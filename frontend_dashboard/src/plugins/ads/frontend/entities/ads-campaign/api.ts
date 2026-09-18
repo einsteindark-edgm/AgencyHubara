@@ -51,6 +51,7 @@ import {
   type AvatarColor,
   type CampaignStatus,
   type CampaignTendency,
+  type AdsStateReason,
   type CapiEvent,
 } from "./model";
 
@@ -147,10 +148,15 @@ function asAdsState(s: string | null): AdsState | null {
 }
 
 /** Backend `capi_event` string → enum del dominio. Narrowing defensivo:
- *  cualquier valor fuera de LeadSubmitted/Purchase (drift) cae a null. */
+ *  cualquier valor fuera del enum (drift) cae a null. */
 function asCapiEvent(s: string | null): CapiEvent | null {
-  if (s === "LeadSubmitted" || s === "Purchase") return s;
+  if (s === "LeadSubmitted" || s === "Purchase" || s === "OrderCanceled")
+    return s;
   return null;
+}
+
+function asStateReason(s: string | null): AdsStateReason | null {
+  return s === "order_cancelled" ? s : null;
 }
 
 export function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
@@ -215,6 +221,7 @@ export function mapBackendConversation(
     llmCostUsd: b.llm_cost_usd,
     llmTokens: b.llm_tokens,
     capiEvent: asCapiEvent(b.capi_event),
+    stateReason: asStateReason(b.state_reason),
   };
 }
 

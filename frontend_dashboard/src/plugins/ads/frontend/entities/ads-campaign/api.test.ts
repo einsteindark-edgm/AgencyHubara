@@ -32,6 +32,7 @@ const sample: BackendAttributedConversation = {
   llm_cost_usd: 0.0042,
   llm_tokens: 1930,
   capi_event: null,
+  state_reason: null,
 };
 
 /** Campaña backend mínima válida — todos los nullable en null. Sin los campos
@@ -326,5 +327,33 @@ describe("ads-campaign — anuncios de un segmento + creativo", () => {
       }),
     );
     expect(c.previewUrl).toBeNull();
+  });
+});
+
+describe("pedido cancelado — capi_event OrderCanceled + state_reason", () => {
+  it("mapea capi_event 'OrderCanceled' → capiEvent", () => {
+    expect(
+      mapBackendConversation({ ...sample, capi_event: "OrderCanceled" })
+        .capiEvent,
+    ).toBe("OrderCanceled");
+  });
+
+  it("defaultea state_reason a null si el backend aún no lo serializa", () => {
+    const { state_reason: _omit, ...rest } = sample;
+    void _omit;
+    expect(
+      backendAttributedConversationSchema.parse(rest).state_reason,
+    ).toBeNull();
+  });
+
+  it("mapea state_reason 'order_cancelled' → stateReason; drift → null", () => {
+    expect(
+      mapBackendConversation({ ...sample, state_reason: "order_cancelled" })
+        .stateReason,
+    ).toBe("order_cancelled");
+    expect(
+      mapBackendConversation({ ...sample, state_reason: "otra_cosa" })
+        .stateReason,
+    ).toBeNull();
   });
 });

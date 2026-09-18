@@ -17,6 +17,9 @@ tengamos `journey_milestones`).
 
 Prioridad de señales (de mayor a menor confianza):
 
+  0. `order_cancelled` (etapa del pedido en Orders) → perdido. El chat no
+     registra la cancelación de un pedido ya pagado (conserva `order_id` y
+     COMPRA_EXITOSA), así que el caller la lee de `OrderFacts` y la pasa acá.
   1. `episode.order_id` is not None         → ganado    (Medusa registró venta)
   2. `episode.closing_tag == COMPRA_EXITOSA` → ganado
   3. `episode.closing_tag == RECHAZO`        → perdido
@@ -60,6 +63,7 @@ def classify_episode_state(
     total_msgs: int,
     last_inbound_ms: int | None,
     now_ms: int,
+    order_cancelled: bool = False,
 ) -> str:
     """Clasifica un episodio en uno de los 7 `AdsState`.
 
@@ -75,10 +79,17 @@ def classify_episode_state(
       last_inbound_ms: ms epoch del último inbound del cliente. None si
         no se pudo derivar.
       now_ms: ms epoch actual, por DI.
+      order_cancelled: el pedido del episodio está cancelado en Orders
+        (`OrderFacts.stage == "cancelled"`). Gana sobre cualquier señal del
+        chat: una venta cancelada no es una venta.
 
     Returns:
       String del `AdsState`. Siempre uno de `VALID_STATES`.
     """
+    # 0. Pedido cancelado en Orders → perdido, diga lo que diga el chat.
+    if order_cancelled:
+        return "perdido"
+
     # 1. Episodio con order_id → venta cerrada (Medusa registró).
     if episode.get("order_id"):
         return "ganado"
@@ -141,6 +152,7 @@ def classify_state(
     total_msgs: int,
     last_inbound_ms: int | None,
     now_ms: int,
+    order_cancelled: bool = False,
 ) -> str:
     """Clasifica una sesión sin `episodes[]` (legacy fallback).
 
@@ -178,4 +190,5 @@ def classify_state(
         total_msgs=total_msgs,
         last_inbound_ms=last_inbound_ms,
         now_ms=now_ms,
+        order_cancelled=order_cancelled,
     )

@@ -203,9 +203,16 @@ class AdsAttributedConversation:
     llm_tokens: int | None = None
 
     # Evento CAPI reportado a Meta para este episodio (fix 2026-07-01):
-    # "Purchase" | "LeadSubmitted" | None (nada reportado / falló). Purchase
-    # pisa a LeadSubmitted (evento terminal — espejo de capi_terminal_event).
+    # "OrderCanceled" | "Purchase" | "LeadSubmitted" | None (nada reportado /
+    # falló). Purchase pisa a LeadSubmitted (evento terminal — espejo de
+    # capi_terminal_event); OrderCanceled pisa a Purchase: Meta no deja
+    # retractar la compra, el badge muestra lo último que sabe del pedido.
     capi_event: str | None = None
+
+    # Por qué `state` no sale del chat: "order_cancelled" = el pedido está
+    # cancelado en Orders (el chat sigue diciendo COMPRA_EXITOSA). None = el
+    # estado es el del chat.
+    state_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -342,6 +349,39 @@ def _empty_state_counts() -> dict[str, int]:
     return {state: 0 for state in VALID_STATES}
 
 
+#: `AdsAttributedConversation.state_reason` cuando el estado lo decide la etapa
+#: del pedido en Orders y no el chat.
+STATE_REASON_ORDER_CANCELLED = "order_cancelled"
+
+
+def _episode_order_cancelled(
+    episode: dict[str, Any] | None,
+    metadata: dict[str, Any],
+    order_facts: OrderFactsSnapshot | None,
+) -> bool:
+    """¿El pedido del episodio está cancelado en Orders?
+
+    El chat conserva `order_id` + COMPRA_EXITOSA aunque el pedido se cancele
+    después (caso 2026-09-18: contra entrega confirmado y cancelado al día
+    siguiente), así que la etapa se lee de `OrderFacts` — la misma fuente que
+    el revenue. Sin dato del pedido (Medusa caído, id inexistente) devuelve
+    False: no se degrada una venta sin evidencia.
+
+    `episode=None` = sesión legacy sin `episodes[]` → su `registered_order`.
+    """
+    if order_facts is None:
+        return False
+    if episode is not None:
+        oid = episode.get("order_id")
+    else:
+        reg = metadata.get("registered_order")
+        oid = reg.get("order_id") if isinstance(reg, dict) else None
+    if not isinstance(oid, str) or not oid:
+        return False
+    fact = order_facts.facts.get(oid)
+    return fact is not None and fact.stage == "cancelled"
+
+
 def _iter_episodes(
     metadata: dict[str, Any],
     *,
@@ -351,8 +391,12 @@ def _iter_episodes(
     total_msgs_fn: Callable[[], int],
     last_msg_ms: int | None,
     now_ms: int,
+    order_facts: OrderFactsSnapshot | None = None,
 ) -> Iterator[tuple[dict[str, Any] | None, str]]:
     """Yields (episode_dict_or_None, state) por cada episodio de la sesión.
+
+    Con `order_facts`, un episodio cuyo pedido está cancelado en Orders sale
+    "perdido" (ver `_episode_order_cancelled`).
 
     - Si `metadata.episodes` está poblado → yields uno por episodio.
       `episode_dict` es el dict tal cual, `state` se computa con
@@ -376,6 +420,7 @@ def _iter_episodes(
             total_msgs=total_msgs_fn(),
             last_inbound_ms=last_msg_ms,
             now_ms=now_ms,
+            order_cancelled=_episode_order_cancelled(None, metadata, order_facts),
         )
         yield (None, state)
         return
@@ -397,6 +442,7 @@ def _iter_episodes(
             total_msgs=total_msgs,
             last_inbound_ms=last_msg_ms if is_active else ep.get("closed_at_ms"),
             now_ms=now_ms,
+            order_cancelled=_episode_order_cancelled(ep, metadata, order_facts),
         )
         yield (ep, state)
 
@@ -539,7 +585,8 @@ def _session_capi_by_episode(
     exactamente la key del pseudo-episodio de las sesiones legacy sin
     `episodes[]`, así sus counters no se pierden.
 
-    Cada slot: `{"lead_sent": n, "purchase_sent": n, "failed": n, "skipped": n}`.
+    Cada slot: `{"lead_sent": n, "purchase_sent": n, "order_canceled_sent": n,
+    "failed": n, "skipped": n}`.
     Los `skipped_*` cuentan aparte (auditoría 2026-09-08: antes se perdían en
     logs); `unknown` (timeout ambiguo) cuenta como `failed` — requiere ojo.
 
@@ -570,11 +617,20 @@ def _session_capi_by_episode(
         elif "_" in event_id:
             ep_id = order_to_ep.get(event_id.split("_", 1)[1])
         slot = out.setdefault(
-            ep_id, {"lead_sent": 0, "purchase_sent": 0, "failed": 0, "skipped": 0}
+            ep_id,
+            {
+                "lead_sent": 0,
+                "purchase_sent": 0,
+                "order_canceled_sent": 0,
+                "failed": 0,
+                "skipped": 0,
+            },
         )
         if status == "sent":
             if name == "Purchase":
                 slot["purchase_sent"] += 1
+            elif name == "OrderCanceled":
+                slot["order_canceled_sent"] += 1
             elif name in ("LeadSubmitted", "Lead"):
                 slot["lead_sent"] += 1
         elif status.startswith("failed") or status == "unknown":
@@ -754,6 +810,7 @@ def list_ads_campaigns(
             total_msgs_fn=count_fn,
             last_msg_ms=last_msg_ms,
             now_ms=now_ms,
+            order_facts=order_facts,
         ):
             ep_started_ms = (
                 ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
@@ -965,6 +1022,7 @@ def list_attributed_conversations(
             total_msgs_fn=count_fn,
             last_msg_ms=last_msg_ms,
             now_ms=now_ms,
+            order_facts=order_facts,
         ):
             # Filtrado por episodio (no por sesión) — re-atribución FU2.
             # Con `source_ids` (fila agrupada por campaña/adset = N ads), el
@@ -1013,7 +1071,9 @@ def list_attributed_conversations(
 
             _usage = ep.get("llm_usage") if isinstance(ep, dict) else None
             _capi_slot = capi_idx.get(ep_id) or {}
-            if _capi_slot.get("purchase_sent"):
+            if _capi_slot.get("order_canceled_sent"):
+                _capi_event = "OrderCanceled"  # lo último que Meta sabe del pedido
+            elif _capi_slot.get("purchase_sent"):
                 _capi_event = "Purchase"  # terminal — pisa a LeadSubmitted
             elif _capi_slot.get("lead_sent"):
                 _capi_event = "LeadSubmitted"
@@ -1043,6 +1103,11 @@ def list_attributed_conversations(
                         else None
                     ),
                     capi_event=_capi_event,
+                    state_reason=(
+                        STATE_REASON_ORDER_CANCELLED
+                        if _episode_order_cancelled(ep, metadata, order_facts)
+                        else None
+                    ),
                 )
             )
 
@@ -1114,6 +1179,7 @@ def list_daily_series(
     until_ms: int | None = None,
     sessions: list[tuple[Path, dict[str, Any]]] | None = None,
     source_ids: frozenset[str] | None = None,
+    order_facts: OrderFactsSnapshot | None = None,
 ) -> list[AdsDailySeriesPoint]:
     """Serie diaria de una campaña: chats iniciados por día, por estado actual.
 
@@ -1185,6 +1251,7 @@ def list_daily_series(
             total_msgs_fn=count_fn,
             last_msg_ms=last_msg_ms,
             now_ms=now_ms,
+            order_facts=order_facts,
         ):
             ep_started_ms = (
                 ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
