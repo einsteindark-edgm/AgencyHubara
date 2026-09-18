@@ -169,9 +169,13 @@ export const backendAttributedConversationSchema = z.object({
   llm_tokens: z.number().int().nullable(),
 
   // Evento CAPI reportado a Meta para este episodio: "LeadSubmitted" |
-  // "Purchase" | null (no reportado). `.default(null)` tolera un backend
-  // viejo que aún no emite el campo.
+  // "Purchase" | "OrderCanceled" | null (no reportado). `.default(null)`
+  // tolera un backend viejo que aún no emite el campo.
   capi_event: z.string().nullable().default(null),
+
+  // "order_cancelled" cuando el estado lo decide la etapa del pedido en
+  // Pedidos (cancelado) y no el chat. null = estado del chat.
+  state_reason: z.string().nullable().default(null),
 });
 
 export type BackendAttributedConversation = z.infer<

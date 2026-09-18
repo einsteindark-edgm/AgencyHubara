@@ -54,11 +54,40 @@ describe("AdsAttributedTable — badge CAPI", () => {
     expect(badge.getAttribute("style")).toContain("--color-info");
   });
 
+  it("renderiza el badge OrderCanceled en rojo (token danger)", () => {
+    const { getByText } = render(
+      <AdsAttributedTable rows={[makeRow({ capiEvent: "OrderCanceled" })]} />,
+    );
+    const badge = getByText("OrderCanceled");
+    expect(badge.className).toContain("att-state");
+    expect(badge.getAttribute("style")).toContain("--color-danger");
+  });
+
   it("no renderiza badge cuando capiEvent es null", () => {
     const { queryByText } = render(
       <AdsAttributedTable rows={[makeRow({ capiEvent: null })]} />,
     );
     expect(queryByText("Purchase")).toBeNull();
     expect(queryByText("LeadSubmitted")).toBeNull();
+  });
+});
+
+describe("AdsAttributedTable — pedido cancelado", () => {
+  it("un perdido por pedido cancelado lo dice en el badge de estado", () => {
+    const { getByText } = render(
+      <AdsAttributedTable
+        rows={[makeRow({ state: "perdido", stateReason: "order_cancelled" })]}
+      />,
+    );
+    const badge = getByText(/Perdido · pedido cancelado/);
+    expect(badge.getAttribute("title")).toContain("cancelado en Pedidos");
+  });
+
+  it("un perdido del chat (RECHAZO) no lleva motivo", () => {
+    const { getByText, queryByText } = render(
+      <AdsAttributedTable rows={[makeRow({ state: "perdido" })]} />,
+    );
+    expect(getByText("Perdido", { selector: ".att-state" })).toBeTruthy();
+    expect(queryByText(/pedido cancelado/)).toBeNull();
   });
 });

@@ -54,7 +54,11 @@ export type CampaignTendency = "up" | "flat" | "down";
 /** Evento CAPI (Conversions API de Meta) reportado server-side al cierre de
  *  un episodio: `LeadSubmitted` (lead calificado) o `Purchase` (venta, con
  *  value COP). ⚠️ El nombre exacto importa — Meta rechaza "Lead". */
-export type CapiEvent = "LeadSubmitted" | "Purchase";
+export type CapiEvent = "LeadSubmitted" | "Purchase" | "OrderCanceled";
+
+/** Por qué el estado de una conversación no sale del chat. `order_cancelled`:
+ *  el pedido está cancelado en Pedidos aunque el chat diga COMPRA_EXITOSA. */
+export type AdsStateReason = "order_cancelled";
 
 /* ── Rango temporal del dashboard (filtro por fecha) ─────────────────────── */
 
@@ -252,9 +256,12 @@ export interface AttributedConversation {
   llmTokens?: number | null;
 
   /** Evento CAPI reportado a Meta para este episodio (`LeadSubmitted` |
-   *  `Purchase`). `null` si no se reportó. Opcional para tolerar el mock
-   *  histórico. */
+   *  `Purchase` | `OrderCanceled`). `OrderCanceled` pisa a `Purchase`: Meta no
+   *  deja retractar la compra, el badge muestra lo último que sabe del pedido.
+   *  `null` si no se reportó. Opcional para tolerar el mock histórico. */
   capiEvent?: CapiEvent | null;
+  /** Motivo del estado cuando lo decide Pedidos y no el chat. */
+  stateReason?: AdsStateReason | null;
 }
 
 /* ── Serie diaria — conversaciones iniciadas por día/estado final ────────── */

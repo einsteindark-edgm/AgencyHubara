@@ -610,6 +610,7 @@ def get_ads_campaign_daily(
         until_ms=until_ms,
         sessions=sessions,
         source_ids=scope or None,
+        order_facts=_order_facts(sessions),
     )
     return {
         "campaign_id": campaign_id,
