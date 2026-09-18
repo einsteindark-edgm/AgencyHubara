@@ -184,6 +184,33 @@ describe("CreateOrderAction", () => {
     expect(await screen.findByText(/#22 \(Dúo Zodiacal\)/)).toBeInTheDocument();
   });
 
+  it("al crear el pedido el botón se va, pero el aviso con el número queda a la vista", async () => {
+    // Registrar invalida la sesión → aparece `pending_payment_order_id` → el
+    // composer pasa `available=false`. Si eso desmontara el modal, el
+    // operador perdería "#22 (Dúo Zodiacal)" antes de poder leerlo.
+    createAsync.mockResolvedValue({
+      registered: true,
+      order_id: "order_1",
+      order_reference: "#22 (Dúo Zodiacal)",
+    });
+    suggestAsync.mockResolvedValue(SUGGESTION);
+    const { rerender } = render(
+      <CreateOrderAction chatId="wa_573001234567" available />,
+      { wrapper: wrapper() },
+    );
+    fireEvent.click(screen.getByRole("button", { name: /crear pedido/i }));
+    await screen.findByLabelText(/dirección/i);
+    fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+    expect(await screen.findByText(/#22 \(Dúo Zodiacal\)/)).toBeInTheDocument();
+
+    rerender(<CreateOrderAction chatId="wa_573001234567" available={false} />);
+
+    expect(screen.getByText(/#22 \(Dúo Zodiacal\)/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /listo/i }));
+    // Cerrado el modal, ya no queda el disparador: el pedido existe.
+    expect(screen.queryByRole("button", { name: /crear pedido/i })).not.toBeInTheDocument();
+  });
+
   it("el operador puede NO mandarle las instrucciones de pago al cliente", async () => {
     createAsync.mockResolvedValue({ registered: true, order_id: "order_1" });
     await openForm();

@@ -42,6 +42,14 @@ import {
 
 interface Props {
   chatId: string | null;
+  /**
+   * Si el composer ofrece la acción (histórico elegible y SIN pedido
+   * pendiente todavía). Solo gobierna el DISPARADOR: con el modal abierto el
+   * componente sigue montado, así el aviso "Pedido creado #22" sobrevive a
+   * que el registro mismo encienda `pending_payment_order_id` y el composer
+   * pase esto a `false`.
+   */
+  available?: boolean;
 }
 
 interface FormItem {
@@ -181,7 +189,7 @@ function missingOf(
   return missing;
 }
 
-export function CreateOrderAction({ chatId }: Props) {
+export function CreateOrderAction({ chatId, available = true }: Props) {
   const [open, setOpen] = useState(false);
   const [phase, dispatch] = useReducer(phaseReducer, { k: "reading" } as Phase);
   const [suggestion, setSuggestion] = useState<OrderSuggestion | null>(null);
@@ -278,18 +286,22 @@ export function CreateOrderAction({ chatId }: Props) {
     }
   };
 
+  if (!available && !open) return null;
+
   return (
     <>
-      <button
-        type="button"
-        className="create-order-btn"
-        style={triggerStyle}
-        onClick={openForm}
-        disabled={!chatId}
-        title="Crear el pedido con los datos que aparecen en la conversación"
-      >
-        🧾 Crear pedido
-      </button>
+      {available && (
+        <button
+          type="button"
+          className="create-order-btn"
+          style={triggerStyle}
+          onClick={openForm}
+          disabled={!chatId}
+          title="Crear el pedido con los datos que aparecen en la conversación"
+        >
+          🧾 Crear pedido
+        </button>
+      )}
 
       {open && (
         <div style={overlayStyle} onClick={close}>

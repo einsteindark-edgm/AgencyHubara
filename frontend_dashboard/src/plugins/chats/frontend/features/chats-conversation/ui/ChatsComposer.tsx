@@ -134,7 +134,7 @@ interface InterveneActiveProps {
   pendingPaymentOrderId: string | null;
   /** Cierre de la ventana de servicio 24h (epoch ms), o null si se desconoce. */
   serviceWindowExpiresAtMs: number | null;
-  /** El histórico trae `CONFIRMADO_SIN_DATOS` (ver `model/quickOrderEligibility`). */
+  /** Histórico elegible para "Crear pedido" (ver `model/quickOrderEligibility`). */
   canCreateOrder: boolean;
 }
 
@@ -192,12 +192,16 @@ function InterveneActiveComposer({
           Intervenido por ti · Bot pausado
         </span>
         <span className="right">
-          {/* Crear el pedido con los datos que quedaron EN la conversación.
-              Solo con `CONFIRMADO_SIN_DATOS` en el histórico: el cliente
-              confirmó la compra pero no completó los datos de envío y el
-              humano los consiguió a mano. En cualquier otra conversación
-              intervenida el botón sería ruido. */}
-          {canCreateOrder && <CreateOrderAction chatId={chatId} />}
+          {/* Crear el pedido con los datos que quedaron EN la conversación
+              (histórico elegible: ver `model/quickOrderEligibility`). Una vez
+              creado, la sesión expone `pendingPaymentOrderId` y el paso
+              siguiente es "Asignar fecha" / "Confirmar pago": el disparador se
+              oculta. Montado igual para que el aviso de éxito del modal no
+              se esfume cuando el propio registro enciende ese campo. */}
+          <CreateOrderAction
+            chatId={chatId}
+            available={canCreateOrder && !pendingPaymentOrderId}
+          />
           {pendingPaymentOrderId && (
             <>
               <ScheduleDeliveryAction
