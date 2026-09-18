@@ -18,6 +18,18 @@ permissions:
   id-token: write
   contents: read
 
+# Un deploy a la vez: merges en ráfaga se ENCOLAN en vez de correr en paralelo
+# contra el mismo bucket. Dos `s3 sync --delete` solapados se borran entre sí
+# los assets hasheados y queda un index.html apuntando a un entry que ya no
+# existe → CloudFront devuelve el fallback SPA (text/html) para el .js →
+# dashboard en blanco con ambos runs en "success" (incidente 2026-09-18, runs
+# 35361542201 + 35361559934). cancel-in-progress: false porque cancelar un sync
+# a mitad deja el bucket a medias; GitHub colapsa los pendientes al último SHA,
+# así que el HEAD igual gana. Mismo guard que backend-deploy.yml.
+concurrency:
+  group: frontend-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
