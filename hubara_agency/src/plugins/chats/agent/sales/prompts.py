@@ -76,7 +76,8 @@ _GHOSTING_PROMPT = (
     "que YA hayas etiquetado COMPRA_EXITOSA antes; en ese caso re-confirma "
     "con la misma tag.\n\n"
     "**REGLA DE ORO**: NO generes ninguna respuesta visible al usuario. SOLO "
-    "llama la(s) herramienta(s) en silencio y termina. Para "
+    "llama la(s) herramienta(s) en silencio y termina. No mandes "
+    "`customer_message`: el cliente ya no está en la conversación. Para "
     "CONFIRMADO_SIN_DATOS llamas DOS tools: primero `manage_conversation_tag` "
     "con la tag, después `escalate_to_human` con la razón."
 )

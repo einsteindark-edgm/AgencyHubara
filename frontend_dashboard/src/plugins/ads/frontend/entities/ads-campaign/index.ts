@@ -14,6 +14,7 @@ export type {
   AvatarColor,
   CampaignStatus,
   CampaignTendency,
+  AdsStateReason,
   CapiEvent,
 } from "./model";
 export {

@@ -1,7 +1,11 @@
 /**
- * Sidebar de Ads: lista de campañas Meta filtrable por estado (Activas /
- * Pausadas / Todas) con barra micro-apilada de distribución de estados
- * conversacionales.
+ * Sidebar de Ads: lista de campañas Meta con buscador, filtrable por estado
+ * (Activas / Pausadas / Todas) con barra micro-apilada de distribución de
+ * estados conversacionales.
+ *
+ * La búsqueda acota también los contadores de los pills: así dicen en qué
+ * pill quedó lo buscado (arranca en "Activas" y lo buscado puede estar
+ * pausado).
  *
  * Segmentación (2026-07-10): cada campaña resuelta (con `metaCampaignId`)
  * tiene un chevron que despliega sus segmentos (ad sets) — fetch lazy vía
@@ -20,6 +24,7 @@ import {
   type AdsConversationCounts,
   type AdsWindowParams,
 } from "@plugins/ads/frontend/entities/ads-campaign";
+import { matchesSearch } from "@/shared/lib";
 import { Icon } from "@/shared/ui";
 
 import { fmtMoneyK, fmtN, fmtUsd } from "@plugins/ads/frontend/lib/format";
@@ -31,6 +36,12 @@ type StatusFilter = "active" | "paused" | "all";
 /** Ventana por defecto para el fetch de segmentos cuando el Page no la pasa
  *  (tests / uso suelto): sin límite (total). El Page SIEMPRE la pasa. */
 const OPEN_WINDOW: AdsWindowParams = { days: null, from: null, to: null };
+
+/** Por nombre, o por id (una campaña sin nombre resuelto solo se reconoce por
+ *  el id que se copia de Ads Manager). */
+function matchesCampaign(c: AdsCampaign, query: string): boolean {
+  return matchesSearch(query, [c.name, c.id, c.metaCampaignId]);
+}
 
 interface Props {
   campaigns: AdsCampaign[];
@@ -52,13 +63,19 @@ export function AdsCampaignsList({
   selectedAdsetId = null,
   onSelectAdset,
 }: Props) {
+  const [query, setQuery] = useState("");
+  const searched = useMemo(
+    () => campaigns.filter((c) => matchesCampaign(c, query)),
+    [campaigns, query],
+  );
+
   const counts = useMemo(
     () => ({
-      active: campaigns.filter((c) => c.status === "active").length,
-      paused: campaigns.filter((c) => c.status === "paused").length,
-      all: campaigns.length,
+      active: searched.filter((c) => c.status === "active").length,
+      paused: searched.filter((c) => c.status === "paused").length,
+      all: searched.length,
     }),
-    [campaigns],
+    [searched],
   );
 
   // Default filter: si no tenemos `status` de Meta Ads API todavía (todas
@@ -69,9 +86,10 @@ export function AdsCampaignsList({
   const [filter, setFilter] = useState<StatusFilter>(defaultFilter);
 
   const list = useMemo(() => {
-    if (filter === "all") return campaigns;
-    return campaigns.filter((c) => c.status === filter);
-  }, [campaigns, filter]);
+    if (filter === "all") return searched;
+    return searched.filter((c) => c.status === filter);
+  }, [searched, filter]);
+  const searchText = query.trim();
 
   const filters: { key: StatusFilter; label: string; n: number }[] = [
     { key: "active", label: "Activas", n: counts.active },
@@ -106,7 +124,12 @@ export function AdsCampaignsList({
 
         <div className="side-search">
           <Icon.search />
-          <input placeholder="Buscar campaña…" />
+          <input
+            placeholder="Buscar campaña…"
+            aria-label="Buscar campaña"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </div>
 
         <div className="side-tabs">
@@ -123,6 +146,14 @@ export function AdsCampaignsList({
       </div>
 
       <div className="side-list">
+        {list.length === 0 && searchText && (
+          <NoMatches
+            query={searchText}
+            matchesElsewhere={counts.all}
+            onShowAll={() => setFilter("all")}
+            onClear={() => setQuery("")}
+          />
+        )}
         {list.map((c) => (
           <CampaignRow
             key={c.id}
@@ -136,6 +167,47 @@ export function AdsCampaignsList({
         ))}
       </div>
     </aside>
+  );
+}
+
+/** Búsqueda sin campañas en el pill activo: decirlo (una lista vacía muda
+ *  parece un buscador roto) y ofrecer la salida — ver las de otros pills o
+ *  limpiar la búsqueda. */
+function NoMatches({
+  query,
+  matchesElsewhere,
+  onShowAll,
+  onClear,
+}: {
+  query: string;
+  /** Coincidencias en todos los estados (el pill "Todas"). */
+  matchesElsewhere: number;
+  onShowAll: () => void;
+  onClear: () => void;
+}) {
+  if (matchesElsewhere > 0) {
+    return (
+      <div className="empty-human">
+        <span className="eh-ico"><Icon.search /></span>
+        <div className="eh-t">Sin resultados en esta vista</div>
+        <div className="eh-s">
+          {matchesElsewhere} campaña{matchesElsewhere !== 1 ? "s" : ""} con «{query}» en otras vistas.
+        </div>
+        <button className="cal-preset" style={{ marginTop: 10 }} onClick={onShowAll}>
+          Ver en Todas
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="empty-human">
+      <span className="eh-ico"><Icon.search /></span>
+      <div className="eh-t">Sin resultados para «{query}»</div>
+      <div className="eh-s">Probá con otra palabra del nombre o el id de la campaña.</div>
+      <button className="cal-preset clear" style={{ marginTop: 10 }} onClick={onClear}>
+        Limpiar búsqueda
+      </button>
+    </div>
   );
 }
 

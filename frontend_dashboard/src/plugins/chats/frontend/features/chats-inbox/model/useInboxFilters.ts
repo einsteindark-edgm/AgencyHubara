@@ -1,6 +1,6 @@
 /**
- * Filtros del inbox: tag activo (incluyendo "Humano"), rango de fechas del
- * calendario, y agrupación en secciones (fijadas / hoy / anteriores).
+ * Filtros del inbox: búsqueda, tag activo (incluyendo "Humano"), rango de
+ * fechas del calendario, y agrupación en secciones (fijadas / hoy / anteriores).
  *
  * Todo lo temporal está anclado a **America/Bogota**. El día calendario ya
  * viene resuelto en `ChatInboxItem.dayIso` (lo pone el adaptador de la entity),
@@ -14,7 +14,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import type { ChatInboxItem } from "@plugins/chats/frontend/entities/chat";
-import { formatDayLabelEs, todayBogotaIso } from "@/shared/lib";
+import { formatDayLabelEs, matchesSearch, todayBogotaIso } from "@/shared/lib";
 
 export type InboxFilter = "Humano" | "Todas" | "Interesado" | "Pendiente" | "Cliente" | "Remarketing" | "Frío";
 
@@ -57,6 +57,12 @@ function inRange(dayIso: string, range: DateRange): boolean {
   return dayIso >= range.from && dayIso <= to;
 }
 
+/** Lo que el operador tiene a mano para buscar: el teléfono, el diagnóstico
+ *  de la fila y el número de pedido ("#31"). */
+function matchesChat(c: ChatInboxItem, query: string): boolean {
+  return matchesSearch(query, [c.name, c.snippet, c.order?.label]);
+}
+
 /** Más reciente primero. */
 function byRecency(a: ChatInboxItem, b: ChatInboxItem): number {
   return b.timestamp - a.timestamp;
@@ -73,16 +79,19 @@ export function useInboxFilters(chats: ChatInboxItem[], options: Options = {}) {
   const today = options.today ?? todayBogotaIso();
   const [activeFilter, setActiveFilter] = useState<InboxFilter>("Humano");
   const [dateRange, setDateRange] = useState<DateRange>(NO_RANGE);
+  const [query, setQuery] = useState("");
 
   const clearDateRange = useCallback(() => setDateRange(NO_RANGE), []);
+  const clearQuery = useCallback(() => setQuery(""), []);
   const hasDateRange = dateRange.from !== null;
 
-  /** Chats que pasan SOLO el filtro de fecha. Es la base tanto de los
-   *  contadores de los pills como del filtrado final: si los contadores
-   *  ignoraran el rango, dirían "12" y la lista mostraría 2. */
-  const inDateRange = useMemo(
-    () => chats.filter((c) => inRange(c.dayIso, dateRange)),
-    [chats, dateRange],
+  /** Chats que pasan el rango de fechas y la búsqueda — NO el tag. Es la base
+   *  tanto de los contadores de los pills como del filtrado final: si los
+   *  contadores ignoraran el rango o la búsqueda, dirían "12" y la lista
+   *  mostraría 2. Con la búsqueda además dicen en qué pill está lo buscado. */
+  const inScope = useMemo(
+    () => chats.filter((c) => inRange(c.dayIso, dateRange) && matchesChat(c, query)),
+    [chats, dateRange, query],
   );
 
   /** Días con al menos una conversación — el calendario los marca con un punto
@@ -96,25 +105,25 @@ export function useInboxFilters(chats: ChatInboxItem[], options: Options = {}) {
   }, [chats]);
 
   const filters: InboxFilterMeta[] = useMemo(() => {
-    const humanCount = inDateRange.filter((c) => c.human).length;
+    const humanCount = inScope.filter((c) => c.human).length;
     const byTag = (key: InboxFilter) =>
-      inDateRange.filter((c) => TAG_TO_FILTER[c.tag] === key).length;
+      inScope.filter((c) => TAG_TO_FILTER[c.tag] === key).length;
     return [
       { key: "Humano",      count: humanCount,          color: "var(--color-danger)",        priority: true },
-      { key: "Todas",       count: inDateRange.length,  color: "var(--fg-soft)" },
+      { key: "Todas",       count: inScope.length,      color: "var(--fg-soft)" },
       { key: "Interesado",  count: byTag("Interesado"), color: "var(--color-info)" },
       { key: "Pendiente",   count: byTag("Pendiente"),  color: "var(--color-warn)" },
       { key: "Cliente",     count: byTag("Cliente"),    color: "var(--color-ok)" },
       { key: "Remarketing", count: byTag("Remarketing"),color: "var(--color-violet)" },
       { key: "Frío",        count: byTag("Frío"),       color: "rgba(235,235,235,0.55)" },
     ];
-  }, [inDateRange]);
+  }, [inScope]);
 
   const filtered = useMemo(() => {
-    if (activeFilter === "Humano") return inDateRange.filter((c) => c.human);
-    if (activeFilter === "Todas") return inDateRange;
-    return inDateRange.filter((c) => TAG_TO_FILTER[c.tag] === activeFilter);
-  }, [inDateRange, activeFilter]);
+    if (activeFilter === "Humano") return inScope.filter((c) => c.human);
+    if (activeFilter === "Todas") return inScope;
+    return inScope.filter((c) => TAG_TO_FILTER[c.tag] === activeFilter);
+  }, [inScope, activeFilter]);
 
   const sections: InboxSection[] = useMemo(() => {
     const out: InboxSection[] = [];
@@ -154,6 +163,9 @@ export function useInboxFilters(chats: ChatInboxItem[], options: Options = {}) {
     activeFilter,
     setActiveFilter,
     filters,
+    query,
+    setQuery,
+    clearQuery,
     dateRange,
     setDateRange,
     clearDateRange,

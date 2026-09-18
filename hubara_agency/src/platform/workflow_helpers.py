@@ -36,7 +36,11 @@ with workflow.unsafe.imports_passed_through():
         ScheduleRemarketingDecision,
         TransferDecision,
     )
-    from src.platform.llm_text_sanitizer import sanitize_llm_text
+    from src.platform.llm_text_sanitizer import (
+        is_no_message_abstention,
+        looks_like_admin_leak,
+        sanitize_llm_text,
+    )
     from src.platform.temporal.activities import execute_tool
     from src.platform.temporal.retry_policies import (
         _CONV_OPTIONS,
@@ -475,8 +479,15 @@ async def run_agent_turn(
     episode_id: str | None = None,
     has_new_input: Callable[[], bool] | None = None,
     fabricate_fallback_on_empty: bool = True,
+    admin_turn: bool = False,
 ) -> TurnResult:
     """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
+
+    `admin_turn` (run b06636a6): el caller ya sabe que NINGÚN texto de este
+    turno va al cliente (cierre por ghosting: el trigger es administrativo).
+    Con eso el loop (a) termina el turno apenas una tool declara su cierre
+    (`tag_closure.ends_turn`) sin pedir "un mensaje más", y (b) no le hace
+    recordar al LLM un texto que nunca salió. Default False = turno de cliente.
 
     Arma el `baggage` (`session.id` / `whatsapp.number` / `episode.id`) y lo pasa
     a `_run_agent_turn_impl`, que lo mete en `LLMChatInput.baggage`. La activity
@@ -523,6 +534,7 @@ async def run_agent_turn(
         episode_id=episode_id,
         has_new_input=has_new_input,
         fabricate_fallback_on_empty=fabricate_fallback_on_empty,
+        admin_turn=admin_turn,
     )
 
 
@@ -534,6 +546,7 @@ async def _run_agent_turn_impl(
     episode_id: str | None = None,
     has_new_input: Callable[[], bool] | None = None,
     fabricate_fallback_on_empty: bool = True,
+    admin_turn: bool = False,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -676,6 +689,13 @@ async def _run_agent_turn_impl(
             batch_tool_names = [tc.name for tc in response.tool_calls]
             if _starts_outbound(batch_tool_names):
                 outbound_started = True
+            # Cierre que una tool de ESTE batch declaró en su envelope
+            # (`tag_closure`, ver el corte más abajo). `None` = la tool no
+            # mandó texto para el cliente; "" = mandó y nada era seguro.
+            batch_tag_ends_turn = False
+            batch_tag_customer_message: str | None = None
+            # Una tool del batch devolvió `error`: el modelo debe leerlo.
+            batch_tool_failed = False
             # DEFAULT-DENY (run 1c9ef231): el content que acompaña una tool
             # call es narración interna SIEMPRE — se descarta y se loguea. El
             # texto para el cliente viaja en los params de la tool
@@ -740,6 +760,8 @@ async def _run_agent_turn_impl(
                 # Intentar extraer decisiones del payload JSON (ADR-001).
                 payload = _try_parse_decision_payload(result)
                 if payload is not None:
+                    if isinstance(payload.get("error"), str) and payload["error"]:
+                        batch_tool_failed = True
                     if "transfer_decision" in payload and isinstance(payload["transfer_decision"], dict):
                         td = payload["transfer_decision"]
                         transfer_decision = TransferDecision(
@@ -802,6 +824,22 @@ async def _run_agent_turn_impl(
                                     orr.get("portavelas_included", False)
                                 ),
                             )
+                    if "tag_closure" in payload and isinstance(payload["tag_closure"], dict):
+                        # `ManageConversationTagTool` declara si su tag es
+                        # AUTOSUFICIENTE (`ends_turn`) y, si el modelo lo
+                        # mandó, el texto para el cliente YA validado. La
+                        # decisión de cortar lee SOLO este resultado grabado:
+                        # nada de regex acá (L-21). Se ASIGNA (no se acumula):
+                        # con dos tags en un batch vale el último, igual que
+                        # en metadata gana la última escritura.
+                        closure = payload["tag_closure"]
+                        batch_tag_ends_turn = closure.get("ends_turn") is True
+                        closure_text = closure.get("customer_message")
+                        batch_tag_customer_message = (
+                            closure_text
+                            if batch_tag_ends_turn and isinstance(closure_text, str)
+                            else None
+                        )
 
                 messages = [
                     *messages,
@@ -860,6 +898,62 @@ async def _run_agent_turn_impl(
                     f"turno cortado: {batch_tool_names} espera respuesta del cliente"
                 )
                 final_content = ""
+                break
+
+            # El tag AUTOSUFICIENTE termina el turno (run b06636a6, 2026-09-18).
+            # Misma clase que la escalación de arriba (L-20), otra tool: tras
+            # `manage_conversation_tag` el loop pedía OTRO llm_chat y el modelo
+            # acusaba recibo ("Etiqueta registrada."). En el cierre por
+            # ghosting no salía (turno admin) pero quedaba en el historial como
+            # few-shot del acuse y costaba ~55K prompt tokens por cierre; en un
+            # turno de cliente era el final_content. La tool DECLARA el cierre
+            # (`tag_closure.ends_turn`; los tags combo que exigen
+            # `escalate_to_human` NO lo declaran: ahí el modelo aún tiene
+            # trabajo) y el turno termina cuando ya no hay nada que pedirle:
+            #   * turno admin → sin texto (el cliente no está);
+            #   * turno de cliente CON `customer_message` → ese texto TAL CUAL
+            #     lo devolvió la tool, que ya lo validó ("" = habló y nada era
+            #     seguro: silencio, no se le reabre el canal). Sin sanitizar
+            #     acá: el workflow solo LEE lo grabado (L-21).
+            # Turno de cliente SIN `customer_message` → NO corta: el cliente
+            # sigue esperando respuesta y ese llm_chat es legítimo.
+            # Va DESPUÉS del corte L-11 (al revés que la escalación): en un
+            # batch contradictorio [picker, tag + despedida] gana el picker, que
+            # es lo que pasaba antes de este corte — si no, la despedida
+            # quedaba suprimida por `suppress_text_for_picker` pero persistida
+            # al dashboard y al historial sin haber salido.
+            # Si ALGUNA tool del batch falló, tampoco corta: el modelo tiene
+            # que ver el error (dos tags y el último rebota → sobrevivía el
+            # cierre del primero).
+            # `patched()` va ÚLTIMO a propósito: solo se consulta (y graba su
+            # marker) cuando el corte aplicaría. Histories pre-deploy replayean
+            # con el llm_chat extra; tras el drain (idle 5min en Sales),
+            # eliminar la rama vieja + `deprecate_patch("tag-ends-turn-v1")`.
+            if (
+                batch_tag_ends_turn
+                and not batch_tool_failed
+                and (admin_turn or batch_tag_customer_message is not None)
+                and workflow.patched("tag-ends-turn-v1")
+            ):
+                final_content = "" if admin_turn else (batch_tag_customer_message or "")
+                if final_content:
+                    messages = [
+                        *messages,
+                        {"role": "assistant", "content": final_content},
+                    ]
+                elif not admin_turn:
+                    # Corte SILENCIOSO en turno de cliente: que quede rastro
+                    # (el análogo de la escalación también avisa).
+                    workflow.logger.warning(
+                        "cierre de tag con `customer_message` vacío: la tool "
+                        "descartó todo lo que mandó el modelo; el turno termina "
+                        "sin texto (no se le pide otro mensaje al LLM)",
+                        extra={"session_id": session.session_id},
+                    )
+                workflow.logger.info(
+                    f"turno terminado por cierre de tag ({batch_tool_names}; "
+                    f"admin={admin_turn}, con_texto={bool(final_content)})"
+                )
                 break
         else:
             # ── Empty-content recovery (post-mortem run df5a8fe2-bb7c-4627-b861-dc19643467be) ──
@@ -995,11 +1089,59 @@ async def _run_agent_turn_impl(
             else ""
         )
 
+    # Lo que NO salió, el LLM no lo recuerda (runs b06636a6 → 5ed9af2d).
+    # `record_turn` corre ACÁ, antes de que el caller decida enviar: el acuse
+    # "Etiqueta registrada." de un cierre por ghosting nunca se envió pero sí se
+    # persistió como `assistant`, y la sesión siguiente lo leyó como few-shot
+    # de "tras una tool administrativa se responde con un parte de estado".
+    # Se recorta el texto final cuando ya se sabe que no llega al cliente:
+    #   * turno admin (lo dice el caller), o
+    #   * huele a parte interno — mismo veredicto que el tripwire del choke
+    #     point `send_whatsapp_message_activity`, que tampoco lo dejaría salir.
+    # El resto del turno (mensaje del cliente, tool calls, tool results) queda:
+    # pasó de verdad. `NO_MESSAGE` NO se recorta a propósito (el detector lo
+    # caza como token interno, por eso la excepción explícita): no es un acuse
+    # sino el canal CORRECTO de abstención — verlo usado es el few-shot bueno;
+    # borrarlo empuja a declinar en prosa, que es justo lo que se filtraba.
+    # Un turno que termina en `tool` ya es forma de prod (corte L-11), y
+    # exoclaw descarta los assistant vacíos al persistir.
+    # SIN patch gate: solo cambia el PAYLOAD de `record_turn`, no la secuencia
+    # de commands (L-9 versiona forma, no contenido); en replay la activity no
+    # se re-ejecuta. Por eso `extended` va en su default: nada que versionar.
+    recorded = messages[initial_len:]
+    never_reaches_customer = admin_turn or (
+        looks_like_admin_leak(final_content)
+        and not is_no_message_abstention(final_content)
+    )
+    if (
+        final_content
+        and never_reaches_customer
+        and recorded
+        and recorded[-1].get("role") == "assistant"
+        and not recorded[-1].get("tool_calls")
+        and recorded[-1].get("content") == final_content
+    ):
+        workflow.logger.info(
+            "texto final no recordado en el historial del LLM (nunca llega "
+            f"al cliente; admin={admin_turn}): {final_content[:120]!r}"
+        )
+        recorded = recorded[:-1]
+    # Turno admin SIN ninguna tool call: no dejó ningún hecho que recordar, y
+    # lo único que quedaría es el trigger de sistema SIN cerrar ("[SISTEMA]… NO
+    # generes ninguna respuesta visible… SOLO llama la herramienta"). La sesión
+    # siguiente lo leería pegado al mensaje nuevo del cliente y podría
+    # aplicarle esa orden vieja (cliente que vuelve y recibe silencio). Antes
+    # lo "cerraba" la prosa que ahora se recorta. El turno nunca pasó → lista
+    # vacía; `record_turn` se agenda igual (misma forma de history). Con tool
+    # calls el trigger SÍ queda: lo cierra la llamada, y el tag es un hecho.
+    if admin_turn and not any(m.get("tool_calls") for m in recorded):
+        recorded = []
+
     await workflow.execute_activity(
         record_turn,
         RecordTurnInput(
             session_id=session.session_id,
-            new_messages=messages[initial_len:],
+            new_messages=recorded,
             llm=session.llm,
             workspace=session.workspace,
         ),

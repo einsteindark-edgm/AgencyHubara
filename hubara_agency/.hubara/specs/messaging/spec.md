@@ -149,6 +149,16 @@ en uno de `{"no_reply", "nuevo", "activo", "calificado", "cotizado",
 - THEN devuelve `"ganado"` con prioridad sobre cualquier tag
 - AND el dashboard pinta la sesión en columna "Ganados"
 
+#### Scenario: Pedido cancelado después de la compra (2026-09-18)
+
+- GIVEN un episodio con `order_id` y `closing_tag="COMPRA_EXITOSA"` (pago confirmado, `Purchase` ya enviado a Meta)
+- AND el pedido pasa a etapa `cancelled` en Orders
+- WHEN el dashboard Ads clasifica el episodio con `OrderFacts` del pedido
+- THEN devuelve `"perdido"` con `state_reason="order_cancelled"` — la etapa del pedido gana sobre `order_id` y sobre cualquier tag del chat
+- AND el episodio no suma a "Ganados" ni a revenue en campañas, tabla de conversaciones ni serie diaria
+- AND el badge CAPI de la conversación es `OrderCanceled` (pisa a `Purchase`: Meta no permite retractar la compra)
+- AND si Orders no puede responder por el pedido (`unresolved`), se conserva el estado del chat — no se degrada una venta sin evidencia
+
 ### Requirement: Tag de conversación visible para operador
 
 El sistema SHALL permitir al LLM marcar la conversación con un tag

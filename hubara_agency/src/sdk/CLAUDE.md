@@ -60,6 +60,7 @@ cd hubara_agency && MEDUSA_BASE_URL=http://medusa.invalid MEDUSA_ADMIN_TOKEN=ci-
 | `connectorkit/` | ports de capability + fakes (vendors externos) | docs/_sdk/07 |
 | `castkit.py` | canal 3: cast HTTP cross-plugin (porta `Authorization` + semántica honesta) | docs/_sdk/10 |
 | `catalogkit.py` | catálogo de productos: port + DTOs + errores + predicados (portavelas) | docs/_sdk/14 |
+| `textkit.py` | guards puros del texto LLM→cliente, importables desde una TOOL (libre de Temporal) | docs/_sdk/15 |
 
 ## Gotchas vividos en esta capa
 

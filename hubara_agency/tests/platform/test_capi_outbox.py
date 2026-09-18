@@ -127,10 +127,24 @@ class TestEventVocabulary:
         )
         assert ev.to_dict()["custom_data"] == {"value": 45000, "currency": "COP"}
         bare = build_capi_event(
-            event_name="OrderShipped", event_time=1, event_id="y", waba_id="W", ctwa_clid="C"
+            event_name="ViewContent", event_time=1, event_id="y", waba_id="W", ctwa_clid="C"
         )
         assert "custom_data" not in bare.to_dict()
         assert bare.to_dict()["action_source"] == "business_messaging"
+
+    @pytest.mark.parametrize(
+        "event_name", ["OrderCreated", "OrderShipped", "OrderDelivered", "OrderCanceled"]
+    )
+    def test_order_scoped_events_always_carry_currency(self, event_name: str) -> None:
+        # Prod 2026-09-17 14:43Z y 2026-09-18 19:29Z: Meta rechazó
+        # OrderShipped sin value con HTTP 400 "OrderShipped event currency
+        # missing" (source order_stage:shipping). Un evento de pedido SIEMPRE
+        # lleva moneda, aunque el total no se conozca.
+        ev = build_capi_event(
+            event_name=event_name, event_time=1, event_id="y", waba_id="W",
+            ctwa_clid="C", order_id="order_9",
+        )
+        assert ev.to_dict()["custom_data"] == {"currency": "COP", "order_id": "order_9"}
 
     def test_pre_purchase_set_excludes_post_purchase_events(self) -> None:
         assert "OrderShipped" not in PRE_PURCHASE_EVENT_NAMES

@@ -31,6 +31,39 @@ def capi_event_for_stage(to_stage: str) -> str | None:
     return _CAPI_EVENT_BY_STAGE.get(to_stage)
 
 
+async def _order_payload(
+    metadata: dict, order_id: str
+) -> tuple[int | None, str | None, list[dict] | None]:
+    """``(value, currency, contents)`` del pedido para el evento de etapa.
+
+    Total y moneda salen de ``OrderFacts`` (Medusa vivo, gotcha 13); la copia
+    ``registered_order`` del chat solo es respaldo si Medusa no responde. Los
+    ``contents`` (SKUs para la coincidencia de catálogo) solo viven en esa
+    copia. Best-effort: Medusa caído nunca bloquea el evento."""
+    from src.sdk.connectorkit import get_order_facts_port
+
+    registered = metadata.get("registered_order")
+    if not isinstance(registered, dict) or not registered.get("success"):
+        registered = {}
+    contents = registered.get("capi_contents") or None
+    value: int | None = None
+    currency: str | None = None
+    try:
+        snapshot = await get_order_facts_port().get_facts([order_id])
+    except Exception:  # noqa: BLE001 — degradar a la copia del vault
+        snapshot = None
+    fact = snapshot.facts.get(order_id) if snapshot is not None else None
+    if fact is not None:
+        value, currency = fact.total_cop, fact.currency_code
+    else:
+        frozen = registered.get("total_cop")
+        if isinstance(frozen, int) and not isinstance(frozen, bool):
+            value, currency = frozen, registered.get("currency")
+    if not isinstance(currency, str) or not currency.strip():
+        currency = None
+    return value, (currency.strip().upper() if currency else None), contents
+
+
 async def _emit_stage_capi(session_id: str, order_id: str, to_stage: str) -> None:
     """Encola + flushea el evento CAPI de la etapa en el outbox del chat.
     Corre dentro de la activity (durable). Best-effort: nunca bloquea la
@@ -56,12 +89,16 @@ async def _emit_stage_capi(session_id: str, order_id: str, to_stage: str) -> Non
     ]
     if any(isinstance(e, dict) and e.get("event_name") == event_name and event_name == "OrderCanceled" for e in known):
         return
+    value, currency, contents = await _order_payload(metadata, order_id)
     try:
         event_id = enqueue_capi_event(
             metadata,
             event_name=event_name,
             session_id=session_id,
             order_id=order_id,
+            value=value,
+            currency=currency,
+            contents=contents,
             source=f"order_stage:{to_stage}",
             now_ms=int(time.time() * 1000),
         )
