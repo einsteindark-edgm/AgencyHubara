@@ -422,7 +422,49 @@ _ADMIN_LEAK_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
-def looks_like_admin_leak(raw: str | None) -> bool:
+# Patrones POSTERIORES al set original. Viven aparte porque el veredicto de
+# `looks_like_admin_leak` decide commands DENTRO de los workflows (si se agenda
+# o no el send): ampliar `_ADMIN_LEAK_PATTERNS` en sitio rompe el replay de
+# toda history que ya envió un texto que el patrón nuevo caza (pasó con la
+# history real del run 5ed9af2d → NondeterminismError). Los workflows activan
+# este set con `workflow.patched("admin-leak-patterns-v2")`; activities, tools
+# y evals usan el default `extended=True`. Patrón nuevo → SIEMPRE acá (o en un
+# v3 con su propio patch), nunca en el set de arriba.
+_ADMIN_LEAK_PATTERNS_V2: tuple[re.Pattern[str], ...] = (
+    # Acuse de RELEVO en cualquier posición (run 5ed9af2d: "Listo, la
+    # conversación quedó en manos del equipo humano." — el "Listo, " evadió el
+    # ancla ^ del set original). Tres condiciones juntas, porque cada una sola
+    # es voz de venta: (1) sujeto en tercera persona CON artículo ("la
+    # conversación / el caso / el chat" — "tu caso quedó a cargo de un colega"
+    # le habla al cliente y NO cae); (2) verbo de estado; (3) complemento de
+    # relevo ("la conversación quedó a medias / pendiente" es el gancho
+    # legítimo de remarketing y NO cae).
+    re.compile(
+        r"\b(la\s+conversaci[oó]n|el\s+caso|el\s+chat)\s+"
+        r"(qued[oóa]|pas[oóa]|fue|ha\s+sido|est[aá])\s+"
+        r"(en\s+manos|a\s+cargo|escalad[oa]|transferid[oa]|derivad[oa]|"
+        r"al\s+equipo|con\s+el\s+equipo)\b",
+        re.IGNORECASE,
+    ),
+    # Forma telegráfica al inicio de oración: "Conversación transferida al
+    # equipo." (sin artículo = parte de estado, no voz de venta).
+    re.compile(
+        r"(?:^|[.!?…]\s+)\W*(conversaci[oó]n|caso|chat)\s+"
+        r"(transferid[oa]|escalad[oa]|derivad[oa])\b",
+        re.IGNORECASE,
+    ),
+    # Acuse tras `manage_conversation_tag` (run b06636a6: "Etiqueta
+    # registrada."), SOLO como mensaje entero: dentro de una frase ("va con la
+    # etiqueta aplicada a mano") es gift-tagging legítimo.
+    re.compile(
+        r"^\W*etiqueta(\s+[`'\"“]?[A-ZÁÉÍÓÚ_]{3,}[`'\"”]?)?\s+"
+        r"(registrada|aplicada|actualizada|guardada|asignada)\W*$",
+        re.IGNORECASE,
+    ),
+)
+
+
+def looks_like_admin_leak(raw: str | None, *, extended: bool = True) -> bool:
     """True si el texto huele a reporte administrativo interno, no a mensaje
     para el cliente (incidente 5f43bcd0: "La conversación queda etiquetada
     como `INTERESADO`..." enviado por WhatsApp).
@@ -432,13 +474,22 @@ def looks_like_admin_leak(raw: str | None) -> bool:
     cubriendo los turnos NORMALES donde el LLM regurgita envelopes de tools
     o narra su proceso. Conservador: solo patrones que un mensaje legítimo
     de venta esencialmente nunca contiene.
+
+    `extended=False` = set ORIGINAL congelado: lo usan los workflows cuando
+    `workflow.patched("admin-leak-patterns-v2")` es False (replay de histories
+    pre-deploy). Todo lo que no se replayea usa el default.
     """
     if not raw:
         return False
     text = raw.strip()
     if not text:
         return False
-    return any(p.search(text) for p in _ADMIN_LEAK_PATTERNS)
+    patterns = (
+        _ADMIN_LEAK_PATTERNS + _ADMIN_LEAK_PATTERNS_V2
+        if extended
+        else _ADMIN_LEAK_PATTERNS
+    )
+    return any(p.search(text) for p in patterns)
 
 
 # Incidente 943e6bff (2026-09-07): un pedido SIN portavelas cerró con "Al
@@ -474,6 +525,75 @@ def strip_portavelas_notice(raw: str | None) -> str:
         if part and part.strip()
         and _PORTAVELAS_MENTION not in part.casefold()
     ]
+    return " ".join(kept)
+
+
+# Vocabulario que rompe la persona (run 5ed9af2d: "Listo, la conversación
+# quedó en manos del equipo humano."). Nombrar a "un humano" delata que hasta
+# ahí NO atendía una persona; el relevo se dice "un colega / un compañero del
+# equipo". Léxico CERRADO a propósito: son las palabras que oponen persona vs.
+# sistema, no un clasificador de intención. "automáticamente" NO cae (el `\b`
+# exige fin de palabra tras automátic[oa]).
+_PERSONA_BREAK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bhuman[oa]s?\b", re.IGNORECASE),
+    re.compile(r"\bpersonas?\s+(real|reales|de\s+verdad)\b", re.IGNORECASE),
+    re.compile(r"\b(chat)?bots?\b", re.IGNORECASE),
+    re.compile(r"\brobots?\b", re.IGNORECASE),
+    re.compile(r"\bI\.?A\.?(?![\w.])"),  # sigla en mayúsculas: "IA", "I.A."
+    re.compile(r"\binteligencia\s+artificial\b", re.IGNORECASE),
+    re.compile(r"\basistente\s+(virtual|digital)\b", re.IGNORECASE),
+    re.compile(r"\basesor[a]?\s+(virtual|digital)\b", re.IGNORECASE),
+    re.compile(r"\bautom[aá]tic[oa]s?\b", re.IGNORECASE),
+    re.compile(r"\bautomatizad[oa]s?\b", re.IGNORECASE),
+    re.compile(r"\bmodelo\s+de\s+lenguaje\b", re.IGNORECASE),
+    # Auto-identificación: "soy una ia" (minúscula), "soy un asistente".
+    re.compile(
+        r"\bsoy\s+un[a]?\s+(asistente|ia|ai|programa|sistema|m[aá]quina)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bAI\b"),  # sigla en inglés, solo mayúsculas
+    # Giros con que un bot anuncia el relevo: una persona del equipo diría "un
+    # compañero", no "una persona" ni "un agente en vivo".
+    re.compile(r"\b(agente|asesor[a]?|persona)\s+en\s+vivo\b", re.IGNORECASE),
+    re.compile(
+        r"\b(te\s+(paso|comunico|conecto|transfiero)\s+con|ya\s+te\s+atiende)\s+"
+        r"una\s+persona\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+def breaks_human_persona(raw: str | None) -> bool:
+    """True si el texto delata que quien atiende no es una persona.
+
+    Pensado para validar texto client-facing con REEMPLAZO (la tool de
+    escalación cambia la despedida por una aprobada), no con bloqueo: un
+    falso positivo cuesta una frase enlatada, nunca un cliente sin respuesta.
+    Puro, stdlib-only (importable desde el sandbox del workflow).
+    """
+    if not raw or not raw.strip():
+        return False
+    return any(p.search(raw) for p in _PERSONA_BREAK_PATTERNS)
+
+
+def keep_customer_safe_sentences(raw: str | None) -> str:
+    """Quita SOLO las oraciones que rompen la persona o huelen a reporte interno.
+
+    Reemplazar el texto entero por una palabra marcada botaba lo que SÍ servía
+    (el aviso del portavelas en la despedida de cierre) y agrandaba el costo de
+    un falso positivo ("toque humano", "mensaje automático"). Si nada se cae,
+    devuelve el texto intacto (con sus saltos de línea). Puro, stdlib-only.
+    """
+    if not raw or not raw.strip():
+        return ""
+    text = raw.strip()
+    parts = [p.strip() for p in _SENTENCE_SPLIT_RE.split(text) if p and p.strip()]
+    kept = [
+        p for p in parts
+        if not breaks_human_persona(p) and not looks_like_admin_leak(p)
+    ]
+    if len(kept) == len(parts):
+        return text
     return " ".join(kept)
 
 

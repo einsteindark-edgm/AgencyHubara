@@ -390,7 +390,12 @@ class RemarketingSessionWorkflow:
                         and result.transfer_decision is None
                         and result.final_content
                         and workflow.patched("admin-text-guard-v1")
-                        and looks_like_admin_leak(result.final_content)
+                        # Set de patrones versionado (run 5ed9af2d): ver
+                        # `_ADMIN_LEAK_PATTERNS_V2` en llm_text_sanitizer.
+                        and looks_like_admin_leak(
+                            result.final_content,
+                            extended=workflow.patched("admin-leak-patterns-v2"),
+                        )
                     ):
                         workflow.logger.warning(
                             "admin-text-guard: gancho con texto administrativo "

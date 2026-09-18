@@ -617,6 +617,7 @@ async def _run_agent_turn_impl(
     transfer_decision: TransferDecision | None = None
     schedule_remarketing: ScheduleRemarketingDecision | None = None
     escalation_decision: EscalationDecision | None = None
+    escalation_farewell = ""
     episode_closed_decision: EpisodeClosedDecision | None = None
     order_registered_decision: OrderRegisteredDecision | None = None
     # Costo por episodio: acumula los tokens del turno sobre las N iteraciones del
@@ -760,6 +761,13 @@ async def _run_agent_turn_impl(
                             reason_category=str(ed.get("reason_category", "OTHER")),
                             summary=str(ed.get("summary", "")),
                         )
+                        # Despedida del relevo: texto FINAL que la tool ya
+                        # validó (param `customer_message` del LLM o la
+                        # despedida aprobada). Ver el corte de abajo.
+                        farewell_raw = payload.get("customer_message")
+                        escalation_farewell = (
+                            farewell_raw if isinstance(farewell_raw, str) else ""
+                        )
                     if "episode_closed" in payload and isinstance(payload["episode_closed"], dict):
                         # HU-WA24H-001 Sprint 2: parsing del envelope que
                         # `ManageConversationTagTool` emite cuando un
@@ -799,6 +807,43 @@ async def _run_agent_turn_impl(
                     *messages,
                     {"role": "tool", "tool_call_id": tc.id, "name": tc.name, "content": result},
                 ]
+
+            # La escalación TERMINA el turno (run 5ed9af2d, 2026-09-18). Antes
+            # el loop pedía OTRO llm_chat tras el tool result ("…NO generes más
+            # respuestas") y el modelo, obligado a emitir algo, le acusaba
+            # recibo al sistema: "Listo, la conversación quedó en manos del
+            # equipo humano." — y eso era el final_content que recibía el
+            # cliente (la despedida buena había viajado como content junto a
+            # la tool call → descartada por el default-deny). Ahora el texto
+            # del cliente es el `customer_message` que la tool devuelve ya
+            # validado, y NO hay llm_chat posterior: el acuse no se genera,
+            # así que no hay nada que pueda filtrarse (misma idea que L-11: el
+            # prompt no frena al modelo, el corte sí). Va ANTES del corte
+            # L-11 para que un batch [tool que espera al cliente, escalate]
+            # conserve la despedida como final_content (el UI intent igual
+            # sale por el flush; sales_session exceptúa la supresión del
+            # picker cuando hubo escalación).
+            # Solo corta si la escalación OCURRIÓ (hay decision): una tool que
+            # la rechazó (`escalated: false`) deja seguir al LLM.
+            # patched(): histories pre-deploy replayean con el llm_chat extra;
+            # tras el drain (idle 5min en Sales), eliminar la rama vieja +
+            # `workflow.deprecate_patch("escalation-ends-turn-v1")`.
+            if escalation_decision is not None and workflow.patched(
+                "escalation-ends-turn-v1"
+            ):
+                final_content = sanitize_llm_text(escalation_farewell).text
+                if final_content:
+                    messages = [
+                        *messages,
+                        {"role": "assistant", "content": final_content},
+                    ]
+                else:
+                    workflow.logger.warning(
+                        "escalación sin customer_message en el envelope: el "
+                        "turno termina sin texto (no se le pide acuse al LLM)",
+                        extra={"session_id": session.session_id},
+                    )
+                break
 
             # L-11: el batch dejó la conversación ESPERANDO al cliente (picker /
             # formulario / confirmación / quick replies) → el turno termina ACÁ.

@@ -895,7 +895,12 @@ class HubaraSalesSessionWorkflow:
                             # pre-tool con olor administrativo no sale.
                             if workflow.patched(
                                 "admin-text-guard-v1"
-                            ) and looks_like_admin_leak(pre_msg):
+                            ) and looks_like_admin_leak(
+                                pre_msg,
+                                extended=workflow.patched(
+                                    "admin-leak-patterns-v2"
+                                ),
+                            ):
                                 workflow.logger.warning(
                                     "admin-text-guard: pre_tool bloqueado: "
                                     f"{pre_msg[:120]!r}"
@@ -926,9 +931,17 @@ class HubaraSalesSessionWorkflow:
                     # burbuja única. Gated por patch para no romper el replay de
                     # workflows en vuelo (R-DET): histories pre-deploy no tienen
                     # el marker → patched()=False → mandan el texto como antes.
+                    # Excepción (run 5ed9af2d): si el turno ESCALÓ, el texto es
+                    # la despedida del relevo (`customer_message`) y sale
+                    # siempre — un batch [picker, escalate] dejaba al cliente
+                    # escalado y sin una palabra. Replay-safe sin patch
+                    # propio: en histories pre `escalation-ends-turn-v1` el
+                    # picker cortaba el turno con final_content="" (L-11), así
+                    # que ningún command dependía de este flag en ese caso.
                     suppress_text_for_picker = (
                         workflow.patched("suppress-text-when-variant-picker-v1")
                         and "present_variant_picker" in result.tools_used
+                        and result.escalation_decision is None
                     )
                     # Guarda de enumeración de variantes (run 9bd495be,
                     # 2026-09-14): el LLM listó los 11 aromas como texto plano
@@ -1000,10 +1013,17 @@ class HubaraSalesSessionWorkflow:
                             stripped or _ORDER_REGISTERED_FALLBACK_FAREWELL
                         )
                         trace_guards.append("portavelas_notice_guard")
+                    # Set de patrones VERSIONADO (run 5ed9af2d): el veredicto decide
+                    # commands, así que los patrones posteriores al set original solo
+                    # aplican bajo su propio patch — histories pre-deploy que SÍ
+                    # enviaron un texto que hoy cazarían replayean con el set viejo.
                     leak_blocked = (
                         bool(result.final_content)
                         and workflow.patched("admin-text-guard-v1")
-                        and looks_like_admin_leak(result.final_content)
+                        and looks_like_admin_leak(
+                            result.final_content,
+                            extended=workflow.patched("admin-leak-patterns-v2"),
+                        )
                     )
                     if leak_blocked:
                         trace_guards.append("admin_text_guard")

@@ -29,3 +29,26 @@ async def test_sales_session_replay_does_not_diverge() -> None:
     history = WorkflowHistory.from_json("test-sales", FIXTURE.read_text(encoding="utf-8"))
     replayer = Replayer(workflows=[HubaraSalesSessionWorkflow])
     await replayer.replay_workflow(history)
+
+
+# History REAL de prod (run 5ed9af2d, 2026-09-18) saneada: sin teléfono, sin API
+# keys, sin system prompt ni tool definitions. Tiene la forma PRE
+# `escalation-ends-turn-v1`: tras `escalate_to_human` hay un `llm_chat` extra
+# (el acuse "Listo, la conversación quedó en manos del equipo humano." que le
+# llegó al cliente). El código nuevo corta el turno en la escalación, así que
+# este replay es la garantía de que el deploy no rompe runs en vuelo (L-9):
+# sin el gate `workflow.patched(...)` falla con NondeterminismError
+# ('llm_chat' scheduled vs 'record_turn' command). CONGELADA — no se regenera;
+# se borra junto con `workflow.deprecate_patch("escalation-ends-turn-v1")`.
+PREPATCH_ESCALATION_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "history_sales_escalation_prepatch_v1.json"
+)
+
+
+async def test_prepatch_escalation_history_still_replays() -> None:
+    history = WorkflowHistory.from_json(
+        "test-sales-escalation-prepatch",
+        PREPATCH_ESCALATION_FIXTURE.read_text(encoding="utf-8"),
+    )
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflow])
+    await replayer.replay_workflow(history)

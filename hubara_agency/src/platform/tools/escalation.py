@@ -33,6 +33,49 @@ from exoclaw.agent.tools import ToolBase, ToolContext
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.constants import ROUTE_HUMANO
+from src.platform.llm_text_sanitizer import (
+    keep_customer_safe_sentences,
+    sanitize_llm_text,
+)
+
+# Despedidas aprobadas del relevo (run 5ed9af2d). Regla del operador: el
+# cliente nunca debe notar cuándo lo atiende el bot y cuándo una persona — el
+# relevo se nombra "un colega del equipo", jamás "un humano". Se usan cuando el
+# LLM no mandó `customer_message` (sesión en vuelo con el schema viejo) o
+# cuando lo que mandó rompe la persona / huele a reporte interno.
+# Sin marca a propósito: esta tool es de plataforma (multi-tenant); la
+# despedida con marca la redacta el LLM desde el guion de su workspace.
+_DEFAULT_FAREWELL = "Un colega del equipo te responde en este mismo chat 🤍"
+_FAREWELL_BY_REASON: dict[str, str] = {
+    "PAYMENT_VERIFICATION_PENDING": (
+        "Listo, tu pedido quedó registrado 🤍. Gracias por elegirnos."
+    ),
+    "ORDER_REGISTRATION_FAILED": (
+        "Tu pedido quedó tomado 🤍. Un colega del equipo te confirma por "
+        "este mismo chat."
+    ),
+}
+
+
+# Bajo este largo lo que sobrevive al filtrado ya no es una despedida ("Claro
+# 🤍.") — va la aprobada.
+_MIN_FAREWELL_WORDS = 4
+
+
+def resolve_customer_farewell(reason_category: str, customer_message: str | None) -> str:
+    """El texto FINAL que el cliente lee al escalar. Nunca vacío.
+
+    Del texto del LLM se caen SOLO las oraciones que rompen la persona
+    (`breaks_human_persona`) o huelen a reporte interno
+    (`looks_like_admin_leak`) — así el aviso del portavelas sobrevive a un "un
+    humano verificará tu pago". Si falta o lo que queda es muy poco, va la
+    despedida aprobada de la categoría. Reemplazo, no bloqueo: un falso
+    positivo cuesta una oración, nunca un cliente sin respuesta.
+    """
+    text = keep_customer_safe_sentences(sanitize_llm_text(customer_message or "").text)
+    if len(text.split()) >= _MIN_FAREWELL_WORDS:
+        return text
+    return _FAREWELL_BY_REASON.get(reason_category, _DEFAULT_FAREWELL)
 
 
 _REASON_CATEGORIES: list[str] = [
@@ -88,13 +131,17 @@ class EscalateToHumanTool(ToolBase):
     """
 
     name = "escalate_to_human"
+    # La definición NO usa el vocabulario que después rompe la persona (guard:
+    # test_tool_definition_does_not_prime_human_wording): el LLM redacta
+    # `customer_message` con esto en frente.
     description = (
-        "Transfiere la conversación a un asesor humano del equipo Hubara. "
-        "Úsala cuando el caso requiera intervención humana: pedidos al por "
-        "mayor (>20 unidades), descuentos, B2B/distribuidores, eventos "
-        "corporativos, personalización, problemas post-venta, salud/seguridad, "
-        "o cuando el cliente lo pide explícitamente. Ver la sección 'Cuándo "
-        "escalar a humano' en TOOLS.md para la taxonomía completa."
+        "Pasa la conversación a un colega del equipo Hubara y TERMINA tu "
+        "turno: lo único que el cliente lee es `customer_message`. Úsala "
+        "cuando el caso lo debe llevar un colega: pedidos al por mayor (>20 "
+        "unidades), descuentos, B2B/distribuidores, eventos corporativos, "
+        "personalización, problemas post-venta, salud/seguridad, o cuando el "
+        "cliente pide hablar con alguien más. Ver la sección 'Cuándo "
+        "escalar' en TOOLS.md para la taxonomía completa."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -117,29 +164,50 @@ class EscalateToHumanTool(ToolBase):
                     "aparece pero cliente persiste), "
                     "ORDER_PENDING_SHIPPING_DETAILS (cliente confirmó el "
                     "pedido pero no completó los datos de envío y dejó la "
-                    "conversación — humano cierra pidiendo los datos), "
+                    "conversación — un colega cierra pidiendo los datos), "
                     "ORDER_REGISTRATION_FAILED (Medusa rechazó el "
-                    "register_order — humano registra manualmente con los "
+                    "register_order — un colega registra manualmente con los "
                     "datos guardados en metadata.failed_order_registrations), "
                     "PAYMENT_VERIFICATION_PENDING (orden registrada OK pero "
                     "el LLM no puede confirmar si el pago se efectuó — "
                     "obligatorio para los 3 métodos de pago hasta que haya "
                     "pasarela integrada; usar SIEMPRE en combo con "
                     "manage_conversation_tag('CONFIRMADO_PAGO_PENDIENTE')), "
-                    "EXPLICIT_REQUEST (cliente pide humano o está "
-                    "frustrado), OTHER."
+                    "EXPLICIT_REQUEST (cliente pide hablar con alguien más "
+                    "del equipo o está frustrado), OTHER."
                 ),
             },
             "summary": {
                 "type": "string",
                 "description": (
-                    "Resumen de 1-2 líneas para el humano que va a tomar el "
+                    "Resumen INTERNO de 1-2 líneas para el colega que toma el "
                     "caso: qué pidió el cliente, qué intentaste, y qué "
-                    "necesita confirmación. Sin información sensible."
+                    "necesita confirmación. Sin información sensible. El "
+                    "cliente nunca lo ve."
                 ),
                 "minLength": 1,
             },
+            "customer_message": {
+                "type": "string",
+                "description": (
+                    "OBLIGATORIO. El ÚNICO texto que el cliente lee en este "
+                    "turno (tu content se descarta y después de esta tool ya "
+                    "no escribes más). Una línea cálida, de tú y en primera "
+                    "persona, como quien le pasa el caso a un compañero de "
+                    "trabajo: nombra el relevo como 'un colega del equipo' o "
+                    "'un compañero' que le responde en este mismo chat. Sin "
+                    "prometer tiempos y sin mencionar procesos internos. "
+                    "Ejemplo: 'Para esa cantidad te coordino con un colega "
+                    "del equipo, que maneja esos pedidos y te responde en "
+                    "este mismo chat 🤍'. Tras registrar un pedido va la "
+                    "despedida de tu guion de cierre ('Listo, tu pedido quedó "
+                    "registrado 🤍…')."
+                ),
+            },
         },
+        # `customer_message` NO va en required a propósito: una sesión en vuelo
+        # (tool_definitions del bootstrap pre-deploy) llama sin el param y no
+        # debe rebotar en validate_params — cae a la despedida aprobada.
         "required": ["reason_category", "summary"],
     }
 
@@ -162,6 +230,7 @@ class EscalateToHumanTool(ToolBase):
         ctx: ToolContext,
         reason_category: str,
         summary: str,
+        customer_message: str = "",
     ) -> str:
         metadata_file = self._vault_dir / ctx.session_key / "metadata.json"
         metadata_file.parent.mkdir(parents=True, exist_ok=True)
@@ -198,9 +267,19 @@ class EscalateToHumanTool(ToolBase):
                 "reason_category": reason_category,
                 "summary": summary,
             },
+            # Texto FINAL para el cliente: `run_agent_turn` lo usa como
+            # final_content y TERMINA el turno sin otro llm_chat (run
+            # 5ed9af2d: el llm_chat forzado tras este result produjo el acuse
+            # "Listo, la conversación quedó en manos del equipo humano.").
+            "customer_message": resolve_customer_farewell(
+                reason_category, customer_message
+            ),
+            # Queda en el historial que verá el LLM en sesiones futuras: sin
+            # vocabulario que oponga persona vs. sistema y sin órdenes que
+            # pidan un acuse.
             "message": (
-                "Escalación registrada. El cliente queda en la cola humana; "
-                "NO generes más respuestas en este chat."
+                "Hecho: un colega del equipo continúa la atención en este "
+                "chat. La despedida ya se le envió al cliente."
             ),
         }
         return json.dumps(decision_payload, ensure_ascii=False)

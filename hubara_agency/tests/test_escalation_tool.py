@@ -97,6 +97,177 @@ async def test_escalation_tool_writes_metadata_and_emits_decision(tmp_path: Path
     assert isinstance(entry["timestamp"], float)
 
 
+# --- Despedida del relevo (run 5ed9af2d, 2026-09-18) -------------------------
+# El cliente recibió "Listo, la conversación quedó en manos del equipo humano."
+# porque la tool no tenía canal para la despedida: el texto bueno del LLM
+# ("te coordino con un colega del equipo…") viajó como content junto a la tool
+# call y el default-deny lo descartó; después el loop forzó otro llm_chat y el
+# acuse interno salió por WhatsApp. Contrato nuevo: la despedida viaja en
+# `customer_message` y la tool devuelve en el envelope el texto FINAL que el
+# cliente va a leer (validado; si rompe la persona → despedida aprobada).
+
+_GOOD_FAREWELL = (
+    "Para 100 unidades te coordino con un colega del equipo, que maneja ese "
+    "tipo de pedidos y te responde en este mismo chat 🤍"
+)
+
+
+@pytest.mark.asyncio
+async def test_customer_message_travels_back_in_the_envelope(tmp_path: Path) -> None:
+    tool = EscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+
+    raw = await tool.execute_with_context(
+        _ctx("wa_573001234567"),
+        reason_category="BULK_ORDER",
+        summary="cliente pide ~100 presentes sencillos",
+        customer_message=_GOOD_FAREWELL,
+    )
+
+    assert json.loads(raw)["customer_message"] == _GOOD_FAREWELL
+
+
+@pytest.mark.asyncio
+async def test_persona_breaking_customer_message_is_replaced_by_approved_farewell(
+    tmp_path: Path,
+) -> None:
+    tool = EscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+
+    raw = await tool.execute_with_context(
+        _ctx("wa_573001234567"),
+        reason_category="BULK_ORDER",
+        summary="cliente pide ~100 presentes sencillos",
+        # Texto literal que recibió el cliente en el run 5ed9af2d.
+        customer_message="Listo, la conversación quedó en manos del equipo humano.",
+    )
+
+    farewell = json.loads(raw)["customer_message"]
+    assert "humano" not in farewell.lower()
+    assert "colega" in farewell.lower()
+
+
+@pytest.mark.asyncio
+async def test_missing_customer_message_falls_back_to_approved_farewell(
+    tmp_path: Path,
+) -> None:
+    """Sesiones en vuelo con el schema viejo llaman sin el param: el cliente
+    igual recibe una despedida aprobada, nunca silencio."""
+    tool = EscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+
+    raw = await tool.execute_with_context(
+        _ctx("wa_573001234567"),
+        reason_category="EXPLICIT_REQUEST",
+        summary="cliente pide hablar con alguien del equipo",
+    )
+
+    farewell = json.loads(raw)["customer_message"]
+    assert "colega" in farewell.lower()
+    assert "humano" not in farewell.lower()
+
+
+@pytest.mark.asyncio
+async def test_tool_result_does_not_seed_human_wording_nor_orders_silence(
+    tmp_path: Path,
+) -> None:
+    """El envelope que queda en el historial del LLM no siembra vocabulario
+    'humano' ni le ordena callar (la orden de callar + un llm_chat forzado fue
+    lo que produjo el acuse del run 5ed9af2d)."""
+    tool = EscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+
+    raw = await tool.execute_with_context(
+        _ctx("wa_573001234567"),
+        reason_category="BULK_ORDER",
+        summary="cliente pide ~100 presentes sencillos",
+        customer_message=_GOOD_FAREWELL,
+    )
+
+    message = json.loads(raw)["message"].lower()
+    assert "human" not in message
+    assert "no generes" not in message
+
+
+@pytest.mark.asyncio
+async def test_payment_verification_falls_back_to_the_order_registered_farewell(
+    tmp_path: Path,
+) -> None:
+    tool = EscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+
+    raw = await tool.execute_with_context(
+        _ctx("wa_573001234567"),
+        reason_category="PAYMENT_VERIFICATION_PENDING",
+        summary="Pedido 42 registrado. Verificar pago.",
+        customer_message="Un humano verificará tu pago en breve.",
+    )
+
+    # Sin marca: la tool es de plataforma (multi-tenant); la despedida con
+    # marca la escribe el LLM desde el guion de su workspace.
+    assert json.loads(raw)["customer_message"] == (
+        "Listo, tu pedido quedó registrado 🤍. Gracias por elegirnos."
+    )
+
+
+@pytest.mark.asyncio
+async def test_only_the_persona_breaking_sentence_is_dropped(tmp_path: Path) -> None:
+    """Reemplazar TODA la despedida por una palabra marcada botaba el aviso del
+    portavelas (regla de negocio: el comprador debe saber que los colores se
+    escogen al finalizar el pago). Se cae solo la oración que rompe la persona."""
+    tool = EscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+
+    raw = await tool.execute_with_context(
+        _ctx("wa_573001234567"),
+        reason_category="PAYMENT_VERIFICATION_PENDING",
+        summary="Pedido 42 registrado. Verificar pago.",
+        customer_message=(
+            "Listo, tu pedido quedó registrado 🤍. Un humano verificará tu pago "
+            "en breve. Al finalizar el pago del pedido se escogen los colores "
+            "del portavelas, según disponibilidad."
+        ),
+    )
+
+    farewell = json.loads(raw)["customer_message"]
+    assert "humano" not in farewell.lower()
+    assert "tu pedido quedó registrado" in farewell
+    assert "se escogen los colores del portavelas" in farewell
+
+
+@pytest.mark.asyncio
+async def test_thin_remainder_falls_back_to_the_approved_farewell(tmp_path: Path) -> None:
+    tool = EscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+
+    raw = await tool.execute_with_context(
+        _ctx("wa_573001234567"),
+        reason_category="EXPLICIT_REQUEST",
+        summary="cliente pide hablar con alguien del equipo",
+        customer_message="Claro 🤍. Ya te paso con un asesor humano.",
+    )
+
+    assert json.loads(raw)["customer_message"] == (
+        "Un colega del equipo te responde en este mismo chat 🤍"
+    )
+
+
+def test_customer_message_is_in_the_schema_but_optional(tmp_path: Path) -> None:
+    """Opcional a propósito: una sesión en vuelo (tool_definitions viejas)
+    llama sin el param y NO debe rebotar en validate_params — cae al fallback."""
+    tool = EscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+
+    assert "customer_message" in tool.parameters["properties"]
+    assert not tool.validate_params({"reason_category": "BULK_ORDER", "summary": "x"})
+
+
+def test_tool_definition_does_not_prime_human_wording(tmp_path: Path) -> None:
+    """Lo que el LLM lee al redactar `customer_message` no debe sembrarle la
+    palabra que después rompe la persona (el nombre de la tool se conserva por
+    compatibilidad con historiales y evals)."""
+    tool = EscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+
+    definition = json.dumps(
+        {"description": tool.description, "parameters": tool.parameters},
+        ensure_ascii=False,
+    ).lower()
+
+    assert "human" not in definition
+
+
 @pytest.mark.asyncio
 async def test_escalation_tool_appends_to_existing_status_history(tmp_path: Path) -> None:
     """Si la sesion ya tenia status_history, lo extendemos sin perderlo."""

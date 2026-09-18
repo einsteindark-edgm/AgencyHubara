@@ -204,6 +204,19 @@ async def test_envelope_with_portavelas_instructs_note_and_buyer_notice(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("items", [_CRUZ_ITEMS, _DUO_ITEMS], ids=["sin_portavelas", "con_portavelas"])
+async def test_envelope_routes_the_farewell_through_customer_message(
+    ctx, vault, catalog, items
+):
+    """Run 5ed9af2d: `escalate_to_human` termina el turno y lo único que el
+    cliente lee es su `customer_message`. Si el envelope solo dice "despide al
+    cliente", el LLM escribe la despedida como content (descartado) y el aviso
+    del portavelas se pierde."""
+    summary = (await _register_ok(ctx, vault, items, catalog))["summary"]
+    assert "customer_message" in summary
+
+
+@pytest.mark.asyncio
 async def test_mixed_order_counts_as_portavelas(ctx, vault, catalog):
     result = await _register_ok(
         ctx, vault, _CRUZ_ITEMS + _DUO_ITEMS, catalog
