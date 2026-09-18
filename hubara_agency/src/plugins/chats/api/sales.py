@@ -243,14 +243,30 @@ def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
     # reintentos) y antes el resto del batch se perdía en silencio — sin sesión,
     # sin workflow, sin log (auditoría 2026-09-18).
     batch = parse_whatsapp_inbound_all(body)
-    for reason in batch.rejected:
-        logger.warning("Malformed WhatsApp webhook body", error=reason)
+    for item in batch.rejected:
+        logger.warning("Malformed WhatsApp webhook body", error=item.reason, wa_message_id=item.wa_message_id)
+    # Lo que el parser descarta queda en el ledger con su motivo: sin esto sería
+    # un `seen` sin desenlace y el porqué solo viviría en el log del container.
+    build_inbound_ledger().append(
+        [
+            message_stage_record(
+                stage="rejected",
+                at_ms=_now_ms(),
+                field="messages",
+                wa_message_id=item.wa_message_id,
+                from_number=item.from_number or "",
+                error=item.reason,
+            )
+            for item in batch.rejected
+            if item.wa_message_id
+        ]
+    )
     if batch.rejected and not batch.messages:
         # Nada aprovechable en el POST: el 400 de siempre. Con al menos un
         # mensaje válido NO se devuelve 400 — Meta reintentaría TODO el POST y
         # re-entregaría los válidos por un ítem que igual nunca va a parsear.
         _ledger_request(None, outcome="malformed")
-        raise HTTPException(status_code=400, detail=f"malformed payload: {batch.rejected[0]}")
+        raise HTTPException(status_code=400, detail=f"malformed payload: {batch.rejected[0].reason}")
 
     # Un background task por mensaje, en el orden de Meta. Starlette los corre
     # SECUENCIALMENTE (await uno tras otro), así que dos mensajes del mismo

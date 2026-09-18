@@ -108,3 +108,42 @@ def test_a_rejected_signature_leaves_its_request_record(harness, monkeypatch) ->
     assert r.status_code == 403
     assert ledger.outcomes() == ["signature_rejected"]
     assert ledger.messages() == []
+
+
+# ── ledger × POST batcheado: rastro de TODO el batch ──────────────────────────
+
+def test_every_message_of_a_batched_post_ends_up_ingested_in_the_ledger(harness) -> None:
+    use, ledger = harness
+    use(_Ingest()).post("/api/webhook", json=_body(_change("wamid.A", "573001234567"), _change("wamid.B", "573000000001")))
+
+    assert ledger.messages() == [("seen", "wamid.A"), ("seen", "wamid.B"), ("ingested", "wamid.A"), ("ingested", "wamid.B")]
+
+
+def test_a_failed_ingest_is_recorded_and_the_next_message_is_still_ingested(harness) -> None:
+    use, ledger = harness
+
+    class _FailsOnFirst(_Ingest):
+        async def execute(self, *args: Any, **kwargs: Any) -> None:
+            await super().execute(*args)
+            if len(self.calls) == 1:
+                raise RuntimeError("temporal unreachable")
+
+    use(_FailsOnFirst()).post("/api/webhook", json=_body(_change("wamid.A", "573001234567"), _change("wamid.B", "573000000001")))
+
+    assert ledger.messages() == [("seen", "wamid.A"), ("seen", "wamid.B"), ("ingest_failed", "wamid.A"), ("ingested", "wamid.B")]
+
+
+def test_an_item_the_parser_rejects_is_recorded_with_its_reason(harness) -> None:
+    """Sin esto un mensaje que el parser descarta quedaría `seen` sin desenlace
+    (`lost`) y el motivo solo viviría en el log del container — que un deploy borra."""
+    use, ledger = harness
+    broken = _change("wamid.ROTO", "573001234567")
+    broken["value"]["messages"][0]["text"] = {}
+
+    r = use(_Ingest()).post("/api/webhook", json=_body(broken, _change("wamid.B", "573000000001")))
+
+    assert r.status_code == 200
+    assert ledger.messages() == [("seen", "wamid.ROTO"), ("seen", "wamid.B"), ("rejected", "wamid.ROTO"), ("ingested", "wamid.B")]
+    rejected = next(r for r in ledger.records if r.get("stage") == "rejected")
+    assert rejected["error"] == "text message missing 'text.body'"
+    assert rejected["session_id"] == "wa_573001234567"

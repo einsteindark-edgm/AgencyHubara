@@ -165,7 +165,8 @@ def test_parse_all_reports_why_an_item_was_rejected_and_keeps_the_rest() -> None
     batch = parse_whatsapp_inbound_all(body)
 
     assert [m.message_id for m in batch.messages] == ["wamid.OK"]
-    assert batch.rejected == ("text message missing 'text.body'", "missing 'metadata.phone_number_id'")
+    assert [r.reason for r in batch.rejected] == ["text message missing 'text.body'", "missing 'metadata.phone_number_id'"]
+    assert [(r.wa_message_id, r.from_number) for r in batch.rejected] == [("wamid.BAD", "573001234567"), (None, None)]
 
 
 @pytest.mark.parametrize("garbage", [None, [], "x", {}, {"entry": "x"}, {"entry": [None, {"changes": "x"}, {"changes": [None]}]}])

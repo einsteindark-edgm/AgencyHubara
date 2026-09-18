@@ -43,6 +43,7 @@ y el resto se perdía en silencio.
 - THEN CADA mensaje MUST llegar a `IngestInboundMessage.execute`, uno por background task
 - AND en el orden en que Meta los mandó (los tasks corren en serie → dos mensajes del mismo cliente se ingieren en orden)
 - AND el fallo de un task (un ingest o un delivery status que lanza) MUST NOT impedir los siguientes: se loguea con traceback (`inbound_ingest_failed` / `delivery_status_ingest_failed`) y se sigue
+- AND cada mensaje deja su desenlace en el ledger de inbound (ver "Ledger durable de inbound del webhook")
 
 #### Scenario: Body malformado
 
@@ -515,7 +516,9 @@ MUST NOT afectar la respuesta al webhook.
 
 - GIVEN un mensaje entregado a `IngestInboundMessage` / `IngestStandby`
 - WHEN el ingest termina
-- THEN queda `stage=ingested`; si lanzó, `stage=ingest_failed` con `error` (y la excepción se re-lanza)
+- THEN queda `stage=ingested`; si lanzó, `stage=ingest_failed` con `error`
+- AND la excepción NO se re-lanza (se loguea con traceback): Starlette corta el loop de background tasks en la primera excepción y dejaría sin ingerir a los mensajes encolados detrás
+- AND un ítem que el parser rechaza queda `stage=rejected` con el motivo en `error` (el reporte lo cuenta como `failed`)
 - AND un `seen` sin desenlace se reporta como `lost`
 
 #### Scenario: un POST rechazado también deja registro

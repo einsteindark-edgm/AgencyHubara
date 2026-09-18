@@ -146,3 +146,17 @@ def test_summary_tells_arrived_vs_lost_inside_per_bogota_day_and_ad() -> None:
     assert summary["failed"] == [
         {"wa_message_id": "wamid.C", "session_id": "wa_573000000002", "at_ms": t + 3, "source_id": _AD, "error": "RuntimeError: boom"}
     ]
+
+
+def test_summary_counts_a_parser_rejection_as_failed_with_its_reason() -> None:
+    t = _SEP_18_0710_BOG
+    records = [
+        _seen("wamid.R", "wa_573001234567", t, _AD),
+        _stage("rejected", "wamid.R", "wa_573001234567", t + 1, "text message missing 'text.body'"),
+    ]
+
+    summary = summarize_ledger(records)
+
+    assert summary["by_day_ad"]["2026-09-18"][_AD] == {"sessions": 1, "ingested": 0, "failed": 1, "lost": 0}
+    assert summary["failed"][0]["error"] == "text message missing 'text.body'"
+    assert summary["lost"] == []
