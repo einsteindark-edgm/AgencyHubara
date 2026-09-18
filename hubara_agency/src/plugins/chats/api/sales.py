@@ -12,6 +12,8 @@ from __future__ import annotations
 import hmac
 import json
 import re
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -29,7 +31,7 @@ from src.plugins.chats.agent.sales.parsers import (
     HANDOVERS_FIELD,
     STANDBY_FIELD,
     parse_messaging_handovers,
-    parse_whatsapp_inbound,
+    parse_whatsapp_inbound_all,
     parse_whatsapp_standby,
     parse_whatsapp_statuses,
     split_webhook_by_field,
@@ -164,24 +166,55 @@ def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
         delivery_use_case = build_ingest_delivery_status_use_case()
         add_traced_background_task(
             background_tasks,
+            _isolated,
+            "delivery_status_ingest_failed",
+            {"wa_message_id": status_update.wa_message_id, "status": status_update.status},
             delivery_use_case.execute,
             status_update.wa_message_id,
             status_update.status,
             status_update.pricing,
         )
 
-    try:
-        parsed = parse_whatsapp_inbound(body)
-    except ValueError as exc:
-        logger.warning("Malformed WhatsApp webhook body", error=str(exc))
-        raise HTTPException(status_code=400, detail=f"malformed payload: {exc}")
+    # TODOS los mensajes del POST, no solo el primero: Meta agrupa varios
+    # `entry`/`changes`/`messages[]` en un mismo webhook (tras demoras o
+    # reintentos) y antes el resto del batch se perdía en silencio — sin sesión,
+    # sin workflow, sin log (auditoría 2026-09-18).
+    batch = parse_whatsapp_inbound_all(body)
+    for reason in batch.rejected:
+        logger.warning("Malformed WhatsApp webhook body", error=reason)
+    if batch.rejected and not batch.messages:
+        # Nada aprovechable en el POST: el 400 de siempre. Con al menos un
+        # mensaje válido NO se devuelve 400 — Meta reintentaría TODO el POST y
+        # re-entregaría los válidos por un ítem que igual nunca va a parsear.
+        raise HTTPException(status_code=400, detail=f"malformed payload: {batch.rejected[0]}")
 
-    if parsed is None:
-        # Sin messages[] — ya despachamos los statuses arriba (si había).
-        return
-
+    # Un background task por mensaje, en el orden de Meta. Starlette los corre
+    # SECUENCIALMENTE (await uno tras otro), así que dos mensajes del mismo
+    # cliente se ingieren en orden; statuses arriba ya quedaron encolados.
     use_case = build_ingest_use_case()
-    add_traced_background_task(background_tasks, use_case.execute, parsed)
+    for parsed in batch.messages:
+        add_traced_background_task(
+            background_tasks,
+            _isolated,
+            "inbound_ingest_failed",
+            {"wa_message_id": parsed.message_id, "from_number": f"***{parsed.from_number[-4:]}"},
+            use_case.execute,
+            parsed,
+        )
+
+
+async def _isolated(
+    event: str, log_fields: dict[str, Any], execute: Callable[..., Awaitable[None]], /, *args: Any
+) -> None:
+    """Corre UN background task sin dejar que su fallo mate a los que vienen
+    detrás: Starlette los ejecuta en serie y CORTA el loop en la primera
+    excepción, así que un status o un ingest roto dejaba sin ingerir a los
+    mensajes encolados después (en un POST batcheado: clientes perdidos). El
+    fallo queda en el log con traceback (teléfonos ya enmascarados)."""
+    try:
+        await execute(*args)
+    except Exception:  # noqa: BLE001 — aislar; el traceback va al log
+        logger.exception(event, **log_fields)
 
 
 def _handle_standby(body: dict, background_tasks: BackgroundTasks) -> None:
