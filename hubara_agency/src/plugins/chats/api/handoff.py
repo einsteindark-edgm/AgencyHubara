@@ -750,7 +750,9 @@ async def send_human_message(
     else:
         # Envío de TEXTO. PM2-B3: propagar el rechazo de Meta — antes se
         # tragaba y el operador veía "enviado" con el cliente sin recibir nada.
-        delivered = await send_message_to_session(session_id, payload.text)
+        delivered = await send_message_to_session(
+            session_id, payload.text, author="human"
+        )
         if not delivered:
             if cmid:
                 metadata_store.update(session_id, _clear_pending)

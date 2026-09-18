@@ -162,7 +162,7 @@ def test_send_message_with_attachment_sends_image_and_persists_image_url(client_
         },
     )
 
-    send_image_mock = AsyncMock()
+    send_image_mock = AsyncMock(return_value=_outbound_result(True))
     with patch("src.plugins.chats.api.handoff.send_image_to_session", new=send_image_mock):
         res = client.post(
             "/api/dashboard/sessions/wa_6/messages",
@@ -187,6 +187,9 @@ def test_send_message_with_attachment_sends_image_and_persists_image_url(client_
     parsed = json.loads(log.read_text(encoding="utf-8").strip())
     assert parsed["sender"] == "human"
     assert parsed["image_url"] == "/api/dashboard/media/wa_6/out-xyz.jpg"
+    # El wamid del adjunto queda persistido: es el destino de la cita del
+    # cliente ("quiero este" respondiendo a la foto del operador).
+    assert parsed["wamid"] == "wamid-x"
 
 
 def test_send_message_blocks_when_service_window_closed(client_and_vault):
@@ -413,7 +416,7 @@ def test_send_does_not_clobber_concurrent_metadata_writes(client_and_vault):
         {"active_route": "humano", "service_window_expires_at_ms": _FUTURE_MS},
     )
 
-    async def _concurrent_writer(session_id, text):
+    async def _concurrent_writer(session_id, text, **_kw):
         # Simula al ingest escribiendo DURANTE el send.
         data = _read_metadata(vault, session_id)
         data["concurrent_marker"] = "escrito-durante-el-send"
@@ -452,7 +455,9 @@ def test_send_message_text_only_still_works(client_and_vault):
             json={"text": "hola equipo"},
         )
     assert res.status_code == 200
-    send_mock.assert_awaited_once_with("wa_11", "hola equipo")
+    # `author="human"`: el índice de burbujas salientes etiqueta la cita como
+    # del operador, no del bot.
+    send_mock.assert_awaited_once_with("wa_11", "hola equipo", author="human")
 
 
 # ---------- Fixes del premortem 2 (2026-07-14) ----------

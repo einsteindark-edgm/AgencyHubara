@@ -496,6 +496,11 @@ async def flush_pending_ui_intents(session_id: str) -> int:
         try:
             history_event = _build_history_event(kind, params)
             if history_event is not None:
+                # `wamid`: destino de las citas del cliente ("este" citando
+                # los botones / el catálogo / la foto). Sin él el dashboard
+                # muestra "Mensaje no disponible" (caso 2026-09-17).
+                if result.wa_message_id:
+                    history_event["wamid"] = result.wa_message_id
                 _append_history_event(session_id, history_event)
         except Exception:  # noqa: BLE001 - observability nunca bloquea
             pass

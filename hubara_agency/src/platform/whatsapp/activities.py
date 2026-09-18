@@ -139,7 +139,43 @@ async def check_reengagement_policy_activity(session_id: str) -> SendDecision:
     )
 
 
-async def send_message_to_session(session_id: str, message: str) -> bool:
+#: Cap del índice wamid→burbuja de texto en metadata.json. Simétrico al
+#: `outbound_media_index` de las fotos: alcanza para resolver las citas
+#: recientes sin que el metadata crezca sin límite en un chat largo.
+OUTBOUND_TEXT_INDEX_MAX = 60
+
+#: Recorte del texto indexado — la cita se muestra clampeada a 3 líneas.
+_OUTBOUND_TEXT_INDEX_MAX_CHARS = 300
+
+
+def _merge_outbound_text_index(
+    metadata: dict[str, Any], sent: list[tuple[str, str]], author: str
+) -> None:
+    """Mergea las burbujas de texto entregadas al `outbound_text_index`
+    (wamid → `{text, author}`), evictando las más viejas por encima del cap.
+
+    Un evento `assistant`/`human` del JSONL es UN texto que sale como N
+    burbujas, así que el wamid no cabe en el evento: sin este índice el
+    dashboard no puede resolver la cita del cliente a la burbuja concreta
+    que citó y muestra "Mensaje no disponible" (caso 2026-09-17).
+    """
+    if not sent:
+        return
+    index = dict(metadata.get("outbound_text_index") or {})
+    for wamid, text in sent:
+        index[wamid] = {
+            "text": text[:_OUTBOUND_TEXT_INDEX_MAX_CHARS],
+            "author": author,
+        }
+    if len(index) > OUTBOUND_TEXT_INDEX_MAX:
+        # El dict preserva insertion order (JSON round-trip incluido).
+        index = dict(list(index.items())[-OUTBOUND_TEXT_INDEX_MAX:])
+    metadata["outbound_text_index"] = index
+
+
+async def send_message_to_session(
+    session_id: str, message: str, *, author: str = "agent"
+) -> bool:
     """Envia `message` al cliente cuyo `session_id` mapea a un numero de WhatsApp.
 
     Pura (no toca Temporal). Resuelve `phone_number_id` desde `metadata.json` o
@@ -161,6 +197,12 @@ async def send_message_to_session(session_id: str, message: str) -> bool:
     chunk fallido se CORTA (no se mandan los siguientes); si hubo entrega
     parcial se registra igual el fingerprint para que un retry no re-mande los
     chunks que sí llegaron. El hit de idempotencia devuelve True (ya enviado).
+
+    Cada burbuja entregada queda en `metadata[outbound_text_index]`
+    (wamid → texto + `author`) para que el dashboard pueda resolver una cita
+    del cliente a la burbuja exacta que citó (ver `_merge_outbound_text_index`).
+    `author` distingue al bot (`"agent"`, default) del operador humano
+    (`"human"`, handoff) — es la etiqueta que muestra la cita.
 
     Reutilizada por:
       * `send_whatsapp_message_activity` (worker, dentro de workflows —
@@ -200,12 +242,16 @@ async def send_message_to_session(session_id: str, message: str) -> bool:
     # `send_message` (swallow). Ante el primer chunk rechazado se corta.
     delivered = 0
     failed_error: str | None = None
+    # (wamid, texto) de cada burbuja que Meta ACEPTÓ — destino de las citas.
+    sent_bubbles: list[tuple[str, str]] = []
     for chunk in chunks:
         result = await whatsapp_client.send_text(phone_number_id, from_number, chunk)
         if not result.ok:
             failed_error = result.error
             break
         delivered += 1
+        if result.wa_message_id:
+            sent_bubbles.append((result.wa_message_id, chunk))
         await asyncio.sleep(1.5)
 
     if delivered:
@@ -225,6 +271,8 @@ async def send_message_to_session(session_id: str, message: str) -> bool:
         _append_outbound_to_active_episode(metadata, log_entry)
         metadata["last_outbound"] = asdict(log_entry)
         _record_freeform_send(metadata, fingerprint, now_ms)
+        # Misma escritura: el índice de citas no merece IO extra.
+        _merge_outbound_text_index(metadata, sent_bubbles, author)
         _write_metadata(session_id, metadata)
 
     if failed_error is not None:
@@ -783,7 +831,7 @@ async def send_template_to_session(
     # (vive en Meta Business Manager, no en código), pero suficiente para
     # que el operador entienda qué se mandó.
     _append_template_to_session_history(
-        session_id, spec, variables, sender=sender
+        session_id, spec, variables, sender=sender, wamid=result.wa_message_id
     )
 
     log.info(
@@ -801,6 +849,7 @@ def _append_template_to_session_history(
     variables: dict[str, str],
     *,
     sender: str | None = None,
+    wamid: str | None = None,
 ) -> None:
     """Persiste un marker del template enviado al JSONL del session_history.
 
@@ -812,7 +861,9 @@ def _append_template_to_session_history(
 
     El `content` es el texto REAL que recibió el cliente (`render_template_body`):
     el operador lo lee en el chat y el LLM lo ve en su historial al retomar.
-    `sender` (solo si viene) marca el envío del operador humano.
+    `sender` (solo si viene) marca el envío del operador humano. `wamid` es
+    el id que Meta le dio al template: destino de las citas del cliente (sin
+    él, responder citando la plantilla sale "Mensaje no disponible").
 
     Best-effort: si el write falla, log warning y continúa — el send ya
     ocurrió, el log JSONL es secondary observability.
@@ -831,6 +882,8 @@ def _append_template_to_session_history(
         }
         if sender:
             event["sender"] = sender
+        if wamid:
+            event["wamid"] = wamid
         with history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
     except OSError as e:
