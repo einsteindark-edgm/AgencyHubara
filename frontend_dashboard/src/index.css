@@ -449,9 +449,9 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 .tag.t-cold { background: rgba(255,255,255,0.06); color: var(--fg-muted); }
 .tag.t-human { background: rgba(255,114,105,0.20); color: #ff7269; }
 
-/* Chip de pedido de la fila: a qué orden pertenece la conversación.
-   El tono habla del PAGO (lo único que sabe el metadata del vault); el estado
-   logístico vive en Medusa y lo muestra el panel de pedidos del chat. */
+/* Chip de orden de la fila: a qué orden pertenece la conversación. Solo sale
+   para órdenes reales con número (un draft todavía no es una orden). El tono
+   habla del PAGO; el estado logístico lo muestra el panel de pedidos del chat. */
 .order-chip {
   margin-left: auto;
   display: inline-flex; align-items: center; gap: 4px;
@@ -463,8 +463,14 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 .order-chip-pending   { background: var(--color-warn-soft); color: var(--color-warn); }
 .order-chip-confirmed { background: var(--color-ok-soft);   color: var(--color-ok); }
 .order-chip-cancelled { background: rgba(255,255,255,0.06); color: var(--fg-muted); }
-/* Fila seleccionada: el azul del row se come los tonos, igual que el tag. */
-.row.sel .order-chip { background: rgba(255,255,255,0.25); color: #fff; }
+/* Fila seleccionada: el tono del chip ES la información (pagado / por
+   verificar / cancelado) — no se puede perder. La primera versión lo pasaba a
+   blanco sobre blanco translúcido y en la fila azul todos los chips se veían
+   iguales. Sobre el azul de la selección los tonos "soft" se ensucian, así que
+   el chip se vuelve una pastilla SÓLIDA del color del estado con texto oscuro. */
+.row.sel .order-chip-pending   { background: var(--color-warn); color: #3a2400; }
+.row.sel .order-chip-confirmed { background: var(--color-ok);   color: #06310f; }
+.row.sel .order-chip-cancelled { background: rgba(0,0,0,0.38);  color: rgba(255,255,255,0.8); }
 /* Con chip presente, el `margin-left:auto` del unread repartiría el espacio
    libre entre los dos y el chip dejaría de quedar pegado a la derecha. */
 .order-chip + .badge-unread { margin-left: 4px; }

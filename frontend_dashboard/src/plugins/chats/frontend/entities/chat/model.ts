@@ -20,7 +20,7 @@ export type Presence = "online" | "away" | "off";
  * arma con el metadata del vault, sin una llamada a Medusa por fila.
  */
 export interface ChatOrderBadge {
-  /** Lo que se lee en el chip: "#31", o "…B3XY9Z" si no hubo display_id. */
+  /** Lo que se lee en el chip: el número de orden, "#31". */
   label: string;
   orderId: string;
   payment: "pending" | "confirmed" | "cancelled";

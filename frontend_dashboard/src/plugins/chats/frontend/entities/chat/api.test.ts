@@ -562,7 +562,8 @@ describe("order (chip de pedido en la fila)", () => {
     expect(data?.[0]?.order).toBeNull();
   });
 
-  it("sin display_id (provider stub) cae al id corto — nunca el order_id crudo", async () => {
+  it("sin número de orden no hay chip — nunca el id interno de Medusa", async () => {
+    // La primera versión caía a "…B3XY9Z": un id que al operador no le sirve.
     const data = await runInbox([
       makeSession({
         order_ref: {
@@ -573,7 +574,23 @@ describe("order (chip de pedido en la fila)", () => {
         },
       }),
     ]);
-    expect(data?.[0]?.order?.label).toBe("…B3XY9Z");
+    expect(data?.[0]?.order).toBeNull();
+  });
+
+  it("un solo # aunque el backend mande el número ya formateado", async () => {
+    // Frontend y backend despliegan por separado: un backend viejo manda
+    // "#32" (formato de la vista Orders) y el chip pintaba "##32".
+    const data = await runInbox([
+      makeSession({
+        order_ref: {
+          order_id: ORDER_ID,
+          display_id: "#32",
+          payment: "pending",
+          count: 1,
+        },
+      }),
+    ]);
+    expect(data?.[0]?.order?.label).toBe("#32");
   });
 });
 

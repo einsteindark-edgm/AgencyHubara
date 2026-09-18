@@ -136,7 +136,8 @@ def _pending_payment_order_id_from_metadata(data: dict) -> str | None:
 
 
 async def _pending_payment_facts(order_ids: set[str]):
-    """Estado canónico de los pedidos con pago por verificar del inbox.
+    """Estado canónico de los pedidos del inbox (botón "Confirmar pago" + chip
+    de orden de la fila), en UNA lectura.
 
     Falla / Medusa caído → snapshot `unresolved`: cada sesión cae a la regla
     vieja por etiquetas (el operador sigue viendo el botón como antes).
@@ -152,43 +153,72 @@ async def _pending_payment_facts(order_ids: set[str]):
         return OrderFactsSnapshot(unresolved=frozenset(order_ids), stale=True)
 
 
-def _compute_order_ref(data: dict, order_facts=None) -> dict | None:
-    """¿Esta conversación ya se convirtió en un pedido? ¿En qué punto va el pago?
+def _order_ref_candidate_ids(data: dict) -> set[str]:
+    """Pedidos EXITOSOS de la sesión (el vigente + el historial): los ids que
+    el listado junta para leer `OrderFacts` en UN batch. El vault solo aporta
+    este vínculo conversación → `order_id` (regla 13); qué ES cada pedido lo
+    dice `OrderFacts`."""
+    ids: set[str] = set()
+    registered = data.get("registered_order")
+    if isinstance(registered, dict) and registered.get("success") is True:
+        order_id = registered.get("order_id")
+        if isinstance(order_id, str) and order_id:
+            ids.add(order_id)
+    if not ids:
+        return ids  # sin pedido vigente no hay chip — el historial no aplica
+    for h in data.get("registered_orders_history") or []:
+        if isinstance(h, dict) and h.get("success") is True:
+            order_id = h.get("order_id")
+            if isinstance(order_id, str) and order_id:
+                ids.add(order_id)
+    return ids
 
-    Devuelve ``{order_id, display_id, payment, count}`` o ``None`` si todavía
-    no hay pedido registrado. Enciende el chip de pedido en la fila de la
-    bandeja — el operador ve de un vistazo qué chats del filtro "Asignadas al
-    humano" ya tienen orden (y cuál) y cuáles siguen en proceso.
 
-    Sale del `metadata.json` que este endpoint YA lee: **cero llamadas a Medusa
-    por fila**. Por eso `payment` habla del PAGO y no de la logística
-    (preparando / listo / en camino): ese estado vive en Medusa y lo muestra el
-    panel de pedidos del chat, no una fila del listado.
+def _real_order_number(fact) -> str | None:
+    """Número de orden PELADO ("32") de un pedido que ya es una orden real, o
+    ``None``.
 
-    ``order_facts`` (`OrderFactsSnapshot`): cuando el snapshot YA trae este
-    pedido — lo trae para los escalados por verificación de pago, que el inbox
-    resuelve en una sola lectura (#289) — MANDA EL PEDIDO y no las marcas del
-    chat, igual que `_compute_pending_payment_order_id`. Sin eso, el chip diría
-    "pago por verificar" en un pedido que el operador ya cobró desde Medusa
-    Admin mientras el botón "Confirmar pago" ya había desaparecido: dos partes
-    de la misma fila contando cosas distintas. NO se piden ids extra a Medusa
-    por el chip — el que no está en el snapshot cae a las marcas del chat.
-
-      * ``pending``   — pedido registrado, falta que un humano verifique el pago
-                        (también tras una reversa de pago).
-      * ``confirmed`` — pago verificado (`payment_confirmed_at_ms` en el
-                        episodio, o `tag=COMPRA_EXITOSA` en metadata legacy).
-      * ``cancelled`` — orden cancelada desde el dashboard (`cancelled_at_ms`
-                        en el episodio, o `tag=RECHAZO`).
-
-    Un registro FALLIDO (`success != True`, que vive en
-    `failed_order_registrations[]`) NO es un pedido: devuelve ``None``. Pintar
-    el chip ahí sería mentir sobre algo que Medusa no tiene.
-
-    `display_id` es el número humano ("#31") que Medusa asigna al crear el
-    draft — existe desde el registro, sin esperar a que el humano agende. Si el
-    provider no lo trae (stub), viaja ``None`` y el frontend cae al id corto.
+    * Un **draft** todavía no es una orden: el bot registró la venta pero
+      nadie agendó la entrega (que es lo que lo convierte, conservando el id).
+    * `OrderFacts.display_id` viene formateado para la vista Orders ("#32").
+      Se pela acá y el "#" lo pone UNA sola vez el frontend — la primera
+      versión del chip pintaba "##32".
+    * Sin `display_id` numérico el mapper de Medusa cae a "#<últimos 6 del
+      id>": un id interno que al operador no le dice nada. Eso no es un número
+      de orden → sin chip.
     """
+    if fact is None or fact.is_draft:
+        return None
+    number = str(fact.display_id or "").lstrip("#").strip()
+    return number if number.isdigit() else None
+
+
+def _compute_order_ref(data: dict, order_facts) -> dict | None:
+    """¿Esta conversación ya pertenece a una ORDEN? ¿Cuál, y cómo va el pago?
+
+    Devuelve ``{order_id, display_id, payment, count}`` o ``None``. Enciende
+    el chip de la fila de la bandeja: el operador ve de un vistazo qué chats
+    del filtro "Asignadas al humano" ya son una orden (y cuál) y cuáles siguen
+    en proceso. **Solo órdenes reales con número** — un draft, un pedido que
+    Medusa no conoce o uno sin número de orden no pintan nada.
+
+    Todo lo que el chip dice sale de ``order_facts`` (`OrderFactsSnapshot`,
+    regla 13 del repo): draft/orden, número, pago y etapa vienen del mismo
+    store que alimenta la vista Orders, leído en UNA pasada para toda la
+    bandeja. Del vault sale solo el vínculo conversación → `order_id`. Sin dato
+    del pedido (snapshot ausente, Medusa caído y pedido nunca visto) no hay
+    chip: no se sabe si es draft u orden, y un chip inventado es peor que
+    ninguno.
+
+      * ``pending``   — orden sin pago confirmado (también tras un reembolso).
+      * ``confirmed`` — pagada y no cancelada (`counts_as_revenue`).
+      * ``cancelled`` — orden cancelada.
+
+    ``count`` = cuántas órdenes REALES lleva el cliente en esta sesión (el
+    chip muestra "#33 +1"); los drafts viejos no cuentan.
+    """
+    if order_facts is None:
+        return None
     registered = data.get("registered_order")
     if not isinstance(registered, dict) or registered.get("success") is not True:
         return None
@@ -196,54 +226,26 @@ def _compute_order_ref(data: dict, order_facts=None) -> dict | None:
     if not isinstance(order_id, str) or not order_id:
         return None
 
-    raw = registered.get("raw_payload")
-    display_id = raw.get("display_id") if isinstance(raw, dict) else None
+    fact = order_facts.facts.get(order_id)
+    number = _real_order_number(fact)
+    if number is None:
+        return None
 
-    # El episodio de ESTE pedido manda sobre el tag de la sesión: el tag es de
-    # la conversación entera (puede haber cerrado por otra cosa), las marcas
-    # del episodio son de este pedido. `apply_order_cancellation_*` ni siquiera
-    # toca el tag cuando el pago ya estaba confirmado.
-    episode = None
-    for candidate in reversed(data.get("episodes") or []):
-        if isinstance(candidate, dict) and candidate.get("order_id") == order_id:
-            episode = candidate
-            break
-
-    fact = None if order_facts is None else order_facts.facts.get(order_id)
-    if fact is not None:
-        # El display_id del pedido REAL le gana al congelado en el vault.
-        display_id = fact.display_id or display_id
-
-    if fact is not None and fact.stage == "cancelled":
-        payment = "cancelled"
-    elif fact is not None:
-        payment = "confirmed" if fact.counts_as_revenue else "pending"
-    elif episode and episode.get("payment_confirmed_at_ms"):
-        payment = "confirmed"
-    elif episode and episode.get("cancelled_at_ms"):
-        payment = "cancelled"
-    elif data.get("tag") == "COMPRA_EXITOSA":
-        payment = "confirmed"
-    elif data.get("tag") == "RECHAZO":
+    if fact.stage == "cancelled":
         payment = "cancelled"
     else:
-        payment = "pending"
+        payment = "confirmed" if fact.counts_as_revenue else "pending"
 
-    # Cuántos pedidos EXITOSOS lleva el cliente en esta sesión (el chip muestra
-    # "#33 +1"). El history apendea también los fallidos — se filtran.
-    history = data.get("registered_orders_history")
-    ids = {
-        h.get("order_id")
-        for h in (history or [])
-        if isinstance(h, dict) and h.get("success") is True and h.get("order_id")
-    }
-    ids.add(order_id)
-
+    real_orders = sum(
+        1
+        for candidate in _order_ref_candidate_ids(data)
+        if _real_order_number(order_facts.facts.get(candidate)) is not None
+    )
     return {
         "order_id": order_id,
-        "display_id": str(display_id) if display_id is not None else None,
+        "display_id": number,
         "payment": payment,
-        "count": len(ids),
+        "count": real_orders,
     }
 
 
@@ -544,7 +546,6 @@ async def list_dashboard_sessions():
                     pending_payment_order_id = (
                         _pending_payment_order_id_from_metadata(data)
                     )
-                    order_ref = _compute_order_ref(data)
                     session_data[entry] = data
                     origin = session_origin(data)
                 except json.JSONDecodeError:
@@ -574,20 +575,25 @@ async def list_dashboard_sessions():
                 "origin": origin,
             })
 
-    # Estado real de los pedidos con pago por verificar, en UNA lectura.
-    facts = await _pending_payment_facts(
-        {s["pending_payment_order_id"] for s in sessions if s["pending_payment_order_id"]}
-    )
+    # Estado real de los pedidos del inbox, en UNA lectura: los que esperan
+    # verificación de pago (botón) + todo pedido vinculado a una sesión (chip
+    # de orden). El store de OrderFacts es una caché compartida con la vista
+    # Orders — lo ya visto sale al instante.
+    order_ids = {
+        s["pending_payment_order_id"] for s in sessions if s["pending_payment_order_id"]
+    }
+    for data_ in session_data.values():
+        order_ids |= _order_ref_candidate_ids(data_)
+    facts = await _pending_payment_facts(order_ids)
     for s_ in sessions:
+        data_ = session_data.get(s_["session_id"])
+        if data_ is None:
+            continue
         if s_["pending_payment_order_id"]:
-            data_ = session_data[s_["session_id"]]
             s_["pending_payment_order_id"] = _compute_pending_payment_order_id(
                 data_, facts
             )
-            # El chip de pedido de la fila cuenta lo mismo que el botón: si el
-            # pedido ya está en el snapshot, manda el pedido (mismo batch, cero
-            # lecturas extra a Medusa).
-            s_["order_ref"] = _compute_order_ref(data_, facts)
+        s_["order_ref"] = _compute_order_ref(data_, facts)
 
     # Nombres reales de campaña en UN batch para todo el listado.
     enriched = _origins_with_names({s["session_id"]: s["origin"] for s in sessions})
@@ -757,19 +763,25 @@ async def get_session_history(session_id: str):
         pending_payment_order_id = (
             _pending_payment_order_id_from_metadata(data)
         )
-        order_ref = _compute_order_ref(data)
         origin = _origins_with_names({session_id: session_origin(data)})[session_id]
         # El composer humano lo usa para ofrecer "Reactivar conversación"
         # (plantilla) cuando la ventana 24h ya cerró. None = desconocido.
         expires = data.get("service_window_expires_at_ms")
         service_window_expires_at_ms = expires if isinstance(expires, int) else None
 
-    if pending_payment_order_id:
-        facts = await _pending_payment_facts({pending_payment_order_id})
-        pending_payment_order_id = _compute_pending_payment_order_id(data, facts)
-        # La misma lectura resuelve el chip del pedido: el botón "Confirmar
-        # pago" y el chip de la fila no pueden contar cosas distintas.
-        order_ref = _compute_order_ref(data, facts)
+    if data:
+        # UNA lectura resuelve el botón "Confirmar pago" y el chip de orden:
+        # no pueden contar cosas distintas del mismo pedido.
+        order_ids = _order_ref_candidate_ids(data)
+        if pending_payment_order_id:
+            order_ids.add(pending_payment_order_id)
+        if order_ids:
+            facts = await _pending_payment_facts(order_ids)
+            if pending_payment_order_id:
+                pending_payment_order_id = _compute_pending_payment_order_id(
+                    data, facts
+                )
+            order_ref = _compute_order_ref(data, facts)
 
     memory_content = None
     memory_file = session_path / "memory" / "MEMORY.md"
