@@ -400,7 +400,8 @@ def build_capi_event(
     :func:`build_purchase_event`, que valida. Para el resto, si viene
     ``value`` sin ``currency`` se asume ``DEFAULT_CURRENCY``; lo mismo si algún
     content lleva ``item_price`` aunque no haya ``value`` (Meta exige
-    ``currency`` junto a ``item_price``).
+    ``currency`` junto a ``item_price``), y en todo evento de pedido
+    (``ORDER_SCOPED_EVENT_NAMES``), que Meta rechaza sin moneda.
     """
     validate_event_name(event_name)
     if event_name == "Purchase":
@@ -422,8 +423,12 @@ def build_capi_event(
     # ViewContent de ``flush_ui_intents:product_detail`` (event_id
     # ``viewcontent_wa_<wa_id>_ep_001``) se perdió porque no traía ``value``.
     has_item_price = any("item_price" in c for c in normalized)
+    # Meta también exige ``currency`` en los eventos de pedido aunque no haya
+    # ``value`` (HTTP 400 "OrderShipped event currency missing", prod
+    # 2026-09-17 14:43Z y 2026-09-18 19:29Z, source ``order_stage:shipping``).
+    needs_currency = has_item_price or event_name in ORDER_SCOPED_EVENT_NAMES
     custom = CapiCustomData(
-        currency=(currency or DEFAULT_CURRENCY) if has_item_price else None,
+        currency=(currency or DEFAULT_CURRENCY) if needs_currency else None,
         order_id=order_id,
         contents=normalized,
     )

@@ -167,7 +167,7 @@ return {..., "orders_stale": facts.stale}  # la UI avisa "valores sin actualizar
 `marketing` (`campaign_stats`), `customer_scoring` (LTV / frecuencia / última
 compra, y el endpoint dejó de fetchear Medusa por su cuenta), el **inbox de
 chats** (botón "Confirmar pago"), el **watchdog de remarketing** (etapa del
-template + monto real) y `shared/funnel.is_open_cart`. La guarda AST cubre ads
+template + monto real) `shared/funnel.is_open_cart` y los **eventos CAPI de etapa** (`orders/.../emit_stage.py`: OrderShipped/Delivered/Canceled con el total vivo; `registered_order` solo si Medusa no responde). La guarda AST cubre ads
 y marketing; en el resto el reemplazo es de TAG por estado del pedido, con el
 camino viejo como respaldo cuando Medusa no responde.
 
