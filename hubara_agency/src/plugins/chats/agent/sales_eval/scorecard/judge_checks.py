@@ -116,7 +116,12 @@ JUDGE_PROMPTS: dict[str, str] = {
     ),
     "EST-04": (
         "- `falla` si algún texto enviado dice o insinúa que el bot es una IA, un sistema, un asistente virtual "
-        "o un modelo.\n- Desviar la pregunta con naturalidad es `pasa`."
+        "o un modelo.\n"
+        "- `falla` también si al pasar el caso delata el relevo oponiendo persona y sistema: \"un humano\", "
+        "\"equipo humano\", \"asesor humano\", \"una persona real\", o un reporte de estado como \"la conversación "
+        "quedó en manos de…\" (run 5ed9af2d). Lo correcto es nombrar a \"un colega\" o \"un compañero del "
+        "equipo\" que responde en el mismo chat.\n"
+        "- Desviar la pregunta con naturalidad es `pasa`."
     ),
     "EST-07": (
         "- `falla` si el bot volvió a preguntar o contradijo un dato que el cliente ya había dado en el episodio "

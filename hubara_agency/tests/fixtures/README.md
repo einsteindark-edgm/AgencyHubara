@@ -11,7 +11,20 @@ history (R-DET / ADR-005).
 | Fixture | Workflow | Origen |
 |---|---|---|
 | `history_sales_session_v2.json` | `HubaraSalesSessionWorkflow` | `generate_fixtures.py` |
-| `history_remarketing_session_v1.json` | `RemarketingSessionWorkflow` | `generate_fixtures.py` |
+| `history_remarketing_session_v3.json` | `RemarketingSessionWorkflow` | `generate_fixtures.py` |
+| `history_sales_escalation_prepatch_v1.json` | `HubaraSalesSessionWorkflow` | history REAL de prod (run 5ed9af2d, 2026-09-18), saneada |
+
+**`history_sales_escalation_prepatch_v1.json` es distinta a las demás: está
+CONGELADA y NO se regenera.** Es la history real del incidente "Listo, la
+conversación quedó en manos del equipo humano." con la forma PRE
+`escalation-ends-turn-v1` (un `llm_chat` extra después de `escalate_to_human`).
+Prueba que el código nuevo sigue replayeando runs en vuelo del deploy anterior
+(L-9), y protege DOS gates: forzar a True `escalation-ends-turn-v1` o
+`admin-leak-patterns-v2` la rompe con NondeterminismError (L-20 / L-21).
+Saneada antes de commitear: teléfono → sintético clasificado en
+`forge/manifest.yaml`, API keys fuera, system prompt y tool definitions
+reemplazados por stubs, hostnames del worker → `fixture-worker`. Se borra
+junto con el `workflow.deprecate_patch(...)` de ambos gates.
 
 **Post-F7**: la fixture de Sales refleja el patron bootstrap-activity. Su
 primer `activityTaskScheduledEvent` es `bootstrap_sales_session_activity`

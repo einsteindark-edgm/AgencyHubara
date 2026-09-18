@@ -182,6 +182,29 @@ async def test_other_escalation_reasons_are_untouched(ctx, tmp_path: Path) -> No
     assert result["escalation_decision"]["reason_category"] == "EXPLICIT_REQUEST"
 
 
+@pytest.mark.asyncio
+async def test_sales_escalation_forwards_the_customer_farewell(ctx, tmp_path: Path) -> None:
+    """Run 5ed9af2d: la despedida del relevo viaja en `customer_message`; la
+    guarda de Sales la reenvía intacta a la tool de plataforma."""
+    from src.platform.tools.escalation import EscalateToHumanTool
+    from src.plugins.chats.agent.sales.tools.escalation import guarded_escalation_tool
+
+    SalesEscalateToHumanTool = guarded_escalation_tool(EscalateToHumanTool)
+
+    _seed(tmp_path, {"active_route": "ventas", "episodes": [_episode()]})
+    tool = SalesEscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+    farewell = "Eso te lo coordino con un colega del equipo, te responde en este mismo chat 🤍"
+    result = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            reason_category="BULK_ORDER",
+            summary="pide ~100 unidades",
+            customer_message=farewell,
+        )
+    )
+    assert result["customer_message"] == farewell
+
+
 # ---------------------------------------------------------------- remarketing handoff
 
 

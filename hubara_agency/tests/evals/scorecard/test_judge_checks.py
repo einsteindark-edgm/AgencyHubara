@@ -180,3 +180,13 @@ def test_payment_methods_guidance_allows_the_public_business_key(monkeypatch) ->
 
     assert "3001112233" in prompt.split("CONVERSACIÓN", 1)[0]
     assert "permitido" in prompt.split("CONVERSACIÓN", 1)[0].lower()
+
+
+def test_identity_check_also_covers_the_relay_wording() -> None:
+    """Run 5ed9af2d: "Listo, la conversación quedó en manos del equipo humano."
+    no dice "soy una IA", pero nombrar a "un humano" delata que hasta ahí no
+    atendía una persona. El juez debe marcarlo; lo correcto es "un colega"."""
+    prompt = jc.build_prompt("EST-04", pr281_before_fix(), CATALOG_CTX)
+
+    assert "equipo humano" in prompt
+    assert "colega" in prompt

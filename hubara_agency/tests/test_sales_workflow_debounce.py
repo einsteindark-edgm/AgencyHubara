@@ -2353,3 +2353,221 @@ async def test_turn_trace_records_the_text_the_customer_received(tmp_path: Path)
     assert turn["suppressed_reason"] is None
     assert turn["tools"] == []
     assert turn["turn_started_ms"] > 0
+
+
+# =============================================================================
+# Run 5ed9af2d (2026-09-18) — el relevo delató al bot
+# =============================================================================
+# Forma exacta del incidente:
+#   llm_chat #1 → content="Para 100 unidades te coordino con un colega…" +
+#                 tool_call escalate_to_human          (la despedida BUENA)
+#   default-deny → ese content se descarta (junto a una tool call)
+#   execute_tool → "Escalación registrada… NO generes más respuestas"
+#   llm_chat #2  → FORZADO por el loop; el modelo acusa recibo al sistema:
+#                 "Listo, la conversación quedó en manos del equipo humano."
+#   send         → ese acuse le llegó al cliente.
+# Contrato nuevo: la despedida viaja en `customer_message`, la tool devuelve el
+# texto final en el envelope y la escalación TERMINA el turno — el llm_chat #2
+# no existe, así que no hay acuse que pueda filtrarse.
+
+_RELAY_FAREWELL = (
+    "Para 100 unidades te coordino con un colega del equipo, que maneja ese "
+    "tipo de pedidos y te responde en este mismo chat 🤍"
+)
+_RELAY_LEAK = "Listo, la conversación quedó en manos del equipo humano."
+
+
+def _escalation_batch(customer_message: str | None) -> LLMResponseData:
+    args = {
+        "reason_category": "BULK_ORDER",
+        "summary": "Cliente pide ~100 presentes sencillos; requiere cotización por volumen.",
+    }
+    if customer_message is not None:
+        args["customer_message"] = customer_message
+    return LLMResponseData(
+        content=_RELAY_FAREWELL,
+        finish_reason="tool_calls",
+        has_tool_calls=True,
+        tool_calls=[ToolCallData(id="esc1", name="escalate_to_human", arguments=args)],
+    )
+
+
+def _escalation_envelope(customer_message: str) -> str:
+    return json.dumps(
+        {
+            "escalation_decision": {
+                "session_id": "wa_trace",
+                "reason_category": "BULK_ORDER",
+                "summary": "Cliente pide ~100 presentes sencillos",
+            },
+            "customer_message": customer_message,
+            "message": "Hecho: un colega del equipo continúa la atención en este chat.",
+        },
+        ensure_ascii=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_escalation_sends_the_farewell_and_never_asks_the_llm_for_an_ack(
+    tmp_path: Path,
+) -> None:
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_turn_with_tools(
+        tracker,
+        workspace,
+        # El 2º response es el acuse del run real: si el loop lo pide, se filtra.
+        responses=[_escalation_batch(_RELAY_FAREWELL), _final_resp(_RELAY_LEAK)],
+        tool_results={"escalate_to_human": _escalation_envelope(_RELAY_FAREWELL)},
+    )
+
+    sent = [m for (_s, m) in tracker.send_whatsapp_calls]
+    assert sent == [_RELAY_FAREWELL], f"el cliente recibió: {sent}"
+    assert tracker.llm_calls == 1, "la escalación termina el turno: sin llm_chat de acuse"
+    turn = tracker.turn_traces[0]
+    assert turn["sent_texts"] == [_RELAY_FAREWELL]
+    assert turn["llm_text"] == _RELAY_FAREWELL
+
+
+@pytest.mark.asyncio
+async def test_escalation_without_farewell_in_envelope_sends_nothing_and_asks_no_ack(
+    tmp_path: Path,
+) -> None:
+    """Defensa: un envelope de escalación SIN `customer_message` (tool ajena o
+    worker viejo) termina el turno en silencio — jamás se vuelve a abrir el
+    canal del acuse pidiéndole otro texto al LLM."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    legacy_envelope = json.dumps(
+        {
+            "escalation_decision": {
+                "session_id": "wa_trace",
+                "reason_category": "BULK_ORDER",
+                "summary": "Cliente pide ~100 presentes sencillos",
+            },
+            "message": "Escalación registrada.",
+        },
+        ensure_ascii=False,
+    )
+
+    await _run_turn_with_tools(
+        tracker,
+        workspace,
+        responses=[_escalation_batch(None), _final_resp(_RELAY_LEAK)],
+        tool_results={"escalate_to_human": legacy_envelope},
+    )
+
+    assert tracker.send_whatsapp_calls == []
+    assert tracker.llm_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_tag_tool_ack_in_a_customer_turn_is_not_sent(tmp_path: Path) -> None:
+    """Run b06636a6: tras `manage_conversation_tag` el llm_chat forzado devolvió
+    "Etiqueta registrada.". Ahí no salió por ser turno de cierre (admin); en un
+    turno NORMAL (el cliente dice "no gracias") era `final_content` y ningún
+    patrón lo frenaba. En runs nuevos el set extendido
+    (`admin-leak-patterns-v2`) lo bloquea y la traza deja constancia."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_turn_with_tools(
+        tracker,
+        workspace,
+        responses=[_tool_resp("manage_conversation_tag"), _final_resp("Etiqueta registrada.")],
+        tool_results={
+            "manage_conversation_tag": json.dumps(
+                {"message": "Éxito. Interacción etiquetada como 'RECHAZO'."},
+                ensure_ascii=False,
+            )
+        },
+    )
+
+    assert "Etiqueta registrada." not in [m for (_s, m) in tracker.send_whatsapp_calls]
+    turn = tracker.turn_traces[0]
+    assert turn["suppressed_reason"] == "admin_text_guard"
+    assert turn["guards"] == ["admin_text_guard"]
+
+
+@pytest.mark.asyncio
+async def test_incident_shape_with_the_real_tool_sends_the_approved_farewell(
+    tmp_path: Path,
+) -> None:
+    """Contrato tool↔loop de punta a punta con la forma EXACTA del run 5ed9af2d:
+    el LLM llama `escalate_to_human` SIN `customer_message` (schema viejo) y con
+    la despedida como content. El envelope lo produce la tool REAL de Sales
+    (guarda + plataforma): si alguien renombra la clave `customer_message` en un
+    solo lado, este test lo caza."""
+    from exoclaw.agent.tools import ToolContext
+
+    from src.platform.tools.escalation import EscalateToHumanTool
+    from src.plugins.chats.agent.sales.tools.escalation import guarded_escalation_tool
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    tool = guarded_escalation_tool(EscalateToHumanTool)(
+        workspace=str(tmp_path), vault_dir=vault
+    )
+    real_envelope = await tool.execute_with_context(
+        ToolContext(session_key="wa_trace", channel="whatsapp", chat_id="wa_trace"),
+        reason_category="BULK_ORDER",
+        summary="Cliente pide ~100 presentes sencillos; requiere cotización por volumen.",
+    )
+
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    await _run_turn_with_tools(
+        tracker,
+        workspace,
+        responses=[_escalation_batch(None), _final_resp(_RELAY_LEAK)],
+        tool_results={"escalate_to_human": real_envelope},
+    )
+
+    sent = [m for (_s, m) in tracker.send_whatsapp_calls]
+    assert sent == ["Un colega del equipo te responde en este mismo chat 🤍"]
+    assert tracker.llm_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_farewell_survives_a_variant_picker_in_the_same_batch(tmp_path: Path) -> None:
+    """Un batch [present_variant_picker, escalate_to_human] activaba
+    `suppress_text_for_picker` ("el picker YA es el mensaje") y la despedida del
+    relevo no salía: el cliente quedaba escalado y sin una palabra."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    batch = LLMResponseData(
+        content="",
+        finish_reason="tool_calls",
+        has_tool_calls=True,
+        tool_calls=[
+            ToolCallData(id="p1", name="present_variant_picker", arguments={"handle": "cubo-love"}),
+            ToolCallData(
+                id="esc1",
+                name="escalate_to_human",
+                arguments={
+                    "reason_category": "BULK_ORDER",
+                    "summary": "pide ~100 unidades",
+                    "customer_message": _RELAY_FAREWELL,
+                },
+            ),
+        ],
+    )
+
+    await _run_turn_with_tools(
+        tracker,
+        workspace,
+        responses=[batch, _final_resp(_RELAY_LEAK)],
+        tool_results={
+            "present_variant_picker": json.dumps({"queued": True}),
+            "escalate_to_human": _escalation_envelope(_RELAY_FAREWELL),
+        },
+    )
+
+    assert [m for (_s, m) in tracker.send_whatsapp_calls] == [_RELAY_FAREWELL]
+    assert tracker.llm_calls == 1

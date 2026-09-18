@@ -25,7 +25,11 @@ def guarded_escalation_tool(base: type) -> type:
 
     class SalesEscalateToHumanTool(base):  # type: ignore[misc,valid-type]
         async def execute_with_context(
-            self, ctx: ToolContext, reason_category: str, summary: str
+            self,
+            ctx: ToolContext,
+            reason_category: str,
+            summary: str,
+            customer_message: str = "",
         ) -> str:
             if reason_category == GUARDED_REASON and not self._purchase_confirmed(ctx):
                 return json.dumps(
@@ -43,7 +47,10 @@ def guarded_escalation_tool(base: type) -> type:
                     ensure_ascii=False,
                 )
             return await super().execute_with_context(
-                ctx, reason_category=reason_category, summary=summary
+                ctx,
+                reason_category=reason_category,
+                summary=summary,
+                customer_message=customer_message,
             )
 
         def _purchase_confirmed(self, ctx: ToolContext) -> bool:

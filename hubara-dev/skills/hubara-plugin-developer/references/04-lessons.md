@@ -1,4 +1,4 @@
-# 04 · Lecciones (qué NO repetir — índice de §9, L-0..L-18)
+# 04 · Lecciones (qué NO repetir — índice de §9, L-0..L-21)
 
 > Índice scannable de `ARCHITECTURE_FINAL_fable.md §9`. Cada lección allá tiene
 > Síntoma → Causa → Fix → Regla-para-el-skill → Guard. Acá, la regla en una
@@ -25,6 +25,9 @@
 | L-16 | cast sin identidad | todo cast loopback PORTA el `Authorization` entrante (castkit) — el hop interno no hereda la identidad del edge gratis |
 | L-17 | seam olvidada | integrar un plugin con GraphAgents incluye la seam en `vscode-hubara/seams.yaml` (guard `test_graphagents_seams.py`); una regla solo-de-prosa se olvida — guard en el mismo PR |
 | L-18 | depends_on omitido | plugin que escribe en sesiones ⇒ `depends_on: [chats]` (guard `test_session_plugins_depend_on_chats.py`); sin declarar, Acktos Studio lo dibuja como ISLA y P-6 no protege el deploy — al crear un plugin, verificá con `build_system_graph()` que queda CONECTADO |
+| L-19 | precio del LLM | todo monto que se muestra o registra NACE en una tool desde el catálogo; el LLM solo transporta handles y cantidades; un umbral vive en UN módulo de `config/` |
+| L-20 | acuse tras tool terminal | una tool que termina la conversación lleva el texto del cliente en un PARAM tipado y CORTA el turno — nunca un `llm_chat` "de despedida" tras el tool result (el modelo le acusa recibo al sistema y eso le llega al cliente); un tool result describe hechos, no da órdenes; la regla de VOZ del operador se hace ley con guard sobre los guiones que nosotros dictamos |
+| L-21 | regex = lógica de replay | un predicado (regex, umbral, lista) cuyo veredicto decide commands DENTRO de un workflow se versiona como código: valor nuevo → set nuevo + `workflow.patched` propio; el mejor test es una history REAL saneada con control negativo |
 
 ## El patrón que las genera (y cómo contribuís)
 

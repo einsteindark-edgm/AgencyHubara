@@ -386,7 +386,7 @@ renderizados post-LLM como mensajes WhatsApp nativos:
 #### Scenario: send_quick_replies en saludo inicial
 
 - GIVEN primera conversación, mensaje "hola"
-- WHEN el LLM responde con saludo + `send_quick_replies([{title: "Ver catálogo"}, {title: "Promos"}, {title: "Asesor humano"}])`
+- WHEN el LLM responde con saludo + `send_quick_replies([{title: "Ver catálogo"}, {title: "Promos"}, {title: "Hablar con alguien"}])`
 - THEN se envía un mensaje WA tipo `interactive.button` con 3 botones
 - AND el cliente puede tappear → genera inbound con `button_reply.title`
 
@@ -442,9 +442,46 @@ control al operador via dashboard.
 - GIVEN el LLM detectó una pregunta fuera de scope (legal, devolución compleja, queja)
 - WHEN invoca `escalate_to_human(reason)`
 - THEN se setea `metadata.json[tag]="HUMANO"`, `active_route="humano"`
-- AND la tool devuelve `{escalation_decision: true, reason}`
-- AND el workflow envía mensaje de despedida del LLM ("Te conecto con un asesor humano...") y cierra
+- AND la tool devuelve `{escalation_decision, customer_message}`
+- AND el workflow envía el `customer_message` como despedida y cierra
 - AND inbounds subsecuentes NO arrancan workflow (espera intervención manual)
+
+#### Scenario: El relevo no delata al bot (run 5ed9af2d)
+
+El cliente NUNCA debe notar cuándo lo atiende el bot y cuándo una persona: el
+relevo se nombra "un colega / un compañero del equipo", jamás con vocabulario
+que oponga persona vs. sistema ("humano", "bot", "IA", "asistente virtual",
+"automático").
+
+- GIVEN el LLM decide escalar (p. ej. `BULK_ORDER`, ~100 unidades)
+- WHEN invoca `escalate_to_human(reason_category, summary, customer_message)`
+- THEN la escalación TERMINA el turno: el workflow NO pide otro `llm_chat` tras el tool result (antes ese `llm_chat` forzado producía un acuse al sistema — "Listo, la conversación quedó en manos del equipo humano." — y se enviaba al cliente)
+- AND el único texto que recibe el cliente es el `customer_message` que devuelve la tool
+- AND el `content` que el LLM emita junto a la tool call se descarta (default-deny)
+
+#### Scenario: customer_message ausente o que rompe la persona
+
+- GIVEN el LLM llama `escalate_to_human` sin `customer_message` (sesión en vuelo con el schema viejo) o con oraciones que `breaks_human_persona` / `looks_like_admin_leak` marcan
+- WHEN la tool arma el envelope
+- THEN se caen SOLO las oraciones marcadas (el aviso del portavelas sobrevive a un "un humano verificará tu pago")
+- AND si falta el texto o lo que queda tiene menos de 4 palabras, `customer_message` es la despedida aprobada de la categoría (default: "Un colega del equipo te responde en este mismo chat 🤍")
+- AND el cliente nunca queda sin respuesta ni recibe la oración marcada
+
+#### Scenario: La despedida sale aunque el batch traiga un picker
+
+- GIVEN un batch `[present_variant_picker, escalate_to_human]`
+- THEN la supresión "el picker ya es el mensaje" NO aplica: el `customer_message` se envía igual
+
+#### Scenario: La escalación rechazada NO corta el turno
+
+- GIVEN la guarda de Sales rechaza la escalación (`escalated: false`, sin `escalation_decision`)
+- WHEN el tool-loop procesa el result
+- THEN el turno continúa y el LLM decide el siguiente paso con el error en contexto
+
+#### Scenario: Los guiones propios no dictan la palabra prohibida
+
+- GIVEN cualquier línea DICTADA al agente (`*"…"*` en el workspace, `customer_message='…'` o "despide … con: '…'" en strings de Python)
+- THEN `breaks_human_persona(línea)` es False (guard `test_scripted_customer_lines_keep_persona.py`)
 
 ### Requirement: Transcripción de audio inbound
 
