@@ -1,4 +1,4 @@
-# 04 · Lecciones (qué NO repetir — índice de §9, L-0..L-21)
+# 04 · Lecciones (qué NO repetir — índice de §9, L-0..L-22)
 
 > Índice scannable de `ARCHITECTURE_FINAL_fable.md §9`. Cada lección allá tiene
 > Síntoma → Causa → Fix → Regla-para-el-skill → Guard. Acá, la regla en una
@@ -28,6 +28,7 @@
 | L-19 | precio del LLM | todo monto que se muestra o registra NACE en una tool desde el catálogo; el LLM solo transporta handles y cantidades; un umbral vive en UN módulo de `config/` |
 | L-20 | acuse tras tool terminal | una tool que termina la conversación lleva el texto del cliente en un PARAM tipado y CORTA el turno — nunca un `llm_chat` "de despedida" tras el tool result (el modelo le acusa recibo al sistema y eso le llega al cliente); un tool result describe hechos, no da órdenes; la regla de VOZ del operador se hace ley con guard sobre los guiones que nosotros dictamos |
 | L-21 | regex = lógica de replay | un predicado (regex, umbral, lista) cuyo veredicto decide commands DENTRO de un workflow se versiona como código: valor nuevo → set nuevo + `workflow.patched` propio; el mejor test es una history REAL saneada con control negativo |
+| L-22 | historial = few-shot | lo que NO salió el LLM no lo recuerda: `record_turn` corre antes de que el caller decida enviar → el helper recibe `admin_turn` y recorta el `assistant` final no enviado; el corte de L-20 se decide por lo que la tool DECLARA (`tag_closure.ends_turn`), no por su nombre; cambio de solo-payload no lleva `patched`; si el corte depende de una clave NUEVA del envelope, la fixture útil es la de versiones mezcladas, con control negativo automatizado |
 
 ## El patrón que las genera (y cómo contribuís)
 

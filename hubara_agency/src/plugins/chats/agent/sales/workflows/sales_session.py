@@ -469,8 +469,17 @@ class HubaraSalesSessionWorkflow:
                             and workflow.patched("turn-interrupt-v1")
                         ):
                             hni = lambda: bool(self._pending)  # noqa: E731
+                        # `admin_turn` (run b06636a6): el helper termina el
+                        # turno apenas el tag declara su cierre (sin el
+                        # llm_chat del acuse) y no le hace recordar al LLM un
+                        # texto que nunca salió. Se pasa en CADA vuelta: un
+                        # corrientazo que dropea el trigger de ghosting baja
+                        # `admin_no_send` y el re-run es un turno normal.
                         result = await run_agent_turn(
-                            session, msg, has_new_input=hni
+                            session,
+                            msg,
+                            has_new_input=hni,
+                            admin_turn=admin_no_send,
                         )
                         if result.interrupted:
                             restarts += 1
@@ -978,7 +987,9 @@ class HubaraSalesSessionWorkflow:
                     if admin_no_send and result.final_content:
                         # Observabilidad del turno admin: el LLM produjo texto
                         # pese a la instrucción de silencio — lo suprimimos y
-                        # dejamos rastro (el texto vive en record_turn igual).
+                        # dejamos rastro. NO vive en el historial del LLM:
+                        # `run_agent_turn(admin_turn=True)` lo recorta antes de
+                        # `record_turn` (run b06636a6); queda en la traza.
                         workflow.logger.warning(
                             "turno admin: final_content suprimido (no va al "
                             f"cliente): {result.final_content[:120]!r}"
