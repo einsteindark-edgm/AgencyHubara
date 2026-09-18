@@ -325,6 +325,14 @@ def _close_payment_pending(
                 }
             )
     escalated = _escalate(data, reason_category=PAYMENT_VERIFICATION_REASON, motivo=motivo, now_ms=now_ms)
+    if not escalated and data.get("active_route") == ROUTE_HUMANO:
+        # Un humano YA tenía el hilo (p.ej. registró el pedido con "Crear
+        # pedido" tras una escalación ORDER_PENDING_SHIPPING_DETAILS). `_escalate`
+        # no le pisa ruta/tag/motivo — bien —, pero lo que ese humano tiene
+        # pendiente ahora ES verificar el pago. Sin esto `escalation_reason`
+        # quedaba en el motivo viejo y el dashboard no exponía
+        # `pending_payment_order_id`: sin "Asignar fecha" ni "Confirmar pago".
+        data["escalation_reason"] = PAYMENT_VERIFICATION_REASON
     return closed_id, escalated
 
 

@@ -236,13 +236,52 @@ describe("ChatsComposer", () => {
     ).toBeInTheDocument();
   });
 
-  it("NO lo ofrece en una conversación intervenida cualquiera", () => {
+  it("ofrece 'Crear pedido' cuando un lead INTERESADO pasa a HUMANO", () => {
     useSessionMock.mockReturnValue({
       data: {
         active_agent_route: "humano",
         pending_payment_order_id: null,
         status_history: [
           { tag: "INTERESADO", motivo: "", active_route: "ventas", timestamp: 1 },
+          { tag: "HUMANO", motivo: "", active_route: "humano", timestamp: 2 },
+        ],
+      },
+    });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    expect(
+      screen.getByRole("button", { name: /crear pedido/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("con el pedido YA creado cambia a 'Asignar fecha' + 'Confirmar pago'", () => {
+    // Después de "Crear pedido" la sesión expone `pending_payment_order_id`:
+    // el paso siguiente es agendar y confirmar el pago, no crear otro pedido.
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: "order_1",
+        status_history: [
+          { tag: "CONFIRMADO_SIN_DATOS", motivo: "", active_route: "ventas", timestamp: 1 },
+          { tag: "HUMANO", motivo: "", active_route: "humano", timestamp: 2 },
+          { tag: "CONFIRMADO_PAGO_PENDIENTE", motivo: "", active_route: "humano", timestamp: 3 },
+        ],
+      },
+    });
+    render(<ChatsComposer chatId="wa_X" />, { wrapper: makeWrapper() });
+    expect(screen.getByRole("button", { name: /asignar fecha/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /confirmar pago/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /crear pedido/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("NO lo ofrece en una conversación intervenida cualquiera", () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        active_agent_route: "humano",
+        pending_payment_order_id: null,
+        status_history: [
+          { tag: "RECHAZO", motivo: "", active_route: "ventas", timestamp: 1 },
           { tag: "HUMANO", motivo: "", active_route: "humano", timestamp: 2 },
         ],
       },

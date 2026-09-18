@@ -199,6 +199,33 @@ def test_order_can_skip_the_payment_instructions_message(h: _Harness) -> None:
     assert h.meta()["pending_ui_intents"][0]["kind"] == "payment_instructions"
 
 
+def test_order_created_by_the_human_turns_on_schedule_and_confirm_payment(h: _Harness) -> None:
+    """Botón "Crear pedido" del chat intervenido: la sesión YA está en humano
+    (el bot escaló por ORDER_PENDING_SHIPPING_DETAILS) cuando el operador
+    registra el pedido. `_escalate` no toca un hilo humano — correcto para no
+    pisarle el estado — pero dejaba `escalation_reason` en el motivo VIEJO, y
+    el dashboard solo expone `pending_payment_order_id` (lo que enciende
+    "Asignar fecha" y "Confirmar pago") con PAYMENT_VERIFICATION_PENDING. El
+    pedido quedaba creado y los botones para seguirlo, invisibles.
+    """
+    from src.plugins.chats.api.dashboard import _compute_pending_payment_order_id
+
+    h.client.post(_url("draft"), json={"producto": "luz-serena"})
+    h.client.post(_url("escalate"), json={"reason_category": "ORDER_PENDING_SHIPPING_DETAILS",
+                                          "summary": "confirmó sin datos de envío"})
+    assert h.meta()["active_route"] == ROUTE_HUMANO
+
+    body = h.client.post(_url("order"), json=_ORDER).json()
+
+    assert body["registered"] is True
+    m = h.meta()
+    # El humano conserva el hilo (invariante de handoff)…
+    assert m["active_route"] == ROUTE_HUMANO and m["tag"] == "HUMANO"
+    # …pero lo que tiene pendiente ahora es verificar el pago.
+    assert m["escalation_reason"] == "PAYMENT_VERIFICATION_PENDING"
+    assert _compute_pending_payment_order_id(m) == body["order_id"]
+
+
 def test_order_is_idempotent_for_the_same_content(h: _Harness) -> None:
     first = h.client.post(_url("order"), json=_ORDER).json()
     second = h.client.post(_url("order"), json=_ORDER).json()
