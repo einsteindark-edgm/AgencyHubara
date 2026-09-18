@@ -128,3 +128,48 @@ def test_parse_text_message_without_body_raises_value_error() -> None:
     )
     with pytest.raises(ValueError):
         parse_whatsapp_inbound(body)
+
+
+# ── parse_whatsapp_inbound_all: el POST entero (Meta batchea) ────────────────
+
+from src.plugins.chats.agent.sales.parsers import parse_whatsapp_inbound_all  # noqa: E402
+
+
+def _text(wamid: str, from_number: str = "573001234567") -> dict:
+    return {"id": wamid, "from": from_number, "timestamp": "1714312345", "type": "text", "text": {"body": "hola"}}
+
+
+def test_parse_all_keeps_the_order_across_entries_changes_and_messages() -> None:
+    value = lambda *msgs: {"value": {"metadata": {"phone_number_id": "PHONE_123"}, "messages": list(msgs)}}  # noqa: E731
+    body = {"entry": [{"changes": [value(_text("wamid.1"), _text("wamid.2")), value(_text("wamid.3"))]}, {"changes": [value(_text("wamid.4"))]}]}
+
+    batch = parse_whatsapp_inbound_all(body)
+
+    assert [m.message_id for m in batch.messages] == ["wamid.1", "wamid.2", "wamid.3", "wamid.4"]
+    assert batch.rejected == ()
+
+
+def test_parse_all_reports_why_an_item_was_rejected_and_keeps_the_rest() -> None:
+    body = {
+        "entry": [
+            {
+                "changes": [
+                    {"value": {"metadata": {"phone_number_id": "PHONE_123"}, "messages": [_text("wamid.OK"), {**_text("wamid.BAD"), "text": {}}]}},
+                    {"value": {"messages": [_text("wamid.NOMETA")]}},
+                    {"value": {"metadata": {"phone_number_id": "PHONE_123"}, "statuses": [{"id": "wamid.OUT"}]}},
+                ]
+            }
+        ]
+    }
+
+    batch = parse_whatsapp_inbound_all(body)
+
+    assert [m.message_id for m in batch.messages] == ["wamid.OK"]
+    assert batch.rejected == ("text message missing 'text.body'", "missing 'metadata.phone_number_id'")
+
+
+@pytest.mark.parametrize("garbage", [None, [], "x", {}, {"entry": "x"}, {"entry": [None, {"changes": "x"}, {"changes": [None]}]}])
+def test_parse_all_never_raises_on_garbage(garbage) -> None:
+    batch = parse_whatsapp_inbound_all(garbage)
+
+    assert batch.messages == ()

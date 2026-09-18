@@ -33,7 +33,7 @@ from src.plugins.chats.agent.sales.parsers import (
     HANDOVERS_FIELD,
     STANDBY_FIELD,
     parse_messaging_handovers,
-    parse_whatsapp_inbound,
+    parse_whatsapp_inbound_all,
     parse_whatsapp_standby,
     parse_whatsapp_statuses,
     split_webhook_by_field,
@@ -189,29 +189,34 @@ async def _ingest_ledgered(
     field_name: str,
     messages: Sequence[Any],
 ) -> None:
-    """Corre el ingest y deja su desenlace por mensaje: `ingested` o
-    `ingest_failed` (con el error). Una excepción en un background task solo
-    vivía en el log del container; ahora queda en el ledger y se re-lanza igual."""
+    """Corre UN ingest, deja su desenlace por mensaje en el ledger (`ingested`
+    o `ingest_failed` con el error) y AÍSLA su fallo: Starlette corta el loop de
+    background tasks en la primera excepción, así que re-lanzar dejaría sin
+    ingerir a los mensajes encolados detrás (POST batcheado). El traceback va al
+    log; el ledger guarda el hecho de forma durable."""
     error: str | None = None
     try:
         await execute(payload)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — aislar; queda en ledger + log
         error = f"{type(exc).__name__}: {exc}"
-        raise
-    finally:
-        build_inbound_ledger().append(
-            [
-                message_stage_record(
-                    stage="ingested" if error is None else "ingest_failed",
-                    at_ms=_now_ms(),
-                    field=field_name,
-                    wa_message_id=m.message_id,
-                    from_number=m.from_number,
-                    error=error,
-                )
-                for m in messages
-            ]
+        logger.exception(
+            "inbound_ingest_failed",
+            field=field_name,
+            wa_message_ids=[m.message_id for m in messages],
         )
+    build_inbound_ledger().append(
+        [
+            message_stage_record(
+                stage="ingested" if error is None else "ingest_failed",
+                at_ms=_now_ms(),
+                field=field_name,
+                wa_message_id=m.message_id,
+                from_number=m.from_number,
+                error=error,
+            )
+            for m in messages
+        ]
+    )
 
 
 # ── handlers por `field` ───────────────────────────────────────────────────────
@@ -224,27 +229,52 @@ def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
         delivery_use_case = build_ingest_delivery_status_use_case()
         add_traced_background_task(
             background_tasks,
+            _isolated,
+            "delivery_status_ingest_failed",
+            {"wa_message_id": status_update.wa_message_id, "status": status_update.status},
             delivery_use_case.execute,
             status_update.wa_message_id,
             status_update.status,
             status_update.pricing,
         )
 
-    try:
-        parsed = parse_whatsapp_inbound(body)
-    except ValueError as exc:
-        logger.warning("Malformed WhatsApp webhook body", error=str(exc))
+    # TODOS los mensajes del POST, no solo el primero: Meta agrupa varios
+    # `entry`/`changes`/`messages[]` en un mismo webhook (tras demoras o
+    # reintentos) y antes el resto del batch se perdía en silencio — sin sesión,
+    # sin workflow, sin log (auditoría 2026-09-18).
+    batch = parse_whatsapp_inbound_all(body)
+    for reason in batch.rejected:
+        logger.warning("Malformed WhatsApp webhook body", error=reason)
+    if batch.rejected and not batch.messages:
+        # Nada aprovechable en el POST: el 400 de siempre. Con al menos un
+        # mensaje válido NO se devuelve 400 — Meta reintentaría TODO el POST y
+        # re-entregaría los válidos por un ítem que igual nunca va a parsear.
         _ledger_request(None, outcome="malformed")
-        raise HTTPException(status_code=400, detail=f"malformed payload: {exc}")
+        raise HTTPException(status_code=400, detail=f"malformed payload: {batch.rejected[0]}")
 
-    if parsed is None:
-        # Sin messages[] — ya despachamos los statuses arriba (si había).
-        return
-
+    # Un background task por mensaje, en el orden de Meta. Starlette los corre
+    # SECUENCIALMENTE (await uno tras otro), así que dos mensajes del mismo
+    # cliente se ingieren en orden; statuses arriba ya quedaron encolados.
     use_case = build_ingest_use_case()
-    add_traced_background_task(
-        background_tasks, _ingest_ledgered, use_case.execute, parsed, "messages", (parsed,)
-    )
+    for parsed in batch.messages:
+        add_traced_background_task(
+            background_tasks, _ingest_ledgered, use_case.execute, parsed, "messages", (parsed,)
+        )
+
+
+async def _isolated(
+    event: str, log_fields: dict[str, Any], execute: Callable[..., Awaitable[None]], /, *args: Any
+) -> None:
+    """Corre UN background task sin dejar que su fallo mate a los que vienen
+    detrás: Starlette los ejecuta en serie y CORTA el loop en la primera
+    excepción, así que un status roto dejaba sin ingerir a los mensajes
+    encolados después (en un POST batcheado: clientes perdidos). El fallo queda
+    en el log con traceback. Los ingests de mensajes usan `_ingest_ledgered`,
+    que además de aislar deja el desenlace en el ledger."""
+    try:
+        await execute(*args)
+    except Exception:  # noqa: BLE001 — aislar; el traceback va al log
+        logger.exception(event, **log_fields)
 
 
 def _handle_standby(body: dict, background_tasks: BackgroundTasks) -> None:
@@ -260,6 +290,9 @@ def _handle_standby(body: dict, background_tasks: BackgroundTasks) -> None:
     for status_update in standby.statuses:
         add_traced_background_task(
             background_tasks,
+            _isolated,
+            "delivery_status_ingest_failed",
+            {"wa_message_id": status_update.wa_message_id, "status": status_update.status},
             build_ingest_delivery_status_use_case().execute,
             status_update.wa_message_id,
             status_update.status,

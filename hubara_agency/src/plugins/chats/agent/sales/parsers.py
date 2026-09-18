@@ -121,6 +121,57 @@ def parse_whatsapp_inbound(body: dict) -> WhatsAppMessage | None:
     return _parse_message(messages[0], phone_number_id)
 
 
+@dataclass(frozen=True)
+class InboundBatch:
+    """Todos los mensajes del cliente de UN POST, en el orden en que Meta los
+    mandó, + el motivo de cada ítem que no se pudo parsear."""
+
+    messages: tuple[WhatsAppMessage, ...] = ()
+    rejected: tuple[str, ...] = ()
+
+
+def parse_whatsapp_inbound_all(body: Any) -> InboundBatch:
+    """Como ``parse_whatsapp_inbound`` pero para el POST ENTERO: Meta puede
+    agrupar varios ``entry`` / ``changes`` / ``messages[]`` en un mismo webhook
+    (hasta 1000 updates, típico tras demoras o reintentos).
+
+    ``parse_whatsapp_inbound`` solo lee ``entry[0].changes[0].messages[0]`` —
+    el resto del batch se perdía en silencio (auditoría 2026-09-18). Acá un
+    ítem inválido NO tumba a sus hermanos: va a ``rejected`` y se sigue; quien
+    llama decide qué hacer si no quedó ninguno aprovechable. Nunca lanza.
+    """
+    messages: list[WhatsAppMessage] = []
+    rejected: list[str] = []
+    entries = body.get("entry") if isinstance(body, dict) else None
+    for entry in entries if isinstance(entries, list) else []:
+        changes = entry.get("changes") if isinstance(entry, dict) else None
+        for change in changes if isinstance(changes, list) else []:
+            value = change.get("value") if isinstance(change, dict) else None
+            if not isinstance(value, dict):
+                rejected.append("missing 'value' object")
+                continue
+            raw_messages = value.get("messages")
+            if not raw_messages:
+                continue  # statuses u otro evento sin messages[]: no es inbound
+            if not isinstance(raw_messages, list):
+                rejected.append("'messages' must be a list")
+                continue
+            metadata = value.get("metadata")
+            phone_number_id = metadata.get("phone_number_id") if isinstance(metadata, dict) else None
+            if not isinstance(phone_number_id, str):
+                rejected.append("missing 'metadata.phone_number_id'")
+                continue
+            for raw in raw_messages:
+                try:
+                    parsed = _parse_message(raw, phone_number_id)
+                except ValueError as exc:
+                    rejected.append(str(exc))
+                    continue
+                if parsed is not None:
+                    messages.append(parsed)
+    return InboundBatch(messages=tuple(messages), rejected=tuple(rejected))
+
+
 def _parse_message(msg: Any, phone_number_id: str) -> WhatsAppMessage | None:
     """Un ítem de ``messages[]`` → ``WhatsAppMessage`` (``None`` si no es un
     mensaje aprovechable; ``ValueError`` si la shape es inválida). Compartido

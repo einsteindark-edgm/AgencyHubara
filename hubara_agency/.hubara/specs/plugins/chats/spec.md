@@ -27,24 +27,41 @@ en background (sin bloquear la response al cliente WhatsApp).
 
 - GIVEN un body WhatsApp Cloud bien formado con un mensaje de texto
 - WHEN `POST /api/webhook` recibe el body
-- THEN parsea con `parse_whatsapp_inbound`
+- THEN parsea con `parse_whatsapp_inbound_all` (el POST ENTERO)
 - AND devuelve `{status: "ok"}` con HTTP 200 en < 200ms
 - AND `IngestInboundMessage.execute(parsed)` se invoca en background
 - AND eventualmente arranca/signalá el workflow apropiado (sales o remarketing)
 
+#### Scenario: POST batcheado (varios mensajes en un mismo webhook)
+
+Meta puede agrupar hasta 1000 updates por POST (típico tras demoras o
+reintentos). Bug 2026-09-18: solo se leía `entry[0].changes[0].messages[0]`
+y el resto se perdía en silencio.
+
+- GIVEN un POST con varios mensajes — en varios `entry`, varios `changes`, o varios ítems de un mismo `messages[]`
+- WHEN se procesa
+- THEN CADA mensaje MUST llegar a `IngestInboundMessage.execute`, uno por background task
+- AND en el orden en que Meta los mandó (los tasks corren en serie → dos mensajes del mismo cliente se ingieren en orden)
+- AND el fallo de un task (un ingest o un delivery status que lanza) MUST NOT impedir los siguientes: se loguea con traceback (`inbound_ingest_failed` / `delivery_status_ingest_failed`) y se sigue
+
 #### Scenario: Body malformado
 
-- GIVEN un body que no cumple el schema esperado de WhatsApp Cloud
-- WHEN el parser arroja `ValueError`
+- GIVEN un POST donde NINGÚN mensaje se pudo parsear (ítem inválido o envelope del change roto)
 - THEN se devuelve HTTP 400 con `detail="malformed payload: ..."`
-- AND se loguea `Malformed WhatsApp webhook body` con `error=str(exc)`
+- AND se loguea `Malformed WhatsApp webhook body` con el motivo de cada ítem rechazado
+
+#### Scenario: Ítem inválido junto a mensajes válidos
+
+- GIVEN un POST con al menos un mensaje válido y algún ítem que no parsea
+- THEN los válidos se ingieren y se devuelve HTTP 200 (un 400 haría que Meta reintente TODO el POST y re-entregue los válidos)
+- AND cada ítem rechazado se loguea con su motivo
 
 #### Scenario: Status update (no es mensaje)
 
 - GIVEN un webhook que es status update (delivered/read), no mensaje nuevo
 - WHEN se procesa
-- THEN el parser devuelve `None`
-- AND el endpoint responde `{status: "ok"}` sin dispatch a use case
+- THEN el batch de inbound queda vacío
+- AND el endpoint responde `{status: "ok"}` sin dispatch al ingest de mensajes
 
 #### Scenario: Verification handshake
 
