@@ -161,14 +161,19 @@ function isAssignedToHuman(s: ChatSession, tag: ChatTag): boolean {
 /**
  * `order_ref` del backend → chip de la fila.
  *
- * El label es el número humano de Medusa ("#31"). Sin `display_id` (provider
- * stub) cae a los últimos 6 del id interno — el `order_01KSTZ…` crudo no le
- * dice nada al operador y rompe el ancho de la fila.
+ * El chip solo existe para una ORDEN real con su número: sin `display_id` no
+ * se pinta nada (la primera versión caía a los últimos 6 del id interno de
+ * Medusa, que al operador no le dicen nada).
+ *
+ * El "#" se pone ACÁ, una sola vez. El backend manda el número pelado ("32"),
+ * pero frontend y backend despliegan por separado: uno viejo manda "#32" (el
+ * formato de la vista Orders) y el chip pintaba "##32" — por eso se pela igual.
  */
 function adaptOrderRef(ref: SessionOrderRef | null | undefined): ChatOrderBadge | null {
-  if (!ref) return null;
+  const number = ref?.display_id?.replace(/^#+/, "").trim();
+  if (!ref || !number) return null;
   return {
-    label: ref.display_id ? `#${ref.display_id}` : `…${ref.order_id.slice(-6)}`,
+    label: `#${number}`,
     orderId: ref.order_id,
     payment: ref.payment,
     count: ref.count,

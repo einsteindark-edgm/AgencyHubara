@@ -19,7 +19,7 @@ export interface SessionOrigin {
 /** Pedido al que ya pertenece la conversación (ver `sessionOrderRefSchema`). */
 export interface SessionOrderRef {
   order_id: string;
-  /** Número humano de Medusa ("31"), o null si el provider no lo trae. */
+  /** Número de orden pelado ("31"). Sin número no se pinta chip. */
   display_id: string | null;
   payment: "pending" | "confirmed" | "cancelled";
   /** Pedidos exitosos de esta sesión (el chip muestra "#33 +1"). */

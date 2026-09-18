@@ -67,14 +67,16 @@ def test_inbox_list_uses_one_read_and_the_real_payment_state(client) -> None:
     c, vault, facts = client
     _seed(vault, "wa_31", "order_31")  # pagado en Medusa → sin botón
     _seed(vault, "wa_32", "order_32")  # sin pagar → con botón
-    _seed(vault, "wa_40", "order_40", escalation_reason="OTRA")  # ni candidato
+    _seed(vault, "wa_40", "order_40", escalation_reason="OTRA")  # sin botón
 
     by_id = {s["session_id"]: s for s in c.get("/api/dashboard/sessions").json()["sessions"]}
 
     assert by_id["wa_31"]["pending_payment_order_id"] is None
     assert by_id["wa_32"]["pending_payment_order_id"] == "order_32"
     assert by_id["wa_40"]["pending_payment_order_id"] is None
-    assert facts.calls == [{"order_31", "order_32"}]
+    # UNA sola lectura para toda la bandeja. order_40 no es candidato al botón
+    # pero sí al chip de orden de la fila, que se resuelve en el mismo batch.
+    assert facts.calls == [{"order_31", "order_32", "order_40"}]
 
 
 def test_session_detail_uses_the_real_payment_state(client) -> None:

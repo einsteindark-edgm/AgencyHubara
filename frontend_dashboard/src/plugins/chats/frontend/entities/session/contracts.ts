@@ -22,14 +22,15 @@ export const sessionOriginSchema = z.object({
 });
 
 /**
- * Pedido al que YA pertenece la conversación, o null si todavía no hay orden
- * registrada. Lo computa el backend desde el metadata del vault
- * (`_compute_order_ref`) — cero llamadas a Medusa por fila de la bandeja.
+ * ORDEN a la que ya pertenece la conversación, o null. Solo órdenes reales con
+ * número: un draft (venta registrada, entrega sin agendar) todavía no es una
+ * orden y viaja como null. Lo computa el backend (`_compute_order_ref`) desde
+ * `OrderFacts` — el mismo store de la vista Orders, en una lectura por bandeja.
  *
- * `payment` habla del PAGO (lo único que el vault sabe), no de la logística:
- * preparando / listo / en camino vive en Medusa y lo pide el panel de pedidos.
- * `display_id` es el número humano de Medusa ("31"); null si el provider no lo
- * trae (stub) → el UI cae al id corto.
+ * `payment` habla del PAGO, no de la logística: preparando / listo / en camino
+ * lo muestra el panel de pedidos del chat. `display_id` es el número PELADO
+ * ("31"); el "#" lo pone el adaptador. Nullable solo por tolerancia de rollout:
+ * sin número no se pinta chip.
  */
 export const sessionOrderRefSchema = z.object({
   order_id: z.string(),
