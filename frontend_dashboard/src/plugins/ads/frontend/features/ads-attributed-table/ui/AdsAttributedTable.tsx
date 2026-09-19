@@ -30,7 +30,17 @@ import {
 const CAPI_EVENT_META: Record<CapiEvent, { color: string; bg: string }> = {
   Purchase: { color: "var(--color-ok)", bg: "rgba(91,224,123,0.22)" },
   LeadSubmitted: { color: "var(--color-info)", bg: "rgba(95,169,255,0.22)" },
+  OrderCanceled: { color: "var(--color-danger)", bg: "rgba(255,114,105,0.22)" },
 };
+
+/** Tooltip del badge CAPI. `OrderCanceled` llega DESPUÉS de un Purchase que
+ *  Meta no deja retractar — se aclara para que el operador no lo lea como
+ *  "la compra se borró de Ads Manager". */
+function capiTitle(event: CapiEvent): string {
+  if (event === "OrderCanceled")
+    return "Pedido cancelado reportado a Meta (OrderCanceled). Si antes se reportó un Purchase, Ads Manager lo sigue contando: Meta no permite retractarlo.";
+  return `Evento ${event} reportado a Meta (CAPI)`;
+}
 
 interface Props {
   rows: AttributedConversation[];
@@ -108,13 +118,20 @@ export function AdsAttributedTable({ rows }: Props) {
                     {meta ? (
                       <span
                         className="att-state"
+                        title={
+                          c.stateReason === "order_cancelled"
+                            ? "El pedido de esta conversación está cancelado en Pedidos"
+                            : undefined
+                        }
                         style={{ background: meta.bg, color: meta.color }}
                       >
                         <span
                           className="att-dot"
                           style={{ background: meta.color }}
                         />
-                        {meta.label}
+                        {c.stateReason === "order_cancelled"
+                          ? `${meta.label} · pedido cancelado`
+                          : meta.label}
                       </span>
                     ) : (
                       <MissingField withIcon />
@@ -127,7 +144,7 @@ export function AdsAttributedTable({ rows }: Props) {
                     {c.capiEvent ? (
                       <span
                         className="att-state"
-                        title={`Evento ${c.capiEvent} reportado a Meta (CAPI)`}
+                        title={capiTitle(c.capiEvent)}
                         style={{
                           background: CAPI_EVENT_META[c.capiEvent].bg,
                           color: CAPI_EVENT_META[c.capiEvent].color,

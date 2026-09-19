@@ -2571,3 +2571,591 @@ async def test_farewell_survives_a_variant_picker_in_the_same_batch(tmp_path: Pa
 
     assert [m for (_s, m) in tracker.send_whatsapp_calls] == [_RELAY_FAREWELL]
     assert tracker.llm_calls == 1
+
+
+# =============================================================================
+# El tag AUTOSUFICIENTE termina el turno — run b06636a6 (2026-09-18)
+# =============================================================================
+# Misma clase que L-20, otra tool. Cadena real del cierre por ghosting:
+#   llm_chat #1  → manage_conversation_tag(INTERESADO)
+#   tool result  → "Éxito. Interacción etiquetada como 'INTERESADO'."
+#   llm_chat #2  → FORZADO por el loop; el modelo acusa recibo: "Etiqueta registrada."
+# No llegó al cliente SOLO por ser turno admin, pero (1) `record_turn` lo
+# persistió como `assistant` → few-shot de "tras una tool se acusa recibo" en el
+# contexto que produjo el leak del run 5ed9af2d; (2) en un turno de CLIENTE era
+# el final_content; (3) ~55K prompt tokens por cierre para un texto descartado.
+# Contrato nuevo: la tool DECLARA el cierre (`tag_closure`) y el loop corta.
+
+_TAG_ACK = "Etiqueta registrada."
+_CLOSING_LINE = "Con gusto, aquí estaré por si más adelante te animas 🤍"
+_FIRST_REPLY = "¿Qué aroma te gustaría?"
+_ABSENT = object()
+
+
+def _tag_batch(
+    tag: str, *, customer_message: str | None = None, content: str = ""
+) -> LLMResponseData:
+    args = {"tag": tag, "motivo": "cierre"}
+    if customer_message is not None:
+        args["customer_message"] = customer_message
+    return LLMResponseData(
+        content=content,
+        finish_reason="tool_calls",
+        has_tool_calls=True,
+        tool_calls=[ToolCallData(id="tag1", name="manage_conversation_tag", arguments=args)],
+    )
+
+
+def _tag_envelope(
+    tag: str,
+    *,
+    ends_turn: bool = True,
+    customer_message: object = _ABSENT,
+    episode_closed: bool = False,
+) -> str:
+    closure: dict = {"tag": tag, "ends_turn": ends_turn}
+    if customer_message is not _ABSENT:
+        closure["customer_message"] = customer_message
+    payload: dict = {"message": "Hecho.", "tag_closure": closure}
+    if episode_closed:
+        payload["episode_closed"] = {
+            "session_id": "wa_tagturn",
+            "episode_id": "ep_007",
+            "closing_tag": tag,
+        }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+async def _run_tag_session(
+    tracker: Tracker,
+    workspace: Path,
+    *,
+    responses: list[LLMResponseData],
+    tool_results: dict[str, str],
+    closing_escalation_result: bool = False,
+    customer_text: str = "Hola, busco una vela",
+) -> None:
+    """UN mensaje del cliente y después silencio: el workflow corre el turno del
+    cliente y, al vencer el idle, el turno ADMIN de cierre por ghosting."""
+
+    # El cierre de episodio dispara EpisodeClosedEvent + CAPI (mismos fakes
+    # locales que `test_closing_escalation_safety_net_…`).
+    @activity.defn(name="send_capi_event_activity")
+    async def fake_send_capi(session_id: str, episode_id: str, event_name: str) -> dict:
+        return {"status": "sent", "event_id": f"close_{episode_id}", "event_name": event_name}
+
+    @activity.defn(name="orchestration.dispatch_event")
+    async def fake_dispatch_event(envelope) -> dict:
+        return {
+            "source_plugin": "chats",
+            "source_worker": "sales",
+            "event_type": "chats.episode_closed",
+        }
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=[
+                *_make_fake_activities(
+                    tracker,
+                    workspace_path=str(workspace),
+                    llm_responses=responses,
+                    tool_results=tool_results,
+                    closing_escalation_result=closing_escalation_result,
+                    prior_history=[
+                        {"role": "user", "content": "Hola"},
+                        {"role": "assistant", "content": "¡Buenas! Bienvenido a *Hubara*..."},
+                    ],
+                ),
+                fake_send_capi,
+                fake_dispatch_event,
+            ],
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(session_id="wa_tagturn", runtime_workspace_path=str(workspace)),
+                id="session-wa_tagturn",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message, args=[customer_text, None, None]
+            )
+            await handle.result()
+
+
+def _assistant_texts(new_messages: list[dict]) -> list[str]:
+    """Lo que el LLM va a RECORDAR haberle dicho al cliente: los mensajes
+    assistant de TEXTO. El content que acompaña a una tool call (narración que
+    el default-deny descarta) es otra discusión y no se mide acá."""
+    return [
+        m["content"]
+        for m in new_messages
+        if m.get("role") == "assistant" and m.get("content") and not m.get("tool_calls")
+    ]
+
+
+# ------------------------------------------------------------- A · turno admin
+
+
+@pytest.mark.asyncio
+async def test_ghost_close_tag_ends_the_turn_and_never_asks_for_an_ack(
+    tmp_path: Path,
+) -> None:
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        # El 3er response es el acuse del run real: si el loop lo pide, existe.
+        responses=[_final_resp(_FIRST_REPLY), _tag_batch("INTERESADO"), _final_resp(_TAG_ACK)],
+        tool_results={"manage_conversation_tag": _tag_envelope("INTERESADO")},
+    )
+
+    assert tracker.ghosting_calls == 1
+    assert tracker.execute_tool_calls == ["manage_conversation_tag"]
+    assert tracker.llm_calls == 2, (
+        "turno del cliente + turno de cierre: el tag termina el turno, sin el "
+        f"llm_chat del acuse (hubo {tracker.llm_calls})"
+    )
+    assert [m for (_s, m) in tracker.send_whatsapp_calls] == [_FIRST_REPLY]
+    ghost_turn = tracker.record_turn_new_messages[-1]
+    assert _assistant_texts(ghost_turn) == [], f"el LLM recordaría: {ghost_turn}"
+
+
+@pytest.mark.asyncio
+async def test_ghost_close_combo_tag_still_lets_the_llm_escalate(tmp_path: Path) -> None:
+    """CONFIRMADO_SIN_DATOS va en combo con `escalate_to_human`: ahí el `llm_chat`
+    siguiente SÍ tiene trabajo (escalar con su resumen para el colega). Cortar por
+    NOMBRE de tool le quitaría al relevo de la venta más valiosa el resumen del
+    modelo y lo dejaría con el motivo genérico de la red de seguridad. La
+    despedida de la escalación no sale (el cliente ya no está) ni se recuerda."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        responses=[
+            _final_resp(_FIRST_REPLY),
+            _tag_batch("CONFIRMADO_SIN_DATOS"),
+            _escalation_batch(_RELAY_FAREWELL),
+            _final_resp(_RELAY_LEAK),
+        ],
+        tool_results={
+            "manage_conversation_tag": _tag_envelope("CONFIRMADO_SIN_DATOS", ends_turn=False),
+            "escalate_to_human": _escalation_envelope(_RELAY_FAREWELL),
+        },
+    )
+
+    assert tracker.execute_tool_calls == ["manage_conversation_tag", "escalate_to_human"]
+    assert tracker.llm_calls == 3, "cliente + (tag, escalate); sin acuse tras escalar"
+    assert [m for (_s, m) in tracker.send_whatsapp_calls] == [_FIRST_REPLY]
+    ghost_turn = tracker.record_turn_new_messages[-1]
+    assert _assistant_texts(ghost_turn) == [], (
+        f"despedida NO enviada (turno admin) pero recordada: {ghost_turn}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ghost_close_combo_tag_without_escalation_is_covered_by_the_safety_net(
+    tmp_path: Path,
+) -> None:
+    """El LLM marca CONFIRMADO_SIN_DATOS y, en vez de escalar, acusa recibo. La
+    red `ensure_closing_escalation` escala por él; el acuse ni sale ni se recuerda."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        responses=[_final_resp(_FIRST_REPLY), _tag_batch("CONFIRMADO_SIN_DATOS"), _final_resp(_TAG_ACK)],
+        tool_results={
+            "manage_conversation_tag": _tag_envelope(
+                "CONFIRMADO_SIN_DATOS", ends_turn=False, episode_closed=True
+            )
+        },
+        closing_escalation_result=True,
+    )
+
+    assert [(s, r) for (s, r, _m) in tracker.closing_escalation_calls] == [
+        ("wa_tagturn", "ORDER_PENDING_SHIPPING_DETAILS")
+    ]
+    assert [m for (_s, m) in tracker.send_whatsapp_calls] == [_FIRST_REPLY]
+    ghost_turn = tracker.record_turn_new_messages[-1]
+    assert _assistant_texts(ghost_turn) == [], f"el LLM recordaría: {ghost_turn}"
+
+
+# ---------------------------------------------------------- B · turno de cliente
+
+
+@pytest.mark.asyncio
+async def test_closing_tag_in_a_customer_turn_sends_the_customer_message_and_asks_no_ack(
+    tmp_path: Path,
+) -> None:
+    """El cliente dice "no gracias": el modelo escribe la despedida como content
+    JUNTO a la tool call (se descarta, default-deny) y la repite en
+    `customer_message`. Sale ESA, una sola vez, y no hay llm_chat de acuse."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        customer_text="No gracias, ya no me interesa",
+        responses=[
+            _tag_batch("RECHAZO", customer_message=_CLOSING_LINE, content=_CLOSING_LINE),
+            _final_resp(_TAG_ACK),
+        ],
+        tool_results={
+            "manage_conversation_tag": _tag_envelope("RECHAZO", customer_message=_CLOSING_LINE)
+        },
+    )
+
+    assert [m for (_s, m) in tracker.send_whatsapp_calls] == [_CLOSING_LINE]
+    customer_turn = tracker.record_turn_new_messages[0]
+    assert _assistant_texts(customer_turn)[-1] == _CLOSING_LINE, (
+        "lo que SÍ salió queda en el historial del LLM"
+    )
+    trace = tracker.turn_traces[0]
+    assert trace["sent_texts"] == [_CLOSING_LINE]
+    assert trace["llm_text"] == _CLOSING_LINE
+    # Turno del cliente (1) + cierre por ghosting posterior (1, que también corta).
+    assert tracker.llm_calls == 2, f"hubo un llm_chat de acuse: {tracker.llm_calls}"
+
+
+@pytest.mark.asyncio
+async def test_closing_tag_without_customer_message_keeps_the_llm_reply(
+    tmp_path: Path,
+) -> None:
+    """Sin `customer_message` (sesión en vuelo con el schema viejo, o el modelo
+    prefiere responder aparte) el cliente SIGUE esperando respuesta: ese llm_chat
+    es legítimo y su texto sale. Cortar acá dejaría al cliente en silencio."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        customer_text="Lo voy a pensar. ¿Hacen envíos a Cali?",
+        responses=[_tag_batch("INTERESADO"), _final_resp("Sí, enviamos a Cali 🤍")],
+        tool_results={"manage_conversation_tag": _tag_envelope("INTERESADO")},
+    )
+
+    assert [m for (_s, m) in tracker.send_whatsapp_calls] == ["Sí, enviamos a Cali 🤍"]
+
+
+@pytest.mark.asyncio
+async def test_closing_tag_with_nothing_safe_to_say_ends_the_turn_in_silence(
+    tmp_path: Path,
+) -> None:
+    """El modelo mandó `customer_message` pero era un parte interno: la tool lo
+    declara VACÍO (≠ ausente). El modelo ya mostró que confunde al destinatario:
+    el turno termina callado en vez de reabrirle el canal con otro llm_chat."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        customer_text="No gracias",
+        responses=[_tag_batch("RECHAZO", customer_message=_TAG_ACK), _final_resp(_TAG_ACK)],
+        tool_results={"manage_conversation_tag": _tag_envelope("RECHAZO", customer_message="")},
+    )
+
+    assert tracker.send_whatsapp_calls == []
+    assert tracker.llm_calls == 2, "turno del cliente (1) + cierre por ghosting (1)"
+
+
+# ------------------------------------- C · lo que no salió, el LLM no lo recuerda
+
+
+@pytest.mark.asyncio
+async def test_blocked_ack_is_not_remembered_by_the_llm(tmp_path: Path) -> None:
+    """Tool result de forma vieja (sin `tag_closure`): el loop no corta, el modelo
+    acusa recibo y el tripwire lo bloquea. Antes ese texto igual se persistía con
+    `record_turn`: la sesión siguiente lo leía como algo que "ya dijo"."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        customer_text="No gracias",
+        responses=[_tag_batch("RECHAZO"), _final_resp(_TAG_ACK)],
+        tool_results={
+            "manage_conversation_tag": json.dumps(
+                {"message": "Éxito. Interacción etiquetada como 'RECHAZO'."},
+                ensure_ascii=False,
+            )
+        },
+    )
+
+    assert tracker.send_whatsapp_calls == []
+    customer_turn = tracker.record_turn_new_messages[0]
+    assert _assistant_texts(customer_turn) == [], f"el LLM recordaría: {customer_turn}"
+    # El turno en sí NO desaparece: lo que el cliente dijo y la tool quedan.
+    assert [m.get("role") for m in customer_turn] == ["user", "assistant", "tool"]
+
+
+@pytest.mark.asyncio
+async def test_admin_turn_prose_is_not_remembered_by_the_llm(tmp_path: Path) -> None:
+    """Run 5f43bcd0 (llm_chat 729): en el cierre por ghosting el modelo desobedece
+    y escribe el resumen sin llamar la tool. No sale (turno admin) — y tampoco
+    debe quedar como algo que el agente le dijo al cliente."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        responses=[_final_resp(_FIRST_REPLY), _final_resp("Quedó pensándolo, vuelvo luego.")],
+        tool_results={},
+    )
+
+    assert [m for (_s, m) in tracker.send_whatsapp_calls] == [_FIRST_REPLY]
+    ghost_turn = tracker.record_turn_new_messages[-1]
+    assert _assistant_texts(ghost_turn) == [], f"el LLM recordaría: {ghost_turn}"
+    # Y tampoco queda el TRIGGER solo. Sin la prosa que lo "cerraba", la sesión
+    # siguiente leería [user: "[SISTEMA]… NO generes ninguna respuesta visible…"]
+    # [user: mensaje nuevo del cliente] y podría aplicarle la orden vieja al
+    # mensaje nuevo (cliente que vuelve y recibe silencio). Un turno admin sin
+    # tool calls no dejó ningún hecho que recordar: "nunca pasó".
+    assert ghost_turn == [], f"quedó una instrucción de sistema sin cerrar: {ghost_turn}"
+    assert tracker.record_turn_calls == 2, "record_turn se agenda SIEMPRE (misma forma de history)"
+
+
+@pytest.mark.asyncio
+async def test_no_message_abstention_is_still_remembered(tmp_path: Path) -> None:
+    """Decisión deliberada: `NO_MESSAGE` NO se recorta. No es un acuse sino el
+    canal CORRECTO de abstención; que el modelo vea que lo usó es el few-shot
+    bueno (borrarlo empuja a declinar en prosa, que es lo que se filtraba)."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                pending_handoff="Usuario respondió: (sin mensaje nuevo)",
+                llm_responses=[_final_resp("NO_MESSAGE")],
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(session_id="wa_tagturn", runtime_workspace_path=str(workspace)),
+                id="session-wa_tagturn",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.result()
+
+    assert tracker.send_whatsapp_calls == []
+    assert _assistant_texts(tracker.record_turn_new_messages[0]) == ["NO_MESSAGE"]
+
+
+class _SequencedResults(dict):
+    """`tool_results` donde una tool devuelve un envelope DISTINTO por llamada
+    (valor = lista, se consume en orden); un valor `str` se repite siempre."""
+
+    def __getitem__(self, key: str) -> str:
+        value = super().__getitem__(key)
+        return value.pop(0) if isinstance(value, list) else value
+
+
+@pytest.mark.asyncio
+async def test_the_last_tag_of_the_batch_decides_whether_the_turn_ends(tmp_path: Path) -> None:
+    """Dos tags en UN batch (el modelo se corrige): en metadata gana la última
+    escritura, así que el cierre que vale es el de la ÚLTIMA llamada. Si la
+    primera era autosuficiente y la última es combo, el turno NO termina: el
+    modelo todavía tiene que escalar."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    two_tags = LLMResponseData(
+        content="",
+        finish_reason="tool_calls",
+        has_tool_calls=True,
+        tool_calls=[
+            ToolCallData(
+                id="t1",
+                name="manage_conversation_tag",
+                arguments={"tag": "RECHAZO", "motivo": "primer intento"},
+            ),
+            ToolCallData(
+                id="t2",
+                name="manage_conversation_tag",
+                arguments={"tag": "CONFIRMADO_SIN_DATOS", "motivo": "se corrige"},
+            ),
+        ],
+    )
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        responses=[_final_resp(_FIRST_REPLY), two_tags, _escalation_batch(_RELAY_FAREWELL)],
+        tool_results=_SequencedResults(
+            {
+                "manage_conversation_tag": [
+                    _tag_envelope("RECHAZO"),
+                    _tag_envelope("CONFIRMADO_SIN_DATOS", ends_turn=False),
+                ],
+                "escalate_to_human": _escalation_envelope(_RELAY_FAREWELL),
+            }
+        ),
+    )
+
+    assert tracker.execute_tool_calls == [
+        "manage_conversation_tag",
+        "manage_conversation_tag",
+        "escalate_to_human",
+    ], "el turno se cortó en el primer tag y el modelo nunca llegó a escalar"
+
+
+@pytest.mark.asyncio
+async def test_real_tag_tool_envelope_ends_the_turn_end_to_end(tmp_path: Path) -> None:
+    """Contrato tool↔loop de punta a punta: los envelopes los produce la tool REAL
+    (los demás tests usan envelopes escritos a mano). Si alguien renombra
+    `tag_closure` / `ends_turn` / `customer_message` en UN solo lado, este test lo
+    caza. Cubre los dos sitios del corte: "no gracias" del cliente y el cierre
+    por ghosting posterior."""
+    from exoclaw.agent.tools import ToolContext
+
+    from src.plugins.chats.agent.sales.tools.tags import ManageConversationTagTool
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    tool = ManageConversationTagTool(workspace=str(tmp_path), vault_dir=vault)
+    ctx = ToolContext(session_key="wa_tagturn", channel="whatsapp", chat_id="wa_tagturn")
+    customer_turn_envelope = await tool.execute_with_context(
+        ctx, tag="RECHAZO", motivo="dijo que no", customer_message=_CLOSING_LINE
+    )
+    ghost_turn_envelope = await tool.execute_with_context(
+        ctx, tag="RECHAZO", motivo="dejó de responder"
+    )
+
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    await _run_tag_session(
+        tracker,
+        workspace,
+        customer_text="No gracias, ya no me interesa",
+        responses=[
+            _tag_batch("RECHAZO", customer_message=_CLOSING_LINE, content=_CLOSING_LINE),
+            _tag_batch("RECHAZO"),
+            _final_resp(_TAG_ACK),
+        ],
+        tool_results=_SequencedResults(
+            {"manage_conversation_tag": [customer_turn_envelope, ghost_turn_envelope]}
+        ),
+    )
+
+    assert [m for (_s, m) in tracker.send_whatsapp_calls] == [_CLOSING_LINE]
+    assert tracker.execute_tool_calls == ["manage_conversation_tag"] * 2
+    assert tracker.llm_calls == 2, (
+        "un llm_chat por turno: ni el turno del cliente ni el cierre por "
+        f"ghosting piden el acuse (hubo {tracker.llm_calls})"
+    )
+    remembered = [t for turn in tracker.record_turn_new_messages for t in _assistant_texts(turn)]
+    assert remembered == [_CLOSING_LINE], f"el LLM recordaría: {remembered}"
+
+
+@pytest.mark.asyncio
+async def test_a_picker_in_the_same_batch_wins_over_the_closing_tag(tmp_path: Path) -> None:
+    """Batch contradictorio [present_variant_picker, tag + customer_message]: el
+    picker le PREGUNTA algo al cliente y el tag se DESPIDE. Gana el corte L-11 (el
+    picker ES el mensaje, como antes de este cambio): la despedida no sale, no
+    aparece en el dashboard como si hubiera salido y el LLM no la recuerda.
+    (Con la escalación es al revés —la despedida sobrevive— porque es definitiva.)"""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    batch = LLMResponseData(
+        content="",
+        finish_reason="tool_calls",
+        has_tool_calls=True,
+        tool_calls=[
+            ToolCallData(id="p1", name="present_variant_picker", arguments={"handle": "cubo-love"}),
+            ToolCallData(
+                id="tag1",
+                name="manage_conversation_tag",
+                arguments={"tag": "INTERESADO", "motivo": "duda", "customer_message": _CLOSING_LINE},
+            ),
+        ],
+    )
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        customer_text="¿Qué aromas hay?",
+        responses=[batch, _final_resp(_TAG_ACK)],
+        tool_results={
+            "present_variant_picker": json.dumps({"queued": True}),
+            "manage_conversation_tag": _tag_envelope("INTERESADO", customer_message=_CLOSING_LINE),
+        },
+    )
+
+    assert tracker.send_whatsapp_calls == [], "el picker es el único mensaje del turno"
+    assert tracker.persist_calls == [], "el dashboard mostraría un texto que el cliente no recibió"
+    assert _assistant_texts(tracker.record_turn_new_messages[0]) == []
+    assert "flush" in tracker.timeline, "el picker sí se entrega"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_tool_in_the_batch_keeps_the_turn_open(tmp_path: Path) -> None:
+    """Si ALGUNA tool del batch falló, el modelo tiene que verlo: no se corta.
+    Caso: dos tags en un batch y el último rebota por precondición (su envelope de
+    error no trae `tag_closure`) — sin esto sobrevivía el cierre del primero y el
+    turno terminaba con el error sin leer."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    two_tags = LLMResponseData(
+        content="",
+        finish_reason="tool_calls",
+        has_tool_calls=True,
+        tool_calls=[
+            ToolCallData(
+                id="t1",
+                name="manage_conversation_tag",
+                arguments={"tag": "RECHAZO", "motivo": "x", "customer_message": _CLOSING_LINE},
+            ),
+            ToolCallData(
+                id="t2",
+                name="manage_conversation_tag",
+                arguments={"tag": "CONFIRMADO_PAGO_PENDIENTE", "motivo": "y"},
+            ),
+        ],
+    )
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        customer_text="Listo, ya pagué",
+        responses=[two_tags, _final_resp("Dame un momento y lo reviso 🤍")],
+        tool_results=_SequencedResults(
+            {
+                "manage_conversation_tag": [
+                    _tag_envelope("RECHAZO", customer_message=_CLOSING_LINE),
+                    json.dumps({"error": "precondition_failed: falta register_order"}),
+                ]
+            }
+        ),
+    )
+
+    assert [m for (_s, m) in tracker.send_whatsapp_calls] == ["Dame un momento y lo reviso 🤍"]

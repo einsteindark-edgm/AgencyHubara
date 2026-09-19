@@ -32,9 +32,10 @@ export function ChatsInbox({ selectedId, onSelect }: Props) {
   const { data: chats = [] } = useChatInbox();
   const f = useInboxFilters(chats);
   const isHuman = f.activeFilter === "Humano";
-  // El banner cuenta sobre el rango de fechas vigente, igual que los pills —
-  // si no, dice "7 esperando" y la lista muestra 2.
+  // El banner cuenta sobre el rango de fechas y la búsqueda vigentes, igual
+  // que los pills — si no, dice "7 esperando" y la lista muestra 2.
   const humanCount = f.filters.find((t) => t.key === "Humano")?.count ?? 0;
+  const allCount = f.filters.find((t) => t.key === "Todas")?.count ?? 0;
 
   return (
     <aside className="sidebar">
@@ -47,7 +48,12 @@ export function ChatsInbox({ selectedId, onSelect }: Props) {
 
         <div className="side-search">
           <Icon.search />
-          <input placeholder="Buscar conversaciones…" />
+          <input
+            placeholder="Buscar conversaciones…"
+            aria-label="Buscar conversaciones"
+            value={f.query}
+            onChange={(e) => f.setQuery(e.target.value)}
+          />
         </div>
 
         <button
@@ -58,7 +64,7 @@ export function ChatsInbox({ selectedId, onSelect }: Props) {
           <span className="hb-body">
             <span className="hb-t">Asignadas al humano</span>
             <span className="hb-s">
-              {humanCount} conversación{humanCount !== 1 ? "es" : ""} esperando respuesta
+              {humanCount} conversaci{humanCount !== 1 ? "ones" : "ón"} esperando respuesta
             </span>
           </span>
           <span className="hb-count">{humanCount}</span>
@@ -95,7 +101,15 @@ export function ChatsInbox({ selectedId, onSelect }: Props) {
 
       <div className="side-list">
         {f.filtered.length === 0 ? (
-          <EmptyState hasDateRange={f.hasDateRange} isHuman={isHuman} onClear={f.clearDateRange} />
+          <EmptyState
+            query={f.query.trim()}
+            matchesElsewhere={allCount}
+            onShowAll={() => f.setActiveFilter("Todas")}
+            onClearQuery={f.clearQuery}
+            hasDateRange={f.hasDateRange}
+            isHuman={isHuman}
+            onClear={f.clearDateRange}
+          />
         ) : (
           f.sections.map((section) => (
             <div key={section.key}>
@@ -111,18 +125,56 @@ export function ChatsInbox({ selectedId, onSelect }: Props) {
   );
 }
 
-/** Una bandeja vacía por un filtro de fecha NO es "todo bajo control": es un
- *  filtro que esconde conversaciones. Decirlo evita el susto de creer que se
- *  perdieron los chats, y ofrece la salida en el mismo lugar. */
+/** Una bandeja vacía por una búsqueda o un filtro de fecha NO es "todo bajo
+ *  control": es un filtro que esconde conversaciones. Decirlo evita el susto
+ *  de creer que se perdieron los chats, y ofrece la salida en el mismo lugar. */
 function EmptyState({
+  query,
+  matchesElsewhere,
+  onShowAll,
+  onClearQuery,
   hasDateRange,
   isHuman,
   onClear,
 }: {
+  query: string;
+  /** Coincidencias de la búsqueda en todas las vistas (el pill "Todas"). */
+  matchesElsewhere: number;
+  onShowAll: () => void;
+  onClearQuery: () => void;
   hasDateRange: boolean;
   isHuman: boolean;
   onClear: () => void;
 }) {
+  // Lo buscado está en otro pill: la vista por defecto es la cola del humano
+  // y el cliente que se busca casi nunca está ahí — un vacío mudo haría creer
+  // que el buscador no encuentra.
+  if (query && matchesElsewhere > 0) {
+    return (
+      <div className="empty-human">
+        <span className="eh-ico"><Icon.search /></span>
+        <div className="eh-t">Sin resultados en esta vista</div>
+        <div className="eh-s">
+          {matchesElsewhere} conversaci{matchesElsewhere !== 1 ? "ones" : "ón"} con «{query}» en otras vistas.
+        </div>
+        <button className="cal-preset" style={{ marginTop: 10 }} onClick={onShowAll}>
+          Ver en Todas
+        </button>
+      </div>
+    );
+  }
+  if (query) {
+    return (
+      <div className="empty-human">
+        <span className="eh-ico"><Icon.search /></span>
+        <div className="eh-t">Sin resultados para «{query}»</div>
+        <div className="eh-s">Probá con otro teléfono, palabra o # de pedido.</div>
+        <button className="cal-preset clear" style={{ marginTop: 10 }} onClick={onClearQuery}>
+          Limpiar búsqueda
+        </button>
+      </div>
+    );
+  }
   if (hasDateRange) {
     return (
       <div className="empty-human">

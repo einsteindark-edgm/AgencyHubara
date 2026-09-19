@@ -136,7 +136,10 @@ async def test_tag_tool_dispatched_via_registry(tmp_path: Path) -> None:
     # El dispatch vía registry ejecutó la tool real: tag persistido en el
     # vault per-sesión. (El envelope `schedule_remarketing` ya no existe —
     # la reactivación es del ciclo del Window Strategist, no de esta tool.)
-    assert "INTERESADO" in payload["message"]
+    # El tag aplicado viaja ESTRUCTURADO en `tag_closure`, no en el `message`:
+    # un message con el token ("Interacción etiquetada como 'X'") tenía forma
+    # de parte interno e invitaba al acuse (run b06636a6).
+    assert payload["tag_closure"] == {"tag": "INTERESADO", "ends_turn": True}
     metadata = json.loads(
         (tmp_path / "wa_5499876543210" / "metadata.json").read_text(
             encoding="utf-8"
@@ -270,7 +273,11 @@ async def test_tag_tool_accepts_confirmado_pago_pendiente_when_registered(
     )
     payload = json.loads(raw)
     assert "error" not in payload
-    assert "CONFIRMADO_PAGO_PENDIENTE" in payload["message"]
+    # Tag combo: NO termina el turno (falta `escalate_to_human`).
+    assert payload["tag_closure"] == {
+        "tag": "CONFIRMADO_PAGO_PENDIENTE",
+        "ends_turn": False,
+    }
 
     data = json.loads((chat_dir / "metadata.json").read_text(encoding="utf-8"))
     assert data["tag"] == "CONFIRMADO_PAGO_PENDIENTE"

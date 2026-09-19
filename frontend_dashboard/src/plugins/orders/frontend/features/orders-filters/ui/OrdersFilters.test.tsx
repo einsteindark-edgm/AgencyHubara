@@ -60,6 +60,8 @@ function countOf(label: string): number {
 function renderFilters(orders: Order[] = ORDERS) {
   render(
     <OrdersFilters
+      query=""
+      setQuery={vi.fn()}
       view="all"
       setView={vi.fn()}
       payType="all"

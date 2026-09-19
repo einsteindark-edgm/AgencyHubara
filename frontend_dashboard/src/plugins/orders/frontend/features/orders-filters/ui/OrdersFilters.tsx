@@ -9,6 +9,9 @@
  *
  * Recibe el estado de filtros por prop. Owner del estado: la página, vía
  * `useOrderFilters` reusado por ambas features (filters + board).
+ *
+ * `orders` llega YA acotado por la búsqueda: los contadores dicen en qué
+ * vista quedó lo buscado, en vez de seguir contando todo.
  */
 
 import { Icon, MacButton } from "@/shared/ui";
@@ -19,6 +22,8 @@ import type { PayTypeFilter, ViewFilter } from "../model/useOrderFilters";
 const CHANNELS = ["WhatsApp", "Instagram", "Web", "Tienda", "Mercado Libre"];
 
 interface Props {
+  query: string;
+  setQuery: (q: string) => void;
   view: ViewFilter;
   setView: (v: ViewFilter) => void;
   payType: PayTypeFilter;
@@ -26,7 +31,15 @@ interface Props {
   orders: Order[];
 }
 
-export function OrdersFilters({ view, setView, payType, setPayType, orders }: Props) {
+export function OrdersFilters({
+  query,
+  setQuery,
+  view,
+  setView,
+  payType,
+  setPayType,
+  orders,
+}: Props) {
   // Día calendario COLOMBIANO (no UTC): `dueIso` es una fecha que el operador
   // eligió a mano, y el corte UTC caía a las 19:00 locales — a partir de las 7
   // de la tarde "Para hoy" mostraba las entregas de mañana.
@@ -72,7 +85,12 @@ export function OrdersFilters({ view, setView, payType, setPayType, orders }: Pr
 
       <div className="sb-search">
         <Icon.search />
-        <input placeholder="Buscar # orden o cliente…" />
+        <input
+          placeholder="Buscar # orden o cliente…"
+          aria-label="Buscar órdenes"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
       </div>
 
       <div className="sb-section">
