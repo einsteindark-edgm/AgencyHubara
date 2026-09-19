@@ -45,9 +45,14 @@ export function formatIsoDateEs(iso: string): string {
  * que un mensaje de las 20:00 del lunes se agrupara como martes, y que el
  * contador "Hoy" del inbox arrancara a las 7 de la tarde.
  *
- * Estas funciones son PURAS respecto al reloj salvo `todayBogotaIso()`, que es
- * la única que consulta `now` — se llama en render (regla 5 de la política de
- * estado), nunca dentro de un mapper ni de un `queryFn`.
+ * Estas funciones son PURAS respecto al reloj salvo las que consultan `now`:
+ * `todayBogotaIso()` directamente, y `addDaysBogotaIso()`,
+ * `nextDaysBogotaIsoSet()` y el `today` por defecto de `formatDayLabelEs()`,
+ * que la llaman por dentro. Esas se llaman en render (regla 5 de la política
+ * de estado), nunca dentro de un mapper ni de un `queryFn`. Si alimentan un
+ * `useMemo`, el día va en las deps: un
+ * `useMemo(() => nextDaysBogotaIsoSet(7), [])` pasa el linter y queda congelado
+ * en el día en que se montó el componente.
  */
 
 export const BOGOTA_TZ = "America/Bogota";

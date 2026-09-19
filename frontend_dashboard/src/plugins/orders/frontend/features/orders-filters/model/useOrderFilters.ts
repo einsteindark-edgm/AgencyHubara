@@ -3,12 +3,18 @@
  * modalidad del panel izquierdo (no hay agrupar/orden/cambio-a-tabla —
  * eliminados por feedback del usuario en la iteración del prototipo).
  *
- * Las fechas son dinámicas (Date.now()) — no hardcoded — para que el filtro
- * funcione correctamente para cualquier fecha de instalación.
+ * Las vistas por fecha cortan el día en hora COLOMBIA, igual que los
+ * contadores de la sidebar (`OrdersFilters`): `dueIso` es un día calendario
+ * que el operador eligió a mano, no un instante.
  */
 
 import { useMemo, useState } from "react";
-import { matchesSearch } from "@/shared/lib";
+import {
+  addDaysBogotaIso,
+  matchesSearch,
+  nextDaysBogotaIsoSet,
+  todayBogotaIso,
+} from "@/shared/lib";
 import type { Order, PayType } from "@plugins/orders/frontend/entities/order";
 
 export type ViewFilter =
@@ -21,14 +27,6 @@ export type ViewFilter =
   | "inprocess"
   | "ship";
 export type PayTypeFilter = "all" | PayType;
-
-function buildWeekIsos(): Set<string> {
-  const set = new Set<string>();
-  for (let i = 0; i < 7; i++) {
-    set.add(new Date(Date.now() + i * 86_400_000).toISOString().slice(0, 10));
-  }
-  return set;
-}
 
 /** Lo que promete el placeholder ("# orden o cliente") + el teléfono, que es
  *  como el cliente se identifica cuando escribe o llama. */
@@ -49,10 +47,18 @@ export function useOrderFilters(orders: Order[]) {
     [orders, query],
   );
 
+  // Día COLOMBIANO, el mismo corte que los contadores de la sidebar. En UTC
+  // la frontera caía a las 19:00 locales: desde esa hora "Para hoy" llenaba el
+  // tablero con las entregas de mañana mientras su contador contaba las de hoy.
+  // Se lee en cada render y entra en las deps: congelado dentro del memo, pasada
+  // la medianoche el filtro seguiría en el día anterior.
+  const today = todayBogotaIso();
+  const tomorrow = addDaysBogotaIso(1);
+
   const filtered = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-    const weekIsos = buildWeekIsos();
+    // Esta semana = próximos 7 días incluyendo hoy. Un Set no sirve de dep:
+    // se arma acá y se rehace cada vez que cambia `today`.
+    const weekIsos = nextDaysBogotaIsoSet(7);
     return searched.filter((o) => {
       if (payType !== "all" && o.payType !== payType) return false;
       // "No agendadas" = órdenes sin fecha de entrega asignada — típicamente
@@ -71,7 +77,7 @@ export function useOrderFilters(orders: Order[]) {
       if (view === "ship")     return o.status === "shipping";
       return true;
     });
-  }, [searched, view, payType]);
+  }, [searched, view, payType, today, tomorrow]);
 
   return { query, setQuery, view, setView, payType, setPayType, searched, filtered };
 }
