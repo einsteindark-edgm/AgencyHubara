@@ -27,24 +27,42 @@ en background (sin bloquear la response al cliente WhatsApp).
 
 - GIVEN un body WhatsApp Cloud bien formado con un mensaje de texto
 - WHEN `POST /api/webhook` recibe el body
-- THEN parsea con `parse_whatsapp_inbound`
+- THEN parsea con `parse_whatsapp_inbound_all` (el POST ENTERO)
 - AND devuelve `{status: "ok"}` con HTTP 200 en < 200ms
 - AND `IngestInboundMessage.execute(parsed)` se invoca en background
 - AND eventualmente arranca/signalá el workflow apropiado (sales o remarketing)
 
+#### Scenario: POST batcheado (varios mensajes en un mismo webhook)
+
+Meta puede agrupar hasta 1000 updates por POST (típico tras demoras o
+reintentos). Bug 2026-09-18: solo se leía `entry[0].changes[0].messages[0]`
+y el resto se perdía en silencio.
+
+- GIVEN un POST con varios mensajes — en varios `entry`, varios `changes`, o varios ítems de un mismo `messages[]`
+- WHEN se procesa
+- THEN CADA mensaje MUST llegar a `IngestInboundMessage.execute`, uno por background task
+- AND en el orden en que Meta los mandó (los tasks corren en serie → dos mensajes del mismo cliente se ingieren en orden)
+- AND el fallo de un task (un ingest o un delivery status que lanza) MUST NOT impedir los siguientes: se loguea con traceback (`inbound_ingest_failed` / `delivery_status_ingest_failed`) y se sigue
+- AND cada mensaje deja su desenlace en el ledger de inbound (ver "Ledger durable de inbound del webhook")
+
 #### Scenario: Body malformado
 
-- GIVEN un body que no cumple el schema esperado de WhatsApp Cloud
-- WHEN el parser arroja `ValueError`
+- GIVEN un POST donde NINGÚN mensaje se pudo parsear (ítem inválido o envelope del change roto)
 - THEN se devuelve HTTP 400 con `detail="malformed payload: ..."`
-- AND se loguea `Malformed WhatsApp webhook body` con `error=str(exc)`
+- AND se loguea `Malformed WhatsApp webhook body` con el motivo de cada ítem rechazado
+
+#### Scenario: Ítem inválido junto a mensajes válidos
+
+- GIVEN un POST con al menos un mensaje válido y algún ítem que no parsea
+- THEN los válidos se ingieren y se devuelve HTTP 200 (un 400 haría que Meta reintente TODO el POST y re-entregue los válidos)
+- AND cada ítem rechazado se loguea con su motivo
 
 #### Scenario: Status update (no es mensaje)
 
 - GIVEN un webhook que es status update (delivered/read), no mensaje nuevo
 - WHEN se procesa
-- THEN el parser devuelve `None`
-- AND el endpoint responde `{status: "ok"}` sin dispatch a use case
+- THEN el batch de inbound queda vacío
+- AND el endpoint responde `{status: "ok"}` sin dispatch al ingest de mensajes
 
 #### Scenario: Verification handshake
 
@@ -476,6 +494,42 @@ igual (sin `contents`): la identidad enriquece, nunca bloquea.
 - GIVEN el catálogo no responde
 - WHEN se registra el pedido
 - THEN el pedido se registra igual, `capi_contents == []` y los eventos salen sin `contents`
+
+### Requirement: Ledger durable de inbound del webhook
+
+El webhook de WhatsApp MUST dejar un rastro DURABLE (sobrevive a deploys, a
+diferencia de los logs del container) de cada POST y de cada mensaje del
+cliente, para poder distinguir "el webhook nunca llegó" de "llegó y lo perdimos
+adentro" al reconciliar contra las conversaciones que reporta Meta
+(auditoría 2026-09-18). Vive en `<vault>/_ledger/webhook/YYYY-MM-DD.jsonl`
+(día UTC, append-only). El ledger es observabilidad: un fallo al escribirlo
+MUST NOT afectar la respuesta al webhook.
+
+#### Scenario: todo mensaje del body crudo queda `seen` antes de rutear
+
+- GIVEN un POST válido con uno o más mensajes (en cualquier `entry`/`change`, incluido `standby`)
+- WHEN el handler lo acepta
+- THEN escribe un registro `request` (`outcome=accepted`, `fields`, `n_messages`, `n_statuses`)
+- AND un registro `message` `stage=seen` POR CADA mensaje del body crudo (con `wa_message_id`, `session_id` y el resumen del `referral`: `source_id`, `source_type`, `headline`, `has_clid`) — independiente de lo que el parser decida después
+
+#### Scenario: el ingest deja su desenlace
+
+- GIVEN un mensaje entregado a `IngestInboundMessage` / `IngestStandby`
+- WHEN el ingest termina
+- THEN queda `stage=ingested`; si lanzó, `stage=ingest_failed` con `error`
+- AND la excepción NO se re-lanza (se loguea con traceback): Starlette corta el loop de background tasks en la primera excepción y dejaría sin ingerir a los mensajes encolados detrás
+- AND un ítem que el parser rechaza queda `stage=rejected` con el motivo en `error` (el reporte lo cuenta como `failed`)
+- AND un `seen` sin desenlace se reporta como `lost`
+
+#### Scenario: un POST rechazado también deja registro
+
+- GIVEN un POST con firma inválida, sin secreto en prod, body no-JSON o payload malformado
+- THEN queda un registro `request` con `outcome` ∈ {`signature_rejected`, `secret_missing`, `not_json`, `malformed`}
+
+#### Scenario: reporte de reconciliación
+
+- WHEN el operador corre `python -m src.plugins.chats.agent.sales.inbound_ledger_report --from D --to D`
+- THEN obtiene, por día de Bogotá y por anuncio (`referral.source_id`), `sessions` (personas distintas — comparable con "conversaciones iniciadas" de Meta), `ingested`, `failed` y `lost`, con los teléfonos enmascarados salvo `--full`
 
 ## Out of scope
 
