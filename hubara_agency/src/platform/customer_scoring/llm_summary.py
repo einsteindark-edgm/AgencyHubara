@@ -134,7 +134,10 @@ class CustomerSummaryAdapter:
         elapsed_ms = int((time.time() - started) * 1000)
         try:
             content = response["choices"][0]["message"]["content"]
-            summary = str(content).strip()
+            # `content` llega None cuando el modelo no emitió texto (solo tool
+            # call, bloqueo de seguridad, o gastó max_tokens pensando). Un
+            # `str(None)` mostraba el resumen literal "None" sin error_detail.
+            summary = content.strip() if isinstance(content, str) else ""
         except (KeyError, IndexError, TypeError):
             log.warning(
                 "customer_summary: respuesta litellm con shape inesperado: %r",
