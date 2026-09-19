@@ -186,16 +186,22 @@ umbral de la Fase B. Conecta con el motor de unit-economics CTWA.
   lane está capturada; el consumidor (dashboard/aggregation) es follow-up. NO
   reclamar "medición implementada".
 
-**🔴 RUNBOOK #1 — el flip del rate card el 1-oct (premortem M1, el fallo más caro):**
-El default de `get_current_rate_card()` sigue siendo `co_2026q2_v1` (service=0).
-`co_2026q4_v1` (service=800) **solo entra si se setea
-`WHATSAPP_RATE_CARD_VERSION=co_2026q4_v1`** en el deploy del 1-oct. **No hay
-guard automático** que lo fuerce ni que compare `now_ms` contra el
-`effective_from_ms` del card. Si nadie flippea el env el 1-oct → **subconteo
-silencioso de TODO el gasto de service**. Fix propio (follow-up): selección de
-rate card date-aware por `effective_from_ms`. Mientras tanto, es item de deploy
-obligatorio + (idealmente) una alerta si el card activo tiene service=0 después
-del 1-oct.
+**✅ RUNBOOK #1 — el flip del rate card el 1-oct (premortem M1) — RESUELTO 2026-09-18:**
+`get_current_rate_card()` ya NO tiene default hardcodeado: elige la tarjeta
+VIGENTE por fecha (`cost.effective_rate_card_version`, por `effective_from_ms`)
+y sin cache de proceso, así que `co_2026q4_v1` (service=800) entra solo el
+2026-10-01T00:00:00Z **sin flippear nada ni reiniciar workers**. El costo real
+(`IngestDeliveryStatus`) usa la tarjeta vigente a la fecha de ENVÍO del mensaje.
+`WHATSAPP_RATE_CARD_VERSION` queda solo como override de emergencia (no existe
+en SSM y no hace falta crearlo). Guardas: `tests/platform/test_rate_card_date_aware.py`
+(falla si la tarjeta vigente ≥ 1-oct tiene service/utility en 0, o si el
+`effective_from_ms` de un YAML no coincide con el trimestre de su nombre — las
+dos tarjetas lo tenían mal) + tripwire `free_pricing_on_billable_category` en el
+log si Meta manda `free_customer_service` para una categoría que ya se cobra.
+Tarifa verificada contra Meta: service = utility = $0.0008 (CO); shape del
+webhook: `{"billable": true, "type": "regular", "category": "service"}`.
+**Pendiente operativo:** tras el 1-oct, mirar 1-2 webhooks reales + el log del
+tripwire y conciliar contra la factura de Meta.
 
 ## 10. Incógnitas a verificar (contra webhook real, no doc)
 

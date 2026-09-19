@@ -53,6 +53,7 @@ import {
   type CampaignTendency,
   type AdsStateReason,
   type CapiEvent,
+  type WaCostByCategory,
 } from "./model";
 
 const AVATAR_COLORS: AvatarColor[] = ["a", "b", "c", "d", "e", "f"];
@@ -159,6 +160,19 @@ function asStateReason(s: string | null): AdsStateReason | null {
   return s === "order_cancelled" ? s : null;
 }
 
+/** `{cat: {count, usd_micros}}` (snake, backend) → `{cat: {count, usdMicros}}`. */
+function mapWaCostByCategory(
+  raw: BackendAdsCampaign["wa_cost_by_category"],
+): WaCostByCategory | null {
+  if (!raw) return null;
+  return Object.fromEntries(
+    Object.entries(raw).map(([category, entry]) => [
+      category,
+      { count: entry.count, usdMicros: entry.usd_micros },
+    ]),
+  );
+}
+
 export function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
   return {
     id: b.id,
@@ -190,6 +204,9 @@ export function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
     avgTicket: b.avg_ticket,
     llmCostUsd: b.llm_cost_usd,
     llmTokens: b.llm_tokens,
+    waCostUsdMicros: b.wa_cost_usd_micros,
+    waCostByCategory: mapWaCostByCategory(b.wa_cost_by_category),
+    waMsgsPending: b.wa_msgs_pending,
     avgEpisodeDurationMs: b.avg_episode_duration_ms,
     firstResp: b.first_resp,
     tendency: asCampaignTendency(b.tendency),
@@ -220,6 +237,9 @@ export function mapBackendConversation(
     durationMs: b.duration_ms,
     llmCostUsd: b.llm_cost_usd,
     llmTokens: b.llm_tokens,
+    waCostUsdMicros: b.wa_cost_usd_micros,
+    waCostByCategory: mapWaCostByCategory(b.wa_cost_by_category),
+    waMsgsPending: b.wa_msgs_pending,
     capiEvent: asCapiEvent(b.capi_event),
     stateReason: asStateReason(b.state_reason),
   };

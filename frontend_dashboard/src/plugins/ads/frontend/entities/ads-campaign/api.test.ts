@@ -31,6 +31,9 @@ const sample: BackendAttributedConversation = {
   duration_ms: 4200000,
   llm_cost_usd: 0.0042,
   llm_tokens: 1930,
+  wa_cost_usd_micros: null,
+  wa_cost_by_category: null,
+  wa_msgs_pending: 0,
   capi_event: null,
   state_reason: null,
 };

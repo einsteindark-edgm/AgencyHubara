@@ -123,6 +123,27 @@ describe("AdsSection — empty-state (vault sin campañas)", () => {
   });
 });
 
+describe("AdsSection — costos de WhatsApp (2026-09-18)", () => {
+  it("el panel principal muestra la sección 'Costos de WhatsApp' de la campaña", () => {
+    useAdsCampaignsMock.mockReturnValue({
+      data: [
+        makeCampaign({
+          waCostUsdMicros: 22_900,
+          waCostByCategory: {
+            service: { count: 12, usdMicros: 9_600 },
+            marketing: { count: 1, usdMicros: 12_500 },
+          },
+          waMsgsPending: 0,
+        }),
+      ],
+    });
+    const { getByRole, getByTestId } = render(<AdsSection />);
+
+    expect(getByRole("separator", { name: "Costos de WhatsApp" })).toBeTruthy();
+    expect(getByTestId("wa-cost-marketing")).toBeTruthy();
+  });
+});
+
 describe("AdsSection — scope por segmento (2026-07-10)", () => {
   it("al seleccionar un segmento, conversaciones y serie diaria se piden con ese adset_id", () => {
     useAdsCampaignsMock.mockReturnValue({ data: [makeCampaign()] });

@@ -160,7 +160,9 @@ def build_ingest_delivery_status_use_case() -> IngestDeliveryStatus:
 
     _DELIVERY_STATUS_USE_CASE = IngestDeliveryStatus(
         metadata_store=metadata_store,
-        rate_card=get_current_rate_card(),
+        # Proveedor, NO instancia: este singleton vive lo que vive el proceso y
+        # una tarjeta resuelta acá quedaba congelada (el 1-oct-2026 cambia).
+        rate_card_for=get_current_rate_card,
         event_bus=event_bus,
         vault_dir=WORKSPACE_VAULT_DIR,
         tenant_id=tenant_id,

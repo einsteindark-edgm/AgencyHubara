@@ -11,12 +11,18 @@
 
 import {
   ADS_STATES,
+  waCostBreakdown,
   type AttributedConversation,
   type CapiEvent,
 } from "@plugins/ads/frontend/entities/ads-campaign";
 import { Avatar } from "@/shared/ui";
 
-import { fmtMoney, fmtN, fmtUsd } from "@plugins/ads/frontend/lib/format";
+import {
+  fmtMoney,
+  fmtN,
+  fmtUsd,
+  fmtUsdMicros,
+} from "@plugins/ads/frontend/lib/format";
 import { MissingField } from "@plugins/ads/frontend/lib/MissingField";
 
 import {
@@ -91,6 +97,9 @@ export function AdsAttributedTable({ rows }: Props) {
               <th>CAPI</th>
               <th className="num">Valor</th>
               <th className="num">Costo LLM</th>
+              <th className="num" title="Lo que Meta cobra por los mensajes de esta conversación, por categoría">
+                Costo WA
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -179,12 +188,39 @@ export function AdsAttributedTable({ rows }: Props) {
                       <MissingField />
                     )}
                   </td>
+                  {/* Costo de WhatsApp de la conversación + las categorías de
+                      Meta que usó (incluye las gratis). null = sin dato. */}
+                  <td className="num" data-testid="wa-cost-cell">
+                    {c.waCostUsdMicros != null ? (
+                      <div>
+                        <div>
+                          {c.waCostUsdMicros > 0 ? fmtUsdMicros(c.waCostUsdMicros) : "Gratis"}
+                        </div>
+                        {waCostBreakdown(c.waCostByCategory).map((row) => (
+                          <div
+                            key={row.key}
+                            style={{ fontSize: 11, color: "var(--fg-mute)" }}
+                          >
+                            {row.label} {fmtN(row.count)}
+                            {row.usdMicros > 0 ? ` · ${fmtUsdMicros(row.usdMicros)}` : ""}
+                          </div>
+                        ))}
+                        {(c.waMsgsPending ?? 0) > 0 && (
+                          <div style={{ fontSize: 11, color: "var(--fg-faint)" }}>
+                            +{c.waMsgsPending} sin precio
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <MissingField />
+                    )}
+                  </td>
                 </tr>
               );
             })}
             {list.length === 0 && (
               <tr>
-                <td colSpan={10} className="att-empty">
+                <td colSpan={11} className="att-empty">
                   Sin chats que coincidan con el filtro.
                 </td>
               </tr>
