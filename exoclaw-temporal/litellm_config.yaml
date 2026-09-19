@@ -49,11 +49,36 @@ model_list:
       model: deepseek/deepseek-flash
       api_key: "os.environ/DEEPSEEK_API_KEY"
 
+  # FALLBACK CONVERSACIONAL del agente (router_settings.fallbacks, abajo) y
+  # default de CUSTOMER_SUMMARY_MODEL (hubara_agency/src/platform/config.py).
+  # Atiende CLIENTES con tool-calling cuando DeepSeek falla → el id upstream
+  # tiene que ser ESTABLE: nunca `-preview` / `-exp` / `-latest` (lección L-23).
+  #
+  # Hasta 2026-09-18 apuntaba a `gemini-3.1-flash-lite-preview`, que la tabla
+  # oficial da por APAGADO desde el 2026-05-25 (aviso de ~2,5 semanas). Medido
+  # en prod ese día: seguía contestando 200 sólo porque Google lo redirige en
+  # silencio al GA (`modelVersion=gemini-3.1-flash-lite`) — una cortesía sin
+  # fecha. Como los dos consumidores tragan el error (el fallback sólo se usa
+  # cuando DeepSeek ya falló; `llm_summary` es never-raises), el día que corten
+  # el redirect NADIE se habría enterado.
+  #
+  # POR QUÉ 3.5 y no `gemini-3.1-flash-lite`: el 3.1 GA ya tiene shutdown
+  # publicado (2027-05-07, reemplazo = este mismo 3.5) — migrar ahí era agendar
+  # esta misma tarea otra vez. El 3.5 es GA (2026-07-21), sin fecha de shutdown,
+  # y es el más capaz de la línea flash-lite, que es lo que importa en un
+  # fallback que conversa y llama tools. Costo de lista: $0.30 in / $2.50 out
+  # por 1M (3.1: $0.25 / $1.50); sólo se paga cuando DeepSeek falla + resúmenes.
+  #
+  # Probado con el MISMO litellm del proxy de prod (v1.86.2) y la key real:
+  # texto plano, tool call, ida y vuelta del tool call propio, y — el caso real
+  # del failover — un historial con tool calls hechos por DeepSeek (sin thought
+  # signature de Gemini): los cuatro OK, ~0,5–0,8 s.
+  #
+  # Guard: hubara_agency/tests/platform/test_litellm_model_ids_stable.py.
+  # Fuente de fechas: ai.google.dev/gemini-api/docs/deprecations.
   - model_name: gemini-backup
     litellm_params:
-      model: gemini/gemini-3.1-flash-lite-preview
-      api_key: "os.environ/GEMINI_API_KEY"
-      override_raw_request_params:
+      model: gemini/gemini-3.5-flash-lite
       api_key: "os.environ/GEMINI_API_KEY"
 
   # Juez frontier del golden-eval: Gemini Pro 3.1 — independiente del agente

@@ -197,9 +197,12 @@ API_BASE_LLMLITE = os.getenv("API_BASE_LLMLITE", "http://localhost:4000")
 # el resumen on-demand del cliente en "Historial cliente". El modelo de
 # agentes por defecto (DeepSeek V4) está tuneado para conversación con tools,
 # no para síntesis batch single-turn. Gemini Flash-Lite (alias `gemini-backup`
-# del litellm config) es
-# rápido, barato y devuelve `content` estándar. Mismo modelo que usa el
-# pipeline de transcripción de audio.
+# del litellm config) es rápido, barato y devuelve `content` estándar.
+#
+# OJO: `llm_summary` es never-raises (si el modelo no responde loguea un warning
+# y devuelve el resumen determinístico), así que un alias colgado o un id
+# upstream apagado NO se ve como error. Por eso el alias y la estabilidad de su
+# id están bajo guard: tests/platform/test_litellm_model_ids_stable.py (L-23).
 #
 # El prefijo `litellm_proxy/` le dice al litellm SDK que rutee al PROXY
 # (api_base) y resuelva el alias ahí — la GEMINI_API_KEY vive en el container
