@@ -48,6 +48,7 @@ import { AdsCreativesTable } from "@plugins/ads/frontend/features/ads-creatives-
 import { AdsInspector } from "@plugins/ads/frontend/features/ads-inspector";
 import { ConnectMeta } from "@plugins/ads/frontend/features/connect-meta";
 import { CampaignMetaKpis } from "@plugins/ads/frontend/features/campaign-meta-kpis";
+import { WhatsappCosts } from "@plugins/ads/frontend/features/whatsapp-costs";
 import { AgentReferralsKpi } from "@plugins/ads/frontend/features/agent-referrals-kpi";
 import { OrdersStaleNotice } from "@plugins/ads/frontend/features/orders-stale-notice";
 // Las 3 features del buzón de análisis con IA. FSD: la Page es el único punto que
@@ -250,6 +251,9 @@ export function AdsSection() {
         {/* KPIs Meta del scope activo (gasto/imp/clicks/conv/CPC/costo-conv):
             campaña (merge level=campaign) o segmento (level=adset). */}
         <CampaignMetaKpis campaign={scoped ?? campaign} />
+        {/* Costos de WhatsApp del scope activo, por categoría de Meta — con su
+            línea divisoria rotulada: NO es el gasto del anuncio (2026-09-18). */}
+        <WhatsappCosts campaign={scoped ?? campaign} />
         {/* Conversaciones que mandó ChatGPT/Gemini… — de toda la tienda, en la
             ventana del header (no del scope de campaña). */}
         <AgentReferralsKpi params={params} />

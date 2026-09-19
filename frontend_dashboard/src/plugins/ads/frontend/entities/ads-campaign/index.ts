@@ -16,6 +16,9 @@ export type {
   CampaignTendency,
   AdsStateReason,
   CapiEvent,
+  WaCostByCategory,
+  WaCostEntry,
+  WaCostRow,
 } from "./model";
 export {
   ADS_DATE_RANGES,
@@ -26,6 +29,7 @@ export {
   rangeDays,
   selectionToParams,
   totalConversations,
+  waCostBreakdown,
 } from "./model";
 export { adsCampaignKeys } from "./keys";
 export {

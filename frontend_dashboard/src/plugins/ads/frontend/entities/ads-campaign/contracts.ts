@@ -30,6 +30,24 @@ export const backendAdsConversationsCountsSchema = z
   })
   .nullable();
 
+/** Costo de WhatsApp (2026-09-18): {categoría Meta: {count, usd_micros}}.
+ *  `z.record` ABIERTO a propósito — si Meta agrega una categoría, el panel la
+ *  muestra en vez de reventar el parseo de toda la campaña. USD micros =
+ *  1e-6 USD (enteros). `.default(...)`: un backend viejo no manda los campos. */
+const backendWaCostByCategorySchema = z
+  .record(
+    z.string(),
+    z.object({ count: z.number().int(), usd_micros: z.number().int() }),
+  )
+  .nullable()
+  .default(null);
+
+const backendWaCostFields = {
+  wa_cost_usd_micros: z.number().int().nullable().default(null),
+  wa_cost_by_category: backendWaCostByCategorySchema,
+  wa_msgs_pending: z.number().int().default(0),
+};
+
 export const backendAdsCampaignSchema = z.object({
   // Disponibles hoy
   id: z.string(),
@@ -48,6 +66,8 @@ export const backendAdsCampaignSchema = z.object({
   avg_ticket: z.number().nullable(),
   llm_cost_usd: z.number().nullable(),
   llm_tokens: z.number().int().nullable(),
+  // Costo de WhatsApp acumulado de la campaña (suma de `episode.cost_summary`).
+  ...backendWaCostFields,
   avg_episode_duration_ms: z.number().int().nullable(),
 
   // Faltantes — backend serializa null hasta integrar Meta Ads API / orders
@@ -167,6 +187,9 @@ export const backendAttributedConversationSchema = z.object({
   // no acumuló uso (sesión legacy / episodio sin turnos LLM).
   llm_cost_usd: z.number().nullable(),
   llm_tokens: z.number().int().nullable(),
+
+  // Costo de WhatsApp del episodio + categorías de Meta que usó la conversación.
+  ...backendWaCostFields,
 
   // Evento CAPI reportado a Meta para este episodio: "LeadSubmitted" |
   // "Purchase" | "OrderCanceled" | null (no reportado). `.default(null)`

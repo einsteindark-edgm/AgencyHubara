@@ -410,3 +410,82 @@ class TestFillAdCreatives:
         assert new.name == "Carrusel"  # el nombre de insights se respeta
         # la fila que ya tenía creativo queda intacta (misma instancia)
         assert out[1] is rows[1]
+
+
+class TestWhatsappCostMerge:
+    """Costos de WhatsApp (2026-09-18): una campaña con varios anuncios (o un
+    adset) es la MAYORÍA de las filas reales — `merge_bucket_group` recompone
+    los campos a mano, así que un campo que no se mergea sale en 0/None."""
+
+    def test_suma_total_y_categorias_de_todos_los_anuncios(self):
+        b1 = _bucket(
+            id="AD_1",
+            wa_cost_usd_micros=13_300,
+            wa_cost_by_category={
+                "service": {"count": 10, "usd_micros": 800},
+                "marketing": {"count": 1, "usd_micros": 12_500},
+            },
+            wa_msgs_pending=1,
+        )
+        b2 = _bucket(
+            id="AD_2",
+            wa_cost_usd_micros=2_400,
+            wa_cost_by_category={
+                "service": {"count": 2, "usd_micros": 1_600},
+                "utility": {"count": 1, "usd_micros": 800},
+            },
+            wa_msgs_pending=2,
+        )
+        names = {"AD_1": _names("AD_1"), "AD_2": _names("AD_2")}
+        (row,) = group_buckets_by_campaign([b1, b2], names)
+        assert row.wa_cost_usd_micros == 15_700
+        assert row.wa_cost_by_category == {
+            "service": {"count": 12, "usd_micros": 2_400},
+            "marketing": {"count": 1, "usd_micros": 12_500},
+            "utility": {"count": 1, "usd_micros": 800},
+        }
+        assert row.wa_msgs_pending == 3
+        # El merge no muta los buckets de origen (se reusan para adsets/ads).
+        assert b1.wa_cost_by_category["service"] == {"count": 10, "usd_micros": 800}
+
+    def test_none_honesto_si_ningun_anuncio_trae_costo(self):
+        names = {"AD_1": _names("AD_1"), "AD_2": _names("AD_2")}
+        (row,) = group_buckets_by_campaign(
+            [_bucket(id="AD_1"), _bucket(id="AD_2")], names
+        )
+        assert row.wa_cost_usd_micros is None
+        assert row.wa_cost_by_category is None
+
+    def test_un_anuncio_con_costo_y_otro_sin_dato(self):
+        b1 = _bucket(
+            id="AD_1",
+            wa_cost_usd_micros=800,
+            wa_cost_by_category={"service": {"count": 1, "usd_micros": 800}},
+        )
+        names = {"AD_1": _names("AD_1"), "AD_2": _names("AD_2")}
+        (row,) = group_buckets_by_campaign([b1, _bucket(id="AD_2")], names)
+        assert row.wa_cost_usd_micros == 800
+
+    def test_tambien_por_adset(self):
+        b1 = _bucket(
+            id="AD_1",
+            wa_cost_usd_micros=800,
+            wa_cost_by_category={"service": {"count": 1, "usd_micros": 800}},
+        )
+        b2 = _bucket(
+            id="AD_2",
+            wa_cost_usd_micros=1_600,
+            wa_cost_by_category={"service": {"count": 2, "usd_micros": 1_600}},
+        )
+        names = {"AD_1": _names("AD_1"), "AD_2": _names("AD_2")}
+        rows = group_buckets_by_adset([b1, b2], names)
+        assert [r.wa_cost_usd_micros for r in rows] == [2_400]
+
+    def test_capi_skipped_tambien_se_suma(self):
+        # De paso (mismo bug, misma función): `capi_skipped` se perdía al agrupar.
+        names = {"AD_1": _names("AD_1"), "AD_2": _names("AD_2")}
+        (row,) = group_buckets_by_campaign(
+            [_bucket(id="AD_1", capi_skipped=2), _bucket(id="AD_2", capi_skipped=1)],
+            names,
+        )
+        assert row.capi_skipped == 3

@@ -117,6 +117,17 @@ class AdsCampaignSummary:
     # de `episode.llm_usage`. None si ningún episodio acumuló uso LLM.
     llm_cost_usd: float | None = None
     llm_tokens: int | None = None
+    # Costo de WHATSAPP agregado (USD micros = 1e-6 USD; enteros, sin float) —
+    # suma de `episode.cost_summary` de los episodios del bucket. NO es el
+    # gasto del anuncio (`spend`, COP): es lo que Meta cobra por los mensajes.
+    # `wa_cost_by_category` = {categoría Meta: {count, usd_micros}} — incluye
+    # categorías con costo 0 (mensajes gratis): el operador quiere ver cuáles
+    # se usaron. None si ningún episodio trae `cost_summary` (≠ "costó 0").
+    wa_cost_usd_micros: int | None = None
+    wa_cost_by_category: dict[str, dict[str, int]] | None = None
+    # Mensajes enviados cuyo precio aún no llegó por webhook: el total todavía
+    # no los incluye (la UI lo avisa en vez de mostrar un total "final" falso).
+    wa_msgs_pending: int = 0
     # Duración media de los episodios CERRADOS del bucket (ms) — el "tiempo"
     # del embudo. None si no hay episodios cerrados con timestamps válidos.
     avg_episode_duration_ms: int | None = None
@@ -201,6 +212,14 @@ class AdsAttributedConversation:
     # no acumuló uso (sesión legacy / episodio sin turnos LLM).
     llm_cost_usd: float | None = None
     llm_tokens: int | None = None
+
+    # Costo de WhatsApp del episodio (USD micros) + desglose por categoría de
+    # Meta {cat: {count, usd_micros}} — de `episode.cost_summary`, que
+    # materializa el ingest de delivery-status (chats) con el `pricing` del
+    # webhook + la tarjeta de tarifas. None si el episodio no lo trae.
+    wa_cost_usd_micros: int | None = None
+    wa_cost_by_category: dict[str, dict[str, int]] | None = None
+    wa_msgs_pending: int = 0
 
     # Evento CAPI reportado a Meta para este episodio (fix 2026-07-01):
     # "OrderCanceled" | "Purchase" | "LeadSubmitted" | None (nada reportado /
@@ -751,6 +770,54 @@ def _episode_llm_usage(episode: dict[str, Any] | None) -> tuple[float, int] | No
     )
 
 
+def _as_count(value: Any) -> int:
+    """Entero no negativo desde un valor crudo del vault (defensivo)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return max(0, int(value))
+
+
+def merge_wa_cost_categories(
+    target: dict[str, dict[str, int]], source: dict[str, dict[str, int]] | None
+) -> None:
+    """Suma `source` sobre `target` ({categoría: {count, usd_micros}}), in place.
+    Lo usan el acumulado por bucket y el merge de buckets de `segmentation`."""
+    for category, entry in (source or {}).items():
+        slot = target.setdefault(category, {"count": 0, "usd_micros": 0})
+        slot["count"] += entry["count"]
+        slot["usd_micros"] += entry["usd_micros"]
+
+
+def _episode_wa_cost(
+    episode: dict[str, Any] | None,
+) -> tuple[int, dict[str, dict[str, int]], int] | None:
+    """`(total_usd_micros, by_category, pending)` del episodio, o None si no
+    trae `cost_summary`.
+
+    Lectura CRUDA del vault (P-3: ads no importa chats; el shape canónico es
+    `_summary_to_dict` del ingest de delivery-status). Tolerante: una categoría
+    ilegible se salta y el total se RECOMPONE desde las categorías legibles —
+    así total y desglose nunca se contradicen en la UI.
+    """
+    if not isinstance(episode, dict):
+        return None
+    summary = episode.get("cost_summary")
+    if not isinstance(summary, dict):
+        return None
+    by_category: dict[str, dict[str, int]] = {}
+    raw_categories = summary.get("by_category")
+    if isinstance(raw_categories, dict):
+        for category, entry in raw_categories.items():
+            if not isinstance(category, str) or not isinstance(entry, dict):
+                continue
+            by_category[category] = {
+                "count": _as_count(entry.get("count")),
+                "usd_micros": _as_count(entry.get("usd_micros")),
+            }
+    total = sum(entry["usd_micros"] for entry in by_category.values())
+    return total, by_category, _as_count(summary.get("messages_pending_count"))
+
+
 # =============================================================================
 # Public API
 # =============================================================================
@@ -854,6 +921,10 @@ def list_ads_campaigns(
                     "llm_cost": 0.0,
                     "llm_tokens": 0,
                     "has_llm": False,
+                    "wa_cost": 0,
+                    "wa_by_category": {},
+                    "wa_pending": 0,
+                    "has_wa": False,
                     "dur_sum": 0,
                     "dur_count": 0,
                     "capi_leads": 0,
@@ -877,6 +948,13 @@ def list_ads_campaigns(
                 bucket["llm_cost"] += usage[0]
                 bucket["llm_tokens"] += usage[1]
                 bucket["has_llm"] = True
+            # Costo de WhatsApp del episodio (total + por categoría de Meta).
+            wa_cost = _episode_wa_cost(ep)
+            if wa_cost is not None:
+                bucket["wa_cost"] += wa_cost[0]
+                merge_wa_cost_categories(bucket["wa_by_category"], wa_cost[1])
+                bucket["wa_pending"] += wa_cost[2]
+                bucket["has_wa"] = True
             # Duración (solo episodios cerrados con timestamps válidos).
             dur = _episode_duration_ms(ep)
             if dur is not None:
@@ -957,6 +1035,11 @@ def list_ads_campaigns(
                 avg_ticket=avg_ticket,
                 llm_cost_usd=llm_cost_usd,
                 llm_tokens=llm_tokens,
+                wa_cost_usd_micros=bucket["wa_cost"] if bucket["has_wa"] else None,
+                wa_cost_by_category=(
+                    bucket["wa_by_category"] if bucket["has_wa"] else None
+                ),
+                wa_msgs_pending=bucket["wa_pending"],
                 avg_episode_duration_ms=avg_episode_duration_ms,
                 revenue_count=bucket["revenue_count"],
                 duration_count=bucket["dur_count"],
@@ -1070,6 +1153,7 @@ def list_attributed_conversations(
                 continue
 
             _usage = ep.get("llm_usage") if isinstance(ep, dict) else None
+            _wa_cost = _episode_wa_cost(ep)
             _capi_slot = capi_idx.get(ep_id) or {}
             if _capi_slot.get("order_canceled_sent"):
                 _capi_event = "OrderCanceled"  # lo último que Meta sabe del pedido
@@ -1102,6 +1186,9 @@ def list_attributed_conversations(
                         if isinstance(_usage, dict)
                         else None
                     ),
+                    wa_cost_usd_micros=_wa_cost[0] if _wa_cost else None,
+                    wa_cost_by_category=_wa_cost[1] if _wa_cost else None,
+                    wa_msgs_pending=_wa_cost[2] if _wa_cost else 0,
                     capi_event=_capi_event,
                     state_reason=(
                         STATE_REASON_ORDER_CANCELLED

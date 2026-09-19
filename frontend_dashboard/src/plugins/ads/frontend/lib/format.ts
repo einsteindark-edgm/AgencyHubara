@@ -38,6 +38,16 @@ export function fmtUsd(n: number): string {
   return "US$" + n.toFixed(2);
 }
 
+/** "US$0.0008" / "US$3.27" — costo de WhatsApp desde USD micros (1e-6 USD,
+ *  enteros). Un mensaje de servicio en Colombia vale US$0.0008: con 2
+ *  decimales toda conversación se leería "US$0.00" — por debajo de US$1 van 4
+ *  decimales; de US$1 en adelante, 2. "US$" para no confundirlo con el COP. */
+export function fmtUsdMicros(micros: number): string {
+  if (!micros) return "US$0";
+  const usd = micros / 1_000_000;
+  return "US$" + usd.toFixed(usd < 1 ? 4 : 2);
+}
+
 /** "1h 12m" / "45m" / "38s" — duración legible desde milisegundos. Para el
  *  "tiempo" del embudo (duración de episodio). "—" si null/0/negativo. */
 export function fmtDuration(ms: number): string {

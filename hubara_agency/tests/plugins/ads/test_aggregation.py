@@ -1109,9 +1109,12 @@ def _ep(
     closing_tag: str | None = None,
     llm_cost_usd: float | None = None,
     llm_tokens: int | None = None,
+    cost_summary: dict | None = None,
 ) -> dict:
     """Construye un episodio con shape de `episode_lifecycle._make_empty_episode`.
-    `referral_snapshot=None` → la atribución cae al `origin` de la sesión."""
+    `referral_snapshot=None` → la atribución cae al `origin` de la sesión.
+    `cost_summary` = el agregado de costo de WhatsApp que materializa
+    `IngestDeliveryStatus` (shape de `_summary_to_dict`)."""
     ep: dict = {
         "episode_id": episode_id,
         "started_at_ms": started_at_ms,
@@ -1133,6 +1136,8 @@ def _ep(
             "total_tokens": llm_tokens or 0,
             "cost_usd": llm_cost_usd if llm_cost_usd is not None else 0.0,
         }
+    if cost_summary is not None:
+        ep["cost_summary"] = cost_summary
     return ep
 
 
