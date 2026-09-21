@@ -1,7 +1,7 @@
 /**
  * ¿Tiene sentido ofrecer "Crear pedido" en esta conversación?
  *
- * Dos casos en el histórico (`status_history`), y ninguno más:
+ * Tres casos en el histórico (`status_history`), y ninguno más:
  *
  *  1. **`CONFIRMADO_SIN_DATOS`** — el cliente SÍ confirmó la compra pero NO
  *     completó los datos de envío (`tools/tags.py`; va siempre en combo con
@@ -12,6 +12,12 @@
  *     para cerrar la venta a mano. Solo cuenta la transición directa: pasar a
  *     HUMANO desde un `RECHAZO`, o un `INTERESADO` que llega después del
  *     `HUMANO`, no es un lead al borde de comprar.
+ *  3. **`RETOMA_VENTA` → `HUMANO`** (misma regla de transición directa) — la
+ *     venta se retomó (vuelta de post-venta o del humano al bot) y la
+ *     escalaron o la intervinieron para cerrarla a mano. También vale
+ *     **`RETOMA_VENTA` → `RECHAZO` → `HUMANO`**: el cliente dijo que no a la
+ *     venta retomada y el operador entró a rescatarla. Un `RECHAZO` que no
+ *     viene de `RETOMA_VENTA` sigue sin contar.
  *
  * En cualquier otra conversación intervenida (una duda, un reclamo, un pedido
  * que ya cerró) el botón sería ruido en la barra del composer.
@@ -25,6 +31,11 @@
 /** La escribe `ManageConversationTagTool` (backend `chats/agent/sales/tools/tags.py`). */
 export const PENDING_SHIPPING_DATA_TAG = "CONFIRMADO_SIN_DATOS";
 const INTERESTED_TAG = "INTERESADO";
+/** La escriben `post_sale_return` y la devolución humano→bot (`platform/tools/routing.py`). */
+const RESUMED_SALE_TAG = "RETOMA_VENTA";
+/** Tags que, seguidos directamente de `HUMANO`, marcan una venta a cerrar a mano. */
+const PRE_HANDOFF_SALE_TAGS: ReadonlySet<string> = new Set([INTERESTED_TAG, RESUMED_SALE_TAG]);
+const REJECTED_TAG = "RECHAZO";
 const HUMAN_TAG = "HUMANO";
 
 interface StatusHistoryEntry {
@@ -35,9 +46,12 @@ export function canOfferQuickOrder(
   statusHistory?: readonly StatusHistoryEntry[] | null,
 ): boolean {
   if (!statusHistory) return false;
+  const tagAt = (i: number) => statusHistory[i]?.tag;
   return statusHistory.some(
     (entry, i) =>
       entry?.tag === PENDING_SHIPPING_DATA_TAG ||
-      (entry?.tag === HUMAN_TAG && statusHistory[i - 1]?.tag === INTERESTED_TAG),
+      (entry?.tag === HUMAN_TAG &&
+        (PRE_HANDOFF_SALE_TAGS.has(tagAt(i - 1) ?? "") ||
+          (tagAt(i - 1) === REJECTED_TAG && tagAt(i - 2) === RESUMED_SALE_TAG))),
   );
 }
