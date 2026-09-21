@@ -155,11 +155,24 @@ transiciones manuales validando el DAG permitido entre stages.
   avisado por chat)
 - WHEN se invoca con `{stage: "ready", by: "order-sentinel", notify_customer: false}`
 - THEN la transición se aplica y el SSE del dashboard se publica igual
-- AND la cascada ETA (`EmitOrderStageWorkflow` → mensaje WhatsApp al cliente)
-  NO se dispara — evita duplicar lo que el humano ya dijo
+- AND `EmitOrderStageWorkflow` corre en modo silencioso: encola el evento
+  CAPI de la etapa pero NO despacha el `OrderStageChangedEvent` → ningún
+  WhatsApp al cliente (evita duplicar lo que el humano ya dijo)
 - AND con `notify_customer` omitido o `true` el comportamiento actual queda
   intacto (ETA notifica). La supresión es POR TRANSICIÓN, nunca por tag
   HUMANO (L-6: toda venta exitosa termina en HUMANO)
+
+#### Scenario: Pedido entregado sin pasar por las etapas intermedias
+
+- GIVEN una orden en `preparing` que el operador olvidó mover y ya se entregó
+- WHEN desde el kanban la suelta en `delivered` y confirma el diálogo de
+  salto (aviso al cliente apagado por defecto)
+- THEN se invoca con `{stage: "delivered", force: true, notify_customer: false,
+  note: "Salto manual: se omitió Lista, En camino"}`
+- AND el stage history registra UNA entrada con la nota (no se inventan
+  entradas para las etapas omitidas)
+- AND sale el evento CAPI `OrderDelivered`; NO salen los de las etapas
+  omitidas ni ningún WhatsApp al cliente
 
 #### Scenario: Notificación con Meta Business Agent al frente (D1.9)
 

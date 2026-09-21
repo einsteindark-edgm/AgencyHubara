@@ -56,7 +56,7 @@ conversación (`evidence_not_found`, anti-alucinación).
 
 El ciclo SHALL ejecutar cada intent vía la API HTTP de orders con
 `by: "order-sentinel"` y `notify_customer: false` (el humano ya avisó por
-chat). `invalid_transition`/`invalid_state` SHALL contarse como `skipped`
+chat: no sale WhatsApp; el evento CAPI de la etapa sí). `invalid_transition`/`invalid_state` SHALL contarse como `skipped`
 (carrera benigna con el humano / draft sin agendar), no como fallo.
 
 #### Scenario: Carrera con el operador es benigna
