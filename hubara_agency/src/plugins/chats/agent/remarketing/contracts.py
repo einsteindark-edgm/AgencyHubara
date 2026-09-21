@@ -54,6 +54,11 @@ class RemarketingContext:
     tag_motivo: str = ""
     has_order_draft: bool = False
     transcript: str = ""
+    #: Escalera de reactivación (2026-09-18): qué toque es este (1-based) y
+    #: cuánto silencio real lleva el cliente. None = contexto legacy (histories
+    #: en vuelo traen el result viejo sin estos campos).
+    touch_number: int | None = None
+    silence_minutes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -64,3 +69,5 @@ class RemarketingTriggerInput:
     memory_context: str = ""
     has_order_draft: bool = False
     transcript: str = ""
+    touch_number: int | None = None
+    silence_minutes: int | None = None

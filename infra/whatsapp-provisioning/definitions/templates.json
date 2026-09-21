@@ -46,5 +46,13 @@
     "body": "Hola, vi que quedó {{1}} en tu carrito. ¿Quieres que te ayude a completar tu pedido? Si no deseas recibir más mensajes, respóndeme y te doy de baja.",
     "example": ["una vela aromática Patchouli"],
     "semantics": "Recovery de carrito fuera de ventana (re-engagement sin promoción ni envío gratis; incluye opt-out). NUNCA por watchdog — solo LLM/cadencia. v2: sin saludo por nombre."
+  },
+  {
+    "name": "followup_interest_marketing_v1",
+    "category": "MARKETING",
+    "language": "es_CO",
+    "body": "Hola 👋 Te escribo de Hubara. Quedé atento por si quieres retomar lo que estabas mirando; con gusto te ayudo a elegir. Si prefieres no recibir más mensajes, respóndeme \"NO MÁS\" y te doy de baja.",
+    "example": [],
+    "semantics": "Seguimiento genérico de la escalera de reactivación fuera de la ventana de 24h (lead interesado SIN carrito). Sin variables, sin promoción; incluye opt-out. Solo RemarketingWorkflow — NUNCA por watchdog. Tope 2 plantillas/día por cliente."
   }
 ]

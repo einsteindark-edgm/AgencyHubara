@@ -60,6 +60,15 @@ CONFIG_KEYS = (
 )
 
 
+
+def _body_component(d: dict) -> dict:
+    """BODY del submit. Una plantilla SIN variables no lleva `example`:
+    `{"body_text": [[]]}` hace que Meta rechace el submit."""
+    comp = {"type": "BODY", "text": d["body"]}
+    if d.get("example"):
+        comp["example"] = {"body_text": [d["example"]]}
+    return comp
+
 def load_config(path: str) -> dict:
     cfg = {k: "" for k in CONFIG_KEYS}
     if path and os.path.exists(path):
@@ -552,11 +561,7 @@ def step_templates(cfg: dict) -> None:
             "name": d["name"],
             "language": d["language"],
             "category": d["category"],
-            "components": [{
-                "type": "BODY",
-                "text": d["body"],
-                "example": {"body_text": [d["example"]]},
-            }],
+            "components": [_body_component(d)],
         }
         st, body = _api("POST", f"{cfg['WABA_ID']}/message_templates",
                         cfg["SYSTEM_USER_TOKEN"], json_body=payload)
@@ -599,11 +604,7 @@ def step_templates_update(cfg: dict) -> None:
             continue
         payload = {
             "category": d["category"],
-            "components": [{
-                "type": "BODY",
-                "text": d["body"],
-                "example": {"body_text": [d["example"]]},
-            }],
+            "components": [_body_component(d)],
         }
         st, body = _api("POST", cur["id"], cfg["SYSTEM_USER_TOKEN"], json_body=payload)
         ok = st == 200 and body.get("success", True) and not body.get("error")

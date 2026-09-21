@@ -94,13 +94,16 @@ async def test_activity_reads_vault_metadata_and_transcript(_isolate_vault_dir: 
         tag_motivo="vio la lista y agradeció",
         has_order_draft=False,
         transcript="Cliente: Precio de la cera\nAsesor: La cera no se vende aparte\nCliente: Gracias",
+        # Escalera (2026-09-18): la activity digiere qué toque es — sin toques
+        # registrados, este sería el primero. Sin last_inbound no hay silencio.
+        touch_number=1,
     )
 
 
 @pytest.mark.asyncio
 async def test_activity_tolerates_missing_files_and_corrupt_lines(_isolate_vault_dir: Path) -> None:
     sid = "wa_nada"
-    assert await ActivityEnvironment().run(read_remarketing_context_activity, sid) == RemarketingContext()
+    assert await ActivityEnvironment().run(read_remarketing_context_activity, sid) == RemarketingContext(touch_number=1)
     d = _isolate_vault_dir / sid / "sessions"
     d.mkdir(parents=True)
     (d / f"{sid}.jsonl").write_text('{"role": "user", "content": "hola"}\n{corrupto\n', encoding="utf-8")

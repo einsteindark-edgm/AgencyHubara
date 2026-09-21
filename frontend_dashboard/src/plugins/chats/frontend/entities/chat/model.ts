@@ -7,7 +7,11 @@
  * que cambie (queryFn → fetch) sin tocar features.
  */
 
-export type ChatTag = "HUMANO" | "INTERESADO" | "PENDIENTE" | "CLIENTE" | "REMARKETING" | "FRÍO";
+/** `SIN_RESPUESTA`: agotó la escalera de reactivación (5 toques) sin contestar
+ *  — el operador lo filtra para decidir qué hacer con esos números. */
+export type ChatTag =
+  | "HUMANO" | "INTERESADO" | "PENDIENTE" | "CLIENTE" | "REMARKETING" | "FRÍO"
+  | "SIN_RESPUESTA";
 export type AvatarColor = "purple" | "blue" | "green" | "orange" | "pink" | "teal" | "gray";
 export type Presence = "online" | "away" | "off";
 

@@ -325,12 +325,37 @@ class IngestInboundMessage:
         # con inbounds subsecuentes. Defensivo: chequeamos presencia previa
         # del campo, no `referral_already_seen` (que es por ad_id, no por
         # ventana de pricing).
+        #
+        # Fix 2026-09-18: la guarda era `"ctwa_window_expires_at_ms" not in
+        # metadata` — el campo quedaba pegado PARA SIEMPRE y un cliente que
+        # volvía semanas después por OTRO anuncio no abría ventana nueva,
+        # aunque Meta sí se la da (Free Entry Point por cada entrada desde
+        # anuncio). Ahora: se abre si no hay ventana o si la anterior ya
+        # venció; con la ventana ABIERTA no se extiende (Meta tampoco).
+        _ctwa_exp = metadata.get("ctwa_window_expires_at_ms")
         if (
             parsed.referral
             and parsed.referral.get("ctwa_clid")
-            and "ctwa_window_expires_at_ms" not in metadata
+            and not (isinstance(_ctwa_exp, int) and now_ms < _ctwa_exp)
         ):
             metadata["ctwa_window_expires_at_ms"] = compute_ctwa_window_expiry(now_ms)
+
+        # Escalera de reactivación (decisión 2026-09-18): `SIN_RESPUESTA`
+        # marca a quien agotó los toques sin contestar. Si VUELVE a escribir
+        # ya no es "sin respuesta" — levantar la etiqueta acá (determinista)
+        # lo saca del filtro del operador y deja rastro en el historial.
+        if metadata.get("tag") == "SIN_RESPUESTA":
+            metadata["tag"] = "NO_ETIQUETADO"
+            metadata["motivo"] = "El cliente volvió a escribir tras agotar la escalera."
+            metadata.setdefault("status_history", []).append(
+                {
+                    "tag": "NO_ETIQUETADO",
+                    "motivo": metadata["motivo"],
+                    "active_route": metadata.get("active_route"),
+                    "timestamp": now_ms / 1000,
+                    "source": "ingest:customer_returned",
+                }
+            )
 
         self._safe_write_metadata(session_id, metadata)
 

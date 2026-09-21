@@ -212,3 +212,20 @@ describe("fijadas y filtro Humano", () => {
     expect(idsOf(result.current.sections, "waiting")).toEqual(["s", "r"]);
   });
 });
+
+describe("filtro 'Sin respuesta' (escalera de reactivación agotada)", () => {
+  it("cuenta y filtra los chats con tag SIN_RESPUESTA", () => {
+    const chats = [
+      chat({ id: "a", tag: "SIN_RESPUESTA" }),
+      chat({ id: "b", tag: "INTERESADO" }),
+      chat({ id: "c", tag: "SIN_RESPUESTA" }),
+    ];
+    const { result } = run(chats);
+    const meta = result.current.filters.find((f) => f.key === "Sin respuesta");
+    expect(meta?.count).toBe(2);
+
+    act(() => result.current.setActiveFilter("Sin respuesta"));
+    const ids = result.current.filtered.map((c) => c.id).sort();
+    expect(ids).toEqual(["a", "c"]);
+  });
+});

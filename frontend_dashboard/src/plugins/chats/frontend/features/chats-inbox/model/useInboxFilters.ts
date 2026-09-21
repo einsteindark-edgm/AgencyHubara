@@ -16,7 +16,9 @@ import { useCallback, useMemo, useState } from "react";
 import type { ChatInboxItem } from "@plugins/chats/frontend/entities/chat";
 import { formatDayLabelEs, todayBogotaIso } from "@/shared/lib";
 
-export type InboxFilter = "Humano" | "Todas" | "Interesado" | "Pendiente" | "Cliente" | "Remarketing" | "Frío";
+export type InboxFilter =
+  | "Humano" | "Todas" | "Interesado" | "Pendiente" | "Cliente" | "Remarketing" | "Frío"
+  | "Sin respuesta";
 
 /** Rango cerrado de días calendario (YYYY-MM-DD, Bogotá). `to: null` = rango a
  *  medio elegir en el calendario: se comporta como un día suelto. */
@@ -39,6 +41,7 @@ const TAG_TO_FILTER: Record<string, InboxFilter> = {
   CLIENTE: "Cliente",
   REMARKETING: "Remarketing",
   FRÍO: "Frío",
+  SIN_RESPUESTA: "Sin respuesta",
   HUMANO: "Humano",
 };
 
@@ -107,6 +110,8 @@ export function useInboxFilters(chats: ChatInboxItem[], options: Options = {}) {
       { key: "Cliente",     count: byTag("Cliente"),    color: "var(--color-ok)" },
       { key: "Remarketing", count: byTag("Remarketing"),color: "var(--color-violet)" },
       { key: "Frío",        count: byTag("Frío"),       color: "rgba(235,235,235,0.55)" },
+      // Agotó la escalera de reactivación sin contestar (tag SIN_RESPUESTA).
+      { key: "Sin respuesta", count: byTag("Sin respuesta"), color: "var(--fg-muted)" },
     ];
   }, [inDateRange]);
 

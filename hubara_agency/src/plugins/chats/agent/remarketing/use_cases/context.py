@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.plugins.chats.agent.remarketing.contracts import RemarketingContext
-from src.sdk.messagingkit import lead_state_from_metadata
+from src.sdk.messagingkit import ladder_state, lead_state_from_metadata
 
 #: cuántos mensajes visibles viajan al gancho (WhatsApp: 12 alcanzan para
 #: entender por qué se frenó la charla sin inflar el prompt).
@@ -59,14 +59,31 @@ def render_transcript(events: list[dict[str, Any]], *, limit: int = TRANSCRIPT_L
 
 
 def context_from_metadata(
-    metadata: dict[str, Any] | None, events: list[dict[str, Any]]
+    metadata: dict[str, Any] | None,
+    events: list[dict[str, Any]],
+    *,
+    now_ms: int | None = None,
 ) -> RemarketingContext:
-    """(metadata.json, eventos del transcript) → `RemarketingContext`."""
+    """(metadata.json, eventos del transcript) → `RemarketingContext`.
+
+    Con `now_ms` también digiere la escalera: qué toque es (peldaños ya
+    consumidos + 1) y el silencio real del cliente — para que el trigger se lo
+    DIGA al LLM en vez de dejarlo adivinar (runs `01a0b0da`…`01a0b586`).
+    """
     meta = metadata or {}
     motivo = meta.get("motivo")
     lead = lead_state_from_metadata(meta)
+    touch_number: int | None = None
+    silence_minutes: int | None = None
+    if now_ms is not None:
+        touch_number = ladder_state(now_ms, meta).step + 1
+        last_inbound = meta.get("last_inbound_at_ms")
+        if isinstance(last_inbound, int):
+            silence_minutes = max(0, (now_ms - last_inbound) // 60_000)
     return RemarketingContext(
         tag_motivo=motivo.strip() if isinstance(motivo, str) else "",
         has_order_draft=lead.has_order_draft,
         transcript=render_transcript(events),
+        touch_number=touch_number,
+        silence_minutes=silence_minutes,
     )

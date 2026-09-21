@@ -20,7 +20,11 @@ from typing import Any
 from temporalio import activity
 
 from src.plugins.reengagement.agent.cycle.composition import get_launcher
-from src.plugins.reengagement.agent.cycle.use_cases import build_snapshot_from_sessions
+from src.plugins.reengagement.agent.cycle.use_cases import (
+    build_snapshot_from_sessions,
+    mark_unresponsive,
+    unresponsive_session_ids,
+)
 from src.sdk.messagingkit import (
     get_current_rate_card,
     is_quiet_hours_for_session,
@@ -28,7 +32,12 @@ from src.sdk.messagingkit import (
     reengagement_shortlist,
     update_reengagement_index_entries,
 )
-from src.sdk.runtime import WORKSPACE_VAULT_DIR, mba_controls_thread, with_heartbeat
+from src.sdk.runtime import (
+    WORKSPACE_VAULT_DIR,
+    FilesystemMetadataStore,
+    mba_controls_thread,
+    with_heartbeat,
+)
 
 #: prefijo de sesiones WhatsApp en el vault (los demás dirs se saltan).
 _SESSION_PREFIX = "wa_"
@@ -85,6 +94,27 @@ async def build_reengagement_snapshot_activity() -> dict[str, Any]:
                 sessions.append((session_id, metadata))
         index_size = len(index)
 
+    # Escalera agotada + gracia cumplida → etiqueta SIN_RESPUESTA (decisión
+    # 2026-09-18). Read-modify-write atómico por sesión, re-chequeando sobre
+    # lectura FRESCA: el cliente pudo escribir entre el scan y este write.
+    store = FilesystemMetadataStore(vault)
+    marked = 0
+    for session_id in unresponsive_session_ids(now_ms, sessions):
+        def _mutate(
+            data: dict[str, Any], _sid: str = session_id
+        ) -> dict[str, Any] | None:
+            if not unresponsive_session_ids(now_ms, [(_sid, data)]):
+                return None  # cambió bajo nuestros pies → abortar sin escribir
+            return mark_unresponsive(data, now_ms=now_ms)
+
+        updated = store.update(session_id, _mutate)
+        if isinstance(updated, dict) and updated.get("tag") == "SIN_RESPUESTA":
+            marked += 1
+    if marked:
+        sessions = [
+            (sid, _read_metadata(vault / sid) or meta) for sid, meta in sessions
+        ]
+
     # Refresh/rebuild: lo que se leyó queda al día en UN write atómico.
     update_reengagement_index_entries(
         vault, dict(sessions), now_ms=now_ms
@@ -100,6 +130,7 @@ async def build_reengagement_snapshot_activity() -> dict[str, Any]:
         quiet_checker=lambda sid: is_quiet_hours_for_session(sid, now_utc),
         mba_controls_checker=mba_controls_thread,
     )
+    snapshot["marked_unresponsive"] = marked
     snapshot["shortlisted"] = len(sessions)
     snapshot["index_size"] = index_size
     return snapshot

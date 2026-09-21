@@ -31,6 +31,7 @@ from src.platform.temporal.dispatcher import (
 )
 from src.platform.whatsapp.activities import (
     check_reengagement_policy_activity,
+    record_remarketing_touch_activity,
     send_typing_indicator_activity,
     send_whatsapp_message_activity,
     send_whatsapp_template_activity,
@@ -45,6 +46,7 @@ from src.plugins.chats.agent.remarketing.activities import (
     check_watchdog_eligibility_activity,
     persist_watchdog_outcome_activity,
     read_remarketing_context_activity,
+    send_remarketing_template_activity,
 )
 from src.platform.session_history.activities import persist_assistant_message_activity
 from src.plugins.chats.agent.remarketing.workflows.remarketing import (
@@ -98,6 +100,10 @@ async def main() -> None:
             # + transcript) para el gancho — gated remarketing-context-v1.
             read_remarketing_context_activity,
             build_remarketing_trigger_v2_activity,
+            # Escalera de reactivación (remarketing-ladder-v1): registro del
+            # toque/abstención + toque por plantilla con la CSW cerrada.
+            record_remarketing_touch_activity,
+            send_remarketing_template_activity,
             bootstrap_remarketing_session_activity,
             # PR-D global cleanup (ADR-2026-05-06-10): la
             # `@activity.defn load_remarketing_brain_activity` fue eliminada del

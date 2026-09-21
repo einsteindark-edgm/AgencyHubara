@@ -185,7 +185,7 @@ function Row({ chat, selected, onSelect }: RowProps) {
         </div>
         <div className="snippet">{chat.snippet}</div>
         <div className="meta-row">
-          <span className={"tag " + chat.tagClass}>{chat.tag}</span>
+          <span className={"tag " + chat.tagClass}>{chat.tag.replace(/_/g, " ")}</span>
           {chat.order && <OrderChip order={chat.order} />}
           {chat.unread > 0 && <span className="badge-unread">{chat.unread}</span>}
         </div>

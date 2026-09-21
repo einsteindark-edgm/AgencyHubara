@@ -41,6 +41,17 @@ from src.platform.whatsapp.quiet_hours import (
     is_quiet_hours_for_session as is_quiet_hours_for_session,
     resolve_local_timezone as resolve_local_timezone,
 )
+from src.platform.whatsapp.reengagement_ladder import (
+    HOT_FIRST_GAP_MS as HOT_FIRST_GAP_MS,
+    LADDER_GAPS_MS as LADDER_GAPS_MS,
+    MAX_TEMPLATES_PER_24H as MAX_TEMPLATES_PER_24H,
+    TOUCH_ABSTAINED as TOUCH_ABSTAINED,
+    TOUCH_FREE_FORM as TOUCH_FREE_FORM,
+    TOUCH_TEMPLATE as TOUCH_TEMPLATE,
+    LadderState as LadderState,
+    ladder_state as ladder_state,
+    record_touch as record_touch,
+)
 from src.platform.whatsapp import reengagement_index as _reengagement_index
 
 # Índice incremental de reactivación (Punto 2, escala): shortlist para el

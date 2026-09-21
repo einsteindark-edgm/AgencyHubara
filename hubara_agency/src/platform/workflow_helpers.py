@@ -475,8 +475,17 @@ async def run_agent_turn(
     episode_id: str | None = None,
     has_new_input: Callable[[], bool] | None = None,
     fabricate_fallback_on_empty: bool = True,
+    skip_record_when: Callable[[str], bool] | None = None,
 ) -> TurnResult:
     """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
+
+    `skip_record_when(final_content)` → True hace que el turno NO se grabe en
+    el historial del LLM (`record_turn`). Lo usa Remarketing para las
+    abstenciones (`NO_MESSAGE`): grabadas, cada una era precedente del
+    siguiente intento y el prompt crecía 8k→27k tokens (runs
+    `01a0b0da`…`01a0b586`). Solo aplica a turnos SIN tools (una tool ya tuvo
+    efectos: ese turno sí pasó). El caller lo pasa detrás de su propio
+    `workflow.patched` — acá cambia la secuencia de activities.
 
     Arma el `baggage` (`session.id` / `whatsapp.number` / `episode.id`) y lo pasa
     a `_run_agent_turn_impl`, que lo mete en `LLMChatInput.baggage`. La activity
@@ -523,6 +532,7 @@ async def run_agent_turn(
         episode_id=episode_id,
         has_new_input=has_new_input,
         fabricate_fallback_on_empty=fabricate_fallback_on_empty,
+        skip_record_when=skip_record_when,
     )
 
 
@@ -534,6 +544,7 @@ async def _run_agent_turn_impl(
     episode_id: str | None = None,
     has_new_input: Callable[[], bool] | None = None,
     fabricate_fallback_on_empty: bool = True,
+    skip_record_when: Callable[[str], bool] | None = None,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -995,16 +1006,22 @@ async def _run_agent_turn_impl(
             else ""
         )
 
-    await workflow.execute_activity(
-        record_turn,
-        RecordTurnInput(
-            session_id=session.session_id,
-            new_messages=messages[initial_len:],
-            llm=session.llm,
-            workspace=session.workspace,
-        ),
-        **_CONV_OPTIONS,  # type: ignore[arg-type]
+    skip_record = (
+        skip_record_when is not None
+        and not tools_used
+        and skip_record_when(final_content)
     )
+    if not skip_record:
+        await workflow.execute_activity(
+            record_turn,
+            RecordTurnInput(
+                session_id=session.session_id,
+                new_messages=messages[initial_len:],
+                llm=session.llm,
+                workspace=session.workspace,
+            ),
+            **_CONV_OPTIONS,  # type: ignore[arg-type]
+        )
 
     # Persistir el costo LLM del turno al episodio (dato de negocio → frontend).
     # Gated por replay-safety (session workflows long-lived; histories viejas
