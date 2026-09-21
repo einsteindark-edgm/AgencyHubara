@@ -13,6 +13,28 @@ history (R-DET / ADR-005).
 | `history_sales_session_v2.json` | `HubaraSalesSessionWorkflow` | `generate_fixtures.py` |
 | `history_remarketing_session_v3.json` | `RemarketingSessionWorkflow` | `generate_fixtures.py` |
 | `history_sales_escalation_prepatch_v1.json` | `HubaraSalesSessionWorkflow` | history REAL de prod (run 5ed9af2d, 2026-09-18), saneada |
+| `history_sales_tag_closure_prepatch_v1.json` | `HubaraSalesSessionWorkflow` | sintética, generada con el código del commit 4052c29 (PRE `tag-ends-turn-v1`) |
+
+**`history_sales_tag_closure_prepatch_v1.json` también está CONGELADA y NO se
+regenera** (el código que la produjo ya no existe: regenerarla hoy daría la
+forma POST-patch y dejaría de proteger nada). Tiene la forma PRE
+`tag-ends-turn-v1`: tras `manage_conversation_tag` hay un `llm_chat` extra (el
+acuse "Etiqueta registrada." del run b06636a6), en los DOS sitios del corte —
+turno de cliente con `customer_message` y turno admin de cierre por ghosting.
+Es sintética **a propósito**, a diferencia de la de la escalación: el corte
+nuevo se decide por una clave NUEVA del envelope (`tag_closure`), así que una
+history real de prod (tool results de forma vieja) jamás lo activa y no puede
+proteger el gate. El único caso en que una history sin el marker trae un
+envelope que el código nuevo cortaría es la **ventana de versiones mezcladas
+de un deploy** (activity con la tool nueva + workflow task con el loop viejo),
+y eso es lo que congela. Su control negativo está automatizado
+(`test_prepatch_tag_closure_history_breaks_without_the_gate`: sin el gate →
+`NondeterminismError 'llm_chat' vs 'record_turn'`). Sesión sintética
+`wa_tagclosure`, identidad del worker → `fixture-worker`. Procedencia
+reproducible en `generate_tag_closure_prepatch_fixture.py` (requiere el código
+del commit 4052c29 y se NIEGA a correr si `workflow_helpers.py` ya trae el
+gate). Fixture y generador se borran junto con
+`workflow.deprecate_patch("tag-ends-turn-v1")`.
 
 **`history_sales_escalation_prepatch_v1.json` es distinta a las demás: está
 CONGELADA y NO se regenera.** Es la history real del incidente "Listo, la

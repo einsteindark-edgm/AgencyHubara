@@ -87,12 +87,23 @@ def _recent_touches(metadata: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(last_inbound, int)
         else None
     )
-    touches = [
-        {"at_ms": o.get("sent_at_ms"), "kind": o.get("kind")}
-        for o in outbounds
-        if isinstance(o.get("sent_at_ms"), int)
-        and (threshold_ms is None or o["sent_at_ms"] > threshold_ms)
-    ]
+    touches: list[dict[str, Any]] = []
+    seen: set[tuple[int, Any]] = set()
+    for o in outbounds:
+        sent_at = o.get("sent_at_ms")
+        if not isinstance(sent_at, int):
+            continue
+        if threshold_ms is not None and sent_at <= threshold_ms:
+            continue
+        # El log guarda una entrada POR BURBUJA (cada una con su wamid, para
+        # que el webhook de Meta le ponga precio): las burbujas de un mismo
+        # envío comparten `sent_at_ms` + `kind` y son UN solo toque — si no,
+        # un gancho de 2 burbujas agotaría el cadence cap él solo.
+        key = (sent_at, o.get("kind"))
+        if key in seen:
+            continue
+        seen.add(key)
+        touches.append({"at_ms": sent_at, "kind": o.get("kind")})
     return touches[-RECENT_TOUCHES_CAP:]
 
 

@@ -11,12 +11,18 @@
 
 import {
   ADS_STATES,
+  waCostBreakdown,
   type AttributedConversation,
   type CapiEvent,
 } from "@plugins/ads/frontend/entities/ads-campaign";
 import { Avatar } from "@/shared/ui";
 
-import { fmtMoney, fmtN, fmtUsd } from "@plugins/ads/frontend/lib/format";
+import {
+  fmtMoney,
+  fmtN,
+  fmtUsd,
+  fmtUsdMicros,
+} from "@plugins/ads/frontend/lib/format";
 import { MissingField } from "@plugins/ads/frontend/lib/MissingField";
 
 import {
@@ -30,7 +36,17 @@ import {
 const CAPI_EVENT_META: Record<CapiEvent, { color: string; bg: string }> = {
   Purchase: { color: "var(--color-ok)", bg: "rgba(91,224,123,0.22)" },
   LeadSubmitted: { color: "var(--color-info)", bg: "rgba(95,169,255,0.22)" },
+  OrderCanceled: { color: "var(--color-danger)", bg: "rgba(255,114,105,0.22)" },
 };
+
+/** Tooltip del badge CAPI. `OrderCanceled` llega DESPUÉS de un Purchase que
+ *  Meta no deja retractar — se aclara para que el operador no lo lea como
+ *  "la compra se borró de Ads Manager". */
+function capiTitle(event: CapiEvent): string {
+  if (event === "OrderCanceled")
+    return "Pedido cancelado reportado a Meta (OrderCanceled). Si antes se reportó un Purchase, Ads Manager lo sigue contando: Meta no permite retractarlo.";
+  return `Evento ${event} reportado a Meta (CAPI)`;
+}
 
 interface Props {
   rows: AttributedConversation[];
@@ -81,6 +97,9 @@ export function AdsAttributedTable({ rows }: Props) {
               <th>CAPI</th>
               <th className="num">Valor</th>
               <th className="num">Costo LLM</th>
+              <th className="num" title="Lo que Meta cobra por los mensajes de esta conversación, por categoría">
+                Costo WA
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -108,13 +127,20 @@ export function AdsAttributedTable({ rows }: Props) {
                     {meta ? (
                       <span
                         className="att-state"
+                        title={
+                          c.stateReason === "order_cancelled"
+                            ? "El pedido de esta conversación está cancelado en Pedidos"
+                            : undefined
+                        }
                         style={{ background: meta.bg, color: meta.color }}
                       >
                         <span
                           className="att-dot"
                           style={{ background: meta.color }}
                         />
-                        {meta.label}
+                        {c.stateReason === "order_cancelled"
+                          ? `${meta.label} · pedido cancelado`
+                          : meta.label}
                       </span>
                     ) : (
                       <MissingField withIcon />
@@ -127,7 +153,7 @@ export function AdsAttributedTable({ rows }: Props) {
                     {c.capiEvent ? (
                       <span
                         className="att-state"
-                        title={`Evento ${c.capiEvent} reportado a Meta (CAPI)`}
+                        title={capiTitle(c.capiEvent)}
                         style={{
                           background: CAPI_EVENT_META[c.capiEvent].bg,
                           color: CAPI_EVENT_META[c.capiEvent].color,
@@ -162,12 +188,39 @@ export function AdsAttributedTable({ rows }: Props) {
                       <MissingField />
                     )}
                   </td>
+                  {/* Costo de WhatsApp de la conversación + las categorías de
+                      Meta que usó (incluye las gratis). null = sin dato. */}
+                  <td className="num" data-testid="wa-cost-cell">
+                    {c.waCostUsdMicros != null ? (
+                      <div>
+                        <div>
+                          {c.waCostUsdMicros > 0 ? fmtUsdMicros(c.waCostUsdMicros) : "Gratis"}
+                        </div>
+                        {waCostBreakdown(c.waCostByCategory).map((row) => (
+                          <div
+                            key={row.key}
+                            style={{ fontSize: 11, color: "var(--fg-mute)" }}
+                          >
+                            {row.label} {fmtN(row.count)}
+                            {row.usdMicros > 0 ? ` · ${fmtUsdMicros(row.usdMicros)}` : ""}
+                          </div>
+                        ))}
+                        {(c.waMsgsPending ?? 0) > 0 && (
+                          <div style={{ fontSize: 11, color: "var(--fg-faint)" }}>
+                            +{c.waMsgsPending} sin precio
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <MissingField />
+                    )}
+                  </td>
                 </tr>
               );
             })}
             {list.length === 0 && (
               <tr>
-                <td colSpan={10} className="att-empty">
+                <td colSpan={11} className="att-empty">
                   Sin chats que coincidan con el filtro.
                 </td>
               </tr>

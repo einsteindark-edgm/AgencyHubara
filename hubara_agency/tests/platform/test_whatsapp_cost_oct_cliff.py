@@ -37,7 +37,7 @@ class TestOctoberRateCard:
         card = load_rate_card_from_yaml("co_2026q4_v1")
         # 2026-10-01T00:00:00Z.
         assert card.rates["marketing"].usd_micros_per_message == 12500
-        assert card.effective_from_ms == 1_759_276_800_000
+        assert card.effective_from_ms == 1_790_812_800_000  # (pineaba 2025-10-01)
 
 
 class TestSilentUndercountRisk:

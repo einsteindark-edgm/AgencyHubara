@@ -483,6 +483,102 @@ que oponga persona vs. sistema ("humano", "bot", "IA", "asistente virtual",
 - GIVEN cualquier línea DICTADA al agente (`*"…"*` en el workspace, `customer_message='…'` o "despide … con: '…'" en strings de Python)
 - THEN `breaks_human_persona(línea)` es False (guard `test_scripted_customer_lines_keep_persona.py`)
 
+### Requirement: El cierre comercial termina el turno (run b06636a6)
+
+`manage_conversation_tag` MUST declarar en su envelope (`tag_closure`) si el
+tag aplicado es AUTOSUFICIENTE (`ends_turn`). Un tag autosuficiente
+(`INTERESADO`, `RECHAZO`, `COMPRA_EXITOSA`, o un `CONFIRMADO_SIN_DATOS`
+degradado a `INTERESADO`) MUST terminar el turno sin otro `llm_chat` cuando ya
+no queda nada que pedirle al modelo. Los tags combo (`CONFIRMADO_SIN_DATOS`,
+`CONFIRMADO_PAGO_PENDIENTE`) MUST NOT terminarlo: exigen `escalate_to_human` y
+ahí el modelo todavía tiene trabajo (el resumen para el colega).
+
+El texto para el cliente MUST viajar en el param `customer_message` de la tool
+y validarse DENTRO de la tool (activity), nunca en el workflow.
+
+#### Scenario: Cierre por ghosting (turno admin)
+
+- GIVEN el cliente dejó de responder y el sistema inyectó el trigger de ghosting
+- WHEN el LLM llama `manage_conversation_tag("INTERESADO" | "RECHAZO", motivo)`
+- THEN el turno termina ahí: el workflow NO pide otro `llm_chat` (antes ese `llm_chat` forzado producía el acuse "Etiqueta registrada.", ~55K prompt tokens por cierre)
+- AND ningún texto llega al cliente
+
+#### Scenario: El cliente se despide (turno de cliente)
+
+- GIVEN el cliente dice "no gracias" o "lo voy a pensar"
+- WHEN el LLM llama `manage_conversation_tag(tag, motivo, customer_message)`
+- THEN el único texto que recibe el cliente es ese `customer_message`, una sola vez
+- AND el `content` que el LLM emita junto a la tool call se descarta (default-deny)
+- AND el workflow NO pide otro `llm_chat`
+
+#### Scenario: customer_message con oraciones inseguras
+
+- GIVEN el `customer_message` trae oraciones que `breaks_human_persona` / `looks_like_admin_leak` marcan
+- WHEN la tool arma el envelope
+- THEN se caen SOLO esas oraciones
+- AND si no sobrevive ninguna, el `customer_message` viaja VACÍO (≠ ausente) y el turno termina en silencio: al modelo que confundió al destinatario no se le reabre el canal
+
+#### Scenario: Tag de cierre sin customer_message en turno de cliente
+
+- GIVEN el LLM llama la tool sin `customer_message` (sesión en vuelo con el schema viejo, o prefiere responder aparte)
+- THEN el turno NO se corta: el cliente sigue esperando respuesta y el siguiente `llm_chat` es legítimo
+- AND el tool result describe un hecho y nombra al destinatario ("Tu próximo mensaje lo lee el cliente"), sin forma de parte interno
+
+#### Scenario: Etiqueta degradada
+
+- GIVEN el LLM manda `CONFIRMADO_SIN_DATOS` con `customer_message`, pero no hay confirmación de compra y la tool degrada a `INTERESADO`
+- THEN el envelope NO declara `customer_message`: el modelo lo redactó bajo una premisa que la tool rechazó ("un colega te escribe por los datos de envío") y nadie va a escalar
+- AND en turno de cliente el turno NO se corta: el modelo responde con el aviso de degradación a la vista
+- AND en turno admin se corta igual, sin texto
+
+#### Scenario: Picker en el mismo batch
+
+- GIVEN un batch `[present_variant_picker, manage_conversation_tag(..., customer_message)]`
+- THEN gana el corte L-11: el picker ES el mensaje del turno (igual que antes de este requirement)
+- AND la despedida no se envía, no se persiste al dashboard y el LLM no la recuerda
+- AND (contraste) con `escalate_to_human` es al revés — la despedida sobrevive al picker — porque la escalación es definitiva
+
+#### Scenario: Una tool del batch falló
+
+- GIVEN cualquier tool del batch devolvió `error` (p. ej. dos tags y el último rebota por precondición)
+- THEN el turno NO se corta aunque otro tag del batch haya declarado su cierre: el modelo tiene que leer el error
+
+#### Scenario: CONFIRMADO_SIN_DATOS en el cierre por ghosting
+
+- GIVEN el LLM marca `CONFIRMADO_SIN_DATOS` (con confirmación de compra registrada)
+- THEN el turno continúa para que llame `escalate_to_human("ORDER_PENDING_SHIPPING_DETAILS", summary)`
+- AND si en vez de escalar acusa recibo, la red `ensure_closing_escalation` escala por él; el acuse no sale
+
+### Requirement: Lo que no salió, el LLM no lo recuerda (run b06636a6 → 5ed9af2d)
+
+El historial que el LLM lee en la sesión siguiente MUST NOT contener como
+mensaje `assistant` un texto final que nunca llegó al cliente por ser de un
+turno admin o por oler a parte interno. El resto del turno (mensaje del
+cliente, tool calls, tool results) MUST conservarse.
+
+#### Scenario: Acuse de un turno admin
+
+- GIVEN un cierre por ghosting en el que el LLM escribe texto (acuse, resumen, o la despedida de una escalación)
+- THEN ese texto no se envía Y no se persiste con `record_turn`
+- AND queda en la traza del turno (`llm_text`, `suppressed_reason: admin_turn`)
+
+#### Scenario: Texto bloqueado por el tripwire en un turno de cliente
+
+- GIVEN el texto final huele a parte interno (`looks_like_admin_leak`)
+- THEN no se envía Y no se persiste como `assistant`
+
+#### Scenario: La abstención explícita sí se recuerda
+
+- GIVEN un turno de cliente o de handoff (NO admin) en el que el LLM responde el sentinel `NO_MESSAGE`
+- THEN no se envía, pero SÍ queda en el historial: es el canal correcto de abstención y verlo usado es el few-shot bueno
+- AND en un turno admin se recorta como cualquier otro texto (ahí la respuesta correcta era la tool call, no el sentinel)
+
+#### Scenario: Turno admin sin ninguna tool call
+
+- GIVEN un cierre por ghosting en el que el LLM escribe prosa y NO llama ninguna tool
+- THEN `record_turn` se agenda igual pero con la lista VACÍA: el turno "nunca pasó"
+- AND el trigger `[SISTEMA]` de ghosting NO queda en el historial sin cerrar (la sesión siguiente lo leería pegado al mensaje nuevo del cliente y podría aplicarle esa orden vieja)
+
 ### Requirement: Transcripción de audio inbound
 
 El sales-worker MUST transcribir audios inbound vía

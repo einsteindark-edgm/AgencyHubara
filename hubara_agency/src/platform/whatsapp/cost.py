@@ -25,6 +25,7 @@ Ver HU-WA24H-001 §3.4 para el contrato completo.
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -320,6 +321,37 @@ def _bump(
 
 #: Directorio donde viven los rate cards versionados.
 RATE_CARDS_DIR: Path = Path(__file__).parent / "rate_cards"
+
+
+@lru_cache(maxsize=1)
+def _rate_card_timeline() -> tuple[tuple[int, str], ...]:
+    """(effective_from_ms, version) de TODAS las tarjetas, ordenado. Los YAML
+    son inmutables por proceso (se agregan con un deploy) → cache seguro."""
+    timeline = [
+        (load_rate_card_from_yaml(path.stem).effective_from_ms, path.stem)
+        for path in RATE_CARDS_DIR.glob("*.yaml")
+    ]
+    if not timeline:
+        raise FileNotFoundError(f"No hay rate cards en {RATE_CARDS_DIR}")
+    return tuple(sorted(timeline))
+
+
+def effective_rate_card_version(now_ms: int) -> str:
+    """Versión de la tarjeta VIGENTE en `now_ms`: la de `effective_from_ms`
+    más reciente que no sea futura. Antes de la primera → la más vieja
+    (defensivo: relojes raros / datos históricos — nunca explota).
+
+    Por qué existe (2026-09-18): la versión era un default hardcodeado + un
+    env que nadie seteaba; el 1-oct-2026 (Meta empieza a cobrar service y
+    utility-en-ventana) prod habría seguido con `service: 0`. Pura: el caller
+    pasa `now_ms`.
+    """
+    timeline = _rate_card_timeline()
+    current = timeline[0][1]
+    for effective_from_ms, version in timeline:
+        if effective_from_ms <= now_ms:
+            current = version
+    return current
 
 
 def load_rate_card_from_yaml(version: str) -> RateCard:

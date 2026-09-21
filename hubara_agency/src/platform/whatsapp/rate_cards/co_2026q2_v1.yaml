@@ -23,7 +23,7 @@
 # Episodios históricos snapshotean `rate_card_version` para retener cost preciso.
 
 version: co_2026q2_v1
-effective_from_ms: 1717200000000   # 2026-04-01T00:00:00Z (abril 1, 2026)
+effective_from_ms: 1775001600000   # 2026-04-01T00:00:00Z (era 1717200000000 = 2024-06-01, fix 2026-09-18)
 country: CO
 currency: USD
 

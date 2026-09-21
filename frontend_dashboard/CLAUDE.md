@@ -67,10 +67,14 @@ Seis reglas. Los reviewers las exigen; las 1-2 tienen gate automático
    (referencia: `ReadyForShip`), no se duplican en `useState`.
 4. **Estado cross-sección SOLO vía PluginHost** — `useSelection(pluginId,
    fallback)`; el fallback lo declara el plugin, el shell no siembra ids.
-5. **Derivados de reloj se computan en render** con utils puras
-   (`@/shared/lib` dates: `todayIso`/`addDaysIso`) — nunca en mappers ni
-   queryFn (la cache debe ser estable respecto al tiempo; `overdue` viene
-   del backend).
+5. **Derivados de reloj se computan en render** con los helpers de
+   `@/shared/lib` dates (`todayBogotaIso`/`addDaysBogotaIso`/
+   `nextDaysBogotaIsoSet` — día calendario **America/Bogota**; los
+   `todayIso`/`addDaysIso` en UTC se ELIMINARON a propósito, no recrearlos)
+   — nunca en mappers ni queryFn (la cache debe ser estable respecto al
+   tiempo; `overdue` viene del backend). Si el derivado alimenta un
+   `useMemo`, el día se lee en render y va en las deps: leído dentro del
+   memo queda congelado al cruzar la medianoche (caso Órdenes, PR #305).
 6. **Cero diálogos JS nativos** (`window.confirm/alert`) — no son confiables
    en los webviews de Tauri. Confirmaciones: inline de dos pasos (patrón
    DangerPanel) o modal propio.

@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import dataclasses
 
-from src.plugins.ads.aggregation import AdsCampaignSummary
+from src.plugins.ads.aggregation import (
+    AdsCampaignSummary,
+    merge_wa_cost_categories,
+)
 from src.plugins.ads.classification import VALID_STATES
 from src.plugins.ads.meta_names import enrich_campaign_names
 
@@ -75,6 +78,16 @@ def merge_bucket_group(members: list[AdsCampaignSummary]) -> AdsCampaignSummary:
         sum(m.llm_tokens or 0 for m in members) if llm_vals else None
     )
 
+    # Costo de WhatsApp: total + desglose por categoría de Meta. Dict NUEVO —
+    # los buckets de origen se reusan para el drill-down (adsets / ads).
+    wa_members = [m for m in members if m.wa_cost_usd_micros is not None]
+    wa_cost = sum(m.wa_cost_usd_micros or 0 for m in wa_members) if wa_members else None
+    wa_by_category: dict[str, dict[str, int]] | None = None
+    if wa_members:
+        wa_by_category = {}
+        for m in wa_members:
+            merge_wa_cost_categories(wa_by_category, m.wa_cost_by_category)
+
     firsts = [m.first_seen_ms for m in members if m.first_seen_ms is not None]
     lasts = [m.last_seen_ms for m in members if m.last_seen_ms is not None]
 
@@ -90,12 +103,18 @@ def merge_bucket_group(members: list[AdsCampaignSummary]) -> AdsCampaignSummary:
         avg_ticket=avg_ticket,
         llm_cost_usd=llm_cost,
         llm_tokens=llm_tokens,
+        wa_cost_usd_micros=wa_cost,
+        wa_cost_by_category=wa_by_category,
+        wa_msgs_pending=sum(m.wa_msgs_pending for m in members),
         avg_episode_duration_ms=avg_duration,
         revenue_count=revenue_count,
         duration_count=dur_count,
         capi_leads_sent=sum(m.capi_leads_sent for m in members),
         capi_purchases_sent=sum(m.capi_purchases_sent for m in members),
         capi_failed=sum(m.capi_failed for m in members),
+        # Se perdía al agrupar (este merge recompone los campos A MANO: todo
+        # campo nuevo de AdsCampaignSummary tiene que sumarse acá también).
+        capi_skipped=sum(m.capi_skipped for m in members),
     )
 
 

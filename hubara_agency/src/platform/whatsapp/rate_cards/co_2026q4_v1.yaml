@@ -10,9 +10,17 @@
 #              pricing_type del webhook / la ventana — ver el guard del
 #              short-circuit en test_whatsapp_cost_oct_cliff.py.
 #
-# ⚠️ El valor 800 de `service` es PROVISIONAL — Meta publica el rate real de
-# service ~1-sep-2026. Cuando salga, actualizar este archivo ANTES de flippear
-# WHATSAPP_RATE_CARD_VERSION=co_2026q4_v1 en el deploy del 1-oct.
+# `service: 800` VERIFICADO 2026-09-18 contra la doc oficial de Meta
+# ("non-template messages"): "By market, rates for service messages are the
+# same as the rates for utility and authentication messages" → Colombia
+# utility/auth = $0.0008. Shape del webhook post-oct: {"billable": true,
+# "pricing_model": "PMP", "type": "regular", "category": "service"}.
+# (Los BSP mencionan 1.000 service gratis/mes por número; la página oficial
+# no — si existen llegarán como no-billable y el costo real da 0 igual.)
+#
+# NO hace falta flippear ningún env: desde 2026-09-18 la tarjeta vigente se
+# elige POR FECHA (`effective_rate_card_version`). WHATSAPP_RATE_CARD_VERSION
+# queda solo como override de emergencia.
 #
 # Reglas (idénticas a co_2026q2_v1, ver cost.py):
 #   - pricing.billable == false                        → 0
@@ -28,7 +36,7 @@
 # INMUTABLE una vez en producción — si Meta cambia tarifas, crear versión nueva.
 
 version: co_2026q4_v1
-effective_from_ms: 1759276800000   # 2026-10-01T00:00:00Z
+effective_from_ms: 1790812800000   # 2026-10-01T00:00:00Z (era 1759276800000 = 2025-10-01, fix 2026-09-18)
 country: CO
 currency: USD
 

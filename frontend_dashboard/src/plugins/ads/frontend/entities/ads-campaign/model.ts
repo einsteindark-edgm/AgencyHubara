@@ -54,7 +54,11 @@ export type CampaignTendency = "up" | "flat" | "down";
 /** Evento CAPI (Conversions API de Meta) reportado server-side al cierre de
  *  un episodio: `LeadSubmitted` (lead calificado) o `Purchase` (venta, con
  *  value COP). ⚠️ El nombre exacto importa — Meta rechaza "Lead". */
-export type CapiEvent = "LeadSubmitted" | "Purchase";
+export type CapiEvent = "LeadSubmitted" | "Purchase" | "OrderCanceled";
+
+/** Por qué el estado de una conversación no sale del chat. `order_cancelled`:
+ *  el pedido está cancelado en Pedidos aunque el chat diga COMPRA_EXITOSA. */
+export type AdsStateReason = "order_cancelled";
 
 /* ── Rango temporal del dashboard (filtro por fecha) ─────────────────────── */
 
@@ -120,6 +124,60 @@ export function selectionToParams(sel: AdsRangeSelection): AdsWindowParams {
 
 export type AdsConversationCounts = Record<AdsState, number>;
 
+// ---------------------------------------------------------------------------
+// Costo de WhatsApp (2026-09-18)
+// ---------------------------------------------------------------------------
+
+/** Una categoría de Meta dentro de un costo: cuántos mensajes y cuánto costaron
+ *  (USD micros = 1e-6 USD). `count` incluye los gratis (costo 0). */
+export interface WaCostEntry {
+  count: number;
+  usdMicros: number;
+}
+
+/** {categoría Meta → entrada}. Abierto: Meta puede agregar categorías. */
+export type WaCostByCategory = Record<string, WaCostEntry>;
+
+/** Fila lista para pintar. `tone` = sufijo de token REAL del tema
+ *  (`text-<tone>` / `bg-<tone>-soft` existen en `@theme` de index.css). */
+export interface WaCostRow extends WaCostEntry {
+  key: string;
+  label: string;
+  tone: "violet" | "info" | "ok" | "warn" | "neutral";
+}
+
+/** Categorías conocidas de Meta, en el orden en que se pintan: primero las que
+ *  más cuestan por mensaje (marketing) — es lo que el operador quiere vigilar. */
+const WA_COST_CATEGORIES: { key: string; label: string; tone: WaCostRow["tone"] }[] = [
+  { key: "marketing", label: "Marketing", tone: "violet" },
+  { key: "utility", label: "Utilidad", tone: "info" },
+  { key: "service", label: "Servicio", tone: "ok" },
+  { key: "authentication", label: "Autenticación", tone: "warn" },
+  { key: "authentication_international", label: "Autenticación intl.", tone: "warn" },
+  // Categoría REAL que manda Meta para los mensajes dentro de la ventana
+  // gratis de 72h del anuncio (pricing type `free_entry_point`) — verificado
+  // en el vault de prod el 2026-09-18.
+  { key: "referral_conversion", label: "Anuncio (72h gratis)", tone: "neutral" },
+];
+
+/** Desglose ORDENADO para pintar. Una categoría desconocida (Meta agrega una)
+ *  va al final con su nombre crudo — nunca se esconde un costo. */
+export function waCostBreakdown(
+  byCategory: WaCostByCategory | null | undefined,
+): WaCostRow[] {
+  if (!byCategory) return [];
+  const known = WA_COST_CATEGORIES.filter((c) => byCategory[c.key]).map((c) => ({
+    ...c,
+    ...byCategory[c.key],
+  }));
+  const knownKeys = new Set(WA_COST_CATEGORIES.map((c) => c.key));
+  const unknown = Object.keys(byCategory)
+    .filter((key) => !knownKeys.has(key))
+    .sort()
+    .map((key) => ({ key, label: key, tone: "neutral" as const, ...byCategory[key] }));
+  return [...known, ...unknown];
+}
+
 /**
  * Una campaña Meta vista desde el dashboard. Muchos campos son `| null`
  * porque hoy solo tenemos lo que clasifica el ingest WhatsApp (origin +
@@ -178,6 +236,15 @@ export interface AdsCampaign {
   llmCostUsd: number | null;
   /** Tokens LLM totales (prompt+completion) de la campaña. */
   llmTokens: number | null;
+  /** Costo de WHATSAPP acumulado de la campaña, en USD micros (1e-6 USD). NO
+   *  es el gasto del anuncio (`spend`, COP): es lo que Meta cobra por los
+   *  mensajes. null = ningún episodio trae dato (≠ "costó 0"). Opcionales para
+   *  tolerar fixtures/mocks históricos. */
+  waCostUsdMicros?: number | null;
+  /** Desglose por categoría de Meta (incluye categorías gratis, con costo 0). */
+  waCostByCategory?: WaCostByCategory | null;
+  /** Mensajes enviados cuyo precio aún no llegó por webhook (no están en el total). */
+  waMsgsPending?: number;
   /** Duración media de los episodios CERRADOS del bucket (ms) — el "tiempo"
    *  del embudo. null si no hay episodios cerrados con timestamps válidos. */
   avgEpisodeDurationMs: number | null;
@@ -251,10 +318,21 @@ export interface AttributedConversation {
   /** Tokens totales (prompt+completion) del episodio. */
   llmTokens?: number | null;
 
+  // --- Costo de WhatsApp de la conversación (2026-09-18) ---
+  /** Costo de WhatsApp del episodio en USD micros. null = sin dato (≠ 0). */
+  waCostUsdMicros?: number | null;
+  /** Categorías de Meta que usó la conversación, con conteo y costo. */
+  waCostByCategory?: WaCostByCategory | null;
+  /** Mensajes cuyo precio aún no llegó por webhook. */
+  waMsgsPending?: number;
+
   /** Evento CAPI reportado a Meta para este episodio (`LeadSubmitted` |
-   *  `Purchase`). `null` si no se reportó. Opcional para tolerar el mock
-   *  histórico. */
+   *  `Purchase` | `OrderCanceled`). `OrderCanceled` pisa a `Purchase`: Meta no
+   *  deja retractar la compra, el badge muestra lo último que sabe del pedido.
+   *  `null` si no se reportó. Opcional para tolerar el mock histórico. */
   capiEvent?: CapiEvent | null;
+  /** Motivo del estado cuando lo decide Pedidos y no el chat. */
+  stateReason?: AdsStateReason | null;
 }
 
 /* ── Serie diaria — conversaciones iniciadas por día/estado final ────────── */

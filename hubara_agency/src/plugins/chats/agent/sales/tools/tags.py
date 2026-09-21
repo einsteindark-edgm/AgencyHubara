@@ -49,6 +49,7 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
 )
 from src.plugins.chats.shared.funnel import enqueue_capi_for_tag
 from src.plugins.chats.shared.purchase_signals import has_purchase_confirmation
+from src.sdk.textkit import keep_customer_safe_sentences, sanitize_llm_text
 
 # Sesión c4e3416f: `CONFIRMADO_SIN_DATOS` es para el caso donde el cliente
 # confirmó el pedido (apretó "Confirmar" en `present_order_confirmation`) pero
@@ -74,6 +75,18 @@ _TAG_ENUM: list[str] = [
     "CONFIRMADO_PAGO_PENDIENTE",
 ]
 
+# Tags que NO cierran solos: van SIEMPRE en combo con `escalate_to_human`
+# (valor = la razón que el guion exige). Tras ellos el `llm_chat` siguiente no
+# es un canal ambiguo: el modelo tiene trabajo real (escalar con su resumen
+# para el colega). Todo otro tag es AUTOSUFICIENTE: después de él no queda
+# nada por hacer, y pedirle "un mensaje más" al modelo es abrirle el canal del
+# acuse (run b06636a6: "Etiqueta registrada."). La tool lo DECLARA en el
+# envelope (`tag_closure.ends_turn`) y `run_agent_turn` decide el corte.
+_ESCALATION_REASON_BY_TAG: dict[str, str] = {
+    "CONFIRMADO_SIN_DATOS": "ORDER_PENDING_SHIPPING_DETAILS",
+    "CONFIRMADO_PAGO_PENDIENTE": "PAYMENT_VERIFICATION_PENDING",
+}
+
 
 class ManageConversationTagTool(ToolBase):
     """Register the final commercial tag for a conversation, plus the reason.
@@ -89,7 +102,9 @@ class ManageConversationTagTool(ToolBase):
         "Úsala al final de la venta, o si el usuario pierde el interés. "
         "Registra la etiqueta final ('INTERESADO', 'RECHAZO', "
         "'COMPRA_EXITOSA', 'CONFIRMADO_SIN_DATOS', "
-        "'CONFIRMADO_PAGO_PENDIENTE') y un resumen breve."
+        "'CONFIRMADO_PAGO_PENDIENTE') y un resumen breve. Con INTERESADO o "
+        "RECHAZO TERMINA tu turno: si el cliente está en la conversación, tu "
+        "despedida viaja en `customer_message`."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -130,7 +145,25 @@ class ManageConversationTagTool(ToolBase):
                 ),
                 "minLength": 1,
             },
+            "customer_message": {
+                "type": "string",
+                "description": (
+                    "Tu línea de cierre para el cliente cuando él está en la "
+                    "conversación (dijo que no, se despidió, lo va a pensar). "
+                    "Es lo ÚNICO que lee en este turno: tu content se descarta "
+                    "y con INTERESADO o RECHAZO esta tool termina tu turno. "
+                    "Cálida, de tú y en primera persona, respondiendo a lo que "
+                    "acaba de decir; sin etiquetas ni procesos internos. "
+                    "Ejemplo: 'Con gusto, aquí estaré por si más adelante te "
+                    "animas 🤍'. En el cierre por inactividad (el cliente ya "
+                    "no está) NO lo mandes."
+                ),
+            },
         },
+        # `customer_message` NO va en required a propósito: una sesión en vuelo
+        # (tool_definitions del bootstrap pre-deploy) llama sin el param y no
+        # debe rebotar en validate_params; y en el cierre por ghosting no hay
+        # cliente a quien hablarle.
         "required": ["tag", "motivo"],
     }
 
@@ -148,7 +181,7 @@ class ManageConversationTagTool(ToolBase):
         )
 
     async def execute_with_context(
-        self, ctx: ToolContext, tag: str, motivo: str
+        self, ctx: ToolContext, tag: str, motivo: str, customer_message: str = ""
     ) -> str:
         # Path per-sesion (NO el workspace canonico del agente).
         metadata_file = self._vault_dir / ctx.session_key / "metadata.json"
@@ -263,9 +296,53 @@ class ManageConversationTagTool(ToolBase):
         # PR #113 (transition eliminada) y su `message` le mentía al LLM. El
         # parser del workflow (`workflow_helpers`) sigue entendiendo el
         # envelope SOLO para replay de histories viejas — acá no se produce.
+        # El `message` DESCRIBE un hecho; no da órdenes ni tiene forma de
+        # reporte (L-20). El viejo "Éxito. Interacción etiquetada como 'X'."
+        # invitaba al acuse y quedaba en el historial como few-shot de "tras
+        # una tool administrativa se responde con un parte de estado". Va en
+        # CONDICIONAL porque la tool no sabe si el turno es de cliente o admin
+        # y el texto queda grabado: tiene que ser cierto en los dos.
+        escalation_reason = _ESCALATION_REASON_BY_TAG.get(tag)
         response: dict[str, Any] = {
-            "message": f"Éxito. Interacción etiquetada como '{tag}'.",
+            "message": (
+                "Hecho. Si el cliente sigue en la conversación, tu próximo "
+                "mensaje lo lee él."
+                if escalation_reason is None
+                else (
+                    "Hecho. El relevo todavía no está pedido: corresponde "
+                    f"`escalate_to_human` con reason_category='{escalation_reason}' "
+                    "(la despedida viaja en su `customer_message`)."
+                )
+            ),
+            # Cierre declarado: `run_agent_turn` corta el turno cuando
+            # `ends_turn` (gate `tag-ends-turn-v1`). Va con el tag EFECTIVO: un
+            # CONFIRMADO_SIN_DATOS degradado cierra como INTERESADO.
+            "tag_closure": {"tag": tag, "ends_turn": escalation_reason is None},
         }
+        # Texto para el cliente (solo en tags autosuficientes; en los combo la
+        # despedida viaja en `escalate_to_human`). Tres estados que el loop
+        # distingue: clave AUSENTE = el modelo no mandó texto (cierre por
+        # ghosting, o va a responder en su siguiente mensaje); clave con texto
+        # = lo único que lee el cliente; clave VACÍA = el modelo habló y nada
+        # era seguro → el turno termina en silencio en vez de reabrirle el
+        # canal. Se valida ACÁ (activity) y el workflow solo lee el resultado
+        # grabado: un regex que decide commands es lógica de replay (L-21).
+        # Etiqueta DEGRADADA → nunca se declara texto: el modelo lo redactó
+        # bajo una premisa que esta tool rechazó (creía cerrar un
+        # CONFIRMADO_SIN_DATOS: "un colega te escribe por los datos de envío")
+        # y nadie va a escalar. Sin texto, en turno de cliente el loop no corta
+        # y el modelo responde con el aviso de degradación a la vista (el
+        # mecanismo del fix del run 01a0a0f1); en turno admin corta igual.
+        if (
+            escalation_reason is None
+            and degraded_from is None
+            and customer_message.strip()
+        ):
+            response["tag_closure"]["customer_message"] = (
+                keep_customer_safe_sentences(
+                    sanitize_llm_text(customer_message).text
+                )
+            )
         if degraded_from is not None:
             response["degraded_from"] = degraded_from
             response["message"] = (

@@ -18,7 +18,7 @@ import hashlib
 import json
 import os
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any
 
 import structlog
@@ -325,12 +325,15 @@ async def send_message_to_session(
     failed_error: str | None = None
     # (wamid, texto) de cada burbuja que Meta ACEPTÓ — destino de las citas.
     sent_bubbles: list[tuple[str, str]] = []
+    # wamid de CADA burbuja entregada ("" si Meta no lo devolvió).
+    delivered_wamids: list[str] = []
     for chunk in chunks:
         result = await whatsapp_client.send_text(phone_number_id, from_number, chunk)
         if not result.ok:
             failed_error = result.error
             break
         delivered += 1
+        delivered_wamids.append(result.wa_message_id or "")
         if result.wa_message_id:
             sent_bubbles.append((result.wa_message_id, chunk))
         await asyncio.sleep(1.5)
@@ -340,6 +343,13 @@ async def send_message_to_session(
         # (mismo patrón que el template path). El pricing llega por webhook.
         # Se registra TAMBIÉN en entrega parcial: un retry no debe re-mandar
         # los chunks que sí llegaron (el fingerprint lo dedupea).
+        #
+        # UNA entrada POR BURBUJA, con SU wamid (fix 2026-09-18). Antes era una
+        # sola entrada con `wa_message_id=""`: el webhook `message_status` de
+        # Meta (que trae el `pricing`) no encontraba el mensaje → 3.012
+        # statuses en la cola muerta como `not_found` y el costo de TODO el
+        # texto del bot "pendiente" para siempre (313/313 en prod). Y cada
+        # burbuja es un mensaje facturable distinto para Meta.
         log_entry = OutboundLogEntry(
             sent_at_ms=now_ms,
             wa_message_id="",
@@ -349,7 +359,9 @@ async def send_message_to_session(
             cost_usd_micros=None,
             rate_card_version=None,
         )
-        _append_outbound_to_active_episode(metadata, log_entry)
+        for wamid in delivered_wamids:
+            log_entry = replace(log_entry, wa_message_id=wamid)
+            _append_outbound_to_active_episode(metadata, log_entry)
         metadata["last_outbound"] = asdict(log_entry)
         _record_freeform_send(metadata, fingerprint, now_ms)
         # Misma escritura: el índice de citas no merece IO extra.

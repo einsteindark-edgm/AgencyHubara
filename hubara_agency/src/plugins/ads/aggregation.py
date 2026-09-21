@@ -117,6 +117,17 @@ class AdsCampaignSummary:
     # de `episode.llm_usage`. None si ningún episodio acumuló uso LLM.
     llm_cost_usd: float | None = None
     llm_tokens: int | None = None
+    # Costo de WHATSAPP agregado (USD micros = 1e-6 USD; enteros, sin float) —
+    # suma de `episode.cost_summary` de los episodios del bucket. NO es el
+    # gasto del anuncio (`spend`, COP): es lo que Meta cobra por los mensajes.
+    # `wa_cost_by_category` = {categoría Meta: {count, usd_micros}} — incluye
+    # categorías con costo 0 (mensajes gratis): el operador quiere ver cuáles
+    # se usaron. None si ningún episodio trae `cost_summary` (≠ "costó 0").
+    wa_cost_usd_micros: int | None = None
+    wa_cost_by_category: dict[str, dict[str, int]] | None = None
+    # Mensajes enviados cuyo precio aún no llegó por webhook: el total todavía
+    # no los incluye (la UI lo avisa en vez de mostrar un total "final" falso).
+    wa_msgs_pending: int = 0
     # Duración media de los episodios CERRADOS del bucket (ms) — el "tiempo"
     # del embudo. None si no hay episodios cerrados con timestamps válidos.
     avg_episode_duration_ms: int | None = None
@@ -202,10 +213,25 @@ class AdsAttributedConversation:
     llm_cost_usd: float | None = None
     llm_tokens: int | None = None
 
+    # Costo de WhatsApp del episodio (USD micros) + desglose por categoría de
+    # Meta {cat: {count, usd_micros}} — de `episode.cost_summary`, que
+    # materializa el ingest de delivery-status (chats) con el `pricing` del
+    # webhook + la tarjeta de tarifas. None si el episodio no lo trae.
+    wa_cost_usd_micros: int | None = None
+    wa_cost_by_category: dict[str, dict[str, int]] | None = None
+    wa_msgs_pending: int = 0
+
     # Evento CAPI reportado a Meta para este episodio (fix 2026-07-01):
-    # "Purchase" | "LeadSubmitted" | None (nada reportado / falló). Purchase
-    # pisa a LeadSubmitted (evento terminal — espejo de capi_terminal_event).
+    # "OrderCanceled" | "Purchase" | "LeadSubmitted" | None (nada reportado /
+    # falló). Purchase pisa a LeadSubmitted (evento terminal — espejo de
+    # capi_terminal_event); OrderCanceled pisa a Purchase: Meta no deja
+    # retractar la compra, el badge muestra lo último que sabe del pedido.
     capi_event: str | None = None
+
+    # Por qué `state` no sale del chat: "order_cancelled" = el pedido está
+    # cancelado en Orders (el chat sigue diciendo COMPRA_EXITOSA). None = el
+    # estado es el del chat.
+    state_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -342,6 +368,39 @@ def _empty_state_counts() -> dict[str, int]:
     return {state: 0 for state in VALID_STATES}
 
 
+#: `AdsAttributedConversation.state_reason` cuando el estado lo decide la etapa
+#: del pedido en Orders y no el chat.
+STATE_REASON_ORDER_CANCELLED = "order_cancelled"
+
+
+def _episode_order_cancelled(
+    episode: dict[str, Any] | None,
+    metadata: dict[str, Any],
+    order_facts: OrderFactsSnapshot | None,
+) -> bool:
+    """¿El pedido del episodio está cancelado en Orders?
+
+    El chat conserva `order_id` + COMPRA_EXITOSA aunque el pedido se cancele
+    después (caso 2026-09-18: contra entrega confirmado y cancelado al día
+    siguiente), así que la etapa se lee de `OrderFacts` — la misma fuente que
+    el revenue. Sin dato del pedido (Medusa caído, id inexistente) devuelve
+    False: no se degrada una venta sin evidencia.
+
+    `episode=None` = sesión legacy sin `episodes[]` → su `registered_order`.
+    """
+    if order_facts is None:
+        return False
+    if episode is not None:
+        oid = episode.get("order_id")
+    else:
+        reg = metadata.get("registered_order")
+        oid = reg.get("order_id") if isinstance(reg, dict) else None
+    if not isinstance(oid, str) or not oid:
+        return False
+    fact = order_facts.facts.get(oid)
+    return fact is not None and fact.stage == "cancelled"
+
+
 def _iter_episodes(
     metadata: dict[str, Any],
     *,
@@ -351,8 +410,12 @@ def _iter_episodes(
     total_msgs_fn: Callable[[], int],
     last_msg_ms: int | None,
     now_ms: int,
+    order_facts: OrderFactsSnapshot | None = None,
 ) -> Iterator[tuple[dict[str, Any] | None, str]]:
     """Yields (episode_dict_or_None, state) por cada episodio de la sesión.
+
+    Con `order_facts`, un episodio cuyo pedido está cancelado en Orders sale
+    "perdido" (ver `_episode_order_cancelled`).
 
     - Si `metadata.episodes` está poblado → yields uno por episodio.
       `episode_dict` es el dict tal cual, `state` se computa con
@@ -376,6 +439,7 @@ def _iter_episodes(
             total_msgs=total_msgs_fn(),
             last_inbound_ms=last_msg_ms,
             now_ms=now_ms,
+            order_cancelled=_episode_order_cancelled(None, metadata, order_facts),
         )
         yield (None, state)
         return
@@ -397,6 +461,7 @@ def _iter_episodes(
             total_msgs=total_msgs,
             last_inbound_ms=last_msg_ms if is_active else ep.get("closed_at_ms"),
             now_ms=now_ms,
+            order_cancelled=_episode_order_cancelled(ep, metadata, order_facts),
         )
         yield (ep, state)
 
@@ -539,7 +604,8 @@ def _session_capi_by_episode(
     exactamente la key del pseudo-episodio de las sesiones legacy sin
     `episodes[]`, así sus counters no se pierden.
 
-    Cada slot: `{"lead_sent": n, "purchase_sent": n, "failed": n, "skipped": n}`.
+    Cada slot: `{"lead_sent": n, "purchase_sent": n, "order_canceled_sent": n,
+    "failed": n, "skipped": n}`.
     Los `skipped_*` cuentan aparte (auditoría 2026-09-08: antes se perdían en
     logs); `unknown` (timeout ambiguo) cuenta como `failed` — requiere ojo.
 
@@ -570,11 +636,20 @@ def _session_capi_by_episode(
         elif "_" in event_id:
             ep_id = order_to_ep.get(event_id.split("_", 1)[1])
         slot = out.setdefault(
-            ep_id, {"lead_sent": 0, "purchase_sent": 0, "failed": 0, "skipped": 0}
+            ep_id,
+            {
+                "lead_sent": 0,
+                "purchase_sent": 0,
+                "order_canceled_sent": 0,
+                "failed": 0,
+                "skipped": 0,
+            },
         )
         if status == "sent":
             if name == "Purchase":
                 slot["purchase_sent"] += 1
+            elif name == "OrderCanceled":
+                slot["order_canceled_sent"] += 1
             elif name in ("LeadSubmitted", "Lead"):
                 slot["lead_sent"] += 1
         elif status.startswith("failed") or status == "unknown":
@@ -695,6 +770,54 @@ def _episode_llm_usage(episode: dict[str, Any] | None) -> tuple[float, int] | No
     )
 
 
+def _as_count(value: Any) -> int:
+    """Entero no negativo desde un valor crudo del vault (defensivo)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return max(0, int(value))
+
+
+def merge_wa_cost_categories(
+    target: dict[str, dict[str, int]], source: dict[str, dict[str, int]] | None
+) -> None:
+    """Suma `source` sobre `target` ({categoría: {count, usd_micros}}), in place.
+    Lo usan el acumulado por bucket y el merge de buckets de `segmentation`."""
+    for category, entry in (source or {}).items():
+        slot = target.setdefault(category, {"count": 0, "usd_micros": 0})
+        slot["count"] += entry["count"]
+        slot["usd_micros"] += entry["usd_micros"]
+
+
+def _episode_wa_cost(
+    episode: dict[str, Any] | None,
+) -> tuple[int, dict[str, dict[str, int]], int] | None:
+    """`(total_usd_micros, by_category, pending)` del episodio, o None si no
+    trae `cost_summary`.
+
+    Lectura CRUDA del vault (P-3: ads no importa chats; el shape canónico es
+    `_summary_to_dict` del ingest de delivery-status). Tolerante: una categoría
+    ilegible se salta y el total se RECOMPONE desde las categorías legibles —
+    así total y desglose nunca se contradicen en la UI.
+    """
+    if not isinstance(episode, dict):
+        return None
+    summary = episode.get("cost_summary")
+    if not isinstance(summary, dict):
+        return None
+    by_category: dict[str, dict[str, int]] = {}
+    raw_categories = summary.get("by_category")
+    if isinstance(raw_categories, dict):
+        for category, entry in raw_categories.items():
+            if not isinstance(category, str) or not isinstance(entry, dict):
+                continue
+            by_category[category] = {
+                "count": _as_count(entry.get("count")),
+                "usd_micros": _as_count(entry.get("usd_micros")),
+            }
+    total = sum(entry["usd_micros"] for entry in by_category.values())
+    return total, by_category, _as_count(summary.get("messages_pending_count"))
+
+
 # =============================================================================
 # Public API
 # =============================================================================
@@ -754,6 +877,7 @@ def list_ads_campaigns(
             total_msgs_fn=count_fn,
             last_msg_ms=last_msg_ms,
             now_ms=now_ms,
+            order_facts=order_facts,
         ):
             ep_started_ms = (
                 ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
@@ -797,6 +921,10 @@ def list_ads_campaigns(
                     "llm_cost": 0.0,
                     "llm_tokens": 0,
                     "has_llm": False,
+                    "wa_cost": 0,
+                    "wa_by_category": {},
+                    "wa_pending": 0,
+                    "has_wa": False,
                     "dur_sum": 0,
                     "dur_count": 0,
                     "capi_leads": 0,
@@ -820,6 +948,13 @@ def list_ads_campaigns(
                 bucket["llm_cost"] += usage[0]
                 bucket["llm_tokens"] += usage[1]
                 bucket["has_llm"] = True
+            # Costo de WhatsApp del episodio (total + por categoría de Meta).
+            wa_cost = _episode_wa_cost(ep)
+            if wa_cost is not None:
+                bucket["wa_cost"] += wa_cost[0]
+                merge_wa_cost_categories(bucket["wa_by_category"], wa_cost[1])
+                bucket["wa_pending"] += wa_cost[2]
+                bucket["has_wa"] = True
             # Duración (solo episodios cerrados con timestamps válidos).
             dur = _episode_duration_ms(ep)
             if dur is not None:
@@ -900,6 +1035,11 @@ def list_ads_campaigns(
                 avg_ticket=avg_ticket,
                 llm_cost_usd=llm_cost_usd,
                 llm_tokens=llm_tokens,
+                wa_cost_usd_micros=bucket["wa_cost"] if bucket["has_wa"] else None,
+                wa_cost_by_category=(
+                    bucket["wa_by_category"] if bucket["has_wa"] else None
+                ),
+                wa_msgs_pending=bucket["wa_pending"],
                 avg_episode_duration_ms=avg_episode_duration_ms,
                 revenue_count=bucket["revenue_count"],
                 duration_count=bucket["dur_count"],
@@ -965,6 +1105,7 @@ def list_attributed_conversations(
             total_msgs_fn=count_fn,
             last_msg_ms=last_msg_ms,
             now_ms=now_ms,
+            order_facts=order_facts,
         ):
             # Filtrado por episodio (no por sesión) — re-atribución FU2.
             # Con `source_ids` (fila agrupada por campaña/adset = N ads), el
@@ -1012,8 +1153,11 @@ def list_attributed_conversations(
                 continue
 
             _usage = ep.get("llm_usage") if isinstance(ep, dict) else None
+            _wa_cost = _episode_wa_cost(ep)
             _capi_slot = capi_idx.get(ep_id) or {}
-            if _capi_slot.get("purchase_sent"):
+            if _capi_slot.get("order_canceled_sent"):
+                _capi_event = "OrderCanceled"  # lo último que Meta sabe del pedido
+            elif _capi_slot.get("purchase_sent"):
                 _capi_event = "Purchase"  # terminal — pisa a LeadSubmitted
             elif _capi_slot.get("lead_sent"):
                 _capi_event = "LeadSubmitted"
@@ -1042,7 +1186,15 @@ def list_attributed_conversations(
                         if isinstance(_usage, dict)
                         else None
                     ),
+                    wa_cost_usd_micros=_wa_cost[0] if _wa_cost else None,
+                    wa_cost_by_category=_wa_cost[1] if _wa_cost else None,
+                    wa_msgs_pending=_wa_cost[2] if _wa_cost else 0,
                     capi_event=_capi_event,
+                    state_reason=(
+                        STATE_REASON_ORDER_CANCELLED
+                        if _episode_order_cancelled(ep, metadata, order_facts)
+                        else None
+                    ),
                 )
             )
 
@@ -1114,6 +1266,7 @@ def list_daily_series(
     until_ms: int | None = None,
     sessions: list[tuple[Path, dict[str, Any]]] | None = None,
     source_ids: frozenset[str] | None = None,
+    order_facts: OrderFactsSnapshot | None = None,
 ) -> list[AdsDailySeriesPoint]:
     """Serie diaria de una campaña: chats iniciados por día, por estado actual.
 
@@ -1185,6 +1338,7 @@ def list_daily_series(
             total_msgs_fn=count_fn,
             last_msg_ms=last_msg_ms,
             now_ms=now_ms,
+            order_facts=order_facts,
         ):
             ep_started_ms = (
                 ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
