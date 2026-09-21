@@ -80,16 +80,19 @@ def test_a_body_without_standby_changes_yields_none_and_grouped_changes_are_all_
     assert (len(event.messages), len(event.echoes), len(event.statuses)) == (1, 1, 1)
 
 
-@pytest.mark.parametrize("bad_to", ["../../etc", "wa_1", "+573001234567", ""])
+# `P.CUSTOMER + "\n"`: el `$` de `re.match` acepta un salto de línea final — el
+# id nacería como `wa_<num>\n`, un directorio del vault con un `\n` en el nombre.
+@pytest.mark.parametrize("bad_to", ["../../etc", "wa_1", "+573001234567", "", P.CUSTOMER + "\n"])
 def test_standby_echo_with_an_unsafe_recipient_is_dropped(bad_to: str) -> None:
     body = P.echo_text()
     body["entry"][0]["changes"][0]["value"]["standby"]["message_echoes"][0]["message"]["to"] = bad_to
     assert parse_whatsapp_standby(body).echoes == ()
 
 
-def test_standby_inbound_with_an_unsafe_sender_is_dropped_not_raised() -> None:
+@pytest.mark.parametrize("bad_from", ["../x", P.CUSTOMER + "\n"])
+def test_standby_inbound_with_an_unsafe_sender_is_dropped_not_raised(bad_from: str) -> None:
     body = P.inbound()
-    body["entry"][0]["changes"][0]["value"]["standby"]["messages"][0]["from"] = "../x"
+    body["entry"][0]["changes"][0]["value"]["standby"]["messages"][0]["from"] = bad_from
     assert parse_whatsapp_standby(body).messages == ()
 
 

@@ -11,6 +11,7 @@ from loguru import logger
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.media import resolve_media_file
+from src.plugins.chats.api.session_guard import require_valid_session_id
 from src.plugins.chats.shared.chat_events import (
     annotate_touched_buttons,
     detect_chat_event,
@@ -673,6 +674,8 @@ async def get_session_history(session_id: str):
     """
     Returns the raw historical chat events from exoclaw-temporal JSONL.
     """
+    # ANTES de armar cualquier ruta: `..` resolvía al padre del vault (200).
+    require_valid_session_id(session_id)
     session_path = WORKSPACE_VAULT_DIR / session_id
     if not session_path.exists() or not session_path.is_dir():
         raise HTTPException(status_code=404, detail="Session not found in Vault")

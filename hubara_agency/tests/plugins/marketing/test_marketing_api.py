@@ -298,6 +298,32 @@ def test_test_send_numero_sin_sesion_es_404(
     assert res.status_code == 404
 
 
+def test_test_send_rechaza_un_numero_que_es_una_ruta(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    # El `phone` del body arma `wa_<phone>` y ese id termina en un Path del
+    # vault: con una sesión real delante, `/../../x` resolvía FUERA del vault
+    # (`<padre del vault>/x/metadata.json`) y el envío de prueba salía igual.
+    _seed_session(_isolate_vault_dir, "wa_15550001111", {})
+    _seed_session(_isolate_vault_dir.parent, "x", {"customer_name": "canario"})
+    sent = []
+
+    async def _fake_send(session_id, template_name, variables):
+        sent.append(session_id)
+        return type("R", (), {"wa_message_id": "wamid-1", "ok": True, "error": None})()
+
+    monkeypatch.setattr(api_mod, "send_template_to_session", _fake_send)
+    campaign_id = _ready_campaign(client)
+
+    res = client.post(
+        f"/api/marketing/campaigns/{campaign_id}/test",
+        json={"phone": "15550001111/../../x"},
+    )
+
+    assert res.status_code == 422
+    assert sent == []
+
+
 class _FakeWorkflowHandle:
     def __init__(self) -> None:
         self.cancelled = False
@@ -524,6 +550,14 @@ def test_get_audience_conversation_valida_session_id(client: TestClient) -> None
     )
 
 
+def test_get_audience_conversation_rechaza_salto_de_linea_final(
+    client: TestClient,
+) -> None:
+    # El `$` de `re.match` acepta un `\n` final: `wa_123%0A` pasaba el guard.
+    res = client.get("/api/marketing/audience/wa_123%0A/conversation")
+    assert res.status_code == 422
+
+
 def test_get_audience_conversation_sin_historial_es_lista_vacia(
     client: TestClient, _isolate_vault_dir: Path
 ) -> None:
@@ -581,6 +615,26 @@ def test_put_extra_con_formato_invalido_es_422(client: TestClient) -> None:
         json={"extra_session_ids": ["../../etc/passwd"]},
     )
     assert res.status_code == 422
+
+
+@pytest.mark.parametrize("field", ["excluded_session_ids", "extra_session_ids"])
+def test_put_id_con_salto_de_linea_final_es_422_y_no_se_guarda(
+    client: TestClient, _isolate_vault_dir: Path, field: str
+) -> None:
+    # Un id pegado con su `\n` quedaba guardado en la curaduría: un "quitado
+    # por el operador" que no matchea ninguna sesión → a ese cliente le llega.
+    # (El dir con `\n` existe para que `extra` no se salve por "sin sesión".)
+    _seed_session(_isolate_vault_dir, "wa_123\n", {})
+    campaign_id = _ready_campaign(client)
+
+    res = client.put(
+        f"/api/marketing/campaigns/{campaign_id}", json={field: ["wa_123\n"]}
+    )
+
+    assert res.status_code == 422
+    assert "session_id inválido" in res.json()["detail"]
+    saved = CampaignStore(_isolate_vault_dir).get(campaign_id)
+    assert not saved.get(field)
 
 
 def test_get_segments_cuenta_contactos_y_expone_costo(

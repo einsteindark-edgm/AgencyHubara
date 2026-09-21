@@ -185,9 +185,10 @@ def eval_transcript(
     contra EXACTAMENTE lo que se puntuó. `episode_id` vacío = sesión entera
     (evaluaciones legacy).
     """
-    if not _SESSION_ID_RE.match(session_id):
+    # fullmatch: el `$` de `match` acepta un salto de línea final.
+    if not _SESSION_ID_RE.fullmatch(session_id):
         raise HTTPException(status_code=400, detail="invalid session id")
-    if episode_id and not _EPISODE_ID_RE.match(episode_id):
+    if episode_id and not _EPISODE_ID_RE.fullmatch(episode_id):
         raise HTTPException(status_code=400, detail="invalid episode id")
 
     vault = get_vault_dir()

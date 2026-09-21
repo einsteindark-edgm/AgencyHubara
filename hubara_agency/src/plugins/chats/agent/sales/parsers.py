@@ -211,7 +211,8 @@ def _parse_message(msg: Any, phone_number_id: str) -> WhatsAppMessage | None:
     # SEC-12: `from_number` se convierte en `session_id = wa_<from>` que llega al
     # filesystem del vault (metadata + media). Exigir un teléfono E.164 (solo
     # dígitos, 6-15) evita path traversal (`../`) y command-injection en el id.
-    if not _PHONE_RE.match(from_number):
+    # `fullmatch`: el `$` de `match` acepta un salto de línea final.
+    if not _PHONE_RE.fullmatch(from_number):
         raise ValueError("'from' no es un número de teléfono válido (E.164)")
     if not isinstance(timestamp, str):
         raise ValueError("missing 'timestamp' on message")
@@ -627,7 +628,7 @@ def _parse_echo(raw: Any) -> StandbyEcho | None:
         return None
     to = message.get("to")
     # SEC-12: ``to`` se vuelve ``session_id = wa_<to>`` en el filesystem del vault.
-    if not isinstance(to, str) or not _PHONE_RE.match(to):
+    if not isinstance(to, str) or not _PHONE_RE.fullmatch(to):
         return None
     msg_type = message.get("type") if isinstance(message.get("type"), str) else "unknown"
     text: str | None = None

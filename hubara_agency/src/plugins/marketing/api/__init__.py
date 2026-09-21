@@ -149,7 +149,8 @@ def update_campaign(campaign_id: str, body: UpdateCampaignBody) -> dict:
     for field in ("excluded_session_ids", "extra_session_ids"):
         if field not in patch:
             continue
-        bad_format = [s for s in patch[field] if not _SESSION_ID_RE.match(s)]
+        # fullmatch: el `$` de `match` acepta un salto de línea final.
+        bad_format = [s for s in patch[field] if not _SESSION_ID_RE.fullmatch(s)]
         if bad_format:
             raise HTTPException(
                 status_code=422,
@@ -333,6 +334,13 @@ async def test_send(campaign_id: str, body: TestSendBody) -> dict:
     """
     campaign = _require_campaign(campaign_id)
     session_id = _session_id_for_phone(body.phone)
+    # El `phone` del body termina en un Path del vault: con una sesión real
+    # delante, `<num>/../../x` resolvía fuera. Solo dígitos (con o sin `+`).
+    if not _SESSION_ID_RE.fullmatch(session_id):
+        raise HTTPException(
+            status_code=422,
+            detail="Número inválido: solo dígitos, con o sin + inicial",
+        )
     if not (WORKSPACE_VAULT_DIR / session_id / "metadata.json").exists():
         raise HTTPException(
             status_code=404,
@@ -473,7 +481,7 @@ def get_audience_conversation(session_id: str) -> dict:
     la agregación de ads: `<session>/sessions/<session>.jsonl`). Parse
     tolerante: una línea corrupta se salta, jamás rompe el visor.
     """
-    if not _SESSION_ID_RE.match(session_id):
+    if not _SESSION_ID_RE.fullmatch(session_id):
         raise HTTPException(status_code=422, detail="session_id inválido")
     history_path = (
         WORKSPACE_VAULT_DIR / session_id / "sessions" / f"{session_id}.jsonl"

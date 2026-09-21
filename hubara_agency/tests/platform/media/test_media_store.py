@@ -87,6 +87,21 @@ def test_resolve_rejects_path_traversal(vault):
     assert media_store.resolve_media_file("wa_1/..", "ok.jpg") is None
 
 
+@pytest.mark.parametrize("segment", ["wa_1\n", "foto.jpg\n", "."])
+def test_is_safe_segment_rejects_trailing_newline_and_bare_dot(segment):
+    """El `$` de `re.match` aceptaba un `\\n` final; `.` es el directorio mismo."""
+    assert media_store.is_safe_segment(segment) is False
+
+
+def test_resolve_rejects_bare_dot_as_session_id(vault):
+    """`.` como session_id servía `<vault>/media/*`, que no es de ninguna sesión."""
+    stray = vault / "media"
+    stray.mkdir()
+    (stray / "suelto.jpg").write_bytes(b"x")
+
+    assert media_store.resolve_media_file(".", "suelto.jpg") is None
+
+
 def test_resolve_missing_file_returns_none(vault):
     assert media_store.resolve_media_file("wa_1", "nope.jpg") is None
 

@@ -26,12 +26,14 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.constants import ROUTE_HUMANO, ROUTE_VENTAS
 from src.platform.medusa.client import HttpMedusaClient, MedusaAPIError
 from src.platform.orders import display_id_cache
+from src.platform.state import is_vault_session_id
 from src.platform.whatsapp.capi_outbox import enqueue_capi_event, schedule_capi_flush
 from src.platform.orders.command_port import (
     CancelOrderCommand,
@@ -414,6 +416,27 @@ def apply_payment_reversal_to_chat_metadata(
     return True
 
 
+def _chat_metadata_file(
+    session_key: str, *, operation: str, order_id: str
+) -> Path | None:
+    """`<vault>/<session_key>/metadata.json` del chat a sincronizar, o `None`.
+
+    El `session_key` viene de la metadata de la orden en Medusa: lo escribe
+    `register_order`, pero es editable en Medusa Admin — dato de AFUERA. Con una
+    sesión real delante, `wa_<real>/../../x` resolvía FUERA del vault y el sync
+    reescribía el JSON que hubiera ahí. Si no pasa el piso del vault, el sync
+    se saltea (best-effort: el lado Medusa ya quedó OK, NO se levanta).
+    """
+    if not is_vault_session_id(session_key):
+        log.warning(
+            "%s: Medusa session_key is not a vault session id, skipping chat sync",
+            operation,
+            extra={"order_id": order_id, "session_key": session_key[:80]},
+        )
+        return None
+    return WORKSPACE_VAULT_DIR / session_key / "metadata.json"
+
+
 class MedusaOrderCommand:
     """Adapter live — escribe metadata a Medusa via merge-patch."""
 
@@ -716,7 +739,11 @@ class MedusaOrderCommand:
         ya está OK y eso es el side effect crítico. El humano puede
         sincronizar manualmente desde el dashboard si quedó desfasado.
         """
-        chat_meta_file = WORKSPACE_VAULT_DIR / session_key / "metadata.json"
+        chat_meta_file = _chat_metadata_file(
+            session_key, operation="confirm_payment", order_id=order_id
+        )
+        if chat_meta_file is None:
+            return
         if not chat_meta_file.exists():
             log.info(
                 "confirm_payment: chat metadata not found, skipping sync",
@@ -776,7 +803,11 @@ class MedusaOrderCommand:
         Defensivo: si el file no existe / está corrupto / falla la
         escritura, logueamos warning pero NO levantamos.
         """
-        chat_meta_file = WORKSPACE_VAULT_DIR / session_key / "metadata.json"
+        chat_meta_file = _chat_metadata_file(
+            session_key, operation="cancel_order", order_id=order_id
+        )
+        if chat_meta_file is None:
+            return
         if not chat_meta_file.exists():
             log.info(
                 "cancel_order: chat metadata not found, skipping sync",
@@ -938,8 +969,10 @@ class MedusaOrderCommand:
         """Espejo defensivo de `_sync_chat_payment_confirmation`: si el chat
         no existe o no se puede escribir, se loguea y NO falla — Medusa ya
         quedó reversado, que es lo crítico."""
-        chat_meta_file = WORKSPACE_VAULT_DIR / session_key / "metadata.json"
-        if not chat_meta_file.exists():
+        chat_meta_file = _chat_metadata_file(
+            session_key, operation="reverse_payment", order_id=order_id
+        )
+        if chat_meta_file is None or not chat_meta_file.exists():
             return
         try:
             chat_data = json.loads(chat_meta_file.read_text(encoding="utf-8"))
