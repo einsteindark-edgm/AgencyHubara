@@ -56,6 +56,7 @@ const TAG_CLASS: Record<string, string> = {
   CLIENTE:     "t-cli",
   REMARKETING: "t-rem",
   FRÍO:        "t-cold",
+  SIN_RESPUESTA: "t-noreply",
   FRIO:        "t-cold",
 };
 
@@ -87,6 +88,9 @@ const BACKEND_TO_INBOX_TAG: Record<string, ChatTag> = {
   INTERESADO: "INTERESADO",
   COMPRA_EXITOSA: "CLIENTE",
   RECHAZO: "FRÍO",
+  // Escalera de reactivación agotada (2026-09-18): tag propio — si cayera al
+  // fallback, el operador no podría filtrar a quienes nunca contestaron.
+  SIN_RESPUESTA: "SIN_RESPUESTA",
   CONFIRMADO_SIN_DATOS: "PENDIENTE",
   // HU "verificación humana de pago" (operativo hasta tener pasarela):
   // orden registrada en Medusa, falta verificación humana del pago. El

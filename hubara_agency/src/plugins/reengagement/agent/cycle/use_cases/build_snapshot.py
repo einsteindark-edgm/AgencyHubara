@@ -7,7 +7,12 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from src.sdk.messagingkit import decide_reengagement, lead_state_from_metadata
+from src.sdk.messagingkit import (
+    LADDER_GAPS_MS,
+    decide_reengagement,
+    ladder_state,
+    lead_state_from_metadata,
+)
 
 #: máximo de toques recientes reportados por conversación (el nodo `plan` del
 #: agente solo necesita la ventana de 24h; capamos para no inflar el seed).
@@ -50,6 +55,15 @@ def _min_silence_ms_for(lead: Any) -> int:
     if lead.tag == _TAG_INTERESADO or lead.engaged:
         return MIN_SILENCE_WARM_MS
     return MIN_SILENCE_MS
+
+
+#: Política que viaja en el seed (`payload.policy` — el agente la aplica por
+#: encima de sus defaults). El Window Strategist trae `max_touches_per_24h=2`
+#: sobre los outbounds proactivos: sin override cortaría la escalera en el 3er
+#: peldaño. La AUTORIDAD de cadencia es la escalera de hubara
+#: (`ladder_state`); el tope del agente queda como red contra un runaway
+#: (peldaños + margen para el nudge del watchdog).
+SEED_POLICY: dict[str, int] = {"max_touches_per_24h": len(LADDER_GAPS_MS) + 3}
 
 #: margen tras el último inbound dentro del cual un outbound es RÉPLICA
 #: conversacional, no un toque proactivo (post-mortem run 019f6d0d: contar
@@ -107,7 +121,7 @@ def _is_reactivable(metadata: dict[str, Any]) -> bool:
 
 
 def conversation_entry(
-    session_id: str, metadata: dict[str, Any]
+    session_id: str, metadata: dict[str, Any], *, ladder_step: int = 0
 ) -> dict[str, Any] | None:
     """metadata de una sesión → entry del snapshot (None si no reactivable).
 
@@ -134,6 +148,8 @@ def conversation_entry(
             "last_closing_tag": lead.last_closing_tag,
         },
         "recent_touches": _recent_touches(metadata),
+        # Peldaño de la escalera ya consumido (0 = este sería el primer toque).
+        "ladder_step": ladder_step,
     }
 
 
@@ -176,16 +192,33 @@ def build_snapshot_from_sessions(
         if quiet_checker is not None and quiet_checker(session_id):
             prefiltered["quiet_hours"] = prefiltered.get("quiet_hours", 0) + 1
             continue
-        lead = lead_state_from_metadata(metadata)
-        last_inbound = metadata.get("last_inbound_at_ms")
-        if (
-            isinstance(last_inbound, int)
-            and now_ms - last_inbound < _min_silence_ms_for(lead)
-        ):
-            prefiltered["conversation_active"] = (
-                prefiltered.get("conversation_active", 0) + 1
+        if metadata.get("marketing_opt_out"):
+            # El cliente pidió la baja ("NO MÁS" tras una plantilla): la
+            # promesa del body se cumple — ningún toque proactivo más.
+            prefiltered["marketing_opt_out"] = (
+                prefiltered.get("marketing_opt_out", 0) + 1
             )
             continue
+        lead = lead_state_from_metadata(metadata)
+        # Escalera de reactivación (decisión 2026-09-18): el primer hueco sale
+        # del calor del lead; los siguientes, de la escalera. Todo intento
+        # previo (enviado o abstenido) ya consumió su peldaño, así que una
+        # sesión no vuelve al seed hasta que venza el próximo.
+        ladder = ladder_state(
+            now_ms, metadata, first_gap_ms=_min_silence_ms_for(lead)
+        )
+        if ladder.exhausted:
+            prefiltered["ladder_exhausted"] = (
+                prefiltered.get("ladder_exhausted", 0) + 1
+            )
+            continue
+        if ladder.next_due_at_ms is not None and not ladder.due:
+            # Paso 0 = el cliente calló hace poco (ventas en plena charla);
+            # paso >0 = el toque anterior todavía está "respirando".
+            reason = "conversation_active" if ladder.step == 0 else "ladder_not_due"
+            prefiltered[reason] = prefiltered.get(reason, 0) + 1
+            continue
+        entry["ladder_step"] = ladder.step
         if rate_card is not None:
             # D1.7: `mba_controls_checker` (inyectado, = `mba_controls_thread`
             # del SDK) le dice a la central si Meta Business Agent responde en
@@ -204,4 +237,5 @@ def build_snapshot_from_sessions(
         "now_ms": now_ms,
         "conversations": conversations,
         "prefiltered": prefiltered,
+        "policy": dict(SEED_POLICY),
     }

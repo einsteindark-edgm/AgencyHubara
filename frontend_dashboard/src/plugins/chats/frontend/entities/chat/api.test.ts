@@ -96,6 +96,16 @@ describe("normalizeTag via useChatInbox (regression: venta=Frío bug)", () => {
     expect(data?.[0]?.tagClass).toBe("t-cold");
   });
 
+  it("SIN_RESPUESTA del backend → SIN_RESPUESTA en inbox (no cae al fallback FRÍO)", async () => {
+    // Escalera de reactivación (2026-09-18): quien agotó los 5 toques sin
+    // contestar queda etiquetado para que el operador lo filtre después.
+    const data = await runInbox([
+      makeSession({ tag: "SIN_RESPUESTA", motivo: "Escalera de reactivación agotada" }),
+    ]);
+    expect(data?.[0]?.tag).toBe("SIN_RESPUESTA");
+    expect(data?.[0]?.tagClass).toBe("t-noreply");
+  });
+
   it("CONFIRMADO_SIN_DATOS → PENDIENTE en inbox", async () => {
     const data = await runInbox([
       makeSession({ tag: "CONFIRMADO_SIN_DATOS", motivo: "Confirmó pero faltó shipping" }),

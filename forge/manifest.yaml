@@ -154,6 +154,14 @@ replacements:
       - "frontend_dashboard/src/plugins/chats/frontend/entities/handoff/model/templatePreview.test.ts"
     from: "te escribe Liliana, asesora de Hubara,"
     to: "te escribe tu asesora de {{company}},"
+  - id: plantilla-seguimiento-interes   # followup_interest_marketing_v1 (escalera
+    # de remarketing): la marca es del cliente. Mismo texto en definitions (lo
+    # que se somete a Meta) y catálogo (guard de drift).
+    files:
+      - "infra/whatsapp-provisioning/definitions/*.json"
+      - "hubara_agency/src/platform/whatsapp/templates/catalog.yaml"
+    from: "Te escribo de Hubara."
+    to: "Te escribo de {{company}}."
   - id: ws-default-tenant
     files: ["infra/whatsapp-provisioning/*.py"]
     from: 'or "hubara"'

@@ -145,3 +145,21 @@ templates:
       - name: product_label
         type: string
         max_length: 120
+
+  - name: followup_interest_marketing_v1
+    category: marketing
+    language: es_CO
+    waba_template_name: followup_interest_marketing_v1   # pending Meta approval (provisioning CLI)
+    body: "Hola 👋 Te escribo de Hubara. Quedé atento por si quieres retomar lo que estabas mirando; con gusto te ayudo a elegir. Si prefieres no recibir más mensajes, respóndeme \"NO MÁS\" y te doy de baja."
+    # Escalera de reactivación (decisión 2026-09-18, runs 01a0b0da…): toque
+    # con la CSW de 24h CERRADA (Meta solo acepta plantillas) para un lead
+    # SIN carrito — `cart_recovery_marketing_v2` afirma "quedó X en tu
+    # carrito" y sería falso. SIN variables: nada que inventar sobre quien
+    # no eligió producto (slot vacío → 131008). Sin promo ni descuento;
+    # opt-out fijo (guía de marketing de Meta). Tuteo, no voseo.
+    # Tope: 2 plantillas/día por cliente (`MAX_TEMPLATES_PER_24H`).
+    semantics: "Seguimiento genérico de la escalera de reactivación fuera de la ventana de 24h (lead interesado sin carrito; body con opt-out)"
+    triggers_when_window_expiring: false   # MARKETING nunca por watchdog
+    # SIN requires_episode_stage: lo dispara SOLO el RemarketingWorkflow
+    # (`send_remarketing_template_activity`), nunca la auto-resolution.
+    variables: []

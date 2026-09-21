@@ -49,9 +49,11 @@ from src.platform.whatsapp.templates.registry import (
     TemplateSpec,
     render_template_body,
 )
+from src.platform.whatsapp.reengagement_ladder import ladder_state, record_touch
 from src.platform.whatsapp.send_policy import (
     CHANNEL_BLOCKED,
     CHANNEL_TEMPLATE,
+    TAG_REMARKETING,
     SendDecision,
     annotate_last_outbound_policy,
     decide_reengagement,
@@ -102,6 +104,10 @@ async def check_reengagement_policy_activity(session_id: str) -> SendDecision:
          watchdog) → suprimir (`quiet_hours`). El caller decide si re-agenda.
       3. `decide_reengagement(now, metadata, LeadState, rate_card)` — el
          Free-First Funnel (terminales / Fase A gratis / Fase B quirúrgica).
+      4. Escalera de reactivación (`ladder_state`, decisión 2026-09-18):
+         agotada → `ladder_exhausted`; el toque anterior no cumplió su hueco
+         → `ladder_not_due`; canal plantilla con el tope diario alcanzado →
+         `template_daily_cap`. El tag REMARKETING (decisión humana) la salta.
     """
     metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
     if not metadata_file.exists():
@@ -129,13 +135,88 @@ async def check_reengagement_policy_activity(session_id: str) -> SendDecision:
         )
 
     metadata = _read_metadata(session_id)
-    return decide_reengagement(
-        _now_ms(),
+    now_ms = _now_ms()
+    lead = lead_state_from_metadata(metadata)
+    decision = decide_reengagement(
+        now_ms,
         metadata,
-        lead_state_from_metadata(metadata),
+        lead,
         get_current_rate_card(),
         # D1.7: con Meta Business Agent al frente, sin toques en ventana.
         mba_controls=mba_controls_thread(metadata, session_id),
+    )
+    if not decision.allowed or lead.tag == TAG_REMARKETING:
+        # REMARKETING = decisión humana (dashboard): salta la escalera igual
+        # que salta las demás reglas de la central.
+        return decision
+
+    # 3.5 Baja pedida por el cliente ("NO MÁS" tras una plantilla — la
+    # promesa del body): ningún toque proactivo más, ni plantilla ni free-form.
+    # Sticky: solo la revierte el operador. (El tag REMARKETING del operador
+    # ya retornó arriba: es SU decisión re-contactar.)
+    if metadata.get("marketing_opt_out"):
+        return _ladder_suppress(
+            "marketing_opt_out", "el cliente pidió no recibir más mensajes"
+        )
+
+    # 4. Escalera de reactivación (decisión 2026-09-18). El intent puede llegar
+    # viejo o duplicado: el toque anterior tiene que haber respirado su hueco
+    # y la escalera no puede estar agotada. El PRIMER hueco (dormancia por
+    # calor) lo aplica el pre-filtro del ciclo, no este gate — la central
+    # también sirve al disparo manual (delay 0); acá lo cubre `customer_active`.
+    ladder = ladder_state(now_ms, metadata)
+    if ladder.exhausted:
+        return _ladder_suppress(
+            "ladder_exhausted", "escalera agotada sin respuesta — no se envía más"
+        )
+    if ladder.step > 0 and not ladder.due:
+        return _ladder_suppress(
+            "ladder_not_due", "el toque anterior todavía no cumplió su hueco"
+        )
+    if decision.channel == CHANNEL_TEMPLATE and ladder.template_cap_reached:
+        return _ladder_suppress(
+            "template_daily_cap",
+            "ya salieron las plantillas del día (tope de Meta por usuario)",
+        )
+    return decision
+
+
+@activity.defn(name="record_remarketing_touch_activity")
+async def record_remarketing_touch_activity(session_id: str, kind: str) -> None:
+    """Consume un peldaño de la escalera de reactivación.
+
+    `kind`: `free_form` | `template` (enviados), `abstained` (el LLM decidió
+    NO_MESSAGE) o `failed` (Meta rechazó la plantilla). TODO intento deja
+    rastro: sin él la sesión volvía al seed del ciclo cada 45 min (runs
+    `01a0b0da`…`01a0b586`). Read-modify-write sobre lectura FRESCA — el send
+    acaba de escribir el outbound en el mismo archivo.
+    """
+    # Bajo el flock del store (hallazgo L-2 de la revisión): se serializa con
+    # el dashboard y con el etiquetado SIN_RESPUESTA del ciclo. Import local:
+    # platform/state importa de config — evita el ciclo en el import del módulo.
+    from src.platform.state import FilesystemMetadataStore
+
+    now_ms = _now_ms()
+
+    def _mutate(data: dict[str, Any]) -> dict[str, Any] | None:
+        if not data:
+            return None  # sin metadata no se crea una sesión fantasma
+        record_touch(data, now_ms, kind)
+        return data
+
+    if FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, _mutate) is None:
+        log.warning("remarketing_touch_not_recorded", session_id=session_id, kind=kind)
+
+
+def _ladder_suppress(reason: str, why: str) -> SendDecision:
+    return SendDecision(
+        allowed=False,
+        channel=CHANNEL_BLOCKED,
+        recommended_category="service",
+        is_free=False,
+        expected_cost_micros=0,
+        rationale=why,
+        suppress_reason=reason,
     )
 
 

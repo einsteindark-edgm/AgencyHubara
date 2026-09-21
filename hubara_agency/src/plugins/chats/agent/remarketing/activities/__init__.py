@@ -22,6 +22,9 @@ from src.plugins.chats.agent.remarketing.activities.context import (
     build_remarketing_trigger_v2_activity,
     read_remarketing_context_activity,
 )
+from src.plugins.chats.agent.remarketing.activities.ladder_template import (
+    send_remarketing_template_activity,
+)
 from src.plugins.chats.agent.remarketing.activities.watchdog_activities import (
     check_watchdog_eligibility_activity,
     persist_watchdog_outcome_activity,
@@ -34,4 +37,5 @@ __all__ = [
     "check_watchdog_eligibility_activity",
     "read_remarketing_context_activity",
     "persist_watchdog_outcome_activity",
+    "send_remarketing_template_activity",
 ]

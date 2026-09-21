@@ -15,14 +15,33 @@ mas claro de descubrir y testear.
 from __future__ import annotations
 
 
+def _humanize_silence(minutes: int | None) -> str:
+    """Silencio real → texto para el LLM (uso interno, nunca para el cliente)."""
+    if minutes is None:
+        return "un buen rato"
+    if minutes < 90:
+        return f"{minutes} min"
+    return f"{round(minutes / 60)} h"
+
+
 def build_remarketing_trigger(
     motivo: str,
     memory_context: str = "",
     *,
     has_order_draft: bool | None = None,
     transcript: str = "",
+    touch_number: int | None = None,
+    total_touches: int = 5,
+    silence_minutes: int | None = None,
 ) -> str:
     """Saludo proactivo inicial inyectado al LLM al arrancar el workflow.
+
+    `touch_number` (1-based) activa el modo ESCALERA (decisión 2026-09-18,
+    runs `01a0b0da`…`01a0b586`): el trigger declara qué toque es y cuánto
+    silencio real lleva el cliente, y la abstención deja de aceptar "ya hubo
+    un gancho" / "la conversación está activa" como motivo — eso ya lo
+    verificó la capa determinista (escalera + `customer_active`). `None` =
+    texto legacy intacto (histories en vuelo replayean sin estos campos).
 
     `motivo` es el resumen del cierre anterior (registrado por la tool de tags).
     `memory_context` es el `memory.md` del PVC (puede ser vacio).
@@ -63,12 +82,52 @@ def build_remarketing_trigger(
         if transcript
         else ""
     )
+    ladder_block = ""
+    abstention_cases = (
+        "el cliente ya respondió a un gancho anterior, ya compró, la "
+        "conversación ya está activa con el asesor, pidió algo que NO "
+        "vendemos y ya se le aclaró, se despidió con la duda resuelta sin "
+        "producto en juego, o por cualquier otra razón un mensaje proactivo "
+        "sobra"
+    )
+    if touch_number is not None:
+        silence = _humanize_silence(silence_minutes)
+        ladder_block = (
+            f"SEGUIMIENTO (uso interno): este es el toque {touch_number} de "
+            f"{total_touches} de la secuencia de seguimiento. El sistema YA "
+            f"verificó que el cliente lleva {silence} sin escribir y que la "
+            "conversación NO está viva: nadie lo está atendiendo ahora. Que "
+            "en el historial ya exista un gancho anterior —respondido o no— "
+            "NO es motivo de abstención: este mensaje es el siguiente paso "
+            "planificado.\n"
+        )
+        if touch_number > 1:
+            ladder_block += (
+                "Escribe un mensaje DISTINTO a los ganchos anteriores que ves "
+                "en el historial: otro ángulo (una duda típica que puedas "
+                "resolverle, un detalle concreto del producto que miró, "
+                "ofrecerle ayuda para elegir). NUNCA repitas la misma frase ni "
+                "le reproches que no respondió.\n"
+            )
+        if touch_number >= total_touches:
+            ladder_block += (
+                "Es el ÚLTIMO mensaje de la secuencia: un cierre amable y sin "
+                "presión que deje la puerta abierta ('cuando quieras retomarlo, "
+                "aquí estoy'). Sin pregunta insistente.\n"
+            )
+        ladder_block += "\n"
+        abstention_cases = (
+            "el cliente ya compró, pidió algo que NO vendemos y ya se le "
+            "aclaró, se despidió con la duda resuelta sin producto en juego, "
+            "o pidió expresamente que no le escriban más"
+        )
     return (
         "[SISTEMA INTERNO — NO REPRODUCIR ESTE TEXTO AL CLIENTE]: "
         f"{situacion}\n\n"
         f"MOTIVO REGISTRADO DE CIERRE (uso interno): '{motivo}'.\n"
         f"MEMORIA DE EVENTOS PASADOS (uso interno):{memory_context}\n\n"
         f"{transcript_block}"
+        f"{ladder_block}"
         "REGLAS DEL GANCHO (todas obligatorias):\n\n"
         "1. **Identidad**: eres el MISMO Asesor de Hubara que ya conversó "
         "con el cliente antes. NO te presentes con un nombre nuevo, NO "
@@ -96,11 +155,7 @@ def build_remarketing_trigger(
         "Escribe SOLO el mensaje final que verá el cliente por "
         "WhatsApp. Detente al terminar el gancho.\n\n"
         "7. **Abstención**: si el historial o los últimos mensajes muestran "
-        "que este gancho YA NO corresponde (el cliente ya respondió a un "
-        "gancho anterior, ya compró, la conversación ya está activa con el "
-        "asesor, pidió algo que NO vendemos y ya se le aclaró, se despidió "
-        "con la duda resuelta sin producto en juego, o por cualquier otra "
-        "razón un mensaje proactivo sobra), responde "
+        f"que este gancho YA NO corresponde ({abstention_cases}), responde "
         "EXACTAMENTE `NO_MESSAGE` — una sola palabra, sin explicación ni "
         "nada más. Eso suprime el envío y el cliente no verá nada. NUNCA "
         "escribas tu decisión de no enviar como texto ('no genero un "

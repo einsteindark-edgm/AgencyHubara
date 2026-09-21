@@ -129,11 +129,16 @@ def _make_fake_activities(tracker: Tracker, *, context: RemarketingContext, work
     async def fake_persist(session_id: str, message: str) -> None:
         return None
 
+    # remarketing-ladder-v1: todo intento proactivo consume su peldaño.
+    @activity.defn(name="record_remarketing_touch_activity")
+    async def fake_record_touch(session_id: str, kind: str) -> None:
+        return None
+
     return [
         fake_eligibility, fake_policy, fake_bootstrap, fake_claim, fake_memory,
         fake_context, fake_trigger_legacy, fake_trigger_v2, fake_typing,
         fake_build_prompt, fake_llm, fake_execute_tool, fake_record_turn,
-        fake_episode_id, fake_send, fake_persist,
+        fake_episode_id, fake_send, fake_persist, fake_record_touch,
     ]
 
 

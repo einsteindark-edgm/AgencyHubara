@@ -66,6 +66,31 @@ def detect_marketing_opt_out(
     """
     if not text:
         return False
-    if matching_campaign_touch(metadata.get("campaign_touches"), now_ms) is None:
+    if (
+        matching_campaign_touch(metadata.get("campaign_touches"), now_ms) is None
+        and not _recent_ladder_template(metadata, now_ms)
+    ):
         return False
     return _is_opt_out_text(text)
+
+
+#: Misma ventana que la atribución de campañas: una plantilla de hace más de
+#: 7 días ya no es el contexto del "no más".
+_LADDER_TEMPLATE_CONTEXT_MS = 7 * 24 * 60 * 60 * 1000
+
+
+def _recent_ladder_template(metadata: dict[str, Any], now_ms: int) -> bool:
+    """¿Salió hace poco una PLANTILLA de la escalera de reactivación? Esas
+    plantillas (`followup_interest_marketing_v1`, `cart_recovery_marketing_v2`)
+    prometen la baja igual que la de campañas — hallazgo H-2 (2026-09-18): la
+    promesa no se cumplía porque el detector solo miraba `campaign_touches`.
+    Un gancho free-form NO cuenta: no promete baja."""
+    for touch in metadata.get("remarketing_touches") or []:
+        if (
+            isinstance(touch, dict)
+            and touch.get("kind") == "template"
+            and isinstance(touch.get("at_ms"), int)
+            and 0 <= now_ms - touch["at_ms"] <= _LADDER_TEMPLATE_CONTEXT_MS
+        ):
+            return True
+    return False

@@ -9,6 +9,7 @@ nunca falla el gancho por esto.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +61,7 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
     session_dir = Path(WORKSPACE_VAULT_DIR) / session_id
     metadata = _read_json(session_dir / "metadata.json")
     events = _read_jsonl(session_dir / "sessions" / f"{session_id}.jsonl")
-    return context_from_metadata(metadata, events)
+    return context_from_metadata(metadata, events, now_ms=int(time.time() * 1000))
 
 
 @activity.defn(name="build_remarketing_trigger_v2_activity")
@@ -71,4 +72,6 @@ async def build_remarketing_trigger_v2_activity(input: RemarketingTriggerInput) 
         input.memory_context,
         has_order_draft=input.has_order_draft,
         transcript=input.transcript,
+        touch_number=input.touch_number,
+        silence_minutes=input.silence_minutes,
     )

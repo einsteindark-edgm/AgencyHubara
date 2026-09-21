@@ -5,6 +5,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 
 with workflow.unsafe.imports_passed_through():
     from exoclaw_temporal.config import SessionInput
@@ -19,6 +20,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.platform.whatsapp.activities import (
         check_reengagement_policy_activity,
+        record_remarketing_touch_activity,
         send_whatsapp_message_activity,
     )
     from src.platform.temporal.dispatcher import (
@@ -38,6 +40,7 @@ with workflow.unsafe.imports_passed_through():
         build_remarketing_trigger_activity,
         build_remarketing_trigger_v2_activity,
         read_remarketing_context_activity,
+        send_remarketing_template_activity,
     )
     from src.plugins.chats.agent.remarketing.contracts import (
         RemarketingTriggerInput,
@@ -70,6 +73,15 @@ class RemarketingSessionWorkflow:
         self._last_response: str | None = None
         self._processing = False
         self._force_shutdown: bool = False
+        # Escalera de reactivación (remarketing-ladder-v1): el ciclo pide el
+        # siguiente toque por signal cuando este workflow sigue vivo esperando
+        # la respuesta del cliente (antes `via: start_workflow` lo descartaba).
+        self._touch_requested: bool = False
+        # Trigger PROACTIVO del sistema encolado en `_pending` (no es una
+        # respuesta del cliente: no dispara el handoff determinista a Sales).
+        # Se guarda la REFERENCIA: el cliente puede escribir antes o después
+        # de que se encole, así que la posición en el batch no lo identifica.
+        self._proactive_trigger: PendingMessage | None = None
 
     @workflow.signal
     async def send_message(
@@ -82,6 +94,15 @@ class RemarketingSessionWorkflow:
         self._pending.append(
             PendingMessage(message=message, media=media, plugin_context=plugin_context)
         )
+
+    @workflow.signal
+    async def next_touch(self, payload: dict | None = None) -> None:
+        """El Window Strategist pide el siguiente toque de la escalera.
+
+        Llega por `via: signal_with_start`: con el workflow vivo es la ÚNICA
+        forma de que salga el toque N+1; en frío llega junto al start y se
+        descarta (el arranque ya hace su propio toque)."""
+        self._touch_requested = True
 
     @workflow.query
     def get_last_response(self) -> str | None:
@@ -145,6 +166,98 @@ class RemarketingSessionWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
 
+    async def _build_trigger(
+        self, session_id: str, motivo: str, memory_context: str, *, ladder: bool
+    ) -> str:
+        context = await workflow.execute_activity(
+            read_remarketing_context_activity,
+            args=[session_id],
+            start_to_close_timeout=timedelta(seconds=15),
+            retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+        return await workflow.execute_activity(
+            build_remarketing_trigger_v2_activity,
+            RemarketingTriggerInput(
+                motivo=context.tag_motivo or motivo,
+                memory_context=memory_context,
+                has_order_draft=context.has_order_draft,
+                transcript=context.transcript,
+                # Escalera: el trigger le DICE al LLM qué toque es y cuánto
+                # silencio real hay (runs 01a0b0da…: sin esto, NO_MESSAGE 100%).
+                touch_number=context.touch_number if ladder else None,
+                silence_minutes=context.silence_minutes if ladder else None,
+            ),
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+
+    async def _record_touch(self, session_id: str, kind: str) -> None:
+        await workflow.execute_activity(
+            record_remarketing_touch_activity,
+            args=[session_id, kind],
+            start_to_close_timeout=timedelta(seconds=15),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
+
+    async def _template_touch(self, session_id: str, *, is_free: bool) -> bool:
+        """Toque por plantilla (CSW cerrada). True si Meta la aceptó. El
+        peldaño se consume SIEMPRE: una plantilla rechazada no se reintenta
+        cada 45 min."""
+        try:
+            outcome = await workflow.execute_activity(
+                send_remarketing_template_activity,
+                args=[session_id, is_free],
+                start_to_close_timeout=timedelta(seconds=90),
+                heartbeat_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except ActivityError as exc:
+            # Timeout / restart del worker: sin esto el workflow moría con la
+            # ruta en `remarketing` y sin peldaño → re-despacho cada ciclo.
+            outcome = f"failed:{type(exc.cause).__name__ if exc.cause else 'ActivityError'}"
+        sent = outcome == "sent"
+        await self._record_touch(session_id, "template" if sent else "failed")
+        if not sent:
+            workflow.logger.warning(
+                f"Remarketing: plantilla de la escalera falló ({outcome})."
+            )
+        return sent
+
+    async def _followup_touch(
+        self, session_id: str, motivo: str, memory_context: str
+    ) -> None:
+        """Toque N+1 pedido por signal con el workflow vivo. Re-valida TODO
+        (el cliente pudo comprar / pasar a humano / escribir hace minutos)."""
+        eligibility = await workflow.execute_activity(
+            check_remarketing_eligibility,
+            args=[session_id],
+            start_to_close_timeout=timedelta(seconds=15),
+        )
+        if not eligibility.eligible:
+            return
+        policy = await workflow.execute_activity(
+            check_reengagement_policy_activity,
+            args=[session_id],
+            start_to_close_timeout=timedelta(seconds=15),
+        )
+        if not policy.allowed:
+            workflow.logger.info(
+                f"Remarketing: toque de seguimiento suprimido ({policy.suppress_reason})."
+            )
+            return
+        if policy.channel == "template":
+            await self._template_touch(session_id, is_free=policy.is_free)
+            return
+        trigger = await self._build_trigger(
+            session_id, motivo, memory_context, ladder=True
+        )
+        if self._pending:
+            # El cliente escribió mientras se armaba el toque: gana el
+            # cliente, el toque sobra (no se encola ni consume peldaño).
+            return
+        self._proactive_trigger = PendingMessage(message=trigger, plugin_context=None)
+        self._pending.append(self._proactive_trigger)
+
     @workflow.run
     async def run(self, input: RemarketingSessionInput) -> None:
         session_id = input.session_id
@@ -196,6 +309,8 @@ class RemarketingSessionWorkflow:
         #
         # workflow.patched: histories en vuelo (duermen hasta 24h, L-9) no
         # ejecutan este branch. Tras drain, deprecate_patch.
+        policy_channel = "free_form"
+        policy_is_free = True
         if workflow.patched("reengagement-policy-gate-v1"):
             policy = await workflow.execute_activity(
                 check_reengagement_policy_activity,
@@ -211,6 +326,8 @@ class RemarketingSessionWorkflow:
                     policy.rationale,
                 )
                 return
+            policy_channel = policy.channel
+            policy_is_free = policy.is_free
 
         # Bootstrap: construye SessionInput fuera del workflow (R-DET).
         # Reemplaza el `build_workspace_config` + `get_base_tools_registry` que
@@ -245,49 +362,58 @@ class RemarketingSessionWorkflow:
         # El motivo del TAG (lo que Sales anotó al etiquetar) manda sobre el
         # del input cuando existe. workflow.patched: histories en vuelo
         # replayean la activity vieja; tras drain (24h), deprecate_patch.
-        if workflow.patched("remarketing-context-v1"):
-            context = await workflow.execute_activity(
-                read_remarketing_context_activity,
-                args=[session_id],
-                start_to_close_timeout=timedelta(seconds=15),
-                retry_policy=RetryPolicy(maximum_attempts=2),
-            )
-            system_trigger_msg = await workflow.execute_activity(
-                build_remarketing_trigger_v2_activity,
-                RemarketingTriggerInput(
-                    motivo=context.tag_motivo or motivo,
-                    memory_context=memory_context,
-                    has_order_draft=context.has_order_draft,
-                    transcript=context.transcript,
-                ),
-                start_to_close_timeout=timedelta(seconds=10),
-                retry_policy=RetryPolicy(maximum_attempts=2),
-            )
-        else:
-            system_trigger_msg = await workflow.execute_activity(
-                build_remarketing_trigger_activity,
-                args=[motivo, memory_context],
-                start_to_close_timeout=timedelta(seconds=10),
-                retry_policy=RetryPolicy(maximum_attempts=2),
-            )
-
-        # PR-B: identidad / tono / catalogo viven en el workspace canonico
-        # (`workspace/{IDENTITY,SOUL,USER,TOOLS,AGENTS}.md` y
-        # `workspace/skills/hubara_catalog/SKILL.md`), leidos por
-        # `ContextBuilder.build_system_prompt` en `build_prompt`. Ya no se
-        # forwardea `shared_brain/*.md` por `plugin_context` — el campo
-        # sobrevive en `PendingMessage` para datos volatiles del turno
-        # (A-MEM, snippets), no identidad. Ver `core/workflow_helpers.py:PendingMessage`.
-        self._pending.append(PendingMessage(
-            message=system_trigger_msg,
-            plugin_context=None,
-        ))
-
+        # Escalera de reactivación (decisión 2026-09-18). workflow.patched:
+        # histories en vuelo (duermen hasta 24h, L-9) replayean sin la rama.
+        ladder = workflow.patched("remarketing-ladder-v1")
         messages_processed = 0
+        if ladder and policy_channel == "template":
+            # CSW cerrada: Meta solo acepta plantilla — el LLM free-form
+            # sería rechazado (131047). Sin turno LLM de arranque.
+            if not await self._template_touch(session_id, is_free=policy_is_free):
+                await workflow.execute_activity(
+                    claim_conversation_routing,
+                    args=[session_id, ROUTE_VENTAS],
+                    start_to_close_timeout=timedelta(seconds=15),
+                )
+                return
+            # La plantilla cuenta como el mensaje proactivo: la PRIMERA
+            # respuesta del cliente ya dispara el handoff determinista.
+            messages_processed = 1
+            self._touch_requested = False
+        else:
+            if ladder:
+                system_trigger_msg = await self._build_trigger(
+                    session_id, motivo, memory_context, ladder=True
+                )
+            elif workflow.patched("remarketing-context-v1"):
+                system_trigger_msg = await self._build_trigger(
+                    session_id, motivo, memory_context, ladder=False
+                )
+            else:
+                system_trigger_msg = await workflow.execute_activity(
+                    build_remarketing_trigger_activity,
+                    args=[motivo, memory_context],
+                    start_to_close_timeout=timedelta(seconds=10),
+                    retry_policy=RetryPolicy(maximum_attempts=2),
+                )
+
+            # PR-B: identidad / tono / catalogo viven en el workspace canonico
+            # (`workspace/*.md`), leidos por `ContextBuilder` en `build_prompt`.
+            # `plugin_context` sobrevive en `PendingMessage` solo para datos
+            # volatiles del turno. Ver `core/workflow_helpers.py:PendingMessage`.
+            trigger_msg = PendingMessage(
+                message=system_trigger_msg,
+                plugin_context=None,
+            )
+            if ladder:
+                self._proactive_trigger = trigger_msg
+            self._pending.append(trigger_msg)
+
         while True:
             try:
                 await workflow.wait_condition(
-                    lambda: len(self._pending) > 0,
+                    lambda: len(self._pending) > 0
+                    or (ladder and self._touch_requested),
                     timeout=_IDLE_TIMEOUT,
                 )
             except asyncio.TimeoutError:
@@ -298,6 +424,13 @@ class RemarketingSessionWorkflow:
                     start_to_close_timeout=timedelta(seconds=15),
                 )
                 return
+
+            # Escalera: el ciclo pidió el siguiente toque y el cliente sigue
+            # callado → re-validar y armar el trigger N+1 (o la plantilla).
+            if ladder and self._touch_requested and not self._pending:
+                self._touch_requested = False
+                await self._followup_touch(session_id, motivo, memory_context)
+                continue
 
             # Trailing debounce con reset (Fix 1, gated): identico a Sales.
             # Cada signal nuevo resetea el timer; cap absoluto 12s.
@@ -320,8 +453,21 @@ class RemarketingSessionWorkflow:
 
                 batch = list(self._pending)
                 self._pending.clear()
+                # ¿Turno PROACTIVO (trigger del sistema) o respuesta del
+                # cliente? Si el cliente escribió justo encima del trigger,
+                # gana el cliente: el trigger se descarta del batch.
+                # (por IDENTIDAD, no por posición: el cliente pudo escribir
+                # antes de que el trigger se encolara).
+                is_proactive = False
+                if ladder and self._proactive_trigger is not None:
+                    customer = [m for m in batch if m is not self._proactive_trigger]
+                    is_proactive = not customer
+                    if customer:
+                        batch = customer
+                    self._proactive_trigger = None
                 msgs_to_process: list[PendingMessage] = [coalesce_pending(batch)]
             else:
+                is_proactive = False
                 msgs_to_process = []
                 while self._pending:
                     msgs_to_process.append(self._pending.pop(0))
@@ -362,6 +508,12 @@ class RemarketingSessionWorkflow:
                         fallback_plugin_context=None,
                         fabricate_fallback_on_empty=not workflow.patched(
                             "remarketing-no-fabricated-fallback-v1"
+                        ),
+                        # Escalera: un NO_MESSAGE grabado era precedente del
+                        # siguiente intento (15 abstenciones apiladas, prompt
+                        # 8k→27k tokens). La abstención no entra al historial.
+                        skip_record_when=(
+                            is_no_message_abstention if ladder else None
                         ),
                     )
                     self._last_response = result.final_content
@@ -421,7 +573,11 @@ class RemarketingSessionWorkflow:
                             summary=result.transfer_decision.summary or "El cliente volvió a interactuar",
                         )
                         self._force_shutdown = True
-                    elif messages_processed > 1 and not self._force_shutdown:
+                    elif (
+                        messages_processed > 1
+                        and not self._force_shutdown
+                        and not (ladder and is_proactive)
+                    ):
                         # Salvavidas DETERMINISTA: si el usuario respondio y el LLM no
                         # uso la tool de transferir, lo forzamos con una decision sintetica.
                         workflow.logger.info("Remarketing ignoró la transición. Forzando paso a Ventas de forma determinista.")
@@ -482,6 +638,18 @@ class RemarketingSessionWorkflow:
                                 retry_policy=RetryPolicy(maximum_attempts=2),
                             )
                         workflow.logger.info(f"Remarketing respondió para sesión {session_id}.")
+
+                    if ladder and is_proactive and not self._force_shutdown:
+                        # TODO intento proactivo consume su peldaño — enviado
+                        # o abstenido. Sin este rastro el ciclo re-despachaba
+                        # la sesión cada 45 min (runs 01a0b0da…01a0b586).
+                        sent = bool(result.final_content) and not abstained
+                        await self._record_touch(
+                            session_id, "free_form" if sent else "abstained"
+                        )
+                        # El signal que llega junto al start (signal_with_start
+                        # en frío) ya quedó cubierto por este toque.
+                        self._touch_requested = False
 
                     if abstained and not self._force_shutdown:
                         # El toque sobra: no enviar, no persistir (nada que

@@ -44,7 +44,25 @@ class TestLoadCatalogReal:
         assert "cart_recovery_marketing_v2" in registry
         assert "campaign_promo_marketing_v1" in registry
         assert "human_followup_utility_v1" in registry
-        assert len(registry) == 6
+        # Escalera de reactivación (2026-09-18): seguimiento con la CSW cerrada
+        # para leads SIN carrito (cart_recovery habla de "tu carrito").
+        assert "followup_interest_marketing_v1" in registry
+        assert len(registry) == 7
+
+    def test_followup_interest_is_marketing_without_variables_and_with_opt_out(self):
+        """Toque por plantilla de la escalera (runs 01a0b0da…: con la CSW
+        cerrada el remarketing no tenía plantilla válida para un lead sin
+        carrito). Sin variables: nada que inventar sobre un cliente que no
+        eligió producto (slot vacío → Meta 131008). Marketing + opt-out fijo
+        (guía de Meta); jamás por watchdog; sin promo ni descuento."""
+        spec = load_template_registry_from_yaml()["followup_interest_marketing_v1"]
+        assert spec.category == "marketing"
+        assert list(spec.variables) == []
+        assert spec.triggers_when_window_expiring is False
+        body = spec.body.lower()
+        assert "te doy de baja" in body
+        for banned in ("descuento", "gratis", "promo", "oferta"):
+            assert banned not in body
 
     def test_quote_ready_has_correct_spec(self):
         registry = load_template_registry_from_yaml()

@@ -42,19 +42,24 @@ agent:
       emits:
         - ReengagementDispatchIntentEvent
       transitions:
-        # Cada intent del agente arranca el remarketing de esa conversación.
-        # `via: start_workflow` (NO _with_replace): si ya hay un remarketing
-        # vivo para la sesión, el intent NO lo mata — la conversación en
-        # curso gana. El RemarketingWorkflow re-valida con la central
-        # (check_reengagement_policy) antes de tocar al cliente.
+        # Cada intent del agente arranca el remarketing de esa conversación —
+        # o, si ya hay uno VIVO (queda hasta 24h esperando la respuesta del
+        # cliente), le pide el siguiente toque de la escalera por signal.
+        # `via: signal_with_start` (decisión 2026-09-18, runs 01a0b0da…):
+        # con `start_workflow` el intent del toque N+1 chocaba con el
+        # workflow_id en uso y se descartaba. NO `_with_replace`: mataría una
+        # conversación viva. El RemarketingWorkflow re-valida con la central
+        # (check_reengagement_policy + escalera) antes de tocar al cliente.
+        # Guard: tests/plugins/reengagement/test_manifest_next_touch.py.
         - id: dispatch_intent_starts_remarketing
           on_event: ReengagementDispatchIntentEvent
           action:
-            via: start_workflow
+            via: signal_with_start
             target_plugin: chats
             target_worker: remarketing
             target_workflow: RemarketingWorkflow
             workflow_id_template: "remarketing-{event.session_id}"
+            signal_name: next_touch
             input_mapping:
               session_id: "$.session_id"
               motivo: "$.motivo"

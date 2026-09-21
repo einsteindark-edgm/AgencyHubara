@@ -447,6 +447,7 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 .tag.t-cli  { background: rgba(48,209,88,0.16);   color: #5be07b; }
 .tag.t-rem  { background: rgba(191,90,242,0.18);  color: #d68aff; }
 .tag.t-cold { background: rgba(255,255,255,0.06); color: var(--fg-muted); }
+.tag.t-noreply { background: rgba(255,255,255,0.04); color: var(--fg-muted); border: 1px dashed rgba(255,255,255,0.18); }
 .tag.t-human { background: rgba(255,114,105,0.20); color: #ff7269; }
 
 /* Chip de orden de la fila: a qué orden pertenece la conversación. Solo sale

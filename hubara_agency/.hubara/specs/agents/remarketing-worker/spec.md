@@ -86,6 +86,74 @@ genérico del intent del Window Strategist.
 - THEN el trigger que ve el LLM usa el motivo del tag, dice que NO hay pedido a medias e incluye esos mensajes
 - AND el LLM puede responder `NO_MESSAGE` si el transcript muestra que el gancho no corresponde
 
+### Requirement: La reactivación sigue una escalera de toques por cada ghosting
+
+Decisión del operador 2026-09-18 (runs `01a0b0da`…`01a0b586`: tras el primer
+gancho el LLM respondía `NO_MESSAGE` siempre y el ciclo re-despachaba la sesión
+cada 45 min — 86% de los RemarketingWorkflow morían en <30 s).
+
+El sistema SHALL tocar al cliente que dejó de responder con una escalera de
+hasta 5 toques, con huecos 2h / 2h / 4h / 6h / 6h medidos desde el toque
+anterior (el primero, desde el último inbound; 30 min si hay gancho
+transaccional). El ancla es el último inbound del cliente: un inbound nuevo
+MUST reiniciar la escalera, también cuando un remarketing previo revivió la
+conversación. TODO intento —enviado, abstenido (`NO_MESSAGE`) o plantilla
+rechazada— MUST consumir su peldaño en `metadata.remarketing_touches`. Agotada
+la escalera el sistema MUST NOT enviar más.
+
+#### Scenario: El cliente respondió a un gancho y volvió a callar
+- GIVEN un gancho enviado ayer, una respuesta del cliente hoy y 2h de silencio
+- WHEN corre el ciclo de reactivación
+- THEN la sesión entra al seed como toque 1 de una escalera NUEVA
+- AND el trigger le declara al LLM el número de toque y el silencio real
+- AND "ya hubo un gancho anterior" NO es motivo de abstención
+
+#### Scenario: El toque anterior todavía no cumplió su hueco
+- GIVEN un toque registrado hace 30 min
+- WHEN llega un intent (viejo o duplicado) al RemarketingWorkflow
+- THEN `check_reengagement_policy` suprime con `ladder_not_due`
+
+#### Scenario: Escalera agotada
+- GIVEN 5 toques registrados desde el último inbound
+- WHEN corre el ciclo
+- THEN la sesión queda fuera del seed (`prefiltered.ladder_exhausted`)
+- AND tras 6h más sin respuesta el tag pasa a `SIN_RESPUESTA` (source `reengagement:ladder`)
+- AND si el cliente vuelve a escribir, el ingest levanta la etiqueta
+
+#### Scenario: La escalera no puede continuar gratis
+- GIVEN toques ya enviados, la CSW cerrada, sin ventana de 72h y sin gancho transaccional
+- WHEN pasan 6h desde el último toque
+- THEN el tag pasa a `SIN_RESPUESTA` igual que con la escalera agotada (no se paga marketing por un lead que no contestó)
+
+#### Scenario: Abstención del LLM
+- GIVEN el LLM responde `NO_MESSAGE` a un trigger proactivo
+- THEN no se envía nada, el peldaño se consume como `abstained`
+- AND el turno NO se graba en el historial del agente (no es precedente)
+
+### Requirement: Con la ventana de 24h cerrada el toque va por plantilla
+
+Fuera de la CSW Meta solo acepta plantillas. Cuando la central devuelve
+`channel="template"` el RemarketingWorkflow MUST enviar una plantilla aprobada
+(`cart_recovery_marketing_v2` si hay pedido a medias; si no
+`followup_interest_marketing_v1`) y MUST NOT correr el turno LLM free-form.
+El sistema MUST NOT enviar más de 2 plantillas por cliente en 24h (tope de Meta
+por usuario, error 131049). Una plantilla rechazada consume el peldaño
+(`failed`) y devuelve el routing a ventas — no se reintenta cada ciclo.
+
+#### Scenario: CSW cerrada dentro de las 72h del anuncio
+- GIVEN un lead CTWA con la CSW vencida y la ventana de 72h abierta
+- WHEN vence el siguiente peldaño
+- THEN sale UNA plantilla (gratis), se registra el toque `template`
+- AND el workflow queda atento a la respuesta para el handoff a Sales
+
+### Requirement: Un remarketing vivo acepta el siguiente toque por signal
+
+Tras tocar al cliente el RemarketingWorkflow queda vivo hasta 24h esperando su
+respuesta. El intent del ciclo MUST llegar por `signal_with_start`
+(`next_touch`): si el workflow vive, re-valida elegibilidad + política y envía
+el toque N+1; si no existe, arranca. El sistema MUST NOT usar
+`start_workflow_with_replace` (mataría una conversación viva).
+
 ### Requirement: Handoff a Sales cuando cliente responde
 
 Cuando un cliente responde durante el remarketing, el sistema MUST transferir

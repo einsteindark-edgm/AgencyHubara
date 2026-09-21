@@ -82,3 +82,13 @@ describe("chip de pedido en la fila", () => {
     expect(screen.queryByLabelText(/^Pedido/)).toBeNull();
   });
 });
+
+describe("chip del tag en la fila", () => {
+  it("SIN_RESPUESTA se lee 'SIN RESPUESTA' (sin el guion bajo del tag técnico)", () => {
+    renderInbox([
+      makeItem({ tag: "SIN_RESPUESTA", tagClass: "t-noreply" }),
+    ]);
+    // El botón de filtro dice "Sin respuesta"; el chip de la fila, en mayúsculas.
+    expect(screen.getByText("SIN RESPUESTA")).toBeTruthy();
+  });
+});
