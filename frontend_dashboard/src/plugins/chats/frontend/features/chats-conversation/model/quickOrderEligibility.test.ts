@@ -45,6 +45,46 @@ describe("canOfferQuickOrder", () => {
     ).toBe(true);
   });
 
+  it("se activa cuando una conversación en RETOMA_VENTA pasa a HUMANO", () => {
+    // La venta se retomó (vuelta de post-venta o del humano al bot) y la
+    // escalaron / la intervinieron para cerrarla a mano.
+    expect(canOfferQuickOrder([entry("RETOMA_VENTA"), entry("HUMANO")])).toBe(true);
+    expect(
+      canOfferQuickOrder([
+        entry("COMPRA_EXITOSA"),
+        entry("RETOMA_VENTA"),
+        entry("HUMANO"),
+        entry("HUMANO"),
+      ]),
+    ).toBe(true);
+  });
+
+  it("se activa con RETOMA_VENTA → RECHAZO → HUMANO", () => {
+    // Retomada la venta, el cliente dijo que no y el operador entró a
+    // rescatarla: sigue siendo una venta a cerrar a mano.
+    expect(
+      canOfferQuickOrder([entry("RETOMA_VENTA"), entry("RECHAZO"), entry("HUMANO")]),
+    ).toBe(true);
+  });
+
+  it("RETOMA_VENTA y HUMANO sueltos no cuentan", () => {
+    expect(canOfferQuickOrder([entry("HUMANO"), entry("RETOMA_VENTA")])).toBe(false);
+    // El rescate vale solo con el RECHAZO en medio, nada más.
+    expect(
+      canOfferQuickOrder([
+        entry("RETOMA_VENTA"),
+        entry("RECHAZO"),
+        entry("RECHAZO"),
+        entry("HUMANO"),
+      ]),
+    ).toBe(false);
+    expect(
+      canOfferQuickOrder([entry("RETOMA_VENTA"), entry("INTERESADO_FRIO"), entry("HUMANO")]),
+    ).toBe(false);
+    // Un RECHAZO que no viene de RETOMA_VENTA no cuenta.
+    expect(canOfferQuickOrder([entry("RECHAZO"), entry("HUMANO")])).toBe(false);
+  });
+
   it("INTERESADO y HUMANO sueltos (no uno detrás del otro) no cuentan", () => {
     // Pasó a HUMANO desde un RECHAZO: no es un lead a punto de comprar.
     expect(
