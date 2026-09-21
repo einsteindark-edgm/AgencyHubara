@@ -64,6 +64,7 @@ class OrderFacts:
     customer: str
     is_draft: bool
     created_at_ms: int = 0
+    is_test: bool = False   # marcado "prueba" en Órdenes → no es venta
 
     @classmethod
     def from_summary(cls, s: OrderSummaryDTO) -> OrderFacts:
@@ -77,13 +78,18 @@ class OrderFacts:
             customer=s.customer,
             is_draft=s.is_draft,
             created_at_ms=int(s.created_at_ms or 0),
+            is_test=bool(getattr(s, "is_test", False)),
         )
 
     @property
     def counts_as_revenue(self) -> bool:
-        """Venta cerrada: pago confirmado y no cancelada (mismo criterio que
-        `ads/sales_join` y el badge "Pagado" de Orders)."""
-        return self.pay_status == "paid" and self.stage != "cancelled"
+        """Venta cerrada: pago confirmado, no cancelada y no de prueba (mismo
+        criterio que `ads/sales_join` y los totales de Orders)."""
+        return (
+            self.pay_status == "paid"
+            and self.stage != "cancelled"
+            and not self.is_test
+        )
 
 
 def _is_number(value: Any) -> bool:

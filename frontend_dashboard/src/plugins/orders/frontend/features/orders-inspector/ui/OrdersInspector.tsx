@@ -25,6 +25,7 @@ import { NotesPanel } from "./NotesPanel";
 import { PaymentPanel } from "./PaymentPanel";
 import { PhotoPanel } from "./PhotoPanel";
 import { ReadyForShip } from "./ReadyForShip";
+import { TestOrderPanel } from "./TestOrderPanel";
 import { TimelinePanel } from "./TimelinePanel";
 
 interface Props {
@@ -64,6 +65,24 @@ export function OrdersInspector({ order }: Props) {
         <div className="ih-title">
           <h3>
             {order.id}
+            {order.isTest && (
+              <span
+                style={{
+                  marginLeft: 8,
+                  fontSize: 9,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.5,
+                  padding: "2px 6px",
+                  borderRadius: 4,
+                  background: "var(--color-neutral-soft)",
+                  color: "var(--color-neutral)",
+                  verticalAlign: "middle",
+                }}
+              >
+                Prueba
+              </span>
+            )}
             {order.isDraft && (
               <span
                 style={{
@@ -120,6 +139,10 @@ export function OrdersInspector({ order }: Props) {
       </div>
 
       <div className="ins-body">
+        {/* Pedido de prueba: siempre a mano, arriba — define si la orden
+            cuenta en los números de toda la pantalla. */}
+        <TestOrderPanel order={order} />
+
         {/* "Lista para envío" — único panel de agendamiento. Solo aparece
             para orders nuevas sin fecha asignada (acción primaria del
             operador antes de avanzar al kanban). Una vez agendada,

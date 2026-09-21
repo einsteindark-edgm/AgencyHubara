@@ -72,3 +72,14 @@ def test_respeta_la_ventana_del_analisis() -> None:
 
 def test_sin_ordenes_devuelve_sales_vacio() -> None:
     assert manual_sales_from_orders([], since="2026-06-01", until="2026-06-30") == {"sales": []}
+
+
+def test_pedido_de_prueba_no_es_venta_aunque_este_pagado() -> None:
+    # El operador lo marcó "prueba" en Órdenes (hubara_test_order en Medusa).
+    real = _order(created="2026-06-15T10:00", total=100000)
+    prueba = _order(created="2026-06-15T11:00", total=999999)
+    prueba.is_test = True
+    out = manual_sales_from_orders([real, prueba], since="2026-06-01", until="2026-06-30")
+    assert out == {"sales": [
+        {"date": "2026-06-15", "total_orders": 1, "total_revenue": 100000},
+    ]}

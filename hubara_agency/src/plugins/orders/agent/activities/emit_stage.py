@@ -33,13 +33,15 @@ def capi_event_for_stage(to_stage: str) -> str | None:
 
 async def _order_payload(
     metadata: dict, order_id: str
-) -> tuple[int | None, str | None, list[dict] | None]:
+) -> tuple[int | None, str | None, list[dict] | None] | None:
     """``(value, currency, contents)`` del pedido para el evento de etapa.
 
     Total y moneda salen de ``OrderFacts`` (Medusa vivo, gotcha 13); la copia
     ``registered_order`` del chat solo es respaldo si Medusa no responde. Los
     ``contents`` (SKUs para la coincidencia de catálogo) solo viven en esa
-    copia. Best-effort: Medusa caído nunca bloquea el evento."""
+    copia. Best-effort: Medusa caído nunca bloquea el evento.
+
+    ``None`` = pedido marcado "prueba" en Órdenes: no se emite nada a Meta."""
     from src.sdk.connectorkit import get_order_facts_port
 
     registered = metadata.get("registered_order")
@@ -53,6 +55,8 @@ async def _order_payload(
     except Exception:  # noqa: BLE001 — degradar a la copia del vault
         snapshot = None
     fact = snapshot.facts.get(order_id) if snapshot is not None else None
+    if fact is not None and fact.is_test:
+        return None
     if fact is not None:
         value, currency = fact.total_cop, fact.currency_code
     else:
@@ -89,7 +93,10 @@ async def _emit_stage_capi(session_id: str, order_id: str, to_stage: str) -> Non
     ]
     if any(isinstance(e, dict) and e.get("event_name") == event_name and event_name == "OrderCanceled" for e in known):
         return
-    value, currency, contents = await _order_payload(metadata, order_id)
+    payload = await _order_payload(metadata, order_id)
+    if payload is None:
+        return
+    value, currency, contents = payload
     try:
         event_id = enqueue_capi_event(
             metadata,

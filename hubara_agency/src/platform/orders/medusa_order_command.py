@@ -41,15 +41,18 @@ from src.platform.orders.command_port import (
     OrderCommandResult,
     ReversePaymentCommand,
     ScheduleDeliveryCommand,
+    SetTestOrderCommand,
     TransitionStageCommand,
 )
 from src.platform.orders.state import (
     InvalidStageTransitionError,
     build_cancel_patch,
     META_KEY_PAYMENT_CONFIRMED,
+    META_KEY_TEST_ORDER,
     build_confirm_payment_patch,
     build_reverse_payment_patch,
     build_schedule_patch,
+    build_test_order_patch,
     read_stage,
     transition_stage,
 )
@@ -142,6 +145,7 @@ def apply_payment_confirmation_to_chat_metadata(
     by: str | None = None,
     session_id: str | None = None,
     order_id: str | None = None,
+    is_test_order: bool = False,
 ) -> bool:
     """Aplica el cierre con tag `COMPRA_EXITOSA` al `metadata.json` del chat
     después de que un humano confirmó el pago desde el dashboard de orders.
@@ -214,7 +218,10 @@ def apply_payment_confirmation_to_chat_metadata(
                 break
 
     # El Purchase a Meta sale de ACÁ (auditoría 2026-09-08): este es el
-    # único momento en que la venta está verificada.
+    # único momento en que la venta está verificada. Un pedido de prueba
+    # no es venta: Meta no se entera.
+    if is_test_order:
+        return True
     _enqueue_order_capi(
         chat_metadata,
         event_name="Purchase",
@@ -413,6 +420,33 @@ def apply_payment_reversal_to_chat_metadata(
                 and e.get("order_id") in ids
             )
         ]
+    return True
+
+
+def apply_test_order_to_chat_metadata(
+    chat_metadata: dict[str, Any],
+    *,
+    order_id: str,
+    order_aliases: tuple[str, ...] = (),
+) -> bool:
+    """El pedido pasó a "prueba": descarta del outbox CAPI del chat los
+    eventos de ese pedido que todavía no salieron (Purchase, etapas). Los ya
+    enviados no se pueden retractar en Meta. Devuelve True si quitó algo.
+
+    `order_aliases`: otros ids del mismo pedido (el dashboard manda el
+    display_id "#7"; el evento pudo quedar encolado con el id de Medusa).
+    """
+    ids = {i for i in (order_id, *order_aliases) if i}
+    outbox = chat_metadata.get("capi_outbox")
+    if not isinstance(outbox, list):
+        return False
+    kept = [
+        e for e in outbox
+        if not (isinstance(e, dict) and e.get("order_id") in ids)
+    ]
+    if len(kept) == len(outbox):
+        return False
+    chat_metadata["capi_outbox"] = kept
     return True
 
 
@@ -715,6 +749,7 @@ class MedusaOrderCommand:
                 session_key=chat_session_key,
                 order_id=order_id,
                 by=command.by,
+                is_test_order=current_metadata.get(META_KEY_TEST_ORDER) is True,
             )
 
         return OrderCommandResult(
@@ -729,6 +764,7 @@ class MedusaOrderCommand:
         session_key: str,
         order_id: str,
         by: str | None,
+        is_test_order: bool = False,
     ) -> None:
         """Side effect: patchear el `metadata.json` del chat para reflejar
         el cierre con tag COMPRA_EXITOSA después de que el humano confirmó
@@ -760,6 +796,7 @@ class MedusaOrderCommand:
                 by=by,
                 session_id=session_key,
                 order_id=order_id,
+                is_test_order=is_test_order,
             )
             if changed:
                 chat_meta_file.write_text(
@@ -1114,6 +1151,71 @@ class MedusaOrderCommand:
                 },
             )
         return result
+
+    async def set_test_order(
+        self, command: SetTestOrderCommand
+    ) -> OrderCommandResult:
+        """Marcar/desmarcar el pedido como "prueba" (metadata de Medusa).
+
+        La marca vive SOLO en Medusa: `OrderFacts` la espeja y todos los
+        totales la leen de ahí. Al marcar, además se descartan del outbox
+        CAPI del chat los eventos de este pedido que aún no salieron
+        (best-effort — el lado Medusa ya quedó OK).
+        """
+        result = await self._patch(
+            command.order_id,
+            patch_builder=lambda meta: build_test_order_patch(
+                meta, is_test=command.is_test, by=command.by
+            ),
+            operation="set_test_order",
+        )
+        if not result.success or not command.is_test:
+            return result
+        try:
+            backend_id, _is_draft, current_data = await self._fetch_with_kind(
+                command.order_id
+            )
+        except MedusaAPIError:
+            return result
+        metadata: dict[str, Any] = current_data.get("metadata") or {}
+        session_key = metadata.get("session_key")
+        if isinstance(session_key, str) and session_key:
+            self._sync_chat_test_order(
+                session_key=session_key,
+                order_id=command.order_id,
+                aliases=(backend_id,),
+            )
+        return result
+
+    def _sync_chat_test_order(
+        self, *, session_key: str, order_id: str, aliases: tuple[str, ...]
+    ) -> None:
+        chat_meta_file = _chat_metadata_file(
+            session_key, operation="set_test_order", order_id=order_id
+        )
+        if chat_meta_file is None or not chat_meta_file.exists():
+            return
+        try:
+            chat_data = json.loads(chat_meta_file.read_text(encoding="utf-8"))
+            if not isinstance(chat_data, dict):
+                return
+            if apply_test_order_to_chat_metadata(
+                chat_data, order_id=order_id, order_aliases=aliases
+            ):
+                chat_meta_file.write_text(
+                    json.dumps(chat_data, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning(
+                "set_test_order: failed to sync chat metadata "
+                "(Medusa side already OK)",
+                extra={
+                    "order_id": order_id,
+                    "session_key": session_key,
+                    "error": str(exc)[:200],
+                },
+            )
 
     # ------------------------------------------------------------------
     # Internals — el flujo común: detect draft vs order → fetch → patch
@@ -1505,5 +1607,10 @@ class NoopOrderCommand:
 
     async def cancel_order(
         self, command: CancelOrderCommand
+    ) -> OrderCommandResult:
+        return self._unavailable(command.order_id)
+
+    async def set_test_order(
+        self, command: SetTestOrderCommand
     ) -> OrderCommandResult:
         return self._unavailable(command.order_id)

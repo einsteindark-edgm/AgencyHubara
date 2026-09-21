@@ -77,6 +77,7 @@ export function toLegacyOrder(s: OrderSummary): Order {
     agent: s.agent,
     priority: s.priority,
     isDraft: s.is_draft,
+    isTest: s.is_test === true,
     // El `due_iso` viene del backend como estimate (created+1d) — siempre
     // estimated hasta que tengamos integración real de shipping.
     isDueEstimated: s.due_iso !== null,
@@ -341,6 +342,31 @@ export function useCancelOrder() {
       const raw = await apiClient.post<unknown>(
         `/api/orders/orders/${encodeURIComponent(orderId)}/cancel`,
         { reason },
+      );
+      return orderCommandResultSchema.parse(raw);
+    },
+    onSuccess: (result, vars) => {
+      if (result.success) {
+        qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
+      }
+    },
+  });
+}
+
+interface SetTestOrderVariables {
+  orderId: string;
+  isTest: boolean;
+}
+
+/** Marcar / desmarcar el pedido como "prueba" (la marca vive en Medusa). */
+export function useSetTestOrder() {
+  const qc = useQueryClient();
+  return useMutation<OrderCommandResult, Error, SetTestOrderVariables>({
+    mutationFn: async ({ orderId, isTest }) => {
+      const raw = await apiClient.patch<unknown>(
+        `/api/orders/orders/${encodeURIComponent(orderId)}/test-order`,
+        { is_test: isTest },
       );
       return orderCommandResultSchema.parse(raw);
     },

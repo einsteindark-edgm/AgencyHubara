@@ -20,6 +20,8 @@ Operaciones cubiertas:
   * `confirm_payment`: humano click "Confirmar pago" cuando el cliente
     transfirió / pagó COD.
   * `cancel_order`: humano cancela (cliente arrepintió, error operativo).
+  * `set_test_order`: humano marca/desmarca el pedido como "prueba" (fuera
+    de las estadísticas y de los eventos a Meta).
 """
 from __future__ import annotations
 
@@ -104,6 +106,20 @@ class CancelOrderCommand:
 
 
 @dataclass(frozen=True)
+class SetTestOrderCommand:
+    """Marcar (o desmarcar) el pedido como "prueba".
+
+    Un pedido de prueba sigue visible en el tablero pero NO cuenta en ninguna
+    estadística ni manda eventos a Meta. La marca vive en la metadata de
+    Medusa (`hubara_test_order`) — única fuente de verdad, espejada por
+    `OrderFacts.is_test`.
+    """
+    order_id: str
+    is_test: bool
+    by: str = "human"
+
+
+@dataclass(frozen=True)
 class OrderCommandResult:
     """Resultado uniforme de cualquier comando.
 
@@ -164,4 +180,8 @@ class OrderCommandPort(Protocol):
 
     async def cancel_order(
         self, command: CancelOrderCommand
+    ) -> OrderCommandResult: ...
+
+    async def set_test_order(
+        self, command: SetTestOrderCommand
     ) -> OrderCommandResult: ...

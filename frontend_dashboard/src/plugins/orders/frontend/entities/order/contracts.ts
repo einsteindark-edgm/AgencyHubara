@@ -47,6 +47,9 @@ export const orderSummarySchema = z.object({
   total_cop: z.number().int(),
   currency_code: z.string(),
   is_draft: z.boolean(),
+  // Pedido de prueba (`metadata.hubara_test_order` en Medusa): visible pero
+  // fuera de todos los totales. Opcional: un backend viejo no lo manda.
+  is_test: z.boolean().optional(),
   // Datos que Medusa NO tiene todavía — son estimaciones / placeholders.
   due_iso: z.string().nullable(),
   due_time: z.string().nullable(),

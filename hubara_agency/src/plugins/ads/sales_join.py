@@ -19,11 +19,12 @@ def _order_date(order: Any) -> str:
 
 def _is_sale(order: Any) -> bool:
     """Venta CERRADA = pagada (Medusa `pay_status == 'paid'`), no draft (carrito),
-    no cancelada. pending/partial/refund NO son revenue confirmado."""
+    no cancelada, no de prueba. pending/partial/refund NO son revenue confirmado."""
     return (
         getattr(order, "pay_status", None) == "paid"
         and not getattr(order, "is_draft", False)
         and getattr(order, "status", None) != "cancelled"
+        and not getattr(order, "is_test", False)
     )
 
 

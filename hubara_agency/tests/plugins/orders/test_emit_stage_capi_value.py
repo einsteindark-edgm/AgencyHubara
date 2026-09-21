@@ -155,3 +155,16 @@ async def test_outbox_replays_the_same_payload_to_meta(vault: Path) -> None:
     assert first["custom_data"]["contents"] == CONTENTS
     sent = json.loads(path.read_text(encoding="utf-8"))["capi_events_sent"]
     assert sent[-1]["status"] == "sent"
+
+
+@pytest.mark.parametrize("stage", ["shipping", "delivered", "cancelled"])
+async def test_pedido_de_prueba_no_manda_eventos_de_etapa(vault: Path, stage: str) -> None:
+    # Pedido marcado "prueba" en Órdenes: Meta no debe enterarse de nada.
+    from dataclasses import replace
+
+    path = _seed(vault, _metadata())
+    _use_facts(InMemoryOrderFacts([replace(_fact(150000), is_test=True)]))
+
+    await emit_stage._emit_stage_capi(SESSION, ORDER, stage)
+
+    assert "capi_outbox" not in json.loads(path.read_text(encoding="utf-8"))
