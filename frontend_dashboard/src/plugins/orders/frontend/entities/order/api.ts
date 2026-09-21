@@ -222,12 +222,14 @@ interface TransitionStageVariables {
   force?: boolean;
   /** Link de la guía (solo `shipping`): el ETA lo agrega al mensaje de WhatsApp. */
   tracking_url?: string;
+  /** `false` = sin WhatsApp al cliente (el evento CAPI sale igual). Omitido = avisa. */
+  notify_customer?: boolean;
 }
 
 export function useTransitionOrderStage() {
   const qc = useQueryClient();
   return useMutation<OrderCommandResult, Error, TransitionStageVariables>({
-    mutationFn: async ({ orderId, to_stage, note, force, tracking_url }) => {
+    mutationFn: async ({ orderId, to_stage, note, force, tracking_url, notify_customer }) => {
       const raw = await apiClient.patch<unknown>(
         `/api/orders/orders/${encodeURIComponent(orderId)}/stage`,
         {
@@ -235,6 +237,7 @@ export function useTransitionOrderStage() {
           note,
           force: force ?? false,
           ...(tracking_url ? { tracking_url } : {}),
+          ...(notify_customer === false ? { notify_customer: false } : {}),
         },
       );
       return orderCommandResultSchema.parse(raw);

@@ -392,11 +392,13 @@ async def transition_order_stage(
       * `force` (optional bool, default False) — bypassa DAG. Usar solo
         para correcciones explícitas (UI debe pedir confirm dialog).
       * `by` (optional, default "human") — atribución en el stage history.
-      * `notify_customer` (optional bool, default True) — con `false` NO se
-        dispara la cascada ETA. Lo usa el agente order-sentinel: la transición
-        se infirió de la conversación humana, el cliente YA fue avisado por
-        chat y la notificación ETA duplicaría el mensaje. NO gatear por tag
-        HUMANO (L-6: toda venta exitosa termina en HUMANO — apagaría todo).
+      * `notify_customer` (optional bool, default True) — con `false` NO le
+        llega WhatsApp al cliente, pero el evento CAPI de la etapa SÍ sale
+        (Meta debe saber que se entregó). Lo usan: el agente order-sentinel
+        (transición inferida de un chat donde el humano YA avisó) y el
+        operador que corrige un pedido ya entregado saltándose etapas
+        (`force` + `notify_customer=false` desde el kanban). NO gatear por
+        tag HUMANO (L-6: toda venta exitosa termina en HUMANO — apagaría todo).
       * `tracking_url` (optional str) — link de la guía de la transportadora
         que el operador adjunta al mover el pedido a `shipping` (modal del
         kanban). Viaja en la cascada ETA hasta el mensaje de WhatsApp (link
@@ -435,12 +437,14 @@ async def transition_order_stage(
     # Cada transición de stage gatilla una notificación del Agente ETA. El
     # dispatcher matchea por `to_stage`; stages sin transición declarada (ej.
     # `new`) caen en no-match → no-op. Dedup vive en el workflow ETA.
-    if (
-        result.success
-        and result.current_stage
-        and body.get("notify_customer", True) is not False
-    ):
-        _spawn_emit(order_id, result.current_stage, tracking_url)
+    # `notify_customer=false` emite igual (CAPI) pero sin WhatsApp al cliente.
+    if result.success and result.current_stage:
+        _spawn_emit(
+            order_id,
+            result.current_stage,
+            tracking_url,
+            notify_customer=body.get("notify_customer", True) is not False,
+        )
     if result.success:
         _publish_orders_changed(order_id)
     return _serialize_command_result(result)
@@ -578,7 +582,10 @@ def _parse_tracking_url(raw: Any) -> str | None:
 
 
 async def _start_durable_emit(
-    order_id: str, to_stage: str, tracking_url: str | None = None
+    order_id: str,
+    to_stage: str,
+    tracking_url: str | None = None,
+    notify_customer: bool = True,
 ) -> None:
     """L-8b: la emisión es un workflow Temporal (EmitOrderStageWorkflow en
     queue-orders-reconcile) — durable, con retries y visible en la UI :8233.
@@ -594,7 +601,12 @@ async def _start_durable_emit(
         client = await get_temporal_client()
         await client.start_workflow(
             "EmitOrderStageWorkflow",
-            {"order_id": order_id, "to_stage": to_stage, "tracking_url": tracking_url},
+            {
+                "order_id": order_id,
+                "to_stage": to_stage,
+                "tracking_url": tracking_url,
+                "notify_customer": notify_customer,
+            },
             id=f"order-stage-changed-{order_id.lstrip('#')}-{to_stage}",
             task_queue=get_task_queue("orders", "reconcile"),
         )
@@ -608,9 +620,14 @@ async def _start_durable_emit(
 
 
 def _spawn_emit(
-    order_id: str, to_stage: str, tracking_url: str | None = None
+    order_id: str,
+    to_stage: str,
+    tracking_url: str | None = None,
+    notify_customer: bool = True,
 ) -> None:
-    task = asyncio.create_task(_start_durable_emit(order_id, to_stage, tracking_url))
+    task = asyncio.create_task(
+        _start_durable_emit(order_id, to_stage, tracking_url, notify_customer)
+    )
     _emit_tasks.add(task)
     task.add_done_callback(_emit_tasks.discard)
 

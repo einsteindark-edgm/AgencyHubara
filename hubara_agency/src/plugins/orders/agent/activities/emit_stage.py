@@ -112,7 +112,10 @@ async def _emit_stage_capi(session_id: str, order_id: str, to_stage: str) -> Non
 
 @activity.defn(name="emit_order_stage_activity")
 async def emit_order_stage_activity(
-    order_id: str, to_stage: str, tracking_url: str | None = None
+    order_id: str,
+    to_stage: str,
+    tracking_url: str | None = None,
+    notify_customer: bool = True,
 ) -> str:
     """Resuelve la sesión dueña del pedido y despacha el evento. Devuelve
     el resultado del dispatch ("signaled_with_start" / "no_session" / ...).
@@ -121,6 +124,12 @@ async def emit_order_stage_activity(
     mover el pedido a "en camino"; viaja en el evento hasta el mensaje de
     WhatsApp. Tercer arg con default para que los runs en vuelo del
     ``EmitOrderStageWorkflow`` viejo (2 args) sigan replayando.
+
+    ``notify_customer=False``: el evento CAPI de la etapa sale igual (Meta
+    debe saber que se entregó) pero NO se despacha el OrderStageChangedEvent
+    → el cliente no recibe WhatsApp. Casos: el operador corrige un pedido
+    que ya se entregó saltándose etapas, o el order-sentinel infiere la
+    transición de un chat donde el humano ya avisó. Devuelve "capi_only".
     """
     # Import lazy: el módulo API define el router FastAPI; lo importamos solo
     # al ejecutar (intra-plugin orders→orders, R-DIP OK).
@@ -172,6 +181,13 @@ async def emit_order_stage_activity(
         activity.logger.warning(
             "emit_order_stage: CAPI %s falló (no bloquea): %s", to_stage, exc
         )
+
+    if not notify_customer:
+        activity.logger.info(
+            "emit_order_stage: order=%s stage=%s sin aviso al cliente (solo CAPI)",
+            order_id, to_stage,
+        )
+        return "capi_only"
 
     client = await get_temporal_client()
     await dispatch_envelope_with_client(

@@ -17,7 +17,16 @@ import {
 import { Avatar, Icon, MacButton } from "@/shared/ui";
 import { dayChipShort, fmtMoney, todayBogotaIso } from "@/shared/lib";
 
+import { skipNote, skippedStages } from "../model/stageSkip";
+import { SkipStagesModal } from "./SkipStagesModal";
 import { TrackingLinkModal } from "./TrackingLinkModal";
+
+interface PendingSkip {
+  orderId: string;
+  from: OrderStatus;
+  to: OrderStatus;
+  skipped: OrderStatus[];
+}
 
 const COLUMNS: OrderStatus[] = ["new", "preparing", "ready", "shipping", "delivered", "cancelled"];
 
@@ -40,6 +49,9 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
   // Drop en "En camino": antes de mover pedimos (opcionalmente) el link de la
   // guía — viaja en el mismo PATCH y termina en el WhatsApp del cliente.
   const [pendingShip, setPendingShip] = useState<string | null>(null);
+  // Drop que se salta columnas (ej. preparación → entregada): confirmamos el
+  // salto y si se avisa o no al cliente antes de mover.
+  const [pendingSkip, setPendingSkip] = useState<PendingSkip | null>(null);
 
   const grouped = useMemo(() => {
     return COLUMNS.map((status) => ({
@@ -58,16 +70,21 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
     if (!dragged) return;
     if (dragged.status === toStage) return; // no-op (idempotente)
 
+    const skipped = skippedStages(dragged.status, toStage);
+    if (skipped.length > 0) {
+      setPendingSkip({ orderId, from: dragged.status, to: toStage, skipped });
+      return;
+    }
     if (toStage === "shipping") {
       setPendingShip(orderId);
       return;
     }
-    runTransition(orderId, toStage);
+    runTransition({ orderId, to_stage: toStage });
   }
 
-  function runTransition(orderId: string, toStage: OrderStatus, trackingUrl?: string) {
+  function runTransition(vars: Parameters<typeof transition.mutate>[0]) {
     transition.mutate(
-      { orderId, to_stage: toStage, tracking_url: trackingUrl },
+      vars,
       {
         onSuccess: (result) => {
           if (!result.success && result.error_detail) {
@@ -145,7 +162,30 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
           onConfirm={(url) => {
             const orderId = pendingShip;
             setPendingShip(null);
-            runTransition(orderId, "shipping", url ?? undefined);
+            runTransition({ orderId, to_stage: "shipping", tracking_url: url ?? undefined });
+          }}
+        />
+      )}
+      {pendingSkip && (
+        <SkipStagesModal
+          orderId={pendingSkip.orderId}
+          from={pendingSkip.from}
+          to={pendingSkip.to}
+          skipped={pendingSkip.skipped}
+          busy={transition.isPending}
+          onCancel={() => setPendingSkip(null)}
+          onConfirm={(notifyCustomer) => {
+            const { orderId, to, skipped } = pendingSkip;
+            setPendingSkip(null);
+            // `force`: el DAG solo permite el paso siguiente; el salto es una
+            // corrección explícita del operador y queda con nota en el historial.
+            runTransition({
+              orderId,
+              to_stage: to,
+              force: true,
+              notify_customer: notifyCustomer,
+              note: skipNote(skipped),
+            });
           }}
         />
       )}

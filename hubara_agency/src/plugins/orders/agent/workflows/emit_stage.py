@@ -20,6 +20,19 @@ with workflow.unsafe.imports_passed_through():
     )
 
 
+def activity_args(input: dict) -> list:
+    """Input del workflow → args de la activity. Runs viejos sin
+    `notify_customer` siguen avisando al cliente (default True)."""
+    return [
+        str(input.get("order_id", "")),
+        str(input.get("to_stage", "")),
+        # Link de guía opcional (solo lo manda el operador en "en camino").
+        input.get("tracking_url") or None,
+        # False = salto silencioso (CAPI sí, WhatsApp al cliente no).
+        input.get("notify_customer", True) is not False,
+    ]
+
+
 @workflow.defn(name="EmitOrderStageWorkflow")
 class EmitOrderStageWorkflow:
     """Emite OrderStageChangedEvent para (order_id, to_stage), con retries."""
@@ -28,12 +41,7 @@ class EmitOrderStageWorkflow:
     async def run(self, input: dict) -> str:
         return await workflow.execute_activity(
             emit_order_stage_activity,
-            args=[
-                str(input.get("order_id", "")),
-                str(input.get("to_stage", "")),
-                # Link de guía opcional (solo lo manda el operador en "en camino").
-                input.get("tracking_url") or None,
-            ],
+            args=activity_args(input),
             # Railway puede tardar 30s+ por GET (L-2); margen amplio + retries.
             start_to_close_timeout=timedelta(seconds=180),
             retry_policy=RetryPolicy(
