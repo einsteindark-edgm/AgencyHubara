@@ -71,6 +71,17 @@ describe("toLegacyOrder", () => {
     expect(o.city).toBe("—");
   });
 
+  // El filtro por fecha ubica en el calendario a las órdenes SIN entrega
+  // agendada por el día en que se crearon — día COLOMBIANO: a las 21:00 del
+  // 10 de septiembre en Bogotá ya es 11 en UTC.
+  it("derives the Colombian creation day from created_at_ms", () => {
+    const o = toLegacyOrder({
+      ...sampleSummary,
+      created_at_ms: Date.parse("2026-09-11T02:00:00.000Z"),
+    });
+    expect(o.createdIso).toBe("2026-09-10");
+  });
+
   it("marks draft orders explicitly", () => {
     const o = toLegacyOrder({ ...sampleSummary, is_draft: true });
     expect(o.isDraft).toBe(true);

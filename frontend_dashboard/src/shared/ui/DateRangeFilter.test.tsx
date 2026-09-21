@@ -1,20 +1,20 @@
 /**
- * Calendario del inbox. El comportamiento observable que exige el operador:
+ * Calendario de filtro por fecha (Chats, Órdenes). El comportamiento observable que exige el operador:
  * abrir, elegir un día (o un rango), ver marcados los días CON conversaciones,
  * y poder limpiar el filtro sin adivinar.
  */
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { InboxDateFilter } from "./InboxDateFilter";
+import { DateRangeFilter } from "./DateRangeFilter";
 
 const TODAY = "2026-09-10";
 const ACTIVE = new Set(["2026-09-08", "2026-09-10"]);
 
-function setup(overrides: Partial<Parameters<typeof InboxDateFilter>[0]> = {}) {
+function setup(overrides: Partial<Parameters<typeof DateRangeFilter>[0]> = {}) {
   const onChange = vi.fn();
   const onClear = vi.fn();
   render(
-    <InboxDateFilter
+    <DateRangeFilter
       value={{ from: null, to: null }}
       onChange={onChange}
       onClear={onClear}

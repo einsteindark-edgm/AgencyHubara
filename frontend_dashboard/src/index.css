@@ -1675,6 +1675,8 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 }
 .sb-search svg { width: 13px; height: 13px; color: var(--fg-faint); }
 .sb-search input { background: transparent; border: 0; outline: 0; color: var(--fg); flex: 1; font: inherit; font-size: 12px; }
+/* Calendario (el mismo de Chats) bajo el buscador, alineado con su margen. */
+.sb-dates { margin: 0 12px 6px; }
 
 .sb-section { padding-top: 4px; }
 .sb-section-h {

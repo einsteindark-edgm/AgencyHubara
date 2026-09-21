@@ -54,6 +54,7 @@ function order(status: Order["status"]): Order {
     priority: "normal",
     isDraft: false,
     isDueEstimated: false,
+    createdIso: "",
   };
 }
 

@@ -14,26 +14,26 @@
 
 import { useCallback, useMemo, useState } from "react";
 import type { ChatInboxItem } from "@plugins/chats/frontend/entities/chat";
-import { formatDayLabelEs, matchesSearch, todayBogotaIso } from "@/shared/lib";
+import {
+  NO_DATE_RANGE,
+  describeDateRange,
+  isInDateRange,
+  matchesSearch,
+  todayBogotaIso,
+  type DateRange,
+} from "@/shared/lib";
+
+export type { DateRange };
 
 export type InboxFilter =
   | "Humano" | "Todas" | "Interesado" | "Pendiente" | "Cliente" | "Remarketing" | "Frío"
   | "Sin respuesta";
-
-/** Rango cerrado de días calendario (YYYY-MM-DD, Bogotá). `to: null` = rango a
- *  medio elegir en el calendario: se comporta como un día suelto. */
-export interface DateRange {
-  from: string | null;
-  to: string | null;
-}
 
 export interface InboxSection {
   key: "pinned" | "waiting" | "today" | "earlier" | "results";
   title: string;
   items: ChatInboxItem[];
 }
-
-const NO_RANGE: DateRange = { from: null, to: null };
 
 const TAG_TO_FILTER: Record<string, InboxFilter> = {
   INTERESADO: "Interesado",
@@ -50,14 +50,6 @@ export interface InboxFilterMeta {
   count: number;
   color: string;
   priority?: boolean;
-}
-
-/** ¿El día `dayIso` cae dentro del rango? Sin `from` el rango está inactivo. */
-function inRange(dayIso: string, range: DateRange): boolean {
-  if (!range.from) return true;
-  if (!dayIso) return false; // sin fecha conocida no puede afirmarse que entra
-  const to = range.to ?? range.from;
-  return dayIso >= range.from && dayIso <= to;
 }
 
 /** Lo que el operador tiene a mano para buscar: el teléfono, el diagnóstico
@@ -81,10 +73,10 @@ interface Options {
 export function useInboxFilters(chats: ChatInboxItem[], options: Options = {}) {
   const today = options.today ?? todayBogotaIso();
   const [activeFilter, setActiveFilter] = useState<InboxFilter>("Humano");
-  const [dateRange, setDateRange] = useState<DateRange>(NO_RANGE);
+  const [dateRange, setDateRange] = useState<DateRange>(NO_DATE_RANGE);
   const [query, setQuery] = useState("");
 
-  const clearDateRange = useCallback(() => setDateRange(NO_RANGE), []);
+  const clearDateRange = useCallback(() => setDateRange(NO_DATE_RANGE), []);
   const clearQuery = useCallback(() => setQuery(""), []);
   const hasDateRange = dateRange.from !== null;
 
@@ -93,7 +85,7 @@ export function useInboxFilters(chats: ChatInboxItem[], options: Options = {}) {
    *  contadores ignoraran el rango o la búsqueda, dirían "12" y la lista
    *  mostraría 2. Con la búsqueda además dicen en qué pill está lo buscado. */
   const inScope = useMemo(
-    () => chats.filter((c) => inRange(c.dayIso, dateRange) && matchesChat(c, query)),
+    () => chats.filter((c) => isInDateRange(c.dayIso, dateRange) && matchesChat(c, query)),
     [chats, dateRange, query],
   );
 
@@ -143,7 +135,7 @@ export function useInboxFilters(chats: ChatInboxItem[], options: Options = {}) {
     // Con un rango elegido, partir en "Hoy / Anteriores" es ruido: el operador
     // ya dijo qué ventana quiere ver. Una sola sección rotulada con el rango.
     if (hasDateRange) {
-      out.push({ key: "results", title: describeRange(dateRange, today), items: rest });
+      out.push({ key: "results", title: describeDateRange(dateRange, today), items: rest });
       return out;
     }
     // El filtro Humano es una COLA, no un archivo: todas esperan respuesta,
@@ -176,50 +168,10 @@ export function useInboxFilters(chats: ChatInboxItem[], options: Options = {}) {
     clearDateRange,
     hasDateRange,
     /** Texto corto del rango para el botón que abre el calendario. */
-    dateRangeLabel: hasDateRange ? describeRange(dateRange, today) : "Todas las fechas",
+    dateRangeLabel: hasDateRange ? describeDateRange(dateRange, today) : "Todas las fechas",
     activeDays,
     sections,
     filtered,
     today,
   };
-}
-
-// Sólo el mes: pedirle a es-CO `{day, month:"short"}` devuelve "8 de sept."
-// — con preposición y punto. Se compone a mano.
-const SHORT_MONTH_FMT = new Intl.DateTimeFormat("es-CO", {
-  month: "short",
-  timeZone: "UTC",
-});
-
-/** "8 sep" — compacto, sin preposición ni punto abreviativo. */
-function shortDay(iso: string): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  const month = SHORT_MONTH_FMT.format(new Date(Date.UTC(y, m - 1, d)))
-    .replace(/\.$/, "")
-    .replace(/^sept$/, "sep");
-  return `${d} ${month}`;
-}
-
-/**
- * Texto del rango. Un día suelto va en lenguaje humano ("Hoy", "Ayer"); un
- * rango va COMPACTO porque tiene que entrar en los 280px de la sidebar y en el
- * encabezado de la sección — la fecha larga de los dos extremos ("8 de
- * septiembre de 2026 – 9 de septiembre de 2026") se corta con elipsis y el
- * operador deja de ver qué filtro tiene puesto.
- *
- * El año se escribe una sola vez cuando ambos extremos lo comparten.
- */
-function describeRange(range: DateRange, today: string): string {
-  if (!range.from) return "Todas las fechas";
-  const to = range.to ?? range.from;
-  if (range.from === to) return formatDayLabelEs(range.from, today);
-
-  const [fromYear, toYear] = [range.from.slice(0, 4), to.slice(0, 4)];
-  if (fromYear !== toYear) {
-    return `${shortDay(range.from)} ${fromYear} – ${shortDay(to)} ${toYear}`;
-  }
-  // Mismo mes: no repetirlo ("8 – 9 sep 2026").
-  const sameMonth = range.from.slice(0, 7) === to.slice(0, 7);
-  const left = sameMonth ? String(Number(range.from.slice(8))) : shortDay(range.from);
-  return `${left} – ${shortDay(to)} ${toYear}`;
 }

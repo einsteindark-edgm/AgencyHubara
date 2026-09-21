@@ -1,5 +1,6 @@
 /**
- * Calendario de la bandeja: filtra las conversaciones por día o por rango.
+ * Calendario de filtro por fecha (bandeja de Chats, tablero de Órdenes):
+ * filtra por día o por rango.
  *
  * Arranca COLAPSADO — la sidebar mide 280px y lo que el operador vino a ver es
  * la lista, no un mes entero. El disparador muestra el rango vigente ("Hoy",
@@ -8,29 +9,30 @@
  * filtro plegable: la lista se ve corta y nadie sabe por qué.
  *
  * Todo el estado de aquí es UI pura (abierto/cerrado, mes en pantalla) y vive
- * local (regla 3). El rango elegido es del dueño — `useInboxFilters` —, así que
- * viaja por props.
+ * local (regla 3). El rango elegido es del dueño (`useInboxFilters`,
+ * `useOrderFilters`), así que viaja por props.
  */
 
 import { useState } from "react";
-import { Icon } from "@/shared/ui";
-import { formatIsoDateEs, shiftIsoDay } from "@/shared/lib";
-import type { DateRange } from "../model/useInboxFilters";
 import {
   buildMonthGrid,
+  formatIsoDateEs,
   isInSelectedRange,
   monthLabelEs,
   monthOf,
   nextRange,
+  shiftIsoDay,
   shiftMonth,
-} from "../model/calendar";
+  type DateRange,
+} from "@/shared/lib";
+import { Icon } from "./Icon";
 
 interface Props {
   value: DateRange;
   onChange: (range: DateRange) => void;
   onClear: () => void;
-  /** Días con al menos una conversación — se marcan con un punto para que el
-   *  operador no vaya cazando días vacíos a ciegas. */
+  /** Días con al menos un elemento (conversación, orden) — se marcan con un
+   *  punto para que el operador no vaya cazando días vacíos a ciegas. */
   activeDays: Set<string>;
   /** Hoy en Bogotá. Llega por prop (no se consulta el reloj acá) para que el
    *  componente sea puro y el hook siga siendo la única fuente del "hoy". */
@@ -41,7 +43,7 @@ interface Props {
 
 const WEEKDAYS = ["L", "M", "M", "J", "V", "S", "D"];
 
-export function InboxDateFilter({
+export function DateRangeFilter({
   value,
   onChange,
   onClear,

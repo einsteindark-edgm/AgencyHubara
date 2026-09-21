@@ -38,6 +38,7 @@ function order(overrides: Partial<Order> & { id: string }): Order {
     priority: "normal",
     isDraft: false,
     isDueEstimated: false,
+    createdIso: "",
     ...overrides,
   };
 }
@@ -66,6 +67,11 @@ function renderFilters(orders: Order[] = ORDERS) {
       setView={vi.fn()}
       payType="all"
       setPayType={vi.fn()}
+      dateRange={{ from: null, to: null }}
+      setDateRange={vi.fn()}
+      clearDateRange={vi.fn()}
+      activeDays={new Set()}
+      dateRangeLabel="Todas las fechas"
       orders={orders}
     />,
   );
