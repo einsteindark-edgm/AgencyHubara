@@ -258,3 +258,26 @@ async def test_session_key_from_medusa_still_resolves_a_real_session(
     )
 
     assert resolved == "wa_+15550001111"
+
+
+# ── La foto del pedido (#311) también recibe el id de sesión por URL ─────────
+
+
+@pytest.mark.parametrize("encoded", ["%2E", "wa_1%0A"])
+def test_order_photo_file_is_never_served_from_outside_a_session(harness, encoded):
+    """`GET /order-photos/{session_id}/{backend_id}` valida con `is_safe_segment`:
+    antes de este PR aceptaba `.` (la RAÍZ del vault) y el salto de línea final,
+    así que servía la foto que dijera un `metadata.json` que no es de ninguna
+    sesión."""
+    client, vault, _port = harness
+    session_dir = vault / ("." if encoded == "%2E" else "wa_1\n")
+    _write_metadata(
+        session_dir, {"order_photos": {"order_1": {"filename": "x.jpg", "mime": "image/jpeg"}}}
+    )
+    (session_dir / "media").mkdir()
+    (session_dir / "media" / "x.jpg").write_bytes(b"\xff\xd8\xff" + b"CANARIO")
+
+    resp = client.get(f"/api/orders/order-photos/{encoded}/order_1")
+
+    assert resp.status_code == 404
+    assert b"CANARIO" not in resp.content

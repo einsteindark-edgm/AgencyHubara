@@ -101,6 +101,16 @@ def _format_cop(total_cop: int | None) -> str:
     return "$ " + f"{int(total_cop):,}".replace(",", ".")
 
 
+def order_photo_entry(data: dict[str, Any], order_id: str) -> dict[str, Any] | None:
+    """Foto del pedido que subió el operador (``metadata.order_photos``, la
+    escribe la API de Órdenes) o None. Solo cuenta si tiene archivo."""
+    photos = data.get("order_photos")
+    entry = photos.get(order_id) if isinstance(photos, dict) else None
+    if isinstance(entry, dict) and isinstance(entry.get("filename"), str) and entry["filename"]:
+        return entry
+    return None
+
+
 def _empty_entry(order_id: str) -> dict[str, Any]:
     return {
         "order_id": order_id,
@@ -360,6 +370,9 @@ async def _claim_facts(
     # el template `order_status_utility_v2`. La decisión la toma el workflow con
     # este flag (no podemos leer metadata en el workflow — R-DET).
     in_window = is_in_service_window(int(time.time() * 1000), data)
+    # Foto del pedido subida desde Órdenes: en ``ready`` el workflow manda la
+    # plantilla con la foto en vez del aviso de estado.
+    has_ready_photo = order_photo_entry(data, order_id) is not None
 
     # Datos vivos del pedido (platform port — R-DIP: chats → platform).
     # Tolerante a Medusa caído/sin configurar: si falla, notificamos con lo
@@ -390,6 +403,7 @@ async def _claim_facts(
             "delivery_window": None,
             "items_label": "",
             "in_service_window": in_window,
+            "has_ready_photo": has_ready_photo,
         }
 
     summary = detail.summary
@@ -410,6 +424,7 @@ async def _claim_facts(
         "delivery_window": None,
         "items_label": _items_label(detail),
         "in_service_window": in_window,
+        "has_ready_photo": has_ready_photo,
     }
 
 

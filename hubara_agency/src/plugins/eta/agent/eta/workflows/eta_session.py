@@ -73,6 +73,7 @@ with workflow.unsafe.imports_passed_through():
         all_trackings_terminal_activity,
         claim_eta_notification_activity,
         record_eta_notification_activity,
+        send_ready_photo_activity,
         start_eta_tracking_activity,
     )
     from src.plugins.eta.agent.eta.contracts import EtaSessionInput
@@ -98,6 +99,13 @@ _ORDER = {"start_to_close_timeout": timedelta(seconds=30), "retry_policy": Retry
 # rechazaba el envío con 131008 → notificación perdida).
 _ORDER_STATUS_TEMPLATE = "order_status_utility_v2"
 
+# Foto del pedido (plantilla con encabezado imagen): subir a Meta + enviar.
+_PHOTO = {
+    "start_to_close_timeout": timedelta(seconds=120),
+    "heartbeat_timeout": timedelta(seconds=30),
+    "retry_policy": RetryPolicy(maximum_attempts=3),
+}
+
 
 @workflow.defn(name="HubaraEtaSessionWorkflow")
 class HubaraEtaSessionWorkflow:
@@ -105,6 +113,7 @@ class HubaraEtaSessionWorkflow:
 
     def __init__(self) -> None:
         self._pending_stages: list[dict] = []              # cambios de estado a notificar
+        self._pending_photos: list[dict] = []              # envíos manuales de la foto del pedido
         self._last_response: str | None = None
         self._processing = False
 
@@ -118,6 +127,17 @@ class HubaraEtaSessionWorkflow:
         operador adjuntó; va al final del mensaje).
         """
         self._pending_stages.append(dict(payload))
+
+    @workflow.signal
+    async def send_ready_photo(self, payload: dict) -> None:
+        """El operador pidió mandar YA la foto del pedido (botón del panel de
+        Órdenes → ``OrderReadyPhotoRequestedEvent``). ``payload`` =
+        ``{"order_id": str}``. No pasa por el dedup de etapa: es un envío
+        explícito (p.ej. reenviar tras cambiar la foto).
+
+        Replay-safe sin ``patched``: los runs viejos nunca recibieron esta
+        señal, así que su historial no tiene los comandos que dispara."""
+        self._pending_photos.append(dict(payload))
 
     # ── Queries ──────────────────────────────────────────────────────────
     @workflow.query
@@ -157,7 +177,7 @@ class HubaraEtaSessionWorkflow:
         while True:
             try:
                 await workflow.wait_condition(
-                    lambda: bool(self._pending_stages),
+                    lambda: bool(self._pending_stages) or bool(self._pending_photos),
                     timeout=_IDLE_TIMEOUT,
                 )
             except asyncio.TimeoutError:
@@ -187,6 +207,23 @@ class HubaraEtaSessionWorkflow:
                 if stage in ("delivered", "cancelled"):
                     saw_terminal_stage = True
 
+            # Envíos manuales de la foto del pedido (botón del operador).
+            while self._pending_photos:
+                req = self._pending_photos.pop(0)
+                order_id = str(req.get("order_id") or input.order_id)
+                turn_count += 1
+                try:
+                    await workflow.execute_activity(
+                        send_ready_photo_activity,
+                        args=[session_id, order_id],
+                        **_PHOTO,
+                    )
+                except Exception as exc:  # noqa: BLE001 — un envío fallido no tumba la sesión
+                    workflow.logger.warning(
+                        f"ETA send_ready_photo falló (no-fatal): session={session_id} "
+                        f"order={order_id} err={exc!r}"
+                    )
+
             # Cierre proactivo: si acabamos de procesar un stage terminal y
             # TODOS los pedidos trackeados quedaron entregados/cancelados, el
             # workflow termina en vez de dormir el idle de 7 días. Revivir es
@@ -195,9 +232,13 @@ class HubaraEtaSessionWorkflow:
             # workflow de vida larga — sin el gate, el replay de runs nacidos
             # antes del deploy emite comandos que el historial viejo no tiene
             # (TMPRL1100, L-9: run 4d5e7baf quedó atascado tras un delivered).
+            # ``_pending_photos`` en los guards: un "Enviar ahora" que llega
+            # mientras se decide el cierre no se pierde. Replay-safe: en los
+            # historiales viejos la lista siempre está vacía (señal nueva).
             if (
                 saw_terminal_stage
                 and not self._pending_stages
+                and not self._pending_photos
                 and workflow.patched("eta-proactive-close-v1")
             ):
                 all_done = await workflow.execute_activity(
@@ -205,7 +246,7 @@ class HubaraEtaSessionWorkflow:
                     session_id,
                     **_FAST,
                 )
-                if all_done:
+                if all_done and not self._pending_photos:
                     workflow.logger.info(
                         f"ETA: todos los pedidos de {session_id} en estado "
                         "terminal — cierre proactivo."
@@ -214,7 +255,7 @@ class HubaraEtaSessionWorkflow:
             saw_terminal_stage = False
 
             if turn_count >= _CONTINUE_AS_NEW_AFTER_TURNS and not (
-                self._pending_stages
+                self._pending_stages or self._pending_photos
             ):
                 workflow.continue_as_new(
                     EtaSessionInput(
@@ -256,6 +297,30 @@ class HubaraEtaSessionWorkflow:
         )
         if facts is None:
             return  # ruta humano / order distinto / ya notificado → skip
+
+        # Pedido listo CON foto subida por el operador: la plantilla con la
+        # foto en el encabezado reemplaza al aviso de estado (sirve dentro y
+        # fuera de ventana). Si falla (p.ej. plantilla aún no aprobada en
+        # Meta), cae al aviso de siempre. ``patched`` (L-9): comando nuevo en
+        # un workflow de vida larga — los runs viejos replayan sin él.
+        if (
+            stage == "ready"
+            and facts.get("has_ready_photo")
+            and workflow.patched("eta-ready-photo-v1")
+        ):
+            try:
+                result = await workflow.execute_activity(
+                    send_ready_photo_activity,
+                    args=[session_id, order_id],
+                    **_PHOTO,
+                )
+                if result and result.get("sent"):
+                    return
+            except Exception as exc:  # noqa: BLE001 — respaldo: aviso de estado
+                workflow.logger.warning(
+                    f"ETA foto de pedido listo falló, envío el aviso de estado: "
+                    f"session={session_id} order={order_id} err={exc!r}"
+                )
 
         if facts.get("in_service_window"):
             await self._send_text_notification(

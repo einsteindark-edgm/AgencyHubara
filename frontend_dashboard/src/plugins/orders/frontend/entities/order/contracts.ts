@@ -292,3 +292,33 @@ export const customerSummarySchema = z.object({
 });
 
 export type CustomerSummary = z.infer<typeof customerSummarySchema>;
+
+/* ── Foto del pedido — panel "Foto del pedido" del inspector ─────────────
+ *
+ * Backend: GET/PUT/DELETE /api/orders/orders/{id}/photo
+ *          POST /api/orders/orders/{id}/photo/send
+ *
+ * La foto vive en la conversación del cliente; al pasar el pedido a "listo"
+ * el Agente ETA la manda por WhatsApp (plantilla con foto). Sin conversación
+ * (`has_conversation: false`) no hay a quién mandársela.
+ */
+
+export const orderPhotoSchema = z.object({
+  order_id: z.string(),
+  has_conversation: z.boolean(),
+  /** Ventana de servicio 24h: abierta → la foto sale como mensaje normal;
+   *  cerrada → plantilla aprobada. null = sin conversación. */
+  service_window_open: z.boolean().nullable().optional(),
+  photo: z
+    .object({
+      /** Ref relativa de nuestro API: pasarla por `apiFileUrl` para `<img>`. */
+      file_url: z.string(),
+      uploaded_at_ms: z.number().int().nullable(),
+      sent_at_ms: z.number().int().nullable(),
+      /** Motivo del último envío fallido (lo deja el Agente ETA). */
+      last_error: z.string().nullable().optional(),
+    })
+    .nullable(),
+});
+
+export type OrderPhoto = z.infer<typeof orderPhotoSchema>;

@@ -33,6 +33,8 @@ import {
   orderCommandResultSchema,
   orderDetailSchema,
   orderListResponseSchema,
+  orderPhotoSchema,
+  type OrderPhoto,
   reconciliationOutcomeSchema,
   vaultOrdersResponseSchema,
   type CustomerScore,
@@ -477,6 +479,83 @@ export function useGenerateCustomerSummary() {
         {},
       );
       return customerSummarySchema.parse(raw);
+    },
+  });
+}
+
+/* ── Foto del pedido ─────────────────────────────────────────────────────
+ *
+ * El operador sube la foto del pedido listo; el Agente ETA la manda al
+ * cliente por WhatsApp al pasar el pedido a "listo" (o ya, con "Enviar
+ * ahora"). La key cuelga de `orderKeys.all`: el SSE `orders` la refresca.
+ */
+
+function photoPath(orderId: string): string {
+  return `/api/orders/orders/${encodeURIComponent(orderId)}/photo`;
+}
+
+export function useOrderPhoto(displayId: string | null) {
+  return useQuery<OrderPhoto>({
+    queryKey: orderKeys.photo(displayId ?? "—"),
+    queryFn: async ({ signal }) => {
+      if (!displayId) throw new Error("displayId required");
+      return orderPhotoSchema.parse(
+        await apiClient.get<unknown>(photoPath(displayId), { signal }),
+      );
+    },
+    enabled: displayId !== null && displayId !== "",
+    staleTime: 30_000,
+  });
+}
+
+interface UploadOrderPhotoVariables {
+  orderId: string;
+  file: Blob;
+}
+
+export function useUploadOrderPhoto() {
+  const qc = useQueryClient();
+  return useMutation<OrderPhoto, Error, UploadOrderPhotoVariables>({
+    mutationFn: async ({ orderId, file }) => {
+      const form = new FormData();
+      form.append("file", file, "pedido.jpg");
+      return orderPhotoSchema.parse(await apiClient.put<unknown>(photoPath(orderId), form));
+    },
+    onSuccess: (data, vars) => qc.setQueryData(orderKeys.photo(vars.orderId), data),
+  });
+}
+
+export function useDeleteOrderPhoto() {
+  const qc = useQueryClient();
+  return useMutation<OrderPhoto, Error, { orderId: string }>({
+    mutationFn: async ({ orderId }) =>
+      orderPhotoSchema.parse(await apiClient.delete<unknown>(photoPath(orderId))),
+    onSuccess: (data, vars) => qc.setQueryData(orderKeys.photo(vars.orderId), data),
+  });
+}
+
+interface SendOrderPhotoVariables {
+  orderId: string;
+  /** Un id por intento: un doble clic no manda la foto dos veces. */
+  requestId: string;
+}
+
+/** El ETA manda la foto en segundos, en otro proceso que no publica eventos
+ *  de Órdenes: un refetch único después trae `sent_at_ms` o `last_error`. */
+const SEND_RESULT_REFETCH_MS = 12_000;
+
+export function useSendOrderPhoto() {
+  const qc = useQueryClient();
+  return useMutation<{ queued: boolean }, Error, SendOrderPhotoVariables>({
+    mutationFn: async ({ orderId, requestId }) =>
+      apiClient.post<{ queued: boolean }>(`${photoPath(orderId)}/send`, {
+        request_id: requestId,
+      }),
+    onSuccess: (_data, vars) => {
+      setTimeout(
+        () => qc.invalidateQueries({ queryKey: orderKeys.photo(vars.orderId) }),
+        SEND_RESULT_REFETCH_MS,
+      );
     },
   });
 }

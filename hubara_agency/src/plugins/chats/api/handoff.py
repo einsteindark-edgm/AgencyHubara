@@ -208,6 +208,9 @@ class WhatsAppTemplateOut(BaseModel):
     body: str | None
     variables: list[TemplateVariableOut]
     is_default: bool
+    #: `"image"` = la plantilla lleva foto en el encabezado: el modal pide
+    #: adjuntarla antes de enviar. None = solo texto.
+    header_format: str | None = None
 
 
 class WhatsAppTemplatesResponse(BaseModel):
@@ -218,6 +221,9 @@ class SendTemplateMessageRequest(BaseModel):
     template_name: str = Field(min_length=1, max_length=128)
     variables: dict[str, str] = Field(default_factory=dict)
     client_message_id: str | None = Field(default=None, max_length=128)
+    #: Foto del encabezado: el `attachment_id` que devolvió la subida
+    #: (`POST .../media`) para ESTA sesión. Solo plantillas con encabezado imagen.
+    header_attachment_id: str | None = Field(default=None, max_length=256)
 
 
 # ---------- Helpers ----------
@@ -856,6 +862,7 @@ async def list_whatsapp_templates() -> WhatsAppTemplatesResponse:
                     for var in spec.variables
                 ],
                 is_default=spec.name == OPERATOR_DEFAULT_TEMPLATE,
+                header_format=spec.header_format,
             )
             for spec in specs
         ]
@@ -898,6 +905,11 @@ async def send_human_template_message(
     if errors:
         raise HTTPException(status_code=422, detail="; ".join(errors))
 
+    header_kwargs = _resolve_template_header_photo(
+        spec, payload.header_attachment_id, data.get("outbound_media", {})
+    )
+    image_url = header_kwargs.get("header_image_url")
+
     content = render_template_body(spec, variables)
     cmid = payload.client_message_id
     if cmid and cmid in data.get("sent_human_message_ids", []):
@@ -906,10 +918,14 @@ async def send_human_template_message(
             session_id=session_id,
             client_message_id=cmid,
         )
-        return HumanMessageResponse(ok=True, role="assistant", sender="human", content=content)
+        return HumanMessageResponse(
+            ok=True, role="assistant", sender="human", content=content, image_url=image_url
+        )
 
     try:
-        await send_template_to_session(session_id, spec.name, variables, sender="human")
+        await send_template_to_session(
+            session_id, spec.name, variables, sender="human", **header_kwargs
+        )
     except Exception as exc:  # noqa: BLE001 — cualquier fallo del send es un 502 accionable
         logger.warning(
             "dashboard.send_human_template failed",
@@ -938,8 +954,49 @@ async def send_human_template_message(
         "dashboard.send_human_template",
         session_id=session_id,
         template_name=spec.name,
+        has_image=image_url is not None,
     )
-    return HumanMessageResponse(ok=True, role="assistant", sender="human", content=content)
+    return HumanMessageResponse(
+        ok=True, role="assistant", sender="human", content=content, image_url=image_url
+    )
+
+
+def _resolve_template_header_photo(
+    spec, attachment_id: str | None, outbound_media: dict
+) -> dict[str, str]:
+    """Kwargs de la foto del encabezado para `send_template_to_session` (vacío
+    si la plantilla no lleva foto). 422 si la combinación no la aceptaría Meta.
+
+    Igual que el envío de fotos (PM-B3): solo se reenvía a Meta un
+    `attachment_id` subido para ESTA sesión, y tiene que ser una imagen.
+    """
+    if spec.header_format is None:
+        if attachment_id:
+            raise HTTPException(
+                status_code=422,
+                detail=f"La plantilla {spec.name!r} no tiene encabezado de imagen: no lleva foto.",
+            )
+        return {}
+    if not attachment_id:
+        raise HTTPException(
+            status_code=422,
+            detail=f"La plantilla {spec.name!r} necesita una foto: adjúntala antes de enviar.",
+        )
+    entry = outbound_media.get(attachment_id)
+    if entry is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"header_attachment_id {attachment_id!r} desconocido para esta "
+                "sesión. Subí la foto primero (POST .../media)."
+            ),
+        )
+    if entry.get("kind", "image") != "image":
+        raise HTTPException(
+            status_code=422,
+            detail="El encabezado de la plantilla tiene que ser una imagen (JPEG o PNG), no un documento.",
+        )
+    return {"header_media_id": attachment_id, "header_image_url": entry.get("media_ref")}
 
 
 @router.post(

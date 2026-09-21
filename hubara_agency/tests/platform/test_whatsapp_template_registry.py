@@ -37,7 +37,8 @@ class TestLoadCatalogReal:
 
         # Los 4 templates iniciales del HU (v2 sin saludo por nombre,
         # 2026-07-21) + el de campañas directas (sección Marketing, 2026-07-17)
-        # + el de seguimiento del operador humano (Reactivar conversación).
+        # + el de seguimiento del operador humano (Reactivar conversación)
+        # + el de pedido listo con foto en el encabezado (2026-09-21).
         assert "quote_ready_utility_v2" in registry
         assert "payment_pending_utility_v2" in registry
         assert "order_status_utility_v2" in registry
@@ -47,7 +48,8 @@ class TestLoadCatalogReal:
         # Escalera de reactivación (2026-09-18): seguimiento con la CSW cerrada
         # para leads SIN carrito (cart_recovery habla de "tu carrito").
         assert "followup_interest_marketing_v1" in registry
-        assert len(registry) == 7
+        assert "order_ready_photo_utility_v1" in registry
+        assert len(registry) == 8
 
     def test_followup_interest_is_marketing_without_variables_and_with_opt_out(self):
         """Toque por plantilla de la escalera (runs 01a0b0da…: con la CSW

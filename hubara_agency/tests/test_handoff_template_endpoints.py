@@ -220,3 +220,96 @@ def test_session_detail_exposes_service_window_expiry(client_and_vault):
 
     assert closed["service_window_expires_at_ms"] == CLOSED_WINDOW
     assert unknown["service_window_expires_at_ms"] is None
+
+
+# ---------- plantilla con foto ("tu pedido está listo") ----------
+
+ORDER_READY = "order_ready_photo_utility_v1"
+PHOTO_REF = "/api/dashboard/media/wa_57310/out-abc.jpg"
+
+
+def _with_uploaded_photo() -> dict:
+    """Sesión en ruta humano con una foto y un PDF ya subidos en la fase A
+    (`POST .../media`)."""
+    return _humano(
+        outbound_media={
+            "MEDIA_OK": {"media_ref": PHOTO_REF, "filename": "out-abc.jpg", "mime": "image/jpeg"},
+            "PDF_1": {
+                "media_ref": "/api/dashboard/media/wa_57310/out-x.pdf",
+                "filename": "out-x.pdf",
+                "mime": "application/pdf",
+                "kind": "document",
+            },
+        },
+    )
+
+
+def test_catalog_marks_which_templates_need_a_photo(client_and_vault):
+    client, _ = client_and_vault
+    res = client.get("/api/dashboard/whatsapp-templates")
+    templates = {t["name"]: t for t in res.json()["templates"]}
+
+    assert templates[ORDER_READY]["header_format"] == "image"
+    assert templates[FOLLOWUP]["header_format"] is None
+
+
+def test_sends_order_ready_template_with_the_uploaded_photo(client_and_vault):
+    client, vault = client_and_vault
+    _write_metadata(vault, "wa_57310", _with_uploaded_photo())
+
+    send_mock = AsyncMock(
+        return_value=OutboundResult(wa_message_id="wamid.P", ok=True, error=None)
+    )
+    with patch("src.plugins.chats.api.handoff.send_template_to_session", new=send_mock):
+        res = client.post(
+            "/api/dashboard/sessions/wa_57310/template-messages",
+            json={
+                "template_name": ORDER_READY,
+                "variables": {"order_reference": "#31"},
+                "header_attachment_id": "MEDIA_OK",
+                "client_message_id": "cmid-photo",
+            },
+        )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["image_url"] == PHOTO_REF
+    assert "#31" in res.json()["content"]
+    send_mock.assert_awaited_once_with(
+        "wa_57310",
+        ORDER_READY,
+        {"order_reference": "#31"},
+        sender="human",
+        header_media_id="MEDIA_OK",
+        header_image_url=PHOTO_REF,
+    )
+
+
+@pytest.mark.parametrize(
+    ("template_name", "variables", "attachment", "detail"),
+    [
+        # Pedido listo sin foto: Meta la rechazaría.
+        (ORDER_READY, {"order_reference": "#31"}, None, "foto"),
+        # Un media_id que no se subió para ESTA sesión no se reenvía a Meta.
+        (ORDER_READY, {"order_reference": "#31"}, "MEDIA_AJENO", "desconocido"),
+        # Un PDF no sirve como encabezado de imagen.
+        (ORDER_READY, {"order_reference": "#31"}, "PDF_1", "imagen"),
+        # Una foto en una plantilla que no tiene encabezado.
+        (FOLLOWUP, {"followup_message": "hola"}, "MEDIA_OK", "encabezado"),
+    ],
+)
+def test_rejects_wrong_photo_combinations_without_sending(
+    client_and_vault, template_name, variables, attachment, detail
+):
+    client, vault = client_and_vault
+    _write_metadata(vault, "wa_57310", _with_uploaded_photo())
+
+    send_mock = AsyncMock()
+    body: dict = {"template_name": template_name, "variables": variables}
+    if attachment:
+        body["header_attachment_id"] = attachment
+    with patch("src.plugins.chats.api.handoff.send_template_to_session", new=send_mock):
+        res = client.post("/api/dashboard/sessions/wa_57310/template-messages", json=body)
+
+    assert res.status_code == 422, res.text
+    assert detail in res.json()["detail"]
+    send_mock.assert_not_awaited()

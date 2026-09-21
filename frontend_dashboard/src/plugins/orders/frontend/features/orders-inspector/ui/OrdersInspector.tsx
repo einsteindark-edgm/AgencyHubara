@@ -23,6 +23,7 @@ import { DeliveryPanel } from "./DeliveryPanel";
 import { ItemsPanel } from "./ItemsPanel";
 import { NotesPanel } from "./NotesPanel";
 import { PaymentPanel } from "./PaymentPanel";
+import { PhotoPanel } from "./PhotoPanel";
 import { ReadyForShip } from "./ReadyForShip";
 import { TimelinePanel } from "./TimelinePanel";
 
@@ -126,6 +127,10 @@ export function OrdersInspector({ order }: Props) {
         {order.status === "new" && !order.dueIso && (
           <ReadyForShip order={order} />
         )}
+
+        {/* Foto del pedido: al pasar a "listo" el Agente ETA se la manda
+            al cliente por WhatsApp (o ya, con "Enviar ahora"). */}
+        <PhotoPanel order={order} />
 
         {detailQuery.isLoading && (
           <div style={{ padding: 16, color: "var(--fg-muted)", fontSize: 12 }}>
