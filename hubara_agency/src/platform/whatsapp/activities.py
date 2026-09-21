@@ -809,12 +809,19 @@ async def send_template_to_session(
     variables: dict[str, str],
     *,
     sender: str | None = None,
+    header_media_id: str | None = None,
+    header_image_url: str | None = None,
 ) -> OutboundResult:
     """Envía un template aprobado y persiste el OutboundLogEntry.
 
     `sender="human"`: la plantilla la mandó el operador desde el dashboard —
     el evento del historial lleva `sender` y el chat la pinta como burbuja del
     humano. Default None = envío del sistema (watchdog, ETA, campañas).
+
+    `header_media_id`: foto del encabezado (ya subida a Meta) para templates
+    con `header_format=image` ("tu pedido está listo" con su foto).
+    `header_image_url`: ref servible de esa misma foto — va al historial para
+    que el chat la muestre en la burbuja de la plantilla.
 
     Versión pura (sin decorators Temporal) — testeable sin worker. El activity
     `send_whatsapp_template_activity` es solo el wrapper con heartbeat.
@@ -850,7 +857,13 @@ async def send_template_to_session(
     to_number = session_id.replace(WHATSAPP_SESSION_PREFIX, "")
 
     # 2.5 Idempotencia: ¿ya enviamos este mismo template hace segundos (retry)?
-    fingerprint = _template_fingerprint(template_name, variables)
+    # La foto entra al fingerprint: misma referencia con otra foto = otro envío.
+    fingerprint = _template_fingerprint(
+        template_name,
+        {**variables, "__header_media_id": header_media_id}
+        if header_media_id
+        else variables,
+    )
     now_ms = _now_ms()
     prior_wa_id = _find_recent_template_send(metadata, fingerprint, now_ms)
     if prior_wa_id is not None:
@@ -865,7 +878,7 @@ async def send_template_to_session(
 
     # 3. Send
     result = await whatsapp_client.send_template(
-        phone_number_id, to_number, spec, variables
+        phone_number_id, to_number, spec, variables, header_media_id=header_media_id
     )
 
     # 4. Parse error y decidir retry policy
@@ -924,7 +937,12 @@ async def send_template_to_session(
     # (vive en Meta Business Manager, no en código), pero suficiente para
     # que el operador entienda qué se mandó.
     _append_template_to_session_history(
-        session_id, spec, variables, sender=sender, wamid=result.wa_message_id
+        session_id,
+        spec,
+        variables,
+        sender=sender,
+        wamid=result.wa_message_id,
+        image_url=header_image_url,
     )
 
     log.info(
@@ -943,8 +961,12 @@ def _append_template_to_session_history(
     *,
     sender: str | None = None,
     wamid: str | None = None,
+    image_url: str | None = None,
 ) -> None:
     """Persiste un marker del template enviado al JSONL del session_history.
+
+    `image_url`: la foto del encabezado (templates con imagen) — mismo campo
+    que las fotos del operador, así el chat la pinta en la burbuja.
 
     Shape del evento (compatible con `append_assistant_event` shape):
         {"role": "assistant", "kind": "template", "template_name": "...",
@@ -977,6 +999,8 @@ def _append_template_to_session_history(
             event["sender"] = sender
         if wamid:
             event["wamid"] = wamid
+        if image_url:
+            event["image_url"] = image_url
         with history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
     except OSError as e:

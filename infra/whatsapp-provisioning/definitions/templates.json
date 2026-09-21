@@ -32,6 +32,15 @@
     "semantics": "Seguimiento del operador humano cuando la ventana de 24h cerró (dashboard: Reactivar conversación). El slot {{1}} lo escribe el humano sobre el tema pendiente; sin nombre del cliente ni promociones (utility). NUNCA por watchdog."
   },
   {
+    "name": "order_ready_photo_utility_v1",
+    "category": "UTILITY",
+    "language": "es_CO",
+    "header": {"format": "IMAGE", "example_file": "assets/order_ready_example.jpg"},
+    "body": "Hola, tu pedido {{1}} ya está listo. Te compartimos la foto para que lo veas. ¿Nos confirmas para coordinar la entrega?",
+    "example": ["#31"],
+    "semantics": "Pedido listo con su foto, con la ventana 24h cerrada (dashboard: Reactivar conversación). Encabezado IMAGE: la foto real del pedido se elige en CADA envío (media_id); example_file es solo la foto de ejemplo que exige Meta para revisar la plantilla (Resumable Upload API). Transaccional, sin promociones (utility). NUNCA por watchdog."
+  },
+  {
     "name": "campaign_promo_marketing",
     "category": "MARKETING",
     "language": "es_CO",

@@ -17,6 +17,7 @@ from temporalio.common import RetryPolicy
 with workflow.unsafe.imports_passed_through():
     from src.plugins.orders.agent.activities.emit_stage import (
         emit_order_stage_activity,
+        emit_ready_photo_request_activity,
     )
 
 
@@ -47,6 +48,26 @@ class EmitOrderStageWorkflow:
             retry_policy=RetryPolicy(
                 maximum_attempts=5,
                 initial_interval=timedelta(seconds=5),
+                backoff_coefficient=2.0,
+            ),
+        )
+
+
+@workflow.defn(name="EmitReadyPhotoRequestWorkflow")
+class EmitReadyPhotoRequestWorkflow:
+    """Emite OrderReadyPhotoRequestedEvent (botón "Enviar ahora" de la foto
+    del pedido), con retries. Id por request del operador: un doble clic no
+    envía dos veces, un reenvío explícito sí."""
+
+    @workflow.run
+    async def run(self, input: dict) -> str:
+        return await workflow.execute_activity(
+            emit_ready_photo_request_activity,
+            args=[str(input.get("order_id", "")), str(input.get("session_id", ""))],
+            start_to_close_timeout=timedelta(seconds=60),
+            retry_policy=RetryPolicy(
+                maximum_attempts=5,
+                initial_interval=timedelta(seconds=2),
                 backoff_coefficient=2.0,
             ),
         )

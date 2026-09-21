@@ -9,4 +9,6 @@ export const orderKeys = {
   // (display_id) — el backend resuelve internamente el session_id del cliente.
   customerScore: (orderId: string) =>
     [...orderKeys.all, "customer-score", orderId] as const,
+  // Foto del pedido listo (la manda el ETA). Bajo `all`: el SSE la refresca.
+  photo: (orderId: string) => [...orderKeys.all, "photo", orderId] as const,
 } as const;

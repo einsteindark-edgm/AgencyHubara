@@ -10,7 +10,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { setAccessToken } from "../config/auth-token";
-import { apiClient, ApiError } from "./client";
+import { env } from "../config/env";
+import { apiClient, apiFileUrl, ApiError } from "./client";
 
 describe("postExternal en WebViews viejos (Android 11 stock = Chrome 86)", () => {
   it("funciona sin AbortSignal.timeout (fallback AbortController)", async () => {
@@ -135,5 +136,45 @@ describe("apiClient", () => {
 
     const [, init] = fetchMock.mock.calls[0];
     expect((init.headers as Headers).get("authorization")).toBeNull();
+  });
+});
+
+describe("apiClient con archivos (FormData)", () => {
+  it("sends FormData as-is so the browser sets the multipart boundary", async () => {
+    setAccessToken("tok");
+    fetchMock.mockResolvedValueOnce(
+      new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const form = new FormData();
+    form.append("file", new Blob(["x"], { type: "image/jpeg" }), "pedido.jpg");
+
+    await apiClient.put("/api/orders/orders/%2331/photo", form);
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.body).toBe(form);
+    // Sin content-type propio: el navegador pone multipart/form-data; boundary=…
+    expect((init.headers as Headers).get("content-type")).toBeNull();
+    expect((init.headers as Headers).get("authorization")).toBe("Bearer tok");
+  });
+});
+
+describe("apiFileUrl (para <img src>)", () => {
+  it("makes our API refs absolute and carries the token by query", () => {
+    setAccessToken("tok en");
+    expect(apiFileUrl("/api/orders/order-photos/wa_1/o_1?v=2")).toBe(
+      `${env.apiUrl}/api/orders/order-photos/wa_1/o_1?v=2&access_token=tok%20en`,
+    );
+  });
+
+  it("never sends the token to another origin", () => {
+    setAccessToken("tok");
+    expect(apiFileUrl("https://assets.example/foto.jpg")).toBe(
+      "https://assets.example/foto.jpg",
+    );
+  });
+
+  it("without session the URL stays clean", () => {
+    setAccessToken(null);
+    expect(apiFileUrl("/api/x.jpg")).toBe(`${env.apiUrl}/api/x.jpg`);
   });
 });

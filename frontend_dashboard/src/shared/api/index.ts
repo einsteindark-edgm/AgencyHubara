@@ -1,4 +1,4 @@
-export { apiClient, ApiError } from "./client";
+export { apiClient, apiFileUrl, ApiError } from "./client";
 export type { ApiRequestInit } from "./client";
 export {
   cognitoInitiateAuth,

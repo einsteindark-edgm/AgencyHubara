@@ -59,6 +59,7 @@ agent:
       # patrón que el ingest HTTP de chats emitiendo con source_worker=sales.
       emits:
         - OrderStageChangedEvent
+        - OrderReadyPhotoRequestedEvent
       transitions:
         - id: order_preparing_starts_eta
           on_event: OrderStageChangedEvent
@@ -138,6 +139,21 @@ agent:
               session_id: "$.session_id"
               order_id: "$.order_id"
               to_stage: "$.to_stage"
+        # Botón "Enviar ahora" de la foto del pedido (panel de Órdenes): el ETA
+        # sube la foto a Meta y manda order_ready_photo_utility_v1. Señal
+        # propia — no pasa por el dedup por etapa (el operador puede reenviar).
+        - id: order_ready_photo_requested_sends_eta
+          on_event: OrderReadyPhotoRequestedEvent
+          action:
+            via: signal_with_start
+            target_plugin: eta
+            target_worker: eta
+            target_workflow: HubaraEtaSessionWorkflow
+            workflow_id_template: "eta-{event.session_id}"
+            signal_name: send_ready_photo
+            input_mapping:
+              session_id: "$.session_id"
+              order_id: "$.order_id"
       deployment:
         replicas: 1                       # barrido idempotente — no hace falta paralelismo
         strategy: Recreate

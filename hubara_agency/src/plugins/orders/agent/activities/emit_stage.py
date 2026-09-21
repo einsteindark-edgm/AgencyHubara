@@ -209,3 +209,37 @@ async def emit_order_stage_activity(
         order_id, to_stage, session_id,
     )
     return "dispatched"
+
+
+@activity.defn(name="emit_ready_photo_request_activity")
+async def emit_ready_photo_request_activity(order_id: str, session_id: str) -> str:
+    """Despacha ``OrderReadyPhotoRequestedEvent`` (botón "Enviar ahora" de la
+    foto del pedido). La API ya resolvió pedido backend y sesión al validar
+    que hay foto, así que acá solo se despacha — el manifest lo lleva a la
+    sesión ETA del cliente (señal ``send_ready_photo``)."""
+    from src.platform.orchestration import (
+        dispatch_envelope_with_client,
+        envelope_for,
+    )
+    from src.platform.temporal.client import get_temporal_client
+    from src.plugins.orders.shared.contracts.events import (
+        OrderReadyPhotoRequestedEvent,
+    )
+
+    client = await get_temporal_client()
+    await dispatch_envelope_with_client(
+        envelope_for(
+            OrderReadyPhotoRequestedEvent(
+                session_id=session_id,
+                order_id=order_id,
+                requested_at_ms=int(time.time() * 1000),
+            ),
+            source_plugin="orders",
+            source_worker="reconcile",
+        ),
+        client,
+    )
+    activity.logger.info(
+        "emit_ready_photo_request: despachado order=%s session=%s", order_id, session_id
+    )
+    return "dispatched"
