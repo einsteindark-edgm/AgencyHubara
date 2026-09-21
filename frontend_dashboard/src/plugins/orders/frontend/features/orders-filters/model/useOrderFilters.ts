@@ -1,21 +1,36 @@
 /**
- * Filtros y agrupaciones de la vista Órdenes: la búsqueda y la vista +
- * modalidad del panel izquierdo (no hay agrupar/orden/cambio-a-tabla —
- * eliminados por feedback del usuario en la iteración del prototipo).
+ * Filtros y agrupaciones de la vista Órdenes: la búsqueda, el rango de fechas
+ * del calendario (el mismo de Chats) y la vista + modalidad del panel
+ * izquierdo (no hay agrupar/orden/cambio-a-tabla — eliminados por feedback del
+ * usuario en la iteración del prototipo).
+ *
+ * Tres alcances, cada uno para un consumidor:
+ *   - `scoped`   = búsqueda + rango → contadores de la sidebar.
+ *   - `kpiScope` = scoped + modalidad → KPIs del tablero (NO la vista: son el
+ *     resumen del período, no de la columna que se está mirando).
+ *   - `filtered` = kpiScope + vista → kanban.
  *
  * Las vistas por fecha cortan el día en hora COLOMBIA, igual que los
  * contadores de la sidebar (`OrdersFilters`): `dueIso` es un día calendario
  * que el operador eligió a mano, no un instante.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
+  NO_DATE_RANGE,
   addDaysBogotaIso,
+  describeDateRange,
+  isInDateRange,
   matchesSearch,
   nextDaysBogotaIsoSet,
   todayBogotaIso,
+  type DateRange,
 } from "@/shared/lib";
-import type { Order, PayType } from "@plugins/orders/frontend/entities/order";
+import {
+  orderDayIso,
+  type Order,
+  type PayType,
+} from "@plugins/orders/frontend/entities/order";
 
 export type ViewFilter =
   | "all"
@@ -38,14 +53,37 @@ export function useOrderFilters(orders: Order[]) {
   const [query, setQuery] = useState("");
   const [view, setView] = useState<ViewFilter>("all");
   const [payType, setPayType] = useState<PayTypeFilter>("all");
+  const [dateRange, setDateRange] = useState<DateRange>(NO_DATE_RANGE);
+  const clearDateRange = useCallback(() => setDateRange(NO_DATE_RANGE), []);
+  const hasDateRange = dateRange.from !== null;
 
-  /** Órdenes que coinciden con la búsqueda — sin vista ni modalidad. Es la
-   *  base de los contadores de la sidebar: así dicen en qué vista quedó lo
-   *  buscado en vez de seguir contando todo. */
-  const searched = useMemo(
-    () => orders.filter((o) => matchesOrder(o, query)),
-    [orders, query],
+  /** Órdenes que coinciden con la búsqueda y el rango — sin vista ni
+   *  modalidad. Es la base de los contadores de la sidebar: así dicen en qué
+   *  vista quedó lo buscado/el período en vez de seguir contando todo. */
+  const scoped = useMemo(
+    () =>
+      orders.filter(
+        (o) => matchesOrder(o, query) && isInDateRange(orderDayIso(o), dateRange),
+      ),
+    [orders, query, dateRange],
   );
+
+  const kpiScope = useMemo(
+    () => (payType === "all" ? scoped : scoped.filter((o) => o.payType === payType)),
+    [scoped, payType],
+  );
+
+  /** Días con al menos una orden — el calendario los marca con un punto. Sobre
+   *  TODAS las órdenes: si dependiera del rango, al elegir un día se apagarían
+   *  los demás. */
+  const activeDays = useMemo(() => {
+    const days = new Set<string>();
+    for (const o of orders) {
+      const day = orderDayIso(o);
+      if (day) days.add(day);
+    }
+    return days;
+  }, [orders]);
 
   // Día COLOMBIANO, el mismo corte que los contadores de la sidebar. En UTC
   // la frontera caía a las 19:00 locales: desde esa hora "Para hoy" llenaba el
@@ -59,8 +97,7 @@ export function useOrderFilters(orders: Order[]) {
     // Esta semana = próximos 7 días incluyendo hoy. Un Set no sirve de dep:
     // se arma acá y se rehace cada vez que cambia `today`.
     const weekIsos = nextDaysBogotaIsoSet(7);
-    return searched.filter((o) => {
-      if (payType !== "all" && o.payType !== payType) return false;
+    return kpiScope.filter((o) => {
       // "No agendadas" = órdenes sin fecha de entrega asignada — típicamente
       // las que también viven en la columna "Nueva" del kanban porque el
       // operador todavía no las agendó.
@@ -77,9 +114,26 @@ export function useOrderFilters(orders: Order[]) {
       if (view === "ship")     return o.status === "shipping";
       return true;
     });
-  }, [searched, view, payType, today, tomorrow]);
+  }, [kpiScope, view, today, tomorrow]);
 
-  return { query, setQuery, view, setView, payType, setPayType, searched, filtered };
+  return {
+    query,
+    setQuery,
+    view,
+    setView,
+    payType,
+    setPayType,
+    dateRange,
+    setDateRange,
+    clearDateRange,
+    /** Texto corto del rango para el disparador del calendario y los KPIs. */
+    dateRangeLabel: hasDateRange ? describeDateRange(dateRange, today) : "Todas las fechas",
+    activeDays,
+    today,
+    scoped,
+    kpiScope,
+    filtered,
+  };
 }
 
 export function filterLabel(view: ViewFilter): string {

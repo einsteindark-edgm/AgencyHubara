@@ -10,7 +10,12 @@ export type {
   OrderSummary,
   OrderTimelineEvent,
 } from "./model";
-export { ORDER_STATUS_META, PAY_STATUS_META } from "./model";
+export {
+  ORDER_STATUS_META,
+  PAY_STATUS_META,
+  isCollectedRevenue,
+  orderDayIso,
+} from "./model";
 export { orderKeys } from "./keys";
 export {
   useOrders,

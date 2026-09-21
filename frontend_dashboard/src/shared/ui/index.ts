@@ -12,3 +12,4 @@ export { MissingData } from "./MissingData";
 export { ErrorBoundary } from "./ErrorBoundary";
 export { Toolbar, StatusBar, type SectionKey } from "./chrome";
 export { Markdown } from "./Markdown";
+export { DateRangeFilter } from "./DateRangeFilter";

@@ -10,12 +10,18 @@
  * Recibe el estado de filtros por prop. Owner del estado: la página, vía
  * `useOrderFilters` reusado por ambas features (filters + board).
  *
- * `orders` llega YA acotado por la búsqueda: los contadores dicen en qué
- * vista quedó lo buscado, en vez de seguir contando todo.
+ * `orders` llega YA acotado por la búsqueda y el rango de fechas: los
+ * contadores dicen en qué vista quedó lo buscado/el período, en vez de seguir
+ * contando todo.
  */
 
-import { Icon, MacButton } from "@/shared/ui";
-import { addDaysBogotaIso, nextDaysBogotaIsoSet, todayBogotaIso } from "@/shared/lib";
+import { DateRangeFilter, Icon, MacButton } from "@/shared/ui";
+import {
+  addDaysBogotaIso,
+  nextDaysBogotaIsoSet,
+  todayBogotaIso,
+  type DateRange,
+} from "@/shared/lib";
 import type { Order } from "@plugins/orders/frontend/entities/order";
 import type { PayTypeFilter, ViewFilter } from "../model/useOrderFilters";
 
@@ -28,6 +34,12 @@ interface Props {
   setView: (v: ViewFilter) => void;
   payType: PayTypeFilter;
   setPayType: (p: PayTypeFilter) => void;
+  dateRange: DateRange;
+  setDateRange: (range: DateRange) => void;
+  clearDateRange: () => void;
+  /** Días con órdenes (se marcan en el calendario) y texto del rango. */
+  activeDays: Set<string>;
+  dateRangeLabel: string;
   orders: Order[];
 }
 
@@ -38,6 +50,11 @@ export function OrdersFilters({
   setView,
   payType,
   setPayType,
+  dateRange,
+  setDateRange,
+  clearDateRange,
+  activeDays,
+  dateRangeLabel,
   orders,
 }: Props) {
   // Día calendario COLOMBIANO (no UTC): `dueIso` es una fecha que el operador
@@ -90,6 +107,17 @@ export function OrdersFilters({
           aria-label="Buscar órdenes"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
+
+      <div className="sb-dates">
+        <DateRangeFilter
+          value={dateRange}
+          onChange={setDateRange}
+          onClear={clearDateRange}
+          activeDays={activeDays}
+          today={today}
+          label={dateRangeLabel}
         />
       </div>
 

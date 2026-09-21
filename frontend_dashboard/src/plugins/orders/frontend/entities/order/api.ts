@@ -27,6 +27,7 @@ import {
   useDashboardEvents,
   useInvalidateOnReconnect,
 } from "@/shared/api";
+import { bogotaDayIsoFromMs } from "@/shared/lib";
 import {
   customerScoreSchema,
   customerSummarySchema,
@@ -79,6 +80,8 @@ export function toLegacyOrder(s: OrderSummary): Order {
     // El `due_iso` viene del backend como estimate (created+1d) — siempre
     // estimated hasta que tengamos integración real de shipping.
     isDueEstimated: s.due_iso !== null,
+    // Conversión de un instante FIJO (no lee el reloj): el mapper sigue puro.
+    createdIso: bogotaDayIsoFromMs(s.created_at_ms),
   };
 }
 

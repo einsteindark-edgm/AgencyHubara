@@ -18,9 +18,8 @@ import {
   type ChatInboxItem,
   type ChatOrderBadge,
 } from "@plugins/chats/frontend/entities/chat";
-import { Avatar, Icon } from "@/shared/ui";
+import { Avatar, DateRangeFilter, Icon } from "@/shared/ui";
 import { useInboxFilters } from "../model/useInboxFilters";
-import { InboxDateFilter } from "./InboxDateFilter";
 import { SoundSettings } from "./SoundSettings";
 
 interface Props {
@@ -87,7 +86,7 @@ export function ChatsInbox({ selectedId, onSelect }: Props) {
             ))}
         </div>
 
-        <InboxDateFilter
+        <DateRangeFilter
           value={f.dateRange}
           onChange={f.setDateRange}
           onClear={f.clearDateRange}

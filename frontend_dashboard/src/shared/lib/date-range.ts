@@ -1,5 +1,6 @@
 /**
- * Aritmética pura del calendario del inbox — sin React, sin reloj, sin zonas.
+ * Rango de días + aritmética pura del calendario (filtro por fecha de Chats y
+ * de Órdenes) — sin React, sin reloj, sin zonas.
  *
  * Todo opera sobre strings: un día es `YYYY-MM-DD` y un mes es `YYYY-MM`. Las
  * conversiones intermedias se hacen en UTC a propósito: el input ya es un día
@@ -7,7 +8,26 @@
  * instante. Meter `America/Bogota` acá sería aplicar el offset dos veces.
  */
 
-import type { DateRange } from "./useInboxFilters";
+import { formatDayLabelEs } from "./dates";
+
+/** Rango cerrado de días calendario (YYYY-MM-DD, Bogotá). `to: null` = rango a
+ *  medio elegir en el calendario: se comporta como un día suelto. */
+export interface DateRange {
+  from: string | null;
+  to: string | null;
+}
+
+export const NO_DATE_RANGE: DateRange = { from: null, to: null };
+
+/** ¿El día `dayIso` cae dentro del rango? Sin `from` el rango está inactivo
+ *  (todo entra); un día vacío no entra a un rango activo — sin fecha conocida
+ *  no puede afirmarse que cae adentro. */
+export function isInDateRange(dayIso: string, range: DateRange): boolean {
+  if (!range.from) return true;
+  if (!dayIso) return false;
+  const to = range.to ?? range.from;
+  return dayIso >= range.from && dayIso <= to;
+}
 
 export interface MonthCell {
   iso: string;
@@ -95,4 +115,44 @@ export function isInSelectedRange(day: string, range: DateRange): boolean {
   if (!range.from) return false;
   const to = range.to ?? range.from;
   return day >= range.from && day <= to;
+}
+
+// Sólo el mes: pedirle a es-CO `{day, month:"short"}` devuelve "8 de sept."
+// — con preposición y punto. Se compone a mano.
+const SHORT_MONTH_FMT = new Intl.DateTimeFormat("es-CO", {
+  month: "short",
+  timeZone: "UTC",
+});
+
+/** "8 sep" — compacto, sin preposición ni punto abreviativo. */
+function shortDay(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const month = SHORT_MONTH_FMT.format(new Date(Date.UTC(y, m - 1, d)))
+    .replace(/\.$/, "")
+    .replace(/^sept$/, "sep");
+  return `${d} ${month}`;
+}
+
+/**
+ * Texto del rango. Un día suelto va en lenguaje humano ("Hoy", "Ayer"); un
+ * rango va COMPACTO porque tiene que entrar en los 280px de la sidebar y en el
+ * encabezado de la sección — la fecha larga de los dos extremos ("8 de
+ * septiembre de 2026 – 9 de septiembre de 2026") se corta con elipsis y el
+ * operador deja de ver qué filtro tiene puesto.
+ *
+ * El año se escribe una sola vez cuando ambos extremos lo comparten.
+ */
+export function describeDateRange(range: DateRange, today: string): string {
+  if (!range.from) return "Todas las fechas";
+  const to = range.to ?? range.from;
+  if (range.from === to) return formatDayLabelEs(range.from, today);
+
+  const [fromYear, toYear] = [range.from.slice(0, 4), to.slice(0, 4)];
+  if (fromYear !== toYear) {
+    return `${shortDay(range.from)} ${fromYear} – ${shortDay(to)} ${toYear}`;
+  }
+  // Mismo mes: no repetirlo ("8 – 9 sep 2026").
+  const sameMonth = range.from.slice(0, 7) === to.slice(0, 7);
+  const left = sameMonth ? String(Number(range.from.slice(8))) : shortDay(range.from);
+  return `${left} – ${shortDay(to)} ${toYear}`;
 }

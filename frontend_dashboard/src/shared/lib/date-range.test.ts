@@ -4,7 +4,7 @@
  * bugs, y en un `render()` cuestan diez veces más de verificar.
  */
 import { describe, expect, it } from "vitest";
-import { buildMonthGrid, monthLabelEs, nextRange, shiftMonth } from "./calendar";
+import { buildMonthGrid, monthLabelEs, nextRange, shiftMonth } from "./date-range";
 
 describe("buildMonthGrid", () => {
   it("arranca en LUNES (convención colombiana), no en domingo", () => {

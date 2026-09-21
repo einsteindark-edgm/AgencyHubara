@@ -37,7 +37,7 @@ export function OrdersSection() {
   const orders = query.data?.orders ?? [];
   const response = query.data?.response;
   const f = useOrderFilters(orders);
-  // Counter "X órdenes · Y en valor" del header solo cuenta órdenes activas
+  // Subtítulo "X órdenes · Y en valor" del header solo cuenta órdenes activas
   // (excluye canceladas). El kanban sigue mostrando la columna "Cancelada"
   // con sus cards — los counters reflejan productividad operacional, no
   // inventory total. Bug fix 2026-05-26.
@@ -64,12 +64,21 @@ export function OrdersSection() {
           setView={f.setView}
           payType={f.payType}
           setPayType={f.setPayType}
-          orders={f.searched}
+          dateRange={f.dateRange}
+          setDateRange={f.setDateRange}
+          clearDateRange={f.clearDateRange}
+          activeDays={f.activeDays}
+          dateRangeLabel={f.dateRangeLabel}
+          orders={f.scoped}
         />
       )}
       <main className="ord-canvas">
+        {/* KPIs = búsqueda + rango + modalidad, sin la vista (resumen del
+            período, no de la columna que se mira). */}
         <OrdersHeader
-          orders={orders}
+          orders={f.kpiScope}
+          range={f.dateRange}
+          rangeLabel={f.dateRangeLabel}
           filteredCount={filteredActiveCount}
           filteredTotal={filteredActiveTotal}
           title={filterLabel(f.view)}

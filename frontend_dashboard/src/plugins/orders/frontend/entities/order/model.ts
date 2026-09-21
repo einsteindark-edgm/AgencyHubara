@@ -58,6 +58,24 @@ export interface Order {
   // Nuevos: meta del backend para que la UI sepa cuándo pintar markers.
   isDraft: boolean;
   isDueEstimated: boolean; // true cuando dueIso es estimate (created+1d)
+  /** Día de creación YYYY-MM-DD en America/Bogota ("" si el backend no lo
+   *  mandó). Ubica en el calendario a las órdenes sin entrega agendada. */
+  createdIso: string;
+}
+
+/**
+ * El día con el que una orden cae en el filtro por fecha y en "Ingresos": la
+ * ENTREGA agendada; si no está agendada, el día en que se creó. Con solo
+ * `dueIso`, cualquier rango escondería las órdenes sin agendar (y una entregada
+ * que saltó etapas sin fecha nunca sumaría como ingreso).
+ */
+export function orderDayIso(o: Pick<Order, "dueIso" | "createdIso">): string {
+  return o.dueIso || o.createdIso;
+}
+
+/** Ingreso = plata que YA entró: columna "Entregada" y pago "Pagado". */
+export function isCollectedRevenue(o: Pick<Order, "status" | "payStatus">): boolean {
+  return o.status === "delivered" && o.payStatus === "paid";
 }
 
 export interface OrderStatusMeta {

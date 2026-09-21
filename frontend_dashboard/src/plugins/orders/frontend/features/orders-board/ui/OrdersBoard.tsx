@@ -10,12 +10,20 @@
 import { useMemo, useState } from "react";
 import {
   ORDER_STATUS_META,
+  isCollectedRevenue,
+  orderDayIso,
   useTransitionOrderStage,
   type Order,
   type OrderStatus,
 } from "@plugins/orders/frontend/entities/order";
 import { Avatar, Icon, MacButton } from "@/shared/ui";
-import { dayChipShort, fmtMoney, todayBogotaIso } from "@/shared/lib";
+import {
+  dayChipShort,
+  fmtMoney,
+  isInDateRange,
+  todayBogotaIso,
+  type DateRange,
+} from "@/shared/lib";
 
 import { skipNote, skippedStages } from "../model/stageSkip";
 import { ReadyPhotoModal } from "./ReadyPhotoModal";
@@ -382,19 +390,27 @@ export function OrdersHeader({
   filteredCount,
   filteredTotal,
   title,
+  range,
+  rangeLabel,
 }: {
+  /** Órdenes del período (búsqueda + rango + modalidad), NO acotadas por la
+   *  vista: los KPIs resumen el período, no la columna que se está mirando. */
   orders: Order[];
   filteredCount: number;
   filteredTotal: number;
   title: string;
+  /** Rango del calendario. Sin rango, "Ingresos" es el mes en curso. */
+  range: DateRange;
+  rangeLabel: string;
 }) {
   // Día COLOMBIANO. Con el corte UTC (frontera a las 19:00 locales) el KPI
   // "Para hoy" saltaba a las 7 de la tarde, y "Ingresos mes" —que deriva de
   // `today.slice(0, 7)`— cambiaba de mes la noche del último día: a las 20:00
   // del 31 de agosto ya mostraba septiembre y el mes que cerraba iba a cero.
   const today = todayBogotaIso();
-  // YYYY-MM del mes actual — usado para filtrar dueIso del mes corriente.
+  // YYYY-MM del mes actual — período de "Ingresos" cuando no hay rango.
   const monthPrefix = today.slice(0, 7);
+  const hasRange = range.from !== null;
   const k = useMemo(
     () => {
       // Bug fix 2026-05-26: TODOS los KPIs operacionales excluyen órdenes
@@ -414,12 +430,17 @@ export function OrdersHeader({
       ).length;
       // "En tránsito" = en camino.
       const shipping = active.filter((o) => o.status === "shipping").length;
-      // "Ingresos mes" = total de órdenes activas con fecha de entrega
-      // dentro del mes corriente. Cancelled ya filtrado arriba.
-      const revenueMonth = active
-        .filter(
-          (o) => !!o.dueIso && o.dueIso.startsWith(monthPrefix),
-        )
+      // "Ingresos" = plata que YA entró: columna "Entregada" + pago "Pagado",
+      // por el día de la orden (entrega agendada, o creación si no se agendó).
+      // Período: el rango del calendario; sin rango, el mes en curso. Antes
+      // sumaba TODA orden activa agendada en el mes (en preparación, sin
+      // cobrar…) y el KPI prometía ingresos que no existían.
+      const revenue = active
+        .filter((o) => {
+          if (!isCollectedRevenue(o)) return false;
+          const day = orderDayIso(o);
+          return hasRange ? isInDateRange(day, range) : day.startsWith(monthPrefix);
+        })
         .reduce((a, b) => a + b.total, 0);
       return {
         todayCount,
@@ -427,10 +448,10 @@ export function OrdersHeader({
         overdue: active.filter((o) => o.overdue).length,
         inProc,
         shipping,
-        revenueMonth,
+        revenue,
       };
     },
-    [orders, today, monthPrefix],
+    [orders, today, monthPrefix, hasRange, range],
   );
 
   return (
@@ -443,9 +464,6 @@ export function OrdersHeader({
           </p>
         </div>
         <div className="ord-actions">
-          <MacButton ghost sm>
-            <Icon.filter /> Filtros
-          </MacButton>
           <MacButton ghost sm>
             <Icon.download /> Exportar
           </MacButton>
@@ -464,7 +482,12 @@ export function OrdersHeader({
         <KPI label="Retrasadas"   value={k.overdue}                tone="red"    sub="Requieren atención" />
         <KPI label="En proceso"   value={k.inProc}                 tone="orange" sub="Preparando + listas" />
         <KPI label="En tránsito"  value={k.shipping}               tone="cyan" />
-        <KPI label="Ingresos mes" value={fmtMoney(k.revenueMonth, true)} tone="green" sub="Entregas agendadas este mes" />
+        <KPI
+          label={hasRange ? "Ingresos" : "Ingresos mes"}
+          value={fmtMoney(k.revenue, true)}
+          tone="green"
+          sub={hasRange ? `Entregadas y pagadas · ${rangeLabel}` : "Entregadas y pagadas este mes"}
+        />
       </div>
 
       <div className="ord-bar">

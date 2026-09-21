@@ -79,6 +79,7 @@ function order(overrides: Partial<Order> & { id: string }): Order {
     priority: "normal",
     isDraft: false,
     isDueEstimated: false,
+    createdIso: "",
     ...overrides,
   };
 }

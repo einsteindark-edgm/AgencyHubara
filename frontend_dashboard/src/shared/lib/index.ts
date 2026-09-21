@@ -1,4 +1,5 @@
 export * from "./dates";
+export * from "./date-range";
 export * from "./format";
 export * from "./runtime";
 export * from "./plugin-host";
