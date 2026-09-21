@@ -84,7 +84,9 @@ def test_get_run_devuelve_el_record(client) -> None:
 
 
 def test_get_run_inexistente_404(client) -> None:
-    assert client.get("/api/ads/analysis/runs/nope").status_code == 404
+    # Id BIEN formado que no existe → 404. Uno mal formado (`nope`) es 400 y ni
+    # toca el filesystem: `test_analysis_run_id_guard.py`.
+    assert client.get("/api/ads/analysis/runs/run-000000000000").status_code == 404
 
 
 def test_approve_dispara_el_resume_en_background(client) -> None:

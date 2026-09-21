@@ -97,8 +97,16 @@ def _sanitize_media_id(media_id: str) -> str:
 
 
 def is_safe_segment(segment: str) -> bool:
-    """True si ``segment`` es un único componente de path seguro (sin `/`, `..`)."""
-    return bool(_SAFE_SEGMENT.match(segment)) and ".." not in segment
+    """True si ``segment`` es un único componente de path seguro (sin `/`, `..`).
+
+    ``fullmatch``: el ``$`` de ``match`` acepta un salto de línea final. Y ``.``
+    solo es el directorio mismo — como ``session_id`` servía ``<vault>/media/*``.
+    """
+    return (
+        bool(_SAFE_SEGMENT.fullmatch(segment))
+        and ".." not in segment
+        and segment != "."
+    )
 
 
 def _media_dir(session_id: str) -> Path:

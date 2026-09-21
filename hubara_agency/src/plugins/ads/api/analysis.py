@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
@@ -155,6 +156,18 @@ def _new_run_id() -> str:
     return f"run-{uuid.uuid4().hex[:12]}"
 
 
+#: La forma ÚNICA de un run id — la de `_new_run_id`. El id de la URL arma
+#: `<vault>/ad-analysis/<run_id>/record.json`: `..` salía de `ad-analysis/`.
+_RUN_ID_RE = re.compile(r"run-[0-9a-f]{12}")
+
+
+def _require_run_id(run_id: str) -> None:
+    """400 ANTES de tocar el vault (o de suscribirse al bus)."""
+    # fullmatch: el `$` de `match` acepta un salto de línea final.
+    if not _RUN_ID_RE.fullmatch(run_id):
+        raise HTTPException(status_code=400, detail="run_id inválido")
+
+
 def _get_launcher():
     """El Launcher real (boto3). Import perezoso: tests lo monkeypatchean con un fake, y boto3
     no se importa si no hace falta (NO-OP sin config AWS)."""
@@ -247,6 +260,7 @@ async def create_run(body: TriggerBody) -> dict:
 
 @router.get("/runs/{run_id}")
 def get_run(run_id: str) -> dict:
+    _require_run_id(run_id)
     rec = record.read_run(run_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="run no existe")
@@ -255,6 +269,7 @@ def get_run(run_id: str) -> dict:
 
 @router.post("/runs/{run_id}/approve")
 async def approve(run_id: str, body: ApproveBody) -> dict:
+    _require_run_id(run_id)
     rec = record.read_run(run_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="run no existe")
@@ -272,6 +287,7 @@ async def approve(run_id: str, body: ApproveBody) -> dict:
 async def run_events(run_id: str, request: Request) -> StreamingResponse:
     """SSE en vivo del run: snapshot inicial (el record) + cada evento del bus filtrado por
     run-id. Reusa el `DashboardEventBus` (dominio `ads`) — el poll_loop publica acá."""
+    _require_run_id(run_id)  # antes de suscribirse: un 400 no deja una cola colgada
     bus = get_dashboard_event_bus()
     queue = bus.subscribe()
 

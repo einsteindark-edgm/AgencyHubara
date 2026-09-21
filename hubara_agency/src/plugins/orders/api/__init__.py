@@ -71,6 +71,7 @@ from src.sdk.mediakit import (
     media_url_for,
     persist_outbound_image,
 )
+from src.sdk.runtime import is_vault_session_id
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -83,6 +84,13 @@ def _publish_orders_changed(order_id: str | None = None) -> None:
     del agente Sales) llegan por otro camino: el sampler del vault en
     chats/api/dashboard.py detecta el cambio de metadata y publica él."""
     get_dashboard_event_bus().publish("orders", "changed", id=order_id)
+
+
+def _require_vault_session_id(session_id: str) -> None:
+    """400 ANTES de tocar el vault: el id de la URL arma
+    `<vault>/<id>/metadata.json` (`..` es el padre del vault, `.` el vault)."""
+    if not is_vault_session_id(session_id):
+        raise HTTPException(status_code=400, detail="session_id inválido")
 
 
 @router.get("/orders")
@@ -149,8 +157,7 @@ async def list_orders_by_session(
     se reporta en `error_detail` (los demás pedidos SÍ llegan al operador).
     Cap de 15 ids (los más recientes) — `episodes[]` no tiene tope.
     """
-    if not re.fullmatch(r"[A-Za-z0-9._+-]+", session_id) or ".." in session_id:
-        raise HTTPException(status_code=400, detail="session_id inválido")
+    _require_vault_session_id(session_id)
 
     metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
     metadata = metadata_store.read(session_id)
@@ -280,6 +287,7 @@ async def retry_vault_order(
     404 si no existe el (session_key, audit_id); 422 si el record está
     malformado y no se puede reconstruir.
     """
+    _require_vault_session_id(session_key)
     port = get_order_registration_port()
     outcome = await reconcile_one(
         vault_dir=WORKSPACE_VAULT_DIR,
@@ -317,6 +325,7 @@ async def resolve_vault_order(
     Body opcional: `{"note": "...", "resolved_order_id": "order_01..."}`.
     404 si no existe el (session_key, audit_id).
     """
+    _require_vault_session_id(session_key)
     outcome = mark_resolved_manually(
         vault_dir=WORKSPACE_VAULT_DIR,
         session_key=session_key,
@@ -1133,9 +1142,11 @@ async def _resolve_session_for_order(
         client = get_medusa_client()
         raw = await client.get_order(backend_order_id, fields="id,metadata")
         session_key = (raw.get("metadata") or {}).get("session_key")
+        # El dato viene de Medusa (editable en su Admin): mismo piso que un id
+        # de URL — `wa_<real>/../../x` pasaba el `startswith("wa_")`.
         if (
             isinstance(session_key, str)
-            and session_key.startswith("wa_")
+            and is_vault_session_id(session_key)
             and (vault_dir / session_key / "metadata.json").exists()
         ):
             return session_key

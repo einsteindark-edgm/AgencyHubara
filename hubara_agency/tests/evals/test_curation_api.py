@@ -215,6 +215,19 @@ def test_transcript_rejects_bad_ids(eval_dirs):
     assert exc.value.status_code == 400
 
 
+@pytest.mark.parametrize(
+    "session_id, episode_id",
+    [("wa_3\n", ""), ("wa_3", "ep_002\n")],
+)
+def test_transcript_rejects_ids_with_a_trailing_newline(
+    eval_dirs, session_id, episode_id
+):
+    """El `$` de `re.match` acepta un `\\n` final — `fullmatch` no."""
+    with pytest.raises(HTTPException) as exc:
+        api.eval_transcript(session_id=session_id, episode_id=episode_id)
+    assert exc.value.status_code == 400
+
+
 def test_transcript_404_when_session_missing(eval_dirs):
     with pytest.raises(HTTPException) as exc:
         api.eval_transcript(session_id="wa_inexistente", episode_id="")

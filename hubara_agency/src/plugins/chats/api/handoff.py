@@ -48,6 +48,7 @@ from src.plugins.chats.api.dashboard_composition import (
     get_metadata_store,
     get_temporal_client,
 )
+from src.plugins.chats.api.session_guard import require_valid_session_id
 from src.platform.constants import (
     ROUTE_HUMANO,
     ROUTE_REMARKETING,
@@ -56,7 +57,6 @@ from src.platform.constants import (
 from src.sdk.mediakit import (
     MediaUploadError,
     delete_outbound_image,
-    is_safe_segment,
     media_url_for,
     persist_outbound_image,
     upload_media,
@@ -316,7 +316,7 @@ async def intervene(
     Idempotente: si ya estaba en humano, lo refresca con el nuevo motivo y
     re-intenta terminar workflows zombies.
     """
-    _require_safe_session_id(session_id)
+    require_valid_session_id(session_id)
     data = metadata_store.read(session_id)
     motivo = payload.motivo or "Humano tomó el control desde el dashboard"
 
@@ -379,13 +379,6 @@ def _require_humano_route(data: dict, session_id: str, verb: str) -> None:
                 f"de {verb}."
             ),
         )
-
-
-def _require_safe_session_id(session_id: str) -> None:
-    """PM-B9: simetría con el GET de media — el session_id de la URL no llega
-    a los stores de filesystem sin pasar el mismo charset anti-traversal."""
-    if not is_safe_segment(session_id):
-        raise HTTPException(status_code=400, detail="session_id inválido")
 
 
 def _sniff_is_image(content: bytes) -> bool:
@@ -456,7 +449,7 @@ async def upload_human_media(
     cliente es una llamada SEPARADA (`POST .../messages` con `attachment_id`),
     para que un retry del send nunca re-suba los bytes.
     """
-    _require_safe_session_id(session_id)
+    require_valid_session_id(session_id)
     data = metadata_store.read(session_id)
     _require_humano_route(data, session_id, "subir archivos")
 
@@ -591,7 +584,7 @@ async def send_human_message(
         metadata de ventana no está poblada, no bloquea (fail-open).
       * idempotencia por `client_message_id` — un retry no re-envía.
     """
-    _require_safe_session_id(session_id)
+    require_valid_session_id(session_id)
     data = metadata_store.read(session_id)
     _require_humano_route(data, session_id, "mandar mensajes")
 
@@ -897,7 +890,7 @@ async def send_human_template_message(
     El historial lo escribe `send_template_to_session` (sender=human, texto
     renderizado) — acá no se duplica.
     """
-    _require_safe_session_id(session_id)
+    require_valid_session_id(session_id)
     data = metadata_store.read(session_id)
     _require_humano_route(data, session_id, "mandar plantillas")
 
@@ -1023,7 +1016,7 @@ async def return_to_bot(
       inmediatamente para que el bot envíe un gancho al cliente. Requiere
       `motivo` (el workflow lo usa para construir el prompt del gancho).
     """
-    _require_safe_session_id(session_id)
+    require_valid_session_id(session_id)
     data = metadata_store.read(session_id)
     active_route = data.get("active_route", ROUTE_VENTAS)
     if active_route != ROUTE_HUMANO:

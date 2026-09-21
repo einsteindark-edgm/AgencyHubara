@@ -22,6 +22,12 @@ Notas de diseño:
   Estado process-wide NUEVO exige ``clear()`` + fixture autouse (lección L-2).
 - ``atomic_write_json`` es la única forma sancionada de escribir JSON al
   vault (write-rename, sin archivos a medio escribir).
+- ``is_vault_session_id`` es el PISO anti path-traversal de todo id de sesión
+  que llega de afuera (URL, body) y termina en un ``Path`` bajo el vault: un
+  router lo chequea ANTES de tocar el filesystem y responde 400. ``..`` es el
+  padre del vault, ``.`` el vault mismo, ``_analytics`` no es una sesión. No es
+  política de formato — un plugin puede exigir además ``wa_<dígitos>``, pero
+  con ``fullmatch`` (el ``$`` de ``match`` acepta un salto de línea final).
 - ``client_ip`` es la IP real del cliente detrás de Caddy/CloudFront (primer
   hop de ``X-Forwarded-For``); la clave correcta para cualquier límite por IP
   en un router expuesto (el peer es siempre el proxy).
@@ -61,6 +67,7 @@ from src.platform.rate_limit import (
 from src.platform.state import (
     FilesystemMetadataStore as FilesystemMetadataStore,
     atomic_write_json as atomic_write_json,
+    is_vault_session_id as is_vault_session_id,
 )
 from src.platform.temporal.client import (
     get_temporal_client as get_temporal_client,

@@ -18,10 +18,13 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from src.platform.constants import WHATSAPP_SESSION_PREFIX
 
 
 def atomic_write_json(path: Path, data: Any) -> None:
@@ -56,6 +59,31 @@ def atomic_write_json(path: Path, data: Any) -> None:
         except OSError:
             pass
         raise
+
+
+# Un `session_id` es el NOMBRE de un directorio del vault
+# (`<vault_dir>/<session_id>/...`). El charset no puede ni expresar un
+# traversal -- sin `.`, sin `/`, sin `\` -- y el tope de largo evita que un
+# segmento desmedido reviente `Path.exists()` (ENAMETOOLONG). Cubre las formas
+# que existen de verdad: `wa_<digitos>` (el `from` de Meta), `wa_+<digitos>`
+# (prefijo E.164) e ids de test con guion bajo.
+_VAULT_SESSION_ID_RE = re.compile(
+    re.escape(WHATSAPP_SESSION_PREFIX) + r"[A-Za-z0-9+_]{1,120}"
+)
+
+
+def is_vault_session_id(session_id: str) -> bool:
+    """True si `session_id` puede nombrar el directorio de una sesion del vault.
+
+    Es el PISO anti path-traversal para todo id que llega de afuera (URL, body)
+    y termina en un `Path` bajo el vault: `..` es el padre del vault, `.` el
+    vault mismo y `_analytics` / `_campaigns` directorios que no son sesiones.
+    NO es politica de formato: quien escribe sobre un numero real (enviar,
+    registrar un pedido) puede exigir ademas `wa_<digitos>`.
+
+    `fullmatch` y no `match`: el `$` de `match` acepta un salto de linea final.
+    """
+    return _VAULT_SESSION_ID_RE.fullmatch(session_id) is not None
 
 
 class FilesystemMetadataStore:
