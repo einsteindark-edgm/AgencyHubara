@@ -133,7 +133,34 @@ def test_order_without_photo_reports_none(api):
     client, _, _ = api
     res = client.get("/api/orders/orders/%2331/photo")
     assert res.status_code == 200
-    assert res.json() == {"order_id": BACKEND_ID, "photo": None, "has_conversation": True}
+    assert res.json() == {
+        "order_id": BACKEND_ID,
+        "photo": None,
+        "has_conversation": True,
+        "service_window_open": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("expires_at_ms", "open_"),
+    [(9_999_999_999_999, True), (1_000, False)],
+)
+def test_tells_the_panel_whether_the_24h_window_is_open(api, expires_at_ms, open_):
+    """Con la ventana abierta la foto sale como mensaje normal; cerrada, por
+    plantilla. El modal de "Listo" se lo dice al operador antes de mover."""
+    client, vault, _ = api
+    meta = _meta(vault)
+    meta["service_window_expires_at_ms"] = expires_at_ms
+    (vault / SID / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    body = client.get("/api/orders/orders/%2331/photo").json()
+
+    assert body["service_window_open"] is open_
+
+
+def test_without_conversation_there_is_no_window_to_speak_of(api):
+    client, _, _ = api
+    assert client.get("/api/orders/orders/%2340/photo").json()["service_window_open"] is None
 
 
 def test_upload_stores_the_photo_where_the_eta_reads_it(api):

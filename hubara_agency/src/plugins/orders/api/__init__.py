@@ -64,6 +64,7 @@ from src.platform.orders.state import STAGE_VALUES
 from src.platform.state import FilesystemMetadataStore
 from src.plugins.orders.vault_scanner import scan_vault_orders
 from src.sdk.dashboardkit import get_dashboard_event_bus
+from src.sdk.messagingkit import is_in_service_window
 from src.sdk.mediakit import (
     delete_outbound_image,
     is_safe_segment,
@@ -672,18 +673,27 @@ async def _order_owner(order_id: str) -> tuple[str, str | None]:
     return detail.summary.id, session_id
 
 
-def _order_photo_entry(session_id: str, backend_id: str) -> dict[str, Any] | None:
+def _session_metadata(session_id: str) -> dict[str, Any]:
     try:
         data = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
     except Exception:  # noqa: BLE001 — sesión sin metadata = sin foto
-        return None
-    photos = data.get("order_photos") if isinstance(data, dict) else None
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _photo_in(data: dict[str, Any], backend_id: str) -> dict[str, Any] | None:
+    photos = data.get("order_photos")
     entry = photos.get(backend_id) if isinstance(photos, dict) else None
     return entry if isinstance(entry, dict) and entry.get("filename") else None
 
 
+def _order_photo_entry(session_id: str, backend_id: str) -> dict[str, Any] | None:
+    return _photo_in(_session_metadata(session_id), backend_id)
+
+
 def _order_photo_payload(backend_id: str, session_id: str | None) -> dict[str, Any]:
-    entry = _order_photo_entry(session_id, backend_id) if session_id else None
+    data = _session_metadata(session_id) if session_id else {}
+    entry = _photo_in(data, backend_id) if session_id else None
     photo = None
     if entry is not None:
         photo = {
@@ -698,7 +708,16 @@ def _order_photo_payload(backend_id: str, session_id: str | None) -> dict[str, A
             # sin aprobar): el envío corre lejos del clic del operador.
             "last_error": entry.get("last_send_error"),
         }
-    return {"order_id": backend_id, "photo": photo, "has_conversation": session_id is not None}
+    return {
+        "order_id": backend_id,
+        "photo": photo,
+        "has_conversation": session_id is not None,
+        # Ventana 24h abierta → el ETA manda la foto como mensaje normal;
+        # cerrada (o sin dato) → plantilla. El modal de "Listo" lo muestra.
+        "service_window_open": (
+            is_in_service_window(int(time.time() * 1000), data) if session_id else None
+        ),
+    }
 
 
 def _require_conversation(session_id: str | None) -> str:

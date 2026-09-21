@@ -38,7 +38,11 @@ from src.plugins.eta.agent.eta.activities.tracking import (
 )
 from src.sdk.connectorkit import get_order_facts_port
 from src.sdk.mediakit import is_safe_segment, upload_media
-from src.sdk.messagingkit import send_template_to_session
+from src.sdk.messagingkit import (
+    is_in_service_window,
+    send_photo_message_to_session,
+    send_template_to_session,
+)
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, FilesystemMetadataStore, with_heartbeat
 
 READY_PHOTO_TEMPLATE = "order_ready_photo_utility_v1"
@@ -48,6 +52,15 @@ _MEDIA_ID_TTL_MS = 20 * 24 * 3600 * 1000
 #: Tope del slot ``order_reference`` en el catálogo.
 _REFERENCE_MAX = 60
 _STAGE_ORDER = ("preparing", "ready", "shipping", "delivered", "cancelled")
+#: Body aprobado de la plantilla (catalog.yaml) — también el caption del mensaje normal.
+_READY_BODY = (
+    "Hola, tu pedido {{1}} ya está listo. Te compartimos la foto para que lo "
+    "veas. ¿Nos confirmas para coordinar la entrega?"
+)
+#: Meta: "fuera de la ventana de servicio" → toca plantilla.
+_WINDOW_CLOSED_CODE = "131047"
+#: Un reenvío de la misma foto antes de esto se toma como duplicado.
+_RESEND_GUARD_MS = 120_000
 
 
 def _store() -> FilesystemMetadataStore:
@@ -112,7 +125,20 @@ async def _order_reference(order_id: str) -> str:
     return reference[:_REFERENCE_MAX]
 
 
-def _record_sent(store: FilesystemMetadataStore, session_id: str, order_id: str, reference: str) -> None:
+def _ready_caption(reference: str) -> str:
+    """Texto del mensaje normal: el MISMO body de la plantilla aprobada (un
+    test lo ata al catálogo) — el cliente recibe lo mismo por los dos canales."""
+    return _READY_BODY.replace("{{1}}", reference)
+
+
+def _record_sent(
+    store: FilesystemMetadataStore,
+    session_id: str,
+    order_id: str,
+    reference: str,
+    channel: str = "template",
+) -> None:
+    via = "mensaje (ventana 24h abierta)" if channel == "message" else "plantilla"
     def _apply(orders: dict[str, dict[str, Any]]) -> None:
         entry = orders.get(order_id) or _empty_entry(order_id)
         notified = list(entry.get("notified_stages") or [])
@@ -126,7 +152,7 @@ def _record_sent(store: FilesystemMetadataStore, session_id: str, order_id: str,
         events.append(
             {
                 "stage": "ready",
-                "agent_msg": f"[Foto del pedido {reference} enviada por plantilla]",
+                "agent_msg": f"[Foto del pedido {reference} enviada por {via}]",
                 "at_ms": int(time.time() * 1000),
                 "reply": None,
                 "flagged": False,
@@ -190,6 +216,18 @@ async def _send(
         return {"sent": False, "reason": "photo_file_missing"}
 
     now_ms = int(time.time() * 1000)
+    # Esta MISMA foto salió hace segundos (reintento de la activity, o "listo"
+    # + "Enviar ahora" casi juntos): el mensaje normal no tiene la
+    # idempotencia de las plantillas, así que se corta acá para no repetirlo.
+    sent_at = photo.get("sent_at_ms")
+    if (
+        isinstance(sent_at, int)
+        and photo.get("sent_for_uploaded_at_ms") == photo.get("uploaded_at_ms")
+        and 0 <= now_ms - sent_at < _RESEND_GUARD_MS
+    ):
+        activity.logger.info("send_ready_photo: %s enviado hace segundos — dedup", order_id)
+        return {"sent": True, "wa_message_id": photo.get("last_wa_message_id"), "deduped": True}
+
     media_id = _cached_media_id(photo, now_ms)
     if media_id is None:
         phone_number_id = data.get("phone_number_id") or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
@@ -213,30 +251,55 @@ async def _send(
         )
 
     reference = await _order_reference(order_id)
-    result = await send_template_to_session(
-        session_id,
-        READY_PHOTO_TEMPLATE,
-        {"order_reference": reference},
-        header_media_id=media_id,
-        header_image_url=photo.get("media_ref"),
-    )
+    channel = "template"
+    wa_message_id: str | None = None
 
-    wa_message_id = getattr(result, "wa_message_id", None)
-    # Reenvío de la MISMA foto dentro de la ventana de idempotencia: el envío
-    # anterior devuelve su mismo wamid y a Meta no sale nada. No es un envío
-    # nuevo → ni otra entrada en el timeline ni otro sent_at.
-    if wa_message_id and wa_message_id == photo.get("last_wa_message_id"):
-        activity.logger.info("send_ready_photo: %s ya enviado (%s) — dedup", order_id, wa_message_id)
-        return {"sent": True, "wa_message_id": wa_message_id, "deduped": True}
+    # Ventana de servicio 24h ABIERTA (el cliente escribió hace < 24 h): la foto
+    # sale como mensaje normal con el mismo texto de la plantilla. No depende
+    # de que Meta haya aprobado la plantilla, y hasta el 30-sep-2026 es gratis
+    # (desde el 1-oct Meta lo cobra a la misma tarifa que una utility). Sin
+    # dato de ventana NO se asume abierta: mejor plantilla que un rechazo.
+    if is_in_service_window(now_ms, data):
+        sent = await send_photo_message_to_session(
+            session_id,
+            media_id,
+            _ready_caption(reference),
+            image_url=photo.get("media_ref"),
+        )
+        if sent.ok:
+            channel, wa_message_id = "message", sent.wa_message_id
+        elif _WINDOW_CLOSED_CODE not in (sent.error or ""):
+            raise ApplicationError(
+                f"WhatsApp rechazó la foto del pedido: {sent.error}", non_retryable=True
+            )
+        # 131047: la ventana cerró entre la lectura y el envío → plantilla.
+
+    if channel == "template":
+        result = await send_template_to_session(
+            session_id,
+            READY_PHOTO_TEMPLATE,
+            {"order_reference": reference},
+            header_media_id=media_id,
+            header_image_url=photo.get("media_ref"),
+        )
+        wa_message_id = getattr(result, "wa_message_id", None)
+        # Reenvío de la MISMA foto dentro de la ventana de idempotencia de
+        # plantillas: devuelve el mismo wamid y a Meta no sale nada. No es un
+        # envío nuevo → ni otra entrada en el timeline ni otro sent_at.
+        if wa_message_id and wa_message_id == photo.get("last_wa_message_id"):
+            activity.logger.info("send_ready_photo: %s ya enviado (%s) — dedup", order_id, wa_message_id)
+            return {"sent": True, "wa_message_id": wa_message_id, "deduped": True}
 
     _update_photo(
         store, session_id, order_id, photo.get("uploaded_at_ms"),
         {
             "sent_at_ms": int(time.time() * 1000),
+            "sent_for_uploaded_at_ms": photo.get("uploaded_at_ms"),
+            "sent_via": channel,
             "last_wa_message_id": wa_message_id,
             "last_send_error": None,
         },
     )
-    _record_sent(store, session_id, order_id, reference)
-    activity.logger.info("send_ready_photo: foto de %s enviada a %s", order_id, session_id)
-    return {"sent": True, "wa_message_id": wa_message_id}
+    _record_sent(store, session_id, order_id, reference, channel)
+    activity.logger.info("send_ready_photo: foto de %s enviada a %s por %s", order_id, session_id, channel)
+    return {"sent": True, "wa_message_id": wa_message_id, "channel": channel}

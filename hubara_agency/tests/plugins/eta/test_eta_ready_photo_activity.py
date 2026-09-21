@@ -243,3 +243,105 @@ async def test_a_deduplicated_resend_is_not_recorded_as_a_new_send(
     assert result == {"sent": True, "wa_message_id": "wamid.P", "deduped": True}
     assert len(meta["eta_tracking"]["orders"][ORDER]["events"]) == 1
     assert meta["order_photos"][ORDER]["sent_at_ms"] == first_sent_at
+
+
+# ---------- ventana de servicio 24h: mensaje normal vs plantilla ----------
+
+OPEN_WINDOW = {"service_window_expires_at_ms": 9_999_999_999_999}
+
+
+@pytest.fixture
+def photo_message(monkeypatch):
+    send_msg = AsyncMock(return_value=OutboundResult(wa_message_id="wamid.M", ok=True))
+    monkeypatch.setattr(f"{MOD}.send_photo_message_to_session", send_msg)
+    return send_msg
+
+
+async def test_open_window_sends_a_normal_message_instead_of_the_template(
+    _isolate_vault_dir: Path, meta_fakes, photo_message
+):
+    """Cliente escribió en las últimas 24 h: la foto sale como mensaje normal
+    (no depende de la aprobación de la plantilla)."""
+    _, send_template = meta_fakes
+    _seed(_isolate_vault_dir, extra=OPEN_WINDOW)
+
+    result = await ActivityEnvironment().run(send_ready_photo_activity, SID, ORDER)
+
+    assert result["channel"] == "message"
+    send_template.assert_not_awaited()
+    args, kwargs = photo_message.await_args
+    assert args[:2] == (SID, "MEDIA_123")
+    assert "#31" in args[2]
+    assert kwargs["image_url"] == f"/api/dashboard/media/{SID}/out-order-abc.jpg"
+    event = _meta(_isolate_vault_dir)["eta_tracking"]["orders"][ORDER]["events"][-1]
+    assert "mensaje" in event["agent_msg"]
+
+
+async def test_the_message_says_the_same_as_the_approved_template(
+    _isolate_vault_dir: Path, meta_fakes, photo_message
+):
+    from src.platform.whatsapp.templates.registry import (
+        load_template_registry_from_yaml,
+        render_template_body,
+    )
+
+    _seed(_isolate_vault_dir, extra=OPEN_WINDOW)
+    await ActivityEnvironment().run(send_ready_photo_activity, SID, ORDER)
+
+    spec = load_template_registry_from_yaml()["order_ready_photo_utility_v1"]
+    assert photo_message.await_args.args[2] == render_template_body(spec, {"order_reference": "#31"})
+
+
+async def test_window_closed_meanwhile_falls_back_to_the_template(
+    _isolate_vault_dir: Path, meta_fakes, photo_message
+):
+    """La ventana cerró entre la lectura y el envío: Meta responde 131047 → plantilla."""
+    _, send_template = meta_fakes
+    photo_message.return_value = OutboundResult(
+        wa_message_id=None, ok=False, error='http_400: {"error":{"code":131047}}'
+    )
+    _seed(_isolate_vault_dir, extra=OPEN_WINDOW)
+
+    result = await ActivityEnvironment().run(send_ready_photo_activity, SID, ORDER)
+
+    assert result["channel"] == "template"
+    send_template.assert_awaited_once()
+
+
+async def test_other_rejection_of_the_message_is_reported(
+    _isolate_vault_dir: Path, meta_fakes, photo_message
+):
+    _, send_template = meta_fakes
+    photo_message.return_value = OutboundResult(
+        wa_message_id=None, ok=False, error='http_400: {"error":{"code":131026}}'
+    )
+    _seed(_isolate_vault_dir, extra=OPEN_WINDOW)
+
+    with pytest.raises(Exception):
+        await ActivityEnvironment().run(send_ready_photo_activity, SID, ORDER)
+
+    send_template.assert_not_awaited()
+    assert "131026" in _meta(_isolate_vault_dir)["order_photos"][ORDER]["last_send_error"]
+
+
+async def test_closed_window_uses_the_template(_isolate_vault_dir: Path, meta_fakes, photo_message):
+    _seed(_isolate_vault_dir, extra={"service_window_expires_at_ms": 1_000})
+
+    result = await ActivityEnvironment().run(send_ready_photo_activity, SID, ORDER)
+
+    assert result["channel"] == "template"
+    photo_message.assert_not_awaited()
+
+
+async def test_a_retry_right_after_a_normal_message_does_not_send_it_twice(
+    _isolate_vault_dir: Path, meta_fakes, photo_message
+):
+    """El mensaje normal no tiene la idempotencia de las plantillas: un reintento
+    a los segundos (o doble disparo listo + "Enviar ahora") no lo repite."""
+    _seed(_isolate_vault_dir, extra=OPEN_WINDOW)
+
+    await ActivityEnvironment().run(send_ready_photo_activity, SID, ORDER)
+    second = await ActivityEnvironment().run(send_ready_photo_activity, SID, ORDER)
+
+    assert photo_message.await_count == 1
+    assert second["deduped"] is True

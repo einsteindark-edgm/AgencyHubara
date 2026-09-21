@@ -438,6 +438,45 @@ async def send_image_to_session(
     return result
 
 
+async def send_photo_message_to_session(
+    session_id: str,
+    media_id: str,
+    caption: str,
+    *,
+    image_url: str | None = None,
+) -> OutboundResult:
+    """Foto + texto como mensaje NORMAL (no plantilla), para agentes.
+
+    Solo sirve DENTRO de la ventana de servicio 24h — fuera, Meta lo rechaza
+    (131047) y el caller cae a la plantilla. Envía con ``send_image_to_session``
+    (outbound log incluido) y, si Meta lo aceptó, deja el mensaje en el
+    historial del chat con la foto (``image_url``) y el ``wamid`` (destino de
+    las citas del cliente). El dashboard del operador NO usa esta: escribe su
+    propio evento humano.
+    """
+    result = await send_image_to_session(session_id, media_id=media_id, caption=caption)
+    if not result.ok:
+        return result
+    history_path = WORKSPACE_VAULT_DIR / session_id / "sessions" / f"{session_id}.jsonl"
+    try:
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        event: dict[str, Any] = {
+            "role": "assistant",
+            "content": caption,
+            "timestamp": _now_iso_utc(),
+        }
+        if image_url:
+            event["image_url"] = image_url
+        if result.wa_message_id:
+            event["wamid"] = result.wa_message_id
+        with history_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except OSError as e:
+        # El mensaje YA salió: perder el rastro es malo, pero no se re-envía.
+        log.warning("photo_message_history_persist_failed", session_id=session_id, error=str(e))
+    return result
+
+
 async def send_document_to_session(
     session_id: str,
     media_id: str,

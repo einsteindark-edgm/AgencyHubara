@@ -306,6 +306,9 @@ export type CustomerSummary = z.infer<typeof customerSummarySchema>;
 export const orderPhotoSchema = z.object({
   order_id: z.string(),
   has_conversation: z.boolean(),
+  /** Ventana de servicio 24h: abierta → la foto sale como mensaje normal;
+   *  cerrada → plantilla aprobada. null = sin conversación. */
+  service_window_open: z.boolean().nullable().optional(),
   photo: z
     .object({
       /** Ref relativa de nuestro API: pasarla por `apiFileUrl` para `<img>`. */
