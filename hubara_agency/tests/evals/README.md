@@ -51,7 +51,7 @@ real. **El fallo de prod se convirtió en test de regresión.**
 
 | Env | Default | Qué |
 |---|---|---|
-| `EVAL_JUDGE_MODEL` | `litellm_proxy/gemini-backup` | alias del proxy litellm para el juez (≠ modelo del agente → evita self-preference) |
+| `EVAL_JUDGE_MODEL` | `litellm_proxy/gemini-pro-judge` | alias del proxy litellm para el juez (≠ modelo del agente → evita self-preference). Default real: `_DEFAULT_JUDGE_MODEL` en `sales_eval/evals/judge.py`. NO usar `gemini-backup`: es el fallback del propio agente. El juez es un id `-preview` a propósito, con excepción FECHADA en `tests/platform/test_litellm_model_ids_stable.py` (vence y obliga a re-mirar la tabla de deprecations) |
 | `EVAL_CANDIDATES_DIR` | `tests/evals/goldens/sales/_candidates` | dónde se escriben candidatos (en prod: path montado durable) |
 | `SALES_EVAL_SCHEDULE_ENABLED` | `true` | off-switch del cron |
 | `SALES_EVAL_SCHEDULE_CRON` | `0 8,14,20 * * *` | cron (tz America/Bogota) |

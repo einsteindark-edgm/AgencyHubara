@@ -155,6 +155,30 @@ jobs:
           OTEL_SDK_DISABLED: "true"
         run: uv run pytest tests/plugins/test_premortem_invariants.py -q
 
+      - name: Guards del proxy LLM (ids upstream revisados + thinking + multimodal + resumen)
+        # `tests/platform/` NO corre completo acá (cuelga con los dummies de Medusa),
+        # así que los guards que cargan el `litellm_config.yaml` REAL se nombran uno
+        # por uno: sin este step solo valían en la máquina de quien corriera la suite.
+        # Son YAML/JSON + un litellm.Router contra servidores HTTP en loopback: no
+        # salen a internet ni piden keys.
+        # OJO: test_litellm_model_ids_stable.py tiene VENCIMIENTOS fechados a
+        # propósito (permisos de ids `-preview`, avisos de apagado). Si se pone rojo
+        # por fecha, el mensaje dice qué tabla del proveedor mirar y qué fechas
+        # mover — son 2 minutos, y es justo el recordatorio que faltó (lección L-23).
+        if: needs.changes.outputs.central == 'true'
+        working-directory: hubara_agency
+        env:
+          MEDUSA_BASE_URL: http://medusa.invalid
+          MEDUSA_ADMIN_TOKEN: ci-dummy
+          OTEL_SDK_DISABLED: "true"
+        run: >-
+          uv run pytest
+          tests/platform/test_litellm_model_ids_stable.py
+          tests/platform/test_llm_thinking_disabled.py
+          tests/platform/test_multimodal_via_proxy.py
+          tests/platform/customer_scoring/test_llm_summary.py
+          -q
+
       - name: PR solo de GraphAgents — central no aplica
         if: needs.changes.outputs.central != 'true'
         run: echo "El PR es exclusivamente de GraphAgents/. Las gates del central no aplican; su CI es graphagents-gates.yml."
