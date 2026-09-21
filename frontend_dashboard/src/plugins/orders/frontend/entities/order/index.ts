@@ -13,6 +13,7 @@ export type {
 export {
   ORDER_STATUS_META,
   PAY_STATUS_META,
+  countsInStats,
   isCollectedRevenue,
   orderDayIso,
 } from "./model";
@@ -29,6 +30,7 @@ export {
   useConfirmOrderPayment,
   useReverseOrderPayment,
   useCancelOrder,
+  useSetTestOrder,
   useCustomerScore,
   useGenerateCustomerSummary,
   useOrderPhoto,

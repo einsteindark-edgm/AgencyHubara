@@ -142,6 +142,9 @@ class OrderSummaryDTO:
     agent: str             # "—" si no hay
     created_at_ms: int     # ISO datetime de Medusa → ms epoch
     updated_at_ms: int
+    # Pedido de prueba (`metadata.hubara_test_order`): visible, pero fuera de
+    # toda estadística y de los eventos a Meta.
+    is_test: bool = False
 
 
 @dataclass(frozen=True)

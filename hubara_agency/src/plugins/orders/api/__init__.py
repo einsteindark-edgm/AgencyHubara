@@ -47,6 +47,7 @@ from src.platform.orders.command_port import (
     ConfirmPaymentCommand,
     ReversePaymentCommand,
     ScheduleDeliveryCommand,
+    SetTestOrderCommand,
     TransitionStageCommand,
 )
 from src.platform.orders.composition import (
@@ -545,6 +546,30 @@ async def cancel_order_endpoint(
     # Cancelación: el Agente ETA avisa al cliente (si la sesión sigue en ruta eta).
     if result.success and result.current_stage:
         _spawn_emit(order_id, result.current_stage)
+    if result.success:
+        _publish_orders_changed(order_id)
+    return _serialize_command_result(result)
+
+
+@router.patch("/orders/{order_id}/test-order")
+async def set_test_order_endpoint(
+    order_id: str = Path(..., min_length=1, max_length=200),
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Marcar / desmarcar el pedido como "prueba".
+
+    Body `{"is_test": true|false, "by": "string"}`. `is_test` es obligatorio
+    y booleano (422 si no): nunca se cambia la marca por omisión. La marca
+    vive en Medusa (`hubara_test_order`); el pedido sigue visible pero sale
+    de todos los totales (Orders, Ads, campañas) y no manda eventos a Meta.
+    """
+    is_test = body.get("is_test")
+    if not isinstance(is_test, bool):
+        raise HTTPException(status_code=422, detail="is_test debe ser true o false")
+    by = body.get("by") if isinstance(body.get("by"), str) else "human"
+    cmd = SetTestOrderCommand(order_id=order_id, is_test=is_test, by=by)
+    port = get_order_command_port()
+    result = await port.set_test_order(cmd)
     if result.success:
         _publish_orders_changed(order_id)
     return _serialize_command_result(result)

@@ -57,6 +57,9 @@ export interface Order {
   priority: "alta" | "normal" | "baja";
   // Nuevos: meta del backend para que la UI sepa cuándo pintar markers.
   isDraft: boolean;
+  /** Marcado "prueba" en el inspector: sigue en el tablero pero NO cuenta en
+   *  ningún número (ver `countsInStats`). */
+  isTest?: boolean;
   isDueEstimated: boolean; // true cuando dueIso es estimate (created+1d)
   /** Día de creación YYYY-MM-DD en America/Bogota ("" si el backend no lo
    *  mandó). Ubica en el calendario a las órdenes sin entrega agendada. */
@@ -73,9 +76,18 @@ export function orderDayIso(o: Pick<Order, "dueIso" | "createdIso">): string {
   return o.dueIso || o.createdIso;
 }
 
-/** Ingreso = plata que YA entró: columna "Entregada" y pago "Pagado". */
-export function isCollectedRevenue(o: Pick<Order, "status" | "payStatus">): boolean {
-  return o.status === "delivered" && o.payStatus === "paid";
+/** ¿La orden entra en los números de la pantalla? Un pedido de prueba no:
+ *  ni contadores, ni KPIs, ni totales de columna, ni ingresos. */
+export function countsInStats(o: Pick<Order, "isTest">): boolean {
+  return !o.isTest;
+}
+
+/** Ingreso = plata que YA entró: columna "Entregada" y pago "Pagado" (y no
+ *  es un pedido de prueba). */
+export function isCollectedRevenue(
+  o: Pick<Order, "status" | "payStatus" | "isTest">,
+): boolean {
+  return o.status === "delivered" && o.payStatus === "paid" && countsInStats(o);
 }
 
 export interface OrderStatusMeta {

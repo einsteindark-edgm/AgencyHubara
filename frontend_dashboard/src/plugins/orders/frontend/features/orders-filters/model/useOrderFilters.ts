@@ -10,6 +10,9 @@
  *     resumen del período, no de la columna que se está mirando).
  *   - `filtered` = kpiScope + vista → kanban.
  *
+ * Los pedidos de prueba quedan en `filtered` (el kanban los muestra con su
+ * etiqueta) pero NO en `scoped` ni `kpiScope`: no cuentan en ningún número.
+ *
  * Las vistas por fecha cortan el día en hora COLOMBIA, igual que los
  * contadores de la sidebar (`OrdersFilters`): `dueIso` es un día calendario
  * que el operador eligió a mano, no un instante.
@@ -27,6 +30,7 @@ import {
   type DateRange,
 } from "@/shared/lib";
 import {
+  countsInStats,
   orderDayIso,
   type Order,
   type PayType,
@@ -60,7 +64,7 @@ export function useOrderFilters(orders: Order[]) {
   /** Órdenes que coinciden con la búsqueda y el rango — sin vista ni
    *  modalidad. Es la base de los contadores de la sidebar: así dicen en qué
    *  vista quedó lo buscado/el período en vez de seguir contando todo. */
-  const scoped = useMemo(
+  const scopedWithTests = useMemo(
     () =>
       orders.filter(
         (o) => matchesOrder(o, query) && isInDateRange(orderDayIso(o), dateRange),
@@ -68,10 +72,16 @@ export function useOrderFilters(orders: Order[]) {
     [orders, query, dateRange],
   );
 
-  const kpiScope = useMemo(
-    () => (payType === "all" ? scoped : scoped.filter((o) => o.payType === payType)),
-    [scoped, payType],
+  const boardScope = useMemo(
+    () =>
+      payType === "all"
+        ? scopedWithTests
+        : scopedWithTests.filter((o) => o.payType === payType),
+    [scopedWithTests, payType],
   );
+
+  const scoped = useMemo(() => scopedWithTests.filter(countsInStats), [scopedWithTests]);
+  const kpiScope = useMemo(() => boardScope.filter(countsInStats), [boardScope]);
 
   /** Días con al menos una orden — el calendario los marca con un punto. Sobre
    *  TODAS las órdenes: si dependiera del rango, al elegir un día se apagarían
@@ -97,7 +107,7 @@ export function useOrderFilters(orders: Order[]) {
     // Esta semana = próximos 7 días incluyendo hoy. Un Set no sirve de dep:
     // se arma acá y se rehace cada vez que cambia `today`.
     const weekIsos = nextDaysBogotaIsoSet(7);
-    return kpiScope.filter((o) => {
+    return boardScope.filter((o) => {
       // "No agendadas" = órdenes sin fecha de entrega asignada — típicamente
       // las que también viven en la columna "Nueva" del kanban porque el
       // operador todavía no las agendó.
@@ -114,7 +124,7 @@ export function useOrderFilters(orders: Order[]) {
       if (view === "ship")     return o.status === "shipping";
       return true;
     });
-  }, [kpiScope, view, today, tomorrow]);
+  }, [boardScope, view, today, tomorrow]);
 
   return {
     query,

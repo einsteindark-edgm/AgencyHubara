@@ -147,8 +147,17 @@ y moneda de un pedido se leen de `OrderFacts`**. El vault guarda el *vínculo*
 - *Degradación honesta:* si Medusa no responde, se sirve el último valor con
   `stale=True`. Un id nunca visto queda en `unresolved` y el lector usa su
   copia congelada. `snapshot.revenue_cop(order_id, frozen_total=...)`
-  encapsula la regla de "venta cerrada": pagado y no cancelado, con el total
-  vivo.
+  encapsula la regla de "venta cerrada": pagado, no cancelado y no de prueba,
+  con el total vivo.
+- *Pedido de prueba (2026-09-21):* el operador lo marca en el inspector de
+  Órdenes (`PATCH /api/orders/orders/{id}/test-order`). La marca vive **solo**
+  en la metadata de Medusa (`hubara_test_order`) y `OrderFacts.is_test` la
+  espeja: `counts_as_revenue` da False, `ads/sales_join` lo excluye, los
+  eventos CAPI de etapa y el `Purchase` de confirmar pago no salen, y al marcar
+  se descartan del outbox del chat los eventos de ese pedido aún no enviados
+  (los ya enviados Meta no los retracta). Limitación conocida: con Medusa
+  caído, un id `unresolved` usa la copia congelada del vault, que no conoce
+  la marca.
 - *Fake oficial:* `InMemoryOrderFacts` (`available=False` simula Medusa
   caído). La contract suite corre contra ambos.
 

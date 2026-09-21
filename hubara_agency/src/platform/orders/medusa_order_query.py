@@ -59,6 +59,7 @@ from src.platform.orders.state import (  # noqa: F401 (re-exposed via module use
     META_KEY_SCHEDULED_DELIVERY_ISO,
     META_KEY_SCHEDULED_DELIVERY_TIME,
     META_KEY_STAGE,
+    META_KEY_TEST_ORDER,
     STAGE_VALUES,
     read_stage,
 )
@@ -89,6 +90,8 @@ _EVENT_LABELS: dict[str, str] = {
     "payment_confirmed": "Pago confirmado",
     "payment_reversed": "Pago reversado",
     "schedule_updated": "Reagendado",
+    "test_order_marked": "Marcado como prueba",
+    "test_order_unmarked": "Ya no es prueba",
 }
 
 
@@ -456,6 +459,7 @@ class MedusaOrderQuery:
             agent=agent,
             created_at_ms=created_at_ms,
             updated_at_ms=updated_at_ms,
+            is_test=metadata.get(META_KEY_TEST_ORDER) is True,
         )
 
     def _build_detail(

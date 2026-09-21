@@ -10,6 +10,7 @@
 import { useMemo, useState } from "react";
 import {
   ORDER_STATUS_META,
+  countsInStats,
   isCollectedRevenue,
   orderDayIso,
   useTransitionOrderStage,
@@ -121,7 +122,10 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
   return (
     <div className="kanban">
       {grouped.map(({ status, meta, list }) => {
-        const total = list.reduce((a, b) => a + b.total, 0);
+        // Contador y total de la columna: solo pedidos reales (las cards de
+        // prueba se ven, pero no suman).
+        const counted = list.filter(countsInStats);
+        const total = counted.reduce((a, b) => a + b.total, 0);
         const isHover = dropTarget === status;
         return (
           <div
@@ -153,7 +157,7 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
             <div className="kcol-h">
               <span className="kc-dot" style={{ background: meta.color }} />
               <span className="kc-l">{meta.label}</span>
-              <span className="kc-n">{list.length}</span>
+              <span className="kc-n">{counted.length}</span>
               <span className="kc-t">{fmtMoney(total, true)}</span>
             </div>
             <div className="kcol-body">
@@ -270,7 +274,12 @@ interface CardProps {
 function Card({ order, selected, onSelect }: CardProps) {
   return (
     <div
-      className={"kcard" + (selected ? " sel" : "") + (order.isDraft ? " is-draft" : "")}
+      className={
+        "kcard" +
+        (selected ? " sel" : "") +
+        (order.isDraft ? " is-draft" : "") +
+        (order.isTest ? " is-test" : "")
+      }
       onClick={() => onSelect(order.id)}
       // Drag and drop nativo HTML5 — sin deps externas.
       // Cards en columnas terminales (delivered, cancelled) NO son draggable
@@ -282,15 +291,35 @@ function Card({ order, selected, onSelect }: CardProps) {
       }}
       // Premortem A2: borde lateral visible para distinguir Draft Orders
       // (cliente confirmó pero operador no procesó) de orders ya activas.
-      style={
-        order.isDraft
-          ? { borderLeft: "3px solid var(--color-violet)", cursor: "grab" }
-          : { cursor: "grab" }
-      }
+      // Pedido de prueba: atenuado — se ve, pero no es una venta.
+      style={{
+        cursor: "grab",
+        ...(order.isDraft ? { borderLeft: "3px solid var(--color-violet)" } : {}),
+        ...(order.isTest ? { opacity: 0.55 } : {}),
+      }}
     >
       <div className="kc-top">
         <span className="oid">
           {order.id}
+          {order.isTest && (
+            <span
+              style={{
+                marginLeft: 6,
+                fontSize: 8,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: 0.4,
+                padding: "1px 5px",
+                borderRadius: 3,
+                background: "var(--color-neutral-soft)",
+                color: "var(--color-neutral)",
+                verticalAlign: "middle",
+              }}
+              title="Pedido de prueba — no cuenta en los totales ni se reporta a Meta."
+            >
+              Prueba
+            </span>
+          )}
           {/* Etiqueta "Pendiente agendar" para drafts en stage `new` —
               señaliza al operador que tiene que entrar al inspector y
               poner fecha + nota antes que la card avance al kanban. */}
@@ -417,7 +446,10 @@ export function OrdersHeader({
       // canceladas. La cancelada vive en su columna del kanban pero NO
       // contamina las métricas de productividad (today/overdue/inProc/etc).
       // Las canceladas tienen su propio counter por columna en el kanban.
-      const active = orders.filter((o) => o.status !== "cancelled");
+      // Los pedidos de prueba tampoco (defensa: la página ya los saca).
+      const active = orders.filter(
+        (o) => o.status !== "cancelled" && countsInStats(o),
+      );
       // "Para hoy" = órdenes ACTIVAS con fecha de entrega EXACTAMENTE hoy.
       const todayCount = active.filter(
         (o) => !!o.dueIso && o.dueIso === today,

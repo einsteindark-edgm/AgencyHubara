@@ -69,6 +69,8 @@ META_KEY_PAYMENT_REVERSED_AT_MS = "hubara_payment_reversed_at_ms"
 META_KEY_PAYMENT_REVERSED_BY = "hubara_payment_reversed_by"
 META_KEY_PAYMENT_REVERSED_REASON = "hubara_payment_reversed_reason"
 META_KEY_CANCELLED_REASON = "hubara_cancelled_reason"
+# Pedido de prueba: no cuenta en estadísticas ni manda eventos a Meta.
+META_KEY_TEST_ORDER = "hubara_test_order"
 
 
 class InvalidStageTransitionError(ValueError):
@@ -429,3 +431,32 @@ def build_cancel_patch(
     if reason:
         patch[META_KEY_CANCELLED_REASON] = reason
     return patch
+
+
+def build_test_order_patch(
+    metadata: dict[str, Any] | None,
+    *,
+    is_test: bool,
+    by: str = "human",
+    now_ms: int | None = None,
+) -> dict[str, Any]:
+    """Patch para marcar/desmarcar el pedido como "prueba".
+
+    Idempotente: si la marca ya tiene ese valor devuelve {}. Desmarcar
+    escribe `False` (no borra): el merge-patch de Medusa conserva las keys
+    ausentes. NO transiciona stage — la marca es ortogonal al pipeline.
+    """
+    current_metadata = metadata or {}
+    if (current_metadata.get(META_KEY_TEST_ORDER) is True) == is_test:
+        return {}
+    ts_ms = now_ms if now_ms is not None else int(time.time() * 1000)
+    stage = read_stage(current_metadata)
+    history = list(current_metadata.get(META_KEY_HISTORY) or [])
+    history.append({
+        "from": stage,
+        "to": stage,
+        "at_ms": ts_ms,
+        "by": by,
+        "event": "test_order_marked" if is_test else "test_order_unmarked",
+    })
+    return {META_KEY_TEST_ORDER: is_test, META_KEY_HISTORY: history}

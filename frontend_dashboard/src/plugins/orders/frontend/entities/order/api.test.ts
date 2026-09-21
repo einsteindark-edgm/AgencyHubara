@@ -82,6 +82,19 @@ describe("toLegacyOrder", () => {
     expect(o.createdIso).toBe("2026-09-10");
   });
 
+  // Pedido de prueba: la marca vive en Medusa (`hubara_test_order`) y el
+  // backend la expone como `is_test`. Backend viejo sin el campo → no es prueba.
+  it("maps is_test → isTest, defaulting to false when the backend omits it", () => {
+    expect(toLegacyOrder({ ...sampleSummary, is_test: true }).isTest).toBe(true);
+    const legacy: Record<string, unknown> = { ...sampleSummary };
+    delete legacy.is_test;
+    const parsed = orderListResponseSchema.parse({
+      orders: [legacy], count: 1, offset: 0, limit: 50,
+      catalog_available: true, error_detail: null,
+    });
+    expect(toLegacyOrder(parsed.orders[0]).isTest).toBe(false);
+  });
+
   it("marks draft orders explicitly", () => {
     const o = toLegacyOrder({ ...sampleSummary, is_draft: true });
     expect(o.isDraft).toBe(true);

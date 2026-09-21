@@ -20,6 +20,7 @@ import { OrdersInspector } from "@plugins/orders/frontend/features/orders-inspec
 import { VaultOrdersBanner } from "@plugins/orders/frontend/features/orders-vault-reconciliation";
 
 import {
+  countsInStats,
   useOrders,
   useOrdersEvents,
   useVaultOrders,
@@ -40,8 +41,10 @@ export function OrdersSection() {
   // Subtítulo "X órdenes · Y en valor" del header solo cuenta órdenes activas
   // (excluye canceladas). El kanban sigue mostrando la columna "Cancelada"
   // con sus cards — los counters reflejan productividad operacional, no
-  // inventory total. Bug fix 2026-05-26.
-  const filteredActive = f.filtered.filter((o) => o.status !== "cancelled");
+  // inventory total. Bug fix 2026-05-26. Los pedidos de prueba tampoco cuentan.
+  const filteredActive = f.filtered.filter(
+    (o) => o.status !== "cancelled" && countsInStats(o),
+  );
   const filteredActiveCount = filteredActive.length;
   const filteredActiveTotal = filteredActive.reduce((a, b) => a + b.total, 0);
   const selected = orders.find((o) => o.id === selectedOrderId) ?? null;
