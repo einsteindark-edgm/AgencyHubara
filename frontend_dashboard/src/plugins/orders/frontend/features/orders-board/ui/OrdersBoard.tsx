@@ -18,6 +18,7 @@ import { Avatar, Icon, MacButton } from "@/shared/ui";
 import { dayChipShort, fmtMoney, todayBogotaIso } from "@/shared/lib";
 
 import { skipNote, skippedStages } from "../model/stageSkip";
+import { ReadyPhotoModal } from "./ReadyPhotoModal";
 import { SkipStagesModal } from "./SkipStagesModal";
 import { TrackingLinkModal } from "./TrackingLinkModal";
 
@@ -52,6 +53,9 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
   // Drop que se salta columnas (ej. preparación → entregada): confirmamos el
   // salto y si se avisa o no al cliente antes de mover.
   const [pendingSkip, setPendingSkip] = useState<PendingSkip | null>(null);
+  // Drop en "Lista": antes de mover pedimos (opcionalmente) la foto del
+  // pedido — el Agente ETA se la manda al cliente al pasar a Lista.
+  const [pendingReady, setPendingReady] = useState<string | null>(null);
 
   const grouped = useMemo(() => {
     return COLUMNS.map((status) => ({
@@ -77,6 +81,10 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
     }
     if (toStage === "shipping") {
       setPendingShip(orderId);
+      return;
+    }
+    if (toStage === "ready") {
+      setPendingReady(orderId);
       return;
     }
     runTransition({ orderId, to_stage: toStage });
@@ -163,6 +171,18 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
             const orderId = pendingShip;
             setPendingShip(null);
             runTransition({ orderId, to_stage: "shipping", tracking_url: url ?? undefined });
+          }}
+        />
+      )}
+      {pendingReady && (
+        <ReadyPhotoModal
+          orderId={pendingReady}
+          busy={transition.isPending}
+          onCancel={() => setPendingReady(null)}
+          onConfirm={() => {
+            const orderId = pendingReady;
+            setPendingReady(null);
+            runTransition({ orderId, to_stage: "ready" });
           }}
         />
       )}

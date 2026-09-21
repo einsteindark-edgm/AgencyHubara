@@ -69,6 +69,10 @@ class TemplateSpec:
     #: `infra/whatsapp-provisioning/definitions/templates.json`). Lo usa el
     #: dashboard para previsualizar y para pintar en el chat lo que se envió.
     body: str | None = None
+    #: Encabezado multimedia aprobado en Meta (`"image"`) o None (sin
+    #: encabezado). La foto NO es fija: se elige en cada envío (media_id), así
+    #: la plantilla de pedido listo lleva la foto real del pedido.
+    header_format: str | None = None
 
 
 # =============================================================================
@@ -116,6 +120,9 @@ _VALID_CATEGORIES: frozenset[str] = frozenset(
     {"utility", "marketing", "authentication"}
 )
 
+#: Encabezados multimedia soportados por el builder. Solo imagen por ahora.
+_VALID_HEADER_FORMATS: frozenset[str] = frozenset({"image"})
+
 
 def _build_template_spec_from_dict(entry: dict[str, Any]) -> TemplateSpec:
     required = (
@@ -151,6 +158,13 @@ def _build_template_spec_from_dict(entry: dict[str, Any]) -> TemplateSpec:
             "for the LLM or the cadence workflow, never the watchdog."
         )
 
+    header_format = entry.get("header_format")
+    if header_format is not None and header_format not in _VALID_HEADER_FORMATS:
+        raise ValueError(
+            f"Invalid header_format {header_format!r} for template {entry['name']!r}. "
+            f"Valid: {sorted(_VALID_HEADER_FORMATS)}"
+        )
+
     variables_raw = entry["variables"]
     if not isinstance(variables_raw, list):
         raise ValueError(
@@ -183,6 +197,7 @@ def _build_template_spec_from_dict(entry: dict[str, Any]) -> TemplateSpec:
         requires_episode_stage=entry.get("requires_episode_stage"),
         variables=tuple(variables),
         body=entry.get("body"),
+        header_format=header_format,
     )
 
 

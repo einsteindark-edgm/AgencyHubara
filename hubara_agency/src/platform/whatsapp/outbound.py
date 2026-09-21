@@ -586,8 +586,13 @@ def build_template_message(
     to: str,
     spec: TemplateSpec,
     variables: dict[str, str],
+    *,
+    header_media_id: str | None = None,
 ) -> dict[str, Any]:
     """Construye el payload Meta para enviar un template aprobado.
+
+    `header_media_id`: foto del encabezado (ya subida a Meta) para templates con
+    `header_format == "image"` — obligatoria en esos, prohibida en el resto.
 
     Shape Meta Cloud API:
         {
@@ -628,6 +633,17 @@ def build_template_message(
             f"Template {spec.name!r} variables invalid: {'; '.join(errors)}"
         )
 
+    # Encabezado IMAGE: la foto viaja por media_id en cada envío. Sin foto Meta
+    # rechaza el template; con foto en un template sin encabezado, también.
+    if spec.header_format == "image" and not header_media_id:
+        raise ValueError(
+            f"Template {spec.name!r} lleva foto en el encabezado: falta header_media_id"
+        )
+    if spec.header_format is None and header_media_id:
+        raise ValueError(
+            f"Template {spec.name!r} no tiene encabezado de imagen: no admite header_media_id"
+        )
+
     # Construir parameters EN EL ORDEN DECLARADO POR spec.variables.
     # Meta los usa posicionalmente como {{1}}, {{2}}, ...
     parameters = [
@@ -638,12 +654,20 @@ def build_template_message(
         "name": spec.waba_template_name,
         "language": {"code": spec.language},
     }
+    components: list[dict[str, Any]] = []
+    if header_media_id:
+        components.append(
+            {
+                "type": "header",
+                "parameters": [{"type": "image", "image": {"id": header_media_id}}],
+            }
+        )
     if parameters:
-        # Si el template no tiene variables (raro pero posible), Meta acepta
-        # template sin `components`.
-        template_payload["components"] = [
-            {"type": "body", "parameters": parameters}
-        ]
+        components.append({"type": "body", "parameters": parameters})
+    if components:
+        # Si el template no tiene variables ni encabezado (raro pero posible),
+        # Meta acepta template sin `components`.
+        template_payload["components"] = components
 
     return {
         "messaging_product": "whatsapp",

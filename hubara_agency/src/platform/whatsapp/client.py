@@ -391,17 +391,22 @@ async def send_template(
     to: str,
     spec: Any,  # TemplateSpec — forward typing por evitar import cycle
     variables: dict[str, str],
+    *,
+    header_media_id: str | None = None,
 ) -> wa_dtos.OutboundResult:
     """Envía un template aprobado por Meta.
 
     Construye el payload con `outbound.build_template_message` (que valida
     variables vs spec) y POST a la Cloud API. Templates NO aceptan
     `reply_to_message_id` — son business-initiated, no replies.
+    `header_media_id` es la foto del encabezado (templates `header_format=image`).
 
     El `OutboundResult` retornado tiene `wa_message_id` para correlación
     con el webhook `message_status` que después trae `pricing` + cost.
     """
-    data = wa_outbound.build_template_message(to, spec, variables)
+    data = wa_outbound.build_template_message(
+        to, spec, variables, header_media_id=header_media_id
+    )
     return await _post_json(phone_number_id, data, label="template")
 
 

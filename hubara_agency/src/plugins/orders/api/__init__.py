@@ -25,11 +25,14 @@ import asyncio
 import json
 import logging
 import re
+import time
+import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Path, Query
+from fastapi import APIRouter, Body, File, HTTPException, Path, Query, UploadFile
+from fastapi.responses import FileResponse
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.customer_scoring.composition import (
@@ -61,6 +64,13 @@ from src.platform.orders.state import STAGE_VALUES
 from src.platform.state import FilesystemMetadataStore
 from src.plugins.orders.vault_scanner import scan_vault_orders
 from src.sdk.dashboardkit import get_dashboard_event_bus
+from src.sdk.messagingkit import is_in_service_window
+from src.sdk.mediakit import (
+    delete_outbound_image,
+    is_safe_segment,
+    media_url_for,
+    persist_outbound_image,
+)
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -630,6 +640,247 @@ def _spawn_emit(
     )
     _emit_tasks.add(task)
     task.add_done_callback(_emit_tasks.discard)
+
+
+# ── Foto del pedido (panel derecho de Órdenes → la manda el ETA) ─────────
+#
+# La foto vive en la conversación del cliente — ``<vault>/<session>/media/`` +
+# ``metadata.order_photos[<order_id backend>]`` — porque ahí la lee el ETA (otro
+# contenedor, mismo vault) al pasar el pedido a "listo". Se guardan los BYTES:
+# el media_id de Meta vence y el ETA lo pide al enviar.
+
+#: Límite de Meta para imágenes (encabezado de plantilla incluido).
+_ORDER_PHOTO_MAX_BYTES = 5 * 1024 * 1024
+#: Tipos que WhatsApp acepta como encabezado IMAGE → firma de sus bytes.
+_ORDER_PHOTO_SIGNATURES = {"image/jpeg": b"\xff\xd8\xff", "image/png": b"\x89PNG\r\n\x1a\n"}
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+async def _order_owner(order_id: str) -> tuple[str, str | None]:
+    """``(id backend, sesión WhatsApp | None)`` del pedido (acepta ``#31``). 404
+    si Medusa no lo conoce. Misma resolución de sesión que el emisor ETA."""
+    detail = await get_order_query_port().get(order_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"Pedido {order_id!r} no encontrado.")
+    phone = None
+    if detail.shipping_address is not None:
+        phone = detail.shipping_address.phone
+    session_id = await _resolve_session_for_order(
+        backend_order_id=detail.summary.id,
+        shipping_phone=phone or detail.summary.phone,
+        vault_dir=WORKSPACE_VAULT_DIR,
+    )
+    return detail.summary.id, session_id
+
+
+def _session_metadata(session_id: str) -> dict[str, Any]:
+    try:
+        data = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
+    except Exception:  # noqa: BLE001 — sesión sin metadata = sin foto
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _photo_in(data: dict[str, Any], backend_id: str) -> dict[str, Any] | None:
+    photos = data.get("order_photos")
+    entry = photos.get(backend_id) if isinstance(photos, dict) else None
+    return entry if isinstance(entry, dict) and entry.get("filename") else None
+
+
+def _order_photo_entry(session_id: str, backend_id: str) -> dict[str, Any] | None:
+    return _photo_in(_session_metadata(session_id), backend_id)
+
+
+def _order_photo_payload(backend_id: str, session_id: str | None) -> dict[str, Any]:
+    data = _session_metadata(session_id) if session_id else {}
+    entry = _photo_in(data, backend_id) if session_id else None
+    photo = None
+    if entry is not None:
+        photo = {
+            # `?v=` rompe la caché del <img> al reemplazar la foto.
+            "file_url": (
+                f"/api/orders/order-photos/{session_id}/{backend_id}"
+                f"?v={entry.get('uploaded_at_ms', 0)}"
+            ),
+            "uploaded_at_ms": entry.get("uploaded_at_ms"),
+            "sent_at_ms": entry.get("sent_at_ms"),
+            # Lo deja el ETA si Meta rechazó el último envío (p.ej. plantilla
+            # sin aprobar): el envío corre lejos del clic del operador.
+            "last_error": entry.get("last_send_error"),
+        }
+    return {
+        "order_id": backend_id,
+        "photo": photo,
+        "has_conversation": session_id is not None,
+        # Ventana 24h abierta → el ETA manda la foto como mensaje normal;
+        # cerrada (o sin dato) → plantilla. El modal de "Listo" lo muestra.
+        "service_window_open": (
+            is_in_service_window(int(time.time() * 1000), data) if session_id else None
+        ),
+    }
+
+
+def _require_conversation(session_id: str | None) -> str:
+    if session_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "El pedido no está ligado a una conversación de WhatsApp: no hay "
+                "a quién mandarle la foto."
+            ),
+        )
+    return session_id
+
+
+@router.get("/orders/{order_id}/photo")
+async def get_order_photo(
+    order_id: str = Path(..., min_length=1, max_length=200),
+) -> dict[str, Any]:
+    """Foto del pedido listo que subió el operador (o ``photo: null``)."""
+    backend_id, session_id = await _order_owner(order_id)
+    return _order_photo_payload(backend_id, session_id)
+
+
+@router.put("/orders/{order_id}/photo")
+async def upload_order_photo(
+    order_id: str = Path(..., min_length=1, max_length=200),
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    """Sube (o reemplaza) la foto del pedido. JPEG/PNG ≤ 5 MB — lo que WhatsApp
+    acepta como encabezado de plantilla. Al pasar el pedido a "listo" el ETA la
+    manda al cliente con ``order_ready_photo_utility_v1``."""
+    backend_id, session_id = await _order_owner(order_id)
+    session_id = _require_conversation(session_id)
+
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    signature = _ORDER_PHOTO_SIGNATURES.get(mime)
+    if signature is None:
+        raise HTTPException(status_code=415, detail="La foto tiene que ser JPEG o PNG.")
+    if file.size is not None and file.size > _ORDER_PHOTO_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="La foto pesa más de 5 MB.")
+    content = await file.read()
+    if len(content) > _ORDER_PHOTO_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="La foto pesa más de 5 MB.")
+    if not content.startswith(signature):
+        raise HTTPException(status_code=415, detail="Los bytes no son una foto JPEG/PNG válida.")
+
+    token = f"order-{backend_id}-{uuid.uuid4().hex[:12]}"
+    filename = persist_outbound_image(session_id, content, mime, token=token)
+    now_ms = int(time.time() * 1000)
+    replaced: list[str] = []
+
+    def _apply(fresh: dict) -> dict | None:
+        if not fresh:
+            return None  # metadata ilegible: no pisar la sesión
+        photos = fresh.setdefault("order_photos", {})
+        old = photos.get(backend_id)
+        if isinstance(old, dict) and isinstance(old.get("filename"), str):
+            replaced.append(old["filename"])
+        photos[backend_id] = {
+            "filename": filename,
+            "media_ref": media_url_for(session_id, filename),
+            "mime": mime,
+            "uploaded_at_ms": now_ms,
+        }
+        return fresh
+
+    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, _apply)
+    if _order_photo_entry(session_id, backend_id) is None:
+        delete_outbound_image(session_id, filename)
+        raise HTTPException(status_code=409, detail="No se pudo guardar la foto; reintenta.")
+    for old_filename in replaced:
+        if old_filename != filename:
+            delete_outbound_image(session_id, old_filename)
+    _publish_orders_changed(backend_id)
+    log.info("order_photo: foto subida order=%s session=%s", backend_id, session_id)
+    return _order_photo_payload(backend_id, session_id)
+
+
+@router.delete("/orders/{order_id}/photo")
+async def delete_order_photo(
+    order_id: str = Path(..., min_length=1, max_length=200),
+) -> dict[str, Any]:
+    backend_id, session_id = await _order_owner(order_id)
+    if session_id is None:
+        return _order_photo_payload(backend_id, None)
+    removed: list[str] = []
+
+    def _apply(fresh: dict) -> dict | None:
+        photos = fresh.get("order_photos") if fresh else None
+        if not isinstance(photos, dict) or backend_id not in photos:
+            return None
+        old = photos.pop(backend_id)
+        if isinstance(old, dict) and isinstance(old.get("filename"), str):
+            removed.append(old["filename"])
+        return fresh
+
+    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, _apply)
+    for filename in removed:
+        delete_outbound_image(session_id, filename)
+    _publish_orders_changed(backend_id)
+    return _order_photo_payload(backend_id, session_id)
+
+
+@router.get("/order-photos/{session_id}/{backend_id}")
+async def get_order_photo_file(session_id: str, backend_id: str) -> FileResponse:
+    """Sirve la foto al panel (``<img>`` con el token por query, como la media
+    del chat). Keyed por sesión: no consulta Medusa en cada carga."""
+    if not (is_safe_segment(session_id) and is_safe_segment(backend_id)):
+        raise HTTPException(status_code=404, detail="Foto no encontrada.")
+    entry = _order_photo_entry(session_id, backend_id)
+    filename = entry.get("filename") if entry else None
+    if not isinstance(filename, str) or not is_safe_segment(filename):
+        raise HTTPException(status_code=404, detail="Foto no encontrada.")
+    path = WORKSPACE_VAULT_DIR / session_id / "media" / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Foto no encontrada.")
+    return FileResponse(path, media_type=entry.get("mime") or "image/jpeg")
+
+
+@router.post("/orders/{order_id}/photo/send", status_code=202)
+async def send_order_photo(
+    order_id: str = Path(..., min_length=1, max_length=200),
+    body: dict[str, Any] | None = Body(default=None),
+) -> dict[str, Any]:
+    """Botón "Enviar ahora": el ETA manda la foto al cliente ya, sin esperar a
+    que el pedido pase a "listo" (o la reenvía). ``request_id`` (opcional)
+    hace idempotente el doble clic."""
+    backend_id, session_id = await _order_owner(order_id)
+    session_id = _require_conversation(session_id)
+    if _order_photo_entry(session_id, backend_id) is None:
+        raise HTTPException(
+            status_code=409, detail="El pedido no tiene foto: súbela antes de enviarla."
+        )
+    raw = (body or {}).get("request_id")
+    request_id = raw if isinstance(raw, str) and _REQUEST_ID_RE.match(raw) else uuid.uuid4().hex
+    await _start_ready_photo_request(backend_id, session_id, request_id)
+    return {"queued": True, "order_id": backend_id}
+
+
+async def _start_ready_photo_request(order_id: str, session_id: str, request_id: str) -> None:
+    """Arranca ``EmitReadyPhotoRequestWorkflow`` (durable, L-8b). Se espera el
+    start: si Temporal no responde el operador lo ve (503) en vez de un
+    "enviado" falso. Mismo ``request_id`` → mismo id → no duplica."""
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    from src.platform.plugin_manifest import get_task_queue
+    from src.platform.temporal.client import get_temporal_client
+
+    try:
+        client = await get_temporal_client()
+        await client.start_workflow(
+            "EmitReadyPhotoRequestWorkflow",
+            {"order_id": order_id, "session_id": session_id},
+            id=f"order-ready-photo-{order_id}-{request_id}",
+            task_queue=get_task_queue("orders", "reconcile"),
+        )
+    except WorkflowAlreadyStartedError:
+        log.info("order_photo: envío ya en vuelo order=%s request=%s", order_id, request_id)
+    except Exception as exc:  # noqa: BLE001 — el operador tiene que enterarse
+        log.warning("order_photo: no pude pedir el envío order=%s", order_id, exc_info=True)
+        raise HTTPException(
+            status_code=503, detail="No se pudo pedir el envío de la foto; reintenta."
+        ) from exc
 
 
 @router.get("/orders/{order_id}/customer-score")

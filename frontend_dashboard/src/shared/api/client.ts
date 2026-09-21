@@ -52,7 +52,10 @@ async function request<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
   const url = path.startsWith("http") ? path : `${env.apiUrl}${path}`;
 
   const headers = new Headers(init.headers);
-  if (init.body !== undefined && !headers.has("content-type")) {
+  // Archivos: el FormData viaja tal cual y SIN content-type propio — el
+  // navegador pone `multipart/form-data; boundary=…`.
+  const isForm = typeof FormData !== "undefined" && init.body instanceof FormData;
+  if (init.body !== undefined && !isForm && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
   // Auth centralizada: adjuntá el access-token de Cognito una sola vez. El
@@ -66,7 +69,11 @@ async function request<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
   const res = await fetch(url, {
     ...init,
     headers,
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+    body: isForm
+      ? (init.body as FormData)
+      : init.body !== undefined
+        ? JSON.stringify(init.body)
+        : undefined,
   });
 
   const contentType = res.headers.get("content-type") ?? "";
@@ -112,6 +119,21 @@ async function postExternal(
   });
   const data = await res.json().catch(() => ({}));
   return { status: res.status, data };
+}
+
+/**
+ * URL de un archivo de NUESTRO API para `<img src>` / `<a href>`: absoluta con
+ * la base del API y con el JWT por query `access_token` (ni `<img>` ni un link
+ * pueden llevar el header Bearer; `require_auth` lo acepta por query, como el
+ * SSE). A otro origen (CDN) se devuelve intacta: el token no sale de nuestro API.
+ */
+export function apiFileUrl(ref: string): string {
+  const abs = ref.startsWith("http") ? ref : `${env.apiUrl}${ref}`;
+  if (!abs.startsWith(`${env.apiUrl}/`)) return abs;
+  const token = getAccessToken();
+  if (!token) return abs;
+  const sep = abs.includes("?") ? "&" : "?";
+  return `${abs}${sep}access_token=${encodeURIComponent(token)}`;
 }
 
 export const apiClient = {

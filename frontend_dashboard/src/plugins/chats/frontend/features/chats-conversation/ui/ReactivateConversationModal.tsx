@@ -7,18 +7,66 @@
  * (`is_default`), pide el texto de cada variable y muestra en vivo lo que
  * recibirá el cliente — el slot vacío se ve como `{ tu texto aquí }`.
  * Las demás plantillas del catálogo quedan en el selector.
+ *
+ * Plantillas con `header_format === "image"` (pedido listo) llevan la FOTO del
+ * pedido en el encabezado: el operador la adjunta acá, se sube a Meta como
+ * cualquier foto del chat y el envío referencia su `attachment_id`. Hasta que
+ * la foto no está subida no se puede enviar (Meta rechazaría la plantilla).
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { compressImage } from "@/shared/lib";
 import {
   buildTemplatePreview,
   isTemplateReady,
   sanitizeTemplateParam,
+  uploadHumanMedia,
   useSendTemplateMessageMutation,
   useWhatsAppTemplates,
   type WhatsAppTemplate,
 } from "@plugins/chats/frontend/entities/handoff";
 import { apiErrorDetail } from "../model/apiErrorDetail";
+
+/** Foto del encabezado (plantillas `header_format === "image"`). */
+type HeaderPhoto =
+  | { status: "empty" }
+  | { status: "uploading"; previewUrl: string; progress: number }
+  | { status: "ready"; previewUrl: string; attachmentId: string }
+  | { status: "failed"; previewUrl: string; error: string };
+
+type HeaderPhotoAction =
+  | { type: "reset" }
+  | { type: "start"; previewUrl: string }
+  | { type: "progress"; progress: number }
+  | { type: "uploaded"; attachmentId: string }
+  | { type: "failed"; error: string };
+
+function headerPhotoReducer(state: HeaderPhoto, action: HeaderPhotoAction): HeaderPhoto {
+  switch (action.type) {
+    case "reset":
+      return { status: "empty" };
+    case "start":
+      return { status: "uploading", previewUrl: action.previewUrl, progress: 0 };
+    case "progress":
+      return state.status === "uploading" ? { ...state, progress: action.progress } : state;
+    case "uploaded":
+      return state.status === "uploading"
+        ? { status: "ready", previewUrl: state.previewUrl, attachmentId: action.attachmentId }
+        : state;
+    case "failed":
+      return {
+        status: "failed",
+        previewUrl: state.status === "empty" ? "" : state.previewUrl,
+        error: action.error,
+      };
+  }
+}
+
+function revokeBlobUrl(url: string) {
+  if (url.startsWith("blob:") && typeof URL.revokeObjectURL === "function") {
+    URL.revokeObjectURL(url);
+  }
+}
 
 interface Props {
   chatId: string | null;
@@ -36,6 +84,7 @@ function newClientMessageId(): string {
  *  sin entrada acá igual se ve legible (id sin versión ni guiones bajos). */
 const TEMPLATE_LABELS: Record<string, string> = {
   human_followup_utility_v1: "Seguimiento del equipo (mensaje libre)",
+  order_ready_photo_utility_v1: "Pedido listo (con foto)",
   quote_ready_utility_v2: "Cotización lista",
   payment_pending_utility_v2: "Pago pendiente",
   order_status_utility_v2: "Estado del pedido",
@@ -61,16 +110,60 @@ export function ReactivateConversationModal({ chatId, onClose }: Props) {
 
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
+  const [photo, dispatchPhoto] = useReducer(headerPhotoReducer, { status: "empty" });
+  // Intento vigente: descarta el resultado de una subida vieja si el operador
+  // eligió otra foto (o cambió de plantilla) mientras subía.
+  const photoAttempt = useRef(0);
   // Un id por intento de envío: un doble clic o retry no duplica la plantilla.
   const [clientMessageId] = useState(newClientMessageId);
+
+  // Libera el blob de la preview al reemplazarla o al cerrar el modal.
+  const photoPreviewUrl = photo.status === "empty" ? null : photo.previewUrl;
+  useEffect(() => {
+    if (!photoPreviewUrl) return;
+    return () => revokeBlobUrl(photoPreviewUrl);
+  }, [photoPreviewUrl]);
 
   const selected =
     templates.find((t) => t.name === selectedName) ??
     templates.find((t) => t.is_default) ??
     templates[0];
 
+  const needsPhoto = selected?.header_format === "image";
   const preview = selected ? buildTemplatePreview(selected, values) : [];
-  const ready = selected ? isTemplateReady(selected, values) : false;
+  const ready =
+    (selected ? isTemplateReady(selected, values) : false) &&
+    (!needsPhoto || photo.status === "ready");
+
+  const resetPhoto = () => {
+    photoAttempt.current += 1;
+    dispatchPhoto({ type: "reset" });
+  };
+
+  const pickPhoto = async (file: File | undefined) => {
+    if (!file || !chatId) return;
+    const attempt = ++photoAttempt.current;
+    const current = () => attempt === photoAttempt.current;
+    try {
+      const { blob, previewUrl } = await compressImage(file);
+      if (!current()) return revokeBlobUrl(previewUrl);
+      dispatchPhoto({ type: "start", previewUrl });
+      const uploaded = await uploadHumanMedia(
+        chatId,
+        blob,
+        `pedido-${Date.now()}.jpg`,
+        (progress) => current() && dispatchPhoto({ type: "progress", progress }),
+      );
+      if (current()) dispatchPhoto({ type: "uploaded", attachmentId: uploaded.attachment_id });
+    } catch (e) {
+      if (current()) {
+        dispatchPhoto({
+          type: "failed",
+          error: e instanceof Error ? e.message : "no se pudo subir la foto",
+        });
+      }
+    }
+  };
 
   const submit = () => {
     if (!selected || !ready || !chatId || sendTemplate.isPending) return;
@@ -78,7 +171,14 @@ export function ReactivateConversationModal({ chatId, onClose }: Props) {
       selected.variables.map((v) => [v.name, (values[v.name] ?? "").trim()]),
     );
     sendTemplate.mutate(
-      { template_name: selected.name, variables, client_message_id: clientMessageId },
+      {
+        template_name: selected.name,
+        variables,
+        client_message_id: clientMessageId,
+        ...(needsPhoto && photo.status === "ready"
+          ? { header_attachment_id: photo.attachmentId }
+          : {}),
+      },
       { onSuccess: onClose },
     );
   };
@@ -120,6 +220,7 @@ export function ReactivateConversationModal({ chatId, onClose }: Props) {
                 onChange={(e) => {
                   setSelectedName(e.target.value);
                   setValues({});
+                  resetPhoto();
                 }}
               >
                 {templates.map((t) => (
@@ -163,9 +264,47 @@ export function ReactivateConversationModal({ chatId, onClose }: Props) {
               );
             })}
 
+            {needsPhoto && (
+              <label className="rt-field">
+                <span>Foto del pedido</span>
+                <input
+                  type="file"
+                  className="rt-photo-input"
+                  accept="image/jpeg,image/png"
+                  onChange={(e) => {
+                    void pickPhoto(e.target.files?.[0]);
+                    e.target.value = ""; // permite re-elegir la misma foto tras un fallo
+                  }}
+                />
+                {photo.status === "uploading" && (
+                  <small className="rt-photo-status">
+                    Subiendo foto… {Math.round(photo.progress * 100)}%
+                  </small>
+                )}
+              </label>
+            )}
+            {needsPhoto && photo.status === "failed" && (
+              <div className="composer-err" role="alert">
+                No se pudo subir la foto: {photo.error}. Elige la foto de nuevo.
+              </div>
+            )}
+
             <div className="rt-preview-wrap">
               <span className="rt-preview-label">Así lo verá el cliente</span>
               <div className="rt-preview" data-testid="template-preview">
+                {needsPhoto &&
+                  (photo.status !== "empty" && photo.previewUrl ? (
+                    <img
+                      src={photo.previewUrl}
+                      alt="Foto del pedido"
+                      data-testid="template-preview-photo"
+                      className={
+                        photo.status === "ready" ? "rt-preview-photo" : "rt-preview-photo pending"
+                      }
+                    />
+                  ) : (
+                    <span className="rt-preview-photo-empty">{"{ foto del pedido }"}</span>
+                  ))}
                 {preview.map((seg, i) =>
                   seg.kind === "text" ? (
                     <span key={i}>{seg.text}</span>

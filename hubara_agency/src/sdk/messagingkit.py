@@ -92,7 +92,15 @@ from src.platform.whatsapp.send_policy import (
 # que Meta lo rechace en silencio. Fail-open cuando la metadata no está poblada.
 from src.platform.whatsapp.window import (
     compute_service_window_expiry as compute_service_window_expiry,
+    is_in_service_window as is_in_service_window,
     is_service_window_closed as is_service_window_closed,
+)
+
+# Foto + texto como mensaje normal (dentro de la ventana 24h), con historial:
+# el Agente ETA manda así la foto del pedido listo cuando la conversación está
+# abierta (fuera de ventana usa la plantilla con encabezado imagen).
+from src.platform.whatsapp.activities import (
+    send_photo_message_to_session as send_photo_message_to_session,
 )
 
 # Oído `standby` (D1.4, chats): cuando Meta Business Agent controla el hilo,

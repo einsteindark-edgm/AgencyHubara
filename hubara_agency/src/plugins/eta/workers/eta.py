@@ -24,6 +24,7 @@ from src.plugins.eta.agent.eta.activities import (
     bootstrap_eta_session_activity,
     claim_eta_notification_activity,
     record_eta_notification_activity,
+    send_ready_photo_activity,
     start_eta_tracking_activity,
 )
 from src.plugins.eta.agent.eta.workflows.eta_session import (
@@ -77,6 +78,8 @@ async def main() -> None:
             claim_eta_notification_activity,
             record_eta_notification_activity,
             all_trackings_terminal_activity,
+            # Foto del pedido listo (plantilla con encabezado imagen).
+            send_ready_photo_activity,
         ],
         workflow_runner=otel_workflow_runner(),
     )

@@ -81,4 +81,29 @@ class OrderStageChangedEvent:
     tracking_url: str | None = None
 
 
-__all__ = ["OrderStageChangedEvent"]
+@dataclass(frozen=True)
+class OrderReadyPhotoRequestedEvent:
+    """El operador pidió mandar YA la foto del pedido al cliente (botón "Enviar
+    ahora" del panel de Órdenes).
+
+    La foto la subió antes el operador (``metadata.order_photos[order_id]`` en
+    la sesión del cliente). El manifest la rutea a la sesión ETA del cliente
+    (``signal_with_start`` de ``send_ready_photo`` sobre ``eta-{session_id}``):
+    el ETA es quien sube la foto a Meta y manda la plantilla
+    ``order_ready_photo_utility_v1``. Evento propio (no un ``to_stage``) porque
+    es un envío explícito: no pasa por el dedup por etapa del ETA ni por el id
+    fijo por (pedido, etapa) del emisor de etapas — el operador puede reenviar.
+
+    Fields:
+        session_id: la sesión WhatsApp del cliente (``wa_<phone>``), resuelta
+            por la API de Órdenes al pedir el envío.
+        order_id: id backend del pedido (``order_01...``), clave de la foto.
+        requested_at_ms: epoch ms del pedido de envío (observabilidad).
+    """
+
+    session_id: str
+    order_id: str
+    requested_at_ms: int = 0
+
+
+__all__ = ["OrderReadyPhotoRequestedEvent", "OrderStageChangedEvent"]

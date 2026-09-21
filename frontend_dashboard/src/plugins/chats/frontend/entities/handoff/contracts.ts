@@ -49,6 +49,9 @@ export const whatsAppTemplateSchema = z.object({
     }),
   ),
   is_default: z.boolean(),
+  /** `"image"`: la plantilla lleva la foto del pedido en el encabezado — el
+   *  modal pide adjuntarla antes de enviar. null = solo texto. */
+  header_format: z.string().nullable().default(null),
 });
 
 export const whatsAppTemplatesResponseSchema = z.object({
@@ -81,4 +84,7 @@ export interface SendTemplateMessageInput {
   template_name: string;
   variables: Record<string, string>;
   client_message_id?: string;
+  /** Foto del encabezado: `attachment_id` de la subida (`uploadHumanMedia`).
+   *  Solo en plantillas con `header_format === "image"`. */
+  header_attachment_id?: string;
 }

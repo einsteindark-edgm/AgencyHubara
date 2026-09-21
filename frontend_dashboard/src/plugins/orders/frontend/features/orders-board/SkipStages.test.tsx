@@ -133,9 +133,11 @@ describe("OrdersBoard — drop que salta etapas", () => {
   });
 
   it("keeps adjacent moves as a single direct PATCH", () => {
+    // "Lista" y "En camino" abren su propio modal (foto / guía); el resto de
+    // movimientos adyacentes van directo.
     render(<OrdersBoard orders={[order]} selectedId={null} onSelect={() => {}} />);
-    dropOn("Lista");
+    dropOn("Nueva");
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(mutate.mock.calls[0][0]).toMatchObject({ orderId: "#32", to_stage: "ready" });
+    expect(mutate.mock.calls[0][0]).toMatchObject({ orderId: "#32", to_stage: "new" });
   });
 });

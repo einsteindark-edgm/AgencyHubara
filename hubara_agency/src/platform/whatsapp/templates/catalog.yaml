@@ -102,6 +102,23 @@ templates:
         max_length: 400
         description: "Mensaje del operador sobre el tema pendiente"
 
+  - name: order_ready_photo_utility_v1
+    category: utility
+    language: es_CO
+    waba_template_name: order_ready_photo_utility_v1
+    # Encabezado IMAGE: la foto se elige en CADA envío (media_id de la foto que
+    # sube el operador) — Meta solo aprueba el marco con una foto de ejemplo.
+    header_format: image
+    body: "Hola, tu pedido {{1}} ya está listo. Te compartimos la foto para que lo veas. ¿Nos confirmas para coordinar la entrega?"
+    semantics: "Pedido listo con su foto. La manda el ETA al pasar el pedido a 'listo' (o con 'Enviar ahora') si el operador subió la foto en el panel de Órdenes; también se puede mandar a mano desde Chats (Reactivar conversación)"
+    triggers_when_window_expiring: false   # nunca el watchdog: ETA u operador
+    # SIN requires_episode_stage: fuera de toda auto-resolution por stage.
+    variables:
+      - name: order_reference
+        type: string
+        max_length: 60
+        description: "Número o referencia del pedido (ej. #31)"
+
   # ===== MARKETING templates (cobran $0.0125 USD en Colombia) =================
 
   - name: campaign_promo_marketing_v1

@@ -543,6 +543,62 @@ def _current_body_text(tmpl: dict) -> str:
     return ""
 
 
+_UPLOAD_MIMES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+
+
+def _resumable_upload(cfg: dict, path: str) -> str | None:
+    """Sube un archivo con la Resumable Upload API y devuelve su handle (`h`),
+    o None si Meta lo rechaza. Es lo que exige Meta como foto de EJEMPLO al
+    crear una plantilla con encabezado IMAGE (la foto real va en cada envío).
+
+    Dos pasos: (1) abrir una sesión de subida en la APP → `upload:<id>`;
+    (2) POST de los bytes a ese id con `Authorization: OAuth` + `file_offset`.
+    """
+    with open(path, "rb") as f:
+        content = f.read()
+    ext = os.path.splitext(path)[1].lower()
+    token = cfg["SYSTEM_USER_TOKEN"]
+    st, body = _api("POST", f"{cfg['APP_ID']}/uploads", token,
+                    file_name=os.path.basename(path), file_length=str(len(content)),
+                    file_type=_UPLOAD_MIMES.get(ext, "application/octet-stream"))
+    upload_id = body.get("id")
+    if st != 200 or not upload_id:
+        print(f"  ! upload session → {st} {json.dumps(body, ensure_ascii=False)[:200]}")
+        return None
+    # El id trae su propio `?sig=...`: va tal cual en la URL.
+    req = urllib.request.Request(
+        f"{GRAPH}/{API}/{upload_id}", data=content, method="POST",
+        headers={"Authorization": f"OAuth {token}", "file_offset": "0"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            handle = json.loads(r.read().decode() or "{}").get("h")
+    except urllib.error.HTTPError as e:
+        print(f"  ! upload bytes → {e.code} {e.read().decode()[:200]}")
+        return None
+    return handle or None
+
+
+def _template_components(cfg: dict, d: dict) -> list | None:
+    """Componentes del template para Meta: HEADER IMAGE (si la definición lo
+    declara, con la foto de ejemplo subida) + BODY. None si la foto de ejemplo
+    no se pudo subir — mejor no someter que someter una plantilla rota."""
+    components = []
+    header = d.get("header")
+    if header:
+        path = os.path.join(_script_dir(), "definitions", header["example_file"])
+        handle = _resumable_upload(cfg, path)
+        if not handle:
+            return None
+        components.append({
+            "type": "HEADER",
+            "format": header["format"],
+            "example": {"header_handle": [handle]},
+        })
+    components.append(_body_component(d))
+    return components
+
+
 def step_templates(cfg: dict) -> None:
     """Crea/submitea a Meta los templates de definitions/templates.json. Idempotente:
     si ya existe (name+language) NO re-submitea, solo reporta su status de aprobación.
@@ -557,11 +613,16 @@ def step_templates(cfg: dict) -> None:
         if cur:
             print(f"  = template existe: {d['name']} [{d['language']}] status={cur.get('status')}")
             continue
+        components = _template_components(cfg, d)
+        if components is None:
+            print(f"  ! {d['name']} [{d['language']}]: no se pudo subir la foto de "
+                  f"ejemplo del encabezado — SKIP (reintentar)")
+            continue
         payload = {
             "name": d["name"],
             "language": d["language"],
             "category": d["category"],
-            "components": [_body_component(d)],
+            "components": components,
         }
         st, body = _api("POST", f"{cfg['WABA_ID']}/message_templates",
                         cfg["SYSTEM_USER_TOKEN"], json_body=payload)
@@ -602,10 +663,12 @@ def step_templates_update(cfg: dict) -> None:
             print(f"  ! {d['name']} está PENDING — no editable hasta que Meta "
                   f"resuelva. SKIP (reintentar luego)")
             continue
-        payload = {
-            "category": d["category"],
-            "components": [_body_component(d)],
-        }
+        # Los componentes se reenvían completos: omitir el HEADER lo borraría.
+        components = _template_components(cfg, d)
+        if components is None:
+            print(f"  ! {d['name']}: no se pudo subir la foto de ejemplo — SKIP")
+            continue
+        payload = {"category": d["category"], "components": components}
         st, body = _api("POST", cur["id"], cfg["SYSTEM_USER_TOKEN"], json_body=payload)
         ok = st == 200 and body.get("success", True) and not body.get("error")
         mark = "~" if ok else "!"

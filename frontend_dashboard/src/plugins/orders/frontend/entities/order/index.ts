@@ -26,6 +26,10 @@ export {
   useCancelOrder,
   useCustomerScore,
   useGenerateCustomerSummary,
+  useOrderPhoto,
+  useUploadOrderPhoto,
+  useDeleteOrderPhoto,
+  useSendOrderPhoto,
   toLegacyOrder,
 } from "./api";
 export {
@@ -37,6 +41,7 @@ export {
   orderCommandResultSchema,
   customerScoreSchema,
   customerSummarySchema,
+  orderPhotoSchema,
 } from "./contracts";
 export type {
   VaultOrderRecord,
@@ -46,4 +51,5 @@ export type {
   CustomerScore,
   CustomerSummary,
   ScoreBreakdownItem,
+  OrderPhoto,
 } from "./contracts";

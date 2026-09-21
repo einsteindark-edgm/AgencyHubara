@@ -15,6 +15,7 @@ const followup: WhatsAppTemplate = {
     { name: "followup_message", description: "Mensaje del operador", max_length: 400 },
   ],
   is_default: true,
+  header_format: null,
 };
 
 const payment: WhatsAppTemplate = {
@@ -27,6 +28,7 @@ const payment: WhatsAppTemplate = {
     { name: "amount_currency", description: "Monto con moneda", max_length: 40 },
   ],
   is_default: false,
+  header_format: null,
 };
 
 describe("buildTemplatePreview", () => {
