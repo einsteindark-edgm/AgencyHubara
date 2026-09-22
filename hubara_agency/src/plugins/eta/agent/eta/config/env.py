@@ -34,9 +34,9 @@ def get_workspace_path() -> Path:
     Default: ``<repo>/hubara_agency/src/plugins/eta/agent/eta/workspace/``
     (committed al repo para dev convenience).
 
-    Override con ``EXOCLAW_WORKSPACE_ETA`` en producción apuntando a un volumen
-    persistente para que ``memory/MEMORY.md`` y ``memory/HISTORY.md`` sobrevivan
-    a restarts del container.
+    Override con ``EXOCLAW_WORKSPACE_ETA`` en producción apuntando a otro
+    workspace (prompts/skills). No hay memoria compartida entre clientes: el
+    contexto de cada uno es solo su historial (ver `_build_conversation`).
     """
     raw = os.environ.get("EXOCLAW_WORKSPACE_ETA")
     if raw:

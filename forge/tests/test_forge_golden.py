@@ -182,14 +182,12 @@ FIXTURE_FILES = {
     f"{SALES_WS}/IDENTITY.md": "Eres el Asesor Exclusivo de Ventas de Hubara.\n",
     f"{SALES_WS}/SOUL.md": "# Soul — Hubara\nUsá el skill hubara_catalog.\n",
     f"{SALES_WS}/TOOLS.md": "# Tools\nhubara_catalog: catálogo.\n",
-    f"{SALES_WS}/memory/MEMORY.md": "# Memoria del asesor Hubara\n",
     f"{SALES_WS}/skills/etapa_descubrimiento/SKILL.md": "Bienvenido a Hubara, velas artesanales.\n",
     f"{SALES_WS}/skills/sales_script/SKILL.md": "# Guion Hubara\n",
     f"{SALES_WS}/skills/hubara_catalog/SKILL.md": "# Catálogo Hubara\n",
     f"{RMKT_WS}/IDENTITY.md": "Asesor de remarketing de Hubara.\n",
     f"{RMKT_WS}/SOUL.md": "# Soul remarketing Hubara\n",
     f"{RMKT_WS}/TOOLS.md": "# Tools remarketing\n",
-    f"{RMKT_WS}/memory/MEMORY.md": "# Memoria remarketing\n",
     f"{RMKT_WS}/skills/hubara_catalog/SKILL.md": "# Catálogo Hubara (remarketing)\n",
     # Meta Business Agent: el agente autorado (agent.yaml + skills/*.md) es voz del cliente
     f"{MBA_WS}/agent.yaml": (
@@ -267,7 +265,6 @@ def acme_bundle(tmp_path: Path) -> Path:
         _overlay_file(bundle, f"workspace/{agent}/IDENTITY.md", f"Asesor {agent} de Acme.\n")
         _overlay_file(bundle, f"workspace/{agent}/SOUL.md", f"# Soul {agent} — Acme, cafés de origen\n")
         _overlay_file(bundle, f"workspace/{agent}/TOOLS.md", "# Tools\nacme_catalog: catálogo.\n")
-        _overlay_file(bundle, f"workspace/{agent}/memory/MEMORY.md", "# Memoria Acme\n")
         _overlay_file(bundle, f"workspace/{agent}/skills/catalog/SKILL.md", "# Catálogo Acme\n")
     _overlay_file(
         bundle, "workspace/sales/skills/etapa_descubrimiento/SKILL.md", "Bienvenido a Acme.\n"
