@@ -34,6 +34,8 @@ const backendSent: BackendCampaign = {
   test_sends: [{ phone: "573001234567", at_ms: 5, wa_message_id: null }],
   excluded_session_ids: ["wa_573009990000"],
   extra_session_ids: ["wa_+573008881122"],
+  imported_contacts: [],
+  carousel_handles: [],
 };
 
 describe("mapBackendCampaign", () => {
@@ -48,6 +50,19 @@ describe("mapBackendCampaign", () => {
     expect(c.testSends[0]?.atMs).toBe(5);
     expect(c.excludedSessionIds).toEqual(["wa_573009990000"]);
     expect(c.extraSessionIds).toEqual(["wa_+573008881122"]);
+  });
+
+  it("mapea carousel_handles → carouselHandles", () => {
+    const c = mapBackendCampaign({ ...backendSent, carousel_handles: ["a", "b"] });
+    expect(c.carouselHandles).toEqual(["a", "b"]);
+  });
+
+  it("mapea los contactos importados (name null → null)", () => {
+    const c = mapBackendCampaign({
+      ...backendSent,
+      imported_contacts: [{ phone: "573001234567", name: null }],
+    });
+    expect(c.importedContacts).toEqual([{ phone: "573001234567", name: null }]);
   });
 
   it("status/goal fuera del vocabulario caen a un default seguro", () => {
@@ -88,6 +103,12 @@ describe("patchToBody", () => {
     expect(patchToBody({ couponCode: "papa20", percent: 20 })).toEqual({
       coupon_code: "papa20",
       percent: 20,
+    });
+  });
+
+  it("mapea los productos del carrusel como lista completa", () => {
+    expect(patchToBody({ carouselHandles: ["vela-buda", "cubo-love"] })).toEqual({
+      carousel_handles: ["vela-buda", "cubo-love"],
     });
   });
 

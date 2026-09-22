@@ -166,8 +166,13 @@ def _append_total_and_reference(
                 if shipping_cop > 0
                 else "sin costo"
             )
+            lines.append(f"*Productos*: {_format_cop(subtotal_cop, currency)}")
+            discount_cop = params.get("discount_cop")
+            if isinstance(discount_cop, int) and discount_cop > 0:
+                coupon = params.get("coupon_code")
+                label = f"*Descuento{f' ({coupon})' if coupon else ''}*"
+                lines.append(f"{label}: −{_format_cop(discount_cop, currency)}")
             lines.extend([
-                f"*Productos*: {_format_cop(subtotal_cop, currency)}",
                 f"*Envío*: {shipping_text}",
                 f"*{breakdown_total_label}*: {_format_cop(total_cop, currency)}",
             ])
@@ -858,6 +863,12 @@ async def _dispatch_intent(
             "",
             f"Subtotal productos: {_format_cop(subtotal, currency)}",
         ]
+        discount_cop = params.get("discount_cop")
+        if isinstance(discount_cop, int) and discount_cop > 0:
+            coupon = params.get("coupon_code")
+            body_lines.append(
+                f"Descuento{f' ({coupon})' if coupon else ''}: −{_format_cop(discount_cop, currency)}"
+            )
         if payment_method == "cash_on_delivery":
             # Regla del operador (2026-09-07, `config/shipping.py`): con
             # contra entrega el envío se paga al recibir y la transportadora

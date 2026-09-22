@@ -35,6 +35,18 @@ const cancelMock = {
   isPending: false,
   error: null as Error | null,
 };
+const importMock = {
+  mutate: vi.fn(),
+  isPending: false,
+  error: null as Error | null,
+  data: undefined as unknown,
+  reset: vi.fn(),
+};
+const clearContactsMock = {
+  mutate: vi.fn(),
+  isPending: false,
+  error: null as Error | null,
+};
 
 vi.mock("@plugins/marketing/frontend/entities/campaign", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -42,6 +54,8 @@ vi.mock("@plugins/marketing/frontend/entities/campaign", async (importOriginal) 
   useSendCampaign: () => sendMock,
   useTestSend: () => testMock,
   useCancelCampaign: () => cancelMock,
+  useImportContacts: () => importMock,
+  useClearContacts: () => clearContactsMock,
 }));
 
 vi.mock("@plugins/marketing/frontend/entities/segment", async (importOriginal) => ({
@@ -60,9 +74,52 @@ vi.mock("@plugins/marketing/frontend/entities/segment", async (importOriginal) =
   }),
 }));
 
+const PRODUCTS = [
+  {
+    handle: "vela-buda",
+    title: "Vela Buda Zen",
+    sku: "HUB-BUDA",
+    category: "Velas",
+    priceAmount: 45_000,
+    currency: "cop",
+    thumbnail: null,
+  },
+  {
+    handle: "cubo-love",
+    title: "Cubo Love",
+    sku: "HUB-CUBOLOVE",
+    category: "Velas",
+    priceAmount: 38_000,
+    currency: "cop",
+    thumbnail: null,
+  },
+];
+
+vi.mock("@plugins/marketing/frontend/entities/promotion", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  usePromotions: () => ({
+    data: {
+      promotions: [
+        {
+          code: "MAMA15",
+          discountType: "percentage",
+          value: 15,
+          targetType: "items",
+          name: "Madres",
+          endsAtMs: null,
+          minSubtotalCop: null,
+          productCount: 0,
+        },
+      ],
+      unavailable: false,
+    },
+    isPending: false,
+  }),
+}));
+
 vi.mock("@plugins/marketing/frontend/entities/product", async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useProducts: () => ({ data: [], isPending: false }),
+  useProducts: () => ({ data: PRODUCTS, isPending: false }),
 }));
 
 /** Audiencia REAL del endpoint — undefined = cargando (fallback a la
@@ -109,6 +166,8 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     testSends: [],
     excludedSessionIds: [],
     extraSessionIds: [],
+    importedContacts: [],
+    carouselHandles: [],
     ...over,
   };
 }
@@ -118,6 +177,10 @@ beforeEach(() => {
   sendMock.mutate.mockClear();
   testMock.mutate.mockClear();
   cancelMock.mutate.mockClear();
+  importMock.mutate.mockClear();
+  clearContactsMock.mutate.mockClear();
+  importMock.data = undefined;
+  importMock.error = null;
   testMock.error = null;
   sendMock.error = null;
   audienceMock.data = undefined;
@@ -258,5 +321,122 @@ describe("CampaignBuilder — envío de prueba", () => {
       />,
     );
     expect(getByText(/573001234567/)).toBeTruthy();
+  });
+});
+
+describe("CampaignBuilder — contactos importados (CSV)", () => {
+  it("elegir un archivo dispara la importación con ese File", () => {
+    const { getByLabelText } = render(<CampaignBuilder campaign={makeCampaign()} />);
+    const input = getByLabelText("Importar contactos (CSV)") as HTMLInputElement;
+    const file = new File(["3001234567\n"], "lista.csv", { type: "text/csv" });
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(importMock.mutate).toHaveBeenCalledTimes(1);
+    expect(importMock.mutate.mock.calls[0]?.[0]).toBe(file);
+  });
+
+  it("muestra cuántos contactos hay importados y permite vaciarlos", () => {
+    const { getByText, getByRole } = render(
+      <CampaignBuilder
+        campaign={makeCampaign({
+          importedContacts: [
+            { phone: "573001234567", name: "Camila" },
+            { phone: "573109876543", name: null },
+          ],
+        })}
+      />,
+    );
+    expect(getByText(/2 contactos importados/)).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: "Quitar importados" }));
+    expect(clearContactsMock.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("resume la última importación: importados, duplicados y rechazados por línea", () => {
+    importMock.data = {
+      imported: 3,
+      duplicates: 1,
+      rejected: [{ line: 4, reason: "numero_invalido" }],
+      rejectedCount: 1,
+      total: 3,
+      campaign: makeCampaign(),
+    };
+    const { getByText } = render(<CampaignBuilder campaign={makeCampaign()} />);
+    expect(getByText(/3 nuevos/)).toBeTruthy();
+    expect(getByText(/1 repetido/)).toBeTruthy();
+    expect(getByText(/línea 4/)).toBeTruthy();
+  });
+
+  it("con solo importados (sin segmentos) la campaña se puede enviar", () => {
+    const { getByRole } = render(
+      <CampaignBuilder
+        campaign={makeCampaign({
+          goal: "discount_general",
+          percent: 10,
+          message: { header: "", body: "Hola", footer: "", cta: "" },
+          segments: [],
+          importedContacts: [{ phone: "573001234567", name: null }],
+        })}
+      />,
+    );
+    const button = getByRole("button", { name: "Enviar ahora" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+  });
+});
+
+describe("CampaignBuilder — carrusel de productos", () => {
+  it("agregar un producto al carrusel dispara el PUT con carousel_handles", () => {
+    const { getByRole, getByText } = render(
+      <CampaignBuilder
+        campaign={makeCampaign({ goal: "launch", carouselHandles: ["vela-buda"] })}
+      />,
+    );
+    // El chip del ya elegido está; se agrega el segundo desde el picker.
+    expect(getByText("Vela Buda Zen")).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: /Agregar producto al carrusel/ }));
+    fireEvent.click(getByRole("button", { name: /Cubo Love/ }));
+    expect(updateMock.mutate).toHaveBeenCalledTimes(1);
+    expect(updateMock.mutate.mock.calls[0]?.[0]).toMatchObject({
+      carouselHandles: ["vela-buda", "cubo-love"],
+    });
+  });
+
+  it("quitar un producto del carrusel dispara el PUT sin ese handle", () => {
+    const { getByRole } = render(
+      <CampaignBuilder
+        campaign={makeCampaign({
+          goal: "launch",
+          carouselHandles: ["vela-buda", "cubo-love"],
+        })}
+      />,
+    );
+    fireEvent.click(getByRole("button", { name: "Quitar Vela Buda Zen del carrusel" }));
+    expect(updateMock.mutate.mock.calls[0]?.[0]).toMatchObject({
+      carouselHandles: ["cubo-love"],
+    });
+  });
+
+  it("con un solo producto avisa que el carrusel necesita 2 a 10", () => {
+    const { getByText } = render(
+      <CampaignBuilder campaign={makeCampaign({ goal: "launch", carouselHandles: ["vela-buda"] })} />,
+    );
+    expect(getByText(/entre 2 y 10/)).toBeTruthy();
+  });
+});
+
+describe("CampaignBuilder — cupón", () => {
+  it("el código se sanea a letras y números (VELAS_10 → VELAS10) al escribir", () => {
+    const { getByPlaceholderText } = render(
+      <CampaignBuilder campaign={makeCampaign({ goal: "discount_general" })} />,
+    );
+    const input = getByPlaceholderText("PAPA20") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "velas_10" } });
+    expect(input.value).toBe("VELAS10");
+  });
+
+  it("ofrece los cupones vigentes de Medusa y elegir uno dispara el PUT", () => {
+    const { getByRole } = render(
+      <CampaignBuilder campaign={makeCampaign({ goal: "discount_general" })} />,
+    );
+    fireEvent.click(getByRole("button", { name: /MAMA15 · 15%/ }));
+    expect(updateMock.mutate.mock.calls[0]?.[0]).toMatchObject({ couponCode: "MAMA15" });
   });
 });

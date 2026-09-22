@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   campaignChecklist,
   campaignOfferLine,
+  carouselSizeError,
   goalNeedsProduct,
   goalUsesDiscount,
   isCampaignEditable,
@@ -36,6 +37,8 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     testSends: [],
     excludedSessionIds: [],
     extraSessionIds: [],
+    importedContacts: [],
+    carouselHandles: [],
     ...over,
   };
 }
@@ -97,6 +100,39 @@ describe("campaignChecklist", () => {
     expect(byKey.message?.done).toBe(false);
     expect(byKey.audience?.done).toBe(false);
     expect(byKey.coupon?.required).toBe(false);
+  });
+
+  it("la audiencia se cumple con contactos importados aunque no haya segmentos", () => {
+    const items = campaignChecklist(
+      makeCampaign({
+        goal: "launch",
+        message: { header: "", body: "Hola", footer: "", cta: "" },
+        importedContacts: [{ phone: "573001234567", name: null }],
+      }),
+    );
+    const audience = items.find((i) => i.key === "audience");
+    expect(audience?.done).toBe(true);
+    expect(audience?.label).toBe("Audiencia elegida");
+  });
+
+  it("carrusel con 1 producto bloquea el envío; con 2..10 o ninguno, no", () => {
+    const one = campaignChecklist(makeCampaign({ carouselHandles: ["a"] }));
+    const item = one.find((i) => i.key === "carousel");
+    expect(item?.required).toBe(true);
+    expect(item?.done).toBe(false);
+    expect(
+      campaignChecklist(makeCampaign({ carouselHandles: ["a", "b"] })).find(
+        (i) => i.key === "carousel",
+      )?.done,
+    ).toBe(true);
+    expect(
+      campaignChecklist(makeCampaign()).find((i) => i.key === "carousel"),
+    ).toBeUndefined();
+    expect(carouselSizeError(["a"])).toMatch(/entre 2 y 10/);
+    expect(carouselSizeError([])).toBeNull();
+    expect(carouselSizeError(Array.from({ length: 11 }, (_, i) => `p${i}`))).toMatch(
+      /entre 2 y 10/,
+    );
   });
 
   it("campaña de producto exige el producto elegido", () => {

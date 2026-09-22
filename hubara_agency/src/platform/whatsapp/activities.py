@@ -43,7 +43,7 @@ from src.platform.whatsapp.cost import (
     add_outbound_to_summary,
     empty_episode_cost_summary,
 )
-from src.platform.whatsapp.dtos import OutboundResult
+from src.platform.whatsapp.dtos import CarouselCard, OutboundResult
 from src.platform.whatsapp.quiet_hours import is_quiet_hours_for_session
 from src.platform.whatsapp.templates.registry import (
     TemplateSpec,
@@ -850,8 +850,13 @@ async def send_template_to_session(
     sender: str | None = None,
     header_media_id: str | None = None,
     header_image_url: str | None = None,
+    carousel_cards: list[CarouselCard] | None = None,
 ) -> OutboundResult:
     """Envía un template aprobado y persiste el OutboundLogEntry.
+
+    `carousel_cards`: tarjetas de producto para plantillas con carrusel
+    (campañas): viajan al cliente, entran al fingerprint de idempotencia y
+    quedan en el historial (el operador ve qué productos recibió el cliente).
 
     `sender="human"`: la plantilla la mandó el operador desde el dashboard —
     el evento del historial lleva `sender` y el chat la pinta como burbuja del
@@ -897,11 +902,16 @@ async def send_template_to_session(
 
     # 2.5 Idempotencia: ¿ya enviamos este mismo template hace segundos (retry)?
     # La foto entra al fingerprint: misma referencia con otra foto = otro envío.
+    fingerprint_extra: dict[str, str] = {}
+    if header_media_id:
+        fingerprint_extra["__header_media_id"] = header_media_id
+    if carousel_cards:
+        fingerprint_extra["__carousel"] = json.dumps(
+            [asdict(card) for card in carousel_cards], sort_keys=True
+        )
     fingerprint = _template_fingerprint(
         template_name,
-        {**variables, "__header_media_id": header_media_id}
-        if header_media_id
-        else variables,
+        {**variables, **fingerprint_extra} if fingerprint_extra else variables,
     )
     now_ms = _now_ms()
     prior_wa_id = _find_recent_template_send(metadata, fingerprint, now_ms)
@@ -917,7 +927,12 @@ async def send_template_to_session(
 
     # 3. Send
     result = await whatsapp_client.send_template(
-        phone_number_id, to_number, spec, variables, header_media_id=header_media_id
+        phone_number_id,
+        to_number,
+        spec,
+        variables,
+        header_media_id=header_media_id,
+        carousel_cards=carousel_cards,
     )
 
     # 4. Parse error y decidir retry policy
@@ -982,6 +997,7 @@ async def send_template_to_session(
         sender=sender,
         wamid=result.wa_message_id,
         image_url=header_image_url,
+        carousel_cards=carousel_cards,
     )
 
     log.info(
@@ -1001,8 +1017,13 @@ def _append_template_to_session_history(
     sender: str | None = None,
     wamid: str | None = None,
     image_url: str | None = None,
+    carousel_cards: list[CarouselCard] | None = None,
 ) -> None:
     """Persiste un marker del template enviado al JSONL del session_history.
+
+    `carousel_cards`: los productos del carrusel se listan al pie del
+    `content` (el bot y el operador ven qué se ofreció) y quedan en
+    `carousel` (sin media_id: no sirve fuera de Meta).
 
     `image_url`: la foto del encabezado (templates con imagen) — mismo campo
     que las fotos del operador, así el chat la pinta en la burbuja.
@@ -1040,6 +1061,19 @@ def _append_template_to_session_history(
             event["wamid"] = wamid
         if image_url:
             event["image_url"] = image_url
+        if carousel_cards:
+            event["content"] += "\n\n" + "\n".join(
+                f"🖼 {card.body_text or card.product_retailer_id or ''}"
+                for card in carousel_cards
+            )
+            event["carousel"] = [
+                {
+                    "body_text": card.body_text,
+                    "product_retailer_id": card.product_retailer_id,
+                    "quick_reply_payload": card.quick_reply_payload,
+                }
+                for card in carousel_cards
+            ]
         with history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
     except OSError as e:
@@ -1065,6 +1099,13 @@ async def send_whatsapp_template_activity(
     session_id: str,
     template_name: str,
     variables: dict[str, str],
+    carousel_cards: list[CarouselCard] | None = None,
 ) -> OutboundResult:
-    """Activity wrapper que delega a `send_template_to_session`."""
-    return await send_template_to_session(session_id, template_name, variables)
+    """Activity wrapper que delega a `send_template_to_session`.
+
+    `carousel_cards` es opcional (4º arg posicional): los callers viejos
+    siguen mandando 3 args; el workflow de campañas manda las tarjetas.
+    """
+    return await send_template_to_session(
+        session_id, template_name, variables, carousel_cards=carousel_cards
+    )

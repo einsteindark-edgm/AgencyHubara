@@ -10,6 +10,7 @@ comando `hubara-archive-hu` lo actualiza al introducir nuevas capabilities.
 | `plugins/orders` | [spec.md](plugins/orders/spec.md) | `hubara_agency/src/plugins/orders/` | `frontend_dashboard/src/plugins/orders/` | ✅ active |
 | `plugins/chats` | [spec.md](plugins/chats/spec.md) | `hubara_agency/src/plugins/chats/` | `frontend_dashboard/src/plugins/chats/` | ✅ active |
 | `plugins/catalog` | [spec.md](plugins/catalog/spec.md) | `hubara_agency/src/plugins/catalog/` | `frontend_dashboard/src/plugins/catalog/` | ✅ active |
+| `plugins/marketing` | [spec.md](plugins/marketing/spec.md) | `hubara_agency/src/plugins/marketing/` | `frontend_dashboard/src/plugins/marketing/` | ✅ active (parcial: audiencia importada + carrusel) |
 | `plugins/eta` | _bootstrap pendiente_ | `hubara_agency/src/plugins/eta/` | `frontend_dashboard/src/plugins/eta/` | ⏳ todo |
 | `plugins/agents_admin` | _bootstrap pendiente_ | `hubara_agency/src/plugins/agents_admin/` | `frontend_dashboard/src/plugins/agents_admin/` | ⏳ todo |
 | `plugins/system_map` | _bootstrap pendiente_ | `hubara_agency/src/plugins/system_map/` | `frontend_dashboard/src/plugins/system_map/` | ⏳ todo |

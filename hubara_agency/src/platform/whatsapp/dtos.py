@@ -20,6 +20,25 @@ from typing import Literal
 
 
 @dataclass(frozen=True)
+class CarouselCard:
+    """Una tarjeta de un carrusel de plantilla MARKETING.
+
+    Dos sabores de Meta (la plantilla declara cuál — `TemplateSpec.carousel_kind`):
+      * **product**: `product_retailer_id` + `catalog_id` — foto y precio salen
+        del catálogo de Meta conectado al número; el botón "Ver" abre el
+        producto con carrito nativo. `body_text` solo va al historial.
+      * **media**: `header_media_id` (foto subida a Meta) + `body_text`
+        (≤160) + `quick_reply_payload` (vuelve al webhook al tocar el botón).
+    """
+
+    body_text: str = ""
+    product_retailer_id: str | None = None
+    catalog_id: str | None = None
+    header_media_id: str | None = None
+    quick_reply_payload: str | None = None
+
+
+@dataclass(frozen=True)
 class OutboundResult:
     """Resultado del envío. wa_message_id es el id que asigna Meta para
     tracking de delivery/read/analytics."""

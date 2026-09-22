@@ -12,6 +12,7 @@ import {
   backendCampaignSchema,
   backendCampaignsResponseSchema,
   backendCampaignStatsSchema,
+  backendImportContactsResponseSchema,
   backendSendResponseSchema,
   backendTestSendResponseSchema,
 } from "./contracts";
@@ -111,6 +112,45 @@ describe("backendCampaignSchema", () => {
     });
     expect(parsed.excluded_session_ids).toEqual(["wa_573001112233"]);
     expect(parsed.extra_session_ids).toEqual(["wa_+573009998877"]);
+  });
+
+  it("parsea los contactos importados por CSV (phone + name nullable)", () => {
+    const parsed = backendCampaignSchema.parse({
+      ...draftFixture,
+      imported_contacts: [
+        { phone: "573001234567", name: "Camila" },
+        { phone: "573109876543", name: null },
+      ],
+    });
+    expect(parsed.imported_contacts).toEqual([
+      { phone: "573001234567", name: "Camila" },
+      { phone: "573109876543", name: null },
+    ]);
+  });
+
+  it("parsea carousel_handles y defaultea a [] con un backend viejo", () => {
+    expect(
+      backendCampaignSchema.parse({ ...draftFixture, carousel_handles: ["a", "b"] })
+        .carousel_handles,
+    ).toEqual(["a", "b"]);
+    expect(backendCampaignSchema.parse(draftFixture).carousel_handles).toEqual([]);
+  });
+
+  it("defaultea imported_contacts a [] con un backend viejo", () => {
+    expect(backendCampaignSchema.parse(draftFixture).imported_contacts).toEqual([]);
+  });
+
+  it("parsea la respuesta de POST /contacts/import", () => {
+    const parsed = backendImportContactsResponseSchema.parse({
+      imported: 2,
+      duplicates: 1,
+      rejected: [{ line: 3, reason: "numero_invalido" }],
+      rejected_count: 1,
+      total: 5,
+      campaign: { ...draftFixture, imported_contacts: [] },
+    });
+    expect(parsed.total).toBe(5);
+    expect(parsed.rejected[0].reason).toBe("numero_invalido");
   });
 
   it("defaultea excluded/extra a [] si el backend no los emite", () => {

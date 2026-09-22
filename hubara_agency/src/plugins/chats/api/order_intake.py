@@ -49,6 +49,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path as PathParam
 from loguru import logger
 
 from src.plugins.chats.agent.sales.config.shipping import shipping_rate_for_city
+from src.plugins.chats.agent.sales.use_cases.coupons import coupon_discount_for_items
 from src.plugins.chats.agent.sales.use_cases.order_pricing import price_order_items
 from src.plugins.chats.shared.order_intake import (
     build_prompt,
@@ -188,6 +189,19 @@ async def _load_catalog(deps: OrderIntakeDeps, warnings: list[str]) -> list[Any]
     return list(getattr(result, "results", None) or [])
 
 
+class _DictCatalog:
+    """Adapter mínimo: los productos ya cargados como `CatalogPort.get_by_handle`."""
+
+    def __init__(self, products_by_handle: dict[str, Any]) -> None:
+        self._products = products_by_handle
+
+    async def get_by_handle(self, handle: str) -> Any:
+        try:
+            return self._products[handle]
+        except KeyError as exc:
+            raise LookupError(handle) from exc
+
+
 def _resolve_items(
     raw_items: list[dict[str, Any]], products_by_handle: dict[str, Any], warnings: list[str]
 ) -> list[dict[str, Any]]:
@@ -273,6 +287,12 @@ async def suggest(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
 
     subtotal_cop = sum(it["line_total_cop"] for it in items)
     shipping_cop = shipping_rate_for_city(shipping.get("city"))
+    # Cupón aplicado en el chat: el formulario muestra el mismo descuento
+    # que va a exigir el registro (SEC-07).
+    discount = await coupon_discount_for_items(
+        metadata, _DictCatalog(products_by_handle), items, shipping_cop=shipping_cop
+    )
+    discount_cop = discount.discount_cop if discount else 0
     notes = extracted.get("notes")
 
     logger.info(
@@ -294,7 +314,9 @@ async def suggest(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
         "payment_method": payment_method,
         "subtotal_cop": subtotal_cop,
         "shipping_cop": shipping_cop,
-        "total_cop": subtotal_cop + shipping_cop,
+        "discount_cop": discount_cop,
+        "coupon_code": discount.code if discount and discount_cop > 0 else None,
+        "total_cop": subtotal_cop + shipping_cop - discount_cop,
         "missing": missing_fields(shipping, items, payment_method),
         "warnings": warnings,
         "notes": str(notes)[:500] if isinstance(notes, str) and notes.strip() else None,

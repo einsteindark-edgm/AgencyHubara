@@ -614,3 +614,38 @@ async def test_dispatch_without_breakdown_keeps_single_value_line(monkeypatch):
     assert "*Valor*: $47.000 COP" in text
     assert "*Productos*" not in text
     assert "*Envío*" not in text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_shows_coupon_discount_line_in_breakdown(monkeypatch):
+    """Con cupón, el desglose muestra Productos − Descuento (código) + Envío
+    = Total, y el total ya viene descontado (SEC-07 en register_order)."""
+    _set_env(monkeypatch, _ENV)
+    wa_client = SimpleNamespace(
+        send_text=AsyncMock(return_value=SimpleNamespace(ok=True, wa_message_id="wamid.pay.2"))
+    )
+    result = await _dispatch_intent(
+        wa_client=wa_client,
+        wa_dtos=wa_dtos,
+        kind="payment_instructions",
+        params={
+            "order_id": "order_test_002",
+            "subtotal_cop": 40000,
+            "discount_cop": 6000,
+            "coupon_code": "MAMA15",
+            "shipping_cop": 7900,
+            "total_cop": 41900,
+            "currency": "COP",
+            "method": "transfer",
+        },
+        fallback={},
+        phone_number_id="phone-1",
+        to_number="573000000000",
+        last_inbound_message_id=None,
+    )
+    assert result is not None and result.ok is True
+    text = wa_client.send_text.await_args.args[2]
+    assert "*Productos*: $40.000" in text
+    assert "*Descuento (MAMA15)*: −$6.000" in text
+    assert "*Envío*: $7.900" in text
+    assert "$41.900" in text

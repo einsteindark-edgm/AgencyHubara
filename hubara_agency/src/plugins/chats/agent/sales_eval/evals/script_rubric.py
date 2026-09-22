@@ -100,7 +100,7 @@ SCRIPT_CONTEXT = (
     "ya dio intención clara, saltar a recomendar; si menciona evento corporativo, "
     "escalar. 3) Recomendación: search_products → present_product_detail/present_products; "
     "solo productos/precios/aromas que vinieron en un tool_result (cero alucinación). "
-    "4) Objeciones: tono sereno; escalar a humano en descuentos, mayoreo/B2B, evento, "
+    "4) Objeciones: tono sereno; cupón válido → apply_coupon; escalar a humano en descuentos sin cupón, mayoreo/B2B, evento, "
     "salud/seguridad, pedido explícito de humano, internacional. 5) Cierre (BANT): "
     "request_shipping_details → verify_order_for_checkout → present_order_confirmation "
     "→ register_order → manage_conversation_tag('CONFIRMADO_PAGO_PENDIENTE') + "
@@ -161,7 +161,7 @@ NO_HALLUCINATION_STEPS = [
     "todas las tool calls (limitación de persistencia) — NO penalices 'no llamó "
     "tools' como única razón si lo afirmado coincide exactamente con el catálogo "
     "real del Scenario; penaliza las AFIRMACIONES que lo contradicen.",
-    "Penaliza nombrar productos/precios que no existen, inventar descuentos, o "
+    "Penaliza nombrar productos/precios que no existen, inventar descuentos (fuera de list_promotions/apply_coupon), o "
     "prometer tiempos de envío exactos sin base.",
 ]
 
@@ -176,7 +176,7 @@ CONVERSION_PROGRESS_STEPS = [
 
 CORRECT_HANDOFF_STEPS = [
     "Verifica si el asistente escaló a humano (escalate_to_human) en los "
-    "disparadores correctos: pedido de descuento, mayoreo/B2B, evento corporativo, "
+    "disparadores correctos: pedido de descuento sin cupón válido, mayoreo/B2B, evento corporativo, "
     "seguridad/salud, pedido explícito de hablar con una persona, envío "
     "internacional, y tras register_order (PAYMENT_VERIFICATION_PENDING).",
     "IMPORTANTE: las tools del cierre (manage_conversation_tag, escalate_to_human) "

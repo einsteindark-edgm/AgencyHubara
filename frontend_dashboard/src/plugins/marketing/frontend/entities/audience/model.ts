@@ -44,7 +44,7 @@ export interface AudienceConversation {
 export function segmentTone(key: string): "ok" | "info" | "neutral" | "violet" {
   if (key === "clientes") return "ok";
   if (key === "interesados") return "info";
-  if (key === "manual") return "violet";
+  if (key === "manual" || key === "importados") return "violet";
   return "neutral";
 }
 

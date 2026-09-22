@@ -59,7 +59,7 @@ export function AudiencePanel({ campaign }: Props) {
 
       {data.recipients.length === 0 ? (
         <p className="text-[11.5px] leading-relaxed text-fg-muted">
-          Sin destinatarios todavía — Elegí segmentos en el paso 4.
+          Sin destinatarios todavía — Elegí segmentos o importá un CSV en el paso 4.
         </p>
       ) : (
         <ul className="flex flex-col gap-0.5">

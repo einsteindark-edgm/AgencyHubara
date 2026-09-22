@@ -1218,3 +1218,87 @@ async def test_register_order_without_attribution_omits_keys(adapter):
     body = _json.loads(draft_route.calls[0].request.content)
     assert "meta_ad_id" not in body["metadata"]
     assert "attribution_channel" not in body["metadata"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_register_order_with_coupon_sends_promo_codes_and_metadata(adapter):
+    """Cupón aplicado (2026-09-21): el código viaja como `promo_codes` (Medusa
+    aplica la promoción → `discount_total`/`total` reales) y el monto que el
+    bot prometió queda en metadata como auditoría."""
+    respx.get(f"{_BASE_URL}/admin/products").mock(
+        return_value=Response(200, json=_product_payload_for_handle("cruz-de-vida"))
+    )
+    respx.get(f"{_BASE_URL}/admin/customers").mock(
+        return_value=Response(200, json={"customers": [], "count": 0, "offset": 0, "limit": 1})
+    )
+    respx.post(f"{_BASE_URL}/admin/customers").mock(
+        return_value=Response(200, json={"customer": {"id": "cus_c", "email": "wa+wa_c@hubara.local"}})
+    )
+    respx.get(f"{_BASE_URL}/admin/shipping-options").mock(
+        return_value=Response(
+            200,
+            json={"shipping_options": [{"id": "so_std_01", "name": "Envío estándar"}], "count": 1, "offset": 0, "limit": 50},
+        )
+    )
+    respx.get(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(200, json={"draft_orders": [], "count": 0, "offset": 0, "limit": 50})
+    )
+    draft_route = respx.post(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(200, json={"draft_order": {"id": "draft_c_001", "status": "draft", "items": [], "shipping_methods": []}})
+    )
+
+    result = await adapter.register_order(
+        session_key="wa_c",
+        items=_ITEMS,
+        shipping=_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=17000,
+        shipping_cop=5000,
+        total_cop=19450,
+        coupon_code="MAMA15",
+        discount_cop=2550,
+    )
+    assert result.success is True
+    import json as _json
+
+    body = _json.loads(draft_route.calls[-1].request.content)
+    assert body["promo_codes"] == ["MAMA15"]
+    assert body["metadata"]["coupon_code"] == "MAMA15"
+    assert body["metadata"]["discount_cop"] == 2550
+    assert body["metadata"]["total_cop"] == 19450
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_register_order_without_coupon_has_no_promo_codes(adapter):
+    respx.get(f"{_BASE_URL}/admin/products").mock(
+        return_value=Response(200, json=_product_payload_for_handle("cruz-de-vida"))
+    )
+    respx.get(f"{_BASE_URL}/admin/customers").mock(
+        return_value=Response(200, json={"customers": [], "count": 0, "offset": 0, "limit": 1})
+    )
+    respx.post(f"{_BASE_URL}/admin/customers").mock(
+        return_value=Response(200, json={"customer": {"id": "cus_d", "email": "wa+wa_d@hubara.local"}})
+    )
+    respx.get(f"{_BASE_URL}/admin/shipping-options").mock(
+        return_value=Response(
+            200,
+            json={"shipping_options": [{"id": "so_std_01", "name": "Envío estándar"}], "count": 1, "offset": 0, "limit": 50},
+        )
+    )
+    respx.get(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(200, json={"draft_orders": [], "count": 0, "offset": 0, "limit": 50})
+    )
+    draft_route = respx.post(f"{_BASE_URL}/admin/draft-orders").mock(
+        return_value=Response(200, json={"draft_order": {"id": "draft_d_001", "status": "draft", "items": [], "shipping_methods": []}})
+    )
+    await adapter.register_order(
+        session_key="wa_d", items=_ITEMS, shipping=_SHIPPING, payment_method="transfer",
+        subtotal_cop=17000, shipping_cop=5000, total_cop=22000,
+    )
+    import json as _json
+
+    body = _json.loads(draft_route.calls[-1].request.content)
+    assert "promo_codes" not in body
+    assert "coupon_code" not in body["metadata"]

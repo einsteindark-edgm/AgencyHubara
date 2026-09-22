@@ -6,8 +6,15 @@ vocabulario vivo del sistema (``src.sdk.messagingkit``): COMPRA_EXITOSA /
 INTERESADO / CONFIRMADO_PAGO_PENDIENTE / HUMANO / NO_ETIQUETADO.
 """
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+from src.sdk.messagingkit import (
+    CAROUSEL_MAX_CARDS,
+    CAROUSEL_MIN_CARDS,
+    CarouselCard,
+    carousel_template_name,
+)
 
 SEGMENT_CLIENTES = "clientes"
 SEGMENT_INTERESADOS = "interesados"
@@ -15,6 +22,12 @@ SEGMENT_FRIOS = "frios"
 
 #: Contacto agregado a mano por el operador (fuera de los segmentos elegidos).
 SEGMENT_MANUAL = "manual"
+
+#: Contacto importado desde un archivo (CSV) — puede NO tener sesión en el vault.
+SEGMENT_IMPORTADOS = "importados"
+
+#: Cap de contactos importados por campaña (mismo orden que la curaduría manual).
+IMPORTED_CONTACTS_CAP = 5000
 
 ALL_SEGMENTS: tuple[str, ...] = (
     SEGMENT_CLIENTES,
@@ -57,6 +70,104 @@ STATUS_FAILED = "failed"
 #: Template MARKETING pre-aprobado por Meta que viaja en cada campaña
 #: (ver `platform/whatsapp/templates/catalog.yaml` + provisioning).
 CAMPAIGN_TEMPLATE_NAME = "campaign_promo_marketing_v1"
+
+
+def carousel_handles(campaign: dict[str, Any]) -> list[str]:
+    """Handles de los productos del carrusel, en el orden elegido (o [])."""
+    return [
+        str(h)
+        for h in (campaign.get("carousel_handles") or [])
+        if isinstance(h, str) and h.strip()
+    ]
+
+
+def carousel_size_error(handles: list[str]) -> str | None:
+    """None si la cantidad de productos es válida (0 = sin carrusel, o el
+    rango de Meta); si no, el mensaje para el operador."""
+    n = len(handles)
+    if n == 0 or CAROUSEL_MIN_CARDS <= n <= CAROUSEL_MAX_CARDS:
+        return None
+    return (
+        f"el carrusel lleva entre {CAROUSEL_MIN_CARDS} y {CAROUSEL_MAX_CARDS} "
+        f"productos (elegiste {n})"
+    )
+
+
+def campaign_template_name(campaign: dict[str, Any]) -> str:
+    """Plantilla que viaja: la de carrusel (por cantidad de productos) si la
+    campaña lleva productos; si no, la guardada o la de campaña simple."""
+    handles = carousel_handles(campaign)
+    if handles:
+        return carousel_template_name(len(handles))
+    return campaign.get("template_name") or CAMPAIGN_TEMPLATE_NAME
+
+
+#: Cuerpo de tarjeta: Meta acepta hasta 160 caracteres.
+CAROUSEL_CARD_BODY_MAX = 160
+
+
+def carousel_card_body(product: Any) -> str:
+    """"Nombre · $precio" en una línea, ≤160 (Meta), con el precio COP de la
+    primera variante (mismo criterio que el bot: COP gana sobre otras monedas)."""
+    title = _single_line(str(getattr(product, "title", "") or ""))
+    price = _catalog_unit_price_cop(product)
+    suffix = f" · {format_cop(price)}" if price else ""
+    room = CAROUSEL_CARD_BODY_MAX - len(suffix)
+    if len(title) > room:
+        title = title[: max(room - 1, 1)].rstrip() + "…"
+    return f"{title}{suffix}"
+
+
+def format_cop(amount: int) -> str:
+    """$49.500 — miles con punto, sin decimales."""
+    return "$" + f"{int(amount):,}".replace(",", ".")
+
+
+def _catalog_unit_price_cop(product: Any) -> int | None:
+    variants = getattr(product, "variants", None) or []
+    if not variants:
+        return None
+    prices = getattr(variants[0], "prices", None) or []
+    if not prices:
+        return None
+    chosen = next(
+        (p for p in prices if str(getattr(p, "currency_code", "")).lower() == "cop"),
+        prices[0],
+    )
+    try:
+        value = int(round(float(chosen.amount)))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return value if value > 0 else None
+
+
+def build_carousel_cards(
+    handles: list[str],
+    products: dict[str, Any],
+    *,
+    catalog_id: str,
+) -> list[CarouselCard]:
+    """Product cards en el orden elegido: cada tarjeta referencia el ítem del
+    catálogo de Meta (`product_retailer_id` = identidad vigente del producto,
+    SKU) en `catalog_id`. Foto y precio los pone Meta desde el catálogo;
+    `body_text` solo alimenta el historial del chat."""
+    from src.sdk.connectorkit import product_retailer_id
+
+    if not catalog_id:
+        raise ValueError("META_CATALOG_ID no configurado: el carrusel usa el catálogo de Meta")
+    cards: list[CarouselCard] = []
+    for handle in handles:
+        product = products.get(handle)
+        if product is None:
+            raise ValueError(f"producto {handle!r} no está en el catálogo")
+        cards.append(
+            CarouselCard(
+                body_text=carousel_card_body(product),
+                product_retailer_id=product_retailer_id(product),
+                catalog_id=catalog_id,
+            )
+        )
+    return cards
 
 
 @dataclass(frozen=True)
@@ -111,13 +222,21 @@ def resolve_campaign_audience(
     programadas), "campana_reciente" (touch de campaña < 48h — respiro entre
     promos), o "fuera_de_segmento". La transparencia del skip es deliberada:
     el operador ve a quién NO le llegó y por qué.
+
+    Contactos importados (CSV): entran como segmento "importados" aunque no
+    tengan sesión en el vault. Si SÍ la tienen, valen las mismas reglas que
+    un agregado manual (humano/opt-out absolutos, saltan el cooldown, quiet
+    hours protege siempre); el nombre del vault gana sobre el del archivo.
     """
     wanted = set(campaign.get("segments") or [])
     removed_ids = set(campaign.get("excluded_session_ids") or [])
     extra_ids = set(campaign.get("extra_session_ids") or [])
+    imported = imported_contacts_by_session(campaign)
     recipients: list[CampaignRecipient] = []
     skipped: list[SkippedRecipient] = []
+    seen: set[str] = set()
     for session_id, metadata in sessions:
+        seen.add(session_id)
         segment = segment_for_metadata(metadata)
         if segment is None:
             # Humano / opt-out: absoluto — ni el agregado manual lo pisa.
@@ -127,7 +246,8 @@ def resolve_campaign_audience(
             skipped.append(SkippedRecipient(session_id, "quitado_por_operador"))
             continue
         is_manual = session_id in extra_ids
-        if not is_manual and segment not in wanted:
+        is_imported = session_id in imported
+        if not (is_manual or is_imported) and segment not in wanted:
             skipped.append(SkippedRecipient(session_id, "fuera_de_segmento"))
             continue
         if is_quiet_hours is not None and is_quiet_hours(session_id):
@@ -135,7 +255,7 @@ def resolve_campaign_audience(
             skipped.append(SkippedRecipient(session_id, "quiet_hours"))
             continue
         if (
-            not is_manual
+            not (is_manual or is_imported)
             and now_ms is not None
             and _has_recent_campaign_touch(metadata, now_ms)
         ):
@@ -143,16 +263,60 @@ def resolve_campaign_audience(
             # (decisión consciente del operador sobre UN contacto).
             skipped.append(SkippedRecipient(session_id, "campana_reciente"))
             continue
+        if segment in wanted:
+            resolved_segment = segment
+        elif is_manual:
+            resolved_segment = SEGMENT_MANUAL
+        else:
+            resolved_segment = SEGMENT_IMPORTADOS
         recipients.append(
             CampaignRecipient(
                 session_id=session_id,
-                segment=SEGMENT_MANUAL
-                if is_manual and segment not in wanted
-                else segment,
-                customer_name=customer_name_from_metadata(metadata),
+                segment=resolved_segment,
+                customer_name=customer_name_from_metadata(metadata)
+                or (imported.get(session_id) if is_imported else None),
+            )
+        )
+    # Importados SIN sesión en el vault: destinatarios nuevos para el bot.
+    for session_id, name in imported.items():
+        if session_id in seen:
+            continue
+        if session_id in removed_ids:
+            skipped.append(SkippedRecipient(session_id, "quitado_por_operador"))
+            continue
+        if is_quiet_hours is not None and is_quiet_hours(session_id):
+            skipped.append(SkippedRecipient(session_id, "quiet_hours"))
+            continue
+        recipients.append(
+            CampaignRecipient(
+                session_id=session_id,
+                segment=SEGMENT_IMPORTADOS,
+                customer_name=_first_name(name),
             )
         )
     return CampaignAudience(recipients=recipients, skipped=skipped)
+
+
+def imported_contacts_by_session(campaign: dict[str, Any]) -> dict[str, str | None]:
+    """`{wa_<phone>: nombre|None}` de los contactos importados de la campaña."""
+    out: dict[str, str | None] = {}
+    for contact in campaign.get("imported_contacts") or []:
+        if not isinstance(contact, dict):
+            continue
+        phone = str(contact.get("phone") or "").strip()
+        if not phone.isdigit():
+            continue
+        name = contact.get("name")
+        out[f"wa_{phone}"] = name if isinstance(name, str) and name.strip() else None
+    return out
+
+
+def _first_name(full_name: str | None) -> str | None:
+    if not isinstance(full_name, str) or not full_name.strip():
+        return None
+    if full_name.strip().lower() in _PLACEHOLDER_NAMES:
+        return None
+    return full_name.strip().split()[0]
 
 
 # El customer de ventas WhatsApp se crea en Medusa con nombre placeholder
@@ -194,6 +358,9 @@ class CampaignSendPlan:
     skipped: list[SkippedRecipient]
     unit_cost_usd_micros: int
     total_cost_usd_micros: int
+    #: Productos del carrusel (vacío = plantilla simple). Las tarjetas las
+    #: resuelve una activity aparte (sube fotos a Meta) — el plan es puro.
+    carousel_handles: list[str] = field(default_factory=list)
 
 
 def build_send_plan(
@@ -225,11 +392,12 @@ def build_send_plan(
     )
     return CampaignSendPlan(
         campaign_id=campaign["id"],
-        template_name=campaign.get("template_name") or CAMPAIGN_TEMPLATE_NAME,
+        template_name=campaign_template_name(campaign),
         recipients=recipients,
         skipped=audience.skipped,
         unit_cost_usd_micros=estimate.unit_cost_usd_micros,
         total_cost_usd_micros=estimate.total_usd_micros,
+        carousel_handles=carousel_handles(campaign),
     )
 
 
@@ -387,6 +555,10 @@ def new_campaign(
         # Curaduría manual de la audiencia (sección Ver audiencia):
         "excluded_session_ids": [],
         "extra_session_ids": [],
+        # Audiencia importada desde un archivo (CSV): [{phone, name}].
+        "imported_contacts": [],
+        # Carrusel de productos del catálogo de Meta (handles, 0 o 2..10).
+        "carousel_handles": [],
         "message": {"header": header, "body": body, "footer": footer, "cta": cta},
         "template_name": CAMPAIGN_TEMPLATE_NAME,
         "schedule_at_ms": None,

@@ -63,6 +63,7 @@ from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
 )
 from src.plugins.chats.agent.sales.config.shipping import shipping_rate_for_city
 from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
+from src.plugins.chats.agent.sales.use_cases.coupons import coupon_discount_for_items
 from src.plugins.chats.agent.sales.tools.order_registration import (
     RegisterOrderTool,
     _order_reference,
@@ -446,7 +447,6 @@ async def order(session_key: SessionKey, body: OrderBody, deps: Deps) -> dict[st
 async def _register(session: str, body: OrderBody, priced: Any, deps: SessionActionsDeps) -> dict[str, Any]:
     shipping_cop = shipping_rate_for_city(body.shipping.city)
     subtotal_cop = priced.subtotal_cop
-    total_cop = subtotal_cop + shipping_cop
     store = FilesystemMetadataStore(deps.vault_dir)
     tool = RegisterOrderTool(str(deps.vault_dir), vault_dir=deps.vault_dir, port=deps.order_port, catalog=deps.catalog)
 
@@ -454,6 +454,13 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
     # solo si el último episodio de la sesión ya la tiene anotada (el mismo
     # pedido semanas después, en un episodio nuevo, es una venta nueva).
     data_before = store.read(session)
+    # Cupón aplicado en el chat (`apply_coupon`): el mismo descuento que
+    # exige SEC-07 en la tool — el operador no lo recalcula a mano.
+    discount = await coupon_discount_for_items(
+        data_before, deps.catalog, priced.items, shipping_cop=shipping_cop
+    )
+    discount_cop = discount.discount_cop if discount else 0
+    total_cop = subtotal_cop + shipping_cop - discount_cop
     existing = data_before.get("registered_order")
     episodes = data_before.get("episodes") or []
     last_episode = episodes[-1] if episodes and isinstance(episodes[-1], dict) else {}

@@ -67,6 +67,9 @@ export const orderSuggestionSchema = z.object({
   payment_method: paymentMethodSchema.nullable().default(null),
   subtotal_cop: z.number().default(0),
   shipping_cop: z.number().default(0),
+  /** Cupón aplicado en el chat (`apply_coupon`): el registro lo descuenta. */
+  discount_cop: z.number().default(0),
+  coupon_code: z.string().nullable().default(null),
   total_cop: z.number().default(0),
   /** Campos que el operador TIENE que completar antes de poder registrar. */
   missing: z.array(z.string()).default([]),

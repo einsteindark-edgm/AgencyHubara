@@ -514,6 +514,14 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                   <span>Productos</span>
                   <span>{formatCop(subtotal)}</span>
                 </div>
+                {suggestion && suggestion.discount_cop > 0 && (
+                  <div style={totalsStyle}>
+                    <span>
+                      Descuento cupón {suggestion.coupon_code ?? ""} (aplicado en el chat)
+                    </span>
+                    <span>−{formatCop(suggestion.discount_cop)}</span>
+                  </div>
+                )}
                 <p style={mutedStyle}>
                   El envío se calcula al crear el pedido (tarifa mínima según la
                   ciudad) y la transportadora lo confirma al despachar.

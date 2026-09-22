@@ -14,6 +14,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from src.plugins.marketing.campaign_store import CampaignStore
+from src.plugins.marketing.carousel import CarouselError, resolve_campaign_carousel
 from src.plugins.marketing.domain.campaigns import (
     STATUS_SENDING,
     STATUS_SENT,
@@ -22,6 +23,7 @@ from src.plugins.marketing.domain.campaigns import (
 )
 from src.sdk.connectorkit import FilesystemAttributionStore
 from src.sdk.messagingkit import (
+    CarouselCard,
     get_current_rate_card,
     is_quiet_hours_for_session,
 )
@@ -80,6 +82,24 @@ async def load_campaign_send_plan_activity(campaign_id: str) -> CampaignSendPlan
     )
 
 
+@activity.defn(name="prepare_campaign_carousel")
+async def prepare_campaign_carousel_activity(campaign_id: str) -> list[CarouselCard]:
+    """Tarjetas del carrusel (product cards del catálogo de Meta), UNA vez
+    por campaña. Un producto fuera del catálogo o sin META_CATALOG_ID es
+    non-retryable: reintentar no lo arregla, el operador corrige.
+    """
+    store = _store()
+    campaign = _require_campaign(store, campaign_id)
+    try:
+        return await resolve_campaign_carousel(campaign, now_ms=_now_ms())
+    except CarouselError as e:
+        raise ApplicationError(
+            f"Carrusel de la campaña {campaign_id!r}: {e}",
+            non_retryable=True,
+            type="CampaignCarouselInvalid",
+        ) from e
+
+
 @activity.defn(name="mark_campaign_sending")
 async def mark_campaign_sending_activity(campaign_id: str) -> None:
     store = _store()
@@ -135,6 +155,7 @@ async def record_campaign_send_result_activity(
 __all__ = [
     "load_campaign_send_plan_activity",
     "mark_campaign_sending_activity",
+    "prepare_campaign_carousel_activity",
     "record_campaign_send_result_activity",
     "stamp_campaign_touch_activity",
 ]

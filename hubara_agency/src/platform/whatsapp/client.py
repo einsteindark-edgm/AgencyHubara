@@ -393,6 +393,7 @@ async def send_template(
     variables: dict[str, str],
     *,
     header_media_id: str | None = None,
+    carousel_cards: list[wa_dtos.CarouselCard] | None = None,
 ) -> wa_dtos.OutboundResult:
     """Envía un template aprobado por Meta.
 
@@ -405,7 +406,11 @@ async def send_template(
     con el webhook `message_status` que después trae `pricing` + cost.
     """
     data = wa_outbound.build_template_message(
-        to, spec, variables, header_media_id=header_media_id
+        to,
+        spec,
+        variables,
+        header_media_id=header_media_id,
+        carousel_cards=carousel_cards,
     )
     return await _post_json(phone_number_id, data, label="template")
 

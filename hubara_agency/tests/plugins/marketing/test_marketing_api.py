@@ -658,3 +658,308 @@ def test_get_segments_cuenta_contactos_y_expone_costo(
     # Costo claro: tarifa marketing CO vigente por mensaje.
     assert body["unit_cost_usd_micros"] == 12500
     assert body["currency"] == "USD"
+
+
+# --- Importación de contactos (CSV) ----------------------------------------
+
+
+def _import(client: TestClient, campaign_id: str, content: str, name="lista.csv"):
+    return client.post(
+        f"/api/marketing/campaigns/{campaign_id}/contacts/import",
+        files={"file": (name, content.encode("utf-8"), "text/csv")},
+    )
+
+
+def test_import_contacts_csv_persiste_y_resume(client: TestClient) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    res = _import(
+        client,
+        campaign_id,
+        "nombre,telefono\nCamila,3001234567\nPepe,basura\nAna,300 123 4567\n",
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["imported"] == 1
+    assert body["duplicates"] == 1
+    assert body["rejected"] == [{"line": 3, "reason": "numero_invalido"}]
+    assert body["total"] == 1
+    saved = client.get(f"/api/marketing/campaigns/{campaign_id}").json()
+    assert saved["imported_contacts"] == [
+        {"phone": "573001234567", "name": "Camila"}
+    ]
+
+
+def test_import_contacts_mergea_sin_duplicar_con_lo_ya_importado(
+    client: TestClient,
+) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    _import(client, campaign_id, "3001234567\n")
+    res = _import(client, campaign_id, "3001234567\n3109876543\n")
+    assert res.json()["imported"] == 1
+    assert res.json()["total"] == 2
+
+
+def test_import_contacts_rechaza_archivo_no_texto_y_muy_grande(
+    client: TestClient,
+) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    res = client.post(
+        f"/api/marketing/campaigns/{campaign_id}/contacts/import",
+        files={"file": ("foto.png", b"\x89PNG\r\n", "image/png")},
+    )
+    assert res.status_code == 415
+    big = "3001234567\n" * 200_000  # > 1 MB
+    res = _import(client, campaign_id, big)
+    assert res.status_code == 413
+
+
+def test_import_contacts_en_campana_enviada_es_409(
+    client: TestClient, _isolate_vault_dir: Path
+) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    store = CampaignStore(_isolate_vault_dir)
+    campaign = store.get(campaign_id)
+    campaign["status"] = "sent"
+    store.save(campaign)
+    assert _import(client, campaign_id, "3001234567\n").status_code == 409
+
+
+def test_delete_contacts_limpia_la_lista(client: TestClient) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    _import(client, campaign_id, "3001234567\n")
+    res = client.delete(f"/api/marketing/campaigns/{campaign_id}/contacts")
+    assert res.status_code == 200
+    assert res.json()["imported_contacts"] == []
+
+
+def test_send_con_solo_importados_es_valido(client: TestClient, monkeypatch) -> None:
+    fake = _FakeTemporalClient()
+
+    async def _fake_client():
+        return fake
+
+    monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={"goal": "launch", "message": {"body": "Nueva colección."}},
+    )
+    _import(client, campaign_id, "3001234567\n")
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/send", json={})
+    assert res.status_code == 200, res.text
+
+
+def test_audience_incluye_importados_sin_sesion(client: TestClient) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    _import(client, campaign_id, "nombre,telefono\nCamila,3001234567\n")
+    res = client.get(f"/api/marketing/campaigns/{campaign_id}/audience")
+    assert res.status_code == 200
+    assert res.json()["recipients"] == [
+        {
+            "session_id": "wa_573001234567",
+            "phone": "573001234567",
+            "customer_name": "Camila",
+            "segment": "importados",
+        }
+    ]
+
+
+# --- Carrusel de productos --------------------------------------------------
+
+
+def test_put_carousel_handles_valida_cantidad(client: TestClient) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "A"}
+    ).json()["id"]
+    ok = client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={"carousel_handles": ["vela-buda", "cubo-love"]},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["carousel_handles"] == ["vela-buda", "cubo-love"]
+    # 1 producto no es carrusel (Meta: 2..10); 11 tampoco.
+    assert (
+        client.put(
+            f"/api/marketing/campaigns/{campaign_id}",
+            json={"carousel_handles": ["solo-uno"]},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.put(
+            f"/api/marketing/campaigns/{campaign_id}",
+            json={"carousel_handles": [f"p{i}" for i in range(11)]},
+        ).status_code
+        == 422
+    )
+    # Vaciar = volver a la plantilla simple.
+    cleared = client.put(
+        f"/api/marketing/campaigns/{campaign_id}", json={"carousel_handles": []}
+    )
+    assert cleared.json()["carousel_handles"] == []
+
+
+def test_put_carousel_handles_dedup_y_rechaza_handles_raros(client: TestClient) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "A"}
+    ).json()["id"]
+    res = client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={"carousel_handles": ["vela-buda", "vela-buda", "cubo-love"]},
+    )
+    assert res.status_code == 200
+    assert res.json()["carousel_handles"] == ["vela-buda", "cubo-love"]
+    assert (
+        client.put(
+            f"/api/marketing/campaigns/{campaign_id}",
+            json={"carousel_handles": ["../etc", "cubo-love"]},
+        ).status_code
+        == 422
+    )
+
+
+def test_test_send_con_carrusel_manda_las_tarjetas(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    from src.sdk.messagingkit import CarouselCard
+
+    _seed_session(_isolate_vault_dir, "wa_+573125671604", {"tag": "INTERESADO"})
+    sent = []
+
+    async def _fake_send(session_id, template_name, variables, **kwargs):
+        sent.append((session_id, template_name, variables, kwargs))
+        return type("R", (), {"wa_message_id": "wamid-1", "ok": True, "error": None})()
+
+    cards = [
+        CarouselCard(body_text="A · $1", product_retailer_id="HUB-A", catalog_id="868"),
+        CarouselCard(body_text="B · $2", product_retailer_id="HUB-B", catalog_id="868"),
+    ]
+
+    async def _fake_resolve(campaign, *, now_ms):
+        return cards
+
+    monkeypatch.setattr(api_mod, "send_template_to_session", _fake_send)
+    monkeypatch.setattr(api_mod, "resolve_campaign_carousel", _fake_resolve)
+    campaign_id = _ready_campaign(client)
+    client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={"carousel_handles": ["a", "b"]},
+    )
+    res = client.post(
+        f"/api/marketing/campaigns/{campaign_id}/test",
+        json={"phone": "+57 312 567 1604"},
+    )
+    assert res.status_code == 200, res.text
+    assert sent[0][1] == "campaign_carousel_marketing_v1_2"
+    assert sent[0][3]["carousel_cards"] == cards
+
+
+def test_test_send_con_carrusel_roto_es_422_legible(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    from src.plugins.marketing.carousel import CarouselError
+
+    _seed_session(_isolate_vault_dir, "wa_+573125671604", {"tag": "INTERESADO"})
+
+    async def _fake_resolve(campaign, *, now_ms):
+        raise CarouselError("producto 'a' sin foto en el catálogo")  # mensaje del resolver
+
+    monkeypatch.setattr(api_mod, "resolve_campaign_carousel", _fake_resolve)
+    campaign_id = _ready_campaign(client)
+    client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={"carousel_handles": ["a", "b"]},
+    )
+    res = client.post(
+        f"/api/marketing/campaigns/{campaign_id}/test",
+        json={"phone": "+57 312 567 1604"},
+    )
+    assert res.status_code == 422
+    assert "sin foto" in res.json()["detail"]
+
+
+# --- Cupones (promociones de Medusa) ----------------------------------------
+
+
+def test_put_coupon_code_rechaza_forma_de_tag_interno(client: TestClient) -> None:
+    """`VELAS_10` dispara el guard anti-leak del bot (enmudece): el cupón solo
+    admite letras y números (memoria coupon-tag-shape-collision)."""
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "A"}
+    ).json()["id"]
+    res = client.put(
+        f"/api/marketing/campaigns/{campaign_id}", json={"coupon_code": "velas_10"}
+    )
+    assert res.status_code == 422
+    assert "VELAS_10" in res.json()["detail"]
+    for bad in ("PAPA-20", "MAMA 15"):
+        assert (
+            client.put(
+                f"/api/marketing/campaigns/{campaign_id}", json={"coupon_code": bad}
+            ).status_code
+            == 422
+        )
+    ok = client.put(f"/api/marketing/campaigns/{campaign_id}", json={"coupon_code": " mama15 "})
+    assert ok.status_code == 200 and ok.json()["coupon_code"] == "MAMA15"
+    cleared = client.put(f"/api/marketing/campaigns/{campaign_id}", json={"coupon_code": ""})
+    assert cleared.json()["coupon_code"] == ""
+
+
+def test_get_promotions_lista_los_cupones_vigentes_de_medusa(
+    client: TestClient, monkeypatch
+) -> None:
+    from src.sdk.connectorkit import FakePromotionsPort, PromotionDTO
+
+    promo = PromotionDTO(
+        id="p1", code="MAMA15", discount_type="percentage", value=15, currency_code="cop",
+        target_type="items", allocation="across", max_quantity=None,
+        product_ids=("prod_a",), variant_ids=(), collection_ids=(), min_subtotal_cop=None,
+        is_automatic=False, status="active", starts_at_ms=None, ends_at_ms=1_800_000_000_000,
+        budget_type=None, budget_limit=None, budget_used=None, description="Madres",
+    )
+    monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([promo]))
+    res = client.get("/api/marketing/promotions")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["unavailable"] is False
+    assert body["promotions"] == [
+        {
+            "code": "MAMA15",
+            "discount_type": "percentage",
+            "value": 15,
+            "target_type": "items",
+            "name": "Madres",
+            "ends_at_ms": 1_800_000_000_000,
+            "min_subtotal_cop": None,
+            "product_count": 1,
+        }
+    ]
+
+
+def test_get_promotions_con_medusa_caido_es_vacio_y_lo_dice(
+    client: TestClient, monkeypatch
+) -> None:
+    from src.sdk.connectorkit import PromotionsUnavailableError
+
+    class Down:
+        async def list_active(self):
+            raise PromotionsUnavailableError("timeout")
+
+    monkeypatch.setattr(api_mod, "get_promotions_port", lambda: Down())
+    res = client.get("/api/marketing/promotions")
+    assert res.status_code == 200
+    assert res.json() == {"promotions": [], "unavailable": True}

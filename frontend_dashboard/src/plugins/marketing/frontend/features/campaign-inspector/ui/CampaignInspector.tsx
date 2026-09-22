@@ -21,6 +21,7 @@ import {
   useCampaignStats,
   type Campaign,
 } from "@plugins/marketing/frontend/entities/campaign";
+import { useProducts } from "@plugins/marketing/frontend/entities/product";
 import {
   fmtCop,
   fmtN,
@@ -119,12 +120,52 @@ function TemplatePreview({ campaign }: { campaign: Campaign }) {
             {m.cta}
           </div>
         ) : null}
+
+        {campaign.carouselHandles.length > 0 ? (
+          <CarouselPreview handles={campaign.carouselHandles} />
+        ) : null}
       </div>
 
       <p className="px-1 pt-2 text-[10.5px] leading-snug text-fg-faint">
         El saludo se personaliza con el nombre de cada destinatario (o "Hola" a
         secas si no lo tenemos).
       </p>
+    </div>
+  );
+}
+
+/** Tarjetas del carrusel como las ve el cliente: product cards del catálogo
+ *  de Meta (foto, nombre, precio) con el botón "Ver" (carrito nativo). */
+function CarouselPreview({ handles }: { handles: string[] }) {
+  const { data: products = [] } = useProducts();
+  return (
+    <div className="flex max-w-full gap-2 overflow-x-auto pb-1" aria-label="Carrusel">
+      {handles.map((handle) => {
+        const product = products.find((p) => p.handle === handle);
+        return (
+          <div
+            key={handle}
+            className="w-32 shrink-0 overflow-hidden rounded-lg border border-line bg-inspector"
+          >
+            {product?.thumbnail ? (
+              <img src={product.thumbnail} alt="" className="h-20 w-full object-cover" />
+            ) : (
+              <div className="flex h-20 w-full items-center justify-center bg-line/40 text-fg-faint">
+                <Icon.img />
+              </div>
+            )}
+            <div className="px-2 py-1.5 text-[11px] leading-snug">
+              <p className="truncate font-semibold text-fg">{product?.title ?? handle}</p>
+              {product?.priceAmount !== null && product?.priceAmount !== undefined ? (
+                <p className="tabular-nums text-fg-muted">{fmtCop(product.priceAmount)}</p>
+              ) : null}
+            </div>
+            <div className="border-t border-line px-2 py-1 text-center text-[10.5px] font-semibold text-info">
+              Ver
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

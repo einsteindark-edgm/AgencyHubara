@@ -83,6 +83,10 @@ from src.plugins.chats.agent.sales.composition import (
     build_session_metadata_store,
 )
 from src.plugins.chats.agent.sales.tools.checkout import VerifyOrderForCheckoutTool
+from src.plugins.chats.agent.sales.tools.coupons import (
+    ApplyCouponTool,
+    ListPromotionsTool,
+)
 from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
 from src.plugins.chats.agent.sales.tools.order_status import CheckOrderStatusTool
 from src.plugins.chats.agent.sales.tools.order_registration import (
@@ -138,6 +142,29 @@ register_tool_extension(
 # via CatalogPort. El cliente es singleton via lru_cache(1) — capturado por
 # closure en la lambda de la factory.
 _catalog = get_catalog_client()
+
+# Cupones (2026-09-21): las promociones viven en Medusa (Admin → Promotions).
+# El bot solo las lee/valida; el monto lo calcula el sistema (use case
+# coupons) en present_order_confirmation / register_order.
+from src.sdk.connectorkit import get_promotions_port  # noqa: E402
+
+_promotions = get_promotions_port()
+
+register_tool_extension(
+    "sales.list_promotions",
+    lambda workspace: ListPromotionsTool(
+        workspace=str(workspace), promotions=_promotions, catalog=_catalog
+    ),
+)
+register_tool_extension(
+    "sales.apply_coupon",
+    lambda workspace: ApplyCouponTool(
+        workspace=str(workspace),
+        promotions=_promotions,
+        catalog=_catalog,
+        metadata_store=build_session_metadata_store(),
+    ),
+)
 
 register_tool_extension(
     "sales.search_products",

@@ -13,21 +13,27 @@ from datetime import timedelta
 from typing import Any
 
 from anyio import from_thread
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from src.plugins.marketing.campaign_store import CampaignStore
+from src.plugins.marketing.carousel import CarouselError, resolve_campaign_carousel
 from src.plugins.marketing.domain.campaigns import (
     ALL_SEGMENTS,
+    IMPORTED_CONTACTS_CAP,
     STATUS_DRAFT,
     STATUS_SCHEDULED,
     campaign_stats,
+    campaign_template_name,
     campaign_template_variables,
+    carousel_handles,
+    carousel_size_error,
     customer_name_from_metadata,
     new_campaign,
     resolve_campaign_audience,
     segment_for_metadata,
 )
+from src.plugins.marketing.domain.contacts import parse_contacts_file
 from src.plugins.marketing.domain.logic import health_payload
 from src.sdk import get_task_queue
 from src.sdk.connectorkit import (
@@ -54,6 +60,20 @@ _SEGMENT_LABELS: dict[str, tuple[str, str]] = {
     "interesados": ("Interesados", "Mostraron intención o tienen pago pendiente"),
     "frios": ("Fríos", "Consultaron sin etiqueta de compra"),
 }
+
+#: Tipos aceptados para el archivo de contactos (CSV/TSV/texto plano). Excel
+#: exporta CSV; un .xlsx binario se rechaza con 415 (conviértalo a CSV).
+_CONTACTS_MIMES = {
+    "text/csv",
+    "text/plain",
+    "text/tab-separated-values",
+    "application/csv",
+    "application/vnd.ms-excel",  # Windows etiqueta los .csv así
+    "application/octet-stream",  # algunos navegadores no tipan el .csv
+}
+_CONTACTS_EXTENSIONS = (".csv", ".txt", ".tsv")
+#: 1 MB de texto ≈ 80k líneas — muy por encima del cap de contactos.
+_MAX_CONTACTS_BYTES = 1 * 1024 * 1024
 
 #: Estados en los que la campaña sigue siendo editable por el operador.
 _EDITABLE_STATUSES = {STATUS_DRAFT, STATUS_SCHEDULED}
@@ -101,6 +121,9 @@ class UpdateCampaignBody(BaseModel):
     coupon_code: str | None = Field(default=None, max_length=14)
     valid_until: str | None = Field(default=None, max_length=60)
     product_handle: str | None = None
+    # Carrusel de productos (handles del catálogo): [] = sin carrusel, si no
+    # 2..10 (Meta fija la cantidad de tarjetas al aprobar la plantilla).
+    carousel_handles: list[str] | None = Field(default=None, max_length=20)
     segments: list[str] | None = None
     message: MessageBody | None = None
     # Curaduría manual de la audiencia (replace completo, como el resto del PUT).
@@ -145,7 +168,32 @@ def update_campaign(campaign_id: str, body: UpdateCampaignBody) -> dict:
                 status_code=422, detail=f"Segmentos desconocidos: {sorted(unknown)}"
             )
     if "coupon_code" in patch:
-        patch["coupon_code"] = patch["coupon_code"].upper()
+        code = patch["coupon_code"].strip().upper()
+        # Solo letras y números: un cupón con forma de tag interno (`VELAS_10`)
+        # dispara el guard anti-leak del bot y lo enmudece (memoria
+        # coupon-tag-shape-collision). Vacío = sin cupón.
+        if code and not _COUPON_CODE_RE.fullmatch(code):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Cupón inválido: {code!r}. Solo letras y números, sin espacios, "
+                    "guiones ni guiones bajos (ej. MAMA15)."
+                ),
+            )
+        patch["coupon_code"] = code
+    if "carousel_handles" in patch:
+        handles: list[str] = []
+        for handle in patch["carousel_handles"]:
+            if not isinstance(handle, str) or not _HANDLE_RE.fullmatch(handle):
+                raise HTTPException(
+                    status_code=422, detail=f"handle de producto inválido: {handle!r}"
+                )
+            if handle not in handles:
+                handles.append(handle)
+        size_error = carousel_size_error(handles)
+        if size_error:
+            raise HTTPException(status_code=422, detail=size_error)
+        patch["carousel_handles"] = handles
     for field in ("excluded_session_ids", "extra_session_ids"):
         if field not in patch:
             continue
@@ -190,7 +238,141 @@ def delete_campaign(campaign_id: str) -> None:
     _store().delete(campaign_id)
 
 
+# --- Contactos importados (CSV) --------------------------------------------
+
+
+def _decode_contacts_file(content: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return content.decode("utf-8", errors="replace")
+
+
+@router.post("/campaigns/{campaign_id}/contacts/import")
+async def import_contacts(campaign_id: str, file: UploadFile = File(...)) -> dict:
+    """Importa una lista de números (CSV/TSV/texto) como audiencia extra.
+
+    Merge con lo ya importado (dedupe por teléfono). Los números NO necesitan
+    conversación previa con el bot: el envío usa el número del negocio
+    (`WHATSAPP_PHONE_NUMBER_ID`) y el primer mensaje crea la sesión. Devuelve
+    el resumen (importados / duplicados / rechazados con línea) para que el
+    operador vea qué NO entró y por qué.
+    """
+    campaign = _require_campaign(campaign_id)
+    if campaign["status"] not in _EDITABLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Campaña en estado {campaign['status']!r} — ya no es editable",
+        )
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    filename = (file.filename or "").lower()
+    if mime not in _CONTACTS_MIMES and not filename.endswith(_CONTACTS_EXTENSIONS):
+        raise HTTPException(
+            status_code=415,
+            detail=f"Tipo no soportado: {mime or filename!r}. Subí un CSV o TXT.",
+        )
+    if file.size is not None and file.size > _MAX_CONTACTS_BYTES:
+        raise HTTPException(
+            status_code=413, detail="Archivo demasiado grande (máximo 1 MB)"
+        )
+    content = await file.read(_MAX_CONTACTS_BYTES + 1)
+    if len(content) > _MAX_CONTACTS_BYTES:
+        raise HTTPException(
+            status_code=413, detail="Archivo demasiado grande (máximo 1 MB)"
+        )
+    if content[:4] == b"PK\x03\x04" or b"\x00" in content[:512]:
+        raise HTTPException(
+            status_code=415,
+            detail="El archivo no es texto (¿.xlsx?). Exportalo como CSV.",
+        )
+
+    result = parse_contacts_file(_decode_contacts_file(content))
+    existing = list(campaign.get("imported_contacts") or [])
+    known = {c.get("phone") for c in existing if isinstance(c, dict)}
+    added = 0
+    duplicates = result.duplicates
+    for contact in result.contacts:
+        if contact.phone in known:
+            duplicates += 1
+            continue
+        if len(existing) >= IMPORTED_CONTACTS_CAP:
+            break
+        existing.append({"phone": contact.phone, "name": contact.name})
+        known.add(contact.phone)
+        added += 1
+    campaign["imported_contacts"] = existing
+    campaign["updated_at_ms"] = _now_ms()
+    _store().save(campaign)
+    return {
+        "imported": added,
+        "duplicates": duplicates,
+        "rejected": [{"line": r.line, "reason": r.reason} for r in result.rejected][
+            :200
+        ],
+        "rejected_count": len(result.rejected),
+        "total": len(existing),
+        "campaign": campaign,
+    }
+
+
+@router.delete("/campaigns/{campaign_id}/contacts")
+def clear_contacts(campaign_id: str) -> dict:
+    """Vacía la lista importada (la campaña vuelve a depender de segmentos)."""
+    campaign = _require_campaign(campaign_id)
+    if campaign["status"] not in _EDITABLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Campaña en estado {campaign['status']!r} — ya no es editable",
+        )
+    campaign["imported_contacts"] = []
+    campaign["updated_at_ms"] = _now_ms()
+    _store().save(campaign)
+    return campaign
+
+
 # --- Segmentos + costos -----------------------------------------------------
+
+
+# --- Cupones (promociones de Medusa) ----------------------------------------
+
+
+def get_promotions_port():
+    """Provider a nivel módulo (lazy + monkeypatcheable en tests): el import
+    arrastra la composición de Medusa (gate `test_sdk_lazy_surface`)."""
+    from src.sdk.connectorkit import get_promotions_port as _factory
+
+    return _factory()
+
+
+@router.get("/promotions")
+async def list_promotions() -> dict:
+    """Cupones vigentes en Medusa (Admin → Promotions) para elegir en el
+    builder: el mismo código que el bot valida con `apply_coupon`."""
+    from src.sdk.connectorkit import PromotionsUnavailableError
+
+    try:
+        promotions = await get_promotions_port().list_active()
+    except PromotionsUnavailableError as e:
+        log.warning("marketing: no pude leer promociones de Medusa: %s", e)
+        return {"promotions": [], "unavailable": True}
+    return {
+        "promotions": [
+            {
+                "code": p.code,
+                "discount_type": p.discount_type,
+                "value": p.value,
+                "target_type": p.target_type,
+                "name": p.description,
+                "ends_at_ms": p.ends_at_ms,
+                "min_subtotal_cop": p.min_subtotal_cop,
+                "product_count": len(p.product_ids) + len(p.variant_ids) + len(p.collection_ids),
+            }
+            for p in promotions
+        ],
+        "unavailable": False,
+    }
 
 
 # --- Catálogo (picker de producto) -----------------------------------------
@@ -235,8 +417,11 @@ def _validate_ready_to_send(campaign: dict[str, Any]) -> None:
         problems.append("falta el objetivo")
     if not (campaign.get("message") or {}).get("body"):
         problems.append("falta el cuerpo del mensaje")
-    if not campaign.get("segments"):
-        problems.append("falta elegir audiencia")
+    if not campaign.get("segments") and not campaign.get("imported_contacts"):
+        problems.append("falta elegir audiencia (segmentos o contactos importados)")
+    size_error = carousel_size_error(carousel_handles(campaign))
+    if size_error:
+        problems.append(size_error)
     if problems:
         raise HTTPException(status_code=422, detail="; ".join(problems))
 
@@ -353,8 +538,19 @@ async def test_send(campaign_id: str, body: TestSendBody) -> dict:
     variables = campaign_template_variables(
         campaign, customer_name=customer_name_from_metadata(session_metadata)
     )
+    size_error = carousel_size_error(carousel_handles(campaign))
+    if size_error:
+        raise HTTPException(status_code=422, detail=size_error)
+    send_kwargs: dict[str, Any] = {}
+    if carousel_handles(campaign):
+        try:
+            send_kwargs["carousel_cards"] = await resolve_campaign_carousel(
+                campaign, now_ms=_now_ms()
+            )
+        except CarouselError as e:
+            raise HTTPException(status_code=422, detail=f"Carrusel: {e}") from e
     result = await send_template_to_session(
-        session_id, campaign.get("template_name") or "campaign_promo_marketing_v1", variables
+        session_id, campaign_template_name(campaign), variables, **send_kwargs
     )
 
     campaign.setdefault("test_sends", []).append(
@@ -467,6 +663,10 @@ def get_campaign_audience(campaign_id: str) -> dict:
 
 # Anti path-traversal, no política de formato: solo wa_ + dígitos (con o sin +).
 _SESSION_ID_RE = re.compile(r"^wa_\+?\d{1,20}$")
+#: Handle de producto Medusa (slug): letras/dígitos/guiones/underscore.
+_HANDLE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,120}$")
+#: Cupón: solo letras y números (espejo de `COUPON_CODE_RE` del SDK; ver PUT).
+_COUPON_CODE_RE = re.compile(r"^[A-Z0-9]{1,14}$")
 
 #: Cap de mensajes que devuelve la vista (las conversaciones largas no
 #: aportan al preview de campaña; el operador tiene Chats para el detalle).

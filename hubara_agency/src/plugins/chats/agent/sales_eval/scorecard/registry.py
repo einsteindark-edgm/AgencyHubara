@@ -260,7 +260,7 @@ CHECKS: tuple[CheckSpec, ...] = (
        "Pendiente de datos exige confirmación; verificación de pago exige orden o comprobante.",
        ("PR #281",)),
     _c("TAG-03", "Escala cuando el guion lo exige", "estado", "mayor", "judge",
-       "El cliente pidió descuento, mayoreo, evento, algo de salud, envío internacional o un humano.",
+       "El cliente pidió descuento sin cupón válido, mayoreo, evento, algo de salud, envío internacional o un humano.",
        "El bot llama escalate_to_human con el motivo correcto.",
        ("guion:sales_script objeciones",), ("escalate",)),
     _c("TAG-04", "No escala consultas normales", "estado", "mayor", "judge",

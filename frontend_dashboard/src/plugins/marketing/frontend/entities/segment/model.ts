@@ -24,6 +24,8 @@ const FALLBACK_LABELS: Record<string, string> = {
   clientes: "Clientes",
   interesados: "Interesados",
   frios: "Fríos",
+  manual: "Manual",
+  importados: "Importado",
 };
 
 export function segmentLabel(key: string): string {

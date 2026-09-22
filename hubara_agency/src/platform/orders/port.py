@@ -112,4 +112,12 @@ class OrderRegistrationPort(Protocol):
         total_cop: int,
         currency: str = "COP",
         attribution: dict[str, Any] | None = None,
+        coupon_code: str | None = None,
+        discount_cop: int = 0,
     ) -> OrderRegistrationResult: ...
+
+    # `coupon_code` / `discount_cop` (cupones Medusa, 2026-09-21): el código
+    # viaja como `promo_codes` del draft y el monto ya viene descontado en
+    # `total_cop` (lo recomputa la tool desde el snapshot del episodio). Los
+    # callers los mandan SOLO cuando hay cupón, así los adapters/fakes viejos
+    # siguen siendo compatibles.

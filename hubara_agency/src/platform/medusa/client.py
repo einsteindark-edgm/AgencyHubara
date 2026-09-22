@@ -548,6 +548,34 @@ class HttpMedusaClient:
         )
         return data["order"]
 
+    # ---------- promotions (cupones) ----------
+
+    PROMOTION_FIELDS = (
+        "id,code,type,is_automatic,status,"
+        "*application_method,*application_method.target_rules,"
+        "*rules,*campaign,*campaign.budget"
+    )
+
+    async def list_promotions(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """`GET /admin/promotions` paginado — promociones con su método de
+        aplicación (tipo/valor/productos), reglas (mínimo de compra) y
+        campaña (vigencia + presupuesto)."""
+        out: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            data = await self._request(
+                "GET",
+                "/admin/promotions",
+                params={"limit": limit, "offset": offset, "fields": self.PROMOTION_FIELDS},
+            )
+            page = data.get("promotions") or []
+            out.extend(p for p in page if isinstance(p, dict))
+            count = data.get("count")
+            offset += len(page)
+            if not page or not isinstance(count, int) or offset >= count:
+                break
+        return out
+
     # ---------- internals ----------
 
     async def _request(

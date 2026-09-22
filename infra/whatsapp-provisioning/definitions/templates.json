@@ -4,7 +4,9 @@
     "category": "UTILITY",
     "language": "es_CO",
     "body": "Hola, tu cotización para {{1}} ya está lista. ¿Quieres que te la comparta ahora?",
-    "example": ["kit aroma rosas (cotización #42)"],
+    "example": [
+      "kit aroma rosas (cotización #42)"
+    ],
     "semantics": "Notificar al cliente que su cotización está lista (watchdog: awaiting_quote). v2: sin saludo por nombre — el nombre real casi nunca existe (placeholder Medusa) y un slot vacío hace que Meta rechace con 131008 (incidente 2026-07-21)."
   },
   {
@@ -12,7 +14,10 @@
     "category": "UTILITY",
     "language": "es_CO",
     "body": "Hola, tu pago de la orden {{1}} por {{2}} está pendiente. ¿Te ayudo a completarlo?",
-    "example": ["#1042", "$120.000 COP"],
+    "example": [
+      "#1042",
+      "$120.000 COP"
+    ],
     "semantics": "Recordar pago pendiente de una orden creada (watchdog: awaiting_payment). v2: sin saludo por nombre."
   },
   {
@@ -20,7 +25,10 @@
     "category": "UTILITY",
     "language": "es_CO",
     "body": "Hola, tu pedido {{1}} está {{2}}. Si quieres más información, cuéntame por aquí.",
-    "example": ["#22 (Plegaria de Luz)", "en camino"],
+    "example": [
+      "#22 (Plegaria de Luz)",
+      "en camino"
+    ],
     "semantics": "Update objetivo de estado de orden post-compra (watchdog: post_purchase; también agente ETA). v2: sin saludo por nombre."
   },
   {
@@ -28,16 +36,23 @@
     "category": "UTILITY",
     "language": "es_CO",
     "body": "Hola, te escribe Liliana, asesora de Hubara, para hacer seguimiento a tu consulta {{1}}. Quedo atenta a tu respuesta.",
-    "example": ["de la vela personalizada con foto que pediste para el 15 de septiembre"],
+    "example": [
+      "de la vela personalizada con foto que pediste para el 15 de septiembre"
+    ],
     "semantics": "Seguimiento del operador humano cuando la ventana de 24h cerró (dashboard: Reactivar conversación). El slot {{1}} lo escribe el humano sobre el tema pendiente; sin nombre del cliente ni promociones (utility). NUNCA por watchdog."
   },
   {
     "name": "order_ready_photo_utility_v1",
     "category": "UTILITY",
     "language": "es_CO",
-    "header": {"format": "IMAGE", "example_file": "assets/order_ready_example.jpg"},
+    "header": {
+      "format": "IMAGE",
+      "example_file": "assets/order_ready_example.jpg"
+    },
     "body": "Hola, tu pedido {{1}} ya está listo. Te compartimos la foto para que lo veas. ¿Nos confirmas para coordinar la entrega?",
-    "example": ["#31"],
+    "example": [
+      "#31"
+    ],
     "semantics": "Pedido listo con su foto, con la ventana 24h cerrada (dashboard: Reactivar conversación). Encabezado IMAGE: la foto real del pedido se elige en CADA envío (media_id); example_file es solo la foto de ejemplo que exige Meta para revisar la plantilla (Resumable Upload API). Transaccional, sin promociones (utility). NUNCA por watchdog."
   },
   {
@@ -45,7 +60,11 @@
     "category": "MARKETING",
     "language": "es_CO",
     "body": "¡{{1}}! 👋\n\n{{2}}\n\n{{3}}\n\nSi prefieres no recibir más promociones, respóndeme \"NO MÁS\" y te doy de baja.",
-    "example": ["Hola Camila", "Por el día de la madre tenemos 15% de descuento en toda la colección de velas artesanales, hasta el viernes.", "Usa el código MAMA15 al pagar — válido hasta el 14 de junio."],
+    "example": [
+      "Hola Camila",
+      "Por el día de la madre tenemos 15% de descuento en toda la colección de velas artesanales, hasta el viernes.",
+      "Usa el código MAMA15 al pagar — válido hasta el 14 de junio."
+    ],
     "semantics": "Campaña directa del operador (sección Marketing del dashboard): saludo + mensaje + oferta dentro de un marco aprobado con opt-out fijo. NUNCA por watchdog. El slot {{1}} es el saludo COMPLETO que arma el código de campañas con fallback no-vacío ('Hola') — única excepción a la regla sin-nombre."
   },
   {
@@ -53,7 +72,9 @@
     "category": "MARKETING",
     "language": "es_CO",
     "body": "Hola, vi que quedó {{1}} en tu carrito. ¿Quieres que te ayude a completar tu pedido? Si no deseas recibir más mensajes, respóndeme y te doy de baja.",
-    "example": ["una vela aromática Patchouli"],
+    "example": [
+      "una vela aromática Patchouli"
+    ],
     "semantics": "Recovery de carrito fuera de ventana (re-engagement sin promoción ni envío gratis; incluye opt-out). NUNCA por watchdog — solo LLM/cadencia. v2: sin saludo por nombre."
   },
   {
@@ -63,5 +84,203 @@
     "body": "Hola 👋 Te escribo de Hubara. Quedé atento por si quieres retomar lo que estabas mirando; con gusto te ayudo a elegir. Si prefieres no recibir más mensajes, respóndeme \"NO MÁS\" y te doy de baja.",
     "example": [],
     "semantics": "Seguimiento genérico de la escalera de reactivación fuera de la ventana de 24h (lead interesado SIN carrito). Sin variables, sin promoción; incluye opt-out. Solo RemarketingWorkflow — NUNCA por watchdog. Tope 2 plantillas/día por cliente."
+  },
+  {
+    "name": "campaign_carousel_2_marketing_v1",
+    "category": "MARKETING",
+    "language": "es_CO",
+    "body": "¡{{1}}! 👋\n\n{{2}}\n\n{{3}}\n\nSi prefieres no recibir más promociones, respóndeme \"NO MÁS\" y te doy de baja.",
+    "example": [
+      "Hola Camila",
+      "Por el día de la madre tenemos 15% de descuento en toda la colección de velas artesanales, hasta el viernes.",
+      "Usa el código MAMA15 al pagar — válido hasta el 14 de junio."
+    ],
+    "carousel": {
+      "cards": 2,
+      "kind": "product",
+      "buttons": [
+        {
+          "type": "SPM",
+          "text": "Ver"
+        }
+      ]
+    },
+    "semantics": "Campaña con carrusel de 2 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+  },
+  {
+    "name": "campaign_carousel_3_marketing_v1",
+    "category": "MARKETING",
+    "language": "es_CO",
+    "body": "¡{{1}}! 👋\n\n{{2}}\n\n{{3}}\n\nSi prefieres no recibir más promociones, respóndeme \"NO MÁS\" y te doy de baja.",
+    "example": [
+      "Hola Camila",
+      "Por el día de la madre tenemos 15% de descuento en toda la colección de velas artesanales, hasta el viernes.",
+      "Usa el código MAMA15 al pagar — válido hasta el 14 de junio."
+    ],
+    "carousel": {
+      "cards": 3,
+      "kind": "product",
+      "buttons": [
+        {
+          "type": "SPM",
+          "text": "Ver"
+        }
+      ]
+    },
+    "semantics": "Campaña con carrusel de 3 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+  },
+  {
+    "name": "campaign_carousel_4_marketing_v1",
+    "category": "MARKETING",
+    "language": "es_CO",
+    "body": "¡{{1}}! 👋\n\n{{2}}\n\n{{3}}\n\nSi prefieres no recibir más promociones, respóndeme \"NO MÁS\" y te doy de baja.",
+    "example": [
+      "Hola Camila",
+      "Por el día de la madre tenemos 15% de descuento en toda la colección de velas artesanales, hasta el viernes.",
+      "Usa el código MAMA15 al pagar — válido hasta el 14 de junio."
+    ],
+    "carousel": {
+      "cards": 4,
+      "kind": "product",
+      "buttons": [
+        {
+          "type": "SPM",
+          "text": "Ver"
+        }
+      ]
+    },
+    "semantics": "Campaña con carrusel de 4 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+  },
+  {
+    "name": "campaign_carousel_5_marketing_v1",
+    "category": "MARKETING",
+    "language": "es_CO",
+    "body": "¡{{1}}! 👋\n\n{{2}}\n\n{{3}}\n\nSi prefieres no recibir más promociones, respóndeme \"NO MÁS\" y te doy de baja.",
+    "example": [
+      "Hola Camila",
+      "Por el día de la madre tenemos 15% de descuento en toda la colección de velas artesanales, hasta el viernes.",
+      "Usa el código MAMA15 al pagar — válido hasta el 14 de junio."
+    ],
+    "carousel": {
+      "cards": 5,
+      "kind": "product",
+      "buttons": [
+        {
+          "type": "SPM",
+          "text": "Ver"
+        }
+      ]
+    },
+    "semantics": "Campaña con carrusel de 5 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+  },
+  {
+    "name": "campaign_carousel_6_marketing_v1",
+    "category": "MARKETING",
+    "language": "es_CO",
+    "body": "¡{{1}}! 👋\n\n{{2}}\n\n{{3}}\n\nSi prefieres no recibir más promociones, respóndeme \"NO MÁS\" y te doy de baja.",
+    "example": [
+      "Hola Camila",
+      "Por el día de la madre tenemos 15% de descuento en toda la colección de velas artesanales, hasta el viernes.",
+      "Usa el código MAMA15 al pagar — válido hasta el 14 de junio."
+    ],
+    "carousel": {
+      "cards": 6,
+      "kind": "product",
+      "buttons": [
+        {
+          "type": "SPM",
+          "text": "Ver"
+        }
+      ]
+    },
+    "semantics": "Campaña con carrusel de 6 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+  },
+  {
+    "name": "campaign_carousel_7_marketing_v1",
+    "category": "MARKETING",
+    "language": "es_CO",
+    "body": "¡{{1}}! 👋\n\n{{2}}\n\n{{3}}\n\nSi prefieres no recibir más promociones, respóndeme \"NO MÁS\" y te doy de baja.",
+    "example": [
+      "Hola Camila",
+      "Por el día de la madre tenemos 15% de descuento en toda la colección de velas artesanales, hasta el viernes.",
+      "Usa el código MAMA15 al pagar — válido hasta el 14 de junio."
+    ],
+    "carousel": {
+      "cards": 7,
+      "kind": "product",
+      "buttons": [
+        {
+          "type": "SPM",
+          "text": "Ver"
+        }
+      ]
+    },
+    "semantics": "Campaña con carrusel de 7 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+  },
+  {
+    "name": "campaign_carousel_8_marketing_v1",
+    "category": "MARKETING",
+    "language": "es_CO",
+    "body": "¡{{1}}! 👋\n\n{{2}}\n\n{{3}}\n\nSi prefieres no recibir más promociones, respóndeme \"NO MÁS\" y te doy de baja.",
+    "example": [
+      "Hola Camila",
+      "Por el día de la madre tenemos 15% de descuento en toda la colección de velas artesanales, hasta el viernes.",
+      "Usa el código MAMA15 al pagar — válido hasta el 14 de junio."
+    ],
+    "carousel": {
+      "cards": 8,
+      "kind": "product",
+      "buttons": [
+        {
+          "type": "SPM",
+          "text": "Ver"
+        }
+      ]
+    },
+    "semantics": "Campaña con carrusel de 8 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+  },
+  {
+    "name": "campaign_carousel_9_marketing_v1",
+    "category": "MARKETING",
+    "language": "es_CO",
+    "body": "¡{{1}}! 👋\n\n{{2}}\n\n{{3}}\n\nSi prefieres no recibir más promociones, respóndeme \"NO MÁS\" y te doy de baja.",
+    "example": [
+      "Hola Camila",
+      "Por el día de la madre tenemos 15% de descuento en toda la colección de velas artesanales, hasta el viernes.",
+      "Usa el código MAMA15 al pagar — válido hasta el 14 de junio."
+    ],
+    "carousel": {
+      "cards": 9,
+      "kind": "product",
+      "buttons": [
+        {
+          "type": "SPM",
+          "text": "Ver"
+        }
+      ]
+    },
+    "semantics": "Campaña con carrusel de 9 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+  },
+  {
+    "name": "campaign_carousel_10_marketing_v1",
+    "category": "MARKETING",
+    "language": "es_CO",
+    "body": "¡{{1}}! 👋\n\n{{2}}\n\n{{3}}\n\nSi prefieres no recibir más promociones, respóndeme \"NO MÁS\" y te doy de baja.",
+    "example": [
+      "Hola Camila",
+      "Por el día de la madre tenemos 15% de descuento en toda la colección de velas artesanales, hasta el viernes.",
+      "Usa el código MAMA15 al pagar — válido hasta el 14 de junio."
+    ],
+    "carousel": {
+      "cards": 10,
+      "kind": "product",
+      "buttons": [
+        {
+          "type": "SPM",
+          "text": "Ver"
+        }
+      ]
+    },
+    "semantics": "Campaña con carrusel de 10 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
   }
 ]

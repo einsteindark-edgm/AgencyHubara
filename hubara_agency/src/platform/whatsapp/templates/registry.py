@@ -73,6 +73,13 @@ class TemplateSpec:
     #: encabezado). La foto NO es fija: se elige en cada envío (media_id), así
     #: la plantilla de pedido listo lleva la foto real del pedido.
     header_format: str | None = None
+    #: Cantidad de tarjetas del carrusel (media cards) aprobada en Meta —
+    #: 0 = sin carrusel. Meta la fija al crear la plantilla (2..10), por eso
+    #: hay una plantilla por cantidad (`carousel_cards_range` en el YAML).
+    carousel_cards: int = 0
+    #: "product" (tarjetas del catálogo de Meta: precio+foto del catálogo,
+    #: botón Ver) o "media" (foto por media_id + cuerpo + quick reply).
+    carousel_kind: str = "media"
 
 
 # =============================================================================
@@ -106,14 +113,55 @@ def _build_registry_from_dict(raw: dict[str, Any]) -> dict[str, TemplateSpec]:
 
     registry: dict[str, TemplateSpec] = {}
     for entry in raw["templates"]:
-        spec = _build_template_spec_from_dict(entry)
-        if spec.name in registry:
-            raise ValueError(
-                f"Duplicate template name in catalog: {spec.name}. "
-                "Use _vN suffix to version locally."
-            )
-        registry[spec.name] = spec
+        for expanded in _expand_carousel_range(entry):
+            spec = _build_template_spec_from_dict(expanded)
+            if spec.name in registry:
+                raise ValueError(
+                    f"Duplicate template name in catalog: {spec.name}. "
+                    "Use _vN suffix to version locally."
+                )
+            registry[spec.name] = spec
     return registry
+
+
+#: Límites de Meta para media card carousels.
+CAROUSEL_MIN_CARDS = 2
+CAROUSEL_MAX_CARDS = 10
+
+#: Plantilla de campaña con carrusel de productos, por cantidad de tarjetas.
+CAMPAIGN_CAROUSEL_TEMPLATE_PATTERN = "campaign_carousel_marketing_v1_{n}"
+
+
+def carousel_template_name(cards: int) -> str:
+    """Nombre interno de la plantilla de campaña con `cards` tarjetas."""
+    return CAMPAIGN_CAROUSEL_TEMPLATE_PATTERN.format(n=cards)
+
+
+def _expand_carousel_range(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """`carousel_cards_range: [lo, hi]` → una entrada por cantidad, con `{n}`
+    reemplazado en `name` y `waba_template_name`."""
+    rng = entry.get("carousel_cards_range")
+    if rng is None:
+        return [entry]
+    if (
+        not isinstance(rng, list)
+        or len(rng) != 2
+        or not all(isinstance(x, int) for x in rng)
+        or rng[0] > rng[1]
+    ):
+        raise ValueError(
+            f"Template {entry.get('name')!r}: carousel_cards_range debe ser [lo, hi]"
+        )
+    expanded = []
+    for n in range(rng[0], rng[1] + 1):
+        e = {k: v for k, v in entry.items() if k != "carousel_cards_range"}
+        e["name"] = str(entry["name"]).replace("{n}", str(n))
+        e["waba_template_name"] = str(entry["waba_template_name"]).replace(
+            "{n}", str(n)
+        )
+        e["carousel_cards"] = n
+        expanded.append(e)
+    return expanded
 
 
 _VALID_CATEGORIES: frozenset[str] = frozenset(
@@ -122,6 +170,8 @@ _VALID_CATEGORIES: frozenset[str] = frozenset(
 
 #: Encabezados multimedia soportados por el builder. Solo imagen por ahora.
 _VALID_HEADER_FORMATS: frozenset[str] = frozenset({"image"})
+#: Sabores de carrusel de Meta (media card / product card).
+_VALID_CAROUSEL_KINDS: frozenset[str] = frozenset({"media", "product"})
 
 
 def _build_template_spec_from_dict(entry: dict[str, Any]) -> TemplateSpec:
@@ -165,6 +215,23 @@ def _build_template_spec_from_dict(entry: dict[str, Any]) -> TemplateSpec:
             f"Valid: {sorted(_VALID_HEADER_FORMATS)}"
         )
 
+    carousel_kind = entry.get("carousel_kind") or "media"
+    if carousel_kind not in _VALID_CAROUSEL_KINDS:
+        raise ValueError(
+            f"Template {entry['name']!r}: carousel_kind {carousel_kind!r} inválido. "
+            f"Valid: {sorted(_VALID_CAROUSEL_KINDS)}"
+        )
+    carousel_cards = entry.get("carousel_cards") or 0
+    if not isinstance(carousel_cards, int) or isinstance(carousel_cards, bool):
+        raise ValueError(
+            f"Template {entry['name']!r}: carousel_cards debe ser entero"
+        )
+    if carousel_cards and not (CAROUSEL_MIN_CARDS <= carousel_cards <= CAROUSEL_MAX_CARDS):
+        raise ValueError(
+            f"Template {entry['name']!r}: carousel_cards={carousel_cards} fuera del "
+            f"rango de Meta [{CAROUSEL_MIN_CARDS}, {CAROUSEL_MAX_CARDS}]"
+        )
+
     variables_raw = entry["variables"]
     if not isinstance(variables_raw, list):
         raise ValueError(
@@ -198,6 +265,8 @@ def _build_template_spec_from_dict(entry: dict[str, Any]) -> TemplateSpec:
         variables=tuple(variables),
         body=entry.get("body"),
         header_format=header_format,
+        carousel_cards=carousel_cards,
+        carousel_kind=carousel_kind,
     )
 
 

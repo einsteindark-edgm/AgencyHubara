@@ -588,11 +588,18 @@ def build_template_message(
     variables: dict[str, str],
     *,
     header_media_id: str | None = None,
+    carousel_cards: list[wa_dtos.CarouselCard] | None = None,
 ) -> dict[str, Any]:
     """Construye el payload Meta para enviar un template aprobado.
 
     `header_media_id`: foto del encabezado (ya subida a Meta) para templates con
     `header_format == "image"` — obligatoria en esos, prohibida en el resto.
+    `carousel_cards`: tarjetas del carrusel para plantillas con
+    `carousel_cards > 0` — exactamente esa cantidad (Meta la fijó al aprobar),
+    prohibidas en el resto. Según `spec.carousel_kind`: **product** = header
+    PRODUCT (`product_retailer_id` + `catalog_id`, el botón Ver no lleva
+    parámetros); **media** = header IMAGE por media_id + body de una variable
+    + botón quick_reply (índice 0) con su payload.
 
     Shape Meta Cloud API:
         {
@@ -643,6 +650,28 @@ def build_template_message(
         raise ValueError(
             f"Template {spec.name!r} no tiene encabezado de imagen: no admite header_media_id"
         )
+    cards = list(carousel_cards or [])
+    if spec.carousel_cards and len(cards) != spec.carousel_cards:
+        raise ValueError(
+            f"Template {spec.name!r} lleva {spec.carousel_cards} tarjetas de carrusel: "
+            f"llegaron {len(cards)}"
+        )
+    if not spec.carousel_cards and cards:
+        raise ValueError(
+            f"Template {spec.name!r} no tiene carrusel: no admite tarjetas"
+        )
+    for index, card in enumerate(cards):
+        if spec.carousel_kind == "product":
+            if not (card.product_retailer_id and card.catalog_id):
+                raise ValueError(
+                    f"Template {spec.name!r}: tarjeta {index} sin producto del "
+                    "catálogo (product_retailer_id + catalog_id)"
+                )
+        elif not (card.header_media_id and card.quick_reply_payload):
+            raise ValueError(
+                f"Template {spec.name!r}: tarjeta {index} sin foto (header_media_id) "
+                "o sin payload del botón"
+            )
 
     # Construir parameters EN EL ORDEN DECLARADO POR spec.variables.
     # Meta los usa posicionalmente como {{1}}, {{2}}, ...
@@ -664,6 +693,16 @@ def build_template_message(
         )
     if parameters:
         components.append({"type": "body", "parameters": parameters})
+    if cards:
+        components.append(
+            {
+                "type": "carousel",
+                "cards": [
+                    {"card_index": index, "components": _carousel_card_components(spec, card)}
+                    for index, card in enumerate(cards)
+                ],
+            }
+        )
     if components:
         # Si el template no tiene variables ni encabezado (raro pero posible),
         # Meta acepta template sin `components`.
@@ -676,6 +715,39 @@ def build_template_message(
         "type": "template",
         "template": template_payload,
     }
+
+
+def _carousel_card_components(
+    spec: TemplateSpec, card: wa_dtos.CarouselCard
+) -> list[dict[str, Any]]:
+    if spec.carousel_kind == "product":
+        return [
+            {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "product",
+                        "product": {
+                            "product_retailer_id": card.product_retailer_id,
+                            "catalog_id": card.catalog_id,
+                        },
+                    }
+                ],
+            }
+        ]
+    return [
+        {
+            "type": "header",
+            "parameters": [{"type": "image", "image": {"id": card.header_media_id}}],
+        },
+        {"type": "body", "parameters": [{"type": "text", "text": card.body_text}]},
+        {
+            "type": "button",
+            "sub_type": "quick_reply",
+            "index": "0",
+            "parameters": [{"type": "payload", "payload": card.quick_reply_payload}],
+        },
+    ]
 
 
 # =============================================================================

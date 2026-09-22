@@ -335,6 +335,7 @@ services:
     - WORKSPACE_VAULT_DIR=/app/hubara_vault
     - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
     - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
+    - META_CATALOG_ID=${META_CATALOG_ID}
     - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,marketing,mba,order_sentinel,orders,reengagement,system_map
     - EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state
     volumes:

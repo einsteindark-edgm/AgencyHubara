@@ -174,3 +174,53 @@ def test_parse_all_never_raises_on_garbage(garbage) -> None:
     batch = parse_whatsapp_inbound_all(garbage)
 
     assert batch.messages == ()
+
+
+def test_parse_template_quick_reply_button_carries_title_and_payload() -> None:
+    """Respuesta a un botón quick_reply de una PLANTILLA (carrusel de campaña):
+    Meta manda `type: button` con `{payload, text}` (no `interactive`). El
+    texto que ve el bot lleva el título Y el payload — así `ref: HUB-…` del
+    botón "Me interesa" hidrata el producto como el botón del PDP."""
+    body = _envelope(
+        {
+            "metadata": {"phone_number_id": "PHONE_123"},
+            "messages": [
+                {
+                    "id": "wamid.BTN",
+                    "from": "5491111111111",
+                    "timestamp": "1714312345",
+                    "type": "button",
+                    "button": {"payload": "ref: HUB-CUBOLOVE", "text": "Me interesa"},
+                }
+            ],
+        }
+    )
+    parsed = parse_whatsapp_inbound(body)
+    assert parsed is not None
+    assert parsed.text == "Me interesa · ref: HUB-CUBOLOVE"
+    assert parsed.media is None
+    assert parsed.interactive == {
+        "type": "template_button",
+        "payload": "ref: HUB-CUBOLOVE",
+        "title": "Me interesa",
+    }
+
+
+def test_parse_template_button_with_same_payload_and_text_is_not_duplicated() -> None:
+    body = _envelope(
+        {
+            "metadata": {"phone_number_id": "PHONE_123"},
+            "messages": [
+                {
+                    "id": "wamid.BTN2",
+                    "from": "5491111111111",
+                    "timestamp": "1714312345",
+                    "type": "button",
+                    "button": {"payload": "Sí, quiero", "text": "Sí, quiero"},
+                }
+            ],
+        }
+    )
+    parsed = parse_whatsapp_inbound(body)
+    assert parsed is not None
+    assert parsed.text == "Sí, quiero"
