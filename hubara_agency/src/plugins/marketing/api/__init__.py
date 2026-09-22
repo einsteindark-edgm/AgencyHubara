@@ -33,7 +33,7 @@ from src.plugins.marketing.domain.campaigns import (
     resolve_campaign_audience,
     segment_for_metadata,
 )
-from src.plugins.marketing.domain.contacts import parse_contacts_file
+from src.plugins.marketing.domain.contacts import normalize_phone, parse_contacts_file
 from src.plugins.marketing.domain.logic import health_payload
 from src.sdk import get_task_queue
 from src.sdk.connectorkit import (
@@ -504,33 +504,44 @@ async def cancel_campaign(campaign_id: str) -> dict:
     return {"ok": True, "workflow_cancelled": workflow_cancelled}
 
 
-def _session_id_for_phone(phone: str) -> str:
-    normalized = re.sub(r"[\s\-()]", "", phone)
-    return f"wa_{normalized}"
+#: Lo que puede traer un teléfono tecleado: dígitos, `+`, espacios y
+#: separadores. Cualquier otra cosa (`/`, `.`, letras) se rechaza ANTES de
+#: normalizar — el id termina en un Path del vault (ver `_SESSION_ID_RE`).
+_PHONE_INPUT_RE = re.compile(r"^[\d\s+\-()]+$")
+
+
+def _session_id_for_phone(phone: str) -> str | None:
+    """`wa_<E.164 sin +>` o None si no es un celular usable.
+
+    Misma regla que el CSV de audiencia (`normalize_phone`): "3001234567" y
+    "+57 300 123 4567" caen en la MISMA sesión `wa_573001234567`, que es como
+    la escribe el webhook. Sin esto el operador tecleaba su celular sin
+    indicativo y el endpoint buscaba `wa_3001234567`, que no existe.
+    """
+    if not _PHONE_INPUT_RE.fullmatch(phone):
+        return None
+    normalized = normalize_phone(phone)
+    return f"wa_{normalized}" if normalized else None
 
 
 @router.post("/campaigns/{campaign_id}/test")
 async def test_send(campaign_id: str, body: TestSendBody) -> dict:
     """Envío de prueba a UN número del operador, antes de disparar la campaña.
 
-    El número debe tener sesión en el vault (haber chateado con el bot al
-    menos una vez): el send resuelve phone_number_id desde su metadata.
+    NO exige conversación previa: igual que los contactos importados, el envío
+    usa el número del negocio (`WHATSAPP_PHONE_NUMBER_ID`) cuando el número no
+    tiene sesión, y el primer mensaje la crea. Si la tiene, el saludo lleva su
+    nombre. Un rechazo de Meta (plantilla no aprobada, número inválido) sale
+    como 502 con el motivo — nunca un 500 pelado.
     """
     campaign = _require_campaign(campaign_id)
     session_id = _session_id_for_phone(body.phone)
-    # El `phone` del body termina en un Path del vault: con una sesión real
-    # delante, `<num>/../../x` resolvía fuera. Solo dígitos (con o sin `+`).
-    if not _SESSION_ID_RE.fullmatch(session_id):
+    if session_id is None or not _SESSION_ID_RE.fullmatch(session_id):
         raise HTTPException(
             status_code=422,
-            detail="Número inválido: solo dígitos, con o sin + inicial",
-        )
-    if not (WORKSPACE_VAULT_DIR / session_id / "metadata.json").exists():
-        raise HTTPException(
-            status_code=404,
             detail=(
-                f"El número {body.phone} no tiene conversación previa con el bot — "
-                "escríbele primero al WhatsApp del negocio y reintenta"
+                f"El número {body.phone!r} no es un celular válido — escríbelo "
+                "como 3001234567 o +57 300 123 4567"
             ),
         )
     session_metadata = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
@@ -548,13 +559,19 @@ async def test_send(campaign_id: str, body: TestSendBody) -> dict:
             )
         except CarouselError as e:
             raise HTTPException(status_code=422, detail=f"Carrusel: {e}") from e
-    result = await send_template_to_session(
-        session_id, campaign_template_name(campaign), variables, **send_kwargs
-    )
+    try:
+        result = await send_template_to_session(
+            session_id, campaign_template_name(campaign), variables, **send_kwargs
+        )
+    except Exception as exc:  # noqa: BLE001 — superficie el motivo al operador
+        log.exception("marketing: envío de prueba rechazado (campaña %s)", campaign_id)
+        raise HTTPException(
+            status_code=502, detail=f"WhatsApp rechazó el envío de prueba: {exc}"
+        ) from exc
 
     campaign.setdefault("test_sends", []).append(
         {
-            "phone": _session_id_for_phone(body.phone).removeprefix("wa_"),
+            "phone": session_id.removeprefix("wa_"),
             "at_ms": _now_ms(),
             "wa_message_id": getattr(result, "wa_message_id", None),
         }

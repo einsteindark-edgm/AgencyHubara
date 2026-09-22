@@ -260,7 +260,11 @@ def test_send_campana_incompleta_es_422(client: TestClient, monkeypatch) -> None
 def test_test_send_manda_template_a_la_sesion_del_numero(
     client: TestClient, _isolate_vault_dir: Path, monkeypatch
 ) -> None:
-    _seed_session(_isolate_vault_dir, "wa_+573125671604", {"tag": "INTERESADO"})
+    # La sesión del vault es `wa_57…` (sin `+`, como llega del webhook): el
+    # número tecleado con `+57` y espacios tiene que caer en ESA sesión.
+    _seed_session(
+        _isolate_vault_dir, "wa_573001234567", {"tag": "INTERESADO", "profile": {"name": "Ana Ruiz"}}
+    )
     sent = []
 
     async def _fake_send(session_id, template_name, variables):
@@ -272,30 +276,101 @@ def test_test_send_manda_template_a_la_sesion_del_numero(
 
     res = client.post(
         f"/api/marketing/campaigns/{campaign_id}/test",
-        json={"phone": "+57 312 567 1604"},
+        json={"phone": "+57 300 123 4567"},
     )
-    assert res.status_code == 200
-    assert sent[0][0] == "wa_+573125671604"
+    assert res.status_code == 200, res.text
+    assert sent[0][0] == "wa_573001234567"
     assert sent[0][1] == "campaign_promo_marketing_v1"
-    assert sent[0][2]["greeting"] == "Hola"
-    # La prueba queda en el historial de la campaña.
+    assert sent[0][2]["greeting"] == "Hola Ana"
+    # La prueba queda en el historial de la campaña, con el número normalizado.
     saved = client.get(f"/api/marketing/campaigns/{campaign_id}").json()
-    assert saved["test_sends"][0]["phone"] == "+573125671604"
+    assert saved["test_sends"][0]["phone"] == "573001234567"
 
 
-def test_test_send_numero_sin_sesion_es_404(
+def test_test_send_celular_sin_indicativo_recibe_el_57(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    # Caso real: el operador escribe "3229…" (10 dígitos) y el endpoint buscaba
+    # `wa_3229…` — la sesión existe como `wa_573229…`. Misma regla que el CSV.
+    _seed_session(_isolate_vault_dir, "wa_573001234567", {"tag": "INTERESADO"})
+    sent = []
+
+    async def _fake_send(session_id, template_name, variables):
+        sent.append(session_id)
+        return type("R", (), {"wa_message_id": "wamid-1", "ok": True, "error": None})()
+
+    monkeypatch.setattr(api_mod, "send_template_to_session", _fake_send)
+    campaign_id = _ready_campaign(client)
+
+    res = client.post(
+        f"/api/marketing/campaigns/{campaign_id}/test", json={"phone": "300 123 4567"}
+    )
+    assert res.status_code == 200, res.text
+    assert sent == ["wa_573001234567"]
+
+
+def test_test_send_sin_sesion_envia_igual_con_el_numero_del_negocio(
     client: TestClient, monkeypatch
 ) -> None:
-    async def _fake_send(session_id, template_name, variables):  # pragma: no cover
-        raise AssertionError("no debe llegar al send")
+    # Igual que los contactos importados: el envío usa el número del negocio
+    # (WHATSAPP_PHONE_NUMBER_ID) y el primer mensaje crea la sesión. Exigir
+    # conversación previa dejaba al operador sin poder probar desde su celular.
+    sent = []
+
+    async def _fake_send(session_id, template_name, variables):
+        sent.append((session_id, variables))
+        return type("R", (), {"wa_message_id": "wamid-1", "ok": True, "error": None})()
 
     monkeypatch.setattr(api_mod, "send_template_to_session", _fake_send)
     campaign_id = _ready_campaign(client)
     res = client.post(
         f"/api/marketing/campaigns/{campaign_id}/test",
-        json={"phone": "+57 300 000 0000"},
+        json={"phone": "3002223344"},
     )
-    assert res.status_code == 404
+    assert res.status_code == 200, res.text
+    assert sent[0][0] == "wa_573002223344"
+    assert sent[0][1]["greeting"] == "Hola"  # sin nombre conocido: saludo neutro
+
+
+def test_test_send_numero_no_usable_es_422(client: TestClient, monkeypatch) -> None:
+    async def _fake_send(session_id, template_name, variables):  # pragma: no cover
+        raise AssertionError("no debe llegar al send")
+
+    monkeypatch.setattr(api_mod, "send_template_to_session", _fake_send)
+    campaign_id = _ready_campaign(client)
+    for phone in ("6012345678", "12345 67", "abc-def-ghij"):  # fijo, corto, letras
+        res = client.post(
+            f"/api/marketing/campaigns/{campaign_id}/test", json={"phone": phone}
+        )
+        assert res.status_code == 422, (phone, res.text)
+        assert "celular" in res.json()["detail"].lower()
+
+
+def test_test_send_rechazo_de_meta_es_502_con_el_motivo(
+    client: TestClient, monkeypatch
+) -> None:
+    # El send lanza (plantilla no aprobada, número inválido para Meta, config
+    # faltante): antes era un 500 pelado; el operador tiene que ver el motivo.
+    from temporalio.exceptions import ApplicationError
+
+    async def _fake_send(session_id, template_name, variables):
+        raise ApplicationError(
+            "WhatsApp template send failed (non-retryable, code=132001): "
+            "Template name does not exist in the translation",
+            non_retryable=True,
+            type="TemplateMetaError132001",
+        )
+
+    monkeypatch.setattr(api_mod, "send_template_to_session", _fake_send)
+    campaign_id = _ready_campaign(client)
+    res = client.post(
+        f"/api/marketing/campaigns/{campaign_id}/test", json={"phone": "3002223344"}
+    )
+    assert res.status_code == 502, res.text
+    assert "132001" in res.json()["detail"]
+    # Un envío fallido NO queda en el historial de pruebas.
+    saved = client.get(f"/api/marketing/campaigns/{campaign_id}").json()
+    assert saved["test_sends"] == []
 
 
 def test_test_send_rechaza_un_numero_que_es_una_ruta(
@@ -837,7 +912,7 @@ def test_test_send_con_carrusel_manda_las_tarjetas(
 ) -> None:
     from src.sdk.messagingkit import CarouselCard
 
-    _seed_session(_isolate_vault_dir, "wa_+573125671604", {"tag": "INTERESADO"})
+    _seed_session(_isolate_vault_dir, "wa_573001234567", {"tag": "INTERESADO"})
     sent = []
 
     async def _fake_send(session_id, template_name, variables, **kwargs):
@@ -861,7 +936,7 @@ def test_test_send_con_carrusel_manda_las_tarjetas(
     )
     res = client.post(
         f"/api/marketing/campaigns/{campaign_id}/test",
-        json={"phone": "+57 312 567 1604"},
+        json={"phone": "300 123 4567"},
     )
     assert res.status_code == 200, res.text
     assert sent[0][1] == "campaign_carousel_marketing_v1_2"
@@ -873,7 +948,7 @@ def test_test_send_con_carrusel_roto_es_422_legible(
 ) -> None:
     from src.plugins.marketing.carousel import CarouselError
 
-    _seed_session(_isolate_vault_dir, "wa_+573125671604", {"tag": "INTERESADO"})
+    _seed_session(_isolate_vault_dir, "wa_573001234567", {"tag": "INTERESADO"})
 
     async def _fake_resolve(campaign, *, now_ms):
         raise CarouselError("producto 'a' sin foto en el catálogo")  # mensaje del resolver
@@ -886,7 +961,7 @@ def test_test_send_con_carrusel_roto_es_422_legible(
     )
     res = client.post(
         f"/api/marketing/campaigns/{campaign_id}/test",
-        json={"phone": "+57 312 567 1604"},
+        json={"phone": "300 123 4567"},
     )
     assert res.status_code == 422
     assert "sin foto" in res.json()["detail"]

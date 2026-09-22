@@ -65,3 +65,29 @@ soportado en la plataforma para números sin catálogo.
 - GIVEN el cliente abre el producto desde la tarjeta y envía el carrito nativo
 - WHEN chats lo ingiere (`type: order`)
 - THEN el bot lo recibe como "[el cliente armó un carrito con: …]" (flujo existente) y sigue la venta
+
+### Requirement: Envío de prueba a un número del operador
+
+`POST /campaigns/{id}/test` SHALL normalizar el número con la misma regla que
+el CSV de audiencia (`3001234567`, `300 123 4567` y `+57 300 123 4567` son la
+sesión `wa_573001234567`, como la escribe el webhook) y MUST NOT exigir
+conversación previa: sin sesión, el envío usa el número del negocio
+(`WHATSAPP_PHONE_NUMBER_ID`) igual que un contacto importado. Un rechazo del
+envío (plantilla no aprobada, número inválido para Meta, configuración
+faltante) SHALL responder 502 con el motivo, nunca un 500 sin detalle.
+
+#### Scenario: El operador teclea su celular sin indicativo
+
+- GIVEN la sesión `wa_573001234567` existe (o no)
+- WHEN el operador envía la prueba con `300 123 4567`
+- THEN la plantilla sale a `wa_573001234567` (con el nombre del vault si lo hay) y el historial de pruebas guarda `573001234567`
+
+#### Scenario: Número que no es un celular
+
+- WHEN el operador envía `6012345678` (fijo) o texto
+- THEN responde 422 explicando el formato y nada sale
+
+#### Scenario: Meta rechaza el envío
+
+- WHEN el envío lanza (por ejemplo `code=132001`, plantilla inexistente)
+- THEN responde 502 con ese motivo y la prueba NO queda en el historial
