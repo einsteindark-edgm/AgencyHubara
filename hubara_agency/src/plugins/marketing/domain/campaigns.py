@@ -183,6 +183,14 @@ class CampaignRecipient:
 #: Distinta de "excluido" (humano): el operador ve a quién ya NO puede enviar.
 SKIP_DADO_DE_BAJA = "dado_de_baja"
 
+#: Sesión sembrada para probar Ads (`seeded_test: true`, teléfono falso):
+#: ruido de desarrollo, jamás destinatario. La API no la lista ni en skipped.
+SKIP_SESION_DE_PRUEBA = "sesion_de_prueba"
+
+
+def is_test_session(metadata: dict[str, Any]) -> bool:
+    return metadata.get("seeded_test") is True
+
 
 @dataclass(frozen=True)
 class SkippedRecipient:
@@ -247,6 +255,10 @@ def resolve_campaign_audience(
     seen: set[str] = set()
     for session_id, metadata in sessions:
         seen.add(session_id)
+        if is_test_session(metadata):
+            # Sintética (seed de Ads): ni por segmento, ni a mano, ni importada.
+            skipped.append(SkippedRecipient(session_id, SKIP_SESION_DE_PRUEBA))
+            continue
         segment = segment_for_metadata(metadata)
         if segment is None:
             # Humano / baja: absoluto — ni el agregado manual lo pisa.

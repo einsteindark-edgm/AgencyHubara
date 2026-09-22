@@ -160,3 +160,21 @@ def test_customer_name_from_metadata_filtra_placeholder() -> None:
         is None
     )
     assert customer_name_from_metadata({}) is None
+
+
+def test_sesion_de_prueba_jamas_recibe_ni_por_segmento_ni_agregada_a_mano() -> None:
+    # Las sesiones sembradas para probar Ads (`seeded_test: true`, teléfonos
+    # falsos wa_5730000009XX con "[seed] mensaje N") caían en "fríos" y una
+    # campaña les intentaba enviar WhatsApp real. Son ruido: nunca entran.
+    campaign = _campaign(["clientes", "frios"])
+    campaign["extra_session_ids"] = ["wa_573000000902"]
+    sessions = [
+        ("wa_573000000901", {"tag": "COMPRA_EXITOSA", "seeded_test": True}),
+        ("wa_573000000902", {"seeded_test": True}),
+        ("wa_+571", {"tag": "COMPRA_EXITOSA"}),
+    ]
+    audience = resolve_campaign_audience(campaign, sessions)
+    assert [r.session_id for r in audience.recipients] == ["wa_+571"]
+    reasons = {s.session_id: s.reason for s in audience.skipped}
+    assert reasons["wa_573000000901"] == "sesion_de_prueba"
+    assert reasons["wa_573000000902"] == "sesion_de_prueba"

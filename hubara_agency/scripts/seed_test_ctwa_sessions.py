@@ -7,7 +7,11 @@ que planifica `src.plugins.ads.synthetic_seed` (estados garantizados contra el
 clasificador real): nuevo ×2, activo ×2, calificado, cotizado, perdido, no_reply.
 
 Salvaguardas:
-  * TODAS las sesiones llevan `seeded_test: true` → `--clean` las borra.
+  * TODAS las sesiones llevan `seeded_test: true` → `--clean` las saca del
+    vault a una CUARENTENA (`<vault>/_quarantine/seeded-<ts>/`), reversible con
+    un `mv` de vuelta; también reconoce seeds viejos sin marker por su historial
+    ("[seed] mensaje N"). Los readers del vault solo miran `wa_*` de primer
+    nivel: en cuarentena dejan de existir para Chats, Ads y Marketing.
   * Teléfonos obviamente falsos (wa_5730000009XX) — no colisionan con clientes.
   * Dry-run por default; `--apply` para escribir.
   * OJO: aparecen también en la sección Chats (son sesiones del vault) — es
@@ -25,8 +29,9 @@ USO (container del API en la caja — el vault vive ahí):
     # tablero = Medusa; usa el order_id y total_cop reales de cada orden):
     python -m scripts.seed_test_ctwa_sessions --campaign-id 120243118818600317 --won-from-medusa --apply
 
-    # limpiar TODO lo sembrado (borra sesiones con seeded_test=true):
+    # limpiar TODO lo sembrado (mueve a cuarentena; sin --apply = dry-run):
     python -m scripts.seed_test_ctwa_sessions --clean --apply
+    # deshacer: mv <vault>/_quarantine/seeded-<ts>/wa_* <vault>/
 """
 from __future__ import annotations
 
@@ -35,6 +40,9 @@ import json
 import os
 import shutil
 import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 
 from loguru import logger
 
@@ -97,21 +105,94 @@ def _fetch_campaign_orders(campaign_id: str) -> list[dict]:
     return asyncio.run(_run())
 
 
-def _clean(apply: bool) -> None:
-    removed = 0
-    for meta_file in sorted(WORKSPACE_VAULT_DIR.glob("*/metadata.json")):
-        try:
-            meta = json.loads(meta_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+#: Texto con que este script escribe el historial sintético — reconoce seeds
+#: sembrados antes de que existiera el marker `seeded_test`.
+_SEED_HISTORY_PREFIX = "[seed] mensaje"
+#: Solo hace falta mirar el arranque del historial (el seed escribe todo así).
+_SEED_HISTORY_PROBE_LINES = 5
+
+
+def _is_seed_history(session_dir: Path) -> bool:
+    history = session_dir / "sessions" / f"{session_dir.name}.jsonl"
+    if not history.exists():
+        return False
+    try:
+        with history.open(encoding="utf-8") as fh:
+            for _ in range(_SEED_HISTORY_PROBE_LINES):
+                line = fh.readline()
+                if not line:
+                    break
+                try:
+                    content = json.loads(line).get("content")
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(content, str) and content.startswith(_SEED_HISTORY_PREFIX):
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def find_seed_sessions(vault_dir: Path) -> list[Path]:
+    """Sesiones sintéticas del vault: marker `seeded_test: true` en el metadata
+    O historial escrito por este script ("[seed] mensaje N"). Un cliente real
+    que mencione "seed" en su chat NO califica (el prefijo es exacto)."""
+    found: list[Path] = []
+    for session_dir in sorted(vault_dir.glob("wa_*")):
+        if not session_dir.is_dir():
             continue
-        if meta.get("seeded_test") is True:
-            removed += 1
-            logger.info("  CLEAN {}", meta_file.parent.name)
-            if apply:
-                shutil.rmtree(meta_file.parent, ignore_errors=True)
-    logger.info("{}: {} sesiones sintéticas", "BORRADAS" if apply else "A BORRAR", removed)
-    if not apply:
-        logger.info("DRY-RUN — nada borrado. Re-correr con --apply.")
+        meta_file = session_dir / "metadata.json"
+        seeded = False
+        if meta_file.exists():
+            try:
+                seeded = json.loads(meta_file.read_text(encoding="utf-8")).get("seeded_test") is True
+            except (OSError, json.JSONDecodeError):
+                seeded = False
+        if seeded or _is_seed_history(session_dir):
+            found.append(session_dir)
+    return found
+
+
+@dataclass(frozen=True)
+class QuarantineResult:
+    found: int
+    moved: int
+    target_dir: Path
+
+
+def quarantine_seed_sessions(
+    vault_dir: Path, *, apply: bool, now_ms: int | None = None
+) -> QuarantineResult:
+    """Mueve las sesiones sintéticas a `<vault>/_quarantine/seeded-<ts>/`.
+
+    Mover, no borrar: reversible (`mv` de vuelta) y los readers del vault no
+    miran dentro de `_quarantine`. Sin `apply` solo cuenta. Idempotente: la
+    segunda pasada no encuentra nada."""
+    ts = datetime.fromtimestamp(
+        (now_ms if now_ms is not None else int(time.time() * 1000)) / 1000, tz=timezone.utc
+    ).strftime("%Y%m%dT%H%M%SZ")
+    target_dir = vault_dir / "_quarantine" / f"seeded-{ts}"
+    seeds = find_seed_sessions(vault_dir)
+    moved = 0
+    for session_dir in seeds:
+        logger.info("  {} {}", "CUARENTENA" if apply else "A CUARENTENA", session_dir.name)
+        if not apply:
+            continue
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(session_dir), str(target_dir / session_dir.name))
+        moved += 1
+    return QuarantineResult(found=len(seeds), moved=moved, target_dir=target_dir)
+
+
+def _clean(apply: bool) -> None:
+    result = quarantine_seed_sessions(WORKSPACE_VAULT_DIR, apply=apply)
+    if apply:
+        logger.info(
+            "MOVIDAS {} de {} sesiones sintéticas a {}", result.moved, result.found, result.target_dir
+        )
+    else:
+        logger.info("A CUARENTENA: {} sesiones sintéticas", result.found)
+        logger.info("DRY-RUN — nada movido. Re-correr con --apply.")
 
 
 def main() -> None:

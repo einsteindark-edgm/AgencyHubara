@@ -637,6 +637,22 @@ def test_get_campaign_audience_muestra_las_bajas_con_fecha_y_campana(
     assert by_id["wa_+572"]["opted_out_at_ms"] is None
     assert body["opted_out_count"] == 2
 
+def test_get_campaign_audience_oculta_las_sesiones_de_prueba(
+    client: TestClient, _isolate_vault_dir: Path
+) -> None:
+    _seed_session(
+        _isolate_vault_dir,
+        "wa_573000000901",
+        {"tag": "COMPRA_EXITOSA", "seeded_test": True},
+    )
+    _seed_session(_isolate_vault_dir, "wa_+571", {"tag": "COMPRA_EXITOSA"})
+    campaign_id = _ready_campaign(client)  # segments=["clientes"]
+    body = client.get(f"/api/marketing/campaigns/{campaign_id}/audience").json()
+    assert [r["session_id"] for r in body["recipients"]] == ["wa_+571"]
+    # Ni en "No reciben": es ruido de desarrollo, no un contacto.
+    assert body["skipped"] == []
+    assert body["total"] == 1
+
 
 def test_get_audience_conversation_devuelve_historial_simplificado(
     client: TestClient, _isolate_vault_dir: Path
