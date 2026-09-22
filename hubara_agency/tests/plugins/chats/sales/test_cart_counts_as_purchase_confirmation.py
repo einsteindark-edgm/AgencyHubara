@@ -31,7 +31,7 @@ from src.platform.state import FilesystemMetadataStore
 SESSION = "wa_573001234567"
 NOW = 1_789_406_554_683
 _CART = {
-    "catalog_id": "868785339159351",
+    "catalog_id": "CATALOG_TEST",
     "product_items": [
         {"product_retailer_id": "HUB-TRILOGIA", "quantity": 1, "item_price": 45000, "currency": "COP"}
     ],
