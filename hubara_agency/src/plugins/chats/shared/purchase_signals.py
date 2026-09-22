@@ -111,6 +111,11 @@ def _is_confirm_button(interactive: dict[str, Any] | None) -> bool:
     return any(button_id.startswith(p) for p in _CONFIRM_BUTTON_IDS) or "confirmar" in title
 
 
+def _is_cart(order: dict[str, Any] | None) -> bool:
+    """Carrito del catálogo de WhatsApp (`type: "order"`) con al menos un ítem."""
+    return isinstance(order, dict) and bool(order.get("product_items"))
+
+
 def register_inbound_purchase_signals(
     metadata: dict[str, Any],
     text: str | None,
@@ -118,16 +123,22 @@ def register_inbound_purchase_signals(
     now_ms: int,
     message_id: str | None,
     interactive: dict[str, Any] | None = None,
+    order: dict[str, Any] | None = None,
 ) -> str | None:
     """Clasifica el inbound y persiste la señal en `metadata` (mutación).
 
     Returns ``"deferral"`` / ``"affirmation"`` / ``None``. Una afirmación con
     producto ya elegido en el draft del episodio activo marca la confirmación
     de compra (`order_draft.confirmed_at_ms` + `confirmed_by`).
+
+    El carrito del catálogo (run 01a0cb16) confirma SIEMPRE: nombra producto y
+    cantidad por sí mismo, no depende de que el draft ya tenga `producto`.
     """
     kind: str | None = None
     confirmed_by = "text"
-    if _is_confirm_button(interactive):
+    if _is_cart(order):
+        kind, confirmed_by = "affirmation", "cart"
+    elif _is_confirm_button(interactive):
         kind, confirmed_by = "affirmation", "button"
     elif detect_deferral(text):
         kind = "deferral"
@@ -146,6 +157,11 @@ def register_inbound_purchase_signals(
     }
     if kind == "affirmation":
         episode = active_episode(metadata)
+        if episode and confirmed_by == "cart":
+            cart_draft = episode.setdefault("order_draft", {})
+            cart_draft["confirmed_at_ms"] = now_ms
+            cart_draft["confirmed_by"] = confirmed_by
+            return kind
         draft = (episode or {}).get("order_draft") if episode else None
         slots = draft.get("slots") if isinstance(draft, dict) else None
         if isinstance(slots, dict) and str(slots.get("producto") or "").strip():

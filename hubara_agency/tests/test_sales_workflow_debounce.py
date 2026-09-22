@@ -3159,3 +3159,125 @@ async def test_a_failed_tool_in_the_batch_keeps_the_turn_open(tmp_path: Path) ->
     )
 
     assert [m for (_s, m) in tracker.send_whatsapp_calls] == ["Dame un momento y lo reviso 🤍"]
+
+
+# =============================================================================
+# El corte L-11 exige que la tool haya MOSTRADO algo — runs 01a0caec / 01a0cb16
+# =============================================================================
+# El corte de turno (L-11, run b730c006) existe porque el cliente ya tiene algo
+# delante que responder: seguir iterando deja al modelo "responderse a sí
+# mismo". Pero el corte decidía por el NOMBRE de la tool. Cuando la tool se
+# NIEGA (`queued: false` — "No se envió nada"), la premisa es falsa: el cliente
+# no recibió nada y el modelo nunca lee el rechazo → el bot se queda callado.
+#   01a0caec: send_quick_replies → catalog_choice_not_allowed → silencio →
+#             ghosting cerró INTERESADO, tomó el humano.
+#   01a0cb16: carrito → request_shipping_details → purchase_not_confirmed →
+#             silencio con el pedido armado.
+
+_QR_REJECTED = json.dumps({
+    "queued": False,
+    "error": "catalog_choice_not_allowed",
+    "message": "send_quick_replies NO sirve para elegir aromas. No se envió nada. "
+    "Usa present_variant_picker.",
+}, ensure_ascii=False)
+_SHIPPING_REJECTED = json.dumps({
+    "queued": False,
+    "error": "purchase_not_confirmed",
+    "message": "El cliente todavía NO confirmó. Dile el precio y pregúntale si lo "
+    "dejamos así (send_quick_replies). No se mostró nada al cliente.",
+}, ensure_ascii=False)
+_QUEUED = json.dumps({"queued": True, "kind": "quick_replies", "count": 2})
+
+
+def _customer_turn_tool_calls(tracker: Tracker) -> list[str]:
+    """Tools que el modelo llamó en el turno del CLIENTE (el primero grabado)."""
+    names: list[str] = []
+    for m in tracker.record_turn_new_messages[0]:
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") if isinstance(tc, dict) else None
+            names.append((fn or {}).get("name") or tc.get("name"))
+    return names
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_turn_ending_tool_lets_the_model_answer(tmp_path: Path) -> None:
+    """Run 01a0caec: los quick replies rebotan → el modelo lee el rechazo y
+    responde. El cliente recibe ESA respuesta en vez de silencio."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    reply = "Tenemos aromas frescos y cálidos 🤍 ¿Cuál te gusta más para tu casa?"
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        customer_text="Es para mí y para regalar, me encanta que huela rico",
+        responses=[_tool_resp("send_quick_replies"), _final_resp(reply)],
+        tool_results={"send_quick_replies": _QR_REJECTED},
+    )
+
+    assert reply in [m for (_s, m) in tracker.send_whatsapp_calls], (
+        f"el rechazo cortó el turno y el cliente no recibió nada: {tracker.send_whatsapp_calls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_shipping_form_lets_the_model_ask_and_then_cuts(
+    tmp_path: Path,
+) -> None:
+    """Run 01a0cb16: el formulario rebota → el modelo sigue la instrucción
+    (quick replies de confirmación), ESOS sí salen y AHÍ se corta: no hay un
+    tercer llm_chat en el turno del cliente."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        customer_text="[el cliente armó un carrito con: 1× HUB-TRILOGIA]",
+        responses=[
+            _tool_resp("request_shipping_details"),
+            _tool_resp("send_quick_replies"),
+            _tool_resp("set_order_slot"),
+        ],
+        tool_results={
+            "request_shipping_details": _SHIPPING_REJECTED,
+            "send_quick_replies": _QUEUED,
+        },
+    )
+
+    assert _customer_turn_tool_calls(tracker) == [
+        "request_shipping_details",
+        "send_quick_replies",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_delivered_picker_still_cuts_even_if_another_tool_failed(
+    tmp_path: Path,
+) -> None:
+    """Regresión b730c006: el selector SÍ salió → el cliente tiene la pregunta
+    delante. Aunque otra tool del batch falle, el turno corta: el modelo no
+    puede elegir el color por el cliente."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    await _run_tag_session(
+        tracker,
+        workspace,
+        customer_text="Quiero el cubo love",
+        responses=[
+            _tool_resp("present_variant_picker", "set_order_slot"),
+            _tool_resp("set_order_slot"),
+        ],
+        tool_results={
+            "present_variant_picker": json.dumps({"queued": True, "kind": "variant_picker"}),
+            "set_order_slot": json.dumps({"updated": False, "error": "invalid_slot"}),
+        },
+    )
+
+    assert _customer_turn_tool_calls(tracker) == ["present_variant_picker", "set_order_slot"], (
+        "el modelo siguió tras mostrar el selector — puede responder por el cliente"
+    )

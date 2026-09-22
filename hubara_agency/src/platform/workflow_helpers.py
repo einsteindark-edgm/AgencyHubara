@@ -289,6 +289,18 @@ def _ends_turn(tool_names: list[str], *, version: int = 1) -> bool:
     return any(name in ending for name in tool_names)
 
 
+def _rejected_by_tool(payload: dict[str, Any] | None) -> bool:
+    """¿La tool declaró que NO le mostró nada al cliente (`queued: false`)?
+
+    Contrato de las tools outbound (`ui_intents.py`): `queued: true` = el UI
+    intent quedó encolado para el cliente; `queued: false` + `error` = se negó
+    y el mensaje le dice al modelo qué hacer. Un resultado sin envelope
+    ("ok", texto plano) NO cuenta como rechazo: ante la duda, se asume que
+    salió (el corte conservador de L-11).
+    """
+    return isinstance(payload, dict) and payload.get("queued") is False
+
+
 def _starts_outbound(tool_names: list[str]) -> bool:
     """¿Este batch produce contenido client-visible (send directo o UI intent)?"""
     return any(name.startswith(_OUTBOUND_TOOL_PREFIXES) for name in tool_names)
@@ -707,6 +719,9 @@ async def _run_agent_turn_impl(
             batch_tag_customer_message: str | None = None
             # Una tool del batch devolvió `error`: el modelo debe leerlo.
             batch_tool_failed = False
+            # Corte L-11 por RESULTADO (runs 01a0caec / 01a0cb16): ¿alguna tool
+            # que espera al cliente le mostró algo de verdad en este batch?
+            batch_awaits_customer = False
             # DEFAULT-DENY (run 1c9ef231): el content que acompaña una tool
             # call es narración interna SIEMPRE — se descarta y se loguea. El
             # texto para el cliente viaja en los params de la tool
@@ -770,6 +785,10 @@ async def _run_agent_turn_impl(
 
                 # Intentar extraer decisiones del payload JSON (ADR-001).
                 payload = _try_parse_decision_payload(result)
+                if not _rejected_by_tool(payload) and _ends_turn(
+                    [tc.name], version=ends_turn_version
+                ):
+                    batch_awaits_customer = True
                 if payload is not None:
                     if isinstance(payload.get("error"), str) and payload["error"]:
                         batch_tool_failed = True
@@ -904,12 +923,32 @@ async def _run_agent_turn_impl(
             # explícito: el fallback "se me cortó un segundito" es para fallas
             # del modelo, no para este corte deliberado (el guard falsy del
             # caller no envía burbuja vacía).
+            #
+            # Corte por RESULTADO, no por nombre (runs 01a0caec / 01a0cb16,
+            # 2026-09-22): la premisa del corte es que el cliente YA tiene algo
+            # delante. Si TODAS las tools que esperan al cliente se negaron
+            # (`queued: false`, "No se envió nada"), no hay nada que esperar:
+            # cortar deja al bot callado y el modelo nunca lee el rechazo (que
+            # trae el siguiente paso). Sigue iterando; si en la vuelta siguiente
+            # una tool terminal SÍ sale, ahí corta. b730c006 queda cubierto: con
+            # el selector mostrado se corta aunque otra tool del batch falle.
+            # `patched()` va ÚLTIMO: solo se consulta cuando la regla nueva
+            # difiere de la vieja (nada salió). Histories pre-deploy replayean
+            # con el corte viejo; tras el drain (idle 5min en Sales), eliminar
+            # la rama vieja + `deprecate_patch("turn-cut-on-delivery-v1")`.
             if turn_cut_v1 and _ends_turn(batch_tool_names, version=ends_turn_version):
+                if batch_awaits_customer or not workflow.patched(
+                    "turn-cut-on-delivery-v1"
+                ):
+                    workflow.logger.info(
+                        f"turno cortado: {batch_tool_names} espera respuesta del cliente"
+                    )
+                    final_content = ""
+                    break
                 workflow.logger.info(
-                    f"turno cortado: {batch_tool_names} espera respuesta del cliente"
+                    f"sin corte: {batch_tool_names} se negó y no mostró nada al "
+                    "cliente; el modelo lee el rechazo"
                 )
-                final_content = ""
-                break
 
             # El tag AUTOSUFICIENTE termina el turno (run b06636a6, 2026-09-18).
             # Misma clase que la escalación de arriba (L-20), otra tool: tras
