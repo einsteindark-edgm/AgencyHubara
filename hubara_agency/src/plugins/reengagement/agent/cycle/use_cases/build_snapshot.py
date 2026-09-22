@@ -143,7 +143,9 @@ def conversation_entry(
             "has_registered_order": lead.has_registered_order,
             "is_ctwa_lead": lead.is_ctwa_lead,
             "engaged": lead.engaged,
-            "allow_paid_marketing": lead.allow_paid_marketing,
+            # Opt-in del operador O cita del cliente: el espejo de GraphAgents
+            # (parse_conversations) decide el marketing pago con este flag.
+            "allow_paid_marketing": lead.may_pay_marketing,
             # Cierre del último episodio: la supresión already_purchased del
             # espejo (parse-conversations) lo necesita pre-digerido.
             "last_closing_tag": lead.last_closing_tag,

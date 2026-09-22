@@ -192,3 +192,27 @@ async def test_watchdog_sigue_avisando_del_pedido_aunque_haya_baja(
 
     assert result.eligible is True
     assert result.resolved_template_name == "payment_pending_utility_v2"
+
+
+class _CapturingLoadOrStart:
+    def __init__(self) -> None:
+        self.extra_context: list[str] = []
+
+    async def execute(self, *a: Any, **kw: Any) -> None:
+        self.extra_context = [n for n in (kw.get("extra_context") or []) if n]
+
+
+@pytest.mark.asyncio
+async def test_el_bot_confirma_el_dia_en_que_le_escribimos(_isolate_vault_dir):
+    # Antes contestaba «aquí estaré cuando quieras retomar»: ahora la fecha que
+    # el sistema calculó (y en la que la cita le escribe) va en el turno.
+    loader = _CapturingLoadOrStart()
+    use_case = IngestInboundMessage(
+        history_store=_FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=_FakeMetadataStore(),  # type: ignore[arg-type]
+    )
+    await use_case.execute(_msg("Si, pero les escribo la otra semana", "wamid.B"))
+
+    notes = "\n".join(loader.extra_context)
+    assert "le escribimos el lunes" in notes

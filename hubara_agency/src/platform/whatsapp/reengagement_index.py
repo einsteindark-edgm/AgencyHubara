@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from src.platform.state import atomic_write_json
+from src.platform.whatsapp.reengagement_deferral import appointment_at_ms
 from src.platform.whatsapp.send_policy import lead_state_from_metadata
 
 #: dónde vive el índice, relativo al vault (junto a la otra data derivada).
@@ -51,6 +52,9 @@ def index_entry_from_metadata(
         "ctwa_window_expires_at_ms": metadata.get("ctwa_window_expires_at_ms"),
         "tag": lead.tag,
         "transactional_hook": lead.transactional_hook,
+        # Cita del cliente ("les escribo la otra semana"): el lead ya es viejo
+        # y frío cuando llega la fecha — sin esto nunca volvería al shortlist.
+        "appointment_at_ms": appointment_at_ms(metadata),
         "updated_at_ms": now_ms,
     }
 
@@ -102,7 +106,8 @@ def _in_window(now_ms: int, expires_at_ms: Any) -> bool:
 def shortlist_session_ids(
     index: dict[str, dict[str, Any]], *, now_ms: int
 ) -> list[str]:
-    """Candidatos a snapshot: ventana abierta, gancho vivo, o entrada joven.
+    """Candidatos a snapshot: ventana abierta, gancho vivo, cita vencida o
+    entrada joven.
 
     El caso masivo a escala (frío + viejo) queda fuera SIN abrir su metadata.
     Deliberadamente NO mira el tag: un HUMANO/convertido joven igual entra y
@@ -115,6 +120,10 @@ def shortlist_session_ids(
             _in_window(now_ms, e.get("service_window_expires_at_ms"))
             or _in_window(now_ms, e.get("ctwa_window_expires_at_ms"))
             or e.get("transactional_hook")
+            or (
+                isinstance(e.get("appointment_at_ms"), int)
+                and now_ms >= e["appointment_at_ms"]
+            )
             or (
                 isinstance(e.get("updated_at_ms"), int)
                 and now_ms - e["updated_at_ms"] < YOUNG_ENTRY_MS

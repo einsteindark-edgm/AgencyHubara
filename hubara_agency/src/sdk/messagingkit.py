@@ -82,6 +82,8 @@ from src.platform.whatsapp.marketing_opt_out import (
 # proactivamente hasta esa fecha.
 from src.platform.whatsapp.reengagement_deferral import (
     DEFERRAL_KEY as DEFERRAL_KEY,
+    appointment_pending as appointment_pending,
+    fresh_resume_label as fresh_resume_label,
     register_reengagement_deferral as register_reengagement_deferral,
     reengagement_deferred_until as reengagement_deferred_until,
 )

@@ -50,7 +50,10 @@ from src.platform.whatsapp.templates.registry import (
     render_template_body,
 )
 from src.platform.whatsapp.reengagement_ladder import ladder_state, record_touch
-from src.platform.whatsapp.reengagement_deferral import reengagement_deferred_until
+from src.platform.whatsapp.reengagement_deferral import (
+    mark_appointment_touched,
+    reengagement_deferred_until,
+)
 from src.platform.whatsapp.send_policy import (
     CHANNEL_BLOCKED,
     CHANNEL_TEMPLATE,
@@ -212,6 +215,9 @@ async def record_remarketing_touch_activity(session_id: str, kind: str) -> None:
         if not data:
             return None  # sin metadata no se crea una sesión fantasma
         record_touch(data, now_ms, kind)
+        # La cita del cliente es UN toque: el primero después de la fecha la
+        # consume (enviado, abstenido o fallido).
+        mark_appointment_touched(data, now_ms)
         return data
 
     if FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, _mutate) is None:

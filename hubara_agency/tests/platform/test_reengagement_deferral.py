@@ -208,3 +208,11 @@ async def test_el_gate_suprime_al_que_aplazo(
     )
     assert decision.allowed is False
     assert decision.suppress_reason == "customer_deferred"
+
+
+def test_la_pausa_guarda_la_fecha_en_palabras_para_que_el_bot_la_confirme():
+    meta: dict = {}
+    register_reengagement_deferral(
+        meta, "Si, pero les escribo la otra semana", now_ms=NOW, tz=BOGOTA
+    )
+    assert meta[DEFERRAL_KEY]["resume_label"] == "el lunes 28 de septiembre"

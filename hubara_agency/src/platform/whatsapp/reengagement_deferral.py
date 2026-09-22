@@ -9,7 +9,15 @@ Este módulo lee el aplazamiento DETERMINISTA (sin LLM) y deja en el metadata la
 fecha en que el cliente dijo que retoma (`reengagement_deferral.until_ms`, a
 las 10:00 hora local). Hasta esa fecha ningún toque proactivo de venta: lo
 consultan el pre-filtro del ciclo, la central (`check_reengagement_policy`) y
-el watchdog. Vencida la fecha, la escalera vuelve a correr normal.
+el watchdog.
+
+La CITA (decisión del operador 2026-09-22): el día de la fecha sale UN toque
+— `followup_interest_marketing_v1`, aunque sea una plantilla de marketing
+PAGADA (a una semana las ventanas gratis ya cerraron). La central lo habilita
+como un opt-in de un solo uso (`LeadState.appointment_pending`); el primer
+toque registrado después de la fecha la consume. Sin respuesta, la escalera
+no sigue (lead frío) y el ciclo lo etiqueta `SIN_RESPUESTA`. Un aplazamiento
+sin fecha ("yo les escribo cuando…") NO tiene cita: solo la pausa.
 
 Sesgo deliberado:
 * Solo pausa un aplazamiento CON FECHA ("mañana", "el jueves", "la otra
@@ -47,6 +55,18 @@ OPEN_DEFERRAL_MS = 7 * 24 * 60 * 60 * 1000
 RESUME_HOUR_LOCAL = 10
 
 _TEXT_MAX = 120
+
+_WEEKDAY_NAMES = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+_MONTH_NAMES = (
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+    "septiembre", "octubre", "noviembre", "diciembre",
+)
+
+
+def _resume_label(until_ms: int, tz: ZoneInfo) -> str:
+    """"el lunes 28 de septiembre" — lo que el bot le confirma al cliente."""
+    d = datetime.fromtimestamp(until_ms / 1000, tz=tz)
+    return f"el {_WEEKDAY_NAMES[d.weekday()]} {d.day} de {_MONTH_NAMES[d.month - 1]}"
 
 
 @dataclass(frozen=True)
@@ -249,12 +269,15 @@ def register_reengagement_deferral(
             and current.get("kind") == DEFERRAL_KIND_DATED
         ):
             return
-        metadata[DEFERRAL_KEY] = {
+        entry: dict[str, Any] = {
             "at_ms": now_ms,
             "until_ms": parsed.until_ms,
             "kind": parsed.kind,
             "text": text[:_TEXT_MAX],
         }
+        if parsed.kind == DEFERRAL_KIND_DATED:
+            entry["resume_label"] = _resume_label(parsed.until_ms, tz)
+        metadata[DEFERRAL_KEY] = entry
         return
     if DEFERRAL_KEY in metadata and not _is_courtesy(_normalize(text)):
         metadata.pop(DEFERRAL_KEY, None)
@@ -265,3 +288,54 @@ def reengagement_deferred_until(metadata: dict[str, Any], now_ms: int) -> int | 
     pausa vigente."""
     entry = _active(metadata, now_ms)
     return None if entry is None else entry["until_ms"]
+
+
+# --- La cita -----------------------------------------------------------------
+
+
+def _dated_entry(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    entry = metadata.get(DEFERRAL_KEY)
+    if not isinstance(entry, dict) or entry.get("kind") != DEFERRAL_KIND_DATED:
+        return None
+    until = entry.get("until_ms")
+    if isinstance(until, bool) or not isinstance(until, int):
+        return None
+    return entry
+
+
+def appointment_pending(metadata: dict[str, Any]) -> bool:
+    """¿Queda una cita por cumplir? (aplazamiento con fecha, sin toque aún).
+
+    Sin reloj: antes de la fecha la pausa (`reengagement_deferred_until`) ya
+    suprime todo; esto solo dice que el cliente sigue esperando ESE toque.
+    Si retomó la charla el ingest borró el aplazamiento y no hay cita."""
+    entry = _dated_entry(metadata)
+    return entry is not None and "appointment_touched_at_ms" not in entry
+
+
+def appointment_at_ms(metadata: dict[str, Any]) -> int | None:
+    """Cuándo toca la cita pendiente (para el shortlist del ciclo), o None."""
+    entry = _dated_entry(metadata)
+    if entry is None or "appointment_touched_at_ms" in entry:
+        return None
+    return entry["until_ms"]
+
+
+def mark_appointment_touched(metadata: dict[str, Any], now_ms: int) -> None:
+    """El primer toque registrado DESPUÉS de la fecha consume la cita —
+    enviado, abstenido o fallido: es UN intento, no la escalera (muta)."""
+    entry = _dated_entry(metadata)
+    if entry is None or "appointment_touched_at_ms" in entry:
+        return
+    if now_ms >= entry["until_ms"]:
+        entry["appointment_touched_at_ms"] = now_ms
+
+
+def fresh_resume_label(metadata: dict[str, Any]) -> str | None:
+    """"el lunes 28 de septiembre" si ESTE inbound (el último) dio la fecha —
+    para que el bot confirme el día de la cita en su respuesta."""
+    entry = _dated_entry(metadata)
+    if entry is None or entry.get("at_ms") != metadata.get("last_inbound_at_ms"):
+        return None
+    label = entry.get("resume_label")
+    return label if isinstance(label, str) and label else None

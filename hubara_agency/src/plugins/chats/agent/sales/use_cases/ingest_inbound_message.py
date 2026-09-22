@@ -56,6 +56,7 @@ from src.sdk.messagingkit import (
     OPT_OUT_SOURCE_TEXT,
     detect_marketing_opt_out,
     mark_marketing_opt_out,
+    fresh_resume_label,
     opt_out_campaign_id,
     register_reengagement_deferral,
     resolve_local_timezone,
@@ -788,7 +789,9 @@ class IngestInboundMessage:
         # Aplazamiento del cliente ("voy en camino", "luego"): el LLM responde
         # texto breve y no avanza el cierre (las tools de cierre también lo
         # rechazan — defensa en profundidad).
-        deferral_note = build_deferral_note(metadata)
+        deferral_note = build_deferral_note(
+            metadata, resume_label=fresh_resume_label(metadata)
+        )
         # Cupón aplicado en el episodio: el LLM lo recuerda cada turno y sabe
         # que el monto lo calcula el sistema (no promete otro descuento).
         coupon_note = build_coupon_note(metadata)
