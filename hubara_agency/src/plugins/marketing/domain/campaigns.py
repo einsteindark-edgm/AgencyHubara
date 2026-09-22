@@ -16,6 +16,12 @@ SEGMENT_FRIOS = "frios"
 #: Contacto agregado a mano por el operador (fuera de los segmentos elegidos).
 SEGMENT_MANUAL = "manual"
 
+#: Contacto importado desde un archivo (CSV) — puede NO tener sesión en el vault.
+SEGMENT_IMPORTADOS = "importados"
+
+#: Cap de contactos importados por campaña (mismo orden que la curaduría manual).
+IMPORTED_CONTACTS_CAP = 5000
+
 ALL_SEGMENTS: tuple[str, ...] = (
     SEGMENT_CLIENTES,
     SEGMENT_INTERESADOS,
@@ -111,13 +117,21 @@ def resolve_campaign_audience(
     programadas), "campana_reciente" (touch de campaña < 48h — respiro entre
     promos), o "fuera_de_segmento". La transparencia del skip es deliberada:
     el operador ve a quién NO le llegó y por qué.
+
+    Contactos importados (CSV): entran como segmento "importados" aunque no
+    tengan sesión en el vault. Si SÍ la tienen, valen las mismas reglas que
+    un agregado manual (humano/opt-out absolutos, saltan el cooldown, quiet
+    hours protege siempre); el nombre del vault gana sobre el del archivo.
     """
     wanted = set(campaign.get("segments") or [])
     removed_ids = set(campaign.get("excluded_session_ids") or [])
     extra_ids = set(campaign.get("extra_session_ids") or [])
+    imported = imported_contacts_by_session(campaign)
     recipients: list[CampaignRecipient] = []
     skipped: list[SkippedRecipient] = []
+    seen: set[str] = set()
     for session_id, metadata in sessions:
+        seen.add(session_id)
         segment = segment_for_metadata(metadata)
         if segment is None:
             # Humano / opt-out: absoluto — ni el agregado manual lo pisa.
@@ -127,7 +141,8 @@ def resolve_campaign_audience(
             skipped.append(SkippedRecipient(session_id, "quitado_por_operador"))
             continue
         is_manual = session_id in extra_ids
-        if not is_manual and segment not in wanted:
+        is_imported = session_id in imported
+        if not (is_manual or is_imported) and segment not in wanted:
             skipped.append(SkippedRecipient(session_id, "fuera_de_segmento"))
             continue
         if is_quiet_hours is not None and is_quiet_hours(session_id):
@@ -135,7 +150,7 @@ def resolve_campaign_audience(
             skipped.append(SkippedRecipient(session_id, "quiet_hours"))
             continue
         if (
-            not is_manual
+            not (is_manual or is_imported)
             and now_ms is not None
             and _has_recent_campaign_touch(metadata, now_ms)
         ):
@@ -143,16 +158,60 @@ def resolve_campaign_audience(
             # (decisión consciente del operador sobre UN contacto).
             skipped.append(SkippedRecipient(session_id, "campana_reciente"))
             continue
+        if segment in wanted:
+            resolved_segment = segment
+        elif is_manual:
+            resolved_segment = SEGMENT_MANUAL
+        else:
+            resolved_segment = SEGMENT_IMPORTADOS
         recipients.append(
             CampaignRecipient(
                 session_id=session_id,
-                segment=SEGMENT_MANUAL
-                if is_manual and segment not in wanted
-                else segment,
-                customer_name=customer_name_from_metadata(metadata),
+                segment=resolved_segment,
+                customer_name=customer_name_from_metadata(metadata)
+                or (imported.get(session_id) if is_imported else None),
+            )
+        )
+    # Importados SIN sesión en el vault: destinatarios nuevos para el bot.
+    for session_id, name in imported.items():
+        if session_id in seen:
+            continue
+        if session_id in removed_ids:
+            skipped.append(SkippedRecipient(session_id, "quitado_por_operador"))
+            continue
+        if is_quiet_hours is not None and is_quiet_hours(session_id):
+            skipped.append(SkippedRecipient(session_id, "quiet_hours"))
+            continue
+        recipients.append(
+            CampaignRecipient(
+                session_id=session_id,
+                segment=SEGMENT_IMPORTADOS,
+                customer_name=_first_name(name),
             )
         )
     return CampaignAudience(recipients=recipients, skipped=skipped)
+
+
+def imported_contacts_by_session(campaign: dict[str, Any]) -> dict[str, str | None]:
+    """`{wa_<phone>: nombre|None}` de los contactos importados de la campaña."""
+    out: dict[str, str | None] = {}
+    for contact in campaign.get("imported_contacts") or []:
+        if not isinstance(contact, dict):
+            continue
+        phone = str(contact.get("phone") or "").strip()
+        if not phone.isdigit():
+            continue
+        name = contact.get("name")
+        out[f"wa_{phone}"] = name if isinstance(name, str) and name.strip() else None
+    return out
+
+
+def _first_name(full_name: str | None) -> str | None:
+    if not isinstance(full_name, str) or not full_name.strip():
+        return None
+    if full_name.strip().lower() in _PLACEHOLDER_NAMES:
+        return None
+    return full_name.strip().split()[0]
 
 
 # El customer de ventas WhatsApp se crea en Medusa con nombre placeholder
@@ -387,6 +446,8 @@ def new_campaign(
         # Curaduría manual de la audiencia (sección Ver audiencia):
         "excluded_session_ids": [],
         "extra_session_ids": [],
+        # Audiencia importada desde un archivo (CSV): [{phone, name}].
+        "imported_contacts": [],
         "message": {"header": header, "body": body, "footer": footer, "cta": cta},
         "template_name": CAMPAIGN_TEMPLATE_NAME,
         "schedule_at_ms": None,

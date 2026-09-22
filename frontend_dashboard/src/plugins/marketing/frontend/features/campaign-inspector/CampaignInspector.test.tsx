@@ -74,6 +74,7 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     testSends: [],
     excludedSessionIds: [],
     extraSessionIds: [],
+    importedContacts: [],
     ...over,
   };
 }
@@ -218,7 +219,7 @@ describe("CampaignInspector — audiencia", () => {
   it("audiencia vacía: invita a elegir segmentos en el paso 4", () => {
     audienceMock.data = { recipients: [], skipped: [], total: 0 };
     const { getByText } = openAudienceTab(makeCampaign({ segments: [] }));
-    expect(getByText(/Elegí segmentos en el paso 4/)).toBeTruthy();
+    expect(getByText(/Elegí segmentos o importá un CSV en el paso 4/)).toBeTruthy();
   });
 
   it("click en una fila abre el visor con esa sesión y Escape lo cierra", () => {

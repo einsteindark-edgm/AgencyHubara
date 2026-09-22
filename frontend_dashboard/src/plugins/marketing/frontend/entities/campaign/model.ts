@@ -44,6 +44,20 @@ export interface CampaignTestSend {
   waMessageId: string | null;
 }
 
+export interface ImportedContact {
+  phone: string;
+  name: string | null;
+}
+
+export interface ContactsImportSummary {
+  imported: number;
+  duplicates: number;
+  rejected: { line: number; reason: string }[];
+  rejectedCount: number;
+  total: number;
+  campaign: Campaign;
+}
+
 export interface Campaign {
   id: string;
   name: string;
@@ -66,6 +80,8 @@ export interface Campaign {
   excludedSessionIds: string[];
   /** Curaduría manual: sesiones agregadas a mano fuera del segmento. */
   extraSessionIds: string[];
+  /** Audiencia importada desde un CSV (no necesitan sesión previa). */
+  importedContacts: ImportedContact[];
 }
 
 export interface CampaignStats {
@@ -225,7 +241,8 @@ export function campaignChecklist(c: Campaign): ChecklistItem[] {
     {
       key: "audience",
       label: "Audiencia elegida",
-      done: c.segments.length > 0,
+      // Espejo de `_validate_ready_to_send`: segmentos O contactos importados.
+      done: c.segments.length > 0 || c.importedContacts.length > 0,
       required: true,
     },
     {
@@ -236,6 +253,13 @@ export function campaignChecklist(c: Campaign): ChecklistItem[] {
     },
   );
   return items;
+}
+
+/** Razón de rechazo de una fila del CSV, legible. */
+export function importRejectReasonLabel(reason: string): string {
+  if (reason === "numero_invalido") return "número inválido";
+  if (reason === "sin_columna_telefono") return "no encontré una columna de teléfonos";
+  return reason;
 }
 
 /** ¿Los requeridos del checklist están completos? (gate del botón Enviar —

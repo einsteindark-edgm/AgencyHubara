@@ -36,6 +36,7 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     testSends: [],
     excludedSessionIds: [],
     extraSessionIds: [],
+    importedContacts: [],
     ...over,
   };
 }
@@ -97,6 +98,19 @@ describe("campaignChecklist", () => {
     expect(byKey.message?.done).toBe(false);
     expect(byKey.audience?.done).toBe(false);
     expect(byKey.coupon?.required).toBe(false);
+  });
+
+  it("la audiencia se cumple con contactos importados aunque no haya segmentos", () => {
+    const items = campaignChecklist(
+      makeCampaign({
+        goal: "launch",
+        message: { header: "", body: "Hola", footer: "", cta: "" },
+        importedContacts: [{ phone: "573001234567", name: null }],
+      }),
+    );
+    const audience = items.find((i) => i.key === "audience");
+    expect(audience?.done).toBe(true);
+    expect(audience?.label).toBe("Audiencia elegida");
   });
 
   it("campaña de producto exige el producto elegido", () => {

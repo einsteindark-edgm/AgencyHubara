@@ -9,6 +9,8 @@ export type {
   CampaignStatus,
   CampaignTestSend,
   ChecklistItem,
+  ContactsImportSummary,
+  ImportedContact,
   SkippedRecipient,
   StatusTone,
 } from "./model";
@@ -20,6 +22,7 @@ export {
   campaignReadyToSend,
   goalNeedsProduct,
   goalUsesDiscount,
+  importRejectReasonLabel,
   isCampaignEditable,
   OPT_OUT_LINE,
 } from "./model";
@@ -29,7 +32,9 @@ export {
   useCampaignStats,
   useCampaignOrdersEvents,
   useCancelCampaign,
+  useClearContacts,
   useCreateCampaign,
+  useImportContacts,
   useSendCampaign,
   useTestSend,
   useUpdateCampaign,

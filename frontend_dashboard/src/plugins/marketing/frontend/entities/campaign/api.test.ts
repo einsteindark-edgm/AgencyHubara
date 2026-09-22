@@ -34,6 +34,7 @@ const backendSent: BackendCampaign = {
   test_sends: [{ phone: "573001234567", at_ms: 5, wa_message_id: null }],
   excluded_session_ids: ["wa_573009990000"],
   extra_session_ids: ["wa_+573008881122"],
+  imported_contacts: [],
 };
 
 describe("mapBackendCampaign", () => {
@@ -48,6 +49,14 @@ describe("mapBackendCampaign", () => {
     expect(c.testSends[0]?.atMs).toBe(5);
     expect(c.excludedSessionIds).toEqual(["wa_573009990000"]);
     expect(c.extraSessionIds).toEqual(["wa_+573008881122"]);
+  });
+
+  it("mapea los contactos importados (name null → null)", () => {
+    const c = mapBackendCampaign({
+      ...backendSent,
+      imported_contacts: [{ phone: "573001234567", name: null }],
+    });
+    expect(c.importedContacts).toEqual([{ phone: "573001234567", name: null }]);
   });
 
   it("status/goal fuera del vocabulario caen a un default seguro", () => {

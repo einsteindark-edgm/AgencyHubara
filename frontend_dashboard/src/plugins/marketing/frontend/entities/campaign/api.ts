@@ -20,6 +20,7 @@ import {
   backendCampaignSchema,
   backendCampaignsResponseSchema,
   backendCampaignStatsSchema,
+  backendImportContactsResponseSchema,
   backendSendResponseSchema,
   backendTestSendResponseSchema,
   type BackendCampaign,
@@ -33,6 +34,7 @@ import type {
   CampaignSendStarted,
   CampaignStats,
   CampaignStatus,
+  ContactsImportSummary,
 } from "./model";
 
 /* ── Mappers backend → dominio ──────────────────────────────────────────── */
@@ -94,6 +96,10 @@ export function mapBackendCampaign(b: BackendCampaign): Campaign {
     })),
     excludedSessionIds: b.excluded_session_ids,
     extraSessionIds: b.extra_session_ids,
+    importedContacts: b.imported_contacts.map((c) => ({
+      phone: c.phone,
+      name: c.name,
+    })),
   };
 }
 
@@ -279,6 +285,50 @@ export function useTestSend(campaignId: string) {
       return { ok: parsed.ok, sessionId: parsed.session_id };
     },
     // El backend appendea a test_sends → la lista es la fuente del historial.
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: campaignKeys.list() });
+    },
+  });
+}
+
+/** POST /campaigns/{id}/contacts/import — sube un CSV/TXT de números y los
+ *  mergea con lo ya importado. 415/413 con detail legible (superficie eso). */
+export function useImportContacts(campaignId: string) {
+  const qc = useQueryClient();
+  return useMutation<ContactsImportSummary, Error, File>({
+    mutationFn: async (file) => {
+      const form = new FormData();
+      form.append("file", file, file.name || "contactos.csv");
+      const raw = await apiClient.post<unknown>(
+        `/api/marketing/campaigns/${encodeURIComponent(campaignId)}/contacts/import`,
+        form,
+      );
+      const parsed = backendImportContactsResponseSchema.parse(raw);
+      return {
+        imported: parsed.imported,
+        duplicates: parsed.duplicates,
+        rejected: parsed.rejected,
+        rejectedCount: parsed.rejected_count,
+        total: parsed.total,
+        campaign: mapBackendCampaign(parsed.campaign),
+      };
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: campaignKeys.list() });
+    },
+  });
+}
+
+/** DELETE /campaigns/{id}/contacts — vacía la lista importada. */
+export function useClearContacts(campaignId: string) {
+  const qc = useQueryClient();
+  return useMutation<Campaign, Error, void>({
+    mutationFn: async () => {
+      const raw = await apiClient.delete<unknown>(
+        `/api/marketing/campaigns/${encodeURIComponent(campaignId)}/contacts`,
+      );
+      return mapBackendCampaign(backendCampaignSchema.parse(raw));
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: campaignKeys.list() });
     },

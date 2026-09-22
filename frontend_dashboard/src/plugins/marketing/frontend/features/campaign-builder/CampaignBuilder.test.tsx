@@ -35,6 +35,18 @@ const cancelMock = {
   isPending: false,
   error: null as Error | null,
 };
+const importMock = {
+  mutate: vi.fn(),
+  isPending: false,
+  error: null as Error | null,
+  data: undefined as unknown,
+  reset: vi.fn(),
+};
+const clearContactsMock = {
+  mutate: vi.fn(),
+  isPending: false,
+  error: null as Error | null,
+};
 
 vi.mock("@plugins/marketing/frontend/entities/campaign", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -42,6 +54,8 @@ vi.mock("@plugins/marketing/frontend/entities/campaign", async (importOriginal) 
   useSendCampaign: () => sendMock,
   useTestSend: () => testMock,
   useCancelCampaign: () => cancelMock,
+  useImportContacts: () => importMock,
+  useClearContacts: () => clearContactsMock,
 }));
 
 vi.mock("@plugins/marketing/frontend/entities/segment", async (importOriginal) => ({
@@ -109,6 +123,7 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     testSends: [],
     excludedSessionIds: [],
     extraSessionIds: [],
+    importedContacts: [],
     ...over,
   };
 }
@@ -118,6 +133,10 @@ beforeEach(() => {
   sendMock.mutate.mockClear();
   testMock.mutate.mockClear();
   cancelMock.mutate.mockClear();
+  importMock.mutate.mockClear();
+  clearContactsMock.mutate.mockClear();
+  importMock.data = undefined;
+  importMock.error = null;
   testMock.error = null;
   sendMock.error = null;
   audienceMock.data = undefined;
@@ -258,5 +277,63 @@ describe("CampaignBuilder — envío de prueba", () => {
       />,
     );
     expect(getByText(/573001234567/)).toBeTruthy();
+  });
+});
+
+describe("CampaignBuilder — contactos importados (CSV)", () => {
+  it("elegir un archivo dispara la importación con ese File", () => {
+    const { getByLabelText } = render(<CampaignBuilder campaign={makeCampaign()} />);
+    const input = getByLabelText("Importar contactos (CSV)") as HTMLInputElement;
+    const file = new File(["3001234567\n"], "lista.csv", { type: "text/csv" });
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(importMock.mutate).toHaveBeenCalledTimes(1);
+    expect(importMock.mutate.mock.calls[0]?.[0]).toBe(file);
+  });
+
+  it("muestra cuántos contactos hay importados y permite vaciarlos", () => {
+    const { getByText, getByRole } = render(
+      <CampaignBuilder
+        campaign={makeCampaign({
+          importedContacts: [
+            { phone: "573001234567", name: "Camila" },
+            { phone: "573109876543", name: null },
+          ],
+        })}
+      />,
+    );
+    expect(getByText(/2 contactos importados/)).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: "Quitar importados" }));
+    expect(clearContactsMock.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("resume la última importación: importados, duplicados y rechazados por línea", () => {
+    importMock.data = {
+      imported: 3,
+      duplicates: 1,
+      rejected: [{ line: 4, reason: "numero_invalido" }],
+      rejectedCount: 1,
+      total: 3,
+      campaign: makeCampaign(),
+    };
+    const { getByText } = render(<CampaignBuilder campaign={makeCampaign()} />);
+    expect(getByText(/3 nuevos/)).toBeTruthy();
+    expect(getByText(/1 repetido/)).toBeTruthy();
+    expect(getByText(/línea 4/)).toBeTruthy();
+  });
+
+  it("con solo importados (sin segmentos) la campaña se puede enviar", () => {
+    const { getByRole } = render(
+      <CampaignBuilder
+        campaign={makeCampaign({
+          goal: "discount_general",
+          percent: 10,
+          message: { header: "", body: "Hola", footer: "", cta: "" },
+          segments: [],
+          importedContacts: [{ phone: "573001234567", name: null }],
+        })}
+      />,
+    );
+    const button = getByRole("button", { name: "Enviar ahora" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
   });
 });

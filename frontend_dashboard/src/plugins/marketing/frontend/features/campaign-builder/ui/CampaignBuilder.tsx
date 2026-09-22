@@ -80,7 +80,8 @@ export function CampaignBuilder({ campaign }: Props) {
     (!goalNeedsProduct(draft.goal) || Boolean(draft.productHandle)) &&
     (!goalUsesDiscount(draft.goal) || draft.percent > 0);
   const done3 = draft.message.body.trim() !== "";
-  const done4 = draft.segments.length > 0;
+  // Espejo de `_validate_ready_to_send`: segmentos O contactos importados.
+  const done4 = draft.segments.length > 0 || campaign.importedContacts.length > 0;
   const done5 = campaign.testSends.length > 0;
   const done6 = campaign.status !== "draft" && campaign.status !== "failed";
   const canSend = done1 && done2 && done3 && done4;
@@ -192,6 +193,7 @@ export function CampaignBuilder({ campaign }: Props) {
 
           <StepShell n={4} title="Audiencia" done={done4}>
             <AudienceStep
+              campaign={campaign}
               selected={draft.segments}
               info={segmentsInfo}
               editable={editable}

@@ -658,3 +658,121 @@ def test_get_segments_cuenta_contactos_y_expone_costo(
     # Costo claro: tarifa marketing CO vigente por mensaje.
     assert body["unit_cost_usd_micros"] == 12500
     assert body["currency"] == "USD"
+
+
+# --- Importación de contactos (CSV) ----------------------------------------
+
+
+def _import(client: TestClient, campaign_id: str, content: str, name="lista.csv"):
+    return client.post(
+        f"/api/marketing/campaigns/{campaign_id}/contacts/import",
+        files={"file": (name, content.encode("utf-8"), "text/csv")},
+    )
+
+
+def test_import_contacts_csv_persiste_y_resume(client: TestClient) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    res = _import(
+        client,
+        campaign_id,
+        "nombre,telefono\nCamila,3001234567\nPepe,basura\nAna,300 123 4567\n",
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["imported"] == 1
+    assert body["duplicates"] == 1
+    assert body["rejected"] == [{"line": 3, "reason": "numero_invalido"}]
+    assert body["total"] == 1
+    saved = client.get(f"/api/marketing/campaigns/{campaign_id}").json()
+    assert saved["imported_contacts"] == [
+        {"phone": "573001234567", "name": "Camila"}
+    ]
+
+
+def test_import_contacts_mergea_sin_duplicar_con_lo_ya_importado(
+    client: TestClient,
+) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    _import(client, campaign_id, "3001234567\n")
+    res = _import(client, campaign_id, "3001234567\n3109876543\n")
+    assert res.json()["imported"] == 1
+    assert res.json()["total"] == 2
+
+
+def test_import_contacts_rechaza_archivo_no_texto_y_muy_grande(
+    client: TestClient,
+) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    res = client.post(
+        f"/api/marketing/campaigns/{campaign_id}/contacts/import",
+        files={"file": ("foto.png", b"\x89PNG\r\n", "image/png")},
+    )
+    assert res.status_code == 415
+    big = "3001234567\n" * 200_000  # > 1 MB
+    res = _import(client, campaign_id, big)
+    assert res.status_code == 413
+
+
+def test_import_contacts_en_campana_enviada_es_409(
+    client: TestClient, _isolate_vault_dir: Path
+) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    store = CampaignStore(_isolate_vault_dir)
+    campaign = store.get(campaign_id)
+    campaign["status"] = "sent"
+    store.save(campaign)
+    assert _import(client, campaign_id, "3001234567\n").status_code == 409
+
+
+def test_delete_contacts_limpia_la_lista(client: TestClient) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    _import(client, campaign_id, "3001234567\n")
+    res = client.delete(f"/api/marketing/campaigns/{campaign_id}/contacts")
+    assert res.status_code == 200
+    assert res.json()["imported_contacts"] == []
+
+
+def test_send_con_solo_importados_es_valido(client: TestClient, monkeypatch) -> None:
+    fake = _FakeTemporalClient()
+
+    async def _fake_client():
+        return fake
+
+    monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={"goal": "launch", "message": {"body": "Nueva colección."}},
+    )
+    _import(client, campaign_id, "3001234567\n")
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/send", json={})
+    assert res.status_code == 200, res.text
+
+
+def test_audience_incluye_importados_sin_sesion(client: TestClient) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "Feria"}
+    ).json()["id"]
+    _import(client, campaign_id, "nombre,telefono\nCamila,3001234567\n")
+    res = client.get(f"/api/marketing/campaigns/{campaign_id}/audience")
+    assert res.status_code == 200
+    assert res.json()["recipients"] == [
+        {
+            "session_id": "wa_573001234567",
+            "phone": "573001234567",
+            "customer_name": "Camila",
+            "segment": "importados",
+        }
+    ]

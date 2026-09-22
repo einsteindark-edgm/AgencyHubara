@@ -63,6 +63,7 @@ function makeCampaign(id: string) {
     testSends: [],
     excludedSessionIds: [],
     extraSessionIds: [],
+    importedContacts: [],
   };
 }
 

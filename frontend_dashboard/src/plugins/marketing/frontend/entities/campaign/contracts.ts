@@ -37,6 +37,12 @@ export const backendTestSendRecordSchema = z.object({
   wa_message_id: z.string().nullable().default(null),
 });
 
+/** Contacto importado desde un archivo (CSV) — puede no tener sesión. */
+export const backendImportedContactSchema = z.object({
+  phone: z.string(),
+  name: z.string().nullable().default(null),
+});
+
 export const backendCampaignSchema = z.object({
   id: z.string(),
   name: z.string().default(""),
@@ -67,9 +73,27 @@ export const backendCampaignSchema = z.object({
   // quitados a mano del segmento / agregados a mano fuera del segmento.
   excluded_session_ids: z.array(z.string()).default([]),
   extra_session_ids: z.array(z.string()).default([]),
+  // Audiencia importada por CSV (números sin conversación previa).
+  imported_contacts: z.array(backendImportedContactSchema).default([]),
 });
 
 export type BackendCampaign = z.infer<typeof backendCampaignSchema>;
+
+/** Response de POST /campaigns/{id}/contacts/import — resumen + campaña. */
+export const backendImportContactsResponseSchema = z.object({
+  imported: z.number().int().default(0),
+  duplicates: z.number().int().default(0),
+  rejected: z
+    .array(z.object({ line: z.number().int(), reason: z.string() }))
+    .default([]),
+  rejected_count: z.number().int().default(0),
+  total: z.number().int().default(0),
+  campaign: backendCampaignSchema,
+});
+
+export type BackendImportContactsResponse = z.infer<
+  typeof backendImportContactsResponseSchema
+>;
 
 export const backendCampaignsResponseSchema = z.object({
   campaigns: z.array(backendCampaignSchema),
