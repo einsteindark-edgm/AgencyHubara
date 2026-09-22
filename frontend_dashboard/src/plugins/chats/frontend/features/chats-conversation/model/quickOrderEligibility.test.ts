@@ -17,10 +17,21 @@ describe("canOfferQuickOrder", () => {
   });
 
   it("NO se activa en una conversación normal intervenida", () => {
-    // El caso común: el operador entra a responder una duda. No hay pedido
-    // confirmado sin datos, así que el botón sería ruido.
-    expect(canOfferQuickOrder([entry("HUMANO")])).toBe(false);
+    // Pasó a HUMANO desde un rechazo: no es un lead al borde de comprar.
     expect(canOfferQuickOrder([entry("RECHAZO"), entry("HUMANO")])).toBe(false);
+  });
+
+  it("se activa cuando el histórico solo tiene HUMANO", () => {
+    // El operador intervino desde el arranque (o el cliente entró directo al
+    // humano): no hay otro tag que descarte una venta, así que puede
+    // necesitar registrar el pedido.
+    expect(canOfferQuickOrder([entry("HUMANO")])).toBe(true);
+    expect(canOfferQuickOrder([entry("HUMANO"), entry("HUMANO")])).toBe(true);
+  });
+
+  it("HUMANO mezclado con otros tags no cuenta como 'solo HUMANO'", () => {
+    expect(canOfferQuickOrder([entry("HUMANO"), entry("RECHAZO")])).toBe(false);
+    expect(canOfferQuickOrder([entry("COMPRA_EXITOSA"), entry("HUMANO")])).toBe(false);
   });
 
   it("tampoco con otros cierres (una compra ya cerrada, un rechazo)", () => {
