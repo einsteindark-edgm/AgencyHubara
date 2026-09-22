@@ -19,6 +19,8 @@ from src.plugins.marketing.domain.campaigns import (
     STATUS_SENDING,
     STATUS_SENT,
     CampaignSendPlan,
+    append_campaign_touch,
+    build_campaign_touch,
     build_send_plan,
 )
 from src.sdk.connectorkit import FilesystemAttributionStore
@@ -33,11 +35,6 @@ from src.sdk.runtime import (
     WORKSPACE_VAULT_DIR,
     FilesystemMetadataStore,
 )
-
-#: Cap del historial de touches por sesión (mismo criterio que los dedup caps
-#: del send de platform: suficiente para atribución, sin crecer sin límite).
-_CAMPAIGN_TOUCHES_CAP = 20
-
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
@@ -120,19 +117,18 @@ async def stamp_campaign_touch_activity(
     Es LA atribución: cuando el cliente responda, el panel de Ads agrupa la
     conversación por este touch (canal `hubara_campaign`). El nombre viaja
     denormalizado para que el reader no necesite leer `_campaigns/`.
+
+    El touch lleva además lo que recibió el cliente (mensaje, cupón,
+    productos): el bot no ve la plantilla en su historial y lo necesita
+    cuando el cliente responde (bug 2026-09-22). La campaña se lee del
+    vault; si ya no existe queda el touch mínimo de atribución.
     """
+    campaign = _store().get(campaign_id) or {"id": campaign_id}
+    campaign = {**campaign, "id": campaign_id, "name": campaign_name}
+    touch = build_campaign_touch(campaign, sent_at_ms=_now_ms())
+
     def _append_touch(metadata: dict[str, Any]) -> dict[str, Any]:
-        touches = metadata.setdefault("campaign_touches", [])
-        touches.append(
-            {
-                "campaign_id": campaign_id,
-                "campaign_name": campaign_name,
-                "sent_at_ms": _now_ms(),
-            }
-        )
-        if len(touches) > _CAMPAIGN_TOUCHES_CAP:
-            metadata["campaign_touches"] = touches[-_CAMPAIGN_TOUCHES_CAP:]
-        return metadata
+        return append_campaign_touch(metadata, touch)
 
     # `update` (flock por sesión): el ingest del webhook escribe el mismo
     # metadata.json — un read→write suelto perdería updates concurrentes.

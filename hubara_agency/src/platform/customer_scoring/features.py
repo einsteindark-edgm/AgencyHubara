@@ -43,6 +43,9 @@ _PARTIAL_TAGS: frozenset[str] = frozenset(
 )
 # Tag sintético cuando el lifecycle cerró por timeout (cliente abandonó).
 _TIMEOUT_TAG: str = "TIMEOUT"
+# CAMPAIGN_REPLY: episodio abierto que la respuesta a una campaña cerró (el cliente
+# no volvió a ESE episodio) — cuenta como abandono, igual que TIMEOUT.
+_ABANDONED_TAGS: frozenset[str] = frozenset({_TIMEOUT_TAG, "CAMPAIGN_REPLY"})
 
 _MS_PER_DAY: int = 24 * 60 * 60 * 1000
 
@@ -168,7 +171,7 @@ def compute_customer_features(
             episodes_lost += 1
         elif closing_tag in _PARTIAL_TAGS:
             episodes_partial += 1
-        elif closing_tag == _TIMEOUT_TAG:
+        elif closing_tag in _ABANDONED_TAGS:
             episodes_timeout += 1
 
         _append_msgs_diff(ep, msgs_diffs)

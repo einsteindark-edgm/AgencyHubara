@@ -68,7 +68,14 @@ from src.platform.whatsapp.window import (
     compute_service_window_expiry,
     watchdog_fire_at,
 )
+from src.plugins.chats.agent.sales.use_cases.campaign_reply import (
+    build_campaign_reply_note,
+    campaign_label,
+    unanswered_campaign_touch,
+)
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
+    CAMPAIGN_CLOSING_TAG,
+    close_episode,
     count_session_jsonl_lines,
     ensure_active_episode,
 )
@@ -260,7 +267,28 @@ class IngestInboundMessage:
         # saltamos es la rotación de episodios + el reset del tag. Al volver al
         # bot (return-to-bot pone active_route=ventas) se reanuda el ciclo.
         episode_boundary_note: str | None = None
+        campaign_reply_note: str | None = None
         if metadata.get("active_route") != ROUTE_HUMANO:
+            # Respuesta a campaña (bug 2026-09-22, runs 31c15a38/01a0caee):
+            # la PRIMERA respuesta tras el envío es una intención nueva. Se
+            # cierra el episodio abierto (su draft/cupón/nota web se apagan)
+            # y el turno lleva la nota con lo que recibió el cliente — que el
+            # LLM no ve (la plantilla no entra a su historial). Corre ANTES
+            # de pisar `last_inbound_at_ms` (lo usa para saber si ya
+            # respondió).
+            _campaign_touch = unanswered_campaign_touch(metadata, now_ms)
+            if _campaign_touch is not None:
+                close_episode(
+                    metadata,
+                    closing_tag=CAMPAIGN_CLOSING_TAG,
+                    closing_motivo=(
+                        "El cliente respondió a la campaña "
+                        f"«{campaign_label(_campaign_touch)}»"
+                    ),
+                    now_ms=now_ms,
+                    msgs_count_at_close=msgs_count_at_start,
+                )
+                campaign_reply_note = build_campaign_reply_note(_campaign_touch)
             _episodes_before = metadata.get("episodes") or []
             _prev_closed_episode = (
                 _episodes_before[-1]
@@ -268,9 +296,11 @@ class IngestInboundMessage:
                 and _episodes_before[-1].get("closed_at_ms") is not None
                 else None
             )
+            # Con respuesta a campaña la nota de la campaña reemplaza a la de
+            # frontera ("saluda y pregunta en qué ayudar" la contradice).
             episode_boundary_note = (
                 _build_episode_boundary_note(_prev_closed_episode)
-                if _prev_closed_episode is not None
+                if _prev_closed_episode is not None and campaign_reply_note is None
                 else None
             )
             ensure_active_episode(
@@ -338,6 +368,8 @@ class IngestInboundMessage:
                 source=OPT_OUT_SOURCE_TEXT,
                 campaign_id=opt_out_campaign_id(metadata, now_ms),
             )
+            # Pidió la baja: no se le sigue conversando la campaña.
+            campaign_reply_note = None
             logger.info(
                 "marketing_opt_out_detected",
                 session_id=session_id,
@@ -795,13 +827,20 @@ class IngestInboundMessage:
         # Cupón aplicado en el episodio: el LLM lo recuerda cada turno y sabe
         # que el monto lo calcula el sistema (no promete otro descuento).
         coupon_note = build_coupon_note(metadata)
+        # Respuesta a campaña: la nota solo viaja por la ruta Sales (el
+        # remarketing no recibe plugin_context) — el turno va a Ventas.
+        route_kwargs: dict[str, Any] = (
+            {"prefer_sales": True} if campaign_reply_note else {}
+        )
         await self._load_session.execute(
             session_id=session_id,
             message=effective.text,
             phone_number_id=parsed.phone_number_id,
+            **route_kwargs,
             extra_context=[
                 note
                 for note in (
+                    campaign_reply_note,
                     episode_boundary_note,
                     deferral_note,
                     web_cart_note,

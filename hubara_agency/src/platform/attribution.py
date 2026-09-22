@@ -54,7 +54,9 @@ def matching_campaign_touch(
         return None
     best: dict[str, Any] | None = None
     for touch in campaign_touches:
-        if not isinstance(touch, dict):
+        # `test`: envío de prueba del operador — deja touch para que el bot
+        # sepa qué campaña recibió, pero no es una respuesta/venta atribuible.
+        if not isinstance(touch, dict) or touch.get("test"):
             continue
         sent = touch.get("sent_at_ms")
         if not isinstance(sent, int) or not touch.get("campaign_id"):

@@ -26,6 +26,8 @@ from src.plugins.marketing.domain.campaigns import (
     IMPORTED_CONTACTS_CAP,
     STATUS_DRAFT,
     STATUS_SCHEDULED,
+    append_campaign_touch,
+    build_campaign_touch,
     campaign_stats,
     campaign_template_name,
     campaign_template_variables,
@@ -625,6 +627,13 @@ async def test_send(campaign_id: str, body: TestSendBody) -> dict:
     )
     campaign["updated_at_ms"] = _now_ms()
     _store().save(campaign)
+    # Igual que el envío real: el contacto queda con el touch (marcado como
+    # prueba, la atribución lo ignora) para que si responde el bot sepa qué
+    # campaña recibió (bug 2026-09-22).
+    touch = build_campaign_touch(campaign, sent_at_ms=_now_ms(), test=True)
+    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(
+        session_id, lambda metadata: append_campaign_touch(metadata, touch)
+    )
     return {"ok": True, "session_id": session_id}
 
 

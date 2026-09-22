@@ -112,7 +112,12 @@ class LoadOrStartSalesSession:
         message: str,
         phone_number_id: str | None,
         extra_context: list[str] | None = None,
+        prefer_sales: bool = False,
     ) -> None:
+        # `prefer_sales`: el turno TIENE que ir a Ventas aunque la ruta sea
+        # remarketing (hoy: respuesta a una campaña — su nota solo viaja por
+        # el plugin_context de Sales). Cancela el remarketing vivo y deja la
+        # ruta en ventas. Nunca pisa la ruta humano ni las rutas de plugin.
         # `extra_context`: notas volátiles del turno que se appendéan al
         # `plugin_context` del signal Sales (junto al bloque de hora/saludo de
         # Bogotá). Hoy lo usa `IngestInboundMessage` para inyectar la nota de
@@ -198,6 +203,21 @@ class LoadOrStartSalesSession:
                     route=active_route,
                 )
                 active_route = ROUTE_VENTAS
+
+        # 2.9. Respuesta a campaña: Ventas toma la conversación. El
+        # remarketing vivo se termina (si no, su escalera seguiría sobre el
+        # episodio que la campaña reemplazó) y la ruta queda en ventas para
+        # los próximos inbounds.
+        if prefer_sales and active_route == ROUTE_REMARKETING:
+            try:
+                await client.get_workflow_handle(
+                    f"remarketing-{session_id}"
+                ).terminate(reason="El cliente respondió a una campaña: pasa a ventas")
+            except Exception:  # noqa: BLE001 — no existe / ya terminó / race
+                pass
+            data["active_route"] = ROUTE_VENTAS
+            self._metadata_store.write(session_id, data)
+            active_route = ROUTE_VENTAS
 
         # 3. Si la ruta activa es remarketing, intentamos reusar; si murio, fallback.
         if active_route == ROUTE_REMARKETING:

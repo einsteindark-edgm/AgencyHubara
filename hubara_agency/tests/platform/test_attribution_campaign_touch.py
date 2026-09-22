@@ -25,3 +25,16 @@ def test_matching_campaign_touch_gana_el_mas_reciente_en_ventana():
     assert matching_campaign_touch(touches, 2_000 + 8 * day) is None
     assert matching_campaign_touch(None, 5_000) is None
     assert matching_campaign_touch(touches, None) is None
+
+
+def test_touch_de_envio_de_prueba_no_atribuye():
+    """El envío de prueba del operador deja touch (el bot sabe qué recibió),
+    pero no cuenta para respuestas/ventas de la campaña ni para Ads."""
+    from src.platform.attribution import matching_campaign_touch
+
+    touches = [
+        {"campaign_id": "mkt-a", "sent_at_ms": 1_000},
+        {"campaign_id": "mkt-a", "sent_at_ms": 2_000, "test": True},
+    ]
+    assert matching_campaign_touch(touches, 5_000)["sent_at_ms"] == 1_000
+    assert matching_campaign_touch(touches[1:], 5_000) is None

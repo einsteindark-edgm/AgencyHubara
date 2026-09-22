@@ -218,3 +218,27 @@ def test_registered_order_beats_tag_rechazo():
         classify_state(metadata, total_msgs=20, last_inbound_ms=_NOW_MS, now_ms=_NOW_MS)
         == "ganado"
     )
+
+
+def test_episode_superseded_by_campaign_reply_is_no_reply():
+    """`CAMPAIGN_REPLY`: el episodio quedó abierto sin respuesta y el cliente volvió
+    respondiendo a una campaña (episodio nuevo). No es una cotización."""
+    from src.plugins.ads.classification import classify_episode_state
+
+    episode = {
+        "episode_id": "ep_004",
+        "started_at_ms": _NOW_MS - 4 * _ONE_DAY_MS,
+        "closed_at_ms": _NOW_MS,
+        "closing_tag": "CAMPAIGN_REPLY",
+        "order_id": None,
+    }
+    assert (
+        classify_episode_state(
+            episode,
+            current_tag=None,
+            total_msgs=30,
+            last_inbound_ms=_NOW_MS,
+            now_ms=_NOW_MS,
+        )
+        == "no_reply"
+    )

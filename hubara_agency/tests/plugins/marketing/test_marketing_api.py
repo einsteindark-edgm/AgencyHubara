@@ -300,6 +300,17 @@ def test_test_send_manda_template_a_la_sesion_del_numero(
     # La prueba queda en el historial de la campaña, con el número normalizado.
     saved = client.get(f"/api/marketing/campaigns/{campaign_id}").json()
     assert saved["test_sends"][0]["phone"] == "573001234567"
+    # El contacto queda marcado con la campaña (como prueba): si responde, el
+    # bot sabe qué recibió — igual que en el envío real.
+    metadata = json.loads(
+        (_isolate_vault_dir / "wa_573001234567" / "metadata.json").read_text()
+    )
+    touch = metadata["campaign_touches"][-1]
+    assert touch["campaign_id"] == campaign_id
+    assert touch["test"] is True
+    assert touch["message"]
+    # El tag del contacto sobrevive (merge, no clobber).
+    assert metadata["tag"] == "INTERESADO"
 
 
 def test_test_send_celular_sin_indicativo_recibe_el_57(
