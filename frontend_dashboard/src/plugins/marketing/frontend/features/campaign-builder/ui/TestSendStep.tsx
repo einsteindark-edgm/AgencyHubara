@@ -1,6 +1,8 @@
 /**
- * Paso 5 — Envío de prueba: POST /test a UN número del operador. El 404
- * (número sin conversación previa con el bot) se superficie con su detail.
+ * Paso 5 — Envío de prueba: POST /test a UN número del operador. Con o sin
+ * indicativo (el backend normaliza como el CSV de audiencia) y sin necesidad
+ * de conversación previa: sale del número del negocio. Un error del backend
+ * (422 número inválido, 502 rechazo de Meta) se superficie con su detail.
  * El historial `test_sends` se lista como chips.
  */
 
@@ -36,7 +38,7 @@ export function TestSendStep({ campaign, editable }: Props) {
           type="tel"
           disabled={!editable}
           value={phone}
-          placeholder="573001234567"
+          placeholder="3001234567 o 573001234567"
           onChange={(e) => setPhone(e.target.value)}
           aria-label="Teléfono de prueba"
           className="w-56 rounded-md border border-line bg-transparent px-2.5 py-1.5 text-[12.5px] tabular-nums text-fg outline-none focus:border-accent disabled:opacity-60 placeholder:text-fg-faint"
@@ -77,7 +79,8 @@ export function TestSendStep({ campaign, editable }: Props) {
         </div>
       ) : (
         <p className="text-[11px] text-fg-faint">
-          El número debe haber chateado con el bot al menos una vez.
+          Con o sin indicativo. No necesita conversación previa: la prueba sale
+          del número del negocio.
         </p>
       )}
     </div>

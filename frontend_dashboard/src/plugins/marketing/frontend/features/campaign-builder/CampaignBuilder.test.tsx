@@ -302,13 +302,29 @@ describe("CampaignBuilder — envío de prueba", () => {
     expect(testMock.mutate).toHaveBeenCalledWith("573001234567");
   });
 
-  it("superficie el detail del 404 (número sin conversación previa)", () => {
-    testMock.error = new ApiError(404, {
-      detail:
-        "El número 573000000000 no tiene conversación previa con el bot — escríbele primero al WhatsApp del negocio y reintenta",
+  it("acepta el celular sin indicativo y lo manda tal cual (el backend normaliza)", () => {
+    const { getByRole, getByPlaceholderText } = render(
+      <CampaignBuilder campaign={makeCampaign()} />,
+    );
+    fireEvent.change(getByPlaceholderText(/573/), {
+      target: { value: "300 123 4567" },
     });
-    const { getByText } = render(<CampaignBuilder campaign={makeCampaign()} />);
-    expect(getByText(/no tiene conversación previa con el bot/)).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: "Enviar prueba" }));
+    expect(testMock.mutate).toHaveBeenCalledWith("300 123 4567");
+  });
+
+  it("superficie el detail del error del backend (422 número inválido / 502 Meta)", () => {
+    testMock.error = new ApiError(502, {
+      detail:
+        "WhatsApp rechazó el envío de prueba: WhatsApp template send failed (non-retryable, code=132001)",
+    });
+    const { getByText, queryByText } = render(
+      <CampaignBuilder campaign={makeCampaign()} />,
+    );
+    expect(getByText(/WhatsApp rechazó el envío de prueba/)).toBeTruthy();
+    // La ayuda ya no exige conversación previa (sale del número del negocio).
+    expect(queryByText(/debe haber chateado/)).toBeNull();
+    expect(getByText(/No necesita conversación previa/)).toBeTruthy();
   });
 
   it("lista el historial de pruebas enviadas", () => {
