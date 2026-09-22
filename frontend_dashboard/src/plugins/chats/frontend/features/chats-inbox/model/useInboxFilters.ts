@@ -115,7 +115,14 @@ export function useInboxFilters(chats: ChatInboxItem[], options: Options = {}) {
       { key: "Sin respuesta", count: byTag("Sin respuesta"), color: "var(--fg-muted)" },
       // Dijo cuándo retoma («les escribo la otra semana»): no es una etiqueta
       // sino un estado — sale cuando retoma la charla o queda SIN_RESPUESTA.
-      { key: "Pospuestos", count: inScope.filter((c) => c.postponed).length, color: "var(--color-info)" },
+      // Con algún vencido (fecha pasada) la pastilla avisa en rojo: hay que retomar.
+      {
+        key: "Pospuestos",
+        count: inScope.filter((c) => c.postponed).length,
+        ...(inScope.some((c) => c.postponed?.overdue)
+          ? { color: "var(--color-danger)", priority: true }
+          : { color: "var(--color-info)" }),
+      },
     ];
   }, [inScope]);
 

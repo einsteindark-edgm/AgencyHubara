@@ -28,13 +28,16 @@ export interface SessionOrderRef {
 
 /** Cliente pospuesto («les escribo la otra semana») — ver `sessionPostponedSchema`. */
 export interface SessionPostponed {
-  status: "esperando" | "cita_pendiente" | "cita_enviada";
+  status: "esperando" | "cita_pendiente" | "cita_enviada" | "vencido";
+  /** `"manual"` = lo puso el equipo desde el inspector. */
   kind: string | null;
   /** Epoch ms en que el cliente dijo que retoma. */
   until_ms: number;
   resume_label: string | null;
-  /** Lo que escribió el cliente al aplazar. */
+  /** Lo que escribió el cliente al aplazar, o la nota del operador. */
   text: string;
+  /** La fecha ya pasó (hay que retomar). Opcional: backend sin desplegar. */
+  overdue?: boolean;
 }
 
 /** Item de la lista de sesiones (panel izquierdo). */

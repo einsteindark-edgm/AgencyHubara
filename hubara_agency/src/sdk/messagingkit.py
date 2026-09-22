@@ -85,6 +85,9 @@ from src.platform.whatsapp.reengagement_deferral import (
     appointment_pending as appointment_pending,
     fresh_resume_label as fresh_resume_label,
     postponed_view as postponed_view,
+    clear_postponement as clear_postponement,
+    manual_postpone_until_ms as manual_postpone_until_ms,
+    set_manual_postponement as set_manual_postponement,
     register_reengagement_deferral as register_reengagement_deferral,
     reengagement_deferred_until as reengagement_deferred_until,
 )

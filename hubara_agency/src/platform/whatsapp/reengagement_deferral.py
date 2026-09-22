@@ -47,6 +47,10 @@ DEFERRAL_KEY = "reengagement_deferral"
 DEFERRAL_KIND_DATED = "fecha"
 #: El cliente dijo que ÉL escribe, sin fecha ("yo les escribo cuando…").
 DEFERRAL_KIND_OPEN = "abierto"
+#: Lo puso el EQUIPO desde el dashboard ("retomar el <fecha>"): pausa los
+#: toques proactivos hasta la fecha, NO agenda cita (retoma el humano) y solo
+#: lo quita el operador — ni un mensaje del cliente ni otro aplazamiento.
+DEFERRAL_KIND_MANUAL = "manual"
 
 #: Pausa de un aplazamiento sin fecha: una semana.
 OPEN_DEFERRAL_MS = 7 * 24 * 60 * 60 * 1000
@@ -260,6 +264,9 @@ def register_reengagement_deferral(
     """
     if not text:
         return
+    existing = metadata.get(DEFERRAL_KEY)
+    if isinstance(existing, dict) and existing.get("kind") == DEFERRAL_KIND_MANUAL:
+        return  # decisión del equipo: solo el operador la quita
     parsed = parse_reengagement_deferral(text, now_ms, tz)
     current = _active(metadata, now_ms)
     if parsed is not None:
@@ -349,6 +356,8 @@ POSTPONED_WAITING = "esperando"
 POSTPONED_APPOINTMENT_DUE = "cita_pendiente"
 #: La cita salió; esperando la respuesta del cliente.
 POSTPONED_APPOINTMENT_SENT = "cita_enviada"
+#: Pospuesto manual con la fecha ya pasada: le toca al humano retomar.
+POSTPONED_OVERDUE = "vencido"
 
 #: Etiqueta del ciclo cuando la escalera (o la cita) terminó sin respuesta.
 _TAG_UNRESPONSIVE = "SIN_RESPUESTA"
@@ -362,14 +371,20 @@ def postponed_view(metadata: dict[str, Any], now_ms: int) -> dict[str, Any] | No
     charla (el ingest borra el aplazamiento) o queda `SIN_RESPUESTA`. Sin
     fecha, solo mientras dura la pausa: no hay cita que vigilar después."""
     entry = metadata.get(DEFERRAL_KEY)
-    if not isinstance(entry, dict) or metadata.get("tag") == _TAG_UNRESPONSIVE:
+    if not isinstance(entry, dict):
+        return None
+    kind = entry.get("kind")
+    # El manual es del equipo: sigue (en rojo) hasta que el operador lo quite,
+    # aunque el chat haya quedado SIN_RESPUESTA.
+    if kind != DEFERRAL_KIND_MANUAL and metadata.get("tag") == _TAG_UNRESPONSIVE:
         return None
     until = entry.get("until_ms")
     if isinstance(until, bool) or not isinstance(until, int):
         return None
-    kind = entry.get("kind")
     if now_ms < until:
         status = POSTPONED_WAITING
+    elif kind == DEFERRAL_KIND_MANUAL:
+        status = POSTPONED_OVERDUE
     elif kind != DEFERRAL_KIND_DATED:
         return None
     elif "appointment_touched_at_ms" in entry:
@@ -384,4 +399,34 @@ def postponed_view(metadata: dict[str, Any], now_ms: int) -> dict[str, Any] | No
         "until_ms": until,
         "resume_label": label if isinstance(label, str) and label else None,
         "text": text if isinstance(text, str) else "",
+        # La fecha ya pasó: la fila se pinta en rojo — hay que retomar.
+        "overdue": now_ms >= until,
     }
+
+
+# --- Pospuesto manual (dashboard) --------------------------------------------
+
+
+def manual_postpone_until_ms(day: date, tz: ZoneInfo) -> int:
+    """El día que eligió el operador, a la hora de retoma (10:00 local)."""
+    at = datetime(day.year, day.month, day.day, RESUME_HOUR_LOCAL, tzinfo=tz)
+    return int(at.timestamp() * 1000)
+
+
+def set_manual_postponement(
+    metadata: dict[str, Any], *, until_ms: int, now_ms: int, note: str, tz: ZoneInfo
+) -> None:
+    """El operador pospone el chat hasta `until_ms` (muta). Reemplaza cualquier
+    aplazamiento anterior — el del cliente incluido: manda el equipo."""
+    metadata[DEFERRAL_KEY] = {
+        "at_ms": now_ms,
+        "until_ms": until_ms,
+        "kind": DEFERRAL_KIND_MANUAL,
+        "text": note[:_TEXT_MAX],
+        "resume_label": _resume_label(until_ms, tz),
+    }
+
+
+def clear_postponement(metadata: dict[str, Any]) -> None:
+    """El operador quita el pospuesto (manual o del cliente) — muta."""
+    metadata.pop(DEFERRAL_KEY, None)

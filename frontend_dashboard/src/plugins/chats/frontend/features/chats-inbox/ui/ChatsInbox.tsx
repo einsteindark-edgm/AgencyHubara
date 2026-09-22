@@ -224,15 +224,28 @@ interface RowProps {
 }
 
 function Row({ chat, selected, onSelect }: RowProps) {
+  // Pospuesto con la fecha ya pasada: la fila entera en rojo + aviso — el
+  // humano tiene que retomar esta conversación (pedido del operador).
+  const overdue = Boolean(chat.postponed?.overdue);
   return (
     <div
-      className={"row" + (selected ? " sel" : "")}
+      className={"row" + (selected ? " sel" : "") + (overdue ? " row-overdue" : "")}
       onClick={() => onSelect(chat.id)}
     >
       <Avatar initials={chat.short} color={chat.color} presence={chat.presence} />
       <div className="row-body">
         <div className="name-row">
           <span className="name">{chat.name}</span>
+          {overdue && (
+            <span
+              className="overdue-alert"
+              role="img"
+              aria-label="Vencido: hay que retomar esta conversación"
+              title="Vencido: hay que retomar esta conversación"
+            >
+              <Icon.alert />
+            </span>
+          )}
           <span className="time">{chat.time}</span>
         </div>
         <div className="snippet">{chat.snippet}</div>

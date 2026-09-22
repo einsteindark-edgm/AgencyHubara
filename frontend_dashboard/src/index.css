@@ -491,6 +491,16 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 .row.sel .postponed-chip-cita_pendiente { background: var(--color-warn); color: #3a2400; }
 .order-chip + .postponed-chip,
 .postponed-chip + .badge-unread { margin-left: 4px; }
+.postponed-chip-vencido { background: var(--color-danger-soft); color: var(--color-danger); }
+.row.sel .postponed-chip-vencido { background: var(--color-danger); color: #3a0906; }
+/* Pospuesto VENCIDO (la fecha ya pasó): la fila entera avisa en rojo — el
+   humano tiene que retomar. El aviso no viaja solo en el color: el ícono lleva
+   aria-label/title con palabras. */
+.row.row-overdue { background: var(--color-danger-soft); box-shadow: inset 3px 0 0 var(--color-danger); }
+.row.row-overdue.sel { box-shadow: inset 3px 0 0 var(--color-danger); }
+.overdue-alert { display: inline-flex; color: var(--color-danger); margin-left: 4px; }
+.overdue-alert svg { width: 13px; height: 13px; }
+.row.sel .overdue-alert { color: #fff; }
 
 .badge-unread {
   margin-left: auto; background: var(--accent); color: #fff;

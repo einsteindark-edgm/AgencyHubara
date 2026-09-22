@@ -28,6 +28,12 @@ vi.mock("@plugins/chats/frontend/entities/session-tag", () => ({
   })),
 }));
 
+// "Posponer" vive en el mismo panel: sus mutaciones no son el foco acá.
+vi.mock("@plugins/chats/frontend/entities/session-postpone", () => ({
+  usePostponeMutation: vi.fn(() => ({ mutate: vi.fn(), isPending: false, isError: false, error: null })),
+  useClearPostponeMutation: vi.fn(() => ({ mutate: vi.fn(), isPending: false, isError: false, error: null })),
+}));
+
 beforeEach(() => {
   overviewMock.mockReset();
   overviewMock.mockReturnValue({ data: null });

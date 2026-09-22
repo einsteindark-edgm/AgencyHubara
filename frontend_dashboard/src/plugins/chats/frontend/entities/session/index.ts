@@ -11,6 +11,7 @@ export {
   sessionDetailsSchema,
   sessionOrderRefSchema,
   sessionOriginSchema,
+  sessionPostponedSchema,
   sessionsListResponseSchema,
   statusHistoryEntrySchema,
 } from "./contracts";

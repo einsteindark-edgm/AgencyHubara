@@ -199,6 +199,7 @@ const POSTPONED_TEXT: Record<
   esperando: { chip: "Retoma", describe: (day) => `retoma el ${day}` },
   cita_pendiente: { chip: "Cita", describe: (day) => `la cita del ${day} todavía no salió` },
   cita_enviada: { chip: "Cita ✓", describe: (day) => `cita enviada el ${day}, esperando respuesta` },
+  vencido: { chip: "Retomar", describe: (day) => `había que retomar el ${day}` },
 };
 
 /** Día de la retoma en hora Colombia: `{ short: "28 sep", long: "lun 28 sep" }`. */
@@ -216,12 +217,18 @@ function adaptPostponed(p: SessionPostponed | null | undefined): ChatPostponedBa
   if (!p) return null;
   const text = POSTPONED_TEXT[p.status];
   const day = bogotaDay(p.until_ms);
+  const manual = p.kind === "manual";
   return {
     status: p.status,
     untilMs: p.until_ms,
     label: `${text.chip} ${day.short}`.trim(),
-    description: text.describe(day.long),
+    description:
+      manual && p.status === "esperando"
+        ? `pospuesto por el equipo hasta el ${day.long}`
+        : text.describe(day.long),
     text: p.text,
+    overdue: p.overdue ?? false,
+    manual,
   };
 }
 

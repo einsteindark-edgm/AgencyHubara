@@ -16,7 +16,13 @@ import {
   useReassignTagMutation,
   type OperatorTag,
 } from "@plugins/chats/frontend/entities/session-tag";
+import {
+  useClearPostponeMutation,
+  usePostponeMutation,
+} from "@plugins/chats/frontend/entities/session-postpone";
+import type { ChatPostponedBadge } from "@plugins/chats/frontend/entities/chat";
 import { Icon, Panel } from "@/shared/ui";
+import { todayBogotaIso } from "@/shared/lib";
 
 type InspectorTab = "tag" | "agent" | "mem";
 
@@ -85,6 +91,7 @@ function TagsTab({ chatId }: { chatId: string | null }) {
   const chat = chats.find((c) => c.id === chatId);
   const tagLabel = chat ? chat.tag : "—";
   const [reassigning, setReassigning] = useState(false);
+  const [postponing, setPostponing] = useState(false);
 
   return (
     <>
@@ -133,8 +140,11 @@ function TagsTab({ chatId }: { chatId: string | null }) {
             </div>
           )}
         </div>
+        {chat?.postponed && <PostponedState chatId={chatId} postponed={chat.postponed} />}
         {reassigning ? (
           <ReassignTagForm chatId={chatId} onDone={() => setReassigning(false)} />
+        ) : postponing ? (
+          <PostponeForm chatId={chatId} onDone={() => setPostponing(false)} />
         ) : (
           <div className="quick-row" style={{ marginTop: 10 }}>
             <button
@@ -144,6 +154,14 @@ function TagsTab({ chatId }: { chatId: string | null }) {
             >
               <Icon.user />
               Reasignar
+            </button>
+            <button
+              className="insp-button"
+              onClick={() => setPostponing(true)}
+              disabled={!chatId}
+            >
+              <Icon.clock />
+              Posponer
             </button>
           </div>
         )}
@@ -172,6 +190,124 @@ function TagsTab({ chatId }: { chatId: string | null }) {
         </div>
       </Panel>
     </>
+  );
+}
+
+const FIELD_STYLE = {
+  width: "100%",
+  background: "rgba(255,255,255,0.04)",
+  color: "var(--fg)",
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  padding: "6px 8px",
+  fontSize: 12,
+} as const;
+
+/** El chat ya está pospuesto: hasta cuándo, qué hay que retomar y "Quitar".
+ *  Vencido va en rojo (mismo aviso que la fila de la bandeja). */
+function PostponedState({
+  chatId,
+  postponed,
+}: {
+  chatId: string | null;
+  postponed: ChatPostponedBadge;
+}) {
+  const clear = useClearPostponeMutation(chatId);
+  const color = postponed.overdue ? "var(--color-danger)" : "var(--color-info)";
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        padding: "8px 10px",
+        borderRadius: 6,
+        border: `1px solid ${color}`,
+        color,
+        fontSize: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+        {postponed.overdue ? <Icon.alert /> : <Icon.clock />}
+        Pospuesto: {postponed.description}
+      </div>
+      {postponed.text && (
+        <div style={{ color: "var(--fg-soft)" }}>«{postponed.text}»</div>
+      )}
+      {clear.isError && (
+        <div style={{ color: "#ff6b62", fontSize: 11.5 }}>
+          No se pudo quitar: {clear.error.message}
+        </div>
+      )}
+      <div className="quick-row">
+        <button
+          type="button"
+          className="insp-button"
+          disabled={clear.isPending}
+          onClick={() => clear.mutate()}
+        >
+          {clear.isPending ? "Quitando…" : "Quitar pospuesto"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Formulario inline de "Posponer": el operador elige el día en que el equipo
+ *  retoma este chat (también si lo tomó un humano) y anota qué hay que hacer.
+ *  La fila entra al filtro "Pospuestos" y, vencida la fecha, se pinta en rojo. */
+function PostponeForm({ chatId, onDone }: { chatId: string | null; onDone: () => void }) {
+  const [date, setDate] = useState("");
+  const [note, setNote] = useState("");
+  const mutation = usePostponeMutation(chatId);
+  const canSave = Boolean(chatId) && date.length > 0 && !mutation.isPending;
+
+  return (
+    <form
+      style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!canSave) return;
+        mutation.mutate({ date, note: note.trim() }, { onSuccess: () => onDone() });
+      }}
+    >
+      <label className="lbl" htmlFor="postpone-date" style={{ fontSize: 11.5 }}>
+        Retomar el
+      </label>
+      <input
+        id="postpone-date"
+        type="date"
+        style={FIELD_STYLE}
+        min={todayBogotaIso()}
+        value={date}
+        onChange={(e) => setDate(e.target.value)}
+      />
+      <label className="lbl" htmlFor="postpone-note" style={{ fontSize: 11.5 }}>
+        Qué hay que retomar
+      </label>
+      <textarea
+        id="postpone-note"
+        style={{ ...FIELD_STYLE, minHeight: 52, resize: "vertical" }}
+        placeholder="Ej.: llamar para cerrar el pedido"
+        maxLength={500}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+      />
+      {mutation.isError && (
+        <div style={{ color: "#ff6b62", fontSize: 11.5 }}>
+          No se pudo posponer: {mutation.error.message}
+        </div>
+      )}
+      <div className="quick-row">
+        <button type="submit" className="insp-button primary" disabled={!canSave}>
+          {mutation.isPending ? "Guardando…" : "Posponer hasta esa fecha"}
+        </button>
+        <button type="button" className="insp-button" onClick={onDone}>
+          Cancelar
+        </button>
+      </div>
+    </form>
   );
 }
 

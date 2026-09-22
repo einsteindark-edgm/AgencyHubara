@@ -67,6 +67,7 @@ def test_esperando_la_fecha_esta_en_el_filtro():
         "until_ms": UNTIL,
         "resume_label": "el lunes 28 de septiembre",
         "text": "Si, pero les escribo la otra semana",
+        "overdue": False,
     }
 
 

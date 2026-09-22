@@ -50,6 +50,8 @@ describe("chip de pospuesto en la fila", () => {
           label: "Retoma 28 sep",
           description: "retoma el lun 28 sep",
           text: "Si, pero les escribo la otra semana",
+          overdue: false,
+          manual: false,
         },
       }),
     ];
@@ -66,5 +68,45 @@ describe("chip de pospuesto en la fila", () => {
     chats.current = [makeItem()];
     render(<ChatsInbox selectedId={null} onSelect={() => {}} />);
     expect(screen.queryByText(/Retoma/)).toBeNull();
+  });
+});
+
+describe("pospuesto vencido: la fila se pinta en rojo con aviso", () => {
+  it("con la fecha pasada la fila avisa que hay que retomar", () => {
+    chats.current = [
+      makeItem({
+        postponed: {
+          status: "vencido",
+          untilMs: Date.UTC(2026, 8, 28, 15),
+          label: "Retomar 28 sep",
+          description: "había que retomar el lun 28 sep",
+          text: "Llamar para cerrar el pedido",
+          overdue: true,
+          manual: true,
+        },
+      }),
+    ];
+    const { container } = render(<ChatsInbox selectedId={null} onSelect={() => {}} />);
+    expect(screen.getByLabelText("Vencido: hay que retomar esta conversación")).toBeTruthy();
+    expect(container.querySelector(".row.row-overdue")).not.toBeNull();
+  });
+
+  it("antes de la fecha no hay rojo ni aviso", () => {
+    chats.current = [
+      makeItem({
+        postponed: {
+          status: "esperando",
+          untilMs: Date.UTC(2026, 8, 28, 15),
+          label: "Retoma 28 sep",
+          description: "retoma el lun 28 sep",
+          text: "",
+          overdue: false,
+          manual: false,
+        },
+      }),
+    ];
+    const { container } = render(<ChatsInbox selectedId={null} onSelect={() => {}} />);
+    expect(screen.queryByLabelText(/Vencido/)).toBeNull();
+    expect(container.querySelector(".row-overdue")).toBeNull();
   });
 });
