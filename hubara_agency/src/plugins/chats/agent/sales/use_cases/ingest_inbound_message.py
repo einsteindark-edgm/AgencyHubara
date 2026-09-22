@@ -57,6 +57,8 @@ from src.sdk.messagingkit import (
     detect_marketing_opt_out,
     mark_marketing_opt_out,
     opt_out_campaign_id,
+    register_reengagement_deferral,
+    resolve_local_timezone,
     update_reengagement_index_entry,
 )
 from src.platform.session_history import FilesystemMessageHistoryStore
@@ -305,6 +307,17 @@ class IngestInboundMessage:
                 kind=inbound_signal,
                 text_preview=(parsed.text or "")[:60],
             )
+
+        # Aplazamiento con fecha ("les escribo la otra semana"): hasta esa
+        # fecha el remarketing y el watchdog no le escriben (incidente runs
+        # 337efe8c / ee3cec91: 4 toques en 24h tras el aplazamiento → "No
+        # más"). Una cortesía no la levanta; retomar la charla sí.
+        register_reengagement_deferral(
+            metadata,
+            parsed.text,
+            now_ms=now_ms,
+            tz=resolve_local_timezone(session_id),
+        )
 
         # Opt-out de marketing (plugin marketing, campañas directas): el
         # template aprobado promete "respóndeme NO MÁS y te doy de baja" —

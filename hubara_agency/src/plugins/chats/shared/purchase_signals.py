@@ -46,9 +46,11 @@ _DEFERRAL_PATTERNS = [
         r"\bdejame\b",
         r"\bdeja(me)? (que )?(miro|reviso|pienso|veo)\b",
         r"\blo pienso\b",
-        r"\bte aviso\b",
-        r"\bte escribo\b",
-        r"\bte confirmo\b",
+        # "te / les / le": al negocio se le habla en plural ("les escribo la
+        # otra semana" — incidente runs 337efe8c / ee3cec91).
+        r"\b(te|les|le) aviso\b",
+        r"\b(te|les|le) escribo\b",
+        r"\b(te|les|le) confirmo\b",
         r"\bmanana\b",
         r"\bestoy ocupad",
         r"\bme ocup[eo]\b",

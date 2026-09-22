@@ -12,6 +12,7 @@ from src.sdk.messagingkit import (
     decide_reengagement,
     ladder_state,
     lead_state_from_metadata,
+    reengagement_deferred_until,
 )
 
 #: máximo de toques recientes reportados por conversación (el nodo `plan` del
@@ -197,6 +198,13 @@ def build_snapshot_from_sessions(
             # promesa del body se cumple — ningún toque proactivo más.
             prefiltered["marketing_opt_out"] = (
                 prefiltered.get("marketing_opt_out", 0) + 1
+            )
+            continue
+        if reengagement_deferred_until(metadata, now_ms) is not None:
+            # El cliente dijo cuándo retoma ("les escribo la otra semana"):
+            # hasta esa fecha no se lo reactiva.
+            prefiltered["customer_deferred"] = (
+                prefiltered.get("customer_deferred", 0) + 1
             )
             continue
         lead = lead_state_from_metadata(metadata)

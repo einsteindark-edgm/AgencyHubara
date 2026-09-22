@@ -50,6 +50,7 @@ from src.platform.whatsapp.templates.registry import (
     render_template_body,
 )
 from src.platform.whatsapp.reengagement_ladder import ladder_state, record_touch
+from src.platform.whatsapp.reengagement_deferral import reengagement_deferred_until
 from src.platform.whatsapp.send_policy import (
     CHANNEL_BLOCKED,
     CHANNEL_TEMPLATE,
@@ -158,6 +159,14 @@ async def check_reengagement_policy_activity(session_id: str) -> SendDecision:
     if metadata.get("marketing_opt_out"):
         return _ladder_suppress(
             "marketing_opt_out", "el cliente pidió no recibir más mensajes"
+        )
+
+    # 3.6 El cliente aplazó con fecha ("les escribo la otra semana"): ningún
+    # toque proactivo hasta la fecha que dio (incidente runs 337efe8c /
+    # ee3cec91: 4 toques en 24h tras el aplazamiento → "No más").
+    if reengagement_deferred_until(metadata, now_ms) is not None:
+        return _ladder_suppress(
+            "customer_deferred", "el cliente dijo cuándo retoma — no se le escribe antes"
         )
 
     # 4. Escalera de reactivación (decisión 2026-09-18). El intent puede llegar
