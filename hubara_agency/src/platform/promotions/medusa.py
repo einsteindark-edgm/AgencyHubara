@@ -1,0 +1,151 @@
+"""Adapter Medusa v2 del `PromotionsPort` + mapper puro del shape Admin API.
+
+`GET /admin/promotions` con `application_method` (+ `target_rules`), `rules`
+y `campaign` (+ `budget`). Cache corto (TTL) por proceso: los cupones cambian
+poco y el bot los consulta en cada turno que los menciona.
+"""
+from __future__ import annotations
+
+import logging
+import time
+from datetime import datetime
+from typing import Any
+
+from src.platform.promotions.port import PromotionDTO, PromotionsUnavailableError
+
+log = logging.getLogger(__name__)
+
+_PRODUCT_ATTRS = {"items.product.id", "items.product_id", "product.id", "product_id"}
+_VARIANT_ATTRS = {"items.variant.id", "items.variant_id", "variant.id", "variant_id"}
+_COLLECTION_ATTRS = {
+    "items.product.collection_id",
+    "items.product.collection.id",
+    "product.collection_id",
+}
+_SUBTOTAL_ATTRS = {"item_total", "subtotal", "items.subtotal", "item_subtotal", "total"}
+
+
+def _values(rule: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for v in rule.get("values") or []:
+        if isinstance(v, dict):
+            v = v.get("value")
+        if v is not None and str(v).strip():
+            out.append(str(v).strip())
+    return out
+
+
+def _iso_to_ms(raw: Any) -> int | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return int(datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def _to_int(raw: Any) -> int | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        return int(round(float(raw)))
+    except (TypeError, ValueError):
+        return None
+
+
+def promotion_from_medusa(raw: dict[str, Any]) -> PromotionDTO | None:
+    """Promoción Admin API v2 → snapshot. None si no es un cupón usable
+    (sin código, sin método de aplicación)."""
+    if not isinstance(raw, dict):
+        return None
+    code = raw.get("code")
+    method = raw.get("application_method")
+    if not isinstance(code, str) or not code.strip() or not isinstance(method, dict):
+        return None
+    product_ids: list[str] = []
+    variant_ids: list[str] = []
+    collection_ids: list[str] = []
+    for rule in method.get("target_rules") or []:
+        if not isinstance(rule, dict):
+            continue
+        attr = str(rule.get("attribute") or "")
+        if attr in _PRODUCT_ATTRS:
+            product_ids.extend(_values(rule))
+        elif attr in _VARIANT_ATTRS:
+            variant_ids.extend(_values(rule))
+        elif attr in _COLLECTION_ATTRS:
+            collection_ids.extend(_values(rule))
+    min_subtotal: int | None = None
+    for rule in raw.get("rules") or []:
+        if not isinstance(rule, dict):
+            continue
+        attr = str(rule.get("attribute") or "")
+        if attr in _SUBTOTAL_ATTRS and str(rule.get("operator") or "") in ("gte", "gt"):
+            values = [_to_int(v) for v in _values(rule)]
+            values = [v for v in values if v is not None]
+            if values:
+                min_subtotal = max(values)
+    campaign = raw.get("campaign") if isinstance(raw.get("campaign"), dict) else {}
+    budget = campaign.get("budget") if isinstance(campaign.get("budget"), dict) else {}
+    promo_type = str(raw.get("type") or "standard")
+    discount_type = (
+        "buyget" if promo_type == "buyget" else str(method.get("type") or "percentage")
+    )
+    return PromotionDTO(
+        id=str(raw.get("id") or code),
+        code=code.strip().upper(),
+        discount_type=discount_type,
+        value=_to_int(method.get("value")) or 0,
+        currency_code=(method.get("currency_code") or None),
+        target_type=str(method.get("target_type") or "items"),
+        allocation=str(method.get("allocation") or "across"),
+        max_quantity=_to_int(method.get("max_quantity")),
+        product_ids=tuple(product_ids),
+        variant_ids=tuple(variant_ids),
+        collection_ids=tuple(collection_ids),
+        min_subtotal_cop=min_subtotal,
+        is_automatic=bool(raw.get("is_automatic")),
+        status=str(raw.get("status") or "active"),
+        starts_at_ms=_iso_to_ms(campaign.get("starts_at")),
+        ends_at_ms=_iso_to_ms(campaign.get("ends_at")),
+        budget_type=(budget.get("type") or None),
+        budget_limit=_to_int(budget.get("limit")),
+        budget_used=_to_int(budget.get("used")),
+        description=(campaign.get("name") or None),
+    )
+
+
+class MedusaPromotionsPort:
+    """Lee las promociones de Medusa con un cache corto por proceso."""
+
+    def __init__(self, client: Any, *, ttl_s: float = 60.0) -> None:
+        self._client = client
+        self._ttl_s = ttl_s
+        self._cache: list[PromotionDTO] | None = None
+        self._cached_at = 0.0
+
+    async def _all(self) -> list[PromotionDTO]:
+        now = time.monotonic()
+        if self._cache is not None and now - self._cached_at < self._ttl_s:
+            return self._cache
+        try:
+            raw_list = await self._client.list_promotions()
+        except Exception as exc:  # noqa: BLE001 — el vendor no cruza el port
+            if self._cache is not None:
+                log.warning("promotions: Medusa falló, uso cache: %s", exc)
+                return self._cache
+            raise PromotionsUnavailableError(str(exc)) from exc
+        promotions = [p for p in (promotion_from_medusa(r) for r in raw_list) if p]
+        self._cache = promotions
+        self._cached_at = now
+        return promotions
+
+    async def list_active(self) -> list[PromotionDTO]:
+        return [p for p in await self._all() if p.status == "active" and not p.is_automatic]
+
+    async def get_by_code(self, code: str) -> PromotionDTO | None:
+        wanted = code.strip().upper()
+        return next((p for p in await self._all() if p.code == wanted), None)
+
+
+__all__ = ["MedusaPromotionsPort", "promotion_from_medusa"]

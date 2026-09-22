@@ -77,6 +77,9 @@ from src.plugins.chats.agent.sales.pricing import (
     format_cop,
 )
 from src.platform.orders.stub import StubOrderRegistration
+from src.plugins.chats.agent.sales.use_cases.coupons import (
+    coupon_discount_for_items,
+)
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     attach_order_to_active_episode,
 )
@@ -319,6 +322,17 @@ class RegisterOrderTool(ToolBase):
             )
         return normalize_capi_contents(out)
 
+    def _read_metadata(self, session_key: str) -> dict[str, Any]:
+        """metadata.json de la sesión ({} si no existe / corrupto)."""
+        metadata_file = self._vault_dir / session_key / "metadata.json"
+        if not metadata_file.exists():
+            return {}
+        try:
+            data = json.loads(metadata_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
     def _session_attribution(self, session_key: str) -> dict[str, Any] | None:
         """Atribución CTWA de la sesión (`origin` de metadata.json): el
         `source_id` del referral es el AD ID de Meta. Best-effort: sesión
@@ -412,6 +426,20 @@ class RegisterOrderTool(ToolBase):
             national_id=national_id_raw or None,
         )
 
+        # Cupón aplicado en el episodio (`apply_coupon`): el descuento se
+        # recomputa acá desde el snapshot + catálogo. NUNCA lo manda el LLM.
+        metadata_before = self._read_metadata(ctx.session_key)
+        discount = await coupon_discount_for_items(
+            metadata_before, self._catalog, items, shipping_cop=shipping_cop
+        )
+        if discount is not None and self._catalog is None:
+            logger.warning(
+                "🧾 [TOOL register_order] cupón {} sin catálogo: descuento solo si la promo es global",
+                discount.code,
+            )
+        discount_cop = discount.discount_cop if discount else 0
+        coupon_code = discount.code if discount and discount_cop > 0 else None
+
         # SEC-07: consistencia de montos server-side. El LLM manda los precios;
         # recomputamos el subtotal desde los line items para que un total
         # inventado (o manipulado por el cliente vía prompt injection) NO cree un
@@ -421,7 +449,6 @@ class RegisterOrderTool(ToolBase):
         # (eso requiere comparar contra catálogo); el gate humano de pago sigue
         # siendo el control primario de integridad de precio.
         computed_subtotal = sum(it.unit_price_cop * it.quantity for it in order_items)
-        discount_cop = 0  # placeholder coupon-ready (hoy sin descuentos)
         expected_total = computed_subtotal + shipping_cop - discount_cop
         if subtotal_cop != computed_subtotal or total_cop != expected_total:
             logger.warning(
@@ -444,9 +471,15 @@ class RegisterOrderTool(ToolBase):
                         f"total esperado={expected_total} (recibido {total_cop}). "
                         "Recalcula el pedido con los precios REALES del catálogo "
                         "(subtotal = suma de unit_price×cantidad; total = subtotal "
-                        "+ envío) y llama de nuevo `register_order` con los montos "
+                        "+ envío"
+                        + (
+                            f" − descuento del cupón {coupon_code} ${discount_cop:,} COP"
+                            if coupon_code
+                            else ""
+                        )
+                        + ") y llama de nuevo `register_order` con los montos "
                         "correctos. No inventes precios ni totales."
-                    ),
+                    ).replace(",", "."),
                 },
                 ensure_ascii=False,
             )
@@ -499,6 +532,8 @@ class RegisterOrderTool(ToolBase):
             total_cop=total_cop,
             currency=currency,
             attribution=self._session_attribution(ctx.session_key),
+            # Solo con cupón: los ports/fakes sin estos kwargs siguen andando.
+            **({"coupon_code": coupon_code, "discount_cop": discount_cop} if coupon_code else {}),
         )
 
         # Generar un fallback order_id si el port no devolvio uno (no
@@ -535,6 +570,8 @@ class RegisterOrderTool(ToolBase):
             "payment_method": payment_method,
             "subtotal_cop": subtotal_cop,
             "shipping_cop": shipping_cop,
+            "discount_cop": discount_cop,
+            "coupon_code": coupon_code,
             "total_cop": total_cop,
             "currency": currency,
             "registered_at_ms": int(time.time() * 1000),
@@ -613,6 +650,9 @@ class RegisterOrderTool(ToolBase):
                     "currency": currency,
                     "method": payment_method,
                 }
+                if coupon_code:
+                    params["discount_cop"] = discount_cop
+                    params["coupon_code"] = coupon_code
                 reference = _order_reference(result.raw_payload)
                 if reference:
                     params["order_reference"] = reference
@@ -673,6 +713,8 @@ class RegisterOrderTool(ToolBase):
                 "registered": True,
                 "order_id": result.order_id,
                 "provider": result.provider,
+                "discount_cop": discount_cop,
+                "coupon_code": coupon_code,
                 # Decisión determinista contra el catálogo: ¿algún ítem trae
                 # portavela? El guion de cierre condiciona la nota al humano
                 # y el aviso al comprador a `portavelas.included`.

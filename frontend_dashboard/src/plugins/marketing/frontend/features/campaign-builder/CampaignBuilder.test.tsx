@@ -95,6 +95,28 @@ const PRODUCTS = [
   },
 ];
 
+vi.mock("@plugins/marketing/frontend/entities/promotion", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  usePromotions: () => ({
+    data: {
+      promotions: [
+        {
+          code: "MAMA15",
+          discountType: "percentage",
+          value: 15,
+          targetType: "items",
+          name: "Madres",
+          endsAtMs: null,
+          minSubtotalCop: null,
+          productCount: 0,
+        },
+      ],
+      unavailable: false,
+    },
+    isPending: false,
+  }),
+}));
+
 vi.mock("@plugins/marketing/frontend/entities/product", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useProducts: () => ({ data: PRODUCTS, isPending: false }),
@@ -397,5 +419,24 @@ describe("CampaignBuilder — carrusel de productos", () => {
       <CampaignBuilder campaign={makeCampaign({ goal: "launch", carouselHandles: ["vela-buda"] })} />,
     );
     expect(getByText(/entre 2 y 10/)).toBeTruthy();
+  });
+});
+
+describe("CampaignBuilder — cupón", () => {
+  it("el código se sanea a letras y números (VELAS_10 → VELAS10) al escribir", () => {
+    const { getByPlaceholderText } = render(
+      <CampaignBuilder campaign={makeCampaign({ goal: "discount_general" })} />,
+    );
+    const input = getByPlaceholderText("PAPA20") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "velas_10" } });
+    expect(input.value).toBe("VELAS10");
+  });
+
+  it("ofrece los cupones vigentes de Medusa y elegir uno dispara el PUT", () => {
+    const { getByRole } = render(
+      <CampaignBuilder campaign={makeCampaign({ goal: "discount_general" })} />,
+    );
+    fireEvent.click(getByRole("button", { name: /MAMA15 · 15%/ }));
+    expect(updateMock.mutate.mock.calls[0]?.[0]).toMatchObject({ couponCode: "MAMA15" });
   });
 });

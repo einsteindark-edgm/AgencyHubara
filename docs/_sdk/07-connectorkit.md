@@ -193,6 +193,32 @@ camino viejo como respaldo cuando Medusa no responde.
 Los evals de `sales_eval` leen el tag a propósito: evalúan lo que hizo el bot,
 no el estado del pedido.
 
+## Cupones: `PromotionsPort` (Medusa Admin → Promotions)
+
+Los descuentos del bot de ventas NO se inventan ni se negocian: viven en
+Medusa como **promociones con código** (Admin → Promotions: código, tipo
+`percentage`/`fixed`, productos/variantes/colección objetivo, mínimo de
+compra, campaña con vigencia y presupuesto). El kit expone:
+
+| Símbolo | Qué es |
+|---|---|
+| `PromotionsPort` (`list_active()`, `get_by_code()`) | contrato; adapter real `platform/promotions/medusa.py` (`GET /admin/promotions`, cache 60 s), `NullPromotionsPort` sin Medusa |
+| `PromotionDTO` | SNAPSHOT JSON-safe de la promoción (se persiste en `episodes[-1].applied_coupon` cuando el cliente aplica un cupón) |
+| `resolve_coupon(code, promotions, now_ms)` | valida forma (`COUPON_CODE_RE = [A-Z0-9]{3,20}`, sin `_`: colisión con el guard anti-leak), existencia, estado, vigencia y presupuesto |
+| `compute_discount(promo, items: DiscountLineItem[], shipping_cop)` | el MONTO (COP entero) — percentage / fixed across / fixed each con `max_quantity` / envío; `buyget` = unsupported |
+| `FakePromotionsPort` | doble oficial; contract suite en `tests/platform/promotions/test_promotions_port_contract.py` |
+| `get_promotions_port()` | factory (Medusa si `MEDUSA_BASE_URL`, si no Null) |
+
+Quién lo usa: tools `list_promotions` / `apply_coupon` del sales worker
+(validan y persisten el snapshot), `present_order_confirmation` /
+`register_order` / el botón "Crear pedido" del dashboard (recomputan el
+descuento desde el snapshot con los precios del catálogo — L-19: el LLM
+solo repite el total que devuelve el envelope), y `register_order` manda
+`promo_codes: [code]` al draft de Medusa (así `discount_total`/`total` reales
+llegan a OrderFacts y al panel de Órdenes) más `metadata.coupon_code` /
+`discount_cop` como auditoría. Marketing ofrece esos mismos códigos en el
+builder (`GET /api/marketing/promotions`).
+
 ## Reglas al agregar un port (regla de oro del kit)
 
 Port nuevo ⇒ en el MISMO PR: el `Protocol` + su factory + su **fake** + su

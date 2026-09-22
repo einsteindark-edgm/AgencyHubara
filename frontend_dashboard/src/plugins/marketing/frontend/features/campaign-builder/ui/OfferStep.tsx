@@ -10,6 +10,11 @@ import {
   goalNeedsProduct,
   goalUsesDiscount,
 } from "@plugins/marketing/frontend/entities/campaign";
+import {
+  promotionLabel,
+  sanitizeCouponCode,
+  usePromotions,
+} from "@plugins/marketing/frontend/entities/promotion";
 
 import type { CampaignDraft } from "../model/draft";
 import { CarouselPicker } from "./CarouselPicker";
@@ -25,6 +30,10 @@ interface Props {
 export function OfferStep({ draft, editable, onPatch, onCommit }: Props) {
   const needsProduct = goalNeedsProduct(draft.goal);
   const usesDiscount = goalUsesDiscount(draft.goal);
+  // Cupones vigentes en Medusa: el mismo código que el bot valida con
+  // `apply_coupon` — así la campaña promete un cupón que existe de verdad.
+  const { data: promotionsInfo } = usePromotions(usesDiscount);
+  const promotions = promotionsInfo?.promotions ?? [];
 
   if (draft.goal === "") {
     return (
@@ -76,10 +85,43 @@ export function OfferStep({ draft, editable, onPatch, onCommit }: Props) {
               disabled={!editable}
               value={draft.couponCode}
               placeholder="PAPA20"
-              onChange={(e) => onPatch({ couponCode: e.target.value.toUpperCase() })}
+              list="marketing-coupon-codes"
+              onChange={(e) => onPatch({ couponCode: sanitizeCouponCode(e.target.value) })}
               onBlur={() => onCommit()}
               className="w-full rounded-md border border-line bg-transparent px-2.5 py-1.5 text-[12.5px] uppercase tracking-wide text-fg outline-none focus:border-accent disabled:opacity-60 placeholder:normal-case placeholder:text-fg-faint"
             />
+            <datalist id="marketing-coupon-codes">
+              {promotions.map((p) => (
+                <option key={p.code} value={p.code}>
+                  {promotionLabel(p)}
+                </option>
+              ))}
+            </datalist>
+            {promotions.length > 0 ? (
+              <span className="text-[10.5px] leading-snug text-fg-faint">
+                En Medusa:{" "}
+                {promotions.map((p) => (
+                  <button
+                    key={p.code}
+                    type="button"
+                    disabled={!editable}
+                    onClick={() => onCommit({ couponCode: p.code })}
+                    className="mr-1 rounded border border-line px-1.5 py-0.5 font-mono text-[10.5px] text-fg-soft hover:border-fg-faint disabled:opacity-50"
+                  >
+                    {p.code} · {promotionLabel(p)}
+                  </button>
+                ))}
+              </span>
+            ) : promotionsInfo?.unavailable ? (
+              <span className="text-[10.5px] text-warn">
+                No pude leer los cupones de Medusa — escribí el código a mano.
+              </span>
+            ) : (
+              <span className="text-[10.5px] leading-snug text-fg-faint">
+                Creá el cupón en Medusa (Admin → Promotions) con el mismo código: el
+                bot solo aplica cupones que existan ahí.
+              </span>
+            )}
           </label>
 
           <label className="flex flex-col gap-1">

@@ -165,6 +165,8 @@ class MedusaOrderRegistration:
         total_cop: int,
         currency: str = "COP",
         attribution: dict[str, Any] | None = None,
+        coupon_code: str | None = None,
+        discount_cop: int = 0,
     ) -> OrderRegistrationResult:
         # Premortem C1: wrap ALL the work in a single wait_for to bound the
         # worst-case latency at ~45s. The activity heartbeat (every 10s in
@@ -182,6 +184,8 @@ class MedusaOrderRegistration:
                     total_cop=total_cop,
                     currency=currency,
                     attribution=attribution,
+                    coupon_code=coupon_code,
+                    discount_cop=discount_cop,
                 ),
                 timeout=_REGISTER_ORDER_TIMEOUT_S,
             )
@@ -213,6 +217,8 @@ class MedusaOrderRegistration:
         total_cop: int,
         currency: str = "COP",
         attribution: dict[str, Any] | None = None,
+        coupon_code: str | None = None,
+        discount_cop: int = 0,
     ) -> OrderRegistrationResult:
         log.info(
             "MedusaOrderRegistration.register_order start",
@@ -294,6 +300,8 @@ class MedusaOrderRegistration:
                 idempotency_key=idempotency_key,
                 fingerprint=fingerprint,
                 attribution=attribution,
+                coupon_code=coupon_code,
+                discount_cop=discount_cop,
             )
 
             # 5) POST /admin/draft-orders.
@@ -696,6 +704,8 @@ class MedusaOrderRegistration:
         idempotency_key: str,
         fingerprint: str,
         attribution: dict[str, Any] | None = None,
+        coupon_code: str | None = None,
+        discount_cop: int = 0,
     ) -> dict[str, Any]:
         """Build the POST /admin/draft-orders payload per OpenAPI spec."""
         # shipping_address: country_code en lowercase per spec.
@@ -752,8 +762,15 @@ class MedusaOrderRegistration:
         # (los joins/backfill distinguen por presencia, no por null).
         if attribution:
             metadata.update({k: v for k, v in attribution.items() if v})
+        # Cupón (2026-09-21): el código va como `promo_codes` (Medusa aplica
+        # la promoción al draft → `discount_total`/`total` reales, que leen
+        # OrderFacts y el panel de Órdenes) y queda también en metadata como
+        # auditoría del monto que el bot le prometió al cliente.
+        if coupon_code:
+            metadata["coupon_code"] = coupon_code
+            metadata["discount_cop"] = int(discount_cop or 0)
 
-        return {
+        payload: dict[str, Any] = {
             "sales_channel_id": self._settings.sales_channel_id,
             "region_id": self._settings.region_id,
             "currency_code": currency_code,
@@ -777,6 +794,9 @@ class MedusaOrderRegistration:
             "metadata": metadata,
             "no_notification_order": True,  # WhatsApp es el canal — no email blast
         }
+        if coupon_code:
+            payload["promo_codes"] = [coupon_code]
+        return payload
 
 
 # ----------------------------------------------------------------------

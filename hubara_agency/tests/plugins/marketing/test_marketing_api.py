@@ -890,3 +890,76 @@ def test_test_send_con_carrusel_roto_es_422_legible(
     )
     assert res.status_code == 422
     assert "sin foto" in res.json()["detail"]
+
+
+# --- Cupones (promociones de Medusa) ----------------------------------------
+
+
+def test_put_coupon_code_rechaza_forma_de_tag_interno(client: TestClient) -> None:
+    """`VELAS_10` dispara el guard anti-leak del bot (enmudece): el cupón solo
+    admite letras y números (memoria coupon-tag-shape-collision)."""
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "A"}
+    ).json()["id"]
+    res = client.put(
+        f"/api/marketing/campaigns/{campaign_id}", json={"coupon_code": "velas_10"}
+    )
+    assert res.status_code == 422
+    assert "VELAS_10" in res.json()["detail"]
+    for bad in ("PAPA-20", "MAMA 15"):
+        assert (
+            client.put(
+                f"/api/marketing/campaigns/{campaign_id}", json={"coupon_code": bad}
+            ).status_code
+            == 422
+        )
+    ok = client.put(f"/api/marketing/campaigns/{campaign_id}", json={"coupon_code": " mama15 "})
+    assert ok.status_code == 200 and ok.json()["coupon_code"] == "MAMA15"
+    cleared = client.put(f"/api/marketing/campaigns/{campaign_id}", json={"coupon_code": ""})
+    assert cleared.json()["coupon_code"] == ""
+
+
+def test_get_promotions_lista_los_cupones_vigentes_de_medusa(
+    client: TestClient, monkeypatch
+) -> None:
+    from src.sdk.connectorkit import FakePromotionsPort, PromotionDTO
+
+    promo = PromotionDTO(
+        id="p1", code="MAMA15", discount_type="percentage", value=15, currency_code="cop",
+        target_type="items", allocation="across", max_quantity=None,
+        product_ids=("prod_a",), variant_ids=(), collection_ids=(), min_subtotal_cop=None,
+        is_automatic=False, status="active", starts_at_ms=None, ends_at_ms=1_800_000_000_000,
+        budget_type=None, budget_limit=None, budget_used=None, description="Madres",
+    )
+    monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([promo]))
+    res = client.get("/api/marketing/promotions")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["unavailable"] is False
+    assert body["promotions"] == [
+        {
+            "code": "MAMA15",
+            "discount_type": "percentage",
+            "value": 15,
+            "target_type": "items",
+            "name": "Madres",
+            "ends_at_ms": 1_800_000_000_000,
+            "min_subtotal_cop": None,
+            "product_count": 1,
+        }
+    ]
+
+
+def test_get_promotions_con_medusa_caido_es_vacio_y_lo_dice(
+    client: TestClient, monkeypatch
+) -> None:
+    from src.sdk.connectorkit import PromotionsUnavailableError
+
+    class Down:
+        async def list_active(self):
+            raise PromotionsUnavailableError("timeout")
+
+    monkeypatch.setattr(api_mod, "get_promotions_port", lambda: Down())
+    res = client.get("/api/marketing/promotions")
+    assert res.status_code == 200
+    assert res.json() == {"promotions": [], "unavailable": True}

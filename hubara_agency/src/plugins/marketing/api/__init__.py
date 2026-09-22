@@ -168,7 +168,19 @@ def update_campaign(campaign_id: str, body: UpdateCampaignBody) -> dict:
                 status_code=422, detail=f"Segmentos desconocidos: {sorted(unknown)}"
             )
     if "coupon_code" in patch:
-        patch["coupon_code"] = patch["coupon_code"].upper()
+        code = patch["coupon_code"].strip().upper()
+        # Solo letras y números: un cupón con forma de tag interno (`VELAS_10`)
+        # dispara el guard anti-leak del bot y lo enmudece (memoria
+        # coupon-tag-shape-collision). Vacío = sin cupón.
+        if code and not _COUPON_CODE_RE.fullmatch(code):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Cupón inválido: {code!r}. Solo letras y números, sin espacios, "
+                    "guiones ni guiones bajos (ej. MAMA15)."
+                ),
+            )
+        patch["coupon_code"] = code
     if "carousel_handles" in patch:
         handles: list[str] = []
         for handle in patch["carousel_handles"]:
@@ -321,6 +333,46 @@ def clear_contacts(campaign_id: str) -> dict:
 
 
 # --- Segmentos + costos -----------------------------------------------------
+
+
+# --- Cupones (promociones de Medusa) ----------------------------------------
+
+
+def get_promotions_port():
+    """Provider a nivel módulo (lazy + monkeypatcheable en tests): el import
+    arrastra la composición de Medusa (gate `test_sdk_lazy_surface`)."""
+    from src.sdk.connectorkit import get_promotions_port as _factory
+
+    return _factory()
+
+
+@router.get("/promotions")
+async def list_promotions() -> dict:
+    """Cupones vigentes en Medusa (Admin → Promotions) para elegir en el
+    builder: el mismo código que el bot valida con `apply_coupon`."""
+    from src.sdk.connectorkit import PromotionsUnavailableError
+
+    try:
+        promotions = await get_promotions_port().list_active()
+    except PromotionsUnavailableError as e:
+        log.warning("marketing: no pude leer promociones de Medusa: %s", e)
+        return {"promotions": [], "unavailable": True}
+    return {
+        "promotions": [
+            {
+                "code": p.code,
+                "discount_type": p.discount_type,
+                "value": p.value,
+                "target_type": p.target_type,
+                "name": p.description,
+                "ends_at_ms": p.ends_at_ms,
+                "min_subtotal_cop": p.min_subtotal_cop,
+                "product_count": len(p.product_ids) + len(p.variant_ids) + len(p.collection_ids),
+            }
+            for p in promotions
+        ],
+        "unavailable": False,
+    }
 
 
 # --- Catálogo (picker de producto) -----------------------------------------
@@ -613,6 +665,8 @@ def get_campaign_audience(campaign_id: str) -> dict:
 _SESSION_ID_RE = re.compile(r"^wa_\+?\d{1,20}$")
 #: Handle de producto Medusa (slug): letras/dígitos/guiones/underscore.
 _HANDLE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,120}$")
+#: Cupón: solo letras y números (espejo de `COUPON_CODE_RE` del SDK; ver PUT).
+_COUPON_CODE_RE = re.compile(r"^[A-Z0-9]{1,14}$")
 
 #: Cap de mensajes que devuelve la vista (las conversaciones largas no
 #: aportan al preview de campaña; el operador tiene Chats para el detalle).

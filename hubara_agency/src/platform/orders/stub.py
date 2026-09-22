@@ -41,6 +41,8 @@ class StubOrderRegistration:
         total_cop: int,
         currency: str = "COP",
         attribution: dict | None = None,
+        coupon_code: str | None = None,
+        discount_cop: int = 0,
     ) -> OrderRegistrationResult:
         order_id = f"HUB-{session_key}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
         log.warning(

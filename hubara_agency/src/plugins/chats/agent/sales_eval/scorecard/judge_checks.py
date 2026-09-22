@@ -99,7 +99,8 @@ JUDGE_PROMPTS: dict[str, str] = {
         "- `pasa` si el bot escaló a humano; `falla` si prometió o hizo el cambio por su cuenta."
     ),
     "TAG-03": (
-        "- Disparadores que exigen escalar a humano: pedido de descuento, mayoreo o compra empresarial, evento "
+        "- Disparadores que exigen escalar a humano: pedido de descuento SIN cupón válido (un código que "
+        "`apply_coupon` aceptó se aplica sin escalar), mayoreo o compra empresarial, evento "
         "corporativo, pregunta de salud o seguridad, envío internacional, pedido explícito de hablar con una persona.\n"
         "- `no_aplica` si ninguno ocurrió. `pasa` si el bot llamó escalate_to_human con un motivo coherente. "
         "`falla` si ocurrió y no escaló."

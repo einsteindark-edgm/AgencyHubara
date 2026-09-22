@@ -1025,7 +1025,23 @@ class PresentOrderConfirmationTool(ToolBase):
                 "line_total_cop": line_total,
             })
 
-        total = subtotal + shipping_cop + tax_cop
+        # Cupón aplicado en el episodio (`apply_coupon`): el descuento se
+        # RECOMPUTA acá desde el snapshot + precios del catálogo — el LLM no
+        # manda montos de descuento. Catálogo caído → sin ids → solo aplica
+        # una promo sin filtro de productos. Import local: el paquete
+        # use_cases arrastra el workflow → activities → esta tool (ciclo).
+        from src.plugins.chats.agent.sales.use_cases.coupons import (
+            coupon_discount_for_items,
+        )
+
+        discount = await coupon_discount_for_items(
+            FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(ctx.session_key),
+            self._catalog,
+            items,
+            shipping_cop=shipping_cop,
+        )
+        discount_cop = discount.discount_cop if discount else 0
+        total = subtotal + shipping_cop + tax_cop - discount_cop
         reference_id = f"HUB-hubara-{ctx.session_key}-{int(time.time())}"
 
         if price_mismatches:
@@ -1064,6 +1080,11 @@ class PresentOrderConfirmationTool(ToolBase):
                 "currency": "COP",
                 "shipping_address_summary": shipping_address_summary,
                 "payment_method": payment_method,
+                **(
+                    {"discount_cop": discount_cop, "coupon_code": discount.code}
+                    if discount and discount_cop > 0
+                    else {}
+                ),
             },
             "analytics": {
                 "component_id": "order_confirmation",
@@ -1087,10 +1108,15 @@ class PresentOrderConfirmationTool(ToolBase):
             "nativo, recibirás el evento order_status:captured. Si fallback "
             "a botones, recibirás '[el cliente tocó el botón: Confirmar]'."
         )
+        discount_text = (
+            f" − descuento {discount.code} ${discount_cop:,} COP"
+            if discount and discount_cop > 0
+            else ""
+        )
         if payment_method == "cash_on_delivery":
             amounts = {"subtotal_cop": subtotal}
             summary = (
-                f"Confirmación enviada: productos ${subtotal:,} COP; el "
+                f"Confirmación enviada: productos ${subtotal:,} COP{discount_text}; el "
                 "envío figura 'Por confirmar' (la transportadora lo "
                 "recalcula antes de despachar) — no le des al cliente un "
                 f"valor de envío ni un total que lo incluya. {wait_hint}"
@@ -1098,11 +1124,25 @@ class PresentOrderConfirmationTool(ToolBase):
         else:
             amounts = {"subtotal_cop": subtotal, "total_cop": total}
             summary = (
-                f"Confirmación enviada: productos ${subtotal:,} COP + envío "
+                f"Confirmación enviada: productos ${subtotal:,} COP{discount_text} + envío "
                 f"${shipping_cop:,} COP (tarifa mínima) = total ${total:,} "
                 f"COP. Si mencionas el envío, aclara que es tarifa mínima. "
                 f"{wait_hint}"
             )
+        if discount and discount_cop > 0:
+            amounts["discount_cop"] = discount_cop
+            amounts["coupon_code"] = discount.code
+            summary += (
+                f" El total ${total:,} COP YA incluye el descuento del cupón "
+                f"{discount.code}: pásalo tal cual a `register_order`."
+            )
+        elif discount and discount.reason == "min_subtotal":
+            summary += (
+                f" El cupón {discount.code} NO aplica: requiere compra mínima de "
+                f"${discount.min_subtotal_cop or 0:,} COP en productos — díselo."
+            )
+        elif discount and discount.reason == "no_applicable_items":
+            summary += f" El cupón {discount.code} no aplica a estos productos — díselo."
         # Run ebbc203d: si `verify_order_for_checkout` detectó que el bot le
         # escribió al cliente un precio que no es del catálogo, el resumen
         # correcto NO basta — el LLM debe explicar el cambio en su texto.

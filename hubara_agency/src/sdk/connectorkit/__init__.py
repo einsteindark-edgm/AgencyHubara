@@ -86,6 +86,20 @@ _LAZY_EXPORTS: dict[str, str] = {
     "OrderFactsSnapshot": "src.platform.orders.facts",
     "InMemoryOrderFacts": "src.platform.orders.facts",
     "OrderRegistrationPort": "src.platform.orders.port",
+    # Cupones / promociones (Medusa Admin → Promotions): port + DTOs + dobles
+    # + reglas puras (el monto del descuento nace acá, nunca en el LLM):
+    "PromotionsPort": "src.platform.promotions.port",
+    "PromotionDTO": "src.platform.promotions.port",
+    "DiscountLineItem": "src.platform.promotions.port",
+    "FakePromotionsPort": "src.platform.promotions.port",
+    "NullPromotionsPort": "src.platform.promotions.port",
+    "PromotionsUnavailableError": "src.platform.promotions.port",
+    "COUPON_CODE_RE": "src.platform.promotions.rules",
+    "CouponResolution": "src.platform.promotions.rules",
+    "DiscountResult": "src.platform.promotions.rules",
+    "compute_discount": "src.platform.promotions.rules",
+    "normalize_coupon_code": "src.platform.promotions.rules",
+    "resolve_coupon": "src.platform.promotions.rules",
     "WebCartReaderPort": "src.platform.carts.port",
     # DTOs + fakes + errores del web cart (HU web-cart) — viajan con su port:
     "WebCartItem": "src.platform.carts.port",
@@ -104,6 +118,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_order_query_port": "src.platform.orders.composition",
     "get_order_facts_port": "src.platform.orders.composition",
     "get_order_registration_port": "src.platform.orders.composition",
+    "get_promotions_port": "src.platform.promotions.composition",
     "get_web_cart_reader": "src.platform.carts.composition",
 }
 

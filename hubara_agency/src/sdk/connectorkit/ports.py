@@ -108,6 +108,25 @@ from src.platform.orders.port import (
 from src.platform.orders.query_port import (
     OrderQueryPort as OrderQueryPort,
 )
+from src.platform.promotions.composition import (
+    get_promotions_port as get_promotions_port,
+)
+from src.platform.promotions.port import (
+    DiscountLineItem as DiscountLineItem,
+    FakePromotionsPort as FakePromotionsPort,
+    NullPromotionsPort as NullPromotionsPort,
+    PromotionDTO as PromotionDTO,
+    PromotionsPort as PromotionsPort,
+    PromotionsUnavailableError as PromotionsUnavailableError,
+)
+from src.platform.promotions.rules import (
+    COUPON_CODE_RE as COUPON_CODE_RE,
+    CouponResolution as CouponResolution,
+    DiscountResult as DiscountResult,
+    compute_discount as compute_discount,
+    normalize_coupon_code as normalize_coupon_code,
+    resolve_coupon as resolve_coupon,
+)
 from src.platform.vision.composition import (
     get_image_vision_port as get_image_vision_port,
 )
