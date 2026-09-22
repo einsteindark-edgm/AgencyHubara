@@ -17,6 +17,7 @@ import {
   useChatInbox,
   type ChatInboxItem,
   type ChatOrderBadge,
+  type ChatPostponedBadge,
 } from "@plugins/chats/frontend/entities/chat";
 import { Avatar, DateRangeFilter, Icon } from "@/shared/ui";
 import { useInboxFilters } from "../model/useInboxFilters";
@@ -238,6 +239,7 @@ function Row({ chat, selected, onSelect }: RowProps) {
         <div className="meta-row">
           <span className={"tag " + chat.tagClass}>{chat.tag.replace(/_/g, " ")}</span>
           {chat.order && <OrderChip order={chat.order} />}
+          {chat.postponed && <PostponedChip postponed={chat.postponed} />}
           {chat.unread > 0 && <span className="badge-unread">{chat.unread}</span>}
         </div>
       </div>
@@ -255,6 +257,24 @@ function Row({ chat, selected, onSelect }: RowProps) {
  * muestra el panel de pedidos). El estado NO viaja sólo en el color: el
  * `aria-label` y el tooltip lo dicen con palabras.
  */
+/**
+ * Chip del cliente pospuesto: cuándo dijo que retoma y si la cita (el toque de
+ * ese día) ya salió. Lo que escribió el cliente va en el texto accesible y el
+ * tooltip — el operador lo ve sin abrir el chat.
+ */
+function PostponedChip({ postponed }: { postponed: ChatPostponedBadge }) {
+  const said = postponed.text ? ` — «${postponed.text}»` : "";
+  return (
+    <span
+      className={"postponed-chip postponed-chip-" + postponed.status}
+      aria-label={`Pospuesto: ${postponed.description}${said}`}
+      title={`Pospuesto: ${postponed.description}${said}`}
+    >
+      {postponed.label}
+    </span>
+  );
+}
+
 function OrderChip({ order }: { order: ChatOrderBadge }) {
   const meta = ORDER_BADGE_META[order.payment];
   // "#33 +1" — el pedido más reciente y cuántos más lleva el cliente.

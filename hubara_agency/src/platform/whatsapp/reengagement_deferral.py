@@ -339,3 +339,49 @@ def fresh_resume_label(metadata: dict[str, Any]) -> str | None:
         return None
     label = entry.get("resume_label")
     return label if isinstance(label, str) and label else None
+
+
+# --- Vista para el dashboard (filtro "Pospuestos") ---------------------------
+
+#: Esperando la fecha que dio el cliente (o la pausa de 7 días sin fecha).
+POSTPONED_WAITING = "esperando"
+#: Llegó la fecha y la cita todavía no salió.
+POSTPONED_APPOINTMENT_DUE = "cita_pendiente"
+#: La cita salió; esperando la respuesta del cliente.
+POSTPONED_APPOINTMENT_SENT = "cita_enviada"
+
+#: Etiqueta del ciclo cuando la escalera (o la cita) terminó sin respuesta.
+_TAG_UNRESPONSIVE = "SIN_RESPUESTA"
+
+
+def postponed_view(metadata: dict[str, Any], now_ms: int) -> dict[str, Any] | None:
+    """El cliente pospuesto tal como lo ve el operador, o None si no está.
+
+    Pedido del operador (2026-09-22): un filtro para estar pendiente de
+    quienes dijeron cuándo retoman. Está desde que aplazó hasta que retoma la
+    charla (el ingest borra el aplazamiento) o queda `SIN_RESPUESTA`. Sin
+    fecha, solo mientras dura la pausa: no hay cita que vigilar después."""
+    entry = metadata.get(DEFERRAL_KEY)
+    if not isinstance(entry, dict) or metadata.get("tag") == _TAG_UNRESPONSIVE:
+        return None
+    until = entry.get("until_ms")
+    if isinstance(until, bool) or not isinstance(until, int):
+        return None
+    kind = entry.get("kind")
+    if now_ms < until:
+        status = POSTPONED_WAITING
+    elif kind != DEFERRAL_KIND_DATED:
+        return None
+    elif "appointment_touched_at_ms" in entry:
+        status = POSTPONED_APPOINTMENT_SENT
+    else:
+        status = POSTPONED_APPOINTMENT_DUE
+    label = entry.get("resume_label")
+    text = entry.get("text")
+    return {
+        "status": status,
+        "kind": kind,
+        "until_ms": until,
+        "resume_label": label if isinstance(label, str) and label else None,
+        "text": text if isinstance(text, str) else "",
+    }

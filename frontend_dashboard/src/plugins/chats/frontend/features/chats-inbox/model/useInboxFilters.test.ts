@@ -229,3 +229,38 @@ describe("filtro 'Sin respuesta' (escalera de reactivación agotada)", () => {
     expect(ids).toEqual(["a", "c"]);
   });
 });
+
+describe("filtro 'Pospuestos' (el cliente dijo cuándo retoma)", () => {
+  const postponed = (untilMs: number, status: "esperando" | "cita_pendiente" | "cita_enviada" = "esperando") => ({
+    status,
+    untilMs,
+    label: "Retoma",
+    description: "retoma",
+    text: "les escribo la otra semana",
+  });
+
+  it("cuenta y muestra SOLO los pospuestos, sin importar la etiqueta", () => {
+    const chats = [
+      chat({ id: "a", tag: "INTERESADO", postponed: postponed(2_000) }),
+      chat({ id: "b", tag: "INTERESADO" }),
+      chat({ id: "c", tag: "FRÍO", postponed: postponed(1_000, "cita_enviada") }),
+    ];
+    const { result } = run(chats);
+    expect(result.current.filters.find((f) => f.key === "Pospuestos")?.count).toBe(2);
+
+    act(() => result.current.setActiveFilter("Pospuestos"));
+    expect(result.current.filtered.map((c) => c.id).sort()).toEqual(["a", "c"]);
+  });
+
+  it("es una cola por fecha de retoma: el más próximo primero, sin partir por día", () => {
+    const chats = [
+      chat({ id: "tarde", dayIso: TODAY, timestamp: 900, postponed: postponed(3_000) }),
+      chat({ id: "pronto", dayIso: "2026-09-01", timestamp: 100, postponed: postponed(1_000) }),
+      chat({ id: "medio", dayIso: "2026-09-05", timestamp: 500, postponed: postponed(2_000) }),
+    ];
+    const { result } = run(chats);
+    act(() => result.current.setActiveFilter("Pospuestos"));
+    expect(result.current.sections.map((s) => s.key)).toEqual(["postponed"]);
+    expect(idsOf(result.current.sections, "postponed")).toEqual(["pronto", "medio", "tarde"]);
+  });
+});

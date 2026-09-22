@@ -26,6 +26,17 @@ export interface SessionOrderRef {
   count: number;
 }
 
+/** Cliente pospuesto («les escribo la otra semana») — ver `sessionPostponedSchema`. */
+export interface SessionPostponed {
+  status: "esperando" | "cita_pendiente" | "cita_enviada";
+  kind: string | null;
+  /** Epoch ms en que el cliente dijo que retoma. */
+  until_ms: number;
+  resume_label: string | null;
+  /** Lo que escribió el cliente al aplazar. */
+  text: string;
+}
+
 /** Item de la lista de sesiones (panel izquierdo). */
 export interface ChatSession {
   session_id: string;
@@ -43,6 +54,8 @@ export interface ChatSession {
   /** Epoch ms del último mensaje del cliente, o null si nunca escribió. */
   last_inbound_ms: number | null;
   origin: SessionOrigin | null;
+  /** Pospuesto con fecha de retoma, o null. Opcional: backend sin desplegar. */
+  postponed?: SessionPostponed | null;
 }
 
 export interface StatusHistoryEntry {

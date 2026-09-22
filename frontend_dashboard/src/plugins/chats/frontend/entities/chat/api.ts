@@ -22,6 +22,7 @@ import {
   type SessionDetails,
   type SessionOrderRef,
   type SessionOrigin,
+  type SessionPostponed,
   type StatusHistoryEntry,
 } from "@plugins/chats/frontend/entities/session";
 import {
@@ -35,6 +36,7 @@ import type {
   AvatarColor,
   ChatInboxItem,
   ChatOrderBadge,
+  ChatPostponedBadge,
   ChatMessageItem,
   ChatOverview,
   ChatQuote,
@@ -184,6 +186,45 @@ function adaptOrderRef(ref: SessionOrderRef | null | undefined): ChatOrderBadge 
   };
 }
 
+const WEEKDAYS_SHORT = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+const MONTHS_SHORT = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+/** El chip va CORTO (la fila es angosta: "Cita enviada mar 22 sep" no cabía
+ *  junto a la etiqueta); la descripción completa va al tooltip y al texto
+ *  accesible, con el día de la semana. */
+const POSTPONED_TEXT: Record<
+  ChatPostponedBadge["status"],
+  { chip: string; describe: (day: string) => string }
+> = {
+  esperando: { chip: "Retoma", describe: (day) => `retoma el ${day}` },
+  cita_pendiente: { chip: "Cita", describe: (day) => `la cita del ${day} todavía no salió` },
+  cita_enviada: { chip: "Cita ✓", describe: (day) => `cita enviada el ${day}, esperando respuesta` },
+};
+
+/** Día de la retoma en hora Colombia: `{ short: "28 sep", long: "lun 28 sep" }`. */
+function bogotaDay(ms: number): { short: string; long: string } {
+  const iso = bogotaDayIsoFromUnix(Math.floor(ms / 1000));
+  if (!iso) return { short: "", long: "" };
+  const [y, m, d] = iso.split("-").map(Number);
+  const short = `${d} ${MONTHS_SHORT[m - 1]}`;
+  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return { short, long: `${WEEKDAYS_SHORT[weekday]} ${short}` };
+}
+
+/** `postponed` del backend → chip de la fila + clave del filtro "Pospuestos". */
+function adaptPostponed(p: SessionPostponed | null | undefined): ChatPostponedBadge | null {
+  if (!p) return null;
+  const text = POSTPONED_TEXT[p.status];
+  const day = bogotaDay(p.until_ms);
+  return {
+    status: p.status,
+    untilMs: p.until_ms,
+    label: `${text.chip} ${day.short}`.trim(),
+    description: text.describe(day.long),
+    text: p.text,
+  };
+}
+
 function adaptSession(s: ChatSession): ChatInboxItem {
   const { tag, tagClass } = normalizeTag(s.tag, s.active_agent_route);
   const human = isAssignedToHuman(s, tag);
@@ -197,6 +238,7 @@ function adaptSession(s: ChatSession): ChatInboxItem {
     dayIso: bogotaDayIsoFromUnix(s.last_updated_timestamp),
     lastInboundMs: s.last_inbound_ms ?? null,
     order: adaptOrderRef(s.order_ref),
+    postponed: adaptPostponed(s.postponed),
     tag,
     tagClass,
     color: hashColor(s.session_id),

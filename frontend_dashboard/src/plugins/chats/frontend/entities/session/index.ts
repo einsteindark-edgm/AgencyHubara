@@ -2,6 +2,7 @@ export type {
   ChatSession,
   SessionDetails,
   SessionOrderRef,
+  SessionPostponed,
   SessionOrigin,
   StatusHistoryEntry,
 } from "./model";
