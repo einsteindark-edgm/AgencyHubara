@@ -531,6 +531,50 @@ MUST NOT afectar la respuesta al webhook.
 - WHEN el operador corre `python -m src.plugins.chats.agent.sales.inbound_ledger_report --from D --to D`
 - THEN obtiene, por día de Bogotá y por anuncio (`referral.source_id`), `sessions` (personas distintas — comparable con "conversaciones iniciadas" de Meta), `ingested`, `failed` y `lost`, con los teléfonos enmascarados salvo `--full`
 
+### Requirement: Cupones de descuento validados contra Medusa
+
+El bot de ventas MUST aplicar SOLO cupones que existan como promociones con
+código en Medusa (Admin → Promotions). El monto del descuento MUST calcularlo
+el sistema (`compute_discount` del connectorkit) con el snapshot de la
+promoción persistido en el episodio y los precios del catálogo — nunca el
+LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
+(`DISCOUNT_REQUEST`).
+
+#### Scenario: El cliente da un código válido
+
+- GIVEN una promoción activa `MAMA15` (15 %, sin filtro de productos) en Medusa
+- WHEN el cliente escribe "tengo el cupón mama15" y el bot llama `apply_coupon(code="mama15")`
+- THEN la tool devuelve `applied=true` y persiste `episodes[-1].applied_coupon = {code, promotion (snapshot), applied_at_ms}`
+- AND cada turno siguiente recibe la nota `[CUPÓN APLICADO: MAMA15 — 15% …]`
+- AND `present_order_confirmation` devuelve `discount_cop` + `total_cop` ya descontado y el resumen muestra la línea "Descuento (MAMA15)"
+- AND `register_order` exige ese `total_cop` (SEC-07: `subtotal + envío − descuento`), manda `promo_codes: ["MAMA15"]` al draft de Medusa y guarda `coupon_code`/`discount_cop` en `registered_order` y en las instrucciones de pago
+
+#### Scenario: Código inexistente, vencido, inactivo o con forma de tag interno
+
+- GIVEN el cliente da `NOEXISTE`, un cupón vencido, o `VELAS_10`
+- WHEN el bot llama `apply_coupon`
+- THEN devuelve `applied=false` con `reason` ∈ {not_found, expired, inactive, not_started, budget_exhausted, invalid_format}
+- AND NO persiste nada en el episodio
+- AND el bot se lo dice al cliente con honestidad sin aplicar ningún descuento
+
+#### Scenario: Promociones vigentes
+
+- WHEN el cliente pregunta "¿tienen descuentos?" y el bot llama `list_promotions`
+- THEN el envelope lista código, descuento y productos de cada cupón activo (no automático)
+- AND con lista vacía el bot dice que no hay promociones (no inventa) y solo escala si el cliente insiste en negociar
+
+#### Scenario: Cupón con mínimo de compra o sin productos aplicables
+
+- GIVEN un cupón aplicado con `min_subtotal_cop` mayor al pedido, o cuyos productos no están en el pedido
+- WHEN se presenta la confirmación
+- THEN el descuento es 0, el envelope explica la razón (`min_subtotal` / `no_applicable_items`) y el cupón sigue guardado por si el cliente ajusta el pedido
+
+#### Scenario: Crear pedido desde el dashboard con cupón aplicado en el chat
+
+- GIVEN un episodio con `applied_coupon`
+- WHEN el operador usa "Crear pedido"
+- THEN el sugerido muestra `discount_cop`/`coupon_code` y el registro descuenta lo mismo que descontaría el bot
+
 ## Out of scope
 
 - Verificación por visión/IA del CONTENIDO de un PDF (¿es un pago real?) — decisión 2026-09-01: la clasificación de PDFs es determinista (todo PDF → verificación humana)
