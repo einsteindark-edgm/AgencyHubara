@@ -21,6 +21,7 @@ from src.plugins.marketing.carousel import CarouselError, resolve_campaign_carou
 from src.plugins.marketing.domain.campaigns import (
     SKIP_DADO_DE_BAJA,
     SKIP_SESION_DE_PRUEBA,
+    is_test_session,
     ALL_SEGMENTS,
     IMPORTED_CONTACTS_CAP,
     STATUS_DRAFT,
@@ -810,6 +811,10 @@ def list_segments() -> dict:
     excluded = 0
     sessions = FilesystemAttributionStore(WORKSPACE_VAULT_DIR).scan_sessions()
     for session in sessions:
+        if is_test_session(session.metadata):
+            # Seed de Ads: la audiencia las salta, el conteo también (no son
+            # contactos — incidente card 16 vs audiencia 4).
+            continue
         segment = segment_for_metadata(session.metadata)
         if segment is None:
             excluded += 1

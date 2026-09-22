@@ -137,6 +137,7 @@ reconociendo también seeds viejos sin marker por su historial.
 - GIVEN una sesión `wa_5730000009XX` con `seeded_test: true` y tag INTERESADO
 - WHEN se resuelve la audiencia de una campaña a interesados
 - THEN no está en `recipients` ni en `skipped` de la API y el envío nunca la toca
+- AND `GET /segments` tampoco la cuenta (ni en el segmento ni en `excluded_count`): la card del segmento y la audiencia usan la misma regla
 
 ### Requirement: El mensaje de campaña solo ofrece lo que viaja en la plantilla
 
