@@ -46,19 +46,19 @@ def test_parse_csv_con_encabezado_detecta_telefono_y_nombre() -> None:
     text = (
         "nombre,telefono,ciudad\n"
         "Camila,3001234567,Bogotá\n"
-        "Andrés,+57 3109876543,Cali\n"
+        "Andrés,+57 3002223344,Cali\n"
     )
     result = parse_contacts_file(text)
-    assert [c.phone for c in result.contacts] == ["573001234567", "573109876543"]
+    assert [c.phone for c in result.contacts] == ["573001234567", "573002223344"]
     assert [c.name for c in result.contacts] == ["Camila", "Andrés"]
     assert result.rejected == []
     assert result.duplicates == 0
 
 
 def test_parse_csv_sin_encabezado_una_columna() -> None:
-    text = "3001234567\n3109876543\n\n"
+    text = "3001234567\n3002223344\n\n"
     result = parse_contacts_file(text)
-    assert [c.phone for c in result.contacts] == ["573001234567", "573109876543"]
+    assert [c.phone for c in result.contacts] == ["573001234567", "573002223344"]
     assert [c.name for c in result.contacts] == [None, None]
 
 
@@ -95,8 +95,8 @@ def test_parse_csv_sin_columna_de_telefono_devuelve_todo_rechazado() -> None:
 
 def test_parse_csv_tolera_lineas_con_texto_extra_en_una_columna() -> None:
     # Un export de WhatsApp/Excel suele traer "Camila - 3001234567".
-    result = parse_contacts_file("Camila - 3001234567\nAndrés 3109876543\n")
-    assert [c.phone for c in result.contacts] == ["573001234567", "573109876543"]
+    result = parse_contacts_file("Camila - 3001234567\nAndrés 3002223344\n")
+    assert [c.phone for c in result.contacts] == ["573001234567", "573002223344"]
 
 
 # --- audiencia con importados ----------------------------------------------
@@ -122,29 +122,29 @@ def test_importado_con_sesion_respeta_humano_y_opt_out() -> None:
         [],
         [
             {"phone": "573001234567", "name": None},
-            {"phone": "573109876543", "name": None},
-            {"phone": "573201112233", "name": None},
+            {"phone": "573002223344", "name": None},
+            {"phone": "573003334455", "name": None},
         ],
     )
     sessions = [
         ("wa_573001234567", {"tag": "HUMANO"}),
-        ("wa_573109876543", {"marketing_opt_out": True}),
-        ("wa_573201112233", {"tag": "INTERESADO", "profile": {"name": "Ana Ruiz"}}),
+        ("wa_573002223344", {"marketing_opt_out": True}),
+        ("wa_573003334455", {"tag": "INTERESADO", "profile": {"name": "Ana Ruiz"}}),
     ]
     audience = resolve_campaign_audience(campaign, sessions)
-    assert [r.session_id for r in audience.recipients] == ["wa_573201112233"]
+    assert [r.session_id for r in audience.recipients] == ["wa_573003334455"]
     # Con sesión real el nombre del vault gana sobre el del CSV (None).
     assert audience.recipients[0].customer_name == "Ana"
     reasons = {s.session_id: s.reason for s in audience.skipped}
     assert reasons["wa_573001234567"] == "excluido"
-    assert reasons["wa_573109876543"] == "excluido"
+    assert reasons["wa_573002223344"] == "excluido"
 
 
 def test_importado_salta_cooldown_pero_no_quiet_hours() -> None:
     now = 1_750_000_000_000
     campaign = _campaign(
         [],
-        [{"phone": "573001234567", "name": None}, {"phone": "573109876543", "name": None}],
+        [{"phone": "573001234567", "name": None}, {"phone": "573002223344", "name": None}],
     )
     sessions = [
         (
@@ -156,11 +156,11 @@ def test_importado_salta_cooldown_pero_no_quiet_hours() -> None:
         campaign,
         sessions,
         now_ms=now,
-        is_quiet_hours=lambda sid: sid == "wa_573109876543",
+        is_quiet_hours=lambda sid: sid == "wa_573002223344",
     )
     assert [r.session_id for r in audience.recipients] == ["wa_573001234567"]
     reasons = {s.session_id: s.reason for s in audience.skipped}
-    assert reasons["wa_573109876543"] == "quiet_hours"
+    assert reasons["wa_573002223344"] == "quiet_hours"
 
 
 def test_importado_quitado_por_operador_no_recibe() -> None:
