@@ -21,6 +21,8 @@ REASON_INACTIVE = "inactive"
 REASON_NOT_STARTED = "not_started"
 REASON_EXPIRED = "expired"
 REASON_BUDGET = "budget_exhausted"
+#: La promo tiene reglas que no pudimos leer: no se sabe a qué aplica.
+REASON_SCOPE_UNRESOLVED = "scope_unresolved"
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,8 @@ def resolve_coupon(
         and promo.budget_used >= promo.budget_limit
     ):
         return CouponResolution(False, REASON_BUDGET, promo)
+    if promo.scope_unresolved:
+        return CouponResolution(False, REASON_SCOPE_UNRESOLVED, promo)
     return CouponResolution(True, None, promo)
 
 

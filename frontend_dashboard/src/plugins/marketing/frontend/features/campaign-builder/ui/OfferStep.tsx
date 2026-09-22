@@ -30,6 +30,12 @@ export function OfferStep({ draft, editable, onPatch, onCommit }: Props) {
   // `apply_coupon` — así la campaña promete un cupón que existe de verdad.
   const { data: promotionsInfo } = usePromotions(usesDiscount);
   const promotions = promotionsInfo?.promotions ?? [];
+  // Solo con la lista REAL de Medusa (si no respondió, no sabemos).
+  const couponNotInMedusa =
+    draft.couponCode !== "" &&
+    promotionsInfo !== undefined &&
+    !promotionsInfo.unavailable &&
+    !promotions.some((p) => p.code === draft.couponCode);
 
   if (draft.goal === "") {
     return (
@@ -85,6 +91,13 @@ export function OfferStep({ draft, editable, onPatch, onCommit }: Props) {
                 </option>
               ))}
             </datalist>
+            {couponNotInMedusa ? (
+              <span role="alert" className="text-[10.5px] leading-snug text-warn">
+                {draft.couponCode} no está entre los cupones vigentes de Medusa: el
+                cliente que lo escriba recibirá "ese código no existe" y el envío
+                se bloqueará. Elige uno de la lista o créalo en Medusa.
+              </span>
+            ) : null}
             {promotions.length > 0 ? (
               <span className="text-[10.5px] leading-snug text-fg-faint">
                 En Medusa:{" "}
@@ -102,11 +115,11 @@ export function OfferStep({ draft, editable, onPatch, onCommit }: Props) {
               </span>
             ) : promotionsInfo?.unavailable ? (
               <span className="text-[10.5px] text-warn">
-                No pude leer los cupones de Medusa — escribí el código a mano.
+                No pude leer los cupones de Medusa — escribe el código a mano.
               </span>
             ) : (
               <span className="text-[10.5px] leading-snug text-fg-faint">
-                Creá el cupón en Medusa (Admin → Promotions) con el mismo código: el
+                Crea el cupón en Medusa (Admin → Promotions) con el mismo código: el
                 bot solo aplica cupones que existan ahí.
               </span>
             )}

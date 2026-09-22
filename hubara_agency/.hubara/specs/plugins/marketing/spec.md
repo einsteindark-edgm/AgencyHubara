@@ -153,3 +153,17 @@ cuerpo en un solo párrafo ("Encabezado. Cuerpo"), seguido de la oferta y la baj
 - GIVEN una campaña con `message.footer` y `message.cta` de antes de este cambio
 - WHEN el operador la abre o la edita
 - THEN la vista previa no los muestra y el siguiente guardado los elimina
+
+### Requirement: El cupón que anuncia la campaña existe en Medusa
+
+Si la campaña tiene `coupon_code`, el envío y el envío de prueba MUST validarlo
+contra Medusa con la misma regla que usa el bot (`resolve_coupon`): código
+inexistente, inactivo, sin empezar, vencido, agotado o con reglas ilegibles →
+422 con el motivo y nada sale; Medusa caído → 503. El builder avisa cuando el
+código escrito no está entre los vigentes.
+
+#### Scenario: La campaña anuncia un código que no existe
+
+- GIVEN la campaña dice "Usa el código AMOR" y en Medusa solo existe AMOR26
+- WHEN el operador envía (o prueba) la campaña
+- THEN responde 422 "El cupón AMOR no existe en Medusa…" y el builder ya lo advertía bajo el campo

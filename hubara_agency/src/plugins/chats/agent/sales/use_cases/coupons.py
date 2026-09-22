@@ -9,7 +9,7 @@ Medusa puede cambiar a mitad de chat sin que el pedido cambie de precio.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from src.sdk.connectorkit import (
@@ -54,14 +54,94 @@ def promotion_from_snapshot(raw: dict[str, Any]) -> PromotionDTO:
     data = dict(raw)
     for key in ("product_ids", "variant_ids", "collection_ids"):
         data[key] = tuple(str(x) for x in (data.get(key) or []))
+    # Snapshots de antes del campo: sin reglas ilegibles conocidas.
+    data["scope_unresolved"] = bool(data.get("scope_unresolved"))
     fields = PromotionDTO.__dataclass_fields__
     return PromotionDTO(**{k: data.get(k) for k in fields})
 
 
+def is_whole_catalog(promotion: PromotionDTO) -> bool:
+    """¿Aplica a todos los productos? Solo si NO filtra productos, no es de
+    envío y sus reglas se leyeron completas (falla cerrada)."""
+    if promotion.scope_unresolved or promotion.target_type == "shipping_methods":
+        return False
+    return not (promotion.product_ids or promotion.variant_ids or promotion.collection_ids)
+
+
+def _cop_price(variant: Any) -> int | None:
+    prices = list(getattr(variant, "prices", None) or [])
+    chosen = next((p for p in prices if str(p.currency_code).lower() == "cop"), None)
+    if chosen is None:
+        return None
+    try:
+        return int(round(float(chosen.amount)))
+    except (TypeError, ValueError):
+        return None
+
+
+async def eligible_products(catalog: Any, promotion: PromotionDTO) -> list[dict[str, Any]]:
+    """Productos del catálogo a los que aplica la promo, con su precio y el
+    precio con descuento (calculado con `compute_discount`, L-19). Vacío si
+    la promo es de todo el catálogo, de envío, o el catálogo no responde."""
+    if is_whole_catalog(promotion) or promotion.target_type == "shipping_methods":
+        return []
+    if catalog is None:
+        return []
+    try:
+        result = await catalog.search("", limit=200)
+    except Exception:  # noqa: BLE001 — sin catálogo no hay lista
+        return []
+    # Precio unitario: el mínimo de compra no cambia el precio de la unidad.
+    per_unit = replace(promotion, min_subtotal_cop=None)
+    out: list[dict[str, Any]] = []
+    for product in getattr(result, "results", None) or []:
+        pid = str(getattr(product, "id", "") or "")
+        variants = list(getattr(product, "variants", None) or [])
+        matching = [v for v in variants if str(getattr(v, "id", "")) in promotion.variant_ids]
+        if pid not in promotion.product_ids and not matching:
+            continue
+        variant = (matching or variants or [None])[0]
+        price = _cop_price(variant) if variant is not None else None
+        if price is None:
+            continue
+        line = DiscountLineItem(
+            handle=str(getattr(product, "handle", "") or ""),
+            quantity=1,
+            unit_price_cop=price,
+            product_id=pid or None,
+            variant_id=str(getattr(variant, "id", "")) or None,
+        )
+        discount = compute_discount(per_unit, [line]).discount_cop
+        out.append(
+            {
+                "handle": line.handle,
+                "title": str(getattr(product, "title", "") or line.handle),
+                "price_cop": price,
+                "discounted_price_cop": max(price - discount, 0),
+            }
+        )
+    return out
+
+
+def eligible_products_text(products: list[dict[str, Any]]) -> str:
+    """"Cubo Love ($30.000 → $27.000), Vela Buda ($40.000 → $36.000)"."""
+    return ", ".join(
+        f"{p['title']} ({format_cop(p['price_cop'])} → {format_cop(p['discounted_price_cop'])})"
+        for p in products
+    )
+
+
 def set_applied_coupon(
-    metadata: dict[str, Any], *, promotion: PromotionDTO, now_ms: int
+    metadata: dict[str, Any],
+    *,
+    promotion: PromotionDTO,
+    now_ms: int,
+    eligible: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Mutates: fija el cupón en el episodio activo (lo crea si no hay)."""
+    """Mutates: fija el cupón en el episodio activo (lo crea si no hay).
+
+    `eligible`: los productos a los que aplica (nombre + precios) — la nota
+    de cada turno los recuerda para que el bot ofrezca ESOS."""
     episode = get_active_episode(metadata) or ensure_active_episode(
         metadata, now_ms=now_ms
     )
@@ -69,6 +149,7 @@ def set_applied_coupon(
         "code": promotion.code,
         "promotion": asdict(promotion),
         "applied_at_ms": now_ms,
+        "eligible_products": list(eligible or []),
     }
     return metadata
 
@@ -171,11 +252,25 @@ def build_coupon_note(metadata: dict[str, Any]) -> str | None:
         promotion = promotion_from_snapshot(raw["promotion"])
     except (TypeError, KeyError):
         return None
+    eligible = [p for p in (raw.get("eligible_products") or []) if isinstance(p, dict)]
+    if is_whole_catalog(promotion):
+        scope = "aplica a todo el catálogo."
+    elif eligible:
+        scope = (
+            f"aplica SOLO a: {eligible_products_text(eligible)}. Ofrece estos "
+            "productos; lo que se habló antes de otros productos va SIN "
+            "descuento — retómalo solo si el cliente lo pide, aclarándolo."
+        )
+    else:
+        scope = (
+            "aplica solo a algunos productos: confirma cuáles con "
+            "`list_promotions` antes de prometer descuento en uno."
+        )
     return (
-        f"[CUPÓN APLICADO: {promotion.code} — {describe_promotion(promotion)}. "
-        "El sistema calcula el descuento en `present_order_confirmation` y "
-        "`register_order`; usa el total que devuelven esos envelopes. No "
-        "prometas otro descuento.]"
+        f"[CUPÓN APLICADO: {promotion.code} — {describe_promotion(promotion)}; "
+        f"{scope} El sistema calcula el descuento en "
+        "`present_order_confirmation` y `register_order`; usa el total de esos "
+        "envelopes. No prometas otro descuento.]"
     )
 
 
@@ -187,6 +282,9 @@ __all__ = [
     "coupon_discount_for_items",
     "describe_promotion",
     "discount_line_items",
+    "eligible_products",
+    "eligible_products_text",
+    "is_whole_catalog",
     "format_cop",
     "promotion_from_snapshot",
     "set_applied_coupon",

@@ -42,6 +42,10 @@ class PromotionDTO:
     budget_used: int | None
     #: Nombre de la campaña Medusa (texto para el cliente), si existe.
     description: str | None
+    #: True = la promo tiene reglas (productos / mínimo de compra) que NO se
+    #: pudieron leer (sin `values`, atributo desconocido). Falla CERRADA: el
+    #: cupón no se aplica — jamás se asume "todo el catálogo".
+    scope_unresolved: bool = False
 
 
 @dataclass(frozen=True)

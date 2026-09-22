@@ -65,16 +65,26 @@ def promotion_from_medusa(raw: dict[str, Any]) -> PromotionDTO | None:
     product_ids: list[str] = []
     variant_ids: list[str] = []
     collection_ids: list[str] = []
+    # Falla CERRADA: una regla que no sabemos leer (sin `values` o con un
+    # atributo que no entendemos) NO se ignora — ignorarla convertía "solo
+    # estos productos" en "todo el catálogo" (incidente AMOR26).
+    scope_unresolved = False
     for rule in method.get("target_rules") or []:
         if not isinstance(rule, dict):
             continue
         attr = str(rule.get("attribute") or "")
+        values = _values(rule)
+        if not values:
+            scope_unresolved = True
+            continue
         if attr in _PRODUCT_ATTRS:
-            product_ids.extend(_values(rule))
+            product_ids.extend(values)
         elif attr in _VARIANT_ATTRS:
-            variant_ids.extend(_values(rule))
+            variant_ids.extend(values)
         elif attr in _COLLECTION_ATTRS:
-            collection_ids.extend(_values(rule))
+            collection_ids.extend(values)
+        else:
+            scope_unresolved = True
     min_subtotal: int | None = None
     for rule in raw.get("rules") or []:
         if not isinstance(rule, dict):
@@ -85,6 +95,8 @@ def promotion_from_medusa(raw: dict[str, Any]) -> PromotionDTO | None:
             values = [v for v in values if v is not None]
             if values:
                 min_subtotal = max(values)
+            else:
+                scope_unresolved = True
     campaign = raw.get("campaign") if isinstance(raw.get("campaign"), dict) else {}
     budget = campaign.get("budget") if isinstance(campaign.get("budget"), dict) else {}
     promo_type = str(raw.get("type") or "standard")
@@ -112,6 +124,7 @@ def promotion_from_medusa(raw: dict[str, Any]) -> PromotionDTO | None:
         budget_limit=_to_int(budget.get("limit")),
         budget_used=_to_int(budget.get("used")),
         description=(campaign.get("name") or None),
+        scope_unresolved=scope_unresolved,
     )
 
 

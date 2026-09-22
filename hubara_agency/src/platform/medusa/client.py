@@ -552,8 +552,11 @@ class HttpMedusaClient:
 
     PROMOTION_FIELDS = (
         "id,code,type,is_automatic,status,"
+        # `.values`: sin ellos Medusa devuelve la regla SIN la lista de
+        # productos / el mínimo (incidente AMOR26: "todo el catálogo").
         "*application_method,*application_method.target_rules,"
-        "*rules,*campaign,*campaign.budget"
+        "*application_method.target_rules.values,"
+        "*rules,*rules.values,*campaign,*campaign.budget"
     )
 
     async def list_promotions(self, *, limit: int = 100) -> list[dict[str, Any]]:
