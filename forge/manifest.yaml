@@ -396,7 +396,6 @@ workspace_overlay:
     - IDENTITY.md
     - SOUL.md
     - TOOLS.md
-    - memory/MEMORY.md
     - skills/catalog/SKILL.md
 
 # ── Scanner de residuales (el ratchet) ─────────────────────────────────────

@@ -12,9 +12,20 @@ persistente), el ESTADO (sessions) se muda a
 workspace porque agentes distintos (sales/remarketing) comparten
 session_ids (`wa_<phone>`) y sin aislamiento se mezclarían.
 
-Los prompts/skills (ContextBuilder) y la memoria consolidada (MemoryStore)
-siguen leyéndose del workspace de CÓDIGO: solo el historial se muda.
-Env var ausente → comportamiento legacy intacto (dev/tests).
+Los prompts/skills (ContextBuilder) siguen leyéndose del workspace de
+CÓDIGO: solo el historial se muda. Env var ausente → sessions en el
+workspace (dev/tests).
+
+SIN MEMORIA COMPARTIDA (incidente 2026-09-17, run 7889b9f6):
+exoclaw_conversation, por default, consolida toda sesión con ≥ memory_window
+mensajes: un LLM la resume en `<workspace>/memory/MEMORY.md` — UN archivo por
+agente, compartido por todos los clientes — y ese archivo entra en la sección
+`# Memory` del system prompt de TODAS las conversaciones. En prod el prompt de
+un cliente llevó el pedido pendiente de otra clienta. Por eso toda
+conversación se construye con `_NeverConsolidate` (el LLM de resumen nunca se
+invoca, nada se escribe) + `_NoSharedMemory` (nada de MEMORY.md llega al
+prompt). El contexto de cada cliente es SOLO su propio historial (ventana de
+`memory_window` mensajes) + el plugin_context del turno.
 """
 
 from __future__ import annotations
@@ -25,8 +36,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+from exoclaw_conversation.context import ContextBuilder
 from exoclaw_conversation.conversation import DefaultConversation
-from exoclaw_provider_litellm.provider import LiteLLMProvider
+from exoclaw_conversation.session.manager import Session, SessionManager
 from temporalio import activity
 
 from exoclaw_temporal.config import BuildPromptInput, LLMConfig, RecordTurnInput, WorkspaceConfig
@@ -61,36 +73,43 @@ def _state_workspace_for(code_workspace: Path) -> Path | None:
     return state_root / slug
 
 
+class _NeverConsolidate:
+    """ConsolidationPolicy que nunca consolida: la historia de un cliente no
+    se resume a ningún lado (ni se llama al LLM de resumen)."""
+
+    async def should_consolidate(self, session: Session, *, memory_window: int) -> bool:
+        return False
+
+    async def consolidate(
+        self, session: Session, *, archive_all: bool = False, memory_window: int = 50
+    ) -> bool:
+        return True
+
+
+class _NoSharedMemory:
+    """MemoryBackend vacío: el system prompt no lleva `# Memory` aunque
+    `MEMORY.md` exista, y nada se escribe ahí."""
+
+    def get_memory_context(self) -> str:
+        return ""
+
+    async def consolidate(self, session: Session, *args: Any, **kwargs: Any) -> bool:
+        return True
+
+    async def consolidate_messages(self, session: Session, **kwargs: Any) -> bool:
+        return True
+
+
 def _build_conversation(llm: LLMConfig, ws: WorkspaceConfig) -> DefaultConversation:
-    provider = LiteLLMProvider(
-        api_key=llm.api_key,
-        api_base=llm.api_base,
-        default_model=llm.model,
-        extra_headers=llm.extra_headers or None,
-    )
     code_workspace = Path(ws.path)
-    state_workspace = _state_workspace_for(code_workspace)
-    if state_workspace is None:
-        return DefaultConversation.create(
-            workspace=code_workspace,
-            provider=provider,
-            model=llm.model,
-            memory_window=llm.memory_window,
-        )
-
-    # Construcción manual espejo de `DefaultConversation.create`, con el
-    # HistoryStore apuntando al state dir persistente. Memory y prompts
-    # quedan en el workspace de código (ver docstring del módulo).
-    from exoclaw_conversation.context import ContextBuilder
-    from exoclaw_conversation.memory import MemoryStore
-    from exoclaw_conversation.session.manager import SessionManager
-
-    memory = MemoryStore(code_workspace, provider, llm.model)
+    state_workspace = _state_workspace_for(code_workspace) or code_workspace
+    memory = _NoSharedMemory()
     return DefaultConversation(
         history=SessionManager(state_workspace),
         memory=memory,
         prompt=ContextBuilder(code_workspace, memory=memory),
         memory_window=llm.memory_window,
+        consolidation_policy=_NeverConsolidate(),
     )
 
 
