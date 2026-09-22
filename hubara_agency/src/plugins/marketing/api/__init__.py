@@ -20,6 +20,7 @@ from src.plugins.marketing.campaign_store import CampaignStore
 from src.plugins.marketing.carousel import CarouselError, resolve_campaign_carousel
 from src.plugins.marketing.domain.campaigns import (
     SKIP_DADO_DE_BAJA,
+    SKIP_SESION_DE_PRUEBA,
     ALL_SEGMENTS,
     IMPORTED_CONTACTS_CAP,
     STATUS_DRAFT,
@@ -689,7 +690,7 @@ def get_campaign_audience(campaign_id: str) -> dict:
             "opted_out_campaign_name": _campaign_name(s.opted_out_campaign_id),
         }
         for s in audience.skipped
-        if s.reason != "fuera_de_segmento"
+        if s.reason not in ("fuera_de_segmento", SKIP_SESION_DE_PRUEBA)
     ]
     return {
         "recipients": recipients,

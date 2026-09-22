@@ -120,3 +120,20 @@ operador la revierte editando el metadata.
 - WHEN el operador abre la audiencia de cualquier campaña
 - THEN los contactos de baja aparecen en una sección "Bajas" aparte de "No reciben", con razón `dado_de_baja`, la vía, la fecha y el nombre de la campaña que la provocó (`opted_out_campaign_name`, null si esa campaña se borró), más `opted_out_count`
 - AND `GET /campaigns/{id}/stats` devuelve `opted_out` = bajas provocadas por ESA campaña (fila "Bajas" en el resultado del envío)
+
+### Requirement: Las sesiones de prueba nunca son audiencia
+
+Una sesión sembrada para probar Ads (`seeded_test: true`, teléfono falso,
+historial "[seed] mensaje N") MUST NOT ser destinataria de ninguna campaña:
+ni por segmento, ni agregada a mano, ni importada. La audiencia la salta con
+razón `sesion_de_prueba` y la API no la lista ni en "No reciben" (es ruido de
+desarrollo, no un contacto). La limpieza es
+`python -m scripts.seed_test_ctwa_sessions --clean --apply` (container api):
+mueve esas sesiones a `<vault>/_quarantine/seeded-<ts>/` (reversible con `mv`),
+reconociendo también seeds viejos sin marker por su historial.
+
+#### Scenario: Campaña a "fríos" con seeds en el vault
+
+- GIVEN una sesión `wa_5730000009XX` con `seeded_test: true` y tag INTERESADO
+- WHEN se resuelve la audiencia de una campaña a interesados
+- THEN no está en `recipients` ni en `skipped` de la API y el envío nunca la toca
