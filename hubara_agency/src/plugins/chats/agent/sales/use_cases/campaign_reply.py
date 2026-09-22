@@ -10,7 +10,7 @@ carrito web de 4 días antes. Dos agujeros:
   draft, su cupón y la nota de lead web.
 
 La campaña es una intención nueva: la PRIMERA respuesta tras el envío cierra
-el episodio abierto (`CAMPAÑA`), abre uno nuevo y el turno lleva esta nota
+el episodio abierto (`RE_MARKETING`), abre uno nuevo y el turno lleva esta nota
 con lo que recibió el cliente. El touch lo escribe el plugin marketing
 (`stamp_campaign_touch` / envío de prueba) con
 ``{campaign_id, campaign_name, sent_at_ms, message, coupon_code,

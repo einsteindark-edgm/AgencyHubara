@@ -272,7 +272,7 @@ def test_features_recency_uses_medusa_created_at_when_available():
 
 
 def test_episode_closed_by_campaign_reply_counts_as_timeout():
-    """`CAMPAÑA` = episodio abandonado que la respuesta a una campaña cerró:
+    """`RE_MARKETING` = episodio abandonado que la respuesta a una campaña cerró:
     mismo peso que TIMEOUT (no es rechazo ni cierre formal)."""
     metadata = {
         "episodes": [
@@ -280,7 +280,7 @@ def test_episode_closed_by_campaign_reply_counts_as_timeout():
                 "episode_id": "ep_001",
                 "started_at_ms": 1_000,
                 "closed_at_ms": 2_000,
-                "closing_tag": "CAMPAÑA",
+                "closing_tag": "RE_MARKETING",
                 "order_id": None,
             }
         ]
