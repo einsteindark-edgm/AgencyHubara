@@ -46,6 +46,35 @@ def format_cop(amount: int | None) -> str:
     return "$ " + f"{int(amount):,}".replace(",", ".")
 
 
+def _positive_cop(raw: object) -> int | None:
+    """Entero COP > 0 o ``None`` (descarta bool, cero, negativos y basura)."""
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        return None
+    return raw
+
+
+def shipping_breakdown(
+    shipping_cost: int | None, order_total_cop: int | None
+) -> list[tuple[str, str]] | None:
+    """Desglose de "en camino" cuando el operador informó el valor del envío.
+
+    ``[("Valor del pedido", "$ 50.000"), ("Valor del envío", "$ 12.000"),
+    ("Total", "$ 62.000")]``. Sin total del pedido conocido (Medusa caído)
+    queda solo el envío: no inventamos el valor del pedido ni el total. Sin
+    envío → ``None`` (el mensaje es el de siempre)."""
+    envio = _positive_cop(shipping_cost)
+    if envio is None:
+        return None
+    pedido = _positive_cop(order_total_cop)
+    if pedido is None:
+        return [("Valor del envío", format_cop(envio))]
+    return [
+        ("Valor del pedido", format_cop(pedido)),
+        ("Valor del envío", format_cop(envio)),
+        ("Total", format_cop(pedido + envio)),
+    ]
+
+
 def build_status_template_variables(
     stage: str,
     facts: dict,
@@ -74,17 +103,24 @@ def build_status_template_variables(
         reference = f"{reference} ({items_label})"
     status_label = STAGE_LABELS.get(stage, stage)
     url = _clean_tracking_url(tracking_url)
-    envio = format_cop(shipping_cost) if stage == "shipping" else ""
-    if stage == "shipping" and (url or envio):
-        # Fuera de ventana el ÚNICO canal es este template: el valor del
-        # envío y el link de la guía viajan dentro del slot de estado
-        # ("...está en camino. El valor del envío es $ 12.000. Sigue tu
-        # envío aquí: https://…. Si quieres más información…"). El catálogo
-        # declara max_length holgado para este slot; sin saltos de línea ni
-        # 4+ espacios (Meta los rechaza en params).
+    detalle = (
+        shipping_breakdown(shipping_cost, facts.get("total_cop"))
+        if stage == "shipping"
+        else None
+    )
+    if stage == "shipping" and (url or detalle):
+        # Fuera de ventana el ÚNICO canal es este template: el desglose
+        # (pedido, envío, total) y el link de la guía viajan dentro del slot
+        # de estado ("...está en camino. Valor del pedido: $ 50.000, valor
+        # del envío: $ 12.000, total: $ 62.000. Sigue tu envío aquí: https://…
+        # . Si quieres más información…"). El catálogo declara max_length
+        # holgado para este slot; sin saltos de línea ni 4+ espacios (Meta
+        # los rechaza en params).
         status_label = "en camino"
-        if envio:
-            status_label += f". El valor del envío es {envio}"
+        if detalle:
+            partes = [f"{k}: {v}" for k, v in detalle]
+            partes[1:] = [p[0].lower() + p[1:] for p in partes[1:]]
+            status_label += ". " + ", ".join(partes)
         if url:
             status_label += f". Sigue tu envío aquí: {url}"
     return {
@@ -152,6 +188,7 @@ def render_stage_notification(
     items_label: str = "",
     tracking_url: str | None = None,
     shipping_cost: int | None = None,
+    order_total_cop: int | None = None,
 ) -> str | None:
     """Renderiza el mensaje EXACTO de una notificación de cambio de estado.
 
@@ -173,9 +210,11 @@ def render_stage_notification(
     al final; las demás etapas lo ignoran.
 
     ``shipping_cost`` (COP entero, opcional; lo escribe el operador al marcar
-    "en camino") se informa SOLO en ``shipping`` ("El valor del envío es
-    $ 12.000"), tal cual, sin sumarlo ni restarlo del total. Con valor de
-    envío, el pedido pagado ya NO afirma "no tienes que pagar nada".
+    "en camino") se informa SOLO en ``shipping`` como desglose separado del
+    pedido — "Valor del pedido" (``order_total_cop``, total vivo del pedido),
+    "Valor del envío" y "Total" (la suma), una línea cada uno dentro de la
+    misma burbuja. Contra entrega cobra el total; el pagado dice que el valor
+    del pedido ya está pagado (ya NO "no tienes que pagar nada").
 
     2026-09-22: ni ``preparing`` ni ``ready`` contra entrega recuerdan el monto
     ("pagarás $ X…" / "Ten listos $ X…") — el precio se menciona recién en
@@ -222,13 +261,30 @@ def render_stage_notification(
         )
 
     if stage == "shipping":
-        envio = format_cop(shipping_cost)
         head = f"Tu pedido {order} ya va en camino 🚚."
-        if envio:
-            head += f" El valor del envío es {envio}."
-        if pay == "confirmed" and envio:
-            body = f"{head} Tu pedido ya está pagado. Te aviso cuando esté por llegar."
-        elif pay == "confirmed":
+        detalle = shipping_breakdown(shipping_cost, order_total_cop)
+        if detalle:
+            # Una línea por concepto, misma burbuja ("\n" simple; "\n\n"
+            # partiría el mensaje en chunks).
+            lines = [head, *(f"{k}: {v}" for k, v in detalle)]
+            por_cobrar = detalle[-1][1] if len(detalle) == 3 else monto
+            if pay == "confirmed":
+                lines.append(
+                    "El valor del pedido ya está pagado. Te aviso cuando esté por llegar."
+                )
+            elif pay == "cod":
+                lines.append(
+                    f"Recuerda que al recibirlo pagas {por_cobrar} al repartidor "
+                    "(efectivo o transferencia)."
+                )
+            else:
+                lines.append("Te aviso cuando esté por llegar.")
+            return (
+                "\n".join(lines)
+                + _window_suffix(delivery_window)
+                + _tracking_suffix(tracking_url)
+            )
+        if pay == "confirmed":
             body = (
                 f"{head} Recuerda que está pagado, así que al recibirlo no "
                 "tienes que pagar nada. Te aviso cuando esté por llegar."

@@ -235,20 +235,27 @@ transiciones manuales validando el DAG permitido entre stages.
 #### Scenario: "En camino" con valor del envío (modal del kanban, 2026-09-22)
 
 - GIVEN el operador suelta un pedido en la columna `shipping` del kanban
-- WHEN el modal "Marcar en camino" le pide (opcionalmente) el valor del envío
-  y confirma con `{stage: "shipping", shipping_cost: 12000}` (COP entero,
-  con o sin `tracking_url`)
+- WHEN el modal "Marcar en camino" muestra el valor del pedido prellenado
+  (total vivo de la orden, solo lectura), le pide (opcionalmente) el valor
+  del envío, recalcula el total en vivo, y confirma con
+  `{stage: "shipping", shipping_cost: 12000}` (COP entero, con o sin
+  `tracking_url`)
 - THEN la transición se aplica y el stage history registra la nota
   `Valor del envío: $ 12.000` (concatenada a la nota / guía si venían)
 - AND `EmitOrderStageWorkflow` recibe el `shipping_cost`, el
   `OrderStageChangedEvent` lo lleva y el manifest lo mapea
   (`$.shipping_cost`) al signal `notify_stage_change` del ETA
-- AND el mensaje de WhatsApp dice `Tu pedido #9 (…) ya va en camino 🚚. El
-  valor del envío es $ 12.000. …` — el valor se informa tal cual, sin sumarlo
-  ni restarlo del total; con pedido pagado el mensaje ya NO afirma "no tienes
-  que pagar nada". Fuera de la ventana 24h viaja en el slot `status_label`
-  del template `order_status_utility_v2` (`en camino. El valor del envío es
-  $ 12.000. Sigue tu envío aquí: …`)
+- AND el mensaje de WhatsApp detalla el cobro separado, una línea por
+  concepto en la misma burbuja: `Tu pedido #9 (…) ya va en camino 🚚.` /
+  `Valor del pedido: $ 50.000` / `Valor del envío: $ 12.000` /
+  `Total: $ 62.000`. El valor del pedido lo lee el ETA del pedido vivo (no
+  viaja desde el modal). Contra entrega: `Recuerda que al recibirlo pagas
+  $ 62.000 al repartidor…`; pagado: `El valor del pedido ya está pagado.`
+  (ya NO "no tienes que pagar nada"). Sin total del pedido conocido (Medusa
+  caído) sale solo la línea del envío. Fuera de la ventana 24h viaja en el
+  slot `status_label` del template `order_status_utility_v2` (`en camino.
+  Valor del pedido: $ 50.000, valor del envío: $ 12.000, total: $ 62.000.
+  Sigue tu envío aquí: …`)
 - AND sin `shipping_cost` (ausente, `null` o `0`) el mensaje es byte-a-byte
   el de siempre
 - AND `shipping_cost` no entero, bool, negativo o > 10.000.000 → HTTP 422

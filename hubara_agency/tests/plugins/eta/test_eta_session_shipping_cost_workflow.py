@@ -47,7 +47,8 @@ def _fakes(tracker: Tracker, *, in_window: bool):
         return {
             "customer_name": "Ana",
             "order_display_id": "#9",
-            "total_label": "",
+            "total_label": "$ 50.000",
+            "total_cop": 50000,
             "pay_type": "confirmed",
             "payment_confirmed": False,
             "delivery_window": None,
@@ -141,8 +142,11 @@ async def test_shipping_signal_with_cost_sends_value_in_text():
     )
 
     assert tracker.texts == [
-        "Tu pedido #9 (Difusor) ya va en camino 🚚. El valor del envío es "
-        "$ 12.000. Te aviso cuando esté por llegar."
+        "Tu pedido #9 (Difusor) ya va en camino 🚚.\n"
+        "Valor del pedido: $ 50.000\n"
+        "Valor del envío: $ 12.000\n"
+        "Total: $ 62.000\n"
+        "Te aviso cuando esté por llegar."
     ]
     assert tracker.templates == []
     assert tracker.claims == [("shipping", None, 12000)]
@@ -160,7 +164,9 @@ async def test_shipping_signal_with_cost_out_of_window_uses_template_slot():
     assert tracker.texts == []
     name, variables = tracker.templates[0]
     assert name == "order_status_utility_v2"
-    assert variables["status_label"] == "en camino. El valor del envío es $ 12.000"
+    assert variables["status_label"] == (
+        "en camino. Valor del pedido: $ 50.000, valor del envío: $ 12.000, total: $ 62.000"
+    )
 
 
 @pytest.mark.asyncio

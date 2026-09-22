@@ -375,6 +375,8 @@ class HubaraEtaSessionWorkflow:
             items_label=facts.get("items_label", ""),
             tracking_url=tracking_url,
             shipping_cost=shipping_cost,
+            # Ausente en facts de runs viejos → None (solo línea del envío).
+            order_total_cop=facts.get("total_cop"),
         )
         if not message:
             return  # stage desconocido → nada que enviar

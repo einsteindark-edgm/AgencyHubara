@@ -57,15 +57,27 @@ la foto (`order_ready_photo_utility_v1`) en vez del aviso de estado.
   `¡Buenas noticias {nombre}! Tu pedido {numero_pedido} ya está empacado y listo para salir. Te escribo apenas vaya en camino.`
 
 ### En camino (`shipping`)
-Si el operador escribió el valor del envío en el modal, la primera frase
-lleva `El valor del envío es {valor_envio}.` (tal cual, sin sumarlo al total).
+Sin valor de envío (el operador no lo escribió en el modal):
 - **`pago_confirmado`**:
   `Tu pedido {numero_pedido} ({productos}) ya va en camino 🚚. Recuerda que está pagado, así que al recibirlo no tienes que pagar nada. Te aviso cuando esté por llegar.`
-  Con valor de envío: `Tu pedido {numero_pedido} ({productos}) ya va en camino 🚚. El valor del envío es {valor_envio}. Tu pedido ya está pagado. Te aviso cuando esté por llegar.`
 - **`contra_entrega`**:
-  `Tu pedido {numero_pedido} ({productos}) ya va en camino 🚚. [El valor del envío es {valor_envio}.] Recuerda que al recibirlo pagas {monto_total} al repartidor (efectivo o transferencia).`
+  `Tu pedido {numero_pedido} ({productos}) ya va en camino 🚚. Recuerda que al recibirlo pagas {monto_total} al repartidor (efectivo o transferencia).`
 - **`pago_pendiente`** (sin mencionar el pago):
-  `Tu pedido {numero_pedido} ({productos}) ya va en camino 🚚. [El valor del envío es {valor_envio}.] Te aviso cuando esté por llegar.`
+  `Tu pedido {numero_pedido} ({productos}) ya va en camino 🚚. Te aviso cuando esté por llegar.`
+
+Con valor de envío: desglose en líneas de la misma burbuja
+(`{total}` = `{monto_pedido}` + `{valor_envio}`):
+```
+Tu pedido {numero_pedido} ({productos}) ya va en camino 🚚.
+Valor del pedido: {monto_pedido}
+Valor del envío: {valor_envio}
+Total: {total}
+<cierre>
+```
+`<cierre>`: pagado → `El valor del pedido ya está pagado. Te aviso cuando esté por llegar.`;
+contra entrega → `Recuerda que al recibirlo pagas {total} al repartidor (efectivo o transferencia).`;
+pendiente → `Te aviso cuando esté por llegar.` Sin total del pedido conocido,
+solo la línea `Valor del envío`.
 
 ### Entregado (`delivered`) — mismo mensaje para los tres tipos de pago
   `¡Tu pedido {numero_pedido} ({productos}) fue entregado! 🎉 Esperamos que lo disfrutes. Si algo no salió como esperabas, escríbenos por aquí y con gusto te ayudamos 🤍`

@@ -256,6 +256,8 @@ async def test_claim_returns_facts_happy_path(_isolate_vault_dir: Path, monkeypa
     assert facts["customer_name"] == "María"  # primer nombre
     assert facts["order_display_id"] == "#1247"
     assert facts["total_label"] == "$ 124.500"
+    # Total vivo en COP entero: "en camino" lo suma al valor del envío.
+    assert facts["total_cop"] == 124500
     assert facts["pay_type"] == "confirmed"
     assert facts["payment_confirmed"] is True  # pay_status == "paid" → pago real
     # sin `service_window_expires_at_ms` → ventana cerrada → el workflow usará template

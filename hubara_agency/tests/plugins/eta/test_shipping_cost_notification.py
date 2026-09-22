@@ -4,9 +4,10 @@
     ("pagarás $ X…" / "Ten listos $ X…") — el precio se menciona recién en
     "en camino". ``ready`` sí avisa (foto si la hay, aviso de estado si no).
   * ``shipping``: el operador puede escribir el valor del envío al marcar
-    "en camino"; ese valor viaja en el mensaje (dentro de ventana como texto,
-    fuera de ventana dentro del slot ``status_label`` del template v2).
-    Sin valor, el mensaje es byte-a-byte el de hoy.
+    "en camino"; el mensaje lo detalla separado del pedido: valor del
+    pedido (total vivo del pedido), valor del envío y total (dentro de
+    ventana en líneas de una misma burbuja; fuera de ventana en el slot
+    ``status_label`` del template v2). Sin valor, el mensaje es el de hoy.
 """
 from __future__ import annotations
 
@@ -51,44 +52,67 @@ def test_render_ready_cod_no_longer_mentions_the_amount():
     assert "215.000" not in msg
 
 
-def test_render_shipping_pending_with_shipping_cost():
+def test_render_shipping_pending_details_order_shipping_and_total():
     msg = render_stage_notification(
         stage="shipping", customer_name="Ana", order_display_id="#9",
-        total_label="", pay_type="confirmed", payment_confirmed=False,
-        items_label="Difusor", shipping_cost=12000,
+        total_label="$ 50.000", pay_type="confirmed", payment_confirmed=False,
+        items_label="Difusor", shipping_cost=12000, order_total_cop=50000,
     )
     assert msg == (
-        "Tu pedido #9 (Difusor) ya va en camino 🚚. El valor del envío es "
-        "$ 12.000. Te aviso cuando esté por llegar."
+        "Tu pedido #9 (Difusor) ya va en camino 🚚.\n"
+        "Valor del pedido: $ 50.000\n"
+        "Valor del envío: $ 12.000\n"
+        "Total: $ 62.000\n"
+        "Te aviso cuando esté por llegar."
     )
+    # Una sola burbuja: "\n\n" parte el mensaje en chunks separados.
+    assert "\n\n" not in msg
 
 
-def test_render_shipping_cod_with_shipping_cost_keeps_the_cod_reminder():
+def test_render_shipping_cod_charges_the_grand_total():
     msg = render_stage_notification(
         stage="shipping", customer_name="", order_display_id="#9",
         total_label="$ 50.000", pay_type="cod", payment_confirmed=False,
-        shipping_cost=12000, tracking_url=URL,
+        shipping_cost=12000, order_total_cop=50000, tracking_url=URL,
     )
     assert msg == (
-        "Tu pedido #9 ya va en camino 🚚. El valor del envío es $ 12.000. "
-        "Recuerda que al recibirlo pagas $ 50.000 al repartidor (efectivo o "
+        "Tu pedido #9 ya va en camino 🚚.\n"
+        "Valor del pedido: $ 50.000\n"
+        "Valor del envío: $ 12.000\n"
+        "Total: $ 62.000\n"
+        "Recuerda que al recibirlo pagas $ 62.000 al repartidor (efectivo o "
         f"transferencia).\n\nPuedes seguir tu envío aquí: {URL}"
     )
 
 
-def test_render_shipping_paid_with_shipping_cost_does_not_claim_nothing_to_pay():
-    """Con un valor de envío informado, el pedido pagado NO dice "no tienes
-    que pagar nada" (el envío puede cobrarse aparte)."""
+def test_render_shipping_paid_says_the_order_value_is_paid():
     msg = render_stage_notification(
         stage="shipping", customer_name="Ana", order_display_id="#9",
         total_label="$ 50.000", pay_type="confirmed", payment_confirmed=True,
-        items_label="Difusor", shipping_cost=12000,
+        items_label="Difusor", shipping_cost=12000, order_total_cop=50000,
     )
     assert msg == (
-        "Tu pedido #9 (Difusor) ya va en camino 🚚. El valor del envío es "
-        "$ 12.000. Tu pedido ya está pagado. Te aviso cuando esté por llegar."
+        "Tu pedido #9 (Difusor) ya va en camino 🚚.\n"
+        "Valor del pedido: $ 50.000\n"
+        "Valor del envío: $ 12.000\n"
+        "Total: $ 62.000\n"
+        "El valor del pedido ya está pagado. Te aviso cuando esté por llegar."
     )
     assert "no tienes que pagar nada" not in msg
+
+
+def test_render_shipping_cost_without_known_order_total_shows_only_shipping():
+    """Medusa caído: sin total del pedido NO inventamos pedido ni total."""
+    msg = render_stage_notification(
+        stage="shipping", customer_name="", order_display_id="order_01HX",
+        total_label="", pay_type="confirmed", payment_confirmed=False,
+        shipping_cost=12000, order_total_cop=None,
+    )
+    assert msg == (
+        "Tu pedido order_01HX ya va en camino 🚚.\n"
+        "Valor del envío: $ 12.000\n"
+        "Te aviso cuando esté por llegar."
+    )
 
 
 def test_render_shipping_without_shipping_cost_is_unchanged():
@@ -100,6 +124,7 @@ def test_render_shipping_without_shipping_cost_is_unchanged():
     base = render_stage_notification(**kwargs)
     assert base == render_stage_notification(**kwargs, shipping_cost=None)
     assert base == render_stage_notification(**kwargs, shipping_cost=0)
+    assert base == render_stage_notification(**kwargs, order_total_cop=50000)
     assert "envío" not in base.replace("Te aviso", "")
 
 
@@ -113,26 +138,29 @@ def test_render_other_stages_ignore_shipping_cost():
         assert msg and "12.000" not in msg, stage
 
 
-def test_template_variables_shipping_with_cost_and_link_pass_registry_validation():
+def test_template_variables_shipping_details_pass_registry_validation():
     from src.platform.whatsapp.composition import get_template_registry
     from src.platform.whatsapp.templates.registry import validate_variables
 
-    facts = {"order_display_id": "#22", "items_label": "Plegaria de Luz"}
+    facts = {"order_display_id": "#22", "items_label": "Plegaria de Luz", "total_cop": 50000}
     variables = build_status_template_variables(
         "shipping", facts, tracking_url=URL, shipping_cost=12000
     )
     assert variables["status_label"] == (
-        f"en camino. El valor del envío es $ 12.000. Sigue tu envío aquí: {URL}"
+        "en camino. Valor del pedido: $ 50.000, valor del envío: $ 12.000, "
+        f"total: $ 62.000. Sigue tu envío aquí: {URL}"
     )
     assert "\n" not in variables["status_label"] and "    " not in variables["status_label"]
     spec = get_template_registry()["order_status_utility_v2"]
     assert validate_variables(spec, variables) == []
 
 
-def test_template_variables_shipping_cost_without_link():
+def test_template_variables_shipping_cost_without_order_total_or_link():
     variables = build_status_template_variables("shipping", {}, shipping_cost=12000)
-    assert variables["status_label"] == "en camino. El valor del envío es $ 12.000"
-    assert build_status_template_variables("shipping", {})["status_label"] == "En camino"
+    assert variables["status_label"] == "en camino. Valor del envío: $ 12.000"
+    assert build_status_template_variables("shipping", {"total_cop": 50000})[
+        "status_label"
+    ] == "En camino"
     assert build_status_template_variables("delivered", {}, shipping_cost=12000)[
         "status_label"
     ] == "Entregado"

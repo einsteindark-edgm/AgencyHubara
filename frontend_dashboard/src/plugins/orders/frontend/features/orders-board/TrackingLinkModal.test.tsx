@@ -61,11 +61,17 @@ describe("normalizeTrackingUrl", () => {
   });
 });
 
-function setup(busy = false) {
+function setup(busy = false, orderTotal: number | null = 50000) {
   const onConfirm = vi.fn();
   const onCancel = vi.fn();
   render(
-    <TrackingLinkModal orderId="#1247" busy={busy} onConfirm={onConfirm} onCancel={onCancel} />,
+    <TrackingLinkModal
+      orderId="#1247"
+      orderTotal={orderTotal}
+      busy={busy}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />,
   );
   return { onConfirm, onCancel };
 }
@@ -117,6 +123,30 @@ describe("TrackingLinkModal", () => {
     fireEvent.change(screen.getByLabelText(/link de la guía/i), { target: { value: URL } });
     fireEvent.click(screen.getByRole("button", { name: /con guía/i }));
     expect(onConfirm).toHaveBeenLastCalledWith({ trackingUrl: URL, shippingCost: 12000 });
+  });
+
+  it("shows the order value pre-set, and the total updates with the shipping cost", () => {
+    setup();
+    expect(screen.getByTestId("ship-order-value")).toHaveTextContent("$ 50.000");
+    expect(screen.getByTestId("ship-total")).toHaveTextContent("$ 50.000");
+    fireEvent.change(screen.getByLabelText(/valor del envío/i), {
+      target: { value: "12.000" },
+    });
+    expect(screen.getByTestId("ship-total")).toHaveTextContent("$ 62.000");
+  });
+
+  it("does not add an invalid shipping cost to the total", () => {
+    setup();
+    fireEvent.change(screen.getByLabelText(/valor del envío/i), {
+      target: { value: "doce" },
+    });
+    expect(screen.getByTestId("ship-total")).toHaveTextContent("$ 50.000");
+  });
+
+  it("without a known order value it shows only the shipping cost", () => {
+    setup(false, null);
+    expect(screen.queryByTestId("ship-order-value")).toBeNull();
+    expect(screen.queryByTestId("ship-total")).toBeNull();
   });
 
   it("shows an error and does not confirm on an invalid shipping cost", () => {

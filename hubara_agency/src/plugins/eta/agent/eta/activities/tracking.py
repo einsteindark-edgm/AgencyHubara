@@ -273,6 +273,7 @@ async def _delegate_to_mba(
         items_label=facts.get("items_label", ""),
         tracking_url=tracking_url,
         shipping_cost=shipping_cost,
+        order_total_cop=facts.get("total_cop"),
     )
     if event_type is None or not message:
         return False
@@ -404,6 +405,7 @@ async def _claim_facts(
             "customer_name": "",
             "order_display_id": order_id,
             "total_label": "",
+            "total_cop": None,
             "pay_type": "confirmed",
             "payment_confirmed": False,
             "delivery_window": None,
@@ -417,6 +419,8 @@ async def _claim_facts(
         "customer_name": _display_first_name(summary.customer),
         "order_display_id": summary.display_id,
         "total_label": _format_cop(summary.total_cop),
+        # Entero COP del total vivo: "en camino" lo suma al valor del envío.
+        "total_cop": summary.total_cop or None,
         "pay_type": summary.pay_type,
         # `pay_type` es solo la MODALIDAD (cod vs prepago) y defaultea a
         # "confirmed" cuando falta `payment_method` — NO dice si el cliente ya

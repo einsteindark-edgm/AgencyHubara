@@ -177,6 +177,7 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
       {pendingShip && (
         <TrackingLinkModal
           orderId={pendingShip}
+          orderTotal={orders.find((o) => o.id === pendingShip)?.total ?? null}
           busy={transition.isPending}
           onCancel={() => setPendingShip(null)}
           onConfirm={({ trackingUrl, shippingCost }) => {
