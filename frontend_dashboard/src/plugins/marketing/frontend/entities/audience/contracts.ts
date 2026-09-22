@@ -25,9 +25,16 @@ export type BackendAudienceRecipient = z.infer<
 export const backendAudienceSkippedSchema = z.object({
   session_id: z.string(),
   phone: z.string().default(""),
-  // "excluido" (humano u opt-out) | "campana_reciente" (<48h) — se traduce
-  // a label legible en model.ts, tolerante a razones nuevas.
+  // "excluido" (humano) | "dado_de_baja" | "campana_reciente" (<48h) — se
+  // traduce a label legible en model.ts, tolerante a razones nuevas.
   reason: z.string().default(""),
+  // Solo para "dado_de_baja": cuándo, por qué vía ("texto" | "meta") y qué
+  // campaña la provocó (id + nombre; nombre null si la campaña se borró).
+  // Backend viejo / baja vieja sin detalle → null.
+  opted_out_at_ms: z.number().int().nullable().default(null),
+  opted_out_source: z.string().nullable().default(null),
+  opted_out_campaign_id: z.string().nullable().default(null),
+  opted_out_campaign_name: z.string().nullable().default(null),
 });
 
 export type BackendAudienceSkipped = z.infer<typeof backendAudienceSkippedSchema>;
@@ -35,6 +42,8 @@ export type BackendAudienceSkipped = z.infer<typeof backendAudienceSkippedSchema
 export const backendCampaignAudienceSchema = z.object({
   recipients: z.array(backendAudienceRecipientSchema).default([]),
   skipped: z.array(backendAudienceSkippedSchema).default([]),
+  // Cuántos de los skipped se dieron de baja (ya no se les puede enviar).
+  opted_out_count: z.number().int().default(0),
   total: z.number().int().default(0),
 });
 

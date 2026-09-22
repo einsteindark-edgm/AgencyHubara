@@ -91,3 +91,32 @@ faltante) SHALL responder 502 con el motivo, nunca un 500 sin detalle.
 
 - WHEN el envío lanza (por ejemplo `code=132001`, plantilla inexistente)
 - THEN responde 502 con ese motivo y la prueba NO queda en el historial
+
+### Requirement: Registro de bajas de marketing (quién, cuándo, por qué vía y qué campaña)
+
+Una baja de marketing la registra SIEMPRE Hubara en el metadata del contacto
+(`marketing_opt_out=true`), por dos vías: el cliente responde pidiéndola
+("no más", "baja", "stop"… con campaña reciente; `marketing_opt_out_source =
+texto`) o la pide desde WhatsApp y Meta rechaza el envío con el código
+`131050` (`source = meta`, que además MUST ser no reintentable). En ambos
+casos SHALL quedar `marketing_opt_out_at_ms` y `marketing_opt_out_campaign_id`
+(la campaña del touch reciente, o la que estaba enviando cuando Meta rechazó).
+La baja es sticky: una segunda baja MUST NOT pisar la primera. Solo el
+operador la revierte editando el metadata.
+
+#### Scenario: Meta rechaza el envío de campaña con 131050
+
+- GIVEN el workflow de envío intenta un destinatario y Meta responde 131050
+- THEN el contacto queda de baja con `source = meta` y `campaign_id` = esta campaña, NO cuenta como fallido (`send_result.opted_out`) y no se le vuelve a intentar en campañas futuras
+
+#### Scenario: El cliente responde "no más" tras una campaña
+
+- GIVEN un touch de campaña `mkt-1` hace menos de 7 días
+- WHEN el ingest de chats recibe "no más"
+- THEN queda de baja con `source = texto`, la fecha del inbound y `campaign_id = mkt-1`
+
+#### Scenario: Audiencia y métrica de bajas
+
+- WHEN el operador abre la audiencia de cualquier campaña
+- THEN los contactos de baja aparecen en una sección "Bajas" aparte de "No reciben", con razón `dado_de_baja`, la vía, la fecha y el nombre de la campaña que la provocó (`opted_out_campaign_name`, null si esa campaña se borró), más `opted_out_count`
+- AND `GET /campaigns/{id}/stats` devuelve `opted_out` = bajas provocadas por ESA campaña (fila "Bajas" en el resultado del envío)

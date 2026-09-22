@@ -116,6 +116,7 @@ export function mapBackendStats(b: BackendCampaignStats): CampaignStats {
     replied: b.replied,
     attributedOrders: b.attributed_orders,
     attributedRevenueCop: b.attributed_revenue_cop,
+    optedOut: b.opted_out,
     ordersStale: b.orders_stale,
   };
 }

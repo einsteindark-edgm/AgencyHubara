@@ -53,7 +53,10 @@ from src.plugins.chats.agent.sales.translate import (
 )
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.sdk.messagingkit import (
+    OPT_OUT_SOURCE_TEXT,
     detect_marketing_opt_out,
+    mark_marketing_opt_out,
+    opt_out_campaign_id,
     update_reengagement_index_entry,
 )
 from src.platform.session_history import FilesystemMessageHistoryStore
@@ -313,11 +316,18 @@ class IngestInboundMessage:
             and parsed.text
             and detect_marketing_opt_out(parsed.text, metadata, now_ms)
         ):
-            metadata["marketing_opt_out"] = True
-            metadata["marketing_opt_out_at_ms"] = now_ms
+            # Queda registrado cuándo, por qué vía y qué campaña lo provocó
+            # (la del touch reciente): métrica de bajas por campaña.
+            mark_marketing_opt_out(
+                metadata,
+                now_ms=now_ms,
+                source=OPT_OUT_SOURCE_TEXT,
+                campaign_id=opt_out_campaign_id(metadata, now_ms),
+            )
             logger.info(
                 "marketing_opt_out_detected",
                 session_id=session_id,
+                campaign_id=metadata.get("marketing_opt_out_campaign_id"),
                 text_preview=parsed.text[:60],
             )
 

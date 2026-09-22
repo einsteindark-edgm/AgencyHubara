@@ -140,6 +140,7 @@ const AUDIENCE: CampaignAudience = {
       reason: "campana_reciente",
     },
   ],
+  optedOutCount: 0,
   total: 2,
 };
 
@@ -188,6 +189,8 @@ describe("CampaignInspector — validación", () => {
       replied: 9,
       attributedOrders: 3,
       attributedRevenueCop: 364_500,
+      optedOut: 4,
+      ordersStale: false,
     };
     const { getByRole, getByText } = render(
       <CampaignInspector campaign={makeCampaign({ status: "sent" })} />,
@@ -195,6 +198,8 @@ describe("CampaignInspector — validación", () => {
     fireEvent.click(getByRole("button", { name: /Validación/ }));
     expect(getByText("40")).toBeTruthy(); // enviados
     expect(getByText("9")).toBeTruthy(); // respondieron
+    expect(getByText("Bajas")).toBeTruthy(); // se dieron de baja por ESTA campaña
+    expect(getByText("4")).toBeTruthy();
     expect(getByText("$364.500")).toBeTruthy(); // revenue COP
     expect(getByText("US$0,5000")).toBeTruthy(); // gastado, micros→US$ 4 dec
   });
@@ -222,8 +227,49 @@ describe("CampaignInspector — audiencia", () => {
     audienceMock.data = AUDIENCE;
     const { getByText } = openAudienceTab();
     expect(getByText("No reciben (2)")).toBeTruthy();
-    expect(getByText("Atendido por humano u opt-out")).toBeTruthy();
+    expect(getByText("Atendido por humano")).toBeTruthy();
     expect(getByText("Campaña reciente (<48h)")).toBeTruthy();
+  });
+
+  it("las bajas se listan aparte con fecha, vía y campaña que las provocó", () => {
+    audienceMock.data = {
+      ...AUDIENCE,
+      skipped: [
+        ...AUDIENCE.skipped,
+        {
+          sessionId: "wa_573000000003",
+          phone: "+573000000003",
+          reason: "dado_de_baja",
+          optedOutAtMs: 1_758_500_000_000,
+          optedOutSource: "meta",
+          optedOutCampaignId: "mkt-0",
+          optedOutCampaignName: "Promo madre",
+        },
+        {
+          sessionId: "wa_573000000004",
+          phone: "+573000000004",
+          reason: "dado_de_baja",
+          optedOutAtMs: null,
+          optedOutSource: null,
+          optedOutCampaignId: null,
+          optedOutCampaignName: null,
+        },
+      ],
+      optedOutCount: 2,
+    };
+    const { getByText, queryByText } = openAudienceTab();
+    // Resumen de bajas con su aviso, separado de "No reciben".
+    expect(getByText("Bajas (2)")).toBeTruthy();
+    expect(getByText(/ya no se les puede enviar/)).toBeTruthy();
+    expect(getByText("No reciben (2)")).toBeTruthy();
+    expect(getByText("+573000000003")).toBeTruthy();
+    // Detalle: vía + campaña que la provocó + fecha.
+    expect(getByText(/se dio de baja desde WhatsApp/)).toBeTruthy();
+    expect(getByText(/por la campaña Promo madre/)).toBeTruthy();
+    expect(getByText(/2025/)).toBeTruthy();
+    // Baja vieja sin detalle: solo el teléfono, sin inventar campaña.
+    expect(getByText("+573000000004")).toBeTruthy();
+    expect(queryByText(/por la campaña mkt-/)).toBeNull();
   });
 
   it("los quitados por el operador aparecen en No reciben con su label", () => {
@@ -244,7 +290,7 @@ describe("CampaignInspector — audiencia", () => {
   });
 
   it("audiencia vacía: invita a elegir segmentos en el paso 4", () => {
-    audienceMock.data = { recipients: [], skipped: [], total: 0 };
+    audienceMock.data = { recipients: [], skipped: [], optedOutCount: 0, total: 0 };
     const { getByText } = openAudienceTab(makeCampaign({ segments: [] }));
     expect(getByText(/Elegí segmentos o importá un CSV en el paso 4/)).toBeTruthy();
   });

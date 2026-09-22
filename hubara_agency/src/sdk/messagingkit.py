@@ -67,7 +67,14 @@ reengagement_shortlist = _reengagement_index.shortlist_session_ids
 # ingest de chats en cada inbound de texto; la audiencia de campañas excluye
 # `marketing_opt_out`.
 from src.platform.whatsapp.marketing_opt_out import (
+    OPT_OUT_SOURCE_META as OPT_OUT_SOURCE_META,
+    OPT_OUT_SOURCE_TEXT as OPT_OUT_SOURCE_TEXT,
+    MarketingOptOut as MarketingOptOut,
     detect_marketing_opt_out as detect_marketing_opt_out,
+    is_meta_opt_out_failure as is_meta_opt_out_failure,
+    mark_marketing_opt_out as mark_marketing_opt_out,
+    marketing_opt_out_info as marketing_opt_out_info,
+    opt_out_campaign_id as opt_out_campaign_id,
 )
 
 # El send de templates aprobados, para plugins que mandan proactivo (marketing:

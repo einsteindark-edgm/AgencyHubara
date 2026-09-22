@@ -12,15 +12,22 @@
 import { useState } from "react";
 
 import {
+  SKIP_DADO_DE_BAJA,
+  optOutSourceLabel,
   skippedReasonLabel,
   useCampaignAudience,
+  type SkippedContact,
 } from "@plugins/marketing/frontend/entities/audience";
 import type { Campaign } from "@plugins/marketing/frontend/entities/campaign";
 import {
   AudienceViewer,
   RecipientRow,
 } from "@plugins/marketing/frontend/features/audience-viewer";
-import { apiErrorDetail, fmtN } from "@plugins/marketing/frontend/lib/format";
+import {
+  apiErrorDetail,
+  fmtDateMs,
+  fmtN,
+} from "@plugins/marketing/frontend/lib/format";
 
 interface Props {
   campaign: Campaign;
@@ -51,6 +58,11 @@ export function AudiencePanel({ campaign }: Props) {
 
   if (!data) return null;
 
+  // Las bajas van aparte de "No reciben": no es un filtro de esta campaña,
+  // es un contacto al que ya NO se le puede enviar ninguna.
+  const optedOut = data.skipped.filter((s) => s.reason === SKIP_DADO_DE_BAJA);
+  const notReceiving = data.skipped.filter((s) => s.reason !== SKIP_DADO_DE_BAJA);
+
   return (
     <div className="flex flex-col gap-3">
       <p className="text-[12px] font-semibold tabular-nums text-fg">
@@ -74,13 +86,33 @@ export function AudiencePanel({ campaign }: Props) {
         </ul>
       )}
 
-      {data.skipped.length > 0 ? (
+      {optedOut.length > 0 ? (
+        <section className="rounded-lg border border-danger/30 bg-danger/[0.06] p-2.5">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wide text-danger">
+            Bajas ({fmtN(optedOut.length)})
+          </h3>
+          <p className="mt-0.5 text-[11px] leading-snug text-fg-muted">
+            Pidieron no recibir más promociones: ya no se les puede enviar
+            ninguna campaña.
+          </p>
+          <ul className="mt-1.5 flex flex-col gap-0.5">
+            {optedOut.map((s) => (
+              <li key={s.sessionId} className="rounded-md px-2.5 py-1.5">
+                <span className="text-[11px] tabular-nums text-fg">{s.phone}</span>
+                <OptOutDetail contact={s} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {notReceiving.length > 0 ? (
         <details className="opacity-70">
           <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
-            No reciben ({fmtN(data.skipped.length)})
+            No reciben ({fmtN(notReceiving.length)})
           </summary>
           <ul className="mt-1.5 flex flex-col gap-0.5">
-            {data.skipped.map((s) => (
+            {notReceiving.map((s) => (
               <li
                 key={s.sessionId}
                 className="flex items-center gap-2 rounded-md px-2.5 py-1.5"
@@ -111,5 +143,26 @@ export function AudiencePanel({ campaign }: Props) {
         />
       ) : null}
     </div>
+  );
+}
+
+/** "se dio de baja desde WhatsApp · por la campaña Promo madre · 22 sept 2025".
+ *  Cada pieza solo si existe: una baja vieja (sin detalle) muestra solo el
+ *  teléfono, sin inventar campaña ni fecha. */
+function OptOutDetail({ contact }: { contact: SkippedContact }) {
+  const parts: string[] = [];
+  const via = optOutSourceLabel(contact.optedOutSource);
+  if (via) parts.push(via);
+  if (contact.optedOutCampaignName) {
+    parts.push(`por la campaña ${contact.optedOutCampaignName}`);
+  } else if (contact.optedOutCampaignId) {
+    parts.push(`por la campaña ${contact.optedOutCampaignId}`);
+  }
+  if (contact.optedOutAtMs !== null && contact.optedOutAtMs !== undefined) {
+    parts.push(fmtDateMs(contact.optedOutAtMs));
+  }
+  if (parts.length === 0) return null;
+  return (
+    <p className="text-[10.5px] leading-snug text-fg-faint">{parts.join(" · ")}</p>
   );
 }

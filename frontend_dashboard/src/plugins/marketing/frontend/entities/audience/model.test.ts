@@ -5,7 +5,12 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { phoneToSessionId, segmentTone, skippedReasonLabel } from "./model";
+import {
+  optOutSourceLabel,
+  phoneToSessionId,
+  segmentTone,
+  skippedReasonLabel,
+} from "./model";
 
 describe("segmentTone", () => {
   it("clientes=ok, interesados=info, desconocidos=neutral", () => {
@@ -26,8 +31,22 @@ describe("skippedReasonLabel", () => {
   });
 
   it("razones conocidas mantienen su label y las nuevas pasan crudas", () => {
-    expect(skippedReasonLabel("excluido")).toBe("Atendido por humano u opt-out");
+    expect(skippedReasonLabel("excluido")).toBe("Atendido por humano");
     expect(skippedReasonLabel("razon_nueva")).toBe("razon_nueva");
+  });
+
+  it("dado_de_baja dice que ya no se le puede enviar", () => {
+    expect(skippedReasonLabel("dado_de_baja")).toBe(
+      "Se dio de baja — ya no se le puede enviar",
+    );
+  });
+});
+
+describe("optOutSourceLabel", () => {
+  it("texto = respondió pidiendo la baja; meta = la pidió desde WhatsApp", () => {
+    expect(optOutSourceLabel("texto")).toBe("respondió pidiendo la baja");
+    expect(optOutSourceLabel("meta")).toBe("se dio de baja desde WhatsApp");
+    expect(optOutSourceLabel(null)).toBe("");
   });
 });
 

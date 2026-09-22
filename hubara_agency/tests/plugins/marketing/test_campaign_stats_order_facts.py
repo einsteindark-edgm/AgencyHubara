@@ -85,3 +85,19 @@ def test_stats_endpoint_reads_order_facts(_isolate_vault_dir: Path, monkeypatch)
     stats = client.get(f"/api/marketing/campaigns/{campaign_id}/stats").json()
     assert stats["attributed_revenue_cop"] == 44000
     assert stats["orders_stale"] is True
+
+
+def test_stats_cuentan_las_bajas_que_provoco_esta_campana() -> None:
+    sessions = [
+        ("wa_1", _metadata("c1", [])),
+        ("wa_2", {**_metadata("c1", []), "marketing_opt_out": True,
+                  "marketing_opt_out_campaign_id": "c1", "marketing_opt_out_source": "texto"}),
+        ("wa_3", {**_metadata("c1", []), "marketing_opt_out": True,
+                  "marketing_opt_out_campaign_id": "c1", "marketing_opt_out_source": "meta"}),
+        # Baja provocada por OTRA campaña (o vieja, sin campaña): no es de c1.
+        ("wa_4", {**_metadata("c1", []), "marketing_opt_out": True,
+                  "marketing_opt_out_campaign_id": "c0"}),
+        ("wa_5", {"marketing_opt_out": True}),
+    ]
+    stats = campaign_stats({"id": "c1"}, sessions, order_facts=OrderFactsSnapshot())
+    assert stats["opted_out"] == 2

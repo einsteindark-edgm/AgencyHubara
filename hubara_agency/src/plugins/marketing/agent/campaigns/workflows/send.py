@@ -11,16 +11,18 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError
+from temporalio.exceptions import ActivityError, ApplicationError
 
 with workflow.unsafe.imports_passed_through():
     from src.plugins.marketing.agent.campaigns.activities import (
         load_campaign_send_plan_activity,
         mark_campaign_sending_activity,
+        mark_marketing_opt_out_activity,
         prepare_campaign_carousel_activity,
         record_campaign_send_result_activity,
         stamp_campaign_touch_activity,
     )
+    from src.sdk.messagingkit import is_meta_opt_out_failure
 
 _FAST = timedelta(seconds=30)
 #: El send real hace un POST a Graph con retries de red adentro del client.
@@ -61,6 +63,7 @@ class CampaignSendWorkflow:
 
         sent = 0
         failed: list[str] = []
+        opted_out: list[str] = []
         for recipient in plan.recipients:
             try:
                 send_args: list = [
@@ -76,8 +79,22 @@ class CampaignSendWorkflow:
                     start_to_close_timeout=_SEND_TIMEOUT,
                     retry_policy=_SEND_RETRY,
                 )
-            except ActivityError:
-                failed.append(recipient.session_id)
+            except ActivityError as e:
+                cause = e.cause
+                if isinstance(cause, ApplicationError) and is_meta_opt_out_failure(
+                    cause.type
+                ):
+                    # Baja hecha en WhatsApp (131050): se registra atribuida a
+                    # ESTA campaña; no es un fallo ni se le vuelve a intentar.
+                    await workflow.execute_activity(
+                        mark_marketing_opt_out_activity,
+                        args=[recipient.session_id, campaign_id],
+                        start_to_close_timeout=_FAST,
+                        retry_policy=RetryPolicy(maximum_attempts=3),
+                    )
+                    opted_out.append(recipient.session_id)
+                else:
+                    failed.append(recipient.session_id)
                 continue
             sent += 1
             await workflow.execute_activity(
@@ -91,6 +108,7 @@ class CampaignSendWorkflow:
             "planned": len(plan.recipients),
             "sent": sent,
             "failed": failed,
+            "opted_out": opted_out,
             "skipped": [
                 {"session_id": s.session_id, "reason": s.reason}
                 for s in plan.skipped
@@ -104,4 +122,9 @@ class CampaignSendWorkflow:
             start_to_close_timeout=_FAST,
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
-        return {"sent": sent, "failed": len(failed), "planned": len(plan.recipients)}
+        return {
+            "sent": sent,
+            "failed": len(failed),
+            "planned": len(plan.recipients),
+            "opted_out": len(opted_out),
+        }

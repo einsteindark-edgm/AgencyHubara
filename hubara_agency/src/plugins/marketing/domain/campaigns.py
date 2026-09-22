@@ -179,10 +179,20 @@ class CampaignRecipient:
     customer_name: str | None = None
 
 
+#: Razón de skip de un contacto que pidió la baja (texto o desde WhatsApp).
+#: Distinta de "excluido" (humano): el operador ve a quién ya NO puede enviar.
+SKIP_DADO_DE_BAJA = "dado_de_baja"
+
+
 @dataclass(frozen=True)
 class SkippedRecipient:
     session_id: str
     reason: str
+    #: Solo para `dado_de_baja`: cuándo, por qué vía ("texto" | "meta") y qué
+    #: campaña la provocó. None = baja vieja sin detalle o sin campaña.
+    opted_out_at_ms: int | None = None
+    opted_out_source: str | None = None
+    opted_out_campaign_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -239,8 +249,8 @@ def resolve_campaign_audience(
         seen.add(session_id)
         segment = segment_for_metadata(metadata)
         if segment is None:
-            # Humano / opt-out: absoluto — ni el agregado manual lo pisa.
-            skipped.append(SkippedRecipient(session_id, "excluido"))
+            # Humano / baja: absoluto — ni el agregado manual lo pisa.
+            skipped.append(_excluded_recipient(session_id, metadata))
             continue
         if session_id in removed_ids:
             skipped.append(SkippedRecipient(session_id, "quitado_por_operador"))
@@ -295,6 +305,22 @@ def resolve_campaign_audience(
             )
         )
     return CampaignAudience(recipients=recipients, skipped=skipped)
+
+
+def _excluded_recipient(session_id: str, metadata: dict[str, Any]) -> SkippedRecipient:
+    """Humano → "excluido"; baja → "dado_de_baja" con su registro."""
+    from src.sdk.messagingkit import marketing_opt_out_info
+
+    info = marketing_opt_out_info(metadata)
+    if info is None:
+        return SkippedRecipient(session_id, "excluido")
+    return SkippedRecipient(
+        session_id,
+        SKIP_DADO_DE_BAJA,
+        opted_out_at_ms=info.at_ms,
+        opted_out_source=info.source,
+        opted_out_campaign_id=info.campaign_id,
+    )
 
 
 def imported_contacts_by_session(campaign: dict[str, Any]) -> dict[str, str | None]:
@@ -417,14 +443,21 @@ def campaign_stats(
     post-touch de ESTA campaña. `attributed_*` = episodios que arrancan en
     ventana y cerraron venta (mismo matcher de 7 días que usa el panel de
     Ads — `matching_campaign_touch` del read model de atribución).
+    `opted_out` = contactos cuya baja (por texto o desde WhatsApp) la
+    provocó ESTA campaña (`marketing_opt_out_campaign_id`).
     """
     from src.sdk.connectorkit import matching_campaign_touch
+    from src.sdk.messagingkit import marketing_opt_out_info
 
     campaign_id = campaign["id"]
     replied = 0
     orders = 0
     revenue_cop = 0
+    opted_out = 0
     for _session_id, metadata in sessions:
+        info = marketing_opt_out_info(metadata)
+        if info is not None and info.campaign_id == campaign_id:
+            opted_out += 1
         touches = [
             t
             for t in (metadata.get("campaign_touches") or [])
@@ -451,6 +484,7 @@ def campaign_stats(
         "replied": replied,
         "attributed_orders": orders,
         "attributed_revenue_cop": revenue_cop,
+        "opted_out": opted_out,
     }
 
 

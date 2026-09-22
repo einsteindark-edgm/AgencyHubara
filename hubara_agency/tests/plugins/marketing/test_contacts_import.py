@@ -137,7 +137,7 @@ def test_importado_con_sesion_respeta_humano_y_opt_out() -> None:
     assert audience.recipients[0].customer_name == "Ana"
     reasons = {s.session_id: s.reason for s in audience.skipped}
     assert reasons["wa_573001234567"] == "excluido"
-    assert reasons["wa_573002223344"] == "excluido"
+    assert reasons["wa_573002223344"] == "dado_de_baja"
 
 
 def test_importado_salta_cooldown_pero_no_quiet_hours() -> None:

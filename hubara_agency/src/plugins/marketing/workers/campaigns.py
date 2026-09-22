@@ -12,6 +12,7 @@ from temporalio.worker import Worker
 from src.plugins.marketing.agent.campaigns.activities import (
     load_campaign_send_plan_activity,
     mark_campaign_sending_activity,
+    mark_marketing_opt_out_activity,
     prepare_campaign_carousel_activity,
     record_campaign_send_result_activity,
     stamp_campaign_touch_activity,
@@ -38,6 +39,7 @@ async def main() -> None:
             load_campaign_send_plan_activity,
             prepare_campaign_carousel_activity,
             mark_campaign_sending_activity,
+            mark_marketing_opt_out_activity,
             send_whatsapp_template_activity,
             stamp_campaign_touch_activity,
             record_campaign_send_result_activity,

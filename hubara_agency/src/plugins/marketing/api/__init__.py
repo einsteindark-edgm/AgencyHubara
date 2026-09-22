@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from src.plugins.marketing.campaign_store import CampaignStore
 from src.plugins.marketing.carousel import CarouselError, resolve_campaign_carousel
 from src.plugins.marketing.domain.campaigns import (
+    SKIP_DADO_DE_BAJA,
     ALL_SEGMENTS,
     IMPORTED_CONTACTS_CAP,
     STATUS_DRAFT,
@@ -665,16 +666,37 @@ def get_campaign_audience(campaign_id: str) -> dict:
         }
         for r in audience.recipients
     ]
+    store = _store()
+    campaign_names: dict[str, str | None] = {}
+
+    def _campaign_name(cid: str | None) -> str | None:
+        # La campaña que provocó la baja puede haberse borrado: None, no 500.
+        if not cid:
+            return None
+        if cid not in campaign_names:
+            found = store.get(cid)
+            campaign_names[cid] = found.get("name") if found else None
+        return campaign_names[cid]
+
     skipped = [
         {
             "session_id": s.session_id,
             "phone": s.session_id.removeprefix("wa_"),
             "reason": s.reason,
+            "opted_out_at_ms": s.opted_out_at_ms,
+            "opted_out_source": s.opted_out_source,
+            "opted_out_campaign_id": s.opted_out_campaign_id,
+            "opted_out_campaign_name": _campaign_name(s.opted_out_campaign_id),
         }
         for s in audience.skipped
         if s.reason != "fuera_de_segmento"
     ]
-    return {"recipients": recipients, "skipped": skipped, "total": len(recipients)}
+    return {
+        "recipients": recipients,
+        "skipped": skipped,
+        "opted_out_count": sum(1 for s in skipped if s["reason"] == SKIP_DADO_DE_BAJA),
+        "total": len(recipients),
+    }
 
 
 # Anti path-traversal, no política de formato: solo wa_ + dígitos (con o sin +).
