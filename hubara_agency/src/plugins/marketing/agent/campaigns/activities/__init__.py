@@ -23,9 +23,11 @@ from src.plugins.marketing.domain.campaigns import (
 )
 from src.sdk.connectorkit import FilesystemAttributionStore
 from src.sdk.messagingkit import (
+    OPT_OUT_SOURCE_META,
     CarouselCard,
     get_current_rate_card,
     is_quiet_hours_for_session,
+    mark_marketing_opt_out,
 )
 from src.sdk.runtime import (
     WORKSPACE_VAULT_DIR,
@@ -137,6 +139,23 @@ async def stamp_campaign_touch_activity(
     FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, _append_touch)
 
 
+@activity.defn(name="mark_marketing_opt_out")
+async def mark_marketing_opt_out_activity(session_id: str, campaign_id: str) -> None:
+    """Meta rechazó el envío con 131050: el cliente eligió, desde WhatsApp,
+    no recibir más marketing del negocio. Es una baja, no un fallo: queda
+    registrada (fecha, vía "meta", ESTA campaña como la que la provocó) y la
+    audiencia de las próximas campañas lo excluye. Sticky como la baja por
+    texto: si ya estaba de baja no se pisa el registro."""
+    now = _now_ms()
+
+    def _mark(metadata: dict[str, Any]) -> dict[str, Any]:
+        return mark_marketing_opt_out(
+            metadata, now_ms=now, source=OPT_OUT_SOURCE_META, campaign_id=campaign_id
+        )
+
+    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, _mark)
+
+
 @activity.defn(name="record_campaign_send_result")
 async def record_campaign_send_result_activity(
     campaign_id: str, result: dict[str, Any]
@@ -155,6 +174,7 @@ async def record_campaign_send_result_activity(
 __all__ = [
     "load_campaign_send_plan_activity",
     "mark_campaign_sending_activity",
+    "mark_marketing_opt_out_activity",
     "prepare_campaign_carousel_activity",
     "record_campaign_send_result_activity",
     "stamp_campaign_touch_activity",

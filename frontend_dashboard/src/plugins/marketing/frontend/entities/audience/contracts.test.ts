@@ -36,7 +36,17 @@ const audienceFixture = {
       phone: "+573000000002",
       reason: "campana_reciente",
     },
+    {
+      session_id: "wa_573000000003",
+      phone: "+573000000003",
+      reason: "dado_de_baja",
+      opted_out_at_ms: 1750000000000,
+      opted_out_source: "meta",
+      opted_out_campaign_id: "mkt-0",
+      opted_out_campaign_name: "Promo madre",
+    },
   ],
+  opted_out_count: 1,
   total: 2,
 };
 
@@ -123,5 +133,29 @@ describe("backendAudienceConversationSchema", () => {
     expect(() =>
       backendAudienceConversationSchema.parse({ messages: [] }),
     ).toThrow();
+  });
+});
+
+describe("backendCampaignAudienceSchema — bajas", () => {
+  it("parsea el detalle de la baja y el contador", () => {
+    const parsed = backendCampaignAudienceSchema.parse(audienceFixture);
+    const baja = parsed.skipped[2];
+    expect(baja.reason).toBe("dado_de_baja");
+    expect(baja.opted_out_at_ms).toBe(1750000000000);
+    expect(baja.opted_out_source).toBe("meta");
+    expect(baja.opted_out_campaign_id).toBe("mkt-0");
+    expect(baja.opted_out_campaign_name).toBe("Promo madre");
+    expect(parsed.opted_out_count).toBe(1);
+  });
+
+  it("backend viejo sin los campos de baja: null y contador 0", () => {
+    const parsed = backendCampaignAudienceSchema.parse({
+      recipients: [],
+      skipped: [{ session_id: "wa_1", phone: "1", reason: "excluido" }],
+      total: 0,
+    });
+    expect(parsed.skipped[0].opted_out_at_ms).toBeNull();
+    expect(parsed.skipped[0].opted_out_campaign_name).toBeNull();
+    expect(parsed.opted_out_count).toBe(0);
   });
 });

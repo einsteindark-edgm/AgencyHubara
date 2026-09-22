@@ -524,6 +524,19 @@ def test_get_campaign_stats_agrega_respuestas_y_revenue(
         {"campaign_touches": [touch], "last_inbound_at_ms": t0 - hour},
     )
 
+    # Se dio de baja por esta campaña (Meta la rechazó con 131050).
+    _seed_session(
+        vault,
+        "wa_+574",
+        {
+            "campaign_touches": [touch],
+            "marketing_opt_out": True,
+            "marketing_opt_out_at_ms": t0 + hour,
+            "marketing_opt_out_source": "meta",
+            "marketing_opt_out_campaign_id": campaign_id,
+        },
+    )
+
     res = client.get(f"/api/marketing/campaigns/{campaign_id}/stats")
     assert res.status_code == 200
     stats = res.json()
@@ -532,6 +545,7 @@ def test_get_campaign_stats_agrega_respuestas_y_revenue(
     assert stats["replied"] == 2
     assert stats["attributed_orders"] == 1
     assert stats["attributed_revenue_cop"] == 44000
+    assert stats["opted_out"] == 1
 
 
 def test_get_campaign_audience_lista_destinatarios_y_excluidos(
@@ -578,6 +592,50 @@ def test_get_campaign_audience_lista_destinatarios_y_excluidos(
     # Transparencia: excluidos y en cooldown SÍ; "fuera_de_segmento" es ruido.
     assert skipped == {"wa_+573": "excluido", "wa_+574": "campana_reciente"}
     assert body["total"] == 1
+
+
+def test_get_campaign_audience_muestra_las_bajas_con_fecha_y_campana(
+    client: TestClient, _isolate_vault_dir: Path
+) -> None:
+    vault = _isolate_vault_dir
+    otra = client.post("/api/marketing/campaigns", json={"name": "Promo madre"}).json()
+    _seed_session(
+        vault,
+        "wa_+571",
+        {
+            "tag": "COMPRA_EXITOSA",
+            "marketing_opt_out": True,
+            "marketing_opt_out_at_ms": 1_750_000_000_000,
+            "marketing_opt_out_source": "texto",
+            "marketing_opt_out_campaign_id": otra["id"],
+        },
+    )
+    # Baja cuya campaña ya no existe (borrada) o baja vieja sin detalle.
+    _seed_session(
+        vault,
+        "wa_+572",
+        {"tag": "COMPRA_EXITOSA", "marketing_opt_out": True,
+         "marketing_opt_out_campaign_id": "mkt-borrada"},
+    )
+    campaign_id = _ready_campaign(client)  # segments=["clientes"]
+
+    body = client.get(f"/api/marketing/campaigns/{campaign_id}/audience").json()
+    assert body["recipients"] == []
+    by_id = {s["session_id"]: s for s in body["skipped"]}
+    assert by_id["wa_+571"] == {
+        "session_id": "wa_+571",
+        "phone": "+571",
+        "reason": "dado_de_baja",
+        "opted_out_at_ms": 1_750_000_000_000,
+        "opted_out_source": "texto",
+        "opted_out_campaign_id": otra["id"],
+        "opted_out_campaign_name": "Promo madre",
+    }
+    assert by_id["wa_+572"]["reason"] == "dado_de_baja"
+    assert by_id["wa_+572"]["opted_out_campaign_id"] == "mkt-borrada"
+    assert by_id["wa_+572"]["opted_out_campaign_name"] is None
+    assert by_id["wa_+572"]["opted_out_at_ms"] is None
+    assert body["opted_out_count"] == 2
 
 
 def test_get_audience_conversation_devuelve_historial_simplificado(

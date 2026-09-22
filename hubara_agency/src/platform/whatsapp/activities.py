@@ -77,6 +77,7 @@ NON_RETRYABLE_META_ERROR_CODES: frozenset[str] = frozenset(
         "131008",  # Template name does not exist OR not approved in this language
         "132012",  # Template has been paused by Meta (low quality)
         "131049",  # Per-user marketing template cap reached
+        "131050",  # El cliente eligió no recibir marketing del negocio (baja)
         "131047",  # Re-engagement message — fuera de ventana (defensivo para template)
     }
 )

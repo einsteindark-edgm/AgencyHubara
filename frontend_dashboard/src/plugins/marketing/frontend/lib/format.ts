@@ -49,6 +49,16 @@ export function usdMicrosToCop(
 }
 
 /** "12 jul, 14:30" — timestamp corto es-CO para historial de pruebas. */
+/** Fecha con año ("22 sept 2025") — para registros que se miran meses después
+ *  (bajas), donde el día y mes solos son ambiguos. */
+export function fmtDateMs(ms: number): string {
+  return new Date(ms).toLocaleDateString("es-CO", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 export function fmtDateTimeMs(ms: number): string {
   const d = new Date(ms);
   const date = d.toLocaleDateString("es-CO", { day: "numeric", month: "short" });

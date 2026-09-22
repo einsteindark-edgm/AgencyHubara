@@ -42,11 +42,17 @@ class Tracker:
     def __init__(self) -> None:
         self.sends: list[tuple[str, str, dict]] = []
         self.touches: list[tuple[str, str, str]] = []
+        self.opt_outs: list[tuple[str, str]] = []
         self.statuses: list[str] = []
         self.result: dict | None = None
 
 
-def _fakes(tracker: Tracker, *, fail_session: str | None = None):
+def _fakes(
+    tracker: Tracker,
+    *,
+    fail_session: str | None = None,
+    opted_out_session: str | None = None,
+):
     @activity.defn(name="load_campaign_send_plan")
     async def fake_plan(campaign_id: str) -> CampaignSendPlan:
         return _PLAN
@@ -63,8 +69,21 @@ def _fakes(tracker: Tracker, *, fail_session: str | None = None):
             raise ApplicationError(
                 "Meta 131026 non-retryable", non_retryable=True
             )
+        if session_id == opted_out_session:
+            # Mismo shape que `send_template_to_session` para un rechazo de
+            # Meta: el `type` lleva el código.
+            raise ApplicationError(
+                "WhatsApp template send failed (non-retryable, code=131050): "
+                "recipient has chosen to stop receiving marketing messages",
+                non_retryable=True,
+                type="TemplateMetaError131050",
+            )
         tracker.sends.append((session_id, template_name, variables))
         return {"wa_message_id": f"wamid-{session_id}", "ok": True, "error": None}
+
+    @activity.defn(name="mark_marketing_opt_out")
+    async def fake_opt_out(session_id: str, campaign_id: str) -> None:
+        tracker.opt_outs.append((session_id, campaign_id))
 
     @activity.defn(name="stamp_campaign_touch")
     async def fake_touch(
@@ -76,7 +95,7 @@ def _fakes(tracker: Tracker, *, fail_session: str | None = None):
     async def fake_record(campaign_id: str, result: dict) -> None:
         tracker.result = result
 
-    return [fake_plan, fake_mark, fake_send, fake_touch, fake_record]
+    return [fake_plan, fake_mark, fake_send, fake_opt_out, fake_touch, fake_record]
 
 
 async def _run(tracker: Tracker, **kw) -> dict:
@@ -195,3 +214,18 @@ async def test_con_carrusel_prepara_las_tarjetas_una_vez_y_las_manda_a_todos() -
     assert len(sends) == 3
     assert all(s[1] == "campaign_carousel_marketing_v1_2" for s in sends)
     assert all(s[2] == cards for s in sends)
+
+
+@pytest.mark.asyncio
+async def test_rechazo_131050_marca_la_baja_con_la_campana_y_no_cuenta_como_fallo() -> None:
+    # Meta: el cliente eligió no recibir marketing del negocio (baja desde
+    # WhatsApp). Sin esto quedaba como "fallido" y la próxima campaña volvía
+    # a intentarle: ahora se registra la baja atribuida a ESTA campaña.
+    tracker = Tracker()
+    summary = await _run(tracker, opted_out_session="wa_b")
+    assert tracker.opt_outs == [("wa_b", "mkt-1")]
+    assert [s[0] for s in tracker.sends] == ["wa_a", "wa_c"]
+    assert [t[0] for t in tracker.touches] == ["wa_a", "wa_c"]
+    assert tracker.result["failed"] == []
+    assert tracker.result["opted_out"] == ["wa_b"]
+    assert summary == {"sent": 2, "failed": 0, "planned": 3, "opted_out": 1}

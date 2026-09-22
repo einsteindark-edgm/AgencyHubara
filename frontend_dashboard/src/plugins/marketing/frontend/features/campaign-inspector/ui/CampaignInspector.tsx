@@ -224,6 +224,7 @@ function ValidationPanel({ campaign }: { campaign: Campaign }) {
               <StatRow label="Enviados" value={stats.sent !== null ? fmtN(stats.sent) : "—"} />
               <StatRow label="Fallidos" value={fmtN(stats.failedCount)} />
               <StatRow label="Respondieron" value={fmtN(stats.replied)} />
+              <StatRow label="Bajas" value={fmtN(stats.optedOut)} />
               <StatRow label="Pedidos atribuidos" value={fmtN(stats.attributedOrders)} />
               <StatRow
                 label="Revenue atribuido"

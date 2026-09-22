@@ -28,7 +28,8 @@ def test_resolve_campaign_audience_filtra_por_segmento_y_exclusiones() -> None:
     reasons = {s.session_id: s.reason for s in audience.skipped}
     assert reasons["wa_+573"] == "fuera_de_segmento"
     assert reasons["wa_+574"] == "excluido"
-    assert reasons["wa_+575"] == "excluido"
+    # La baja tiene razón propia: el operador la ve distinta de "humano".
+    assert reasons["wa_+575"] == "dado_de_baja"
 
 
 def test_resolve_campaign_audience_sin_segmentos_no_manda_a_nadie() -> None:
@@ -114,7 +115,35 @@ def test_agregado_manual_jamas_pisa_humano_ni_opt_out() -> None:
     audience = resolve_campaign_audience(campaign, sessions)
     assert audience.recipients == []
     reasons = {s.session_id: s.reason for s in audience.skipped}
-    assert reasons == {"wa_+577": "excluido", "wa_+578": "excluido"}
+    assert reasons == {"wa_+577": "excluido", "wa_+578": "dado_de_baja"}
+
+
+def test_dado_de_baja_lleva_fecha_origen_y_campana_que_lo_provoco() -> None:
+    campaign = _campaign(["clientes"])
+    sessions = [
+        (
+            "wa_+579",
+            {
+                "tag": "COMPRA_EXITOSA",
+                "marketing_opt_out": True,
+                "marketing_opt_out_at_ms": 1_750_000_000_000,
+                "marketing_opt_out_source": "meta",
+                "marketing_opt_out_campaign_id": "mkt-0",
+            },
+        ),
+        # Baja vieja (antes de guardar detalle): sigue excluida, sin detalle.
+        ("wa_+580", {"tag": "COMPRA_EXITOSA", "marketing_opt_out": True}),
+    ]
+    audience = resolve_campaign_audience(campaign, sessions)
+    assert audience.recipients == []
+    by_id = {s.session_id: s for s in audience.skipped}
+    assert by_id["wa_+579"].reason == "dado_de_baja"
+    assert by_id["wa_+579"].opted_out_at_ms == 1_750_000_000_000
+    assert by_id["wa_+579"].opted_out_source == "meta"
+    assert by_id["wa_+579"].opted_out_campaign_id == "mkt-0"
+    assert by_id["wa_+580"].reason == "dado_de_baja"
+    assert by_id["wa_+580"].opted_out_at_ms is None
+    assert by_id["wa_+580"].opted_out_campaign_id is None
 
 
 def test_customer_name_from_metadata_filtra_placeholder() -> None:

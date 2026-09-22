@@ -133,6 +133,8 @@ export const backendCampaignStatsSchema = z.object({
   replied: z.number().int().default(0),
   attributed_orders: z.number().int().default(0),
   attributed_revenue_cop: z.number().int().default(0),
+  // Contactos que se dieron de baja por ESTA campaña (texto o WhatsApp).
+  opted_out: z.number().int().default(0),
   // true = Orders (Medusa) no respondió: el revenue usa el último valor
   // conocido de los pedidos (OrderFacts). Backend viejo → false.
   orders_stale: z.boolean().default(false),

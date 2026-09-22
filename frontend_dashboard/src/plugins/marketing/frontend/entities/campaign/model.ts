@@ -97,6 +97,8 @@ export interface CampaignStats {
   replied: number;
   attributedOrders: number;
   attributedRevenueCop: number;
+  /** Bajas que provocó esta campaña (respondieron "no más" o desde WhatsApp). */
+  optedOut: number;
   /** Revenue calculado con valores de pedidos no actualizados (Orders caído). */
   ordersStale: boolean;
 }

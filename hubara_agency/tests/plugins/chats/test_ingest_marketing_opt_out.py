@@ -80,6 +80,9 @@ async def test_no_mas_con_campana_reciente_marca_opt_out(_isolate_vault_dir):
     saved = metadata_store.store["wa_5491111111111"]
     assert saved["marketing_opt_out"] is True
     assert isinstance(saved["marketing_opt_out_at_ms"], int)
+    # Quién lo hizo caer: la campaña del touch reciente, y por qué vía.
+    assert saved["marketing_opt_out_campaign_id"] == "mkt-1"
+    assert saved["marketing_opt_out_source"] == "texto"
 
 
 @pytest.mark.asyncio

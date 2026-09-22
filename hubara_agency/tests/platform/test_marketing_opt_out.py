@@ -68,3 +68,84 @@ def test_messagingkit_reexporta_el_detector() -> None:
     import src.sdk.messagingkit as kit
 
     assert kit.detect_marketing_opt_out is impl.detect_marketing_opt_out
+
+
+# --- registro de la baja: fecha, origen y campaña que la provocó ----------
+
+
+def test_opt_out_campaign_id_es_la_campana_del_touch_reciente() -> None:
+    from src.platform.whatsapp.marketing_opt_out import opt_out_campaign_id
+
+    assert opt_out_campaign_id(_TOUCHED, _NOW) == "mkt-1"
+    # Sin touch en ventana (o solo escalera de remarketing): no hay campaña.
+    assert opt_out_campaign_id({}, _NOW) is None
+    ladder = {"remarketing_touches": [{"kind": "template", "at_ms": _NOW - _HOUR}]}
+    assert opt_out_campaign_id(ladder, _NOW) is None
+
+
+def test_mark_marketing_opt_out_guarda_fecha_origen_y_campana() -> None:
+    from src.platform.whatsapp.marketing_opt_out import (
+        OPT_OUT_SOURCE_META,
+        OPT_OUT_SOURCE_TEXT,
+        mark_marketing_opt_out,
+        marketing_opt_out_info,
+    )
+
+    metadata: dict = {"tag": "INTERESADO"}
+    mark_marketing_opt_out(
+        metadata, now_ms=_NOW, source=OPT_OUT_SOURCE_TEXT, campaign_id="mkt-1"
+    )
+    assert metadata["marketing_opt_out"] is True
+    assert metadata["marketing_opt_out_at_ms"] == _NOW
+    assert metadata["marketing_opt_out_source"] == "texto"
+    assert metadata["marketing_opt_out_campaign_id"] == "mkt-1"
+    info = marketing_opt_out_info(metadata)
+    assert (info.at_ms, info.source, info.campaign_id) == (_NOW, "texto", "mkt-1")
+
+    # Sticky: una segunda baja (Meta, otra campaña) NO pisa la primera —
+    # la métrica de bajas por campaña cuenta la que la provocó.
+    mark_marketing_opt_out(
+        metadata, now_ms=_NOW + _HOUR, source=OPT_OUT_SOURCE_META, campaign_id="mkt-2"
+    )
+    assert metadata["marketing_opt_out_campaign_id"] == "mkt-1"
+    assert metadata["marketing_opt_out_at_ms"] == _NOW
+
+
+def test_marketing_opt_out_info_tolera_metadata_viejo_y_sin_baja() -> None:
+    from src.platform.whatsapp.marketing_opt_out import marketing_opt_out_info
+
+    assert marketing_opt_out_info({"tag": "INTERESADO"}) is None
+    # Bajas de antes de este cambio: solo el flag (y a veces la fecha).
+    info = marketing_opt_out_info({"marketing_opt_out": True})
+    assert info is not None
+    assert (info.at_ms, info.source, info.campaign_id) == (None, None, None)
+
+
+def test_is_meta_opt_out_failure_reconoce_el_131050() -> None:
+    from src.platform.whatsapp.marketing_opt_out import is_meta_opt_out_failure
+
+    assert is_meta_opt_out_failure("TemplateMetaError131050") is True
+    assert is_meta_opt_out_failure("TemplateMetaError131049") is False
+    assert is_meta_opt_out_failure(None) is False
+
+
+def test_131050_es_non_retryable_en_el_send() -> None:
+    # Meta: "el destinatario eligió no recibir mensajes de marketing de tu
+    # negocio" — reintentar es gastar y ensuciar la calidad del número.
+    from src.platform.whatsapp.activities import NON_RETRYABLE_META_ERROR_CODES
+
+    assert "131050" in NON_RETRYABLE_META_ERROR_CODES
+
+
+def test_messagingkit_reexporta_el_registro_de_baja() -> None:
+    from src.sdk import messagingkit
+
+    for name in (
+        "mark_marketing_opt_out",
+        "opt_out_campaign_id",
+        "marketing_opt_out_info",
+        "is_meta_opt_out_failure",
+        "OPT_OUT_SOURCE_TEXT",
+        "OPT_OUT_SOURCE_META",
+    ):
+        assert hasattr(messagingkit, name), name

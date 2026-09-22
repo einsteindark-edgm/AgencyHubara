@@ -44,7 +44,12 @@ export function mapBackendAudience(
       sessionId: s.session_id,
       phone: s.phone,
       reason: s.reason,
+      optedOutAtMs: s.opted_out_at_ms,
+      optedOutSource: s.opted_out_source,
+      optedOutCampaignId: s.opted_out_campaign_id,
+      optedOutCampaignName: s.opted_out_campaign_name,
     })),
+    optedOutCount: b.opted_out_count,
     total: b.total,
   };
 }
