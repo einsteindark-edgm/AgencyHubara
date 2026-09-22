@@ -84,7 +84,6 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     percent: 20,
     couponCode: "PAPA20",
     validUntil: "15 de junio",
-    productHandle: null,
     segments: ["clientes"],
     message: {
       header: "¡Se acerca el Día del Padre!",

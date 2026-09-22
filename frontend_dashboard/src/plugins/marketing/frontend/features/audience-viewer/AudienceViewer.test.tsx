@@ -72,7 +72,6 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     percent: 20,
     couponCode: "PAPA20",
     validUntil: "15 de junio",
-    productHandle: null,
     segments: ["clientes", "frios"],
     message: { header: "H", body: "B", footer: "", cta: "C" },
     templateName: "campaign_promo_marketing_v1",

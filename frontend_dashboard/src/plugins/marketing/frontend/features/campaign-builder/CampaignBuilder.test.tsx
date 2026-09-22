@@ -149,7 +149,6 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     percent: 20,
     couponCode: "PAPA20",
     validUntil: "15 de junio",
-    productHandle: null,
     segments: ["clientes", "interesados"],
     message: {
       header: "¡Se acerca el Día del Padre!",
@@ -380,6 +379,27 @@ describe("CampaignBuilder — contactos importados (CSV)", () => {
     const button = getByRole("button", { name: "Enviar ahora" }) as HTMLButtonElement;
     expect(button.disabled).toBe(false);
   });
+});
+
+describe("CampaignBuilder — sin selector de producto único", () => {
+  it.each(["discount_product", "launch"] as const)(
+    "objetivo %s: solo el carrusel elige productos y el envío no exige un producto único",
+    (goal) => {
+      const { queryByRole, getByRole } = render(
+        <CampaignBuilder
+          campaign={makeCampaign({
+            goal,
+            percent: goal === "launch" ? 0 : 10,
+            segments: ["clientes"],
+            message: { header: "", body: "Hola", footer: "", cta: "" },
+          })}
+        />,
+      );
+      expect(queryByRole("button", { name: /Elegir producto del catálogo/ })).toBeNull();
+      expect(getByRole("button", { name: /Agregar producto al carrusel/ })).toBeTruthy();
+      expect((getByRole("button", { name: "Enviar ahora" }) as HTMLButtonElement).disabled).toBe(false);
+    },
+  );
 });
 
 describe("CampaignBuilder — carrusel de productos", () => {

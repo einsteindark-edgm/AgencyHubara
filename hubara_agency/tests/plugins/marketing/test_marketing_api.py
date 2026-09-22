@@ -963,3 +963,43 @@ def test_get_promotions_con_medusa_caido_es_vacio_y_lo_dice(
     res = client.get("/api/marketing/promotions")
     assert res.status_code == 200
     assert res.json() == {"promotions": [], "unavailable": True}
+
+
+# --- Producto único retirado (los productos van en el carrusel) -------------
+
+
+def test_campana_nueva_no_tiene_producto_unico_y_el_put_lo_ignora(client: TestClient) -> None:
+    """El selector de producto único se quitó del builder: los productos de
+    la campaña son los del carrusel. Un dashboard viejo en caché que todavía
+    mande `product_handle` no rompe el PUT ni persiste el campo."""
+    created = client.post("/api/marketing/campaigns", json={"name": "A"}).json()
+    assert "product_handle" not in created
+    res = client.put(
+        f"/api/marketing/campaigns/{created['id']}",
+        json={"product_handle": "vela-buda", "goal": "discount_product"},
+    )
+    assert res.status_code == 200
+    assert "product_handle" not in res.json()
+    assert res.json()["goal"] == "discount_product"
+
+
+def test_send_producto_existente_sin_producto_unico_arranca(client: TestClient, monkeypatch) -> None:
+    fake = _FakeTemporalClient()
+
+    async def _fake_client():
+        return fake
+
+    monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
+    campaign_id = client.post("/api/marketing/campaigns", json={"name": "P"}).json()["id"]
+    client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={
+            "goal": "discount_product",
+            "percent": 10,
+            "segments": ["clientes"],
+            "carousel_handles": ["vela-buda", "cubo-love"],
+            "message": {"body": "Velas con 10%."},
+        },
+    )
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/send", json={})
+    assert res.status_code == 200, res.text
