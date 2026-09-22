@@ -43,9 +43,9 @@ _PARTIAL_TAGS: frozenset[str] = frozenset(
 )
 # Tag sintético cuando el lifecycle cerró por timeout (cliente abandonó).
 _TIMEOUT_TAG: str = "TIMEOUT"
-# RE_MARKETING: episodio abierto que la respuesta a una campaña cerró (el cliente
+# CAMPAIGN_REPLY: episodio abierto que la respuesta a una campaña cerró (el cliente
 # no volvió a ESE episodio) — cuenta como abandono, igual que TIMEOUT.
-_ABANDONED_TAGS: frozenset[str] = frozenset({_TIMEOUT_TAG, "RE_MARKETING"})
+_ABANDONED_TAGS: frozenset[str] = frozenset({_TIMEOUT_TAG, "CAMPAIGN_REPLY"})
 
 _MS_PER_DAY: int = 24 * 60 * 60 * 1000
 

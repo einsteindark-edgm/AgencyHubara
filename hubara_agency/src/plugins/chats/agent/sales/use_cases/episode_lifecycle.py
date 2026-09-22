@@ -92,7 +92,7 @@ TIMEOUT_CLOSING_TAG: str = "TIMEOUT"
 # una intención nueva → el ingest cierra el viejo con este tag y abre otro
 # (`use_cases/campaign_reply.py`). Como TIMEOUT: no viene del agente y los
 # lectores lo cuentan como abandono (ads → no_reply, scoring → timeout).
-CAMPAIGN_CLOSING_TAG: str = "RE_MARKETING"
+CAMPAIGN_CLOSING_TAG: str = "CAMPAIGN_REPLY"
 
 
 # Si el episodio activo no recibió inbound del cliente en este tiempo,

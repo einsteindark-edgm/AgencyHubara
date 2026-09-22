@@ -9,7 +9,7 @@ la nota de lead web y el draft de la Trilogía.
 
 Contrato:
 - la PRIMERA respuesta tras una campaña cierra el episodio abierto con
-  `RE_MARKETING` y abre uno nuevo (draft, cupón y nota web del viejo se apagan);
+  `CAMPAIGN_REPLY` y abre uno nuevo (draft, cupón y nota web del viejo se apagan);
 - ese turno lleva la nota `[RESPUESTA A CAMPAÑA…]` con lo que recibió el
   cliente (mensaje, cupón, productos) y va a Ventas aunque la ruta sea
   remarketing (el remarketing no recibe `plugin_context`).
@@ -231,7 +231,7 @@ async def test_campaign_reply_closes_stale_episode_and_opens_a_new_one():
     episodes = store.data[_SESSION]["episodes"]
     assert len(episodes) == 2
     old, new = episodes
-    assert old["closing_tag"] == CAMPAIGN_CLOSING_TAG == "RE_MARKETING"
+    assert old["closing_tag"] == CAMPAIGN_CLOSING_TAG == "CAMPAIGN_REPLY"
     assert old["closed_at_ms"] is not None
     assert "Amor y amistad" in old["closing_motivo"]
     assert new["closed_at_ms"] is None

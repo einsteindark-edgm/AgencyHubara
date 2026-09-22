@@ -221,7 +221,7 @@ def test_registered_order_beats_tag_rechazo():
 
 
 def test_episode_superseded_by_campaign_reply_is_no_reply():
-    """`RE_MARKETING`: el episodio quedó abierto sin respuesta y el cliente volvió
+    """`CAMPAIGN_REPLY`: el episodio quedó abierto sin respuesta y el cliente volvió
     respondiendo a una campaña (episodio nuevo). No es una cotización."""
     from src.plugins.ads.classification import classify_episode_state
 
@@ -229,7 +229,7 @@ def test_episode_superseded_by_campaign_reply_is_no_reply():
         "episode_id": "ep_004",
         "started_at_ms": _NOW_MS - 4 * _ONE_DAY_MS,
         "closed_at_ms": _NOW_MS,
-        "closing_tag": "RE_MARKETING",
+        "closing_tag": "CAMPAIGN_REPLY",
         "order_id": None,
     }
     assert (
