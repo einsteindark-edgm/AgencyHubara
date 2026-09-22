@@ -607,10 +607,20 @@ def _template_components(cfg: dict, d: dict) -> list | None:
 
 
 def _carousel_component(cfg: dict, carousel: dict) -> dict | None:
-    """CAROUSEL de media cards: `cards` tarjetas IDÉNTICAS (Meta exige los
-    mismos componentes en todas), cada una con HEADER IMAGE (la foto de
-    ejemplo se sube UNA vez y se reutiliza), BODY con su ejemplo y BUTTONS.
-    La cantidad queda fija en Meta: una plantilla por cantidad de tarjetas."""
+    """CAROUSEL: `cards` tarjetas IDÉNTICAS (Meta exige los mismos componentes
+    en todas). `kind: product` → HEADER PRODUCT (foto/precio del catálogo
+    conectado al número; sin ejemplo) + BUTTONS (SPM "Ver"). `kind: media`
+    (default) → HEADER IMAGE (la foto de ejemplo se sube UNA vez y se
+    reutiliza) + BODY con su ejemplo + BUTTONS. La cantidad queda fija en
+    Meta: una plantilla por cantidad de tarjetas."""
+    if (carousel.get("kind") or "media") == "product":
+        card_components = [{"type": "HEADER", "format": "PRODUCT"}]
+        if carousel.get("buttons"):
+            card_components.append({"type": "BUTTONS", "buttons": list(carousel["buttons"])})
+        return {
+            "type": "CAROUSEL",
+            "cards": [{"components": list(card_components)} for _ in range(int(carousel["cards"]))],
+        }
     header = carousel["header"]
     path = os.path.join(_script_dir(), "definitions", header["example_file"])
     handle = _resumable_upload(cfg, path)

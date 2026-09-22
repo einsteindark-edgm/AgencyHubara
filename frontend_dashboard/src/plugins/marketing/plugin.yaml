@@ -59,12 +59,16 @@ agent:
         memory_request: 256Mi
         env_secrets:
           - { var: WHATSAPP_ACCESS_TOKEN, secret: hubara-whatsapp-secret, key: WHATSAPP_ACCESS_TOKEN }
+          # Carrusel de productos (product cards): el catálogo de Meta
+          # conectado al número — el mismo que usa el bot en product_list.
+          - { var: META_CATALOG_ID,       secret: hubara-meta-secret,     key: META_CATALOG_ID }
       compose:
         env:
           TEMPORAL_URL: temporal:7233
           WORKSPACE_VAULT_DIR: /app/hubara_vault
           WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
           WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}
+          META_CATALOG_ID: ${META_CATALOG_ID}
         volumes:
           - hubara-vault-local:/app/hubara_vault
         depends_on:

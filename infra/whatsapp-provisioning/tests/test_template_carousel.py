@@ -61,6 +61,27 @@ def test_carousel_definition_emits_body_and_n_identical_cards(monkeypatch) -> No
         ]
 
 
+PRODUCT_DEF = {
+    **CAROUSEL_DEF,
+    "carousel": {"cards": 3, "kind": "product", "buttons": [{"type": "SPM", "text": "Ver"}]},
+}
+
+
+def test_product_carousel_definition_emits_product_headers_without_upload(monkeypatch) -> None:
+    """Product cards (número con catálogo conectado): el encabezado es
+    PRODUCT sin foto de ejemplo — Meta toma foto y precio del catálogo."""
+    monkeypatch.setattr(wp, "_resumable_upload", lambda cfg, path: (_ for _ in ()).throw(AssertionError("no upload")))
+    components = wp._template_components(CFG, PRODUCT_DEF)
+    assert [c["type"] for c in components] == ["BODY", "CAROUSEL"]
+    cards = components[1]["cards"]
+    assert len(cards) == 3
+    for card in cards:
+        assert card["components"] == [
+            {"type": "HEADER", "format": "PRODUCT"},
+            {"type": "BUTTONS", "buttons": [{"type": "SPM", "text": "Ver"}]},
+        ]
+
+
 def test_carousel_definition_without_example_photo_is_skipped(monkeypatch) -> None:
     monkeypatch.setattr(wp, "_resumable_upload", lambda cfg, path: None)
     assert wp._template_components(CFG, CAROUSEL_DEF) is None

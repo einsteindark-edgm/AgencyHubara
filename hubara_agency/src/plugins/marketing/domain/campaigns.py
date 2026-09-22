@@ -141,35 +141,30 @@ def _catalog_unit_price_cop(product: Any) -> int | None:
     return value if value > 0 else None
 
 
-def _product_ref(product: Any) -> str:
-    """Payload del botón "Me interesa": `ref: <retailer_id>` — el SKU
-    (`HUB-…`) que el ingest de chats ya reconoce como ref de producto."""
-    from src.sdk.connectorkit import product_retailer_id
-
-    return f"ref: {product_retailer_id(product)}"
-
-
 def build_carousel_cards(
     handles: list[str],
     products: dict[str, Any],
     *,
-    media_ids: dict[str, str],
+    catalog_id: str,
 ) -> list[CarouselCard]:
-    """Tarjetas en el orden elegido. Exige producto y foto (media_id) por
-    handle: una tarjeta sin foto la rechaza Meta entera."""
+    """Product cards en el orden elegido: cada tarjeta referencia el ítem del
+    catálogo de Meta (`product_retailer_id` = identidad vigente del producto,
+    SKU) en `catalog_id`. Foto y precio los pone Meta desde el catálogo;
+    `body_text` solo alimenta el historial del chat."""
+    from src.sdk.connectorkit import product_retailer_id
+
+    if not catalog_id:
+        raise ValueError("META_CATALOG_ID no configurado: el carrusel usa el catálogo de Meta")
     cards: list[CarouselCard] = []
     for handle in handles:
         product = products.get(handle)
         if product is None:
             raise ValueError(f"producto {handle!r} no está en el catálogo")
-        media_id = media_ids.get(handle)
-        if not media_id:
-            raise ValueError(f"producto {handle!r} sin foto subida a Meta")
         cards.append(
             CarouselCard(
-                header_media_id=media_id,
                 body_text=carousel_card_body(product),
-                quick_reply_payload=_product_ref(product),
+                product_retailer_id=product_retailer_id(product),
+                catalog_id=catalog_id,
             )
         )
     return cards
@@ -562,10 +557,8 @@ def new_campaign(
         "extra_session_ids": [],
         # Audiencia importada desde un archivo (CSV): [{phone, name}].
         "imported_contacts": [],
-        # Carrusel de productos (handles del catálogo, 0 o 2..10) + cache de
-        # las fotos subidas a Meta {handle: {media_id, uploaded_at_ms}}.
+        # Carrusel de productos del catálogo de Meta (handles, 0 o 2..10).
         "carousel_handles": [],
-        "carousel_media": {},
         "message": {"header": header, "body": body, "footer": footer, "cta": cta},
         "template_name": CAMPAIGN_TEMPLATE_NAME,
         "schedule_at_ms": None,

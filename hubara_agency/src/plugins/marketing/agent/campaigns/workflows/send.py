@@ -25,8 +25,8 @@ with workflow.unsafe.imports_passed_through():
 _FAST = timedelta(seconds=30)
 #: El send real hace un POST a Graph con retries de red adentro del client.
 _SEND_TIMEOUT = timedelta(seconds=60)
-#: Hasta 10 fotos: bajar de Medusa + subir a Meta.
-_CAROUSEL_TIMEOUT = timedelta(minutes=5)
+#: Hasta 10 lecturas del snapshot del catálogo.
+_CAROUSEL_TIMEOUT = timedelta(seconds=60)
 #: Retries acotados por destinatario: un número inválido no debe colgar la
 #: campaña entera (los non-retryable de Meta cortan solos en el 1er intento).
 _SEND_RETRY = RetryPolicy(maximum_attempts=3)
@@ -42,8 +42,8 @@ class CampaignSendWorkflow:
             start_to_close_timeout=_FAST,
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
-        # Carrusel: las fotos se suben a Meta UNA vez (cacheadas en la
-        # campaña) y las mismas tarjetas viajan a cada destinatario.
+        # Carrusel: las tarjetas (productos del catálogo de Meta) se arman
+        # UNA vez y las mismas viajan a cada destinatario.
         cards: list = []
         if plan.carousel_handles:
             cards = await workflow.execute_activity(

@@ -845,8 +845,8 @@ def test_test_send_con_carrusel_manda_las_tarjetas(
         return type("R", (), {"wa_message_id": "wamid-1", "ok": True, "error": None})()
 
     cards = [
-        CarouselCard(header_media_id="M1", body_text="A · $1", quick_reply_payload="ref: HUB-A"),
-        CarouselCard(header_media_id="M2", body_text="B · $2", quick_reply_payload="ref: HUB-B"),
+        CarouselCard(body_text="A · $1", product_retailer_id="HUB-A", catalog_id="868"),
+        CarouselCard(body_text="B · $2", product_retailer_id="HUB-B", catalog_id="868"),
     ]
 
     async def _fake_resolve(campaign, *, now_ms):
@@ -876,7 +876,7 @@ def test_test_send_con_carrusel_roto_es_422_legible(
     _seed_session(_isolate_vault_dir, "wa_+573125671604", {"tag": "INTERESADO"})
 
     async def _fake_resolve(campaign, *, now_ms):
-        raise CarouselError("producto 'a' sin foto en el catálogo")
+        raise CarouselError("producto 'a' sin foto en el catálogo")  # mensaje del resolver
 
     monkeypatch.setattr(api_mod, "resolve_campaign_carousel", _fake_resolve)
     campaign_id = _ready_campaign(client)

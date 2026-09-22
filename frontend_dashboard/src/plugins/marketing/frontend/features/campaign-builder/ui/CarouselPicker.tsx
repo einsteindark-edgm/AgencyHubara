@@ -33,9 +33,9 @@ export function CarouselPicker({ handles, editable, onChange }: Props) {
           Carrusel de productos (opcional)
         </span>
         <p className="text-[11px] leading-snug text-fg-faint">
-          Cada producto viaja como una tarjeta con su foto, nombre y precio, y el
-          botón "Me interesa" que abre la conversación con el bot. Entre 2 y{" "}
-          {CAROUSEL_MAX_CARDS} productos.
+          Cada producto viaja como una tarjeta del catálogo de Meta (foto y precio
+          del catálogo) con el botón "Ver", que abre el producto y su carrito.
+          Entre 2 y {CAROUSEL_MAX_CARDS} productos.
         </p>
       </div>
 

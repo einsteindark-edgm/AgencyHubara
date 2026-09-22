@@ -269,7 +269,7 @@ describe("CampaignInspector — audiencia", () => {
 });
 
 describe("CampaignInspector — preview del carrusel", () => {
-  it("muestra una tarjeta por producto con nombre, precio y el botón Me interesa", () => {
+  it("muestra una tarjeta por producto con nombre, precio y el botón Ver", () => {
     const { getAllByText, getByText } = render(
       <CampaignInspector
         campaign={makeCampaign({ carouselHandles: ["vela-buda", "cubo-love"] })}
@@ -278,6 +278,6 @@ describe("CampaignInspector — preview del carrusel", () => {
     expect(getByText("Vela Buda Zen")).toBeTruthy();
     expect(getByText("Cubo Love")).toBeTruthy();
     expect(getByText("$45.000")).toBeTruthy();
-    expect(getAllByText("Me interesa")).toHaveLength(2);
+    expect(getAllByText("Ver")).toHaveLength(2);
   });
 });

@@ -21,17 +21,21 @@ from typing import Literal
 
 @dataclass(frozen=True)
 class CarouselCard:
-    """Una tarjeta de un carrusel de plantilla MARKETING (media card).
+    """Una tarjeta de un carrusel de plantilla MARKETING.
 
-    `header_media_id`: foto ya subida a Meta (30 días de vigencia).
-    `body_text`: cuerpo corto de la tarjeta (nombre · precio; Meta: ≤160).
-    `quick_reply_payload`: lo que vuelve al webhook cuando el cliente toca el
-    botón (`ref: HUB-<sku>` → el ingest hidrata el producto).
+    Dos sabores de Meta (la plantilla declara cuál — `TemplateSpec.carousel_kind`):
+      * **product**: `product_retailer_id` + `catalog_id` — foto y precio salen
+        del catálogo de Meta conectado al número; el botón "Ver" abre el
+        producto con carrito nativo. `body_text` solo va al historial.
+      * **media**: `header_media_id` (foto subida a Meta) + `body_text`
+        (≤160) + `quick_reply_payload` (vuelve al webhook al tocar el botón).
     """
 
-    header_media_id: str
-    body_text: str
-    quick_reply_payload: str
+    body_text: str = ""
+    product_retailer_id: str | None = None
+    catalog_id: str | None = None
+    header_media_id: str | None = None
+    quick_reply_payload: str | None = None
 
 
 @dataclass(frozen=True)

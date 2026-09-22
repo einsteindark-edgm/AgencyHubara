@@ -84,10 +84,9 @@ async def load_campaign_send_plan_activity(campaign_id: str) -> CampaignSendPlan
 
 @activity.defn(name="prepare_campaign_carousel")
 async def prepare_campaign_carousel_activity(campaign_id: str) -> list[CarouselCard]:
-    """Tarjetas del carrusel (fotos ya subidas a Meta), UNA vez por campaña.
-
-    Un producto sin foto o fuera del catálogo es non-retryable: reintentar no
-    lo arregla, el operador tiene que corregir la campaña.
+    """Tarjetas del carrusel (product cards del catálogo de Meta), UNA vez
+    por campaña. Un producto fuera del catálogo o sin META_CATALOG_ID es
+    non-retryable: reintentar no lo arregla, el operador corrige.
     """
     store = _store()
     campaign = _require_campaign(store, campaign_id)

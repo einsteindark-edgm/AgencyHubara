@@ -77,6 +77,9 @@ class TemplateSpec:
     #: 0 = sin carrusel. Meta la fija al crear la plantilla (2..10), por eso
     #: hay una plantilla por cantidad (`carousel_cards_range` en el YAML).
     carousel_cards: int = 0
+    #: "product" (tarjetas del catálogo de Meta: precio+foto del catálogo,
+    #: botón Ver) o "media" (foto por media_id + cuerpo + quick reply).
+    carousel_kind: str = "media"
 
 
 # =============================================================================
@@ -167,6 +170,8 @@ _VALID_CATEGORIES: frozenset[str] = frozenset(
 
 #: Encabezados multimedia soportados por el builder. Solo imagen por ahora.
 _VALID_HEADER_FORMATS: frozenset[str] = frozenset({"image"})
+#: Sabores de carrusel de Meta (media card / product card).
+_VALID_CAROUSEL_KINDS: frozenset[str] = frozenset({"media", "product"})
 
 
 def _build_template_spec_from_dict(entry: dict[str, Any]) -> TemplateSpec:
@@ -210,6 +215,12 @@ def _build_template_spec_from_dict(entry: dict[str, Any]) -> TemplateSpec:
             f"Valid: {sorted(_VALID_HEADER_FORMATS)}"
         )
 
+    carousel_kind = entry.get("carousel_kind") or "media"
+    if carousel_kind not in _VALID_CAROUSEL_KINDS:
+        raise ValueError(
+            f"Template {entry['name']!r}: carousel_kind {carousel_kind!r} inválido. "
+            f"Valid: {sorted(_VALID_CAROUSEL_KINDS)}"
+        )
     carousel_cards = entry.get("carousel_cards") or 0
     if not isinstance(carousel_cards, int) or isinstance(carousel_cards, bool):
         raise ValueError(
@@ -255,6 +266,7 @@ def _build_template_spec_from_dict(entry: dict[str, Any]) -> TemplateSpec:
         body=entry.get("body"),
         header_format=header_format,
         carousel_cards=carousel_cards,
+        carousel_kind=carousel_kind,
     )
 
 

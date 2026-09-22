@@ -131,8 +131,8 @@ async def test_con_carrusel_prepara_las_tarjetas_una_vez_y_las_manda_a_todos() -
     viajan como 4º argumento del send a cada destinatario."""
     tracker = Tracker()
     cards = [
-        CarouselCard(header_media_id="M1", body_text="A · $1", quick_reply_payload="ref: HUB-A"),
-        CarouselCard(header_media_id="M2", body_text="B · $2", quick_reply_payload="ref: HUB-B"),
+        CarouselCard(body_text="A · $1", product_retailer_id="HUB-A", catalog_id="868"),
+        CarouselCard(body_text="B · $2", product_retailer_id="HUB-B", catalog_id="868"),
     ]
     plan = CampaignSendPlan(
         campaign_id="mkt-1",

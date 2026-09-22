@@ -1063,11 +1063,13 @@ def _append_template_to_session_history(
             event["image_url"] = image_url
         if carousel_cards:
             event["content"] += "\n\n" + "\n".join(
-                f"🖼 {card.body_text}" for card in carousel_cards
+                f"🖼 {card.body_text or card.product_retailer_id or ''}"
+                for card in carousel_cards
             )
             event["carousel"] = [
                 {
                     "body_text": card.body_text,
+                    "product_retailer_id": card.product_retailer_id,
                     "quick_reply_payload": card.quick_reply_payload,
                 }
                 for card in carousel_cards

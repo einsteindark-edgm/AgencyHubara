@@ -39,26 +39,29 @@ saltan el cooldown de 48 h).
 ### Requirement: Carrusel de productos en la plantilla de campaña
 
 La campaña MAY llevar entre 2 y 10 productos del catálogo como tarjetas de
-un carrusel (media cards de Meta). Cada tarjeta MUST llevar la foto del
-producto (media_id subido a Meta), "nombre · precio" y el botón "Me interesa"
-cuyo payload `ref: <SKU>` el ingest de chats entiende como referencia de
-producto. Meta fija la cantidad de tarjetas al aprobar la plantilla: MUST
-existir una plantilla por cantidad (`campaign_carousel_marketing_v1_{n}`).
+un carrusel de **product cards** de Meta: cada tarjeta referencia el ítem
+del catálogo de Meta conectado al número del bot (`product_retailer_id` =
+identidad vigente del producto + `META_CATALOG_ID`); foto y precio los pone
+Meta desde el catálogo y el botón "Ver" abre el producto con carrito nativo.
+Meta fija la cantidad de tarjetas al aprobar la plantilla: MUST existir una
+plantilla por cantidad (`campaign_carousel_marketing_v1_{n}`, `carousel_kind:
+product`). El sabor *media card* (foto por media_id + quick reply) queda
+soportado en la plataforma para números sin catálogo.
 
 #### Scenario: Campaña con tres productos
 
-- GIVEN `carousel_handles = [a, b, c]`
+- GIVEN `carousel_handles = [a, b, c]` y `META_CATALOG_ID` configurado
 - WHEN se envía (o se hace el envío de prueba)
-- THEN el plan usa `campaign_carousel_marketing_v1_3`, las fotos se suben UNA vez (cache `carousel_media`, renovado a los 25 días) y las mismas 3 tarjetas viajan a cada destinatario
+- THEN el plan usa `campaign_carousel_marketing_v1_3`, las tarjetas se arman UNA vez (sin subir fotos) y las mismas 3 viajan a cada destinatario con `{type: product, product: {product_retailer_id, catalog_id}}`
 - AND el historial de la sesión muestra los productos ofrecidos
 
-#### Scenario: Cantidad inválida o producto sin foto
+#### Scenario: Cantidad inválida, producto fuera del catálogo o sin catálogo de Meta
 
-- WHEN se guarda 1 producto (o 11), o un producto elegido no tiene foto en el catálogo
+- WHEN se guarda 1 producto (o 11), un handle ya no está en el catálogo, o falta `META_CATALOG_ID`
 - THEN el PUT / el envío responde 422 con la razón y nada sale
 
-#### Scenario: El cliente toca "Me interesa"
+#### Scenario: El cliente toca "Ver" y arma un carrito
 
-- GIVEN el webhook trae `type: button` con `payload: "ref: HUB-CUBOLOVE"`
-- WHEN chats lo ingiere
-- THEN el texto del mensaje lleva título y payload ("Me interesa · ref: HUB-CUBOLOVE") y el producto queda hidratado como con el botón del PDP
+- GIVEN el cliente abre el producto desde la tarjeta y envía el carrito nativo
+- WHEN chats lo ingiere (`type: order`)
+- THEN el bot lo recibe como "[el cliente armó un carrito con: …]" (flujo existente) y sigue la venta

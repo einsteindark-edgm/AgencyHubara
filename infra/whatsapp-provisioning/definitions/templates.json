@@ -97,22 +97,15 @@
     ],
     "carousel": {
       "cards": 2,
-      "header": {
-        "format": "IMAGE",
-        "example_file": "assets/order_ready_example.jpg"
-      },
-      "card_body": "{{1}}",
-      "card_example": [
-        "Vela Buda Zen · $45.000"
-      ],
+      "kind": "product",
       "buttons": [
         {
-          "type": "QUICK_REPLY",
-          "text": "Me interesa"
+          "type": "SPM",
+          "text": "Ver"
         }
       ]
     },
-    "semantics": "Campaña con carrusel de 2 productos del catálogo (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta: foto del producto (media_id al enviar), 'nombre · precio' en el cuerpo y el botón 'Me interesa' con payload `ref: HUB-<sku>` que el bot de ventas entiende. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+    "semantics": "Campaña con carrusel de 2 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
   },
   {
     "name": "campaign_carousel_3_marketing_v1",
@@ -126,22 +119,15 @@
     ],
     "carousel": {
       "cards": 3,
-      "header": {
-        "format": "IMAGE",
-        "example_file": "assets/order_ready_example.jpg"
-      },
-      "card_body": "{{1}}",
-      "card_example": [
-        "Vela Buda Zen · $45.000"
-      ],
+      "kind": "product",
       "buttons": [
         {
-          "type": "QUICK_REPLY",
-          "text": "Me interesa"
+          "type": "SPM",
+          "text": "Ver"
         }
       ]
     },
-    "semantics": "Campaña con carrusel de 3 productos del catálogo (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta: foto del producto (media_id al enviar), 'nombre · precio' en el cuerpo y el botón 'Me interesa' con payload `ref: HUB-<sku>` que el bot de ventas entiende. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+    "semantics": "Campaña con carrusel de 3 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
   },
   {
     "name": "campaign_carousel_4_marketing_v1",
@@ -155,22 +141,15 @@
     ],
     "carousel": {
       "cards": 4,
-      "header": {
-        "format": "IMAGE",
-        "example_file": "assets/order_ready_example.jpg"
-      },
-      "card_body": "{{1}}",
-      "card_example": [
-        "Vela Buda Zen · $45.000"
-      ],
+      "kind": "product",
       "buttons": [
         {
-          "type": "QUICK_REPLY",
-          "text": "Me interesa"
+          "type": "SPM",
+          "text": "Ver"
         }
       ]
     },
-    "semantics": "Campaña con carrusel de 4 productos del catálogo (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta: foto del producto (media_id al enviar), 'nombre · precio' en el cuerpo y el botón 'Me interesa' con payload `ref: HUB-<sku>` que el bot de ventas entiende. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+    "semantics": "Campaña con carrusel de 4 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
   },
   {
     "name": "campaign_carousel_5_marketing_v1",
@@ -184,22 +163,15 @@
     ],
     "carousel": {
       "cards": 5,
-      "header": {
-        "format": "IMAGE",
-        "example_file": "assets/order_ready_example.jpg"
-      },
-      "card_body": "{{1}}",
-      "card_example": [
-        "Vela Buda Zen · $45.000"
-      ],
+      "kind": "product",
       "buttons": [
         {
-          "type": "QUICK_REPLY",
-          "text": "Me interesa"
+          "type": "SPM",
+          "text": "Ver"
         }
       ]
     },
-    "semantics": "Campaña con carrusel de 5 productos del catálogo (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta: foto del producto (media_id al enviar), 'nombre · precio' en el cuerpo y el botón 'Me interesa' con payload `ref: HUB-<sku>` que el bot de ventas entiende. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+    "semantics": "Campaña con carrusel de 5 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
   },
   {
     "name": "campaign_carousel_6_marketing_v1",
@@ -213,22 +185,15 @@
     ],
     "carousel": {
       "cards": 6,
-      "header": {
-        "format": "IMAGE",
-        "example_file": "assets/order_ready_example.jpg"
-      },
-      "card_body": "{{1}}",
-      "card_example": [
-        "Vela Buda Zen · $45.000"
-      ],
+      "kind": "product",
       "buttons": [
         {
-          "type": "QUICK_REPLY",
-          "text": "Me interesa"
+          "type": "SPM",
+          "text": "Ver"
         }
       ]
     },
-    "semantics": "Campaña con carrusel de 6 productos del catálogo (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta: foto del producto (media_id al enviar), 'nombre · precio' en el cuerpo y el botón 'Me interesa' con payload `ref: HUB-<sku>` que el bot de ventas entiende. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+    "semantics": "Campaña con carrusel de 6 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
   },
   {
     "name": "campaign_carousel_7_marketing_v1",
@@ -242,22 +207,15 @@
     ],
     "carousel": {
       "cards": 7,
-      "header": {
-        "format": "IMAGE",
-        "example_file": "assets/order_ready_example.jpg"
-      },
-      "card_body": "{{1}}",
-      "card_example": [
-        "Vela Buda Zen · $45.000"
-      ],
+      "kind": "product",
       "buttons": [
         {
-          "type": "QUICK_REPLY",
-          "text": "Me interesa"
+          "type": "SPM",
+          "text": "Ver"
         }
       ]
     },
-    "semantics": "Campaña con carrusel de 7 productos del catálogo (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta: foto del producto (media_id al enviar), 'nombre · precio' en el cuerpo y el botón 'Me interesa' con payload `ref: HUB-<sku>` que el bot de ventas entiende. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+    "semantics": "Campaña con carrusel de 7 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
   },
   {
     "name": "campaign_carousel_8_marketing_v1",
@@ -271,22 +229,15 @@
     ],
     "carousel": {
       "cards": 8,
-      "header": {
-        "format": "IMAGE",
-        "example_file": "assets/order_ready_example.jpg"
-      },
-      "card_body": "{{1}}",
-      "card_example": [
-        "Vela Buda Zen · $45.000"
-      ],
+      "kind": "product",
       "buttons": [
         {
-          "type": "QUICK_REPLY",
-          "text": "Me interesa"
+          "type": "SPM",
+          "text": "Ver"
         }
       ]
     },
-    "semantics": "Campaña con carrusel de 8 productos del catálogo (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta: foto del producto (media_id al enviar), 'nombre · precio' en el cuerpo y el botón 'Me interesa' con payload `ref: HUB-<sku>` que el bot de ventas entiende. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+    "semantics": "Campaña con carrusel de 8 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
   },
   {
     "name": "campaign_carousel_9_marketing_v1",
@@ -300,22 +251,15 @@
     ],
     "carousel": {
       "cards": 9,
-      "header": {
-        "format": "IMAGE",
-        "example_file": "assets/order_ready_example.jpg"
-      },
-      "card_body": "{{1}}",
-      "card_example": [
-        "Vela Buda Zen · $45.000"
-      ],
+      "kind": "product",
       "buttons": [
         {
-          "type": "QUICK_REPLY",
-          "text": "Me interesa"
+          "type": "SPM",
+          "text": "Ver"
         }
       ]
     },
-    "semantics": "Campaña con carrusel de 9 productos del catálogo (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta: foto del producto (media_id al enviar), 'nombre · precio' en el cuerpo y el botón 'Me interesa' con payload `ref: HUB-<sku>` que el bot de ventas entiende. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+    "semantics": "Campaña con carrusel de 9 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
   },
   {
     "name": "campaign_carousel_10_marketing_v1",
@@ -329,21 +273,14 @@
     ],
     "carousel": {
       "cards": 10,
-      "header": {
-        "format": "IMAGE",
-        "example_file": "assets/order_ready_example.jpg"
-      },
-      "card_body": "{{1}}",
-      "card_example": [
-        "Vela Buda Zen · $45.000"
-      ],
+      "kind": "product",
       "buttons": [
         {
-          "type": "QUICK_REPLY",
-          "text": "Me interesa"
+          "type": "SPM",
+          "text": "Ver"
         }
       ]
     },
-    "semantics": "Campaña con carrusel de 10 productos del catálogo (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta: foto del producto (media_id al enviar), 'nombre · precio' en el cuerpo y el botón 'Me interesa' con payload `ref: HUB-<sku>` que el bot de ventas entiende. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+    "semantics": "Campaña con carrusel de 10 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
   }
 ]

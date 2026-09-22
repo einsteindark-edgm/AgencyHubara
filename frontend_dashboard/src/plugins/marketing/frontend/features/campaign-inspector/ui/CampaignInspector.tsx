@@ -134,8 +134,8 @@ function TemplatePreview({ campaign }: { campaign: Campaign }) {
   );
 }
 
-/** Tarjetas del carrusel como las ve el cliente: foto, nombre · precio y el
- *  botón "Me interesa" (payload `ref: <sku>` que el bot entiende). */
+/** Tarjetas del carrusel como las ve el cliente: product cards del catálogo
+ *  de Meta (foto, nombre, precio) con el botón "Ver" (carrito nativo). */
 function CarouselPreview({ handles }: { handles: string[] }) {
   const { data: products = [] } = useProducts();
   return (
@@ -161,7 +161,7 @@ function CarouselPreview({ handles }: { handles: string[] }) {
               ) : null}
             </div>
             <div className="border-t border-line px-2 py-1 text-center text-[10.5px] font-semibold text-info">
-              Me interesa
+              Ver
             </div>
           </div>
         );
