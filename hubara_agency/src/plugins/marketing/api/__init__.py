@@ -120,7 +120,6 @@ class UpdateCampaignBody(BaseModel):
     percent: int | None = Field(default=None, ge=0, le=100)
     coupon_code: str | None = Field(default=None, max_length=14)
     valid_until: str | None = Field(default=None, max_length=60)
-    product_handle: str | None = None
     # Carrusel de productos (handles del catálogo): [] = sin carrusel, si no
     # 2..10 (Meta fija la cantidad de tarjetas al aprobar la plantilla).
     carousel_handles: list[str] | None = Field(default=None, max_length=20)

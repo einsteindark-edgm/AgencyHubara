@@ -26,7 +26,6 @@ const draftFixture = {
   percent: 0,
   coupon_code: "",
   valid_until: "",
-  product_handle: null,
   segments: [],
   message: { header: "", body: "", footer: "", cta: "" },
   template_name: "campaign_promo_marketing_v1",

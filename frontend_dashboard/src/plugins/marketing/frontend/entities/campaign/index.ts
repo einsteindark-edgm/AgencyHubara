@@ -23,7 +23,6 @@ export {
   CAROUSEL_MAX_CARDS,
   CAROUSEL_MIN_CARDS,
   carouselSizeError,
-  goalNeedsProduct,
   goalUsesDiscount,
   importRejectReasonLabel,
   isCampaignEditable,

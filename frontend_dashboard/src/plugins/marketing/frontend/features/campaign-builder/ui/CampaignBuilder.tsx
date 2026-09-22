@@ -16,7 +16,6 @@ import { useCampaignAudience } from "@plugins/marketing/frontend/entities/audien
 import {
   CAMPAIGN_STATUS_META,
   carouselSizeError,
-  goalNeedsProduct,
   goalUsesDiscount,
   isCampaignEditable,
   useCancelCampaign,
@@ -78,7 +77,6 @@ export function CampaignBuilder({ campaign }: Props) {
   const done1 = draft.goal !== "";
   const done2 =
     done1 &&
-    (!goalNeedsProduct(draft.goal) || Boolean(draft.productHandle)) &&
     (!goalUsesDiscount(draft.goal) || draft.percent > 0) &&
     carouselSizeError(draft.carouselHandles) === null;
   const done3 = draft.message.body.trim() !== "";

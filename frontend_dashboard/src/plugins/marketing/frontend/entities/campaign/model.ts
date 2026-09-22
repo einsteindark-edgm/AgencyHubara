@@ -66,7 +66,6 @@ export interface Campaign {
   percent: number;
   couponCode: string;
   validUntil: string;
-  productHandle: string | null;
   segments: string[];
   message: CampaignMessage;
   templateName: string;
@@ -109,7 +108,6 @@ export interface CampaignPatch {
   percent?: number;
   couponCode?: string;
   validUntil?: string;
-  productHandle?: string | null;
   segments?: string[];
   message?: CampaignMessage;
   /** REPLACE completo de las listas de curaduría (no merge). */
@@ -171,10 +169,6 @@ export function isCampaignEditable(status: CampaignStatus): boolean {
   return status === "draft" || status === "scheduled";
 }
 
-export function goalNeedsProduct(goal: CampaignGoal): boolean {
-  return goal === "discount_product" || goal === "launch";
-}
-
 export function goalUsesDiscount(goal: CampaignGoal): boolean {
   return goal !== "" && goal !== "launch";
 }
@@ -230,14 +224,6 @@ export function campaignChecklist(c: Campaign): ChecklistItem[] {
   const items: ChecklistItem[] = [
     { key: "goal", label: "Objetivo definido", done: c.goal !== "", required: true },
   ];
-  if (goalNeedsProduct(c.goal)) {
-    items.push({
-      key: "product",
-      label: "Producto elegido",
-      done: c.productHandle !== null && c.productHandle !== "",
-      required: true,
-    });
-  }
   if (goalUsesDiscount(c.goal)) {
     items.push({
       key: "discount",

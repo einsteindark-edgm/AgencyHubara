@@ -1,15 +1,13 @@
 /**
  * Paso 2 — Descuento / Producto según el objetivo:
- *  - discount_product | launch → picker de producto del catálogo
  *  - todo goal salvo launch → porcentaje (0-100), cupón (uppercase, max 14)
  *    y vigencia (texto libre "15 de junio")
- *  - todo goal → carrusel opcional de 2..10 productos (tarjetas con foto)
+ *  - todo goal → carrusel de 2..10 productos del catálogo: es LA forma de
+ *    elegir productos (el selector de producto único se retiró — lo que se
+ *    envía son las tarjetas del carrusel)
  */
 
-import {
-  goalNeedsProduct,
-  goalUsesDiscount,
-} from "@plugins/marketing/frontend/entities/campaign";
+import { goalUsesDiscount } from "@plugins/marketing/frontend/entities/campaign";
 import {
   promotionLabel,
   sanitizeCouponCode,
@@ -18,7 +16,6 @@ import {
 
 import type { CampaignDraft } from "../model/draft";
 import { CarouselPicker } from "./CarouselPicker";
-import { ProductPicker } from "./ProductPicker";
 
 interface Props {
   draft: CampaignDraft;
@@ -28,7 +25,6 @@ interface Props {
 }
 
 export function OfferStep({ draft, editable, onPatch, onCommit }: Props) {
-  const needsProduct = goalNeedsProduct(draft.goal);
   const usesDiscount = goalUsesDiscount(draft.goal);
   // Cupones vigentes en Medusa: el mismo código que el bot valida con
   // `apply_coupon` — así la campaña promete un cupón que existe de verdad.
@@ -45,14 +41,6 @@ export function OfferStep({ draft, editable, onPatch, onCommit }: Props) {
 
   return (
     <div className="flex flex-col gap-3">
-      {needsProduct ? (
-        <ProductPicker
-          value={draft.productHandle}
-          editable={editable}
-          onPick={(handle) => onCommit({ productHandle: handle })}
-        />
-      ) : null}
-
       {usesDiscount ? (
         <div className="grid grid-cols-3 gap-2.5 max-[900px]:grid-cols-1">
           <label className="flex flex-col gap-1">

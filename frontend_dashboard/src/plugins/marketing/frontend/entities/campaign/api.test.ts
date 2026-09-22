@@ -15,7 +15,6 @@ const backendSent: BackendCampaign = {
   percent: 20,
   coupon_code: "PAPA20",
   valid_until: "15 de junio",
-  product_handle: null,
   segments: ["clientes", "interesados"],
   message: { header: "H", body: "B", footer: "F", cta: "C" },
   template_name: "campaign_promo_marketing_v1",
@@ -129,12 +128,10 @@ describe("patchToBody", () => {
       patchToBody({
         segments: ["frios"],
         message: { header: "H", body: "B", footer: "", cta: "" },
-        productHandle: "duo-zodiacal",
       }),
     ).toEqual({
       segments: ["frios"],
       message: { header: "H", body: "B", footer: "", cta: "" },
-      product_handle: "duo-zodiacal",
     });
   });
 });

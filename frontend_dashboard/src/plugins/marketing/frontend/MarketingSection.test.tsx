@@ -51,7 +51,6 @@ function makeCampaign(id: string) {
     percent: 0,
     couponCode: "",
     validUntil: "",
-    productHandle: null,
     segments: [],
     message: { header: "", body: "", footer: "", cta: "" },
     templateName: "t",

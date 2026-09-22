@@ -9,7 +9,6 @@ import {
   campaignChecklist,
   campaignOfferLine,
   carouselSizeError,
-  goalNeedsProduct,
   goalUsesDiscount,
   isCampaignEditable,
   OPT_OUT_LINE,
@@ -25,7 +24,6 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     percent: 0,
     couponCode: "",
     validUntil: "",
-    productHandle: null,
     segments: [],
     message: { header: "", body: "", footer: "", cta: "" },
     templateName: "campaign_promo_marketing_v1",
@@ -70,12 +68,6 @@ describe("campaignOfferLine — espejo de _campaign_offer_line del backend", () 
 });
 
 describe("reglas por objetivo", () => {
-  it("producto requerido para discount_product y launch", () => {
-    expect(goalNeedsProduct("discount_product")).toBe(true);
-    expect(goalNeedsProduct("launch")).toBe(true);
-    expect(goalNeedsProduct("discount_general")).toBe(false);
-  });
-
   it("descuento aplica salvo launch", () => {
     expect(goalUsesDiscount("discount_general")).toBe(true);
     expect(goalUsesDiscount("launch")).toBe(false);
@@ -100,6 +92,21 @@ describe("campaignChecklist", () => {
     expect(byKey.message?.done).toBe(false);
     expect(byKey.audience?.done).toBe(false);
     expect(byKey.coupon?.required).toBe(false);
+  });
+
+  it("producto existente / lanzamiento NO exigen un producto único (los productos van en el carrusel)", () => {
+    for (const goal of ["discount_product", "launch"] as const) {
+      const items = campaignChecklist(
+        makeCampaign({
+          goal,
+          percent: goal === "launch" ? 0 : 10,
+          message: { header: "", body: "Hola", footer: "", cta: "" },
+          segments: ["clientes"],
+        }),
+      );
+      expect(items.find((i) => i.key === "product")).toBeUndefined();
+      expect(items.filter((i) => i.required).every((i) => i.done)).toBe(true);
+    }
   });
 
   it("la audiencia se cumple con contactos importados aunque no haya segmentos", () => {
@@ -135,14 +142,6 @@ describe("campaignChecklist", () => {
     );
   });
 
-  it("campaña de producto exige el producto elegido", () => {
-    const items = campaignChecklist(
-      makeCampaign({ goal: "discount_product", percent: 10 }),
-    );
-    const product = items.find((i) => i.key === "product");
-    expect(product?.required).toBe(true);
-    expect(product?.done).toBe(false);
-  });
 
   it("campaña completa: todos los requeridos en done", () => {
     const items = campaignChecklist(

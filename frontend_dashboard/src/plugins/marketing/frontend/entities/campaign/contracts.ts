@@ -52,7 +52,6 @@ export const backendCampaignSchema = z.object({
   percent: z.number().int().default(0),
   coupon_code: z.string().default(""),
   valid_until: z.string().default(""),
-  product_handle: z.string().nullable().default(null),
   segments: z.array(z.string()).default([]),
   // Zod v4: `.default()` NO re-parsea el valor por el schema interno — el
   // default debe ser el output completo.

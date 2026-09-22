@@ -67,7 +67,6 @@ export function mapBackendCampaign(b: BackendCampaign): Campaign {
     percent: b.percent,
     couponCode: b.coupon_code,
     validUntil: b.valid_until,
-    productHandle: b.product_handle,
     segments: b.segments,
     message: b.message,
     templateName: b.template_name,
@@ -129,7 +128,6 @@ export function patchToBody(patch: CampaignPatch): Record<string, unknown> {
   if (patch.percent !== undefined) body.percent = patch.percent;
   if (patch.couponCode !== undefined) body.coupon_code = patch.couponCode;
   if (patch.validUntil !== undefined) body.valid_until = patch.validUntil;
-  if (patch.productHandle !== undefined) body.product_handle = patch.productHandle;
   if (patch.segments !== undefined) body.segments = patch.segments;
   if (patch.message !== undefined) body.message = patch.message;
   if (patch.excludedSessionIds !== undefined)

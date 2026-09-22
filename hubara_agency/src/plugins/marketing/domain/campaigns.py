@@ -529,7 +529,6 @@ def new_campaign(
     percent: int = 0,
     coupon_code: str = "",
     valid_until: str = "",
-    product_handle: str | None = None,
     segments: list[str] | None = None,
     header: str = "",
     body: str = "",
@@ -550,7 +549,6 @@ def new_campaign(
         "percent": percent,
         "coupon_code": coupon_code,
         "valid_until": valid_until,
-        "product_handle": product_handle,
         "segments": list(segments or []),
         # Curaduría manual de la audiencia (sección Ver audiencia):
         "excluded_session_ids": [],
