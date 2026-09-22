@@ -19,6 +19,7 @@ from src.plugins.chats.shared.chat_events import (
 from src.plugins.chats.shared.origin import session_origin, with_ad_names
 from src.sdk.connectorkit import fetch_meta_ad_names, meta_marketing_token
 from src.sdk.dashboardkit import DashboardEvent, get_dashboard_event_bus
+from src.sdk.messagingkit import postponed_view
 
 router = APIRouter()
 
@@ -536,6 +537,7 @@ async def list_dashboard_sessions():
             pending_payment_order_id = None
             order_ref = None
             origin = None
+            postponed = None
 
             if metadata_file.exists():
                 try:
@@ -549,6 +551,9 @@ async def list_dashboard_sessions():
                     )
                     session_data[entry] = data
                     origin = session_origin(data)
+                    # Filtro "Pospuestos": dijo cuándo retoma y aún no quedó
+                    # SIN_RESPUESTA (la regla vive en messagingkit).
+                    postponed = postponed_view(data, int(time.time() * 1000))
                 except json.JSONDecodeError:
                     pass
             
@@ -574,6 +579,7 @@ async def list_dashboard_sessions():
                 "last_updated_timestamp": last_updated,
                 "last_inbound_ms": last_inbound_ms,
                 "origin": origin,
+                "postponed": postponed,
             })
 
     # Estado real de los pedidos del inbox, en UNA lectura: los que esperan

@@ -46,9 +46,11 @@ _DEFERRAL_PATTERNS = [
         r"\bdejame\b",
         r"\bdeja(me)? (que )?(miro|reviso|pienso|veo)\b",
         r"\blo pienso\b",
-        r"\bte aviso\b",
-        r"\bte escribo\b",
-        r"\bte confirmo\b",
+        # "te / les / le": al negocio se le habla en plural ("les escribo la
+        # otra semana" — incidente runs 337efe8c / ee3cec91).
+        r"\b(te|les|le) aviso\b",
+        r"\b(te|les|le) escribo\b",
+        r"\b(te|les|le) confirmo\b",
         r"\bmanana\b",
         r"\bestoy ocupad",
         r"\bme ocup[eo]\b",
@@ -179,18 +181,30 @@ def is_current_inbound_deferral(metadata: dict[str, Any]) -> bool:
     return bool(sig and sig.get("kind") == "deferral")
 
 
-def build_deferral_note(metadata: dict[str, Any]) -> str | None:
+def build_deferral_note(
+    metadata: dict[str, Any], *, resume_label: str | None = None
+) -> str | None:
     """Nota para `plugin_context`: el LLM responde texto breve y no avanza el cierre."""
     sig = current_signal(metadata)
     if not sig or sig.get("kind") != "deferral":
         return None
     quoted = str(sig.get("text") or "").strip()
-    return (
+    note = (
         "[SISTEMA — EL CLIENTE APLAZÓ]: acaba de escribir "
         f"\"{quoted}\". Eso NO es una confirmación: responde con UNA frase "
         "cálida y breve (sin preguntas de venta), NO muestres productos, NO "
         "pidas datos de envío ni confirmes el pedido. Espera a que retome."
     )
+    # La cita: el sistema le escribe ESE día — el bot se lo confirma para que
+    # sea un compromiso visible ("¡Listo! Te escribimos el lunes 28"). El
+    # label lo calcula el ingest (sdk.messagingkit): este módulo lo importan
+    # tools, que no pueden arrastrar temporalio (contrato R-DIP).
+    if resume_label:
+        note += (
+            f" Confírmale que le escribimos {resume_label} "
+            "(no prometas otra fecha)."
+        )
+    return note
 
 
 __all__ = [

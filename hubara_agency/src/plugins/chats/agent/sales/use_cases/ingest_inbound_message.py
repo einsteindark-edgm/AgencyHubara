@@ -56,7 +56,10 @@ from src.sdk.messagingkit import (
     OPT_OUT_SOURCE_TEXT,
     detect_marketing_opt_out,
     mark_marketing_opt_out,
+    fresh_resume_label,
     opt_out_campaign_id,
+    register_reengagement_deferral,
+    resolve_local_timezone,
     update_reengagement_index_entry,
 )
 from src.platform.session_history import FilesystemMessageHistoryStore
@@ -305,6 +308,17 @@ class IngestInboundMessage:
                 kind=inbound_signal,
                 text_preview=(parsed.text or "")[:60],
             )
+
+        # Aplazamiento con fecha ("les escribo la otra semana"): hasta esa
+        # fecha el remarketing y el watchdog no le escriben (incidente runs
+        # 337efe8c / ee3cec91: 4 toques en 24h tras el aplazamiento → "No
+        # más"). Una cortesía no la levanta; retomar la charla sí.
+        register_reengagement_deferral(
+            metadata,
+            parsed.text,
+            now_ms=now_ms,
+            tz=resolve_local_timezone(session_id),
+        )
 
         # Opt-out de marketing (plugin marketing, campañas directas): el
         # template aprobado promete "respóndeme NO MÁS y te doy de baja" —
@@ -775,7 +789,9 @@ class IngestInboundMessage:
         # Aplazamiento del cliente ("voy en camino", "luego"): el LLM responde
         # texto breve y no avanza el cierre (las tools de cierre también lo
         # rechazan — defensa en profundidad).
-        deferral_note = build_deferral_note(metadata)
+        deferral_note = build_deferral_note(
+            metadata, resume_label=fresh_resume_label(metadata)
+        )
         # Cupón aplicado en el episodio: el LLM lo recuerda cada turno y sabe
         # que el monto lo calcula el sistema (no promete otro descuento).
         coupon_note = build_coupon_note(metadata)

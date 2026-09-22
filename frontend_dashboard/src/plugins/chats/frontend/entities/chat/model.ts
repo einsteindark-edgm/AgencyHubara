@@ -43,6 +43,24 @@ export const ORDER_BADGE_META: Record<
   cancelled: { label: "pedido cancelado", tone: "cancelled" },
 };
 
+/** Chip + filtro "Pospuestos": el cliente dijo cuándo retoma. */
+export interface ChatPostponedBadge {
+  status: "esperando" | "cita_pendiente" | "cita_enviada" | "vencido";
+  /** Epoch ms de la retoma — ordena la cola del filtro (el más próximo primero). */
+  untilMs: number;
+  /** Lo que se lee en el chip, corto: "Retoma 28 sep" / "Cita ✓ 22 sep". */
+  label: string;
+  /** Lo mismo con palabras, para el tooltip y el texto accesible:
+   *  "cita enviada el mar 22 sep, esperando respuesta". */
+  description: string;
+  /** Lo que escribió el cliente al aplazar, o la nota del operador. */
+  text: string;
+  /** La fecha ya pasó: la fila va en rojo con aviso — hay que retomar. */
+  overdue: boolean;
+  /** Lo puso el equipo desde el inspector (no el cliente). */
+  manual: boolean;
+}
+
 export interface ChatInboxItem {
   id: string;
   name: string;
@@ -63,6 +81,8 @@ export interface ChatInboxItem {
   lastInboundMs: number | null;
   /** Pedido al que pertenece la conversación, o null. */
   order: ChatOrderBadge | null;
+  /** Cliente pospuesto, o null/ausente. */
+  postponed?: ChatPostponedBadge | null;
   tag: ChatTag;
   tagClass: string;
   color: AvatarColor;

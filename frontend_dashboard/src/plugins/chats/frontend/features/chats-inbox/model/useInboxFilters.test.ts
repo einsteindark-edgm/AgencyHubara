@@ -229,3 +229,64 @@ describe("filtro 'Sin respuesta' (escalera de reactivación agotada)", () => {
     expect(ids).toEqual(["a", "c"]);
   });
 });
+
+describe("filtro 'Pospuestos' (el cliente dijo cuándo retoma)", () => {
+  const postponed = (untilMs: number, status: "esperando" | "cita_pendiente" | "cita_enviada" = "esperando") => ({
+    status,
+    untilMs,
+    label: "Retoma",
+    description: "retoma",
+    text: "les escribo la otra semana",
+    overdue: false,
+    manual: false,
+  });
+
+  it("cuenta y muestra SOLO los pospuestos, sin importar la etiqueta", () => {
+    const chats = [
+      chat({ id: "a", tag: "INTERESADO", postponed: postponed(2_000) }),
+      chat({ id: "b", tag: "INTERESADO" }),
+      chat({ id: "c", tag: "FRÍO", postponed: postponed(1_000, "cita_enviada") }),
+    ];
+    const { result } = run(chats);
+    expect(result.current.filters.find((f) => f.key === "Pospuestos")?.count).toBe(2);
+
+    act(() => result.current.setActiveFilter("Pospuestos"));
+    expect(result.current.filtered.map((c) => c.id).sort()).toEqual(["a", "c"]);
+  });
+
+  it("es una cola por fecha de retoma: el más próximo primero, sin partir por día", () => {
+    const chats = [
+      chat({ id: "tarde", dayIso: TODAY, timestamp: 900, postponed: postponed(3_000) }),
+      chat({ id: "pronto", dayIso: "2026-09-01", timestamp: 100, postponed: postponed(1_000) }),
+      chat({ id: "medio", dayIso: "2026-09-05", timestamp: 500, postponed: postponed(2_000) }),
+    ];
+    const { result } = run(chats);
+    act(() => result.current.setActiveFilter("Pospuestos"));
+    expect(result.current.sections.map((s) => s.key)).toEqual(["postponed"]);
+    expect(idsOf(result.current.sections, "postponed")).toEqual(["pronto", "medio", "tarde"]);
+  });
+});
+
+describe("pastilla 'Pospuestos' en rojo si hay vencidos", () => {
+  const p = (overdue: boolean) => ({
+    status: overdue ? ("vencido" as const) : ("esperando" as const),
+    untilMs: 1_000,
+    label: "x",
+    description: "x",
+    text: "",
+    overdue,
+    manual: true,
+  });
+
+  it("con algún vencido la pastilla avisa en rojo", () => {
+    const { result } = run([chat({ id: "a", postponed: p(true) }), chat({ id: "b", postponed: p(false) })]);
+    const meta = result.current.filters.find((f) => f.key === "Pospuestos");
+    expect(meta?.color).toBe("var(--color-danger)");
+    expect(meta?.priority).toBe(true);
+  });
+
+  it("sin vencidos queda en su color normal", () => {
+    const { result } = run([chat({ id: "b", postponed: p(false) })]);
+    expect(result.current.filters.find((f) => f.key === "Pospuestos")?.color).toBe("var(--color-info)");
+  });
+});

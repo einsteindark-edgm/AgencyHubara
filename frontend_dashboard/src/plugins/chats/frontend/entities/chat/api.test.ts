@@ -677,3 +677,90 @@ describe("useChatMessages — eventos del hilo", () => {
     expect(data?.find((m) => m.kind === "in")?.event).toBeUndefined();
   });
 });
+
+describe("pospuesto (filtro 'Pospuestos' de la bandeja)", () => {
+  it("proyecta la fecha de retoma en hora Colombia y el estado de la cita", async () => {
+    const until = Date.UTC(2026, 8, 28, 15, 0); // lun 28-sep 10:00 Bogotá
+    const items = await runInbox([
+      makeSession({
+        postponed: {
+          status: "esperando",
+          kind: "fecha",
+          until_ms: until,
+          resume_label: "el lunes 28 de septiembre",
+          text: "Si, pero les escribo la otra semana",
+        },
+      }),
+    ]);
+    expect(items?.[0]?.postponed).toEqual({
+      status: "esperando",
+      untilMs: until,
+      label: "Retoma 28 sep",
+      description: "retoma el lun 28 sep",
+      text: "Si, pero les escribo la otra semana",
+      overdue: false,
+      manual: false,
+    });
+  });
+
+  it("la cita enviada: chip corto que cabe en la fila, descripción completa", async () => {
+    const until = Date.UTC(2026, 8, 28, 15, 0);
+    const items = await runInbox([
+      makeSession({
+        postponed: {
+          status: "cita_enviada",
+          kind: "fecha",
+          until_ms: until,
+          resume_label: "el lunes 28 de septiembre",
+          text: "les escribo la otra semana",
+        },
+      }),
+    ]);
+    expect(items?.[0]?.postponed?.label).toBe("Cita ✓ 28 sep");
+    expect(items?.[0]?.postponed?.description).toBe(
+      "cita enviada el lun 28 sep, esperando respuesta",
+    );
+  });
+
+  it("sin pospuesto no hay nada", async () => {
+    const items = await runInbox([makeSession()]);
+    expect(items?.[0]?.postponed).toBeNull();
+  });
+});
+
+describe("pospuesto manual y vencido (rojo en la bandeja)", () => {
+  const until = Date.UTC(2026, 8, 28, 15, 0); // lun 28-sep 10:00 Bogotá
+
+  it("el manual del equipo se describe como tal", async () => {
+    const items = await runInbox([
+      makeSession({
+        postponed: {
+          status: "esperando", kind: "manual", until_ms: until,
+          resume_label: "el lunes 28 de septiembre", text: "Llamar para cerrar", overdue: false,
+        },
+      }),
+    ]);
+    expect(items?.[0]?.postponed).toMatchObject({
+      label: "Retoma 28 sep",
+      description: "pospuesto por el equipo hasta el lun 28 sep",
+      overdue: false,
+      manual: true,
+    });
+  });
+
+  it("vencido: marca overdue y pide retomar", async () => {
+    const items = await runInbox([
+      makeSession({
+        postponed: {
+          status: "vencido", kind: "manual", until_ms: until,
+          resume_label: "el lunes 28 de septiembre", text: "Llamar para cerrar", overdue: true,
+        },
+      }),
+    ]);
+    expect(items?.[0]?.postponed).toMatchObject({
+      label: "Retomar 28 sep",
+      description: "había que retomar el lun 28 sep",
+      overdue: true,
+    });
+  });
+});

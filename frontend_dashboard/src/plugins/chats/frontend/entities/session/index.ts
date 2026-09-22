@@ -2,6 +2,7 @@ export type {
   ChatSession,
   SessionDetails,
   SessionOrderRef,
+  SessionPostponed,
   SessionOrigin,
   StatusHistoryEntry,
 } from "./model";
@@ -10,6 +11,7 @@ export {
   sessionDetailsSchema,
   sessionOrderRefSchema,
   sessionOriginSchema,
+  sessionPostponedSchema,
   sessionsListResponseSchema,
   statusHistoryEntrySchema,
 } from "./contracts";

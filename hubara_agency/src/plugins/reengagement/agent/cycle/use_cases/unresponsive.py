@@ -47,7 +47,7 @@ def _can_continue_for_free(now_ms: int, metadata: dict[str, Any]) -> bool:
     ):
         return True
     lead = lead_state_from_metadata(metadata)
-    return lead.transactional_hook or lead.allow_paid_marketing
+    return lead.transactional_hook or lead.may_pay_marketing
 
 
 def unresponsive_session_ids(

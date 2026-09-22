@@ -12,6 +12,8 @@ La elección es determinista (sin LLM — el copy vive aprobado en Meta):
 
 Regla del operador "no perder dinero": las plantillas de la escalera son de
 MARKETING, así que salen SOLO cuando son gratis (ventana de 72h del anuncio).
+Excepción: la CITA del cliente ("les escribo la otra semana") sale ese día
+aunque sea pagada — UN toque con el seguimiento genérico.
 Fuera de ella la central puede recomendar una `utility` paga (gancho
 transaccional) — 15× más barata que lo que mandaríamos acá — y ese seguimiento
 ya tiene dueño (watchdog / ETA / verificación humana del pago): la escalera
@@ -28,7 +30,11 @@ from typing import Any
 
 from temporalio import activity
 
-from src.sdk.messagingkit import lead_state_from_metadata, send_template_to_session
+from src.sdk.messagingkit import (
+    appointment_pending,
+    lead_state_from_metadata,
+    send_template_to_session,
+)
 from src.sdk.runtime import with_heartbeat
 
 TEMPLATE_FOLLOWUP = "followup_interest_marketing_v1"
@@ -41,6 +47,11 @@ def choose_ladder_template(
     metadata: dict[str, Any], *, is_free: bool
 ) -> tuple[str, dict[str, str]] | None:
     """metadata → (template_name, variables), o None si no corresponde. Pura."""
+    if appointment_pending(metadata):
+        # CITA: el cliente dijo cuándo retoma ("les escribo la otra semana").
+        # Decisión del operador (2026-09-22): el seguimiento genérico, aunque
+        # sea pagado — es UN toque que el cliente mismo pidió.
+        return TEMPLATE_FOLLOWUP, {}
     if not is_free:
         return None  # marketing pago: no se pierde dinero en quien no contestó
     lead = lead_state_from_metadata(metadata)

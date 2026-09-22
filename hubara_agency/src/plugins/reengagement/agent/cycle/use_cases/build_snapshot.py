@@ -12,6 +12,7 @@ from src.sdk.messagingkit import (
     decide_reengagement,
     ladder_state,
     lead_state_from_metadata,
+    reengagement_deferred_until,
 )
 
 #: máximo de toques recientes reportados por conversación (el nodo `plan` del
@@ -142,7 +143,9 @@ def conversation_entry(
             "has_registered_order": lead.has_registered_order,
             "is_ctwa_lead": lead.is_ctwa_lead,
             "engaged": lead.engaged,
-            "allow_paid_marketing": lead.allow_paid_marketing,
+            # Opt-in del operador O cita del cliente: el espejo de GraphAgents
+            # (parse_conversations) decide el marketing pago con este flag.
+            "allow_paid_marketing": lead.may_pay_marketing,
             # Cierre del último episodio: la supresión already_purchased del
             # espejo (parse-conversations) lo necesita pre-digerido.
             "last_closing_tag": lead.last_closing_tag,
@@ -197,6 +200,13 @@ def build_snapshot_from_sessions(
             # promesa del body se cumple — ningún toque proactivo más.
             prefiltered["marketing_opt_out"] = (
                 prefiltered.get("marketing_opt_out", 0) + 1
+            )
+            continue
+        if reengagement_deferred_until(metadata, now_ms) is not None:
+            # El cliente dijo cuándo retoma ("les escribo la otra semana"):
+            # hasta esa fecha no se lo reactiva.
+            prefiltered["customer_deferred"] = (
+                prefiltered.get("customer_deferred", 0) + 1
             )
             continue
         lead = lead_state_from_metadata(metadata)

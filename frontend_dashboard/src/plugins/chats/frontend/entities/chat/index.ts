@@ -3,6 +3,7 @@ export type {
   ChatInboxItem,
   ChatMessageItem,
   ChatOrderBadge,
+  ChatPostponedBadge,
   ChatQuote,
   ChatTag,
   AvatarColor,

@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.platform.whatsapp.cost import RateCard
+from src.platform.whatsapp.reengagement_deferral import appointment_pending
 from src.platform.whatsapp.window import (
     is_in_ctwa_window,
     is_in_service_window,
@@ -261,6 +262,14 @@ class LeadState:
     #: RETOMA_VENTA) — este campo preserva "la compra ya se hizo" para la
     #: supresión de re-targeting. Default None = backward-compat (golden).
     last_closing_tag: str | None = None
+    #: El cliente aplazó CON FECHA y la cita no se cumplió todavía: habilita
+    #: UN marketing pago, como `allow_paid_marketing` (decisión 2026-09-22).
+    appointment_pending: bool = False
+
+    @property
+    def may_pay_marketing(self) -> bool:
+        """Opt-in de marketing pago: el del operador o la cita del cliente."""
+        return self.allow_paid_marketing or self.appointment_pending
 
     @property
     def transactional_hook(self) -> bool:
@@ -306,6 +315,7 @@ def lead_state_from_metadata(metadata: dict[str, Any]) -> LeadState:
         engaged=engaged,
         allow_paid_marketing=bool(metadata.get("allow_paid_marketing")),
         last_closing_tag=closing_tag if isinstance(closing_tag, str) else None,
+        appointment_pending=appointment_pending(metadata),
     )
 
 
@@ -430,7 +440,8 @@ def decide_reengagement(
         return evaluate_send(
             now_ms, metadata, CHANNEL_TEMPLATE, CATEGORY_UTILITY, rate_card
         )
-    if lead.allow_paid_marketing:
+    if lead.may_pay_marketing:
+        # Opt-in del operador o CITA del cliente (el día que dijo que retoma).
         return evaluate_send(
             now_ms, metadata, CHANNEL_TEMPLATE, CATEGORY_MARKETING, rate_card
         )

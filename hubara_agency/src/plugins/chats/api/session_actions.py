@@ -45,6 +45,7 @@ Reglas:
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
 import re
 import time
@@ -85,6 +86,13 @@ from src.sdk.connectorkit import (
     get_order_registration_port,
 )
 from src.sdk.eventkit import dispatch_envelope_with_client, envelope_for
+from src.sdk.messagingkit import (
+    clear_postponement,
+    manual_postpone_until_ms,
+    postponed_view,
+    resolve_local_timezone,
+    set_manual_postponement,
+)
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, FilesystemMetadataStore, get_temporal_client
 
 router = APIRouter()
@@ -260,6 +268,15 @@ class OperatorTagBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tag: OPERATOR_TAGS
     motivo: str = Field(min_length=1, max_length=2000)
+
+
+class PostponeBody(BaseModel):
+    """ "Posponer" del inspector: retomar el chat el `date` (10:00 hora local del
+    cliente). `note` = qué hay que retomar (se ve en la fila del filtro)."""
+
+    model_config = ConfigDict(extra="forbid")
+    date: dt.date
+    note: str = Field(default="", max_length=500)
 
 
 class EscalateBody(BaseModel):
@@ -668,6 +685,62 @@ async def operator_tag(session_key: SessionKey, body: OperatorTagBody, deps: Dep
         "active_route": outcome.get("route", ROUTE_VENTAS),
         "episode_closed": {"episode_id": closed_id, "closing_tag": body.tag} if closed_id else None,
     }
+
+
+@router.post("/session-actions/{session_key}/postpone")
+async def postpone(session_key: SessionKey, body: PostponeBody, deps: Deps) -> dict[str, Any]:
+    """Pospuesto MANUAL (pedido del operador 2026-09-22): el equipo marca
+    "retomar el <fecha>" — también en chats que tomó un humano. Pausa los
+    toques proactivos hasta la fecha, no agenda cita (retoma el humano) y la
+    fila entra al filtro "Pospuestos"; vencida, se pinta en rojo. La ruta y
+    la etiqueta NO se tocan."""
+    session = _session(session_key)
+    tz = resolve_local_timezone(session)
+    now_ms = _now_ms()
+    if body.date < dt.datetime.fromtimestamp(now_ms / 1000, tz=tz).date():
+        raise HTTPException(status_code=422, detail="la fecha ya pasó")
+    until_ms = manual_postpone_until_ms(body.date, tz)
+
+    def _mutate(data: dict[str, Any]) -> dict[str, Any] | None:
+        if not data:
+            return None  # sin metadata no se inventa una sesión
+        set_manual_postponement(
+            data, until_ms=until_ms, now_ms=now_ms, note=body.note.strip(), tz=tz
+        )
+        return data
+
+    try:
+        async with _session_lock(session):
+            updated = FilesystemMetadataStore(deps.vault_dir).update(session, _mutate)
+    finally:
+        _release_session_lock(session)
+    if not updated:
+        raise HTTPException(status_code=404, detail="sesión no encontrada")
+    logger.info("[chats.session_actions] postpone session={} until_ms={}", session, until_ms)
+    return {"postponed": postponed_view(updated, now_ms)}
+
+
+@router.delete("/session-actions/{session_key}/postpone")
+async def clear_postpone(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
+    """Quitar el pospuesto (el manual o el que dejó el cliente): el chat sale
+    del filtro y la escalera vuelve a correr normal."""
+    session = _session(session_key)
+
+    def _mutate(data: dict[str, Any]) -> dict[str, Any] | None:
+        if not data:
+            return None
+        clear_postponement(data)
+        return data
+
+    try:
+        async with _session_lock(session):
+            updated = FilesystemMetadataStore(deps.vault_dir).update(session, _mutate)
+    finally:
+        _release_session_lock(session)
+    if not updated:
+        raise HTTPException(status_code=404, detail="sesión no encontrada")
+    logger.info("[chats.session_actions] clear-postpone session={}", session)
+    return {"postponed": None}
 
 
 @router.post("/session-actions/{session_key}/escalate")

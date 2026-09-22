@@ -77,6 +77,21 @@ from src.platform.whatsapp.marketing_opt_out import (
     opt_out_campaign_id as opt_out_campaign_id,
 )
 
+# Aplazamiento del cliente ("les escribo la otra semana"): el ingest de chats
+# estampa la fecha de retoma; el ciclo, la central y el watchdog no tocan
+# proactivamente hasta esa fecha.
+from src.platform.whatsapp.reengagement_deferral import (
+    DEFERRAL_KEY as DEFERRAL_KEY,
+    appointment_pending as appointment_pending,
+    fresh_resume_label as fresh_resume_label,
+    postponed_view as postponed_view,
+    clear_postponement as clear_postponement,
+    manual_postpone_until_ms as manual_postpone_until_ms,
+    set_manual_postponement as set_manual_postponement,
+    register_reengagement_deferral as register_reengagement_deferral,
+    reengagement_deferred_until as reengagement_deferred_until,
+)
+
 # El send de templates aprobados, para plugins que mandan proactivo (marketing:
 # campañas directas). La activity se registra en el worker del plugin; la
 # función pura es la unidad testeable sin Temporal. El template DEBE existir en

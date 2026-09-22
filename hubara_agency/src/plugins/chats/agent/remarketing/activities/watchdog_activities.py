@@ -40,6 +40,7 @@ from src.platform.whatsapp.templates.registry import (
 from src.platform.whatsapp.composition import get_template_registry
 from src.sdk.messagingkit import (
     is_quiet_hours_for_session,
+    reengagement_deferred_until,
     resolve_local_timezone,
 )
 from src.platform.whatsapp.window import watchdog_pre_expiry_ms
@@ -433,6 +434,26 @@ async def check_watchdog_eligibility_activity(
     #    pedido (OrderFacts) manda sobre las etiquetas del chat.
     order_facts = await _watchdog_order_facts(metadata)
     stage = _infer_episode_stage(metadata, order_facts)
+    # 4.5. El empujón de VENTA (`awaiting_quote`) respeta la baja de marketing
+    #      y el aplazamiento del cliente ("les escribo la otra semana"). Los
+    #      avisos de un pedido que el cliente hizo (pago pendiente, post-compra)
+    #      son servicio y siguen saliendo.
+    if stage == "awaiting_quote":
+        skip_reason = None
+        if metadata.get("marketing_opt_out"):
+            skip_reason = "marketing_opt_out"
+        elif reengagement_deferred_until(metadata, now_ms) is not None:
+            skip_reason = "customer_deferred"
+        if skip_reason is not None:
+            log.info(
+                "watchdog_eligibility_skipped",
+                session_id=session_id,
+                episode_id=episode_id,
+                reason=skip_reason,
+                stage=stage,
+            )
+            return WatchdogEligibilityResult(eligible=False, reason=skip_reason)
+
     registry = get_template_registry()
     spec = get_watchdog_template_for_stage(registry, stage or "")
     if spec is None:

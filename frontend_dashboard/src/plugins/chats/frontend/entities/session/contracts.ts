@@ -39,6 +39,24 @@ export const sessionOrderRefSchema = z.object({
   count: z.number().default(1),
 });
 
+/**
+ * Cliente POSPUESTO («les escribo la otra semana»), o null. Lo decide el
+ * backend (`postponed_view`): está desde que aplazó hasta que retoma la charla
+ * o queda SIN_RESPUESTA. `status`: esperando la fecha / la cita llegó y no
+ * salió / la cita salió y espera respuesta / `vencido` (pospuesto MANUAL del
+ * equipo con la fecha pasada). `kind: "manual"` = lo puso el operador.
+ * `until_ms` = epoch ms de la retoma.
+ */
+export const sessionPostponedSchema = z.object({
+  status: z.enum(["esperando", "cita_pendiente", "cita_enviada", "vencido"]),
+  kind: z.string().nullable().default(null),
+  until_ms: z.number(),
+  resume_label: z.string().nullable().default(null),
+  text: z.string().default(""),
+  // La fecha ya pasó: la fila se pinta en rojo (hay que retomar).
+  overdue: z.boolean().default(false),
+});
+
 export const chatSessionSchema = z.object({
   session_id: z.string(),
   phone_number: z.string(),
@@ -62,6 +80,9 @@ export const chatSessionSchema = z.object({
   last_inbound_ms: z.number().nullable().default(null),
   // `.default(null)` tolera snapshots viejos del SSE durante el rollout.
   origin: sessionOriginSchema.nullable().default(null),
+  // Filtro "Pospuestos" (ver `sessionPostponedSchema`). `.default(null)`
+  // tolera un backend sin desplegar todavía.
+  postponed: sessionPostponedSchema.nullable().default(null),
 });
 
 export const statusHistoryEntrySchema = z.object({

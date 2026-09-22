@@ -27,10 +27,10 @@ export type { DateRange };
 
 export type InboxFilter =
   | "Humano" | "Todas" | "Interesado" | "Pendiente" | "Cliente" | "Remarketing" | "Frío"
-  | "Sin respuesta";
+  | "Sin respuesta" | "Pospuestos";
 
 export interface InboxSection {
-  key: "pinned" | "waiting" | "today" | "earlier" | "results";
+  key: "pinned" | "waiting" | "postponed" | "today" | "earlier" | "results";
   title: string;
   items: ChatInboxItem[];
 }
@@ -113,17 +113,37 @@ export function useInboxFilters(chats: ChatInboxItem[], options: Options = {}) {
       { key: "Frío",        count: byTag("Frío"),       color: "rgba(235,235,235,0.55)" },
       // Agotó la escalera de reactivación sin contestar (tag SIN_RESPUESTA).
       { key: "Sin respuesta", count: byTag("Sin respuesta"), color: "var(--fg-muted)" },
+      // Dijo cuándo retoma («les escribo la otra semana»): no es una etiqueta
+      // sino un estado — sale cuando retoma la charla o queda SIN_RESPUESTA.
+      // Con algún vencido (fecha pasada) la pastilla avisa en rojo: hay que retomar.
+      {
+        key: "Pospuestos",
+        count: inScope.filter((c) => c.postponed).length,
+        ...(inScope.some((c) => c.postponed?.overdue)
+          ? { color: "var(--color-danger)", priority: true }
+          : { color: "var(--color-info)" }),
+      },
     ];
   }, [inScope]);
 
   const filtered = useMemo(() => {
     if (activeFilter === "Humano") return inScope.filter((c) => c.human);
     if (activeFilter === "Todas") return inScope;
+    if (activeFilter === "Pospuestos") return inScope.filter((c) => c.postponed);
     return inScope.filter((c) => TAG_TO_FILTER[c.tag] === activeFilter);
   }, [inScope, activeFilter]);
 
   const sections: InboxSection[] = useMemo(() => {
     const out: InboxSection[] = [];
+    // Pospuestos es una COLA por fecha de retoma (el más próximo primero):
+    // lo que el operador vigila es quién toca ahora, no cuándo escribió.
+    if (activeFilter === "Pospuestos") {
+      const queue = [...filtered].sort(
+        (a, b) => (a.postponed?.untilMs ?? 0) - (b.postponed?.untilMs ?? 0),
+      );
+      if (queue.length > 0) out.push({ key: "postponed", title: "Por retomar", items: queue });
+      return out;
+    }
     const pinned = filtered.filter((c) => c.pinned).sort(byRecency);
     const rest = filtered.filter((c) => !c.pinned).sort(byRecency);
 
