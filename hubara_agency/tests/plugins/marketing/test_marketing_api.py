@@ -642,7 +642,7 @@ def test_get_campaign_audience_oculta_las_sesiones_de_prueba(
 ) -> None:
     _seed_session(
         _isolate_vault_dir,
-        "wa_573000000901",
+        "wa_573000000004",
         {"tag": "COMPRA_EXITOSA", "seeded_test": True},
     )
     _seed_session(_isolate_vault_dir, "wa_+571", {"tag": "COMPRA_EXITOSA"})
