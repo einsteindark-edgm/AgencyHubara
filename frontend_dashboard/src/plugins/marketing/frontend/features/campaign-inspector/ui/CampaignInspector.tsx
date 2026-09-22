@@ -15,6 +15,7 @@ import { Icon } from "@/shared/ui";
 
 import {
   campaignChecklist,
+  campaignMessageLine,
   campaignOfferLine,
   OPT_OUT_LINE,
   useCampaignOrdersEvents,
@@ -82,7 +83,9 @@ export function CampaignInspector({ campaign }: Props) {
 /* ── Preview: mock de teléfono estilo WhatsApp ──────────────────────────── */
 
 function TemplatePreview({ campaign }: { campaign: Campaign }) {
-  const m = campaign.message;
+  // Tal cual viaja: encabezado + cuerpo en un párrafo (sin pie ni botón —
+  // la plantilla aprobada no los tiene).
+  const messageLine = campaignMessageLine(campaign.message);
   return (
     <div className="rounded-2xl border border-line bg-canvas p-2.5">
       {/* "Pantalla" del teléfono */}
@@ -98,9 +101,8 @@ function TemplatePreview({ campaign }: { campaign: Campaign }) {
         {/* Burbuja entrante del negocio */}
         <div className="max-w-[92%] rounded-lg rounded-tl-none border border-line bg-inspector px-2.5 py-2 text-[12px] leading-relaxed text-fg">
           <p className="font-semibold">¡Hola Camila! 👋</p>
-          {m.header.trim() ? <p className="mt-1 font-semibold">{m.header}</p> : null}
-          {m.body.trim() ? (
-            <p className="mt-1 whitespace-pre-wrap">{m.body}</p>
+          {messageLine ? (
+            <p className="mt-1">{messageLine}</p>
           ) : (
             <p className="mt-1 italic text-fg-faint">
               El cuerpo del mensaje aparecerá acá…
@@ -110,16 +112,7 @@ function TemplatePreview({ campaign }: { campaign: Campaign }) {
           <p className="mt-1.5 text-[10.5px] leading-snug text-fg-muted">
             {OPT_OUT_LINE}
           </p>
-          {m.footer.trim() ? (
-            <p className="mt-1 text-[10.5px] text-fg-faint">{m.footer}</p>
-          ) : null}
         </div>
-
-        {m.cta.trim() ? (
-          <div className="max-w-[92%] rounded-lg border border-line bg-inspector px-2.5 py-1.5 text-center text-[11.5px] font-semibold text-info">
-            {m.cta}
-          </div>
-        ) : null}
 
         {campaign.carouselHandles.length > 0 ? (
           <CarouselPreview handles={campaign.carouselHandles} />

@@ -52,7 +52,7 @@ function makeCampaign(id: string) {
     couponCode: "",
     validUntil: "",
     segments: [],
-    message: { header: "", body: "", footer: "", cta: "" },
+    message: { header: "", body: "" },
     templateName: "t",
     scheduleAtMs: null,
     createdAtMs: 1,

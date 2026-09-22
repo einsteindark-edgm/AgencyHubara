@@ -9,11 +9,11 @@
 
 import { z } from "zod";
 
+// Solo header + body: la plantilla no tiene pie ni botón. Campañas viejas
+// guardadas con `footer`/`cta` los traen igual — z.object los descarta.
 export const backendCampaignMessageSchema = z.object({
   header: z.string().default(""),
   body: z.string().default(""),
-  footer: z.string().default(""),
-  cta: z.string().default(""),
 });
 
 export const backendSkippedRecipientSchema = z.object({
@@ -55,12 +55,7 @@ export const backendCampaignSchema = z.object({
   segments: z.array(z.string()).default([]),
   // Zod v4: `.default()` NO re-parsea el valor por el schema interno — el
   // default debe ser el output completo.
-  message: backendCampaignMessageSchema.default({
-    header: "",
-    body: "",
-    footer: "",
-    cta: "",
-  }),
+  message: backendCampaignMessageSchema.default({ header: "", body: "" }),
   template_name: z.string().default("campaign_promo_marketing_v1"),
   schedule_at_ms: z.number().int().nullable().default(null),
   created_at_ms: z.number().int().default(0),

@@ -27,7 +27,7 @@ const draftFixture = {
   coupon_code: "",
   valid_until: "",
   segments: [],
-  message: { header: "", body: "", footer: "", cta: "" },
+  message: { header: "", body: "" },
   template_name: "campaign_promo_marketing_v1",
   schedule_at_ms: null,
   created_at_ms: 1_784_600_000_000,
@@ -51,8 +51,6 @@ const sentFixture = {
   message: {
     header: "¡Se acerca el Día del Padre! 🎁",
     body: "Tenemos 20% de descuento en toda la tienda.",
-    footer: "",
-    cta: "Ver catálogo",
   },
   sent_at_ms: 1_784_700_000_000,
   send_result: {
@@ -97,7 +95,7 @@ describe("backendCampaignSchema", () => {
     expect(parsed.goal).toBe("");
     expect(parsed.percent).toBe(0);
     expect(parsed.segments).toEqual([]);
-    expect(parsed.message).toEqual({ header: "", body: "", footer: "", cta: "" });
+    expect(parsed.message).toEqual({ header: "", body: "" });
     expect(parsed.send_result).toBeNull();
     expect(parsed.test_sends).toEqual([]);
     expect(parsed.schedule_at_ms).toBeNull();
@@ -228,5 +226,15 @@ describe("backendCampaignStatsSchema", () => {
     });
     expect(parsed.planned).toBeNull();
     expect(parsed.spent_usd_micros).toBeNull();
+  });
+});
+
+describe("backendCampaignSchema — campañas viejas con pie/botón", () => {
+  it("descarta footer y cta: la plantilla no los tiene y no deben volver a mostrarse", () => {
+    const parsed = backendCampaignSchema.parse({
+      ...draftFixture,
+      message: { header: "H", body: "B", footer: "Pie viejo", cta: "Ver catálogo" },
+    });
+    expect(parsed.message).toEqual({ header: "H", body: "B" });
   });
 });

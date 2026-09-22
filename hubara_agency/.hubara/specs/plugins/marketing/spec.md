@@ -137,3 +137,19 @@ reconociendo también seeds viejos sin marker por su historial.
 - GIVEN una sesión `wa_5730000009XX` con `seeded_test: true` y tag INTERESADO
 - WHEN se resuelve la audiencia de una campaña a interesados
 - THEN no está en `recipients` ni en `skipped` de la API y el envío nunca la toca
+
+### Requirement: El mensaje de campaña solo ofrece lo que viaja en la plantilla
+
+Las plantillas aprobadas (`campaign_promo_marketing` y las de carrusel) tienen
+un único cuerpo con saludo + mensaje + oferta y el texto de baja fijo: NO
+tienen pie ni botón (Meta los fija al aprobar y no admiten variables; el
+carrusel no admite pie). El builder MUST NOT ofrecer campos de pie o botón, la
+campaña guarda solo `message: {header, body}` (un `footer`/`cta` entrante se
+ignora) y la vista previa SHALL mostrar el mensaje tal cual viaja: encabezado +
+cuerpo en un solo párrafo ("Encabezado. Cuerpo"), seguido de la oferta y la baja.
+
+#### Scenario: Campaña vieja con pie y botón guardados
+
+- GIVEN una campaña con `message.footer` y `message.cta` de antes de este cambio
+- WHEN el operador la abre o la edita
+- THEN la vista previa no los muestra y el siguiente guardado los elimina

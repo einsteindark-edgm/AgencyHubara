@@ -16,7 +16,7 @@ const backendSent: BackendCampaign = {
   coupon_code: "PAPA20",
   valid_until: "15 de junio",
   segments: ["clientes", "interesados"],
-  message: { header: "H", body: "B", footer: "F", cta: "C" },
+  message: { header: "H", body: "B" },
   template_name: "campaign_promo_marketing_v1",
   schedule_at_ms: null,
   created_at_ms: 1_784_600_000_000,
@@ -128,11 +128,11 @@ describe("patchToBody", () => {
     expect(
       patchToBody({
         segments: ["frios"],
-        message: { header: "H", body: "B", footer: "", cta: "" },
+        message: { header: "H", body: "B" },
       }),
     ).toEqual({
       segments: ["frios"],
-      message: { header: "H", body: "B", footer: "", cta: "" },
+      message: { header: "H", body: "B" },
     });
   });
 });

@@ -110,10 +110,11 @@ class CreateCampaignBody(BaseModel):
 
 
 class MessageBody(BaseModel):
+    # La plantilla aprobada solo tiene cuerpo (saludo + mensaje + oferta +
+    # baja fija): pie y botón no existen. Si un dashboard viejo los manda,
+    # pydantic los ignora.
     header: str = Field(default="", max_length=60)
     body: str = Field(default="", max_length=640)
-    footer: str = Field(default="", max_length=60)
-    cta: str = Field(default="", max_length=20)
 
 
 class UpdateCampaignBody(BaseModel):
@@ -222,7 +223,9 @@ def update_campaign(campaign_id: str, body: UpdateCampaignBody) -> dict:
                 ),
             )
     if "message" in patch:
-        patch["message"] = {**campaign["message"], **patch["message"]}
+        # Solo header/body: una campaña vieja con footer/cta los pierde acá.
+        merged = {**campaign["message"], **patch["message"]}
+        patch["message"] = {"header": merged.get("header", ""), "body": merged.get("body", "")}
     campaign.update(patch)
     campaign["updated_at_ms"] = _now_ms()
     _store().save(campaign)

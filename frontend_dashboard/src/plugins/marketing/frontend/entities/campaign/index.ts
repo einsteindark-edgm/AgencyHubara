@@ -18,6 +18,7 @@ export {
   CAMPAIGN_GOALS,
   CAMPAIGN_STATUS_META,
   campaignChecklist,
+  campaignMessageLine,
   campaignOfferLine,
   campaignReadyToSend,
   CAROUSEL_MAX_CARDS,

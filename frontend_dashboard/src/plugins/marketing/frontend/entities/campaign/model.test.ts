@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   campaignChecklist,
+  campaignMessageLine,
   campaignOfferLine,
   carouselSizeError,
   goalUsesDiscount,
@@ -25,7 +26,7 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     couponCode: "",
     validUntil: "",
     segments: [],
-    message: { header: "", body: "", footer: "", cta: "" },
+    message: { header: "", body: "" },
     templateName: "campaign_promo_marketing_v1",
     scheduleAtMs: null,
     createdAtMs: 1,
@@ -100,7 +101,7 @@ describe("campaignChecklist", () => {
         makeCampaign({
           goal,
           percent: goal === "launch" ? 0 : 10,
-          message: { header: "", body: "Hola", footer: "", cta: "" },
+          message: { header: "", body: "Hola" },
           segments: ["clientes"],
         }),
       );
@@ -113,7 +114,7 @@ describe("campaignChecklist", () => {
     const items = campaignChecklist(
       makeCampaign({
         goal: "launch",
-        message: { header: "", body: "Hola", footer: "", cta: "" },
+        message: { header: "", body: "Hola" },
         importedContacts: [{ phone: "573001234567", name: null }],
       }),
     );
@@ -149,7 +150,7 @@ describe("campaignChecklist", () => {
         goal: "discount_general",
         percent: 20,
         segments: ["clientes"],
-        message: { header: "", body: "Hay 20% off", footer: "", cta: "" },
+        message: { header: "", body: "Hay 20% off" },
       }),
     );
     expect(items.filter((i) => i.required).every((i) => i.done)).toBe(true);
@@ -161,5 +162,29 @@ describe("OPT_OUT_LINE", () => {
     expect(OPT_OUT_LINE).toBe(
       'Si prefieres no recibir más promociones, respóndeme "NO MÁS" y te doy de baja.',
     );
+  });
+});
+
+describe("campaignMessageLine — el mensaje tal cual lo recibe el cliente", () => {
+  it("une encabezado y cuerpo en una oración, como el envío", () => {
+    expect(
+      campaignMessageLine({ header: "¡Se acerca el Día del Padre!", body: "Tenemos 20% off." }),
+    ).toBe("¡Se acerca el Día del Padre! Tenemos 20% off.");
+  });
+
+  it("encabezado sin puntuación final recibe punto", () => {
+    expect(campaignMessageLine({ header: "Nueva colección", body: "Ya llegó." })).toBe(
+      "Nueva colección. Ya llegó.",
+    );
+  });
+
+  it("colapsa saltos de línea y espacios (Meta no los acepta en variables)", () => {
+    expect(campaignMessageLine({ header: "", body: "Hola\n\nvelas    nuevas\t" })).toBe(
+      "Hola velas nuevas",
+    );
+  });
+
+  it("vacío si no hay ni encabezado ni cuerpo", () => {
+    expect(campaignMessageLine({ header: "  ", body: "" })).toBe("");
   });
 });

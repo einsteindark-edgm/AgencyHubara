@@ -17,11 +17,12 @@ export type CampaignStatus =
 
 export type CampaignGoal = "" | "discount_general" | "discount_product" | "launch";
 
+/** Lo que el operador escribe. La plantilla aprobada de Meta solo tiene un
+ *  cuerpo con 3 variables (saludo, mensaje, oferta) + la baja fija: NO tiene
+ *  pie ni botón, por eso no existen acá. */
 export interface CampaignMessage {
   header: string;
   body: string;
-  footer: string;
-  cta: string;
 }
 
 export interface SkippedRecipient {
@@ -194,6 +195,25 @@ export const OPT_OUT_LINE =
  * Línea de oferta del template — espejo EXACTO de `_campaign_offer_line`:
  * cupón > porcentaje > invitación genérica. Siempre non-empty.
  */
+const SENTENCE_END = [".", "!", "?", "…", ":", ";"];
+
+function singleLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/** El mensaje TAL CUAL lo recibe el cliente — espejo de
+ *  `campaign_template_variables` del backend: encabezado + cuerpo en una sola
+ *  línea ("Encabezado. Cuerpo"), porque Meta rechaza variables con saltos de
+ *  línea o espacios repetidos. */
+export function campaignMessageLine(message: CampaignMessage): string {
+  let header = singleLine(message.header);
+  const body = singleLine(message.body);
+  if (header && body && !SENTENCE_END.some((end) => header.endsWith(end))) {
+    header += ".";
+  }
+  return [header, body].filter(Boolean).join(" ");
+}
+
 export function campaignOfferLine(
   c: Pick<Campaign, "couponCode" | "percent" | "validUntil">,
 ): string {
