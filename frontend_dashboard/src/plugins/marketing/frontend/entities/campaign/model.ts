@@ -82,6 +82,8 @@ export interface Campaign {
   extraSessionIds: string[];
   /** Audiencia importada desde un CSV (no necesitan sesión previa). */
   importedContacts: ImportedContact[];
+  /** Productos del carrusel (handles, en orden). [] = plantilla simple. */
+  carouselHandles: string[];
 }
 
 export interface CampaignStats {
@@ -113,6 +115,8 @@ export interface CampaignPatch {
   /** REPLACE completo de las listas de curaduría (no merge). */
   excludedSessionIds?: string[];
   extraSessionIds?: string[];
+  /** REPLACE completo de los productos del carrusel. */
+  carouselHandles?: string[];
 }
 
 /** Response de POST /send — el workflow Temporal ya arrancó (o quedó
@@ -175,6 +179,17 @@ export function goalUsesDiscount(goal: CampaignGoal): boolean {
   return goal !== "" && goal !== "launch";
 }
 
+/** Límites de Meta para el carrusel (espejo de CAROUSEL_MIN/MAX_CARDS). */
+export const CAROUSEL_MIN_CARDS = 2;
+export const CAROUSEL_MAX_CARDS = 10;
+
+/** Espejo de `carousel_size_error`: null si 0 o 2..10 productos. */
+export function carouselSizeError(handles: string[]): string | null {
+  const n = handles.length;
+  if (n === 0 || (n >= CAROUSEL_MIN_CARDS && n <= CAROUSEL_MAX_CARDS)) return null;
+  return `El carrusel lleva entre ${CAROUSEL_MIN_CARDS} y ${CAROUSEL_MAX_CARDS} productos (elegiste ${n}).`;
+}
+
 /** Texto fijo de opt-out del template MARKETING aprobado por Meta. */
 export const OPT_OUT_LINE =
   'Si prefieres no recibir más promociones, respóndeme "NO MÁS" y te doy de baja.';
@@ -228,6 +243,14 @@ export function campaignChecklist(c: Campaign): ChecklistItem[] {
       key: "discount",
       label: "Descuento definido",
       done: c.percent > 0,
+      required: true,
+    });
+  }
+  if (c.carouselHandles.length > 0) {
+    items.push({
+      key: "carousel",
+      label: `Carrusel: ${CAROUSEL_MIN_CARDS} a ${CAROUSEL_MAX_CARDS} productos`,
+      done: carouselSizeError(c.carouselHandles) === null,
       required: true,
     });
   }

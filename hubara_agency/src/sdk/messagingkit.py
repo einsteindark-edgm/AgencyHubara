@@ -79,6 +79,15 @@ from src.platform.whatsapp.activities import (
     send_template_to_session as send_template_to_session,
     send_whatsapp_template_activity as send_whatsapp_template_activity,
 )
+# Tarjeta de un carrusel de plantilla MARKETING (campañas con productos).
+from src.platform.whatsapp.dtos import (
+    CarouselCard as CarouselCard,
+)
+from src.platform.whatsapp.templates.registry import (
+    CAROUSEL_MAX_CARDS as CAROUSEL_MAX_CARDS,
+    CAROUSEL_MIN_CARDS as CAROUSEL_MIN_CARDS,
+    carousel_template_name as carousel_template_name,
+)
 from src.platform.whatsapp.send_policy import (
     LeadState as LeadState,
     SendDecision as SendDecision,

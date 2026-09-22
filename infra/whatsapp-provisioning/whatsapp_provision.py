@@ -581,8 +581,9 @@ def _resumable_upload(cfg: dict, path: str) -> str | None:
 
 def _template_components(cfg: dict, d: dict) -> list | None:
     """Componentes del template para Meta: HEADER IMAGE (si la definición lo
-    declara, con la foto de ejemplo subida) + BODY. None si la foto de ejemplo
-    no se pudo subir — mejor no someter que someter una plantilla rota."""
+    declara, con la foto de ejemplo subida) + BODY (+ CAROUSEL si la definición
+    trae `carousel`). None si la foto de ejemplo no se pudo subir — mejor no
+    someter que someter una plantilla rota."""
     components = []
     header = d.get("header")
     if header:
@@ -596,7 +597,39 @@ def _template_components(cfg: dict, d: dict) -> list | None:
             "example": {"header_handle": [handle]},
         })
     components.append(_body_component(d))
+    carousel = d.get("carousel")
+    if carousel:
+        cards = _carousel_component(cfg, carousel)
+        if cards is None:
+            return None
+        components.append(cards)
     return components
+
+
+def _carousel_component(cfg: dict, carousel: dict) -> dict | None:
+    """CAROUSEL de media cards: `cards` tarjetas IDÉNTICAS (Meta exige los
+    mismos componentes en todas), cada una con HEADER IMAGE (la foto de
+    ejemplo se sube UNA vez y se reutiliza), BODY con su ejemplo y BUTTONS.
+    La cantidad queda fija en Meta: una plantilla por cantidad de tarjetas."""
+    header = carousel["header"]
+    path = os.path.join(_script_dir(), "definitions", header["example_file"])
+    handle = _resumable_upload(cfg, path)
+    if not handle:
+        return None
+    card_components = [
+        {"type": "HEADER", "format": header["format"], "example": {"header_handle": [handle]}},
+    ]
+    if carousel.get("card_body"):
+        body = {"type": "BODY", "text": carousel["card_body"]}
+        if carousel.get("card_example"):
+            body["example"] = {"body_text": [list(carousel["card_example"])]}
+        card_components.append(body)
+    if carousel.get("buttons"):
+        card_components.append({"type": "BUTTONS", "buttons": list(carousel["buttons"])})
+    return {
+        "type": "CAROUSEL",
+        "cards": [{"components": list(card_components)} for _ in range(int(carousel["cards"]))],
+    }
 
 
 def step_templates(cfg: dict) -> None:

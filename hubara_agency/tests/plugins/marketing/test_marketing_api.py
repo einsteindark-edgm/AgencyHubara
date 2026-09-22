@@ -776,3 +776,117 @@ def test_audience_incluye_importados_sin_sesion(client: TestClient) -> None:
             "segment": "importados",
         }
     ]
+
+
+# --- Carrusel de productos --------------------------------------------------
+
+
+def test_put_carousel_handles_valida_cantidad(client: TestClient) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "A"}
+    ).json()["id"]
+    ok = client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={"carousel_handles": ["vela-buda", "cubo-love"]},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["carousel_handles"] == ["vela-buda", "cubo-love"]
+    # 1 producto no es carrusel (Meta: 2..10); 11 tampoco.
+    assert (
+        client.put(
+            f"/api/marketing/campaigns/{campaign_id}",
+            json={"carousel_handles": ["solo-uno"]},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.put(
+            f"/api/marketing/campaigns/{campaign_id}",
+            json={"carousel_handles": [f"p{i}" for i in range(11)]},
+        ).status_code
+        == 422
+    )
+    # Vaciar = volver a la plantilla simple.
+    cleared = client.put(
+        f"/api/marketing/campaigns/{campaign_id}", json={"carousel_handles": []}
+    )
+    assert cleared.json()["carousel_handles"] == []
+
+
+def test_put_carousel_handles_dedup_y_rechaza_handles_raros(client: TestClient) -> None:
+    campaign_id = client.post(
+        "/api/marketing/campaigns", json={"name": "A"}
+    ).json()["id"]
+    res = client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={"carousel_handles": ["vela-buda", "vela-buda", "cubo-love"]},
+    )
+    assert res.status_code == 200
+    assert res.json()["carousel_handles"] == ["vela-buda", "cubo-love"]
+    assert (
+        client.put(
+            f"/api/marketing/campaigns/{campaign_id}",
+            json={"carousel_handles": ["../etc", "cubo-love"]},
+        ).status_code
+        == 422
+    )
+
+
+def test_test_send_con_carrusel_manda_las_tarjetas(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    from src.sdk.messagingkit import CarouselCard
+
+    _seed_session(_isolate_vault_dir, "wa_+573125671604", {"tag": "INTERESADO"})
+    sent = []
+
+    async def _fake_send(session_id, template_name, variables, **kwargs):
+        sent.append((session_id, template_name, variables, kwargs))
+        return type("R", (), {"wa_message_id": "wamid-1", "ok": True, "error": None})()
+
+    cards = [
+        CarouselCard(header_media_id="M1", body_text="A · $1", quick_reply_payload="ref: HUB-A"),
+        CarouselCard(header_media_id="M2", body_text="B · $2", quick_reply_payload="ref: HUB-B"),
+    ]
+
+    async def _fake_resolve(campaign, *, now_ms):
+        return cards
+
+    monkeypatch.setattr(api_mod, "send_template_to_session", _fake_send)
+    monkeypatch.setattr(api_mod, "resolve_campaign_carousel", _fake_resolve)
+    campaign_id = _ready_campaign(client)
+    client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={"carousel_handles": ["a", "b"]},
+    )
+    res = client.post(
+        f"/api/marketing/campaigns/{campaign_id}/test",
+        json={"phone": "+57 312 567 1604"},
+    )
+    assert res.status_code == 200, res.text
+    assert sent[0][1] == "campaign_carousel_marketing_v1_2"
+    assert sent[0][3]["carousel_cards"] == cards
+
+
+def test_test_send_con_carrusel_roto_es_422_legible(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    from src.plugins.marketing.carousel import CarouselError
+
+    _seed_session(_isolate_vault_dir, "wa_+573125671604", {"tag": "INTERESADO"})
+
+    async def _fake_resolve(campaign, *, now_ms):
+        raise CarouselError("producto 'a' sin foto en el catálogo")
+
+    monkeypatch.setattr(api_mod, "resolve_campaign_carousel", _fake_resolve)
+    campaign_id = _ready_campaign(client)
+    client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={"carousel_handles": ["a", "b"]},
+    )
+    res = client.post(
+        f"/api/marketing/campaigns/{campaign_id}/test",
+        json={"phone": "+57 312 567 1604"},
+    )
+    assert res.status_code == 422
+    assert "sin foto" in res.json()["detail"]

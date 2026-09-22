@@ -39,6 +39,33 @@ vi.mock("@plugins/marketing/frontend/entities/campaign", async (importOriginal) 
   useUpdateCampaign: () => updateMock,
 }));
 
+vi.mock("@plugins/marketing/frontend/entities/product", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useProducts: () => ({
+    data: [
+      {
+        handle: "vela-buda",
+        title: "Vela Buda Zen",
+        sku: "HUB-BUDA",
+        category: null,
+        priceAmount: 45_000,
+        currency: "cop",
+        thumbnail: null,
+      },
+      {
+        handle: "cubo-love",
+        title: "Cubo Love",
+        sku: "HUB-CUBOLOVE",
+        category: null,
+        priceAmount: 38_000,
+        currency: "cop",
+        thumbnail: null,
+      },
+    ],
+    isPending: false,
+  }),
+}));
+
 vi.mock("@plugins/marketing/frontend/entities/audience", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useCampaignAudience: () => audienceMock,
@@ -75,6 +102,7 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     excludedSessionIds: [],
     extraSessionIds: [],
     importedContacts: [],
+    carouselHandles: [],
     ...over,
   };
 }
@@ -237,5 +265,19 @@ describe("CampaignInspector — audiencia", () => {
     expect(getByText("Hola bot")).toBeTruthy();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("CampaignInspector — preview del carrusel", () => {
+  it("muestra una tarjeta por producto con nombre, precio y el botón Me interesa", () => {
+    const { getAllByText, getByText } = render(
+      <CampaignInspector
+        campaign={makeCampaign({ carouselHandles: ["vela-buda", "cubo-love"] })}
+      />,
+    );
+    expect(getByText("Vela Buda Zen")).toBeTruthy();
+    expect(getByText("Cubo Love")).toBeTruthy();
+    expect(getByText("$45.000")).toBeTruthy();
+    expect(getAllByText("Me interesa")).toHaveLength(2);
   });
 });

@@ -20,6 +20,7 @@ from src.plugins.marketing.domain.campaigns import (
     SkippedRecipient,
 )
 from src.sdk import get_task_queue
+from src.sdk.messagingkit import CarouselCard
 
 QUEUE = get_task_queue("marketing", "campaigns")
 
@@ -122,3 +123,75 @@ async def test_destinatario_que_falla_no_tumba_la_campana() -> None:
     assert tracker.result["failed"] == ["wa_b"]
     assert tracker.result["spent_usd_micros"] == 25000
     assert summary["failed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_con_carrusel_prepara_las_tarjetas_una_vez_y_las_manda_a_todos() -> None:
+    """Las fotos se suben UNA vez (activity aparte) y las mismas tarjetas
+    viajan como 4º argumento del send a cada destinatario."""
+    tracker = Tracker()
+    cards = [
+        CarouselCard(header_media_id="M1", body_text="A · $1", quick_reply_payload="ref: HUB-A"),
+        CarouselCard(header_media_id="M2", body_text="B · $2", quick_reply_payload="ref: HUB-B"),
+    ]
+    plan = CampaignSendPlan(
+        campaign_id="mkt-1",
+        template_name="campaign_carousel_marketing_v1_2",
+        recipients=_PLAN.recipients,
+        skipped=[],
+        unit_cost_usd_micros=12500,
+        total_cost_usd_micros=37500,
+        carousel_handles=["a", "b"],
+    )
+    prepared: list[str] = []
+    sends: list[tuple] = []
+
+    @activity.defn(name="load_campaign_send_plan")
+    async def fake_plan(campaign_id: str) -> CampaignSendPlan:
+        return plan
+
+    @activity.defn(name="prepare_campaign_carousel")
+    async def fake_prepare(campaign_id: str) -> list[CarouselCard]:
+        prepared.append(campaign_id)
+        return cards
+
+    @activity.defn(name="mark_campaign_sending")
+    async def fake_mark(campaign_id: str) -> None:
+        pass
+
+    @activity.defn(name="send_whatsapp_template_activity")
+    async def fake_send(
+        session_id: str,
+        template_name: str,
+        variables: dict,
+        carousel_cards: list[CarouselCard] | None = None,
+    ) -> dict:
+        sends.append((session_id, template_name, carousel_cards))
+        return {"wa_message_id": "w", "ok": True, "error": None}
+
+    @activity.defn(name="stamp_campaign_touch")
+    async def fake_touch(session_id: str, campaign_id: str, campaign_name: str) -> None:
+        pass
+
+    @activity.defn(name="record_campaign_send_result")
+    async def fake_record(campaign_id: str, result: dict) -> None:
+        tracker.result = result
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=QUEUE,
+            workflows=[CampaignSendWorkflow],
+            activities=[fake_plan, fake_prepare, fake_mark, fake_send, fake_touch, fake_record],
+        ):
+            await env.client.execute_workflow(
+                CampaignSendWorkflow.run,
+                args=["mkt-1", "Promo"],
+                id="campaign-send-carousel",
+                task_queue=QUEUE,
+            )
+
+    assert prepared == ["mkt-1"]
+    assert len(sends) == 3
+    assert all(s[1] == "campaign_carousel_marketing_v1_2" for s in sends)
+    assert all(s[2] == cards for s in sends)

@@ -49,7 +49,11 @@ class TestLoadCatalogReal:
         # para leads SIN carrito (cart_recovery habla de "tu carrito").
         assert "followup_interest_marketing_v1" in registry
         assert "order_ready_photo_utility_v1" in registry
-        assert len(registry) == 8
+        # Campaña con carrusel de productos (2026-09-21): una plantilla por
+        # cantidad de tarjetas (2..10) — Meta fija la cantidad al aprobar.
+        for n in range(2, 11):
+            assert f"campaign_carousel_marketing_v1_{n}" in registry
+        assert len(registry) == 8 + 9
 
     def test_followup_interest_is_marketing_without_variables_and_with_opt_out(self):
         """Toque por plantilla de la escalera (runs 01a0b0da…: con la CSW

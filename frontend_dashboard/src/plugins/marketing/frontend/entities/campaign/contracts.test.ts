@@ -128,6 +128,14 @@ describe("backendCampaignSchema", () => {
     ]);
   });
 
+  it("parsea carousel_handles y defaultea a [] con un backend viejo", () => {
+    expect(
+      backendCampaignSchema.parse({ ...draftFixture, carousel_handles: ["a", "b"] })
+        .carousel_handles,
+    ).toEqual(["a", "b"]);
+    expect(backendCampaignSchema.parse(draftFixture).carousel_handles).toEqual([]);
+  });
+
   it("defaultea imported_contacts a [] con un backend viejo", () => {
     expect(backendCampaignSchema.parse(draftFixture).imported_contacts).toEqual([]);
   });

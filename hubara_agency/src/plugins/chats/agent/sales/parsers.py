@@ -315,6 +315,21 @@ def _parse_message(msg: Any, phone_number_id: str) -> WhatsAppMessage | None:
             contacts = contacts_raw
 
     # --- media (image / video / document / sticker) ---
+    # --- button (respuesta a un quick_reply de PLANTILLA) ---
+    elif msg_type == "button":
+        # Meta manda `{"button": {"payload", "text"}}` (no `interactive`)
+        # cuando el cliente toca un botón de una plantilla (ej. "Me interesa"
+        # de un carrusel de campaña). El texto lleva título + payload: el
+        # payload `ref: HUB-…` hidrata el producto como el botón del PDP.
+        button_obj = msg.get("button") if isinstance(msg.get("button"), dict) else {}
+        payload = str(button_obj.get("payload") or "")
+        title = str(button_obj.get("text") or "")
+        if payload and payload != title:
+            text = f"{title} · {payload}" if title else payload
+        else:
+            text = title or payload
+        interactive = {"type": "template_button", "payload": payload, "title": title}
+
     elif msg_type in {"image", "video", "document", "sticker"}:
         media_obj = msg.get(msg_type)
         if isinstance(media_obj, dict):

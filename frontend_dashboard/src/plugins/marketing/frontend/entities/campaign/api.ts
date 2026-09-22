@@ -100,6 +100,7 @@ export function mapBackendCampaign(b: BackendCampaign): Campaign {
       phone: c.phone,
       name: c.name,
     })),
+    carouselHandles: b.carousel_handles,
   };
 }
 
@@ -135,6 +136,8 @@ export function patchToBody(patch: CampaignPatch): Record<string, unknown> {
     body.excluded_session_ids = patch.excludedSessionIds;
   if (patch.extraSessionIds !== undefined)
     body.extra_session_ids = patch.extraSessionIds;
+  if (patch.carouselHandles !== undefined)
+    body.carousel_handles = patch.carouselHandles;
   return body;
 }
 

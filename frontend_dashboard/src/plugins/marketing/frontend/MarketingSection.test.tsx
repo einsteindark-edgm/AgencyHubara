@@ -64,6 +64,7 @@ function makeCampaign(id: string) {
     excludedSessionIds: [],
     extraSessionIds: [],
     importedContacts: [],
+    carouselHandles: [],
   };
 }
 

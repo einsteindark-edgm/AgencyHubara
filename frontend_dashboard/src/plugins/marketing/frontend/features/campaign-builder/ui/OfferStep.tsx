@@ -3,6 +3,7 @@
  *  - discount_product | launch → picker de producto del catálogo
  *  - todo goal salvo launch → porcentaje (0-100), cupón (uppercase, max 14)
  *    y vigencia (texto libre "15 de junio")
+ *  - todo goal → carrusel opcional de 2..10 productos (tarjetas con foto)
  */
 
 import {
@@ -11,6 +12,7 @@ import {
 } from "@plugins/marketing/frontend/entities/campaign";
 
 import type { CampaignDraft } from "../model/draft";
+import { CarouselPicker } from "./CarouselPicker";
 import { ProductPicker } from "./ProductPicker";
 
 interface Props {
@@ -99,6 +101,12 @@ export function OfferStep({ draft, editable, onPatch, onCommit }: Props) {
           Un lanzamiento no lleva descuento — el mensaje invita a responder.
         </p>
       )}
+
+      <CarouselPicker
+        handles={draft.carouselHandles}
+        editable={editable}
+        onChange={(carouselHandles) => onCommit({ carouselHandles })}
+      />
     </div>
   );
 }

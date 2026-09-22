@@ -6,8 +6,15 @@ vocabulario vivo del sistema (``src.sdk.messagingkit``): COMPRA_EXITOSA /
 INTERESADO / CONFIRMADO_PAGO_PENDIENTE / HUMANO / NO_ETIQUETADO.
 """
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+from src.sdk.messagingkit import (
+    CAROUSEL_MAX_CARDS,
+    CAROUSEL_MIN_CARDS,
+    CarouselCard,
+    carousel_template_name,
+)
 
 SEGMENT_CLIENTES = "clientes"
 SEGMENT_INTERESADOS = "interesados"
@@ -63,6 +70,109 @@ STATUS_FAILED = "failed"
 #: Template MARKETING pre-aprobado por Meta que viaja en cada campaña
 #: (ver `platform/whatsapp/templates/catalog.yaml` + provisioning).
 CAMPAIGN_TEMPLATE_NAME = "campaign_promo_marketing_v1"
+
+
+def carousel_handles(campaign: dict[str, Any]) -> list[str]:
+    """Handles de los productos del carrusel, en el orden elegido (o [])."""
+    return [
+        str(h)
+        for h in (campaign.get("carousel_handles") or [])
+        if isinstance(h, str) and h.strip()
+    ]
+
+
+def carousel_size_error(handles: list[str]) -> str | None:
+    """None si la cantidad de productos es válida (0 = sin carrusel, o el
+    rango de Meta); si no, el mensaje para el operador."""
+    n = len(handles)
+    if n == 0 or CAROUSEL_MIN_CARDS <= n <= CAROUSEL_MAX_CARDS:
+        return None
+    return (
+        f"el carrusel lleva entre {CAROUSEL_MIN_CARDS} y {CAROUSEL_MAX_CARDS} "
+        f"productos (elegiste {n})"
+    )
+
+
+def campaign_template_name(campaign: dict[str, Any]) -> str:
+    """Plantilla que viaja: la de carrusel (por cantidad de productos) si la
+    campaña lleva productos; si no, la guardada o la de campaña simple."""
+    handles = carousel_handles(campaign)
+    if handles:
+        return carousel_template_name(len(handles))
+    return campaign.get("template_name") or CAMPAIGN_TEMPLATE_NAME
+
+
+#: Cuerpo de tarjeta: Meta acepta hasta 160 caracteres.
+CAROUSEL_CARD_BODY_MAX = 160
+
+
+def carousel_card_body(product: Any) -> str:
+    """"Nombre · $precio" en una línea, ≤160 (Meta), con el precio COP de la
+    primera variante (mismo criterio que el bot: COP gana sobre otras monedas)."""
+    title = _single_line(str(getattr(product, "title", "") or ""))
+    price = _catalog_unit_price_cop(product)
+    suffix = f" · {format_cop(price)}" if price else ""
+    room = CAROUSEL_CARD_BODY_MAX - len(suffix)
+    if len(title) > room:
+        title = title[: max(room - 1, 1)].rstrip() + "…"
+    return f"{title}{suffix}"
+
+
+def format_cop(amount: int) -> str:
+    """$49.500 — miles con punto, sin decimales."""
+    return "$" + f"{int(amount):,}".replace(",", ".")
+
+
+def _catalog_unit_price_cop(product: Any) -> int | None:
+    variants = getattr(product, "variants", None) or []
+    if not variants:
+        return None
+    prices = getattr(variants[0], "prices", None) or []
+    if not prices:
+        return None
+    chosen = next(
+        (p for p in prices if str(getattr(p, "currency_code", "")).lower() == "cop"),
+        prices[0],
+    )
+    try:
+        value = int(round(float(chosen.amount)))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return value if value > 0 else None
+
+
+def _product_ref(product: Any) -> str:
+    """Payload del botón "Me interesa": `ref: <retailer_id>` — el SKU
+    (`HUB-…`) que el ingest de chats ya reconoce como ref de producto."""
+    from src.sdk.connectorkit import product_retailer_id
+
+    return f"ref: {product_retailer_id(product)}"
+
+
+def build_carousel_cards(
+    handles: list[str],
+    products: dict[str, Any],
+    *,
+    media_ids: dict[str, str],
+) -> list[CarouselCard]:
+    """Tarjetas en el orden elegido. Exige producto y foto (media_id) por
+    handle: una tarjeta sin foto la rechaza Meta entera."""
+    cards: list[CarouselCard] = []
+    for handle in handles:
+        product = products.get(handle)
+        if product is None:
+            raise ValueError(f"producto {handle!r} no está en el catálogo")
+        media_id = media_ids.get(handle)
+        if not media_id:
+            raise ValueError(f"producto {handle!r} sin foto subida a Meta")
+        cards.append(
+            CarouselCard(
+                header_media_id=media_id,
+                body_text=carousel_card_body(product),
+                quick_reply_payload=_product_ref(product),
+            )
+        )
+    return cards
 
 
 @dataclass(frozen=True)
@@ -253,6 +363,9 @@ class CampaignSendPlan:
     skipped: list[SkippedRecipient]
     unit_cost_usd_micros: int
     total_cost_usd_micros: int
+    #: Productos del carrusel (vacío = plantilla simple). Las tarjetas las
+    #: resuelve una activity aparte (sube fotos a Meta) — el plan es puro.
+    carousel_handles: list[str] = field(default_factory=list)
 
 
 def build_send_plan(
@@ -284,11 +397,12 @@ def build_send_plan(
     )
     return CampaignSendPlan(
         campaign_id=campaign["id"],
-        template_name=campaign.get("template_name") or CAMPAIGN_TEMPLATE_NAME,
+        template_name=campaign_template_name(campaign),
         recipients=recipients,
         skipped=audience.skipped,
         unit_cost_usd_micros=estimate.unit_cost_usd_micros,
         total_cost_usd_micros=estimate.total_usd_micros,
+        carousel_handles=carousel_handles(campaign),
     )
 
 
@@ -448,6 +562,10 @@ def new_campaign(
         "extra_session_ids": [],
         # Audiencia importada desde un archivo (CSV): [{phone, name}].
         "imported_contacts": [],
+        # Carrusel de productos (handles del catálogo, 0 o 2..10) + cache de
+        # las fotos subidas a Meta {handle: {media_id, uploaded_at_ms}}.
+        "carousel_handles": [],
+        "carousel_media": {},
         "message": {"header": header, "body": body, "footer": footer, "cta": cta},
         "template_name": CAMPAIGN_TEMPLATE_NAME,
         "schedule_at_ms": None,

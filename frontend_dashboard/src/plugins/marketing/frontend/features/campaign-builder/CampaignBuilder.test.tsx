@@ -74,9 +74,30 @@ vi.mock("@plugins/marketing/frontend/entities/segment", async (importOriginal) =
   }),
 }));
 
+const PRODUCTS = [
+  {
+    handle: "vela-buda",
+    title: "Vela Buda Zen",
+    sku: "HUB-BUDA",
+    category: "Velas",
+    priceAmount: 45_000,
+    currency: "cop",
+    thumbnail: null,
+  },
+  {
+    handle: "cubo-love",
+    title: "Cubo Love",
+    sku: "HUB-CUBOLOVE",
+    category: "Velas",
+    priceAmount: 38_000,
+    currency: "cop",
+    thumbnail: null,
+  },
+];
+
 vi.mock("@plugins/marketing/frontend/entities/product", async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useProducts: () => ({ data: [], isPending: false }),
+  useProducts: () => ({ data: PRODUCTS, isPending: false }),
 }));
 
 /** Audiencia REAL del endpoint — undefined = cargando (fallback a la
@@ -124,6 +145,7 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     excludedSessionIds: [],
     extraSessionIds: [],
     importedContacts: [],
+    carouselHandles: [],
     ...over,
   };
 }
@@ -335,5 +357,45 @@ describe("CampaignBuilder — contactos importados (CSV)", () => {
     );
     const button = getByRole("button", { name: "Enviar ahora" }) as HTMLButtonElement;
     expect(button.disabled).toBe(false);
+  });
+});
+
+describe("CampaignBuilder — carrusel de productos", () => {
+  it("agregar un producto al carrusel dispara el PUT con carousel_handles", () => {
+    const { getByRole, getByText } = render(
+      <CampaignBuilder
+        campaign={makeCampaign({ goal: "launch", carouselHandles: ["vela-buda"] })}
+      />,
+    );
+    // El chip del ya elegido está; se agrega el segundo desde el picker.
+    expect(getByText("Vela Buda Zen")).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: /Agregar producto al carrusel/ }));
+    fireEvent.click(getByRole("button", { name: /Cubo Love/ }));
+    expect(updateMock.mutate).toHaveBeenCalledTimes(1);
+    expect(updateMock.mutate.mock.calls[0]?.[0]).toMatchObject({
+      carouselHandles: ["vela-buda", "cubo-love"],
+    });
+  });
+
+  it("quitar un producto del carrusel dispara el PUT sin ese handle", () => {
+    const { getByRole } = render(
+      <CampaignBuilder
+        campaign={makeCampaign({
+          goal: "launch",
+          carouselHandles: ["vela-buda", "cubo-love"],
+        })}
+      />,
+    );
+    fireEvent.click(getByRole("button", { name: "Quitar Vela Buda Zen del carrusel" }));
+    expect(updateMock.mutate.mock.calls[0]?.[0]).toMatchObject({
+      carouselHandles: ["cubo-love"],
+    });
+  });
+
+  it("con un solo producto avisa que el carrusel necesita 2 a 10", () => {
+    const { getByText } = render(
+      <CampaignBuilder campaign={makeCampaign({ goal: "launch", carouselHandles: ["vela-buda"] })} />,
+    );
+    expect(getByText(/entre 2 y 10/)).toBeTruthy();
   });
 });

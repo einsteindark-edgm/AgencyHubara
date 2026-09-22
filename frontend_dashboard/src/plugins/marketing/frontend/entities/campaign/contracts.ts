@@ -75,6 +75,8 @@ export const backendCampaignSchema = z.object({
   extra_session_ids: z.array(z.string()).default([]),
   // Audiencia importada por CSV (números sin conversación previa).
   imported_contacts: z.array(backendImportedContactSchema).default([]),
+  // Carrusel de productos (handles del catálogo): [] o 2..10.
+  carousel_handles: z.array(z.string()).default([]),
 });
 
 export type BackendCampaign = z.infer<typeof backendCampaignSchema>;

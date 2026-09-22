@@ -85,6 +85,7 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     excludedSessionIds: [],
     extraSessionIds: [],
     importedContacts: [],
+    carouselHandles: [],
     ...over,
   };
 }

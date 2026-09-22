@@ -19,6 +19,8 @@ export interface CampaignDraft {
   couponCode: string;
   validUntil: string;
   productHandle: string | null;
+  /** Productos del carrusel (en orden). */
+  carouselHandles: string[];
   segments: string[];
   message: CampaignMessage;
 }
@@ -31,6 +33,7 @@ export function draftFromCampaign(c: Campaign): CampaignDraft {
     couponCode: c.couponCode,
     validUntil: c.validUntil,
     productHandle: c.productHandle,
+    carouselHandles: [...c.carouselHandles],
     segments: [...c.segments],
     message: { ...c.message },
   };
@@ -46,6 +49,7 @@ export function draftToPatch(d: CampaignDraft): CampaignPatch {
     couponCode: d.couponCode,
     validUntil: d.validUntil,
     productHandle: d.productHandle,
+    carouselHandles: [...d.carouselHandles],
     segments: [...d.segments],
     message: { ...d.message },
   };

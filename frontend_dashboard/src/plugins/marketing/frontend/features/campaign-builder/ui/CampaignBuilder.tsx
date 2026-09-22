@@ -15,6 +15,7 @@ import { useRef, useState } from "react";
 import { useCampaignAudience } from "@plugins/marketing/frontend/entities/audience";
 import {
   CAMPAIGN_STATUS_META,
+  carouselSizeError,
   goalNeedsProduct,
   goalUsesDiscount,
   isCampaignEditable,
@@ -78,7 +79,8 @@ export function CampaignBuilder({ campaign }: Props) {
   const done2 =
     done1 &&
     (!goalNeedsProduct(draft.goal) || Boolean(draft.productHandle)) &&
-    (!goalUsesDiscount(draft.goal) || draft.percent > 0);
+    (!goalUsesDiscount(draft.goal) || draft.percent > 0) &&
+    carouselSizeError(draft.carouselHandles) === null;
   const done3 = draft.message.body.trim() !== "";
   // Espejo de `_validate_ready_to_send`: segmentos O contactos importados.
   const done4 = draft.segments.length > 0 || campaign.importedContacts.length > 0;

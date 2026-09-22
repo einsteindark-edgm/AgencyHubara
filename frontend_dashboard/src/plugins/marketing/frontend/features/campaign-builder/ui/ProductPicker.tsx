@@ -18,15 +18,27 @@ interface Props {
   value: string | null;
   editable: boolean;
   onPick: (handle: string) => void;
+  /** Texto del botón cuando no hay producto elegido. */
+  placeholder?: string;
+  /** Handles que no se ofrecen (ya están en el carrusel). */
+  excludeHandles?: string[];
 }
 
-export function ProductPicker({ value, editable, onPick }: Props) {
+export function ProductPicker({
+  value,
+  editable,
+  onPick,
+  placeholder = "Elegir producto del catálogo…",
+  excludeHandles = [],
+}: Props) {
   const { data: products = [], isPending } = useProducts();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
   const selected = products.find((p) => p.handle === value) ?? null;
-  const filtered = products.filter((p) => matchesProductQuery(p, query));
+  const filtered = products.filter(
+    (p) => !excludeHandles.includes(p.handle) && matchesProductQuery(p, query),
+  );
 
   return (
     <div className="relative">
@@ -56,7 +68,7 @@ export function ProductPicker({ value, editable, onPick }: Props) {
           </>
         ) : (
           <span className="flex-1 text-[12.5px] text-fg-muted">
-            {isPending ? "Cargando catálogo…" : "Elegir producto del catálogo…"}
+            {isPending ? "Cargando catálogo…" : placeholder}
           </span>
         )}
         <span className="shrink-0 text-fg-faint">
