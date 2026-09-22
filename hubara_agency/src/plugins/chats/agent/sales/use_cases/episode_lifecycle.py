@@ -87,6 +87,13 @@ CLOSING_TAGS: frozenset[str] = frozenset(
 # agente — el classifier lo trata como `no_reply`.
 TIMEOUT_CLOSING_TAG: str = "TIMEOUT"
 
+# Tag sintético: el cliente respondió a una campaña de marketing con un
+# episodio todavía abierto (típico: INTERESADO que nunca cerró). La campaña es
+# una intención nueva → el ingest cierra el viejo con este tag y abre otro
+# (`use_cases/campaign_reply.py`). Como TIMEOUT: no viene del agente y los
+# lectores lo cuentan como abandono (ads → no_reply, scoring → timeout).
+CAMPAIGN_CLOSING_TAG: str = "CAMPAÑA"
+
 
 # Si el episodio activo no recibió inbound del cliente en este tiempo,
 # se cierra como TIMEOUT cuando llega un inbound nuevo. Esto evita que

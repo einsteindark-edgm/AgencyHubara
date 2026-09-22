@@ -111,6 +111,11 @@ def classify_episode_state(
         # orders revierte el estado de la orden en Medusa, no acá.
         return "ganado"
 
+    # 5b. CAMPAÑA: el episodio quedó abierto sin respuesta y el cliente volvió
+    # respondiendo a una campaña (que abrió otro episodio) — abandono.
+    if closing_tag == "CAMPAÑA":
+        return "no_reply"
+
     # 6. Cierre con tag desconocido (defensivo) — conservador: cotizado.
     if episode.get("closed_at_ms") is not None:
         return "cotizado"

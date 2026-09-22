@@ -269,3 +269,22 @@ def test_features_recency_uses_medusa_created_at_when_available():
         medusa_order_created_at_ms={"order_X": _NOW - 5 * _DAY_MS},  # correcto
     )
     assert f.recency_days == 5  # del Medusa, no del episode
+
+
+def test_episode_closed_by_campaign_reply_counts_as_timeout():
+    """`CAMPAÑA` = episodio abandonado que la respuesta a una campaña cerró:
+    mismo peso que TIMEOUT (no es rechazo ni cierre formal)."""
+    metadata = {
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": 1_000,
+                "closed_at_ms": 2_000,
+                "closing_tag": "CAMPAÑA",
+                "order_id": None,
+            }
+        ]
+    }
+    features = compute_customer_features(metadata, now_ms=10_000)
+    assert features.episodes_timeout == 1
+    assert features.episodes_lost == 0

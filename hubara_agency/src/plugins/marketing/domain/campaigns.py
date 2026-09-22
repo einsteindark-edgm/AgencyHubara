@@ -566,6 +566,49 @@ def _campaign_offer_line(campaign: dict[str, Any]) -> str:
     return "Escríbeme aquí y te cuento más."
 
 
+#: Cap del historial de touches por sesión (suficiente para atribución, sin
+#: crecer sin límite).
+CAMPAIGN_TOUCHES_CAP = 20
+
+
+def build_campaign_touch(
+    campaign: dict[str, Any], *, sent_at_ms: int, test: bool = False
+) -> dict[str, Any]:
+    """El touch que queda en el metadata del contacto al enviarle la campaña.
+
+    Además de la atribución (`campaign_id`/`campaign_name`/`sent_at_ms`)
+    lleva LO QUE RECIBIÓ el cliente — mensaje, cupón y productos del
+    carrusel — porque el bot no ve la plantilla en su historial: con esto,
+    cuando el cliente responde, el ingest de chats le pasa la campaña al LLM
+    (bug 2026-09-22: contestó "AMOR26" y el bot retomó un pedido viejo).
+    `test`: envío de prueba del operador — el bot lo trata igual, la
+    atribución (Ads/stats) lo ignora.
+    """
+    variables = campaign_template_variables(campaign, customer_name=None)
+    touch: dict[str, Any] = {
+        "campaign_id": campaign.get("id"),
+        "campaign_name": campaign.get("name") or "",
+        "sent_at_ms": sent_at_ms,
+        "message": f"{variables['campaign_message']} {variables['campaign_offer']}",
+        "coupon_code": (campaign.get("coupon_code") or "").strip() or None,
+        "product_handles": carousel_handles(campaign),
+    }
+    if test:
+        touch["test"] = True
+    return touch
+
+
+def append_campaign_touch(
+    metadata: dict[str, Any], touch: dict[str, Any]
+) -> dict[str, Any]:
+    """Appendea el touch capeando el historial (mutación in-place)."""
+    touches = metadata.setdefault("campaign_touches", [])
+    touches.append(touch)
+    if len(touches) > CAMPAIGN_TOUCHES_CAP:
+        metadata["campaign_touches"] = touches[-CAMPAIGN_TOUCHES_CAP:]
+    return metadata
+
+
 def new_campaign(
     *,
     campaign_id: str,

@@ -165,3 +165,26 @@ async def test_record_result_deja_la_campana_sent(_isolate_vault_dir: Path) -> N
     assert saved["sent_at_ms"] is not None
     assert saved["send_result"]["sent"] == 1
     assert saved["send_result"]["spent_usd_micros"] == 12500
+
+
+@pytest.mark.asyncio
+async def test_stamp_campaign_touch_guarda_lo_que_recibio_el_cliente(
+    _isolate_vault_dir: Path,
+) -> None:
+    """Respuesta a campaña (2026-09-22): el bot necesita saber QUÉ se le mandó
+    al cliente — mensaje, cupón y productos viajan en el touch."""
+    vault = _isolate_vault_dir
+    _seed_session(vault, "wa_573001234567", {"tag": "INTERESADO"})
+    _seed_campaign(vault, carousel_handles=["duo-zodiacal", "cruz-de-vida"])
+
+    await ActivityEnvironment().run(
+        stamp_campaign_touch_activity, "wa_573001234567", "mkt-1", "Promo madre"
+    )
+
+    metadata = json.loads((vault / "wa_573001234567" / "metadata.json").read_text())
+    touch = metadata["campaign_touches"][-1]
+    assert "15% en velas artesanales" in touch["message"]
+    assert "MAMA15" in touch["message"]
+    assert touch["coupon_code"] == "MAMA15"
+    assert touch["product_handles"] == ["duo-zodiacal", "cruz-de-vida"]
+    assert "test" not in touch

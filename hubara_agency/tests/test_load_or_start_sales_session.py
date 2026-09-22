@@ -575,3 +575,49 @@ async def test_no_override_when_active_route_is_ventas():
     # Sales arrancó normal (sin override — ya era sales)
     assert len(client.start_calls) == 1
     assert client.start_calls[0]["id"] == "session-wa_sales_flag"
+
+
+# ============================================================================
+# Respuesta a campaña (2026-09-22): el turno lleva la nota de la campaña, que
+# solo viaja por la ruta Sales — el remarketing vivo se cancela.
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_prefer_sales_takes_over_running_remarketing():
+    metadata = FakeMetadataStore(initial={"active_route": ROUTE_REMARKETING})
+    rem_handle = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
+    client = FakeClient(existing_handles={"remarketing-wa_c": rem_handle})
+    use_case = _make_use_case(metadata, client)
+
+    await use_case.execute(
+        session_id="wa_c",
+        message="AMOR26",
+        phone_number_id=None,
+        extra_context=["[RESPUESTA A CAMPAÑA …]"],
+        prefer_sales=True,
+    )
+
+    assert rem_handle.signals == []
+    assert len(rem_handle.terminate_reasons) == 1
+    assert "campaña" in rem_handle.terminate_reasons[0]
+    assert metadata.data["active_route"] == ROUTE_VENTAS
+    assert len(client.start_calls) == 1
+    call = client.start_calls[0]
+    assert call["id"] == "session-wa_c"
+    assert call["start_signal_args"][0] == "AMOR26"
+    assert "[RESPUESTA A CAMPAÑA …]" in call["start_signal_args"][2]
+
+
+@pytest.mark.asyncio
+async def test_prefer_sales_never_overrides_the_human_route():
+    metadata = FakeMetadataStore(initial={"active_route": ROUTE_HUMANO})
+    client = FakeClient()
+    use_case = _make_use_case(metadata, client)
+
+    await use_case.execute(
+        session_id="wa_h", message="AMOR26", phone_number_id=None, prefer_sales=True
+    )
+
+    assert client.start_calls == []
+    assert metadata.data["active_route"] == ROUTE_HUMANO

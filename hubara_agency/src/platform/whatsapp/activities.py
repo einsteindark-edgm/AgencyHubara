@@ -1036,7 +1036,10 @@ def _append_template_to_session_history(
          "timestamp": "<ISO>"}
 
     El `content` es el texto REAL que recibió el cliente (`render_template_body`):
-    el operador lo lee en el chat y el LLM lo ve en su historial al retomar.
+    el operador lo lee en el chat. OJO: este JSONL es el del DASHBOARD — el
+    historial del LLM vive aparte (`EXOCLAW_STATE_DIR`, PR #183) y NO ve la
+    plantilla. Para campañas, el contexto le llega por el touch de campaña →
+    nota `[RESPUESTA A CAMPAÑA]` del ingest (bug 2026-09-22).
     `sender` (solo si viene) marca el envío del operador humano. `wamid` es
     el id que Meta le dio al template: destino de las citas del cliente (sin
     él, responder citando la plantilla sale "Mensaje no disponible").
