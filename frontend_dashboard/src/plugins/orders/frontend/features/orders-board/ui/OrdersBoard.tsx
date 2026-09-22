@@ -177,12 +177,18 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
       {pendingShip && (
         <TrackingLinkModal
           orderId={pendingShip}
+          orderTotal={orders.find((o) => o.id === pendingShip)?.total ?? null}
           busy={transition.isPending}
           onCancel={() => setPendingShip(null)}
-          onConfirm={(url) => {
+          onConfirm={({ trackingUrl, shippingCost }) => {
             const orderId = pendingShip;
             setPendingShip(null);
-            runTransition({ orderId, to_stage: "shipping", tracking_url: url ?? undefined });
+            runTransition({
+              orderId,
+              to_stage: "shipping",
+              tracking_url: trackingUrl ?? undefined,
+              shipping_cost: shippingCost ?? undefined,
+            });
           }}
         />
       )}

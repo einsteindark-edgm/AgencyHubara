@@ -43,7 +43,7 @@ def _fakes(t: Tracker):
         return None
 
     @activity.defn(name="claim_eta_notification_activity")
-    async def claim(session_id: str, order_id: str, stage: str, tracking_url: str | None = None):
+    async def claim(session_id: str, order_id: str, stage: str, tracking_url: str | None = None, shipping_cost: int | None = None):
         if (order_id, stage) in t.notified:
             return None
         return {

@@ -31,6 +31,8 @@ def activity_args(input: dict) -> list:
         input.get("tracking_url") or None,
         # False = salto silencioso (CAPI sí, WhatsApp al cliente no).
         input.get("notify_customer", True) is not False,
+        # Valor del envío en COP (solo lo manda el operador en "en camino").
+        input.get("shipping_cost") or None,
     ]
 
 

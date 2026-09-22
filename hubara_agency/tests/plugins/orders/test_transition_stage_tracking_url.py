@@ -46,7 +46,7 @@ def harness(monkeypatch):
     )
     monkeypatch.setattr(
         "src.plugins.orders.api._spawn_emit",
-        lambda order_id, to_stage, tracking_url=None, notify_customer=True: (
+        lambda order_id, to_stage, tracking_url=None, notify_customer=True, shipping_cost=None: (
             spawn_emit_calls.append((order_id, to_stage, tracking_url))
         ),
     )

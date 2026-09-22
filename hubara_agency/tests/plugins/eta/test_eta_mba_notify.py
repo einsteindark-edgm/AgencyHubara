@@ -98,7 +98,7 @@ async def test_with_mba_in_front_the_stage_goes_to_mba_and_hubara_sends_nothing(
     )
     assert kw["payload"] == {"order_id": ORDER, "stage": "shipping", "order_display_id": "#1247",
                              "total_label": "$ 124.500", "pay_type": "confirmed", "payment_confirmed": True,
-                             "items_label": "", "tracking_url": None}
+                             "items_label": "", "tracking_url": None, "shipping_cost": None}
     entry = _read_meta(_isolate_vault_dir, SID)["eta_tracking"]["orders"][ORDER]
     assert entry["notified_stages"] == ["shipping"] and entry["current_stage"] == "shipping"
     assert "agent_event order_shipped" in entry["events"][-1]["agent_msg"] and "AE_1" in entry["events"][-1]["agent_msg"]

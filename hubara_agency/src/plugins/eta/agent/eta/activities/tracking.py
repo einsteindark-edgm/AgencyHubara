@@ -54,7 +54,7 @@ from src.plugins.eta.agent.eta.activities.mba_notify import (
     event_type_for_stage,
     notify_via_mba,
 )
-from src.plugins.eta.agent.eta.prompts import render_stage_notification
+from src.plugins.eta.agent.eta.prompts import format_cop, render_stage_notification
 from src.sdk.runtime import mba_controls_thread
 
 
@@ -96,9 +96,7 @@ def _display_first_name(full_name: str | None) -> str:
 
 def _format_cop(total_cop: int | None) -> str:
     """Formatea un monto COP al estilo del mock: ``$ 215.000`` (miles con punto)."""
-    if not total_cop:
-        return ""
-    return "$ " + f"{int(total_cop):,}".replace(",", ".")
+    return format_cop(total_cop)
 
 
 def order_photo_entry(data: dict[str, Any], order_id: str) -> dict[str, Any] | None:
@@ -204,7 +202,11 @@ async def start_eta_tracking_activity(session_id: str, order_id: str) -> None:
 
 @activity.defn(name="claim_eta_notification_activity")
 async def claim_eta_notification_activity(
-    session_id: str, order_id: str, stage: str, tracking_url: str | None = None
+    session_id: str,
+    order_id: str,
+    stage: str,
+    tracking_url: str | None = None,
+    shipping_cost: int | None = None,
 ) -> dict[str, Any] | None:
     """Decide si corresponde notificar este cambio de estado y, si sí, devuelve
     los datos vivos del pedido para rellenar el mensaje (``_claim_facts``).
@@ -215,8 +217,9 @@ async def claim_eta_notification_activity(
     y se devuelve ``None`` (el workflow no envía nada). Con la flag apagada el
     predicado es siempre falso y el claim es el de siempre.
 
-    ``tracking_url`` (solo ``shipping``, opcional): el workflow lo pasa para
-    que el evento a MBA lleve la guía; el claim de Hubara no lo usa.
+    ``tracking_url`` / ``shipping_cost`` (solo ``shipping``, opcionales): el
+    workflow los pasa para que el evento a MBA lleve la guía y el valor del
+    envío; el claim de Hubara no los usa.
     """
     facts = await _claim_facts(session_id, order_id, stage)
     if facts is None:
@@ -224,7 +227,7 @@ async def claim_eta_notification_activity(
     store = _store()
     data = _safe_read(store, session_id)
     if mba_controls_thread(data, session_id) and await _delegate_to_mba(
-        store, session_id, order_id, stage, facts, tracking_url
+        store, session_id, order_id, stage, facts, tracking_url, shipping_cost
     ):
         return None
     return facts
@@ -253,6 +256,7 @@ async def _delegate_to_mba(
     stage: str,
     facts: dict[str, Any],
     tracking_url: str | None = None,
+    shipping_cost: int | None = None,
 ) -> bool:
     """Le cuenta la novedad a MBA con el texto EXACTO que Hubara habría
     enviado. Devuelve ``True`` si MBA se encarga (stage reservado como
@@ -268,6 +272,8 @@ async def _delegate_to_mba(
         delivery_window=facts.get("delivery_window"),
         items_label=facts.get("items_label", ""),
         tracking_url=tracking_url,
+        shipping_cost=shipping_cost,
+        order_total_cop=facts.get("total_cop"),
     )
     if event_type is None or not message:
         return False
@@ -280,6 +286,7 @@ async def _delegate_to_mba(
         "payment_confirmed": bool(facts.get("payment_confirmed", False)),
         "items_label": facts.get("items_label", ""),
         "tracking_url": (tracking_url or "").strip() or None,
+        "shipping_cost": shipping_cost or None,
     }
     try:
         outcome = await notify_via_mba(
@@ -398,6 +405,7 @@ async def _claim_facts(
             "customer_name": "",
             "order_display_id": order_id,
             "total_label": "",
+            "total_cop": None,
             "pay_type": "confirmed",
             "payment_confirmed": False,
             "delivery_window": None,
@@ -411,6 +419,8 @@ async def _claim_facts(
         "customer_name": _display_first_name(summary.customer),
         "order_display_id": summary.display_id,
         "total_label": _format_cop(summary.total_cop),
+        # Entero COP del total vivo: "en camino" lo suma al valor del envío.
+        "total_cop": summary.total_cop or None,
         "pay_type": summary.pay_type,
         # `pay_type` es solo la MODALIDAD (cod vs prepago) y defaultea a
         # "confirmed" cuando falta `payment_method` — NO dice si el cliente ya

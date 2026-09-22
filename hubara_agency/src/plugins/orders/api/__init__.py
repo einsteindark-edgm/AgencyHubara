@@ -425,6 +425,11 @@ async def transition_order_stage(
         tappable al final) y queda en la nota del stage history. Solo http(s),
         sin espacios, ≤ 500 chars → si no, 422 ANTES de aplicar la transición
         (un "en camino" con link roto no se puede re-notificar por template).
+      * `shipping_cost` (optional int) — valor del envío en COP (entero, sin
+        decimales) que el operador escribe al mover el pedido a `shipping`.
+        Viaja en la cascada ETA hasta el mensaje ("El valor del envío es
+        $ 12.000") y queda en la nota del stage history. Entero 0..10.000.000
+        (0/ausente = sin valor) → si no, 422 ANTES de aplicar la transición.
 
     Response shape igual que `/schedule`. `success=False` con
     `error_detail` que empieza con `invalid_transition:` cuando el
@@ -440,11 +445,16 @@ async def transition_order_stage(
             ),
         )
     tracking_url = _parse_tracking_url(body.get("tracking_url"))
+    shipping_cost = _parse_shipping_cost(body.get("shipping_cost"))
     note = body.get("note") if isinstance(body.get("note"), str) else None
     if tracking_url:
         # Auditoría en el stage history: qué guía se le mandó al cliente.
         guia = f"Guía de envío: {tracking_url}"
         note = f"{note} · {guia}" if note else guia
+    if shipping_cost:
+        # Ídem: qué valor de envío se le informó.
+        envio = f"Valor del envío: {_format_cop(shipping_cost)}"
+        note = f"{note} · {envio}" if note else envio
     cmd = TransitionStageCommand(
         order_id=order_id,
         to_stage=stage_raw,  # type: ignore[arg-type]
@@ -464,6 +474,7 @@ async def transition_order_stage(
             result.current_stage,
             tracking_url,
             notify_customer=body.get("notify_customer", True) is not False,
+            shipping_cost=shipping_cost,
         )
     if result.success:
         _publish_orders_changed(order_id)
@@ -625,17 +636,49 @@ def _parse_tracking_url(raw: Any) -> str | None:
     return url
 
 
+_SHIPPING_COST_MAX = 10_000_000
+
+
+def _parse_shipping_cost(raw: Any) -> int | None:
+    """Normaliza el `shipping_cost` del body. Ausente / null / 0 → None.
+
+    Presente pero inválido (no entero, bool, negativo, > 10.000.000) → 422.
+    Se valida ANTES de tocar el pedido para no dejar una transición aplicada
+    sin su valor.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise HTTPException(
+            status_code=422,
+            detail="`shipping_cost` debe ser un entero en COP (sin decimales).",
+        )
+    if raw < 0 or raw > _SHIPPING_COST_MAX:
+        raise HTTPException(
+            status_code=422,
+            detail=f"`shipping_cost` inválido: debe estar entre 0 y {_SHIPPING_COST_MAX}.",
+        )
+    return raw or None
+
+
+def _format_cop(amount: int) -> str:
+    """``12000`` → ``$ 12.000`` (mismo estilo que el total en la vista)."""
+    return "$ " + f"{int(amount):,}".replace(",", ".")
+
+
 async def _start_durable_emit(
     order_id: str,
     to_stage: str,
     tracking_url: str | None = None,
     notify_customer: bool = True,
+    shipping_cost: int | None = None,
 ) -> None:
     """L-8b: la emisión es un workflow Temporal (EmitOrderStageWorkflow en
     queue-orders-reconcile) — durable, con retries y visible en la UI :8233.
     Reemplaza el create_task best-effort (L-7). El start tarda ~ms; si el
     MISMO (order, stage) ya está en vuelo, Temporal lo dedupea por id.
-    `tracking_url` (solo "en camino") viaja en el input del workflow."""
+    `tracking_url` y `shipping_cost` (solo "en camino") viajan en el input
+    del workflow."""
     from temporalio.exceptions import WorkflowAlreadyStartedError
 
     from src.platform.plugin_manifest import get_task_queue
@@ -650,6 +693,7 @@ async def _start_durable_emit(
                 "to_stage": to_stage,
                 "tracking_url": tracking_url,
                 "notify_customer": notify_customer,
+                "shipping_cost": shipping_cost,
             },
             id=f"order-stage-changed-{order_id.lstrip('#')}-{to_stage}",
             task_queue=get_task_queue("orders", "reconcile"),
@@ -668,9 +712,10 @@ def _spawn_emit(
     to_stage: str,
     tracking_url: str | None = None,
     notify_customer: bool = True,
+    shipping_cost: int | None = None,
 ) -> None:
     task = asyncio.create_task(
-        _start_durable_emit(order_id, to_stage, tracking_url, notify_customer)
+        _start_durable_emit(order_id, to_stage, tracking_url, notify_customer, shipping_cost)
     )
     _emit_tasks.add(task)
     task.add_done_callback(_emit_tasks.discard)

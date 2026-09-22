@@ -62,7 +62,7 @@ def harness(monkeypatch):
     )
     monkeypatch.setattr(
         "src.plugins.orders.api._spawn_emit",
-        lambda order_id, to_stage, tracking_url=None, notify_customer=True: (
+        lambda order_id, to_stage, tracking_url=None, notify_customer=True, shipping_cost=None: (
             spawn_emit_calls.append((order_id, to_stage, notify_customer))
         ),
     )
@@ -247,7 +247,7 @@ def test_emit_workflow_input_carries_notify_customer():
 
     assert activity_args(
         {"order_id": "o1", "to_stage": "delivered", "notify_customer": False}
-    ) == ["o1", "delivered", None, False]
+    ) == ["o1", "delivered", None, False, None]
     assert activity_args({"order_id": "o1", "to_stage": "ready"}) == [
-        "o1", "ready", None, True,
+        "o1", "ready", None, True, None,
     ]

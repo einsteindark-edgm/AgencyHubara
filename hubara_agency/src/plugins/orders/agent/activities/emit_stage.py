@@ -123,6 +123,7 @@ async def emit_order_stage_activity(
     to_stage: str,
     tracking_url: str | None = None,
     notify_customer: bool = True,
+    shipping_cost: int | None = None,
 ) -> str:
     """Resuelve la sesión dueña del pedido y despacha el evento. Devuelve
     el resultado del dispatch ("signaled_with_start" / "no_session" / ...).
@@ -137,6 +138,10 @@ async def emit_order_stage_activity(
     → el cliente no recibe WhatsApp. Casos: el operador corrige un pedido
     que ya se entregó saltándose etapas, o el order-sentinel infiere la
     transición de un chat donde el humano ya avisó. Devuelve "capi_only".
+
+    ``shipping_cost`` (opcional, COP entero): valor del envío que el operador
+    escribió al marcar "en camino"; viaja en el evento hasta el mensaje.
+    Quinto arg con default por los runs en vuelo del workflow viejo.
     """
     # Import lazy: el módulo API define el router FastAPI; lo importamos solo
     # al ejecutar (intra-plugin orders→orders, R-DIP OK).
@@ -205,6 +210,7 @@ async def emit_order_stage_activity(
                 to_stage=to_stage,
                 occurred_at_ms=int(time.time() * 1000),
                 tracking_url=(tracking_url or "").strip() or None,
+                shipping_cost=shipping_cost or None,
             ),
             source_plugin="orders",
             source_worker="reconcile",

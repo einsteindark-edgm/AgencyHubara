@@ -1,19 +1,43 @@
 /**
  * Modal "En camino": al soltar un pedido en la columna `shipping` el operador
- * puede adjuntar el link de la guía (opcional). Comportamiento:
- *  - dialog accesible con el input vacío y foco en él;
- *  - "Marcar en camino" sin link → onConfirm(null) (el mensaje sale sin guía);
- *  - con link válido → onConfirm(url normalizada: trim + https:// si falta);
+ * puede adjuntar el link de la guía y el valor del envío (ambos opcionales).
+ * Comportamiento:
+ *  - dialog accesible con los inputs vacíos y foco en el link;
+ *  - "Marcar en camino" sin link → onConfirm({trackingUrl: null, ...});
+ *  - con link válido → trackingUrl normalizada (trim + https:// si falta);
  *  - link inválido → error visible, NO confirma;
+ *  - valor del envío "12.000" / "$ 12000" → shippingCost 12000 (COP entero);
+ *    vacío → null; inválido → error visible, NO confirma;
  *  - Cancelar / Escape / click en el backdrop → onCancel (el pedido no se mueve).
  */
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 
+import { parseShippingCost } from "./model/shippingCost";
 import { normalizeTrackingUrl } from "./model/trackingUrl";
 import { TrackingLinkModal } from "./ui/TrackingLinkModal";
 
 const URL = "https://www.servientrega.com/wps/portal/rastreo-envio?guia=1234567890";
+
+describe("parseShippingCost", () => {
+  it("accepts plain, dotted and $-prefixed COP amounts", () => {
+    expect(parseShippingCost("12000")).toEqual({ value: 12000 });
+    expect(parseShippingCost(" 12.000 ")).toEqual({ value: 12000 });
+    expect(parseShippingCost("$ 12.000")).toEqual({ value: 12000 });
+    expect(parseShippingCost("1.250.000")).toEqual({ value: 1250000 });
+  });
+  it("treats empty (or zero) as no value", () => {
+    expect(parseShippingCost("")).toEqual({ value: null });
+    expect(parseShippingCost("   ")).toEqual({ value: null });
+    expect(parseShippingCost("0")).toEqual({ value: null });
+  });
+  it("rejects decimals, negatives, text and absurd amounts", () => {
+    expect(parseShippingCost("12,5")).toEqual({ error: expect.any(String) });
+    expect(parseShippingCost("-5000")).toEqual({ error: expect.any(String) });
+    expect(parseShippingCost("doce mil")).toEqual({ error: expect.any(String) });
+    expect(parseShippingCost("99999999")).toEqual({ error: expect.any(String) });
+  });
+});
 
 describe("normalizeTrackingUrl", () => {
   it("trims and keeps http(s) urls verbatim", () => {
@@ -37,11 +61,17 @@ describe("normalizeTrackingUrl", () => {
   });
 });
 
-function setup(busy = false) {
+function setup(busy = false, orderTotal: number | null = 50000) {
   const onConfirm = vi.fn();
   const onCancel = vi.fn();
   render(
-    <TrackingLinkModal orderId="#1247" busy={busy} onConfirm={onConfirm} onCancel={onCancel} />,
+    <TrackingLinkModal
+      orderId="#1247"
+      orderTotal={orderTotal}
+      busy={busy}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />,
   );
   return { onConfirm, onCancel };
 }
@@ -59,7 +89,7 @@ describe("TrackingLinkModal", () => {
   it("confirms with null when the operator sends without a link", () => {
     const { onConfirm } = setup();
     fireEvent.click(screen.getByRole("button", { name: /sin guía/i }));
-    expect(onConfirm).toHaveBeenCalledWith(null);
+    expect(onConfirm).toHaveBeenCalledWith({ trackingUrl: null, shippingCost: null });
   });
 
   it("confirms with the normalized link", () => {
@@ -68,7 +98,7 @@ describe("TrackingLinkModal", () => {
       target: { value: `  ${URL} ` },
     });
     fireEvent.click(screen.getByRole("button", { name: /con guía/i }));
-    expect(onConfirm).toHaveBeenCalledWith(URL);
+    expect(onConfirm).toHaveBeenCalledWith({ trackingUrl: URL, shippingCost: null });
   });
 
   it("submits on Enter inside the input", () => {
@@ -76,7 +106,57 @@ describe("TrackingLinkModal", () => {
     const input = screen.getByLabelText(/link de la guía/i);
     fireEvent.change(input, { target: { value: "coordinadora.com/rastreo?guia=1" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(onConfirm).toHaveBeenCalledWith("https://coordinadora.com/rastreo?guia=1");
+    expect(onConfirm).toHaveBeenCalledWith({
+      trackingUrl: "https://coordinadora.com/rastreo?guia=1",
+      shippingCost: null,
+    });
+  });
+
+  it("sends the shipping cost as an integer COP amount, with or without a link", () => {
+    const { onConfirm } = setup();
+    fireEvent.change(screen.getByLabelText(/valor del envío/i), {
+      target: { value: "12.000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /sin guía/i }));
+    expect(onConfirm).toHaveBeenLastCalledWith({ trackingUrl: null, shippingCost: 12000 });
+
+    fireEvent.change(screen.getByLabelText(/link de la guía/i), { target: { value: URL } });
+    fireEvent.click(screen.getByRole("button", { name: /con guía/i }));
+    expect(onConfirm).toHaveBeenLastCalledWith({ trackingUrl: URL, shippingCost: 12000 });
+  });
+
+  it("shows the order value pre-set, and the total updates with the shipping cost", () => {
+    setup();
+    expect(screen.getByTestId("ship-order-value")).toHaveTextContent("$ 50.000");
+    expect(screen.getByTestId("ship-total")).toHaveTextContent("$ 50.000");
+    fireEvent.change(screen.getByLabelText(/valor del envío/i), {
+      target: { value: "12.000" },
+    });
+    expect(screen.getByTestId("ship-total")).toHaveTextContent("$ 62.000");
+  });
+
+  it("does not add an invalid shipping cost to the total", () => {
+    setup();
+    fireEvent.change(screen.getByLabelText(/valor del envío/i), {
+      target: { value: "doce" },
+    });
+    expect(screen.getByTestId("ship-total")).toHaveTextContent("$ 50.000");
+  });
+
+  it("without a known order value it shows only the shipping cost", () => {
+    setup(false, null);
+    expect(screen.queryByTestId("ship-order-value")).toBeNull();
+    expect(screen.queryByTestId("ship-total")).toBeNull();
+  });
+
+  it("shows an error and does not confirm on an invalid shipping cost", () => {
+    const { onConfirm } = setup();
+    fireEvent.change(screen.getByLabelText(/valor del envío/i), {
+      target: { value: "doce mil" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /sin guía/i }));
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/envío/i);
   });
 
   it("shows an error and does not confirm on an invalid link", () => {
