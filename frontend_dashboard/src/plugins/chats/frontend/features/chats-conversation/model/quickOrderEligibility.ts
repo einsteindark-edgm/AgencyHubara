@@ -1,7 +1,7 @@
 /**
  * ¿Tiene sentido ofrecer "Crear pedido" en esta conversación?
  *
- * Tres casos en el histórico (`status_history`), y ninguno más:
+ * Cuatro casos en el histórico (`status_history`), y ninguno más:
  *
  *  1. **`CONFIRMADO_SIN_DATOS`** — el cliente SÍ confirmó la compra pero NO
  *     completó los datos de envío (`tools/tags.py`; va siempre en combo con
@@ -18,9 +18,12 @@
  *     **`RETOMA_VENTA` → `RECHAZO` → `HUMANO`**: el cliente dijo que no a la
  *     venta retomada y el operador entró a rescatarla. Un `RECHAZO` que no
  *     viene de `RETOMA_VENTA` sigue sin contar.
+ *  4. **Solo `HUMANO`** (una o más entradas, ningún otro tag) — el operador
+ *     intervino desde el arranque o el cliente entró directo al humano: no
+ *     hay ningún tag que descarte una venta.
  *
- * En cualquier otra conversación intervenida (una duda, un reclamo, un pedido
- * que ya cerró) el botón sería ruido en la barra del composer.
+ * En cualquier otra conversación intervenida (un rechazo, un pedido que ya
+ * cerró) el botón sería ruido en la barra del composer.
  *
  * Se mira el histórico y no el `tag` actual: al intervenir, el handoff escribe
  * `tag=HUMANO` encima, así que el estado que justifica el botón solo sobrevive
@@ -47,6 +50,9 @@ export function canOfferQuickOrder(
 ): boolean {
   if (!statusHistory) return false;
   const tagAt = (i: number) => statusHistory[i]?.tag;
+  const onlyHuman =
+    statusHistory.length > 0 && statusHistory.every((entry) => entry?.tag === HUMAN_TAG);
+  if (onlyHuman) return true;
   return statusHistory.some(
     (entry, i) =>
       entry?.tag === PENDING_SHIPPING_DATA_TAG ||
