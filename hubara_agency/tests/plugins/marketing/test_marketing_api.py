@@ -824,6 +824,25 @@ def test_get_segments_cuenta_contactos_y_expone_costo(
     assert body["currency"] == "USD"
 
 
+def test_get_segments_no_cuenta_sesiones_de_prueba(
+    client: TestClient, _isolate_vault_dir: Path
+) -> None:
+    # Incidente 2026-09-22: la card de "clientes" decía 16 y la audiencia 4 —
+    # 12 eran sesiones sembradas para probar Ads (`seeded_test`), que la
+    # audiencia ya saltaba pero el conteo no. Misma regla en los dos.
+    vault = _isolate_vault_dir
+    _seed_session(vault, "wa_+571", {"tag": "COMPRA_EXITOSA"})
+    _seed_session(vault, "wa_573000000004", {"tag": "COMPRA_EXITOSA", "seeded_test": True})
+    _seed_session(vault, "wa_573000000005", {"tag": "INTERESADO", "seeded_test": True})
+
+    body = client.get("/api/marketing/segments").json()
+    by_key = {s["key"]: s for s in body["segments"]}
+    assert by_key["clientes"]["count"] == 1
+    assert by_key["interesados"]["count"] == 0
+    # Tampoco son "excluidos" (humano/baja): no son contactos.
+    assert body["excluded_count"] == 0
+
+
 # --- Importación de contactos (CSV) ----------------------------------------
 
 
