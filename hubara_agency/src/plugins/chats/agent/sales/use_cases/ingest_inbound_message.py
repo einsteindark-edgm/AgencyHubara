@@ -330,6 +330,7 @@ class IngestInboundMessage:
             now_ms=now_ms,
             message_id=parsed.message_id,
             interactive=parsed.interactive,
+            order=parsed.order,
         )
         if inbound_signal is not None:
             logger.info(
