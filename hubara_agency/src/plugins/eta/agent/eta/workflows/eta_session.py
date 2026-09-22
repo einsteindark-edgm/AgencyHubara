@@ -107,6 +107,19 @@ _PHOTO = {
 }
 
 
+def _coerce_cop(raw: object) -> int | None:
+    """``shipping_cost`` del signal → COP entero positivo o ``None``. Pura
+    (R-DET). Tolera el string que deja el JSON del manifest; descarta bool,
+    negativos, cero y basura."""
+    if isinstance(raw, bool) or raw is None:
+        return None
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 @workflow.defn(name="HubaraEtaSessionWorkflow")
 class HubaraEtaSessionWorkflow:
     """Sesión de notificaciones de estado de pedido (Agente ETA)."""
@@ -123,8 +136,9 @@ class HubaraEtaSessionWorkflow:
         """Cambio de estado del pedido (lo emite el dispatcher por el manifest).
 
         ``payload`` = ``{"to_stage": str, "order_id": str}`` (del ``input_mapping``),
-        más ``tracking_url`` opcional en ``shipping`` (link de la guía que el
-        operador adjuntó; va al final del mensaje).
+        más, en ``shipping``, ``tracking_url`` (link de la guía; va al final
+        del mensaje) y ``shipping_cost`` (valor del envío en COP; va en el
+        texto) opcionales — ambos los escribe el operador en el modal.
         """
         self._pending_stages.append(dict(payload))
 
@@ -192,12 +206,13 @@ class HubaraEtaSessionWorkflow:
                 stage = str(ev.get("to_stage", ""))
                 order_id = str(ev.get("order_id", input.order_id))
                 tracking_url = str(ev.get("tracking_url") or "").strip() or None
+                shipping_cost = _coerce_cop(ev.get("shipping_cost"))
                 if not stage:
                     continue
                 turn_count += 1
                 try:
                     await self._notify_stage(
-                        session_id, order_id, stage, tracking_url
+                        session_id, order_id, stage, tracking_url, shipping_cost
                     )
                 except Exception as exc:  # noqa: BLE001 — una notif fallida no tumba la sesión
                     workflow.logger.warning(
@@ -272,12 +287,15 @@ class HubaraEtaSessionWorkflow:
         order_id: str,
         stage: str,
         tracking_url: str | None = None,
+        shipping_cost: int | None = None,
     ) -> None:
         """Notifica un cambio de estado, respetando la ventana de servicio 24h.
 
         ``tracking_url`` (solo ``shipping``): dentro de ventana va como link
         tappable al final del texto; fuera de ventana, dentro del slot
         ``status_label`` del template (único canal permitido por Meta).
+        ``shipping_cost`` (solo ``shipping``): valor del envío en COP; va en
+        el texto y, fuera de ventana, en el mismo slot del template.
 
         - DENTRO de ventana (cliente escribió en las últimas 24h): renderizamos
           el mensaje con plantilla determinista y lo enviamos como texto libre.
@@ -292,7 +310,7 @@ class HubaraEtaSessionWorkflow:
         # comandos), así que los runs vivos no lo notan.
         facts = await workflow.execute_activity(
             claim_eta_notification_activity,
-            args=[session_id, order_id, stage, tracking_url],
+            args=[session_id, order_id, stage, tracking_url, shipping_cost],
             **_ORDER,
         )
         if facts is None:
@@ -324,11 +342,11 @@ class HubaraEtaSessionWorkflow:
 
         if facts.get("in_service_window"):
             await self._send_text_notification(
-                session_id, order_id, stage, facts, tracking_url
+                session_id, order_id, stage, facts, tracking_url, shipping_cost
             )
         else:
             await self._notify_template(
-                session_id, order_id, stage, facts, tracking_url
+                session_id, order_id, stage, facts, tracking_url, shipping_cost
             )
 
     async def _send_text_notification(
@@ -338,6 +356,7 @@ class HubaraEtaSessionWorkflow:
         stage: str,
         facts: dict,
         tracking_url: str | None = None,
+        shipping_cost: int | None = None,
     ) -> None:
         """Notificación DENTRO de ventana: texto fijo renderizado, sin LLM.
 
@@ -355,6 +374,7 @@ class HubaraEtaSessionWorkflow:
             delivery_window=facts.get("delivery_window"),
             items_label=facts.get("items_label", ""),
             tracking_url=tracking_url,
+            shipping_cost=shipping_cost,
         )
         if not message:
             return  # stage desconocido → nada que enviar
@@ -384,6 +404,7 @@ class HubaraEtaSessionWorkflow:
         stage: str,
         facts: dict,
         tracking_url: str | None = None,
+        shipping_cost: int | None = None,
     ) -> None:
         """Notificación FUERA de ventana: template de utilidad aprobado.
 
@@ -397,7 +418,9 @@ class HubaraEtaSessionWorkflow:
         132001 = template inexistente en la WABA) → ApplicationError que el
         wrapper del loop captura y loguea como no-fatal.
         """
-        variables = build_status_template_variables(stage, facts, tracking_url)
+        variables = build_status_template_variables(
+            stage, facts, tracking_url, shipping_cost
+        )
         await workflow.execute_activity(
             send_whatsapp_template_activity,
             args=[session_id, _ORDER_STATUS_TEMPLATE, variables],

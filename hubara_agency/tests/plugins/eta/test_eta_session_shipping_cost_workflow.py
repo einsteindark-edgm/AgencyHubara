@@ -1,16 +1,14 @@
-"""HubaraEtaSessionWorkflow — el link de guía del signal llega al WhatsApp.
+"""HubaraEtaSessionWorkflow — "listo" sin monto + valor del envío en "en camino".
 
-Verifica COMPORTAMIENTO (gotcha #1 del CLAUDE.md: no basta con que el
-schema admita `tracking_url` — el workflow tiene que EMITIRLO):
+Comportamiento (pedido del operador 2026-09-22), verificado sobre lo que el
+workflow EMITE (gotcha #1):
 
-  * signal `notify_stage_change` con `tracking_url` + ventana abierta →
-    `send_whatsapp_message_activity` recibe el texto con la URL al final.
-  * mismo signal fuera de ventana → el template `order_status_utility_v2`
-    lleva la URL en `status_label`.
-  * signal sin `tracking_url` (emisor legacy) → mensaje de siempre.
-
-WorkflowEnvironment time-skipping + activities fake (R-DET). El workflow
-termina solo cuando el idle de 7 días se saltea.
+  * signal ``ready`` (sin foto) → sale el aviso de siempre, SIN monto.
+  * signal ``shipping`` con ``shipping_cost`` + ventana abierta → el texto
+    lleva "El valor del envío es $ 12.000".
+  * mismo signal fuera de ventana → el template lleva el valor en
+    ``status_label``.
+  * signal sin ``shipping_cost`` (emisor legacy) → mensaje de siempre.
 """
 from __future__ import annotations
 
@@ -24,7 +22,6 @@ from src.plugins.eta.agent.eta.workflows.eta_session import HubaraEtaSessionWork
 from src.sdk import get_task_queue
 
 QUEUE = get_task_queue("eta", "eta")
-URL = "https://www.interrapidisimo.com/sigue-tu-envio/?guia=700012345678"
 SESSION = "wa_573001112233"
 
 
@@ -33,6 +30,7 @@ class Tracker:
         self.texts: list[str] = []
         self.templates: list[tuple[str, dict]] = []
         self.recorded: list[tuple[str, str]] = []
+        self.claims: list[tuple] = []
 
 
 def _fakes(tracker: Tracker, *, in_window: bool):
@@ -41,7 +39,11 @@ def _fakes(tracker: Tracker, *, in_window: bool):
         return None
 
     @activity.defn(name="claim_eta_notification_activity")
-    async def fake_claim(session_id: str, order_id: str, stage: str, tracking_url: str | None = None, shipping_cost: int | None = None) -> dict:
+    async def fake_claim(
+        session_id: str, order_id: str, stage: str,
+        tracking_url: str | None = None, shipping_cost: int | None = None,
+    ) -> dict:
+        tracker.claims.append((stage, tracking_url, shipping_cost))
         return {
             "customer_name": "Ana",
             "order_display_id": "#9",
@@ -51,6 +53,7 @@ def _fakes(tracker: Tracker, *, in_window: bool):
             "delivery_window": None,
             "items_label": "Difusor",
             "in_service_window": in_window,
+            "has_ready_photo": False,
         }
 
     @activity.defn(name="send_whatsapp_message_activity")
@@ -80,7 +83,7 @@ def _fakes(tracker: Tracker, *, in_window: bool):
     ]
 
 
-async def _run_with_signal(tracker: Tracker, payload: dict, *, in_window: bool) -> None:
+async def _run_with_signals(tracker: Tracker, payloads: list[dict], *, in_window: bool) -> None:
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
             env.client,
@@ -94,53 +97,82 @@ async def _run_with_signal(tracker: Tracker, payload: dict, *, in_window: bool) 
                 id=f"eta-{SESSION}",
                 task_queue=QUEUE,
             )
-            await handle.signal(HubaraEtaSessionWorkflow.notify_stage_change, payload)
-            # Idle de 7 días saltado por el test server → el run termina.
+            for payload in payloads:
+                await handle.signal(HubaraEtaSessionWorkflow.notify_stage_change, payload)
             await handle.result()
 
 
 @pytest.mark.asyncio
-async def test_shipping_signal_with_tracking_url_sends_link_in_text():
+async def test_ready_still_notifies_without_the_amount():
     tracker = Tracker()
-    await _run_with_signal(
+    await _run_with_signals(
         tracker,
-        {"to_stage": "shipping", "order_id": "order_01HX", "tracking_url": URL},
+        [{"to_stage": "ready", "order_id": "order_01HX", "shipping_cost": 12000}],
         in_window=True,
     )
 
     assert tracker.texts == [
-        "Tu pedido #9 (Difusor) ya va en camino 🚚. Te aviso cuando esté por llegar."
-        f"\n\nPuedes seguir tu envío aquí: {URL}"
+        "¡Buenas noticias Ana! Tu pedido #9 ya está empacado y listo para salir. "
+        "Te escribo apenas vaya en camino."
     ]
-    assert tracker.templates == []
-    assert tracker.recorded[0][0] == "shipping" and URL in tracker.recorded[0][1]
+    assert [s for s, _ in tracker.recorded] == ["ready"]
 
 
 @pytest.mark.asyncio
-async def test_shipping_signal_with_tracking_url_out_of_window_uses_template_slot():
+async def test_ready_out_of_window_uses_the_plain_status_template():
     tracker = Tracker()
-    await _run_with_signal(
+    await _run_with_signals(
         tracker,
-        {"to_stage": "shipping", "order_id": "order_01HX", "tracking_url": URL},
+        [{"to_stage": "ready", "order_id": "order_01HX", "shipping_cost": 12000}],
         in_window=False,
     )
 
     assert tracker.texts == []
-    assert len(tracker.templates) == 1
-    name, variables = tracker.templates[0]
-    assert name == "order_status_utility_v2"
-    assert variables["status_label"] == f"en camino. Sigue tu envío aquí: {URL}"
+    assert tracker.templates[0][1]["status_label"] == "Listo para envío"
 
 
 @pytest.mark.asyncio
-async def test_shipping_signal_without_tracking_url_is_legacy_message():
+async def test_shipping_signal_with_cost_sends_value_in_text():
     tracker = Tracker()
-    await _run_with_signal(
+    await _run_with_signals(
         tracker,
-        {"to_stage": "shipping", "order_id": "order_01HX"},
+        [{"to_stage": "shipping", "order_id": "order_01HX", "shipping_cost": 12000}],
+        in_window=True,
+    )
+
+    assert tracker.texts == [
+        "Tu pedido #9 (Difusor) ya va en camino 🚚. El valor del envío es "
+        "$ 12.000. Te aviso cuando esté por llegar."
+    ]
+    assert tracker.templates == []
+    assert tracker.claims == [("shipping", None, 12000)]
+
+
+@pytest.mark.asyncio
+async def test_shipping_signal_with_cost_out_of_window_uses_template_slot():
+    tracker = Tracker()
+    await _run_with_signals(
+        tracker,
+        [{"to_stage": "shipping", "order_id": "order_01HX", "shipping_cost": "12000"}],
+        in_window=False,
+    )
+
+    assert tracker.texts == []
+    name, variables = tracker.templates[0]
+    assert name == "order_status_utility_v2"
+    assert variables["status_label"] == "en camino. El valor del envío es $ 12.000"
+
+
+@pytest.mark.asyncio
+async def test_shipping_signal_without_cost_is_legacy_message():
+    tracker = Tracker()
+    await _run_with_signals(
+        tracker,
+        [{"to_stage": "shipping", "order_id": "order_01HX", "shipping_cost": None}],
         in_window=True,
     )
 
     assert tracker.texts == [
         "Tu pedido #9 (Difusor) ya va en camino 🚚. Te aviso cuando esté por llegar."
     ]
+    assert tracker.claims == [("shipping", None, None)]

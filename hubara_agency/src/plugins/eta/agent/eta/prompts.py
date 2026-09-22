@@ -38,8 +38,19 @@ STAGE_LABELS: dict[str, str] = {
 _ORDER_REFERENCE_MAX_LEN = 60
 
 
+def format_cop(amount: int | None) -> str:
+    """Monto COP al estilo del total del pedido: ``$ 215.000`` (miles con
+    punto). Cero / ``None`` → "" (sin monto no se escribe nada)."""
+    if not amount:
+        return ""
+    return "$ " + f"{int(amount):,}".replace(",", ".")
+
+
 def build_status_template_variables(
-    stage: str, facts: dict, tracking_url: str | None = None
+    stage: str,
+    facts: dict,
+    tracking_url: str | None = None,
+    shipping_cost: int | None = None,
 ) -> dict[str, str]:
     """Variables del template fuera-de-ventana (``order_status_utility_v2``).
 
@@ -63,13 +74,19 @@ def build_status_template_variables(
         reference = f"{reference} ({items_label})"
     status_label = STAGE_LABELS.get(stage, stage)
     url = _clean_tracking_url(tracking_url)
-    if stage == "shipping" and url:
-        # Fuera de ventana el ÚNICO canal es este template: el link de la
-        # guía viaja dentro del slot de estado ("...está en camino. Sigue tu
+    envio = format_cop(shipping_cost) if stage == "shipping" else ""
+    if stage == "shipping" and (url or envio):
+        # Fuera de ventana el ÚNICO canal es este template: el valor del
+        # envío y el link de la guía viajan dentro del slot de estado
+        # ("...está en camino. El valor del envío es $ 12.000. Sigue tu
         # envío aquí: https://…. Si quieres más información…"). El catálogo
         # declara max_length holgado para este slot; sin saltos de línea ni
         # 4+ espacios (Meta los rechaza en params).
-        status_label = f"en camino. Sigue tu envío aquí: {url}"
+        status_label = "en camino"
+        if envio:
+            status_label += f". El valor del envío es {envio}"
+        if url:
+            status_label += f". Sigue tu envío aquí: {url}"
     return {
         "order_reference": reference[:_ORDER_REFERENCE_MAX_LEN],
         "status_label": status_label,
@@ -134,6 +151,7 @@ def render_stage_notification(
     delivery_window: str | None = None,
     items_label: str = "",
     tracking_url: str | None = None,
+    shipping_cost: int | None = None,
 ) -> str | None:
     """Renderiza el mensaje EXACTO de una notificación de cambio de estado.
 
@@ -153,6 +171,15 @@ def render_stage_notification(
     ``tracking_url`` (opcional, lo adjunta el operador al mover el pedido a
     "en camino") se agrega SOLO al mensaje de ``shipping`` como link tappable
     al final; las demás etapas lo ignoran.
+
+    ``shipping_cost`` (COP entero, opcional; lo escribe el operador al marcar
+    "en camino") se informa SOLO en ``shipping`` ("El valor del envío es
+    $ 12.000"), tal cual, sin sumarlo ni restarlo del total. Con valor de
+    envío, el pedido pagado ya NO afirma "no tienes que pagar nada".
+
+    2026-09-22: ni ``preparing`` ni ``ready`` contra entrega recuerdan el monto
+    ("pagarás $ X…" / "Ten listos $ X…") — el precio se menciona recién en
+    "en camino".
 
     Devuelve ``None`` para un stage desconocido (el workflow lo saltea).
     """
@@ -178,23 +205,15 @@ def render_stage_notification(
                 "confirmado, así que cuando llegue solo tienes que recibirlo 🙌 "
                 "Te aviso en cada paso."
             )
-        if pay == "cod":
-            return (
-                f"{intro} entró en preparación. Recuerda que es contra entrega: "
-                f"pagarás {monto} en efectivo o transferencia cuando lo recibas. "
-                "Te aviso en cada paso 🙌"
-            )
+        # Contra entrega o prepago sin confirmar: solo el cambio de estado,
+        # sin precio (el monto se recuerda recién en "en camino").
         return (
             f"{intro} acaba de entrar en preparación. Te aviso en cada paso 🙌"
         )
 
     if stage == "ready":
-        if pay == "cod":
-            return (
-                f"Tu pedido {order_display_id} ya está empacado y sale a ruta "
-                f"muy pronto. 💡 Ten listos {monto} para pagar cuando lo recibas."
-                + _window_suffix(delivery_window)
-            )
+        # 2026-09-22: sin monto tampoco acá (contra entrega = mismo aviso que
+        # el prepago sin confirmar); el precio se recuerda en "en camino".
         tail = " Recuerda que ya está pagado." if pay == "confirmed" else ""
         return (
             f"{_buenas(name)} Tu pedido {order_display_id} ya está empacado y "
@@ -203,22 +222,24 @@ def render_stage_notification(
         )
 
     if stage == "shipping":
-        if pay == "confirmed":
+        envio = format_cop(shipping_cost)
+        head = f"Tu pedido {order} ya va en camino 🚚."
+        if envio:
+            head += f" El valor del envío es {envio}."
+        if pay == "confirmed" and envio:
+            body = f"{head} Tu pedido ya está pagado. Te aviso cuando esté por llegar."
+        elif pay == "confirmed":
             body = (
-                f"Tu pedido {order} ya va en camino 🚚. Recuerda que está "
-                "pagado, así que al recibirlo no tienes que pagar nada. Te aviso "
-                "cuando esté por llegar."
+                f"{head} Recuerda que está pagado, así que al recibirlo no "
+                "tienes que pagar nada. Te aviso cuando esté por llegar."
             )
         elif pay == "cod":
             body = (
-                f"Tu pedido {order} ya va en camino 🚚. Recuerda que al "
-                f"recibirlo pagas {monto} al repartidor (efectivo o transferencia)."
+                f"{head} Recuerda que al recibirlo pagas {monto} al repartidor "
+                "(efectivo o transferencia)."
             )
         else:
-            body = (
-                f"Tu pedido {order} ya va en camino 🚚. Te aviso cuando esté "
-                "por llegar."
-            )
+            body = f"{head} Te aviso cuando esté por llegar."
         return body + _window_suffix(delivery_window) + _tracking_suffix(tracking_url)
 
     if stage == "delivered":

@@ -232,6 +232,41 @@ transiciones manuales validando el DAG permitido entre stages.
 - AND sin `tracking_url` (o vacío) el mensaje es byte-a-byte el de siempre;
   "Cancelar" en el modal no mueve el pedido ni manda request
 
+#### Scenario: "En camino" con valor del envío (modal del kanban, 2026-09-22)
+
+- GIVEN el operador suelta un pedido en la columna `shipping` del kanban
+- WHEN el modal "Marcar en camino" le pide (opcionalmente) el valor del envío
+  y confirma con `{stage: "shipping", shipping_cost: 12000}` (COP entero,
+  con o sin `tracking_url`)
+- THEN la transición se aplica y el stage history registra la nota
+  `Valor del envío: $ 12.000` (concatenada a la nota / guía si venían)
+- AND `EmitOrderStageWorkflow` recibe el `shipping_cost`, el
+  `OrderStageChangedEvent` lo lleva y el manifest lo mapea
+  (`$.shipping_cost`) al signal `notify_stage_change` del ETA
+- AND el mensaje de WhatsApp dice `Tu pedido #9 (…) ya va en camino 🚚. El
+  valor del envío es $ 12.000. …` — el valor se informa tal cual, sin sumarlo
+  ni restarlo del total; con pedido pagado el mensaje ya NO afirma "no tienes
+  que pagar nada". Fuera de la ventana 24h viaja en el slot `status_label`
+  del template `order_status_utility_v2` (`en camino. El valor del envío es
+  $ 12.000. Sigue tu envío aquí: …`)
+- AND sin `shipping_cost` (ausente, `null` o `0`) el mensaje es byte-a-byte
+  el de siempre
+- AND `shipping_cost` no entero, bool, negativo o > 10.000.000 → HTTP 422
+  mencionando `shipping_cost` y la transición NO se aplica
+
+#### Scenario: "En preparación" y "Listo" no mencionan el precio (2026-09-22)
+
+- GIVEN un pedido contra entrega que pasa a `preparing` o a `ready`
+- WHEN el ETA renderiza el aviso
+- THEN en `preparing` el mensaje es `¡Hola {nombre}! Soy tu asistente de
+  seguimiento de Hubara. Tu pedido #… (…) acaba de entrar en preparación. Te
+  aviso en cada paso 🙌` — sin "Recuerda que es contra entrega: pagarás $ X…"
+- AND en `ready` el mensaje es `¡Buenas noticias {nombre}! Tu pedido #… ya
+  está empacado y listo para salir. Te escribo apenas vaya en camino.` — sin
+  "Ten listos $ X para pagar…". `ready` SIGUE avisando (con la foto del
+  pedido si el operador la subió; el aviso de estado si no)
+- AND el monto se recuerda recién en "en camino"
+
 #### Scenario: Link de guía inválido
 
 - GIVEN body `{stage: "shipping", tracking_url: "www.x.com/guia"}` (sin esquema

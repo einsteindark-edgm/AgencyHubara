@@ -142,14 +142,15 @@ def test_render_preparing_confirmed_claims_paid():
     )
 
 
-def test_render_preparing_cod_reminds_amount():
+def test_render_preparing_cod_does_not_mention_the_amount():
+    """2026-09-22: en preparación NO se recuerda el precio (ni "contra entrega")."""
     msg = render_stage_notification(
         stage="preparing", customer_name="Daniela", order_display_id="#1243",
         total_label="$ 215.000", pay_type="cod", payment_confirmed=False,
         items_label="Vela Cruz",
     )
     assert "¡Hola Daniela!" in msg
-    assert "es contra entrega: pagarás $ 215.000 en efectivo o transferencia" in msg
+    assert "215.000" not in msg and "contra entrega" not in msg
 
 
 def test_render_shipping_pending_has_no_payment_line():

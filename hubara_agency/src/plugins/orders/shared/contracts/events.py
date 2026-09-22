@@ -72,6 +72,11 @@ class OrderStageChangedEvent:
             (``$.tracking_url``) into the ETA ``notify_stage_change`` payload
             so the WhatsApp message that announces "en camino" carries the
             link. ``None`` for every other stage / legacy emitters.
+        shipping_cost: optional shipping value in COP (integer, zero-decimal)
+            the operator typed when moving the order to ``shipping``. Mapped
+            by the manifest (``$.shipping_cost``) into the ETA payload so the
+            "en camino" message states it ("El valor del envío es $ 12.000").
+            ``None`` for every other stage / legacy emitters.
     """
 
     session_id: str
@@ -79,6 +84,7 @@ class OrderStageChangedEvent:
     to_stage: str
     occurred_at_ms: int = 0
     tracking_url: str | None = None
+    shipping_cost: int | None = None
 
 
 @dataclass(frozen=True)

@@ -109,6 +109,9 @@ agent:
               # Link de la guía (opcional, lo adjunta el operador en el modal
               # "en camino"). El ETA lo pone al final del mensaje de WhatsApp.
               tracking_url: "$.tracking_url"
+              # Valor del envío en COP (opcional, mismo modal). El ETA lo
+              # escribe en el mensaje: "El valor del envío es $ 12.000".
+              shipping_cost: "$.shipping_cost"
         - id: order_delivered_notifies_eta
           on_event: OrderStageChangedEvent
           when:

@@ -179,10 +179,15 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
           orderId={pendingShip}
           busy={transition.isPending}
           onCancel={() => setPendingShip(null)}
-          onConfirm={(url) => {
+          onConfirm={({ trackingUrl, shippingCost }) => {
             const orderId = pendingShip;
             setPendingShip(null);
-            runTransition({ orderId, to_stage: "shipping", tracking_url: url ?? undefined });
+            runTransition({
+              orderId,
+              to_stage: "shipping",
+              tracking_url: trackingUrl ?? undefined,
+              shipping_cost: shippingCost ?? undefined,
+            });
           }}
         />
       )}
