@@ -31,7 +31,7 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     couponCode: "PAPA20",
     validUntil: "",
     segments: ["clientes"],
-    message: { header: "", body: "b", footer: "", cta: "" },
+    message: { header: "", body: "b" },
     templateName: "campaign_promo_marketing_v1",
     scheduleAtMs: null,
     createdAtMs: 2,

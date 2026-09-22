@@ -153,8 +153,6 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     message: {
       header: "¡Se acerca el Día del Padre!",
       body: "Tenemos 20% off en toda la tienda.",
-      footer: "",
-      cta: "Ver catálogo",
     },
     templateName: "campaign_promo_marketing_v1",
     scheduleAtMs: null,
@@ -290,6 +288,16 @@ describe("CampaignBuilder — envío con confirmación de dos pasos", () => {
   });
 });
 
+describe("CampaignBuilder — mensaje", () => {
+  it("no ofrece pie ni botón: la plantilla aprobada no los tiene", () => {
+    const { queryByText, getByText } = render(<CampaignBuilder campaign={makeCampaign()} />);
+    expect(queryByText(/Pie \(fijo\)/)).toBeNull();
+    expect(queryByText(/Botón \(fijo\)/)).toBeNull();
+    // La ayuda dice qué SÍ viaja y que el texto de baja es fijo.
+    expect(getByText(/viajan: encabezado, cuerpo y oferta/)).toBeTruthy();
+  });
+});
+
 describe("CampaignBuilder — envío de prueba", () => {
   it("dispara el POST /test con el teléfono", () => {
     const { getByRole, getByPlaceholderText } = render(
@@ -386,7 +394,7 @@ describe("CampaignBuilder — contactos importados (CSV)", () => {
         campaign={makeCampaign({
           goal: "discount_general",
           percent: 10,
-          message: { header: "", body: "Hola", footer: "", cta: "" },
+          message: { header: "", body: "Hola" },
           segments: [],
           importedContacts: [{ phone: "573001234567", name: null }],
         })}
@@ -407,7 +415,7 @@ describe("CampaignBuilder — sin selector de producto único", () => {
             goal,
             percent: goal === "launch" ? 0 : 10,
             segments: ["clientes"],
-            message: { header: "", body: "Hola", footer: "", cta: "" },
+            message: { header: "", body: "Hola" },
           })}
         />,
       );

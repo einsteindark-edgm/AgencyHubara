@@ -88,8 +88,6 @@ function makeCampaign(over: Partial<Campaign> = {}): Campaign {
     message: {
       header: "¡Se acerca el Día del Padre!",
       body: "Tenemos 20% off.",
-      footer: "",
-      cta: "Ver catálogo",
     },
     templateName: "campaign_promo_marketing_v1",
     scheduleAtMs: null,
@@ -153,6 +151,19 @@ describe("CampaignInspector — preview", () => {
       getByText("Usa el código PAPA20 al pagar — válido hasta 15 de junio."),
     ).toBeTruthy();
     expect(getByText(/respóndeme "NO MÁS" y te doy de baja/)).toBeTruthy();
+  });
+
+  it("es fiel al envío: mensaje en una línea y sin pie ni botón (la plantilla no los tiene)", () => {
+    const campaign = makeCampaign();
+    const legacy = {
+      ...campaign,
+      // Campañas viejas guardaron pie/botón: la previa no debe inventarlos.
+      message: { ...campaign.message, footer: "Velas artesanales", cta: "Ver catálogo" },
+    } as typeof campaign;
+    const { getByText, queryByText } = render(<CampaignInspector campaign={legacy} />);
+    expect(getByText("¡Se acerca el Día del Padre! Tenemos 20% off.")).toBeTruthy();
+    expect(queryByText("Ver catálogo")).toBeNull();
+    expect(queryByText("Velas artesanales")).toBeNull();
   });
 
   it("sin cupón pero con % usa la frase de descuento", () => {

@@ -578,8 +578,6 @@ def new_campaign(
     segments: list[str] | None = None,
     header: str = "",
     body: str = "",
-    footer: str = "",
-    cta: str = "",
 ) -> dict[str, Any]:
     """Campaña nueva en estado draft — el shape canónico que persiste el store.
 
@@ -603,7 +601,8 @@ def new_campaign(
         "imported_contacts": [],
         # Carrusel de productos del catálogo de Meta (handles, 0 o 2..10).
         "carousel_handles": [],
-        "message": {"header": header, "body": body, "footer": footer, "cta": cta},
+        # Sin pie ni botón: la plantilla aprobada no los tiene.
+        "message": {"header": header, "body": body},
         "template_name": CAMPAIGN_TEMPLATE_NAME,
         "schedule_at_ms": None,
         "created_at_ms": now_ms,

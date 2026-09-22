@@ -38,6 +38,21 @@ def test_post_campaigns_crea_draft_persistido(
     assert CampaignStore(_isolate_vault_dir).get(body["id"]) is not None
 
 
+def test_mensaje_de_campana_no_guarda_pie_ni_boton(client: TestClient) -> None:
+    # La plantilla aprobada solo tiene cuerpo (saludo + mensaje + oferta +
+    # baja fija): pie y botón no viajan, así que tampoco se guardan. Un
+    # dashboard viejo que los mande no rompe el PUT: se ignoran.
+    campaign_id = client.post("/api/marketing/campaigns", json={"name": "A"}).json()["id"]
+    created = client.get(f"/api/marketing/campaigns/{campaign_id}").json()
+    assert created["message"] == {"header": "", "body": ""}
+    res = client.put(
+        f"/api/marketing/campaigns/{campaign_id}",
+        json={"message": {"header": "H", "body": "B", "footer": "Pie", "cta": "Ver"}},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["message"] == {"header": "H", "body": "B"}
+
+
 def test_get_campaigns_lista_las_guardadas(client: TestClient) -> None:
     client.post("/api/marketing/campaigns", json={"name": "A"})
     client.post("/api/marketing/campaigns", json={"name": "B"})

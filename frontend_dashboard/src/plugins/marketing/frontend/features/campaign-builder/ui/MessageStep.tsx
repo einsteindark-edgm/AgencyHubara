@@ -1,8 +1,9 @@
 /**
  * Paso 3 — Mensaje: header (60) + body (640, el límite real de la variable
- * del template) con contadores; footer y CTA se muestran pero van FIJOS en
- * el template MARKETING aprobado — solo header+body+oferta viajan como
- * variables. El saludo con nombre lo pone el sistema por destinatario.
+ * del template) con contadores. La plantilla MARKETING aprobada solo tiene un
+ * cuerpo con saludo + mensaje + oferta y la baja fija: no tiene pie ni botón
+ * (Meta los fija al aprobar y no admiten variables), así que no se ofrecen.
+ * El saludo con nombre lo pone el sistema por destinatario.
  */
 
 import type { CampaignDraft } from "../model/draft";
@@ -55,38 +56,12 @@ export function MessageStep({ draft, editable, onPatch, onCommit }: Props) {
         />
       </label>
 
-      <div className="grid grid-cols-2 gap-2.5 max-[900px]:grid-cols-1">
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] font-medium text-fg-muted">Pie (fijo)</span>
-          <input
-            type="text"
-            maxLength={60}
-            disabled={!editable}
-            value={m.footer}
-            onChange={(e) => patchMessage("footer", e.target.value)}
-            onBlur={() => onCommit()}
-            className="rounded-md border border-line bg-transparent px-2.5 py-1.5 text-[12.5px] text-fg outline-none focus:border-accent disabled:opacity-60"
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] font-medium text-fg-muted">Botón (fijo)</span>
-          <input
-            type="text"
-            maxLength={20}
-            disabled={!editable}
-            value={m.cta}
-            onChange={(e) => patchMessage("cta", e.target.value)}
-            onBlur={() => onCommit()}
-            className="rounded-md border border-line bg-transparent px-2.5 py-1.5 text-[12.5px] text-fg outline-none focus:border-accent disabled:opacity-60"
-          />
-        </label>
-      </div>
 
       <p className="text-[11px] leading-snug text-fg-faint">
         El saludo con nombre ("Hola Camila") lo agrega el sistema por
-        destinatario. Pie, botón y el texto de baja van fijos en el template
-        aprobado de WhatsApp — solo encabezado, cuerpo y oferta viajan como
-        variables.
+        destinatario. Del mensaje viajan: encabezado, cuerpo y oferta, en un
+        solo párrafo. El texto de baja va fijo al final. La plantilla aprobada
+        de WhatsApp no tiene pie ni botón.
       </p>
     </div>
   );
