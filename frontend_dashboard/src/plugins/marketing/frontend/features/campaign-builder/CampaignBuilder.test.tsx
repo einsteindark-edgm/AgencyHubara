@@ -298,6 +298,23 @@ describe("CampaignBuilder — mensaje", () => {
   });
 });
 
+describe("CampaignBuilder — cupón contra Medusa", () => {
+  it("avisa si el cupón escrito no existe entre los vigentes de Medusa", () => {
+    // Incidente AMOR/AMOR26: la campaña anunció un código que no existía.
+    const { getByText } = render(
+      <CampaignBuilder campaign={makeCampaign({ couponCode: "PAPA20" })} />,
+    );
+    expect(getByText(/PAPA20 no está entre los cupones vigentes de Medusa/)).toBeTruthy();
+  });
+
+  it("un cupón vigente de Medusa no muestra aviso", () => {
+    const { queryByText } = render(
+      <CampaignBuilder campaign={makeCampaign({ couponCode: "MAMA15" })} />,
+    );
+    expect(queryByText(/no está entre los cupones vigentes/)).toBeNull();
+  });
+});
+
 describe("CampaignBuilder — envío de prueba", () => {
   it("dispara el POST /test con el teléfono", () => {
     const { getByRole, getByPlaceholderText } = render(

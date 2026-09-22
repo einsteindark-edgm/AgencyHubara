@@ -569,6 +569,18 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - WHEN se presenta la confirmación
 - THEN el descuento es 0, el envelope explica la razón (`min_subtotal` / `no_applicable_items`) y el cupón sigue guardado por si el cliente ajusta el pedido
 
+#### Scenario: Cupón de productos seleccionados (incidente AMOR26, 2026-09-22)
+
+- GIVEN la promoción de Medusa aplica solo a ciertos productos (`items.product.id in [...]`)
+- WHEN el cliente da el código
+- THEN `apply_coupon` lee la lista (el adapter pide `target_rules.values` y `rules.values`) y responde `whole_catalog=false` + `eligible_products` (nombre, precio y precio con descuento calculado por el sistema); jamás dice "todo el catálogo"
+- AND la nota `[CUPÓN APLICADO: …]` de cada turno ordena ofrecer ESOS productos; lo conversado antes de otros productos se retoma solo si el cliente lo pide, aclarando que va sin descuento
+
+#### Scenario: Reglas de la promoción ilegibles
+
+- GIVEN una regla de productos o de mínimo de compra llega sin valores, o con un atributo que no entendemos
+- THEN la promoción queda `scope_unresolved` (falla CERRADA): `apply_coupon` responde `applied=false, reason=scope_unresolved` y `list_promotions` no la ofrece
+
 #### Scenario: Crear pedido desde el dashboard con cupón aplicado en el chat
 
 - GIVEN un episodio con `applied_coupon`

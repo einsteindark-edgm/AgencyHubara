@@ -27,7 +27,10 @@ from src.plugins.chats.agent.sales.use_cases.coupons import (
     clear_applied_coupon,
     describe_promotion,
     discount_line_items,
+    eligible_products,
+    eligible_products_text,
     format_cop,
+    is_whole_catalog,
     set_applied_coupon,
 )
 
@@ -39,28 +42,15 @@ _REASON_TEXT = {
     "expired": "Ese cupón ya venció.",
     "budget_exhausted": "Ese cupón ya se agotó.",
     "unavailable": "No pude validar el cupón ahora mismo (sistema de promociones caído).",
+    "scope_unresolved": "No pude confirmar a qué productos aplica ese cupón, así que no lo apliqué.",
 }
 
 
 async def _product_titles(catalog: Any, promotion: PromotionDTO) -> list[str] | str:
     """Nombres de los productos a los que aplica, o "todo el catálogo"."""
-    if not (promotion.product_ids or promotion.variant_ids or promotion.collection_ids):
+    if is_whole_catalog(promotion):
         return "todo el catálogo"
-    titles: list[str] = []
-    if catalog is None:
-        return titles
-    try:
-        result = await catalog.search("", limit=200)
-    except Exception:  # noqa: BLE001 — sin catálogo no hay nombres
-        return titles
-    for product in getattr(result, "results", None) or []:
-        pid = str(getattr(product, "id", "") or "")
-        variant_ids = {
-            str(getattr(v, "id", "") or "") for v in (getattr(product, "variants", None) or [])
-        }
-        if pid in promotion.product_ids or variant_ids & set(promotion.variant_ids):
-            titles.append(str(getattr(product, "title", "") or pid))
-    return titles
+    return [p["title"] for p in await eligible_products(catalog, promotion)]
 
 
 class ListPromotionsTool(ToolBase):
@@ -96,6 +86,9 @@ class ListPromotionsTool(ToolBase):
             )
         out = []
         for promo in promotions:
+            if promo.scope_unresolved:
+                # Reglas ilegibles: no sabemos a qué aplica — no se ofrece.
+                continue
             out.append(
                 {
                     "code": promo.code,
@@ -232,9 +225,13 @@ class ApplyCouponTool(ToolBase):
             )
 
         promotion = resolution.promotion
+        whole_catalog = is_whole_catalog(promotion)
+        eligible = await eligible_products(self._catalog, promotion)
         store.update(
             ctx.session_key,
-            lambda md: set_applied_coupon(md, promotion=promotion, now_ms=now_ms),
+            lambda md: set_applied_coupon(
+                md, promotion=promotion, now_ms=now_ms, eligible=eligible
+            ),
         )
         logger.info("🎟️ [TOOL apply_coupon] applied session={} code={}", ctx.session_key, promotion.code)
 
@@ -242,10 +239,24 @@ class ApplyCouponTool(ToolBase):
             "applied": True,
             "code": promotion.code,
             "discount": describe_promotion(promotion),
-            "products": await _product_titles(self._catalog, promotion),
+            "whole_catalog": whole_catalog,
+            "eligible_products": eligible,
             "min_subtotal_cop": promotion.min_subtotal_cop,
         }
         summary = f"Cupón {promotion.code} aplicado: {describe_promotion(promotion)}"
+        if whole_catalog:
+            summary += " en todo el catálogo"
+        elif eligible:
+            summary += (
+                f" SOLO en: {eligible_products_text(eligible)}. Muéstrale y ofrécele "
+                "ESTOS productos; lo que hablaron antes de otros productos va SIN "
+                "descuento (retómalo solo si el cliente lo pide, aclarándolo)"
+            )
+        elif promotion.target_type != "shipping_methods":
+            summary += (
+                " solo en algunos productos que no pude identificar en el catálogo; "
+                "no prometas descuento en un producto concreto"
+            )
         if items:
             lines = await discount_line_items(self._catalog, items)
             result = compute_discount(promotion, lines)

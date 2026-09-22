@@ -1167,3 +1167,118 @@ def test_send_producto_existente_sin_producto_unico_arranca(client: TestClient, 
     )
     res = client.post(f"/api/marketing/campaigns/{campaign_id}/send", json={})
     assert res.status_code == 200, res.text
+
+
+
+# --- El cupón que anuncia la campaña tiene que existir en Medusa -------------
+# Incidente 2026-09-22: la campaña anunció "AMOR" y el código real era AMOR26.
+
+
+def _promo_dto(code: str, **over):
+    from src.sdk.connectorkit import PromotionDTO
+
+    base = dict(
+        id=f"p_{code}", code=code, discount_type="percentage", value=10, currency_code=None,
+        target_type="items", allocation="each", max_quantity=None,
+        product_ids=("prod_a",), variant_ids=(), collection_ids=(), min_subtotal_cop=None,
+        is_automatic=False, status="active", starts_at_ms=None, ends_at_ms=None,
+        budget_type=None, budget_limit=None, budget_used=None, description=None,
+    )
+    base.update(over)
+    return PromotionDTO(**base)
+
+
+def _campaign_with_coupon(client: TestClient, code: str) -> str:
+    campaign_id = _ready_campaign(client)
+    client.put(f"/api/marketing/campaigns/{campaign_id}", json={"coupon_code": code})
+    return campaign_id
+
+
+def test_send_con_cupon_inexistente_en_medusa_es_422(client: TestClient, monkeypatch) -> None:
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    fake = _FakeTemporalClient()
+
+    async def _fake_client():
+        return fake
+
+    monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
+    monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([_promo_dto("AMOR26")]))
+    campaign_id = _campaign_with_coupon(client, "AMOR")
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/send", json={})
+    assert res.status_code == 422
+    assert "AMOR" in res.json()["detail"] and "Medusa" in res.json()["detail"]
+    assert fake.calls == []
+
+
+def test_send_con_cupon_vencido_es_422(client: TestClient, monkeypatch) -> None:
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    fake = _FakeTemporalClient()
+
+    async def _fake_client():
+        return fake
+
+    monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
+    monkeypatch.setattr(
+        api_mod, "get_promotions_port",
+        lambda: FakePromotionsPort([_promo_dto("AMOR26", ends_at_ms=1_000)]),
+    )
+    campaign_id = _campaign_with_coupon(client, "AMOR26")
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/send", json={})
+    assert res.status_code == 422
+    assert "venció" in res.json()["detail"]
+
+
+def test_send_con_cupon_valido_arranca(client: TestClient, monkeypatch) -> None:
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    fake = _FakeTemporalClient()
+
+    async def _fake_client():
+        return fake
+
+    monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
+    monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([_promo_dto("AMOR26")]))
+    campaign_id = _campaign_with_coupon(client, "AMOR26")
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/send", json={})
+    assert res.status_code == 200, res.text
+    assert len(fake.calls) == 1
+
+
+def test_test_send_con_cupon_inexistente_es_422_sin_enviar(client: TestClient, monkeypatch) -> None:
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    async def _fake_send(*a, **kw):  # pragma: no cover
+        raise AssertionError("no debe enviar")
+
+    monkeypatch.setattr(api_mod, "send_template_to_session", _fake_send)
+    monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([_promo_dto("AMOR26")]))
+    campaign_id = _campaign_with_coupon(client, "AMOR")
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/test", json={"phone": "3001234567"})
+    assert res.status_code == 422
+    assert "AMOR" in res.json()["detail"]
+
+
+def test_send_con_medusa_caido_no_puede_validar_el_cupon(client: TestClient, monkeypatch) -> None:
+    from src.sdk.connectorkit import PromotionsUnavailableError
+
+    class Down:
+        async def list_active(self):
+            raise PromotionsUnavailableError("timeout")
+
+        async def get_by_code(self, code):
+            raise PromotionsUnavailableError("timeout")
+
+    fake = _FakeTemporalClient()
+
+    async def _fake_client():
+        return fake
+
+    monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
+    monkeypatch.setattr(api_mod, "get_promotions_port", lambda: Down())
+    campaign_id = _campaign_with_coupon(client, "AMOR26")
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/send", json={})
+    assert res.status_code == 503
+    assert "cupón" in res.json()["detail"]
+    assert fake.calls == []

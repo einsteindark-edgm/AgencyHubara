@@ -37,6 +37,7 @@ from src.plugins.chats.agent.sales.tools.order_registration import RegisterOrder
 from src.plugins.chats.agent.sales.tools.ui_intents import PresentOrderConfirmationTool
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
+    build_coupon_note,
     coupon_discount_for_items,
 )
 
@@ -450,3 +451,118 @@ async def test_register_order_sin_cupon_no_manda_kwargs_nuevos(ctx, _isolate_vau
     env = await _register(_isolate_vault_dir, ctx, port, total=47900)
     assert env["registered"] is True
     assert port.calls == [47900]
+
+
+
+# --- Alcance: el cupón dice A QUÉ productos aplica (incidente AMOR26) ---------
+
+
+@pytest.mark.asyncio
+async def test_apply_coupon_de_productos_lista_los_elegibles_con_precio_y_descuento(
+    ctx, _isolate_vault_dir
+):
+    path = _seed(_isolate_vault_dir)
+    promo = _promo(code="AMOR26", value=10, product_ids=("prod_cubo-love",))
+    tool = ApplyCouponTool(
+        workspace=str(_isolate_vault_dir),
+        metadata_store=FilesystemMetadataStore(_isolate_vault_dir),
+        promotions=FakePromotionsPort([promo]),
+        catalog=FakeCatalog(),
+        now_ms=lambda: _NOW,
+    )
+    env = json.loads(await tool.execute_with_context(ctx, code="amor26"))
+    assert env["applied"] is True
+    assert env["whole_catalog"] is False
+    assert env["eligible_products"] == [
+        {"handle": "cubo-love", "title": "Cubo Love", "price_cop": 30000, "discounted_price_cop": 27000}
+    ]
+    assert "todo el catálogo" not in env["summary"]
+    assert "SOLO" in env["summary"] and "Cubo Love" in env["summary"]
+    assert "$27.000" in env["summary"]
+    # Los elegibles quedan en el episodio: la nota de cada turno los recuerda.
+    coupon = _md(path)["episodes"][-1]["applied_coupon"]
+    assert [p["handle"] for p in coupon["eligible_products"]] == ["cubo-love"]
+
+
+@pytest.mark.asyncio
+async def test_apply_coupon_de_todo_el_catalogo_lo_dice(ctx, _isolate_vault_dir):
+    _seed(_isolate_vault_dir)
+    tool = ApplyCouponTool(
+        workspace=str(_isolate_vault_dir),
+        metadata_store=FilesystemMetadataStore(_isolate_vault_dir),
+        promotions=FakePromotionsPort([_promo()]),
+        catalog=FakeCatalog(),
+        now_ms=lambda: _NOW,
+    )
+    env = json.loads(await tool.execute_with_context(ctx, code="MAMA15"))
+    assert env["whole_catalog"] is True
+    assert env["eligible_products"] == []
+    assert "todo el catálogo" in env["summary"]
+
+
+@pytest.mark.asyncio
+async def test_apply_coupon_con_alcance_desconocido_no_se_aplica(ctx, _isolate_vault_dir):
+    path = _seed(_isolate_vault_dir)
+    promo = _promo(code="AMOR26", scope_unresolved=True)
+    tool = ApplyCouponTool(
+        workspace=str(_isolate_vault_dir),
+        metadata_store=FilesystemMetadataStore(_isolate_vault_dir),
+        promotions=FakePromotionsPort([promo]),
+        catalog=FakeCatalog(),
+        now_ms=lambda: _NOW,
+    )
+    env = json.loads(await tool.execute_with_context(ctx, code="AMOR26"))
+    assert env["applied"] is False
+    assert env["reason"] == "scope_unresolved"
+    assert "todo el catálogo" not in env["summary"]
+    assert "applied_coupon" not in _md(path)["episodes"][-1]
+
+
+@pytest.mark.asyncio
+async def test_list_promotions_omite_las_de_alcance_desconocido(ctx, _isolate_vault_dir):
+    port = FakePromotionsPort([_promo(), _promo(id="p2", code="AMOR26", scope_unresolved=True)])
+    tool = ListPromotionsTool(workspace=str(_isolate_vault_dir), promotions=port, catalog=FakeCatalog())
+    env = json.loads(await tool.execute_with_context(ctx))
+    assert [p["code"] for p in env["promotions"]] == ["MAMA15"]
+
+
+def test_nota_del_cupon_ordena_ofrecer_los_elegibles_y_avisa_que_lo_demas_va_sin_descuento():
+    from dataclasses import asdict
+
+    promo = _promo(code="AMOR26", value=10, product_ids=("prod_cubo-love",))
+    md = {
+        "episodes": [
+            {
+                "episode_id": "ep_1",
+                "started_at_ms": 1,
+                "closed_at_ms": None,
+                "applied_coupon": {
+                    "code": "AMOR26",
+                    "promotion": asdict(promo),
+                    "applied_at_ms": _NOW,
+                    "eligible_products": [
+                        {"handle": "cubo-love", "title": "Cubo Love",
+                         "price_cop": 30000, "discounted_price_cop": 27000}
+                    ],
+                },
+            }
+        ]
+    }
+    note = build_coupon_note(md)
+    assert "AMOR26" in note
+    assert "SOLO" in note
+    assert "Cubo Love ($30.000 → $27.000)" in note
+    assert "ofrece" in note.lower()
+    assert "sin descuento" in note.lower()
+
+
+def test_nota_de_cupon_viejo_sin_elegibles_no_inventa_alcance():
+    from dataclasses import asdict
+
+    promo = _promo(code="AMOR26", value=10, product_ids=("prod_cubo-love",))
+    md = {"episodes": [{"episode_id": "ep_1", "started_at_ms": 1, "closed_at_ms": None,
+                        "applied_coupon": {"code": "AMOR26", "promotion": asdict(promo),
+                                           "applied_at_ms": _NOW}}]}
+    note = build_coupon_note(md)
+    assert "todo el catálogo" not in note
+    assert "list_promotions" in note

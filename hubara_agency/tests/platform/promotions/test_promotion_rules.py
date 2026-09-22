@@ -272,3 +272,53 @@ async def test_fake_y_null_ports() -> None:
     null = NullPromotionsPort()
     assert await null.list_active() == []
     assert await null.get_by_code("MAMA15") is None
+
+
+
+# --- Alcance de la promoción: la lista de productos tiene que llegar ----------
+# Incidente 2026-09-22 (cupón AMOR26): Medusa devolvió la regla
+# `items.product.id in [...]` SIN `values` porque no los pedíamos en `fields`
+# → product_ids vacío → el bot dijo "10% en todo el catálogo".
+
+
+def test_promotion_fields_pide_los_valores_de_las_reglas() -> None:
+    from src.platform.medusa.client import HttpMedusaClient
+
+    fields = HttpMedusaClient.PROMOTION_FIELDS
+    assert "*application_method.target_rules.values" in fields
+    assert "*rules.values" in fields
+
+
+def test_regla_de_productos_sin_valores_es_alcance_desconocido_no_todo_el_catalogo() -> None:
+    raw = _raw()
+    raw["application_method"]["target_rules"] = [
+        {"attribute": "items.product.id", "operator": "in"}  # sin values
+    ]
+    p = promotion_from_medusa(raw)
+    assert p is not None
+    assert p.product_ids == ()
+    assert p.scope_unresolved is True
+
+
+def test_minimo_de_compra_sin_valores_tambien_es_alcance_desconocido() -> None:
+    raw = _raw()
+    raw["rules"] = [{"attribute": "item_total", "operator": "gte"}]
+    p = promotion_from_medusa(raw)
+    assert p is not None and p.scope_unresolved is True
+
+
+def test_promocion_completa_o_sin_reglas_no_es_desconocida() -> None:
+    assert promotion_from_medusa(_raw()).scope_unresolved is False
+    raw = _raw()
+    raw["application_method"]["target_rules"] = []
+    raw["rules"] = []
+    assert promotion_from_medusa(raw).scope_unresolved is False
+
+
+def test_resolve_coupon_con_alcance_desconocido_no_aplica() -> None:
+    raw = _raw()
+    raw["application_method"]["target_rules"] = [{"attribute": "items.product.id", "operator": "in"}]
+    promo = promotion_from_medusa(raw)
+    res = resolve_coupon("MAMA15", [promo], now_ms=1_778_000_000_000)
+    assert res.ok is False
+    assert res.reason == "scope_unresolved"
