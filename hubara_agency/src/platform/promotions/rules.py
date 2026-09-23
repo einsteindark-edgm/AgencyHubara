@@ -77,6 +77,9 @@ class DiscountResult:
 
 
 def _selects(promo: PromotionDTO, item: DiscountLineItem) -> bool:
+    # Condición por etiquetas: se suma (Y) a la de productos, como en Medusa.
+    if promo.tag_values and not set(item.tags) & set(promo.tag_values):
+        return False
     if not (promo.product_ids or promo.variant_ids or promo.collection_ids):
         return True
     if item.product_id and item.product_id in promo.product_ids:

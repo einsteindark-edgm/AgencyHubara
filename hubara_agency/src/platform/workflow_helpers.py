@@ -39,6 +39,7 @@ with workflow.unsafe.imports_passed_through():
     from src.platform.llm_text_sanitizer import (
         is_no_message_abstention,
         looks_like_admin_leak,
+        salvage_customer_text,
         sanitize_llm_text,
     )
     from src.platform.temporal.activities import execute_tool
@@ -210,6 +211,9 @@ class TurnResult:
     # Narración que el default-deny descartó (texto junto a tool calls). El
     # cliente NO la vio; el evaluador sí debe verla (el LLM quiso decir algo).
     discarded_narration: list[str] = field(default_factory=list)
+    # Run 28a8e407: el texto final traía un párrafo de razonamiento y
+    # `final_content` ya es solo lo rescatable (lo mismo que quedó grabado).
+    salvaged_leak: bool = False
 
 
 # Tope del resultado de cada tool que viaja en `TurnResult.tool_events`: el
@@ -499,8 +503,14 @@ async def run_agent_turn(
     skip_record_when: Callable[[str], bool] | None = None,
     admin_turn: bool = False,
     align_history_with_episode: bool = False,
+    salvage_leaked_text: bool = False,
 ) -> TurnResult:
     """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
+
+    `salvage_leaked_text` (run 28a8e407): si el texto final trae párrafos de
+    razonamiento, se quitan ANTES de grabar el turno y `final_content` vuelve
+    ya limpio — el historial del LLM guarda exactamente lo que el caller
+    envía. Opt-in: lo pasa Ventas; en Remarketing un leak es abstención.
 
     `align_history_with_episode` (runs edbb0d8b / 8e73b7dc): antes de armar el
     prompt, pide cortar el historial del LLM de ESTE agente si el episodio
@@ -581,6 +591,7 @@ async def run_agent_turn(
         fabricate_fallback_on_empty=fabricate_fallback_on_empty,
         skip_record_when=skip_record_when,
         admin_turn=admin_turn,
+        salvage_leaked_text=salvage_leaked_text,
     )
 
 
@@ -594,6 +605,7 @@ async def _run_agent_turn_impl(
     fabricate_fallback_on_empty: bool = True,
     skip_record_when: Callable[[str], bool] | None = None,
     admin_turn: bool = False,
+    salvage_leaked_text: bool = False,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -1183,6 +1195,42 @@ async def _run_agent_turn_impl(
     # de commands (L-9 versiona forma, no contenido); en replay la activity no
     # se re-ejecuta. Por eso `extended` va en su default: nada que versionar.
     recorded = messages[initial_len:]
+    # Rescate ANTES de grabar (run 28a8e407, 2026-09-23): el texto final traía
+    # un párrafo de razonamiento + la respuesta real. Antes el rescate vivía en
+    # el caller, DESPUÉS de este `record_turn`: el cliente recibía la respuesta
+    # pero el historial la perdía entera (olía a parte interno) y el LLM
+    # re-contestaba la misma pregunta a cada "Si". Ahora se decide UNA vez: lo
+    # que se graba es exactamente lo que el caller va a enviar. Opt-in
+    # (`salvage_leaked_text`): en remarketing un leak es abstención, no rescate.
+    # `extended=True` = el set v2 que usa el caller en workflows nuevos (el
+    # único lugar donde esta rama corre). `patched()` va ÚLTIMO: solo se
+    # consulta cuando hay algo que rescatar; histories previas replayean con
+    # el rescate en el caller (mismo envío).
+    salvaged_leak = False
+    if (
+        salvage_leaked_text
+        and not admin_turn
+        and final_content
+        and not is_no_message_abstention(final_content)
+        and looks_like_admin_leak(final_content, extended=True)
+        and workflow.patched("record-sent-text-v1")
+    ):
+        salvaged = salvage_customer_text(final_content, extended=True)
+        if salvaged:
+            workflow.logger.info(
+                "texto final rescatado antes de grabarlo (se cae el párrafo "
+                f"de razonamiento): {final_content[:120]!r}"
+            )
+            discarded_narration.append(final_content)
+            if (
+                recorded
+                and recorded[-1].get("role") == "assistant"
+                and not recorded[-1].get("tool_calls")
+                and recorded[-1].get("content") == final_content
+            ):
+                recorded = [*recorded[:-1], {**recorded[-1], "content": salvaged}]
+            final_content = salvaged
+            salvaged_leak = True
     never_reaches_customer = admin_turn or (
         looks_like_admin_leak(final_content)
         and not is_no_message_abstention(final_content)
@@ -1262,4 +1310,5 @@ async def _run_agent_turn_impl(
         outbound_tool_texts=outbound_tool_texts,
         tool_events=tool_events,
         discarded_narration=discarded_narration,
+        salvaged_leak=salvaged_leak,
     )

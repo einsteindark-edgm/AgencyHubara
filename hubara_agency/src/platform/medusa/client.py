@@ -579,6 +579,31 @@ class HttpMedusaClient:
                 break
         return out
 
+    async def list_product_tags(self, ids: list[str]) -> list[dict[str, Any]]:
+        """`GET /admin/product-tags` de esos ids — `{id, value}` de cada
+        etiqueta. Las reglas de promoción por etiqueta traen ids; el catálogo
+        conoce el nombre ("Color: Rosado")."""
+        out: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            data = await self._request(
+                "GET",
+                "/admin/product-tags",
+                params={
+                    "id[]": list(ids),
+                    "fields": "id,value",
+                    "limit": 100,
+                    "offset": offset,
+                },
+            )
+            page = data.get("product_tags") or []
+            out.extend(t for t in page if isinstance(t, dict))
+            count = data.get("count")
+            offset += len(page)
+            if not page or not isinstance(count, int) or offset >= count:
+                break
+        return out
+
     # ---------- internals ----------
 
     async def _request(

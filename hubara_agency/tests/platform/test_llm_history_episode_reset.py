@@ -10,9 +10,13 @@ escribió "Te quedó sonando la Trilogía del Terror… ¿La retomamos?".
 Contrato: si el episodio activo trae `llm_history_reset`, la PRIMERA vez que
 cada agente arma un prompt en ese episodio su historial se corta en ese punto
 (el puntero `last_consolidated` de exoclaw: lo anterior queda en disco pero no
-viaja al LLM) y el resumen del episodio anterior entra como "Previous Session
-Summary". Idempotente por agente: los turnos siguientes del episodio no se
+viaja al LLM). Idempotente por agente: los turnos siguientes del episodio no se
 vuelven a cortar.
+
+Sin "Previous Session Summary" (run 28a8e407, 2026-09-23): exoclaw pega ese
+`summary` delante de CADA mensaje del cliente y lo graba con él — el motivo
+viejo de la Trilogía quedó repetido en todo el episodio. Lo anterior viaja una
+sola vez, en el primer mensaje del episodio (lo arma el ingest).
 """
 from __future__ import annotations
 
@@ -21,7 +25,11 @@ from pathlib import Path
 
 import pytest
 
-from exoclaw_temporal.activities.conversation import _build_conversation
+from exoclaw_conversation.session.manager import SessionManager
+from exoclaw_temporal.activities.conversation import (
+    _build_conversation,
+    _state_workspace_for,
+)
 from exoclaw_temporal.config import LLMConfig, WorkspaceConfig
 from src.platform.llm_history_reset import (
     ResetLLMHistoryInput,
@@ -81,12 +89,22 @@ def state_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
+def _set_exoclaw_summary(ws: WorkspaceConfig, summary: str) -> None:
+    """Lo que dejaba el corte del #330 en la sesión de exoclaw."""
+    manager = SessionManager(_state_workspace_for(Path(ws.path)) or Path(ws.path))
+    session = manager.get_or_create(_SESSION)
+    session.metadata["summary"] = summary
+    manager.save_metadata(session)
+
+
 @pytest.mark.asyncio
-async def test_new_episode_cuts_the_llm_history_and_injects_the_summary(
+async def test_new_episode_cuts_the_llm_history_without_pasting_a_summary(
     tmp_path: Path, state_dir: Path, _isolate_vault_dir: Path
 ) -> None:
     ws = _workspace(tmp_path, "sales")
     await _build_conversation(_llm(), ws).record(_SESSION, _OLD_TURNS)
+    # Pedido con la forma del #330 (traía `summary`): se corta igual, pero el
+    # resumen ya no se inyecta.
     _write_metadata(_isolate_vault_dir, _episodes({"summary": _SUMMARY, "applied": []}))
 
     cut = await reset_llm_history_for_episode_activity(
@@ -97,7 +115,8 @@ async def test_new_episode_cuts_the_llm_history_and_injects_the_summary(
     prompt = await _prompt_texts(ws)
     assert "Quiero la Trilogía del Terror" not in prompt
     assert "¿Me pasas tus datos de envío?" not in prompt
-    assert _SUMMARY in prompt
+    assert _SUMMARY not in prompt
+    assert "Previous Session Summary" not in prompt
     # Queda anotado para este agente: no se vuelve a cortar.
     applied = _read_metadata(_isolate_vault_dir)["episodes"][-1]["llm_history_reset"][
         "applied"
@@ -198,3 +217,26 @@ async def test_without_state_dir_cuts_the_workspace_history(
     )
 
     assert "Quiero la Trilogía del Terror" not in await _prompt_texts(ws)
+
+
+@pytest.mark.asyncio
+async def test_summary_left_by_the_previous_cut_is_removed_on_the_next_turn(
+    tmp_path: Path, state_dir: Path, _isolate_vault_dir: Path
+) -> None:
+    """Sesiones cortadas con el #330 quedaron con `summary` en exoclaw: se
+    pegaba a cada mensaje nuevo. El turno siguiente lo borra aunque el
+    episodio ya no pida corte (sin tocar el historial)."""
+    ws = _workspace(tmp_path, "sales")
+    await _build_conversation(_llm(), ws).record(_SESSION, _OLD_TURNS)
+    _set_exoclaw_summary(ws, _SUMMARY)
+    _write_metadata(_isolate_vault_dir, _episodes(None))
+    assert _SUMMARY in await _prompt_texts(ws)
+
+    cut = await reset_llm_history_for_episode_activity(
+        ResetLLMHistoryInput(session_id=_SESSION, workspace_path=ws.path)
+    )
+
+    assert cut is False
+    prompt = await _prompt_texts(ws)
+    assert _SUMMARY not in prompt
+    assert "Quiero la Trilogía del Terror" in prompt

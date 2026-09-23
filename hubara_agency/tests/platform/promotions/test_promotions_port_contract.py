@@ -115,3 +115,78 @@ async def test_real_port_caches_and_reports_unavailable() -> None:
         route.mock(return_value=Response(503, json={"message": "down"}))
         with pytest.raises(PromotionsUnavailableError):
             await down.list_active()
+
+
+# --- Condición por etiquetas (run 28a8e407) -----------------------------------
+# La regla trae ids de etiqueta; el adapter los traduce al nombre ("Color:
+# Rosado") que tiene el catálogo. Si Medusa no responde esa lectura, la promo
+# queda con alcance desconocido (falla cerrada), el resto se lee igual.
+
+_TAGGED = {
+    "id": "promo_9",
+    "code": "AMOR26",
+    "type": "standard",
+    "is_automatic": False,
+    "status": "active",
+    "application_method": {
+        "type": "percentage",
+        "value": 10,
+        "target_type": "items",
+        "allocation": "each",
+        "target_rules": [
+            {"attribute": "items.product.id", "operator": "in", "values": [{"value": "prod_a"}]},
+            {
+                "attribute": "items.product.tags.id",
+                "operator": "in",
+                "values": [{"value": "ptag_rosado"}, {"value": "ptag_cafe"}],
+            },
+        ],
+    },
+    "rules": [],
+    "campaign": None,
+}
+
+
+def _tagged_port(mock, tags_response: Response) -> MedusaPromotionsPort:
+    mock.get(f"{_BASE}/admin/promotions").mock(
+        return_value=Response(
+            200, json={"promotions": [*_RAW, _TAGGED], "count": 4, "offset": 0, "limit": 100}
+        )
+    )
+    mock.get(f"{_BASE}/admin/product-tags").mock(return_value=tags_response)
+    client = HttpMedusaClient(base_url=_BASE, admin_token="sk_test", timeout=5.0)
+    return MedusaPromotionsPort(client, ttl_s=60)
+
+
+@pytest.mark.asyncio
+async def test_real_adapter_translates_tag_ids_to_tag_names() -> None:
+    with respx.mock(assert_all_called=False) as mock:
+        port = _tagged_port(
+            mock,
+            Response(
+                200,
+                json={
+                    "product_tags": [
+                        {"id": "ptag_rosado", "value": "Color: Rosado"},
+                        {"id": "ptag_cafe", "value": "Aroma: Café"},
+                    ],
+                    "count": 2,
+                    "offset": 0,
+                    "limit": 100,
+                },
+            ),
+        )
+        promo = await port.get_by_code("AMOR26")
+    assert promo is not None
+    assert promo.tag_values == ("Color: Rosado", "Aroma: Café")
+    assert promo.scope_unresolved is False
+
+
+@pytest.mark.asyncio
+async def test_tags_that_cannot_be_read_fail_closed_only_for_that_promo() -> None:
+    with respx.mock(assert_all_called=False) as mock:
+        port = _tagged_port(mock, Response(500, json={"message": "boom"}))
+        promo = await port.get_by_code("AMOR26")
+        other = await port.get_by_code("MAMA15")
+    assert promo is not None and promo.scope_unresolved is True
+    assert other is not None and other.scope_unresolved is False

@@ -75,6 +75,9 @@ from src.plugins.chats.agent.sales.use_cases.campaign_reply import (
     quote_campaign_in_turn,
     unanswered_campaign_touch,
 )
+from src.plugins.chats.agent.sales.use_cases.episode_memory import (
+    with_previous_episode,
+)
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     CAMPAIGN_CLOSING_TAG,
     close_episode,
@@ -271,6 +274,9 @@ class IngestInboundMessage:
         episode_boundary_note: str | None = None
         campaign_reply_note: str | None = None
         campaign_reply_touch: dict[str, Any] | None = None
+        # El episodio que se cerró cuando este mensaje abrió uno nuevo con el
+        # historial del LLM cortado: su resumen encabeza el primer mensaje.
+        previous_episode: dict[str, Any] | None = None
         if metadata.get("active_route") != ROUTE_HUMANO:
             # Respuesta a campaña (bug 2026-09-22, runs 31c15a38/01a0caee):
             # la PRIMERA respuesta tras el envío es una intención nueva. Se
@@ -280,9 +286,6 @@ class IngestInboundMessage:
             # de pisar `last_inbound_at_ms` (lo usa para saber si ya
             # respondió).
             _campaign_touch = unanswered_campaign_touch(metadata, now_ms)
-            # El motivo del episodio viejo (lo borra la rotación) queda como
-            # resumen de una línea para el LLM del episodio nuevo.
-            _prior_motivo = metadata.get("motivo")
             if _campaign_touch is not None:
                 close_episode(
                     metadata,
@@ -326,10 +329,12 @@ class IngestInboundMessage:
                 # episodio guarda la campaña que lo abrió (el gancho de
                 # remarketing la lee) y pide cortar el historial del LLM de
                 # cada agente (`reset_llm_history_for_episode`, en el worker).
-                mark_campaign_episode(
-                    metadata["episodes"][-1],
-                    _campaign_touch,
-                    prior_motivo=_prior_motivo,
+                mark_campaign_episode(metadata["episodes"][-1], _campaign_touch)
+                # Lo anterior viaja UNA vez, en este primer mensaje (run
+                # 28a8e407): hechos del episodio que se cerró, no su motivo.
+                _episodes_now = metadata["episodes"]
+                previous_episode = (
+                    _episodes_now[-2] if len(_episodes_now) >= 2 else None
                 )
 
         # HU-WA24H-001 F1.1: persistir timestamps de la ventana de servicio.
@@ -859,6 +864,8 @@ class IngestInboundMessage:
             if campaign_reply_touch is not None
             else effective.text
         )
+        if previous_episode is not None:
+            turn_message = with_previous_episode(previous_episode, turn_message)
         await self._load_session.execute(
             session_id=session_id,
             message=turn_message,

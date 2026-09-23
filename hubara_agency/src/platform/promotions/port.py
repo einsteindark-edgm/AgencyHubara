@@ -46,6 +46,10 @@ class PromotionDTO:
     #: pudieron leer (sin `values`, atributo desconocido). Falla CERRADA: el
     #: cupón no se aplica — jamás se asume "todo el catálogo".
     scope_unresolved: bool = False
+    #: Condición por etiquetas de producto (`items.product.tags.id`), con el
+    #: NOMBRE de cada etiqueta ("Color: Rosado"): el producto debe tener al
+    #: menos una. Se suma (Y) a la selección de productos, como en Medusa.
+    tag_values: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -58,6 +62,8 @@ class DiscountLineItem:
     product_id: str | None = None
     variant_id: str | None = None
     collection_id: str | None = None
+    #: Etiquetas del producto ("Aroma: Café"), para las promos por etiqueta.
+    tags: tuple[str, ...] = ()
 
 
 class PromotionsUnavailableError(RuntimeError):

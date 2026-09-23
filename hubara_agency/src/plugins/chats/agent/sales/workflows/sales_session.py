@@ -485,6 +485,9 @@ class HubaraSalesSessionWorkflow:
                             # Episodio abierto por campaña: el historial del
                             # LLM arranca ahí (runs edbb0d8b / 8e73b7dc).
                             align_history_with_episode=True,
+                            # Run 28a8e407: el párrafo de razonamiento se cae
+                            # ANTES de grabar — el LLM recuerda lo que salió.
+                            salvage_leaked_text=True,
                         )
                         if result.interrupted:
                             restarts += 1
@@ -1028,6 +1031,8 @@ class HubaraSalesSessionWorkflow:
                     # commands, así que los patrones posteriores al set original solo
                     # aplican bajo su propio patch — histories pre-deploy que SÍ
                     # enviaron un texto que hoy cazarían replayean con el set viejo.
+                    if result.salvaged_leak:
+                        trace_guards.append("admin_text_salvaged")
                     leak_blocked = (
                         bool(result.final_content)
                         and workflow.patched("admin-text-guard-v1")
