@@ -91,3 +91,34 @@ describe("ItemsPanel — clase de match de variante", () => {
     expect(screen.queryByText(/Variante elegida/)).not.toBeInTheDocument();
   });
 });
+
+describe("ItemsPanel — desglose del cobro", () => {
+  function renderTotals(summary: Record<string, unknown>) {
+    const detail = {
+      items_detail: [item({})],
+      subtotal_cop: 50000,
+      shipping_cop: 7900,
+      discount_total_cop: 0,
+      tax_total_cop: 0,
+      summary: { total_cop: 57900, ...summary },
+    } as unknown as OrderDetail;
+    return render(<ItemsPanel detail={detail} />);
+  }
+
+  function row(label: RegExp): string {
+    return screen.getByText(label).closest(".kv")?.textContent ?? "";
+  }
+
+  it("subtotal de productos, envío aparte (estimado) y total = subtotal + envío", () => {
+    renderTotals({ shipping_confirmed: false });
+    expect(row(/^Subtotal productos$/)).toMatch(/50[.,]000/);
+    expect(row(/^Envío \(estimado\)$/)).toMatch(/7[.,]900/);
+    expect(row(/^Total$/)).toMatch(/57[.,]900/);
+  });
+
+  it("con el envío real ya fijado deja de decir estimado", () => {
+    renderTotals({ total_cop: 62000, shipping_confirmed: true });
+    expect(screen.queryByText(/estimado/)).not.toBeInTheDocument();
+    expect(row(/^Envío$/)).toMatch(/7[.,]900/);
+  });
+});

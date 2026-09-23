@@ -256,7 +256,7 @@ class HttpMedusaClient:
             "id", "display_id", "status", "payment_status",
             "fulfillment_status", "email", "currency_code",
             "created_at", "updated_at", "canceled_at", "total", "subtotal",
-            "shipping_total", "tax_total", "discount_total",
+            "item_subtotal", "shipping_total", "tax_total", "discount_total",
             "metadata", "region_id", "customer_id", "sales_channel_id",
             "*items",
             "*shipping_address",
