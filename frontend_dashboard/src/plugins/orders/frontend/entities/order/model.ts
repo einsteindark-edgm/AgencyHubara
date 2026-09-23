@@ -48,7 +48,13 @@ export interface Order {
   payStatus: PayStatus;
   payType: PayType;
   items: number;
+  /** Total vigente: pedido + envío (estimado, o el real si ya se fijó). */
   total: number;
+  /** Envío incluido en `total` (0 = desconocido). */
+  shipping?: number;
+  /** `true` cuando `shipping` es el valor real que fijó el operador al
+   *  marcar "en camino"; `false` = tarifa mínima estimada del registro. */
+  shippingConfirmed?: boolean;
   dueIso: string;
   dueTime: string;
   overdue?: boolean;
@@ -74,6 +80,13 @@ export interface Order {
  */
 export function orderDayIso(o: Pick<Order, "dueIso" | "createdIso">): string {
   return o.dueIso || o.createdIso;
+}
+
+/** Valor del pedido SIN envío: lo que se muestra al marcar "en camino", donde
+ *  el operador escribe el envío real encima (sumar al `total` contaría el
+ *  envío estimado dos veces). */
+export function orderValueWithoutShipping(o: Pick<Order, "total" | "shipping">): number {
+  return o.total - (o.shipping ?? 0);
 }
 
 /** ¿La orden entra en los números de la pantalla? Un pedido de prueba no:

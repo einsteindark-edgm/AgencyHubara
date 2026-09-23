@@ -247,7 +247,8 @@ async def test_claim_returns_facts_happy_path(_isolate_vault_dir: Path, monkeypa
             assert oid == ORDER
             return _fake_detail(
                 customer="María Camila Restrepo", display_id="#1247",
-                total_cop=124500, pay_type="confirmed", pay_status="paid",
+                total_cop=124500, shipping_cop=12000,
+                pay_type="confirmed", pay_status="paid",
             )
 
     monkeypatch.setattr("src.platform.orders.composition.get_order_query_port", lambda: _Port())
@@ -258,6 +259,8 @@ async def test_claim_returns_facts_happy_path(_isolate_vault_dir: Path, monkeypa
     assert facts["total_label"] == "$ 124.500"
     # Total vivo en COP entero: "en camino" lo suma al valor del envío.
     assert facts["total_cop"] == 124500
+    # Valor del pedido SIN envío: "en camino" le suma el envío real encima.
+    assert facts["order_value_cop"] == 112500
     assert facts["pay_type"] == "confirmed"
     assert facts["payment_confirmed"] is True  # pay_status == "paid" → pago real
     # sin `service_window_expires_at_ms` → ventana cerrada → el workflow usará template

@@ -65,6 +65,18 @@ describe("toLegacyOrder", () => {
     expect(o.isDueEstimated).toBe(true);
   });
 
+  // Envío vigente dentro del total: el estimado del registro hasta que el
+  // operador fija el real al marcar "en camino".
+  it("maps the shipping inside the total and whether it is the real one", () => {
+    const o = toLegacyOrder({ ...sampleSummary, shipping_cop: 7900, shipping_confirmed: true });
+    expect(o.shipping).toBe(7900);
+    expect(o.shippingConfirmed).toBe(true);
+    // Backend viejo sin los campos → sin envío conocido.
+    const legacy = toLegacyOrder(sampleSummary);
+    expect(legacy.shipping).toBe(0);
+    expect(legacy.shippingConfirmed).toBe(false);
+  });
+
   it("renders '—' for null phone and city", () => {
     const o = toLegacyOrder({ ...sampleSummary, phone: null, city: null });
     expect(o.phone).toBe("—");

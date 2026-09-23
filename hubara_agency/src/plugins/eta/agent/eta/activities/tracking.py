@@ -94,6 +94,14 @@ def _display_first_name(full_name: str | None) -> str:
     return _first_name(full_name)
 
 
+def _order_value_cop(summary: Any) -> int | None:
+    """Total vigente − envío vigente = lo que vale el pedido sin envío."""
+    total = summary.total_cop or 0
+    shipping = getattr(summary, "shipping_cop", 0) or 0
+    value = total - shipping
+    return value if value > 0 else None
+
+
 def _format_cop(total_cop: int | None) -> str:
     """Formatea un monto COP al estilo del mock: ``$ 215.000`` (miles con punto)."""
     return format_cop(total_cop)
@@ -273,7 +281,7 @@ async def _delegate_to_mba(
         items_label=facts.get("items_label", ""),
         tracking_url=tracking_url,
         shipping_cost=shipping_cost,
-        order_total_cop=facts.get("total_cop"),
+        order_total_cop=facts.get("order_value_cop"),
     )
     if event_type is None or not message:
         return False
@@ -419,8 +427,11 @@ async def _claim_facts(
         "customer_name": _display_first_name(summary.customer),
         "order_display_id": summary.display_id,
         "total_label": _format_cop(summary.total_cop),
-        # Entero COP del total vivo: "en camino" lo suma al valor del envío.
+        # Entero COP del total vigente (con el envío real si ya se fijó).
         "total_cop": summary.total_cop or None,
+        # Valor del pedido SIN envío: "en camino" le suma el envío real que
+        # escribió el operador. Con el total no — ya trae el envío adentro.
+        "order_value_cop": _order_value_cop(summary),
         "pay_type": summary.pay_type,
         # `pay_type` es solo la MODALIDAD (cod vs prepago) y defaultea a
         # "confirmed" cuando falta `payment_method` — NO dice si el cliente ya

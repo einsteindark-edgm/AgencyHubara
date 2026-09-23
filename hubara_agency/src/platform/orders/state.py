@@ -71,6 +71,10 @@ META_KEY_PAYMENT_REVERSED_REASON = "hubara_payment_reversed_reason"
 META_KEY_CANCELLED_REASON = "hubara_cancelled_reason"
 # Pedido de prueba: no cuenta en estadísticas ni manda eventos a Meta.
 META_KEY_TEST_ORDER = "hubara_test_order"
+# Valor REAL del envío (COP entero) que el operador escribe al marcar "en
+# camino". El envío del registro es una tarifa mínima estimada; este valor lo
+# reemplaza en todo Hubara (ver `effective_amounts`).
+META_KEY_SHIPPING_COST = "hubara_shipping_cost_cop"
 
 
 class InvalidStageTransitionError(ValueError):
@@ -151,6 +155,7 @@ def transition_stage(
     note: str | None = None,
     force: bool = False,
     now_ms: int | None = None,
+    shipping_cost_cop: int | None = None,
 ) -> dict[str, Any]:
     """Construye el patch de metadata para una transición de stage.
 
@@ -167,6 +172,10 @@ def transition_stage(
 
     `note`: texto opcional contextual. Para el agendamiento del humano sería
     la nota que escribió. Para drag-and-drop puede ser None.
+
+    `shipping_cost_cop`: valor REAL del envío que el operador escribe al
+    marcar "en camino" → `hubara_shipping_cost_cop` (reemplaza al estimado;
+    ver `effective_amounts`). `None`/0 = no se toca.
 
     `now_ms`: override del timestamp (útil para tests determinísticos). Si
     es None, se lee `time.time()` (best-effort wall-clock; ver discusión
@@ -220,10 +229,43 @@ def transition_stage(
         entry["forced"] = True
     history.append(entry)
 
-    return {
+    patch: dict[str, Any] = {
         META_KEY_STAGE: to_stage,
         META_KEY_HISTORY: history,
     }
+    if shipping_cost_cop:
+        patch[META_KEY_SHIPPING_COST] = int(shipping_cost_cop)
+    return patch
+
+
+def read_real_shipping_cost(metadata: dict[str, Any] | None) -> int | None:
+    """Envío real fijado por el operador (COP entero > 0) o ``None``.
+
+    Tolerante: bool, float, string, cero o negativos (metadata escrita a mano
+    en Medusa Admin) cuentan como "sin valor real" — se mantiene el estimado.
+    """
+    raw = (metadata or {}).get(META_KEY_SHIPPING_COST)
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        return None
+    return raw
+
+
+def effective_amounts(
+    *, total: int, shipping_total: int, metadata: dict[str, Any] | None
+) -> tuple[int, int, bool]:
+    """``(total_cop, shipping_cop, shipping_confirmed)`` vigentes del pedido.
+
+    El envío registrado en Medusa es la tarifa mínima estimada. Cuando el
+    operador fija el valor real (al marcar "en camino"), ese valor reemplaza
+    al estimado: total = total de Medusa − envío estimado + envío real.
+    Medusa v2 no permite editar el monto de un método de envío existente en
+    una orden real, por eso la corrección se aplica acá — en el único punto
+    de lectura (query adapter → OrderFacts) — y no en Medusa.
+    """
+    real = read_real_shipping_cost(metadata)
+    if real is None:
+        return total, shipping_total, False
+    return total - shipping_total + real, real, True
 
 
 def build_initial_stage_patch(

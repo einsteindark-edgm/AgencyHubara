@@ -16,6 +16,7 @@ export {
   countsInStats,
   isCollectedRevenue,
   orderDayIso,
+  orderValueWithoutShipping,
 } from "./model";
 export { orderKeys } from "./keys";
 export {

@@ -162,7 +162,7 @@ function OrderCard({ order, busy, error, onTransition }: CardProps) {
         />
       ) : step === "shipping" ? (
         <ShipStep
-          orderTotal={order.total_cop ?? null}
+          {...shipAmounts(order)}
           busy={busy}
           onCancel={() => setStep(null)}
           onConfirm={(extras) => {
@@ -223,3 +223,18 @@ function OrderCard({ order, busy, error, onTransition }: CardProps) {
 }
 
 export default ChatsOrdersPanel;
+
+/** Montos del paso "Despachar": el valor del pedido SIN el envío (el total ya
+ * trae el estimado del registro) y ese estimado como referencia mientras el
+ * operador no haya fijado el real — mismo criterio que el tablero. */
+function shipAmounts(order: CustomerOrder): {
+  orderTotal: number | null;
+  estimatedShipping: number | null;
+} {
+  if (order.total_cop == null) return { orderTotal: null, estimatedShipping: null };
+  const shipping = order.shipping_cop ?? 0;
+  return {
+    orderTotal: order.total_cop - shipping,
+    estimatedShipping: shipping > 0 && !order.shipping_confirmed ? shipping : null,
+  };
+}

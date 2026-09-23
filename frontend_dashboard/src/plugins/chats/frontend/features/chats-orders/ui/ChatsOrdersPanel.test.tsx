@@ -175,6 +175,17 @@ describe("ChatsOrdersPanel", () => {
     );
   });
 
+  it("despachar muestra el pedido sin el envío estimado y suma solo el envío real", () => {
+    // Total registrado $ 57.900 = pedido $ 50.000 + envío estimado $ 7.900.
+    withOrder({ id: "order_01HX", status: "ready", total_cop: 57900, shipping_cop: 7900 });
+    render(<ChatsOrdersPanel sessionId="wa_1" />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByRole("button", { name: /despachar/i }));
+    expect(screen.getByTestId("ship-order-value")).toHaveTextContent(/50[.,]000/);
+    expect(screen.getByTestId("ship-estimate")).toHaveTextContent(/7[.,]900/);
+    fireEvent.change(screen.getByLabelText(/valor del envío/i), { target: { value: "12.000" } });
+    expect(screen.getByTestId("ship-total")).toHaveTextContent(/62[.,]000/);
+  });
+
   it("despachar sin guía ni valor mueve el pedido igual", async () => {
     transitionMutateAsync.mockResolvedValue({ success: true, current_stage: "shipping" });
     withOrder({ id: "order_01HX", status: "ready" });

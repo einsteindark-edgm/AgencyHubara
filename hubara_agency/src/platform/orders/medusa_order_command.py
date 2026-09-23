@@ -53,6 +53,7 @@ from src.platform.orders.state import (
     build_reverse_payment_patch,
     build_schedule_patch,
     build_test_order_patch,
+    effective_amounts,
     read_stage,
     transition_stage,
 )
@@ -613,6 +614,7 @@ class MedusaOrderCommand:
                 by=command.by,
                 note=command.note,
                 force=command.force,
+                shipping_cost_cop=command.shipping_cost_cop,
             ),
             operation="transition_stage",
         )
@@ -685,7 +687,12 @@ class MedusaOrderCommand:
 
         if not already_captured_in_medusa:
             # Registrar payment en Medusa via pp_system_default.
-            amount = int(current_data.get("total") or 0)
+            # Total vigente: con el envío real si el operador ya lo fijó.
+            amount, _, _ = effective_amounts(
+                total=int(current_data.get("total") or 0),
+                shipping_total=int(current_data.get("shipping_total") or 0),
+                metadata=current_metadata,
+            )
             if amount <= 0:
                 return OrderCommandResult(
                     success=False,
@@ -1392,7 +1399,7 @@ class MedusaOrderCommand:
                 )
             order_id = resolved
 
-        fields = "id,metadata,total,payment_status,status"
+        fields = "id,metadata,total,shipping_total,payment_status,status"
         try:
             data = await self._client.get_order(order_id, fields=fields)
             # /admin/orders/{id} devolvió 200 — infer is_draft del status.
