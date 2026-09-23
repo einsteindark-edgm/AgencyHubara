@@ -152,6 +152,15 @@ Medusa live durante la conversación (latency + cuota).
 - THEN se devuelve product detail completo (variants, prices, images, description, stock)
 - AND si el handle no existe, devuelve `{error: "product_not_found"}`
 
+#### Scenario: medidas de la pieza (2026-09-22)
+
+- GIVEN un producto con `height`/`width`/`length`/`weight` cargados en Medusa (nivel producto; si no, la primera variante que los tenga — misma regla que la web)
+- WHEN `catalog_sync` hace el pull
+- THEN el snapshot guarda `dimensions` (`height_cm`, `width_cm`, `length_cm`, `weight_g`); un 0 en Medusa es "sin dato", no una medida
+- AND `search_products` y `get_product_by_handle` exponen `medidas` como UNA línea ("alto 9 cm, ancho 6 cm") SOLO si hay dato
+- AND el agente las cita como aproximadas (pieza hecha a mano); sin `medidas` NO las inventa ni dice que no existen: ofrece la foto y, si la medida decide la compra, `escalate_to_human("CATALOG_GAP")`
+- AND las medidas NO viajan a Meta: el item del catálogo y su hash son idénticos con o sin ellas (`tests/catalog_sync/test_meta_ignores_dimensions.py`)
+
 #### Scenario: Snapshot stale
 
 - GIVEN el snapshot tiene > 60min sin actualizarse
