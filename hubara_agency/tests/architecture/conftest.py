@@ -15,6 +15,7 @@ Convenciones:
 from __future__ import annotations
 
 import ast
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -58,31 +59,32 @@ def agent_paths(agent: str) -> dict[str, Path]:
 # Packages cross-agent (no son agentes pero participan en las reglas R-DIP).
 PLATFORM_PACKAGES = ("platform",)
 
-# Sub-paths con cada rol — usados por los tests R-DET / R-JSON / R-HEARTBEAT.
-# Cubren tanto el layout legacy (catalog_sync) como el de plugins (chats).
-# Como `Path.glob` no soporta brace-expansion, los tests iteran ambos patrones.
+# Sub-paths con cada rol — scope de R-DET / R-JSON / R-HEARTBEAT / R-STATELESS /
+# naming de tools. `**` cubre los dos layouts de plugin: `agent/<rol>/` (catalog,
+# orders) y `agent/<agente>/<rol>/` (chats, eta, ...). Los gates NO iteran estas
+# tuplas a mano: usan `workflow_modules()` / `activity_modules()` /
+# `tool_modules()` (abajo), que recorren TODOS los patrones y suman los módulos
+# que definen el entrypoint fuera de ellos. Hasta 2026-09-23 un alias singular
+# `AGENT_*_GLOB = AGENT_*_GLOBS[0]` dejaba a R-DET escaneando 0 archivos — ver
+# docs/adr/2026-09-23-arch-gates-non-vacuous-scope.md y el meta-gate
+# `test_gate_scope.py`.
 AGENT_WORKFLOWS_GLOBS = (
     "src/*/workflows/*.py",
-    "src/plugins/*/agent/*/workflows/*.py",
+    "src/plugins/*/agent/**/workflows/*.py",
 )
 AGENT_ACTIVITIES_GLOBS = (
     "src/*/activities/*.py",
-    "src/plugins/*/agent/*/activities/*.py",
+    "src/plugins/*/agent/**/activities/*.py",
 )
 AGENT_TOOLS_GLOBS = (
     "src/*/tools/*.py",
-    "src/plugins/*/agent/*/tools/*.py",
+    "src/plugins/*/agent/**/tools/*.py",
 )
-
-# Backwards-compat aliases (mantienen el nombre singular hasta migrar callers).
-AGENT_WORKFLOWS_GLOB = AGENT_WORKFLOWS_GLOBS[0]
-AGENT_ACTIVITIES_GLOB = AGENT_ACTIVITIES_GLOBS[0]
-AGENT_TOOLS_GLOB = AGENT_TOOLS_GLOBS[0]
 
 # Paths "contracts.py" — DTOs de boundary.
 CONTRACTS_GLOBS = (
     "src/*/contracts.py",
-    "src/plugins/*/agent/*/contracts.py",
+    "src/plugins/*/agent/**/contracts.py",
     "src/platform/contracts.py",
 )
 
@@ -188,3 +190,72 @@ def relative_to_hubara(path: Path) -> str:
     """Devuelve el path string relativo a hubara_agency/, slash-style."""
     hub_root = SRC_ROOT.parent
     return path.relative_to(hub_root).as_posix()
+
+
+# ----------------------------------------------------------------------------
+# Scope por rol — qué archivos audita cada gate R-*.
+# ----------------------------------------------------------------------------
+
+def _defines_entrypoint(tree: ast.Module, entrypoint: str) -> bool:
+    """True si el módulo define `@workflow.defn` / `@activity.defn`
+    (entrypoint "workflow" / "activity") o una subclase de `ToolBase` ("tool")."""
+    for node in ast.walk(tree):
+        if entrypoint == "tool":
+            if isinstance(node, ast.ClassDef) and any(
+                (isinstance(base, ast.Name) and base.id == "ToolBase")
+                or (isinstance(base, ast.Attribute) and base.attr == "ToolBase")
+                for base in node.bases
+            ):
+                return True
+            continue
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        for dec in node.decorator_list:
+            fn = dec.func if isinstance(dec, ast.Call) else dec
+            if (
+                isinstance(fn, ast.Attribute)
+                and fn.attr == "defn"
+                and isinstance(fn.value, ast.Name)
+                and fn.value.id == entrypoint
+            ):
+                return True
+    return False
+
+
+@lru_cache(maxsize=None)
+def _modules_defining(entrypoint: str) -> tuple[Path, ...]:
+    """Todo módulo bajo src/ que define `entrypoint`, viva donde viva."""
+    return tuple(
+        path
+        for path in sorted(SRC_ROOT.rglob("*.py"))
+        if "__pycache__" not in path.parts and _defines_entrypoint(parse_file(path), entrypoint)
+    )
+
+
+def iter_role_files(globs: tuple[str, ...], entrypoint: str) -> list[Path]:
+    """Scope de un gate por rol: TODOS los patrones de `globs` ∪ todo módulo que
+    define `entrypoint` fuera de ellos (p.ej. `src/platform/whatsapp/activities.py`).
+
+    Los `__init__.py` que traen los globs se descartan (shim de re-export, nada
+    que auditar); si definen el entrypoint — marketing, order_sentinel y
+    reengagement definen sus activities en `activities/__init__.py` — entran por
+    el segundo término.
+    """
+    files = {path for glob in globs for path in iter_agent_files(glob) if path.name != "__init__.py"}
+    files.update(_modules_defining(entrypoint))
+    return sorted(files)
+
+
+def workflow_modules() -> list[Path]:
+    """Scope de R-DET."""
+    return iter_role_files(AGENT_WORKFLOWS_GLOBS, "workflow")
+
+
+def activity_modules() -> list[Path]:
+    """Scope de R-HEARTBEAT y R-STATELESS."""
+    return iter_role_files(AGENT_ACTIVITIES_GLOBS, "activity")
+
+
+def tool_modules() -> list[Path]:
+    """Scope del naming de tools (`test_anti_patterns` #15)."""
+    return iter_role_files(AGENT_TOOLS_GLOBS, "tool")

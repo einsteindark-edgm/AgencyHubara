@@ -23,12 +23,11 @@ import ast
 from pathlib import Path
 
 from tests.architecture.conftest import (
-    AGENT_TOOLS_GLOB,
     FORBIDDEN_TOP_LEVEL_PACKAGES,
     SRC_ROOT,
-    iter_agent_files,
     parse_file,
     relative_to_hubara,
+    tool_modules,
 )
 
 
@@ -94,15 +93,19 @@ def test_no_hubara_agency_src_prefix_imports() -> None:
 # Test #15 — tool class names end with `Tool`.
 # ----------------------------------------------------------------------------
 
+def _tool_files() -> list[Path]:
+    """Módulos que audita el test #15 (`conftest.tool_modules`): `tools/*.py` en
+    cualquier layout, más todo módulo que declara una subclase de `ToolBase`."""
+    return tool_modules()
+
+
 def test_tool_subclasses_end_with_Tool() -> None:
     """Toda clase declarada en `tools/*.py` que hereda de `ToolBase` debe
     terminar en `Tool`. Mantiene consistencia con `register_tool_extension`
     y con la convención de naming del merger.
     """
     violations: list[str] = []
-    for path in iter_agent_files(AGENT_TOOLS_GLOB):
-        if path.name == "__init__.py":
-            continue
+    for path in _tool_files():
         rel = relative_to_hubara(path)
         tree = parse_file(path)
         for node in ast.walk(tree):

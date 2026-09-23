@@ -78,4 +78,4 @@ async def apply_variant_enumeration_guard_activity(session_id: str, final_text: 
     return True
 
 
-__all__ = ["apply_variant_enumeration_guard_activity"]
+__all__ = ("apply_variant_enumeration_guard_activity",)

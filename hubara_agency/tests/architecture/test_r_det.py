@@ -19,10 +19,9 @@ import ast
 from pathlib import Path
 
 from tests.architecture.conftest import (
-    AGENT_WORKFLOWS_GLOB,
-    iter_agent_files,
     parse_file,
     relative_to_hubara,
+    workflow_modules,
 )
 
 
@@ -65,9 +64,10 @@ _FORBIDDEN_MODULE_ANY_CALL: frozenset[str] = frozenset({"random"})
 
 
 def _workflow_files() -> list[Path]:
-    """Workflow modules (excluding `__init__.py`, which is a re-export shim and
-    is not executed inside the Temporal sandbox)."""
-    return [p for p in iter_agent_files(AGENT_WORKFLOWS_GLOB) if p.name != "__init__.py"]
+    """Workflow modules in every layout (`conftest.workflow_modules`). An
+    `__init__.py` enters only if it defines a `@workflow.defn` — a pure
+    re-export shim has no workflow code to audit."""
+    return workflow_modules()
 
 
 def _import_top_levels(node: ast.Import | ast.ImportFrom) -> list[str]:

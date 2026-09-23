@@ -2,8 +2,10 @@
 
 Activities must rebuild every dependency they need on each invocation by calling
 a factory from `composition.py`. This rules out module-level mutable state
-inside `activities/*.py` files: `_REGISTRY = []`, `_CACHE: dict = {}`,
-`_CLIENT = None`, etc.
+inside activity modules — every `activities/*.py` in any layout, plus any module
+defining an `@activity.defn` elsewhere (`conftest.activity_modules`):
+`_REGISTRY = []`, `_CACHE: dict = {}`, `_CLIENT = None`, etc. That includes
+`__all__`: declare it as a tuple, not a list.
 
 Convention recap:
   - `composition.py` and `worker.py` ARE allowed to hold singletons (they're
@@ -22,8 +24,7 @@ import ast
 from pathlib import Path
 
 from tests.architecture.conftest import (
-    AGENT_ACTIVITIES_GLOB,
-    iter_agent_files,
+    activity_modules,
     parse_file,
     relative_to_hubara,
 )
@@ -35,18 +36,10 @@ _MUTABLE_LITERAL_NODES: tuple[type, ...] = (ast.Dict, ast.List, ast.Set)
 
 
 def _activity_files() -> list[Path]:
-    """Cada `activities/<concept>.py` que no sea `__init__.py`."""
-    return [p for p in iter_agent_files(AGENT_ACTIVITIES_GLOB) if p.name != "__init__.py"]
-
-
-def _platform_activity_files() -> list[Path]:
-    """Las activities cross-agent bajo platform/temporal/."""
-    src_root = Path(__file__).resolve().parents[2] / "src"
-    candidates = [
-        src_root / "platform" / "temporal" / "activities.py",
-        src_root / "platform" / "temporal" / "dispatcher.py",
-    ]
-    return [p for p in candidates if p.is_file()]
+    """Todo módulo de activities (`conftest.activity_modules`): cada archivo bajo
+    `activities/` en cualquier layout, más todo módulo que define un
+    `@activity.defn` fuera de ahí (platform, `activities/__init__.py`, ...)."""
+    return activity_modules()
 
 
 def _is_upper_snake(name: str) -> bool:
@@ -77,13 +70,13 @@ def _is_mutable_assignment(node: ast.AST) -> tuple[str, str] | None:
 
 
 def test_activities_have_no_module_level_mutable_state() -> None:
-    """`activities/*.py` no puede tener literales mutables a nivel módulo.
+    """Un módulo de activities no puede tener literales mutables a nivel módulo.
 
     Las activities deben pedir sus deps a `composition.py` (factories) en cada
     invocación. Estado a nivel módulo ⇒ rompe R-STATELESS porque persiste entre
     invocaciones de la activity dentro del mismo worker.
     """
-    files = _activity_files() + _platform_activity_files()
+    files = _activity_files()
     violations: list[str] = []
 
     for path in files:
@@ -102,4 +95,6 @@ def test_activities_have_no_module_level_mutable_state() -> None:
     assert not violations, (
         "R-STATELESS violations — module-level mutable state in activities:\n  "
         + "\n  ".join(violations)
+        + "\n\nModule-level constants must be UPPER_SNAKE or an immutable literal "
+        "(tuple/frozenset) — e.g. `__all__ = (...)`, not `[...]`."
     )

@@ -30,7 +30,7 @@ from urllib.parse import quote
 
 from src.sdk import castkit
 
-__all__ = ["SILENCE_MOTIVO", "api_base_url", "close_by_silence"]
+__all__ = ("SILENCE_MOTIVO", "api_base_url", "close_by_silence")
 
 SILENCE_MOTIVO = "silencio del cliente con Meta Business Agent al frente (watchdog de la ventana de servicio)"
 #: Por debajo del `start_to_close_timeout` (15 s) de la activity de eligibility

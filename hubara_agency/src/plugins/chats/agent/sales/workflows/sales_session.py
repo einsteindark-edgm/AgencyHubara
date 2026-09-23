@@ -15,6 +15,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.platform.whatsapp.activities import send_whatsapp_message_activity
     from src.platform.temporal.dispatcher import (
+        schedule_remarketing_workflow_activity,
         start_or_signal_sales_workflow_activity,
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
@@ -597,11 +598,6 @@ class HubaraSalesSessionWorkflow:
                             )
                         else:
                             # Legacy path for pre-deploy workflows (replay-safe).
-                            # Local import — only resolved when the legacy branch
-                            # actually executes during replay.
-                            from src.platform.temporal.dispatcher import (
-                                schedule_remarketing_workflow_activity,
-                            )
                             await workflow.execute_activity(
                                 schedule_remarketing_workflow_activity,
                                 result.schedule_remarketing,
