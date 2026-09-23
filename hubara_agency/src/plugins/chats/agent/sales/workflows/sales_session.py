@@ -21,6 +21,7 @@ with workflow.unsafe.imports_passed_through():
     from src.sdk.agentkit import (
     is_no_message_abstention,
     looks_like_admin_leak,
+    salvage_customer_text,
     strip_portavelas_notice,
 )
     from src.platform.workflow_helpers import (
@@ -480,6 +481,9 @@ class HubaraSalesSessionWorkflow:
                             msg,
                             has_new_input=hni,
                             admin_turn=admin_no_send,
+                            # Episodio abierto por campaña: el historial del
+                            # LLM arranca ahí (runs edbb0d8b / 8e73b7dc).
+                            align_history_with_episode=True,
                         )
                         if result.interrupted:
                             restarts += 1
@@ -1042,6 +1046,19 @@ class HubaraSalesSessionWorkflow:
                             "admin-text-guard: final_content bloqueado (texto "
                             f"administrativo): {result.final_content[:120]!r}"
                         )
+                        # Rescate (run edbb0d8b): deliberación como primer
+                        # párrafo + respuesta real después → bloquear TODO
+                        # dejaba al cliente sin respuesta. Se cae solo el
+                        # párrafo filtrado. Gated: cambia si se agenda el send.
+                        if workflow.patched("admin-text-salvage-v1"):
+                            salvaged = salvage_customer_text(
+                                result.final_content,
+                                extended=workflow.patched("admin-leak-patterns-v2"),
+                            )
+                            if salvaged:
+                                result.final_content = salvaged
+                                leak_blocked = False
+                                trace_guards.append("admin_text_salvaged")
                     if (
                         result.final_content
                         and not self._force_shutdown

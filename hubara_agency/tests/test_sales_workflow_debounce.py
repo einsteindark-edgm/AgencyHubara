@@ -36,6 +36,7 @@ from exoclaw_temporal.config import (
 
 from src.platform.contracts import PaymentPendingClosureResult
 from src.platform.plugin_manifest import get_task_queue
+from src.platform.llm_history_reset import ResetLLMHistoryInput
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 
 SALES_QUEUE = get_task_queue("chats", "sales")
@@ -72,6 +73,9 @@ class Tracker:
         self.variant_guard_calls: list[str] = []
         # HU-SC-0: payloads de la traza por turno, en orden.
         self.turn_traces: list[dict] = []
+        # Runs edbb0d8b / 8e73b7dc: pedidos de corte del historial del LLM
+        # (workspace de cada llamada), con su lugar en `timeline`.
+        self.history_reset_calls: list[str] = []
 
 
 # Burbuja 1 del guion de apertura (etapa_descubrimiento) — lo que la activity
@@ -276,6 +280,12 @@ def _make_fake_activities(
     async def fake_get_active_episode_id(session_id: str) -> str:
         return "ep_001"
 
+    @activity.defn(name="reset_llm_history_for_episode")
+    async def fake_reset_llm_history(inp: ResetLLMHistoryInput) -> bool:
+        tracker.history_reset_calls.append(inp.workspace_path)
+        tracker.timeline.append("reset_llm_history")
+        return False
+
     # Saludo determinista de primer contacto (runs dc32f7fe /
     # 3ce50ef3): la activity real lee la hora de Bogotá; acá
     # devolvemos la Burbuja 1 nocturna fija.
@@ -320,6 +330,7 @@ def _make_fake_activities(
         fake_start_sales,
         fake_schedule_remarketing,
         fake_get_active_episode_id,
+        fake_reset_llm_history,
     ]
 
 
@@ -3281,3 +3292,100 @@ async def test_a_delivered_picker_still_cuts_even_if_another_tool_failed(
     assert _customer_turn_tool_calls(tracker) == ["present_variant_picker", "set_order_slot"], (
         "el modelo siguió tras mostrar el selector — puede responder por el cliente"
     )
+
+
+@pytest.mark.asyncio
+async def test_leaked_deliberation_paragraph_is_dropped_and_the_answer_is_sent(
+    tmp_path: Path,
+) -> None:
+    """Run edbb0d8b (2026-09-22): el cliente escribió "Me gusta"; el LLM
+    respondió con su razonamiento como primer párrafo ("El cliente dice… Le
+    respondo…") y la respuesta real después. `admin_text_guard` bloqueó el
+    texto ENTERO y el cliente quedó sin respuesta. Contrato: se cae solo el
+    párrafo filtrado; la respuesta limpia sale y se persiste."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    deliberation = (
+        'El cliente dice "Me gusta" sin más contexto. Está retomando tras el '
+        "remarketing. Le respondo de forma natural."
+    )
+    answer = "¿Qué fue lo que más te gustó? 🤍 Te muestro la promo con tu cupón."
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=[_final_resp(f"{deliberation}\n\n{answer}")],
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_salvage",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_salvage",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["Me gusta", None, None],
+            )
+            await handle.result()
+
+    sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
+    assert answer in sent, f"la respuesta limpia debió salir: {sent}"
+    assert not any("El cliente dice" in m for m in sent), sent
+    persisted = [m for (_sid, m) in tracker.persist_calls]
+    assert answer in persisted
+    assert not any("El cliente dice" in m for m in persisted), persisted
+
+
+@pytest.mark.asyncio
+async def test_each_turn_aligns_the_llm_history_with_the_episode_before_the_prompt(
+    tmp_path: Path,
+) -> None:
+    """Runs edbb0d8b / 8e73b7dc: el historial del LLM es por sesión y el
+    episodio que abrió la campaña seguía viendo la Trilogía. Antes de armar el
+    prompt, el turno le pide a platform que corte el historial de ESTE agente
+    si el episodio activo lo pide (la activity decide; acá solo el cableado)."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=[_final_resp("¡Hola! ¿Qué te gustó de la promo?")],
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_reset",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_reset",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["Me gusta", None, None],
+            )
+            await handle.result()
+
+    assert tracker.history_reset_calls
+    assert set(tracker.history_reset_calls) == {str(workspace)}
+    first_send = next(i for i, e in enumerate(tracker.timeline) if e.startswith("send:"))
+    assert tracker.timeline.index("reset_llm_history") < first_send
+    assert len(tracker.history_reset_calls) == len(tracker.build_prompt_calls)

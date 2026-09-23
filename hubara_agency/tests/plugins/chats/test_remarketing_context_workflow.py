@@ -26,6 +26,7 @@ from exoclaw_temporal.config import (
     WorkspaceConfig,
 )
 
+from src.platform.llm_history_reset import ResetLLMHistoryInput
 from src.platform.contracts import RemarketingEligibility
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.whatsapp.send_policy import SendDecision
@@ -121,6 +122,10 @@ def _make_fake_activities(tracker: Tracker, *, context: RemarketingContext, work
     async def fake_episode_id(session_id: str) -> str:
         return "ep_001"
 
+    @activity.defn(name="reset_llm_history_for_episode")
+    async def fake_reset_llm_history(inp: ResetLLMHistoryInput) -> bool:
+        return False
+
     @activity.defn(name="send_whatsapp_message_activity")
     async def fake_send(session_id: str, message: str) -> None:
         tracker.send_whatsapp_calls.append(message)
@@ -138,7 +143,8 @@ def _make_fake_activities(tracker: Tracker, *, context: RemarketingContext, work
         fake_eligibility, fake_policy, fake_bootstrap, fake_claim, fake_memory,
         fake_context, fake_trigger_legacy, fake_trigger_v2, fake_typing,
         fake_build_prompt, fake_llm, fake_execute_tool, fake_record_turn,
-        fake_episode_id, fake_send, fake_persist, fake_record_touch,
+        fake_episode_id,
+        fake_reset_llm_history, fake_send, fake_persist, fake_record_touch,
     ]
 
 

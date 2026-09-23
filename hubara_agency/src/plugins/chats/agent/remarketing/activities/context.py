@@ -74,4 +74,5 @@ async def build_remarketing_trigger_v2_activity(input: RemarketingTriggerInput) 
         transcript=input.transcript,
         touch_number=input.touch_number,
         silence_minutes=input.silence_minutes,
+        campaign_context=input.campaign_context,
     )

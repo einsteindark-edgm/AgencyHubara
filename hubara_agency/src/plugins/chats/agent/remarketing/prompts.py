@@ -33,8 +33,13 @@ def build_remarketing_trigger(
     touch_number: int | None = None,
     total_touches: int = 5,
     silence_minutes: int | None = None,
+    campaign_context: str = "",
 ) -> str:
     """Saludo proactivo inicial inyectado al LLM al arrancar el workflow.
+
+    `campaign_context` (runs edbb0d8b / 8e73b7dc): la campaña que abrió el
+    episodio activo. El gancho es sobre ESA campaña — sin esto retomó la
+    Trilogía del episodio anterior ("¿La retomamos?"). "" = texto intacto.
 
     `touch_number` (1-based) activa el modo ESCALERA (decisión 2026-09-18,
     runs `01a0b0da`…`01a0b586`): el trigger declara qué toque es y cuánto
@@ -121,9 +126,19 @@ def build_remarketing_trigger(
             "aclaró, se despidió con la duda resuelta sin producto en juego, "
             "o pidió expresamente que no le escriban más"
         )
+    campaign_block = (
+        "ESTA CONVERSACIÓN LA ABRIÓ UNA CAMPAÑA (uso interno): el cliente le "
+        f"respondió a esta campaña: {campaign_context}. El gancho es sobre ESA "
+        "campaña (sus productos y su cupón). NO retomes pedidos ni productos de "
+        "conversaciones anteriores aunque aparezcan en el motivo o en el "
+        "historial.\n\n"
+        if campaign_context
+        else ""
+    )
     return (
         "[SISTEMA INTERNO — NO REPRODUCIR ESTE TEXTO AL CLIENTE]: "
         f"{situacion}\n\n"
+        f"{campaign_block}"
         f"MOTIVO REGISTRADO DE CIERRE (uso interno): '{motivo}'.\n"
         f"MEMORIA DE EVENTOS PASADOS (uso interno):{memory_context}\n\n"
         f"{transcript_block}"

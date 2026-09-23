@@ -186,6 +186,8 @@ class RemarketingSessionWorkflow:
                 # silencio real hay (runs 01a0b0da…: sin esto, NO_MESSAGE 100%).
                 touch_number=context.touch_number if ladder else None,
                 silence_minutes=context.silence_minutes if ladder else None,
+                # Campaña que abrió el episodio (runs edbb0d8b / 8e73b7dc).
+                campaign_context=context.campaign_context,
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=RetryPolicy(maximum_attempts=2),
@@ -515,6 +517,10 @@ class RemarketingSessionWorkflow:
                         skip_record_when=(
                             is_no_message_abstention if ladder else None
                         ),
+                        # Episodio abierto por campaña: el gancho no ve los
+                        # ganchos/turnos del episodio anterior (runs edbb0d8b
+                        # / 8e73b7dc: "¿La retomamos?" sobre la Trilogía).
+                        align_history_with_episode=True,
                     )
                     self._last_response = result.final_content
 

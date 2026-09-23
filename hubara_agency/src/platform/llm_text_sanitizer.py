@@ -492,6 +492,31 @@ def looks_like_admin_leak(raw: str | None, *, extended: bool = True) -> bool:
     return any(p.search(text) for p in patterns)
 
 
+_PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n")
+
+
+def salvage_customer_text(raw: str | None, *, extended: bool = True) -> str:
+    """Rescata la respuesta al cliente de un texto que `looks_like_admin_leak`
+    bloquearía: quita los PÁRRAFOS que huelen a reporte interno y devuelve el
+    resto (o "" si no queda nada limpio).
+
+    Run edbb0d8b (2026-09-22): el LLM escribió su razonamiento como primer
+    párrafo ("El cliente dice… Le respondo…") y la respuesta real después; el
+    guard bloqueaba el texto ENTERO y el cliente quedaba sin respuesta.
+
+    Por párrafo y no por oración a propósito: dentro de un párrafo de
+    deliberación hay oraciones que no huelen a nada ("Le respondo de forma
+    natural…") y saldrían al cliente. Puro, stdlib-only (workflow sandbox).
+    """
+    if not raw or not raw.strip():
+        return ""
+    paragraphs = [
+        p.strip() for p in _PARAGRAPH_SPLIT_RE.split(raw.strip()) if p.strip()
+    ]
+    kept = [p for p in paragraphs if not looks_like_admin_leak(p, extended=extended)]
+    return "\n\n".join(kept)
+
+
 # Incidente 943e6bff (2026-09-07): un pedido SIN portavelas cerró con "Al
 # finalizar el pago del pedido se escogen los colores del portavelas, según
 # disponibilidad". La política del portavelas solo aplica a los productos que

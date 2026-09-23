@@ -195,3 +195,48 @@ def test_original_pattern_set_is_frozen() -> None:
         ).encode()
     ).hexdigest()
     assert digest == "48a125b37610cb8ad93ddbe3e4241c793104b184364703725d5c5bad567781d9"
+
+
+# --- Rescate: deliberación filtrada + respuesta real en el mismo texto -------
+
+# Run edbb0d8b (2026-09-22): el LLM escribió su razonamiento como primer
+# párrafo y la respuesta al cliente después. El guard bloqueó TODO y el
+# cliente ("Me gusta") quedó sin respuesta.
+_DELIBERATION_PLUS_ANSWER = (
+    'El cliente dice "Me gusta" sin más contexto. Está retomando tras el '
+    "remarketing. Le respondo de forma natural, sin re-saludar, y le pregunto "
+    "qué le gustó.\n\n"
+    "¿Qué fue lo que más te gustó? 🤍\n\n"
+    "Si quieres, te muestro los productos de la promo con tu cupón *AMOR26*."
+)
+
+
+def test_salvage_drops_the_leaked_paragraph_and_keeps_the_answer():
+    from src.platform.llm_text_sanitizer import salvage_customer_text
+
+    salvaged = salvage_customer_text(_DELIBERATION_PLUS_ANSWER)
+    assert salvaged == (
+        "¿Qué fue lo que más te gustó? 🤍\n\n"
+        "Si quieres, te muestro los productos de la promo con tu cupón *AMOR26*."
+    )
+    assert not looks_like_admin_leak(salvaged)
+
+
+def test_salvage_of_a_single_leaked_paragraph_is_empty():
+    """Una narración sin párrafo limpio NO se rescata por oraciones: "Le
+    respondo de forma natural…" no huele a nada y saldría al cliente."""
+    from src.platform.llm_text_sanitizer import salvage_customer_text
+
+    assert (
+        salvage_customer_text(
+            "El cliente dice hola. Le respondo de forma natural y le pregunto qué busca."
+        )
+        == ""
+    )
+
+
+def test_salvage_keeps_a_clean_text_intact():
+    from src.platform.llm_text_sanitizer import salvage_customer_text
+
+    text = "¡Claro! 🤍\n\nTe muestro las velas de la promo."
+    assert salvage_customer_text(text) == text

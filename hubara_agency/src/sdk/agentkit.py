@@ -52,6 +52,7 @@ from src.platform.llm_text_sanitizer import (
     NO_MESSAGE_SENTINEL as NO_MESSAGE_SENTINEL,
     is_no_message_abstention as is_no_message_abstention,
     looks_like_admin_leak as looks_like_admin_leak,
+    salvage_customer_text as salvage_customer_text,
     sanitize_llm_text as sanitize_llm_text,
     strip_portavelas_notice as strip_portavelas_notice,
 )

@@ -59,6 +59,9 @@ class RemarketingContext:
     #: en vuelo traen el result viejo sin estos campos).
     touch_number: int | None = None
     silence_minutes: int | None = None
+    #: Campaña que abrió el episodio activo (runs edbb0d8b / 8e73b7dc), ya
+    #: redactada para el trigger. "" = el episodio no lo abrió una campaña.
+    campaign_context: str = ""
 
 
 @dataclass(frozen=True)
@@ -71,3 +74,5 @@ class RemarketingTriggerInput:
     transcript: str = ""
     touch_number: int | None = None
     silence_minutes: int | None = None
+    #: Ver `RemarketingContext.campaign_context`.
+    campaign_context: str = ""

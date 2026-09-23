@@ -58,6 +58,10 @@ with workflow.unsafe.imports_passed_through():
         get_active_episode_id_activity,
         record_episode_llm_usage_activity,
     )
+    from src.platform.llm_history_reset import (
+        ResetLLMHistoryInput,
+        reset_llm_history_for_episode_activity,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -79,6 +83,7 @@ CONVERSATIONAL_TURN_ACTIVITIES: tuple = (
     record_turn,
     get_active_episode_id_activity,
     record_episode_llm_usage_activity,
+    reset_llm_history_for_episode_activity,
 )
 
 
@@ -493,8 +498,15 @@ async def run_agent_turn(
     fabricate_fallback_on_empty: bool = True,
     skip_record_when: Callable[[str], bool] | None = None,
     admin_turn: bool = False,
+    align_history_with_episode: bool = False,
 ) -> TurnResult:
     """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
+
+    `align_history_with_episode` (runs edbb0d8b / 8e73b7dc): antes de armar el
+    prompt, pide cortar el historial del LLM de ESTE agente si el episodio
+    activo lo pide (`llm_history_reset`, lo escribe el ingest al responder una
+    campaña). Opt-in: solo lo pasan los agentes de la conversación de venta
+    (ventas + remarketing); ETA y demás conservan su memoria.
 
     `admin_turn` (run b06636a6): el caller ya sabe que NINGÚN texto de este
     turno va al cliente (cierre por ghosting: el trigger es administrativo).
@@ -537,6 +549,18 @@ async def run_agent_turn(
             **_CONV_OPTIONS,  # type: ignore[arg-type]
         )
         episode_id = raw_episode_id or None
+
+    if align_history_with_episode and workflow.patched("llm-episode-history-reset-v1"):
+        # Gated: cambia la secuencia de activities del turno (replay-safe para
+        # los session workflows long-lived). La activity decide si corta.
+        await workflow.execute_activity(
+            reset_llm_history_for_episode_activity,
+            ResetLLMHistoryInput(
+                session_id=session.session_id,
+                workspace_path=session.workspace.path,
+            ),
+            **_CONV_OPTIONS,  # type: ignore[arg-type]
+        )
 
     sid = session.session_id
     num = (
