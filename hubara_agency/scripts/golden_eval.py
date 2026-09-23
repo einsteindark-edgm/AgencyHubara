@@ -38,8 +38,13 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
 _VAULT = os.environ.get("GOLDEN_EVAL_VAULT", "/tmp/golden_eval_vault")
-os.environ.setdefault("WORKSPACE_VAULT_DIR", _VAULT)
-os.environ.setdefault("CATALOG_SNAPSHOT_DIR", str(Path(_VAULT) / "catalog"))
+# Asignacion, NO setdefault: el worker sales_eval le hereda al subprocess el vault
+# REAL (prod: render-env-from-ssm.sh) y setdefault no lo pisaba -> las sesiones
+# wa_golden_* caian en el vault de clientes mientras el runner leia el metadata
+# de _VAULT (incidente 2026-09-23). Vault, historial LLM y catalogo: todo en _VAULT.
+os.environ["WORKSPACE_VAULT_DIR"] = _VAULT
+os.environ["EXOCLAW_STATE_DIR"] = str(Path(_VAULT) / "agent_state")
+os.environ["CATALOG_SNAPSHOT_DIR"] = str(Path(_VAULT) / "catalog")
 os.environ.setdefault("API_BASE_LLMLITE", "http://localhost:4000")
 os.environ.setdefault("LITELLM_API_KEY", "sk-litellm-proxy-local")
 # --signoz: en vez de desactivar OTEL, lo dejamos activo apuntando al collector de
