@@ -47,8 +47,11 @@ def _fakes(tracker: Tracker, *, in_window: bool):
         return {
             "customer_name": "Ana",
             "order_display_id": "#9",
-            "total_label": "$ 50.000",
-            "total_cop": 50000,
+            # El envío real ($ 12.000) ya quedó fijado al marcar "en camino":
+            # el total vigente lo incluye y el valor del pedido va aparte.
+            "total_label": "$ 62.000",
+            "total_cop": 62000,
+            "order_value_cop": 50000,
             "pay_type": "confirmed",
             "payment_confirmed": False,
             "delivery_window": None,

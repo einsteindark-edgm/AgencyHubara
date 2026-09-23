@@ -142,7 +142,12 @@ def test_template_variables_shipping_details_pass_registry_validation():
     from src.platform.whatsapp.composition import get_template_registry
     from src.platform.whatsapp.templates.registry import validate_variables
 
-    facts = {"order_display_id": "#22", "items_label": "Plegaria de Luz", "total_cop": 50000}
+    # Total vigente con el envío real ya aplicado; el desglose usa el valor
+    # del pedido SIN envío para no sumarlo dos veces.
+    facts = {
+        "order_display_id": "#22", "items_label": "Plegaria de Luz",
+        "total_cop": 62000, "order_value_cop": 50000,
+    }
     variables = build_status_template_variables(
         "shipping", facts, tracking_url=URL, shipping_cost=12000
     )

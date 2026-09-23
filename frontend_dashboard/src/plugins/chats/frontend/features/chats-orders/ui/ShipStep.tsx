@@ -1,8 +1,10 @@
 /**
  * Paso "Despachar" del panel móvil — espejo del modal "En camino" del tablero.
  *
- * Desglose del cobro: el valor del pedido (solo lectura), el valor del envío
- * que escribe el operador y el total en vivo. El valor del envío y el link de
+ * Desglose del cobro: el valor del pedido SIN envío (solo lectura), el envío
+ * estimado al vender como referencia (no se suma), el valor REAL del envío
+ * que escribe el operador y el total en vivo (pedido + envío real). El valor
+ * real reemplaza al estimado en todo Hubara. El valor del envío y el link de
  * la guía (ambos opcionales) viajan en el mismo cambio de estado; el agente
  * ETA los detalla en el WhatsApp de "ya va en camino". Mismos validadores que
  * el escritorio (`@/shared/lib`), espejo de los del backend.
@@ -19,12 +21,20 @@ export interface ShipExtras {
 interface Props {
   /** Total del pedido en COP (sin envío). `null` = desconocido. */
   orderTotal: number | null;
+  /** Tarifa mínima de envío cobrada al vender (referencia). `null` = no hay. */
+  estimatedShipping?: number | null;
   busy: boolean;
   onConfirm: (extras: ShipExtras) => void;
   onCancel: () => void;
 }
 
-export function ShipStep({ orderTotal, busy, onConfirm, onCancel }: Props) {
+export function ShipStep({
+  orderTotal,
+  estimatedShipping = null,
+  busy,
+  onConfirm,
+  onCancel,
+}: Props) {
   const [link, setLink] = useState("");
   const [cost, setCost] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -61,18 +71,25 @@ export function ShipStep({ orderTotal, busy, onConfirm, onCancel }: Props) {
     <div className="order-step" aria-label="Despachar">
       <p className="order-step-hint">
         El cliente recibe por WhatsApp el aviso de que su pedido va en camino.
-        Con el valor del envío le detallamos pedido, envío y total; el link de
-        la guía va al final. Los dos son opcionales.
+        Escribe el valor REAL del envío: reemplaza a la tarifa estimada y le
+        detallamos pedido, envío y total; el link de la guía va al final. Los
+        dos son opcionales.
       </p>
 
       {knownTotal != null && (
         <div className="order-step-row">
           <span>Valor del pedido</span>
-          <span>{fmtMoney(knownTotal)}</span>
+          <span data-testid="ship-order-value">{fmtMoney(knownTotal)}</span>
+        </div>
+      )}
+      {estimatedShipping != null && estimatedShipping > 0 && (
+        <div className="order-step-row order-step-estimate">
+          <span>Envío estimado al vender (no se suma)</span>
+          <span data-testid="ship-estimate">{fmtMoney(estimatedShipping)}</span>
         </div>
       )}
       <label className="order-step-field">
-        <span>Valor del envío (opcional)</span>
+        <span>Valor del envío real (opcional)</span>
         <input
           type="text"
           inputMode="numeric"

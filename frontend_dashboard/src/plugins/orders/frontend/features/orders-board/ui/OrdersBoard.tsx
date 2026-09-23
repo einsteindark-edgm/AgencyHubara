@@ -13,6 +13,7 @@ import {
   countsInStats,
   isCollectedRevenue,
   orderDayIso,
+  orderValueWithoutShipping,
   useTransitionOrderStage,
   type Order,
   type OrderStatus,
@@ -177,7 +178,7 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
       {pendingShip && (
         <TrackingLinkModal
           orderId={pendingShip}
-          orderTotal={orders.find((o) => o.id === pendingShip)?.total ?? null}
+          {...shipAmounts(orders.find((o) => o.id === pendingShip))}
           busy={transition.isPending}
           onCancel={() => setPendingShip(null)}
           onConfirm={({ trackingUrl, shippingCost }) => {
@@ -251,6 +252,21 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
       )}
     </div>
   );
+}
+
+/** Montos del modal "En camino": el valor del pedido SIN el envío (el total
+ * ya trae el estimado del registro) y ese estimado como referencia mientras
+ * el operador no haya fijado el real. */
+function shipAmounts(order: Order | undefined): {
+  orderTotal: number | null;
+  estimatedShipping: number | null;
+} {
+  if (!order) return { orderTotal: null, estimatedShipping: null };
+  const shipping = order.shipping ?? 0;
+  return {
+    orderTotal: orderValueWithoutShipping(order),
+    estimatedShipping: shipping > 0 && !order.shippingConfirmed ? shipping : null,
+  };
 }
 
 /** Traduce el `error_detail` del backend (formato `kind: detail`) a un

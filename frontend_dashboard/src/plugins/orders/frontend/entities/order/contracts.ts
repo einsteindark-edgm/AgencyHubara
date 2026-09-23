@@ -50,6 +50,11 @@ export const orderSummarySchema = z.object({
   // Pedido de prueba (`metadata.hubara_test_order` en Medusa): visible pero
   // fuera de todos los totales. Opcional: un backend viejo no lo manda.
   is_test: z.boolean().optional(),
+  // Envío vigente DENTRO de `total_cop`: la tarifa mínima estimada del
+  // registro hasta que el operador fija el real al marcar "en camino"
+  // (`shipping_confirmed`). Opcionales: un backend viejo no los manda.
+  shipping_cop: z.number().int().optional(),
+  shipping_confirmed: z.boolean().optional(),
   // Datos que Medusa NO tiene todavía — son estimaciones / placeholders.
   due_iso: z.string().nullable(),
   due_time: z.string().nullable(),

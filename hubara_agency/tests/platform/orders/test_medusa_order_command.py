@@ -63,7 +63,7 @@ async def test_schedule_delivery_converts_draft_and_patches_metadata(
     # (Medusa v2 retorna drafts via este endpoint también).
     respx_mock.get(
         f"/admin/orders/{draft_id}",
-        params__contains={"fields": "id,metadata,total,payment_status,status"},
+        params__contains={"fields": "id,metadata,total,shipping_total,payment_status,status"},
     ).mock(
         return_value=Response(
             200,

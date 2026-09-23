@@ -61,6 +61,7 @@ from src.platform.orders.state import (  # noqa: F401 (re-exposed via module use
     META_KEY_STAGE,
     META_KEY_TEST_ORDER,
     STAGE_VALUES,
+    effective_amounts,
     read_stage,
 )
 
@@ -333,7 +334,13 @@ class MedusaOrderQuery:
         )
 
         # ---- totales en COP integer ----
-        total_cop = _to_int_cop(raw.get("total", 0))
+        # El envío registrado es una tarifa mínima estimada; si el operador ya
+        # fijó el real ("en camino"), reemplaza al estimado en el total.
+        total_cop, shipping_cop, shipping_confirmed = effective_amounts(
+            total=_to_int_cop(raw.get("total", 0)),
+            shipping_total=_to_int_cop(raw.get("shipping_total", 0)),
+            metadata=raw.get("metadata") or {},
+        )
 
         # ---- timestamps ----
         created_at_ms = _iso_to_ms(raw.get("created_at"))
@@ -460,6 +467,8 @@ class MedusaOrderQuery:
             created_at_ms=created_at_ms,
             updated_at_ms=updated_at_ms,
             is_test=metadata.get(META_KEY_TEST_ORDER) is True,
+            shipping_cop=shipping_cop,
+            shipping_confirmed=shipping_confirmed,
         )
 
     def _build_detail(
@@ -510,7 +519,7 @@ class MedusaOrderQuery:
 
         # Totales
         subtotal_cop = _to_int_cop(raw.get("subtotal", 0))
-        shipping_cop = _to_int_cop(raw.get("shipping_total", 0))
+        shipping_cop = summary.shipping_cop  # envío vigente (real si ya se fijó)
         tax_total_cop = _to_int_cop(raw.get("tax_total", 0))
         discount_total_cop = _to_int_cop(raw.get("discount_total", 0))
 

@@ -64,6 +64,7 @@ class TransitionStageCommand:
     note: str | None = None
     force: bool = False
     by: str = "human"
+    shipping_cost_cop: int | None = None
 
 
 @dataclass(frozen=True)

@@ -145,6 +145,12 @@ class OrderSummaryDTO:
     # Pedido de prueba (`metadata.hubara_test_order`): visible, pero fuera de
     # toda estadística y de los eventos a Meta.
     is_test: bool = False
+    # Envío vigente dentro de `total_cop`: el estimado del registro (tarifa
+    # mínima) hasta que el operador fija el real al marcar "en camino"
+    # (`shipping_confirmed=True`). Valor del pedido sin envío =
+    # `total_cop - shipping_cop`.
+    shipping_cop: int = 0
+    shipping_confirmed: bool = False
 
 
 @dataclass(frozen=True)

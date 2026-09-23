@@ -104,7 +104,7 @@ def build_status_template_variables(
     status_label = STAGE_LABELS.get(stage, stage)
     url = _clean_tracking_url(tracking_url)
     detalle = (
-        shipping_breakdown(shipping_cost, facts.get("total_cop"))
+        shipping_breakdown(shipping_cost, facts.get("order_value_cop"))
         if stage == "shipping"
         else None
     )
@@ -211,7 +211,7 @@ def render_stage_notification(
 
     ``shipping_cost`` (COP entero, opcional; lo escribe el operador al marcar
     "en camino") se informa SOLO en ``shipping`` como desglose separado del
-    pedido — "Valor del pedido" (``order_total_cop``, total vivo del pedido),
+    pedido — "Valor del pedido" (``order_total_cop``: el pedido SIN envío),
     "Valor del envío" y "Total" (la suma), una línea cada uno dentro de la
     misma burbuja. Contra entrega cobra el total; el pagado dice que el valor
     del pedido ya está pagado (ya NO "no tienes que pagar nada").

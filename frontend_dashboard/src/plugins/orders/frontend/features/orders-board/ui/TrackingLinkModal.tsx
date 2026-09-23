@@ -1,9 +1,11 @@
 /**
  * Modal "En camino" — aparece al soltar un pedido en la columna `shipping`.
  *
- * Desglose del cobro: el valor del pedido viene prellenado (total vivo de la
- * orden, solo lectura — se edita en el pedido, no acá), el operador escribe
- * el valor del envío y el total se recalcula en vivo.
+ * Desglose del cobro: el valor del pedido viene prellenado SIN envío (solo
+ * lectura — se edita en el pedido, no acá). El envío que se cobró al vender
+ * es una tarifa mínima estimada (se muestra como referencia); recién acá se
+ * sabe el real: el operador lo escribe y el total es pedido + envío real.
+ * Ese valor reemplaza al estimado en todo Hubara (total, cobro, OrderFacts).
  *
  * El link de la guía y el valor del envío (ambos opcionales) viajan en el
  * mismo `PATCH .../stage` (`tracking_url`, `shipping_cost`). El agente ETA
@@ -32,6 +34,8 @@ interface Props {
   orderId: string;
   /** Total del pedido en COP (sin envío). `null` = desconocido: solo se pide el envío. */
   orderTotal?: number | null;
+  /** Tarifa mínima de envío que se cobró al vender (referencia). `null` = no hay. */
+  estimatedShipping?: number | null;
   /** Transición en vuelo: deshabilita las acciones. */
   busy?: boolean;
   onConfirm: (result: ShippingConfirm) => void;
@@ -41,6 +45,7 @@ interface Props {
 export function TrackingLinkModal({
   orderId,
   orderTotal = null,
+  estimatedShipping = null,
   busy = false,
   onConfirm,
   onCancel,
@@ -119,10 +124,10 @@ export function TrackingLinkModal({
           <div className="text-[13px] font-bold text-fg">🚚 Marcar en camino · {orderId}</div>
           <p className="mt-1 text-[11.5px] leading-snug text-fg-faint">
             El cliente recibe por WhatsApp el aviso de que su pedido ya va en
-            camino. Si escribís el valor del envío, el mensaje le detalla el
-            valor del pedido, el del envío y el total; si pegás el link de la
-            guía, va al final para que lo abra con un toque. Los dos son
-            opcionales.
+            camino. Escribí el valor REAL del envío: reemplaza a la tarifa
+            estimada en el pedido, y el mensaje le detalla el valor del
+            pedido, el del envío y el total. Si pegás el link de la guía, va
+            al final para que lo abra con un toque. Los dos son opcionales.
           </p>
         </div>
 
@@ -135,9 +140,15 @@ export function TrackingLinkModal({
               </span>
             </div>
           )}
+          {estimatedShipping != null && estimatedShipping > 0 && (
+            <div className="flex items-center justify-between text-[11px] text-fg-faint">
+              <span>Envío estimado al vender (no se suma)</span>
+              <span data-testid="ship-estimate">{fmtMoney(estimatedShipping)}</span>
+            </div>
+          )}
         <label className="flex flex-col gap-1">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-fg-faint">
-            Valor del envío (opcional)
+            Valor del envío real (opcional)
           </span>
           <input
             type="text"

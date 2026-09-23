@@ -70,6 +70,8 @@ export function toLegacyOrder(s: OrderSummary): Order {
     payType: s.pay_type as PayType,
     items: s.items,
     total: s.total_cop,
+    shipping: s.shipping_cop ?? 0,
+    shippingConfirmed: s.shipping_confirmed === true,
     dueIso: s.due_iso ?? "",
     dueTime: s.due_time ?? "—",
     overdue: s.overdue,

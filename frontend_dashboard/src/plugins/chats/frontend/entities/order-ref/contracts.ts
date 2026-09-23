@@ -68,7 +68,11 @@ export const customerOrderSchema = z
     id: z.string(),
     display_id: z.string().nullish(),
     status: orderRefStatusSchema,
+    /** Total vigente: pedido + envío (estimado, o el real si ya se fijó). */
     total_cop: z.number().nullish(),
+    /** Envío incluido en `total_cop`; `shipping_confirmed` = ya es el real. */
+    shipping_cop: z.number().nullish(),
+    shipping_confirmed: z.boolean().nullish(),
     currency_code: z.string().nullish(),
     due_iso: z.string().nullish(),
     is_draft: z.boolean().nullish(),

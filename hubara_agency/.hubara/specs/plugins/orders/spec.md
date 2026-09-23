@@ -261,6 +261,26 @@ transiciones manuales validando el DAG permitido entre stages.
 - AND `shipping_cost` no entero, bool, negativo o > 10.000.000 → HTTP 422
   mencionando `shipping_cost` y la transición NO se aplica
 
+#### Scenario: El envío del modal es el REAL y reemplaza al estimado (2026-09-23)
+
+- GIVEN un pedido registrado con total $ 57.900 = pedido $ 50.000 + envío
+  estimado $ 7.900 (tarifa mínima: el envío solo se conoce al despachar)
+- WHEN el operador lo suelta en `shipping` (o toca "Despachar" en el panel
+  del celular)
+- THEN el modal muestra `Valor del pedido: $ 50.000` (total − envío vigente,
+  SIN el estimado), el estimado `$ 7.900` como referencia que NO se suma, y
+  la casilla "Valor del envío real"; con $ 12.000 el total es $ 62.000
+- AND la transición persiste `metadata.hubara_shipping_cost_cop = 12000`
+  (Medusa v2 no permite editar el monto de un método de envío existente en
+  una orden real — el valor real vive en metadata, como la etapa)
+- AND desde ahí todo Hubara lee el envío real: el query adapter (único
+  writer de OrderFacts) devuelve `shipping_cop = 12000`,
+  `shipping_confirmed = true` y `total_cop = 62000` (total Medusa − envío
+  estimado + envío real) en lista, detalle, OrderFacts (Ads, Campañas…), el
+  cobro de "Confirmar pago" y el mensaje del ETA (que desglosa con el valor
+  del pedido SIN envío, `order_value_cop`, para no sumarlo dos veces)
+- AND sin valor real (vacío / 0) se mantiene el estimado
+
 #### Scenario: "En preparación" y "Listo" no mencionan el precio (2026-09-22)
 
 - GIVEN un pedido contra entrega que pasa a `preparing` o a `ready`

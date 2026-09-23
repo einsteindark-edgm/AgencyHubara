@@ -427,9 +427,12 @@ async def transition_order_stage(
         (un "en camino" con link roto no se puede re-notificar por template).
       * `shipping_cost` (optional int) — valor del envío en COP (entero, sin
         decimales) que el operador escribe al mover el pedido a `shipping`.
-        Viaja en la cascada ETA hasta el mensaje ("El valor del envío es
-        $ 12.000") y queda en la nota del stage history. Entero 0..10.000.000
-        (0/ausente = sin valor) → si no, 422 ANTES de aplicar la transición.
+        Es el envío REAL: reemplaza a la tarifa mínima estimada del registro
+        en todo Hubara (`metadata.hubara_shipping_cost_cop` → total vigente,
+        OrderFacts, cobro). Viaja en la cascada ETA hasta el mensaje ("Valor
+        del envío: $ 12.000") y queda en la nota del stage history. Entero
+        0..10.000.000 (0/ausente = sin valor, se mantiene el estimado) → si
+        no, 422 ANTES de aplicar la transición.
 
     Response shape igual que `/schedule`. `success=False` con
     `error_detail` que empieza con `invalid_transition:` cuando el
@@ -461,6 +464,7 @@ async def transition_order_stage(
         note=note,
         force=bool(body.get("force", False)),
         by=body.get("by") if isinstance(body.get("by"), str) else "human",
+        shipping_cost_cop=shipping_cost,
     )
     port = get_order_command_port()
     result = await port.transition_stage(cmd)

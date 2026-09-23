@@ -71,6 +71,20 @@ def test_shipping_cost_travels_to_eta_emit_and_stage_note(harness):
     assert fake_port.commands[0].note == "Valor del envío: $ 12.000"
 
 
+def test_shipping_cost_is_persisted_as_the_real_shipping(harness):
+    """El valor del modal es el envío REAL: el comando lo persiste y desde ahí
+    reemplaza al estimado en todo Hubara (total, OrderFacts, cobro)."""
+    client, fake_port, _ = harness
+
+    client.patch(
+        "/api/orders/orders/order_01HX/stage",
+        json={"stage": "shipping", "shipping_cost": 12000},
+    )
+    client.patch("/api/orders/orders/order_01HX/stage", json={"stage": "shipping"})
+
+    assert [c.shipping_cost_cop for c in fake_port.commands] == [12000, None]
+
+
 def test_shipping_cost_and_tracking_url_share_the_note(harness):
     client, fake_port, spawn_emit_calls = harness
     url = "https://www.coordinadora.com/rastreo?guia=98765432101"
