@@ -56,8 +56,15 @@ from src.platform.catalog import (
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.use_cases.order_draft import (
+    current_item,
+    get_active_draft,
     get_projectable_draft,
     update_order_draft,
+)
+from src.plugins.chats.shared.draft_items import (
+    ITEM_FIELDS,
+    draft_items,
+    product_key,
 )
 
 
@@ -75,15 +82,22 @@ class SetOrderSlotTool(ToolBase):
         "el nuevo valor (sobreescribe). Para borrar un dato que el cliente dejo "
         "indefinido, mandalo como string vacio. NO reemplaza a `register_order` "
         "(esta tool es solo memoria de la conversacion; la orden formal la cierra "
-        "`register_order`). Para texto libre que no entra en los campos fijos "
-        "(ej. pedido de varios productos distintos), usa `notas`."
+        "`register_order`). Pedido con VARIOS productos: cada uno es un ítem "
+        "con sus propias variantes — manda `producto` junto con su aroma/"
+        "color/diseno/cantidad (sin `producto`, el dato va al producto al que "
+        "pertenece). Si el cliente cambia de producto, quita el anterior con "
+        "`quitar=true`. Texto libre que no entra en los campos → `notas`."
     )
     parameters: dict[str, Any] = {
         "type": "object",
         "properties": {
             "producto": {
                 "type": "string",
-                "description": "Producto elegido (ej. 'Luz Serena').",
+                "description": (
+                    "Producto al que pertenecen los datos de esta llamada (ej. "
+                    "'Luz Serena'). Si el pedido ya tiene otro producto, este "
+                    "se AGREGA como un ítem aparte con sus propias variantes."
+                ),
             },
             "aroma": {
                 "type": "string",
@@ -146,7 +160,15 @@ class SetOrderSlotTool(ToolBase):
                 "type": "string",
                 "description": (
                     "Texto libre para datos que no entran en los campos fijos "
-                    "(ej. 'pedido: 2x Luz Serena lavanda/blanco + 1x Cruz de Vida')."
+                    "(ej. 'Plato: Leo', 'es para regalo')."
+                ),
+            },
+            "quitar": {
+                "type": "boolean",
+                "description": (
+                    "true = QUITA del pedido el `producto` indicado (el cliente "
+                    "lo descartó o lo cambió por otro; el nuevo se agrega con "
+                    "otra llamada)."
                 ),
             },
         },
@@ -182,14 +204,12 @@ class SetOrderSlotTool(ToolBase):
             return self._color_families
         return get_color_families()
 
-    async def _resolve_product(self, producto: str | None):
-        """Producto del catalogo cuyo titulo matchea `producto`, o None.
-
-        Match normalizado (case/acentos-insensible) por titulo o handle. Si el
-        catalogo esta caido o no hay match claro, None (no se valida — la tool
-        es advisory y degrada abierto: nunca bloquea por infra).
-        """
-        if self._catalog is None or not producto:
+    async def _catalog_products(self) -> list[Any] | None:
+        """Productos del catalogo para validar, o None si esta caido (no se
+        valida — la tool es advisory y degrada abierto: nunca bloquea por
+        infra). Una sola lectura por llamada aunque el pedido tenga varios
+        productos."""
+        if self._catalog is None:
             return None
         try:
             result = await self._catalog.search(q="", limit=30)
@@ -200,11 +220,98 @@ class SetOrderSlotTool(ToolBase):
                 exc,
             )
             return None
-        wanted = normalize_label(producto)
-        for p in result.results:
-            if normalize_label(p.title) == wanted or normalize_label(p.handle) == wanted:
-                return p
-        return None
+        return list(result.results)
+
+    def _check_values(
+        self, product: Any, provided: dict[str, Any], to_check: list[str]
+    ) -> tuple[dict[str, str], list[dict[str, Any]], dict[str, Any] | None]:
+        """Valida aroma/color/diseño contra UN producto, sin escribir nada.
+
+        Devuelve `(canónicos, rechazos, familia_de_color)`: los valores que
+        existen (con el casing real del catálogo) y los que no.
+        """
+        attrs = parse_variant_tags(product.tags)
+        # Mapeo signo→color declarado por el operador (metadata "colores").
+        # Cuando existe, la paleta REAL es la de las variantes — los tags de
+        # color del producto pueden estar stale.
+        variant_colors = parse_variant_colors(product.metadata)
+        # Diseños = option values reales del producto (Duo Zodiacal: los 12
+        # signos). Producto sin options → lista vacía → el valor se acepta
+        # tal cual (degrada abierto, como aroma/color sin tags).
+        design_values = [
+            value for values in (product.options or {}).values() for value in values
+        ]
+        valid_by_kind = {
+            "aroma": attrs.aromas,
+            "color": attrs.colors,
+            "diseno": design_values,
+        }
+        canonical_values: dict[str, str] = {}
+        rejected: list[dict[str, Any]] = []
+        color_family: dict[str, Any] | None = None
+        for kind in to_check:
+            family_info = None
+            if kind == "color" and variant_colors:
+                # Paleta REAL = aliases de las variantes. Match tolerante a
+                # género/número; lo persistido es el alias canónico.
+                canonical, rejection, family_info = self._validate_color(
+                    provided[kind],
+                    primary_colors(variant_colors),
+                    lambda t: matching_color_alias(variant_colors, t),
+                )
+            elif kind == "color" and valid_by_kind["color"]:
+                colors = valid_by_kind["color"]
+                canonical, rejection, family_info = self._validate_color(
+                    provided[kind],
+                    colors,
+                    lambda t, _c=colors: match_option(t, _c),
+                )
+            else:
+                canonical, rejection = self._validate_choice(
+                    kind, provided[kind], valid_by_kind[kind]
+                )
+            if rejection is not None:
+                rejected.append(rejection)
+            elif canonical is not None:
+                canonical_values[kind] = canonical
+            if family_info is not None:
+                color_family = family_info
+        return canonical_values, rejected, color_family
+
+    async def _remove(
+        self, ctx: ToolContext, data: dict[str, Any], producto: str, now_ms: int
+    ) -> str:
+        """`quitar=true`: saca el producto del pedido (lo descartó o lo cambió)."""
+        catalog_products = await self._catalog_products()
+        product = _find_product(catalog_products or [], producto)
+        name = product.title if product is not None else producto
+        key = product_key(name)
+        present = any(
+            product_key(i.get("producto")) == key
+            for i in draft_items(get_active_draft(data))
+        )
+        if present:
+            update_order_draft(
+                data, slots={"producto": name}, now_ms=now_ms, remove_product=True
+            )
+            self._store.write(ctx.session_key, data)
+        logger.info(
+            "📝 [TOOL set_order_slot] session={} quitar={!r} present={}",
+            ctx.session_key, name, present,
+        )
+        return json.dumps(
+            {
+                "updated": present,
+                "removed": name if present else None,
+                "order_draft": get_projectable_draft(data) or {},
+                "summary": (
+                    f"{name} quedó fuera del pedido."
+                    if present
+                    else f"{name} no estaba en el pedido: no hay nada que quitar."
+                ),
+            },
+            ensure_ascii=False,
+        )
 
     def _validate_choice(
         self, kind: str, raw_value: str, valid: list[str]
@@ -388,6 +495,7 @@ class SetOrderSlotTool(ToolBase):
         cedula: str | None = None,
         metodo_pago: str | None = None,
         notas: str | None = None,
+        quitar: bool | None = None,
     ) -> str:
         # Solo los campos que el LLM mando (None = no lo toco esta llamada).
         # OJO: string vacio SI viaja -> `update_order_draft` lo interpreta como
@@ -427,11 +535,16 @@ class SetOrderSlotTool(ToolBase):
         now_ms = int(time.time() * 1000)
         data = self._store.read(ctx.session_key)
 
-        # Validacion closed-list de aroma/color (caso ep_010, run fa1eb974: el
-        # color "Melocotón" no existe y entro al draft → llego a la orden real).
-        # El producto se resuelve del arg `producto` de ESTA llamada o del que
-        # ya este en el draft. Los valores invalidos NO se escriben; el envelope
-        # le dice al LLM las opciones reales (guion: "el rojo no lo manejo").
+        if quitar and producto:
+            return await self._remove(ctx, data, producto, now_ms)
+
+        # Validacion closed-list de aroma/color/diseño (caso ep_010, run
+        # fa1eb974: el color "Melocotón" no existe y entro al draft → llego a
+        # la orden real). Cada valor se valida contra SU producto: el de
+        # `producto` en esta llamada, o el ítem del pedido al que pertenece
+        # (2026-09-22: "Escorpio" se validaba contra la Trilogía y el Duo
+        # nunca entró). Los valores invalidos NO se escriben; el envelope le
+        # dice al LLM las opciones reales (guion: "el rojo no lo manejo").
         rejected: list[dict[str, Any]] = []
         signs_for_color: list[dict[str, Any]] = []
         color_family: dict[str, Any] | None = None
@@ -439,90 +552,121 @@ class SetOrderSlotTool(ToolBase):
             k for k in ("aroma", "color", "diseno")
             if isinstance(provided.get(k), str) and provided[k].strip()
         ]
-        if to_check and self._catalog is not None:
-            draft_slots_now = get_projectable_draft(data) or {}
-            product = await self._resolve_product(
-                provided.get("producto") or draft_slots_now.get("producto")
-            )
+        items_now = draft_items(get_active_draft(data))
+        wants_item = any(k in provided for k in ITEM_FIELDS)
+        catalog_products = (
+            await self._catalog_products()
+            if wants_item and self._catalog is not None
+            else None
+        )
+        product = None
+        target_item: dict[str, Any] | None = None
+        if provided.get("producto") and catalog_products is not None:
+            product = _find_product(catalog_products, provided["producto"])
             if product is not None:
-                attrs = parse_variant_tags(product.tags)
-                # Mapeo signo→color declarado por el operador (metadata
-                # "colores"): cada variante viene en UN color fijo. Cuando
-                # existe, la paleta REAL es la de las variantes — los tags
-                # de color del producto pueden estar stale.
-                variant_colors = parse_variant_colors(product.metadata)
-                # Diseños = option values reales del producto (Duo Zodiacal:
-                # los 12 signos). Producto sin options → lista vacía → el
-                # valor se acepta tal cual (degrada abierto, como aroma/color
-                # sin tags).
-                design_values = [
-                    value
-                    for values in (product.options or {}).values()
-                    for value in values
-                ]
-                valid_by_kind = {
-                    "aroma": attrs.aromas,
-                    "color": attrs.colors,
-                    "diseno": design_values,
-                }
-                for kind in to_check:
-                    if kind == "color" and variant_colors:
-                        # Paleta REAL = aliases de las variantes (los tags
-                        # pueden estar stale). Match tolerante a género/
-                        # número; lo persistido es el alias canónico.
-                        canonical, rejection, family_info = self._validate_color(
-                            provided[kind],
-                            primary_colors(variant_colors),
-                            lambda t: matching_color_alias(variant_colors, t),
-                        )
-                    elif kind == "color" and valid_by_kind["color"]:
-                        colors = valid_by_kind["color"]
-                        canonical, rejection, family_info = self._validate_color(
-                            provided[kind],
-                            colors,
-                            lambda t, _c=colors: match_option(t, _c),
-                        )
-                    else:
-                        canonical, rejection = self._validate_choice(
-                            kind, provided[kind], valid_by_kind[kind]
-                        )
-                        family_info = None
-                    if rejection is not None:
-                        rejected.append(rejection)
-                        provided.pop(kind, None)
-                    else:
-                        provided[kind] = canonical
-                    if family_info is not None:
-                        color_family = family_info
-                        if family_info["shade_requested"]:
-                            # El tono pedido queda para el operador (empaque)
-                            # aunque el slot guarde la familia del catálogo.
-                            tone_note = (
-                                f"Tono de color pedido por el cliente: "
-                                f"'{family_info['requested']}' (registrado "
-                                f"como {family_info['captured']})"
-                            )
-                            extra = provided.get("notas")
-                            provided["notas"] = (
-                                f"{extra} | {tone_note}"
-                                if isinstance(extra, str) and extra.strip()
-                                else tone_note
-                            )
-                if variant_colors:
-                    mismatch, signs_for_color = self._cross_check_color_sign(
-                        provided, draft_slots_now, variant_colors
-                    )
-                    if mismatch is not None:
-                        provided.pop(mismatch["field"], None)
-                        rejected.append(mismatch)
+                # "duo-zodiacal" y "Duo Zodiacal" son el MISMO ítem: se
+                # reconoce por el catálogo y se escribe con el nombre que ya
+                # tiene (session-actions@v1 devuelve lo que MBA mandó).
+                same = next(
+                    (
+                        i for i in items_now
+                        if _find_product(catalog_products, i.get("producto"))
+                        is product
+                    ),
+                    None,
+                )
+                if same is not None:
+                    provided["producto"] = same["producto"]
+        if provided.get("producto"):
+            key = product_key(provided["producto"])
+            target_item = next(
+                (i for i in items_now if product_key(i.get("producto")) == key),
+                None,
+            )
+        elif wants_item and items_now:
+            target_item = current_item(get_active_draft(data), items_now)
+            if catalog_products is not None:
+                product = _find_product(
+                    catalog_products, target_item.get("producto")
+                )
 
-        wrote = bool(provided)
+        if to_check and product is not None:
+            checked = self._check_values(product, provided, to_check)
+            if checked[1] and not provided.get("producto") and len(items_now) > 1:
+                # El valor no es de este producto: ¿es de otro del pedido?
+                for other in items_now:
+                    if other is target_item:
+                        continue
+                    other_product = _find_product(
+                        catalog_products or [], other.get("producto")
+                    )
+                    if other_product is None:
+                        continue
+                    alt = self._check_values(other_product, provided, to_check)
+                    if not alt[1]:
+                        target_item, product, checked = other, other_product, alt
+                        break
+            canonical_values, product_rejected, family_info = checked
+            multi = len(
+                {product_key(i.get("producto")) for i in items_now}
+                | {product_key(product.title)}
+            ) > 1
+            for kind in to_check:
+                if kind in canonical_values:
+                    provided[kind] = canonical_values[kind]
+                else:
+                    provided.pop(kind, None)
+            if product_rejected and not provided.get("producto"):
+                for r in product_rejected:
+                    owners = _products_accepting(
+                        catalog_products or [], r["field"], r["given"], exclude=product
+                    )
+                    if owners:
+                        r["belongs_to"] = owners
+            rejected.extend(product_rejected)
+            if family_info is not None:
+                color_family = family_info
+                if family_info["shade_requested"]:
+                    # El tono pedido queda para el operador (empaque) aunque
+                    # el slot guarde la familia del catálogo.
+                    tone_note = (
+                        f"Tono de color pedido por el cliente: "
+                        f"'{family_info['requested']}' (registrado "
+                        f"como {family_info['captured']})"
+                    )
+                    if multi:
+                        tone_note = f"{product.title}: {tone_note}"
+                    extra = provided.get("notas")
+                    provided["notas"] = (
+                        f"{extra} | {tone_note}"
+                        if isinstance(extra, str) and extra.strip()
+                        else tone_note
+                    )
+            variant_colors = parse_variant_colors(product.metadata)
+            if variant_colors:
+                mismatch, signs_for_color = self._cross_check_color_sign(
+                    provided, target_item or {}, variant_colors
+                )
+                if mismatch is not None:
+                    provided.pop(mismatch["field"], None)
+                    rejected.append(mismatch)
+
+        # El ítem destino viaja explícito al store (sin esto el dato iría al
+        # último producto tocado). Si no queda NINGÚN dato real, no se escribe.
+        injected = False
+        if (
+            target_item is not None
+            and target_item.get("producto")
+            and not provided.get("producto")
+            and any(k in provided for k in ITEM_FIELDS)
+        ):
+            provided["producto"] = target_item["producto"]
+            injected = True
+        wrote = bool(provided) and not (injected and set(provided) == {"producto"})
         if wrote:
-            draft = update_order_draft(data, slots=provided, now_ms=now_ms)
+            update_order_draft(data, slots=provided, now_ms=now_ms)
             self._store.write(ctx.session_key, data)
-            current_slots = draft.get("slots", {})
-        else:
-            current_slots = (get_projectable_draft(data) or {})
+        current_slots = get_projectable_draft(data) or {}
 
         logger.info(
             "📝 [TOOL set_order_slot] session={} captured={} rejected={} draft_now={}",
@@ -594,6 +738,16 @@ class SetOrderSlotTool(ToolBase):
                         f"{r['family']}, que este producto NO maneja "
                         f"(disponibles: {', '.join(r['available'])})"
                     )
+                elif r.get("belongs_to"):
+                    # 2026-09-22: "Escorpio" llegó sin producto y solo estaba
+                    # la Trilogía en el pedido — es del Duo Zodiacal.
+                    owner = r["belongs_to"][0]
+                    parts.append(
+                        f"{r['field']} {r['given']!r} no es de ningún producto "
+                        f"del pedido: es de {', '.join(r['belongs_to'])}. Si el "
+                        f"cliente lo quiere, agrégalo con set_order_slot("
+                        f"producto='{owner}', {r['field']}='{r['given']}')"
+                    )
                 else:
                     parts.append(
                         f"{r['field']} {r['given']!r} NO existe en el catálogo "
@@ -611,3 +765,36 @@ class SetOrderSlotTool(ToolBase):
                 "llamar set_order_slot con la elección final."
             )
         return json.dumps(envelope, ensure_ascii=False)
+
+
+def _find_product(products: list[Any], name: Any) -> Any | None:
+    """Producto del catálogo cuyo título o handle matchea `name` (normalizado:
+    case/acentos-insensible), o None."""
+    if not name:
+        return None
+    wanted = normalize_label(str(name))
+    for p in products:
+        if normalize_label(p.title) == wanted or normalize_label(p.handle) == wanted:
+            return p
+    return None
+
+
+def _products_accepting(
+    products: list[Any], kind: str, value: str, *, exclude: Any
+) -> list[str]:
+    """Títulos de los productos del catálogo donde `value` SÍ existe para
+    `kind` ("Escorpio" → ["Duo Zodiacal"]). Así el rechazo le dice al bot a
+    qué producto pertenece el dato en vez de dejarlo adivinando."""
+    owners: list[str] = []
+    for p in products:
+        if p is exclude:
+            continue
+        if kind == "diseno":
+            valid = [v for values in (p.options or {}).values() for v in values]
+        else:
+            attrs = parse_variant_tags(p.tags)
+            valid = attrs.aromas if kind == "aroma" else attrs.colors
+        tokens = split_multi_label(value) or [value]
+        if valid and all(match_option(t, valid) is not None for t in tokens):
+            owners.append(p.title)
+    return owners

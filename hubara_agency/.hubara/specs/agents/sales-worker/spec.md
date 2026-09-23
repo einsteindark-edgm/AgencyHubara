@@ -614,6 +614,36 @@ cliente, intentos previos de venta).
 - THEN el sistema prompt incluye contenido relevante de memory/
 - AND el LLM puede usarlo para personalizar (mostrar primero velas grandes)
 
+### Requirement: Pedido con varios productos (2026-09-23)
+
+El borrador del pedido (`episodes[-1].order_draft`) MUST guardar un ítem por
+producto en `items` (producto, aroma, color, diseno, cantidad), con los datos
+del pedido (envío, pago, `notas`) en `slots`. `slots` MUST seguir exponiendo la
+vista plana previa: con un producto, IDÉNTICA a la forma anterior; con varios,
+`producto` junta los nombres ("A + B"). Un borrador sin `items` (anterior al
+cambio) MUST leerse como un solo ítem (`shared/draft_items.draft_items`) y
+migrarse en la primera escritura.
+
+#### Scenario: el signo de un segundo producto (run 2026-09-22, ep_002)
+
+- GIVEN un pedido con la Trilogía del Terror
+- WHEN el LLM invoca `set_order_slot(producto="Duo Zodiacal", diseno="Escorpio")`
+- THEN el Duo entra como un segundo ítem con su signo, validado contra las opciones del DUO (no contra la Trilogía)
+- AND si el LLM manda solo `diseno="Escorpio"` sin `producto`, el valor va al ítem del pedido donde existe; si no existe en ninguno, el rechazo trae `belongs_to` con el producto del catálogo que lo tiene y el `summary` dicta `set_order_slot(producto=..., diseno=...)` para agregarlo
+
+#### Scenario: el color de un producto no pisa el de otro (orden #31)
+
+- GIVEN un pedido con Duo Zodiacal (color Morado)
+- WHEN el cliente elige verde para el Velón Amor Eterno
+- THEN el Duo sigue en Morado y el Velón queda en verde
+
+#### Scenario: lo que ve el LLM y lo que mide el scorecard
+
+- THEN `[DATOS DEL PEDIDO YA CONFIRMADOS POR EL CLIENTE]` lista un renglón por producto con SUS variantes; la etapa `variantes` dura hasta que CADA producto tenga aroma, color y cantidad
+- AND la captura determinista de cantidad escribe en el producto en curso y NUNCA pisa la cantidad de otro
+- AND `quitar=true` saca un producto del pedido (el cliente lo descartó o lo cambió)
+- AND un `set_order_slot` que no guardó nada se traza como fallo (`slots_rejected`), no en verde
+
 ### Requirement: Confirmación de compra antes del cierre
 
 El sistema SHALL registrar de forma determinista la confirmación de compra del

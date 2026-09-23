@@ -38,6 +38,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.plugins.chats.shared.draft_items import draft_items
+
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     get_active_episode,
 )
@@ -78,7 +80,12 @@ def resolve_funnel_stage(metadata: dict[str, Any]) -> str:
     slots = draft.get("slots") if isinstance(draft, dict) else None
     if not isinstance(slots, dict) or not slots.get("producto"):
         return STAGE_DESCUBRIMIENTO
-    if not all(slots.get(k) for k in _VARIANT_SLOTS):
+    # Cada producto del pedido con sus elecciones (un borrador viejo es un
+    # solo ítem): con varios, la etapa no avanza por el primero completo.
+    items = draft_items(draft)
+    if not items or not all(
+        all(item.get(k) for k in _VARIANT_SLOTS) for item in items
+    ):
         return STAGE_VARIANTES
     if not all(slots.get(k) for k in _SHIPPING_SLOTS):
         return STAGE_DATOS_ENVIO
