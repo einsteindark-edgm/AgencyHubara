@@ -311,14 +311,16 @@ class SetOrderSlotTool(ToolBase):
         draft_slots: dict[str, Any],
         variant_colors: dict[str, list[str]],
     ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-        """Combinación color+signo inexistente → rechaza el recién llegado.
+        """Color×signo: la foto del signo es REFERENCIA, no restricción.
 
-        Cada signo viene en UN color fijo: "Leo en rojo" no existe (Leo es
-        naranja; el rojo es de Aries). El valor que YA estaba en el draft se
-        respeta; el que llega ahora y contradice se rechaza con las
-        alternativas mismo-color-otro-signo para que el bot ofrezca "no es
-        el signo, pero SÍ es el color". Además: color sin signo → hint
-        `signs_for_color` con el signo dueño, para mostrarlo de una.
+        El mapeo dice en qué color salió la foto de cada signo. Hasta
+        2026-09-22 se usaba para rechazar "Leo en rojo" y el bot le hacía
+        elegir a la clienta entre su signo y su color (el humano lo vendió
+        igual). Regla del operador (2026-09-23): la vela se hace en cualquier
+        color de la paleta, en cualquier signo, sin costo extra. Devuelve
+        `(custom_color, signs_for_color)`: el primero cuando el color no es
+        el de la foto del signo (el bot lo confirma como hecho a pedido); el
+        segundo cuando hay color sin signo (qué foto lo muestra).
         """
 
         def _effective(field: str) -> str | None:
@@ -358,19 +360,12 @@ class SetOrderSlotTool(ToolBase):
                 for v in values_for_color(variant_colors, token)
             }
             if owners & mapped_keys:
-                return None, []  # al menos un par color×signo existe
-        newcomer = "color" if "color" in provided else "diseno"
-        entry: dict[str, Any] = {
-            "field": newcomer,
-            "given": color if newcomer == "color" else diseno,
-            "reason": "color_sign_mismatch",
+                return None, []  # es el color de la foto: nada que aclarar
+        return {
             "sign": diseno,
-            "sign_colors": sign_colors,
-            "same_color_signs": _alternatives(color_tokens[0]),
-        }
-        if newcomer == "diseno":
-            entry["requested_color"] = color
-        return entry, []
+            "photo_colors": sign_colors,
+            "color": color,
+        }, []
 
     async def execute_with_context(
         self,
@@ -434,6 +429,7 @@ class SetOrderSlotTool(ToolBase):
         # le dice al LLM las opciones reales (guion: "el rojo no lo manejo").
         rejected: list[dict[str, Any]] = []
         signs_for_color: list[dict[str, Any]] = []
+        custom_color: dict[str, Any] | None = None
         color_family: dict[str, Any] | None = None
         to_check = [
             k for k in ("aroma", "color", "diseno")
@@ -509,12 +505,9 @@ class SetOrderSlotTool(ToolBase):
                                 else tone_note
                             )
                 if variant_colors:
-                    mismatch, signs_for_color = self._cross_check_color_sign(
+                    custom_color, signs_for_color = self._cross_check_color_sign(
                         provided, draft_slots_now, variant_colors
                     )
-                    if mismatch is not None:
-                        provided.pop(mismatch["field"], None)
-                        rejected.append(mismatch)
 
         wrote = bool(provided)
         if wrote:
@@ -555,32 +548,30 @@ class SetOrderSlotTool(ToolBase):
                     "ni le prometas el tono exacto que pidió."
                 )
         if signs_for_color:
-            # Color elegido sin signo aún: el bot puede mostrar el signo
-            # dueño del color de una ("la roja es la de Aries").
+            # Color elegido sin signo aún: qué foto lo muestra, como
+            # referencia visual. El signo lo elige el cliente.
             envelope["signs_for_color"] = signs_for_color
             owners = ", ".join(
                 f"{s['value']} ({s['colors'][0]})" for s in signs_for_color
             )
             envelope["summary"] += (
-                f" Ese color corresponde a: {owners} — ofrécele ese signo "
-                "citándolo explícitamente."
+                f" Ese color se ve en la foto de: {owners}. Sirve de "
+                "referencia visual; cualquier signo se hace en ese color."
+            )
+        if custom_color is not None:
+            envelope["custom_color"] = custom_color
+            envelope["summary"] += (
+                f" La foto de {custom_color['sign']} es "
+                f"{', '.join(custom_color['photo_colors'])} solo de "
+                f"referencia: la vela se hace en {custom_color['color']}, sin "
+                "costo extra. Confírmaselo con calidez; nunca le hagas elegir "
+                "entre su signo y su color."
             )
         if rejected:
             envelope["rejected"] = rejected
             parts = []
             for r in rejected:
-                if r.get("reason") == "color_sign_mismatch":
-                    alts = ", ".join(
-                        f"{a['value']} ({', '.join(a['colors'])})"
-                        for a in r["same_color_signs"]
-                    ) or "ningún signo"
-                    parts.append(
-                        f"la combinación color+signo NO existe: cada signo "
-                        f"viene en UN color fijo — {r['sign']} es "
-                        f"{', '.join(r['sign_colors'])} y el color pedido lo "
-                        f"tiene {alts}"
-                    )
-                elif r.get("reason") == "color_family_ambiguous":
+                if r.get("reason") == "color_family_ambiguous":
                     parts.append(
                         f"el color {r['given']!r} cae en la gama de "
                         f"{' / '.join(r['families'])} y este producto tiene "
@@ -604,10 +595,7 @@ class SetOrderSlotTool(ToolBase):
                 ("Datos guardados parcialmente. " if wrote else "NO se guardó: ")
                 + "; ".join(parts)
                 + ". Dile al cliente con calidez qué hay realmente: si pidió "
-                "una opción inexistente ofrécele SOLO las disponibles; si fue "
-                "una combinación color+signo, ofrécele el MISMO color en el "
-                "signo que lo tiene (aclarando explícitamente que es otro "
-                "signo) o el signo pedido en su color real. Luego vuelve a "
-                "llamar set_order_slot con la elección final."
+                "una opción inexistente ofrécele SOLO las disponibles. Luego "
+                "vuelve a llamar set_order_slot con la elección final."
             )
         return json.dumps(envelope, ensure_ascii=False)

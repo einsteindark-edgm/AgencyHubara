@@ -120,16 +120,22 @@ Medusa live durante la conversación (latency + cuota).
 - THEN se devuelve la lista cerrada de categorías con su nombre real y `product_count`
 - AND el orden es estable (alfabético por nombre) entre turnos
 
-#### Scenario: color pedido en otro signo (variant_colors, Duo Zodiacal)
+#### Scenario: signo en otro color — la foto es referencia (Duo Zodiacal, 2026-09-23)
 
-- GIVEN un producto multi-variante cuyo mapeo signo→color vive en `product.metadata["colores"]` (cada signo viene en UN color fijo; ej. Leo=naranja, Aries=rojo)
-- WHEN el cliente pide un color que NO es el del signo elegido (ej. "Leo en rojo") y el LLM invoca `set_order_slot(diseno="Leo", color="rojo")`
-- THEN la combinación se rechaza determinísticamente (`rejected` con `reason: color_sign_mismatch`) — el valor recién llegado NO se escribe al draft
-- AND el envelope trae `sign_colors` (el color real del signo pedido) y `same_color_signs` (los signos que SÍ tienen el color pedido)
-- AND el agente ofrece el MISMO color en el otro signo aclarando explícitamente que el signo es distinto — NUNCA niega el color ni registra la combinación inexistente
-- AND si el cliente da color sin signo, el envelope trae `signs_for_color` para ofrecer el signo dueño del color de una
-- AND el matching de color es tolerante a género/número/acentos ("ROJAS" → "rojo") y la paleta citable sale de las variantes reales, no de tags stale
+- GIVEN un producto multi-variante cuyo mapeo signo→color vive en `product.metadata["colores"]` (el color de la FOTO de cada signo; ej. Leo=naranja, Aries=rojo)
+- WHEN el cliente pide un color que NO es el de la foto del signo elegido (ej. "Leo en rojo") y el LLM invoca `set_order_slot(diseno="Leo", color="rojo")`
+- THEN se guardan los dos: la vela del Duo se hace en cualquier color de la paleta, en cualquier signo y sin costo extra (regla del operador, 2026-09-23)
+- AND el envelope trae `custom_color` (`sign`, `photo_colors`, `color`) y el `summary` instruye a confirmar "la foto es de referencia; te la hacemos en rojo" — NUNCA hacerle elegir entre su signo y su color
+- AND si el cliente da color sin signo, el envelope trae `signs_for_color` (qué foto muestra ese color) como referencia visual, sin empujar ese signo
+- AND el color sigue siendo closed-list contra la paleta real (variantes, no tags stale); tolerante a género/número/acentos ("ROJAS" → "rojo")
 - AND `get_product_by_handle` expone el mapeo como `variant_colors` en el detalle del producto
+
+#### Scenario: Duo con signos distintos en plato y vela (2026-09-22)
+
+- GIVEN una clienta que pide "el plato con el signo de Leo y la vela con el de Escorpio"
+- THEN el agente confirma que SÍ se hace, al mismo precio; el signo de la vela va en `diseno` y el del plato en `notas`
+- AND si no hay en stock, informa elaboración de 1 a 2 días (hasta 2 del mismo signo; 3 o más del mismo signo, el equipo confirma el tiempo) y que le envían foto al estar lista
+- AND no confunde el color de la vela con el del plato (si no está claro, lo pregunta en una línea)
 
 #### Scenario: tono pedido dentro de una familia de color (tolerancia de gama)
 
@@ -205,9 +211,9 @@ crea una draft order en Medusa (o stub local si Medusa no configurado).
 - AND algún ítem del pedido es un producto que trae portavela según el catálogo (`metadata.portavelas` explícito, o mención "portavela" en título/description — hoy el Dúo Zodiacal)
 - WHEN la tool arma el `order_registered_decision.motivo` (el texto que la red de seguridad `ensure_payment_pending_closure` escribe en `metadata.motivo` al escalar)
 - THEN el envelope SHALL traer `portavelas.included=true` + `order_registered.portavelas_included=true`
-- AND el motivo SHALL incluir la nota "definir con el cliente el color del portavelas (según disponibilidad)"
+- AND el motivo SHALL incluir la nota "enviarle al cliente foto de los colores disponibles del portavelas para que escoja"
 - AND el envelope instruye al LLM a incluir la misma nota en el `summary` de `escalate_to_human(PAYMENT_VERIFICATION_PENDING)`
-- AND a avisarle al comprador en la despedida que al finalizar el pago del pedido se escogen los colores del portavelas
+- AND a avisarle al comprador en la despedida que le enviarán una foto con los colores disponibles del portavelas para que escoja (nunca "al finalizar el pago": quien paga contra entrega no entiende cuándo)
 
 #### Scenario: Pedido sin portavelas — nadie habla del portavelas (run 943e6bff, 2026-09-07)
 
@@ -220,7 +226,8 @@ crea una draft order en Medusa (o stub local si Medusa no configurado).
 ### Requirement: Política de color del portavelas
 
 El sales-worker MUST responder a la pregunta por el color del portavelas
-que el color es según disponibilidad, y MUST NOT tratarlo como variante
+(el "plato") que se escoge después, con una foto de los colores disponibles
+(regla del operador 2026-09-23), y MUST NOT tratarlo como variante
 del pedido (no se fija con `set_order_slot` ni se ofrece con picker). La
 política aplica SOLO a los productos que traen portavela (hoy el Dúo
 Zodiacal); el agente MUST NOT mencionar el portavelas por su cuenta cuando
@@ -230,8 +237,8 @@ el pedido no incluye uno.
 
 - GIVEN una conversación en cualquier etapa del funnel
 - WHEN el cliente pregunta de qué color es el portavelas
-- THEN el agente responde que el color del portavelas es según disponibilidad
-- AND que al finalizar el pago del pedido se escogen los colores
+- THEN el agente responde que el color del portavelas lo escoge después: le envían una foto con los colores disponibles
+- AND MUST NOT decir "al finalizar el pago" (2026-09-22: la clienta pagaba contra entrega y preguntó dos veces de qué color quedaba)
 - AND NO promete un color específico ni lo registra como slot del pedido
 
 ### Requirement: Datos de envío — quién recibe (2026-08-31)

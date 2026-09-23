@@ -531,7 +531,7 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
         "falta verificación humana del pago."
     )
     if portavelas_handles:
-        motivo += " Pendiente: definir con el cliente el color del portavelas (según disponibilidad)."
+        motivo += " Pendiente: enviarle al cliente foto de los colores disponibles del portavelas para que escoja."
     outcome: dict[str, Any] = {}
 
     def _mutate(data: dict[str, Any]) -> dict[str, Any]:
