@@ -50,6 +50,11 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     ensure_active_episode,
     get_active_episode,
 )
+from src.plugins.chats.shared.draft_items import (
+    ITEM_FIELDS,
+    draft_items,
+    product_key,
+)
 
 # Slots reconocidos, en orden de presentacion, con su etiqueta humana para el
 # breadcrumb. `notas` es el escape-hatch para cualquier dato libre (ej. pedido
@@ -71,6 +76,7 @@ KNOWN_SLOTS: tuple[tuple[str, str], ...] = (
     ("notas", "Notas"),
 )
 _KNOWN_KEYS: frozenset[str] = frozenset(key for key, _ in KNOWN_SLOTS)
+_ITEM_KEYS: frozenset[str] = frozenset(ITEM_FIELDS)
 
 
 def _normalize(value: Any) -> str | None:
@@ -91,11 +97,15 @@ def update_order_draft(
     *,
     slots: dict[str, Any],
     now_ms: int,
+    remove_product: bool = False,
 ) -> dict[str, Any]:
     """Mergea `slots` en el order_draft del episodio activo. Mutates `metadata`.
 
     - Garantiza un episodio activo (defensivo, igual que
       `attach_order_to_active_episode`): si no hay, crea uno.
+    - Campos de producto (`ITEM_FIELDS`) → al ítem de `slots["producto"]`, o
+      al ítem en curso si no viene (ver `_apply_to_item`). `remove_product`
+      quita el ítem de ese producto. El resto → datos del pedido.
     - Merge por slot: valor no vacio -> set/overwrite; valor vacio (`""`/`None`)
       -> remove (overwrite discipline: el cliente puede cambiar de idea).
     - Setea `updated_at_ms`.
@@ -108,6 +118,17 @@ def update_order_draft(
 
     draft: dict[str, Any] = episode.setdefault("order_draft", {})
     draft_slots: dict[str, Any] = draft.setdefault("slots", {})
+
+    item_updates = {k: v for k, v in slots.items() if k in _ITEM_KEYS}
+    if item_updates or "items" in draft:
+        # Primera escritura de un borrador viejo (un producto en los slots
+        # planos): se migra a `items` antes de tocarlo.
+        items = draft_items(draft)
+        draft["items"] = items
+        if item_updates:
+            _apply_to_item(draft, items, item_updates, remove=remove_product)
+        _mirror_items_into_slots(draft_slots, items)
+    slots = {k: v for k, v in slots.items() if k not in _ITEM_KEYS}
 
     for key, raw in slots.items():
         norm = _normalize(raw)
@@ -136,6 +157,96 @@ def update_order_draft(
     return draft
 
 
+def get_active_draft(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    """El `order_draft` crudo del episodio activo (o None)."""
+    episode = get_active_episode(metadata)
+    draft = (episode or {}).get("order_draft")
+    return draft if isinstance(draft, dict) else None
+
+
+def current_item(
+    draft: dict[str, Any] | None, items: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """El ítem del que se está hablando: el último producto que se tocó."""
+    if not items:
+        return None
+    current = (draft or {}).get("current_item")
+    return next(
+        (i for i in items if product_key(i.get("producto")) == current),
+        items[-1],
+    )
+
+
+def _apply_to_item(
+    draft: dict[str, Any],
+    items: list[dict[str, Any]],
+    updates: dict[str, Any],
+    *,
+    remove: bool = False,
+) -> None:
+    """Escribe los campos de producto en SU ítem (mutates `items`).
+
+    Con `producto` → el ítem de ese producto (se agrega si es nuevo; un ítem
+    sin producto todavía lo adopta). Sin `producto` → el ítem en curso (el
+    último que se tocó), que es del que se está hablando. `remove` quita el
+    ítem del producto (el cliente lo descartó o lo cambió por otro).
+    """
+    producto = _normalize(updates.get("producto"))
+    target: dict[str, Any] | None = None
+    if producto is not None:
+        key = product_key(producto)
+        target = next(
+            (i for i in items if product_key(i.get("producto")) == key), None
+        )
+        if target is not None:
+            # Mismo producto escrito distinto: conserva el nombre que ya tenía.
+            updates = {k: v for k, v in updates.items() if k != "producto"}
+            if remove:
+                items.remove(target)
+                if draft.get("current_item") == key:
+                    draft["current_item"] = (
+                        product_key(items[-1].get("producto")) if items else ""
+                    )
+                return
+        elif remove:
+            return
+        else:
+            target = next((i for i in items if not i.get("producto")), None)
+    else:
+        target = current_item(draft, items)
+    if target is None:
+        target = {}
+        items.append(target)
+    for key, raw in updates.items():
+        norm = _normalize(raw)
+        if norm is None:
+            target.pop(key, None)
+        else:
+            target[key] = norm
+    items[:] = [i for i in items if i]
+    draft["current_item"] = product_key(target.get("producto"))
+
+
+def _mirror_items_into_slots(
+    draft_slots: dict[str, Any], items: list[dict[str, Any]]
+) -> None:
+    """La vista plana de siempre, derivada de `items`.
+
+    Un producto → los slots quedan IDÉNTICOS a la forma previa al 2026-09-23.
+    Varios → `producto` junta los nombres ("A + B") para los lectores que solo
+    preguntan si hay producto o necesitan una etiqueta; las variantes viven
+    solo en `items` (a nivel pedido serían ambiguas).
+    """
+    for key in ITEM_FIELDS:
+        draft_slots.pop(key, None)
+    if len(items) == 1:
+        draft_slots.update(items[0])
+    elif items:
+        names = [i["producto"] for i in items if i.get("producto")]
+        if names:
+            draft_slots["producto"] = " + ".join(names)
+
+
 def get_projectable_draft(metadata: dict[str, Any]) -> dict[str, Any] | None:
     """Devuelve los slots del draft del episodio activo SI son proyectables.
 
@@ -146,7 +257,9 @@ def get_projectable_draft(metadata: dict[str, Any]) -> dict[str, Any] | None:
          fuente de verdad; el draft deja de proyectarse.
       3. El draft tiene slots no vacios.
 
-    Returns el dict de slots (`{"color": "Blanco", ...}`) o `None`.
+    Returns el dict de slots (`{"color": "Blanco", ...}`) o `None`. Con varios
+    productos trae además `items` (un dict por producto con sus variantes);
+    con uno solo es la forma plana de siempre.
     """
     episode = get_active_episode(metadata)
     if episode is None:
@@ -159,6 +272,9 @@ def get_projectable_draft(metadata: dict[str, Any]) -> dict[str, Any] | None:
     slots = draft.get("slots")
     if not isinstance(slots, dict) or not slots:
         return None
+    items = draft_items(draft)
+    if len(items) > 1:
+        return {**slots, "items": items}
     return slots
 
 
@@ -170,6 +286,22 @@ def build_order_draft_note(slots: dict[str, Any]) -> str:
     de hora de Bogota (`context.build_bogota_context_string`).
     """
     lines: list[str] = []
+    items = slots.get("items")
+    if isinstance(items, list) and items:
+        # Varios productos: un renglón por producto con SUS variantes (la
+        # etiqueta plana "A + B" no se muestra como si fuera un producto).
+        lines.append(f"Productos del pedido ({len(items)}):")
+        for n, item in enumerate(items, start=1):
+            parts = [str(item.get("producto") or "(producto sin definir)")]
+            parts += [
+                f"{label}: {item[key]}"
+                for key, label in KNOWN_SLOTS
+                if key in _ITEM_KEYS and key != "producto" and item.get(key)
+            ]
+            lines.append(f"{n}. " + " · ".join(parts))
+        slots = {
+            k: v for k, v in slots.items() if k != "items" and k not in _ITEM_KEYS
+        }
     for key, label in KNOWN_SLOTS:
         if key in slots:
             lines.append(f"{label}: {slots[key]}")

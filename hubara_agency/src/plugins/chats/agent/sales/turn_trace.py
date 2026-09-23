@@ -15,6 +15,8 @@ import json
 import re
 from typing import Any
 
+from src.plugins.chats.shared.draft_items import draft_items
+
 _ARG_MAX = 160
 _EXCERPT_MAX = 240
 
@@ -88,10 +90,20 @@ def summarize_tool_event(
             notes.append(f"rejected_buttons:{len(rejected_buttons)}")
         rejected = payload.get("rejected")
         if isinstance(rejected, list) and rejected:
+            # Motivo explícito o, si el rechazo no trae (closed-list simple),
+            # el campo: "rejected_slots:None" no le decía nada al scorecard.
             reasons = sorted(
-                {str(r.get("reason")) for r in rejected if isinstance(r, dict)}
+                {
+                    str(r.get("reason") or r.get("field"))
+                    for r in rejected
+                    if isinstance(r, dict)
+                }
             )
             notes.append("rejected_slots:" + ",".join(reasons))
+            # Nada se guardó: es un fallo, no una nota (2026-09-22: 3
+            # rechazos de "Escorpio" quedaron en verde en la traza).
+            if payload.get("updated") is False and error is None:
+                error = "slots_rejected"
         if isinstance(payload.get("count"), int):
             notes.append(f"count:{payload['count']}")
     compact_args = {
@@ -125,7 +137,11 @@ _SHIPPING_SLOTS: tuple[str, ...] = (
 def draft_slots(episode: dict[str, Any] | None) -> dict[str, Any]:
     draft = (episode or {}).get("order_draft")
     slots = draft.get("slots") if isinstance(draft, dict) else None
-    return dict(slots) if isinstance(slots, dict) else {}
+    out = dict(slots) if isinstance(slots, dict) else {}
+    items = draft_items(draft)
+    if len(items) > 1:
+        out["items"] = items  # varios productos: cada uno con sus variantes
+    return out
 
 
 def is_confirmed(episode: dict[str, Any] | None) -> bool:
@@ -150,7 +166,10 @@ def project_stage(episode: dict[str, Any] | None) -> str:
     slots = draft_slots(episode)
     if not slots.get("producto"):
         return "descubrimiento"
-    if not all(slots.get(k) for k in _VARIANT_SLOTS):
+    items = draft_items((episode or {}).get("order_draft"))
+    if not items or not all(
+        all(item.get(k) for k in _VARIANT_SLOTS) for item in items
+    ):
         return "variantes"
     shipping_started = any(slots.get(k) for k in _SHIPPING_SLOTS)
     if not is_confirmed(episode) and not shipping_started:

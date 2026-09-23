@@ -41,8 +41,10 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     get_active_episode,
 )
 from src.plugins.chats.agent.sales.use_cases.order_draft import (
+    current_item,
     update_order_draft,
 )
+from src.plugins.chats.shared.draft_items import draft_items
 
 _WORD_NUMBERS: dict[str, int] = {
     "un": 1, "una": 1, "uno": 1,
@@ -164,7 +166,11 @@ def capture_quantity_from_reply(
     if not isinstance(slots, dict) or not slots.get("producto"):
         return None
 
-    existing = str(slots.get("cantidad") or "").strip()
+    # La cantidad es del producto del que se está hablando (el ítem en
+    # curso); si ese ya tiene una, el número podría ser de otro — no se
+    # adivina, lo resuelve el LLM.
+    item = current_item(draft, draft_items(draft)) or {}
+    existing = str(item.get("cantidad") or "").strip()
     if existing == str(quantity):
         return quantity
     if existing:
