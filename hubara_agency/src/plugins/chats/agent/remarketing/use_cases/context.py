@@ -11,8 +11,10 @@ Acá se digiere lo que el gancho necesita:
   * `tag_motivo`: el motivo que Sales anotó al etiquetar (metadata.motivo).
   * `has_order_draft`: si hay pedido a medias (misma derivación que la
     central: `lead_state_from_metadata`, Decisión #2 del Window Strategist).
-  * `transcript`: los últimos mensajes VISIBLES del transcript del vault
-    (`<vault>/<sid>/sessions/<sid>.jsonl`, el mismo log que lee el dashboard).
+  * `transcript`: los últimos mensajes VISIBLES del EPISODIO ACTIVO en el
+    transcript del vault (`<vault>/<sid>/sessions/<sid>.jsonl`, el log que lee
+    el dashboard) — no de toda la sesión (runs edbb0d8b / 8e73b7dc).
+  * `campaign_context`: la campaña que abrió el episodio, si la hubo.
 """
 from __future__ import annotations
 
@@ -58,6 +60,51 @@ def render_transcript(events: list[dict[str, Any]], *, limit: int = TRANSCRIPT_L
     return "\n".join(lines[-limit:]) if limit > 0 else ""
 
 
+def _active_episode(meta: dict[str, Any]) -> dict[str, Any] | None:
+    episodes = meta.get("episodes")
+    if not isinstance(episodes, list) or not episodes:
+        return None
+    last = episodes[-1]
+    if not isinstance(last, dict) or last.get("closed_at_ms") is not None:
+        return None
+    return last
+
+
+def episode_events(
+    events: list[dict[str, Any]], episode: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    """Los eventos del transcript que pertenecen al episodio activo.
+
+    Runs edbb0d8b / 8e73b7dc: el transcript era la cola de TODA la sesión y
+    el gancho retomó la Trilogía del episodio anterior. `msgs_count_at_start`
+    es el conteo del JSONL al abrir el episodio (antes de su primer inbound);
+    sin él (episodios legacy) se conserva la cola de la sesión.
+    """
+    start = (episode or {}).get("msgs_count_at_start")
+    if isinstance(start, int) and 0 <= start <= len(events):
+        return events[start:]
+    return events
+
+
+def campaign_context_for(episode: dict[str, Any] | None) -> str:
+    """La campaña que abrió el episodio, redactada para el trigger ("" si no)."""
+    campaign = (episode or {}).get("opened_by_campaign")
+    if not isinstance(campaign, dict):
+        return ""
+    name = campaign.get("campaign_name")
+    parts = [f"Campaña «{name if isinstance(name, str) and name.strip() else 'de marketing'}»"]
+    message = campaign.get("message")
+    if isinstance(message, str) and message.strip():
+        parts.append(f"lo que recibió: «{message.strip()}»")
+    coupon = campaign.get("coupon_code")
+    if isinstance(coupon, str) and coupon.strip():
+        parts.append(f"cupón {coupon.strip()}")
+    handles = [h for h in campaign.get("product_handles") or [] if isinstance(h, str) and h]
+    if handles:
+        parts.append("productos: " + ", ".join(handles))
+    return " — ".join(parts)
+
+
 def context_from_metadata(
     metadata: dict[str, Any] | None,
     events: list[dict[str, Any]],
@@ -80,10 +127,12 @@ def context_from_metadata(
         last_inbound = meta.get("last_inbound_at_ms")
         if isinstance(last_inbound, int):
             silence_minutes = max(0, (now_ms - last_inbound) // 60_000)
+    episode = _active_episode(meta)
     return RemarketingContext(
         tag_motivo=motivo.strip() if isinstance(motivo, str) else "",
         has_order_draft=lead.has_order_draft,
-        transcript=render_transcript(events),
+        transcript=render_transcript(episode_events(events, episode)),
         touch_number=touch_number,
         silence_minutes=silence_minutes,
+        campaign_context=campaign_context_for(episode),
     )

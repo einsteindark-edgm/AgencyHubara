@@ -109,3 +109,88 @@ async def test_activity_tolerates_missing_files_and_corrupt_lines(_isolate_vault
     (d / f"{sid}.jsonl").write_text('{"role": "user", "content": "hola"}\n{corrupto\n', encoding="utf-8")
     ctx = await ActivityEnvironment().run(read_remarketing_context_activity, sid)
     assert ctx.transcript == "Cliente: hola"
+
+
+# --- Episodio abierto por una campaña (runs edbb0d8b / 8e73b7dc) ------------
+
+_CAMPAIGN = {
+    "campaign_id": "mkt-amor",
+    "campaign_name": "Amor y amistad",
+    "sent_at_ms": 1,
+    "message": "Dale a tu cuerpo alegría. Usa el código AMOR26 al pagar.",
+    "coupon_code": "AMOR26",
+    "product_handles": ["velon-amor-eterno", "cubo-love"],
+}
+
+
+def _campaign_session() -> tuple[dict, list[dict]]:
+    """El caso real: 3 mensajes del episodio de la Trilogía, la plantilla de la
+    campaña y "Me gusta" como primer mensaje del episodio nuevo."""
+    events = [
+        _ev("user", "Quiero la Trilogía del Terror"),
+        _ev("assistant", "Quedó pendiente tu Trilogía del Terror. ¿La cerramos?"),
+        _ev("assistant", "¡Hola! Amor y amistad. Usa el código AMOR26 al pagar.", kind="template"),
+        _ev("user", "Me gusta"),
+    ]
+    metadata = {
+        "tag": "INTERESADO",
+        "motivo": "Mostró interés en la campaña Amor y amistad.",
+        "episodes": [
+            {"episode_id": "ep_004", "closed_at_ms": 5, "closing_tag": "CAMPAIGN_REPLY"},
+            {
+                "episode_id": "ep_005",
+                "closed_at_ms": None,
+                "msgs_count_at_start": 3,
+                "opened_by_campaign": _CAMPAIGN,
+            },
+        ],
+    }
+    return metadata, events
+
+
+class TestCampaignEpisode:
+    def test_transcript_only_covers_the_active_episode(self) -> None:
+        metadata, events = _campaign_session()
+        ctx = context_from_metadata(metadata, events)
+        assert ctx.transcript == "Cliente: Me gusta"
+        assert "Trilogía" not in ctx.transcript
+
+    def test_campaign_that_opened_the_episode_travels_to_the_hook(self) -> None:
+        metadata, events = _campaign_session()
+        ctx = context_from_metadata(metadata, events)
+        assert "Amor y amistad" in ctx.campaign_context
+        assert "AMOR26" in ctx.campaign_context
+        assert "velon-amor-eterno" in ctx.campaign_context
+        assert "Dale a tu cuerpo alegría" in ctx.campaign_context
+
+    def test_episode_without_start_index_keeps_the_legacy_tail(self) -> None:
+        metadata, events = _campaign_session()
+        metadata["episodes"][-1].pop("msgs_count_at_start")
+        metadata["episodes"][-1].pop("opened_by_campaign")
+        ctx = context_from_metadata(metadata, events)
+        assert "Trilogía" in ctx.transcript
+        assert ctx.campaign_context == ""
+
+
+def test_trigger_centers_the_hook_on_the_campaign() -> None:
+    from src.plugins.chats.agent.remarketing.prompts import build_remarketing_trigger
+
+    trigger = build_remarketing_trigger(
+        "Mostró interés.",
+        has_order_draft=False,
+        transcript="Cliente: Me gusta",
+        touch_number=1,
+        campaign_context="Campaña «Amor y amistad» — cupón AMOR26",
+    )
+    assert "Campaña «Amor y amistad» — cupón AMOR26" in trigger
+    assert "CAMPAÑA" in trigger
+    assert "NO retomes" in trigger
+
+
+def test_trigger_without_campaign_is_unchanged() -> None:
+    from src.plugins.chats.agent.remarketing.prompts import build_remarketing_trigger
+
+    kwargs = dict(has_order_draft=False, transcript="Cliente: hola", touch_number=1)
+    assert build_remarketing_trigger("m", **kwargs) == build_remarketing_trigger(
+        "m", campaign_context="", **kwargs
+    )

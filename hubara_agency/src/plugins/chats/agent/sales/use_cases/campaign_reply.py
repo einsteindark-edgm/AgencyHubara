@@ -58,6 +58,69 @@ def campaign_label(touch: dict[str, Any]) -> str:
     return name if isinstance(name, str) and name.strip() else "de marketing"
 
 
+#: Campos del touch que viajan al episodio (el remarketing arma el gancho con
+#: ellos). `test` no: el episodio es el mismo para prueba y envío real.
+_EPISODE_CAMPAIGN_FIELDS = (
+    "campaign_id",
+    "campaign_name",
+    "sent_at_ms",
+    "message",
+    "coupon_code",
+    "product_handles",
+)
+
+
+def prior_episode_summary(prior_motivo: Any) -> str:
+    """Resumen de una línea del episodio anterior para el LLM del nuevo.
+
+    Tras el corte del historial es lo ÚNICO que el LLM sabe de antes: si el
+    cliente pregunta por lo anterior puede responder, pero no lo retoma solo.
+    """
+    base = (
+        "Hubo una conversación anterior con este cliente, ya cerrada: "
+        "no la retomes salvo que el cliente la mencione."
+    )
+    if isinstance(prior_motivo, str) and prior_motivo.strip():
+        return f"{base} Resumen: {prior_motivo.strip()}"
+    return base
+
+
+def mark_campaign_episode(
+    episode: dict[str, Any], touch: dict[str, Any], *, prior_motivo: Any
+) -> None:
+    """Anota en el episodio nuevo la campaña que lo abrió y pide cortar el
+    historial del LLM de cada agente (mutación in-place).
+
+    `llm_history_reset.applied` lo llena el worker de cada agente al cortar
+    (`src/platform/llm_history_reset.py`) — idempotente por agente.
+    """
+    episode["opened_by_campaign"] = {
+        key: touch[key] for key in _EPISODE_CAMPAIGN_FIELDS if key in touch
+    }
+    episode["llm_history_reset"] = {
+        "summary": prior_episode_summary(prior_motivo),
+        "applied": [],
+    }
+
+
+def quote_campaign_in_turn(touch: dict[str, Any], text: str) -> str:
+    """El mensaje del cliente con la campaña citada adelante.
+
+    Run edbb0d8b: la nota del system prompt (a ~43k caracteres) perdió contra
+    un historial reciente sobre otro pedido. La cita va en el turno mismo —
+    el LLM la lee justo antes de responder y queda en su historial para los
+    turnos siguientes (la plantilla nunca entra ahí).
+    """
+    message = touch.get("message")
+    sent = (
+        f": «{message.strip()}»" if isinstance(message, str) and message.strip() else ""
+    )
+    return (
+        f"[El cliente responde a la campaña «{campaign_label(touch)}» que le "
+        f"enviamos{sent}]\n{text}"
+    )
+
+
 def build_campaign_reply_note(touch: dict[str, Any]) -> str:
     """Nota de `plugin_context` para el turno que responde a la campaña.
 

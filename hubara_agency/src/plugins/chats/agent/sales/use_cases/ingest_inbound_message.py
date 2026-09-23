@@ -71,6 +71,8 @@ from src.platform.whatsapp.window import (
 from src.plugins.chats.agent.sales.use_cases.campaign_reply import (
     build_campaign_reply_note,
     campaign_label,
+    mark_campaign_episode,
+    quote_campaign_in_turn,
     unanswered_campaign_touch,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
@@ -268,6 +270,7 @@ class IngestInboundMessage:
         # bot (return-to-bot pone active_route=ventas) se reanuda el ciclo.
         episode_boundary_note: str | None = None
         campaign_reply_note: str | None = None
+        campaign_reply_touch: dict[str, Any] | None = None
         if metadata.get("active_route") != ROUTE_HUMANO:
             # Respuesta a campaña (bug 2026-09-22, runs 31c15a38/01a0caee):
             # la PRIMERA respuesta tras el envío es una intención nueva. Se
@@ -277,6 +280,9 @@ class IngestInboundMessage:
             # de pisar `last_inbound_at_ms` (lo usa para saber si ya
             # respondió).
             _campaign_touch = unanswered_campaign_touch(metadata, now_ms)
+            # El motivo del episodio viejo (lo borra la rotación) queda como
+            # resumen de una línea para el LLM del episodio nuevo.
+            _prior_motivo = metadata.get("motivo")
             if _campaign_touch is not None:
                 close_episode(
                     metadata,
@@ -289,6 +295,7 @@ class IngestInboundMessage:
                     msgs_count_at_close=msgs_count_at_start,
                 )
                 campaign_reply_note = build_campaign_reply_note(_campaign_touch)
+                campaign_reply_touch = _campaign_touch
             _episodes_before = metadata.get("episodes") or []
             _prev_closed_episode = (
                 _episodes_before[-1]
@@ -313,6 +320,17 @@ class IngestInboundMessage:
                 ),
                 msgs_count_at_start=msgs_count_at_start,
             )
+            if _campaign_touch is not None:
+                # Runs edbb0d8b / 8e73b7dc: el historial del LLM es por SESIÓN
+                # — ventas y remarketing siguieron hablando de la Trilogía. El
+                # episodio guarda la campaña que lo abrió (el gancho de
+                # remarketing la lee) y pide cortar el historial del LLM de
+                # cada agente (`reset_llm_history_for_episode`, en el worker).
+                mark_campaign_episode(
+                    metadata["episodes"][-1],
+                    _campaign_touch,
+                    prior_motivo=_prior_motivo,
+                )
 
         # HU-WA24H-001 F1.1: persistir timestamps de la ventana de servicio.
         # Cada inbound del cliente reabre la ventana 24h — esto es lo que
@@ -371,6 +389,7 @@ class IngestInboundMessage:
             )
             # Pidió la baja: no se le sigue conversando la campaña.
             campaign_reply_note = None
+            campaign_reply_touch = None
             logger.info(
                 "marketing_opt_out_detected",
                 session_id=session_id,
@@ -833,9 +852,16 @@ class IngestInboundMessage:
         route_kwargs: dict[str, Any] = (
             {"prefer_sales": True} if campaign_reply_note else {}
         )
+        # …y el turno lleva la campaña citada (run edbb0d8b: la nota sola
+        # perdió contra un historial reciente sobre otro pedido).
+        turn_message = (
+            quote_campaign_in_turn(campaign_reply_touch, effective.text)
+            if campaign_reply_touch is not None
+            else effective.text
+        )
         await self._load_session.execute(
             session_id=session_id,
-            message=effective.text,
+            message=turn_message,
             phone_number_id=parsed.phone_number_id,
             **route_kwargs,
             extra_context=[

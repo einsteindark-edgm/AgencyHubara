@@ -188,6 +188,7 @@ def _stale_trilogia_metadata(now_ms: int, *, route: str = "ventas") -> dict:
     return {
         "active_route": route,
         "tag": "INTERESADO",
+        "motivo": "Armó carrito web con la Trilogía del Terror y no cerró.",
         "last_inbound_at_ms": started + 60_000,
         "web_cart": {
             "cart_id": "cart_01",
@@ -320,3 +321,55 @@ async def test_human_route_is_left_alone_on_campaign_reply():
     episodes = store.data[_SESSION]["episodes"]
     assert len(episodes) == 1 and episodes[0]["closed_at_ms"] is None
     assert loader.calls[0]["prefer_sales"] is False
+
+
+@pytest.mark.asyncio
+async def test_campaign_reply_turn_quotes_the_campaign_in_the_customer_message():
+    """Run edbb0d8b: la nota llegó en el system prompt (a 43k caracteres)
+    pero el historial reciente era la Trilogía y el LLM la ignoró. El turno
+    del cliente cita la campaña: el LLM la lee justo antes de responder y
+    queda en su historial para los turnos siguientes."""
+    now = int(time.time() * 1000)
+    store = _Store(_stale_trilogia_metadata(now))
+    loader = _Loader()
+
+    await _use_case(store, loader).execute(_message("Me gusta"))
+
+    message = loader.calls[0]["message"]
+    assert message.endswith("Me gusta")
+    assert "Amor y amistad" in message
+    assert "Celebra el amor con velas" in message
+
+
+@pytest.mark.asyncio
+async def test_normal_turn_message_is_not_decorated():
+    now = int(time.time() * 1000)
+    store = _Store(_stale_trilogia_metadata(now))
+    loader = _Loader()
+    use_case = _use_case(store, loader)
+
+    await use_case.execute(_message("AMOR26"))
+    await use_case.execute(_message("quiero el cubo"))
+
+    assert loader.calls[1]["message"] == "quiero el cubo"
+
+
+@pytest.mark.asyncio
+async def test_campaign_episode_remembers_the_campaign_and_asks_for_a_clean_llm_history():
+    """Runs edbb0d8b / 8e73b7dc: el historial del LLM es por sesión — ventas y
+    remarketing siguieron viendo la Trilogía. El episodio que abre la campaña
+    guarda la campaña (para el remarketing) y pide cortar el historial del LLM
+    de cada agente; lo anterior viaja como resumen de una línea."""
+    now = int(time.time() * 1000)
+    store = _Store(_stale_trilogia_metadata(now))
+    loader = _Loader()
+
+    await _use_case(store, loader).execute(_message("Me gusta"))
+
+    new = store.data[_SESSION]["episodes"][-1]
+    assert new["opened_by_campaign"]["campaign_name"] == "Amor y amistad"
+    assert new["opened_by_campaign"]["coupon_code"] == "AMOR26"
+    reset = new["llm_history_reset"]
+    assert reset["applied"] == []
+    assert "Trilogía del Terror" in reset["summary"]
+    assert "no la retomes" in reset["summary"].lower()
