@@ -85,7 +85,10 @@ def _sample_order(
         "created_at": created_at,
         "updated_at": created_at,
         "total": total,
-        "subtotal": total - 5000,
+        # Forma real de Medusa v2: `subtotal` = total sin impuestos (INCLUYE
+        # el envío); `item_subtotal` = solo productos.
+        "subtotal": total,
+        "item_subtotal": total - 5000,
         "shipping_total": 5000,
         "tax_total": 0,
         "discount_total": 0,

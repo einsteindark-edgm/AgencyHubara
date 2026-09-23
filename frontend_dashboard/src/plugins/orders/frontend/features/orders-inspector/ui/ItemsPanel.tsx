@@ -13,10 +13,17 @@ export function ItemsPanel({ detail }: { detail: OrderDetail }) {
       {items.map((it, i) => (
         <ItemRow key={`${it.sku}-${i}`} item={it} />
       ))}
+      {/* Desglose: subtotal = SOLO productos (el backend ya no usa el
+          `subtotal` de Medusa, que trae el envío adentro), envío aparte —
+          estimado (tarifa mínima del registro) hasta que el operador fija el
+          real al marcar "en camino" — y total = subtotal + envío. */}
       <div style={{ marginTop: 8 }}>
-        <KV k="Subtotal" v={fmtMoney(detail.subtotal_cop)} />
+        <KV k="Subtotal productos" v={fmtMoney(detail.subtotal_cop)} />
         {detail.shipping_cop > 0 && (
-          <KV k="Envío" v={fmtMoney(detail.shipping_cop)} />
+          <KV
+            k={detail.summary.shipping_confirmed ? "Envío" : "Envío (estimado)"}
+            v={fmtMoney(detail.shipping_cop)}
+          />
         )}
         {detail.discount_total_cop > 0 && (
           <KV k="Descuento" v={"− " + fmtMoney(detail.discount_total_cop)} />

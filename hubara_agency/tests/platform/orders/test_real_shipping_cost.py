@@ -231,3 +231,68 @@ async def test_confirm_payment_charges_the_real_shipping(respx_mock, command):
 
     assert result.success is True
     assert json.loads(pc.calls[0].request.content)["amount"] == 62_000
+
+
+# ── Subtotal del inspector = solo productos ──────────────────────────────
+#
+# En Medusa v2 el `subtotal` de una orden es "el total sin impuestos": YA
+# incluye el envío. El inspector lo pintaba como "Subtotal" encima de la
+# línea "Envío" → el envío aparecía sumado dos veces desde el registro del
+# pedido. El subtotal de productos es `item_subtotal`.
+
+
+def _medusa_shaped(metadata: dict) -> dict:
+    order = _order(metadata)
+    order["subtotal"] = 57_900       # Medusa: productos + envío (sin IVA)
+    order["item_subtotal"] = 50_000  # Medusa: solo productos
+    return order
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_inspector_subtotal_is_products_only(query):
+    respx.get(f"{_BASE_URL}/admin/orders/order_01SHIP").mock(
+        return_value=Response(200, json={"order": _medusa_shaped({"hubara_stage": "ready"})})
+    )
+    detail = await query.get("order_01SHIP")
+    assert detail is not None
+    assert detail.subtotal_cop == 50_000
+    assert detail.shipping_cop == 7_900
+    assert detail.summary.total_cop == detail.subtotal_cop + detail.shipping_cop
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_inspector_total_is_products_plus_real_shipping(query):
+    respx.get(f"{_BASE_URL}/admin/orders/order_01SHIP").mock(
+        return_value=Response(
+            200,
+            json={"order": _medusa_shaped(
+                {"hubara_stage": "shipping", META_KEY_SHIPPING_COST: 12_000}
+            )},
+        )
+    )
+    detail = await query.get("order_01SHIP")
+    assert detail is not None
+    assert (detail.subtotal_cop, detail.shipping_cop, detail.summary.total_cop) == (
+        50_000, 12_000, 62_000,
+    )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_inspector_subtotal_falls_back_to_the_items_without_item_subtotal(query):
+    """Payload sin `item_subtotal` (Medusa viejo / fields sin pedir): se suma
+    precio × cantidad de los ítems — nunca el `subtotal` que trae el envío."""
+    order = _medusa_shaped({"hubara_stage": "ready"})
+    del order["item_subtotal"]
+    respx.get(f"{_BASE_URL}/admin/orders/order_01SHIP").mock(
+        return_value=Response(200, json={"order": order})
+    )
+    detail = await query.get("order_01SHIP")
+    assert detail is not None
+    assert detail.subtotal_cop == 50_000
+
+
+def test_order_fields_request_the_items_subtotal():
+    assert "item_subtotal" in HttpMedusaClient.DEFAULT_ORDER_LIST_FIELDS.split(",")

@@ -517,8 +517,18 @@ class MedusaOrderQuery:
         shipping = _map_address(raw.get("shipping_address"))
         billing = _map_address(raw.get("billing_address"))
 
-        # Totales
-        subtotal_cop = _to_int_cop(raw.get("subtotal", 0))
+        # Totales. Subtotal = SOLO productos: en Medusa v2 el `subtotal` de la
+        # orden es "el total sin impuestos" — ya trae el envío adentro, y el
+        # inspector lo pintaba encima de la línea "Envío" (envío sumado dos
+        # veces desde el registro). El de productos es `item_subtotal`; sin
+        # él (Medusa viejo / fields sin pedirlo) se suma precio × cantidad.
+        if raw.get("item_subtotal") is not None:
+            subtotal_cop = _to_int_cop(raw.get("item_subtotal"))
+        else:
+            subtotal_cop = sum(
+                _to_int_cop(it.get("unit_price", 0)) * int(it.get("quantity", 0))
+                for it in (raw.get("items") or [])
+            )
         shipping_cop = summary.shipping_cop  # envío vigente (real si ya se fijó)
         tax_total_cop = _to_int_cop(raw.get("tax_total", 0))
         discount_total_cop = _to_int_cop(raw.get("discount_total", 0))
