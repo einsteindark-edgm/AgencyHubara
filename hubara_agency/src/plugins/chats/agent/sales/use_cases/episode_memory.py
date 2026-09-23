@@ -74,3 +74,38 @@ def with_previous_episode(episode: dict[str, Any], text: str) -> str:
         "no la retomes salvo que el cliente la mencione.]\n"
         f"{text}"
     )
+
+
+def request_clean_llm_history(episode: dict[str, Any]) -> None:
+    """Pide cortar el historial del LLM de cada agente al empezar este
+    episodio (mutación in-place). `applied` lo llena el worker de cada agente
+    al cortar (`src/platform/llm_history_reset.py`) — idempotente por agente.
+    """
+    episode["llm_history_reset"] = {"applied": []}
+
+
+def unseen_template_text(events: list[dict[str, Any]]) -> str | None:
+    """La plantilla a la que responde el cliente, si es lo último que recibió.
+
+    Las plantillas (remarketing, campañas, avisos) se envían por fuera del
+    historial del LLM: solo quedan en el JSONL del dashboard (`kind:
+    template`). Hay que llamarla ANTES de persistir el mensaje actual: si lo
+    último del log ya es otro mensaje del cliente, esa plantilla ya se citó.
+    """
+    if not events:
+        return None
+    last = events[-1]
+    if not isinstance(last, dict) or last.get("role") != "assistant":
+        return None
+    if last.get("kind") != "template":
+        return None
+    content = last.get("content")
+    return content.strip() if isinstance(content, str) and content.strip() else None
+
+
+def quote_template_in_turn(template_text: str, text: str) -> str:
+    """El mensaje del cliente con la plantilla que recibió citada adelante."""
+    return (
+        f"[El cliente responde a este mensaje que le enviamos: «{template_text}»]\n"
+        f"{text}"
+    )

@@ -89,6 +89,7 @@ from src.plugins.chats.agent.sales.tools.coupons import (
 )
 from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
 from src.plugins.chats.agent.sales.tools.order_status import CheckOrderStatusTool
+from src.plugins.chats.agent.sales.tools.reply import SendReplyTool
 from src.plugins.chats.agent.sales.tools.order_registration import (
     RegisterOrderTool,
 )
@@ -136,6 +137,14 @@ setup_analytics()
 register_tool_extension(
     "sales.manage_conversation_tag",
     lambda workspace: ManageConversationTagTool(workspace=str(workspace)),
+)
+
+# Canal único al cliente (run 28a8e407): el texto del asesor viaja en
+# `send_reply(text)`; su texto libre es borrador y nunca sale. La tool valida
+# y devuelve `reply.text`; `run_agent_turn` lo envía y termina el turno.
+register_tool_extension(
+    "sales.send_reply",
+    lambda workspace: SendReplyTool(workspace=str(workspace)),
 )
 
 # HU-04: tools de catalogo. Leen del snapshot mantenido por catalog_sync (HU-03)

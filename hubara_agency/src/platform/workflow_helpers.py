@@ -13,6 +13,7 @@ ejecute la activity-dispatcher correspondiente (ADR-001).
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -493,6 +494,50 @@ def coalesce_inbox(batch: list[InboxMsg], *, version: int = 1) -> PendingMessage
     )
 
 
+_EPISODE_ID_RE = re.compile(r"ep_(\d+)")
+
+
+def _is_returning_episode(episode_id: str | None) -> bool:
+    """¿El episodio activo NO es el primero de la sesión? Los ids son
+    `ep_{len(episodes)+1:03d}` (chats `episode_lifecycle`): `ep_001` es el
+    primer contacto; cualquier otro, un cliente que vuelve."""
+    match = _EPISODE_ID_RE.fullmatch(episode_id or "")
+    return bool(match) and int(match.group(1)) > 1
+
+
+def _history_view(
+    recorded: list[dict[str, Any]], delivered_replies: dict[str, str]
+) -> list[dict[str, Any]]:
+    """Lo que el LLM recuerda del turno (run 28a8e407).
+
+    * Sin la narración que acompaña las tool calls: nunca llegó al cliente
+      (default-deny) y verse narrando ~20 veces por conversación era el
+      few-shot que lo hacía narrar también en la respuesta final.
+    * Cada `send_reply` con el texto que de verdad salió (la tool pudo haber
+      quitado un párrafo de razonamiento).
+
+    Solo cambia el payload de `record_turn`: replay-safe sin patch.
+    """
+    view: list[dict[str, Any]] = []
+    for message in recorded:
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            calls = []
+            for call in message["tool_calls"]:
+                text = delivered_replies.get(call.get("id"))
+                if text is not None:
+                    call = {
+                        **call,
+                        "function": {
+                            **(call.get("function") or {}),
+                            "arguments": json.dumps({"text": text}, ensure_ascii=False),
+                        },
+                    }
+                calls.append(call)
+            message = {**message, "content": "", "tool_calls": calls}
+        view.append(message)
+    return view
+
+
 async def run_agent_turn(
     session: SessionInput,
     msg: PendingMessage,
@@ -652,6 +697,17 @@ async def _run_agent_turn_impl(
     # intercambio previo"). Cómputo puro sobre datos ya en la history →
     # replay-safe sin gate.
     first_contact = not any(m.get("role") == "assistant" for m in messages)
+    # Memoria por episodio (run 28a8e407): cada episodio nuevo arranca con el
+    # historial cortado, así que "sin mensajes del agente" ya no es "cliente
+    # nuevo". Quien vuelve (episodio que no es el primero de la sesión) no
+    # recibe otra vez la bienvenida de marca. `patched()` va último: solo
+    # cuando la regla nueva difiere de la vieja.
+    if (
+        first_contact
+        and _is_returning_episode(episode_id)
+        and workflow.patched("returning-customer-no-welcome-v1")
+    ):
+        first_contact = False
     outbound_tool_texts: list[str] = []
 
     iteration = 0
@@ -664,6 +720,9 @@ async def _run_agent_turn_impl(
     pre_tool_messages: list[str] = []
     tool_events: list[dict[str, Any]] = []
     discarded_narration: list[str] = []
+    # `send_reply` que SÍ salieron: tool_call_id → texto enviado (el
+    # historial guarda eso, no el borrador que mandó el modelo).
+    delivered_replies: dict[str, str] = {}
     # L-11 (run b730c006): corte de turno en tools que esperan al cliente +
     # descarte del content que acompaña tools internas. Gated: ambos cambian la
     # cantidad de commands del turno (menos llm_chat/execute_tool; menos sends
@@ -758,6 +817,9 @@ async def _run_agent_turn_impl(
             # Corte L-11 por RESULTADO (runs 01a0caec / 01a0cb16): ¿alguna tool
             # que espera al cliente le mostró algo de verdad en este batch?
             batch_awaits_customer = False
+            # Canal único al cliente (run 28a8e407): textos que `send_reply`
+            # validó en este batch (`reply.text` del resultado grabado).
+            batch_reply_texts: list[str] = []
             # DEFAULT-DENY (run 1c9ef231): el content que acompaña una tool
             # call es narración interna SIEMPRE — se descarta y se loguea. El
             # texto para el cliente viaja en los params de la tool
@@ -828,6 +890,12 @@ async def _run_agent_turn_impl(
                 if payload is not None:
                     if isinstance(payload.get("error"), str) and payload["error"]:
                         batch_tool_failed = True
+                    reply = payload.get("reply")
+                    if isinstance(reply, dict) and isinstance(reply.get("text"), str):
+                        reply_text = reply["text"].strip()
+                        if reply_text:
+                            batch_reply_texts.append(reply_text)
+                            delivered_replies[tc.id] = reply_text
                     if "transfer_decision" in payload and isinstance(payload["transfer_decision"], dict):
                         td = payload["transfer_decision"]
                         transfer_decision = TransferDecision(
@@ -948,6 +1016,36 @@ async def _run_agent_turn_impl(
                         extra={"session_id": session.session_id},
                     )
                 break
+
+            # `send_reply` (run 28a8e407): el texto que la tool validó ES el
+            # mensaje y el turno termina — no se le pide "un mensaje más" al
+            # LLM. Va antes del corte L-11: en un batch [send_reply, catálogo]
+            # el texto sale y después el flush entrega el menú. Si OTRA tool
+            # del batch falló (ej. el registro rebotó), la respuesta se
+            # escribió sin ver el error: no sale y el modelo responde de
+            # nuevo. Tool nueva: ninguna history deployada la usó → sin patch.
+            if batch_reply_texts and not admin_turn:
+                if not batch_tool_failed:
+                    final_content = "\n\n".join(batch_reply_texts)
+                    workflow.logger.info(
+                        f"turno terminado por send_reply ({batch_tool_names})"
+                    )
+                    break
+                for call_id in [
+                    tc.id for tc in response.tool_calls if tc.id in delivered_replies
+                ]:
+                    delivered_replies.pop(call_id, None)
+                messages = [
+                    *messages,
+                    {
+                        "role": "system",
+                        "content": (
+                            "Tu send_reply NO se envió: otra herramienta del "
+                            "mismo paso falló. Lee el error y vuelve a "
+                            "responderle al cliente con send_reply."
+                        ),
+                    },
+                ]
 
             # L-11: el batch dejó la conversación ESPERANDO al cliente (picker /
             # formulario / confirmación / quick replies) → el turno termina ACÁ.
@@ -1194,7 +1292,7 @@ async def _run_agent_turn_impl(
     # SIN patch gate: solo cambia el PAYLOAD de `record_turn`, no la secuencia
     # de commands (L-9 versiona forma, no contenido); en replay la activity no
     # se re-ejecuta. Por eso `extended` va en su default: nada que versionar.
-    recorded = messages[initial_len:]
+    recorded = _history_view(messages[initial_len:], delivered_replies)
     # Rescate ANTES de grabar (run 28a8e407, 2026-09-23): el texto final traía
     # un párrafo de razonamiento + la respuesta real. Antes el rescate vivía en
     # el caller, DESPUÉS de este `record_turn`: el cliente recibía la respuesta

@@ -31,5 +31,6 @@ from src.platform.llm_text_sanitizer import (
     breaks_human_persona as breaks_human_persona,
     keep_customer_safe_sentences as keep_customer_safe_sentences,
     looks_like_admin_leak as looks_like_admin_leak,
+    salvage_customer_text as salvage_customer_text,
     sanitize_llm_text as sanitize_llm_text,
 )

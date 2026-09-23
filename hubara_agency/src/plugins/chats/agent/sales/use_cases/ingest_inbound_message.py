@@ -76,6 +76,9 @@ from src.plugins.chats.agent.sales.use_cases.campaign_reply import (
     unanswered_campaign_touch,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_memory import (
+    quote_template_in_turn,
+    request_clean_llm_history,
+    unseen_template_text,
     with_previous_episode,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
@@ -300,6 +303,7 @@ class IngestInboundMessage:
                 campaign_reply_note = build_campaign_reply_note(_campaign_touch)
                 campaign_reply_touch = _campaign_touch
             _episodes_before = metadata.get("episodes") or []
+            _episode_count_before = len(_episodes_before)
             _prev_closed_episode = (
                 _episodes_before[-1]
                 if _episodes_before
@@ -323,19 +327,25 @@ class IngestInboundMessage:
                 ),
                 msgs_count_at_start=msgs_count_at_start,
             )
+            _episodes_now = metadata["episodes"]
+            # Memoria por episodio (run 28a8e407): el historial del LLM era de
+            # TODA la sesión — tras el pedido #44 el cliente escribió "AMOR26"
+            # y el bot contestó sobre ese pedido pese a la nota de frontera.
+            # Todo episodio NUEVO que sigue a otro (cierre con desenlace, 14
+            # días sin actividad o campaña) pide cortar el historial del LLM
+            # de cada agente (`reset_llm_history_for_episode`, en el worker) y
+            # lo anterior viaja UNA vez, en este primer mensaje: hechos del
+            # episodio que se cerró, no su motivo. Una pausa dentro del mismo
+            # episodio (INTERESADO no cierra) no corta nada.
+            # Por conteo, no por id: el id sale de `len(episodes)+1` y un
+            # historial con huecos podría repetirlo.
+            if _episode_count_before >= 1 and len(_episodes_now) > _episode_count_before:
+                previous_episode = _episodes_now[-2]
+                request_clean_llm_history(_episodes_now[-1])
             if _campaign_touch is not None:
-                # Runs edbb0d8b / 8e73b7dc: el historial del LLM es por SESIÓN
-                # — ventas y remarketing siguieron hablando de la Trilogía. El
-                # episodio guarda la campaña que lo abrió (el gancho de
-                # remarketing la lee) y pide cortar el historial del LLM de
-                # cada agente (`reset_llm_history_for_episode`, en el worker).
-                mark_campaign_episode(metadata["episodes"][-1], _campaign_touch)
-                # Lo anterior viaja UNA vez, en este primer mensaje (run
-                # 28a8e407): hechos del episodio que se cerró, no su motivo.
-                _episodes_now = metadata["episodes"]
-                previous_episode = (
-                    _episodes_now[-2] if len(_episodes_now) >= 2 else None
-                )
+                # Runs edbb0d8b / 8e73b7dc: el episodio guarda la campaña que
+                # lo abrió (el gancho de remarketing la lee).
+                mark_campaign_episode(_episodes_now[-1], _campaign_touch)
 
         # HU-WA24H-001 F1.1: persistir timestamps de la ventana de servicio.
         # Cada inbound del cliente reabre la ventana 24h — esto es lo que
@@ -765,6 +775,17 @@ class IngestInboundMessage:
                 except Exception:  # noqa: BLE001 — cortesía best-effort
                     pass
 
+        # Plantilla a la que responde (fase 3, run 28a8e407): el LLM no ve
+        # las plantillas (van solo al JSONL del dashboard). Se lee ANTES de
+        # persistir este mensaje; la campaña ya trae su propia cita.
+        unseen_template: str | None = None
+        _read_events = getattr(self._history_store, "read_events", None)
+        if campaign_reply_touch is None and callable(_read_events):
+            try:
+                unseen_template = unseen_template_text(_read_events(session_id))
+            except Exception:  # noqa: BLE001 — la cita es contexto, no bloquea
+                unseen_template = None
+
         # --- 6. Persistir history (texto efectivo, NO el JSON raw) ---
         # `persisted_image_url` solo viene poblado desde el reentry de visión:
         # el evento del cliente queda con la foto adjunta para el dashboard.
@@ -864,6 +885,8 @@ class IngestInboundMessage:
             if campaign_reply_touch is not None
             else effective.text
         )
+        if unseen_template is not None:
+            turn_message = quote_template_in_turn(unseen_template, turn_message)
         if previous_episode is not None:
             turn_message = with_previous_episode(previous_episode, turn_message)
         await self._load_session.execute(

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from src.plugins.chats.agent.sales.use_cases.episode_memory import (
     previous_episode_summary,
+    quote_template_in_turn,
+    unseen_template_text,
     with_previous_episode,
 )
 
@@ -89,3 +91,37 @@ def test_the_line_goes_once_before_the_customer_text() -> None:
     assert first.endswith("]")
     assert "no la retomes" in first
     assert rest == "AMOR26"
+
+
+# --- La plantilla que recibió el cliente (fase 3) -----------------------------
+# El LLM no ve las plantillas: se envían por fuera de su historial (van solo
+# al JSONL del dashboard, `kind: template`). Si el cliente responde a una, el
+# turno la cita — igual que la campaña (run edbb0d8b).
+
+_TEMPLATE = {
+    "role": "assistant",
+    "kind": "template",
+    "content": "Hola 🌿 Te quedó sonando la Trilogía del Terror. ¿La retomamos?",
+}
+
+
+def test_template_right_before_the_reply_is_the_one_to_quote() -> None:
+    events = [{"role": "user", "content": "Hola"}, {"role": "assistant", "content": "¡Hola!"}, _TEMPLATE]
+    assert unseen_template_text(events) == _TEMPLATE["content"]
+
+
+def test_nothing_to_quote_when_the_last_message_was_not_a_template() -> None:
+    assert unseen_template_text([_TEMPLATE, {"role": "assistant", "content": "¿Te ayudo?"}]) is None
+    assert unseen_template_text([_TEMPLATE, {"role": "user", "content": "sí"}]) is None
+    assert unseen_template_text([]) is None
+
+
+def test_template_quote_goes_before_the_customer_text() -> None:
+    text = quote_template_in_turn(_TEMPLATE["content"], "Sí, cuéntame")
+
+    first, rest = text.split("\n", 1)
+    assert first == (
+        "[El cliente responde a este mensaje que le enviamos: "
+        "«Hola 🌿 Te quedó sonando la Trilogía del Terror. ¿La retomamos?»]"
+    )
+    assert rest == "Sí, cuéntame"

@@ -30,7 +30,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from exoclaw_conversation.context import ContextBuilder
+# El mismo builder que usa `build_prompt` en runtime. `ContextBuilder`
+# a secas crea `workspace/memory/` en el workspace REAL (MemoryStore) y
+# eso tumba test_conversation_no_shared_memory en la corrida siguiente.
+from exoclaw_temporal.activities.conversation import (
+    _AgentContextBuilder,
+    _NoSharedMemory,
+)
 
 WORKSPACE = (
     Path(__file__).resolve().parents[1]
@@ -49,7 +55,7 @@ def _build_prompt() -> str:
     Pasamos `extra_context=None` para simular el flujo PR-B donde el
     `plugin_context` del path Remarketing viaja como `None`.
     """
-    builder = ContextBuilder(workspace=WORKSPACE)
+    builder = _AgentContextBuilder(WORKSPACE, memory=_NoSharedMemory())
     return builder.build_system_prompt(skill_names=None, extra_context=None)
 
 
