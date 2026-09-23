@@ -3347,6 +3347,69 @@ async def test_leaked_deliberation_paragraph_is_dropped_and_the_answer_is_sent(
 
 
 @pytest.mark.asyncio
+async def test_the_llm_remembers_exactly_the_salvaged_answer_it_sent(
+    tmp_path: Path,
+) -> None:
+    """Run 28a8e407 (2026-09-23, 15:35–15:38): el rescate mandaba "No, el
+    cupón aplica solo a… ¿Quieres que te muestre esas cuatro?", pero el
+    historial del LLM se grababa ANTES y sin esa respuesta (el texto crudo
+    olía a razonamiento → "lo que no sale no se recuerda"). El LLM veía
+    "¿Todos tienen cupón?" → "Si" → "Si" → "Si" sin nada en medio y contestaba
+    lo mismo tres veces. Contrato: lo que el LLM recuerda es EXACTAMENTE lo
+    que recibió el cliente."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    deliberation = (
+        "El cliente pregunta si todos los productos tienen cupón. El cupón "
+        "aplica solo a productos específicos."
+    )
+    answer = (
+        "No, el cupón aplica solo a las piezas de Amor y Amistad 🤍\n\n"
+        "¿Quieres que te muestre esas cuatro?"
+    )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=[_final_resp(f"{deliberation}\n\n{answer}")],
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_salvage_record",
+                    runtime_workspace_path=str(workspace),
+                ),
+                id="session-wa_salvage_record",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(
+                HubaraSalesSessionWorkflow.send_message,
+                args=["Todos estos productos tiene cupón ?", None, None],
+            )
+            await handle.result()
+
+    sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
+    assert sent == [answer], sent
+    customer_turn = tracker.record_turn_new_messages[0]
+    remembered = [
+        m.get("content") for m in customer_turn if m.get("role") == "assistant"
+    ]
+    assert remembered == [answer], (
+        f"el LLM debe recordar lo que el cliente recibió: {customer_turn}"
+    )
+    assert not any(
+        "El cliente pregunta" in str(m.get("content")) for m in customer_turn
+    ), customer_turn
+
+
+@pytest.mark.asyncio
 async def test_each_turn_aligns_the_llm_history_with_the_episode_before_the_prompt(
     tmp_path: Path,
 ) -> None:

@@ -70,37 +70,19 @@ _EPISODE_CAMPAIGN_FIELDS = (
 )
 
 
-def prior_episode_summary(prior_motivo: Any) -> str:
-    """Resumen de una línea del episodio anterior para el LLM del nuevo.
-
-    Tras el corte del historial es lo ÚNICO que el LLM sabe de antes: si el
-    cliente pregunta por lo anterior puede responder, pero no lo retoma solo.
-    """
-    base = (
-        "Hubo una conversación anterior con este cliente, ya cerrada: "
-        "no la retomes salvo que el cliente la mencione."
-    )
-    if isinstance(prior_motivo, str) and prior_motivo.strip():
-        return f"{base} Resumen: {prior_motivo.strip()}"
-    return base
-
-
-def mark_campaign_episode(
-    episode: dict[str, Any], touch: dict[str, Any], *, prior_motivo: Any
-) -> None:
+def mark_campaign_episode(episode: dict[str, Any], touch: dict[str, Any]) -> None:
     """Anota en el episodio nuevo la campaña que lo abrió y pide cortar el
     historial del LLM de cada agente (mutación in-place).
 
     `llm_history_reset.applied` lo llena el worker de cada agente al cortar
-    (`src/platform/llm_history_reset.py`) — idempotente por agente.
+    (`src/platform/llm_history_reset.py`) — idempotente por agente. Lo del
+    episodio anterior NO va acá: viaja una vez en el primer mensaje
+    (`episode_memory.with_previous_episode`, run 28a8e407).
     """
     episode["opened_by_campaign"] = {
         key: touch[key] for key in _EPISODE_CAMPAIGN_FIELDS if key in touch
     }
-    episode["llm_history_reset"] = {
-        "summary": prior_episode_summary(prior_motivo),
-        "applied": [],
-    }
+    episode["llm_history_reset"] = {"applied": []}
 
 
 def quote_campaign_in_turn(touch: dict[str, Any], text: str) -> str:

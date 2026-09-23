@@ -13,7 +13,7 @@ Contrato:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -482,6 +482,52 @@ async def test_apply_coupon_de_productos_lista_los_elegibles_con_precio_y_descue
     # Los elegibles quedan en el episodio: la nota de cada turno los recuerda.
     coupon = _md(path)["episodes"][-1]["applied_coupon"]
     assert [p["handle"] for p in coupon["eligible_products"]] == ["cubo-love"]
+
+
+class TaggedCatalog(FakeCatalog):
+    """Cubo Love en rosado; la Vela Buda no tiene esa etiqueta."""
+
+    products = {
+        "vela-buda": _product("vela-buda", "Vela Buda Zen", "40000"),
+        "cubo-love": replace(
+            _product("cubo-love", "Cubo Love", "30000"),
+            tags=["Color: Rosado", "Aroma: Café"],
+        ),
+    }
+
+
+@pytest.mark.asyncio
+async def test_cupon_con_condicion_de_etiquetas_aplica_solo_a_los_productos_que_las_tienen(
+    ctx, _isolate_vault_dir
+):
+    """Run 28a8e407: AMOR26 con `items.product.tags.id` — ahora se entiende
+    (Y con la lista de productos, como en Medusa) en vez de rechazarse."""
+    path = _seed(_isolate_vault_dir)
+    promo = _promo(
+        code="AMOR26",
+        value=10,
+        product_ids=("prod_cubo-love", "prod_vela-buda"),
+        tag_values=("Color: Rosado",),
+    )
+    tool = ApplyCouponTool(
+        workspace=str(_isolate_vault_dir),
+        metadata_store=FilesystemMetadataStore(_isolate_vault_dir),
+        promotions=FakePromotionsPort([promo]),
+        catalog=TaggedCatalog(),
+        now_ms=lambda: _NOW,
+    )
+    env = json.loads(await tool.execute_with_context(ctx, code="AMOR26"))
+    assert env["applied"] is True
+    assert [p["handle"] for p in env["eligible_products"]] == ["cubo-love"]
+    discount = await coupon_discount_for_items(
+        _md(path),
+        TaggedCatalog(),
+        [
+            {"handle": "cubo-love", "quantity": 1, "unit_price_cop": 30000},
+            {"handle": "vela-buda", "quantity": 1, "unit_price_cop": 40000},
+        ],
+    )
+    assert discount is not None and discount.discount_cop == 3000
 
 
 @pytest.mark.asyncio

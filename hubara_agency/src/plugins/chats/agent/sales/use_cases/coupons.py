@@ -52,7 +52,7 @@ def applied_coupon(metadata: dict[str, Any]) -> dict[str, Any] | None:
 def promotion_from_snapshot(raw: dict[str, Any]) -> PromotionDTO:
     """Snapshot JSON → DTO (las tuplas viajan como listas en JSON)."""
     data = dict(raw)
-    for key in ("product_ids", "variant_ids", "collection_ids"):
+    for key in ("product_ids", "variant_ids", "collection_ids", "tag_values"):
         data[key] = tuple(str(x) for x in (data.get(key) or []))
     # Snapshots de antes del campo: sin reglas ilegibles conocidas.
     data["scope_unresolved"] = bool(data.get("scope_unresolved"))
@@ -65,7 +65,12 @@ def is_whole_catalog(promotion: PromotionDTO) -> bool:
     envío y sus reglas se leyeron completas (falla cerrada)."""
     if promotion.scope_unresolved or promotion.target_type == "shipping_methods":
         return False
-    return not (promotion.product_ids or promotion.variant_ids or promotion.collection_ids)
+    return not (
+        promotion.product_ids
+        or promotion.variant_ids
+        or promotion.collection_ids
+        or promotion.tag_values
+    )
 
 
 def _cop_price(variant: Any) -> int | None:
@@ -94,11 +99,20 @@ async def eligible_products(catalog: Any, promotion: PromotionDTO) -> list[dict[
     # Precio unitario: el mínimo de compra no cambia el precio de la unidad.
     per_unit = replace(promotion, min_subtotal_cop=None)
     out: list[dict[str, Any]] = []
+    # Colecciones: el catálogo no trae el id de colección → como antes, sin
+    # lista (el descuento igual lo calcula el cierre con la regla completa).
+    selects_by_id = bool(
+        promotion.product_ids or promotion.variant_ids or promotion.collection_ids
+    )
     for product in getattr(result, "results", None) or []:
         pid = str(getattr(product, "id", "") or "")
         variants = list(getattr(product, "variants", None) or [])
         matching = [v for v in variants if str(getattr(v, "id", "")) in promotion.variant_ids]
-        if pid not in promotion.product_ids and not matching:
+        if selects_by_id and pid not in promotion.product_ids and not matching:
+            continue
+        # Condición por etiquetas (run 28a8e407): Y con la de productos.
+        tags = set(getattr(product, "tags", None) or [])
+        if promotion.tag_values and not tags & set(promotion.tag_values):
             continue
         variant = (matching or variants or [None])[0]
         price = _cop_price(variant) if variant is not None else None
@@ -110,6 +124,7 @@ async def eligible_products(catalog: Any, promotion: PromotionDTO) -> list[dict[
             unit_price_cop=price,
             product_id=pid or None,
             variant_id=str(getattr(variant, "id", "")) or None,
+            tags=tuple(str(t) for t in tags),
         )
         discount = compute_discount(per_unit, [line]).discount_cop
         out.append(
@@ -173,10 +188,12 @@ async def discount_line_items(
         handle = str(it.get("handle") or "")
         product_id = None
         variant_id = None
+        tags: tuple[str, ...] = ()
         if catalog is not None and handle:
             try:
                 product = await catalog.get_by_handle(handle)
                 product_id = getattr(product, "id", None)
+                tags = tuple(str(t) for t in getattr(product, "tags", None) or [])
                 variants = getattr(product, "variants", None) or []
                 label = it.get("variant_label")
                 chosen = next(
@@ -193,6 +210,7 @@ async def discount_line_items(
                 unit_price_cop=int(it.get("unit_price_cop") or 0),
                 product_id=str(product_id) if product_id else None,
                 variant_id=str(variant_id) if variant_id else None,
+                tags=tags,
             )
         )
     return out

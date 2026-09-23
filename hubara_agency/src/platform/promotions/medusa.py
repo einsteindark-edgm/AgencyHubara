@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime
-from typing import Any
+from typing import Any, Mapping
 
 from src.platform.promotions.port import PromotionDTO, PromotionsUnavailableError
 
@@ -23,6 +23,10 @@ _COLLECTION_ATTRS = {
     "product.collection_id",
 }
 _SUBTOTAL_ATTRS = {"item_total", "subtotal", "items.subtotal", "item_subtotal", "total"}
+#: Condición por etiquetas de producto: la regla trae ids ("ptag_…"); el
+#: catálogo conoce el nombre ("Color: Rosado"). Run 28a8e407 (AMOR26).
+_TAG_ID_ATTRS = {"items.product.tags.id", "items.product.tags", "product.tags.id"}
+_TAG_VALUE_ATTRS = {"items.product.tags.value", "product.tags.value"}
 
 
 def _values(rule: dict[str, Any]) -> list[str]:
@@ -53,9 +57,29 @@ def _to_int(raw: Any) -> int | None:
         return None
 
 
-def promotion_from_medusa(raw: dict[str, Any]) -> PromotionDTO | None:
+def tag_ids_in(raw: dict[str, Any]) -> set[str]:
+    """Ids de etiqueta que usan las reglas de la promoción (para traducirlos
+    a nombre antes de mapearla)."""
+    method = raw.get("application_method") if isinstance(raw, dict) else None
+    if not isinstance(method, dict):
+        return set()
+    return {
+        value
+        for rule in method.get("target_rules") or []
+        if isinstance(rule, dict) and str(rule.get("attribute") or "") in _TAG_ID_ATTRS
+        for value in _values(rule)
+    }
+
+
+def promotion_from_medusa(
+    raw: dict[str, Any], *, tag_values: Mapping[str, str] | None = None
+) -> PromotionDTO | None:
     """Promoción Admin API v2 → snapshot. None si no es un cupón usable
-    (sin código, sin método de aplicación)."""
+    (sin código, sin método de aplicación).
+
+    `tag_values` traduce los ids de etiqueta de las reglas a su nombre. Sin
+    él (o con un id que no trae) la regla por etiquetas no se puede evaluar
+    y la promo queda con alcance desconocido (falla cerrada)."""
     if not isinstance(raw, dict):
         return None
     code = raw.get("code")
@@ -65,6 +89,7 @@ def promotion_from_medusa(raw: dict[str, Any]) -> PromotionDTO | None:
     product_ids: list[str] = []
     variant_ids: list[str] = []
     collection_ids: list[str] = []
+    tag_names: list[str] = []
     # Falla CERRADA: una regla que no sabemos leer (sin `values` o con un
     # atributo que no entendemos) NO se ignora — ignorarla convertía "solo
     # estos productos" en "todo el catálogo" (incidente AMOR26).
@@ -83,6 +108,14 @@ def promotion_from_medusa(raw: dict[str, Any]) -> PromotionDTO | None:
             variant_ids.extend(values)
         elif attr in _COLLECTION_ATTRS:
             collection_ids.extend(values)
+        elif attr in _TAG_VALUE_ATTRS:
+            tag_names.extend(values)
+        elif attr in _TAG_ID_ATTRS:
+            names = [(tag_values or {}).get(v) for v in values]
+            if tag_values is None or not all(names):
+                scope_unresolved = True
+            else:
+                tag_names.extend(n for n in names if n)
         else:
             scope_unresolved = True
     min_subtotal: int | None = None
@@ -125,6 +158,7 @@ def promotion_from_medusa(raw: dict[str, Any]) -> PromotionDTO | None:
         budget_used=_to_int(budget.get("used")),
         description=(campaign.get("name") or None),
         scope_unresolved=scope_unresolved,
+        tag_values=tuple(tag_names),
     )
 
 
@@ -148,10 +182,32 @@ class MedusaPromotionsPort:
                 log.warning("promotions: Medusa falló, uso cache: %s", exc)
                 return self._cache
             raise PromotionsUnavailableError(str(exc)) from exc
-        promotions = [p for p in (promotion_from_medusa(r) for r in raw_list) if p]
+        tag_values = await self._tag_values(raw_list)
+        promotions = [
+            p
+            for p in (promotion_from_medusa(r, tag_values=tag_values) for r in raw_list)
+            if p
+        ]
         self._cache = promotions
         self._cached_at = now
         return promotions
+
+    async def _tag_values(self, raw_list: list[dict[str, Any]]) -> dict[str, str] | None:
+        """Nombre de cada etiqueta que usan las reglas. None si Medusa no
+        responde: esas promos quedan con alcance desconocido, el resto no."""
+        ids = sorted(set().union(*(tag_ids_in(r) for r in raw_list)) if raw_list else set())
+        if not ids:
+            return {}
+        try:
+            tags = await self._client.list_product_tags(ids)
+        except Exception as exc:  # noqa: BLE001 — el vendor no cruza el port
+            log.warning("promotions: no pude leer las etiquetas de las reglas: %s", exc)
+            return None
+        return {
+            str(t["id"]): str(t["value"])
+            for t in tags
+            if isinstance(t, dict) and t.get("id") and t.get("value")
+        }
 
     async def list_active(self) -> list[PromotionDTO]:
         return [p for p in await self._all() if p.status == "active" and not p.is_automatic]
@@ -161,4 +217,4 @@ class MedusaPromotionsPort:
         return next((p for p in await self._all() if p.code == wanted), None)
 
 
-__all__ = ["MedusaPromotionsPort", "promotion_from_medusa"]
+__all__ = ["MedusaPromotionsPort", "promotion_from_medusa", "tag_ids_in"]

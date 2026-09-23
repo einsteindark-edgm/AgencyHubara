@@ -369,7 +369,27 @@ async def test_campaign_episode_remembers_the_campaign_and_asks_for_a_clean_llm_
     new = store.data[_SESSION]["episodes"][-1]
     assert new["opened_by_campaign"]["campaign_name"] == "Amor y amistad"
     assert new["opened_by_campaign"]["coupon_code"] == "AMOR26"
-    reset = new["llm_history_reset"]
-    assert reset["applied"] == []
-    assert "Trilogía del Terror" in reset["summary"]
-    assert "no la retomes" in reset["summary"].lower()
+    # Sin `summary` (run 28a8e407): exoclaw lo pegaba a cada mensaje.
+    assert new["llm_history_reset"] == {"applied": []}
+
+
+@pytest.mark.asyncio
+async def test_campaign_reply_turn_opens_with_facts_of_the_previous_episode():
+    """Run 28a8e407: lo anterior viaja UNA vez, en el primer mensaje, armado
+    con hechos del episodio que se cerró (su borrador), no con el `motivo`
+    que escribió el LLM — ese puede estar mal."""
+    now = int(time.time() * 1000)
+    data = _stale_trilogia_metadata(now)
+    data["motivo"] = "Cliente interesado en el Duo Zodiacal."
+    store = _Store(data)
+    loader = _Loader()
+
+    await _use_case(store, loader).execute(_message("Me gusta"))
+
+    lines = loader.calls[0]["message"].split("\n")
+    assert lines[0].startswith("[Conversación anterior con este cliente")
+    assert "Trilogía del Terror" in lines[0]
+    assert "sin compra" in lines[0]
+    assert "Duo Zodiacal" not in loader.calls[0]["message"]
+    assert lines[1].startswith("[El cliente responde a la campaña")
+    assert lines[-1] == "Me gusta"

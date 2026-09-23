@@ -5,13 +5,19 @@ campaña y el ingest abrió un episodio nuevo, pero el historial del LLM de
 exoclaw es por SESIÓN: ventas y remarketing siguieron viendo decenas de turnos
 del episodio anterior (la Trilogía) y respondieron sobre eso.
 
-El episodio que lo necesita trae ``llm_history_reset = {summary, applied}``
-(lo escribe el ingest de chats). La primera vez que cada agente arma un prompt
-en ese episodio, esta activity mueve el puntero ``last_consolidated`` del
+El episodio que lo necesita trae ``llm_history_reset = {applied}`` (lo
+escribe el ingest de chats). La primera vez que cada agente arma un prompt en
+ese episodio, esta activity mueve el puntero ``last_consolidated`` del
 historial de ESE agente al final: lo anterior queda en disco (append-only, el
-dashboard no depende de esto) pero ya no viaja al LLM, y ``summary`` entra
-como "Previous Session Summary" (mecanismo nativo de exoclaw). ``applied``
-guarda el workspace de cada agente que ya cortó → idempotente por agente.
+dashboard no depende de esto) pero ya no viaja al LLM. ``applied`` guarda el
+workspace de cada agente que ya cortó → idempotente por agente.
+
+Nada de ``session.metadata["summary"]`` (run 28a8e407, 2026-09-23): exoclaw
+lo antepone a CADA mensaje del cliente y lo graba con él, así que un resumen
+de una línea terminaba repetido en todo el episodio. Lo del episodio anterior
+viaja UNA vez, en el primer mensaje del episodio nuevo (lo arma el ingest).
+Con la consolidación apagada (#329) exoclaw ya no escribe ``summary``: todo
+``summary`` que aparezca lo dejó el corte viejo y se borra en el turno.
 
 Corre en el WORKER (el API no monta el volumen del historial, PR #183).
 R-DIP: no importa plugins; el shape del episodio es contrato de datos.
@@ -58,26 +64,41 @@ def _pending_reset(metadata: dict[str, Any], workspace_path: str) -> dict[str, A
     return reset
 
 
-def _cut_history(session_id: str, workspace_path: str, summary: str) -> bool:
-    """Mueve ``last_consolidated`` al final del historial de este agente.
-
-    Mismo resolver de paths que ``_build_conversation`` (choke point único de
-    exoclaw_temporal): con ``EXOCLAW_STATE_DIR`` el historial vive en el
-    volumen persistente; sin él (dev/tests), en el workspace de código.
-    """
+def _session_manager(workspace_path: str) -> Any:
+    """Mismo resolver de paths que ``_build_conversation`` (choke point único
+    de exoclaw_temporal): con ``EXOCLAW_STATE_DIR`` el historial vive en el
+    volumen persistente; sin él (dev/tests), en el workspace de código."""
     from exoclaw_conversation.session.manager import SessionManager
     from exoclaw_temporal.activities.conversation import _state_workspace_for
 
     code_workspace = Path(workspace_path)
-    manager = SessionManager(_state_workspace_for(code_workspace) or code_workspace)
+    return SessionManager(_state_workspace_for(code_workspace) or code_workspace)
+
+
+def _cut_history(session_id: str, workspace_path: str) -> bool:
+    """Mueve ``last_consolidated`` al final del historial de este agente (y
+    borra cualquier ``summary`` que haya quedado)."""
+    manager = _session_manager(workspace_path)
     if not manager._get_session_path(session_id).exists():
         return False
     session = manager.get_or_create(session_id)
-    if session.total_messages <= session.last_consolidated:
+    dropped_summary = session.metadata.pop("summary", None) is not None
+    cut = session.total_messages > session.last_consolidated
+    if cut:
+        session.last_consolidated = session.total_messages
+    if cut or dropped_summary:
+        manager.save_metadata(session)
+    return cut
+
+
+def _drop_leftover_summary(session_id: str, workspace_path: str) -> bool:
+    """Borra el ``summary`` que dejó el corte del #330 (sin cortar nada)."""
+    manager = _session_manager(workspace_path)
+    if not manager._get_session_path(session_id).exists():
         return False
-    session.last_consolidated = session.total_messages
-    if summary:
-        session.metadata["summary"] = summary
+    session = manager.get_or_create(session_id)
+    if session.metadata.pop("summary", None) is None:
+        return False
     manager.save_metadata(session)
     return True
 
@@ -92,11 +113,14 @@ async def reset_llm_history_for_episode_activity(inp: ResetLLMHistoryInput) -> b
     store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
     reset = _pending_reset(store.read(inp.session_id), inp.workspace_path)
     if reset is None:
+        if _drop_leftover_summary(inp.session_id, inp.workspace_path):
+            log.info(
+                "llm_history_reset summary viejo borrado session=%s workspace=%s",
+                inp.session_id,
+                inp.workspace_path,
+            )
         return False
-    summary = reset.get("summary")
-    cut = _cut_history(
-        inp.session_id, inp.workspace_path, summary if isinstance(summary, str) else ""
-    )
+    cut = _cut_history(inp.session_id, inp.workspace_path)
 
     def _mark_applied(metadata: dict[str, Any]) -> dict[str, Any] | None:
         fresh = _pending_reset(metadata, inp.workspace_path)

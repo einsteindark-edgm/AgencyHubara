@@ -53,7 +53,9 @@ def _promo(**over) -> PromotionDTO:
     return PromotionDTO(**base)
 
 
-def _item(handle, qty=1, price=40_000, product_id=None, variant_id=None, collection_id=None):
+def _item(
+    handle, qty=1, price=40_000, product_id=None, variant_id=None, collection_id=None, tags=()
+):
     return DiscountLineItem(
         handle=handle,
         quantity=qty,
@@ -61,6 +63,7 @@ def _item(handle, qty=1, price=40_000, product_id=None, variant_id=None, collect
         product_id=product_id or f"prod_{handle}",
         variant_id=variant_id or f"var_{handle}",
         collection_id=collection_id,
+        tags=tuple(tags),
     )
 
 
@@ -322,3 +325,63 @@ def test_resolve_coupon_con_alcance_desconocido_no_aplica() -> None:
     res = resolve_coupon("MAMA15", [promo], now_ms=1_778_000_000_000)
     assert res.ok is False
     assert res.reason == "scope_unresolved"
+
+
+# --- Condición por etiquetas de producto --------------------------------------
+# Run 28a8e407 (2026-09-23, 15:26): a AMOR26 le agregaron en Medusa la regla
+# `items.product.tags.id in [...]`. El lector no la entendía → alcance
+# desconocido → el bot rechazó el cupón a todos y lo escondió de la lista.
+
+
+def _raw_with_tags() -> dict:
+    raw = _raw()
+    raw["application_method"]["target_rules"] = [
+        {
+            "attribute": "items.product.id",
+            "operator": "in",
+            "values": [{"value": "prod_a"}, {"value": "prod_b"}],
+        },
+        {
+            "attribute": "items.product.tags.id",
+            "operator": "in",
+            "values": [{"value": "ptag_rosado"}, {"value": "ptag_cafe"}],
+        },
+    ]
+    return raw
+
+
+_TAG_NAMES = {"ptag_rosado": "Color: Rosado", "ptag_cafe": "Aroma: Café"}
+
+
+def test_regla_por_etiquetas_se_lee_con_el_nombre_de_cada_etiqueta() -> None:
+    p = promotion_from_medusa(_raw_with_tags(), tag_values=_TAG_NAMES)
+    assert p is not None
+    assert p.tag_values == ("Color: Rosado", "Aroma: Café")
+    assert p.product_ids == ("prod_a", "prod_b")
+    assert p.scope_unresolved is False
+
+
+def test_etiqueta_sin_nombre_conocido_sigue_siendo_alcance_desconocido() -> None:
+    assert promotion_from_medusa(_raw_with_tags()).scope_unresolved is True
+    partial = {"ptag_rosado": "Color: Rosado"}
+    assert promotion_from_medusa(_raw_with_tags(), tag_values=partial).scope_unresolved is True
+
+
+def test_productos_y_etiquetas_se_cumplen_las_dos_como_en_medusa() -> None:
+    promo = _promo(product_ids=("prod_a", "prod_b"), tag_values=("Color: Rosado",))
+    res = compute_discount(
+        promo,
+        [
+            _item("a", product_id="prod_a", tags=("Color: Rosado", "Aroma: Café")),
+            _item("b", product_id="prod_b", tags=("Color: Azul",)),
+            _item("c", product_id="prod_c", tags=("Color: Rosado",)),
+        ],
+    )
+    assert res.applicable_handles == ["a"]
+    assert res.discount_cop == 6_000
+
+
+def test_promo_solo_por_etiquetas_selecciona_los_productos_que_las_tienen() -> None:
+    promo = _promo(tag_values=("Aroma: Café",))
+    res = compute_discount(promo, [_item("a", tags=("Aroma: Café",)), _item("b")])
+    assert res.applicable_handles == ["a"]
