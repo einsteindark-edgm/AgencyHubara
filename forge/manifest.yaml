@@ -191,8 +191,8 @@ replacements:
     to: "Atributo/variante elegido según el catálogo."
   - id: ej-order-draft-freetext
     files: ["hubara_agency/src/plugins/chats/agent/sales/tools/order_draft.py"]
-    from: "pedido: 2x Luz Serena lavanda/blanco + 1x Cruz de Vida"
-    to: "pedido: 2x <producto> <variante> + 1x <producto>"
+    from: "ej. 'Plato: Leo', 'es para regalo'"
+    to: "ej. un detalle de personalización, 'es para regalo'"
   - id: ej-order-reg-variant-label
     files: ["hubara_agency/src/plugins/chats/agent/sales/tools/order_registration.py"]
     from: "variant_label (ej. 'Lavanda', 'Azul')."

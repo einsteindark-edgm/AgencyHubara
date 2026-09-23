@@ -38,6 +38,24 @@ class CatalogImageDTO:
 
 
 @dataclass(frozen=True)
+class CatalogDimensionsDTO:
+    """Medidas de la pieza tal como las carga el operador en Medusa.
+
+    Misma convención de unidades que la web (hubara_frontend
+    `ProductDetails.astro`): alto/ancho/largo en cm, peso en g. None = sin
+    dato — un 0 en Medusa también es "sin dato" (la Trilogía lo tiene así).
+    Viven FUERA de la description a propósito: el mapper de Meta y los feeds
+    leen campos explícitos, así que las medidas llegan solo al snapshot que
+    consulta el agente.
+    """
+
+    height_cm: float | None = None
+    width_cm: float | None = None
+    length_cm: float | None = None
+    weight_g: float | None = None
+
+
+@dataclass(frozen=True)
 class CatalogProductDTO:
     id: str
     handle: str
@@ -57,6 +75,9 @@ class CatalogProductDTO:
     # Ejes de selección reales del producto ({"Signo": ["Aries", ...]}).
     # None = producto sin options en Medusa (snapshots viejos también).
     options: dict[str, list[str]] | None = None
+    # None = el producto no tiene medidas cargadas (o snapshot previo a
+    # 2026-09-23, cuando el pull empezó a traerlas).
+    dimensions: CatalogDimensionsDTO | None = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +142,11 @@ def product_dto_from_raw(raw: dict) -> CatalogProductDTO:
                 for k, vals in raw["options"].items()
             }
             if raw.get("options")
+            else None
+        ),
+        dimensions=(
+            CatalogDimensionsDTO(**raw["dimensions"])
+            if raw.get("dimensions")
             else None
         ),
     )

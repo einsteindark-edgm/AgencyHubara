@@ -47,6 +47,11 @@ class MedusaVariant(_Base):
     allow_backorder: bool = False
     prices: list[MedusaPrice] = Field(default_factory=list)
     options: list[MedusaOptionValue] = Field(default_factory=list)
+    # Medidas a nivel variante: la web las usa si el producto no trae.
+    height: float | None = None
+    width: float | None = None
+    length: float | None = None
+    weight: float | None = None
 
 
 class MedusaOption(_Base):

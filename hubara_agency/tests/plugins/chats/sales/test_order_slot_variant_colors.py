@@ -1,17 +1,18 @@
 """set_order_slot con mapeo color↔signo (Duo Zodiacal).
 
-Cada signo viene en UN color fijo (metadata `colores` del producto). El
-pedido real del cliente suele ser "quiero la de Leo en rojo" — combinación
-que NO existe (Leo es naranja; el rojo es de Aries). El contrato:
+El mapeo (metadata `colores` del producto) dice en qué color salió la FOTO
+de cada signo. Hasta 2026-09-22 se trataba como restricción ("Leo en rojo no
+existe") y el bot le hacía elegir a la clienta entre su signo y su color. El
+operador lo confirmó el 2026-09-23: la vela del Duo se hace en CUALQUIER color
+de la paleta, en cualquier signo y sin costo extra. El contrato:
 
 1. El color se valida contra los colores REALES de las variantes (los tags
    del producto están stale: "rojo" debe aceptarse aunque no haya tag).
-2. Combinación color+signo inexistente → el valor NUEVO se rechaza con
-   `reason: color_sign_mismatch` + las alternativas mismo-color-otro-signo,
-   para que el bot diga "no es el signo, pero SÍ es el color" (nunca negar
-   el color ni guardar una combinación que no existe).
-3. Color solo (sin signo) → se guarda + hint `signs_for_color` para que el
-   bot muestre el signo dueño del color de una.
+2. Color distinto al de la foto del signo → se GUARDA, y el envelope avisa
+   que la foto es solo referencia (`custom_color`) para que el bot confirme
+   "te la hacemos en rojo" en vez de negarlo.
+3. Color solo (sin signo) → se guarda + `signs_for_color` (qué foto muestra
+   ese color, como referencia visual; el signo lo elige el cliente).
 4. Producto sin mapeo → comportamiento previo intacto (tags closed-list).
 """
 from __future__ import annotations
@@ -103,20 +104,24 @@ async def test_color_validates_against_variant_colors_not_stale_tags(
 
 
 @pytest.mark.asyncio
-async def test_color_only_hints_owning_signs(tmp_path):
-    """Color sin signo → hint con el signo dueño para mostrarlo de una."""
+async def test_color_only_shows_which_photo_has_it_without_steering_sign(
+    tmp_path,
+):
+    """Color sin signo → qué foto muestra ese color (referencia visual). El
+    summary NO le pide al bot ofrecer ese signo: el signo es del cliente."""
     result = await _set(
         _tool(tmp_path), producto="Duo Zodiacal", color="roja"
     )
     assert result["signs_for_color"] == [
         {"value": "Aries", "colors": ["rojo"]}
     ]
+    assert "ofrécele ese signo" not in result["summary"]
 
 
 @pytest.mark.asyncio
-async def test_color_sign_mismatch_rejects_color_with_alternatives(tmp_path):
-    """"Leo en rojo" no existe: Leo queda, el color se rechaza con las
-    alternativas mismo-color-otro-signo y el color real del signo pedido."""
+async def test_sign_in_other_color_is_saved_as_custom_color(tmp_path):
+    """"Leo en rojo" SÍ se hace (operador, 2026-09-23): se guardan los dos y
+    el envelope avisa que la foto de Leo (naranja) es solo referencia."""
     result = await _set(
         _tool(tmp_path),
         producto="Duo Zodiacal",
@@ -124,35 +129,27 @@ async def test_color_sign_mismatch_rejects_color_with_alternatives(tmp_path):
         color="roja",
     )
     assert result["order_draft"]["diseno"] == "Leo"
-    assert "color" not in result["order_draft"]
-    (rejection,) = result["rejected"]
-    assert rejection["field"] == "color"
-    assert rejection["reason"] == "color_sign_mismatch"
-    assert rejection["sign_colors"] == ["naranja"]
-    assert rejection["same_color_signs"] == [
-        {"value": "Aries", "colors": ["rojo"]}
-    ]
-    # El summary guía el guion: mismo color, otro signo, aclarándolo.
-    assert "Aries" in result["summary"]
-    assert "naranja" in result["summary"]
+    assert result["order_draft"]["color"] == "rojo"
+    assert "rejected" not in result
+    assert result["custom_color"] == {
+        "sign": "Leo",
+        "photo_colors": ["naranja"],
+        "color": "rojo",
+    }
+    assert "referencia" in result["summary"]
 
 
 @pytest.mark.asyncio
-async def test_diseno_newcomer_conflicts_with_draft_color(tmp_path):
-    """Draft ya tiene color rojo; llega diseno=Leo → se rechaza el diseno
-    (el recién llegado) con las mismas alternativas."""
+async def test_sign_after_color_keeps_both(tmp_path):
+    """Draft ya tiene color rojo; llega diseno=Leo → quedan los dos (caso
+    real: la clienta eligió Escorpio y pidió el color de SU foto)."""
     tool = _tool(tmp_path)
     await _set(tool, producto="Duo Zodiacal", color="rojo")
     result = await _set(tool, diseno="Leo")
-    assert "diseno" not in result["order_draft"]
+    assert result["order_draft"]["diseno"] == "Leo"
     assert result["order_draft"]["color"] == "rojo"
-    (rejection,) = result["rejected"]
-    assert rejection["field"] == "diseno"
-    assert rejection["reason"] == "color_sign_mismatch"
-    assert rejection["sign_colors"] == ["naranja"]
-    assert rejection["same_color_signs"] == [
-        {"value": "Aries", "colors": ["rojo"]}
-    ]
+    assert "rejected" not in result
+    assert result["custom_color"]["photo_colors"] == ["naranja"]
 
 
 @pytest.mark.asyncio

@@ -319,7 +319,7 @@ def _product_summary(p: CatalogProductDTO) -> dict[str, Any]:
     """Version liviana para search_products (sin description larga)."""
     price, currency = _first_price(p)
     attrs = parse_variant_tags(p.tags)
-    return {
+    summary = {
         "id": p.id,
         "handle": p.handle,
         "title": p.title,
@@ -349,6 +349,10 @@ def _product_summary(p: CatalogProductDTO) -> dict[str, Any]:
             else []
         ),
     }
+    medidas = _dimensions_line(p)
+    if medidas:
+        summary["medidas"] = medidas
+    return summary
 
 
 def _product_full(p: CatalogProductDTO) -> dict[str, Any]:
@@ -391,7 +395,35 @@ def _product_full(p: CatalogProductDTO) -> dict[str, Any]:
     }
     if variant_colors:
         envelope["variant_colors"] = variant_colors
+    medidas = _dimensions_line(p)
+    if medidas:
+        envelope["medidas"] = medidas
     return envelope
+
+
+def _dimensions_line(p: CatalogProductDTO) -> str | None:
+    """Medidas en UNA línea ("alto 9 cm, ancho 6 cm") — o None si el
+    producto no las tiene cargadas (caso 2026-09-22: el snapshot no las
+    traía y el bot respondió que no existían)."""
+    d = p.dimensions
+    if d is None:
+        return None
+    parts = [
+        f"{label} {_number(value)} {unit}"
+        for label, value, unit in (
+            ("alto", d.height_cm, "cm"),
+            ("ancho", d.width_cm, "cm"),
+            ("largo", d.length_cm, "cm"),
+            ("peso", d.weight_g, "g"),
+        )
+        if value
+    ]
+    return ", ".join(parts) or None
+
+
+def _number(value: float) -> str:
+    """9.0 → "9"; 9.5 → "9,5" (coma decimal, como se escribe en Colombia)."""
+    return f"{value:g}".replace(".", ",")
 
 
 def _category_labels(p: CatalogProductDTO) -> list[str]:

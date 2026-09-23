@@ -12,6 +12,7 @@ from typing import Iterable
 
 from src.plugins.catalog.agent.contracts import CatalogSyncInput, PullCatalogResult
 from src.platform.catalog.dtos import (
+    CatalogDimensionsDTO,
     CatalogImageDTO,
     CatalogPriceDTO,
     CatalogProductDTO,
@@ -140,4 +141,25 @@ def _to_dto(mp: MedusaProduct) -> CatalogProductDTO:
             }
             or None
         ),
+        dimensions=_dimensions(mp),
     )
+
+
+def _dimensions(mp: MedusaProduct) -> CatalogDimensionsDTO | None:
+    """Medidas con la misma regla que la web (`getProductDimensions`): las
+    del producto; si no trae ninguna, las de la primera variante que tenga.
+    0 = sin dato (la web lo pinta como "0 cm"; al cliente no se le dice)."""
+    for source in (mp, *mp.variants):
+        dims = CatalogDimensionsDTO(
+            height_cm=_measure(source.height),
+            width_cm=_measure(source.width),
+            length_cm=_measure(source.length),
+            weight_g=_measure(source.weight),
+        )
+        if dims != CatalogDimensionsDTO():
+            return dims
+    return None
+
+
+def _measure(value: float | None) -> float | None:
+    return value if value else None

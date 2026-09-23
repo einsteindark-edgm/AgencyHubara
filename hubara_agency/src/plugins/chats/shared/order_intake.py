@@ -27,6 +27,8 @@ import unicodedata
 from datetime import datetime
 from typing import Any
 
+from src.plugins.chats.shared.draft_items import ITEM_FIELDS, draft_items
+
 HANDOFF_MARKER = "--- EL OPERADOR HUMANO TOMA EL CONTROL ---"
 
 ROUTE_HUMANO = "humano"
@@ -305,7 +307,26 @@ def _render_catalog(catalog: list[dict[str, Any]]) -> str:
 def _render_draft(draft_slots: dict[str, Any]) -> str:
     if not draft_slots:
         return "(sin datos previos)"
-    return "\n".join(f"- {key}: {value}" for key, value in draft_slots.items() if value)
+    items = draft_slots.get("items")
+    if not isinstance(items, list) or len(items) < 2:
+        return "\n".join(
+            f"- {key}: {value}" for key, value in draft_slots.items() if value
+        )
+    # Varios productos: uno por renglón con SUS variantes (la etiqueta plana
+    # "A + B" de `producto` no es un producto).
+    lines = []
+    for item in items:
+        variants = ", ".join(
+            f"{k}: {item[k]}" for k in ITEM_FIELDS if k != "producto" and item.get(k)
+        )
+        name = item.get("producto") or "(producto sin definir)"
+        lines.append(f"- producto: {name}" + (f" ({variants})" if variants else ""))
+    lines += [
+        f"- {key}: {value}"
+        for key, value in draft_slots.items()
+        if value and key != "items" and key not in ITEM_FIELDS
+    ]
+    return "\n".join(lines)
 
 
 def build_prompt(
@@ -396,7 +417,10 @@ def draft_slots_of(metadata: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(draft, dict):
         return {}
     slots = draft.get("slots")
-    return slots if isinstance(slots, dict) else {}
+    if not isinstance(slots, dict):
+        return {}
+    items = draft_items(draft)
+    return {**slots, "items": items} if len(items) > 1 else slots
 
 
 def merge_shipping(

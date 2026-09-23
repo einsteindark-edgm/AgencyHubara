@@ -706,8 +706,8 @@ class RegisterOrderTool(ToolBase):
             )
             if portavelas_included:
                 order_motivo += (
-                    " Pendiente: definir con el cliente el color del "
-                    "portavelas (según disponibilidad)."
+                    " Pendiente: enviarle al cliente foto de los colores "
+                    "disponibles del portavelas para que escoja."
                 )
             envelope = {
                 "registered": True,
@@ -764,13 +764,14 @@ class RegisterOrderTool(ToolBase):
                     "el cliente lee es `customer_message`. "
                     + (
                         "Este pedido INCLUYE un producto con portavelas: "
-                        "incluye en el summary la nota 'definir con el "
-                        "cliente el color del portavelas (según "
-                        "disponibilidad)'. La despedida (va en "
-                        "`customer_message`) es un mensaje breve de "
-                        "agradecimiento que además le avise que al "
-                        "finalizar el pago del pedido se escogen los colores "
-                        "del portavelas, según disponibilidad. "
+                        "incluye en el summary la nota 'enviarle al cliente "
+                        "foto de los colores disponibles del portavelas para "
+                        "que escoja' y lo que pidió en las notas del pedido "
+                        "(signo del plato, color de la vela). La despedida "
+                        "(va en `customer_message`) es un mensaje breve de "
+                        "agradecimiento que además le avise que le enviarán "
+                        "una foto con los colores disponibles del portavelas "
+                        "para que escoja el suyo. "
                         if portavelas_included
                         else "Este pedido NO incluye portavelas: NO menciones "
                         "el portavelas ni sus colores, ni en el summary ni al "
