@@ -13,6 +13,7 @@ ejecute la activity-dispatcher correspondiente (ADR-001).
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -493,6 +494,17 @@ def coalesce_inbox(batch: list[InboxMsg], *, version: int = 1) -> PendingMessage
     )
 
 
+_EPISODE_ID_RE = re.compile(r"ep_(\d+)")
+
+
+def _is_returning_episode(episode_id: str | None) -> bool:
+    """¿El episodio activo NO es el primero de la sesión? Los ids son
+    `ep_{len(episodes)+1:03d}` (chats `episode_lifecycle`): `ep_001` es el
+    primer contacto; cualquier otro, un cliente que vuelve."""
+    match = _EPISODE_ID_RE.fullmatch(episode_id or "")
+    return bool(match) and int(match.group(1)) > 1
+
+
 def _history_view(
     recorded: list[dict[str, Any]], delivered_replies: dict[str, str]
 ) -> list[dict[str, Any]]:
@@ -685,6 +697,17 @@ async def _run_agent_turn_impl(
     # intercambio previo"). Cómputo puro sobre datos ya en la history →
     # replay-safe sin gate.
     first_contact = not any(m.get("role") == "assistant" for m in messages)
+    # Memoria por episodio (run 28a8e407): cada episodio nuevo arranca con el
+    # historial cortado, así que "sin mensajes del agente" ya no es "cliente
+    # nuevo". Quien vuelve (episodio que no es el primero de la sesión) no
+    # recibe otra vez la bienvenida de marca. `patched()` va último: solo
+    # cuando la regla nueva difiere de la vieja.
+    if (
+        first_contact
+        and _is_returning_episode(episode_id)
+        and workflow.patched("returning-customer-no-welcome-v1")
+    ):
+        first_contact = False
     outbound_tool_texts: list[str] = []
 
     iteration = 0
