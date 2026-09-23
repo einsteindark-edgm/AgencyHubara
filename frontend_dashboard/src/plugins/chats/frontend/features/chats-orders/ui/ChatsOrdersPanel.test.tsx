@@ -11,6 +11,8 @@ import { ChatsOrdersPanel } from "./ChatsOrdersPanel";
 
 const useCustomerOrdersMock = vi.fn();
 const transitionMutateAsync = vi.fn();
+const usePhotoMock = vi.fn();
+const uploadMutateAsync = vi.fn();
 
 vi.mock("@plugins/chats/frontend/entities/order-ref", async () => {
   const actual = await vi.importActual<
@@ -20,6 +22,11 @@ vi.mock("@plugins/chats/frontend/entities/order-ref", async () => {
     ...actual,
     useCustomerOrders: (id: string | null) => useCustomerOrdersMock(id),
     useTransitionOrderStage: () => ({ mutateAsync: transitionMutateAsync }),
+    useOrderRefPhoto: (id: string | null) => usePhotoMock(id),
+    useUploadOrderRefPhoto: () => ({
+      mutateAsync: uploadMutateAsync,
+      isPending: false,
+    }),
   };
 });
 
@@ -30,7 +37,21 @@ function Wrapper({ children }: { children: ReactNode }) {
 beforeEach(() => {
   useCustomerOrdersMock.mockReset();
   transitionMutateAsync.mockReset();
+  uploadMutateAsync.mockReset();
+  usePhotoMock.mockReset();
+  usePhotoMock.mockReturnValue({
+    isLoading: false,
+    data: { photo: null, has_conversation: true, service_window_open: true },
+  });
 });
+
+function withOrder(order: Record<string, unknown>) {
+  useCustomerOrdersMock.mockReturnValue({
+    isLoading: false,
+    isError: false,
+    data: { orders: [order], count: 1 },
+  });
+}
 
 describe("ChatsOrdersPanel", () => {
   it("estado vacío cuando el cliente no tiene pedidos", () => {
@@ -63,21 +84,119 @@ describe("ChatsOrdersPanel", () => {
     expect(screen.queryByRole("button", { name: /despachar/i })).not.toBeInTheDocument();
   });
 
-  it("tap en una transición cambia el estado del pedido", async () => {
+  it("tap en una transición sin datos extra cambia el estado del pedido", async () => {
+    transitionMutateAsync.mockResolvedValue({ success: true, current_stage: "preparing" });
+    withOrder({ id: "order_01HX", status: "new" });
+    render(<ChatsOrdersPanel sessionId="wa_1" />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByRole("button", { name: /preparar/i }));
+    await waitFor(() =>
+      expect(transitionMutateAsync).toHaveBeenCalledWith({
+        orderId: "order_01HX",
+        stage: "preparing",
+      }),
+    );
+  });
+
+  it("marcar listo pide la foto (opcional) antes de mover: sin foto pasa a Lista igual", async () => {
     transitionMutateAsync.mockResolvedValue({ success: true, current_stage: "ready" });
-    useCustomerOrdersMock.mockReturnValue({
-      isLoading: false,
-      isError: false,
-      data: { orders: [{ id: "order_01HX", status: "preparing" }], count: 1 },
-    });
+    withOrder({ id: "order_01HX", status: "preparing" });
     render(<ChatsOrdersPanel sessionId="wa_1" />, { wrapper: Wrapper });
     fireEvent.click(screen.getByRole("button", { name: /marcar listo/i }));
+    // El tap NO mueve el pedido: abre el paso de la foto.
+    expect(transitionMutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/foto del pedido/i)).toBeInTheDocument();
+    expect(screen.getByText(/mensaje normal/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /pasar a lista sin foto/i }));
     await waitFor(() =>
       expect(transitionMutateAsync).toHaveBeenCalledWith({
         orderId: "order_01HX",
         stage: "ready",
       }),
     );
+    expect(uploadMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("con foto: la sube primero y SOLO si sale bien pasa el pedido a Lista", async () => {
+    uploadMutateAsync.mockResolvedValue({ photo: { file_url: "/x.jpg" } });
+    transitionMutateAsync.mockResolvedValue({ success: true, current_stage: "ready" });
+    withOrder({ id: "order_01HX", status: "preparing" });
+    render(<ChatsOrdersPanel sessionId="wa_1" />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByRole("button", { name: /marcar listo/i }));
+    const file = new File([new Uint8Array([0xff, 0xd8, 0xff])], "p.jpg", { type: "image/jpeg" });
+    fireEvent.change(screen.getByLabelText(/foto del pedido/i), { target: { files: [file] } });
+    const send = await screen.findByRole("button", { name: /pasar a lista y enviar foto/i });
+    await waitFor(() => expect(send).toBeEnabled());
+    fireEvent.click(send);
+    await waitFor(() =>
+      expect(transitionMutateAsync).toHaveBeenCalledWith({
+        orderId: "order_01HX",
+        stage: "ready",
+      }),
+    );
+    expect(uploadMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: "order_01HX" }),
+    );
+  });
+
+  it("si la foto no se pudo subir, el pedido NO se mueve y se ve el error", async () => {
+    uploadMutateAsync.mockRejectedValue(new Error("La foto pesa más de 5 MB."));
+    withOrder({ id: "order_01HX", status: "preparing" });
+    render(<ChatsOrdersPanel sessionId="wa_1" />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByRole("button", { name: /marcar listo/i }));
+    const file = new File([new Uint8Array([0xff, 0xd8])], "p.jpg", { type: "image/jpeg" });
+    fireEvent.change(screen.getByLabelText(/foto del pedido/i), { target: { files: [file] } });
+    const send = await screen.findByRole("button", { name: /pasar a lista y enviar foto/i });
+    await waitFor(() => expect(send).toBeEnabled());
+    fireEvent.click(send);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/5 MB/);
+    expect(transitionMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("despachar pide el valor del envío y el link: viajan en el mismo cambio de estado", async () => {
+    transitionMutateAsync.mockResolvedValue({ success: true, current_stage: "shipping" });
+    withOrder({ id: "order_01HX", status: "ready", total_cop: 124500 });
+    render(<ChatsOrdersPanel sessionId="wa_1" />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByRole("button", { name: /despachar/i }));
+    expect(transitionMutateAsync).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText(/valor del envío/i), { target: { value: "12.000" } });
+    // Total en vivo: pedido + envío.
+    expect(screen.getByTestId("ship-total")).toHaveTextContent(/136[.,]500/);
+    fireEvent.change(screen.getByLabelText(/link de la guía/i), {
+      target: { value: "servientrega.com/rastreo?guia=1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /despachar con guía/i }));
+    await waitFor(() =>
+      expect(transitionMutateAsync).toHaveBeenCalledWith({
+        orderId: "order_01HX",
+        stage: "shipping",
+        shipping_cost: 12000,
+        tracking_url: "https://servientrega.com/rastreo?guia=1",
+      }),
+    );
+  });
+
+  it("despachar sin guía ni valor mueve el pedido igual", async () => {
+    transitionMutateAsync.mockResolvedValue({ success: true, current_stage: "shipping" });
+    withOrder({ id: "order_01HX", status: "ready" });
+    render(<ChatsOrdersPanel sessionId="wa_1" />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByRole("button", { name: /despachar/i }));
+    fireEvent.click(screen.getByRole("button", { name: /despachar sin guía/i }));
+    await waitFor(() =>
+      expect(transitionMutateAsync).toHaveBeenCalledWith({
+        orderId: "order_01HX",
+        stage: "shipping",
+      }),
+    );
+  });
+
+  it("un valor del envío inválido no despacha y explica por qué", () => {
+    withOrder({ id: "order_01HX", status: "ready" });
+    render(<ChatsOrdersPanel sessionId="wa_1" />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByRole("button", { name: /despachar/i }));
+    fireEvent.change(screen.getByLabelText(/valor del envío/i), { target: { value: "12,5" } });
+    fireEvent.click(screen.getByRole("button", { name: /despachar sin guía/i }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/sin decimales/i);
+    expect(transitionMutateAsync).not.toHaveBeenCalled();
   });
 
   it("cancelar pide confirmación de dos pasos", async () => {
@@ -121,24 +240,24 @@ describe("ChatsOrdersPanel", () => {
           ? new Promise((r) => {
               resolveA = r;
             })
-          : Promise.resolve({ success: true, current_stage: "ready" }),
+          : Promise.resolve({ success: true, current_stage: "preparing" }),
     );
     useCustomerOrdersMock.mockReturnValue({
       isLoading: false,
       isError: false,
       data: {
         orders: [
-          { id: "order_A", status: "preparing" },
-          { id: "order_B", status: "preparing" },
+          { id: "order_A", status: "new" },
+          { id: "order_B", status: "new" },
         ],
         count: 2,
       },
     });
     render(<ChatsOrdersPanel sessionId="wa_1" />, { wrapper: Wrapper });
-    const buttons = screen.getAllByRole("button", { name: /marcar listo|…/i });
+    const buttons = screen.getAllByRole("button", { name: /preparar|…/i });
     // Tap en A: A queda ocupada (spinner "…"), B sigue habilitada.
     fireEvent.click(buttons[0]);
-    const after = screen.getAllByRole("button", { name: /marcar listo|…/i });
+    const after = screen.getAllByRole("button", { name: /preparar|…/i });
     expect(after[0]).toBeDisabled();
     expect(after[1]).toBeEnabled();
     // Tap en B con A aún en vuelo: B dispara SU mutación.
@@ -146,10 +265,10 @@ describe("ChatsOrdersPanel", () => {
     await waitFor(() =>
       expect(transitionMutateAsync).toHaveBeenCalledWith({
         orderId: "order_B",
-        stage: "ready",
+        stage: "preparing",
       }),
     );
-    resolveA({ success: true, current_stage: "ready" });
+    resolveA({ success: true, current_stage: "preparing" });
   });
 
   it("PM2-M11: la fecha de entrega se muestra legible, no como ISO crudo", () => {

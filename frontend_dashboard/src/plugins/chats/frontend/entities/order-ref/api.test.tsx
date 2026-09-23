@@ -13,18 +13,22 @@ import type { ReactNode } from "react";
 
 const getMock = vi.fn();
 const patchMock = vi.fn();
+const putMock = vi.fn();
 
 vi.mock("@/shared/api/client", () => ({
   apiClient: {
     get: (...args: unknown[]) => getMock(...args),
     patch: (...args: unknown[]) => patchMock(...args),
+    put: (...args: unknown[]) => putMock(...args),
   },
 }));
 
 import {
   useCustomerOrders,
   useOrderRefDetail,
+  useOrderRefPhoto,
   useScheduleOrder,
+  useUploadOrderRefPhoto,
   useTransitionOrderStage,
 } from "./api";
 import { orderRefKeys } from "./keys";
@@ -41,6 +45,7 @@ function makeWrapper() {
 beforeEach(() => {
   getMock.mockReset();
   patchMock.mockReset();
+  putMock.mockReset();
 });
 
 describe("order-ref api", () => {
@@ -150,5 +155,36 @@ describe("order-ref api", () => {
       "by-session",
       "wa_1",
     ]);
+  });
+
+  it("useOrderRefPhoto lee la foto del pedido por el cast propio de chats", async () => {
+    getMock.mockResolvedValue({
+      photo: null,
+      has_conversation: true,
+      service_window_open: false,
+    });
+    const { result } = renderHook(() => useOrderRefPhoto("#31"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.service_window_open).toBe(false);
+    expect(String(getMock.mock.calls[0][0])).toBe("/api/chats/order-actions/%2331/photo");
+  });
+
+  it("useUploadOrderRefPhoto sube la foto como multipart `file` al cast de chats", async () => {
+    putMock.mockResolvedValue({
+      photo: { file_url: "/f.jpg", uploaded_at_ms: 1, sent_at_ms: null },
+      has_conversation: true,
+      service_window_open: true,
+    });
+    const { result } = renderHook(() => useUploadOrderRefPhoto(), {
+      wrapper: makeWrapper(),
+    });
+    const blob = new Blob(["x"], { type: "image/jpeg" });
+    await result.current.mutateAsync({ orderId: "order_1", file: blob });
+    const [path, body] = putMock.mock.calls[0];
+    expect(path).toBe("/api/chats/order-actions/order_1/photo");
+    expect(body).toBeInstanceOf(FormData);
+    expect((body as FormData).get("file")).toBeInstanceOf(Blob);
   });
 });

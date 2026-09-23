@@ -4,4 +4,5 @@ export const orderRefKeys = {
   detail: (orderId: string) => [...orderRefKeys.all, "detail", orderId] as const,
   bySession: (sessionId: string) =>
     [...orderRefKeys.all, "by-session", sessionId] as const,
+  photo: (orderId: string) => [...orderRefKeys.all, "photo", orderId] as const,
 };

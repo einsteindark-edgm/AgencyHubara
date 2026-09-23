@@ -44,7 +44,7 @@ import os
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, Path, Request
+from fastapi import APIRouter, Body, File, Path, Request, UploadFile
 
 from src.sdk import castkit
 
@@ -179,10 +179,60 @@ async def transition_order_stage_for_chat(
     """Cambiar el estado de un pedido manualmente desde el chat móvil.
 
     Body: `{stage: "new|preparing|ready|shipping|delivered|cancelled", note?,
-    force?}`. Reenvía a `PATCH /api/orders/orders/{id}/stage`, que valida la
+    force?, shipping_cost?, tracking_url?}` (los dos últimos: "En camino", el
+    ETA los detalla en el WhatsApp). Reenvía a `PATCH /api/orders/orders/{id}/stage`, que valida la
     transición contra el DAG y emite la cascada de notificación ETA. Response:
     el `OrderCommandResult` plano (`{success, current_stage, error_detail}`).
     """
     return await _forward_patch(
         request, f"/api/orders/orders/{_seg(order_id)}/stage", body
+    )
+
+
+@router.get("/order-actions/{order_id}/photo")
+async def get_order_photo_for_chat(
+    request: Request,
+    order_id: str = Path(..., min_length=1, max_length=200),
+) -> dict[str, Any]:
+    """Foto del pedido listo (o ``photo: null``) + canal por el que le llegaría
+    al cliente — el modal "Lista" del chat móvil.
+
+    GET .../{id}/photo → GET /api/orders/orders/{id}/photo.
+    """
+    return await castkit.forward(
+        request,
+        "GET",
+        f"/api/orders/orders/{_seg(order_id)}/photo",
+        base_url=_orders_base(),
+        timeout=_timeout_s(),
+        cast_label=_CAST_LABEL,
+    )
+
+
+@router.put("/order-actions/{order_id}/photo")
+async def upload_order_photo_for_chat(
+    request: Request,
+    order_id: str = Path(..., min_length=1, max_length=200),
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    """Sube la foto del pedido desde el chat móvil antes de pasarlo a "listo".
+
+    PUT .../{id}/photo (multipart ``file``) → PUT /api/orders/orders/{id}/photo
+    con el mismo multipart. Tipo y tamaño los valida el provider.
+    """
+    content = await file.read()
+    return await castkit.forward(
+        request,
+        "PUT",
+        f"/api/orders/orders/{_seg(order_id)}/photo",
+        base_url=_orders_base(),
+        timeout=_timeout_s(),
+        cast_label=_CAST_LABEL,
+        files={
+            "file": (
+                file.filename or "pedido.jpg",
+                content,
+                file.content_type or "application/octet-stream",
+            )
+        },
     )

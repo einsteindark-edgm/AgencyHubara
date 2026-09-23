@@ -72,10 +72,12 @@ class _FakeAsyncClient:
         params: object = None,
         json: object = None,
         headers: dict[str, str] | None = None,
+        files: object = None,
     ) -> httpx.Response:
         if self._capture is not None:
             self._capture.update(
-                method=method, url=url, params=params, json=json, headers=headers
+                method=method, url=url, params=params, json=json, headers=headers,
+                files=files,
             )
         if self._exc is not None:
             raise self._exc
@@ -340,3 +342,17 @@ async def test_forward_rejects_unknown_auth_mode(monkeypatch: pytest.MonkeyPatch
     _install(monkeypatch, result=httpx.Response(200, json={"ok": True}))
     with pytest.raises(ValueError):
         await _forward(_request(), auth="magic")  # type: ignore[arg-type]
+
+
+async def test_forward_sends_files_as_multipart_without_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un cast que sube un archivo (foto del pedido) lo reenvía como multipart:
+    los bytes y el tipo llegan intactos y no se manda cuerpo JSON."""
+    cap: dict[str, Any] = {}
+    _install(monkeypatch, capture=cap, result=httpx.Response(200, json={"ok": True}))
+    files = {"file": ("f.jpg", b"\xff\xd8bytes", "image/jpeg")}
+    data = await _forward(_request(), method="PUT", path="/api/x/photo", files=files)
+    assert data == {"ok": True}
+    assert cap["files"] == files
+    assert cap["json"] is None

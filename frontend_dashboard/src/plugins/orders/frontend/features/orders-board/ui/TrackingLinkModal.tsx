@@ -16,11 +16,9 @@
  * visor de audiencia de marketing: backdrop + `role="dialog"` + Escape.
  */
 import { useEffect, useRef, useState } from "react";
+import { normalizeTrackingUrl, parseShippingCost } from "@/shared/lib";
 import { fmtMoney } from "@/shared/lib/format";
 import { MacButton } from "@/shared/ui";
-
-import { parseShippingCost } from "../model/shippingCost";
-import { normalizeTrackingUrl } from "../model/trackingUrl";
 
 export interface ShippingConfirm {
   /** `null` = marcar en camino sin guía; string = link ya normalizado. */

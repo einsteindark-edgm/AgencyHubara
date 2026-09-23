@@ -10,6 +10,10 @@
  * botones de las transiciones VÁLIDAS (guiado por el DAG — un tap, sin estados
  * inválidos). Cancelar (terminal) pide confirmación de dos pasos. Un error del
  * backend (transición inválida / falta fecha) se muestra inline en la tarjeta.
+ *
+ * "Marcar listo" y "Despachar" NO mueven con un tap: abren un paso en la
+ * tarjeta, igual que los modales del tablero de escritorio — la foto del
+ * pedido (opcional) y el valor del envío + link de la guía (opcionales).
  */
 import { useState } from "react";
 
@@ -23,6 +27,9 @@ import {
   type CustomerOrder,
   type OrderRefStatus,
 } from "@plugins/chats/frontend/entities/order-ref";
+
+import { ReadyStep } from "./ReadyStep";
+import { ShipStep, type ShipExtras } from "./ShipStep";
 
 interface Props {
   sessionId: string | null;
@@ -45,11 +52,15 @@ export function ChatsOrdersPanel({ sessionId }: Props) {
   const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const onTransition = async (orderId: string, stage: OrderRefStatus) => {
+  const onTransition = async (
+    orderId: string,
+    stage: OrderRefStatus,
+    extras: ShipExtras = {},
+  ) => {
     setBusyIds((prev) => new Set(prev).add(orderId));
     setErrors((e) => ({ ...e, [orderId]: "" }));
     try {
-      const res = await transition.mutateAsync({ orderId, stage });
+      const res = await transition.mutateAsync({ orderId, stage, ...extras });
       if (!res.success) {
         setErrors((e) => ({
           ...e,
@@ -110,11 +121,15 @@ interface CardProps {
   order: CustomerOrder;
   busy: boolean;
   error?: string;
-  onTransition: (orderId: string, stage: OrderRefStatus) => void;
+  onTransition: (orderId: string, stage: OrderRefStatus, extras?: ShipExtras) => void;
 }
+
+/** Transiciones que piden datos antes de mover (paso en la tarjeta). */
+type Step = "ready" | "shipping" | null;
 
 function OrderCard({ order, busy, error, onTransition }: CardProps) {
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [step, setStep] = useState<Step>(null);
   const meta = ORDER_REF_STATUS_META[order.status];
   const nexts = NEXT_STAGES[order.status];
   const advances = nexts.filter((s) => s !== "cancelled");
@@ -135,6 +150,26 @@ function OrderCard({ order, busy, error, onTransition }: CardProps) {
 
       {nexts.length === 0 ? (
         <div className="order-terminal">Sin más cambios de estado.</div>
+      ) : step === "ready" ? (
+        <ReadyStep
+          orderId={order.id}
+          busy={busy}
+          onCancel={() => setStep(null)}
+          onConfirm={() => {
+            setStep(null);
+            onTransition(order.id, "ready");
+          }}
+        />
+      ) : step === "shipping" ? (
+        <ShipStep
+          orderTotal={order.total_cop ?? null}
+          busy={busy}
+          onCancel={() => setStep(null)}
+          onConfirm={(extras) => {
+            setStep(null);
+            onTransition(order.id, "shipping", extras);
+          }}
+        />
       ) : confirmingCancel ? (
         <div className="order-card-actions" aria-label="Confirmar cancelación">
           <span className="order-confirm-q">¿Cancelar el pedido?</span>
@@ -159,7 +194,9 @@ function OrderCard({ order, busy, error, onTransition }: CardProps) {
               key={s}
               className="order-advance-btn"
               disabled={busy}
-              onClick={() => onTransition(order.id, s)}
+              onClick={() =>
+                s === "ready" || s === "shipping" ? setStep(s) : onTransition(order.id, s)
+              }
             >
               {busy ? "…" : STAGE_ACTION_LABEL[s]}
             </button>
