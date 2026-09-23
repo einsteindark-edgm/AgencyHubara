@@ -216,3 +216,39 @@ def test_scripts_teach_one_item_per_product():
     assert "un ítem por producto" in tools
     assert "quitar=true" in tools
     assert "de CADA producto" in variantes
+
+
+@pytest.mark.asyncio
+async def test_real_case_trilogy_plus_scorpio_candle_in_another_color(tmp_path):
+    """El pedido del 2026-09-22 de punta a punta: Trilogía + Duo con vela
+    Escorpio en un color que no es el de su foto (negra). Los dos productos
+    quedan, cada uno con lo suyo, y el bot recibe `custom_color` para decir
+    "la foto es de referencia" en vez de negarlo."""
+    from dataclasses import replace
+
+    duo_con_fotos = replace(
+        _DUO, metadata={"colores": "Aries: rojo; Leo: naranja; Escorpio: negro"}
+    )
+
+    class _Catalog(_FakeCatalog):
+        async def search(self, q: str, *, limit: int = 10) -> SearchResult:
+            result = await super().search(q, limit=limit)
+            return replace(result, results=[_TRILOGIA, duo_con_fotos, _VELON])
+
+    tool = SetOrderSlotTool(
+        workspace=tmp_path, vault_dir=tmp_path / "vault", catalog=_Catalog()
+    )
+    await _set(tool, producto="Trilogía del Terror", cantidad="1")
+
+    result = await _set(tool, producto="Duo Zodiacal", diseno="Escorpio", color="roja")
+
+    assert "rejected" not in result
+    assert result["custom_color"] == {
+        "sign": "Escorpio",
+        "photo_colors": ["negro"],
+        "color": "rojo",
+    }
+    assert _items(tmp_path) == [
+        {"producto": "Trilogía del Terror", "cantidad": "1"},
+        {"producto": "Duo Zodiacal", "diseno": "Escorpio", "color": "rojo"},
+    ]
