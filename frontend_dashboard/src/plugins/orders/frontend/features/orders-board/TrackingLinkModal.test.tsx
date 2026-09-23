@@ -13,8 +13,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-import { parseShippingCost } from "./model/shippingCost";
-import { normalizeTrackingUrl } from "./model/trackingUrl";
+import { normalizeTrackingUrl, parseShippingCost } from "@/shared/lib";
 import { TrackingLinkModal } from "./ui/TrackingLinkModal";
 
 const URL = "https://www.servientrega.com/wps/portal/rastreo-envio?guia=1234567890";

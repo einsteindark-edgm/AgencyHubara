@@ -110,6 +110,7 @@ async def forward(
     cast_label: str,
     params: dict[str, Any] | None = None,
     body: dict[str, Any] | None = None,
+    files: dict[str, tuple[str, bytes, str]] | None = None,
     auth: AuthMode = "propagate",
 ) -> dict[str, Any]:
     """Reenvía ``method path`` al contrato publicado del provider, portando la
@@ -126,6 +127,8 @@ async def forward(
         cast_label: etiqueta ``origen→provider`` para los mensajes de error.
         params: query params opcionales.
         body: cuerpo JSON opcional.
+        files: archivos a reenviar como multipart (``{campo: (nombre, bytes,
+            mime)}``), p.ej. la foto que sube el operador. Excluye ``body``.
         auth: ``"propagate"`` (default) porta el ``Authorization`` entrante;
             ``"service"`` manda ``HUBARA_SERVICE_TOKEN`` e IGNORA la identidad
             entrante (no se mezclan). Para casts cuyo edge no trae bearer.
@@ -137,10 +140,12 @@ async def forward(
     else:
         raise ValueError(f"castkit.forward: auth desconocido {auth!r}")
     url = f"{base_url.rstrip('/')}{path}"
+    # `files` solo viaja cuando hay archivos: el request JSON queda idéntico.
+    extra: dict[str, Any] = {"files": files} if files is not None else {}
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.request(
-                method, url, params=params, json=body, headers=headers
+                method, url, params=params, json=body, headers=headers, **extra
             )
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         # Nunca conectó → garantizado que la operación NO se aplicó.

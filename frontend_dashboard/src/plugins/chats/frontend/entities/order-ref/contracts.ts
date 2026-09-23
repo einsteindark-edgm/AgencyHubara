@@ -86,3 +86,22 @@ export const customerOrdersSchema = z
   .passthrough();
 
 export type CustomerOrders = z.infer<typeof customerOrdersSchema>;
+
+/**
+ * Foto del pedido listo (`GET/PUT /api/chats/order-actions/{id}/photo`, cast
+ * de la foto de orders). Vista mínima: la ref del archivo (pasar por
+ * `apiFileUrl` para `<img>`), si el pedido tiene conversación de WhatsApp y si
+ * la ventana de 24 h está abierta (define por qué canal le llega al cliente).
+ */
+export const orderRefPhotoSchema = z
+  .object({
+    photo: z
+      .object({ file_url: z.string() })
+      .passthrough()
+      .nullable(),
+    has_conversation: z.boolean().nullish(),
+    service_window_open: z.boolean().nullish(),
+  })
+  .passthrough();
+
+export type OrderRefPhoto = z.infer<typeof orderRefPhotoSchema>;

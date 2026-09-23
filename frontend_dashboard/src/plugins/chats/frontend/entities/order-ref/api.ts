@@ -19,9 +19,11 @@ import {
   customerOrdersSchema,
   orderRefCommandResultSchema,
   orderRefDetailSchema,
+  orderRefPhotoSchema,
   type CustomerOrders,
   type OrderRefCommandResult,
   type OrderRefDetail,
+  type OrderRefPhoto,
   type OrderRefStatus,
 } from "./contracts";
 import { orderRefKeys } from "./keys";
@@ -59,6 +61,10 @@ interface TransitionStageVariables {
   stage: OrderRefStatus;
   note?: string;
   force?: boolean;
+  /** "En camino": valor del envío en COP entero (el ETA lo detalla al cliente). */
+  shipping_cost?: number;
+  /** "En camino": link de la guía, ya normalizado a http(s). */
+  tracking_url?: string;
 }
 
 /**
@@ -155,5 +161,43 @@ export function useConfirmOrderPayment() {
       );
       return orderRefCommandResultSchema.parse(raw);
     },
+  });
+}
+
+function photoPath(orderId: string): string {
+  return `/api/chats/order-actions/${encodeURIComponent(orderId)}/photo`;
+}
+
+/**
+ * Foto del pedido listo + canal por el que le llegaría al cliente (paso
+ * "Marcar listo" del panel móvil). `enabled` = lazy (al abrir el paso).
+ */
+export function useOrderRefPhoto(
+  orderId: string | null,
+  opts?: { enabled?: boolean },
+) {
+  return useQuery<OrderRefPhoto, Error>({
+    queryKey: orderRefKeys.photo(orderId ?? "none"),
+    enabled: Boolean(orderId) && (opts?.enabled ?? true),
+    queryFn: async ({ signal }) =>
+      orderRefPhotoSchema.parse(
+        await apiClient.get<unknown>(photoPath(orderId ?? ""), { signal }),
+      ),
+  });
+}
+
+/**
+ * Sube (o reemplaza) la foto del pedido como multipart `file`. Al pasar el
+ * pedido a "listo", el Agente ETA se la manda al cliente por WhatsApp.
+ */
+export function useUploadOrderRefPhoto() {
+  const qc = useQueryClient();
+  return useMutation<OrderRefPhoto, Error, { orderId: string; file: Blob }>({
+    mutationFn: async ({ orderId, file }) => {
+      const form = new FormData();
+      form.append("file", file, "pedido.jpg");
+      return orderRefPhotoSchema.parse(await apiClient.put<unknown>(photoPath(orderId), form));
+    },
+    onSuccess: (data, { orderId }) => qc.setQueryData(orderRefKeys.photo(orderId), data),
   });
 }

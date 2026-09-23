@@ -52,9 +52,10 @@ class _FakeAsyncClient:
     async def __aexit__(self, *args: object) -> bool:
         return False
 
-    async def request(self, method, url, *, params=None, json=None, headers=None):
+    async def request(self, method, url, *, params=None, json=None, headers=None, files=None):
         if self._capture is not None:
-            self._capture.update(method=method, url=url, json=json, headers=headers)
+            self._capture.update(
+                method=method, url=url, json=json, headers=headers, files=files)
         if self._exc is not None:
             raise self._exc
         assert self._result is not None
@@ -234,4 +235,67 @@ def test_by_session_route_propagates_authorization(
         "/api/chats/order-actions/by-session/wa_1",
         headers={"Authorization": "Bearer op-token"},
     )
+    assert (cap["headers"] or {}).get("Authorization") == "Bearer op-token"
+
+
+def test_stage_route_forwards_shipping_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """"En camino" desde el chat móvil: el valor del envío y el link de la guía
+    viajan en el mismo PATCH que el tablero de escritorio (el ETA los detalla
+    en el WhatsApp)."""
+    cap: dict[str, object] = {}
+    _install(monkeypatch, capture=cap, result=httpx.Response(
+        200, json={"success": True, "current_stage": "shipping"}))
+    app = FastAPI()
+    app.include_router(order_actions.router, prefix="/api/chats")
+    body = {"stage": "shipping", "shipping_cost": 12000,
+            "tracking_url": "https://guia.example.com/1"}
+    resp = TestClient(app).patch("/api/chats/order-actions/order_01HX/stage", json=body)
+    assert resp.status_code == 200
+    assert cap["json"] == body
+
+
+def test_photo_get_route_forwards_to_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """"Lista" desde el chat móvil: el modal lee si el pedido ya tiene foto y
+    por qué canal le llegaría (ventana de 24 h)."""
+    cap: dict[str, object] = {}
+    _install(monkeypatch, capture=cap, result=httpx.Response(
+        200, json={"photo": None, "has_conversation": True, "service_window_open": True}))
+    app = FastAPI()
+    app.include_router(order_actions.router, prefix="/api/chats")
+    resp = TestClient(app).get("/api/chats/order-actions/order_01HX/photo")
+    assert resp.status_code == 200
+    assert resp.json()["service_window_open"] is True
+    assert cap["method"] == "GET"
+    assert str(cap["url"]).endswith("/api/orders/orders/order_01HX/photo")
+
+
+def test_photo_put_route_forwards_the_file_as_multipart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """La foto que elige el operador en el celular llega al provider como el
+    mismo multipart (`file`) que sube el tablero — bytes y tipo intactos."""
+    cap: dict[str, object] = {}
+    _install(monkeypatch, capture=cap, result=httpx.Response(
+        200, json={"photo": {"file_url": "/x.jpg"}, "has_conversation": True}))
+    app = FastAPI()
+    app.include_router(order_actions.router, prefix="/api/chats")
+    jpeg = b"\xff\xd8\xff\xe0fake-jpeg"
+    resp = TestClient(app).put(
+        "/api/chats/order-actions/order_01HX/photo",
+        files={"file": ("pedido.jpg", jpeg, "image/jpeg")},
+        headers={"Authorization": "Bearer op-token"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["photo"]["file_url"] == "/x.jpg"
+    assert cap["method"] == "PUT"
+    assert str(cap["url"]).endswith("/api/orders/orders/order_01HX/photo")
+    assert cap["json"] is None
+    files = cap["files"]
+    assert isinstance(files, dict)
+    name, content, mime = files["file"]
+    assert (name, content, mime) == ("pedido.jpg", jpeg, "image/jpeg")
     assert (cap["headers"] or {}).get("Authorization") == "Bearer op-token"
