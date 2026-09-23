@@ -215,7 +215,11 @@ def _golden_env() -> dict[str, str]:
 
     El subprocess es la forma más limpia de aislar: el runner setea el env ANTES de
     importar el código de prod (vault temp, dummy Medusa) — algo que el worker
-    long-lived, ya importado con config real, no puede hacer in-process."""
+    long-lived, ya importado con config real, no puede hacer in-process.
+
+    El vault temp viaja solo como GOLDEN_EVAL_VAULT: el runner deriva de ahí (y
+    PISA) WORKSPACE_VAULT_DIR / EXOCLAW_STATE_DIR / CATALOG_SNAPSHOT_DIR, que el env
+    heredado trae apuntando al vault real."""
     env = dict(os.environ)
     env["GOLDEN_EVAL_VAULT"] = tempfile.mkdtemp(prefix="golden_suite_")
     env["GOLDEN_EVAL_SIGNOZ"] = "1"
