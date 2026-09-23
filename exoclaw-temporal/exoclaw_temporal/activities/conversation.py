@@ -26,6 +26,14 @@ conversación se construye con `_NeverConsolidate` (el LLM de resumen nunca se
 invoca, nada se escribe) + `_NoSharedMemory` (nada de MEMORY.md llega al
 prompt). El contexto de cada cliente es SOLO su propio historial (ventana de
 `memory_window` mensajes) + el plugin_context del turno.
+
+SIN LA IDENTIDAD GENÉRICA DE EXOCLAW (run 28a8e407, 2026-09-23):
+`ContextBuilder._get_identity` abre todo system prompt con "You are exoclaw,
+a helpful AI assistant", rutas de MEMORY.md, guías de edición de archivos y
+"State intent before tool calls" — le pedía al modelo narrar antes de cada
+tool. Con thinking apagado esa narración vive en su texto y terminaba en el
+mensaje al cliente. `_AgentContextBuilder` la reemplaza por un encabezado
+neutro: quién es y cómo habla cada agente lo dicen SUS archivos.
 """
 
 from __future__ import annotations
@@ -100,6 +108,18 @@ class _NoSharedMemory:
         return True
 
 
+class _AgentContextBuilder(ContextBuilder):
+    """ContextBuilder sin la identidad genérica de exoclaw (ver docstring del
+    módulo): el prompt arranca con los archivos del agente."""
+
+    def _get_identity(self) -> str:
+        return (
+            "# Agente de Hubara\n\n"
+            "Tus instrucciones, tu forma de hablar y tus herramientas están en "
+            "las secciones siguientes."
+        )
+
+
 def _build_conversation(llm: LLMConfig, ws: WorkspaceConfig) -> DefaultConversation:
     code_workspace = Path(ws.path)
     state_workspace = _state_workspace_for(code_workspace) or code_workspace
@@ -107,7 +127,7 @@ def _build_conversation(llm: LLMConfig, ws: WorkspaceConfig) -> DefaultConversat
     return DefaultConversation(
         history=SessionManager(state_workspace),
         memory=memory,
-        prompt=ContextBuilder(code_workspace, memory=memory),
+        prompt=_AgentContextBuilder(code_workspace, memory=memory),
         memory_window=llm.memory_window,
         consolidation_policy=_NeverConsolidate(),
     )
