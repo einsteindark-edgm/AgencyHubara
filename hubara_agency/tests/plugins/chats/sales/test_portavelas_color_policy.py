@@ -1,12 +1,15 @@
-"""HU portavelas — el color del portavelas es según disponibilidad, y la
-política SOLO aplica cuando el pedido incluye un producto con portavela.
+"""HU portavelas — el color del portavelas se escoge después, con una foto de
+los colores disponibles, y la política SOLO aplica cuando el pedido incluye un
+producto con portavela.
 
 Comportamiento contratado (2026-08-31, corregido 2026-09-07 tras el run
 943e6bff — un pedido sin portavelas recibió "se escogen los colores del
-portavelas"):
+portavelas"; y 2026-09-23: "al finalizar el pago" confundía a una clienta que
+paga contra entrega, que preguntó dos veces de qué color quedaba. El operador
+confirmó que el color del plato se escoge con una foto de lo disponible):
   1. Si el cliente pregunta el color del portavelas, el agente responde que
-     es según disponibilidad y que los colores se escogen al finalizar el
-     pago del pedido (guion siempre-cargado, aplica en cualquier etapa).
+     lo escoge después con una foto de los colores disponibles (guion
+     siempre-cargado, aplica en cualquier etapa). Nunca "al finalizar el pago".
   2. Al cerrar el pedido (register_order success), la tool decide de forma
      DETERMINISTA contra el catálogo si algún ítem trae portavela
      (`portavelas.included`). Solo en ese caso el `motivo` que viaja en
@@ -184,8 +187,9 @@ async def test_order_with_portavelas_carries_note_for_human(ctx, vault, catalog)
     }
     assert result["order_registered"]["portavelas_included"] is True
     motivo = result["order_registered"]["motivo"]
-    assert "color del portavelas" in motivo
-    assert "disponibilidad" in motivo
+    assert "portavelas" in motivo
+    assert "foto" in motivo
+    assert "colores disponibles" in motivo
 
 
 @pytest.mark.asyncio
@@ -195,11 +199,11 @@ async def test_envelope_with_portavelas_instructs_note_and_buyer_notice(
     result = await _register_ok(ctx, vault, _DUO_ITEMS, catalog)
     summary = result["summary"]
     # Nota para el summary de escalate_to_human.
-    assert "color del portavelas" in summary
-    # Aviso al comprador en la despedida: los colores se escogen al
-    # finalizar el pago.
-    assert "finalizar el pago" in summary
-    assert "escogen" in summary
+    assert "portavelas" in summary
+    # Aviso al comprador en la despedida: le llega una foto de los colores
+    # disponibles para escoger (nada de "al finalizar el pago": paga COD).
+    assert "foto con los colores disponibles" in summary
+    assert "finalizar el pago" not in summary
     assert "NO menciones el portavelas" not in summary
 
 
@@ -262,7 +266,7 @@ def test_sales_script_answers_portavelas_color_question() -> None:
     """El guion siempre-cargado responde la pregunta en cualquier etapa."""
     script = _read_ws("skills/sales_script/SKILL.md")
     assert "portavelas" in script
-    assert "según disponibilidad" in script
+    assert "foto con los colores disponibles" in script
 
 
 def test_etapa_cierre_makes_portavelas_notice_conditional() -> None:
@@ -278,16 +282,16 @@ def test_etapa_cierre_makes_portavelas_notice_conditional() -> None:
     # La prohibición explícita existe para el caso sin portavelas.
     assert "no lo incluye" in cierre.lower() or "no incluye" in cierre.lower()
     # La nota al humano sigue documentada para el caso con portavelas.
-    assert "color del portavelas" in cierre
-    assert "finalizar el pago" in cierre
+    assert "portavelas" in cierre
+    assert "foto con los colores disponibles" in cierre
 
 
 def test_etapa_variantes_excludes_portavelas_from_slots() -> None:
     """El color del portavelas NO es una variante del pedido: no se fija
     con set_order_slot ni se pide con picker."""
     variantes = _read_ws("skills/etapa_variantes/SKILL.md")
-    assert "portavelas" in variantes
-    assert "disponibilidad" in variantes
+    assert "portavela" in variantes
+    assert "colores disponibles" in variantes
 
 
 def test_mba_closing_script_makes_portavelas_notice_conditional() -> None:
@@ -304,3 +308,20 @@ def test_mba_closing_script_makes_portavelas_notice_conditional() -> None:
     )
     assert "portavela" in mba_cierre
     assert "solo si" in mba_cierre.lower()
+
+
+def test_no_script_tells_the_buyer_to_wait_for_the_payment() -> None:
+    """"Al finalizar el pago se escogen los colores" no tiene sentido para
+    quien paga contra entrega (2026-09-22 la clienta preguntó dos veces "¿de
+    qué color quedaría?"). Ningún guion, de ventas ni del MBA, lo dice."""
+    scripts = [
+        *(_WORKSPACE / "skills").rglob("*.md"),
+        *(_WORKSPACE.parents[3] / "mba/agents/sales").rglob("*.md"),
+        _WORKSPACE.parents[3] / "mba/agents/sales/agent.yaml",
+    ]
+    offenders = [
+        str(path.relative_to(_WORKSPACE.parents[3]))
+        for path in scripts
+        if "finalizar el pago" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
