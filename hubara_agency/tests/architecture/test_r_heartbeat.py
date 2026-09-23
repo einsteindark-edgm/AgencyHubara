@@ -12,6 +12,9 @@ This test uses a *symbol-based heuristic* over the activity body:
     `@with_heartbeat`.
   - Exemptions for false positives are listed in conftest.R_HEARTBEAT_EXEMPTIONS.
 
+Scope: every activity module (`conftest.activity_modules`) — `activities/*.py`
+in any layout plus any module defining an `@activity.defn` elsewhere.
+
 Test:
   #6 — `test_long_running_activities_have_heartbeat`
 """
@@ -21,9 +24,8 @@ import ast
 from pathlib import Path
 
 from tests.architecture.conftest import (
-    AGENT_ACTIVITIES_GLOB,
     R_HEARTBEAT_EXEMPTIONS,
-    iter_agent_files,
+    activity_modules,
     parse_file,
     relative_to_hubara,
 )
@@ -47,17 +49,10 @@ _LONG_RUNNING_TRIGGERS: frozenset[str] = frozenset(
 
 
 def _activity_modules() -> list[Path]:
-    """Cada archivo bajo `activities/` que no sea `__init__.py`, más los
-    cross-agent platform activities."""
-    files = [p for p in iter_agent_files(AGENT_ACTIVITIES_GLOB) if p.name != "__init__.py"]
-    src_root = Path(__file__).resolve().parents[2] / "src"
-    for extra in (
-        src_root / "platform" / "temporal" / "activities.py",
-        src_root / "platform" / "whatsapp" / "activities.py",
-    ):
-        if extra.is_file():
-            files.append(extra)
-    return sorted(set(files))
+    """Todo módulo de activities (`conftest.activity_modules`): cada archivo bajo
+    `activities/` en cualquier layout, más todo módulo que define un
+    `@activity.defn` fuera de ahí (platform, `activities/__init__.py`, ...)."""
+    return activity_modules()
 
 
 def _has_activity_defn(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:

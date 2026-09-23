@@ -252,9 +252,9 @@ async def send_capi_event_activity(
     return result
 
 
-__all__ = [
+__all__ = (
     "LEAD_CLOSING_TAGS",
     "PURCHASE_CLOSING_TAGS",
     "flush_capi_outbox_activity",
     "send_capi_event_activity",
-]
+)

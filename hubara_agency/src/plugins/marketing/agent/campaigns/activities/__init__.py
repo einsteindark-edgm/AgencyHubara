@@ -167,11 +167,11 @@ async def record_campaign_send_result_activity(
     store.save(campaign)
 
 
-__all__ = [
+__all__ = (
     "load_campaign_send_plan_activity",
     "mark_campaign_sending_activity",
     "mark_marketing_opt_out_activity",
     "prepare_campaign_carousel_activity",
     "record_campaign_send_result_activity",
     "stamp_campaign_touch_activity",
-]
+)

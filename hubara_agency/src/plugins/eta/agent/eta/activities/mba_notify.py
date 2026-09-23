@@ -20,7 +20,7 @@ from urllib.parse import quote
 
 from src.sdk import castkit
 
-__all__ = ["api_base_url", "event_type_for_stage", "notify_via_mba"]
+__all__ = ("api_base_url", "event_type_for_stage", "notify_via_mba")
 
 #: Por debajo del ``start_to_close_timeout`` (30 s) de la activity de claim
 #: del ETA, y por encima del peor caso del adapter de mba (≈13,5 s): un
