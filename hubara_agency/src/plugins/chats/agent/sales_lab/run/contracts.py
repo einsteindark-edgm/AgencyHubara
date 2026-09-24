@@ -46,3 +46,36 @@ class SmokeResult:
     case_id: str | None = None
     error: str | None = None
     sent_texts: list[str] = field(default_factory=list)
+    cost_usd: float = 0.0
+
+
+@dataclass(frozen=True)
+class SimulateInput:
+    """Un caso (línea `index` de cases.jsonl) de un brazo y una repetición."""
+
+    run_id: str
+    bench_id: str
+    arm: str
+    rep: int
+    index: int
+
+
+@dataclass(frozen=True)
+class CaseOutcome:
+    case_id: str
+    ok: bool
+    error: str | None = None
+    cost_usd: float = 0.0
+
+
+@dataclass(frozen=True)
+class ArmPublishInput:
+    run_id: str
+    arm: str
+    rep: int
+
+
+@dataclass(frozen=True)
+class ArmPublishResult:
+    published: int
+    missing: int

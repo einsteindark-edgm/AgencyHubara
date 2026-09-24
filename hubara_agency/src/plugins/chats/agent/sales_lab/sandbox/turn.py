@@ -69,6 +69,17 @@ def turn_context(metadata: dict[str, Any], *, at_ms: int) -> list[str]:
     return [bogota, *(n for n in notes if n)]
 
 
+def llm_cost_usd(metadata: dict[str, Any]) -> float:
+    """Costo LLM acumulado en la metadata (`episodes[].llm_usage.cost_usd`,
+    lo escribe `record_episode_llm_usage`). El del caso = después − antes."""
+    total = 0.0
+    for ep in metadata.get("episodes") or []:
+        usage = ep.get("llm_usage") if isinstance(ep, dict) else None
+        if isinstance(usage, dict) and isinstance(usage.get("cost_usd"), (int, float)):
+            total += float(usage["cost_usd"])
+    return total
+
+
 def _last_jsonl(path: Path) -> dict[str, Any] | None:
     try:
         lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -106,7 +117,9 @@ async def run_case(
         sales_workspace=workspace_slug(workspace_path),
         sales_workspace_path=workspace_path,
     )
-    metadata = json.loads((box.vault_dir / box.session_id / "metadata.json").read_text(encoding="utf-8"))
+    metadata_path = box.vault_dir / box.session_id / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    cost_before = llm_cost_usd(metadata)
     at_ms = int(case["at_ms"])
     queue = task_queue or f"lab-sim-{uuid.uuid4().hex[:12]}"
     capture = SandboxCapture()
@@ -162,6 +175,11 @@ async def run_case(
                 except Exception:  # noqa: BLE001 — el workflow pudo haber cerrado solo (escalación)
                     pass
     result["trace"] = _last_jsonl(box.vault_dir / box.session_id / "evals" / "turn_traces.jsonl")
+    try:
+        after = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        after = metadata
+    result["cost_usd"] = round(max(llm_cost_usd(after) - cost_before, 0.0), 8)
     result["effects"] = capture.effects
     result["plugin_context"] = context
     return result
