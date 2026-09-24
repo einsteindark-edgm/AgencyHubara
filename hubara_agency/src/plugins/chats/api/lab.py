@@ -161,6 +161,16 @@ def estimate(
     return _estimate(store, _parse_arms(arms.split(",")), _parse_reps(reps), bench)
 
 
+async def _last_status(client: Any) -> dict[str, Any] | None:
+    """Cómo terminó la última corrida (el lanzador ya cerró). Si la caja no
+    prendió o nunca reportó, no hay progreso en S3: su error solo vive acá."""
+    try:
+        status = dict(await client.get_workflow_handle(LAB_LAUNCH_WORKFLOW_ID).query("status"))
+    except Exception:  # noqa: BLE001 — nunca se lanzó, o ya salió de la retención
+        return None
+    return status if status.get("phase") else None
+
+
 async def _active_status(client: Any) -> dict[str, Any] | None:
     from temporalio.client import WorkflowExecutionStatus
 
@@ -233,7 +243,9 @@ async def launch(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str,
 
 @router.get("/lab/runs/active")
 async def active() -> dict[str, Any]:
-    return {"active": await _active_status(await _temporal_client())}
+    client = await _temporal_client()
+    status = await _active_status(client)
+    return {"active": status, "last": None if status is not None else await _last_status(client)}
 
 
 @router.post("/lab/runs/active/cancel", status_code=202)
@@ -297,10 +309,23 @@ def _jsonl_key(store: LabStorePort, key: str) -> list[dict[str, Any]]:
     return out
 
 
+# Una corrida sin fase terminal que no reporta hace más de esto se marca
+# vieja: la caja se cayó a mitad y no puede quedar "Corriendo" para siempre.
+_STALE_AFTER_MS = 30 * 60_000
+_TERMINAL = ("done", "failed", "cancelled")
+
+
+def _stale(progress: dict[str, Any]) -> bool:
+    updated = progress.get("updated_at_ms")
+    if progress.get("phase") in _TERMINAL or not isinstance(updated, int):
+        return False
+    return _now_ms() - updated > _STALE_AFTER_MS
+
+
 @router.get("/lab/runs")
 def list_runs() -> dict[str, Any]:
     store = _store()
-    run_ids = sorted({k.split("/")[1] for k in store.list_keys("runs/") if k.count("/") >= 2})
+    run_ids = store.list_children("runs/")
     runs: list[dict[str, Any]] = []
     for run_id in run_ids:
         manifest = json.loads(store.get_bytes(f"runs/{run_id}/manifest.json") or b"{}")
@@ -323,6 +348,7 @@ def list_runs() -> dict[str, Any]:
                 "notes": progress.get("notes") or [],
                 "started_at_ms": progress.get("started_at_ms"),
                 "updated_at_ms": progress.get("updated_at_ms"),
+                "stale": _stale(progress),
             }
         )
     runs.sort(key=lambda r: r.get("started_at_ms") or 0, reverse=True)

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
+import shutil
 import os
 import time
 from dataclasses import asdict
@@ -70,18 +72,33 @@ def _store() -> LabStorePort:
 
 
 def _download_bench(store: LabStorePort, bench_id: str, dest: Path) -> None:
+    """Baja el banco a una carpeta aparte y la renombra al final: un corte a
+    mitad (S3, timeout) nunca queda como banco completo para los reintentos ni
+    para las corridas siguientes de la caja."""
     prefix = f"bench/{bench_id}/"
     if (dest / "manifest.json").is_file():
         return  # ya bajado en una corrida anterior de esta caja
     keys = store.list_keys(prefix)
     if f"{prefix}manifest.json" not in keys:
         raise ApplicationError(f"el banco {bench_id} no tiene manifiesto: está incompleto", non_retryable=True)
-    for key in keys:
-        target = dest / key[len(prefix):]
-        target.parent.mkdir(parents=True, exist_ok=True)
-        data = store.get_bytes(key)
-        if data is not None:
-            target.write_bytes(data)
+    partial = dest.with_name(f"{dest.name}.partial-{uuid.uuid4().hex[:8]}")
+    try:
+        for key in keys:
+            target = partial / key[len(prefix):]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            data = store.get_bytes(key)
+            if data is not None:
+                target.write_bytes(data)
+        if dest.exists() and not (dest / "manifest.json").is_file():
+            shutil.rmtree(dest)  # restos de una bajada anterior a medias
+        try:
+            partial.rename(dest)
+        except OSError:
+            if not (dest / "manifest.json").is_file():
+                raise
+            # otro intento lo bajó completo primero: el nuestro sobra
+    finally:
+        shutil.rmtree(partial, ignore_errors=True)
 
 
 @activity.defn(name="lab_run_prepare")

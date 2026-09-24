@@ -9,6 +9,7 @@ una corrida de decisión, ~US$30 en 9 pasadas; el clasificador suma ~US$0,0002
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -26,6 +27,9 @@ def estimate_run_usd(arms: list[str], *, reps: int, turns: int) -> float:
     return round(per_turn * reps * max(0, turns), 2)
 
 
+_DATED_RUN_RE = re.compile(r"run-(\d{6})\d{2}-")
+
+
 def _same_month(ms: int, now_ms: int) -> bool:
     a = datetime.fromtimestamp(ms / 1000, tz=_BOGOTA)
     b = datetime.fromtimestamp(now_ms / 1000, tz=_BOGOTA)
@@ -33,12 +37,16 @@ def _same_month(ms: int, now_ms: int) -> bool:
 
 
 def month_spent_usd(store: LabStorePort, *, now_ms: int) -> float:
-    """Gasto real de las corridas del mes en curso (hora de Bogotá)."""
+    """Gasto real de las corridas del mes en curso (hora de Bogotá). No lee las
+    corridas cuyo id dice otro mes (`run-AAAAMMDD-…`, fecha de Bogotá); un id
+    sin fecha se lee igual (subcontar el gasto es el error peligroso)."""
     total = 0.0
-    for key in store.list_keys("runs/"):
-        if not key.endswith("/progress.json"):
+    month = f"{datetime.fromtimestamp(now_ms / 1000, tz=_BOGOTA):%Y%m}"
+    for run_id in store.list_children("runs/"):
+        dated = _DATED_RUN_RE.match(run_id)
+        if dated and dated.group(1) != month:
             continue
-        raw = store.get_bytes(key)
+        raw = store.get_bytes(f"runs/{run_id}/progress.json")
         try:
             progress = json.loads(raw or b"{}")
         except ValueError:
