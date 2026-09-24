@@ -29,7 +29,7 @@ async def test_a_run_that_fails_midway_keeps_what_it_spent(box, sims, monkeypatc
     _order(box, arms=["A1"], reps=2)
     seen: list[int] = []
 
-    async def breaks_on_the_second_rep(case, *, bench_dir, sandbox_dir, timeout_s):
+    async def breaks_on_the_second_rep(case, *, bench_dir, sandbox_dir, timeout_s, **_kw):
         seen.append(1)
         if sandbox_dir.parts[-3:-1] == ("A1", "1"):
             raise RuntimeError("el disco de la caja se llenó")
@@ -51,7 +51,7 @@ async def test_a_case_that_never_reported_its_cost_is_charged_the_measured_rate(
 
     _order(box, arms=["A1"], reps=1)
 
-    async def killed(case, *, bench_dir, sandbox_dir, timeout_s):
+    async def killed(case, *, bench_dir, sandbox_dir, timeout_s, **_kw):
         if sandbox_dir.parts[-3] == "A1":
             return _fake_result(case, cost=0.0, error="el turno no terminó en 600 s")
         return _fake_result(case, cost=0.0)

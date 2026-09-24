@@ -838,6 +838,7 @@ El turno de ventas SHALL poder usar un clasificador (Jev u OpenAI por OpenRouter
 - AND si una tool que espera al cliente (ej. `send_shipping_rates`) cortaría el turno sin atender el catálogo, hay UNA ronda más con esa nota (`turn_policy`)
 - AND si la verificación dice con claridad que un asunto quedó sin atender, se envía UN complemento como turno de sistema (`trigger: complement`); si hay duda, el asunto queda pendiente para la percepción del turno siguiente
 - AND si el cliente escribe antes del complemento, su mensaje manda y el complemento se descarta
+- AND la verificación en la traza guarda su costo (`cost_usd`) y `complement_scheduled: true` solo si este turno agendó el complemento (el laboratorio espera ese segundo turno sin adivinar)
 
 #### Scenario: Clasificador caído
 

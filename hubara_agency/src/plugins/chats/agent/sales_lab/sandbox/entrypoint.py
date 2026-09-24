@@ -2,7 +2,7 @@
 
     python -m src.plugins.chats.agent.sales_lab.sandbox.entrypoint \\
         --case case.json --bench /lab/bench/<banco> \\
-        --sandbox /lab/runs/<corrida>/<brazo>/<rep>/<caso> --out result.json
+        --sandbox /lab/runs/<corrida>/<brazo>/<rep>/<caso> --out result.json [--arm B]
 
 Un proceso por caso: el vault, el historial del LLM y los clientes quedan en
 caché por proceso (`lru_cache`, constantes de módulo), así que cada caso
@@ -25,6 +25,7 @@ import os
 import sys
 from pathlib import Path
 
+from src.plugins.chats.agent.sales_lab.arms import SIMULATED_ARMS
 from src.plugins.chats.agent.sales_lab.guard import check_lab_env
 from src.plugins.chats.agent.sales_lab.sandbox.env import prepare_case_env
 
@@ -50,6 +51,7 @@ async def _run(args: argparse.Namespace) -> int:
         sandbox_dir=Path(args.sandbox),
         client=client,
         timeout_s=float(args.timeout),
+        arm=args.arm,
     )
     Path(args.out).write_text(json.dumps(result, ensure_ascii=False, default=str), encoding="utf-8")
     return 0 if result.get("error") is None else 1
@@ -62,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sandbox", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--timeout", default="600")
+    parser.add_argument("--arm", default="A1", choices=SIMULATED_ARMS)
     args = parser.parse_args(argv)
     prepare_case_env(os.environ, Path(args.sandbox))
     problems = check_lab_env(os.environ)

@@ -16,7 +16,8 @@ El proceso tiene que traer el entorno del caso ya preparado
 entrypoint de la caja (`sandbox/entrypoint.py`) hace eso.
 
 Lo que el turno recibe: los mensajes de la ráfaga real, uno por señal (la
-coalescencia arma el turno como en producción), y el contexto que el ingest
+coalescencia arma el turno como en producción; los bots nuevos B y C llevan
+el modo `on` y su perfil en el 4.º argumento, como un canary), y el contexto que el ingest
 agrega y que sale de la metadata (hora de Bogotá, borrador del pedido,
 carrito web, producto web, aplazamiento, cupón). No se reconstruyen las
 notas del ingest que dependen del mensaje entrante (respuesta a campaña,
@@ -32,6 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.plugins.chats.agent.sales_lab.arms import signal_meta
 from src.plugins.chats.agent.sales_lab.sandbox.activities import SandboxCapture, sandbox_activities
 from src.plugins.chats.agent.sales_lab.sandbox.clock import frozen_clock
 from src.plugins.chats.agent.sales_lab.sandbox.materialize import materialize_case
@@ -80,15 +82,33 @@ def llm_cost_usd(metadata: dict[str, Any]) -> float:
     return total
 
 
-def _last_jsonl(path: Path) -> dict[str, Any] | None:
+def _jsonl_rows(path: Path) -> list[dict[str, Any]]:
     try:
         lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     except OSError:
-        return None
-    try:
-        return json.loads(lines[-1]) if lines else None
-    except ValueError:
-        return None
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def classifier_cost_usd(traces: list[dict[str, Any]]) -> float:
+    """Lo que costó el clasificador (percepción + verificación) en el caso:
+    no pasa por el LLM del agente, así que no está en `llm_usage`."""
+    total = 0.0
+    for trace in traces:
+        for step in trace.get("steps") or []:
+            if isinstance(step, dict) and step.get("kind") in ("perception", "verify"):
+                cost = step.get("cost_usd")
+                if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+                    total += float(cost)
+    return total
 
 
 async def run_case(
@@ -101,6 +121,7 @@ async def run_case(
     llm_chat: Any | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     bench_workspace: str = PROD_SALES_WORKSPACE,
+    arm: str = "A1",
 ) -> dict[str, Any]:
     from temporalio.worker import Worker
 
@@ -118,6 +139,8 @@ async def run_case(
         sales_workspace_path=workspace_path,
     )
     metadata_path = box.vault_dir / box.session_id / "metadata.json"
+    traces_path = box.vault_dir / box.session_id / "evals" / "turn_traces.jsonl"
+    traces_before = len(_jsonl_rows(traces_path))
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     cost_before = llm_cost_usd(metadata)
     at_ms = int(case["at_ms"])
@@ -128,6 +151,7 @@ async def run_case(
         "session_id": case.get("session_id"),
         "sim_session_id": box.session_id,
         "turn_key": case.get("turn_key"),
+        "arm": arm,
         "error": None,
     }
     with installed_sandbox_ports(promotions_path=bench_dir / "promotions.json", catalog=get_catalog_client()), frozen_clock(at_ms):
@@ -140,9 +164,15 @@ async def run_case(
 
         activities = sandbox_activities(sales_worker.SALES_ACTIVITIES, capture=capture, llm_chat=llm_chat)
         context = turn_context(metadata, at_ms=at_ms)
-        messages = [str(m.get("text") or "") for m in case.get("burst") or [] if str(m.get("text") or "").strip()]
+        messages = [m for m in case.get("burst") or [] if isinstance(m, dict) and str(m.get("text") or "").strip()]
         if not messages:
-            messages = [str((case.get("real") or {}).get("inbound_text") or "")]
+            messages = [{"text": str((case.get("real") or {}).get("inbound_text") or "")}]
+
+        def _args(message: dict[str, Any]) -> list[Any]:
+            meta = signal_meta(arm, message)
+            base: list[Any] = [str(message.get("text") or ""), None, context]
+            return base if meta is None else [*base, meta]
+
         workflow_id = f"lab-sim-{box.session_id}-{uuid.uuid4().hex[:8]}"
         async with Worker(
             client,
@@ -161,10 +191,10 @@ async def run_case(
                     id=workflow_id,
                     task_queue=queue,
                     start_signal="send_message",
-                    start_signal_args=[messages[0], None, context],
+                    start_signal_args=_args(messages[0]),
                 )
-                for text in messages[1:]:
-                    await handle.signal("send_message", args=[text, None, context])
+                for message in messages[1:]:
+                    await handle.signal("send_message", args=_args(message))
             try:
                 await asyncio.wait_for(capture.turn_done.wait(), timeout=timeout_s)
             except TimeoutError:
@@ -174,12 +204,20 @@ async def run_case(
                     await handle.terminate("laboratorio: turno simulado terminado")
                 except Exception:  # noqa: BLE001 — el workflow pudo haber cerrado solo (escalación)
                     pass
-    result["trace"] = _last_jsonl(box.vault_dir / box.session_id / "evals" / "turn_traces.jsonl")
+    # Las trazas de ESTE caso: la del turno y, si la verificación agendó un
+    # complemento, la de ese segundo turno (parte de la respuesta del caso).
+    new_traces = _jsonl_rows(traces_path)[traces_before:]
+    result["trace"] = new_traces[0] if new_traces else None
+    result["complement_trace"] = next((t for t in new_traces[1:] if t.get("trigger") == "complement"), None)
     try:
         after = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         after = metadata
-    result["cost_usd"] = round(max(llm_cost_usd(after) - cost_before, 0.0), 8)
+    llm = round(max(llm_cost_usd(after) - cost_before, 0.0), 8)
+    classifier = round(classifier_cost_usd(new_traces), 8)
+    result["llm_cost_usd"] = llm
+    result["perception_cost_usd"] = classifier
+    result["cost_usd"] = round(llm + classifier, 8)
     result["effects"] = capture.effects
     result["plugin_context"] = context
     return result

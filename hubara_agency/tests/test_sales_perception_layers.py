@@ -70,7 +70,7 @@ class Classifier:
         @activity.defn(name="verify_coverage")
         async def verify(inp: VerifyInput) -> VerifyOutput:
             self.verified.append(inp)
-            return VerifyOutput(ok=True, decision=self.decision, missing=list(self.missing))
+            return VerifyOutput(ok=True, decision=self.decision, missing=list(self.missing), cost_usd=0.0002)
 
         return [perceive, verify]
 
@@ -204,6 +204,7 @@ async def test_shadow_records_perception_and_verification_without_changing_the_r
     assert kinds.index("verify") > kinds.index("outbound")  # en sombra verifica DESPUÉS de enviar
     verify = next(s for s in trace["steps"] if s["kind"] == "verify")
     assert verify["decision"] == "complement" and verify["applied"] is False
+    assert verify["complement_scheduled"] is False and verify["cost_usd"] == 0.0002
 
 
 @pytest.mark.asyncio
@@ -248,6 +249,10 @@ async def test_on_a_clear_gap_after_the_reply_becomes_one_complement_bubble(tmp_
     complement_prompt = json.dumps(llm.inputs[1], ensure_ascii=False)
     assert "Complemento del turno" in complement_prompt and "envío" in complement_prompt
     assert len(classifier.verified) == 1  # el complemento no se vuelve a verificar
+    # La traza del turno del cliente dice que agendó el complemento: el
+    # laboratorio espera ese segundo turno sin adivinar (PR 15).
+    verify = next(s for s in _customer_trace(tracker)["steps"] if s["kind"] == "verify")
+    assert verify["complement_scheduled"] is True and verify["cost_usd"] == 0.0002
 
 
 @pytest.mark.asyncio

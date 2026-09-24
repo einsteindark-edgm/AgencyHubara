@@ -23,7 +23,9 @@ from typing import Any
 
 from src.plugins.chats.agent.sales_eval.scorecard import stats, store as card_store
 from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION
+from src.plugins.chats.agent.sales_lab.arms import ARM_PROFILES
 from src.plugins.chats.agent.sales_lab.cases import CaseSet
+from src.plugins.chats.agent.sales_lab.run.arena import arena_metrics
 from src.sdk.labkit import LabStorePort
 
 CONTROL = "A0"
@@ -197,6 +199,9 @@ def _real_identity(trace: dict[str, Any], case: dict[str, Any], *, sim_session_i
     return out
 
 
+_COMPLEMENT_FIELDS = ("sent_texts", "llm_text", "tools", "guards", "suppressed_reason", "steps")
+
+
 def publish_arm(
     store: LabStorePort,
     *,
@@ -208,8 +213,11 @@ def publish_arm(
 ) -> tuple[int, int]:
     """Sube lo que corrió un brazo simulado en una repetición:
     `turns/<brazo>/<rep>/<sid>.jsonl` y, en la repetición 0, la salida del
-    brazo en cada turno del hilo (`outputs.<brazo>`). Devuelve (publicados,
-    sin resultado)."""
+    brazo en cada turno del hilo (`outputs.<brazo>`). El complemento del bot
+    nuevo (segundo turno de sistema) viaja dentro de su caso (`complement`,
+    y `complement_texts` en el hilo). Las métricas del brazo van a
+    `metrics/<brazo>/<rep>.json` (arena, PR 15). Devuelve (publicados, sin
+    resultado)."""
     prefix = f"runs/{run_id}"
     source = f"lab:{run_id}:{arm}:{rep}"
     by_sid: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -221,11 +229,26 @@ def publish_arm(
         if not isinstance(trace, dict):
             missing += 1
             continue
-        real = _real_identity(trace, case, sim_session_id=str(result.get("sim_session_id") or ""), source=source)
+        sim = str(result.get("sim_session_id") or "")
+        real = _real_identity(trace, case, sim_session_id=sim, source=source)
+        output = {k: real[k] for k in _OUTPUT_FIELDS if k in real}
+        complement = result.get("complement_trace")
+        if isinstance(complement, dict):
+            second = _real_identity(complement, case, sim_session_id=sim, source=source)
+            real["complement"] = {k: second[k] for k in _COMPLEMENT_FIELDS if k in second}
+            output["complement_texts"] = list(second.get("sent_texts") or [])
         by_sid[str(case["session_id"])].append(real)
-        outputs[str(case["session_id"])][str(case["case_id"])] = {k: real[k] for k in _OUTPUT_FIELDS if k in real}
+        outputs[str(case["session_id"])][str(case["case_id"])] = output
     for sid, rows in by_sid.items():
         store.put_bytes(f"{prefix}/turns/{arm}/{rep}/{sid}.jsonl", _jsonl(rows))
+    metrics = {
+        "arm": arm,
+        "rep": rep,
+        "profile": ARM_PROFILES.get(arm),
+        "missing": missing,
+        **arena_metrics(results.values()),
+    }
+    store.put_bytes(f"{prefix}/metrics/{arm}/{rep}.json", json.dumps(metrics, ensure_ascii=False).encode())
     if rep == 0:
         for sid, by_case in outputs.items():
             raw = store.get_bytes(f"{prefix}/threads/{sid}.json")

@@ -95,3 +95,29 @@ async def test_the_trace_is_persisted_for_real_and_announces_the_end_of_the_turn
     assert calls == [("persist_turn_trace", ("wa_573000000099", '{"turn_started_ms": 1}'))]
     assert capture.turn_done.is_set()
     assert capture.trace_payload == {"turn_started_ms": 1}
+
+
+def test_the_classifier_layers_run_for_real_in_the_sandbox() -> None:
+    """Los bots nuevos (B y C, PR 15) llaman al clasificador de verdad: en la
+    caja, por OpenRouter con la llave del laboratorio; en CI, con el
+    proveedor falso (`PERCEPTION_PROVIDER=fake`)."""
+    assert {"perceive_burst", "verify_coverage"} <= REAL_IN_SANDBOX
+
+
+async def test_a_scheduled_complement_keeps_the_case_open_until_its_own_trace() -> None:
+    """Con el bot nuevo, la verificación puede agendar UN complemento: es un
+    segundo turno (de sistema) que forma parte de la respuesta del caso. La
+    traza del cliente lo avisa (`complement_scheduled`) y el sandbox espera
+    esa segunda traza en vez de adivinar con un tiempo."""
+    import json
+
+    capture = SandboxCapture()
+    [trace] = sandbox_activities([_named("persist_turn_trace")], capture=capture)
+    customer = {"trigger": "customer", "steps": [{"kind": "verify", "decision": "complement", "complement_scheduled": True}]}
+
+    await trace("wa_573000000099", json.dumps(customer))
+    assert not capture.turn_done.is_set()
+
+    await trace("wa_573000000099", json.dumps({"trigger": "complement", "steps": []}))
+    assert capture.turn_done.is_set()
+    assert [t["trigger"] for t in capture.trace_payloads] == ["customer", "complement"]

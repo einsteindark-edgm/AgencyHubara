@@ -7,13 +7,17 @@ activity de producción está en uno de los dos conjuntos; una nueva que no
 esté hace fallar la corrida (`UnclassifiedActivityError`).
 
 Reales: el turno (prompt, LLM, tools, historial, episodio, guardas, cierres)
-escribe en el vault del sandbox. WhatsApp y CAPI también son reales: sin
+escribe en el vault del sandbox. Las capas del bot nuevo (`perceive_burst`,
+`verify_coverage`, PR 15) llaman al clasificador de verdad: en la caja, por
+OpenRouter con la llave del laboratorio; en CI, con `PERCEPTION_PROVIDER=fake`. WhatsApp y CAPI también son reales: sin
 llaves (el guard de la caja lo garantiza) el cliente de WhatsApp simula el
 envío y CAPI se salta; el test de fugas lo verifica.
 
 Reemplazadas:
   * `persist_turn_trace`: la real + avisa que el turno terminó (el driver
-    corta ahí: es la última activity de todo turno);
+    corta ahí: es la última activity de todo turno). Si la traza dice que
+    el turno agendó un complemento (`complement_scheduled`), el caso sigue
+    abierto hasta la traza de ese segundo turno;
   * `read_idle_timeout_seconds`: una hora (el ghosting no se simula);
   * `send_typing_indicator_activity`: no-op;
   * transferencias, remarketing, handoff y eventos entre agentes: se capturan
@@ -46,6 +50,7 @@ REAL_IN_SANDBOX = frozenset(
         "flush_pending_ui_intents_activity",
         "get_active_episode_id",
         "llm_chat",
+        "perceive_burst",
         "persist_assistant_message_activity",
         "read_and_clear_pending_handoff",
         "read_order_draft_note",
@@ -54,6 +59,7 @@ REAL_IN_SANDBOX = frozenset(
         "reset_llm_history_for_episode",
         "send_capi_event_activity",
         "send_whatsapp_message_activity",
+        "verify_coverage",
     }
 )
 
@@ -70,6 +76,7 @@ class SandboxCapture:
 
     effects: list[dict[str, Any]] = field(default_factory=list)
     trace_payload: dict[str, Any] | None = None
+    trace_payloads: list[dict[str, Any]] = field(default_factory=list)
     turn_done: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -79,6 +86,15 @@ def _jsonable(value: Any) -> Any:
 
         return asdict(value)
     return value
+
+
+def _schedules_complement(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return any(
+        isinstance(s, dict) and s.get("kind") == "verify" and s.get("complement_scheduled") is True
+        for s in payload.get("steps") or []
+    )
 
 
 def _fakes(capture: SandboxCapture, real: dict[str, Any]) -> dict[str, Callable[..., Any]]:
@@ -134,7 +150,10 @@ def _fakes(capture: SandboxCapture, real: dict[str, Any]) -> dict[str, Callable[
             capture.trace_payload = json.loads(payload_json)
         except (TypeError, ValueError):
             capture.trace_payload = None
-        capture.turn_done.set()
+        if isinstance(capture.trace_payload, dict):
+            capture.trace_payloads.append(capture.trace_payload)
+        if not _schedules_complement(capture.trace_payload):
+            capture.turn_done.set()
         return bool(ok)
 
     return {

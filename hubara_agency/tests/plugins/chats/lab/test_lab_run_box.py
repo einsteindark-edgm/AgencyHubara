@@ -15,7 +15,7 @@ from temporalio.worker import Worker
 
 from src.plugins.chats.agent.sales_lab.run import activities as run_acts
 from src.plugins.chats.agent.sales_lab.run.contracts import LAB_TASK_QUEUE, LabRunInput
-from src.plugins.chats.agent.sales_lab.run.workflow import ARMS_PENDING_NOTE, LabRunWorkflow
+from src.plugins.chats.agent.sales_lab.run.workflow import LabRunWorkflow
 from src.sdk.labkit import FilesystemLabStore
 from tests.plugins.chats.lab.test_lab_cases import SID, _bench
 
@@ -37,7 +37,7 @@ def box(tmp_path: Path, monkeypatch) -> dict:
     root = tmp_path / "lab"
     smoke: dict = {"calls": [], "result": {"error": None, "trace": {"sent_texts": ["¡Hola!"]}}}
 
-    async def fake_case(case, *, bench_dir, sandbox_dir, timeout_s):
+    async def fake_case(case, *, bench_dir, sandbox_dir, timeout_s, arm="A1"):
         smoke["calls"].append(case["case_id"])
         return {"case_id": case["case_id"], **smoke["result"]}
 
@@ -62,8 +62,9 @@ async def test_an_order_builds_the_cases_and_publishes_the_control(box) -> None:
     assert result["phase"] == "done" and result["cases"] == 2
     store = box["store"]
     progress = json.loads(store.get_bytes(f"runs/{RUN}/progress.json"))
-    assert (progress["phase"], progress["turns_done"], progress["turns_total"]) == ("done", 2, 2)  # A1 sobre 2 casos
-    assert progress["notes"] == [ARMS_PENDING_NOTE.format(arms="B")]
+    # A1 y B sobre 2 casos (PR 15: los bots nuevos corren como A1)
+    assert (progress["phase"], progress["turns_done"], progress["turns_total"]) == ("done", 4, 4)
+    assert progress["notes"] == []
     assert store.get_bytes(f"runs/{RUN}/threads/{SID}.json") is not None
     assert (box["root"] / "bench" / "bench-x" / "manifest.json").is_file()
 
