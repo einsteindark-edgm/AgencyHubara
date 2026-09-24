@@ -283,6 +283,19 @@ def test_cie07_price_mismatch_on_summary_fails() -> None:
     assert "price_mismatch" in r.evidence
 
 
+def test_cie07_shipping_mismatch_fails_on_that_turn() -> None:
+    """Decisión del operador 2026-09-23: el envío es siempre una tarifa
+    publicada; un envío inventado (o $0) es un monto incoherente."""
+    for name in ("present_order_confirmation", "register_order"):
+        t = traj(
+            T(1, tools=[tool("verify_order_for_checkout")]),
+            T(2, tools=[tool(name, ok=False, error="shipping_mismatch")]),
+        )
+        r = _run("CIE-07", t)
+        assert (r.verdict, r.turn) == ("falla", 2), name
+        assert "shipping_mismatch" in r.evidence
+
+
 def test_cie07_without_verify_nor_register_is_not_applicable() -> None:
     assert _run("CIE-07", traj(T(1, sent=["Hola"]))).verdict == "no_aplica"
 

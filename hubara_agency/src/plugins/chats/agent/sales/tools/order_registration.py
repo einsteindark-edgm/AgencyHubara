@@ -74,6 +74,12 @@ from src.platform.orders.port import (
     OrderShipping,
 )
 from src.platform.orders.reconciliation import STATUS_PENDING
+from src.plugins.chats.agent.sales.config.shipping import (
+    CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
+    SHIPPING_COP_PARAM_DESCRIPTION,
+    SHIPPING_RATE_RULE,
+    is_published_shipping_rate,
+)
 from src.plugins.chats.agent.sales.pricing import (
     accepted_prices,
     catalog_unit_price,
@@ -164,8 +170,12 @@ class RegisterOrderTool(ToolBase):
         "respuesta y sigue el `summary` del envelope: si es `true`, tag "
         "`CONFIRMADO_PAGO_PENDIENTE` + `escalate_to_human"
         "(reason_category='PAYMENT_VERIFICATION_PENDING')` con la despedida "
-        "en su `customer_message` (NUNCA `COMPRA_EXITOSA`). Si es "
-        "`false` (Medusa caído / config rota), llama `escalate_to_human"
+        "en su `customer_message` (NUNCA `COMPRA_EXITOSA`). Si es `false` "
+        "con `error` (`shipping_mismatch`, `amount_mismatch`, "
+        "`price_mismatch`, `missing_receiver_name`), el pedido no se "
+        "registró por un dato de la llamada: corrige lo que dice el "
+        "`summary` y vuelve a llamarla, sin escalar. Si es `false` sin "
+        "`error` (Medusa caído / config rota), llama `escalate_to_human"
         "(reason_category='ORDER_REGISTRATION_FAILED')` para que un colega "
         "registre manualmente — los datos quedan persistidos en metadata "
         "para que el equipo los reconstruya. Si el cliente confirmó pero "
@@ -236,11 +246,16 @@ class RegisterOrderTool(ToolBase):
                     "Método de pago elegido por el cliente: 'transfer' = "
                     "pago anticipado (Nequi/llave), 'payment_link' = link "
                     "de pago (con recargo), 'cash_on_delivery' = contra "
-                    "entrega (solo pedidos > $45.000 COP)."
+                    f"entrega (pedidos desde {format_cop(CASH_ON_DELIVERY_MIN_PRODUCTS_COP)} "
+                    "COP en productos, inclusive)."
                 ),
             },
             "subtotal_cop": {"type": "integer", "minimum": 0},
-            "shipping_cop": {"type": "integer", "minimum": 0},
+            "shipping_cop": {
+                "type": "integer",
+                "minimum": 0,
+                "description": SHIPPING_COP_PARAM_DESCRIPTION,
+            },
             "total_cop": {"type": "integer", "minimum": 1},
             "currency": {
                 "type": "string",
@@ -428,6 +443,7 @@ class RegisterOrderTool(ToolBase):
                     "registered": False,
                     "order_id": None,
                     "error_detail": "missing_receiver_name",
+                    "error": "missing_receiver_name",
                     "summary": (
                         "Falta el NOMBRE DE QUIEN RECIBE el pedido (la "
                         "transportadora lo exige). Pregúntale al cliente "
@@ -448,6 +464,38 @@ class RegisterOrderTool(ToolBase):
             receiver_name=receiver_name,
             national_id=national_id_raw or None,
         )
+
+        # Envío = tarifa mínima publicada para la ciudad (decisión del operador
+        # 2026-09-23: el envío lo cobra la transportadora, sin descuentos ni
+        # envío gratis). SEC-07 solo caza un total desconectado; un envío $0
+        # con el total "cuadrado" llegaba a Medusa y a las instrucciones de
+        # pago como "sin costo" (L-19). Va ANTES de SEC-07: con envío 0 y el
+        # total sumado con la tarifa, SEC-07 diría "total esperado = subtotal"
+        # y el modelo gastaría un reintento quitando el envío del total.
+        if not is_published_shipping_rate(int(shipping_cop), order_shipping.city):
+            logger.warning(
+                "🧾 [TOOL register_order] SHIPPING_MISMATCH session={} city={} shipping_cop={}",
+                ctx.session_key,
+                order_shipping.city,
+                shipping_cop,
+            )
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "shipping_mismatch",
+                    "error": "shipping_mismatch",
+                    "summary": (
+                        f"El envío que pasaste ({format_cop(int(shipping_cop))}) no es "
+                        f"la tarifa publicada para {order_shipping.city}. El pedido NO "
+                        f"se registró. {SHIPPING_RATE_RULE} Recalcula el total "
+                        "(subtotal + envío − cupón) y llama de nuevo `register_order`; "
+                        "si le dijiste al cliente otro valor de envío, acláraselo con "
+                        "honestidad antes."
+                    ),
+                },
+                ensure_ascii=False,
+            )
 
         # Cupón aplicado en el episodio (`apply_coupon`): el descuento se
         # recomputa acá desde el snapshot + catálogo. NUNCA lo manda el LLM.
@@ -498,6 +546,7 @@ class RegisterOrderTool(ToolBase):
                     "registered": False,
                     "order_id": None,
                     "error_detail": "amount_mismatch",
+                    "error": "amount_mismatch",
                     "summary": (
                         "Los montos NO cuadran con los ítems del pedido: "
                         f"subtotal esperado={computed_subtotal} (recibido {subtotal_cop}), "
@@ -539,6 +588,7 @@ class RegisterOrderTool(ToolBase):
                     "registered": False,
                     "order_id": None,
                     "error_detail": "price_mismatch",
+                    "error": "price_mismatch",
                     "summary": (
                         f"Los precios NO son los del catálogo: {detail}. El "
                         "pedido NO se registró. Llama `verify_order_for_checkout` "

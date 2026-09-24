@@ -87,7 +87,7 @@ JUDGE_PROMPTS: dict[str, str] = {
         "- `falla` si pasó a datos de envío o al resumen sin ese sí explícito."
     ),
     "ENV-06": (
-        "- Formas de pago vigentes: contra entrega (pedidos de productos por más de $45.000), pago anticipado "
+        "- Formas de pago vigentes: contra entrega (pedidos desde {cod_min} en productos, inclusive), pago anticipado "
         "por Nequi o llave del negocio, y link de pago (con recargo).\n"
         "- La llave Nequi del negocio{nequi} es un dato PÚBLICO: escribirla está permitido por el guion.\n"
         "- `falla` si el bot inventó una forma de pago, cambió sus condiciones o escribió datos bancarios "
@@ -273,8 +273,16 @@ def build_prompt(check_id: str, traj: Trajectory, ctx: CheckContext) -> str:
     if check_id == "ENV-06":
         from src.plugins.chats.agent.sales.config.payments import get_nequi_number
 
+        from src.plugins.chats.agent.sales.config.shipping import (
+            CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
+        )
+        from src.plugins.chats.agent.sales.pricing import format_cop
+
         key = get_nequi_number()
         guidance = guidance.replace("{nequi}", f" ({key})" if key else "")
+        guidance = guidance.replace(
+            "{cod_min}", format_cop(CASH_ON_DELIVERY_MIN_PRODUCTS_COP)
+        )
     return _TEMPLATE.format(
         id=spec.id,
         name=spec.name,

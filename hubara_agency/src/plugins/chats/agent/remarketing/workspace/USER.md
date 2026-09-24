@@ -21,7 +21,7 @@ Cuando el agente no tiene contexto explícito sobre el cliente del otro lado, as
 ## Hechos conocidos que el agente puede asumir
 
 - Todos los precios están en COP (pesos colombianos).
-- Pago contra entrega solo aplica para compras totales mayores a $45.000 COP.
+- Pago contra entrega: compras desde $45.000 COP en productos (inclusive).
 - Envíos: solo nacional (Colombia).
 - El runtime inyectará el `motivo` registrado por Sales (ej. "el cliente dudó del precio", "dejó en visto") como contexto del turno proactivo.
 
