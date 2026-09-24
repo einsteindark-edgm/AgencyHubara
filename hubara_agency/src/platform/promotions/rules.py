@@ -23,6 +23,9 @@ REASON_EXPIRED = "expired"
 REASON_BUDGET = "budget_exhausted"
 #: La promo tiene reglas que no pudimos leer: no se sabe a qué aplica.
 REASON_SCOPE_UNRESOLVED = "scope_unresolved"
+#: Cupón de envío. Decisión del operador (2026-09-23): el envío lo cobra la
+#: transportadora a su tarifa real, sin descuentos → no se aplica.
+REASON_SHIPPING_NOT_SUPPORTED = "shipping_not_supported"
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,8 @@ def resolve_coupon(
         return CouponResolution(False, REASON_BUDGET, promo)
     if promo.scope_unresolved:
         return CouponResolution(False, REASON_SCOPE_UNRESOLVED, promo)
+    if promo.target_type == "shipping_methods":
+        return CouponResolution(False, REASON_SHIPPING_NOT_SUPPORTED, promo)
     return CouponResolution(True, None, promo)
 
 
@@ -80,12 +85,12 @@ class LineDiscount:
 class DiscountResult:
     discount_cop: int
     applicable_handles: list[str] = field(default_factory=list)
-    applies_to_shipping: bool = False
-    #: None = aplicó; "no_applicable_items" | "min_subtotal" | "unsupported"
+    #: None = aplicó; "no_applicable_items" | "min_subtotal" | "unsupported" |
+    #: "shipping_not_supported"
     reason: str | None = None
     min_subtotal_cop: int | None = None
     #: Reparto por unidad del descuento de productos: suma exacta
-    #: `discount_cop`. Vacío si el cupón es de envío o no aplicó.
+    #: `discount_cop`. Vacío si el cupón no aplicó.
     line_discounts: tuple[LineDiscount, ...] = ()
 
 
@@ -201,8 +206,9 @@ def compute_discount(
       unidades en todo el pedido, las más baratas primero.
     * `fixed` + `across`: monto único (tope: el subtotal aplicable)
       prorrateado por unidad; los pesos que sobran van a la última línea.
-    * `shipping_methods`: descuenta el envío (tope: el envío), sin reparto
-      por línea.
+    * `shipping_methods`: `shipping_not_supported` — el envío lo cobra la
+      transportadora a su tarifa real, sin descuentos (decisión del operador,
+      2026-09-23). `shipping_cop` ya no cambia el resultado.
     * `buyget`: no se calcula acá (unsupported) — el operador lo aplica.
     """
     if promo.discount_type not in ("percentage", "fixed"):
@@ -210,19 +216,14 @@ def compute_discount(
     # `once` sin tope: Medusa no deja crearla; un snapshot así no se entiende.
     if promo.allocation == "once" and not promo.max_quantity:
         return DiscountResult(0, reason="unsupported")
+    if promo.target_type == "shipping_methods":
+        return DiscountResult(0, reason=REASON_SHIPPING_NOT_SUPPORTED)
 
     subtotal = sum(it.unit_price_cop * it.quantity for it in items)
     if promo.min_subtotal_cop is not None and subtotal < promo.min_subtotal_cop:
         return DiscountResult(
             0, reason="min_subtotal", min_subtotal_cop=promo.min_subtotal_cop
         )
-
-    if promo.target_type == "shipping_methods":
-        if promo.discount_type == "percentage":
-            amount = round(shipping_cop * promo.value / 100)
-        else:
-            amount = min(promo.value, shipping_cop)
-        return DiscountResult(int(max(amount, 0)), applies_to_shipping=True)
 
     indexed = [(i, it) for i, it in enumerate(items) if _selects(promo, it)]
     if not indexed:

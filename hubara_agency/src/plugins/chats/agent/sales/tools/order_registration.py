@@ -510,16 +510,14 @@ class RegisterOrderTool(ToolBase):
             )
         discount_cop = discount.discount_cop if discount else 0
         coupon_code = discount.code if discount and discount_cop > 0 else None
-        # Pedido #44: el reparto por unidad viaja en cada ítem (o en el envío) y
-        # el adapter lo escribe como precio de línea — Medusa no aplica la
-        # promoción a un draft. Solo con cupón: los ports/fakes sin estos
-        # kwargs siguen andando.
+        # Pedido #44: el reparto por unidad viaja en cada ítem y el adapter lo
+        # escribe como precio de línea — Medusa no aplica la promoción a un
+        # draft. Solo con cupón: los ports/fakes sin estos kwargs siguen
+        # andando.
         coupon_kwargs: dict[str, Any] = {}
         if discount is not None and coupon_code:
             order_items = _with_discounted_units(order_items, discount.line_discounts)
             coupon_kwargs = {"coupon_code": coupon_code, "discount_cop": discount_cop}
-            if discount.applies_to_shipping:
-                coupon_kwargs["shipping_discount_cop"] = discount_cop
 
         # SEC-07: consistencia de montos server-side. El LLM manda los precios;
         # recomputamos el subtotal desde los line items para que un total
@@ -666,7 +664,6 @@ class RegisterOrderTool(ToolBase):
                         }
                         for line in discount.line_discounts
                     ],
-                    "shipping_discount_cop": coupon_kwargs.get("shipping_discount_cop", 0),
                 }
                 if discount is not None and coupon_code
                 else {}

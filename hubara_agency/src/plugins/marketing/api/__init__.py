@@ -362,6 +362,10 @@ _COUPON_PROBLEM = {
     "expired": "ya venció en Medusa",
     "budget_exhausted": "ya agotó sus usos en Medusa",
     "scope_unresolved": "tiene reglas que no pude leer en Medusa (no sé a qué productos aplica)",
+    "shipping_not_supported": (
+        "es de envío, y el envío lo cobra la transportadora a su tarifa, sin "
+        "descuentos: el bot no lo aplica. Usa un cupón sobre productos"
+    ),
 }
 
 
@@ -416,6 +420,8 @@ async def list_promotions() -> dict:
                 "product_count": len(p.product_ids) + len(p.variant_ids) + len(p.collection_ids),
             }
             for p in promotions
+            # El bot no aplica cupones de envío: el builder tampoco los ofrece.
+            if p.target_type != "shipping_methods"
         ],
         "unavailable": False,
     }

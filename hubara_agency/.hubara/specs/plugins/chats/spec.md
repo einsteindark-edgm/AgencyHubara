@@ -553,7 +553,7 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 
 - GIVEN el cliente da `NOEXISTE`, un cupón vencido, o `VELAS_10`
 - WHEN el bot llama `apply_coupon`
-- THEN devuelve `applied=false` con `reason` ∈ {not_found, expired, inactive, not_started, budget_exhausted, invalid_format}
+- THEN devuelve `applied=false` con `reason` ∈ {not_found, expired, inactive, not_started, budget_exhausted, invalid_format, scope_unresolved, shipping_not_supported}
 - AND NO persiste nada en el episodio
 - AND el bot se lo dice al cliente con honestidad sin aplicar ningún descuento
 
@@ -583,10 +583,18 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - THEN el draft lleva UNA línea de 2 unidades a $18.900 con `metadata.coupon_code`, `list_unit_price_cop` y `discount_unit_cop`, NO lleva `promo_codes` (Medusa 2.12.5 lo vincularía sin descontar: al crear el draft no carga `items.product`), y Medusa cobra $45.700
 - AND el reparto lo calcula `compute_discount` por unidad, en pesos enteros, y suma exacto el descuento confirmado: porcentaje redondeado a peso por unidad; `max_quantity` por línea (`each`) o por pedido, las unidades más baratas primero (`once`); un monto fijo al pedido se prorratea con el resto de pesos en la última línea
 - AND con 12 unidades, 10 van en una línea a $18.900 y 2 en otra a precio de lista; la referencia del pedido que lee el cliente ("#45 (12× Cubo Love)") y los productos de las notificaciones del ETA agrupan esas líneas
-- AND un cupón de envío baja el monto del envío estimado que se registra, no el de los productos (el envío real que el operador fija al despachar todavía lo reemplaza sin el cupón — pendiente)
+- AND el envío va siempre completo: los cupones son solo de productos (ver el escenario del cupón de envío)
 - AND si las líneas + el envío del payload no suman `total_cop`, el adapter NO crea el draft (`amount_mismatch`) y el pedido queda para registro manual
 - AND el reintento de reconciliación de un registro fallido manda el mismo cupón y las mismas unidades con descuento (`coupon_line_discounts` en el record)
 - AND el inspector de Órdenes explica en cada línea el cupón, el descuento por unidad y el precio de lista (en Medusa `discount_total` queda en 0)
+
+#### Scenario: Cupón de envío (decisión del operador, 2026-09-23)
+
+- GIVEN una promoción vigente en Medusa sobre el envío (`target_type = shipping_methods`), p. ej. `ENVIOGRATIS`
+- WHEN el cliente da el código o pregunta por promociones
+- THEN `apply_coupon` responde `applied=false, reason=shipping_not_supported` (el envío lo cobra la transportadora a su tarifa, sin descuentos) y no guarda nada en el episodio, y `list_promotions` no la ofrece
+- AND aunque un episodio ya tenga guardado un cupón de envío (de antes de esta decisión), `compute_discount` no descuenta nada (`shipping_not_supported`), la nota de cada turno dice `[CUPÓN SIN EFECTO: …]` en vez de `[CUPÓN APLICADO: …]`, `present_order_confirmation` explica que no aplica y `register_order` exige el total con el envío completo
+- AND el envío real que el operador fija al marcar "en camino" es el que paga el cliente
 
 #### Scenario: Reglas de la promoción ilegibles
 

@@ -124,6 +124,15 @@ def test_resolve_coupon_razones_de_rechazo() -> None:
     )
 
 
+def test_resolve_coupon_rejects_a_shipping_coupon() -> None:
+    """Decisión del operador (2026-09-23): el envío lo cobra la transportadora a
+    su tarifa real y no lleva descuentos. Un cupón de envío NO se aplica: el
+    bot no puede prometer un descuento que nadie honra al despachar."""
+    envio = _promo(code="ENVIOGRATIS", value=100, target_type="shipping_methods")
+    res = resolve_coupon("enviogratis", [envio], now_ms=_NOW)
+    assert (res.ok, res.reason) == (False, "shipping_not_supported")
+
+
 # --- compute_discount -------------------------------------------------------
 
 
@@ -279,12 +288,13 @@ def test_minimo_de_compra_no_alcanzado() -> None:
     assert res.min_subtotal_cop == 100_000
 
 
-def test_descuento_de_envio_aplica_al_envio_no_a_los_productos() -> None:
+def test_un_cupon_de_envio_no_descuenta_ni_el_envio_ni_los_productos() -> None:
+    """El envío se cobra a la tarifa real de la transportadora (decisión del
+    operador, 2026-09-23). Aunque un snapshot de cupón de envío ya esté
+    guardado en un episodio, no descuenta nada."""
     promo = _promo(discount_type="fixed", value=20_000, target_type="shipping_methods")
     res = compute_discount(promo, [_item("a", 1, 40_000)], shipping_cop=7_900)
-    assert res.discount_cop == 7_900
-    assert res.applies_to_shipping is True
-    assert res.applicable_handles == []
+    assert (res.discount_cop, res.reason, res.line_discounts) == (0, "shipping_not_supported", ())
 
 
 def test_promocion_buyget_no_se_calcula_aca() -> None:

@@ -42,9 +42,10 @@ Premortem fixes aplicados (ver docs/PREMORTEM_ORDERS.md):
 
 Cupón (pedido #44, L-26): Medusa 2.12.5 NO aplica a un draft las promociones
 con reglas de producto (vincula `promo_codes` con descuento 0). El reparto lo
-calcula Hubara y llega en `OrderItem.discounted_units` / `shipping_discount_cop`;
-el adapter lo escribe como precio (línea propia con metadata de auditoría, o
-envío más bajo) y jamás manda `promo_codes`.
+calcula Hubara y llega en `OrderItem.discounted_units`; el adapter lo escribe
+como precio (línea propia con metadata de auditoría) y jamás manda
+`promo_codes`. El envío va siempre completo: no hay cupones de envío (lo cobra
+la transportadora a su tarifa — decisión del operador, 2026-09-23).
 
 Flujo del adapter:
   0. SEC-07 en el borde: líneas + envío deben sumar `total_cop` (si no, no
@@ -175,7 +176,6 @@ class MedusaOrderRegistration:
         attribution: dict[str, Any] | None = None,
         coupon_code: str | None = None,
         discount_cop: int = 0,
-        shipping_discount_cop: int = 0,
     ) -> OrderRegistrationResult:
         # Premortem C1: wrap ALL the work in a single wait_for to bound the
         # worst-case latency at ~45s. The activity heartbeat (every 10s in
@@ -195,7 +195,6 @@ class MedusaOrderRegistration:
                     attribution=attribution,
                     coupon_code=coupon_code,
                     discount_cop=discount_cop,
-                    shipping_discount_cop=shipping_discount_cop,
                 ),
                 timeout=_REGISTER_ORDER_TIMEOUT_S,
             )
@@ -229,7 +228,6 @@ class MedusaOrderRegistration:
         attribution: dict[str, Any] | None = None,
         coupon_code: str | None = None,
         discount_cop: int = 0,
-        shipping_discount_cop: int = 0,
     ) -> OrderRegistrationResult:
         log.info(
             "MedusaOrderRegistration.register_order start",
@@ -258,7 +256,7 @@ class MedusaOrderRegistration:
         # de cableado) no se crea un pedido con otro total: queda para
         # registro manual. Chequeo barato sobre los inputs (antes de tocar
         # Medusa); el definitivo es sobre el payload, justo antes del POST.
-        expected_charge = _medusa_total_cop(items, shipping_cop, shipping_discount_cop)
+        expected_charge = _medusa_total_cop(items, shipping_cop)
         if expected_charge != total_cop:
             return _amount_mismatch(
                 expected_charge, total_cop, session_key=session_key, coupon_code=coupon_code
@@ -327,7 +325,6 @@ class MedusaOrderRegistration:
                 attribution=attribution,
                 coupon_code=coupon_code,
                 discount_cop=discount_cop,
-                shipping_discount_cop=shipping_discount_cop,
             )
 
             # 4b) SEC-07 sobre el payload REAL: Medusa cobra estas líneas y
@@ -754,7 +751,6 @@ class MedusaOrderRegistration:
         attribution: dict[str, Any] | None = None,
         coupon_code: str | None = None,
         discount_cop: int = 0,
-        shipping_discount_cop: int = 0,
     ) -> dict[str, Any]:
         """Build the POST /admin/draft-orders payload per OpenAPI spec."""
         # shipping_address: country_code en lowercase per spec.
@@ -838,8 +834,7 @@ class MedusaOrderRegistration:
                     # (run bc54cb93-52d4-45d1-b69d-24b542a759ee, 2026-05-25):
                     # `Field 'shipping_methods, 0, shipping_option_id' is required`.
                     "shipping_option_id": shipping_option_id,
-                    # Cupón de envío: el descuento baja el envío, no los productos.
-                    "amount": max(shipping_cop - shipping_discount_cop, 0),
+                    "amount": shipping_cop,
                 }
             ],
             "metadata": metadata,
@@ -906,20 +901,18 @@ def _payload_charge_cop(payload: dict[str, Any]) -> int:
     return lines + sum(int(method["amount"]) for method in payload["shipping_methods"])
 
 
-def _medusa_total_cop(
-    items: list[OrderItem], shipping_cop: int, shipping_discount_cop: int
-) -> int:
+def _medusa_total_cop(items: list[OrderItem], shipping_cop: int) -> int:
     """Lo que Medusa cobraría por estos ítems, calculado desde los inputs:
     cada tramo al precio de lista menos el descuento de sus unidades, + el
-    envío menos su descuento. Coincide con el payload mientras la resolución
-    de variantes conserve la cantidad; por eso el chequeo definitivo es
+    envío. Coincide con el payload mientras la resolución de variantes
+    conserve la cantidad; por eso el chequeo definitivo es
     `_payload_charge_cop` sobre el payload real."""
     lines = sum(
         units * (it.unit_price_cop - discount)
         for it in items
         for units, discount in _discount_chunks(it.quantity, _pending_discounts(it))
     )
-    return lines + max(shipping_cop - shipping_discount_cop, 0)
+    return lines + shipping_cop
 
 
 def _pending_discounts(item: OrderItem) -> list[list[int]]:
