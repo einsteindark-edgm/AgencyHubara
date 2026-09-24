@@ -8,20 +8,22 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from src.plugins.chats.agent.sales_eval.evals import reconstruct
-from src.plugins.chats.agent.sales_eval.scorecard.engine import run_code_checks
+from src.plugins.chats.agent.sales_eval.scorecard.engine import pin_to_focus, run_code_checks
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext, CheckResult
 from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION, SPECS_BY_ID
 from src.plugins.chats.agent.sales_eval.scorecard.trajectory import (
     Trajectory,
+    Turn,
     build_legacy_trajectory,
     build_trajectory,
+    focus_trajectory,
 )
 from src.plugins.chats.agent.sales_eval.scorecard.verdict import compute_scorecard
 from src.plugins.chats.shared import turn_traces
@@ -205,3 +207,83 @@ def score_trajectory(
         }
     )
     return record
+
+
+
+# ── Modo turno (laboratorio, plan §5.2–5.5) ─────────────────────────────────
+# Precedencia al agregar un check sobre varios turnos: la señal más fuerte gana.
+_AGGREGATE_RANK = {"falla": 0, "pasa": 1, "desconocido": 2, "sin_senal": 3, "no_aplica": 4}
+
+
+def score_turns(
+    real: Trajectory,
+    candidates: Mapping[int, Turn],
+    ctx: CheckContext,
+    *,
+    episodes_at: Mapping[int, dict[str, Any]] | None = None,
+    judge_results: Mapping[int, Iterable[CheckResult]] | None = None,
+    calibrated: Iterable[str] = frozenset(),
+) -> dict[str, Any]:
+    """Califica turnos simulados con el prefijo REAL como contexto.
+
+    Cada candidato (turno k → `Turn`, misma forma que `turn_from_trace`) se
+    juzga sobre `focus_trajectory(real, candidato)`: solo ese turno puede
+    fallar. `episodes_at[k]` es el episodio al momento del turno (sin cierre);
+    `judge_results[k]` los checks de juez de ese turno
+    (`judge_checks.run_judge_checks_focus`). El veredicto del brazo simulado
+    sale de la misma regla (`verdict.compute_scorecard`) sobre la unión de los
+    checks por turno.
+    """
+    calibrated_set = frozenset(calibrated)
+    by_turn: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    union: list[CheckResult] = []
+    for k in sorted(candidates):
+        focus = focus_trajectory(real, candidates[k], episode_at=(episodes_at or {}).get(k))
+        judged = pin_to_focus((judge_results or {}).get(k, ()), k)
+        results = [*run_code_checks(focus, ctx), *judged]
+        card = compute_scorecard(focus, SPECS_BY_ID, results, calibrated=calibrated_set)
+        by_turn.append(
+            {
+                "turn": k,
+                "verdict": card.verdict,
+                "counts": card.counts,
+                "first_failure": card.first_failure,
+                "results": card.results,
+            }
+        )
+        rows.extend(card.results)
+        union.extend(results)
+    simulated = replace(
+        real,
+        turns=tuple(candidates[k] for k in sorted(candidates)),
+        closing_tag=None,
+        closing_motivo=None,
+        closed_at_ms=None,
+    )
+    episode = compute_scorecard(simulated, SPECS_BY_ID, union, calibrated=calibrated_set)
+    return {
+        "mode": "turn",
+        "registry_version": REGISTRY_VERSION,
+        "session_id": real.session_id,
+        "episode_id": real.episode_id,
+        "by_turn": by_turn,
+        "verdict": episode.verdict,
+        "counts": episode.counts,
+        "first_failure": episode.first_failure,
+        "first_critical": episode.first_critical,
+        "results": rows,
+    }
+
+
+def aggregate_checks(rows: Iterable[Mapping[str, Any]]) -> dict[str, str]:
+    """Un veredicto por check sobre varios turnos: falla > pasa > desconocido >
+    sin_senal > no_aplica (para estadísticas; `store.to_row` se queda con el
+    último, que en modo turno no dice nada)."""
+    out: dict[str, str] = {}
+    for row in rows:
+        check_id, verdict = str(row.get("check_id")), str(row.get("verdict"))
+        rank = _AGGREGATE_RANK.get(verdict, 9)
+        if check_id not in out or rank < _AGGREGATE_RANK.get(out[check_id], 9):
+            out[check_id] = verdict
+    return out

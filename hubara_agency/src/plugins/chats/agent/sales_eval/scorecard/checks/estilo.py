@@ -13,7 +13,8 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     failed,
     is_legacy,
-    not_applicable,
+    judged_turns,
+    not_judged,
     passed,
     quote,
     sent_texts,
@@ -55,7 +56,7 @@ def check_no_voseo(traj: Trajectory, ctx: CheckContext) -> CheckResult:
         for rx in VOSEO_RES:
             if m := rx.search(text):
                 return failed("EST-01", turn.turn, f"turno {turn.turn}: voseo «{m.group(0)}» {quote(text)}")
-    return passed("EST-01") if any_text else not_applicable("EST-01", _NO_TEXT)
+    return passed("EST-01") if any_text else not_judged("EST-01", traj, _NO_TEXT)
 
 
 @code_check("EST-02")
@@ -65,7 +66,7 @@ def check_dash_and_emojis(traj: Trajectory, ctx: CheckContext) -> CheckResult:
         any_text = True
         if problem := _emoji_problem(text):
             return failed("EST-02", turn.turn, f"turno {turn.turn}: {problem} {quote(text)}")
-    return passed("EST-02") if any_text else not_applicable("EST-02", _NO_TEXT)
+    return passed("EST-02") if any_text else not_judged("EST-02", traj, _NO_TEXT)
 
 
 @code_check("EST-03")
@@ -75,14 +76,14 @@ def check_no_admin_text(traj: Trajectory, ctx: CheckContext) -> CheckResult:
         any_text = True
         if looks_like_admin_leak(text):
             return failed("EST-03", turn.turn, f"turno {turn.turn}: texto administrativo al cliente {quote(text)}")
-    return passed("EST-03") if any_text else not_applicable("EST-03", _NO_TEXT)
+    return passed("EST-03") if any_text else not_judged("EST-03", traj, _NO_TEXT)
 
 
 @code_check("EST-03b")
 def check_admin_guard_acted(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if is_legacy(traj):
         return unknown("EST-03b", "legacy sin guardas")
-    for turn in traj.turns:
+    for turn in judged_turns(traj):
         if "admin_text_guard" in turn.guards or turn.suppressed_reason == "admin_text_guard":
             detail = f" {quote(turn.llm_text)}" if turn.llm_text else ""
             return failed("EST-03b", turn.turn, f"turno {turn.turn}: la guarda bloqueó texto administrativo{detail}")
@@ -103,14 +104,14 @@ def check_no_delivery_promises(traj: Trajectory, ctx: CheckContext) -> CheckResu
         any_text = True
         if _promises_delivery_time(text):
             return failed("EST-05", turn.turn, f"turno {turn.turn}: promete plazo de entrega {quote(text)}")
-    return passed("EST-05") if any_text else not_applicable("EST-05", _NO_TEXT)
+    return passed("EST-05") if any_text else not_judged("EST-05", traj, _NO_TEXT)
 
 
 @code_check("EST-06")
 def check_no_discarded_narration(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if is_legacy(traj):
         return unknown("EST-06", "legacy sin narración descartada")
-    for turn in traj.turns:
+    for turn in judged_turns(traj):
         if turn.discarded_narration:
             return failed(
                 "EST-06", turn.turn, f"turno {turn.turn}: narración descartada {quote(turn.discarded_narration[0])}"

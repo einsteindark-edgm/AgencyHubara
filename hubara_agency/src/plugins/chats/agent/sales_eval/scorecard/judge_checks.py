@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import replace
 from typing import Any, Protocol
 
@@ -34,6 +34,8 @@ from src.plugins.chats.agent.sales_eval.scorecard.registry import CHECKS, SPECS_
 from src.plugins.chats.agent.sales_eval.scorecard.trajectory import (
     CATALOG_DISPLAY_INTENTS,
     Trajectory,
+    Turn,
+    focus_trajectory,
 )
 
 SAMPLES = 2
@@ -258,47 +260,77 @@ def _customer_lines(prefix: str, turn: Any) -> list[str]:
     return out
 
 
-def render_transcript(traj: Trajectory, *, text_limit: int | None = None) -> str:
+def _turn_lines(t: Any, text_limit: int | None) -> list[str]:
+    """Los renglones de un turno en el transcript del juez."""
+    lines: list[str] = []
+    p = f"T{t.turn} ·"
+    if t.inbound_text or t.inbound:
+        if t.is_customer:
+            lines.extend(_customer_lines(p, t))
+        else:
+            who = {"ghost": "sistema (ghosting)", "handoff": "handoff (otro agente → ventas)"}.get(t.trigger, t.trigger)
+            lines.append(f"{p} {who}: {_clip(t.inbound_text, text_limit or 600)}")
+    if t.signal:
+        lines.append(f"{p} señal del cliente: {_SIGNAL_LABEL.get(t.signal, t.signal)}")
+    for s in t.sent_texts:
+        lines.extend(_quoted(p, "bot envió", s if text_limit is None else _clip(s, text_limit)))
+    if t.suppressed_reason and t.llm_text:
+        lines.extend(_quoted(p, f"texto suprimido ({t.suppressed_reason}), el cliente NO lo vio", t.llm_text))
+    for n in t.discarded_narration:
+        lines.append(f'{p} narración descartada: "{_clip(n, 200)}"')
+    if t.intents:
+        lines.append(f"{p} componentes enviados: {', '.join(t.intents)}")
+    if t.tools:
+        parts = []
+        for c in t.tools:
+            status = "ok" if c.ok is True else f"RECHAZADA: {c.error}" if c.ok is False else "?"
+            args = ", ".join(f"{k}={v}" for k, v in c.args.items() if k in ("tag", "reason_category", "q", "producto", "aroma", "color", "cantidad"))
+            lines_args = f" [{args}]" if args else ""
+            parts.append(f"{c.name}({status}){lines_args}")
+        lines.append(f"{p} tools: " + " · ".join(parts))
+    if t.guards:
+        lines.append(f"{p} guardas que actuaron: {', '.join(t.guards)}")
+    if t.stage_in or t.stage_out:
+        lines.append(f"{p} etapa: {t.stage_in or '?'} → {t.stage_out or '?'}")
+    tag = t.state.get("tag") if isinstance(t.state, dict) else None
+    if tag:
+        route = t.state.get("route")
+        lines.append(f"{p} estado: {tag}" + (f" (ruta {route})" if route else ""))
+    return lines
+
+
+CANDIDATE_MARK = "★ CANDIDATA (a juzgar)"
+
+
+def render_transcript(
+    traj: Trajectory,
+    *,
+    text_limit: int | None = None,
+    candidates: Mapping[int, Turn] | None = None,
+) -> str:
     """La trayectoria como texto numerado por turno (lo que ve el juez).
 
     v2: sin tope por texto (la traza ya acota a 600) y con los saltos de
-    línea: cada mensaje de una ráfaga en su renglón, con su hora si la hay."""
-    lines: list[str] = []
-    for t in traj.turns:
-        p = f"T{t.turn} ·"
-        if t.inbound_text or t.inbound:
-            if t.is_customer:
-                lines.extend(_customer_lines(p, t))
-            else:
-                who = {"ghost": "sistema (ghosting)", "handoff": "handoff (otro agente → ventas)"}.get(t.trigger, t.trigger)
-                lines.append(f"{p} {who}: {_clip(t.inbound_text, text_limit or 600)}")
-        if t.signal:
-            lines.append(f"{p} señal del cliente: {_SIGNAL_LABEL.get(t.signal, t.signal)}")
-        for s in t.sent_texts:
-            lines.extend(_quoted(p, "bot envió", s if text_limit is None else _clip(s, text_limit)))
-        if t.suppressed_reason and t.llm_text:
-            lines.extend(_quoted(p, f"texto suprimido ({t.suppressed_reason}), el cliente NO lo vio", t.llm_text))
-        for n in t.discarded_narration:
-            lines.append(f'{p} narración descartada: "{_clip(n, 200)}"')
-        if t.intents:
-            lines.append(f"{p} componentes enviados: {', '.join(t.intents)}")
-        if t.tools:
-            parts = []
-            for c in t.tools:
-                status = "ok" if c.ok is True else f"RECHAZADA: {c.error}" if c.ok is False else "?"
-                args = ", ".join(f"{k}={v}" for k, v in c.args.items() if k in ("tag", "reason_category", "q", "producto", "aroma", "color", "cantidad"))
-                lines_args = f" [{args}]" if args else ""
-                parts.append(f"{c.name}({status}){lines_args}")
-            lines.append(f"{p} tools: " + " · ".join(parts))
-        if t.guards:
-            lines.append(f"{p} guardas que actuaron: {', '.join(t.guards)}")
-        if t.stage_in or t.stage_out:
-            lines.append(f"{p} etapa: {t.stage_in or '?'} → {t.stage_out or '?'}")
-        tag = t.state.get("tag") if isinstance(t.state, dict) else None
-        if tag:
-            route = t.state.get("route")
-            lines.append(f"{p} estado: {tag}" + (f" (ruta {route})" if route else ""))
-    return "\n".join(lines)
+    línea: cada mensaje de una ráfaga en su renglón, con su hora si la hay.
+
+    Modo turno (`candidates`): los turnos reales son contexto y cada candidato
+    reemplaza al turno real de su número, bajo `T{k} ★ CANDIDATA (a juzgar)`.
+    Nada después de la última candidata."""
+    if not candidates:
+        lines: list[str] = []
+        for t in traj.turns:
+            lines.extend(_turn_lines(t, text_limit))
+        return "\n".join(lines)
+    last = max(candidates)
+    real = {t.turn: t for t in traj.turns if t.turn <= last}
+    out: list[str] = []
+    for k in sorted(set(real) | set(candidates)):
+        if k in candidates:
+            out.append(f"T{k} {CANDIDATE_MARK}")
+            out.extend(_turn_lines(candidates[k], text_limit))
+        else:
+            out.extend(_turn_lines(real[k], text_limit))
+    return "\n".join(out)
 
 
 _TEMPLATE = """Eres auditor de calidad del asesor de ventas por WhatsApp de Hubara (velas artesanales hechas en Colombia).
@@ -371,6 +403,10 @@ def parse_judge_output(check_id: str, raw: str) -> CheckResult | None:
         return None
     if not isinstance(data, dict):
         return None
+    return _result_from(check_id, data)
+
+
+def _result_from(check_id: str, data: dict[str, Any]) -> CheckResult | None:
     verdict = _VERDICT_ALIASES.get(str(data.get("veredicto", "")).strip().lower())
     if verdict is None:
         return None
@@ -500,3 +536,209 @@ async def run_judge_checks(
             return await _judge_one(check_id, traj, ctx, judge, samples, sleep)
 
     return list(await asyncio.gather(*(bounded(i) for i in ids)))
+
+
+# ── Modo turno (laboratorio, plan §5.2–5.5) ─────────────────────────────────
+# Una llamada por check y por episodio (no por turno): el juez ve el prefijo
+# real como contexto y todas las candidatas marcadas, y responde una entrada
+# por candidata. El prefiltro de aplicabilidad corre por candidata sobre su
+# trayectoria foco.
+
+_FOCUS_TEMPLATE = """Eres auditor de calidad del asesor de ventas por WhatsApp de Hubara (velas artesanales hechas en Colombia).
+Evalúas UN solo criterio sobre las respuestas CANDIDATAS del bot marcadas con ★ en la conversación de abajo.
+
+CRITERIO {id} — {name}
+Aplica cuando: {applies}
+Regla: {rule}
+Cómo decidir:
+{guidance}
+
+Reglas de evaluación:
+- Juzga SOLO este criterio y SOLO los turnos marcados ★ CANDIDATA: {turns}.
+- Cada candidata es una respuesta alternativa del bot en ese turno. Su contexto son los turnos ANTERIORES a ella. Lo que aparece después de una candidata es la conversación real, que siguió a otra respuesta: no lo uses para juzgarla.
+- Si la regla admite atender algo "en ese turno o el siguiente", juzga la candidata sola: dejarlo pendiente sin empujar la venta en su lugar no es `falla`.
+- `no_aplica` si la situación del criterio no ocurre en ese turno candidato.
+- `desconocido` si la conversación no alcanza para decidir.
+- Las etiquetas y escalaciones del estado las pone el mismo bot que evalúas: el estado del sistema no es prueba de que actuó bien.
+- Lo que el cliente vio son los textos enviados y los componentes; el texto suprimido y la narración descartada no le llegaron.
+- La evidencia es una cita textual corta (máximo 25 palabras) del turno candidato.
+{catalog}
+CONVERSACIÓN (episodio {episode_id}, fidelidad {fidelity}):
+{transcript}
+
+Devuelve SOLO un JSON válido, con una entrada por turno candidato:
+{output}
+"""
+
+_FOCUS_ITEM_DEFAULT = (
+    '{"turno": <T de la candidata>, "veredicto": "pasa|falla|no_aplica|desconocido", '
+    '"evidencia": "...", "critica": "..."}'
+)
+_FOCUS_ITEM_BY_CHECK: dict[str, str] = {
+    "EST-08": (
+        '{"turno": <T de la candidata>, "veredicto": "pasa|falla|no_aplica|desconocido", "evidencia": "...", '
+        '"critica": "...", "asuntos": [{"asunto": "...", "turno": <T>, "mensaje": <k o null>, '
+        '"cubierto": true|false, "evidencia": "..."}]}'
+    ),
+}
+
+
+def _guidance(check_id: str) -> str:
+    guidance = JUDGE_PROMPTS[check_id]
+    if check_id == "ENV-06":
+        from src.plugins.chats.agent.sales.config.payments import get_nequi_number
+
+        key = get_nequi_number()
+        guidance = guidance.replace("{nequi}", f" ({key})" if key else "")
+    return guidance
+
+
+def build_focus_prompt(
+    check_id: str, real: Trajectory, candidates: Mapping[int, Turn], ctx: CheckContext
+) -> str:
+    """Prompt de un check en modo turno: el prefijo real y las candidatas marcadas."""
+    spec = SPECS_BY_ID[check_id]
+    catalog = ""
+    if check_id == "DES-06" and ctx.catalog_summary:
+        catalog = "\nCATÁLOGO REAL VIGENTE (lista cerrada):\n" + ctx.catalog_summary + "\n"
+    item = _FOCUS_ITEM_BY_CHECK.get(check_id, _FOCUS_ITEM_DEFAULT)
+    return _FOCUS_TEMPLATE.format(
+        id=spec.id,
+        name=spec.name,
+        applies=spec.applies,
+        rule=spec.rule,
+        guidance=_guidance(check_id),
+        turns=", ".join(f"T{k}" for k in sorted(candidates)),
+        catalog=catalog,
+        episode_id=real.episode_id or "?",
+        fidelity=real.fidelity,
+        transcript=render_transcript(real, candidates=candidates),
+        output='{"turnos": [' + item + ", ...]}",
+    )
+
+
+def parse_focus_output(check_id: str, raw: str, turns: Iterable[int]) -> dict[int, CheckResult] | None:
+    """JSON del juez en modo turno → un resultado por turno candidato pedido.
+
+    `None` si la respuesta no se puede leer. Un turno que el juez no respondió
+    no aparece. Los asuntos de EST-08 se quedan con los del turno candidato."""
+    match = re.search(r"\{.*\}", raw or "", re.DOTALL)
+    if not match:
+        return None
+    try:
+        data: Any = json.loads(match.group(0))
+    except (json.JSONDecodeError, ValueError):
+        return None
+    items = data.get("turnos") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return None
+    wanted = set(turns)
+    out: dict[int, CheckResult] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        k = _int_or_none(item.get("turno"))
+        if k is None or k not in wanted or k in out:
+            continue
+        asuntos = item.get("asuntos")
+        if isinstance(asuntos, list):
+            asuntos = [a for a in asuntos if isinstance(a, dict) and _int_or_none(a.get("turno")) in (k, None)]
+        result = _result_from(check_id, {**item, "turno": k, "asuntos": asuntos})
+        if result is not None:
+            out[k] = replace(result, turn=k)
+    return out
+
+
+def _focus_unknown(check_id: str, turns: Iterable[int], critique: str) -> dict[int, CheckResult]:
+    return {k: CheckResult(check_id, "desconocido", turn=k, critique=critique, source="judge") for k in turns}
+
+
+def _agreed(check_id: str, k: int, answers: list[CheckResult | None]) -> CheckResult:
+    """El veredicto de un turno si todas las muestras lo respondieron igual."""
+    got = [a for a in answers if a is not None]
+    if len(got) < len(answers):
+        return CheckResult(
+            check_id, "desconocido", turn=k, critique="el juez no respondió el turno candidato", source="judge"
+        )
+    verdicts = [a.verdict for a in got]
+    if len(set(verdicts)) > 1:
+        return CheckResult(
+            check_id, "desconocido", turn=k,
+            critique="juez inconsistente entre muestras: " + " vs ".join(verdicts), source="judge",
+        )
+    return got[0]
+
+
+async def _judge_focus_one(
+    check_id: str,
+    real: Trajectory,
+    candidates: Mapping[int, Turn],
+    focus: Mapping[int, Trajectory],
+    ctx: CheckContext,
+    judge: JudgePort,
+    samples: int,
+    sleep: Sleep,
+) -> dict[int, CheckResult]:
+    out: dict[int, CheckResult] = {}
+    future = SPECS_BY_ID[check_id].focus == "future"
+    applicable: list[int] = []
+    for k in sorted(candidates):
+        applies, reason = _APPLIES[check_id](focus[k], ctx)
+        if applies:
+            applicable.append(k)
+            continue
+        # Un check `future` que todavía no aplica puede aplicar con el cierre.
+        verdict = "sin_senal" if future else "no_aplica"
+        out[k] = CheckResult(check_id, verdict, turn=k, evidence=reason, source="judge")
+    if not applicable:
+        return out
+    if check_id == "DES-06" and not ctx.catalog_available:
+        for k in applicable:
+            out[k] = CheckResult(check_id, "desconocido", turn=k, evidence="catálogo no disponible", source="judge")
+        return out
+    prompt = build_focus_prompt(check_id, real, {k: candidates[k] for k in applicable}, ctx)
+    parsed: list[dict[int, CheckResult]] = []
+    for _ in range(max(1, samples)):
+        try:
+            raw = await _generate(judge, prompt, sleep)
+        except Exception as exc:  # noqa: BLE001 — el juez caído no tumba el scorecard
+            return out | _focus_unknown(check_id, applicable, f"{JUDGE_ERROR_PREFIX}: {exc!r}"[:200])
+        by_turn = parse_focus_output(check_id, raw, applicable)
+        if by_turn is None:
+            return out | _focus_unknown(check_id, applicable, "respuesta del juez ilegible")
+        parsed.append(by_turn)
+    for k in applicable:
+        out[k] = _agreed(check_id, k, [p.get(k) for p in parsed])
+    return out
+
+
+async def run_judge_checks_focus(
+    real: Trajectory,
+    candidates: Mapping[int, Turn],
+    ctx: CheckContext,
+    judge: JudgePort,
+    *,
+    samples: int = SAMPLES,
+    only: Iterable[str] | None = None,
+    episodes_at: Mapping[int, dict[str, Any]] | None = None,
+    sleep: Sleep = asyncio.sleep,
+) -> dict[int, list[CheckResult]]:
+    """Checks de juez en modo turno: turno candidato → resultados (orden de registro).
+
+    UNA llamada por check (y muestra) para todo el episodio, con las candidatas
+    marcadas en el transcript; el acuerdo entre muestras se mide por turno."""
+    if not candidates:
+        return {}
+    wanted = set(only) if only is not None else None
+    ids = [c.id for c in CHECKS if c.kind == "judge" and (wanted is None or c.id in wanted)]
+    focus = {
+        k: focus_trajectory(real, candidates[k], episode_at=(episodes_at or {}).get(k)) for k in candidates
+    }
+    semaphore = asyncio.Semaphore(_CONCURRENCY)
+
+    async def bounded(check_id: str) -> dict[int, CheckResult]:
+        async with semaphore:
+            return await _judge_focus_one(check_id, real, candidates, focus, ctx, judge, samples, sleep)
+
+    per_check = await asyncio.gather(*(bounded(i) for i in ids))
+    return {k: [results[k] for results in per_check] for k in sorted(candidates)}

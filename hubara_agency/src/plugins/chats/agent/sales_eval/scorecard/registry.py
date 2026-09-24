@@ -9,12 +9,16 @@ que salvar al cliente: el check principal pasa, pero el LLM lo intentó.
 
 Regla de crecimiento (plan §6): ningún incidente cierra sin su check. Subir
 `REGISTRY_VERSION` al agregar, quitar o reformular un check.
+
+Modo turno (laboratorio, v4): `focus="future"` marca los checks que dependen de
+turnos posteriores al que se juzga (cierre, pedido registrado, ghosting). En el
+laboratorio solo pasan con la evidencia en el turno foco; si no, `sin_senal`.
 """
 from __future__ import annotations
 
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckSpec
 
-REGISTRY_VERSION = 3
+REGISTRY_VERSION = 4
 
 LEVELS = ("critico", "mayor", "menor")
 KINDS = ("code", "judge")
@@ -49,7 +53,16 @@ def _c(
     return CheckSpec(
         id=id, name=name, family=family, level=level, kind=kind, applies=applies,
         rule=rule, origin=origin, golden_behaviors=golden, twin_of=twin_of,
+        focus="future" if id in FUTURE_CHECKS else "turn",
     )
+
+
+# Dependen de turnos posteriores al turno foco (plan del laboratorio §5.5): la
+# etiqueta de pago pendiente y la orden se sostienen entre turnos (CIE-03), la
+# red de seguridad, la escalación y el aviso de portavelas cuelgan de un
+# registro que puede llegar después (CIE-03b/04/08), el ghosting llega después
+# del formulario (GHO-02) y RECHAZO/INTERESADO se juzgan con el cierre (TAG-07).
+FUTURE_CHECKS = frozenset({"CIE-03", "CIE-03b", "CIE-04", "CIE-08", "GHO-02", "TAG-07"})
 
 
 CHECKS: tuple[CheckSpec, ...] = (
@@ -347,6 +360,7 @@ def specs_payload() -> list[dict[str, object]]:
             "origin": list(c.origin),
             "golden_behaviors": list(c.golden_behaviors),
             "twin_of": c.twin_of,
+            "focus": c.focus,
         }
         for c in CHECKS
     ]

@@ -10,9 +10,14 @@ from src.plugins.chats.agent.sales_eval.evals.script_rubric import (
 )
 from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
+    all_sent_texts,
     failed,
+    in_focus,
     is_legacy,
+    judged,
+    no_signal,
     not_applicable,
+    not_judged,
     passed,
     quote,
     sent_texts,
@@ -39,7 +44,12 @@ def _first_contact_gate(check_id: str, traj: Trajectory) -> CheckResult | None:
 
 
 def _first_sent(traj: Trajectory) -> tuple[Turn, str] | None:
-    return next(iter(sent_texts(traj)), None)
+    """Primer texto del episodio (con el prefijo en modo turno)."""
+    return next(iter(all_sent_texts(traj)), None)
+
+
+_FIRST_TEXT_LATER = "el primer texto del episodio no salió hasta el turno foco"
+_FIRST_TEXT_BEFORE = "el primer texto salió antes del turno foco"
 
 
 @code_check("APE-01")
@@ -48,8 +58,12 @@ def check_greeting_first_contact(traj: Trajectory, ctx: CheckContext) -> CheckRe
         return gate
     first = _first_sent(traj)
     if first is None:
+        if in_focus(traj):
+            return no_signal("APE-01", _FIRST_TEXT_LATER)
         return failed("APE-01", traj.turns[0].turn, "no se envió saludo en el primer contacto")
     turn, text = first
+    if not judged(traj, turn):
+        return not_judged("APE-01", traj, _FIRST_TEXT_BEFORE)
     missing = [
         label
         for label, rx in (("saludo por hora", GREETING_RE), ("marca Hubara", BRAND_RE))
@@ -68,8 +82,12 @@ def check_no_forbidden_opener(traj: Trajectory, ctx: CheckContext) -> CheckResul
         return gate
     first = _first_sent(traj)
     if first is None:
+        if in_focus(traj):
+            return no_signal("APE-02", _FIRST_TEXT_LATER)
         return not_applicable("APE-02", "no se envió texto en el primer contacto")
     turn, text = first
+    if not judged(traj, turn):
+        return not_judged("APE-02", traj, _FIRST_TEXT_BEFORE)
     head = text[:_OPENER_WINDOW]
     for rx in FORBIDDEN_OPENERS:
         if m := rx.search(head):
@@ -84,6 +102,8 @@ def check_catalog_offered_at_opening(traj: Trajectory, ctx: CheckContext) -> Che
     if (gate := _first_contact_gate("APE-03", traj)) is not None:
         return gate
     opening = traj.turns[0]
+    if not judged(traj, opening):
+        return not_judged("APE-03", traj, "la apertura es un turno anterior")
     intents = set(opening.intents)
     if "quick_replies" in intents or intents & CATALOG_DISPLAY_INTENTS:
         return passed("APE-03", f"turno {opening.turn}: {', '.join(opening.intents)}", turn=opening.turn)
