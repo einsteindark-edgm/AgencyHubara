@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-import statsFixture from "@plugins/agents_admin/frontend/entities/check-stats/fixtures/check-stats.json";
-import { checkStatsSchema } from "@plugins/agents_admin/frontend/entities/check-stats/contracts";
+import statsFixture from "@/shared/lib/fixtures/quality-stats.json";
+import type { ParetoItemView, TrendSeriesView } from "@/shared/lib";
 
 import { FailurePareto } from "./FailurePareto";
 
-const stats = checkStatsSchema.parse(statsFixture);
+/** Agregados de vista de 56 días de un bot real (forma de `check-stats` de agents_admin). */
+const stats = statsFixture as { pareto: ParetoItemView[]; trend: TrendSeriesView[] };
 
 describe("FailurePareto", () => {
   it("una barra por check con fallos, nivel en texto y acumulado", () => {

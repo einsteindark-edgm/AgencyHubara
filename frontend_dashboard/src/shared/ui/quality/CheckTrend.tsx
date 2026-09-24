@@ -1,13 +1,13 @@
 import { useMemo, useState } from "react";
 
 import {
-  hasFailures,
+  formatWeekLabel,
+  qualityLevelLabel as levelLabel,
+  sparklineGeometry,
+  trendHasFailures as hasFailures,
   weeklyDelta,
-  type CheckTrend as CheckTrendSeries,
-} from "@plugins/agents_admin/frontend/entities/check-stats";
-import { levelLabel } from "@plugins/agents_admin/frontend/entities/scorecard";
-
-import { formatWeekLabel, sparklineGeometry } from "../lib/sparkline";
+  type TrendSeriesView as CheckTrendSeries,
+} from "@/shared/lib";
 
 interface Props {
   trend: readonly CheckTrendSeries[];

@@ -1,0 +1,809 @@
+{
+  "columns": [
+    {
+      "index": 0,
+      "turn": 1,
+      "atMs": 60000,
+      "trigger": "customer",
+      "triggerNote": null,
+      "botSilent": false,
+      "stage": "descubrimiento",
+      "gapBeforeMs": null,
+      "lanes": {
+        "cliente": [
+          {
+            "kind": "customer",
+            "text": "Hola, quiero información de las velas",
+            "detail": "Hola, quiero información de las velas",
+            "alert": false
+          }
+        ],
+        "bot": [
+          {
+            "kind": "sent",
+            "text": "¡Buenos días! Bienvenido a *Hubara*, velas artesanales hechas a base de cera de palma, a mano en Colombia.",
+            "detail": "¡Buenos días! Bienvenido a *Hubara*, velas artesanales hechas a base de cera de palma, a mano en Colombia.",
+            "alert": false
+          }
+        ],
+        "tools": [
+          {
+            "kind": "tool_ok",
+            "text": "send_quick_replies",
+            "detail": "send_quick_replies(body=¿Te muestro el catálogo?)",
+            "alert": false
+          }
+        ],
+        "componentes": [
+          {
+            "kind": "intent",
+            "text": "quick_replies",
+            "detail": "Componente de UI: quick_replies",
+            "alert": false
+          }
+        ],
+        "estado": [],
+        "guardas": []
+      },
+      "checks": [
+        {
+          "checkId": "APE-01",
+          "name": "Saludo por hora y marca en el primer contacto",
+          "verdict": "pasa",
+          "level": "mayor",
+          "status": "pasa",
+          "anchored": true
+        },
+        {
+          "checkId": "APE-02",
+          "name": "Sin apertura prohibida",
+          "verdict": "pasa",
+          "level": "menor",
+          "status": "pasa",
+          "anchored": true
+        },
+        {
+          "checkId": "APE-03",
+          "name": "Ofrece el catálogo en la apertura",
+          "verdict": "pasa",
+          "level": "mayor",
+          "status": "pasa",
+          "anchored": true
+        }
+      ],
+      "isFirstFailure": false,
+      "isFirstCritical": false
+    },
+    {
+      "index": 1,
+      "turn": 2,
+      "atMs": 120000,
+      "trigger": "customer",
+      "triggerNote": null,
+      "botSilent": false,
+      "stage": "descubrimiento",
+      "gapBeforeMs": null,
+      "lanes": {
+        "cliente": [
+          {
+            "kind": "customer",
+            "text": "es para un regalo",
+            "detail": "es para un regalo",
+            "alert": false
+          }
+        ],
+        "bot": [
+          {
+            "kind": "sent",
+            "text": "¿Qué aroma le gusta a la persona?",
+            "detail": "¿Qué aroma le gusta a la persona?",
+            "alert": false
+          }
+        ],
+        "tools": [],
+        "componentes": [],
+        "estado": [],
+        "guardas": []
+      },
+      "checks": [
+        {
+          "checkId": "DES-09",
+          "name": "Diseño antes que aroma",
+          "verdict": "falla",
+          "level": "menor",
+          "status": "menor",
+          "anchored": true
+        }
+      ],
+      "isFirstFailure": true,
+      "isFirstCritical": false
+    },
+    {
+      "index": 2,
+      "turn": 3,
+      "atMs": 180000,
+      "trigger": "customer",
+      "triggerNote": null,
+      "botSilent": false,
+      "stage": "descubrimiento",
+      "gapBeforeMs": null,
+      "lanes": {
+        "cliente": [
+          {
+            "kind": "customer",
+            "text": "café",
+            "detail": "café",
+            "alert": false
+          }
+        ],
+        "bot": [
+          {
+            "kind": "sent",
+            "text": "¿Para qué espacio sería? ¿La sala o el dormitorio?",
+            "detail": "¿Para qué espacio sería? ¿La sala o el dormitorio?",
+            "alert": false
+          }
+        ],
+        "tools": [
+          {
+            "kind": "tool_ok",
+            "text": "search_products",
+            "detail": "search_products(q=café) · notas: count:23",
+            "alert": false
+          }
+        ],
+        "componentes": [],
+        "estado": [],
+        "guardas": []
+      },
+      "checks": [
+        {
+          "checkId": "DES-04",
+          "name": "Clasificó bien la intención del cliente",
+          "verdict": "falla",
+          "level": "mayor",
+          "status": "mayor",
+          "anchored": true
+        }
+      ],
+      "isFirstFailure": false,
+      "isFirstCritical": false
+    },
+    {
+      "index": 3,
+      "turn": 4,
+      "atMs": 240000,
+      "trigger": "customer",
+      "triggerNote": null,
+      "botSilent": false,
+      "stage": "descubrimiento",
+      "gapBeforeMs": null,
+      "lanes": {
+        "cliente": [
+          {
+            "kind": "customer",
+            "text": "la sala",
+            "detail": "la sala",
+            "alert": false
+          }
+        ],
+        "bot": [
+          {
+            "kind": "sent",
+            "text": "¿Prefieres algún color?",
+            "detail": "¿Prefieres algún color?",
+            "alert": false
+          }
+        ],
+        "tools": [],
+        "componentes": [],
+        "estado": [],
+        "guardas": []
+      },
+      "checks": [
+        {
+          "checkId": "DES-01",
+          "name": "Máximo dos preguntas antes de mostrar productos",
+          "verdict": "falla",
+          "level": "mayor",
+          "status": "mayor",
+          "anchored": true
+        }
+      ],
+      "isFirstFailure": false,
+      "isFirstCritical": false
+    },
+    {
+      "index": 4,
+      "turn": 5,
+      "atMs": 300000,
+      "trigger": "customer",
+      "triggerNote": null,
+      "botSilent": false,
+      "stage": "descubrimiento",
+      "gapBeforeMs": null,
+      "lanes": {
+        "cliente": [
+          {
+            "kind": "customer",
+            "text": "muéstrame",
+            "detail": "muéstrame",
+            "alert": false
+          }
+        ],
+        "bot": [
+          {
+            "kind": "sent",
+            "text": "Tenemos 11 aromas disponibles: Caballero de la noche, Limoncillo, Lavanda, Café, Sándalo, Ylang ylang, Coco cremoso, Frutos rojos, Verde menta, Drakar y Chanel.",
+            "detail": "Tenemos 11 aromas disponibles: Caballero de la noche, Limoncillo, Lavanda, Café, Sándalo, Ylang ylang, Coco cremoso, Frutos rojos, Verde menta, Drakar y Chanel.",
+            "alert": false
+          }
+        ],
+        "tools": [
+          {
+            "kind": "tool_ok",
+            "text": "search_products",
+            "detail": "search_products() · notas: count:24",
+            "alert": false
+          },
+          {
+            "kind": "tool_ok",
+            "text": "present_products",
+            "detail": "present_products()",
+            "alert": false
+          }
+        ],
+        "componentes": [
+          {
+            "kind": "intent",
+            "text": "products_list",
+            "detail": "Componente de UI: products_list",
+            "alert": false
+          }
+        ],
+        "estado": [],
+        "guardas": []
+      },
+      "checks": [
+        {
+          "checkId": "VAR-01",
+          "name": "Cuatro o más aromas o colores nunca en texto plano",
+          "verdict": "falla",
+          "level": "critico",
+          "status": "critico",
+          "anchored": true
+        }
+      ],
+      "isFirstFailure": false,
+      "isFirstCritical": true
+    },
+    {
+      "index": 5,
+      "turn": 6,
+      "atMs": 360000,
+      "trigger": "customer",
+      "triggerNote": null,
+      "botSilent": false,
+      "stage": "variantes",
+      "gapBeforeMs": null,
+      "lanes": {
+        "cliente": [
+          {
+            "kind": "customer",
+            "text": "El primero azulito",
+            "detail": "El primero azulito",
+            "alert": false
+          }
+        ],
+        "bot": [
+          {
+            "kind": "sent",
+            "text": "¿Te lo dejo en azul?",
+            "detail": "¿Te lo dejo en azul?",
+            "alert": false
+          }
+        ],
+        "tools": [
+          {
+            "kind": "tool_ok",
+            "text": "set_order_slot",
+            "detail": "set_order_slot(producto=cubo-love · color=Azul)",
+            "alert": false
+          }
+        ],
+        "componentes": [],
+        "estado": [],
+        "guardas": []
+      },
+      "checks": [
+        {
+          "checkId": "VAR-05",
+          "name": "No elige variantes por el cliente",
+          "verdict": "falla",
+          "level": "mayor",
+          "status": "mayor",
+          "anchored": true
+        }
+      ],
+      "isFirstFailure": false,
+      "isFirstCritical": false
+    },
+    {
+      "index": 6,
+      "turn": 7,
+      "atMs": 420000,
+      "trigger": "customer",
+      "triggerNote": null,
+      "botSilent": false,
+      "stage": "variantes",
+      "gapBeforeMs": null,
+      "lanes": {
+        "cliente": [
+          {
+            "kind": "customer",
+            "text": "Tengo cita médica, luego te escribo",
+            "detail": "Tengo cita médica, luego te escribo",
+            "alert": false
+          },
+          {
+            "kind": "signal",
+            "text": "señal · aplazamiento",
+            "detail": "Señal del cliente: aplazamiento",
+            "alert": false
+          }
+        ],
+        "bot": [
+          {
+            "kind": "sent",
+            "text": "Claro, aquí te espero 🤍",
+            "detail": "Claro, aquí te espero 🤍",
+            "alert": false
+          }
+        ],
+        "tools": [],
+        "componentes": [],
+        "estado": [],
+        "guardas": []
+      },
+      "checks": [],
+      "isFirstFailure": false,
+      "isFirstCritical": false
+    },
+    {
+      "index": 7,
+      "turn": 8,
+      "atMs": 480000,
+      "trigger": "ghost",
+      "triggerNote": "ghosting",
+      "botSilent": true,
+      "stage": "variantes",
+      "gapBeforeMs": null,
+      "lanes": {
+        "cliente": [
+          {
+            "kind": "system",
+            "text": "silencio del cliente",
+            "detail": "[SISTEMA]: El usuario dejó de responder",
+            "alert": false
+          }
+        ],
+        "bot": [],
+        "tools": [
+          {
+            "kind": "tool_ok",
+            "text": "manage_conversation_tag",
+            "detail": "manage_conversation_tag(tag=INTERESADO)",
+            "alert": false
+          }
+        ],
+        "componentes": [],
+        "estado": [
+          {
+            "kind": "tag",
+            "text": "INTERESADO",
+            "detail": "Etiqueta INTERESADO · origen llm",
+            "alert": false
+          }
+        ],
+        "guardas": []
+      },
+      "checks": [],
+      "isFirstFailure": false,
+      "isFirstCritical": false
+    },
+    {
+      "index": 8,
+      "turn": 9,
+      "atMs": 20000000,
+      "trigger": "handoff",
+      "triggerNote": "handoff",
+      "botSilent": false,
+      "stage": "confirmacion",
+      "gapBeforeMs": 19520000,
+      "lanes": {
+        "cliente": [
+          {
+            "kind": "handoff",
+            "text": "Usuario respondió: Voy apenas en camino a casa. Siguiente paso: confirmar el pedido y tomar datos de envío.",
+            "detail": "Handoff: Usuario respondió: Voy apenas en camino a casa. Siguiente paso: confirmar el pedido y tomar datos de envío.",
+            "alert": false
+          },
+          {
+            "kind": "signal",
+            "text": "señal · aplazamiento",
+            "detail": "Señal del cliente: aplazamiento",
+            "alert": false
+          }
+        ],
+        "bot": [
+          {
+            "kind": "discarded",
+            "text": "Perfecto, ya casi llegas a casa. Te dejo el formulario.",
+            "detail": "Narración descartada por default-deny (no llegó al cliente): «Perfecto, ya casi llegas a casa. Te dejo el formulario.»",
+            "alert": false
+          }
+        ],
+        "tools": [
+          {
+            "kind": "tool_ok",
+            "text": "set_order_slot",
+            "detail": "set_order_slot(aroma=Café · cantidad=1)",
+            "alert": false
+          },
+          {
+            "kind": "tool_ok",
+            "text": "request_shipping_details",
+            "detail": "request_shipping_details(order_total_cop=89000)",
+            "alert": false
+          }
+        ],
+        "componentes": [
+          {
+            "kind": "intent",
+            "text": "shipping_flow",
+            "detail": "Componente de UI: shipping_flow",
+            "alert": false
+          }
+        ],
+        "estado": [],
+        "guardas": []
+      },
+      "checks": [
+        {
+          "checkId": "CON-01",
+          "name": "Formulario de envío solo tras confirmación de compra",
+          "verdict": "falla",
+          "level": "critico",
+          "status": "critico",
+          "anchored": true
+        },
+        {
+          "checkId": "CON-02",
+          "name": "Aplazamiento respetado",
+          "verdict": "falla",
+          "level": "critico",
+          "status": "critico",
+          "anchored": true
+        },
+        {
+          "checkId": "CON-04",
+          "name": "Pide el sí explícito antes de avanzar",
+          "verdict": "falla",
+          "level": "mayor",
+          "status": "mayor",
+          "anchored": true
+        },
+        {
+          "checkId": "ENV-02",
+          "name": "Formulario sin responder al cliente",
+          "verdict": "falla",
+          "level": "mayor",
+          "status": "mayor",
+          "anchored": true
+        },
+        {
+          "checkId": "EST-06",
+          "name": "Sin narración descartada",
+          "verdict": "falla",
+          "level": "menor",
+          "status": "menor",
+          "anchored": true
+        },
+        {
+          "checkId": "ENV-01",
+          "name": "Formulario de envío una sola vez",
+          "verdict": "pasa",
+          "level": "mayor",
+          "status": "pasa",
+          "anchored": true
+        },
+        {
+          "checkId": "VAR-07",
+          "name": "Precio visible antes de pedir confirmación o datos",
+          "verdict": "pasa",
+          "level": "mayor",
+          "status": "pasa",
+          "anchored": true
+        }
+      ],
+      "isFirstFailure": false,
+      "isFirstCritical": false
+    },
+    {
+      "index": 9,
+      "turn": 10,
+      "atMs": 20300000,
+      "trigger": "ghost",
+      "triggerNote": "ghosting",
+      "botSilent": true,
+      "stage": "confirmacion",
+      "gapBeforeMs": null,
+      "lanes": {
+        "cliente": [
+          {
+            "kind": "system",
+            "text": "silencio del cliente",
+            "detail": "[SISTEMA]: El usuario dejó de responder",
+            "alert": false
+          }
+        ],
+        "bot": [],
+        "tools": [
+          {
+            "kind": "tool_ok",
+            "text": "manage_conversation_tag",
+            "detail": "manage_conversation_tag(tag=CONFIRMADO_SIN_DATOS)",
+            "alert": false
+          },
+          {
+            "kind": "tool_ok",
+            "text": "escalate_to_human",
+            "detail": "escalate_to_human(reason_category=ORDER_PENDING_SHIPPING_DETAILS)",
+            "alert": false
+          }
+        ],
+        "componentes": [],
+        "estado": [
+          {
+            "kind": "tag",
+            "text": "CONFIRMADO_SIN_DATOS",
+            "detail": "Etiqueta CONFIRMADO_SIN_DATOS · origen llm",
+            "alert": true
+          },
+          {
+            "kind": "tag",
+            "text": "HUMANO",
+            "detail": "Etiqueta HUMANO · origen llm · motivo ORDER_PENDING_SHIPPING_DETAILS",
+            "alert": true
+          },
+          {
+            "kind": "route",
+            "text": "ruta humano",
+            "detail": "Ruta activa: ventas → humano",
+            "alert": true
+          }
+        ],
+        "guardas": []
+      },
+      "checks": [
+        {
+          "checkId": "TAG-01",
+          "name": "Etiqueta de cierre sostenida por la evidencia",
+          "verdict": "falla",
+          "level": "critico",
+          "status": "critico",
+          "anchored": true
+        },
+        {
+          "checkId": "TAG-02",
+          "name": "Motivo de escalación sostenido por la evidencia",
+          "verdict": "falla",
+          "level": "critico",
+          "status": "critico",
+          "anchored": true
+        },
+        {
+          "checkId": "GHO-02",
+          "name": "Con formulario pendiente espera diez minutos",
+          "verdict": "falla",
+          "level": "menor",
+          "status": "menor",
+          "anchored": true
+        },
+        {
+          "checkId": "EST-08",
+          "name": "Responde lo que el cliente preguntó",
+          "verdict": "desconocido",
+          "level": "mayor",
+          "status": "desconocido",
+          "anchored": false
+        },
+        {
+          "checkId": "CIE-05",
+          "name": "Un solo mensaje de cierre, sin frases prohibidas",
+          "verdict": "pasa",
+          "level": "mayor",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "CIE-06",
+          "name": "Nunca COMPRA_EXITOSA por el bot",
+          "verdict": "pasa",
+          "level": "critico",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "CON-05",
+          "name": "La guarda de confirmación tuvo que actuar",
+          "verdict": "pasa",
+          "level": "mayor",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "DES-02",
+          "name": "Una pregunta por burbuja",
+          "verdict": "pasa",
+          "level": "menor",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "DES-03",
+          "name": "Catálogo pedido, catálogo enviado",
+          "verdict": "pasa",
+          "level": "critico",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "ENV-05",
+          "name": "Sin datos bancarios ni valor de envío definitivo en texto",
+          "verdict": "pasa",
+          "level": "critico",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "EST-01",
+          "name": "Tuteo colombiano, cero voseo",
+          "verdict": "pasa",
+          "level": "menor",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "EST-02",
+          "name": "Sin guion largo y emojis de la lista",
+          "verdict": "pasa",
+          "level": "menor",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "EST-03",
+          "name": "Sin texto administrativo al cliente",
+          "verdict": "pasa",
+          "level": "critico",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "EST-03b",
+          "name": "La guarda de texto administrativo tuvo que actuar",
+          "verdict": "pasa",
+          "level": "mayor",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "EST-04",
+          "name": "No revela que es una IA",
+          "verdict": "pasa",
+          "level": "mayor",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "EST-05",
+          "name": "Sin promesas de tiempos de entrega",
+          "verdict": "pasa",
+          "level": "mayor",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "GHO-01",
+          "name": "El turno de ghosting no le escribe al cliente",
+          "verdict": "pasa",
+          "level": "critico",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "TAG-01b",
+          "name": "La guarda de etiquetas tuvo que degradar",
+          "verdict": "pasa",
+          "level": "mayor",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "TAG-05",
+          "name": "Con ruta humano el bot no vuelve a hablar",
+          "verdict": "pasa",
+          "level": "critico",
+          "status": "pasa",
+          "anchored": true
+        },
+        {
+          "checkId": "TAG-06",
+          "name": "La red de escalación tuvo que actuar",
+          "verdict": "pasa",
+          "level": "mayor",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "VAR-01b",
+          "name": "La guarda de variantes tuvo que actuar",
+          "verdict": "pasa",
+          "level": "mayor",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "VAR-06",
+          "name": "No vuelve a preguntar la cantidad",
+          "verdict": "pasa",
+          "level": "mayor",
+          "status": "pasa",
+          "anchored": false
+        },
+        {
+          "checkId": "VAR-09",
+          "name": "Botones rápidos sin selectores de catálogo",
+          "verdict": "pasa",
+          "level": "menor",
+          "status": "pasa",
+          "anchored": false
+        }
+      ],
+      "isFirstFailure": false,
+      "isFirstCritical": false
+    }
+  ],
+  "bands": [
+    {
+      "stage": "descubrimiento",
+      "label": "descubrimiento",
+      "color": "var(--color-info)",
+      "from": 0,
+      "to": 4
+    },
+    {
+      "stage": "variantes",
+      "label": "variantes",
+      "color": "var(--color-violet)",
+      "from": 5,
+      "to": 7
+    },
+    {
+      "stage": "confirmacion",
+      "label": "confirmación",
+      "color": "var(--color-cyan)",
+      "from": 8,
+      "to": 9
+    }
+  ],
+  "firstFailure": {
+    "turn": 2,
+    "checkId": "DES-09"
+  },
+  "firstCritical": {
+    "turn": 5,
+    "checkId": "VAR-01"
+  }
+}

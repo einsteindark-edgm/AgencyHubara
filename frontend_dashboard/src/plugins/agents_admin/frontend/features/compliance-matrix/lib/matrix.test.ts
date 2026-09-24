@@ -5,11 +5,16 @@ import listFixture from "@plugins/agents_admin/frontend/entities/scorecard/fixtu
 import { checkRegistrySchema } from "@plugins/agents_admin/frontend/entities/scorecard/contracts";
 import { scorecardListSchema } from "@plugins/agents_admin/frontend/entities/scorecard/contracts";
 
+import { matrixCellStatus } from "@/shared/lib";
+import { stageColor } from "@plugins/agents_admin/frontend/entities/scorecard";
+
 import {
   cellStatus,
   filterScorecards,
   finalStageOptions,
   matrixColumns,
+  toMatrixGroupsView,
+  toMatrixRowView,
 } from "./matrix";
 
 const registry = checkRegistrySchema.parse(checksFixture);
@@ -73,5 +78,53 @@ describe("celdas y filas", () => {
       "datos_envio",
       "cierre",
     ]);
+  });
+});
+
+describe("mapeo a la vista genérica de la matriz", () => {
+  it("cada grupo de etapa lleva clave, rótulo, color y columnas con nivel", () => {
+    const groups = matrixColumns(registry, rows, { onlyFailing: false });
+    const view = toMatrixGroupsView(groups);
+    expect(view.map((g) => g.key)).toEqual(groups.map((g) => g.stage));
+    expect(view[0]).toMatchObject({ label: "descubrimiento", color: stageColor("descubrimiento") });
+    const con01 = registry.checks.find((c) => c.id === "CON-01")!;
+    const col = view.flatMap((g) => g.columns).find((c) => c.id === "CON-01")!;
+    expect(col).toEqual({ id: "CON-01", name: con01.name, level: con01.level });
+  });
+
+  it("cada fila lleva clave única, rótulo del episodio, título, meta y veredictos por check", () => {
+    const view = toMatrixRowView(rows[0]);
+    expect(view.key).toBe(`${rows[0].session_id}::${rows[0].episode_id}`);
+    expect(view.verdict).toBe(rows[0].verdict);
+    expect(view.label).toMatch(/ · ep_007$/);
+    expect(view.title).toBe(`${rows[0].session_id} · ${rows[0].episode_id}`);
+    expect(view.meta.startsWith(rows[0].episode_date ?? rows[0].date)).toBe(true);
+    expect(view.checks).toBe(rows[0].checks);
+    expect(new Set(rows.map((r) => toMatrixRowView(r).key)).size).toBe(rows.length);
+  });
+
+  it("la meta suma etiqueta de cierre y marca el legado", () => {
+    const base = rows[0];
+    const meta = toMatrixRowView({
+      ...base,
+      episode_date: "2026-09-10",
+      closing_tag: "COMPRA_EXITOSA",
+      fidelity: "legacy",
+    }).meta;
+    expect(meta).toBe("2026-09-10 · COMPRA_EXITOSA · legado");
+    expect(toMatrixRowView({ ...base, episode_date: null, date: "2026-09-01", closing_tag: null, fidelity: "trace" }).meta).toBe(
+      "2026-09-01",
+    );
+  });
+
+  it("la celda de la vista coincide con la del dominio", () => {
+    const groups = toMatrixGroupsView(matrixColumns(registry, rows, { onlyFailing: false }));
+    for (const r of rows) {
+      const view = toMatrixRowView(r);
+      for (const col of groups.flatMap((g) => g.columns)) {
+        const def = registry.checks.find((c) => c.id === col.id)!;
+        expect(matrixCellStatus(view, col)).toBe(cellStatus(r, def));
+      }
+    }
   });
 });
