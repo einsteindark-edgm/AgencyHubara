@@ -191,6 +191,8 @@ def score_trajectory(
 
     judged = list(judge_results)
     judge_errors = sum(1 for r in judged if is_judge_error(r))
+    # Ilegible o inconsistente: no es un error de conexión, tampoco un juicio.
+    judge_unknown = sum(1 for r in judged if r.verdict == "desconocido" and r.critique and not is_judge_error(r))
     results = [*run_code_checks(traj, ctx), *judged]
     card = compute_scorecard(traj, SPECS_BY_ID, results, calibrated=calibrated)
     record = card.to_dict()
@@ -200,6 +202,7 @@ def score_trajectory(
             # en todas las llamadas no es un scorecard con juez.
             "judge": len(judged) > judge_errors,
             "judge_errors": judge_errors,
+            "judge_unknown": judge_unknown,
             "registry_version": REGISTRY_VERSION,
             "order_id": traj.order_id,
             "episode_date": episode_date(traj),
@@ -212,7 +215,9 @@ def score_trajectory(
 
 # ── Modo turno (laboratorio, plan §5.2–5.5) ─────────────────────────────────
 # Precedencia al agregar un check sobre varios turnos: la señal más fuerte gana.
-_AGGREGATE_RANK = {"falla": 0, "pasa": 1, "desconocido": 2, "sin_senal": 3, "no_aplica": 4}
+# Un turno sin decidir no se esconde detrás de otro que pasó: el episodio
+# queda sin decidir en ese check (como cuando el juez de producción duda).
+_AGGREGATE_RANK = {"falla": 0, "desconocido": 1, "pasa": 2, "sin_senal": 3, "no_aplica": 4}
 
 
 def score_turns(
@@ -238,6 +243,8 @@ def score_turns(
     by_turn: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
     union: list[CheckResult] = []
+    # La candidata del turno k se juzga como turno k aunque venga numerada distinto.
+    candidates = {k: c if c.turn == k else replace(c, turn=k) for k, c in candidates.items()}
     for k in sorted(candidates):
         focus = focus_trajectory(real, candidates[k], episode_at=(episodes_at or {}).get(k))
         judged = pin_to_focus((judge_results or {}).get(k, ()), k)
@@ -277,7 +284,7 @@ def score_turns(
 
 
 def aggregate_checks(rows: Iterable[Mapping[str, Any]]) -> dict[str, str]:
-    """Un veredicto por check sobre varios turnos: falla > pasa > desconocido >
+    """Un veredicto por check sobre varios turnos: falla > desconocido > pasa >
     sin_senal > no_aplica (para estadísticas; `store.to_row` se queda con el
     último, que en modo turno no dice nada)."""
     out: dict[str, str] = {}

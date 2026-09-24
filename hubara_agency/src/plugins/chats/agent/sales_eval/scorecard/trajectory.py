@@ -248,13 +248,41 @@ def build_trajectory(
     )
     turns: list[Turn] = []
     for raw in ordered:
-        turns.append(turn_from_trace(raw, default_turn=len(turns) + 1))
+        turn = turn_from_trace(raw, default_turn=len(turns) + 1)
+        if turn.trigger == COMPLEMENT_TRIGGER and turns:
+            turns[-1] = _with_complement(turns[-1], turn)
+            continue
+        turns.append(turn)
     return Trajectory(
         session_id=session_id,
         episode_id=episode_id,
         fidelity="trace" if turns else "empty",
         turns=tuple(turns),
         **_episode_fields(episode),
+    )
+
+
+# El bot nuevo (canary/on) manda el complemento de un turno como turno aparte
+# (`trigger: complement`, con una nota `[SISTEMA]` que lleva los asuntos del
+# clasificador). Para el scorecard es parte del turno que complementa: los
+# checks de "en ese mismo turno" lo cuentan, los de pares de turnos no ven un
+# turno de más, y el juez no lee la nota del clasificador (EST-08 saca los
+# asuntos por su cuenta).
+COMPLEMENT_TRIGGER = "complement"
+
+
+def _with_complement(turn: Turn, complement: Turn) -> Turn:
+    return replace(
+        turn,
+        sent_texts=(*turn.sent_texts, *complement.sent_texts),
+        discarded_narration=(*turn.discarded_narration, *complement.discarded_narration),
+        tools=(*turn.tools, *complement.tools),
+        intents=(*turn.intents, *complement.intents),
+        guards=(*turn.guards, *complement.guards),
+        stage_out=complement.stage_out or turn.stage_out,
+        draft=complement.draft if complement.draft is not None else turn.draft,
+        confirmed=complement.confirmed if complement.confirmed is not None else turn.confirmed,
+        state=complement.state or turn.state,
     )
 
 
