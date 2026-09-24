@@ -1488,4 +1488,9 @@ async def test_inbound_ids_go_with_the_message_for_the_trace():
 
     await use_case.execute(_make_text_message(text="me mandas el catálogo"))
 
-    assert loader.calls[0].inbound_meta == {"wamid": "wamid.X", "ts_ms": 1714312345000, "kind": "text"}
+    # `text` es lo que escribió el cliente, sin la cita de campaña, la plantilla
+    # ni el resumen del episodio anterior que el turno le agrega al LLM: es lo
+    # que lee el clasificador de las capas nuevas (PR 14).
+    assert loader.calls[0].inbound_meta == {
+        "wamid": "wamid.X", "ts_ms": 1714312345000, "kind": "text", "text": "me mandas el catálogo",
+    }
