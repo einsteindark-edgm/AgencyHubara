@@ -35,9 +35,16 @@ def box(tmp_path: Path, monkeypatch) -> dict:
         "estimate_usd": 20.0, "spend_limit_usd": 120.0, "requested_at_ms": 1,
     }).encode())
     root = tmp_path / "lab"
+    smoke: dict = {"calls": [], "result": {"error": None, "trace": {"sent_texts": ["¡Hola!"]}}}
+
+    async def fake_case(case, *, bench_dir, sandbox_dir, timeout_s):
+        smoke["calls"].append(case["case_id"])
+        return {"case_id": case["case_id"], **smoke["result"]}
+
+    monkeypatch.setattr(run_acts, "run_case_in_subprocess", fake_case)
     monkeypatch.setattr(run_acts, "get_lab_store", lambda: store)
     monkeypatch.setenv("LAB_ROOT", str(root))
-    return {"store": store, "root": root}
+    return {"store": store, "root": root, "smoke": smoke}
 
 
 async def _run(box: dict) -> dict:
@@ -59,6 +66,37 @@ async def test_an_order_builds_the_cases_and_publishes_the_control(box) -> None:
     assert progress["notes"] == [SIMULATION_PENDING_NOTE]
     assert store.get_bytes(f"runs/{RUN}/threads/{SID}.json") is not None
     assert (box["root"] / "bench" / "bench-x" / "manifest.json").is_file()
+
+
+@pytest.mark.asyncio
+async def test_a_smoke_turn_of_the_bench_runs_before_simulating(box) -> None:
+    """Plan §3.3: antes de cada corrida, un turno de humo del banco tiene que
+    pasar; si no pasa, la corrida no arranca (y dice por qué)."""
+    await _run(box)
+
+    assert box["smoke"]["calls"] == [f"{SID}/ep_001/t1"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_smoke_turn_fails_the_run_with_the_reason(box) -> None:
+    box["smoke"]["result"] = {"error": "el turno no terminó en 600 s", "trace": None}
+
+    result = await _run(box)
+
+    assert result["phase"] == "failed"
+    progress = json.loads(box["store"].get_bytes(f"runs/{RUN}/progress.json"))
+    assert progress["phase"] == "failed"
+    assert "turno de humo" in progress["error"] and "no terminó" in progress["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_control_only_run_needs_no_smoke_turn(box) -> None:
+    order = json.loads(box["store"].get_bytes(f"orders/{RUN}.json"))
+    box["store"].put_bytes(f"orders/{RUN}.json", json.dumps({**order, "arms": ["A0"]}).encode())
+
+    result = await _run(box)
+
+    assert result["phase"] == "done" and box["smoke"]["calls"] == []
 
 
 @pytest.mark.asyncio

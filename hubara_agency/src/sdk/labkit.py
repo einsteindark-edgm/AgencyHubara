@@ -15,6 +15,11 @@ Uso canónico (activity del worker `sales_eval`)::
     launcher = get_lab_launcher()
     launcher.start_box()
     launcher.dispatch(run_id, image)   # "dispatched" | "already_dispatched"
+
+Sandbox de un turno (worker `sales_lab`, en la caja): `installed_sandbox_ports`
+pone los puertos de plataforma que hablan con Medusa en modo sandbox (sin
+Medusa, promociones del banco, pedido stub, verificación contra el snapshot)
+ANTES de importar el worker de ventas.
 """
 from __future__ import annotations
 
@@ -44,4 +49,13 @@ from src.platform.lab.store import (
 )
 from src.platform.lab.store import (
     S3LabStore as S3LabStore,
+)
+from src.platform.lab.sandbox_ports import (
+    SandboxNoMedusaError as SandboxNoMedusaError,
+)
+from src.platform.lab.sandbox_ports import (
+    SnapshotLiveMedusa as SnapshotLiveMedusa,
+)
+from src.platform.lab.sandbox_ports import (
+    installed_sandbox_ports as installed_sandbox_ports,
 )

@@ -55,6 +55,15 @@ def test_a_production_key_blocks_the_start(key: str) -> None:
     assert any(key in p for p in problems)
 
 
+def test_the_sandbox_phone_id_sentinel_is_the_only_whatsapp_value_allowed() -> None:
+    """El envío simulado exige `WHATSAPP_PHONE_NUMBER_ID` aunque no haya
+    llave: el sandbox pone un valor centinela. Solo ESE valor pasa; la llave
+    (`WHATSAPP_ACCESS_TOKEN`) sigue prohibida y es la que impide enviar."""
+    assert check_lab_env(_prepared(WHATSAPP_PHONE_NUMBER_ID="lab-sandbox")) == []
+    assert check_lab_env(_prepared(WHATSAPP_PHONE_NUMBER_ID="1234567890")) != []
+    assert check_lab_env(_prepared(WHATSAPP_PHONE_NUMBER_ID="lab-sandbox", WHATSAPP_ACCESS_TOKEN="EAAG")) != []
+
+
 def test_an_empty_production_variable_is_not_a_key() -> None:
     assert check_lab_env(_prepared(MEDUSA_BASE_URL="")) == []
 

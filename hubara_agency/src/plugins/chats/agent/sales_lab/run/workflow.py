@@ -6,8 +6,9 @@ workflow no tiene historias vivas que proteger con `patched`.
 
 Fases (las ve el lanzador en `runs/<corrida>/progress.json`):
   preparing   baja la orden y el banco
-  running     arma los casos y publica el control real (A0); con el
-              simulador (PR 11+) corre los brazos A1, B y C
+  running     arma los casos y publica el control real (A0); si hay brazos
+              simulados, un turno de humo del banco tiene que pasar antes
+              (PR 11); con el simulador completo (PR 13+) corre A1, B y C
   evaluating  scorecard por turno y juez (PR 12+)
   done | failed | cancelled
 """
@@ -25,6 +26,7 @@ with workflow.unsafe.imports_passed_through():
         ProgressUpdate,
         PublishResult,
         RunPlan,
+        SmokeResult,
     )
 
 _QUICK = {"start_to_close_timeout": timedelta(minutes=2), "retry_policy": RetryPolicy(maximum_attempts=3)}
@@ -59,6 +61,19 @@ class LabRunWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             simulated = [a for a in plan.arms if a != "A0"]
+            if simulated:
+                smoke = await workflow.execute_activity(
+                    "lab_run_smoke_turn",
+                    plan,
+                    result_type=SmokeResult,
+                    start_to_close_timeout=timedelta(minutes=15),
+                    heartbeat_timeout=timedelta(minutes=2),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+                if not smoke.ok:
+                    error = f"el turno de humo no pasó ({smoke.case_id}): {smoke.error}"[:500]
+                    await progress(ProgressUpdate(run_id=inp.run_id, phase="failed", error=error))
+                    return {"phase": "failed", "error": error}
             notes = [SIMULATION_PENDING_NOTE] if simulated else []
             await progress(
                 ProgressUpdate(

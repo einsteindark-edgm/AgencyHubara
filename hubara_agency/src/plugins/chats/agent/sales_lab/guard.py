@@ -36,6 +36,11 @@ _FORBIDDEN_KEYS = (
     "APP_SECRET",
 )
 
+# Valores centinela del sandbox: la ÚNICA forma de que una de estas variables
+# tenga valor en la caja. El envío de WhatsApp exige un phone_number_id aunque
+# no haya llave; sin `WHATSAPP_ACCESS_TOKEN` (prohibida) el envío es simulado.
+SANDBOX_SENTINELS: dict[str, str] = {"WHATSAPP_PHONE_NUMBER_ID": "lab-sandbox"}
+
 # Carpetas que el código de producción escribe: todas dentro de LAB_ROOT.
 _FOLDERS: dict[str, str] = {
     "WORKSPACE_VAULT_DIR": "sandbox/vault",
@@ -70,7 +75,7 @@ def check_lab_env(env: Mapping[str, str]) -> list[str]:
     problems: list[str] = []
     root = _root(env)
     for key, value in env.items():
-        if not value:
+        if not value or SANDBOX_SENTINELS.get(key) == value:
             continue
         if key in _FORBIDDEN_KEYS or key.startswith(_FORBIDDEN_PREFIXES):
             problems.append(f"{key}: llave o dato de producción en la caja del laboratorio")
