@@ -1,4 +1,4 @@
-import type { TrendWeek } from "@plugins/agents_admin/frontend/entities/check-stats";
+import type { TrendWeekView } from "./quality-view";
 
 /** Geometría pura del sparkline semanal de cumplimiento (SVG sin librería). */
 
@@ -30,7 +30,7 @@ export interface SparkGeometry {
 
 const REFERENCE_RATE = 0.9;
 
-export function sparklineGeometry(weeks: readonly TrendWeek[], dims: SparkDims): SparkGeometry {
+export function sparklineGeometry(weeks: readonly TrendWeekView[], dims: SparkDims): SparkGeometry {
   const rates = weeks.map((w) => w.rate).filter((r): r is number => r !== null);
   const minRate = rates.length ? Math.min(...rates) : 1;
   const domainMin = minRate < 0.5 ? Math.floor(minRate * 10) / 10 : 0.5;

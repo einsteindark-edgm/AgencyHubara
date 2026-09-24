@@ -1,11 +1,11 @@
+import type { QualityStatus } from "./quality-view";
 import {
   STRIP_LANES,
-  type CheckStatus,
   type StripCheck,
   type StripColumn,
   type StripLaneId,
   type StripModel,
-} from "@plugins/agents_admin/frontend/entities/scorecard";
+} from "./trajectory-strip";
 
 /** Geometría pura de la tira de trayectoria (px del viewBox SVG). */
 
@@ -49,7 +49,7 @@ export function dotOffset(i: number, n: number): { dx: number; row: number } {
 }
 
 export interface CollapsedChecks {
-  status: CheckStatus;
+  status: QualityStatus;
   checks: StripCheck[];
 }
 
@@ -64,7 +64,7 @@ export function splitColumnChecks(
   selectedCheckId: string | null,
 ): { dots: StripCheck[]; collapsed: CollapsedChecks[] } {
   const dots: StripCheck[] = [];
-  const groups = new Map<CheckStatus, StripCheck[]>();
+  const groups = new Map<QualityStatus, StripCheck[]>();
   for (const c of column.checks) {
     if (c.anchored || c.verdict === "falla" || c.checkId === selectedCheckId) {
       dots.push(c);

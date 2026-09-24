@@ -23,8 +23,5 @@ export interface ParetoRow extends ParetoItem {
   share: number;
 }
 
-export interface WeeklyDelta {
-  last: number | null;
-  previous: number | null;
-  delta: number | null;
-}
+/** Última tasa semanal con dato vs. la anterior (forma de vista de `@/shared/lib`). */
+export type { WeeklyDelta } from "@/shared/lib";

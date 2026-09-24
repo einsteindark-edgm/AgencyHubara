@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import checksFixture from "@plugins/agents_admin/frontend/entities/scorecard/fixtures/checks.json";
-import detailFixture from "@plugins/agents_admin/frontend/entities/scorecard/fixtures/scorecard-detail.json";
-import {
-  checkRegistrySchema,
-  scorecardDetailSchema,
-} from "@plugins/agents_admin/frontend/entities/scorecard/contracts";
-import { buildStripModel } from "@plugins/agents_admin/frontend/entities/scorecard/lib";
-
+import stripModelFixture from "./fixtures/strip-model.json";
+import type { StripModel } from "./trajectory-strip";
 import {
   COL_W,
   DOTS_PER_ROW,
@@ -18,14 +12,10 @@ import {
   dotOffset,
   splitColumnChecks,
   stripLayout,
-} from "./layout";
+} from "./trajectory-strip-layout";
 
-const detail = scorecardDetailSchema.parse(detailFixture);
-const model = buildStripModel(
-  detail.trajectory!,
-  detail.scorecard!.results,
-  checkRegistrySchema.parse(checksFixture),
-);
+/** Modelo de vista de un episodio real de 10 turnos (el que arma la entity scorecard de agents_admin). */
+const model = stripModelFixture as StripModel;
 
 describe("splitColumnChecks", () => {
   const last = model.columns[9];

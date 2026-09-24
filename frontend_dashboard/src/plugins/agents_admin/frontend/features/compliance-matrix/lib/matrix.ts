@@ -1,6 +1,9 @@
+import type { MatrixGroupView, MatrixRowView } from "@/shared/lib";
 import {
   STAGE_ORDER,
   checkStatus,
+  episodeLabel,
+  stageColor,
   stageLabel,
   stageRank,
   type CheckDefinition,
@@ -65,6 +68,36 @@ export function matrixColumns(
 
 export function cellStatus(row: ScorecardRow, check: CheckDefinition): CheckStatus {
   return checkStatus(row.checks[check.id], check.level);
+}
+
+/** Grupos de columnas del dominio → vista genérica de `ComplianceMatrixTable`. */
+export function toMatrixGroupsView(groups: readonly MatrixColumnGroup[]): MatrixGroupView[] {
+  return groups.map((g) => ({
+    key: g.stage,
+    label: g.label,
+    color: stageColor(g.stage),
+    columns: g.checks.map((c) => ({ id: c.id, name: c.name, level: c.level })),
+  }));
+}
+
+/** Clave única de una fila de la matriz: sesión + episodio. */
+export function matrixRowKey(row: Pick<ScorecardRow, "session_id" | "episode_id">): string {
+  return `${row.session_id}::${row.episode_id}`;
+}
+
+/** Fila del scorecard → vista genérica de `ComplianceMatrixTable`. */
+export function toMatrixRowView(row: ScorecardRow): MatrixRowView {
+  return {
+    key: matrixRowKey(row),
+    verdict: row.verdict,
+    label: episodeLabel(row),
+    title: `${row.session_id} · ${row.episode_id}`,
+    meta:
+      (row.episode_date ?? row.date) +
+      (row.closing_tag ? ` · ${row.closing_tag}` : "") +
+      (row.fidelity === "legacy" ? " · legado" : ""),
+    checks: row.checks,
+  };
 }
 
 export function finalStageOptions(rows: readonly ScorecardRow[]): string[] {

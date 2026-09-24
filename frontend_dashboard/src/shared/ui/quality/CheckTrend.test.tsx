@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-import statsFixture from "@plugins/agents_admin/frontend/entities/check-stats/fixtures/check-stats.json";
-import { checkStatsSchema } from "@plugins/agents_admin/frontend/entities/check-stats/contracts";
+import statsFixture from "@/shared/lib/fixtures/quality-stats.json";
+import type { ParetoItemView, TrendSeriesView } from "@/shared/lib";
 
 import { CheckTrend } from "./CheckTrend";
 
-const stats = checkStatsSchema.parse(statsFixture);
+/** Agregados de vista de 56 días de un bot real (forma de `check-stats` de agents_admin). */
+const stats = statsFixture as { pareto: ParetoItemView[]; trend: TrendSeriesView[] };
 
 describe("CheckTrend", () => {
   it("por defecto muestra solo los checks que fallaron en la ventana", () => {

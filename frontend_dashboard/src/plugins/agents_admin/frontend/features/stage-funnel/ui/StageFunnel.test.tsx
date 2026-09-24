@@ -8,8 +8,8 @@ import { StageFunnel } from "./StageFunnel";
 
 const stats = checkStatsSchema.parse(statsFixture);
 
-describe("StageFunnel", () => {
-  it("una barra por etapa final con total, en orden del guion, y leyenda", () => {
+describe("StageFunnel (scorecard → gráfica compartida)", () => {
+  it("ordena las etapas del contrato por el guion y las rotula", () => {
     render(<StageFunnel funnel={[...stats.funnel].reverse()} />);
     const chart = screen.getByRole("img", { name: /embudo de etapa terminal/i });
     const labels = within(chart).getAllByTestId("funnel-stage").map((n) => n.textContent);
@@ -21,15 +21,5 @@ describe("StageFunnel", () => {
       "3",
       "7",
     ]);
-    const legend = screen.getByRole("list", { name: /leyenda/i });
-    for (const v of ["Falla", "Alerta", "Pasa", "Sin datos"]) {
-      expect(within(legend).getByText(v)).toBeInTheDocument();
-    }
-    expect(chart.querySelector("title")?.textContent).toMatch(/descubrimiento · Falla: 1/);
-  });
-
-  it("sin episodios lo dice", () => {
-    render(<StageFunnel funnel={[]} />);
-    expect(screen.getByText(/sin episodios en la ventana/i)).toBeInTheDocument();
   });
 });
