@@ -171,6 +171,7 @@ def set_applied_coupon(
     quota: bool = False,
     units: list[dict[str, Any]] | None = None,
     show_units_left: bool = True,
+    sold_out: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Mutates: fija el cupón en el episodio activo (lo crea si no hay).
 
@@ -191,6 +192,7 @@ def set_applied_coupon(
         "eligible_products": list(eligible or []),
         **({"quota": True} if quota else {}),
         **({"units": list(units), "show_units_left": show_units_left} if units else {}),
+        **({"sold_out": list(sold_out)} if sold_out else {}),
     }
     return metadata
 
@@ -369,7 +371,15 @@ def build_coupon_note(metadata: dict[str, Any]) -> str | None:
         )
     eligible = [p for p in (raw.get("eligible_products") or []) if isinstance(p, dict)]
     units = [u for u in (raw.get("units") or []) if isinstance(u, dict)]
-    if is_whole_catalog(promotion):
+    sold_out = [u for u in (raw.get("sold_out") or []) if isinstance(u, dict)]
+    if raw.get("exhausted"):
+        # Relectura del cupo (cada mensaje): se vendieron todas.
+        scope = (
+            "ya no quedan unidades con descuento de este cupón: todo va a precio "
+            "normal. Si el cliente pregunta, díselo con honestidad y no inventes "
+            "otro descuento."
+        )
+    elif is_whole_catalog(promotion):
         scope = "aplica a todo el catálogo."
     elif units:
         # Cupo por unidad (conversación de prueba del 2026-09-24): las
@@ -384,7 +394,9 @@ def build_coupon_note(metadata: dict[str, Any]) -> str | None:
                 "primero; cualquier otro color o aroma va a precio normal: dilo antes "
                 "de tomar el pedido. Si pide más unidades de las que quedan con "
                 "descuento, las demás van a precio normal: dilo también.",
-                *draft_vs_coupon_lines(episode.get("order_draft"), units, show_units_left=show),
+                *draft_vs_coupon_lines(
+                    episode.get("order_draft"), units, show_units_left=show, sold_out=sold_out
+                ),
             ]
         )
     elif eligible:

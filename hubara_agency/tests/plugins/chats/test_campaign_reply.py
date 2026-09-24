@@ -605,3 +605,212 @@ async def test_webhook_shares_one_sales_read_between_campaign_replies(monkeypatc
     await use_case._check_campaign_coupon("AMOR26", now)
 
     assert _Reader.calls == 1
+
+
+# --- El cupo del cupón aplicado se relee con cada mensaje ---------------------
+#
+# Prueba en vivo 2026-09-24 (15:59 Bogotá): el cliente pidió 2 Cilindro Love
+# Azul · Lavanda (cupo 1) y a "¿Si tienes 2 de esa?" el bot dijo "Sí, claro":
+# no fue a mirar cuántas quedaban. El cupo es la existencia de la promoción;
+# con 1 unidad por combinación, lo que se guardó al aplicar el cupón queda
+# viejo apenas otro cliente compra. Cada mensaje relee cuánto queda.
+
+
+def _cilindro(color: str, aroma: str, left: int) -> dict:
+    return {"handle": "cilindro-love", "title": "Cilindro Love", "color": color, "aroma": aroma,
+            "units_left": left, "price_cop": 23500, "discounted_price_cop": 21150}
+
+
+def _episode_with_quota_coupon(now_ms: int, *, route: str = "ventas") -> dict:
+    from dataclasses import asdict
+
+    item = {"producto": "Cilindro Love", "color": "Azul", "aroma": "Lavanda", "cantidad": "2"}
+    return {
+        "active_route": route,
+        "tag": "NO_ETIQUETADO",
+        "last_inbound_at_ms": now_ms - 60_000,
+        "episodes": [
+            {
+                "episode_id": "ep_009",
+                "started_at_ms": now_ms - 10 * 60_000,
+                "closed_at_ms": None,
+                "closing_tag": None,
+                "order_id": None,
+                "applied_coupon": {
+                    "code": "AMOR26",
+                    "promotion": asdict(_amor_promo()),
+                    "applied_at_ms": now_ms - 5 * 60_000,
+                    "eligible_products": [],
+                    "quota": True,
+                    "units": [_cilindro("Azul", "Lavanda", 1), _cilindro("Rosado", "Caballero de la noche", 1)],
+                    "show_units_left": True,
+                },
+                "order_draft": {"slots": dict(item), "items": [dict(item)]},
+            }
+        ],
+    }
+
+
+class _UnitsNow:
+    def __init__(self, offer=None, *, error: Exception | None = None, delay: float = 0) -> None:
+        self.offer = offer
+        self.error = error
+        self.delay = delay
+        self.calls = 0
+
+    async def __call__(self, promotion: dict):
+        import asyncio
+
+        self.calls += 1
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.error is not None:
+            raise self.error
+        return self.offer
+
+
+def _use_case_with_units(store: _Store, loader: _Loader, units_now: _UnitsNow, applier=None) -> IngestInboundMessage:
+    return IngestInboundMessage(
+        history_store=_History(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=store,  # type: ignore[arg-type]
+        campaign_coupon=applier,
+        coupon_units_now=units_now,
+    )
+
+
+@pytest.mark.asyncio
+async def test_each_message_rereads_how_many_are_left_before_the_bot_answers():
+    from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer
+
+    now = int(time.time() * 1000)
+    store = _Store(_episode_with_quota_coupon(now))
+    loader = _Loader()
+    # Otro cliente se llevó la última Azul · Lavanda mientras tanto.
+    live = QuotaOffer(True, None, (_cilindro("Rosado", "Caballero de la noche", 1),), True,
+                      (_cilindro("Azul", "Lavanda", 0),))
+    units_now = _UnitsNow(live)
+
+    await _use_case_with_units(store, loader, units_now).execute(_message("Si tienes 2 de esa ?"))
+
+    assert units_now.calls == 1
+    applied = store.data[_SESSION]["episodes"][-1]["applied_coupon"]
+    assert [u["color"] for u in applied["units"]] == ["Rosado"]
+    assert [u["color"] for u in applied["sold_out"]] == ["Azul"]
+    context = "\n".join(loader.calls[0]["extra_context"])
+    assert "de Cilindro Love Azul · Lavanda ya no quedan unidades con el descuento" in context
+
+
+@pytest.mark.asyncio
+async def test_rereading_the_quota_says_how_many_carry_the_discount():
+    from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer
+
+    now = int(time.time() * 1000)
+    store = _Store(_episode_with_quota_coupon(now))
+    loader = _Loader()
+    live = QuotaOffer(True, None, (_cilindro("Azul", "Lavanda", 1), _cilindro("Rosado", "Caballero de la noche", 1)), True)
+
+    await _use_case_with_units(store, loader, _UnitsNow(live)).execute(_message("Si tienes 2 de esa ?"))
+
+    context = "\n".join(loader.calls[0]["extra_context"])
+    assert "queda 1 con el descuento" in context
+    assert "1 a $21.150 y 1 a precio normal ($23.500)" in context
+
+
+@pytest.mark.asyncio
+async def test_every_unit_sold_is_said_as_such():
+    from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer
+
+    now = int(time.time() * 1000)
+    store = _Store(_episode_with_quota_coupon(now))
+    loader = _Loader()
+
+    await _use_case_with_units(store, loader, _UnitsNow(QuotaOffer(True, "quota_exhausted"))).execute(
+        _message("hola")
+    )
+
+    applied = store.data[_SESSION]["episodes"][-1]["applied_coupon"]
+    assert applied["exhausted"] is True and applied["units"] == []
+    assert "ya no quedan unidades con descuento" in "\n".join(loader.calls[0]["extra_context"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "units_now",
+    [
+        _UnitsNow(error=RuntimeError("medusa caído")),
+        _UnitsNow(None, delay=1),
+    ],
+    ids=["medusa-caido", "medusa-lento"],
+)
+async def test_when_the_quota_cannot_be_reread_the_last_known_units_stay(units_now, monkeypatch):
+    import src.plugins.chats.agent.sales.use_cases.ingest_inbound_message as ingest
+
+    monkeypatch.setattr(ingest, "_CAMPAIGN_COUPON_TIMEOUT_S", 0.05)
+    now = int(time.time() * 1000)
+    store = _Store(_episode_with_quota_coupon(now))
+    loader = _Loader()
+
+    await _use_case_with_units(store, loader, units_now).execute(_message("Si tienes 2 de esa ?"))
+
+    applied = store.data[_SESSION]["episodes"][-1]["applied_coupon"]
+    assert [u["color"] for u in applied["units"]] == ["Azul", "Rosado"]
+    assert "queda 1 con el descuento" in "\n".join(loader.calls[0]["extra_context"])
+
+
+@pytest.mark.asyncio
+async def test_no_reread_for_a_human_conversation_or_a_coupon_just_applied():
+    now = int(time.time() * 1000)
+    human = _UnitsNow()
+    await _use_case_with_units(
+        _Store(_episode_with_quota_coupon(now, route="humano")), _Loader(), human
+    ).execute(_message("hola"))
+    assert human.calls == 0
+
+    # Respuesta a la campaña: el cupón se acaba de validar con las vendidas.
+    just_applied = _UnitsNow()
+    await _use_case_with_units(
+        _Store(_stale_trilogia_metadata(now)), _Loader(), just_applied, applier=_Applier(_applied_with_units())
+    ).execute(_message("Me gusta"))
+    assert just_applied.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_webhook_rereads_the_quota_through_the_same_shared_sales_read(monkeypatch):
+    """El webhook real relee el cupo con los puertos del SDK, compartiendo la
+    lectura de vendidas con la validación del cupón de la campaña."""
+    from dataclasses import asdict
+
+    import src.plugins.chats.agent.sales.composition as comp
+    import src.sdk.connectorkit as ck
+    from src.platform.promotions.port import FakePromotionsPort
+    from src.platform.promotions.quota_store import FakePromoQuotaStore
+    from src.platform.promotions.quotas import PromoUnitQuota
+
+    class _Reader:
+        calls = 0
+
+        async def sold_units(self, *, since, exclude=None):
+            _Reader.calls += 1
+            return {}
+
+    quotas = FakePromoQuotaStore()
+    quotas.replace(
+        "promo_amor26", "AMOR26",
+        [PromoUnitQuota("q1", "promo_amor26", "AMOR26", "prod_cubo", "cubo-love", "Cubo Love",
+                        "Rosado", "Café", 5, "2026-09-24T19:00:00Z", "ana")],
+        show_units_left=True, actor="ana", now_iso="2026-09-24T19:00:00Z",
+    )
+    monkeypatch.setattr(ck, "get_promotions_port", lambda: FakePromotionsPort([_amor_promo()]))
+    monkeypatch.setattr(ck, "get_promo_quota_store", lambda: quotas)
+    monkeypatch.setattr(ck, "get_coupon_sales_reader", lambda: _Reader())
+    monkeypatch.setattr(ck, "get_catalog_client", lambda: None)
+    monkeypatch.setattr(ck, "get_web_cart_reader", lambda: None)
+    monkeypatch.setattr(comp, "_INGEST_USE_CASE", None)
+
+    use_case = comp.build_ingest_use_case()
+    await use_case._check_campaign_coupon("AMOR26", int(time.time() * 1000))
+    offer = await use_case._coupon_units_now(asdict(_amor_promo()))
+
+    assert offer.has_quota
+    assert _Reader.calls == 1

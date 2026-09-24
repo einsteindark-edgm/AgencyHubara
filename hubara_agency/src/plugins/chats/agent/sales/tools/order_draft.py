@@ -83,10 +83,13 @@ def _coupon_lines(data: dict[str, Any]) -> list[str]:
     if not isinstance(applied, dict):
         return []
     units = [u for u in applied.get("units") or [] if isinstance(u, dict)]
-    if not units:
+    sold_out = [u for u in applied.get("sold_out") or [] if isinstance(u, dict)]
+    if not units and not sold_out:
         return []
     show = bool(applied.get("show_units_left", True))
-    lines = draft_vs_coupon_lines(episode.get("order_draft"), units, show_units_left=show)
+    lines = draft_vs_coupon_lines(
+        episode.get("order_draft"), units, show_units_left=show, sold_out=sold_out
+    )
     return [f"Cupón {applied.get('code')}: {line}" for line in lines]
 
 

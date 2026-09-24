@@ -323,3 +323,28 @@ async def test_picker_rows_say_how_many_are_left_when_the_coupon_allows_it(tmp_p
     _, text = await _show(tool, store, "scent", AROMAS)
 
     assert "Lila · Lavanda — $18.900 (queda 1)" in text
+
+
+def test_turn_note_says_when_the_chosen_combination_sold_out() -> None:
+    metadata = _metadata({"producto": "Cubo Love", "color": "Lila", "aroma": "Lavanda", "cantidad": "1"})
+    applied = metadata["episodes"][0]["applied_coupon"]
+    applied["sold_out"] = [dict(applied["units"][0], units_left=0)]
+    applied["units"] = applied["units"][1:]
+
+    note = build_coupon_note(metadata) or ""
+
+    assert "de Cubo Love Lila · Lavanda ya no quedan unidades con el descuento" in note
+    assert "precio normal ($21.000)" in note
+    assert "Lila · Lavanda (queda" not in note
+
+
+def test_turn_note_when_every_unit_sold_out() -> None:
+    metadata = _metadata()
+    applied = metadata["episodes"][0]["applied_coupon"]
+    applied.update(units=[], exhausted=True)
+
+    note = build_coupon_note(metadata) or ""
+
+    assert "ya no quedan unidades con descuento" in note
+    assert "precio normal" in note
+    assert "Lila · Lavanda" not in note
