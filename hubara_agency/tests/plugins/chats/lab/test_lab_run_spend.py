@@ -64,6 +64,20 @@ async def test_a_case_that_never_reported_its_cost_is_charged_the_measured_rate(
     assert progress["spent_usd"] >= round(2 * AGENT_USD_PER_TURN, 6) - 1e-6  # progress guarda 6 decimales
 
 
+@pytest.mark.asyncio
+async def test_a_finished_case_without_llm_cost_is_charged_the_measured_rate(box, sims) -> None:  # noqa: F811
+    """Sin la tabla de precios (o con un modelo que no está en ella) el turno
+    termina bien pero reporta US$0 de LLM: igual gastó, y el tope no puede
+    quedar ciego."""
+    _order(box, arms=["A1"], reps=1)
+    sims["cost"] = 0.0
+
+    await _run(box)
+
+    progress = json.loads(box["store"].get_bytes(f"runs/{RUN}/progress.json"))
+    assert progress["spent_usd"] == pytest.approx(3 * AGENT_USD_PER_TURN, abs=1e-5)  # el humo y los 2 casos
+
+
 def test_the_workflow_charges_the_same_rate_the_launcher_estimates() -> None:
     """El workflow no importa el módulo de costos (sandbox de Temporal): la
     tarifa se repite y este guarda las mantiene iguales."""
