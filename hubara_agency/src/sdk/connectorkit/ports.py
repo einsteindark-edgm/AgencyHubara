@@ -133,3 +133,21 @@ from src.platform.vision.composition import (
 from src.platform.vision.port import (
     ImageVisionPort as ImageVisionPort,
 )
+from src.platform.perception.adapters.fake import (
+    FakePerceptionAdapter as FakePerceptionAdapter,
+)
+from src.platform.perception.adapters.null import (
+    NullPerceptionAdapter as NullPerceptionAdapter,
+)
+from src.platform.perception.anonymize import (
+    anonymize_text as anonymize_text,
+)
+from src.platform.perception.composition import (
+    get_perception_port as get_perception_port,
+)
+from src.platform.perception.ports import (
+    PerceptionPort as PerceptionPort,
+    PerceptionResult as PerceptionResult,
+    TypedAnswer as TypedAnswer,
+    TypedQuestion as TypedQuestion,
+)

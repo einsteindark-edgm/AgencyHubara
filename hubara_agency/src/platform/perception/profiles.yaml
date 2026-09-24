@@ -1,0 +1,22 @@
+# Perfiles del puerto de percepción (plan del laboratorio §4.2). Versionados:
+# un cambio de modelo, preguntas o umbrales es un perfil NUEVO (jev-v2…), para
+# que las corridas del laboratorio y la traza digan con qué se midió.
+# Ids de modelo FIJOS (L-23): nunca "latest", que cambia de versión sin avisar.
+
+jev-v1:                                       # brazo B
+  provider: openrouter_decisions              # POST https://openrouter.ai/api/alpha/decisions
+  model: typesafe/jev-1.13
+  question_set: rafaga-v1                     # forma nativa: noul, choice y score
+  timeout_s: 3
+  thresholds: {detect: 0.70, confidence: 0.60, covered: 0.70}
+  anonymize: true
+  provider_prefs: {data_collection: deny}
+
+openai-lp-v1:                                 # brazo C
+  provider: litellm
+  model: litellm_proxy/openrouter-perception  # → openrouter/openai/gpt-4o-mini-2024-07-18
+  question_set: rafaga-v1                     # un código de un token por respuesta
+  params: {logprobs: true, top_logprobs: 20, temperature: 0, max_tokens: 64}
+  timeout_s: 3
+  thresholds: {detect: 0.70, confidence: 0.60, covered: 0.70}
+  anonymize: true
