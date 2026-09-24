@@ -799,6 +799,14 @@ laboratorio de conversaciones, §4.1.
 - WHEN el cliente escribe mientras el LLM piensa y el turno se reinicia
 - THEN `steps` muestra el intento abortado, el corte `checkpoint_a`, el `restart` y el intento que respondió
 
+#### Scenario: Ráfaga con los ids de cada mensaje
+
+- GIVEN `SALES_SIGNAL_INBOUND_META=on` en la API y el worker que acepta el 4.º argumento de `send_message`
+- WHEN el cliente manda dos mensajes seguidos
+- THEN la traza trae `inbound[]` con el `wamid`, la hora (`ts_ms`) y el tipo de cada mensaje, en orden
+- AND una señal de 3 argumentos (history anterior o variable apagada) sigue funcionando, con `wamid` y `ts_ms` en null
+- AND un 4.º argumento con otra forma se ignora: nunca se descarta el mensaje del cliente
+
 #### Scenario: History anterior a la traza v2
 
 - GIVEN una history que grabó `None` como resultado del envío y un entero como resultado del flush

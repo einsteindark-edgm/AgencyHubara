@@ -285,6 +285,7 @@ def build_turn_payload(
     source: str = "prod",
     mode: str = "off",
     context_notes: list[str] | None = None,
+    inbound: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Payload del turno armado por el WORKFLOW (solo lo que solo él sabe).
 
@@ -320,6 +321,8 @@ def build_turn_payload(
         "source": source,
         "mode": mode,
         "context_notes": list(context_notes or []),
+        # Mensajes de la ráfaga con su wamid, hora y tipo (PR 3).
+        "inbound": [_bound_value(m) for m in (inbound or [])[:_MAX_TOOLS] if isinstance(m, dict)],
         "steps": _normalize_steps(steps or [], turn_started_ms=int(turn_started_ms), tools=tools),
     }
 

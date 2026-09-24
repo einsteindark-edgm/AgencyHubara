@@ -259,7 +259,7 @@ class _Loader:
     def __init__(self) -> None:
         self.calls: list[Any] = []
 
-    async def execute(self, session_id: str, message: str, phone_number_id: str | None, extra_context: list[str] | None = None) -> None:
+    async def execute(self, session_id: str, message: str, phone_number_id: str | None, extra_context: list[str] | None = None, inbound_meta: dict | None = None) -> None:
         self.calls.append((session_id, message, extra_context or []))
 
 
