@@ -17,6 +17,11 @@ class CheckSpec:
     origin: tuple[str, ...]
     golden_behaviors: tuple[str, ...] = ()
     twin_of: str | None = None
+    # Modo turno (laboratorio): `turn` = se juzga en el turno foco con el
+    # prefijo como contexto; `future` = depende de turnos posteriores (cierre,
+    # pedido registrado): solo pasa con la evidencia en el turno foco y si no,
+    # queda `sin_senal`.
+    focus: str = "turn"
 
 
 @dataclass(frozen=True)
@@ -48,7 +53,10 @@ class CheckContext:
     catalog_prices: tuple[int, ...] = ()
 
 
-VERDICTS = ("pasa", "falla", "no_aplica", "desconocido")
+# `sin_senal`: solo en modo turno — el check depende de turnos posteriores al
+# turno foco. Como `desconocido`, no cuenta para el cumplimiento.
+VERDICTS = ("pasa", "falla", "no_aplica", "desconocido", "sin_senal")
+FOCUS_MODES = ("turn", "future")
 
 
 def result_dict(r: CheckResult) -> dict[str, Any]:

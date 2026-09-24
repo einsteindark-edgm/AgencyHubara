@@ -7,8 +7,8 @@
 
 Un check de juez que todavía no está calibrado contra etiquetas humanas no
 puede reprobar un episodio por sí solo: su nivel crítico se degrada a mayor
-(regla del plan §3.8). `desconocido` y `no_aplica` no cuentan para el
-cumplimiento, que es secundario y nunca titular.
+(regla del plan §3.8). `desconocido`, `no_aplica` y `sin_senal` (modo turno)
+no cuentan para el cumplimiento, que es secundario y nunca titular.
 """
 from __future__ import annotations
 
@@ -96,6 +96,10 @@ def compute_scorecard(
             failures.append((row, level))
         elif r.verdict in counts:
             counts[r.verdict] += 1
+        elif r.verdict == "sin_senal":
+            # Solo existe en modo turno: la clave no aparece en los registros
+            # de episodio (mismos bytes que antes del laboratorio).
+            counts["sin_senal"] = counts.get("sin_senal", 0) + 1
 
     if not trajectory.turns:
         verdict = "SIN_DATOS"

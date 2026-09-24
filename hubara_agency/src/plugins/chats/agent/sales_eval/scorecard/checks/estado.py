@@ -10,8 +10,13 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks._evidence import (
 )
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     failed,
+    in_focus,
     is_legacy,
+    judged,
+    judged_turns,
+    no_signal,
     not_applicable,
+    not_judged,
     passed,
     unknown,
 )
@@ -26,8 +31,13 @@ _RECEIPT_MARKERS = ("[el cliente envió un documento pdf", "comprobante")
 def tag_01(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     hit = tag_turn(traj, CONFIRMED_TAGS)
     if hit is None:
+        if in_focus(traj):
+            # Sin turno que ponga la etiqueta, la del cierre del episodio es futura.
+            return no_signal("TAG-01", "la etiqueta de cierre del episodio no se conoce en el turno foco")
         return not_applicable("TAG-01", "el episodio no quedó en una etiqueta de confirmación")
     t, tag = hit
+    if not judged(traj, t):
+        return not_judged("TAG-01", traj, f"la etiqueta {tag} se puso en un turno anterior")
     if tag == "CONFIRMADO_PAGO_PENDIENTE" and (
         registered_order_turn(traj, t.turn) is not None or traj.order_id
     ):
@@ -46,7 +56,7 @@ def tag_01(traj: Trajectory, ctx: CheckContext) -> CheckResult:
 def tag_01b(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if is_legacy(traj):
         return unknown("TAG-01b", "sin trazas: no se ven las degradaciones")
-    for t in traj.turns:
+    for t in judged_turns(traj):
         for call in t.tools_named("manage_conversation_tag"):
             degraded = call.note("degraded_from")
             if degraded:
@@ -74,9 +84,9 @@ def tag_02(traj: Trajectory, ctx: CheckContext) -> CheckResult:
         if any(t.tool_attempted("escalate_to_human") for t in traj.turns):
             return unknown("TAG-02", "sin trazas: no se ve el motivo de la escalación")
         return not_applicable("TAG-02", "sin escalación registrada")
-    found = [(t, r) for t in traj.turns for r in _escalations(t) if r in _EVIDENCED_REASONS]
+    found = [(t, r) for t in judged_turns(traj) for r in _escalations(t) if r in _EVIDENCED_REASONS]
     if not found:
-        return not_applicable("TAG-02", "sin escalación con motivo que exija evidencia")
+        return not_judged("TAG-02", traj, "sin escalación con motivo que exija evidencia")
     for t, reason in found:
         if reason == "ORDER_PENDING_SHIPPING_DETAILS" and confirmed_by(traj, t.turn) is None:
             return failed(
@@ -103,7 +113,9 @@ def tag_05(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     human = next((t for t in traj.turns if t.state.get("route") == "humano"), None)
     if human is None:
         return not_applicable("TAG-05", "la sesión no pasó a ruta humano")
-    for t in traj.turns:
+    if in_focus(traj) and not any(t.turn > human.turn for t in judged_turns(traj)):
+        return not_judged("TAG-05", traj, f"la ruta humano empezó en el turno {human.turn}")
+    for t in judged_turns(traj):
         if t.turn > human.turn and (t.sent_texts or t.intents):
             return failed(
                 "TAG-05", t.turn,
@@ -116,7 +128,7 @@ def tag_05(traj: Trajectory, ctx: CheckContext) -> CheckResult:
 def tag_06(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if is_legacy(traj):
         return unknown("TAG-06", "sin trazas: no se ven las redes de seguridad")
-    for t in traj.turns:
+    for t in judged_turns(traj):
         net = "safety_net_closing_escalation" in t.guards or any(
             ch.get("source") == "safety_net" and ch.get("tag") == "HUMANO" for ch in t.state_changes
         )
