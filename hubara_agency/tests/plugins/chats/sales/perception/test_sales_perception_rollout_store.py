@@ -34,16 +34,23 @@ def test_the_state_round_trips(tmp_path: Path) -> None:
     assert not list((tmp_path / "_rollout").glob("*.tmp"))
 
 
-def _trace(sid_dir: Path, *, at: int, mode: str, fallback: str | None, dur: int) -> None:
+PROFILE = "jev-v1"
+
+
+def _trace(sid_dir: Path, *, at: int, mode: str, fallback: str | None, dur: int,
+           latency: int | None = None, profile: str = PROFILE) -> None:
     sid_dir.mkdir(parents=True, exist_ok=True)
-    line = {"turn_started_ms": at, "mode": mode, "steps": [
-        {"kind": "perception", "fallback": fallback, "dur_ms": dur}, {"kind": "llm"},
-    ]}
+    step = {"kind": "perception", "profile": profile, "fallback": fallback, "dur_ms": dur}
+    if latency is not None:
+        step["latency_ms"] = latency
+    line = {"turn_started_ms": at, "mode": mode, "steps": [step, {"kind": "llm"}]}
     with (sid_dir / "turn_traces.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps(line) + "\n")
 
 
 def test_shadow_metrics_come_from_the_turn_traces(tmp_path: Path) -> None:
+    """"7 días en sombra" son 7 días DISTINTOS con turnos medidos: una prueba
+    suelta de hace 8 días y un turno de ayer son 2 días, no 8."""
     a = tmp_path / "wa_573001234567" / "evals"
     b = tmp_path / "wa_573007654321" / "evals"
     for i in range(98):
@@ -52,14 +59,50 @@ def test_shadow_metrics_come_from_the_turn_traces(tmp_path: Path) -> None:
     _trace(a, at=NOW - DAY, mode="off", fallback=None, dur=0)
     _trace(tmp_path / "_evals" / "x", at=NOW, mode="shadow", fallback=None, dur=1)  # directorio _*: no es sesión
 
-    m = shadow_metrics(tmp_path, now_ms=NOW)
+    m = shadow_metrics(tmp_path, now_ms=NOW, profile=PROFILE)
 
-    assert m.turns == 99 and m.days == 8
+    assert m.turns == 99 and m.days == 2
     assert abs(m.fallback_rate - 1 / 99) < 1e-9
     assert 380 <= m.p95_ms <= 400
 
 
+def test_the_evidence_is_recent_real_and_from_the_current_profile(tmp_path: Path) -> None:
+    """La vara se mide con lo que va a actuar: el perfil vigente (si Terraform
+    cambia de Jev a OpenAI, la sombra empieza de cero), las últimas dos
+    semanas (lo viejo se olvida) y sin las sesiones de la suite golden."""
+    s = tmp_path / "wa_573001234567" / "evals"
+    _trace(s, at=NOW - 20 * DAY, mode="shadow", fallback="timeout", dur=9000)  # fuera de la ventana
+    _trace(s, at=NOW - DAY, mode="shadow", fallback="timeout", dur=9000, profile="openai-lp-v1")  # otro perfil
+    _trace(tmp_path / "wa_golden_x" / "evals", at=NOW - DAY, mode="shadow", fallback="timeout", dur=9000)
+    _trace(s, at=NOW - DAY, mode="shadow", fallback=None, dur=400)
+
+    m = shadow_metrics(tmp_path, now_ms=NOW, profile=PROFILE)
+
+    assert (m.days, m.turns, m.fallback_rate, m.p95_ms) == (1, 1, 0.0, 400)
+
+
+def test_the_p95_is_the_classifier_latency(tmp_path: Path) -> None:
+    """En sombra el paso se lee después de enviar: si la traza trae la latencia
+    del clasificador (`latency_ms`), esa es la que cuenta."""
+    _trace(tmp_path / "wa_573001234567" / "evals", at=NOW - DAY, mode="shadow", fallback=None, dur=15_000, latency=420)
+
+    assert shadow_metrics(tmp_path, now_ms=NOW, profile=PROFILE).p95_ms == 420
+
+
+def test_a_session_untouched_in_the_window_is_not_even_read(tmp_path: Path) -> None:
+    """El recorrido es por cada GET y PUT del panel: solo se leen las sesiones
+    con trazas escritas dentro de la ventana."""
+    import os
+
+    s = tmp_path / "wa_573001234567" / "evals"
+    _trace(s, at=NOW - DAY, mode="shadow", fallback=None, dur=400)
+    old = (NOW - 30 * DAY) / 1000
+    os.utime(s / "turn_traces.jsonl", (old, old))
+
+    assert shadow_metrics(tmp_path, now_ms=NOW, profile=PROFILE).turns == 0
+
+
 def test_no_shadow_yet(tmp_path: Path) -> None:
-    m = shadow_metrics(tmp_path, now_ms=NOW)
+    m = shadow_metrics(tmp_path, now_ms=NOW, profile=PROFILE)
 
     assert (m.days, m.turns, m.fallback_rate, m.p95_ms) == (0, 0, None, None)

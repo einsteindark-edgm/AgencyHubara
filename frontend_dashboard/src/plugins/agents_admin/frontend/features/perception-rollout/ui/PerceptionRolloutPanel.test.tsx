@@ -114,4 +114,89 @@ describe("PerceptionRolloutPanel", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("p95 de la percepción: 2100 ms");
   });
+
+  it("si no se puede leer el estado, Apagar sigue ahí", async () => {
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) =>
+      init?.method === "PUT" ? json(payload("off")) : json({ detail: "timeout" }, 504),
+    );
+    renderPanel();
+
+    expect(await screen.findByText(/No se pudo leer el estado del encendido/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Apagar" }));
+
+    await waitFor(() => expect(puts().at(-1)?.[1]).toEqual({ mode: "off" }));
+  });
+
+  it("Apagar no espera a un cambio que sigue en curso", async () => {
+    state = payload("shadow", { canary: [] });
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method !== "PUT") return json(state);
+      const body = JSON.parse(String(init.body));
+      return body.mode === "off" ? json(payload("off")) : new Promise<Response>(() => {});
+    });
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Canary" }));
+    const confirm = screen.getByRole("button", { name: "Sí, pasar a canary" });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(confirm).toBeDisabled()); // el cambio a canary sigue en vuelo
+    const off = screen.getByRole("button", { name: "Apagar" });
+    expect(off).toBeEnabled();
+    fireEvent.click(off);
+
+    await waitFor(() => expect(puts().map(([, b]) => b.mode)).toEqual(["canary", "off"]));
+  });
+
+  it("un 504 dice que el cambio puede haberse aplicado y vuelve a leer el estado", async () => {
+    state = payload("shadow", { canary: [] });
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) =>
+      init?.method === "PUT" ? json({ detail: "El proveedor tardó: PUEDE haberse aplicado" }, 504) : json(state),
+    );
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Canary" }));
+    const gets = () => fetchMock.mock.calls.filter(([, init]) => init?.method !== "PUT").length;
+    const before = gets();
+    fireEvent.click(screen.getByRole("button", { name: "Sí, pasar a canary" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("puede haberse aplicado");
+    await waitFor(() => expect(gets()).toBeGreaterThan(before));
+  });
+
+  it("la confirmación de canary dice a cuántas conversaciones llega", async () => {
+    state = payload("shadow", { canary: [] });
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Canary" }));
+
+    expect(screen.getByRole("group", { name: "Confirmar el cambio de modo" })).toHaveTextContent(
+      "al 10 % de las conversaciones y a 1 número de prueba",
+    );
+  });
+
+  it("estando en canary, cambiar el porcentaje se aplica con confirmación", async () => {
+    state = payload("canary", { canary: [], on: ["shadow_days"] });
+    renderPanel();
+
+    fireEvent.change(await screen.findByLabelText("Porcentaje canary"), { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar" }));
+    expect(puts()).toEqual([]);
+    const confirm = screen.getByRole("group", { name: "Confirmar el cambio de modo" });
+    expect(confirm).toHaveTextContent("al 20 % de las conversaciones");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Sí, aplicar" }));
+
+    await waitFor(() => expect(puts().at(-1)?.[1]).toEqual({ mode: "canary", canary_percent: 20, test_numbers: ["wa_573001234567"] }));
+  });
+
+  it("dice quién hizo el último cambio y el modo que de verdad corre bajo el techo", async () => {
+    state = {
+      ...payload("on", { on: [] }),
+      ceiling: "shadow",
+      state: { mode: "on", canary_percent: 0, test_numbers: [], updated_at_ms: 1_790_200_000_000, updated_by: "operadora" },
+    };
+    renderPanel();
+
+    expect(await screen.findByText("Encendido (corre en sombra por el techo)")).toBeInTheDocument();
+    expect(screen.getByText(/por operadora/)).toBeInTheDocument();
+  });
 });

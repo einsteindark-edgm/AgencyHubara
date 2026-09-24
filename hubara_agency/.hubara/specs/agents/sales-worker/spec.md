@@ -850,7 +850,7 @@ El turno de ventas SHALL poder usar un clasificador (Jev u OpenAI por OpenRouter
 
 ### Requirement: Encendido del bot nuevo por etapas desde Agents (laboratorio, PR 16)
 
-El modo de cada conversación SHALL salir del estado `<vault>/_rollout/perception.json`, que escribe el panel "Bot nuevo" de la sección Agents (contrato `perception-rollout@v1` de chats, consumido por cast `/api/agents/perception/rollout`). El ingest lo lee en cada mensaje y MUST acotarlo al techo de Terraform `SALES_PERCEPTION_MODE_CEILING`. En `canary`, el modo `on` aplica a los números de prueba y a un porcentaje estable de conversaciones (bucket por hash del `session_id`); el resto queda en `shadow`. Apagar y bajar MUST pasar siempre. Subir MUST exigir los chequeos: `SALES_SIGNAL_INBOUND_META` encendido, dentro del techo, llave presente, y para `canary`/`on` al menos 7 días en sombra con caídas < 1 % y p95 de la percepción < 1500 ms.
+El modo de cada conversación SHALL salir del estado `<vault>/_rollout/perception.json`, que escribe el panel "Bot nuevo" de la sección Agents (contrato `perception-rollout@v1` de chats, consumido por cast `/api/agents/perception/rollout`). El ingest lo lee en cada mensaje y MUST acotarlo al techo de Terraform `SALES_PERCEPTION_MODE_CEILING`. En `canary`, el modo `on` aplica a los números de prueba y a un porcentaje estable de conversaciones (bucket por hash del `session_id`); el resto queda en `shadow`. Apagar y bajar MUST pasar siempre: escriben sin recorrer el vault ni revalidar lo guardado, y el panel muestra Apagar aunque no pueda leer el estado o haya otro cambio en vuelo. Subir MUST exigir los chequeos: `SALES_SIGNAL_INBOUND_META` encendido, dentro del techo, llave presente (el placeholder de Terraform no cuenta), y para `canary`/`on` la vara de la sombra medida con el perfil vigente en las últimas dos semanas y sin la suite golden: 7 días distintos con turnos, al menos 150 turnos, caídas < 1 % y p95 de la latencia del clasificador < 1500 ms. Cada cambio MUST quedar firmado (`updated_by`, el usuario del token) y en el log (`perception.rollout_changed`).
 
 #### Scenario: Apagar es inmediato
 
@@ -874,7 +874,13 @@ El modo de cada conversación SHALL salir del estado `<vault>/_rollout/perceptio
 
 - GIVEN estado `on` y techo `shadow` en Terraform
 - WHEN llega un mensaje
-- THEN la conversación corre en `shadow`
+- THEN la conversación corre en `shadow` y el panel dice "Encendido (corre en sombra por el techo)"
+
+#### Scenario: Una subida lenta no pisa un apagado
+
+- GIVEN un operador pide `canary` y las métricas de la sombra tardan
+- WHEN mientras tanto otro operador pulsa Apagar
+- THEN el apagado se escribe de inmediato y la subida responde 409 `changed` sin tocar el estado
 
 ## Out of scope
 
