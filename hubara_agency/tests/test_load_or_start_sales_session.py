@@ -621,3 +621,47 @@ async def test_prefer_sales_never_overrides_the_human_route():
 
     assert client.start_calls == []
     assert metadata.data["active_route"] == ROUTE_HUMANO
+
+
+# --- Ids de la ráfaga (plan del laboratorio, PR 3) --------------------------
+
+_META = {"wamid": "wamid.A", "ts_ms": 1_000_000, "kind": "text"}
+
+
+@pytest.mark.asyncio
+async def test_inbound_ids_travel_as_fourth_signal_arg_when_enabled(monkeypatch):
+    """Con `SALES_SIGNAL_INBOUND_META=on` la señal lleva `{wamid, ts_ms, kind}`
+    para la traza v2. Se enciende DESPUÉS de desplegar el worker que acepta el
+    4.º argumento: un worker viejo que lo recibe falla la tarea del workflow."""
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    args = client.start_calls[0]["start_signal_args"]
+    assert len(args) == 4 and args[3] == _META
+
+
+@pytest.mark.asyncio
+async def test_inbound_ids_stay_out_of_the_signal_by_default(monkeypatch):
+    monkeypatch.delenv("SALES_SIGNAL_INBOUND_META", raising=False)
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    assert len(client.start_calls[0]["start_signal_args"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_remarketing_signal_never_gets_the_fourth_arg(monkeypatch):
+    """El workflow de remarketing tiene su propia `send_message` de 3 argumentos."""
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    running = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
+    client = FakeClient(existing_handles={"remarketing-wa_9": running})
+    use_case = _make_use_case(FakeMetadataStore(initial={"active_route": ROUTE_REMARKETING}), client)
+
+    await use_case.execute(session_id="wa_9", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    assert running.signals and all(len(args) == 3 for _fn, args in running.signals)

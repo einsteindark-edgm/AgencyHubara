@@ -38,7 +38,8 @@ Un futuro PR podria abstraer un `WorkflowDispatcherPort` con
 """
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+import os
+from typing import Any, Awaitable, Callable
 
 import structlog
 from temporalio.client import Client, WorkflowExecutionStatus
@@ -63,6 +64,10 @@ logger = structlog.get_logger()
 
 
 ClientFactory = Callable[[], Awaitable[Client]]
+
+
+def _inbound_meta_enabled() -> bool:
+    return (os.getenv("SALES_SIGNAL_INBOUND_META") or "").strip().lower() in {"on", "1", "true"}
 
 
 class LoadOrStartSalesSession:
@@ -113,7 +118,13 @@ class LoadOrStartSalesSession:
         phone_number_id: str | None,
         extra_context: list[str] | None = None,
         prefer_sales: bool = False,
+        inbound_meta: dict[str, Any] | None = None,
     ) -> None:
+        # `inbound_meta`: `{wamid, ts_ms, kind}` del mensaje para la traza v2
+        # (plan del laboratorio, PR 3). Viaja como 4.º argumento de la señal
+        # de VENTAS solo con `SALES_SIGNAL_INBOUND_META=on`: se enciende
+        # después de desplegar el worker que acepta ese argumento (un worker
+        # viejo que lo recibe falla la tarea del workflow hasta reiniciarse).
         # `prefer_sales`: el turno TIENE que ir a Ventas aunque la ruta sea
         # remarketing (hoy: respuesta a una campaña — su nota solo viaja por
         # el plugin_context de Sales). Cancela el remarketing vivo y deja la
@@ -341,7 +352,12 @@ class LoadOrStartSalesSession:
                 id=workflow_id,
                 task_queue=get_task_queue("chats", "sales"),
                 start_signal="send_message",
-                start_signal_args=[message, None, plugin_context],
+                start_signal_args=[
+                    message,
+                    None,
+                    plugin_context,
+                    *([inbound_meta] if inbound_meta and _inbound_meta_enabled() else []),
+                ],
                 id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             )
             # El mensaje ya viajó DENTRO del start_workflow (start_signal) — no
