@@ -86,6 +86,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "OrderFactsSnapshot": "src.platform.orders.facts",
     "InMemoryOrderFacts": "src.platform.orders.facts",
     "OrderRegistrationPort": "src.platform.orders.port",
+    # Reparto del cupón por ítem (L-26): viaja con el port de registro.
+    "DiscountedUnits": "src.platform.orders.port",
     # Cupones / promociones (Medusa Admin → Promotions): port + DTOs + dobles
     # + reglas puras (el monto del descuento nace acá, nunca en el LLM):
     "PromotionsPort": "src.platform.promotions.port",
@@ -97,6 +99,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "COUPON_CODE_RE": "src.platform.promotions.rules",
     "CouponResolution": "src.platform.promotions.rules",
     "DiscountResult": "src.platform.promotions.rules",
+    "LineDiscount": "src.platform.promotions.rules",
     "compute_discount": "src.platform.promotions.rules",
     "normalize_coupon_code": "src.platform.promotions.rules",
     "resolve_coupon": "src.platform.promotions.rules",

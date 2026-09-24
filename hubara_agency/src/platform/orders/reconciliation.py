@@ -49,11 +49,12 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from src.platform.orders.port import (
+    DiscountedUnits,
     OrderItem,
     OrderRegistrationPort,
     OrderRegistrationResult,
@@ -451,11 +452,30 @@ def _rebuild_order_args(
             else None
         ),
     )
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "payment_method": str(record["payment_method"]),
         "subtotal_cop": int(record["subtotal_cop"]),
         "shipping_cop": int(record["shipping_cop"]),
         "total_cop": int(record["total_cop"]),
         "currency": str(record.get("currency", "COP")),
     }
+    # Cupón (pedido #44): el reintento lleva el MISMO reparto que el intento
+    # original — sin él Medusa quedaría con el total de lista.
+    if record.get("coupon_code"):
+        groups: dict[int, list[DiscountedUnits]] = {}
+        for line in record.get("coupon_line_discounts") or []:
+            groups.setdefault(int(line["index"]), []).append(
+                DiscountedUnits(
+                    units=int(line["units"]),
+                    discount_unit_cop=int(line["discount_unit_cop"]),
+                )
+            )
+        items = [
+            replace(item, discounted_units=tuple(groups.get(i, ())))
+            for i, item in enumerate(items)
+        ]
+        kwargs["coupon_code"] = str(record["coupon_code"])
+        kwargs["discount_cop"] = int(record.get("discount_cop") or 0)
+        if int(record.get("shipping_discount_cop") or 0) > 0:
+            kwargs["shipping_discount_cop"] = int(record["shipping_discount_cop"])
     return items, shipping, kwargs

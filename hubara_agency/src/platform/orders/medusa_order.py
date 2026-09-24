@@ -40,7 +40,15 @@ Premortem fixes aplicados (ver docs/PREMORTEM_ORDERS.md):
     del match (`variant_match_kind`) y los tokens que sobraron viven en la
     misma metadata; el matching en si vive en `variant_matching`.
 
+Cupón (pedido #44, L-26): Medusa 2.12.5 NO aplica a un draft las promociones
+con reglas de producto (vincula `promo_codes` con descuento 0). El reparto lo
+calcula Hubara y llega en `OrderItem.discounted_units` / `shipping_discount_cop`;
+el adapter lo escribe como precio (línea propia con metadata de auditoría, o
+envío más bajo) y jamás manda `promo_codes`.
+
 Flujo del adapter:
+  0. SEC-07 en el borde: líneas + envío deben sumar `total_cop` (si no, no
+     se crea nada).
   1. Resolve cada `OrderItem.handle` → `variant_id` (paralelizado).
   2. Find-or-create customer por email sintetizado.
   3. Discover shipping_option_id (env override → smart filter → fallback).
@@ -167,6 +175,7 @@ class MedusaOrderRegistration:
         attribution: dict[str, Any] | None = None,
         coupon_code: str | None = None,
         discount_cop: int = 0,
+        shipping_discount_cop: int = 0,
     ) -> OrderRegistrationResult:
         # Premortem C1: wrap ALL the work in a single wait_for to bound the
         # worst-case latency at ~45s. The activity heartbeat (every 10s in
@@ -186,6 +195,7 @@ class MedusaOrderRegistration:
                     attribution=attribution,
                     coupon_code=coupon_code,
                     discount_cop=discount_cop,
+                    shipping_discount_cop=shipping_discount_cop,
                 ),
                 timeout=_REGISTER_ORDER_TIMEOUT_S,
             )
@@ -219,6 +229,7 @@ class MedusaOrderRegistration:
         attribution: dict[str, Any] | None = None,
         coupon_code: str | None = None,
         discount_cop: int = 0,
+        shipping_discount_cop: int = 0,
     ) -> OrderRegistrationResult:
         log.info(
             "MedusaOrderRegistration.register_order start",
@@ -240,6 +251,18 @@ class MedusaOrderRegistration:
         fingerprint = _compute_order_fingerprint(items, total_cop, payment_method)
         idempotency_bucket = int(time.time()) // _IDEMPOTENCY_BUCKET_S
         idempotency_key = f"{session_key}:{idempotency_bucket}:{fingerprint}"
+
+        # SEC-07 en el borde (pedido #44): lo que Medusa va a cobrar por el
+        # draft TIENE que ser el total que confirmó el bot. Si no cuadra (un
+        # reintento de un registro viejo con cupón pero sin reparto, o un bug
+        # de cableado) no se crea un pedido con otro total: queda para
+        # registro manual. Chequeo barato sobre los inputs (antes de tocar
+        # Medusa); el definitivo es sobre el payload, justo antes del POST.
+        expected_charge = _medusa_total_cop(items, shipping_cop, shipping_discount_cop)
+        if expected_charge != total_cop:
+            return _amount_mismatch(
+                expected_charge, total_cop, session_key=session_key, coupon_code=coupon_code
+            )
 
         try:
             # 0) Pre-check de idempotencia (best-effort): ¿ya existe un draft
@@ -271,7 +294,9 @@ class MedusaOrderRegistration:
                 )
 
             # 1) Resolve handle → variant_id (paralelizado — Premortem E1).
-            resolved_items, variant_mismatches = await self._resolve_items(items)
+            resolved_items, variant_mismatches = await self._resolve_items(
+                items, coupon_code=coupon_code
+            )
 
             # 2) Find or create customer (idempotent por email sintetico).
             customer = await self._upsert_customer(
@@ -302,7 +327,17 @@ class MedusaOrderRegistration:
                 attribution=attribution,
                 coupon_code=coupon_code,
                 discount_cop=discount_cop,
+                shipping_discount_cop=shipping_discount_cop,
             )
+
+            # 4b) SEC-07 sobre el payload REAL: Medusa cobra estas líneas y
+            #     este envío, no los inputs (una resolución de variantes que
+            #     pierda unidades no la ve el chequeo de arriba).
+            charged = _payload_charge_cop(payload)
+            if charged != total_cop:
+                return _amount_mismatch(
+                    charged, total_cop, session_key=session_key, coupon_code=coupon_code
+                )
 
             # 5) POST /admin/draft-orders.
             draft = await self._client.create_draft_order(payload)
@@ -366,7 +401,7 @@ class MedusaOrderRegistration:
     # ------------------------------------------------------------------
 
     async def _resolve_items(
-        self, items: list[OrderItem]
+        self, items: list[OrderItem], coupon_code: str | None = None
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Resolve each `handle` → Medusa `variant_id` (+ title/sku).
 
@@ -415,24 +450,37 @@ class MedusaOrderRegistration:
                 )
             if len(resolution.lines) > 1:
                 annotations["variant_split_from_quantity"] = it.quantity
+            # Cupón: las unidades con descuento salen en su propia línea con el
+            # precio ya descontado (Medusa no aplica la promoción a un draft).
+            pending = _pending_discounts(it)
             resolved = [
                 {
                     "title": product.title,
                     "sku": line.variant.sku or product.handle,
                     "variant_id": line.variant.id,
-                    "quantity": line.quantity,
+                    "quantity": units,
                     # Medusa v2: unit_price en unidades MAYORES. COP no tiene
                     # subunidades fraccionarias, asi que mandamos el int crudo.
                     # Premortem H2: si default_currency != cop, el adapter loguea
                     # warning al init — esto sigue el contrato de Medusa.
-                    "unit_price": it.unit_price_cop,
+                    "unit_price": it.unit_price_cop - discount,
                     "metadata": {
                         "handle": it.handle,
                         **({"variant_label": it.variant_label} if it.variant_label else {}),
                         **annotations,
+                        **(
+                            {
+                                "coupon_code": coupon_code,
+                                "list_unit_price_cop": it.unit_price_cop,
+                                "discount_unit_cop": discount,
+                            }
+                            if discount
+                            else {}
+                        ),
                     },
                 }
                 for line in resolution.lines
+                for units, discount in _discount_chunks(line.quantity, pending)
             ]
             first = resolution.lines[0].variant
             mismatch = (
@@ -706,6 +754,7 @@ class MedusaOrderRegistration:
         attribution: dict[str, Any] | None = None,
         coupon_code: str | None = None,
         discount_cop: int = 0,
+        shipping_discount_cop: int = 0,
     ) -> dict[str, Any]:
         """Build the POST /admin/draft-orders payload per OpenAPI spec."""
         # shipping_address: country_code en lowercase per spec.
@@ -762,10 +811,11 @@ class MedusaOrderRegistration:
         # (los joins/backfill distinguen por presencia, no por null).
         if attribution:
             metadata.update({k: v for k, v in attribution.items() if v})
-        # Cupón (2026-09-21): el código va como `promo_codes` (Medusa aplica
-        # la promoción al draft → `discount_total`/`total` reales, que leen
-        # OrderFacts y el panel de Órdenes) y queda también en metadata como
-        # auditoría del monto que el bot le prometió al cliente.
+        # Cupón: el descuento ya viene escrito en el `unit_price` de sus
+        # líneas (Medusa 2.12.5 no aplica `promo_codes` con reglas de producto
+        # a un draft — pedido #44). Acá queda la auditoría del monto que el
+        # bot le prometió al cliente. NUNCA se manda `promo_codes`: Medusa lo
+        # vincularía sin descontar o, sin reglas, descontaría dos veces.
         if coupon_code:
             metadata["coupon_code"] = coupon_code
             metadata["discount_cop"] = int(discount_cop or 0)
@@ -788,14 +838,13 @@ class MedusaOrderRegistration:
                     # (run bc54cb93-52d4-45d1-b69d-24b542a759ee, 2026-05-25):
                     # `Field 'shipping_methods, 0, shipping_option_id' is required`.
                     "shipping_option_id": shipping_option_id,
-                    "amount": shipping_cop,
+                    # Cupón de envío: el descuento baja el envío, no los productos.
+                    "amount": max(shipping_cop - shipping_discount_cop, 0),
                 }
             ],
             "metadata": metadata,
             "no_notification_order": True,  # WhatsApp es el canal — no email blast
         }
-        if coupon_code:
-            payload["promo_codes"] = [coupon_code]
         return payload
 
 
@@ -815,14 +864,94 @@ def _compute_order_fingerprint(
     idempotencia: solo deduplica lo que es realmente el mismo pedido.
 
     Determinístico: ordenamos los items para que el orden de llegada no
-    cambie el hash.
+    cambie el hash. El reparto del cupón (`discounted_units`) es contenido
+    del pedido, pero solo entra cuando existe: sin cupón el hash es el de
+    siempre y un reintento que cruza un deploy sigue encontrando su draft.
     """
     parts = sorted(
         f"{it.handle}:{it.quantity}:{it.unit_price_cop}:{it.variant_label or ''}"
+        + "".join(f":-{g.units}x{g.discount_unit_cop}" for g in it.discounted_units)
         for it in items
     )
     raw = "|".join(parts) + f"|total={total_cop}|pay={payment_method}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _amount_mismatch(
+    charged: int, total_cop: int, *, session_key: str, coupon_code: str | None
+) -> OrderRegistrationResult:
+    """SEC-07 en el borde: el draft NO se crea si Medusa cobraría otro total."""
+    log.error(
+        "MedusaOrderRegistration: amount_mismatch — Medusa cobraría %s y el "
+        "total confirmado es %s; NO se crea el draft",
+        charged,
+        total_cop,
+        extra={"session_key": session_key, "coupon_code": coupon_code},
+    )
+    return OrderRegistrationResult(
+        success=False,
+        order_id=None,
+        provider="medusa",
+        error_detail=(
+            f"amount_mismatch: Medusa cobraría {charged} y el total confirmado "
+            f"es {total_cop}. El pedido NO se registró."
+        ),
+    )
+
+
+def _payload_charge_cop(payload: dict[str, Any]) -> int:
+    """Lo que Medusa cobra por un payload de draft: Σ `unit_price` ×
+    `quantity` de sus líneas + los montos de envío."""
+    lines = sum(int(line["unit_price"]) * int(line["quantity"]) for line in payload["items"])
+    return lines + sum(int(method["amount"]) for method in payload["shipping_methods"])
+
+
+def _medusa_total_cop(
+    items: list[OrderItem], shipping_cop: int, shipping_discount_cop: int
+) -> int:
+    """Lo que Medusa cobraría por estos ítems, calculado desde los inputs:
+    cada tramo al precio de lista menos el descuento de sus unidades, + el
+    envío menos su descuento. Coincide con el payload mientras la resolución
+    de variantes conserve la cantidad; por eso el chequeo definitivo es
+    `_payload_charge_cop` sobre el payload real."""
+    lines = sum(
+        units * (it.unit_price_cop - discount)
+        for it in items
+        for units, discount in _discount_chunks(it.quantity, _pending_discounts(it))
+    )
+    return lines + max(shipping_cop - shipping_discount_cop, 0)
+
+
+def _pending_discounts(item: OrderItem) -> list[list[int]]:
+    """Grupos `[unidades, descuento_por_unidad]` del ítem, mutables para que
+    `_discount_chunks` los consuma línea a línea."""
+    return [
+        [group.units, group.discount_unit_cop]
+        for group in item.discounted_units
+        if group.units > 0 and group.discount_unit_cop > 0
+    ]
+
+
+def _discount_chunks(quantity: int, pending: list[list[int]]) -> list[tuple[int, int]]:
+    """Parte las `quantity` unidades de una línea en tramos
+    `(unidades, descuento_por_unidad)`.
+
+    Consume en orden los grupos con descuento pendientes del ítem (muta
+    `pending`, así una línea de variante siguiente sigue donde quedó esta);
+    las unidades que sobran van a precio de lista (descuento 0).
+    """
+    chunks: list[tuple[int, int]] = []
+    left = quantity
+    while left > 0 and pending:
+        units = min(left, pending[0][0])
+        chunks.append((units, pending[0][1]))
+        pending[0][0] -= units
+        left -= units
+        if pending[0][0] == 0:
+            pending.pop(0)
+    if left > 0:
+        chunks.append((left, 0))
+    return chunks
 
 
 def _pick_preferred_shipping_option(

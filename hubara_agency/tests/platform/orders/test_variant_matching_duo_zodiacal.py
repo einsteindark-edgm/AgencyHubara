@@ -16,7 +16,7 @@ import pytest
 from src.platform.medusa.client import HttpMedusaClient
 from src.platform.medusa.service import MedusaProductService
 from src.platform.orders.medusa_order import MedusaOrderRegistration
-from src.platform.orders.port import OrderItem
+from src.platform.orders.port import DiscountedUnits, OrderItem
 
 from .test_medusa_order_registration import _BASE_URL, _settings
 
@@ -178,6 +178,34 @@ async def test_multi_sign_label_splits_into_one_line_per_variant(
         assert r["metadata"]["variant_label"] == label
         assert r["metadata"]["variant_split_from_quantity"] == quantity
     assert mismatches == []
+
+
+@pytest.mark.asyncio
+async def test_coupon_units_cross_variant_lines_in_order(adapter):
+    """Cupón sobre un label de varios signos (L-26): las unidades con descuento
+    se consumen en el orden de las líneas de variante y pasan de una a otra;
+    las que sobran van a precio de lista. La cantidad total se conserva."""
+    resolved, _ = await adapter._resolve_items(
+        [
+            OrderItem(
+                handle="duo-zodiacal",
+                quantity=3,
+                unit_price_cop=45000,
+                variant_label="Sagitario azul, Capricornio morado, Capricornio verde",
+                discounted_units=(DiscountedUnits(units=2, discount_unit_cop=4500),),
+            )
+        ],
+        coupon_code="AMOR26",
+    )
+
+    assert [
+        (r["variant_id"], r["quantity"], r["unit_price"], r["metadata"].get("coupon_code"))
+        for r in resolved
+    ] == [
+        ("var_sagitario", 1, 40500, "AMOR26"),
+        ("var_capricornio", 1, 40500, "AMOR26"),
+        ("var_capricornio", 1, 45000, None),
+    ]
 
 
 @pytest.mark.asyncio

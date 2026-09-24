@@ -547,7 +547,7 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - THEN la tool devuelve `applied=true` y persiste `episodes[-1].applied_coupon = {code, promotion (snapshot), applied_at_ms}`
 - AND cada turno siguiente recibe la nota `[CUPÓN APLICADO: MAMA15 — 15% …]`
 - AND `present_order_confirmation` devuelve `discount_cop` + `total_cop` ya descontado y el resumen muestra la línea "Descuento (MAMA15)"
-- AND `register_order` exige ese `total_cop` (SEC-07: `subtotal + envío − descuento`), manda `promo_codes: ["MAMA15"]` al draft de Medusa y guarda `coupon_code`/`discount_cop` en `registered_order` y en las instrucciones de pago
+- AND `register_order` exige ese `total_cop` (SEC-07: `subtotal + envío − descuento`), escribe el descuento en el precio de las líneas del draft de Medusa (NUNCA `promo_codes`, ver el escenario del pedido #44) y guarda `coupon_code`/`discount_cop` en `registered_order` y en las instrucciones de pago
 
 #### Scenario: Código inexistente, vencido, inactivo o con forma de tag interno
 
@@ -575,6 +575,18 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - WHEN el cliente da el código
 - THEN `apply_coupon` lee la lista (el adapter pide `target_rules.values` y `rules.values`) y responde `whole_catalog=false` + `eligible_products` (nombre, precio y precio con descuento calculado por el sistema); jamás dice "todo el catálogo"
 - AND la nota `[CUPÓN APLICADO: …]` de cada turno ordena ofrecer ESOS productos; lo conversado antes de otros productos se retoma solo si el cliente lo pide, aclarando que va sin descuento
+
+#### Scenario: El total de Medusa es el que confirmó el bot (pedido #44, 2026-09-23)
+
+- GIVEN `AMOR26` (10 %, `each`, `max_quantity` 10, solo Cubo Love) aplicado y un pedido de 2 × Cubo Love a $21.000 con envío $7.900
+- WHEN el bot llama `register_order` con `total_cop=45700`
+- THEN el draft lleva UNA línea de 2 unidades a $18.900 con `metadata.coupon_code`, `list_unit_price_cop` y `discount_unit_cop`, NO lleva `promo_codes` (Medusa 2.12.5 lo vincularía sin descontar: al crear el draft no carga `items.product`), y Medusa cobra $45.700
+- AND el reparto lo calcula `compute_discount` por unidad, en pesos enteros, y suma exacto el descuento confirmado: porcentaje redondeado a peso por unidad; `max_quantity` por línea (`each`) o por pedido, las unidades más baratas primero (`once`); un monto fijo al pedido se prorratea con el resto de pesos en la última línea
+- AND con 12 unidades, 10 van en una línea a $18.900 y 2 en otra a precio de lista; la referencia del pedido que lee el cliente ("#45 (12× Cubo Love)") y los productos de las notificaciones del ETA agrupan esas líneas
+- AND un cupón de envío baja el monto del envío estimado que se registra, no el de los productos (el envío real que el operador fija al despachar todavía lo reemplaza sin el cupón — pendiente)
+- AND si las líneas + el envío del payload no suman `total_cop`, el adapter NO crea el draft (`amount_mismatch`) y el pedido queda para registro manual
+- AND el reintento de reconciliación de un registro fallido manda el mismo cupón y las mismas unidades con descuento (`coupon_line_discounts` en el record)
+- AND el inspector de Órdenes explica en cada línea el cupón, el descuento por unidad y el precio de lista (en Medusa `discount_total` queda en 0)
 
 #### Scenario: Reglas de la promoción ilegibles
 

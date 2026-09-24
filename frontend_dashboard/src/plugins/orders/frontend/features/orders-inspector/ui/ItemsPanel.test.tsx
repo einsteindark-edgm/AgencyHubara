@@ -92,6 +92,33 @@ describe("ItemsPanel — clase de match de variante", () => {
   });
 });
 
+describe("ItemsPanel — cupón por línea (pedido #44)", () => {
+  // La línea llega a Medusa con el precio YA descontado y `discount_total`
+  // queda en 0: sin esta nota el operador ve $18.900 sin saber por qué.
+  it("explica el precio con descuento: cupón, descuento por unidad y precio de lista", () => {
+    renderItems([
+      item({
+        title: "Cubo Love",
+        quantity: 2,
+        unit_price_cop: 18900,
+        total_cop: 37800,
+        coupon_code: "AMOR26",
+        list_unit_price_cop: 21000,
+        discount_unit_cop: 2100,
+      }),
+    ]);
+
+    const note = screen.getByText(/Cupón AMOR26/).textContent ?? "";
+    expect(note).toMatch(/2[.,]100/);
+    expect(note).toMatch(/21[.,]000/);
+  });
+
+  it("una línea sin cupón no muestra nota de cupón", () => {
+    renderItems([item({})]);
+    expect(screen.queryByText(/Cupón/)).not.toBeInTheDocument();
+  });
+});
+
 describe("ItemsPanel — desglose del cobro", () => {
   function renderTotals(summary: Record<string, unknown>) {
     const detail = {
