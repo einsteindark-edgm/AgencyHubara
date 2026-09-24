@@ -1,0 +1,103 @@
+#cloud-config
+# Caja del laboratorio de conversaciones (LABORATORIO_CONVERSACIONES_PLAN.md §3.3–§3.7).
+# Sin puertos de entrada: la API de producción la prende y le da órdenes por SSM
+# (dispatch.sh / cancel.sh). Sin llaves de producción: solo /hubara-lab.
+# Cada arranque empieza con un Temporal vacío (lab-temporal-reset.service).
+# Stateless: los resultados viven en S3 (runs/); reemplazar la caja no pierde nada.
+# El litellm_config.yaml NO viaja acá: dispatch.sh lo saca de la imagen de cada
+# corrida (la misma que corre producción).
+package_update: true
+packages:
+  - docker
+  - util-linux   # flock (una orden a la vez)
+  - diffutils    # cmp (¿cambió el litellm_config de la imagen?)
+
+write_files:
+  - path: /opt/lab/box.env
+    permissions: "0644"
+    content: |
+      AWS_REGION=${region}
+      LAB_BUCKET=${bucket}
+      GHCR_OWNER=${ghcr_owner}
+
+  - path: /opt/lab/docker-compose.lab.yml
+    permissions: "0644"
+    encoding: b64
+    content: ${compose_b64}
+
+  - path: /opt/lab/dispatch.sh
+    permissions: "0755"
+    encoding: b64
+    content: ${dispatch_b64}
+
+  - path: /opt/lab/cancel.sh
+    permissions: "0755"
+    encoding: b64
+    content: ${cancel_b64}
+
+  - path: /opt/lab/autostop.sh
+    permissions: "0755"
+    encoding: b64
+    content: ${autostop_b64}
+
+  # Temporal vacío en cada arranque (§3.3): corre ANTES de docker, así el
+  # contenedor nunca ve la base de la corrida anterior. El usuario del contenedor
+  # oficial es `temporal` (no root): la carpeta queda escribible. El contador de
+  # minutos sin trabajo también arranca en cero: el de antes de apagarse no cuenta.
+  - path: /etc/systemd/system/lab-temporal-reset.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Laboratorio: Temporal vacío en cada arranque
+      Before=docker.service
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/sh -c 'rm -rf /lab/temporal && install -d -m 1777 /lab/temporal && install -d -m 1777 /lab /lab/runs /lab/bench && rm -f /var/lib/lab/idle_count'
+      [Install]
+      WantedBy=multi-user.target
+
+  # Autoapagado cada 5 min con un timer de systemd (no depende de instalar cron).
+  - path: /etc/systemd/system/lab-autostop.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Laboratorio: apagarse sin trabajo
+      [Service]
+      Type=oneshot
+      Environment=IDLE_MIN=${autostop_minutes} LAB_MAX_RUN_HOURS=${max_run_hours}
+      ExecStart=/opt/lab/autostop.sh
+
+  - path: /etc/systemd/system/lab-autostop.timer
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Laboratorio: revisar el autoapagado cada 5 min
+      [Timer]
+      OnBootSec=5min
+      OnUnitActiveSec=5min
+      [Install]
+      WantedBy=timers.target
+
+  # Respaldo: si todo lo demás falla (runner colgado que no se deja detener,
+  # timer roto), la caja se apaga una hora después del tope de una corrida.
+  - path: /etc/systemd/system/lab-backstop.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Laboratorio: apagado de respaldo
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/sbin/shutdown -h +${backstop_minutes}
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now lab-backstop.service
+  - systemctl enable --now lab-autostop.timer
+  - mkdir -p /usr/libexec/docker/cli-plugins
+  # -f: un 403/5xx de GitHub no queda instalado como `docker compose`.
+  - curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 -o /usr/libexec/docker/cli-plugins/docker-compose
+  - chmod +x /usr/libexec/docker/cli-plugins/docker-compose
+  - systemctl enable --now lab-temporal-reset.service
+  - systemctl enable --now docker

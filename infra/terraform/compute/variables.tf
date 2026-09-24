@@ -74,3 +74,29 @@ variable "graphagents" {
   })
   default = {}
 }
+
+# ── Laboratorio de conversaciones (caja bajo demanda + S3 privado) ───────────
+# LABORATORIO_CONVERSACIONES_PLAN.md §3 / PR 6. `enabled = false` no crea nada.
+variable "lab" {
+  description = "Caja del laboratorio: t3.large (8 GB) con Temporal dev + LiteLLM + worker sales_lab; se apaga sola sin trabajo."
+  type = object({
+    enabled               = optional(bool, false)
+    instance_type         = optional(string, "t3.large")
+    root_volume_gb        = optional(number, 40)
+    autostop_idle_minutes = optional(number, 10)
+    # Tope de una corrida: el autoapagado detiene un runner colgado pasado este
+    # tiempo, y un apagado de respaldo corta la caja una hora después. Una
+    # corrida de decisión (≈3.600 turnos + el juez) pasa de 12 h; 20 h + 1 de
+    # respaldo quedan dentro de las 24 h que el lanzador espera a la caja.
+    max_run_hours = optional(number, 20)
+    # Tenants que usan el laboratorio. El bucket es uno solo (sin prefijo por
+    # tenant): la política de lanzar corridas y el LAB_BUCKET van SOLO a estos.
+    # Por defecto ninguno; cada tenant del laboratorio se declara en el tfvars.
+    tenants = optional(list(string), [])
+  })
+  default = {}
+  validation {
+    condition     = var.lab.max_run_hours >= 1 && var.lab.max_run_hours <= 48
+    error_message = "lab.max_run_hours debe estar entre 1 y 48."
+  }
+}
