@@ -188,3 +188,13 @@ def test_registry_describes_the_burst_rule() -> None:
 
     assert REGISTRY_VERSION == 3
     assert "ráfaga" in spec.rule.lower() or "ráfaga" in spec.applies.lower()
+
+
+def test_only_est08_decides_by_topics() -> None:
+    """Los asuntos solo deciden EST-08: otro check con una clave `asuntos`
+    vacía conserva su veredicto."""
+    import json as _json
+
+    result = jc.parse_judge_output("EST-04", _json.dumps({"veredicto": "pasa", "turno": 2, "asuntos": []}))
+
+    assert result is not None and result.verdict == "pasa"
