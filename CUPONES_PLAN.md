@@ -611,8 +611,11 @@ Los tests nuevos de `tests/platform/promotions` usan dobles y `respx`: no hacen 
 2. **Servicios a reconstruir** por fase:
    - `api`: fases 2, 4, 6 y 7.
    - `worker-sales`: fases 0, 5 y 6, además de las tools.
-   - `worker-marketing-campaigns`: si cambia la plantilla (7.1).
+   - `worker-orders`: la reconciliación relee el cupo, guarda solo su record y no se cuenta a sí misma (premortem).
+   - `worker-marketing-campaigns`: si cambia la plantilla (7.1) y porque el envío programado revalida el cupón (A12).
    - Deploy del frontend: fases 6 y 7.
+   - El fingerprint de un pedido ahora incluye color/aroma cuando existen. Un reintento de un pedido registrado ANTES
+     del deploy (sin color/aroma) no reusaría ese draft: desplegar con la cola de registros fallidos vacía o revisarla.
 3. **Rollback:** revertir el PR de la fase. Los cupones creados en Medusa siguen existiendo y funcionan con el camino de
    lectura de siempre. Las filas de cupo en el vault quedan inertes.
 4. **Deploys en serie:** no lanzar deploys paralelos del backend. Ya tumbaron el proxy de LLM una vez.
@@ -646,6 +649,8 @@ Son acciones del operador en Medusa Admin; no son desarrollo.
 | Medusa caído | El cupón con cupo no se aplica (falla cerrada); la central muestra error y no crea nada |
 | Pedidos a mano en Medusa Admin | No cuentan; el operador ajusta las unidades |
 | Deriva de nombres con la Fase 0 | §4.7: gana lo mergeado; este plan se actualiza |
+| Drafts sin pagar retienen unidades del cupo | Cuentan como vendidos hasta que se cancelan (Medusa o Hubara): el operador cancela los pedidos abandonados |
+| Paginación por offset mientras entran pedidos | Un draft borrado entre dos páginas puede correr la lista y no contarse (subconteo de 1). El filtro `created_at[$gte]` achica la ventana |
 
 ---
 
@@ -659,10 +664,11 @@ Son acciones del operador en Medusa Admin; no son desarrollo.
 
 ---
 
-## 12. Estado de implementación (2026-09-23)
+## 12. Estado de implementación (2026-09-24)
 
-Rama `claude/coupon-central` (worktree `intelligent-rhodes-82a5f3`), sobre `main` + merge de la Fase 0
-(`origin/fix/coupon-discounted-lines-medusa`, PR #342 abierto). Nada pusheado todavía.
+Rama `claude/coupon-central` (worktree `intelligent-rhodes-82a5f3`). `main` ya trae #342 (Fase 0, mismo árbol que
+el que la rama tenía por merge) y #353 (envío = tarifa publicada; rechazos de `register_order` con `error`): ambos
+mergeados a la rama el 24-sep. #346 (sin cupones de envío) sigue abierto. Nada pusheado todavía.
 
 | Fase | Estado | Dónde |
 |---|---|---|
@@ -693,11 +699,45 @@ Rama `claude/coupon-central` (worktree `intelligent-rhodes-82a5f3`), sobre `main
     reconciliación que podía sobrevender, formulario que confirmaba otro total → commit "segunda revisión",
     lección **L-28**.
 
+### Premortem de toda la solución (2026-09-24)
+
+Cuatro revisores en paralelo (central + escrituras en Medusa, cupo + tools del bot, registro + reconciliación,
+front) sobre la rama ya con #342/#353: ~45 hallazgos verificados (CONFIRMED/PLAUSIBLE), todos arreglados con TDD
+salvo lo anotado abajo. Lo que habría pasado en producción:
+
+- **Tras #353**, los rechazos del cupo sin `error` → el bot escalaba un "se llevaron la unidad" como falla de Medusa
+  (L-29, guarda estática sobre todos los `registered: False`).
+- **Cupo ilegible** (Medusa/vault) informado como `quota_changed` con el precio lleno como "total nuevo", en el bot y
+  en "Crear pedido" → ahora queda para reconciliación / `quota_unavailable` (L-30).
+- **Pedidos SIN cupón rechazados**: la validación nueva de color/aroma contra las etiquetas corría en todos
+  (`set_order_slot` guarda valores fuera de las etiquetas) → solo valida en productos con cupo (L-31).
+- **Sin color/aroma la tarjeta salía a precio lleno** y terminaba el turno → `missing_variant_attributes`; la
+  tarjeta dice qué unidades llevan el cupón (L-31).
+- **Color y aroma nunca llegaban a Medusa** (productos "Unico"): ahora van en la línea, en el detalle del pedido y
+  en el fingerprint.
+- **Reintentos**: el reparto se compara por producto + color + aroma + precio (no por posición); la reconciliación no
+  cuenta su propio draft, relee bajo el candado, guarda solo su record (antes revertía un traspaso a humano) y no
+  corta el barrido; `create_draft_order` ya no se reintenta tras un timeout (duplicaba drafts).
+- **Central**: escrituras a medias dichas como "sin cambios", renombre a un código ocupado en otras mayúsculas, dos
+  editores de unidades pisándose (`expected_updated_at` → 409), campaña de Medusa compartida, actor = UUID de Cognito
+  (ahora el email del ID token verificado), envío programado que no revalidaba el cupón.
+- **Front**: "Crear pedido" en bucle tras `quota_changed` y registrando totales que nadie vio (ahora `dry_run` y
+  cotización adoptada), el cupón que desaparecía a $0, ediciones perdidas en la central.
+
+Verificación: backend `tests/platform` 1.670, `architecture + plugins + conformance` 2.830, resto 1.108 (+2 skip),
+`lint-imports` 6/6, `sdk.cli check` OK; front `tsc` limpio, `test:arch` 23, `npm test` 1.270.
+
 **Pendiente:**
-1. Merge de #342 → rebase/merge de `main` en esta rama → PR (o dos: backend+central y front) — **no pusheado**.
-2. Deploy en serie: `api`, `worker-sales`, frontend (§8).
-3. Verificación en vivo: crear un cupón de prueba **escribe en la Medusa de producción** si el stack apunta a ella →
-   requiere permiso explícito del operador (o un Medusa de pruebas). Recorrido: crear cupón → 2 unidades → pedido por
-   el bot → quedan 1 → cancelar → quedan 2 → borrar.
+1. PR (o dos: backend+central y front) y deploy EN SERIE: `api`, `worker-sales`, `worker-orders` (reconciliación),
+   `worker-marketing-campaigns` (revalida el cupón al disparar) y frontend (§8). Al integrar #346 hay conflicto
+   esperado en `shipping_discount_cop` (`medusa_order.py`, `reconciliation.py`, `order_registration.py`).
+2. **Filtro `created_at[$gte]` en Medusa 2.12.5 sin verificar en vivo** (la lectura de prod quedó bloqueada por el
+   clasificador de permisos). Es seguro igual: si Medusa responde 400 se lee todo y se corta de este lado. Verificar
+   con un GET de solo lectura (`/admin/draft-orders?limit=1&created_at[$gte]=…`) cuando haya permiso.
+3. Verificación en vivo: crear un cupón de prueba **escribe en la Medusa de producción** → permiso explícito del
+   operador (o un Medusa de pruebas). Recorrido: crear cupón → 2 unidades → pedido por el bot → quedan 1 → cancelar
+   → quedan 2 → borrar. Tampoco hubo verificación visual: `:5174` sirve `main`.
 4. Confirmar D2 y D3 con el operador.
-5. AMOR26: mientras tenga la regla por etiquetas se ve en solo lectura (se le puede poner cupo igual).
+5. Conocidos, sin arreglar: una campaña `failed` no se re-envía (hay que recrearla); los drafts sin pagar retienen
+   unidades hasta cancelarse (§10); la paginación por offset puede subcontar 1 si se borra un draft entre páginas.
+6. AMOR26: mientras tenga la regla por etiquetas se ve en solo lectura (se le puede poner cupo igual).
