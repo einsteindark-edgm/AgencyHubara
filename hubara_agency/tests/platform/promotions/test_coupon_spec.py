@@ -163,6 +163,59 @@ def test_bad_date_is_rejected_with_field() -> None:
     assert err.value.field == "starts_on"
 
 
+@pytest.mark.parametrize(
+    ("field", "day"),
+    [("ends_on", "9999-12-31"), ("ends_on", "2101-01-01"), ("starts_on", "1999-12-31")],
+)
+def test_a_date_outside_2000_2100_is_a_field_error_not_an_overflow(field: str, day: str) -> None:
+    """"9999-12-31" desbordaba al sumar el día del "hasta" inclusivo → 500."""
+    with pytest.raises(CouponSpecError) as err:
+        coupon_to_medusa_payload(parse_coupon_spec({**_raw(), field: day}))
+
+    assert err.value.field == field
+    assert "2000" in err.value.message and "2100" in err.value.message
+
+
+def test_edge_years_2000_and_2100_are_accepted() -> None:
+    spec = parse_coupon_spec(_raw(starts_on="2000-01-01", ends_on="2100-12-31"))
+
+    assert coupon_to_medusa_payload(spec)["campaign"]["ends_at"] == "2101-01-01T05:00:00Z"
+
+
+# --- Editar: solo se valida lo que cambia (premortem A9) -----------------------
+
+
+def _current(**overrides) -> dict:
+    """El formulario del cupón tal como está en Medusa."""
+    return {**_raw(code="AMORYAMISTAD2026", campaign_name="x" * 90), **overrides}
+
+
+def test_editing_keeps_an_unchanged_code_and_name_the_central_would_not_create() -> None:
+    """Un cupón creado en Medusa con 16 caracteres (la central acepta 3–14)
+    se lista como gestionable: cualquier PATCH fallaba 422 en `code` aunque
+    no se tocara el código."""
+    current = _current()
+
+    spec = parse_coupon_spec({**current, "percentage": 15}, current=current)
+
+    assert (spec.code, spec.campaign_name, spec.percentage) == ("AMORYAMISTAD2026", "x" * 90, 15)
+
+
+def test_editing_still_validates_what_changes() -> None:
+    current = _current()
+
+    with pytest.raises(CouponSpecError) as code_err:
+        parse_coupon_spec({**current, "code": "AMOR_27"}, current=current)
+    with pytest.raises(CouponSpecError) as pct_err:
+        parse_coupon_spec({**current, "percentage": 0}, current=current)
+    with pytest.raises(CouponSpecError) as name_err:
+        parse_coupon_spec({**current, "campaign_name": "y" * 81}, current=current)
+
+    assert (code_err.value.field, pct_err.value.field, name_err.value.field) == (
+        "code", "percentage", "campaign_name",
+    )
+
+
 # ---------------------------------------------------------------------------
 # CouponView: lo que la central muestra de cada promoción de Medusa.
 # Shape real de `GET /admin/promotions` (ids saneados).
@@ -294,6 +347,16 @@ def test_other_medusa_shapes_are_read_only_with_reason(mutate, reason_fragment) 
 
     assert view.manageable is False
     assert reason_fragment in view.unmanageable_reason
+
+
+def test_promotion_whose_campaign_is_shared_is_not_manageable() -> None:
+    """A2: en Medusa Admin se puede colgar varias promociones de UNA campaña;
+    editar fechas o nombre de "este" cupón cambiaría los de los otros."""
+    view = coupon_view_from_medusa(_medusa(), now=_at(2026, 9, 23), campaign_shared=True)
+
+    assert view.manageable is False
+    assert "comparten varios cupones" in view.unmanageable_reason
+    assert "Medusa Admin" in view.unmanageable_reason
 
 
 def test_whole_catalog_coupon_reads_as_all_products() -> None:

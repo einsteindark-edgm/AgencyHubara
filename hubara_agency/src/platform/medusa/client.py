@@ -220,7 +220,10 @@ class HttpMedusaClient:
             payload["phone"] = phone
         if metadata:
             payload["metadata"] = metadata
-        data = await self._request("POST", "/admin/customers", json=payload)
+        # Crear NO es idempotente: un POST cortado por timeout pudo crear el
+        # cliente y reintentarlo lo duplica (L-27). Solo se reintenta si la
+        # conexión ni siquiera se abrió.
+        data = await self._request("POST", "/admin/customers", json=payload, idempotent=False)
         return data["customer"]
 
     # ---------- shipping options -------------------------------------
@@ -284,12 +287,16 @@ class HttpMedusaClient:
         status: list[str] | None = None,
         sales_channel_id: list[str] | None = None,
         fields: str | None = None,
+        created_gte: str | None = None,
     ) -> dict[str, Any]:
         """List orders. Used by the dashboard `/api/orders/orders` endpoint.
 
         Returns the Medusa response envelope `{"orders": [...], "count": N,
         "offset": M, "limit": L}` — unchanged shape so the adapter can do
         its own DTO mapping.
+
+        `created_gte` (ISO-8601): only orders created from that instant on
+        (`created_at[$gte]`).
         """
         params: dict[str, Any] = {
             "limit": limit,
@@ -301,6 +308,8 @@ class HttpMedusaClient:
             params["status[]"] = status
         if sales_channel_id:
             params["sales_channel_id[]"] = sales_channel_id
+        if created_gte:
+            params["created_at[$gte]"] = created_gte
         return await self._request("GET", "/admin/orders", params=params)
 
     async def get_order(
@@ -324,6 +333,7 @@ class HttpMedusaClient:
         offset: int = 0,
         order: str = "-created_at",
         fields: str | None = None,
+        created_gte: str | None = None,
     ) -> dict[str, Any]:
         """List draft orders. Draft orders are the ones our `register_order`
         tool creates on sale close — they live in a separate Medusa endpoint
@@ -331,6 +341,9 @@ class HttpMedusaClient:
 
         The dashboard merges drafts + orders so the operator sees the full
         kanban including pedidos recién cerrados pero no completados.
+
+        `created_gte` (ISO-8601): only drafts created from that instant on
+        (`created_at[$gte]`).
         """
         params: dict[str, Any] = {
             "limit": limit,
@@ -338,6 +351,8 @@ class HttpMedusaClient:
             "order": order,
             "fields": fields or self.DEFAULT_ORDER_LIST_FIELDS,
         }
+        if created_gte:
+            params["created_at[$gte]"] = created_gte
         return await self._request("GET", "/admin/draft-orders", params=params)
 
     async def get_draft_order(
@@ -372,8 +387,12 @@ class HttpMedusaClient:
         non-2xx, raises `MedusaAPIError` like every other client method —
         the caller (adapter) catches and converts to
         `OrderRegistrationResult(success=False, ...)`.
+
+        NO se reintenta si el POST pudo llegar (timeout, conexión cortada a
+        mitad de la respuesta): reintentarlo crearía un SEGUNDO draft (L-27).
+        Solo se reintenta si la conexión ni siquiera se abrió.
         """
-        data = await self._request("POST", "/admin/draft-orders", json=payload)
+        data = await self._request("POST", "/admin/draft-orders", json=payload, idempotent=False)
         return data["draft_order"]
 
     async def patch_draft_order_metadata(
@@ -628,6 +647,28 @@ class HttpMedusaClient:
 
     async def delete_campaign(self, campaign_id: str) -> dict[str, Any]:
         return await self._request("DELETE", f"/admin/campaigns/{campaign_id}", idempotent=False)
+
+    CAMPAIGN_FIELDS = "id,name,campaign_identifier,starts_at,ends_at"
+
+    async def list_campaigns(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """`GET /admin/campaigns` paginado — la central busca acá la campaña
+        que quedó sin cupones al borrar uno (su identificador bloquea volver a
+        crear el mismo código)."""
+        out: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            data = await self._request(
+                "GET",
+                "/admin/campaigns",
+                params={"limit": limit, "offset": offset, "fields": self.CAMPAIGN_FIELDS},
+            )
+            page = data.get("campaigns") or []
+            out.extend(c for c in page if isinstance(c, dict))
+            count = data.get("count")
+            offset += len(page)
+            if not page or not isinstance(count, int) or offset >= count:
+                break
+        return out
 
     async def list_product_tags(self, ids: list[str]) -> list[dict[str, Any]]:
         """`GET /admin/product-tags` de esos ids — `{id, value}` de cada

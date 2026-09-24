@@ -15,6 +15,7 @@ from temporalio.exceptions import ActivityError, ApplicationError
 
 with workflow.unsafe.imports_passed_through():
     from src.plugins.marketing.agent.campaigns.activities import (
+        PLAN_MAX_ATTEMPTS,
         load_campaign_send_plan_activity,
         mark_campaign_sending_activity,
         mark_marketing_opt_out_activity,
@@ -42,8 +43,18 @@ class CampaignSendWorkflow:
             load_campaign_send_plan_activity,
             campaign_id,
             start_to_close_timeout=_FAST,
-            retry_policy=RetryPolicy(maximum_attempts=3),
+            retry_policy=RetryPolicy(maximum_attempts=PLAN_MAX_ATTEMPTS),
         )
+        if plan.blocked_reason:
+            # El cupón ya no servía a la hora del disparo: no sale nada. La
+            # activity dejó la campaña fallida con el motivo (no se pisa).
+            return {
+                "sent": 0,
+                "failed": 0,
+                "planned": 0,
+                "opted_out": 0,
+                "blocked_reason": plan.blocked_reason,
+            }
         # Carrusel: las tarjetas (productos del catálogo de Meta) se arman
         # UNA vez y las mismas viajan a cada destinatario.
         cards: list = []

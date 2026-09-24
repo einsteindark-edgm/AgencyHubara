@@ -48,6 +48,31 @@ def _sin_quiet_hours(monkeypatch):
     )
 
 
+def _promo(code: str = "MAMA15", **over):
+    from src.sdk.connectorkit import PromotionDTO
+
+    base = dict(
+        id=f"p_{code}", code=code, discount_type="percentage", value=15, currency_code=None,
+        target_type="items", allocation="across", max_quantity=None,
+        product_ids=(), variant_ids=(), collection_ids=(), min_subtotal_cop=None,
+        is_automatic=False, status="active", starts_at_ms=None, ends_at_ms=None,
+        budget_type=None, budget_limit=None, budget_used=None, description=None,
+    )
+    return PromotionDTO(**{**base, **over})
+
+
+@pytest.fixture(autouse=True)
+def _cupon_vigente(monkeypatch):
+    """El envío re-valida el cupón al dispararse: por defecto MAMA15 rige
+    (Medusa en memoria; jamás la real)."""
+    import src.plugins.marketing.agent.campaigns.activities as acts
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    port = FakePromotionsPort([_promo()])
+    monkeypatch.setattr(acts, "get_promotions_port", lambda: port)
+    return port
+
+
 @pytest.mark.asyncio
 async def test_load_plan_resuelve_audiencia_y_costo(_isolate_vault_dir: Path) -> None:
     vault = _isolate_vault_dir
@@ -188,3 +213,157 @@ async def test_stamp_campaign_touch_guarda_lo_que_recibio_el_cliente(
     assert touch["coupon_code"] == "MAMA15"
     assert touch["product_handles"] == ["duo-zodiacal", "cruz-de-vida"]
     assert "test" not in touch
+
+
+# --- El cupón se re-valida al DISPARAR el envío (premortem A12) ----------------
+
+
+def _attempt(n: int) -> ActivityEnvironment:
+    import dataclasses
+
+    env = ActivityEnvironment()
+    env.info = dataclasses.replace(env.info, attempt=n)
+    return env
+
+
+@pytest.mark.asyncio
+async def test_send_time_recheck_copies_the_coupon_terms_of_now(
+    _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    """La campaña se programó con 15 % "hasta el 30"; al dispararse el cupón
+    dice 20 % hasta el 27: el mensaje y la campaña anuncian lo de AHORA."""
+    import src.plugins.marketing.agent.campaigns.activities as acts
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault, valid_until="30 de septiembre")
+    _seed_session(vault, "wa_+571", {"tag": "COMPRA_EXITOSA"})
+    promo = _promo(value=20, ends_at_ms=1_790_571_600_000)  # 2026-09-28T05:00Z → "27 de septiembre"
+    monkeypatch.setattr(acts, "get_promotions_port", lambda: FakePromotionsPort([promo]))
+
+    plan = await ActivityEnvironment().run(load_campaign_send_plan_activity, "mkt-1")
+
+    assert plan.blocked_reason is None
+    assert "27 de septiembre" in plan.recipients[0].variables["campaign_offer"]
+    saved = CampaignStore(vault).get("mkt-1")
+    assert (saved["percent"], saved["valid_until"]) == (20, "27 de septiembre")
+
+
+@pytest.mark.parametrize(
+    ("over", "fragment"),
+    [
+        ({"status": "inactive"}, "pausado"),
+        ({"ends_at_ms": 1_000}, "venció"),
+        ({"code": "OTRO"}, "no existe"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_send_time_recheck_blocks_the_send_with_a_clear_reason(
+    _isolate_vault_dir: Path, monkeypatch, over, fragment
+) -> None:
+    import src.plugins.marketing.agent.campaigns.activities as acts
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault)
+    _seed_session(vault, "wa_+571", {"tag": "COMPRA_EXITOSA"})
+    monkeypatch.setattr(acts, "get_promotions_port", lambda: FakePromotionsPort([_promo(**over)]))
+
+    plan = await ActivityEnvironment().run(load_campaign_send_plan_activity, "mkt-1")
+
+    assert plan.recipients == []
+    assert "MAMA15" in plan.blocked_reason and fragment in plan.blocked_reason
+    saved = CampaignStore(vault).get("mkt-1")
+    assert saved["status"] == "failed"
+    assert saved["failure_reason"] == plan.blocked_reason
+
+
+@pytest.mark.asyncio
+async def test_medusa_down_at_send_time_retries_and_on_the_last_attempt_blocks(
+    _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    import src.plugins.marketing.agent.campaigns.activities as acts
+    from src.sdk.connectorkit import PromotionsUnavailableError
+
+    class Down:
+        async def list_active(self):
+            raise PromotionsUnavailableError("timeout")
+
+        async def get_by_code(self, code):
+            raise PromotionsUnavailableError("timeout")
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault)
+    monkeypatch.setattr(acts, "get_promotions_port", lambda: Down())
+
+    with pytest.raises(ApplicationError) as first:
+        await _attempt(1).run(load_campaign_send_plan_activity, "mkt-1")
+    assert first.value.non_retryable is False  # Temporal reintenta
+    assert CampaignStore(vault).get("mkt-1")["status"] == "draft"
+
+    plan = await _attempt(acts.PLAN_MAX_ATTEMPTS).run(load_campaign_send_plan_activity, "mkt-1")
+
+    assert "no respondió" in plan.blocked_reason
+    assert CampaignStore(vault).get("mkt-1")["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_a_worker_without_medusa_blocks_instead_of_calling_the_coupon_unknown(
+    _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    import src.plugins.marketing.agent.campaigns.activities as acts
+    from src.sdk.connectorkit import NullPromotionsPort
+
+    _seed_campaign(_isolate_vault_dir)
+    monkeypatch.setattr(acts, "get_promotions_port", lambda: NullPromotionsPort())
+
+    plan = await ActivityEnvironment().run(load_campaign_send_plan_activity, "mkt-1")
+
+    assert "Medusa" in plan.blocked_reason and "no existe" not in plan.blocked_reason
+
+
+@pytest.mark.asyncio
+async def test_campaign_without_coupon_does_not_ask_medusa(
+    _isolate_vault_dir: Path, _cupon_vigente
+) -> None:
+    vault = _isolate_vault_dir
+    _seed_campaign(vault, coupon_code="")
+    _seed_session(vault, "wa_+571", {"tag": "COMPRA_EXITOSA"})
+
+    plan = await ActivityEnvironment().run(load_campaign_send_plan_activity, "mkt-1")
+
+    assert [r.session_id for r in plan.recipients] == ["wa_+571"]
+    assert _cupon_vigente.calls == []
+
+
+@pytest.mark.asyncio
+async def test_send_time_recheck_reads_medusa_fresh_not_the_process_cache(
+    _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    """El worker de campañas reusa el `PromotionsPort` (cache de 60 s): un
+    cupón pausado justo antes del disparo no puede colarse por el cache."""
+    import src.plugins.marketing.agent.campaigns.activities as acts
+    from src.platform.promotions.medusa import MedusaPromotionsPort
+
+    class Medusa:
+        status = "active"
+
+        async def list_promotions(self):
+            return [{
+                "id": "p_MAMA15", "code": "MAMA15", "status": self.status,
+                "application_method": {"type": "percentage", "value": 15, "target_type": "items"},
+            }]
+
+        async def list_product_tags(self, ids):
+            return []
+
+    medusa = Medusa()
+    port = MedusaPromotionsPort(medusa, ttl_s=3600)
+    assert await port.get_by_code("MAMA15") is not None  # cache caliente: "activo"
+    medusa.status = "inactive"  # el operador lo pausa
+    monkeypatch.setattr(acts, "get_promotions_port", lambda: port)
+    _seed_campaign(_isolate_vault_dir)
+
+    plan = await ActivityEnvironment().run(load_campaign_send_plan_activity, "mkt-1")
+
+    assert plan.blocked_reason is not None and "pausado" in plan.blocked_reason

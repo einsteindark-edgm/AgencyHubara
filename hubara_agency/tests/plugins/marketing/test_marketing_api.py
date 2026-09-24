@@ -1366,3 +1366,116 @@ def test_test_send_announces_the_coupon_terms_not_what_the_operator_typed(
     assert res.status_code == 200, res.text
     assert "27 de septiembre" in json.dumps(sent[0], ensure_ascii=False)
     assert "cuando quieras" not in json.dumps(sent[0], ensure_ascii=False)
+
+
+# --- El cupón se valida para el INSTANTE del envío (premortem A1) --------------
+
+_DAY_MS = 24 * 3_600_000
+
+
+def _now_ms() -> int:
+    import time as _time
+
+    return int(_time.time() * 1000)
+
+
+def _started_fake_temporal(monkeypatch) -> _FakeTemporalClient:
+    fake = _FakeTemporalClient()
+
+    async def _fake_client():
+        return fake
+
+    monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
+    return fake
+
+
+def test_scheduling_a_send_after_a_programmed_coupon_starts_is_accepted(
+    client: TestClient, monkeypatch
+) -> None:
+    """El constructor ofrece cupones PROGRAMADOS: programar el envío para
+    cuando ya rigen no puede dar 422 "todavía no empieza"."""
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    fake = _started_fake_temporal(monkeypatch)
+    now = _now_ms()
+    promo = _promo_dto("AMOR26", starts_at_ms=now + _DAY_MS, ends_at_ms=now + 10 * _DAY_MS)
+    monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([promo]))
+    campaign_id = _campaign_with_coupon(client, "AMOR26")
+
+    res = client.post(
+        f"/api/marketing/campaigns/{campaign_id}/send", json={"schedule_at_ms": now + 2 * _DAY_MS}
+    )
+
+    assert res.status_code == 200, res.text
+    assert len(fake.calls) == 1
+
+
+def test_scheduling_a_send_after_the_coupon_ends_is_422_even_if_it_rules_today(
+    client: TestClient, monkeypatch
+) -> None:
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    fake = _started_fake_temporal(monkeypatch)
+    now = _now_ms()
+    promo = _promo_dto("AMOR26", ends_at_ms=now + _DAY_MS)  # vigente hoy, vence mañana
+    monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([promo]))
+    campaign_id = _campaign_with_coupon(client, "AMOR26")
+
+    res = client.post(
+        f"/api/marketing/campaigns/{campaign_id}/send", json={"schedule_at_ms": now + 3 * _DAY_MS}
+    )
+
+    assert res.status_code == 422
+    assert "envío programado" in res.json()["detail"]
+    assert fake.calls == []
+
+
+def test_sending_now_a_coupon_that_has_not_started_is_still_422(client: TestClient, monkeypatch) -> None:
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    fake = _started_fake_temporal(monkeypatch)
+    promo = _promo_dto("AMOR26", starts_at_ms=_now_ms() + _DAY_MS)
+    monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([promo]))
+    campaign_id = _campaign_with_coupon(client, "AMOR26")
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/send", json={})
+
+    assert res.status_code == 422
+    assert "todavía no empieza" in res.json()["detail"]
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize(
+    ("over", "accepted", "fragment"),
+    [
+        ({"starts_at_ms": "tomorrow"}, True, None),  # programado: la prueba sale
+        ({"status": "inactive"}, False, "pausado"),
+        ({"status": "draft"}, False, "borrador"),
+        ({"ends_at_ms": 1_000}, False, "venció"),
+    ],
+)
+def test_test_send_accepts_a_programmed_coupon_but_not_a_paused_draft_or_expired_one(
+    client: TestClient, monkeypatch, over, accepted, fragment
+) -> None:
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    sent: list[dict] = []
+
+    async def _fake_send(session_id, template, variables, **kw):
+        sent.append(variables)
+        return type("R", (), {"wa_message_id": "wamid.x"})()
+
+    over = {k: (_now_ms() + _DAY_MS if v == "tomorrow" else v) for k, v in over.items()}
+    monkeypatch.setattr(api_mod, "send_template_to_session", _fake_send)
+    monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([_promo_dto("AMOR26", **over)]))
+    campaign_id = _campaign_with_coupon(client, "AMOR26")
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/test", json={"phone": "3001234567"})
+
+    if accepted:
+        assert res.status_code == 200, res.text
+        assert len(sent) == 1
+    else:
+        assert res.status_code == 422
+        assert fragment in res.json()["detail"]
+        assert sent == []

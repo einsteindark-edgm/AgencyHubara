@@ -1,5 +1,6 @@
 """Central de cupones — traducción PURA entre el dominio del SDK y el JSON
-del dashboard (sin I/O; el router solo orquesta ports).
+del dashboard (sin I/O; el router solo orquesta ports). También el texto de
+por qué el cupón de una campaña no sirve (lo usan la API y el envío).
 """
 from __future__ import annotations
 
@@ -32,6 +33,31 @@ EDITABLE_FIELDS = ("code", "campaign_name", "percentage", "products", "starts_on
 def day_label(day: date) -> str:
     """`2026-09-27` → "27 de septiembre" (como se lo dice la campaña al cliente)."""
     return f"{day.day} de {_MONTHS[day.month - 1]}"
+
+
+#: Por qué el cupón que anuncia la campaña no sirve — para el operador
+#: ("El cupón AMOR26 …"). Motivos de `resolve_coupon`.
+_COUPON_PROBLEMS = {
+    "invalid_format": "no tiene una forma válida (solo letras y números)",
+    "not_found": "no existe en Medusa — créalo en Marketing → Cupones o elige uno de los vigentes",
+    "inactive": "está pausado en Medusa",
+    "not_started": "todavía no empieza a regir en Medusa",
+    "expired": "ya venció en Medusa",
+    "budget_exhausted": "ya agotó sus usos en Medusa",
+    "scope_unresolved": "tiene reglas que no pude leer en Medusa (no sé a qué productos aplica)",
+}
+
+
+def campaign_coupon_problem(reason: str | None, promotion: Any = None, *, scheduled: bool = False) -> str:
+    """El motivo, para el operador. `scheduled`: se validó para la hora de un
+    envío programado (no para ahora)."""
+    if reason == "inactive" and getattr(promotion, "status", "") == "draft":
+        return "está en borrador (actívalo en Marketing → Cupones)"
+    if scheduled and reason == "expired":
+        return "ya no rige a la hora del envío programado (vence antes)"
+    if scheduled and reason == "not_started":
+        return "todavía no rige a la hora del envío programado"
+    return _COUPON_PROBLEMS.get(reason or "", "no se puede usar")
 
 
 def coupon_terms(promo: PromotionDTO) -> dict[str, Any]:
@@ -88,7 +114,10 @@ def units_summary(board: list[QuotaStatus] | None, sheet: QuotaSheet) -> dict[st
 
 
 def units_json(board: list[QuotaStatus], sheet: QuotaSheet) -> dict[str, Any]:
+    """Filas del cupo con vendidas/quedan. `updated_at` es la versión de lo
+    guardado (C-5): el editor la devuelve como `expected_updated_at`."""
     return {
+        "updated_at": sheet.updated_at or None,
         "rows": [
             {
                 "id": s.quota.id,
@@ -118,15 +147,10 @@ def results_json(results: CouponResults) -> dict[str, Any]:
     }
 
 
-def spec_patch(view: CouponView, patch: dict[str, Any]) -> dict[str, Any]:
-    """El formulario COMPLETO resultante de aplicar `patch` al cupón actual
-    (para validarlo entero con `parse_coupon_spec`).
-
-    El código solo cambia mientras el cupón es borrador."""
-    unknown = sorted(set(patch) - set(EDITABLE_FIELDS))
-    if unknown:
-        raise CouponSpecError(unknown[0], "Ese campo no se edita desde la central.")
-    current: dict[str, Any] = {
+def coupon_form(view: CouponView) -> dict[str, Any]:
+    """El formulario del cupón tal como está en Medusa (al editarlo, lo que
+    no cambia no se vuelve a validar: `parse_coupon_spec(…, current=…)`)."""
+    return {
         "code": view.code,
         "campaign_name": view.campaign_name or view.code,
         "percentage": view.percentage,
@@ -137,7 +161,17 @@ def spec_patch(view: CouponView, patch: dict[str, Any]) -> dict[str, Any]:
         # entre draft|active, así que se valida con uno de esos.
         "status": "draft" if view.status == "draft" else "active",
     }
-    merged = {**current, **patch}
+
+
+def spec_patch(view: CouponView, patch: dict[str, Any]) -> dict[str, Any]:
+    """El formulario COMPLETO resultante de aplicar `patch` al cupón actual
+    (para validarlo entero con `parse_coupon_spec`).
+
+    El código solo cambia mientras el cupón es borrador."""
+    unknown = sorted(set(patch) - set(EDITABLE_FIELDS))
+    if unknown:
+        raise CouponSpecError(unknown[0], "Ese campo no se edita desde la central.")
+    merged = {**coupon_form(view), **patch}
     if str(merged["code"] or "").strip().upper() != view.code and view.status != "draft":
         raise CouponSpecError(
             "code", "El código solo se cambia mientras el cupón está en borrador."
@@ -150,6 +184,61 @@ def audit_diff(before: CouponView, after: CouponView) -> dict[str, list[Any]]:
     b = coupon_json(before)
     a = coupon_json(after)
     return {f: [b[f], a[f]] for f in EDITABLE_FIELDS if b[f] != a[f]}
+
+
+def intended_diff(before: CouponView, spec: Any) -> dict[str, list[Any]]:
+    """`{campo: [antes, lo pedido]}`: lo que el operador QUISO cambiar (para
+    el registro cuando no se sabe cómo quedó el cupón en Medusa). `spec` es
+    el `CouponSpec` validado."""
+    b = coupon_json(before)
+    wanted = {
+        "code": spec.code,
+        "campaign_name": spec.campaign_name,
+        "percentage": spec.percentage,
+        "products": _products(spec.products),
+        "starts_on": _iso(spec.starts_on),
+        "ends_on": _iso(spec.ends_on),
+    }
+    return {f: [b[f], wanted[f]] for f in EDITABLE_FIELDS if b[f] != wanted[f]}
+
+
+def quota_row_label(quota: Any) -> str:
+    """Una fila del cupo para el registro: "Cubo Love · Rosado · Café: 5"."""
+    return f"{quota.title} · {quota.color or '—'} · {quota.aroma or '—'}: {quota.units}"
+
+
+#: Margen de la lectura ÚNICA de la lista, mayor que el de `quota_board`
+#: (1 h) para que cada hoja pueda contar desde su propio inicio.
+_SCAN_MARGIN = timedelta(hours=2)
+_EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
+
+
+def _instant(raw: Any) -> datetime | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def scan_since(sheets: list[QuotaSheet]) -> datetime:
+    """Desde cuándo leer los pedidos para contar TODAS las hojas de la lista
+    en una sola lectura: el inicio más viejo (`counting_since`, o la fila más
+    vieja si la hoja es anterior a ese campo) con margen."""
+    starts: list[datetime] = []
+    for sheet in sheets:
+        fixed = _instant(sheet.counting_since)
+        rows = [d for d in (_instant(q.created_at) for q in sheet.quotas) if d is not None]
+        starts.append(fixed or (min(rows) if rows else _EPOCH))
+    return (min(starts) if starts else _EPOCH) - _SCAN_MARGIN
+
+
+def created_since(orders: list[dict[str, Any]], since: datetime) -> list[dict[str, Any]]:
+    """Los pedidos creados desde `since` (uno sin fecha legible cuenta: mejor
+    contar de más que vender de más)."""
+    return [o for o in orders if (_instant(o.get("created_at")) or since) >= since]
 
 
 def coupon_product_ids(promo: PromotionDTO, products: list[Any]) -> tuple[str, ...]:

@@ -74,29 +74,55 @@ def _parse_products(raw: Any) -> tuple[str, ...] | None:
     return ids
 
 
+#: Años que acepta una fecha del cupón: fuera de esto no es un error de
+#: tipeo razonable, y "9999-12-31" desbordaba al sumar el día del "hasta".
+YEAR_MIN, YEAR_MAX = 2000, 2100
+
+
 def _parse_day(field: str, raw: Any) -> date:
     if isinstance(raw, date):
-        return raw
-    try:
-        return date.fromisoformat(str(raw or "").strip())
-    except ValueError:
-        raise CouponSpecError(field, "La fecha va como AAAA-MM-DD.") from None
+        day = raw
+    else:
+        try:
+            day = date.fromisoformat(str(raw or "").strip())
+        except ValueError:
+            raise CouponSpecError(field, "La fecha va como AAAA-MM-DD.") from None
+    if not YEAR_MIN <= day.year <= YEAR_MAX:
+        raise CouponSpecError(field, f"La fecha va entre el año {YEAR_MIN} y el {YEAR_MAX}.")
+    return day
 
 
-def parse_coupon_spec(raw: Any) -> CouponSpec:
-    """Formulario de la central → `CouponSpec` validado.
-
-    Levanta `CouponSpecError(field, message)` con el primer dato inválido; el
-    mensaje le dice al operador cómo corregirlo.
-    """
-    if not isinstance(raw, dict):
-        raise CouponSpecError("body", "Faltan los datos del cupón.")
-    code = _parse_code(raw.get("code"))
-    name = str(raw.get("campaign_name") or "").strip() or code
+def _parse_name(raw: Any, code: str) -> str:
+    name = str(raw or "").strip() or code
     if len(name) > CAMPAIGN_NAME_MAX:
         raise CouponSpecError(
             "campaign_name", f"El nombre de la campaña va hasta {CAMPAIGN_NAME_MAX} caracteres."
         )
+    return name
+
+
+def parse_coupon_spec(raw: Any, *, current: dict[str, Any] | None = None) -> CouponSpec:
+    """Formulario de la central → `CouponSpec` validado.
+
+    Levanta `CouponSpecError(field, message)` con el primer dato inválido; el
+    mensaje le dice al operador cómo corregirlo.
+
+    `current` (al editar): el formulario del cupón tal como está en Medusa.
+    Un código o un nombre que NO cambia no se vuelve a validar: un cupón
+    creado en Medusa con un código que la central no crearía (16 caracteres)
+    se sigue pudiendo editar en lo demás.
+    """
+    if not isinstance(raw, dict):
+        raise CouponSpecError("body", "Faltan los datos del cupón.")
+
+    def unchanged(field: str) -> bool:
+        return current is not None and field in current and raw.get(field) == current[field]
+
+    code = str(raw.get("code") or "").strip().upper() if unchanged("code") else _parse_code(raw.get("code"))
+    if unchanged("campaign_name"):
+        name = str(raw.get("campaign_name") or "").strip() or code
+    else:
+        name = _parse_name(raw.get("campaign_name"), code)
     percentage = _parse_percentage(raw.get("percentage"))
     products = _parse_products(raw.get("products"))
     starts_on = _parse_day("starts_on", raw.get("starts_on"))
@@ -218,13 +244,22 @@ def _last_day(instant: datetime | None) -> date | None:
     return local.date() - timedelta(days=1) if local.time() == time.min else local.date()
 
 
-def _unmanageable_reason(raw: dict[str, Any], method: dict[str, Any]) -> str | None:
+#: La campaña de Medusa la usan varias promociones (se puede armar así en
+#: Medusa Admin): cambiar fechas o nombre de una cambiaría los de las otras.
+SHARED_CAMPAIGN_REASON = (
+    "Su campaña de Medusa la comparten varios cupones; se maneja en Medusa Admin."
+)
+
+
+def _unmanageable_reason(
+    raw: dict[str, Any], method: dict[str, Any], *, campaign_shared: bool = False
+) -> str | None:
     """Por qué la central NO puede editar esta promoción (D7), o None.
 
     La central solo escribe lo que ella misma crea: porcentaje sobre
     productos, a lo sumo UNA regla `items.product.id in`, sin condiciones de
-    compra y con campaña. Todo lo demás queda en solo lectura: ninguna
-    escritura toca reglas ajenas.
+    compra y con una campaña PROPIA. Todo lo demás queda en solo lectura:
+    ninguna escritura toca reglas ajenas.
     """
     if raw.get("is_automatic"):
         return "Es una promoción automática (sin código); se maneja en Medusa."
@@ -248,6 +283,8 @@ def _unmanageable_reason(raw: dict[str, Any], method: dict[str, Any]) -> str | N
         return "Tiene condiciones de compra (por ejemplo, mínimo de compra); se maneja en Medusa."
     if not isinstance(raw.get("campaign"), dict):
         return "No tiene campaña (sin fechas); se maneja en Medusa."
+    if campaign_shared:
+        return SHARED_CAMPAIGN_REASON
     return None
 
 
@@ -263,11 +300,15 @@ def _state(status: str, starts: datetime | None, ends: datetime | None, now: dat
     return STATE_ACTIVE
 
 
-def coupon_view_from_medusa(raw: dict[str, Any], *, now: datetime) -> CouponView:
+def coupon_view_from_medusa(
+    raw: dict[str, Any], *, now: datetime, campaign_shared: bool = False
+) -> CouponView:
     """Promoción de `GET /admin/promotions` → lo que muestra la central.
 
     Siempre refleja lo que HAY en Medusa (aunque lo hayan editado en Medusa
     Admin) y dice si la central puede editarlo (`manageable`).
+    `campaign_shared`: otra promoción usa la misma campaña (lo sabe quien ve
+    la lista completa) → solo lectura.
     """
     raw_method = raw.get("application_method")
     method: dict[str, Any] = raw_method if isinstance(raw_method, dict) else {}
@@ -281,7 +322,7 @@ def coupon_view_from_medusa(raw: dict[str, Any], *, now: datetime) -> CouponView
         if isinstance(r, dict) and r.get("attribute") == PRODUCT_RULE_ATTR
     ]
     products = tuple(v for r in product_rules for v in _rule_values(r)) or None
-    reason = _unmanageable_reason(raw, method)
+    reason = _unmanageable_reason(raw, method, campaign_shared=campaign_shared)
     is_percentage = str(method.get("type") or "") == "percentage"
     value = method.get("value")
     status = str(raw.get("status") or "active")

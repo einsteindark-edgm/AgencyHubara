@@ -14,7 +14,8 @@ from __future__ import annotations
 import fcntl
 import json
 import re
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, fields, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol, runtime_checkable
 
@@ -45,13 +46,50 @@ class QuotaSheet:
 
 class QuotaStoreError(RuntimeError):
     """El cupo guardado no se pudo leer (archivo roto o disco). Falla
-    CERRADA: quien lo lea NO debe tratarlo como "cupón sin cupo"."""
+    CERRADA: quien lo lea NO debe tratarlo como "cupón sin cupo".
+
+    `reason` dice qué pasó: ``"unreadable"`` (archivo roto o disco) o
+    ``"changed"`` (`QuotaSheetChangedError`)."""
+
+    reason = "unreadable"
+
+
+class QuotaSheetChangedError(QuotaStoreError):
+    """Otra persona guardó el cupo después de la versión que se editó
+    (`expected_updated_at` no coincide): no se pisa lo nuevo (C-5)."""
+
+    reason = "changed"
 
 
 def _check_id(promotion_id: str) -> str:
     if not isinstance(promotion_id, str) or not _SAFE_ID.fullmatch(promotion_id):
         raise ValueError(f"id de promoción inválido: {promotion_id!r}")
     return promotion_id
+
+
+#: Formato de la versión cuando hay que inventarla (1 µs más que la anterior).
+_VERSION_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
+
+
+def _instant(raw: str) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _next_version(previous: str, now_iso: str) -> str:
+    """`updated_at` de un guardado nuevo, ESTRICTAMENTE mayor que el anterior
+    (C-5): dos guardados en el mismo instante (o con el reloj atrás) no
+    repiten versión — si no, quien cargó entre los dos pasaría el chequeo de
+    `expected_updated_at`. Se calcula bajo el candado del cupo."""
+    before, now = _instant(previous), _instant(now_iso)
+    if before is None or now is None or now > before:
+        return now_iso
+    return (before + timedelta(microseconds=1)).astimezone(timezone.utc).strftime(_VERSION_FORMAT)
 
 
 def _merge(
@@ -77,9 +115,37 @@ def _merge(
         code=code,
         quotas=kept,
         show_units_left=show_units_left,
-        updated_at=now_iso,
+        updated_at=_next_version(current.updated_at, now_iso),
         updated_by=actor,
         counting_since=current.counting_since or (now_iso if kept else ""),
+    )
+
+
+#: Sin chequeo de versión (el llamador no mandó `expected_updated_at`).
+_NO_CHECK: Any = object()
+
+_ROW_FIELDS = frozenset(f.name for f in fields(PromoUnitQuota))
+
+
+def _check_version(current: QuotaSheet, expected_updated_at: Any) -> None:
+    """C-5: `expected_updated_at` es el `updated_at` de la versión que editó
+    el operador (None = "nunca se guardó"). `_NO_CHECK` = cliente viejo que
+    no lo manda: sin chequeo."""
+    if expected_updated_at is _NO_CHECK:
+        return
+    if (current.updated_at or None) != (expected_updated_at or None):
+        raise QuotaSheetChangedError(
+            f"el cupo de {current.promotion_id} cambió: guardado {current.updated_at!r}, "
+            f"editado sobre {expected_updated_at!r}"
+        )
+
+
+def _pruned(current: QuotaSheet, products: tuple[str, ...], *, actor: str, now_iso: str) -> QuotaSheet:
+    """La hoja sin las filas de productos que el cupón ya no tiene (conserva
+    desde cuándo se cuenta y la preferencia de mostrar cuántas quedan)."""
+    kept = tuple(q for q in current.quotas if q.product_id in products)
+    return replace(
+        current, quotas=kept, updated_at=_next_version(current.updated_at, now_iso), updated_by=actor
     )
 
 
@@ -89,15 +155,30 @@ def _to_json(sheet: QuotaSheet) -> dict[str, Any]:
     return data
 
 
+def _row_from_json(promotion_id: str, row: Any) -> PromoUnitQuota:
+    """Una fila guardada. Una clave que este código no conoce (formato más
+    nuevo, edición a mano) se ignora; una fila sin sus campos obligatorios o
+    con unidades que no son un entero NO se adivina: falla cerrada."""
+    if not isinstance(row, dict):
+        raise QuotaStoreError(f"fila de cupo ilegible en {promotion_id}")
+    try:
+        quota = PromoUnitQuota(**{k: v for k, v in row.items() if k in _ROW_FIELDS})
+    except TypeError as exc:
+        raise QuotaStoreError(f"fila de cupo ilegible en {promotion_id}: {exc}") from exc
+    units_ok = isinstance(quota.units, int) and not isinstance(quota.units, bool)
+    if not (units_ok and isinstance(quota.id, str) and quota.id and isinstance(quota.product_id, str)):
+        raise QuotaStoreError(f"fila de cupo ilegible en {promotion_id}: {row.get('id')!r}")
+    return quota
+
+
 def _from_json(promotion_id: str, data: Any) -> QuotaSheet:
+    """La hoja guardada; las claves que este código no conoce se ignoran."""
     if not isinstance(data, dict):
         raise QuotaStoreError(f"cupo de {promotion_id} ilegible")
-    quotas: list[PromoUnitQuota] = []
-    for row in data.get("quotas") or []:
-        try:
-            quotas.append(PromoUnitQuota(**row))
-        except TypeError as exc:
-            raise QuotaStoreError(f"fila de cupo ilegible en {promotion_id}: {exc}") from exc
+    rows = data.get("quotas") or []
+    if not isinstance(rows, list):
+        raise QuotaStoreError(f"cupo de {promotion_id} ilegible")
+    quotas = [_row_from_json(promotion_id, row) for row in rows]
     return QuotaSheet(
         promotion_id=promotion_id,
         code=str(data.get("code") or ""),
@@ -122,7 +203,12 @@ class PromoQuotaStore(Protocol):
         show_units_left: bool,
         actor: str,
         now_iso: str,
+        expected_updated_at: str | None = ...,
     ) -> QuotaSheet: ...
+
+    def prune_to_products(
+        self, promotion_id: str, products: tuple[str, ...], *, actor: str, now_iso: str
+    ) -> tuple[PromoUnitQuota, ...]: ...
 
     def list_sheets(self) -> list[QuotaSheet]: ...
 
@@ -176,13 +262,33 @@ class VaultPromoQuotaStore:
         show_units_left: bool,
         actor: str,
         now_iso: str,
+        expected_updated_at: Any = _NO_CHECK,
     ) -> QuotaSheet:
-        return self.update(
-            promotion_id,
-            lambda current: _merge(
+        """Reemplaza las filas. Una hoja ilegible NO se pisa (se perdería
+        desde cuándo se cuentan las vendidas): `QuotaStoreError`. Con
+        `expected_updated_at` la versión se compara BAJO el candado (C-5)."""
+
+        def _replace(current: QuotaSheet) -> QuotaSheet:
+            _check_version(current, expected_updated_at)
+            return _merge(
                 current, code, quotas, show_units_left=show_units_left, actor=actor, now_iso=now_iso
-            ),
-        )
+            )
+
+        return self.update(promotion_id, _replace)
+
+    def prune_to_products(
+        self, promotion_id: str, products: tuple[str, ...], *, actor: str, now_iso: str
+    ) -> tuple[PromoUnitQuota, ...]:
+        """Quita (bajo el candado) las filas de productos que el cupón ya no
+        tiene; devuelve las quitadas (vacío = no escribió nada)."""
+        removed: list[PromoUnitQuota] = []
+
+        def _prune(current: QuotaSheet) -> QuotaSheet | None:
+            removed.extend(q for q in current.quotas if q.product_id not in products)
+            return _pruned(current, products, actor=actor, now_iso=now_iso) if removed else None
+
+        self.update(promotion_id, _prune)
+        return tuple(removed)
 
     def list_sheets(self) -> list[QuotaSheet]:
         """Hojas legibles con filas (una rota se saltea acá; quien la lea por
@@ -223,13 +329,25 @@ class FakePromoQuotaStore:
         show_units_left: bool,
         actor: str,
         now_iso: str,
+        expected_updated_at: Any = _NO_CHECK,
     ) -> QuotaSheet:
+        current = self.get(promotion_id)
+        _check_version(current, expected_updated_at)
         sheet = _merge(
-            self.get(promotion_id), code, quotas,
+            current, code, quotas,
             show_units_left=show_units_left, actor=actor, now_iso=now_iso,
         )
         self._sheets[promotion_id] = sheet
         return sheet
+
+    def prune_to_products(
+        self, promotion_id: str, products: tuple[str, ...], *, actor: str, now_iso: str
+    ) -> tuple[PromoUnitQuota, ...]:
+        current = self.get(promotion_id)
+        removed = tuple(q for q in current.quotas if q.product_id not in products)
+        if removed:
+            self._sheets[promotion_id] = _pruned(current, products, actor=actor, now_iso=now_iso)
+        return removed
 
     def list_sheets(self) -> list[QuotaSheet]:
         return [s for _, s in sorted(self._sheets.items()) if s.quotas]
@@ -242,6 +360,7 @@ __all__ = [
     "FakePromoQuotaStore",
     "PromoQuotaStore",
     "QuotaSheet",
+    "QuotaSheetChangedError",
     "QuotaStoreError",
     "VaultPromoQuotaStore",
 ]

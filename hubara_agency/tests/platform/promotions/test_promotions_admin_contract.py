@@ -106,6 +106,9 @@ def _medusa_http(sim: InMemoryMedusaPromotions):
             if request.method == "GET" and path == "/admin/promotions":
                 promos = await sim.list_promotions()
                 return httpx.Response(200, json={"promotions": promos, "count": len(promos), "offset": 0, "limit": 100})
+            if request.method == "GET" and path == "/admin/campaigns":
+                camps = await sim.list_campaigns()
+                return httpx.Response(200, json={"campaigns": camps, "count": len(camps), "offset": 0, "limit": 100})
             if request.method == "POST" and path == "/admin/promotions":
                 return httpx.Response(200, json={"promotion": await sim.create_promotion(body)})
             if m := _BATCH.match(path):
@@ -471,7 +474,7 @@ async def test_writes_are_not_retried_after_a_read_timeout() -> None:
 async def test_rename_whose_campaign_step_hits_a_taken_identifier_is_a_partial_update() -> None:
     orphan = {"id": "procamp_x", "name": "vieja", "campaign_identifier": "BORRADOR2"}
     sim = InMemoryMedusaPromotions()
-    sim._orphan_campaigns["procamp_x"] = orphan
+    sim.add_campaign(orphan)
     with respx.mock(assert_all_called=False) as mock:
         mock.route(host="medusa.test").mock(side_effect=_medusa_http(sim))
         client = HttpMedusaClient(base_url=_BASE, admin_token="sk_test", timeout=5.0)
@@ -503,3 +506,380 @@ async def test_created_coupon_is_returned_even_if_the_reread_fails() -> None:
         view = await port.create_coupon(_spec())
 
     assert view.code == "AMOR27" and view.percentage == 10
+
+
+# ---------------------------------------------------------------------------
+# Premortem de la central (A2, A3, A4, A8): campañas compartidas, renombres,
+# escrituras que Medusa no confirmó y borrados a medias.
+# ---------------------------------------------------------------------------
+
+
+def _manageable(pid: str, code: str, campaign: dict[str, Any], *, status: str = "active") -> dict[str, Any]:
+    return {
+        "id": pid, "code": code, "type": "standard", "is_automatic": False, "status": status,
+        "campaign_id": campaign["id"],
+        "application_method": {
+            "id": f"am_{pid}", "type": "percentage", "value": 10, "target_type": "items",
+            "allocation": "across", "max_quantity": None,
+            "target_rules": [
+                {"id": f"r_{pid}", "attribute": "items.product.id", "operator": "in", "values": [{"value": "prod_a"}]},
+            ],
+        },
+        "rules": [],
+        "campaign": dict(campaign),
+    }
+
+
+_SHARED = {
+    "id": "procamp_shared", "name": "TEMPORADA", "campaign_identifier": "TEMPORADA",
+    "starts_at": "2026-09-22T05:00:00.000Z", "ends_at": "2026-09-28T05:00:00.000Z",
+}
+
+
+def _is_unknown(exc: BaseException) -> bool:
+    """Lo que ve la API por el SDK: un `PromotionsUnavailableError` que dice
+    que el resultado es DESCONOCIDO (no "no se hizo ningún cambio")."""
+    return isinstance(exc, PromotionsUnavailableError) and getattr(exc, "outcome_unknown", False) is True
+
+
+def _real_over(sim: InMemoryMedusaPromotions, mock: respx.MockRouter, wrap, **kw: Any) -> MedusaPromotionsAdmin:
+    """El adapter real con un `wrap(request, medusa)` delante del simulador
+    (para cortar o hacer fallar una llamada puntual)."""
+    medusa = _medusa_http(sim)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return await wrap(request, medusa)
+
+    mock.route(host="medusa.test").mock(side_effect=handler)
+    client = HttpMedusaClient(base_url=_BASE, admin_token="sk_test", timeout=5.0)
+    return MedusaPromotionsAdmin(client, clock=_clock, **kw)
+
+
+async def _plain(request: httpx.Request, medusa) -> httpx.Response:
+    return await medusa(request)
+
+
+def _landed_then_cut(method: str, path_prefix: str):
+    """Medusa APLICA la escritura pero la respuesta nunca llega (timeout)."""
+
+    async def wrap(request: httpx.Request, medusa) -> httpx.Response:
+        if request.method == method and request.url.path.startswith(path_prefix):
+            await medusa(request)
+            raise httpx.ReadTimeout("la respuesta no llegó", request=request)
+        return await medusa(request)
+
+    return wrap
+
+
+# --- A2: una campaña de Medusa compartida por varios cupones -------------------
+
+
+@pytest.mark.asyncio
+@KINDS
+async def test_promotions_sharing_one_campaign_are_read_only(kind: str) -> None:
+    seed = [_manageable("promo_1", "TEMPO1", _SHARED), _manageable("promo_2", "TEMPO2", _SHARED)]
+    with respx.mock(assert_all_called=False) as mock:
+        port = _port(kind, mock, seed)
+        listed = await port.list_coupons()
+        one = await port.get_coupon("promo_1")
+        with pytest.raises(CouponNotManageableError) as err:
+            await port.update_coupon("promo_1", _spec(code="TEMPO1", ends_on=date(2026, 9, 30)))
+        with pytest.raises(CouponNotManageableError):
+            await port.set_status("promo_2", "inactive")
+
+    assert [v.manageable for v in listed] == [False, False]
+    assert one.manageable is False
+    assert "comparten varios cupones" in err.value.reason
+    writes = port.medusa.writes if kind == "fake" else _writes(mock)
+    assert writes == []
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_draft_never_deletes_a_campaign_another_promotion_now_uses() -> None:
+    """Entre el chequeo y el borrado, alguien cuelga otra promoción de la
+    misma campaña en Medusa Admin: la campaña se queda."""
+
+    class AttachesMeanwhile(InMemoryMedusaPromotions):
+        async def delete_promotion(self, promotion_id: str) -> dict[str, Any]:
+            campaign_id = (await self.get_promotion(promotion_id))["campaign_id"]
+            self.seed_promotion(_manageable("promo_otro", "OTRO1", {"id": campaign_id}))
+            return await super().delete_promotion(promotion_id)
+
+    sim = AttachesMeanwhile()
+    with respx.mock(assert_all_called=False) as mock:
+        port = _real_over(sim, mock, _plain)
+        draft = await port.create_coupon(_spec(code="BORRADOR1", status="draft"))
+        mock.reset()
+        deletion = await port.delete_coupon(draft.promotion_id)
+        deletes = [(m, p) for m, p, _ in _writes(mock)]
+        other = await port.get_coupon("promo_otro")
+
+    assert deletes == [("DELETE", f"/admin/promotions/{draft.promotion_id}")]
+    assert deletion.campaign_deleted is False and deletion.orphaned_campaign_id is None
+    assert other.campaign_id == draft.campaign_id
+
+
+# --- A3: renombrar un borrador ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+@KINDS
+async def test_renaming_a_draft_to_a_code_taken_in_other_case_is_refused_before_writing(kind: str) -> None:
+    lower = _tagged_amor26() | {"code": "amor26"}
+    lower["campaign"] = lower["campaign"] | {"campaign_identifier": "AMOR26-VIEJA"}
+    with respx.mock(assert_all_called=False) as mock:
+        port = _port(kind, mock, [lower])
+        draft = await port.create_coupon(_spec(code="BORRADOR1", status="draft"))
+        before = list(port.medusa.writes) if kind == "fake" else _writes(mock)
+        with pytest.raises(CouponCodeTakenError):
+            await port.update_coupon(draft.promotion_id, _spec(code="AMOR26", status="draft"))
+        after = list(port.medusa.writes) if kind == "fake" else _writes(mock)
+
+    assert after == before  # ninguna escritura: ni el código ni la campaña
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply", "error"),
+    [
+        (httpx.Response(400, json={"type": "invalid_data", "message": "value must be <= 100"}), CouponRejectedError),
+        (httpx.Response(400, json={"type": "invalid_data", "message": "Promotion with code: X, already exists."}), CouponCodeTakenError),
+        (httpx.Response(404, json={"type": "not_found", "message": "Promotion was not found"}), CouponNotFoundError),
+    ],
+)
+async def test_a_first_step_rejection_is_the_original_error_not_a_partial_update(reply, error) -> None:
+    """Nada cambió en Medusa: decir "quedó a medias" (502) y auditar
+    `update_partial` era falso."""
+
+    async def reject_promotion_post(request: httpx.Request, medusa) -> httpx.Response:
+        if request.method == "POST" and request.url.path.startswith("/admin/promotions/"):
+            return reply
+        return await medusa(request)
+
+    sim = InMemoryMedusaPromotions()
+    with respx.mock(assert_all_called=False) as mock:
+        port = _real_over(sim, mock, reject_promotion_post)
+        created = await port.create_coupon(_spec())
+        with pytest.raises(error):
+            await port.update_coupon(created.promotion_id, _spec(percentage=15, ends_on=date(2026, 9, 29)))
+        view = await port.get_coupon(created.promotion_id)
+
+    assert (view.percentage, view.ends_on) == (10, date(2026, 9, 27))  # la campaña no se tocó
+
+
+@pytest.mark.asyncio
+async def test_a_first_step_that_never_left_is_unavailable_with_nothing_changed() -> None:
+    async def refused(request: httpx.Request, medusa) -> httpx.Response:
+        if request.method == "POST" and request.url.path.startswith("/admin/promotions/"):
+            raise httpx.ConnectError("refused", request=request)
+        return await medusa(request)
+
+    sim = InMemoryMedusaPromotions()
+    with respx.mock(assert_all_called=False) as mock:
+        port = _real_over(sim, mock, refused)
+        created = await port.create_coupon(_spec())
+        with pytest.raises(PromotionsUnavailableError) as err:
+            await port.update_coupon(created.promotion_id, _spec(percentage=15))
+
+    assert not isinstance(err.value, CouponPartialUpdateError)
+    assert not _is_unknown(err.value)  # la conexión ni se abrió: no cambió nada
+
+
+# --- A4: escrituras que Medusa no confirmó ---------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_that_landed_but_timed_out_is_settled_as_created() -> None:
+    changes: list[str] = []
+    sim = InMemoryMedusaPromotions()
+    with respx.mock(assert_all_called=False) as mock:
+        port = _real_over(sim, mock, _landed_then_cut("POST", "/admin/promotions"),
+                          on_change=lambda: changes.append("x"))
+        view = await port.create_coupon(_spec())
+        listed = await port.list_coupons()
+
+    assert (view.code, view.percentage) == ("AMOR27", 10)
+    assert [v.promotion_id for v in listed] == [view.promotion_id]
+    assert changes  # el cache del bot se limpia igual
+
+
+@pytest.mark.asyncio
+async def test_create_that_timed_out_and_is_not_there_is_unknown_not_no_change() -> None:
+    changes: list[str] = []
+
+    async def cut_before_landing(request: httpx.Request, medusa) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/admin/promotions":
+            raise httpx.ReadTimeout("slow", request=request)
+        return await medusa(request)
+
+    sim = InMemoryMedusaPromotions()
+    with respx.mock(assert_all_called=False) as mock:
+        port = _real_over(sim, mock, cut_before_landing, on_change=lambda: changes.append("x"))
+        with pytest.raises(PromotionsUnavailableError) as err:
+            await port.create_coupon(_spec())
+
+    assert _is_unknown(err.value)
+    assert changes  # pudo haberse creado después: el cache se limpia
+
+
+@pytest.mark.asyncio
+async def test_update_whose_final_reread_fails_returns_what_was_written() -> None:
+    """Todos los pasos se aplicaron: responder 503 "no se hizo ningún cambio"
+    mentía y dejaba el cambio sin registro."""
+    wrote: list[str] = []
+
+    async def reread_down_after_writing(request: httpx.Request, medusa) -> httpx.Response:
+        if request.method == "POST":
+            wrote.append(request.url.path)
+        elif wrote and request.url.path.startswith("/admin/promotions/"):
+            return httpx.Response(503, json={"message": "down"})
+        return await medusa(request)
+
+    sim = InMemoryMedusaPromotions()
+    with respx.mock(assert_all_called=False) as mock:
+        port = _real_over(sim, mock, reread_down_after_writing)
+        created = await port.create_coupon(_spec())
+        wrote.clear()
+        view = await port.update_coupon(
+            created.promotion_id, _spec(percentage=15, products=("prod_c",), ends_on=date(2026, 9, 29))
+        )
+
+    assert (view.percentage, view.products, view.ends_on) == (15, ("prod_c",), date(2026, 9, 29))
+    assert view.promotion_id == created.promotion_id and view.manageable is True
+
+
+@pytest.mark.asyncio
+async def test_partial_update_whose_state_cannot_be_reread_still_says_what_was_applied() -> None:
+    async def campaign_fails_then_reread_down(request: httpx.Request, medusa) -> httpx.Response:
+        if request.method == "POST" and request.url.path.startswith("/admin/campaigns/"):
+            reread_down.append(True)
+            return httpx.Response(500, json={"type": "unknown_error", "message": "boom"})
+        if reread_down and request.method == "GET":
+            return httpx.Response(503, json={"message": "down"})
+        return await medusa(request)
+
+    reread_down: list[bool] = []
+    sim = InMemoryMedusaPromotions()
+    with respx.mock(assert_all_called=False) as mock:
+        port = _real_over(sim, mock, campaign_fails_then_reread_down)
+        created = await port.create_coupon(_spec())
+        with pytest.raises(CouponPartialUpdateError) as err:
+            await port.update_coupon(created.promotion_id, _spec(percentage=15, ends_on=date(2026, 9, 29)))
+
+    assert (err.value.step, err.value.view, err.value.applied) == ("campaign", None, ("promotion",))
+
+
+@pytest.mark.asyncio
+async def test_a_step_that_landed_but_timed_out_is_settled_and_the_rest_continues() -> None:
+    sim = InMemoryMedusaPromotions()
+    with respx.mock(assert_all_called=False) as mock:
+        port = _real_over(sim, mock, _landed_then_cut("POST", "/admin/promotions/promo_"))
+        created = await port.create_coupon(_spec())
+        view = await port.update_coupon(created.promotion_id, _spec(percentage=15, ends_on=date(2026, 9, 29)))
+
+    assert (view.percentage, view.ends_on) == (15, date(2026, 9, 29))
+
+
+@pytest.mark.asyncio
+async def test_a_first_step_that_timed_out_without_landing_is_unknown_not_no_change() -> None:
+    async def cut(request: httpx.Request, medusa) -> httpx.Response:
+        if request.method == "POST" and request.url.path.startswith("/admin/promotions/promo_"):
+            raise httpx.ReadTimeout("slow", request=request)
+        return await medusa(request)
+
+    sim = InMemoryMedusaPromotions()
+    with respx.mock(assert_all_called=False) as mock:
+        port = _real_over(sim, mock, cut)
+        created = await port.create_coupon(_spec())
+        with pytest.raises(PromotionsUnavailableError) as err:
+            await port.update_coupon(created.promotion_id, _spec(percentage=15))
+
+    assert _is_unknown(err.value)
+
+
+@pytest.mark.asyncio
+async def test_status_change_that_landed_but_timed_out_returns_the_new_status() -> None:
+    sim = InMemoryMedusaPromotions()
+    with respx.mock(assert_all_called=False) as mock:
+        port = _real_over(sim, mock, _landed_then_cut("POST", "/admin/promotions/promo_"))
+        created = await port.create_coupon(_spec())
+        paused = await port.set_status(created.promotion_id, "inactive")
+
+    assert paused.state == "paused"
+
+
+# --- A8: borrados a medias y campañas huérfanas ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_whose_campaign_delete_fails_reports_the_orphaned_campaign() -> None:
+    async def campaign_delete_down(request: httpx.Request, medusa) -> httpx.Response:
+        if request.method == "DELETE" and request.url.path.startswith("/admin/campaigns/"):
+            return httpx.Response(500, json={"type": "unknown_error", "message": "boom"})
+        return await medusa(request)
+
+    sim = InMemoryMedusaPromotions()
+    with respx.mock(assert_all_called=False) as mock:
+        port = _real_over(sim, mock, campaign_delete_down)
+        draft = await port.create_coupon(_spec(status="draft"))
+        deletion = await port.delete_coupon(draft.promotion_id)
+        with pytest.raises(CouponNotFoundError):
+            await port.get_coupon(draft.promotion_id)
+
+    assert deletion.campaign_deleted is False
+    assert deletion.orphaned_campaign_id == draft.campaign_id
+
+
+@pytest.mark.asyncio
+async def test_delete_that_landed_but_timed_out_is_settled_and_removes_the_campaign() -> None:
+    sim = InMemoryMedusaPromotions()
+    with respx.mock(assert_all_called=False) as mock:
+        port = _real_over(sim, mock, _landed_then_cut("DELETE", "/admin/promotions/"))
+        draft = await port.create_coupon(_spec(status="draft"))
+        deletion = await port.delete_coupon(draft.promotion_id)
+        again = await port.create_coupon(_spec(status="draft"))  # el código quedó libre
+
+    assert (deletion.campaign_deleted, deletion.orphaned_campaign_id) == (True, None)
+    assert again.code == "AMOR27"
+
+
+@pytest.mark.asyncio
+@KINDS
+async def test_delete_orphan_campaigns_removes_only_unused_campaigns_with_that_code(kind: str) -> None:
+    """El reintento de un borrado que Medusa aplicó sin confirmar da 404: la
+    campaña que quedó sin cupones (su identificador bloquea volver a crear el
+    código) se limpia por el código. Una campaña en uso jamás."""
+    in_use = _manageable("promo_1", "OTRO1", {"id": "procamp_used", "name": "x", "campaign_identifier": "OTRO1"})
+    orphan = {"id": "procamp_orphan", "name": "vieja", "campaign_identifier": "BORRADOR1"}
+    with respx.mock(assert_all_called=False) as mock:
+        if kind == "fake":
+            port = FakePromotionsAdmin([in_use], clock=_clock)
+            sim = port.medusa
+        else:
+            sim = InMemoryMedusaPromotions([in_use])
+            port = _real_over(sim, mock, _plain)
+        sim.add_campaign(orphan)
+        removed = await port.delete_orphan_campaigns("borrador1")
+        kept = await port.delete_orphan_campaigns("OTRO1")
+        campaigns = {c["id"] for c in await sim.list_campaigns()}
+
+    assert removed == ["procamp_orphan"]
+    assert kept == []
+    assert campaigns == {"procamp_used"}
+
+
+@pytest.mark.asyncio
+@KINDS
+async def test_create_blocked_only_by_a_leftover_campaign_identifier_says_so(kind: str) -> None:
+    with respx.mock(assert_all_called=False) as mock:
+        if kind == "fake":
+            port = FakePromotionsAdmin(clock=_clock)
+            port.medusa.add_campaign({"id": "procamp_x", "name": "vieja", "campaign_identifier": "AMOR27"})
+        else:
+            sim = InMemoryMedusaPromotions()
+            sim.add_campaign({"id": "procamp_x", "name": "vieja", "campaign_identifier": "AMOR27"})
+            port = _real_over(sim, mock, _plain)
+        with pytest.raises(CouponCodeTakenError) as err:
+            await port.create_coupon(_spec())
+
+    assert err.value.campaign_identifier is True
