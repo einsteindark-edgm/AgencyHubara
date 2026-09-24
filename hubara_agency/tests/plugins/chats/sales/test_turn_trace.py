@@ -267,3 +267,91 @@ def test_enrich_attributes_the_turn_to_the_episode_open_when_it_started() -> Non
     assert trace["turn"] == 7
     assert trace["state"]["closing_tag"] == "INTERESADO"
     assert trace["stage_out"] == "confirmacion"
+
+
+# ---------------------------------------------------------------------------
+# Traza v2 (plan del laboratorio §4.1): pasos en orden con su tiempo
+# ---------------------------------------------------------------------------
+
+_T0 = 2_000_000
+
+
+def _steps() -> list[dict]:
+    return [
+        {"kind": "llm", "at_ms": _T0 + 100, "dur_ms": 1900, "round": 1, "finish": "tool_calls",
+         "tool_calls": ["request_shipping_details"], "tokens_in": 38412, "tokens_out": 96,
+         "text_fate": "discarded_default_deny", "text": "Perfecto, ya casi llegas a casa"},
+        {"kind": "tool", "at_ms": _T0 + 2050, "dur_ms": 300, "name": "request_shipping_details",
+         "call_id": "call_1", "args": {"order_total_cop": 89000}, "event": 0},
+        {"kind": "cut", "at_ms": _T0 + 2400, "reason": "awaits_customer", "tools": ["request_shipping_details"]},
+        {"kind": "guard", "at_ms": _T0 + 2500, "name": "variant_enumeration_guard", "before": "Tenemos 11 aromas", "after": ""},
+        {"kind": "outbound", "at_ms": _T0 + 2600, "bubbles": [{"kind": "text", "text": "Listo", "wamid": "wamid.A", "delivered": True}]},
+    ]
+
+
+def test_trace_version_is_2() -> None:
+    assert tt.TRACE_VERSION == 2
+
+
+def test_payload_v2_numbers_the_steps_with_time_relative_to_the_turn() -> None:
+    payload = _payload(steps=_steps(), turn_key="run:abc/t:7")
+
+    assert [s["i"] for s in payload["steps"]] == [1, 2, 3, 4, 5]
+    assert [s["kind"] for s in payload["steps"]] == ["llm", "tool", "cut", "guard", "outbound"]
+    assert [s["at_ms"] for s in payload["steps"]] == [100, 2050, 2400, 2500, 2600]
+    assert payload["turn_key"] == "run:abc/t:7"
+    assert (payload["source"], payload["mode"]) == ("prod", "off")
+
+
+def test_payload_v2_tool_step_carries_the_outcome_of_its_event() -> None:
+    payload = _payload(steps=_steps())
+
+    tool = payload["steps"][1]
+    assert (tool["ok"], tool["error"]) == (False, "customer_deferred")
+    assert tool["args"] == {"order_total_cop": 89000}
+    assert "customer_deferred" in tool["excerpt"]
+    assert "event" not in tool
+
+
+def test_payload_v2_bounds_texts_and_step_count() -> None:
+    many = [{"kind": "guard", "at_ms": _T0 + i, "name": "g", "before": "x" * 5000} for i in range(80)]
+
+    payload = _payload(steps=many)
+
+    assert len(payload["steps"]) == tt.STEPS_MAX
+    assert payload["steps"][-1] == {"i": tt.STEPS_MAX, "at_ms": 59, "kind": "truncated", "dropped": 21}
+    assert all(len(s.get("before", "")) <= tt.TEXT_MAX for s in payload["steps"])
+
+
+def test_payload_v2_keeps_the_v1_guards_field_sorted() -> None:
+    payload = _payload(guards=["b_guard", "a_guard", "b_guard"], steps=_steps())
+
+    assert payload["guards"] == ["a_guard", "b_guard"]
+
+
+def test_payload_without_steps_is_still_valid_v2() -> None:
+    payload = _payload()
+
+    assert payload["steps"] == []
+    assert payload["turn_key"] is None
+
+
+def test_payload_never_uses_the_keys_that_enrich_owns() -> None:
+    """`enrich_turn_trace` pone v, session_id, episode_id, turn y
+    recorded_at_ms ANTES del payload: si el payload trajera una de esas claves
+    la pisaría (el turno 7 pasaría a llamarse como el contador del workflow)."""
+    payload = _payload(steps=_steps(), turn_key="run:abc/t:7", context_notes=["burst_note"])
+
+    assert not {"v", "session_id", "episode_id", "turn", "recorded_at_ms"} & set(payload)
+
+
+def test_context_note_names_classifies_the_injected_notes() -> None:
+    notes = [
+        "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\nEl cliente te escribió 2 mensajes",
+        "[DATOS DEL PEDIDO YA CONFIRMADOS] producto: cubo-love",
+        "[HANDOFF_REMARKETING]: el cliente respondió",
+        "otra cosa",
+    ]
+
+    assert tt.context_note_names(notes) == ["burst_note", "draft", "handoff", "other"]
+    assert tt.context_note_names(None) == []

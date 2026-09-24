@@ -772,6 +772,39 @@ La traza SHALL atribuirse al episodio abierto cuando ARRANCÓ el turno (el
 - THEN la traza es de `ep_007` (el episodio abierto al arrancar el turno) y encadena su numeración
 - AND `ep_008` no recibe un turno fantasma
 
+### Requirement: La traza guarda los pasos del turno en orden (traza v2, 2026-09-23)
+
+La traza (versión 2) SHALL registrar, además de los campos v1, los `steps` del
+turno en el orden en que pasaron, con su tiempo relativo al inicio del turno:
+cada `llm_chat` (ronda, motivo de fin, tools pedidas, tokens y qué pasó con su
+texto), cada `execute_tool` (con su resultado), cada corte del turno (cliente
+esperando, escalación, `send_reply`, cierre de tag, Checkpoints A y B), cada
+guarda con el texto antes y después, cada reinicio por corrientazo y cada
+burbuja o componente que salió, con su wamid. SHALL traer también un
+`turn_key` determinista (`run:<run_id>/t:<n>`), `source` (`prod` o
+`lab:<corrida>:<brazo>:<rep>`) y `mode`. El campo v1 `guards` SHALL seguir igual
+(ordenado y sin nombres nuevos), para que el scorecard no cambie. El registro
+SHALL armarse en memoria del workflow, sin agregar commands a la history; las
+activities de envío SHALL seguir aceptando el resultado que grabaron las
+histories anteriores (`None` del envío, un entero del flush). Plan del
+laboratorio de conversaciones, §4.1.
+
+#### Scenario: Turno con una búsqueda
+
+- WHEN el LLM pide `search_products`, lee el resultado y responde
+- THEN `steps` es `llm → tool → llm → outbound`, la narración junto a la tool figura como descartada y la burbuja trae su wamid
+
+#### Scenario: Corrientazo
+
+- WHEN el cliente escribe mientras el LLM piensa y el turno se reinicia
+- THEN `steps` muestra el intento abortado, el corte `checkpoint_a`, el `restart` y el intento que respondió
+
+#### Scenario: History anterior a la traza v2
+
+- GIVEN una history que grabó `None` como resultado del envío y un entero como resultado del flush
+- WHEN el worker nuevo la re-juega
+- THEN no diverge y la burbuja queda con `delivered: null`
+
 ## Out of scope
 
 - Detalle del prompt engineering / SOUL.md / USER.md — viven en `hubara_vault/_templates/sales/`
