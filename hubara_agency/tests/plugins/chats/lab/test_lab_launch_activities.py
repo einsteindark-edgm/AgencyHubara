@@ -2,6 +2,7 @@
 dobles del lanzador, de las promociones y de los order facts."""
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -17,9 +18,9 @@ from src.plugins.chats.agent.sales_lab.launch.contracts import (
     PollInput,
 )
 from src.platform.orders.facts import OrderFactsStore
-from src.sdk.connectorkit import FakePromotionsPort, OrderFacts, OrderFactsSnapshot
+from src.sdk.connectorkit import FakePromotionsPort, OrderFacts, OrderFactsSnapshot, PromotionsUnavailableError
 from src.sdk.labkit import FilesystemLabStore
-from tests.platform.orders.test_order_facts import FakeQuery, _summary
+from tests.platform.orders.fakes import FakeQuery, order_summary
 from tests.plugins.chats.lab.test_bench_export import NOW_MS, SINCE_MS, _vault
 
 
@@ -126,11 +127,53 @@ async def test_export_survives_order_facts_down_keeping_the_conversation_with_a_
     ]
 
 
+class HangingFacts:
+    def invalidate(self, order_id=None) -> None:
+        return None
+
+    async def get_facts(self, order_ids):
+        await asyncio.Event().wait()  # Medusa colgado: nunca contesta
+
+
+async def test_export_does_not_wait_forever_for_order_facts(lab, monkeypatch) -> None:
+    monkeypatch.setattr(acts, "get_order_facts_port", lambda: HangingFacts())
+    monkeypatch.setattr(acts, "_ORDER_FACTS_TIMEOUT_S", 0.05)
+
+    info = await ActivityEnvironment().run(
+        acts.export_bench_snapshot_activity, ExportBenchInput(bench_id="bench-run-20260923-a1b2", since_ms=SINCE_MS)
+    )
+
+    manifest = json.loads(lab["store"].get_bytes("bench/bench-run-20260923-a1b2/manifest.json"))
+    assert info.sessions == 1
+    assert manifest["notes"] == [
+        "1 conversación con pedido quedó en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"
+    ]
+
+
+class DownPromotions:
+    async def list_active(self):
+        raise PromotionsUnavailableError("Medusa no responde")
+
+
+async def test_without_promotions_the_export_fails_in_sight_before_waiting_for_order_facts(lab, monkeypatch) -> None:
+    # Con Medusa caído la caja no tiene cupones que simular: el export falla a la vista
+    # (el lanzador lo muestra), sin gastar antes la espera de OrderFacts.
+    monkeypatch.setattr(acts, "get_promotions_port", lambda: DownPromotions())
+
+    with pytest.raises(PromotionsUnavailableError):
+        await ActivityEnvironment().run(
+            acts.export_bench_snapshot_activity, ExportBenchInput(bench_id="bench-run-20260923-a1b2", since_ms=SINCE_MS)
+        )
+
+    assert lab["facts"].asked == []
+    assert lab["store"].get_bytes("bench/bench-run-20260923-a1b2/manifest.json") is None
+
+
 async def test_a_test_mark_made_after_an_earlier_export_counts_in_the_next_bench(lab, monkeypatch) -> None:
     # El store del worker `sales_eval` no oye el bus del dashboard (vive en la API):
     # un valor vencido se serviría tal cual. El banco tiene que leer la marca de hoy.
     now = [0.0]
-    medusa = FakeQuery([_summary("order_01TEST", 89000)])  # todavía no es de prueba
+    medusa = FakeQuery([order_summary("order_01TEST", 89000)])  # todavía no es de prueba
     store = OrderFactsStore(medusa, ttl_s=60, clock=lambda: now[0])
     monkeypatch.setattr(acts, "get_order_facts_port", lambda: store)
     env = ActivityEnvironment()

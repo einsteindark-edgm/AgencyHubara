@@ -259,9 +259,10 @@ def plan_bench_export(
 
 
 def _unverified_note(count: int) -> str:
+    # Con varias es una cota: `stale` es de todo el snapshot y no dice qué pedido quedó viejo.
     if count == 1:
         return "1 conversación con pedido quedó en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"
-    return f"{count} conversaciones con pedido quedaron en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"
+    return f"Hasta {count} conversaciones con pedido quedaron en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"
 
 
 def exclude_test_orders(plan: BenchPlan, facts: OrderFactsSnapshot) -> BenchPlan:
@@ -269,8 +270,9 @@ def exclude_test_orders(plan: BenchPlan, facts: OrderFactsSnapshot) -> BenchPlan
     Órdenes. La marca vive en Medusa (`hubara_test_order`) y la lee OrderFacts
     (`is_test`), nunca una copia del vault.
 
-    Si OrderFacts no pudo leer Medusa (`unresolved` o `stale`), la conversación
-    se queda y el manifiesto lo anota: sin la marca no se adivina."""
+    Si OrderFacts no pudo leer Medusa (`unresolved` o `stale`) no se adivina: un
+    pedido que ya conocía como de prueba (su último valor) excluye igual, las
+    demás conversaciones con pedido se quedan y el manifiesto anota cuántas."""
 
     def is_test(order_id: str) -> bool:
         fact = facts.facts.get(order_id)

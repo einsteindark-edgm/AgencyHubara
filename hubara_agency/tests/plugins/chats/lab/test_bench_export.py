@@ -170,6 +170,35 @@ async def test_when_order_facts_does_not_answer_the_conversation_stays_and_the_m
     assert "pedido_de_prueba" not in dict(plan.exclusions).values()
 
 
+def test_a_test_order_order_facts_already_knew_stays_out_even_if_medusa_did_not_refresh(tmp_path: Path) -> None:
+    vault = _vault(tmp_path)
+    _session(vault, "wa_573002223344", started_ms=SINCE_MS + 86_400_000, order_id="order_01PRUEBA")
+    last_known = OrderFactsSnapshot(facts={"order_01PRUEBA": _order("order_01PRUEBA", is_test=True)}, stale=True)
+
+    plan = exclude_test_orders(_plan(vault), last_known)
+
+    assert dict(plan.exclusions).get("wa_573002223344") == "pedido_de_prueba"
+    assert plan.manifest()["notes"] == []
+
+
+def test_with_several_conversations_the_note_is_an_upper_bound(tmp_path: Path) -> None:
+    # Medusa se cayó a mitad de la paginación: un pedido quedó al día y otro sin
+    # resolver. `stale` es de todo el snapshot (no dice cuál quedó viejo), así que
+    # la cuenta es una cota y la nota no puede afirmar un número exacto.
+    vault = _vault(tmp_path)
+    _session(vault, "wa_573002223344", started_ms=SINCE_MS + 86_400_000, order_id="order_01AA")
+    _session(vault, "wa_573003334455", started_ms=SINCE_MS + 86_400_000, order_id="order_01BB")
+    partial = OrderFactsSnapshot(
+        facts={"order_01AA": _order("order_01AA", is_test=False)}, unresolved=frozenset({"order_01BB"}), stale=True
+    )
+
+    plan = exclude_test_orders(_plan(vault), partial)
+
+    assert plan.manifest()["notes"] == [
+        "Hasta 2 conversaciones con pedido quedaron en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"
+    ]
+
+
 def test_manifest_describes_the_bench(tmp_path: Path) -> None:
     manifest = _plan(_vault(tmp_path)).manifest()
 

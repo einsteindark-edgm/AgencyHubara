@@ -637,7 +637,7 @@ El panel del chat SHALL ofrecer, al final de cada turno del bot, un botón visib
 
 ### Requirement: El banco del laboratorio deja fuera las conversaciones de prueba (laboratorio, PR 7)
 
-El exportador del banco (botón "Nueva corrida", worker `sales_eval`) MUST dejar fuera, con su motivo en el manifiesto, lo que no es una conversación real con un cliente: sesiones `wa_golden_*` (`golden`), `seeded_test: true` (`sesion_de_prueba`), los números del equipo (`numero_interno`, de `LAB_INTERNAL_NUMBERS`, que se declara por tenant en Terraform: `tenants.<t>.lab.internal_numbers`) y las conversaciones con un pedido marcado "prueba" en Órdenes (`pedido_de_prueba`). La marca de prueba MUST leerse de OrderFacts en el momento del export, con los `order_id` de los episodios de `metadata.json` (nunca de una copia del vault ni de un valor vencido). Si OrderFacts no responde, el export MUST NOT fallar ni excluir: la conversación se queda y el manifiesto lleva una nota con cuántas quedaron sin verificar.
+El exportador del banco (botón "Nueva corrida", worker `sales_eval`) MUST dejar fuera, con su motivo en el manifiesto, lo que no es una conversación real con un cliente: sesiones `wa_golden_*` (`golden`), `seeded_test: true` (`sesion_de_prueba`), los números del equipo (`numero_interno`, de `LAB_INTERNAL_NUMBERS`, que se declara por tenant en Terraform: `tenants.<t>.lab.internal_numbers`) y las conversaciones con un pedido marcado "prueba" en Órdenes (`pedido_de_prueba`). La marca de prueba MUST leerse de OrderFacts en el momento del export (lectura fresca de Medusa, no lo que quedó en su caché), con los `order_id` de los episodios de `metadata.json`, nunca de una copia del vault. Si OrderFacts no responde (falla, tarda más de 120 s o no puede leer Medusa), el export MUST NOT fallar por eso ni adivinar: un pedido que OrderFacts ya conocía como de prueba excluye igual, las demás conversaciones con pedido se quedan y el manifiesto anota cuántas quedaron sin verificar. Sin promociones (Medusa caído) el export sí falla, a la vista: la caja las necesita para simular los cupones.
 
 #### Scenario: Pedido marcado prueba
 
@@ -653,9 +653,15 @@ El exportador del banco (botón "Nueva corrida", worker `sales_eval`) MUST dejar
 
 #### Scenario: OrderFacts no responde
 
-- GIVEN Medusa caído al armar el banco
+- GIVEN OrderFacts falla o no contesta en 120 s al armar el banco (las promociones sí se leyeron)
 - WHEN se arma el banco
-- THEN el banco sale igual, las conversaciones con pedido se quedan y el manifiesto anota "N conversaciones con pedido quedaron en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"
+- THEN el banco sale igual, las conversaciones con pedido se quedan y el manifiesto anota "1 conversación con pedido quedó en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"; con varias dice "Hasta N conversaciones…", porque OrderFacts no dice cuál pedido quedó sin actualizar
+
+#### Scenario: Medusa caído
+
+- GIVEN Medusa no responde y no hay promociones en caché
+- WHEN se arma el banco
+- THEN el export falla a la vista (el lanzador muestra el error) sin esperar a OrderFacts, y no queda un banco con manifiesto que la caja pueda usar
 
 
 ### Requirement: Cupo por unidad de un cupón

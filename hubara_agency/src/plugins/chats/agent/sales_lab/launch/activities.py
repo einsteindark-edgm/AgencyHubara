@@ -63,13 +63,13 @@ async def _order_facts(order_ids: frozenset[str]) -> OrderFactsSnapshot:
     valor vencido se serviría tal cual, sin la marca "prueba" que se puso
     después. Nunca tumba el export: si falla o no contesta a tiempo, quedan sin
     resolver y el manifiesto lo anota."""
+    port = get_order_facts_port()
+    for order_id in order_ids:
+        port.invalidate(order_id)
     try:
-        port = get_order_facts_port()
-        for order_id in order_ids:
-            port.invalidate(order_id)
         return await asyncio.wait_for(port.get_facts(order_ids), timeout=_ORDER_FACTS_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 — OrderFacts caído no tumba el banco
-        activity.logger.warning("lab.bench_order_facts_unavailable", extra={"error": str(exc)[:200]})
+        activity.logger.warning("lab.bench_order_facts_unavailable", extra={"error": f"{type(exc).__name__}: {exc}"[:200]})
         return OrderFactsSnapshot(unresolved=frozenset(order_ids), stale=True)
 
 
@@ -97,9 +97,10 @@ async def export_bench_snapshot_activity(inp: ExportBenchInput) -> BenchInfo:
         now_ms=_now_ms(),
         internal_numbers=_internal_numbers(),
     )
+    # Sin promociones (Medusa caído) el export falla a la vista: la caja las necesita.
+    promotions = [_jsonable(p) for p in await get_promotions_port().list_active()]
     snapshot = await _order_facts(plan.order_ids)
     plan = exclude_test_orders(plan, snapshot)
-    promotions = [_jsonable(p) for p in await get_promotions_port().list_active()]
     in_bench = plan.order_ids
     facts = {oid: _jsonable(f) for oid, f in snapshot.facts.items() if oid in in_bench}
     extra = {
