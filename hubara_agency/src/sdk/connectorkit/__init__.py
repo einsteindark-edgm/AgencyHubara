@@ -161,6 +161,16 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_coupon_sales_reader": "src.platform.promotions.composition",
     "get_quota_lock": "src.platform.promotions.composition",
     "get_web_cart_reader": "src.platform.carts.composition",
+    # Percepción (plan del laboratorio §4.2): preguntas tipadas a un
+    # clasificador (Jev u OpenAI por OpenRouter), con fake y nulo oficiales.
+    "PerceptionPort": "src.platform.perception.ports",
+    "PerceptionResult": "src.platform.perception.ports",
+    "TypedAnswer": "src.platform.perception.ports",
+    "TypedQuestion": "src.platform.perception.ports",
+    "FakePerceptionAdapter": "src.platform.perception.adapters.fake",
+    "NullPerceptionAdapter": "src.platform.perception.adapters.null",
+    "anonymize_text": "src.platform.perception.anonymize",
+    "get_perception_port": "src.platform.perception.composition",
 }
 
 

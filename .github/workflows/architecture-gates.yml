@@ -177,6 +177,7 @@ jobs:
           tests/platform/test_llm_thinking_disabled.py
           tests/platform/test_multimodal_via_proxy.py
           tests/platform/customer_scoring/test_llm_summary.py
+          tests/platform/perception
           -q
 
       - name: PR solo de GraphAgents — central no aplica
