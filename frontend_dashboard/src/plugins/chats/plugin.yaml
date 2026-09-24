@@ -62,6 +62,9 @@ api:
     # §4.3): el botón "Nueva corrida" (estimado, lanzar, en curso, cancelar).
     # Las lecturas del contrato lab@v1 llegan con el PR 8.
     - { module: src.plugins.chats.api.lab, prefix: /api/chats, tags: [Chats_Lab] }
+    # Contrato perception-rollout@v1 (plan del laboratorio, PR 16): el encendido
+    # del bot nuevo por etapas. El panel de Agents lo consume por cast.
+    - { module: src.plugins.chats.api.perception, prefix: /api/chats, tags: [Chats_Perception] }
 
 # ── Agente Temporal ────────────────────────────────────────────────────
 # Dos workers en task queues exclusivas: SALES_QUEUE y REMARKETING_QUEUE.

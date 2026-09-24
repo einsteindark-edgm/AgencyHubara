@@ -1,16 +1,21 @@
 /**
  * Inspector de Agentes — Modelo + Capacidades, en modo lectura.
  * Datos reales declarados en el manifest del agente (no editable desde la UI).
+ * `children`: paneles extra que compone la página (una feature no importa a
+ * otra), p. ej. el encendido del bot nuevo cuando el agente es ventas.
  */
+
+import type { ReactNode } from "react";
 
 import { useAgents } from "@plugins/agents_admin/frontend/entities/agent";
 import { Icon, Panel, type IconName } from "@/shared/ui";
 
 interface Props {
   agentId: string;
+  children?: ReactNode;
 }
 
-export function AgentsInspector({ agentId }: Props) {
+export function AgentsInspector({ agentId, children }: Props) {
   const { data: agents = [] } = useAgents();
   const agent = agents.find((a) => a.id === agentId) ?? agents[0];
   if (!agent) return null;
@@ -51,6 +56,8 @@ export function AgentsInspector({ agentId }: Props) {
             })}
           </Panel>
         )}
+
+        {children}
       </div>
     </aside>
   );

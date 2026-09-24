@@ -39,6 +39,7 @@ Un futuro PR podria abstraer un `WorkflowDispatcherPort` con
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 import structlog
@@ -74,16 +75,31 @@ _PERCEPTION_MODES = ("shadow", "canary", "on")
 _DEFAULT_PERCEPTION_PROFILE = "jev-v1"
 
 
-def _perception_meta() -> dict[str, str]:
-    """Modo y perfil de las capas con clasificador (plan del laboratorio,
-    PR 14), acotados por el techo de Terraform `SALES_PERCEPTION_MODE_CEILING`
-    (default `off`: el turno es el de hoy). El control del dashboard (PR 16)
-    podrá bajarlo, nunca subirlo.
+def _vault_dir() -> Path:
+    from src.sdk.runtime import WORKSPACE_VAULT_DIR
+
+    return Path(WORKSPACE_VAULT_DIR)
+
+
+def _perception_meta(session_id: str) -> dict[str, str]:
+    """Modo y perfil de las capas con clasificador para ESTA conversación
+    (plan del laboratorio, PR 14 y 16): el del control del dashboard
+    (`<vault>/_rollout/perception.json`), nunca por encima del techo de
+    Terraform `SALES_PERCEPTION_MODE_CEILING` (default `off`).
 
     `off` viaja EXPLÍCITO: el workflow se queda con el último modo que
     recibió, así que sin esto un chat en curso seguiría en canary/on después
-    de bajar el techo, hasta que su sesión termine."""
-    mode = (os.getenv("SALES_PERCEPTION_MODE_CEILING") or "").strip().lower()
+    de apagar o de bajar el techo, hasta que su sesión termine. Un estado
+    ilegible (editado a mano) cuenta como `off`: el mensaje viaja igual."""
+    from src.plugins.chats.agent.sales.perception.rollout import effective_mode
+    from src.plugins.chats.agent.sales.perception.rollout_store import read_state
+
+    ceiling = (os.getenv("SALES_PERCEPTION_MODE_CEILING") or "off").strip().lower()
+    try:
+        mode = effective_mode(read_state(_vault_dir()), ceiling=ceiling, session_id=session_id)
+    except Exception as exc:  # noqa: BLE001 — el control nunca frena el mensaje del cliente
+        logger.warning("perception.rollout_state_unreadable", error=repr(exc)[:200])
+        mode = "off"
     if mode not in _PERCEPTION_MODES:
         return {"perception_mode": "off"}
     profile = (os.getenv("SALES_PERCEPTION_PROFILE") or "").strip() or _DEFAULT_PERCEPTION_PROFILE
@@ -376,7 +392,7 @@ class LoadOrStartSalesSession:
                     message,
                     None,
                     plugin_context,
-                    *([{**inbound_meta, **_perception_meta()}] if inbound_meta and _inbound_meta_enabled() else []),
+                    *([{**inbound_meta, **_perception_meta(session_id)}] if inbound_meta and _inbound_meta_enabled() else []),
                 ],
                 id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             )
