@@ -599,3 +599,47 @@ async def test_two_aromas_in_one_quota_line_asks_for_one_line_per_combination(_i
 
     assert (env["queued"], env["error"]) == (False, "invalid_variant_attribute")
     assert "una línea por combinación" in env["message"]
+
+
+# --- C1: el color y el aroma llegan al pedido de Medusa ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_register_sends_the_chosen_color_and_aroma_of_each_line(_isolate_vault_dir) -> None:
+    """Con cupo, los canónicos de la lista del producto; sin cupo en esa línea,
+    lo que dijo el cliente tal cual (el equipo tiene que saber qué despachar)."""
+    _seed(_isolate_vault_dir)
+    sales = _Sales()
+    items = [_cubo(color="rosado", aroma="cafe"),
+             {"handle": "cubo-sol", "quantity": 1, "unit_price_cop": 21000, "color": "naranja", "aroma": "Drakar, Café"}]
+    await _confirm(_confirm_tool(_isolate_vault_dir, sales), _ctx(), items)
+    port = _Port(sales)
+
+    env = await _register_items(_register_tool(_isolate_vault_dir, port), items, total=21000 + 21000 + 7900 - 2100)
+
+    assert env["registered"] is True, env
+    assert [(it.color, it.aroma) for it in port.calls[0]["items"]] == [("Rosado", "Café"), ("naranja", "Drakar, Café")]
+
+
+@pytest.mark.asyncio
+async def test_draft_color_and_aroma_only_fill_a_product_that_appears_once(_isolate_vault_dir) -> None:
+    """C9: el borrador guarda UN color/aroma por producto. Con dos líneas del
+    mismo producto no se sabe cuál es cuál: se piden, en vez de descontar las
+    dos como Rosado · Café (y gastar dos unidades de esa fila)."""
+    _seed(_isolate_vault_dir,
+          draft_items=[{"producto": "cubo love", "color": "Rosado", "aroma": "Café", "cantidad": 1}])
+
+    env = await _confirm(_confirm_tool(_isolate_vault_dir, _Sales()), _ctx(), [_cubo(), _cubo()])
+
+    assert (env["queued"], env["error"]) == (False, "missing_variant_attributes"), env
+
+
+def test_remembering_the_split_never_writes_over_an_unreadable_session() -> None:
+    """C11: `store.update` escribe lo que devuelve el mutator. Si la lectura
+    llegó vacía (otro writer a medio escribir), guardar el reparto NO puede
+    pisar la sesión con `{}`: sin episodio activo, no se escribe."""
+    from src.plugins.chats.agent.sales.use_cases.coupon_quota import remember_confirmed_split
+
+    assert remember_confirmed_split({}, "AMOR26", []) is None
+    saved = remember_confirmed_split({"episodes": [{"episode_id": "ep_1", "started_at_ms": 1}]}, "AMOR26", [])
+    assert saved is not None and saved["episodes"][-1]["coupon_confirmed_split"] == {"code": "AMOR26", "split": []}

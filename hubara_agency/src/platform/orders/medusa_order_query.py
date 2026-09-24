@@ -498,6 +498,7 @@ class MedusaOrderQuery:
             OrderItemDTO(
                 **_variant_match_fields(it, single_variant_handles),
                 **_coupon_fields(it),
+                **_choice_fields(it),
                 title=str(it.get("title", "—")),
                 sku=it.get("sku") or it.get("variant_sku"),
                 quantity=int(it.get("quantity", 0)),
@@ -632,6 +633,18 @@ def _format_medusa_error(exc: MedusaAPIError) -> str:
     if 500 <= exc.status_code < 600:
         return f"medusa_unavailable: HTTP {exc.status_code} {exc.path}"
     return f"medusa_api_error: HTTP {exc.status_code} {exc.path}"
+
+
+def _choice_fields(item: dict[str, Any]) -> dict[str, Any]:
+    """Color y aroma elegidos de una línea (metadata que escribe
+    `register_order`); sin ellos → {} (defaults del DTO)."""
+    meta = item.get("metadata")
+    meta = meta if isinstance(meta, dict) else {}
+    return {
+        key: value.strip()
+        for key in ("color", "aroma")
+        if isinstance(value := meta.get(key), str) and value.strip()
+    }
 
 
 def _coupon_fields(item: dict[str, Any]) -> dict[str, Any]:

@@ -61,6 +61,10 @@ class OrderItem:
     unit_price_cop: int
     variant_label: str | None = None
     discounted_units: tuple[DiscountedUnits, ...] = ()
+    #: Color y aroma elegidos (premortem C1): los productos "Unico" no tienen
+    #: variante que los diga, así que viajan a la metadata de la línea.
+    color: str | None = None
+    aroma: str | None = None
 
 
 @dataclass(frozen=True)
@@ -167,6 +171,9 @@ def order_fingerprint(items: list[OrderItem], total_cop: int, payment_method: st
             f":-{g.units}x{g.discount_unit_cop}" + (f"@{g.quota_id}" if g.quota_id else "")
             for g in it.discounted_units
         )
+        # Color/aroma solo cuando existen: sin ellos el hash es el de siempre.
+        + (f":c={it.color}" if it.color else "")
+        + (f":a={it.aroma}" if it.aroma else "")
         for it in items
     )
     raw = "|".join(parts) + f"|total={total_cop}|pay={payment_method}"

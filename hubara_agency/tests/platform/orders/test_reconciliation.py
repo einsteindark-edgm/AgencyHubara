@@ -715,3 +715,111 @@ async def test_reconcile_does_not_count_its_own_draft_as_sold(tmp_path):
     items = [OrderItem(handle="cubo-love", quantity=1, unit_price_cop=21000,
                        discounted_units=(DiscountedUnits(1, 2100, quota_id="q_rosado_cafe"),))]
     assert recheck.own_orders == [("wa_57317", _compute_order_fingerprint(items, 26800, "transfer"))]
+
+
+
+@pytest.mark.asyncio
+async def test_rebuild_order_args_keeps_the_color_and_aroma_of_each_line(tmp_path):
+    """El reintento escribe en Medusa el MISMO color/aroma (y el mismo
+    fingerprint) que el intento original."""
+    record = _failed_record(
+        "AUDIT-CA",
+        items=[{"handle": "cubo-love", "quantity": 1, "unit_price_cop": 21000, "color": "rosado"}],
+        item_variants=[{"color": "Rosado", "aroma": "Café"}],
+        subtotal_cop=21000, shipping_cop=7900, total_cop=28900,
+    )
+    _write_metadata(tmp_path, "wa_57318", {"failed_order_registrations": [record]})
+    port = KwargsPort()
+
+    await reconcile_one(vault_dir=tmp_path, session_key="wa_57318", audit_id="AUDIT-CA", port=port)
+
+    (call,) = port.calls
+    assert (call["items"][0].color, call["items"][0].aroma) == ("Rosado", "Café")
+
+
+
+# --- C3: la reconciliación no escribe una copia vieja de la sesión --------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_keeps_what_others_wrote_to_the_session_meanwhile(tmp_path):
+    """Mientras se reintentaba (candado + Medusa), un humano tomó la
+    conversación: el reintento guarda SU record sin revertir el resto."""
+    path = _write_metadata(tmp_path, "wa_57319", {"failed_order_registrations": [_failed_record("AUDIT-W")]})
+
+    @dataclass
+    class _PortThatSeesAHandoff:
+        calls: list[dict] = field(default_factory=list)
+
+        async def register_order(self, **kwargs) -> OrderRegistrationResult:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["active_route"] = "humano"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            self.calls.append(kwargs)
+            return _ok()
+
+    outcome = await reconcile_one(vault_dir=tmp_path, session_key="wa_57319", audit_id="AUDIT-W",
+                                  port=_PortThatSeesAHandoff())
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert outcome.outcome == OUTCOME_RESOLVED
+    assert saved["active_route"] == "humano"
+    assert saved["failed_order_registrations"][0]["status"] == STATUS_RESOLVED
+
+
+@pytest.mark.asyncio
+async def test_two_reconciliations_of_the_same_quota_order_do_not_undo_each_other(tmp_path):
+    """El barrido y el botón "Reintentar" sobre el mismo pedido con cupo: el
+    segundo espera el candado y, al entrar, ve que el primero ya lo resolvió
+    (no lo abandona por "quota_changed" contando el draft recién creado)."""
+    import asyncio
+    import contextlib
+
+    path = _write_metadata(tmp_path, "wa_57320", {"failed_order_registrations": [_quota_record("AUDIT-2X")]})
+    sold: dict[str, int] = {}
+    gate = asyncio.Lock()
+
+    class _Recheck2:
+        def hold(self, code: str):
+            @contextlib.asynccontextmanager
+            async def _cm():
+                async with gate:
+                    yield
+            return _cm()
+
+        async def units_left(self, quota_ids, *, own_order=None):
+            return {q: 1 - sold.get(q, 0) for q in quota_ids}
+
+    class _SellingPort:
+        async def register_order(self, **kwargs) -> OrderRegistrationResult:
+            await asyncio.sleep(0.01)
+            for item in kwargs["items"]:
+                for group in item.discounted_units:
+                    sold[group.quota_id] = sold.get(group.quota_id, 0) + group.units
+            return _ok(order_id="draft_q")
+
+    outcomes = await asyncio.gather(*[
+        reconcile_one(vault_dir=tmp_path, session_key="wa_57320", audit_id="AUDIT-2X",
+                      port=_SellingPort(), quota_recheck=_Recheck2())
+        for _ in range(2)
+    ])
+
+    assert sorted(o.outcome for o in outcomes) == [OUTCOME_ALREADY_RESOLVED, OUTCOME_RESOLVED]
+    (rec,) = json.loads(path.read_text(encoding="utf-8"))["failed_order_registrations"]
+    assert (rec["status"], rec["resolved_order_id"]) == (STATUS_RESOLVED, "draft_q")
+
+
+
+@pytest.mark.asyncio
+async def test_retrying_an_order_abandoned_for_quota_says_why(tmp_path):
+    """C5: "Reintentar" sobre un pedido abandonado porque se acabaron las
+    unidades dice ESO, no "max_attempts alcanzado"."""
+    rec = _quota_record("AUDIT-QA")
+    rec.update(status=STATUS_ABANDONED, abandon_reason="quota_changed")
+    _write_metadata(tmp_path, "wa_57321", {"failed_order_registrations": [rec]})
+
+    outcome = await reconcile_one(vault_dir=tmp_path, session_key="wa_57321", audit_id="AUDIT-QA",
+                                  port=KwargsPort(), quota_recheck=_Recheck(left={}))
+
+    assert outcome.outcome == OUTCOME_ABANDONED
+    assert "quota_changed" in (outcome.error_detail or "")

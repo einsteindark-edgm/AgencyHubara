@@ -213,6 +213,19 @@ class _DictCatalog:
             raise LookupError(handle) from exc
 
 
+def _coupon_reason(discount: Any, discount_cop: int) -> str | None:
+    """Por qué el cupón aplicado no descuenta (o descuenta solo una parte):
+    una línea con cupo sin color/aroma, agotado, cupo ilegible, compra
+    mínima… None si aplica."""
+    if discount is None:
+        return None
+    if discount.missing_attributes:
+        return "missing_attributes"
+    if discount_cop > 0:
+        return None
+    return discount.reason or "no_applicable_items"
+
+
 def _resolve_items(
     raw_items: list[dict[str, Any]], products_by_handle: dict[str, Any], warnings: list[str]
 ) -> list[dict[str, Any]]:
@@ -347,7 +360,10 @@ async def suggest(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
         "subtotal_cop": subtotal_cop,
         "shipping_cop": shipping_cop,
         "discount_cop": discount_cop,
-        "coupon_code": discount.code if discount and discount_cop > 0 else None,
+        # El cupón aplicado viaja SIEMPRE (también con $0) con el motivo: el
+        # operador tiene que saber que al cliente se le prometió un descuento.
+        "coupon_code": discount.code if discount else None,
+        "coupon_reason": _coupon_reason(discount, discount_cop),
         "total_cop": subtotal_cop + shipping_cop - discount_cop,
         "missing": missing_fields(shipping, items, payment_method),
         "warnings": warnings,

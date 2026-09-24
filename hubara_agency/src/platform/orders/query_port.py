@@ -76,6 +76,9 @@ class OrderItemDTO:
     coupon_code: str | None = None
     list_unit_price_cop: int | None = None
     discount_unit_cop: int = 0
+    # Color y aroma que se despachan (metadata de la línea, premortem C1).
+    color: str | None = None
+    aroma: str | None = None
 
 
 @dataclass(frozen=True)

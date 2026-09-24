@@ -277,6 +277,10 @@ class OrderBody(BaseModel):
     #: el mensaje automático encima sería ruido. El intent se encola igual
     #: (auditoría); lo que se saltea es el flush.
     send_payment_instructions: bool = True
+    #: Solo calcular (subtotal, envío, descuento del cupón y total) con estos
+    #: ítems, sin registrar ni guardar nada: el formulario lo pide tras editar
+    #: líneas para que el operador VEA el total antes de crear el pedido.
+    dry_run: bool = False
 
 
 class TagBody(BaseModel):
@@ -423,12 +427,23 @@ def _apply_tag(
     return closed_id, escalated
 
 
-def _order_fingerprint(items: list[dict[str, Any]], payment_method: str, total_cop: int) -> tuple:
+def _order_fingerprint(
+    items: list[dict[str, Any]], payment_method: str, total_cop: int, shipping: dict[str, Any] | None = None
+) -> tuple:
+    """Identidad del pedido para reconocer un doble envío: ítems (con color y
+    aroma), medio de pago y dirección — sin el conteo del cupo (L-28). Un
+    pedido corregido (otra ciudad u otro color) es OTRO pedido."""
+    def _norm(value: Any) -> str:
+        return str(value or "").strip().casefold()
+
+    ship = shipping or {}
     return (
         tuple(sorted((str(i.get("handle")), str(i.get("variant_label") or ""), int(i.get("quantity", 0)),
-                      int(i.get("unit_price_cop", 0))) for i in items)),
+                      int(i.get("unit_price_cop", 0)), _norm(i.get("color")), _norm(i.get("aroma")))
+                     for i in items)),
         payment_method,
         int(total_cop),
+        (_norm(ship.get("city")), _norm(ship.get("address"))),
     )
 
 
@@ -531,9 +546,23 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
         isinstance(existing, dict)
         and existing.get("success") is True
         and str(last_episode.get("order_id") or "") == str(existing.get("order_id") or "")
-        and _order_fingerprint(existing.get("items") or [], str(existing.get("payment_method")), existing_total)
-        == _order_fingerprint(priced.items, body.payment_method, existing_total)
+        and _order_fingerprint(existing.get("items") or [], str(existing.get("payment_method")), existing_total,
+                               existing.get("shipping") if isinstance(existing.get("shipping"), dict) else None)
+        == _order_fingerprint(items_with_attrs, body.payment_method, existing_total, body.shipping.model_dump())
     )
+    if already and body.dry_run:
+        return {
+            "registered": False,
+            "dry_run": True,
+            "already_registered": True,
+            "order_id": None,
+            "error_detail": None,
+            "subtotal_cop": subtotal_cop,
+            "shipping_cop": shipping_cop,
+            "discount_cop": int(existing.get("discount_cop") or 0),
+            "total_cop": existing_total,
+            "coupon_code": existing.get("coupon_code"),
+        }
     if already:
         total_cop = existing_total
     else:
@@ -563,6 +592,19 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
                 "subtotal_cop": subtotal_cop,
                 "shipping_cop": shipping_cop,
                 "total_cop": None,
+            }
+        if body.dry_run:
+            # Nada se registra ni se guarda: el operador ve el total primero.
+            return {
+                "registered": False,
+                "dry_run": True,
+                "order_id": None,
+                "error_detail": None,
+                "subtotal_cop": subtotal_cop,
+                "shipping_cop": shipping_cop,
+                "discount_cop": discount_cop,
+                "total_cop": total_cop,
+                "coupon_code": discount.code if discount else None,
             }
         if (
             discount is not None

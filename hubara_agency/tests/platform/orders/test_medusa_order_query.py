@@ -978,3 +978,17 @@ async def test_detail_legacy_flag_with_wrong_sign_stays_fallback(adapter):
     assert it.variant_label_mismatch is True
     assert it.variant_match_kind == "fallback_first_variant"
     assert it.selected_variant_title == "Aries"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_detail_item_exposes_the_color_and_aroma_of_the_line(adapter):
+    """C1: el inspector muestra el color y el aroma que se despachan."""
+    it = await _detail_item(adapter, {
+        "title": "Cubo Love",
+        "quantity": 1,
+        "unit_price": 21000,
+        "total": 21000,
+        "metadata": {"handle": "cubo-love", "color": "Rosado", "aroma": "Café"},
+    })
+    assert (it.color, it.aroma) == ("Rosado", "Café")

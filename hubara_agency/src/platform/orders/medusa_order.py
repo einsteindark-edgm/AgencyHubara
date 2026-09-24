@@ -467,6 +467,8 @@ class MedusaOrderRegistration:
                     "metadata": {
                         "handle": it.handle,
                         **({"variant_label": it.variant_label} if it.variant_label else {}),
+                        **({"color": it.color} if it.color else {}),
+                        **({"aroma": it.aroma} if it.aroma else {}),
                         **annotations,
                         **(
                             {

@@ -247,6 +247,10 @@ async def resolve_item_variants(
     no siempre está en las etiquetas.
     """
     drafts = _draft_attrs(metadata)
+    # El borrador guarda UN color/aroma por producto: solo completa una línea
+    # si ese producto está una sola vez en el pedido (con dos líneas no se
+    # sabe cuál es cuál — premortem C9).
+    handles = [str(item.get("handle") or "") for item in items]
     variants: list[ItemVariant] = []
     invalid: list[InvalidAttribute] = []
     for index, item in enumerate(items):
@@ -258,7 +262,7 @@ async def resolve_item_variants(
                 product = None
         title = str(getattr(product, "title", "") or item.get("handle") or "")
         attrs = parse_variant_tags(list(getattr(product, "tags", None) or []))
-        draft = drafts.get(product_key(title), {})
+        draft = drafts.get(product_key(title), {}) if handles.count(handles[index]) == 1 else {}
         chosen: dict[str, str | None] = {}
         for field, options in (("color", attrs.colors), ("aroma", attrs.aromas)):
             given = str(item.get(field) or "").strip()
@@ -407,10 +411,16 @@ def line_discounts_from_key(
 CONFIRMED_SPLIT_KEY = "coupon_confirmed_split"
 
 
-def remember_confirmed_split(metadata: dict[str, Any], code: str, split: list[list[Any]]) -> dict[str, Any]:
+def remember_confirmed_split(
+    metadata: dict[str, Any], code: str, split: list[list[Any]]
+) -> dict[str, Any] | None:
+    """Mutator de `store.update`: guarda el reparto en el episodio activo.
+    Sin episodio activo (o una lectura vacía de un archivo a medio escribir)
+    devuelve None → no se escribe (nunca se pisa la sesión con `{}`)."""
     episode = get_active_episode(metadata)
-    if episode is not None:
-        episode[CONFIRMED_SPLIT_KEY] = {"code": code, "split": split}
+    if episode is None:
+        return None
+    episode[CONFIRMED_SPLIT_KEY] = {"code": code, "split": split}
     return metadata
 
 

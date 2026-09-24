@@ -1583,3 +1583,54 @@ def test_fingerprint_includes_the_quota_of_each_discounted_group():
 
     fp = lambda items: _compute_order_fingerprint(items, 18_900, "transfer")  # noqa: E731
     assert len({fp([plain]), fp([q1]), fp([q2])}) == 3
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_register_order_writes_the_color_and_aroma_of_each_line(adapter):
+    """C1 (premortem): el color y el aroma que eligió el cliente llegan a la
+    línea de Medusa. Los productos "Unico" no tienen variante que los diga:
+    sin esto el equipo no sabe qué despachar."""
+    draft_route = _mock_draft_flow("cubo-love", "Cubo Love")
+
+    await adapter.register_order(
+        session_key="wa_c",
+        items=[OrderItem(handle="cubo-love", quantity=1, unit_price_cop=21_000, color="Rosado", aroma="Café")],
+        shipping=_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=21_000,
+        shipping_cop=7_900,
+        total_cop=28_900,
+    )
+
+    (line,) = json.loads(draft_route.calls[-1].request.content)["items"]
+    assert (line["metadata"]["color"], line["metadata"]["aroma"]) == ("Rosado", "Café")
+
+
+def test_fingerprint_tells_colors_apart_and_keeps_orders_without_them_stable():
+    """Dos pedidos que solo difieren en el color son pedidos distintos (el
+    pre-check no puede devolver el draft del otro); sin color/aroma el hash es
+    el de siempre (un reintento que cruza el deploy encuentra su draft)."""
+    from src.platform.orders.medusa_order import _compute_order_fingerprint
+
+    plain = OrderItem(handle="cubo-love", quantity=1, unit_price_cop=21_000)
+    rosado = replace(plain, color="Rosado", aroma="Café")
+    azul = replace(plain, color="Azul", aroma="Café")
+
+    assert _compute_order_fingerprint([rosado], 1, "x") != _compute_order_fingerprint([azul], 1, "x")
+    assert _compute_order_fingerprint([plain], 22_000, "transfer") == _legacy_fingerprint([plain], 22_000, "transfer")
+
+
+def _legacy_fingerprint(items, total_cop, payment_method):
+    import hashlib
+
+    parts = sorted(
+        f"{it.handle}:{it.quantity}:{it.unit_price_cop}:{it.variant_label or ''}"
+        + "".join(
+            f":-{g.units}x{g.discount_unit_cop}" + (f"@{g.quota_id}" if g.quota_id else "")
+            for g in it.discounted_units
+        )
+        for it in items
+    )
+    raw = "|".join(parts) + f"|total={total_cop}|pay={payment_method}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]

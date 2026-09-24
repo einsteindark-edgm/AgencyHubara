@@ -329,3 +329,74 @@ def test_dashboard_failure_kept_for_reconciliation_says_it_retries_by_itself(tmp
     assert res["saved_for_retry"] is True
     saved = json.loads((tmp_path / _S / "metadata.json").read_text(encoding="utf-8"))
     assert [r["status"] for r in saved["failed_order_registrations"]] == ["pending"]
+
+
+# --- Contratos del formulario (premortem D1/D2/D4) -----------------------------------
+
+
+def _suggest(tmp_path: Path, sales: Any, draft_items: list[dict[str, Any]]) -> dict[str, Any]:
+    _write_metadata(tmp_path, {"episodes": [_episode(order_draft={"items": draft_items})]})
+    (tmp_path / _S / "sessions").mkdir(parents=True, exist_ok=True)
+    (tmp_path / _S / "sessions" / f"{_S}.jsonl").write_text(
+        json.dumps({"timestamp": "2026-09-23T15:00:00+00:00", "role": "user", "content": "Quiero un Cubo Love"}) + "\n",
+        encoding="utf-8",
+    )
+    reply = json.dumps({"items": [{"handle": "cubo-love", "quantity": 1}], "shipping": {}})
+    deps = OrderIntakeDeps(vault_dir=tmp_path, catalog=_Catalog(), llm=_LLM(reply), quotas=_quotas(), sales=sales)
+    app = FastAPI()
+    app.include_router(order_intake.router, prefix="/api/chats")
+    app.dependency_overrides[order_intake.get_order_intake_deps] = lambda: deps
+    return TestClient(app).post(f"/api/chats/order-intake/{_S}/suggest").json()
+
+
+def test_suggestion_names_the_coupon_and_why_it_gives_nothing(tmp_path: Path) -> None:
+    """D2: con el cupón aplicado y $0 de descuento el formulario igual tiene
+    que saber del cupón (y por qué no descuenta): antes llegaba `null` y el
+    operador registraba a precio lleno sin saber que al cliente se le
+    prometió un descuento."""
+    sold_out = _suggest(tmp_path, _Sales({_Q: 5}), [{"producto": "Cubo Love", "color": "Rosado", "aroma": "Café"}])
+    no_attrs = _suggest(tmp_path, _Sales(), [{"producto": "Cubo Love"}])
+
+    assert (sold_out["coupon_code"], sold_out["discount_cop"], sold_out["coupon_reason"]) == (
+        "AMOR26", 0, "quota_exhausted",
+    )
+    assert (no_attrs["coupon_code"], no_attrs["coupon_reason"]) == ("AMOR26", "missing_attributes")
+
+
+def test_dry_run_returns_the_numbers_without_registering_anything(tmp_path: Path) -> None:
+    """D4: tras editar líneas el formulario pide el total nuevo sin registrar
+    (aunque el descuento que había visto ya no sea el mismo)."""
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    client = _orders_client(tmp_path, port, _Sales({_Q: 4}))  # queda 1
+
+    res = client.post(f"/api/chats/session-actions/{_S}/order", json={
+        "items": [{"handle": "cubo-love", "quantity": 2, "color": "Rosado", "aroma": "Café"}],
+        "shipping": _SHIP, "payment_method": "transfer", "expected_discount_cop": 4200, "dry_run": True,
+    }).json()
+
+    assert (res["registered"], res["dry_run"], res["error_detail"]) == (False, True, None)
+    assert (res["discount_cop"], res["coupon_code"]) == (2100, "AMOR26")
+    assert res["total_cop"] == 42000 + res["shipping_cop"] - 2100
+    assert port.calls == []
+    episode = json.loads((tmp_path / _S / "metadata.json").read_text(encoding="utf-8"))["episodes"][-1]
+    assert "coupon_confirmed_split" not in episode
+
+
+def test_resubmit_with_another_city_or_color_is_a_new_order_not_the_old_one(tmp_path: Path) -> None:
+    """C4: el doble envío se reconoce por el MISMO pedido (ítems, color/aroma,
+    medio de pago Y dirección). Si el operador corrige la ciudad o el color,
+    no le devuelve el pedido viejo con el envío/color equivocado."""
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    client = _orders_client(tmp_path, port, _Sales())
+    body = {"items": [{"handle": "cubo-love", "quantity": 1, "color": "Rosado", "aroma": "Café"}],
+            "shipping": _SHIP, "payment_method": "transfer", "send_payment_instructions": False}
+
+    first = client.post(f"/api/chats/session-actions/{_S}/order", json=body).json()
+    other_city = client.post(f"/api/chats/session-actions/{_S}/order",
+                             json={**body, "shipping": {**_SHIP, "city": "Medellín"}}).json()
+
+    assert first["registered"] is True and other_city["registered"] is True
+    assert other_city.get("already_registered") is False
+    assert len(port.calls) == 2

@@ -39,15 +39,15 @@ Idempotencia (la propiedad crítica):
     falso-resuelto de "migrar un stub a otro stub".
 
 Persistencia:
-  * Read-modify-write de `metadata.json` con escritura atómica (`os.replace`
-    sobre un tmp) para que un crash a mitad de escritura no deje el JSON
-    corrupto (que el scanner skipearía, perdiendo el record).
+  * Cada escritura guarda SOLO el record, sobre una lectura fresca de la
+    sesión y bajo el lock de `FilesystemMetadataStore.update` (escritura
+    atómica, un crash a mitad no deja el JSON corrupto): lo que otros
+    escribieron mientras se reintentaba no se revierte (premortem C3).
 """
 from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -64,6 +64,7 @@ from src.platform.orders.port import (
 from src.platform.promotions.port import PromotionsUnavailableError
 from src.platform.promotions.quota_lock import QuotaLockTimeout
 from src.platform.promotions.quota_store import QuotaStoreError
+from src.platform.state import FilesystemMetadataStore
 
 log = logging.getLogger(__name__)
 
@@ -235,7 +236,7 @@ async def reconcile_one(
             outcome=OUTCOME_NOT_FOUND,
             error_detail=f"no se encontró order_id={audit_id} en la sesión",
         )
-    record, _commit = located
+    record, _ = located
 
     status = str(record.get("status", STATUS_PENDING))
     prior_attempts = list(record.get("reconciliation_attempts") or [])
@@ -254,15 +255,19 @@ async def reconcile_one(
             session_key=session_key,
             audit_id=audit_id,
             outcome=OUTCOME_ABANDONED,
-            error_detail="record previamente abandonado (max_attempts alcanzado)",
+            error_detail=(
+                "record previamente abandonado: quota_changed — ya no quedan las unidades con "
+                "descuento; re-confirmar el total con el cliente y registrarlo a mano"
+                if record.get("abandon_reason") == "quota_changed"
+                else "record previamente abandonado (max_attempts alcanzado)"
+            ),
             attempts=len(prior_attempts),
         )
 
     if len(prior_attempts) >= max_attempts:
         record["status"] = STATUS_ABANDONED
         record["abandoned_at_ms"] = _now_ms()
-        _commit(data, record)
-        _atomic_write_json(metadata_file, data)
+        _save_record(metadata_file, audit_id, record)
         log.warning(
             "reconcile_one: audit_id=%s abandonado tras %d reintentos",
             audit_id, len(prior_attempts),
@@ -300,14 +305,25 @@ async def reconcile_one(
         own = (session_key, order_fingerprint(items, kwargs["total_cop"], kwargs["payment_method"]))
         try:
             async with recheck.hold(str(record.get("coupon_code") or "")):
+                # Otra corrida (el barrido y "Reintentar" a la vez) pudo
+                # terminarlo mientras se esperaba el candado: se relee.
+                now_status = _current_status(metadata_file, audit_id)
+                if now_status != STATUS_PENDING:
+                    return ReconciliationOutcome(
+                        session_key=session_key,
+                        audit_id=audit_id,
+                        outcome=(
+                            OUTCOME_ALREADY_RESOLVED if now_status == STATUS_RESOLVED else OUTCOME_ABANDONED
+                        ),
+                        attempts=len(prior_attempts),
+                    )
                 left = await recheck.units_left(set(needed), own_order=own)
                 gone = sorted(q for q, n in needed.items() if left.get(q, 0) < n)
                 if gone:
                     record["status"] = STATUS_ABANDONED
                     record["abandoned_at_ms"] = _now_ms()
                     record["abandon_reason"] = "quota_changed"
-                    _commit(data, record)
-                    _atomic_write_json(metadata_file, data)
+                    _save_record(metadata_file, audit_id, record)
                     log.warning(
                         "reconcile_one: audit_id=%s NO se reintenta: el cupo %s ya no alcanza",
                         audit_id, gone,
@@ -366,8 +382,7 @@ async def reconcile_one(
         record["resolved_order_id"] = result.order_id
         record["resolved_at_ms"] = now
         record["resolution"] = "auto"
-        _commit(data, record)
-        _atomic_write_json(metadata_file, data)
+        _save_record(metadata_file, audit_id, record)
         log.info(
             "reconcile_one: audit_id=%s RESUELTO → order_id=%s provider=%s",
             audit_id, result.order_id, result.provider,
@@ -388,8 +403,7 @@ async def reconcile_one(
         outcome = OUTCOME_ABANDONED
     else:
         outcome = OUTCOME_STILL_FAILING
-    _commit(data, record)
-    _atomic_write_json(metadata_file, data)
+    _save_record(metadata_file, audit_id, record)
     log.warning(
         "reconcile_one: audit_id=%s sigue fallando (intento %d/%d): %s",
         audit_id, len(new_attempts), max_attempts, result.error_detail,
@@ -435,7 +449,7 @@ def mark_resolved_manually(
             outcome=OUTCOME_NOT_FOUND,
             error_detail=f"no se encontró order_id={audit_id} en la sesión",
         )
-    record, _commit = located
+    record, _ = located
 
     if str(record.get("status", STATUS_PENDING)) == STATUS_RESOLVED:
         return ReconciliationOutcome(
@@ -454,8 +468,7 @@ def mark_resolved_manually(
         record["resolved_order_id"] = resolved_order_id
     if note:
         record["resolution_note"] = note
-    _commit(data, record)
-    _atomic_write_json(metadata_file, data)
+    _save_record(metadata_file, audit_id, record)
     log.info(
         "mark_resolved_manually: audit_id=%s resuelto manualmente (order_id=%s)",
         audit_id, resolved_order_id or "(sin id)",
@@ -489,14 +502,29 @@ def _read_metadata(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
-    """Escribe JSON atómicamente (tmp + os.replace) para no corromper en crash."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    os.replace(tmp, path)
+def _save_record(metadata_file: Path, audit_id: str, record: dict[str, Any]) -> None:
+    """Guarda SOLO este record sobre una lectura fresca de la sesión, bajo el
+    mismo lock que `FilesystemMetadataStore.update`: lo que otros escribieron
+    mientras se reintentaba (un humano tomó la conversación, un tag, otro
+    registro) no se revierte (premortem C3). Sin el record en la lectura
+    fresca (o lectura ilegible) no escribe."""
+
+    def _mutate(fresh: dict[str, Any]) -> dict[str, Any] | None:
+        located = _locate_record(fresh, audit_id)
+        if located is None:
+            return None
+        _, commit = located
+        commit(fresh, record)
+        return fresh
+
+    FilesystemMetadataStore(metadata_file.parent.parent).update(metadata_file.parent.name, _mutate)
+
+
+def _current_status(metadata_file: Path, audit_id: str) -> str | None:
+    """Estado del record en disco AHORA (None si ya no está)."""
+    data = _read_metadata(metadata_file)
+    located = _locate_record(data, audit_id) if isinstance(data, dict) else None
+    return str(located[0].get("status", STATUS_PENDING)) if located else None
 
 
 def _locate_record(data: dict[str, Any], audit_id: str):
@@ -557,6 +585,18 @@ def _rebuild_order_args(
         )
         for it in raw_items
     ]
+    # Color/aroma que escribió el intento original (premortem C1): mismo
+    # contenido en Medusa y mismo fingerprint. Records viejos no los traen.
+    chosen = record.get("item_variants")
+    if isinstance(chosen, list) and len(chosen) == len(items):
+        items = [
+            replace(
+                item,
+                color=str(c.get("color")) if isinstance(c, dict) and c.get("color") else None,
+                aroma=str(c.get("aroma")) if isinstance(c, dict) and c.get("aroma") else None,
+            )
+            for item, c in zip(items, chosen)
+        ]
     raw_shipping = record["shipping"]
     shipping = OrderShipping(
         city=str(raw_shipping["city"]),

@@ -166,6 +166,12 @@ def _with_discounted_units(
     ]
 
 
+def _said(item: dict[str, Any], field: str) -> str | None:
+    """Lo que el LLM mandó en `color`/`aroma` del ítem, o None."""
+    value = str(item.get(field) or "").strip()
+    return value or None
+
+
 def _item_identity(it: dict[str, Any]) -> tuple[Any, ...]:
     return (
         str(it.get("handle") or ""),
@@ -695,6 +701,14 @@ class RegisterOrderTool(ToolBase):
                 },
                 ensure_ascii=False,
             )
+        # Color/aroma que se despachan (premortem C1): los productos "Unico"
+        # no tienen variante que los diga, así que viajan en la línea. El
+        # canónico de la lista del producto si lo hay; si no, lo que dijo el
+        # cliente tal cual.
+        order_items = [
+            replace(order_item, color=v.color or _said(it, "color"), aroma=v.aroma or _said(it, "aroma"))
+            for order_item, v, it in zip(order_items, variants, items)
+        ]
         discount = await coupon_discount_for_items(
             metadata_before, self._catalog, items, shipping_cop=shipping_cop,
             quotas=self._quotas, sales=self._sales, variants=variants,
@@ -943,6 +957,8 @@ class RegisterOrderTool(ToolBase):
             "error_detail": result.error_detail,
             "customer_id": result.customer_id,
             "items": items,
+            # El reintento de reconciliación escribe el MISMO color/aroma.
+            "item_variants": [{"color": it.color, "aroma": it.aroma} for it in order_items],
             "shipping": shipping,
             "payment_method": payment_method,
             "subtotal_cop": subtotal_cop,
