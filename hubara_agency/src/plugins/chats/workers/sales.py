@@ -115,6 +115,9 @@ from src.plugins.chats.agent.sales.tools.ui_intents import (
 from src.plugins.chats.agent.sales.workflows.sales_session import (
     HubaraSalesSessionWorkflow,
 )
+from src.plugins.chats.agent.sales.perception.activities import (
+    PERCEPTION_ACTIVITIES,
+)
 
 # HU-002: analytics bus singleton — filesystem siempre, Meta CAPI si hay
 # token. El bus es global para todo el proceso del worker; las activities
@@ -449,6 +452,10 @@ async def main() -> None:
             # (ViewContent / AddToCart / InitiateCheckout / OrderCreated /
             # QualifiedLead / Purchase encolados por tools + UI intents).
             flush_capi_outbox_activity,
+            # Plan del laboratorio, PR 14: capas ① y ③ del turno con
+            # clasificador (`perceive_burst`, `verify_coverage`). Solo corren
+            # con un modo activo en la señal; registrarlas no cambia nada (L-3).
+            *PERCEPTION_ACTIVITIES,
         ],
         # OTel obs: el TracingInterceptor (en get_temporal_client) crea spans
         # dentro del workflow sandbox → necesita opentelemetry como passthrough
