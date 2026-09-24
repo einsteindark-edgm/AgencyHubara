@@ -18,6 +18,7 @@ from pathlib import Path
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from src.plugins.chats.agent.sales_lab.arms import ARM_PROFILES
 from src.plugins.chats.agent.sales_lab.cases import build_cases
 from src.plugins.chats.agent.sales_lab.run.contracts import (
     ArmPublishInput,
@@ -135,32 +136,48 @@ async def publish_control_activity(plan: RunPlan) -> PublishResult:
     return PublishResult(sessions=int(manifest["counts"]["sessions"]), cases=int(manifest["counts"]["cases"]))
 
 
+def _classifier_fallback(trace: dict) -> str | None:
+    step = next((s for s in trace.get("steps") or [] if isinstance(s, dict) and s.get("kind") == "perception"), None)
+    return str(step["fallback"]) if step is not None and step.get("fallback") else None
+
+
 @activity.defn(name="lab_run_smoke_turn")
 @with_heartbeat(every=10)
 async def smoke_turn_activity(plan: RunPlan) -> SmokeResult:
     """Plan §3.3: antes de simular, el primer caso del banco corre de punta a
     punta en el sandbox (el mismo camino que los brazos). Si no pasa, la
-    corrida no arranca: es más barato fallar acá que a mitad de 3.600 turnos."""
+    corrida no arranca: es más barato fallar acá que a mitad de 3.600 turnos.
+
+    También con cada bot nuevo (B, C): su clasificador falla abierto, así que
+    con la llave del laboratorio en placeholder o la API cambiada responderían
+    igual que A1 y la corrida gastaría dos tercios de su tope en nada."""
     cases_path = _lab_root() / "runs" / plan.run_id / "cases.jsonl"
     lines = [line for line in cases_path.read_text(encoding="utf-8").splitlines() if line.strip()] if cases_path.is_file() else []
     if not lines:
         return SmokeResult(ok=False, error="el banco no tiene casos para el turno de humo")
     case = json.loads(lines[0])
-    result = await run_case_in_subprocess(
-        case,
-        bench_dir=_lab_root() / "bench" / plan.bench_id,
-        sandbox_dir=_lab_root() / "runs" / plan.run_id / "smoke" / "case",
-        timeout_s=SMOKE_TIMEOUT_S,
-    )
-    trace = result.get("trace") or {}
-    error = result.get("error") or (None if trace else "el turno no dejó traza")
-    return SmokeResult(
-        ok=error is None,
-        case_id=str(case.get("case_id") or ""),
-        error=error,
-        sent_texts=[str(t) for t in trace.get("sent_texts") or []],
-        cost_usd=float(result.get("cost_usd") or 0.0),
-    )
+    case_id = str(case.get("case_id") or "")
+    cost = 0.0
+    sent: list[str] = []
+    for arm in ("A1", *(a for a in plan.arms if a in ARM_PROFILES)):
+        result = await run_case_in_subprocess(
+            case,
+            bench_dir=_lab_root() / "bench" / plan.bench_id,
+            sandbox_dir=_lab_root() / "runs" / plan.run_id / "smoke" / arm / "case",
+            timeout_s=SMOKE_TIMEOUT_S,
+            arm=arm,
+        )
+        cost += float(result.get("cost_usd") or 0.0)
+        trace = result.get("trace") or {}
+        error = result.get("error") or (None if trace else "el turno no dejó traza")
+        fallback = _classifier_fallback(trace) if error is None and arm in ARM_PROFILES else None
+        if fallback:
+            error = f"el bot {arm} no pudo usar su clasificador ({fallback}): revisa la llave de OpenRouter del laboratorio"
+        if error:
+            return SmokeResult(ok=False, case_id=case_id, error=f"{arm}: {error}" if arm != "A1" else error, cost_usd=cost)
+        if arm == "A1":
+            sent = [str(t) for t in trace.get("sent_texts") or []]
+    return SmokeResult(ok=True, case_id=case_id, sent_texts=sent, cost_usd=cost)
 
 
 @activity.defn(name="lab_run_simulate_case")
