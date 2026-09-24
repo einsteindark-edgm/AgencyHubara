@@ -188,3 +188,54 @@ def test_lab_without_store_is_a_503(env, monkeypatch) -> None:
     monkeypatch.setattr(api, "get_lab_store", lambda: None)
 
     assert env["http"].get("/api/chats/lab/estimate", params={"arms": "A1", "reps": 1}).status_code == 503
+
+
+def _off_the_event_loop() -> bool:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return True
+    return False
+
+
+def test_launch_estimates_off_the_event_loop(env, monkeypatch) -> None:
+    """La API corre en UN proceso que también atiende el webhook de WhatsApp,
+    la bandeja y el SSE: recorrer el vault y listar S3 dentro del event loop
+    los congela mientras dura."""
+    seen: list[bool] = []
+    real = api._estimate
+
+    def spy(*args, **kwargs):
+        seen.append(_off_the_event_loop())
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(api, "_estimate", spy)
+
+    env["http"].post("/api/chats/lab/runs", json={"arms": ["A1"], "reps": 1, "bench": "new"})
+
+    assert seen == [True]
+
+
+def test_the_active_run_reads_s3_off_the_event_loop(env, monkeypatch) -> None:
+    env["http"].post("/api/chats/lab/runs", json={"arms": ["A1"], "reps": 1, "bench": "new"})
+    env["client"].status = {"phase": "running", "run_id": "run-20260923-a1b2"}
+    seen: list[bool] = []
+    real_get = env["store"].get_bytes
+
+    def spy(key):
+        seen.append(_off_the_event_loop())
+        return real_get(key)
+
+    monkeypatch.setattr(env["store"], "get_bytes", spy)
+
+    env["http"].get("/api/chats/lab/runs/active")
+
+    assert seen and all(seen)
+
+
+def test_a_bench_id_must_match_whole(env) -> None:
+    resp = env["http"].get("/api/chats/lab/estimate", params={"bench": "bench-run-20260920-ffff\n"})
+
+    assert resp.status_code == 422 and resp.json()["detail"]["message"] == "Banco inválido."

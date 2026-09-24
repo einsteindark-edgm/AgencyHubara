@@ -46,6 +46,7 @@ class Box:
     poll_delay_s: float = 0.0
     cancelled: bool = False
     spend_limits: list[float] = field(default_factory=list)
+    poll_fails: bool = False
 
 
 def _activities(box: Box):
@@ -79,6 +80,8 @@ def _activities(box: Box):
     @activity.defn(name="lab_poll_run")
     async def poll(inp: PollInput) -> LabProgress:
         box.calls.append("poll")
+        if box.poll_fails:
+            raise ApplicationError("la caja dejó de reportar", non_retryable=True)
         waited = 0.0
         while waited < box.poll_delay_s and not box.cancelled:
             await asyncio.sleep(0.05)
@@ -204,6 +207,32 @@ async def test_repeated_order_is_recognized_by_the_box_and_the_run_goes_on() -> 
 
     assert result["phase"] == "done"
     assert box.calls.count("poll") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("answer", "reason"), [("busy", "ocupada con otra corrida"), ("lost", "perdió esta corrida")])
+async def test_a_box_that_refuses_the_order_fails_the_run_with_a_clear_reason(answer: str, reason: str) -> None:
+    box = Box(dispatch_answers=[answer])
+
+    result = await _run(box, _input())
+
+    assert result["phase"] == "failed"
+    assert reason in result["error"]
+    assert "poll" not in box.calls
+
+
+@pytest.mark.asyncio
+async def test_when_following_the_run_fails_the_box_is_asked_to_stop() -> None:
+    """Si seguir la corrida falla (la caja dejó de reportar, un deploy agotó
+    los intentos), la caja puede seguir gastando: se le pide parar antes de
+    soltar el candado `lab-launch` (si no, una corrida nueva entra en la misma
+    caja)."""
+    box = Box(poll_fails=True)
+
+    result = await _run(box, _input())
+
+    assert result["phase"] == "failed"
+    assert box.calls[-1] == "cancel"
 
 
 def test_sales_eval_worker_registers_the_launcher_and_every_activity_it_uses() -> None:
