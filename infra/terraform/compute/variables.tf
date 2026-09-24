@@ -85,8 +85,10 @@ variable "lab" {
     root_volume_gb        = optional(number, 40)
     autostop_idle_minutes = optional(number, 10)
     # Tope de una corrida: el autoapagado detiene un runner colgado pasado este
-    # tiempo, y un apagado de respaldo corta la caja una hora después.
-    max_run_hours = optional(number, 12)
+    # tiempo, y un apagado de respaldo corta la caja una hora después. Una
+    # corrida de decisión (≈3.600 turnos + el juez) pasa de 12 h; 20 h + 1 de
+    # respaldo quedan dentro de las 24 h que el lanzador espera a la caja.
+    max_run_hours = optional(number, 20)
     # Tenants que usan el laboratorio. El bucket es uno solo (sin prefijo por
     # tenant): la política de lanzar corridas y el LAB_BUCKET van SOLO a estos.
     # Por defecto ninguno; cada tenant del laboratorio se declara en el tfvars.

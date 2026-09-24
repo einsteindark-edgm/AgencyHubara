@@ -74,6 +74,9 @@ services:
       ENABLED_PLUGINS: chats
       OTEL_SDK_DISABLED: "true"
       HUBARA_ENV: lab
+      # La tabla de precios de producción: sin ella cada turno cuesta US$0 y los
+      # topes de gasto quedan ciegos (render-env-from-ssm.sh la fija en prod).
+      OPENLIT_PRICING_JSON: /app/hubara_agency/deploy/openlit/pricing.json
     volumes:
       - /lab/runs:/lab/runs
       - /lab/bench:/lab/bench

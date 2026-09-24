@@ -171,3 +171,28 @@ def test_the_worker_runs_from_the_backend_folder_like_production() -> None:
     worker = _compose(_LAB / "docker-compose.lab.yml")["services"]["sales_lab"]
 
     assert worker["working_dir"] == prod["working_dir"] == "/app/hubara_agency"
+
+
+_PROD_ENV_SCRIPT = _REPO / "infra" / "compose" / "render-env-from-ssm.sh"
+
+
+def test_the_worker_prices_llm_turns_with_the_production_table() -> None:
+    """El costo del LLM de cada turno sale de la tabla de precios de OpenLIT
+    (`OPENLIT_PRICING_JSON`). Producción la fija en su .env; sin ella la caja
+    reporta US$0 por turno y los topes de gasto (por corrida y del mes) quedan
+    ciegos."""
+    prod = re.search(r"^OPENLIT_PRICING_JSON=(\S+)$", _PROD_ENV_SCRIPT.read_text(encoding="utf-8"), re.MULTILINE)
+    env = _compose(_LAB / "docker-compose.lab.yml")["services"]["sales_lab"]["environment"]
+
+    assert prod is not None
+    assert env.get("OPENLIT_PRICING_JSON") == prod.group(1)
+
+
+def test_a_decision_run_fits_in_the_default_run_limit() -> None:
+    """Una corrida de decisión (A1, B y C × 3 repeticiones ≈ 3.600 turnos con
+    4 casos a la vez, más el juez de 10 pasadas) pasa de 12 h: el tope por
+    defecto la cortaba a mitad, con el gasto hecho. 20 h + 1 h de respaldo
+    siguen dentro de las 24 h que el lanzador espera a la caja."""
+    variables = (_REPO / "infra" / "terraform" / "compute" / "variables.tf").read_text(encoding="utf-8")
+
+    assert re.search(r"max_run_hours\s*=\s*optional\(number,\s*20\)", variables)
