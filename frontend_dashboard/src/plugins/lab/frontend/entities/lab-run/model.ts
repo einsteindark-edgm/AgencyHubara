@@ -1,6 +1,12 @@
 import type { z } from "zod";
 
 import type {
+  arenaArmSchema,
+  armMetricsSchema,
+  armSummarySchema,
+  intervalSchema,
+  runDiffSchema,
+  runReportSchema,
   activeRunSchema,
   activeStatusSchema,
   benchReportSchema,
@@ -41,6 +47,12 @@ export type TopicCoverage = z.infer<typeof topicCoverageSchema>;
 export type EvalResult = z.infer<typeof evalResultSchema>;
 export type EpisodeEvaluation = z.infer<typeof episodeEvaluationSchema>;
 export type Evaluations = z.infer<typeof evaluationsSchema>;
+export type ArmSummary = z.infer<typeof armSummarySchema>;
+export type Interval = z.infer<typeof intervalSchema>;
+export type RunDiff = z.infer<typeof runDiffSchema>;
+export type ArmMetrics = z.infer<typeof armMetricsSchema>;
+export type ArenaArm = z.infer<typeof arenaArmSchema>;
+export type RunReport = z.infer<typeof runReportSchema>;
 
 /** Brazo de una corrida: A0 = producción real; A1/B/C = simulados. */
 export type Arm = "A0" | "A1" | "B" | "C";

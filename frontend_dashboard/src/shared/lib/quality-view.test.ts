@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   QUALITY_LEVEL_ORDER,
+  QUALITY_STAGE_ORDER,
   QUALITY_VERDICT_ORDER,
   clipText,
   formatDuration,
@@ -9,12 +10,14 @@ import {
   paretoWithCumulative,
   qualityLevelColor,
   qualityLevelLabel,
+  qualityStageLabel,
   qualityStatus,
   qualityStatusColor,
   qualityStatusGlyph,
   qualityStatusLabel,
   qualityVerdictColor,
   qualityVerdictLabel,
+  toQualityFunnel,
   trendHasFailures,
   verdictCountsTotal,
   weeklyDelta,
@@ -76,5 +79,29 @@ describe("matemática de las gráficas", () => {
     expect(matrixCellStatus(row, { id: "X", name: "", level: "mayor" })).toBe("mayor");
     expect(matrixCellStatus(row, { id: "Y", name: "", level: "mayor" })).toBe("no_aplica");
     expect(matrixCellStatus(row, { id: "Z", name: "", level: "mayor" })).toBe("sin_resultado");
+  });
+});
+
+describe("sin señal (modo turno del laboratorio)", () => {
+  it("es su propio estado, distinto de desconocido y de sin evaluar", () => {
+    const s = qualityStatus("sin_senal", "critico");
+    expect(s).toBe("sin_senal");
+    expect(qualityStatusLabel(s)).toBe("sin señal");
+    expect(qualityStatusGlyph(s)).toBe("∅");
+    expect(qualityStatusColor(s)).not.toBe(qualityStatusColor("sin_resultado"));
+  });
+});
+
+describe("etapas del guion de ventas", () => {
+  it("rotula, colorea y ordena el embudo", () => {
+    const view = toQualityFunnel([
+      { stage: "cierre", FALLA: 1, ALERTA: 0, PASA: 0, SIN_DATOS: 0 },
+      { stage: "datos_envio", FALLA: 0, ALERTA: 1, PASA: 0, SIN_DATOS: 0 },
+      { stage: "rara", FALLA: 0, ALERTA: 0, PASA: 1, SIN_DATOS: 0 },
+    ]);
+    expect(view.map((r) => r.label)).toEqual(["datos de envío", "cierre", "rara"]);
+    expect(view[0].color).toBe("var(--color-yellow)");
+    expect(qualityStageLabel(null)).toBe("sin etapa");
+    expect(QUALITY_STAGE_ORDER[0]).toBe("descubrimiento");
   });
 });

@@ -20,7 +20,12 @@ export type QualityLevel = "critico" | "mayor" | "menor";
 export type QualityVerdict = "FALLA" | "ALERTA" | "PASA" | "SIN_DATOS";
 
 /** Resultado de UN check sobre un episodio. */
-export type QualityCheckVerdict = "pasa" | "falla" | "no_aplica" | "desconocido";
+/**
+ * `sin_senal` (modo turno del laboratorio): el check depende de turnos
+ * posteriores (cierre, pedido registrado) y el turno solo no alcanza para
+ * decidir. No es "desconocido" (el juez no supo) ni "sin evaluar".
+ */
+export type QualityCheckVerdict = "pasa" | "falla" | "no_aplica" | "desconocido" | "sin_senal";
 
 /** Estado visual de un check: la falla toma su nivel; sin resultado = no evaluado. */
 export type QualityStatus =
@@ -30,6 +35,7 @@ export type QualityStatus =
   | "menor"
   | "no_aplica"
   | "desconocido"
+  | "sin_senal"
   | "sin_resultado";
 
 /** Conteo de episodios por veredicto. */
@@ -87,6 +93,7 @@ const STATUS_GLYPHS: Record<QualityStatus, string> = {
   menor: "✗",
   no_aplica: "–",
   desconocido: "?",
+  sin_senal: "∅",
   sin_resultado: "·",
 };
 
@@ -97,6 +104,7 @@ const STATUS_LABELS: Record<QualityStatus, string> = {
   menor: "falla menor",
   no_aplica: "no aplica",
   desconocido: "desconocido",
+  sin_senal: "sin señal",
   sin_resultado: "sin evaluar",
 };
 
@@ -107,6 +115,7 @@ const STATUS_COLORS: Record<QualityStatus, string> = {
   menor: "var(--color-yellow)",
   no_aplica: "var(--color-neutral)",
   desconocido: "var(--color-violet)",
+  sin_senal: "var(--color-fg-muted)",
   sin_resultado: "var(--color-line-strong)",
 };
 
@@ -218,6 +227,55 @@ export function trendHasFailures(trend: Pick<TrendSeriesView, "weeks">): boolean
   return trend.weeks.some((w) => w.passed < w.applicable);
 }
 
+// ── Etapas del guion de ventas (rótulo, color y orden) ─────────────────────
+// Vocabulario de vista compartido por Calidad LLM y el laboratorio.
+
+export const QUALITY_STAGE_ORDER = [
+  "descubrimiento",
+  "variantes",
+  "confirmacion",
+  "datos_envio",
+  "cierre",
+  "postcierre",
+  "transversal",
+] as const;
+
+const STAGE_LABELS: Record<string, string> = {
+  descubrimiento: "descubrimiento",
+  variantes: "variantes",
+  confirmacion: "confirmación",
+  datos_envio: "datos de envío",
+  cierre: "cierre",
+  postcierre: "post-cierre",
+  transversal: "transversal",
+};
+
+/** Cada etapa con su token (identidad reforzada SIEMPRE con texto visible). */
+const STAGE_COLORS: Record<string, string> = {
+  descubrimiento: "var(--color-info)",
+  variantes: "var(--color-violet)",
+  confirmacion: "var(--color-cyan)",
+  datos_envio: "var(--color-yellow)",
+  cierre: "var(--color-pink)",
+  postcierre: "var(--color-accent)",
+  transversal: "var(--color-neutral)",
+};
+
+export function qualityStageLabel(stage: string | null | undefined): string {
+  if (!stage) return "sin etapa";
+  return STAGE_LABELS[stage] ?? stage.replaceAll("_", " ");
+}
+
+export function qualityStageColor(stage: string | null | undefined): string {
+  return (stage && STAGE_COLORS[stage]) || "var(--color-neutral)";
+}
+
+/** Posición en el guion; las etapas desconocidas van al final. */
+export function qualityStageRank(stage: string | null | undefined): number {
+  const i = QUALITY_STAGE_ORDER.indexOf((stage ?? "") as (typeof QUALITY_STAGE_ORDER)[number]);
+  return i === -1 ? QUALITY_STAGE_ORDER.length : i;
+}
+
 // ── Embudo de etapa terminal ──────────────────────────────────────────────
 
 /** Una fila del embudo YA ordenada y rotulada por el dueño del dominio. */
@@ -267,4 +325,13 @@ export interface MatrixRowView {
 /** Estado de una celda: veredicto de la fila para esa columna + nivel del check. */
 export function matrixCellStatus(row: MatrixRowView, column: MatrixColumnView): QualityStatus {
   return qualityStatus(row.checks[column.id], column.level);
+}
+
+
+/** Filas del embudo (`stats.funnel`) → vista de `StageFunnel`: en el orden
+ * del guion y con rótulo y color de cada etapa. */
+export function toQualityFunnel(rows: readonly (VerdictCounts & { stage: string })[]): FunnelRowView[] {
+  return [...rows]
+    .sort((a, b) => qualityStageRank(a.stage) - qualityStageRank(b.stage))
+    .map((r) => ({ ...r, label: qualityStageLabel(r.stage), color: qualityStageColor(r.stage) }));
 }

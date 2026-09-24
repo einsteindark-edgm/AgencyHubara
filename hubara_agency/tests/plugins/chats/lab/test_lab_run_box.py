@@ -44,6 +44,7 @@ def box(tmp_path: Path, monkeypatch) -> dict:
     monkeypatch.setattr(run_acts, "run_case_in_subprocess", fake_case)
     monkeypatch.setattr(run_acts, "get_lab_store", lambda: store)
     monkeypatch.setenv("LAB_ROOT", str(root))
+    monkeypatch.setenv("LAB_JUDGE", "off")  # el juez real no corre en tests
     return {"store": store, "root": root, "smoke": smoke}
 
 

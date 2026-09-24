@@ -149,6 +149,11 @@ async def summary(request: Request, run: str, arm: str = Query("A0")) -> dict[st
     return await _forward(request, "GET", _valid(run_path, run, "summary"), params=_valid(clean_query, arm=arm))
 
 
+@router.get("/runs/{run}/report")
+async def report(request: Request, run: str) -> dict[str, Any]:
+    return await _forward(request, "GET", _valid(run_path, run, "report"))
+
+
 @router.get("/runs/{run}/diff")
 async def diff(request: Request, run: str, base: str = Query("A1"), cand: str = Query("B")) -> dict[str, Any]:
     return await _forward(request, "GET", _valid(run_path, run, "diff"), params=_valid(clean_query, base=base, cand=cand))

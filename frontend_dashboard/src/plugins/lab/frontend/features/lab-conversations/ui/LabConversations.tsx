@@ -289,13 +289,17 @@ function EvaluationList({ run, sid, arm }: { run: string; sid: string; arm: stri
         const shown = ep.results
           .filter((r): r is EvalResult => r.verdict === "falla" || r.verdict === "pasa")
           .sort((a, b) => (VERDICT_RANK[a.verdict] ?? 9) - (VERDICT_RANK[b.verdict] ?? 9));
+        // Modo turno (bots simulados): los checks que dependen de turnos
+        // posteriores (cierre, pedido registrado) no se deciden con un turno.
+        const noSignal = ep.results.filter((r) => r.verdict === "sin_senal").length;
         return (
           <section key={ep.episode_id} aria-label={`Episodio ${ep.episode_id}`}>
             <h5 className="mb-1 mt-3 flex items-center gap-2 text-[10px] font-semibold uppercase leading-none tracking-[0.08em] text-fg-faint">
               {ep.episode_id} <VerdictBadge verdict={ep.verdict} />
             </h5>
             {shown.map((r) => (
-              <article key={r.check_id} className="border-b border-line py-2">
+              // En modo turno el mismo check aparece una vez por turno.
+              <article key={`${r.check_id}:${r.turn ?? "ep"}`} className="border-b border-line py-2">
                 <div className="flex items-center gap-1.5">
                   <b className="text-fg">{r.check_id}</b>
                   <span className={"rounded-full px-1.5 py-[3px] text-[9.5px] font-semibold leading-none " + (r.verdict === "falla" ? "bg-danger-soft text-danger" : "bg-ok-soft text-ok")}>
@@ -306,6 +310,11 @@ function EvaluationList({ run, sid, arm }: { run: string; sid: string; arm: stri
                 {r.evidence || r.critique ? <p className="mb-0 mt-1 text-xs text-fg-muted">{r.critique ?? r.evidence}</p> : null}
               </article>
             ))}
+            {noSignal > 0 ? (
+              <p className="mb-0 mt-1.5 text-[11px] text-fg-faint">
+                {`${noSignal} ${noSignal === 1 ? "check sin señal" : "checks sin señal"}: dependen de turnos posteriores (cierre, pedido registrado).`}
+              </p>
+            ) : null}
           </section>
         );
       })}

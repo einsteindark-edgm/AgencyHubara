@@ -10,7 +10,10 @@ import {
 
 interface Props {
   pareto: readonly ParetoItemView[];
-  days: number;
+  /** Ventana de producción en días ("en los últimos N días"). */
+  days?: number;
+  /** Otro período, dicho completo (p. ej. "en esta corrida"): gana sobre `days`. */
+  period?: string;
   selectedCheckId?: string | null;
   /** Elegir una barra: la composición filtra la matriz a los episodios que fallan ese check. */
   onSelectCheck: (checkId: string) => void;
@@ -36,15 +39,12 @@ function niceMax(v: number): number {
  * nivel también en texto) + línea del acumulado. Responde "qué arreglar
  * primero". Click o Enter en una barra elige el check.
  */
-export function FailurePareto({ pareto, days, selectedCheckId = null, onSelectCheck }: Props) {
+export function FailurePareto({ pareto, days = 0, period, selectedCheckId = null, onSelectCheck }: Props) {
   const rows = useMemo(() => paretoWithCumulative(pareto), [pareto]);
+  const scope = period ?? `en los últimos ${days} días`;
 
   if (rows.length === 0) {
-    return (
-      <p className="rounded-lg border border-line p-4 text-sm text-fg-muted">
-        Ningún check falló en los últimos {days} días.
-      </p>
-    );
+    return <p className="rounded-lg border border-line p-4 text-sm text-fg-muted">{`Ningún check falló ${scope}.`}</p>;
   }
 
   const maxV = niceMax(rows[0].failures);
@@ -71,7 +71,7 @@ export function FailurePareto({ pareto, days, selectedCheckId = null, onSelectCh
         viewBox={`0 0 ${W} ${H}`}
         className="h-auto w-full max-w-full"
         role="group"
-        aria-label={`Pareto de fallos por check en ${days} días`}
+        aria-label={`Pareto de fallos por check ${period ?? `en ${days} días`}`}
       >
         {ticks.map((v) => (
           <g key={v}>

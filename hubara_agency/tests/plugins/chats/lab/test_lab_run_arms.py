@@ -187,3 +187,73 @@ async def test_a_failed_case_is_counted_and_the_run_goes_on(box, sims, monkeypat
     progress = json.loads(box["store"].get_bytes(f"runs/{RUN}/progress.json"))
     assert (progress["turns_done"], progress["turns_total"]) == (3, 4)  # A1 y B × 2 casos; falla A1 turno 2
     assert any("1 caso sin terminar" in n for n in progress["notes"])
+
+
+# ── Evaluación (PR 13): después de simular, la caja califica cada brazo en
+# modo turno (A0 re-medido igual), publica los checks y el resumen.
+
+def _scores(lab_box: dict, arm: str, rep: int = 0) -> list[dict]:
+    raw = lab_box["store"].get_bytes(f"runs/{RUN}/scores/{arm}/{rep}/{SID}.jsonl")
+    return [json.loads(line) for line in (raw or b"").decode().splitlines() if line.strip()]
+
+
+@pytest.mark.asyncio
+async def test_every_arm_is_scored_in_turn_mode_after_simulating(box, sims) -> None:  # noqa: F811
+    result = await _run(box)
+
+    assert result["phase"] == "done"
+    for arm in ("A0", "A1", "B"):
+        [rec] = _scores(box, arm)
+        assert (rec["mode"], rec["arm"], rec["episode_id"]) == ("turn", arm, "ep_001")
+        assert [t["turn"] for t in rec["by_turn"]] == [1, 2]
+    progress = json.loads(box["store"].get_bytes(f"runs/{RUN}/progress.json"))
+    assert progress["phase"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_the_summary_compares_the_bots(box, sims) -> None:  # noqa: F811
+    await _run(box)
+
+    summary = json.loads(box["store"].get_bytes(f"runs/{RUN}/summary.json"))
+    assert set(summary["arms"]) == {"A0", "A1", "B"} and summary["mode"] == "turn"
+    assert set(summary["diffs"]) == {"A0:A1", "A1:B"}
+    assert summary["production"]["reps"] == 1  # el scorecard de producción queda de referencia
+    assert summary["fidelity"] is not None and "arena" in summary and "B" in summary["arena"]
+    index = json.loads(box["store"].get_bytes(f"runs/{RUN}/conversations.json"))
+    assert set(index[0]["verdicts"]) == {"A0", "A1", "B"}
+
+
+@pytest.mark.asyncio
+async def test_a_run_stopped_by_the_spend_cap_is_scored_without_the_judge(box, sims, monkeypatch) -> None:  # noqa: F811
+    from src.plugins.chats.agent.sales_lab.run import activities as run_acts
+
+    seen: list[bool] = []
+    real = run_acts._judge
+
+    def spy():
+        seen.append(True)
+        return real()
+
+    monkeypatch.setattr(run_acts, "_judge", spy)
+    monkeypatch.setenv("LAB_JUDGE", "on")
+    order = json.loads(box["store"].get_bytes(f"orders/{RUN}.json"))
+    box["store"].put_bytes(f"orders/{RUN}.json", json.dumps({**order, "arms": ["A1"], "spend_limit_usd": 0.001}).encode())
+
+    await _run(box)
+
+    assert seen == []  # sin juez: el tope ya se alcanzó
+    progress = json.loads(box["store"].get_bytes(f"runs/{RUN}/progress.json"))
+    assert any("sin juez" in n for n in progress["notes"])
+
+
+@pytest.mark.asyncio
+async def test_the_first_run_validates_turn_mode_against_the_production_scorecard(box, sims) -> None:  # noqa: F811
+    card = {"session_id": SID, "episode_id": "ep_001", "verdict": "ALERTA", "registry_version": 3, "ts": "2026-09-15T00:00:00",
+            "results": [{"check_id": "APE-01", "verdict": "pasa"}]}
+    box["store"].put_bytes("bench/bench-x/scorecards/2026-09-15.jsonl", (json.dumps(card) + "\n").encode())
+
+    await _run(box)
+
+    assert box["store"].get_bytes(f"runs/{RUN}/production/scores/{SID}.jsonl") is not None
+    summary = json.loads(box["store"].get_bytes(f"runs/{RUN}/summary.json"))
+    assert summary["validation"]["episodes"] == 1

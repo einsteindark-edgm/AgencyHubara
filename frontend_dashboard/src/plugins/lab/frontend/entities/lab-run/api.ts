@@ -10,6 +10,9 @@ import {
   estimateSchema,
   evaluationsSchema,
   launchResultSchema,
+  armSummarySchema,
+  runDiffSchema,
+  runReportSchema,
   runsSchema,
   threadSchema,
   turnTraceSchema,
@@ -157,6 +160,53 @@ export function useRunEvaluations(run: string | null, sid: string | null, arm: s
 }
 
 /** "Lanzar corrida": prende la caja del laboratorio (cuesta plata). */
+async function fetchReport(run: string, signal?: AbortSignal) {
+  return runReportSchema.parse(await apiClient.get<unknown>(`${runBase(run)}/report`, { signal }));
+}
+
+async function fetchSummary(run: string, arm: string, signal?: AbortSignal) {
+  const query = new URLSearchParams({ arm }).toString();
+  return armSummarySchema.parse(await apiClient.get<unknown>(`${runBase(run)}/summary?${query}`, { signal }));
+}
+
+async function fetchDiff(run: string, base: string, cand: string, signal?: AbortSignal) {
+  const query = new URLSearchParams({ base, cand }).toString();
+  return runDiffSchema.parse(await apiClient.get<unknown>(`${runBase(run)}/diff?${query}`, { signal }));
+}
+
+/** Lo que el Resumen muestra además de las gráficas (fidelidad, validación, arena). */
+export function useRunReport(run: string | null) {
+  return useQuery({
+    queryKey: labKeys.report(run ?? ""),
+    queryFn: ({ signal }) => fetchReport(run as string, signal),
+    enabled: Boolean(run),
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+/** Las gráficas de Calidad LLM de un brazo de la corrida. */
+export function useRunSummary(run: string | null, arm: string) {
+  return useQuery({
+    queryKey: labKeys.summary(run ?? "", arm),
+    queryFn: ({ signal }) => fetchSummary(run as string, arm, signal),
+    enabled: Boolean(run),
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+/** Diferencia pareada entre dos brazos, con intervalo y turnos que cambiaron. */
+export function useRunDiff(run: string | null, base: string, cand: string) {
+  return useQuery({
+    queryKey: labKeys.diff(run ?? "", base, cand),
+    queryFn: ({ signal }) => fetchDiff(run as string, base, cand, signal),
+    enabled: Boolean(run) && base !== cand,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
 export function useLaunchRun() {
   const client = useQueryClient();
   return useMutation({

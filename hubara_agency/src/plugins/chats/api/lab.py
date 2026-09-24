@@ -18,6 +18,7 @@ Lecturas (PR 8), SOLO desde `runs/<corrida>/` del S3 del laboratorio:
   GET  /lab/runs/{run}/conversations/{sid}/evaluations?arm=
   GET  /lab/runs/{run}/summary?arm=
   GET  /lab/runs/{run}/diff?base=A1&cand=B
+  GET  /lab/runs/{run}/report     fidelidad, arena, producción y comparaciones (PR 13)
 El `turn_key` va como query (lleva `/`, que no viaja en un segmento de ruta).
 
 Candados: A1 (el control) siempre va; repeticiones 1 o 3; una corrida a la
@@ -469,3 +470,24 @@ def run_diff(run: str, base: str = Query("A1"), cand: str = Query("B")) -> dict[
     if key not in diffs:
         raise HTTPException(404, detail=f"Sin comparación {base} → {cand} en esta corrida todavía.")
     return diffs[key]
+
+
+@router.get("/lab/runs/{run}/report")
+def run_report(run: str) -> dict[str, Any]:
+    """Lo que la pestaña Resumen muestra además de las gráficas: fidelidad del
+    simulador, arena de los bots nuevos, el scorecard de producción de
+    referencia y qué comparaciones hay (sus listas de turnos van por /diff)."""
+    summary = _json_key(_store(), f"runs/{_run_id(run)}/summary.json", missing="La corrida no publicó su resumen.")
+    return {
+        "run_id": summary.get("run_id"),
+        "mode": summary.get("mode") or "episode",
+        "registry_version": summary.get("registry_version"),
+        "arms": sorted((summary.get("arms") or {}).keys()),
+        "arms_pending": summary.get("arms_pending") or [],
+        "production": summary.get("production"),
+        "fidelity": summary.get("fidelity"),
+        "arena": summary.get("arena") or {},
+        "judge": summary.get("judge"),
+        "validation": summary.get("validation"),
+        "diffs": sorted((summary.get("diffs") or {}).keys()),
+    }

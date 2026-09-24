@@ -77,3 +77,46 @@ def test_calibration_brier_and_ece() -> None:
     assert over["brier"] == pytest.approx((0.81 * 3 + 0.01) / 4)
     assert over["ece"] == pytest.approx(0.65)  # un solo bin: |0.9 − 0.25|
     assert calibration([]) == {"n": 0, "brier": None, "ece": None}
+
+
+# ── Acuerdo con el juez (PR 13): los asuntos del juez (EST-08, texto libre)
+# se llevan a los 17 códigos del clasificador por palabras clave. Es un mapeo
+# aproximado: lo que no calza queda fuera y se cuenta.
+
+def test_judge_topics_map_to_the_classifier_codes() -> None:
+    from src.plugins.chats.agent.sales_lab.run.arena import judge_topic_codes
+
+    codes, unmapped = judge_topic_codes(
+        [{"topic": "Ver el catálogo de velas"}, {"topic": "costo del envío a Bogotá"}, {"topic": "algo raro"}]
+    )
+
+    assert codes == {"catalogo", "envio"} and unmapped == 1
+
+
+def test_perceived_topics_come_from_the_perception_step() -> None:
+    from src.plugins.chats.agent.sales_lab.run.arena import perceived_topics
+
+    trace = {"steps": [{"kind": "perception", "answers": [
+        {"q": "topic.catalogo", "type": "noul", "p": 0.92, "picked": True},
+        {"q": "topic.envio", "type": "noul", "p": 0.4, "picked": False},
+        {"q": "stage", "type": "choice", "choice": "descubrimiento"},
+    ]}]}
+
+    assert perceived_topics(trace) == {"catalogo": (0.92, True), "envio": (0.4, False)}
+    assert perceived_topics({"steps": []}) is None
+
+
+def test_topic_arena_measures_agreement_and_calibration_against_the_judge() -> None:
+    from src.plugins.chats.agent.sales_lab.run.arena import topic_arena
+
+    pairs = [
+        ({"catalogo": (0.9, True), "envio": (0.2, False)}, {"catalogo", "envio"}),
+        ({"catalogo": (0.1, False), "envio": (0.95, True)}, {"envio"}),
+    ]
+
+    out = topic_arena(pairs)
+
+    assert out["turns"] == 2
+    assert (out["precision"], out["recall"]) == (1.0, pytest.approx(2 / 3))
+    assert out["calibration"]["n"] == 4
+    assert topic_arena([]) == {"turns": 0, "precision": None, "recall": None, "f1": None, "calibration": {"n": 0, "brier": None, "ece": None}}

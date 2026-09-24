@@ -78,4 +78,13 @@ describe("LabPage", () => {
     expect(screen.getByRole("tab", { name: "Banco y corridas" })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByRole("table", { name: "Corridas" })).toBeInTheDocument();
   });
+
+  it("la pestaña Resumen muestra el resumen de la corrida (PR 13)", async () => {
+    runsResponse = { status: 200, body: { runs: [{ run_id: RUN, bench_id: "bench-x", arms: ["A0", "A1", "B"], reps: 3, phase: "done" }] } };
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Resumen" }));
+    expect(screen.getByRole("tab", { name: "Resumen" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText(/resumen/i, { selector: "p" })).toBeInTheDocument();
+  });
 });

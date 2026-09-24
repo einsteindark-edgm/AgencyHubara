@@ -3,8 +3,10 @@
 Tarifas por turno y por pasada de un bot sobre el banco, medidas en
 producción el 2026-09-23: el agente gastó US$7,09 en ~404 turnos; el juez de
 una corrida de decisión, ~US$30 en 9 pasadas; el clasificador suma ~US$0,0002
-(Jev) o ~US$0,0006 (OpenAI) por turno. El gasto real lo reporta la caja en
-`runs/<corrida>/progress.json` y la caja corta si llega al tope.
+(Jev) o ~US$0,0006 (OpenAI) por turno. Antes de comparar, la caja re-mide el
+control real (A0) con el mismo juez: una pasada más sobre el banco. El gasto
+real lo reporta la caja en `runs/<corrida>/progress.json` y la caja corta si
+llega al tope.
 """
 from __future__ import annotations
 
@@ -22,9 +24,14 @@ PERCEPTION_USD_PER_TURN = {"A1": 0.0, "B": 0.0002, "C": 0.0006}
 _BOGOTA = timezone(timedelta(hours=-5))
 
 
-def estimate_run_usd(arms: list[str], *, reps: int, turns: int) -> float:
-    per_turn = sum(AGENT_USD_PER_TURN + JUDGE_USD_PER_TURN + PERCEPTION_USD_PER_TURN.get(a, 0.0) for a in arms)
-    return round(per_turn * reps * max(0, turns), 2)
+def estimate_run_usd(arms: list[str], *, reps: int, turns: int, control: bool = True) -> float:
+    per_turn = sum(AGENT_USD_PER_TURN + JUDGE_USD_PER_TURN + PERCEPTION_USD_PER_TURN.get(a, 0.0) for a in arms) * reps
+    if control and arms:
+        per_turn += JUDGE_USD_PER_TURN  # la pasada del juez sobre A0
+    return round(per_turn * max(0, turns), 2)
+
+
+_DATED_RUN_RE = re.compile(r"run-(\d{6})\d{2}-")
 
 
 _DATED_RUN_RE = re.compile(r"run-(\d{6})\d{2}-")
