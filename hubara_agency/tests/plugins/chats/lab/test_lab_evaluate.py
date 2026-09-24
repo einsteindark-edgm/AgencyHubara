@@ -94,3 +94,18 @@ async def test_the_judge_is_asked_once_per_check_per_episode(tmp_path: Path) -> 
 
     assert judge.prompts and all("CANDIDATA" in p for p in judge.prompts)
     assert rec["judge"] is True
+
+
+def test_the_episode_at_the_turn_carries_the_order_of_that_moment() -> None:
+    """Revisión #358: `episodes_at` del caso trae la orden FINAL del episodio
+    abierto; la del momento del turno es la del estado anterior
+    (`state_before`). Sin eso, un turno anterior a la orden la vería."""
+    from src.plugins.chats.agent.sales_lab.run.evaluate import episode_at
+
+    case = {"episode_id": "ep_001", "episodes_at": [{"episode_id": "ep_001", "order_id": "ord_9", "started_at_ms": 5}],
+            "state_before": {"order_id": None}}
+    assert episode_at(case) == {"episode_id": "ep_001", "order_id": None, "started_at_ms": 5}
+
+    later = {**case, "state_before": {"order_id": "ord_9"}}
+    assert episode_at(later)["order_id"] == "ord_9"
+    assert episode_at({"episode_id": "ep_002", "episodes_at": []}) is None
