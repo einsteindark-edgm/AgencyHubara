@@ -579,6 +579,55 @@ class HttpMedusaClient:
                 break
         return out
 
+    # Escrituras de la central de cupones (Marketing → Cupones). Solo las usa
+    # `MedusaPromotionsAdmin` en el proceso API; el bot solo lee.
+
+    async def get_promotion(self, promotion_id: str) -> dict[str, Any]:
+        """`GET /admin/promotions/{id}` con reglas, valores y campaña."""
+        data = await self._request(
+            "GET",
+            f"/admin/promotions/{promotion_id}",
+            params={"fields": self.PROMOTION_FIELDS},
+        )
+        return data["promotion"]
+
+    async def create_promotion(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """`POST /admin/promotions` — con `campaign` en línea crea promoción y
+        campaña en UNA llamada (atómico)."""
+        data = await self._request("POST", "/admin/promotions", json=payload)
+        return data["promotion"]
+
+    async def update_promotion(self, promotion_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """`POST /admin/promotions/{id}` — código, estado, valor del método."""
+        data = await self._request("POST", f"/admin/promotions/{promotion_id}", json=payload)
+        return data["promotion"]
+
+    async def batch_promotion_target_rules(
+        self,
+        promotion_id: str,
+        *,
+        create: list[dict[str, Any]] | None = None,
+        update: list[dict[str, Any]] | None = None,
+        delete: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """`POST /admin/promotions/{id}/target-rules/batch`."""
+        return await self._request(
+            "POST",
+            f"/admin/promotions/{promotion_id}/target-rules/batch",
+            json={"create": create or [], "update": update or [], "delete": delete or []},
+        )
+
+    async def update_campaign(self, campaign_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """`POST /admin/campaigns/{id}` — nombre, identificador y fechas."""
+        data = await self._request("POST", f"/admin/campaigns/{campaign_id}", json=payload)
+        return data["campaign"]
+
+    async def delete_promotion(self, promotion_id: str) -> dict[str, Any]:
+        return await self._request("DELETE", f"/admin/promotions/{promotion_id}")
+
+    async def delete_campaign(self, campaign_id: str) -> dict[str, Any]:
+        return await self._request("DELETE", f"/admin/campaigns/{campaign_id}")
+
     async def list_product_tags(self, ids: list[str]) -> list[dict[str, Any]]:
         """`GET /admin/product-tags` de esos ids — `{id, value}` de cada
         etiqueta. Las reglas de promoción por etiqueta traen ids; el catálogo

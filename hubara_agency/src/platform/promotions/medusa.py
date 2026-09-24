@@ -209,6 +209,11 @@ class MedusaPromotionsPort:
             if isinstance(t, dict) and t.get("id") and t.get("value")
         }
 
+    def invalidate(self) -> None:
+        """Olvida el cache: la central acaba de escribir en Medusa y este
+        proceso tiene que ver el cambio ya (los demás, en ≤ TTL)."""
+        self._cache = None
+
     async def list_active(self) -> list[PromotionDTO]:
         return [p for p in await self._all() if p.status == "active" and not p.is_automatic]
 
