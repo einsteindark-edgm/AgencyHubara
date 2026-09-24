@@ -58,6 +58,9 @@ api:
     # Lee la conversación con DeepSeek y devuelve el formulario PRE-LLENADO;
     # no registra nada (eso lo hace session-actions@v1 /order).
     - { module: src.plugins.chats.api.order_intake, prefix: /api/chats, tags: [Chats_OrderIntake] }
+    # Contrato perception-rollout@v1 (plan del laboratorio, PR 16): el encendido
+    # del bot nuevo por etapas. El panel de Agents lo consume por cast.
+    - { module: src.plugins.chats.api.perception, prefix: /api/chats, tags: [Chats_Perception] }
 
 # ── Agente Temporal ────────────────────────────────────────────────────
 # Dos workers en task queues exclusivas: SALES_QUEUE y REMARKETING_QUEUE.

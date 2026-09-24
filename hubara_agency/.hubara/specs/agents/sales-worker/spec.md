@@ -829,6 +829,28 @@ El turno de ventas SHALL poder usar un clasificador (Jev u OpenAI por OpenRouter
 - WHEN corre el turno
 - THEN el turno sale como hoy (sin nota, sin ronda extra, sin complemento) y la traza guarda el motivo en `perception.fallback`
 
+### Requirement: Encendido del bot nuevo por etapas desde Agents (laboratorio, PR 16)
+
+El modo de cada conversación SHALL salir del estado `<vault>/_rollout/perception.json`, que escribe el panel "Bot nuevo" de la sección Agents (contrato `perception-rollout@v1` de chats, consumido por cast `/api/agents/perception/rollout`). El ingest lo lee en cada mensaje y MUST acotarlo al techo de Terraform `SALES_PERCEPTION_MODE_CEILING`. En `canary`, el modo `on` aplica a los números de prueba y a un porcentaje estable de conversaciones (bucket por hash del `session_id`); el resto queda en `shadow`. Apagar y bajar MUST pasar siempre. Subir MUST exigir los chequeos: `SALES_SIGNAL_INBOUND_META` encendido, dentro del techo, llave presente, y para `canary`/`on` al menos 7 días en sombra con caídas < 1 % y p95 de la percepción < 1500 ms.
+
+#### Scenario: Apagar es inmediato
+
+- GIVEN modo `on` en el estado
+- WHEN el operador pulsa "Apagar" en Agents
+- THEN el PUT con `{mode: off}` pasa sin chequeos y el siguiente mensaje de cada conversación viaja sin modo (turno de hoy)
+
+#### Scenario: Subir sin la vara de la sombra
+
+- GIVEN 3 días de sombra medida
+- WHEN el operador pide `on`
+- THEN el botón está deshabilitado y el panel dice qué chequeo falla; un PUT directo da 422 `not_ready` con los chequeos que fallan
+
+#### Scenario: El techo manda
+
+- GIVEN estado `on` y techo `shadow` en Terraform
+- WHEN llega un mensaje
+- THEN la conversación corre en `shadow`
+
 ## Out of scope
 
 - Detalle del prompt engineering / SOUL.md / USER.md — viven en `hubara_vault/_templates/sales/`

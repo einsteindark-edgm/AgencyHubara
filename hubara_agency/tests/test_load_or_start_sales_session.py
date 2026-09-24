@@ -667,14 +667,26 @@ async def test_remarketing_signal_never_gets_the_fourth_arg(monkeypatch):
     assert running.signals and all(len(args) == 3 for _fn, args in running.signals)
 
 
+def _rollout(tmp_path, monkeypatch, **state):
+    """Estado del control del dashboard (PR 16) en un vault de prueba."""
+    import json as _json
+
+    from src.plugins.chats.agent.sales.use_cases import load_or_start_sales_session as los
+
+    (tmp_path / "_rollout").mkdir(exist_ok=True)
+    (tmp_path / "_rollout" / "perception.json").write_text(_json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(los, "_vault_dir", lambda: tmp_path)
+
+
 @pytest.mark.asyncio
-async def test_the_perception_mode_travels_with_the_inbound_ids(monkeypatch):
-    """Plan del laboratorio, PR 14: el modo de las capas nuevas viaja en el
-    4.º argumento, acotado por el techo de Terraform
-    (`SALES_PERCEPTION_MODE_CEILING`) y con el perfil activo."""
+async def test_the_perception_mode_travels_with_the_inbound_ids(monkeypatch, tmp_path):
+    """Plan del laboratorio, PR 14 y 16: el modo de las capas nuevas viaja en
+    el 4.º argumento: el del control del dashboard, nunca por encima del techo
+    de Terraform (`SALES_PERCEPTION_MODE_CEILING`), con el perfil activo."""
     monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
-    monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", "shadow")
+    monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", "on")
     monkeypatch.setenv("SALES_PERCEPTION_PROFILE", "openai-lp-v1")
+    _rollout(tmp_path, monkeypatch, mode="shadow")
     client = FakeClient()
     use_case = _make_use_case(FakeMetadataStore(initial={}), client)
 
@@ -685,13 +697,47 @@ async def test_the_perception_mode_travels_with_the_inbound_ids(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("ceiling", [None, "off", "encendido"])
-async def test_without_a_valid_ceiling_no_mode_travels(monkeypatch, ceiling):
+async def test_the_ceiling_caps_the_dashboard_mode(monkeypatch, tmp_path):
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", "shadow")
+    _rollout(tmp_path, monkeypatch, mode="on")
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    assert client.start_calls[0]["start_signal_args"][3]["perception_mode"] == "shadow"
+
+
+@pytest.mark.asyncio
+async def test_canary_acts_on_the_test_number_and_the_rest_measures_in_shadow(monkeypatch, tmp_path):
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", "on")
+    _rollout(tmp_path, monkeypatch, mode="canary", canary_percent=0, test_numbers=["wa_42"])
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+    await use_case.execute(session_id="wa_43", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    modes = [c["start_signal_args"][3]["perception_mode"] for c in client.start_calls]
+    assert modes == ["canary", "shadow"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("ceiling", "state"), [(None, "on"), ("off", "on"), ("encendido", "on"), ("on", None), ("on", "off")])
+async def test_without_an_active_mode_nothing_travels(monkeypatch, tmp_path, ceiling, state):
     monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
     if ceiling is None:
         monkeypatch.delenv("SALES_PERCEPTION_MODE_CEILING", raising=False)
     else:
         monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", ceiling)
+    if state is None:
+        from src.plugins.chats.agent.sales.use_cases import load_or_start_sales_session as los
+
+        monkeypatch.setattr(los, "_vault_dir", lambda: tmp_path)
+    else:
+        _rollout(tmp_path, monkeypatch, mode=state)
     client = FakeClient()
     use_case = _make_use_case(FakeMetadataStore(initial={}), client)
 
