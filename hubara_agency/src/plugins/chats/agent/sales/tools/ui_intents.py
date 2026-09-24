@@ -1143,6 +1143,12 @@ class PresentOrderConfirmationTool(ToolBase):
             )
         elif discount and discount.reason == "no_applicable_items":
             summary += f" El cupón {discount.code} no aplica a estos productos — díselo."
+        elif discount and discount.reason == "shipping_not_supported":
+            summary += (
+                f" El cupón {discount.code} es de envío y NO aplica: el envío lo "
+                "cobra la transportadora a su tarifa, sin descuentos — díselo si "
+                "lo menciona."
+            )
         # Run ebbc203d: si `verify_order_for_checkout` detectó que el bot le
         # escribió al cliente un precio que no es del catálogo, el resumen
         # correcto NO basta — el LLM debe explicar el cambio en su texto.

@@ -1144,6 +1144,21 @@ def test_get_promotions_lista_los_cupones_vigentes_de_medusa(
     ]
 
 
+def test_get_promotions_no_ofrece_cupones_de_envio(client: TestClient, monkeypatch) -> None:
+    """El builder ofrece solo los cupones que el bot aplica: sin cupones de
+    envío (decisión del operador, 2026-09-23)."""
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    monkeypatch.setattr(
+        api_mod, "get_promotions_port",
+        lambda: FakePromotionsPort(
+            [_promo_dto("AMOR26"), _promo_dto("ENVIOGRATIS", target_type="shipping_methods")]
+        ),
+    )
+    res = client.get("/api/marketing/promotions")
+    assert [p["code"] for p in res.json()["promotions"]] == ["AMOR26"]
+
+
 def test_get_promotions_con_medusa_caido_es_vacio_y_lo_dice(
     client: TestClient, monkeypatch
 ) -> None:
@@ -1258,6 +1273,29 @@ def test_send_con_cupon_vencido_es_422(client: TestClient, monkeypatch) -> None:
     res = client.post(f"/api/marketing/campaigns/{campaign_id}/send", json={})
     assert res.status_code == 422
     assert "venció" in res.json()["detail"]
+
+
+def test_send_con_cupon_de_envio_es_422_y_explica_por_que(client: TestClient, monkeypatch) -> None:
+    """El envío lo cobra la transportadora sin descuentos (decisión del
+    operador, 2026-09-23): el bot rechaza los cupones de envío, así que una
+    campaña no puede anunciarlos."""
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    fake = _FakeTemporalClient()
+
+    async def _fake_client():
+        return fake
+
+    monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
+    monkeypatch.setattr(
+        api_mod, "get_promotions_port",
+        lambda: FakePromotionsPort([_promo_dto("ENVIOGRATIS", target_type="shipping_methods")]),
+    )
+    campaign_id = _campaign_with_coupon(client, "ENVIOGRATIS")
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/send", json={})
+    assert res.status_code == 422
+    assert "transportadora" in res.json()["detail"]
+    assert fake.calls == []
 
 
 def test_send_con_cupon_valido_arranca(client: TestClient, monkeypatch) -> None:
