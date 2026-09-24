@@ -366,3 +366,18 @@ def test_scan_hides_resolved_stub(tmp_path):
         },
     })
     assert scan_vault_orders(tmp_path) == []
+
+
+def test_scan_exposes_why_a_coupon_order_was_abandoned(tmp_path):
+    """C5 (premortem): la reconciliación NO registró porque se acabaron las
+    unidades con descuento — el banner tiene que decirlo (re-confirmar el
+    total con el cliente), no mostrar el error viejo de Medusa."""
+    _write_metadata(tmp_path, "wa_1000000002", {"failed_order_registrations": [{
+        "order_id": "AUDIT-Q", "status": "abandoned", "abandon_reason": "quota_changed",
+        "error_detail": "timeout", "items": [{"handle": "cubo-love", "quantity": 1}],
+        "shipping": {"city": "Bogotá"}, "total_cop": 26800, "registered_at_ms": 1,
+    }]})
+
+    (rec,) = scan_vault_orders(tmp_path)
+
+    assert (rec.status, rec.abandon_reason) == ("abandoned", "quota_changed")

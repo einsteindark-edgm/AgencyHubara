@@ -40,9 +40,11 @@ import { TestSendStep } from "./TestSendStep";
 
 interface Props {
   campaign: Campaign;
+  /** Atajo "Crear cupón" del paso 2: el Page abre la vista Cupones. */
+  onCreateCoupon?: () => void;
 }
 
-export function CampaignBuilder({ campaign }: Props) {
+export function CampaignBuilder({ campaign, onCreateCoupon }: Props) {
   const editable = isCampaignEditable(campaign.status);
   const meta = CAMPAIGN_STATUS_META[campaign.status];
 
@@ -179,6 +181,7 @@ export function CampaignBuilder({ campaign }: Props) {
               editable={editable}
               onPatch={patchDraft}
               onCommit={commit}
+              onCreateCoupon={onCreateCoupon}
             />
           </StepShell>
 

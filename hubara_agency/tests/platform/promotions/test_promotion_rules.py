@@ -7,6 +7,8 @@ y el monto lo calcula el sistema con los precios del catálogo.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from src.platform.promotions.medusa import promotion_from_medusa
@@ -18,6 +20,7 @@ from src.platform.promotions.port import (
 )
 from src.platform.promotions.rules import (
     COUPON_CODE_RE,
+    LineDiscount,
     compute_discount,
     resolve_coupon,
 )
@@ -121,6 +124,15 @@ def test_resolve_coupon_razones_de_rechazo() -> None:
     )
 
 
+def test_resolve_coupon_rejects_a_shipping_coupon() -> None:
+    """Decisión del operador (2026-09-23): el envío lo cobra la transportadora a
+    su tarifa real y no lleva descuentos. Un cupón de envío NO se aplica: el
+    bot no puede prometer un descuento que nadie honra al despachar."""
+    envio = _promo(code="ENVIOGRATIS", value=100, target_type="shipping_methods")
+    res = resolve_coupon("enviogratis", [envio], now_ms=_NOW)
+    assert (res.ok, res.reason) == (False, "shipping_not_supported")
+
+
 # --- compute_discount -------------------------------------------------------
 
 
@@ -130,6 +142,32 @@ def test_porcentaje_sobre_todo_el_pedido_redondea_a_pesos() -> None:
     assert res.discount_cop == 12_525
     assert res.applicable_handles == ["a", "b"]
     assert res.reason is None
+
+
+def test_percentage_discount_is_allocated_per_unit_and_sums_to_total() -> None:
+    """El descuento se reparte por unidad, en pesos enteros, y suma exacto lo
+    que el bot confirma: 15% de $19.990 = $2.998,5 → $2.999 por unidad. Es lo
+    que el pedido escribe en Medusa como precio de cada línea (pedido #44)."""
+    res = compute_discount(_promo(value=15), [_item("a", 1, 19_990), _item("b", 3, 17_000)])
+    assert res.line_discounts == (
+        LineDiscount(index=0, units=1, discount_unit_cop=2_999),
+        LineDiscount(index=1, units=3, discount_unit_cop=2_550),
+    )
+    assert res.discount_cop == 10_649
+    assert res.discount_cop == sum(d.units * d.discount_unit_cop for d in res.line_discounts)
+
+
+def test_percentage_each_respects_max_quantity_per_line() -> None:
+    """AMOR26 es 10% `each` con tope de 10 unidades POR LÍNEA, como en Medusa
+    (`max_quantity` de `each` no es un tope del pedido): de 12 Cubo Love se
+    descuentan 10; las 3 unidades de otra línea llevan su propio cupo."""
+    promo = _promo(value=10, allocation="each", max_quantity=10)
+    res = compute_discount(promo, [_item("a", 12, 21_000), _item("b", 3, 20_000)])
+    assert res.line_discounts == (
+        LineDiscount(index=0, units=10, discount_unit_cop=2_100),
+        LineDiscount(index=1, units=3, discount_unit_cop=2_000),
+    )
+    assert res.discount_cop == 27_000
 
 
 def test_porcentaje_solo_sobre_los_productos_de_la_promo() -> None:
@@ -169,6 +207,79 @@ def test_fijo_each_por_unidad_con_tope_max_quantity() -> None:
     assert res.discount_cop == 10_000
 
 
+def test_once_allocation_discounts_the_cheapest_units_up_to_max_quantity_per_order() -> None:
+    """`once` (panel de Medusa 2.12: "aplica a un número limitado de ítems"):
+    `max_quantity` es el tope del PEDIDO y se llena con las unidades más
+    baratas primero. 10% a 3 unidades: las 2 de $20.000 y 1 de $21.000; el
+    resto va a precio de lista."""
+    promo = _promo(value=10, allocation="once", max_quantity=3)
+    res = compute_discount(
+        promo, [_item("a", 1, 30_000), _item("b", 2, 21_000), _item("c", 2, 20_000)]
+    )
+    assert res.line_discounts == (
+        LineDiscount(index=1, units=1, discount_unit_cop=2_100),
+        LineDiscount(index=2, units=2, discount_unit_cop=2_000),
+    )
+    assert res.discount_cop == 6_100
+
+
+def test_once_without_max_quantity_is_unsupported_not_a_zero_discount() -> None:
+    """Medusa exige `max_quantity` en `once`: un snapshot sin tope no se
+    entiende. La regla no dice "aplicó por $0": dice que no lo soporta."""
+    promo = _promo(value=10, allocation="once", max_quantity=None)
+    res = compute_discount(promo, [_item("a", 2, 20_000)])
+    assert (res.discount_cop, res.reason, res.line_discounts) == (0, "unsupported", ())
+
+
+def test_fixed_order_discount_is_prorated_with_remainder_on_last_line() -> None:
+    """$5.000 al pedido se reparten según el subtotal de cada línea, por unidad
+    y en pesos enteros, sin perder pesos: cada unidad lleva la parte entera y
+    lo que sobra va a la última línea. Si ahí no se divide exacto entre sus
+    unidades, la línea se parte en dos tramos que difieren en $1."""
+    promo = _promo(discount_type="fixed", value=5_000, target_type="order", allocation="across")
+    res = compute_discount(promo, [_item("a", 2, 10_000), _item("b", 1, 10_000)])
+    assert res.line_discounts == (
+        LineDiscount(index=0, units=2, discount_unit_cop=1_666),
+        LineDiscount(index=1, units=1, discount_unit_cop=1_668),
+    )
+    assert res.discount_cop == 5_000
+
+    promo = replace(promo, value=5_001)
+    res = compute_discount(promo, [_item("a", 1, 10_000), _item("b", 3, 10_000)])
+    assert res.line_discounts == (
+        LineDiscount(index=0, units=1, discount_unit_cop=1_250),
+        LineDiscount(index=1, units=2, discount_unit_cop=1_250),
+        LineDiscount(index=1, units=1, discount_unit_cop=1_251),
+    )
+    assert res.discount_cop == 5_001
+
+
+def test_fixed_order_remainder_that_does_not_fit_on_the_last_line_goes_to_the_previous_one() -> None:
+    """Una unidad nunca baja de $0: si los pesos que sobran no caben en la
+    última línea, pasan a la anterior (que se parte en tramos de $1 de
+    diferencia). La suma sigue siendo exacta."""
+    promo = _promo(discount_type="fixed", value=21, target_type="order", allocation="across")
+    res = compute_discount(promo, [_item("a", 3, 7), _item("b", 1, 1)])
+    assert res.line_discounts == (
+        LineDiscount(index=0, units=1, discount_unit_cop=6),
+        LineDiscount(index=0, units=2, discount_unit_cop=7),
+        LineDiscount(index=1, units=1, discount_unit_cop=1),
+    )
+    assert res.discount_cop == 21
+
+
+def test_fixed_each_is_allocated_per_unit_with_max_quantity_per_line() -> None:
+    """$5.000 por unidad, hasta 2 por línea (como en Medusa): la segunda línea
+    tiene su propio tope, y una unidad de $4.000 no baja de $0."""
+    promo = _promo(discount_type="fixed", value=5_000, allocation="each", max_quantity=2)
+    res = compute_discount(promo, [_item("a", 3, 30_000), _item("b", 2, 4_000)])
+    assert res.line_discounts == (
+        LineDiscount(index=0, units=2, discount_unit_cop=5_000),
+        LineDiscount(index=1, units=2, discount_unit_cop=4_000),
+    )
+    assert res.discount_cop == 18_000
+
+
 def test_minimo_de_compra_no_alcanzado() -> None:
     promo = _promo(value=10, min_subtotal_cop=100_000)
     res = compute_discount(promo, [_item("a", 1, 40_000)])
@@ -177,12 +288,13 @@ def test_minimo_de_compra_no_alcanzado() -> None:
     assert res.min_subtotal_cop == 100_000
 
 
-def test_descuento_de_envio_aplica_al_envio_no_a_los_productos() -> None:
+def test_un_cupon_de_envio_no_descuenta_ni_el_envio_ni_los_productos() -> None:
+    """El envío se cobra a la tarifa real de la transportadora (decisión del
+    operador, 2026-09-23). Aunque un snapshot de cupón de envío ya esté
+    guardado en un episodio, no descuenta nada."""
     promo = _promo(discount_type="fixed", value=20_000, target_type="shipping_methods")
     res = compute_discount(promo, [_item("a", 1, 40_000)], shipping_cop=7_900)
-    assert res.discount_cop == 7_900
-    assert res.applies_to_shipping is True
-    assert res.applicable_handles == []
+    assert (res.discount_cop, res.reason, res.line_discounts) == (0, "shipping_not_supported", ())
 
 
 def test_promocion_buyget_no_se_calcula_aca() -> None:

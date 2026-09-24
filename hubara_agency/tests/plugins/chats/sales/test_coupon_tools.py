@@ -26,7 +26,13 @@ from src.platform.catalog import (
     CatalogVariantDTO,
     ProductNotFoundError,
 )
-from src.platform.orders.port import OrderItem, OrderRegistrationResult, OrderShipping
+from src.platform.orders.port import (
+    DiscountedUnits,
+    OrderItem,
+    OrderRegistrationResult,
+    OrderShipping,
+)
+from src.platform.orders.reconciliation import reconcile_one
 from src.platform.state import FilesystemMetadataStore
 from src.platform.promotions.port import FakePromotionsPort, PromotionDTO
 from src.plugins.chats.agent.sales.tools.coupons import (
@@ -195,6 +201,19 @@ async def test_list_promotions_cuenta_codigo_valor_y_productos(ctx, _isolate_vau
 
 
 @pytest.mark.asyncio
+async def test_list_promotions_no_ofrece_cupones_de_envio(ctx, _isolate_vault_dir):
+    """El envío no lleva descuentos (decisión del operador, 2026-09-23): un
+    cupón de envío vigente en Medusa no se le ofrece al cliente."""
+    port = FakePromotionsPort(
+        [_promo(), _promo(id="p9", code="ENVIOGRATIS", value=100, target_type="shipping_methods")]
+    )
+    tool = ListPromotionsTool(workspace=str(_isolate_vault_dir), promotions=port, catalog=FakeCatalog())
+    env = json.loads(await tool.execute_with_context(ctx))
+    assert [p["code"] for p in env["promotions"]] == ["MAMA15"]
+    assert "ENVIOGRATIS" not in env["summary"]
+
+
+@pytest.mark.asyncio
 async def test_list_promotions_sin_promos_lo_dice(ctx, _isolate_vault_dir):
     tool = ListPromotionsTool(
         workspace=str(_isolate_vault_dir), promotions=FakePromotionsPort([]), catalog=FakeCatalog()
@@ -250,6 +269,25 @@ async def test_apply_coupon_invalido_no_persiste_y_explica(ctx, _isolate_vault_d
     assert "applied_coupon" not in _md(path)["episodes"][-1]
     env = json.loads(await tool.execute_with_context(ctx, code="VELAS_10"))
     assert env["reason"] == "invalid_format"
+
+
+@pytest.mark.asyncio
+async def test_apply_coupon_rechaza_un_cupon_de_envio_y_explica_por_que(ctx, _isolate_vault_dir):
+    """El envío lo cobra la transportadora a su tarifa real (decisión del
+    operador, 2026-09-23): un cupón de envío no se aplica, no se guarda en el
+    episodio y el bot sabe qué decirle al cliente."""
+    path = _seed(_isolate_vault_dir)
+    envio = _promo(code="ENVIOGRATIS", value=100, target_type="shipping_methods")
+    tool = ApplyCouponTool(
+        workspace=str(_isolate_vault_dir),
+        metadata_store=FilesystemMetadataStore(_isolate_vault_dir),
+        promotions=FakePromotionsPort([envio]),
+        catalog=FakeCatalog(),
+    )
+    env = json.loads(await tool.execute_with_context(ctx, code="enviogratis"))
+    assert (env["applied"], env["reason"]) == (False, "shipping_not_supported")
+    assert "transportadora" in env["summary"]
+    assert "applied_coupon" not in _md(path)["episodes"][-1]
 
 
 @pytest.mark.asyncio
@@ -377,6 +415,28 @@ async def test_present_confirmation_descuenta_y_lo_dice(ctx, _isolate_vault_dir)
     assert intent["params"]["total_cop"] == 41900
 
 
+@pytest.mark.asyncio
+async def test_present_confirmation_explica_que_el_cupon_de_envio_no_aplica(ctx, _isolate_vault_dir):
+    """Un cupón de envío guardado en el episodio no descuenta nada (el envío lo
+    cobra la transportadora, decisión del operador 2026-09-23). La confirmación
+    se lo dice al bot, así no queda un descuento prometido sin explicación."""
+    envio = _promo(code="ENVIOGRATIS", value=100, target_type="shipping_methods")
+    _seed(_isolate_vault_dir, _episode_with_coupon(envio))
+    tool = PresentOrderConfirmationTool(workspace=str(_isolate_vault_dir), catalog=FakeCatalog())
+    env = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            items=[{"handle": "vela-buda", "quantity": 1, "unit_price_cop": 40000}],
+            shipping_cop=7900,
+            shipping_address_summary="Calle 1, Bogotá",
+            payment_method="transfer",
+        )
+    )
+    assert env["total_cop"] == 47900
+    assert "discount_cop" not in env
+    assert "ENVIOGRATIS" in env["summary"] and "transportadora" in env["summary"]
+
+
 # --- register_order con cupón ----------------------------------------------
 
 
@@ -430,6 +490,151 @@ async def test_register_order_pasa_el_cupon_al_port_y_al_intent_de_pago(ctx, _is
     assert intent["params"]["discount_cop"] == 6000
     assert intent["params"]["coupon_code"] == "MAMA15"
     assert intent["params"]["total_cop"] == 41900
+
+
+@dataclass
+class CapturingPort:
+    """Guarda TODO lo que recibe el port (ítems con su reparto incluido)."""
+
+    calls: list[dict[str, Any]] = field(default_factory=list)
+    medusa_down: bool = False
+
+    async def register_order(self, **kwargs: Any) -> OrderRegistrationResult:
+        self.calls.append(kwargs)
+        if self.medusa_down:
+            return OrderRegistrationResult(
+                success=False, order_id=None, provider="medusa", error_detail="medusa_api_error: HTTP 503"
+            )
+        return OrderRegistrationResult(
+            success=True,
+            order_id="draft_c_044",
+            provider="medusa",
+            raw_payload={"id": "draft_c_044", "display_id": 44},
+        )
+
+
+def _episode_with_coupon(promo: PromotionDTO) -> dict:
+    return {
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": 1,
+                "closed_at_ms": None,
+                "applied_coupon": {"code": promo.code, "applied_at_ms": _NOW, "promotion": {**promo.__dict__}},
+            }
+        ]
+    }
+
+
+_AMOR26 = _promo(
+    code="AMOR26", value=10, allocation="each", max_quantity=10, product_ids=("prod_cubo-love",)
+)
+
+
+@pytest.mark.asyncio
+async def test_register_order_sends_per_unit_discount_to_the_port(ctx, _isolate_vault_dir):
+    """Pedido #44: el cupón llega al port como unidades con descuento de cada
+    ítem (el adapter las escribe como línea con el precio descontado, porque
+    Medusa no aplica la promoción a un draft); el ítem que no aplica va sin
+    descuento."""
+    _seed(_isolate_vault_dir, _episode_with_coupon(_AMOR26))
+    port = CapturingPort()
+    tool = RegisterOrderTool(
+        workspace=str(_isolate_vault_dir), vault_dir=_isolate_vault_dir, port=port, catalog=FakeCatalog()
+    )
+    env = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            items=[
+                {"handle": "cubo-love", "quantity": 2, "unit_price_cop": 30000},
+                {"handle": "vela-buda", "quantity": 1, "unit_price_cop": 40000},
+            ],
+            shipping=_SHIPPING,
+            payment_method="transfer",
+            subtotal_cop=100000,
+            shipping_cop=7900,
+            total_cop=101900,
+        )
+    )
+    assert env["registered"] is True, env
+    (call,) = port.calls
+    assert [it.discounted_units for it in call["items"]] == [
+        (DiscountedUnits(units=2, discount_unit_cop=3000),),
+        (),
+    ]
+    assert (call["coupon_code"], call["discount_cop"]) == ("AMOR26", 6000)
+
+
+@pytest.mark.asyncio
+async def test_failed_coupon_registration_is_retried_with_the_same_discounted_lines(
+    ctx, _isolate_vault_dir
+):
+    """Medusa caído al registrar un pedido con AMOR26: el record fallido guarda
+    el reparto del cupón y el reintento de reconciliación manda exactamente los
+    mismos ítems con descuento — Medusa termina con el total que se confirmó."""
+    _seed(_isolate_vault_dir, _episode_with_coupon(_AMOR26))
+    down = CapturingPort(medusa_down=True)
+    tool = RegisterOrderTool(
+        workspace=str(_isolate_vault_dir), vault_dir=_isolate_vault_dir, port=down, catalog=FakeCatalog()
+    )
+    env = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            items=[{"handle": "cubo-love", "quantity": 2, "unit_price_cop": 30000}],
+            shipping=_SHIPPING,
+            payment_method="transfer",
+            subtotal_cop=60000,
+            shipping_cop=7900,
+            total_cop=61900,
+        )
+    )
+    assert env["registered"] is False
+
+    retry = CapturingPort()
+    outcome = await reconcile_one(
+        vault_dir=_isolate_vault_dir, session_key=KEY, audit_id=env["audit_id"], port=retry
+    )
+
+    assert outcome.is_resolved
+    ((original,), (again,)) = down.calls, retry.calls
+    assert again["items"] == original["items"]
+    assert again["items"][0].discounted_units == (DiscountedUnits(units=2, discount_unit_cop=3000),)
+    assert (again["coupon_code"], again["discount_cop"], again["total_cop"]) == ("AMOR26", 6000, 61900)
+
+
+@pytest.mark.asyncio
+async def test_register_order_with_a_saved_shipping_coupon_charges_the_full_shipping(
+    ctx, _isolate_vault_dir
+):
+    """El envío lo cobra la transportadora sin descuentos (decisión del
+    operador, 2026-09-23). Aunque el episodio tenga guardado un cupón de envío,
+    `register_order` exige el total con el envío completo y el pedido va sin
+    cupón."""
+    envio = _promo(code="ENVIOGRATIS", value=100, target_type="shipping_methods")
+    _seed(_isolate_vault_dir, _episode_with_coupon(envio))
+    port = CapturingPort()
+    tool = RegisterOrderTool(
+        workspace=str(_isolate_vault_dir), vault_dir=_isolate_vault_dir, port=port, catalog=FakeCatalog()
+    )
+
+    async def register(total: int) -> dict:
+        return json.loads(
+            await tool.execute_with_context(
+                ctx,
+                items=[{"handle": "vela-buda", "quantity": 1, "unit_price_cop": 40000}],
+                shipping=_SHIPPING,
+                payment_method="transfer",
+                subtotal_cop=40000,
+                shipping_cop=7900,
+                total_cop=total,
+            )
+        )
+
+    assert (await register(40000))["error_detail"] == "amount_mismatch"
+    assert port.calls == []
+    assert (await register(47900))["registered"] is True
+    (call,) = port.calls
+    assert "coupon_code" not in call
 
 
 @pytest.mark.asyncio
@@ -612,3 +817,14 @@ def test_nota_de_cupon_viejo_sin_elegibles_no_inventa_alcance():
     note = build_coupon_note(md)
     assert "todo el catálogo" not in note
     assert "list_promotions" in note
+
+
+def test_nota_de_un_cupon_de_envio_guardado_dice_que_no_aplica():
+    """Un episodio que guardó un cupón de envío antes de la decisión del
+    operador (2026-09-23) no puede seguir diciéndole al bot, turno a turno,
+    que hay un cupón aplicado: el envío lo cobra la transportadora."""
+    envio = _promo(code="ENVIOGRATIS", value=100, target_type="shipping_methods")
+    note = build_coupon_note(_episode_with_coupon(envio))
+    assert note is not None
+    assert "CUPÓN APLICADO" not in note
+    assert "ENVIOGRATIS" in note and "transportadora" in note

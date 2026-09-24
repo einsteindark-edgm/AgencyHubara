@@ -3,7 +3,8 @@
 Las TRES formas de pago que se informan al cliente, con sus condiciones:
 
   * ``cash_on_delivery`` — contra entrega: el valor se calcula con la
-    transportadora. Solo para pedidos > $45.000 COP (política de margen).
+    transportadora. Solo para pedidos desde $45.000 COP en productos,
+    inclusive (política de margen; el umbral vive en ``config/shipping.py``).
   * ``transfer`` — pago anticipado por Nequi o llave (Bre-B).
   * ``payment_link`` — link de pago: recargo adicional de 1,5% sobre la
     venta con Nequi o Bancolombia, 2,69% con otros bancos.

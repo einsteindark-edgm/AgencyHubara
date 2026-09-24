@@ -61,6 +61,19 @@ def test_ghosting_prompt_mentions_register_order_for_compra_exitosa() -> None:
     assert "register_order" in out
 
 
+def test_ghosting_prompt_escalates_registration_failure_only_for_medusa() -> None:
+    """Un rechazo de validación de `register_order` (`error`, p. ej. falta
+    quien recibe) no es una falla de Medusa: el humano lo recibiría como
+    tal y buscaría en `failed_order_registrations`, que está vacío. Si el
+    cliente se fue con ese rechazo pendiente, el pedido quedó sin datos
+    completos (CONFIRMADO_SIN_DATOS + ORDER_PENDING_SHIPPING_DETAILS)."""
+    out = build_ghosting_prompt()
+    compra = out[out.index("- `COMPRA_EXITOSA`"):]
+    assert "sin `error`" in compra
+    assert "con `error`" in compra
+    assert "ORDER_PENDING_SHIPPING_DETAILS" in compra
+
+
 def test_remarketing_trigger_includes_motivo_and_memory() -> None:
     out = build_remarketing_trigger("cliente pidió tiempo", " >>memoria<<")
     assert "cliente pidió tiempo" in out
@@ -76,18 +89,39 @@ def test_remarketing_trigger_works_with_empty_memory() -> None:
 
 def test_remarketing_trigger_does_not_force_envio_gratis() -> None:
     """Post-fix #G (bug b2fb9379): el trigger ya NO obliga al LLM a ofrecer
-    envio gratis. Esa decision la toma el LLM segun AGENTS.md y el motivo.
+    envio gratis, y desde la decisión del operador (2026-09-23: el envío lo
+    cobra la transportadora, sin descuentos) lo prohíbe SIEMPRE, también
+    ante un "caro" — la vieja excepción de "Envío Gratis" se eliminó.
 
     Si el trigger mencionara 'ofreciéndole envío gratis' como antes, el LLM
     quedaba atrapado entre dos instrucciones contradictorias y filtraba su
     razonamiento al cliente. El nuevo trigger DELEGA a AGENTS.md.
     """
-    out = build_remarketing_trigger("dejó en visto", "")
+    out = build_remarketing_trigger("dijo que estaba caro", "")
     # NO debe contener una orden directa de ofrecer envio gratis.
     assert "ofreciéndole envío gratis" not in out
     assert "ofrécele envío gratis" not in out
+    # La prohibición es sin excepción.
+    assert "nunca ofrezcas envío gratis" in out.lower()
     # SI debe referenciar AGENTS.md como fuente de la regla.
     assert "AGENTS.md" in out
+
+
+def test_campaign_coupon_is_the_only_discount_remarketing_may_recall() -> None:
+    """La regla 3 prohíbe TODO descuento, pero el bloque de campaña pide un
+    gancho sobre "sus productos y su cupón": sin una excepción explícita, el
+    LLM recibe dos órdenes contradictorias. Recordar el cupón que la campaña
+    ya le dio al cliente es la única excepción, y solo existe si hay campaña.
+    """
+    with_campaign = build_remarketing_trigger(
+        "dijo que estaba caro", "",
+        campaign_context="Campaña «Amor y amistad» — cupón AMOR26",
+    ).lower()
+    assert "nunca ofrezcas envío gratis" in with_campaign
+    assert "única excepción" in with_campaign
+    without_campaign = build_remarketing_trigger("dijo que estaba caro", "").lower()
+    assert "única excepción" not in without_campaign
+    assert "cupón" not in without_campaign
 
 
 def test_remarketing_trigger_has_anti_leak_rule() -> None:

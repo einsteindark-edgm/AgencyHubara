@@ -23,8 +23,8 @@ Cubre:
   hardcoded cada turno — el catalogo dinamico lo maneja Sales tras
   transferencia.
 - Politicas de pago contra entrega siguen accesibles via skill cargable.
-- Regla de "envio gratis solo si dijo caro" (AGENTS.md § Prohibicion de
-  descuentos).
+- Sin envío gratis ni descuentos, tampoco ante "caro" (AGENTS.md §
+  Prohibición absoluta de descuentos; decisión del operador 2026-09-23).
 """
 from __future__ import annotations
 
@@ -168,14 +168,13 @@ def test_catalog_skill_no_longer_auto_loaded_in_remarketing() -> None:
     assert "$17,000" not in prompt
 
 
-def test_envio_gratis_rule_in_system_prompt() -> None:
-    """Regla critica de AGENTS.md: envio gratis SOLO si el cliente menciono "caro".
-
-    Tokens especificos: la palabra "caro" entre comillas (gatillo) y "Envio
-    Gratis" (la unica promocion permitida bajo esa condicion). La presencia
-    de ambos prueba que la regla cruza al system prompt — antes vivia en
-    `shared_brain/instructions.md` y se inyectaba via plugin_context.
-    """
-    prompt = _build_prompt()
-    assert "caro" in prompt.lower()
-    assert "Envío Gratis" in prompt or "envío gratis" in prompt.lower()
+def test_remarketing_never_offers_free_shipping() -> None:
+    """Decisión del operador (2026-09-23): el envío lo cobra la transportadora
+    a su tarifa, sin descuentos. La vieja promoción "Envío Gratis" ante la
+    objeción "caro" se eliminó: el prompt prohíbe el envío gratis SIEMPRE, sin
+    excepción. (Antes este test exigía la regla del "caro" — un guard del
+    modelo viejo, L-6.)"""
+    prompt = _build_prompt().lower()
+    assert "nunca ofrezcas envío gratis" in prompt
+    assert "promoción exclusiva" not in prompt
+    assert "puedes mencionar la promoción" not in prompt

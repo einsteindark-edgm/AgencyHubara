@@ -21,6 +21,23 @@ export function getAccessToken(): string | null {
 }
 
 /**
+ * ID token de Cognito (C-6). El access token no trae el email: el backend lo
+ * lee de ESTE token (header `X-Hubara-Id-Token`, verificado contra el `sub`
+ * del access token) para registrar quién hizo un cambio. Lo alimentan los
+ * mismos gates de auth que el access token; sin él, la auditoría cae al
+ * usuario/`sub` (nunca se rechaza la request por su falta).
+ */
+let _idToken: string | null = null;
+
+export function setIdToken(token: string | null): void {
+  _idToken = token && token.trim() !== "" ? token : null;
+}
+
+export function getIdToken(): string | null {
+  return _idToken;
+}
+
+/**
  * PM2-A2: path REACTIVO de expiración. El ciclo de vida proactivo (un
  * `setTimeout` de refresh) muere cuando Android congela los timers del WebView
  * en background; sin esto, la app queda "autenticada" con TODAS las requests

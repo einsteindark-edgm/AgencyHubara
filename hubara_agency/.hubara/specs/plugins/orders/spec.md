@@ -372,6 +372,56 @@ mínima sin consumir cuota.
 - WHEN se invoca el endpoint
 - THEN se devuelve `{port: "MedusaOrderQueryAdapter", catalog_available: false, error_detail: "<reason>", sample_count: 0}`
 
+### Requirement: La línea con cupo por unidad lleva la marca del cupo
+
+Una línea con descuento de un cupón con cupo por unidad (central de cupones)
+MUST llevar `metadata.coupon_quota_id` además de `coupon_code`,
+`list_unit_price_cop` y `discount_unit_cop`. Las vendidas de cada cupo se
+DERIVAN de esas líneas en `/admin/orders` y `/admin/draft-orders`, sin
+contador aparte: un pedido cancelado (en Medusa o `hubara_stage=cancelled`),
+borrado o marcado de prueba (`hubara_test_order`) deja de contar solo. El
+reintento de reconciliación MUST conservar el cupo de cada unidad.
+
+#### Scenario: Cancelar devuelve la unidad
+
+- GIVEN un pedido con 1 unidad del cupo "Cubo Love · Rosado · Café"
+- WHEN el pedido se cancela (Medusa o Hubara) o se marca de prueba
+- THEN en la siguiente lectura esa unidad vuelve a quedar disponible para el cupón
+
+#### Scenario: Reintento de un registro con cupo
+
+- GIVEN un registro con cupo falló y quedó en `failed_order_registrations`
+- WHEN la reconciliación lo reintenta
+- THEN cada unidad con descuento viaja con el mismo `quota_id` y la línea en Medusa lleva `coupon_quota_id`
+
+#### Scenario: La línea dice qué color y aroma se despachan
+
+- GIVEN el cliente eligió Cubo Love Rosado · Café (producto de variante "Unico")
+- WHEN se registra el pedido (bot, "Crear pedido" o reintento de reconciliación)
+- THEN la línea del draft lleva `metadata.color` y `metadata.aroma`, el detalle del pedido los expone (`color`, `aroma`) y el fingerprint los distingue (solo cuando existen: sin ellos el hash no cambia)
+
+#### Scenario: El reintento no se cuenta a sí mismo (L-28)
+
+- GIVEN el intento original SÍ creó el draft en Medusa aunque el adapter reportó falla (timeout) y ese draft se llevó la última unidad
+- WHEN la reconciliación relee el cupo bajo el candado
+- THEN ese draft (misma `metadata.session_key` + `metadata.order_fingerprint`) no cuenta como vendido para él, el port lo reusa por fingerprint y el registro queda `resolved` — no `abandoned` ni duplicado
+
+#### Scenario: Sin poder releer el cupo
+
+- GIVEN el candado está ocupado, o Medusa o el vault no responden al releer el cupo
+- WHEN la reconciliación reintenta
+- THEN NO registra, suma un intento (`quota_unavailable: …`) y el registro sigue `pending`; el barrido continúa con los demás pedidos aunque uno falle
+
+#### Scenario: La reconciliación no pisa la sesión
+
+- GIVEN un reintento en curso (candado + Medusa) y, mientras, otro writer cambia la sesión (un humano la toma, un tag, otro registro)
+- THEN el reintento guarda SOLO su record sobre una lectura fresca bajo el lock de la sesión, y con el candado del cupo tomado relee el estado: dos reintentos del mismo pedido (barrido + "Reintentar") terminan `resolved`, nunca `abandoned` con el pedido creado
+
+#### Scenario: Abandonado porque se acabaron las unidades
+
+- GIVEN la reconciliación abandonó un pedido con `abandon_reason: quota_changed`
+- THEN `/api/orders/vault-orders` expone `abandon_reason` y "Reintentar" responde ese motivo (no "max_attempts alcanzado"): el operador re-confirma el total nuevo con el cliente antes de registrarlo a mano
+
 ## Out of scope (NO go en este spec)
 
 - Listado/historial completo de órdenes archivadas (>30 días entregadas) — fuera del kanban

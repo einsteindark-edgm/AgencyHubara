@@ -49,7 +49,29 @@ function partialMatchNote(item: OrderItemDetail): string {
   return `${chosen}Sin resolver: ${item.variant_unresolved_tokens.join(", ")} ${verify}`;
 }
 
+// Pedido #44: el precio de la línea ya trae el descuento del cupón (Medusa no
+// lo ve como descuento), así que la línea explica de dónde sale.
+function couponNote(item: OrderItemDetail): string {
+  const off = item.discount_unit_cop > 0 ? `: −${fmtMoney(item.discount_unit_cop)} c/u` : "";
+  const list =
+    item.list_unit_price_cop != null
+      ? ` (precio de lista ${fmtMoney(item.list_unit_price_cop)})`
+      : "";
+  return `Cupón ${item.coupon_code}${off}${list}`;
+}
+
+// C-3: la combinación que se registró (el cupo por unidad cuenta por
+// producto + color + aroma) — lo que hay que despachar.
+function attributesNote(item: OrderItemDetail): string | null {
+  const parts = [
+    item.color ? `Color: ${item.color}` : null,
+    item.aroma ? `Aroma: ${item.aroma}` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 function ItemRow({ item }: { item: OrderItemDetail }) {
+  const attributes = attributesNote(item);
   return (
     <div className="item-row" style={{ alignItems: "flex-start" }}>
       <div className="ir-thumb">
@@ -123,9 +145,19 @@ function ItemRow({ item }: { item: OrderItemDetail }) {
             (el LLM puede haber registrado la primera variante por defecto).
           </div>
         )}
+        {attributes && (
+          <div style={{ fontSize: 11, color: "var(--fg-soft)", lineHeight: 1.35 }}>
+            {attributes}
+          </div>
+        )}
         <div className="ir-s">
           {item.sku ?? "—"} · {item.quantity} und × {fmtMoney(item.unit_price_cop)}
         </div>
+        {item.coupon_code && (
+          <div style={{ fontSize: 10, color: "var(--fg-soft)", lineHeight: 1.35 }}>
+            {couponNote(item)}
+          </div>
+        )}
       </div>
       <div className="ir-t">{fmtMoney(item.total_cop)}</div>
     </div>

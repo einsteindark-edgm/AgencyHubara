@@ -52,6 +52,8 @@
 | `src/platform/constants.py` | Constants cross-plugin (**spinal**, protected) |
 | `src/platform/plugin_manifest.py` | Loader del `plugin.yaml` |
 | `src/plugins/<id>/` | Plugin (bounded context): `agent/`, `workers/`, `api/` |
+| `src/platform/promotions/` | Cupones: lectura (`PromotionsPort`, cache 60 s), comandos de la central (`admin.py`), dominio del cupón (`coupon.py`), cupo por unidad (`quotas.py`, `quota_store.py` en el vault), ventas derivadas de pedidos (`coupon_sales.py`), registro de cambios (`audit.py`), candado de la última unidad (`quota_lock.py`). Plan: `CUPONES_PLAN.md` |
+| `src/plugins/marketing/api/coupons.py` | Central de cupones (Marketing → Cupones): `/api/marketing/coupons…` |
 | `src/plugins/<id>/agent/composition.py` | Factories `@lru_cache(maxsize=1)` |
 | `src/plugins/<id>/agent/workspace/` | Markdown del agent: IDENTITY, TOOLS, PROMPTS |
 | `src/plugins/<id>/agent/tools/` | Tools LLM (snake_case) |

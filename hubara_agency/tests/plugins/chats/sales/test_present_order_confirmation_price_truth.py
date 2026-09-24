@@ -71,7 +71,7 @@ async def _present(tool, ctx, unit_price: int) -> dict:
     return json.loads(await tool.execute_with_context(
         ctx,
         items=[{"handle": "trilogia-del-terror", "quantity": 1, "unit_price_cop": unit_price}],
-        shipping_cop=0,
+        shipping_cop=16940,  # tarifa publicada nacional (Cali)
         shipping_address_summary="Calle 1 #2-3, Centro, Cali",
         payment_method="cash_on_delivery",
     ))

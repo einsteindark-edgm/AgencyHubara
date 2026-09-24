@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,8 @@ from fastapi.testclient import TestClient
 from src.platform.catalog.dtos import CatalogPriceDTO, CatalogProductDTO, CatalogVariantDTO
 from src.platform.catalog.errors import ProductNotFoundError
 from src.platform.constants import ROUTE_HUMANO
-from src.platform.orders.port import OrderRegistrationResult
+from src.platform.orders.port import DiscountedUnits, OrderRegistrationResult
+from src.platform.promotions.port import PromotionDTO
 from src.plugins.chats.api import session_actions
 from src.plugins.chats.api.session_actions import SessionActionsDeps
 
@@ -180,6 +181,32 @@ def test_order_prices_server_side_registers_closes_escalates_and_sends_payment_i
     assert tags == ["CONFIRMADO_PAGO_PENDIENTE", "HUMANO"]
     # las instrucciones de pago quedaron encoladas antes del flush (transfer)
     assert m["pending_ui_intents"][0]["kind"] == "payment_instructions"
+
+
+def test_order_with_the_chat_coupon_sends_the_discounted_units_to_the_port(h: _Harness) -> None:
+    """Pedido #44 por "Crear pedido": el cupón aplicado en el chat llega al port
+    como unidades con descuento (el adapter las escribe como precio de línea,
+    porque Medusa no aplica la promoción a un draft), con el total que el bot
+    exigiría."""
+    amor26 = PromotionDTO(
+        id="promo_1", code="AMOR26", discount_type="percentage", value=10, currency_code="cop",
+        target_type="items", allocation="each", max_quantity=10, product_ids=("p1",), variant_ids=(),
+        collection_ids=(), min_subtotal_cop=None, is_automatic=False, status="active", starts_at_ms=None,
+        ends_at_ms=None, budget_type=None, budget_limit=None, budget_used=None, description=None,
+    )
+    (h.vault / _A).mkdir(parents=True)
+    (h.vault / _A / "metadata.json").write_text(json.dumps({"episodes": [{
+        "episode_id": "ep_1", "started_at_ms": 1, "closed_at_ms": None,
+        "applied_coupon": {"code": "AMOR26", "applied_at_ms": 1, "promotion": asdict(amor26)},
+    }]}), encoding="utf-8")
+
+    body = h.client.post(_url("order"), json=_ORDER).json()
+
+    assert body["registered"] is True, body
+    assert (body["subtotal_cop"], body["shipping_cop"], body["total_cop"]) == (58000, 7900, 60100)
+    (call,) = h.port.calls
+    assert call["items"][0].discounted_units == (DiscountedUnits(units=2, discount_unit_cop=2900),)
+    assert (call["coupon_code"], call["discount_cop"], call["total_cop"]) == ("AMOR26", 5800, 60100)
 
 
 def test_order_can_skip_the_payment_instructions_message(h: _Harness) -> None:

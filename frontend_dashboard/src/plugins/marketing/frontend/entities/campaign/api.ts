@@ -74,6 +74,7 @@ export function mapBackendCampaign(b: BackendCampaign): Campaign {
     createdAtMs: b.created_at_ms,
     updatedAtMs: b.updated_at_ms,
     sentAtMs: b.sent_at_ms,
+    failureReason: b.failure_reason,
     sendResult:
       b.send_result === null
         ? null

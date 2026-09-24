@@ -547,13 +547,13 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - THEN la tool devuelve `applied=true` y persiste `episodes[-1].applied_coupon = {code, promotion (snapshot), applied_at_ms}`
 - AND cada turno siguiente recibe la nota `[CUPÓN APLICADO: MAMA15 — 15% …]`
 - AND `present_order_confirmation` devuelve `discount_cop` + `total_cop` ya descontado y el resumen muestra la línea "Descuento (MAMA15)"
-- AND `register_order` exige ese `total_cop` (SEC-07: `subtotal + envío − descuento`), manda `promo_codes: ["MAMA15"]` al draft de Medusa y guarda `coupon_code`/`discount_cop` en `registered_order` y en las instrucciones de pago
+- AND `register_order` exige ese `total_cop` (SEC-07: `subtotal + envío − descuento`), escribe el descuento en el precio de las líneas del draft de Medusa (NUNCA `promo_codes`, ver el escenario del pedido #44) y guarda `coupon_code`/`discount_cop` en `registered_order` y en las instrucciones de pago
 
 #### Scenario: Código inexistente, vencido, inactivo o con forma de tag interno
 
 - GIVEN el cliente da `NOEXISTE`, un cupón vencido, o `VELAS_10`
 - WHEN el bot llama `apply_coupon`
-- THEN devuelve `applied=false` con `reason` ∈ {not_found, expired, inactive, not_started, budget_exhausted, invalid_format}
+- THEN devuelve `applied=false` con `reason` ∈ {not_found, expired, inactive, not_started, budget_exhausted, invalid_format, scope_unresolved, shipping_not_supported}
 - AND NO persiste nada en el episodio
 - AND el bot se lo dice al cliente con honestidad sin aplicar ningún descuento
 
@@ -576,6 +576,26 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - THEN `apply_coupon` lee la lista (el adapter pide `target_rules.values` y `rules.values`) y responde `whole_catalog=false` + `eligible_products` (nombre, precio y precio con descuento calculado por el sistema); jamás dice "todo el catálogo"
 - AND la nota `[CUPÓN APLICADO: …]` de cada turno ordena ofrecer ESOS productos; lo conversado antes de otros productos se retoma solo si el cliente lo pide, aclarando que va sin descuento
 
+#### Scenario: El total de Medusa es el que confirmó el bot (pedido #44, 2026-09-23)
+
+- GIVEN `AMOR26` (10 %, `each`, `max_quantity` 10, solo Cubo Love) aplicado y un pedido de 2 × Cubo Love a $21.000 con envío $7.900
+- WHEN el bot llama `register_order` con `total_cop=45700`
+- THEN el draft lleva UNA línea de 2 unidades a $18.900 con `metadata.coupon_code`, `list_unit_price_cop` y `discount_unit_cop`, NO lleva `promo_codes` (Medusa 2.12.5 lo vincularía sin descontar: al crear el draft no carga `items.product`), y Medusa cobra $45.700
+- AND el reparto lo calcula `compute_discount` por unidad, en pesos enteros, y suma exacto el descuento confirmado: porcentaje redondeado a peso por unidad; `max_quantity` por línea (`each`) o por pedido, las unidades más baratas primero (`once`); un monto fijo al pedido se prorratea con el resto de pesos en la última línea
+- AND con 12 unidades, 10 van en una línea a $18.900 y 2 en otra a precio de lista; la referencia del pedido que lee el cliente ("#45 (12× Cubo Love)") y los productos de las notificaciones del ETA agrupan esas líneas
+- AND el envío va siempre completo: los cupones son solo de productos (ver el escenario del cupón de envío)
+- AND si las líneas + el envío del payload no suman `total_cop`, el adapter NO crea el draft (`amount_mismatch`) y el pedido queda para registro manual
+- AND el reintento de reconciliación de un registro fallido manda el mismo cupón y las mismas unidades con descuento (`coupon_line_discounts` en el record)
+- AND el inspector de Órdenes explica en cada línea el cupón, el descuento por unidad y el precio de lista (en Medusa `discount_total` queda en 0)
+
+#### Scenario: Cupón de envío (decisión del operador, 2026-09-23)
+
+- GIVEN una promoción vigente en Medusa sobre el envío (`target_type = shipping_methods`), p. ej. `ENVIOGRATIS`
+- WHEN el cliente da el código o pregunta por promociones
+- THEN `apply_coupon` responde `applied=false, reason=shipping_not_supported` (el envío lo cobra la transportadora a su tarifa, sin descuentos) y no guarda nada en el episodio, y `list_promotions` no la ofrece
+- AND aunque un episodio ya tenga guardado un cupón de envío (de antes de esta decisión), `compute_discount` no descuenta nada (`shipping_not_supported`), la nota de cada turno dice `[CUPÓN SIN EFECTO: …]` en vez de `[CUPÓN APLICADO: …]`, `present_order_confirmation` explica que no aplica y `register_order` exige el total con el envío completo
+- AND el envío real que el operador fija al marcar "en camino" es el que paga el cliente
+
 #### Scenario: Reglas de la promoción ilegibles
 
 - GIVEN una regla de productos o de mínimo de compra llega sin valores, o con un atributo que no entendemos
@@ -586,6 +606,101 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - GIVEN un episodio con `applied_coupon`
 - WHEN el operador usa "Crear pedido"
 - THEN el sugerido muestra `discount_cop`/`coupon_code` y el registro descuenta lo mismo que descontaría el bot
+
+### Requirement: Cupo por unidad de un cupón
+
+Un cupón con filas de cupo (Marketing → Cupones: producto + color + aroma +
+unidades) MUST aplicar SOLO a esas combinaciones mientras queden unidades.
+Las vendidas MUST derivarse de los pedidos de Medusa (líneas con
+`metadata.coupon_quota_id`, sin cancelados ni de prueba), nunca de un
+contador. Si no se pueden leer, el cupón con cupo MUST NOT aplicarse (falla
+cerrada). Un cupón sin filas se comporta como siempre.
+
+#### Scenario: El cupón vale solo en la combinación con unidades
+
+- GIVEN AMOR26 tiene 5 unidades de Cubo Love · Rosado · Café, 2 vendidas
+- WHEN el cliente da el código y el bot llama `apply_coupon`
+- THEN el envelope trae `units: [{title, color, aroma, units_left: 3, price_cop, discounted_price_cop}]` y el resumen dice que otros colores, aromas o productos van a precio normal
+
+#### Scenario: El cupón no permite decir cuántas quedan (D3)
+
+- GIVEN el cupón tiene `show_units_left=false`
+- THEN `apply_coupon` y `list_promotions` omiten `units_left` y el resumen le pide al bot no decir el número
+
+#### Scenario: Agotado
+
+- GIVEN todas las filas del cupón están en 0
+- WHEN el cliente da el código
+- THEN `apply_coupon` responde `applied=false, reason=quota_exhausted`, no guarda nada en el episodio, el turno sigue y el bot ofrece el precio normal sin inventar otro descuento
+- AND `list_promotions` lo muestra como agotado (`exhausted=true`)
+
+#### Scenario: No se pueden leer las vendidas
+
+- GIVEN Medusa no responde al leer los pedidos
+- THEN `apply_coupon` responde `applied=false, reason=quota_unavailable` y `list_promotions` marca `units_unavailable=true`
+
+#### Scenario: El cupo aplica solo a la combinación en la confirmación
+
+- GIVEN AMOR26 tiene 5 unidades de Cubo Love · Rosado · Café y quedan 3
+- WHEN el cliente pide 1 Cubo Love Rosado Café y 1 Cubo Love Azul Lavanda y el bot llama `present_order_confirmation` con `color`/`aroma` por ítem
+- THEN solo la primera lleva 10 % y el resumen dice "1 × Cubo Love Rosado · Café con AMOR26 (−$2.100)"
+- AND un color o aroma que el producto no tiene devuelve `error=invalid_variant_attribute` sin monto ni intent
+
+#### Scenario: Parcial (D2)
+
+- GIVEN queda 1 unidad de la combinación
+- WHEN el cliente pide 2
+- THEN 1 lleva descuento y el resumen dice "1 a precio normal"
+
+#### Scenario: Se llevaron la última
+
+- GIVEN dos clientes confirmaron la última unidad
+- WHEN ambos llaman `register_order`
+- THEN, bajo el candado del código, uno crea el pedido y el otro recibe `quota_changed` con `new_total_cop` y `error=quota_changed`, sin draft
+- AND "Crear pedido" del dashboard reparte y registra con las mismas reglas y el mismo candado, y ante `quota_changed` devuelve el total NUEVO
+
+#### Scenario: "Crear pedido" con cupón
+
+- GIVEN el operador abre "Crear pedido" en un chat con cupón aplicado
+- THEN la sugerencia trae `coupon_code` aunque el descuento sea $0, con `coupon_reason` (`missing_attributes`, `quota_exhausted`, `quota_unavailable`, `min_subtotal`, `no_applicable_items`)
+- AND tras editar líneas el formulario pide `dry_run: true` (calcula sin registrar ni guardar) y registra solo después de que el operador vio ese total (`expected_discount_cop`)
+- AND si al enviar no se puede releer el cupo responde `quota_unavailable` (no `quota_changed`), y un rechazo guardado para reintento trae `saved_for_retry: true`
+- AND el doble envío se reconoce por ítems + color/aroma + medio de pago + dirección: corregir la ciudad o el color es un pedido nuevo
+
+#### Scenario: Los rechazos del cupo se corrigen, no se escalan
+
+- GIVEN `register_order` rechaza por `quota_changed`, `quota_busy` o `invalid_variant_attribute`
+- THEN el envelope trae `error` con ese código (#353: con `error` el bot corrige y reintenta; sin `error` escala ORDER_REGISTRATION_FAILED)
+
+#### Scenario: Ítems en otro orden al registrar
+
+- GIVEN el cliente confirmó [Cubo Love Rosado · Café, Vela Buda] con descuento en el cubo
+- WHEN el bot llama `register_order` con [Vela Buda, Cubo Love Rosado · Café]
+- THEN es el mismo pedido confirmado (el reparto se compara por producto + color + aroma + precio, no por posición) y el descuento va a la línea del cubo
+
+#### Scenario: El color/aroma se valida solo donde decide el cupo
+
+- GIVEN un pedido SIN cupón (o una línea de un producto sin cupo) con `color`/`aroma` que no están en las etiquetas del producto (dos aromas, colores de `metadata.colores`, familias)
+- THEN la confirmación y el registro los aceptan como antes y el valor llega tal cual a la línea de Medusa
+- AND en un producto con cupo un valor fuera de la lista devuelve `invalid_variant_attribute` (dos valores en uno piden "una línea por combinación", y un `variant_label` que nombra OTRO color o aroma de la lista también se rechaza)
+
+#### Scenario: Falta el color o el aroma en una línea con cupo
+
+- GIVEN una línea de un producto con cupo sin `color`/`aroma` (ni en el ítem ni en el borrador, que solo completa un producto que está UNA vez en el pedido)
+- WHEN el bot llama `present_order_confirmation`
+- THEN responde `queued=false, error=missing_variant_attributes` con las listas del producto, sin tarjeta ni reparto guardado — la tarjeta termina el turno y el cliente confirmaría a precio lleno sin que el bot alcance a preguntar
+
+#### Scenario: La tarjeta dice qué unidades llevan el cupón
+
+- GIVEN un cupón con cupo
+- WHEN sale la tarjeta de confirmación
+- THEN su cuerpo incluye la nota del cupo: qué unidades llevan descuento y cuántas van a precio normal, o que no se pudo confirmar el cupo, o que la combinación se agotó (nunca "no aplica" si lo que pasó es que se agotó)
+
+#### Scenario: No se puede releer el cupo al registrar
+
+- GIVEN el cliente confirmó el total con descuento
+- WHEN al registrar Medusa (vendidas) o el vault (filas del cupo) no responden
+- THEN NO se crea el draft, el pedido queda en `failed_order_registrations` (pending) con el reparto CONFIRMADO, y el envelope trae `audit_id` SIN `error` (el bot escala como con Medusa caído) — nunca un "total nuevo" falso
 
 ## Out of scope
 

@@ -943,6 +943,28 @@ async def test_detail_legacy_flag_with_correct_sign_is_downgraded_to_partial(ada
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_detail_item_exposes_the_coupon_and_list_price_of_a_discounted_line(adapter):
+    """Pedido #44: la línea con cupón llega a Medusa con el precio ya
+    descontado y la auditoría en su metadata (`discount_total` queda en 0). El
+    inspector necesita el precio de lista y el cupón para explicar el precio."""
+    it = await _detail_item(adapter, {
+        "title": "Cubo Love",
+        "quantity": 2,
+        "unit_price": 18900,
+        "total": 37800,
+        "metadata": {
+            "handle": "cubo-love",
+            "coupon_code": "AMOR26",
+            "list_unit_price_cop": 21000,
+            "discount_unit_cop": 2100,
+        },
+    })
+    assert (it.unit_price_cop, it.list_unit_price_cop) == (18900, 21000)
+    assert (it.coupon_code, it.discount_unit_cop) == ("AMOR26", 2100)
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_detail_legacy_flag_with_wrong_sign_stays_fallback(adapter):
     """#20/#21/#30: el LLM pidió Capricornio y quedó el fallback Aries."""
     it = await _detail_item(adapter, {
@@ -956,3 +978,17 @@ async def test_detail_legacy_flag_with_wrong_sign_stays_fallback(adapter):
     assert it.variant_label_mismatch is True
     assert it.variant_match_kind == "fallback_first_variant"
     assert it.selected_variant_title == "Aries"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_detail_item_exposes_the_color_and_aroma_of_the_line(adapter):
+    """C1: el inspector muestra el color y el aroma que se despachan."""
+    it = await _detail_item(adapter, {
+        "title": "Cubo Love",
+        "quantity": 1,
+        "unit_price": 21000,
+        "total": 21000,
+        "metadata": {"handle": "cubo-love", "color": "Rosado", "aroma": "Café"},
+    })
+    assert (it.color, it.aroma) == ("Rosado", "Café")

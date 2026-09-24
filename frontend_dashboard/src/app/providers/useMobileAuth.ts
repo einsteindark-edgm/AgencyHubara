@@ -40,6 +40,7 @@ import {
   loadSession,
   saveSession,
   setAccessToken,
+  setIdToken,
   setUnauthorizedHandler,
   type PersistedSession,
 } from "@/shared/config";
@@ -104,6 +105,7 @@ export function useMobileAuth() {
     const d = decideBoot(loadSession(), Date.now());
     if (d.action === "authenticated") {
       setAccessToken(d.session.accessToken);
+      setIdToken(d.session.idToken);
       return { status: "authenticated", username: d.session.username };
     }
     if (d.action === "unauthenticated") return { status: "unauthenticated" };
@@ -186,6 +188,7 @@ export function useMobileAuth() {
         cancelRefresh();
         clearSession();
         setAccessToken(null);
+        setIdToken(null);
         setState({ status: "unauthenticated", error: "Tu sesión expiró." });
       } finally {
         refreshInFlight.current = false;
@@ -217,6 +220,8 @@ export function useMobileAuth() {
       };
       saveSession(persisted);
       setAccessToken(t.accessToken);
+      // C-6: el ID token (con el email) viaja en X-Hubara-Id-Token.
+      setIdToken(t.idToken);
       setState({ status: "authenticated", username });
       scheduleRefresh(expiresAt);
     },
@@ -332,6 +337,7 @@ export function useMobileAuth() {
     cancelRefresh();
     clearSession();
     setAccessToken(null);
+    setIdToken(null);
     setState({ status: "unauthenticated" });
   }, [cancelRefresh]);
 
