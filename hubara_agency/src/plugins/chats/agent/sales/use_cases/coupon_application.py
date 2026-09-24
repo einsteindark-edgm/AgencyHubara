@@ -169,6 +169,7 @@ def store_coupon_application(
         eligible=list(application.eligible),
         quota=application.quota,
         units=list(application.units),
+        show_units_left=application.show_units_left,
     )
 
 

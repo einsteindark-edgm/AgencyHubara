@@ -30,6 +30,7 @@ from src.plugins.chats.agent.sales.use_cases.coupon_application import (
     store_coupon_application,
 )
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+    public_units,
     quota_offer,
     units_text,
 )
@@ -126,7 +127,7 @@ class ListPromotionsTool(ToolBase):
             offer = await quota_offer(promo, quotas=self._quotas, sales=self._sales, catalog=self._catalog)
             if offer.has_quota:
                 # Cupo por unidad: el cupón vale SOLO en estas combinaciones.
-                entry["units"] = list(offer.units)
+                entry["units"] = public_units(offer.units, offer.show_units_left)
                 entry["products"] = [u["title"] for u in offer.units]
                 if offer.reason is not None:
                     entry["exhausted"] = offer.reason == "quota_exhausted"
@@ -320,9 +321,10 @@ class ApplyCouponTool(ToolBase):
         reparto real (qué unidades del pedido llevan descuento) lo hacen
         `present_order_confirmation`/`register_order`."""
         logger.info("🎟️ [TOOL apply_coupon] applied (cupo) code={}", promotion.code)
+        units = public_units(application.units, application.show_units_left)
         summary = (
             f"Cupón {promotion.code} aplicado: {describe_promotion(promotion)} SOLO en estas "
-            f"unidades: {units_text(application.units)}. Otros colores, aromas o productos van a "
+            f"unidades: {units_text(units)}. Otros colores, aromas o productos van a "
             "precio normal. Para aplicarlo necesitas el color y el aroma de cada producto"
         )
         if not application.show_units_left:
@@ -337,7 +339,7 @@ class ApplyCouponTool(ToolBase):
                 "code": promotion.code,
                 "discount": describe_promotion(promotion),
                 "whole_catalog": False,
-                "units": list(application.units),
+                "units": units,
                 "eligible_products": list(application.eligible),
                 "min_subtotal_cop": promotion.min_subtotal_cop,
                 "summary": summary,

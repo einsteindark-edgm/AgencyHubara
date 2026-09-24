@@ -85,7 +85,9 @@ def _coupon_lines(data: dict[str, Any]) -> list[str]:
     units = [u for u in applied.get("units") or [] if isinstance(u, dict)]
     if not units:
         return []
-    return [f"Cupón {applied.get('code')}: {line}" for line in draft_vs_coupon_lines(episode.get("order_draft"), units)]
+    show = bool(applied.get("show_units_left", True))
+    lines = draft_vs_coupon_lines(episode.get("order_draft"), units, show_units_left=show)
+    return [f"Cupón {applied.get('code')}: {line}" for line in lines]
 
 
 class SetOrderSlotTool(ToolBase):

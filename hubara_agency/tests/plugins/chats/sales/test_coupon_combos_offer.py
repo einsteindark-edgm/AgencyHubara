@@ -73,10 +73,10 @@ def test_turn_note_groups_the_coupon_combinations_by_product() -> None:
     note = build_coupon_note(_metadata()) or ""
 
     assert (
-        "Cubo Love ($21.000 → $18.900): Lila · Lavanda, Azul · Caballero de la noche, "
-        "Amarillo · Café, Rosado · Caballero de la noche"
+        "Cubo Love ($21.000 → $18.900): Lila · Lavanda (queda 1), Azul · Caballero de la "
+        "noche (queda 1), Amarillo · Café (queda 1), Rosado · Caballero de la noche (queda 1)"
     ) in note
-    assert "Cubo de corazón ($22.000 → $19.800): Rosado · Sándalo" in note
+    assert "Cubo de corazón ($22.000 → $19.800): Rosado · Sándalo (queda 1)" in note
     assert "según disponibilidad" in note
     assert "precio normal" in note
 
@@ -254,3 +254,72 @@ async def test_set_order_slot_without_a_quota_coupon_says_nothing_about_coupons(
     out = json.loads(await tool.execute_with_context(ctx, producto="Cubo Love", aroma="Sándalo"))
 
     assert "cupón" not in out["summary"] and "descuento" not in out["summary"]
+
+
+# --- Cantidad contra lo que queda del cupo ------------------------------------
+#
+# Prueba en vivo 2026-09-24 (15:59 Bogotá): el cliente pidió 2 Cilindro Love
+# Azul · Lavanda, el cupo de esa combinación es 1, y a "¿Si tienes 2 de esa?"
+# el bot contestó "Sí, claro". La nota decía "esa combinación lleva el
+# descuento" sin mirar cuántas quedaban.
+
+
+def test_turn_note_says_how_many_carry_the_discount_when_the_order_wants_more() -> None:
+    note = build_coupon_note(
+        _metadata({"producto": "Cubo Love", "color": "Amarillo", "aroma": "Café", "cantidad": "2"})
+    ) or ""
+
+    assert "queda 1 con el descuento" in note
+    assert "1 a $18.900 y 1 a precio normal ($21.000)" in note
+    assert "lleva el descuento" not in note
+
+
+def test_turn_note_confirms_the_discount_when_there_are_enough_units() -> None:
+    note = build_coupon_note(
+        _metadata({"producto": "Cubo Love", "color": "Amarillo", "aroma": "Café", "cantidad": "1"})
+    ) or ""
+
+    assert "El pedido tiene 1 de Cubo Love Amarillo · Café: lleva el descuento" in note
+    assert "OJO" not in note
+
+
+def test_turn_note_lists_how_many_are_left_when_the_coupon_allows_it() -> None:
+    note = build_coupon_note(_metadata()) or ""
+
+    assert "Lila · Lavanda (queda 1)" in note
+
+
+def test_turn_note_hides_the_count_when_the_coupon_does_not_allow_it() -> None:
+    metadata = _metadata({"producto": "Cubo Love", "color": "Amarillo", "aroma": "Café", "cantidad": "2"})
+    metadata["episodes"][0]["applied_coupon"]["show_units_left"] = False
+
+    note = build_coupon_note(metadata) or ""
+
+    assert "(queda" not in note and "queda 1" not in note
+    assert "1 a $18.900 y 1 a precio normal ($21.000)" in note
+
+
+@pytest.mark.asyncio
+async def test_set_order_slot_warns_in_the_same_turn_when_the_quantity_exceeds_the_units(tmp_path) -> None:
+    from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
+
+    vault = tmp_path / "isolated_vault"
+    FilesystemMetadataStore(vault).write(
+        KEY, _metadata({"producto": "Cubo Love", "color": "Amarillo", "aroma": "Café"})
+    )
+    tool = SetOrderSlotTool(workspace=str(vault), vault_dir=vault)
+    ctx = ToolContext(session_key=KEY, channel="whatsapp", chat_id=KEY)
+
+    out = json.loads(await tool.execute_with_context(ctx, producto="Cubo Love", cantidad="2"))
+
+    assert "queda 1 con el descuento" in out["summary"]
+    assert "1 a precio normal ($21.000)" in out["summary"]
+
+
+@pytest.mark.asyncio
+async def test_picker_rows_say_how_many_are_left_when_the_coupon_allows_it(tmp_path) -> None:
+    tool, store = _picker(tmp_path, {"producto": "Cubo Love"})
+
+    _, text = await _show(tool, store, "scent", AROMAS)
+
+    assert "Lila · Lavanda — $18.900 (queda 1)" in text

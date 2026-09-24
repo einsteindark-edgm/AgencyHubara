@@ -170,14 +170,17 @@ def set_applied_coupon(
     eligible: list[dict[str, Any]] | None = None,
     quota: bool = False,
     units: list[dict[str, Any]] | None = None,
+    show_units_left: bool = True,
 ) -> dict[str, Any]:
     """Mutates: fija el cupón en el episodio activo (lo crea si no hay).
 
     `eligible`: los productos a los que aplica (nombre + precios) — la nota
     de cada turno los recuerda para que el bot ofrezca ESOS. `quota`: el
     cupón tiene cupo por unidad (esas combinaciones pueden agotarse).
-    `units`: esas combinaciones (handle, color, aroma, precios) — las leen
-    la nota de cada turno y el selector de variantes."""
+    `units`: esas combinaciones (handle, color, aroma, precios, cuántas
+    quedan) — las leen la nota de cada turno, el selector de variantes y
+    `set_order_slot`. `show_units_left`: si el bot puede decir cuántas
+    quedan (D3)."""
     episode = get_active_episode(metadata) or ensure_active_episode(
         metadata, now_ms=now_ms
     )
@@ -187,7 +190,7 @@ def set_applied_coupon(
         "applied_at_ms": now_ms,
         "eligible_products": list(eligible or []),
         **({"quota": True} if quota else {}),
-        **({"units": list(units)} if units else {}),
+        **({"units": list(units), "show_units_left": show_units_left} if units else {}),
     }
     return metadata
 
@@ -372,13 +375,16 @@ def build_coupon_note(metadata: dict[str, Any]) -> str | None:
         # Cupo por unidad (conversación de prueba del 2026-09-24): las
         # combinaciones por producto y qué dice el cupo de lo ya elegido.
         episode = get_active_episode(metadata) or {}
+        show = bool(raw.get("show_units_left", True))
         scope = " ".join(
             [
                 "vale SOLO en estas combinaciones, según disponibilidad (la "
                 "confirmación dice cuáles quedan): "
-                f"{combos_by_product_text(units)}. Ofrécelas primero; cualquier "
-                "otro color o aroma va a precio normal: dilo antes de tomar el pedido.",
-                *draft_vs_coupon_lines(episode.get("order_draft"), units),
+                f"{combos_by_product_text(units, show_units_left=show)}. Ofrécelas "
+                "primero; cualquier otro color o aroma va a precio normal: dilo antes "
+                "de tomar el pedido. Si pide más unidades de las que quedan con "
+                "descuento, las demás van a precio normal: dilo también.",
+                *draft_vs_coupon_lines(episode.get("order_draft"), units, show_units_left=show),
             ]
         )
     elif eligible:
