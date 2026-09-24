@@ -192,6 +192,28 @@ async def test_register_transfer_intent_carries_order_reference(ctx, vault):
 
 
 @pytest.mark.asyncio
+async def test_order_reference_groups_the_lines_of_the_same_product(ctx, vault):
+    """Con cupón, un producto puede salir de Medusa en dos líneas (unidades
+    con descuento y a precio de lista, L-26). El cliente lee un producto:
+    "#45 (3× Vela Cruz de Vida)", no "Vela Cruz de Vida, 2× Vela Cruz de Vida"
+    — y los productos reales no se pierden en "y N más"."""
+    raw = {
+        "display_id": 45,
+        "items": [
+            {"title": "Vela Cruz de Vida", "quantity": 1},
+            {"title": "Vela Cruz de Vida", "quantity": 2},
+            {"title": "Vela Sándalo", "quantity": 1},
+            {"title": "Cubo Love", "quantity": 1},
+        ],
+    }
+    await _register(ctx, vault, payment_method="transfer", port=FakePort(raw_payload=raw))
+    (intent,) = _read_metadata(vault, ctx.session_key)["pending_ui_intents"]
+    assert intent["params"]["order_reference"] == (
+        "#45 (3× Vela Cruz de Vida, Vela Sándalo, Cubo Love)"
+    )
+
+
+@pytest.mark.asyncio
 async def test_register_transfer_without_display_id_omits_reference(ctx, vault):
     """Provider sin display_id (stub / raw_payload vacío) → el param no viaja
     y el renderer cae al order_id crudo."""

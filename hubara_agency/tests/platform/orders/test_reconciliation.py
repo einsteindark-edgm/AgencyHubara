@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from src.platform.orders.port import (
+    DiscountedUnits,
     OrderItem,
     OrderRegistrationResult,
     OrderShipping,
@@ -171,6 +172,52 @@ async def test_reconcile_one_success_marks_resolved(tmp_path):
     assert "resolved_at_ms" in rec
     assert len(rec["reconciliation_attempts"]) == 1
     assert rec["reconciliation_attempts"][0]["ok"] is True
+
+
+@dataclass
+class KwargsPort:
+    """Port que acepta el contrato completo (cupón incluido) y lo guarda."""
+
+    calls: list[dict] = field(default_factory=list)
+
+    async def register_order(self, **kwargs) -> OrderRegistrationResult:
+        self.calls.append(kwargs)
+        return _ok(order_id="draft_01CUPON")
+
+
+@pytest.mark.asyncio
+async def test_rebuild_order_args_keeps_coupon_and_discounted_lines(tmp_path):
+    """El reintento de un registro con cupón NO pierde el descuento: el port
+    recibe el mismo cupón y las mismas unidades con descuento que el intento
+    original (sin eso, Medusa quedaría con el total de lista — pedido #44)."""
+    record = _failed_record(
+        "AUDIT-C",
+        items=[
+            {"handle": "cubo-love", "quantity": 2, "unit_price_cop": 21000},
+            {"handle": "vela-x", "quantity": 1, "unit_price_cop": 17000},
+        ],
+        subtotal_cop=59000,
+        shipping_cop=7900,
+        total_cop=62700,
+        coupon_code="AMOR26",
+        discount_cop=4200,
+        coupon_line_discounts=[{"index": 0, "units": 2, "discount_unit_cop": 2100}],
+    )
+    _write_metadata(tmp_path, "wa_57311", {"failed_order_registrations": [record]})
+    port = KwargsPort()
+
+    outcome = await reconcile_one(
+        vault_dir=tmp_path, session_key="wa_57311", audit_id="AUDIT-C", port=port,
+    )
+
+    assert outcome.outcome == OUTCOME_RESOLVED
+    (call,) = port.calls
+    assert [it.discounted_units for it in call["items"]] == [
+        (DiscountedUnits(units=2, discount_unit_cop=2100),),
+        (),
+    ]
+    assert (call.get("coupon_code"), call.get("discount_cop")) == ("AMOR26", 4200)
+    assert call["total_cop"] == 62700
 
 
 @pytest.mark.asyncio

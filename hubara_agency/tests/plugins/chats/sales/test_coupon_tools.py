@@ -26,7 +26,13 @@ from src.platform.catalog import (
     CatalogVariantDTO,
     ProductNotFoundError,
 )
-from src.platform.orders.port import OrderItem, OrderRegistrationResult, OrderShipping
+from src.platform.orders.port import (
+    DiscountedUnits,
+    OrderItem,
+    OrderRegistrationResult,
+    OrderShipping,
+)
+from src.platform.orders.reconciliation import reconcile_one
 from src.platform.state import FilesystemMetadataStore
 from src.platform.promotions.port import FakePromotionsPort, PromotionDTO
 from src.plugins.chats.agent.sales.tools.coupons import (
@@ -430,6 +436,144 @@ async def test_register_order_pasa_el_cupon_al_port_y_al_intent_de_pago(ctx, _is
     assert intent["params"]["discount_cop"] == 6000
     assert intent["params"]["coupon_code"] == "MAMA15"
     assert intent["params"]["total_cop"] == 41900
+
+
+@dataclass
+class CapturingPort:
+    """Guarda TODO lo que recibe el port (ítems con su reparto incluido)."""
+
+    calls: list[dict[str, Any]] = field(default_factory=list)
+    medusa_down: bool = False
+
+    async def register_order(self, **kwargs: Any) -> OrderRegistrationResult:
+        self.calls.append(kwargs)
+        if self.medusa_down:
+            return OrderRegistrationResult(
+                success=False, order_id=None, provider="medusa", error_detail="medusa_api_error: HTTP 503"
+            )
+        return OrderRegistrationResult(
+            success=True,
+            order_id="draft_c_044",
+            provider="medusa",
+            raw_payload={"id": "draft_c_044", "display_id": 44},
+        )
+
+
+def _episode_with_coupon(promo: PromotionDTO) -> dict:
+    return {
+        "episodes": [
+            {
+                "episode_id": "ep_001",
+                "started_at_ms": 1,
+                "closed_at_ms": None,
+                "applied_coupon": {"code": promo.code, "applied_at_ms": _NOW, "promotion": {**promo.__dict__}},
+            }
+        ]
+    }
+
+
+_AMOR26 = _promo(
+    code="AMOR26", value=10, allocation="each", max_quantity=10, product_ids=("prod_cubo-love",)
+)
+
+
+@pytest.mark.asyncio
+async def test_register_order_sends_per_unit_discount_to_the_port(ctx, _isolate_vault_dir):
+    """Pedido #44: el cupón llega al port como unidades con descuento de cada
+    ítem (el adapter las escribe como línea con el precio descontado, porque
+    Medusa no aplica la promoción a un draft); el ítem que no aplica va sin
+    descuento."""
+    _seed(_isolate_vault_dir, _episode_with_coupon(_AMOR26))
+    port = CapturingPort()
+    tool = RegisterOrderTool(
+        workspace=str(_isolate_vault_dir), vault_dir=_isolate_vault_dir, port=port, catalog=FakeCatalog()
+    )
+    env = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            items=[
+                {"handle": "cubo-love", "quantity": 2, "unit_price_cop": 30000},
+                {"handle": "vela-buda", "quantity": 1, "unit_price_cop": 40000},
+            ],
+            shipping=_SHIPPING,
+            payment_method="transfer",
+            subtotal_cop=100000,
+            shipping_cop=7900,
+            total_cop=101900,
+        )
+    )
+    assert env["registered"] is True, env
+    (call,) = port.calls
+    assert [it.discounted_units for it in call["items"]] == [
+        (DiscountedUnits(units=2, discount_unit_cop=3000),),
+        (),
+    ]
+    assert (call["coupon_code"], call["discount_cop"]) == ("AMOR26", 6000)
+
+
+@pytest.mark.asyncio
+async def test_failed_coupon_registration_is_retried_with_the_same_discounted_lines(
+    ctx, _isolate_vault_dir
+):
+    """Medusa caído al registrar un pedido con AMOR26: el record fallido guarda
+    el reparto del cupón y el reintento de reconciliación manda exactamente los
+    mismos ítems con descuento — Medusa termina con el total que se confirmó."""
+    _seed(_isolate_vault_dir, _episode_with_coupon(_AMOR26))
+    down = CapturingPort(medusa_down=True)
+    tool = RegisterOrderTool(
+        workspace=str(_isolate_vault_dir), vault_dir=_isolate_vault_dir, port=down, catalog=FakeCatalog()
+    )
+    env = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            items=[{"handle": "cubo-love", "quantity": 2, "unit_price_cop": 30000}],
+            shipping=_SHIPPING,
+            payment_method="transfer",
+            subtotal_cop=60000,
+            shipping_cop=7900,
+            total_cop=61900,
+        )
+    )
+    assert env["registered"] is False
+
+    retry = CapturingPort()
+    outcome = await reconcile_one(
+        vault_dir=_isolate_vault_dir, session_key=KEY, audit_id=env["audit_id"], port=retry
+    )
+
+    assert outcome.is_resolved
+    ((original,), (again,)) = down.calls, retry.calls
+    assert again["items"] == original["items"]
+    assert again["items"][0].discounted_units == (DiscountedUnits(units=2, discount_unit_cop=3000),)
+    assert (again["coupon_code"], again["discount_cop"], again["total_cop"]) == ("AMOR26", 6000, 61900)
+
+
+@pytest.mark.asyncio
+async def test_register_order_shipping_coupon_sends_the_shipping_discount(ctx, _isolate_vault_dir):
+    """Un cupón de envío llega al port como descuento del envío: ningún ítem
+    lleva unidades con descuento."""
+    envio = _promo(code="ENVIOGRATIS", value=100, target_type="shipping_methods")
+    _seed(_isolate_vault_dir, _episode_with_coupon(envio))
+    port = CapturingPort()
+    tool = RegisterOrderTool(
+        workspace=str(_isolate_vault_dir), vault_dir=_isolate_vault_dir, port=port, catalog=FakeCatalog()
+    )
+    env = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            items=[{"handle": "vela-buda", "quantity": 1, "unit_price_cop": 40000}],
+            shipping=_SHIPPING,
+            payment_method="transfer",
+            subtotal_cop=40000,
+            shipping_cop=7900,
+            total_cop=40000,
+        )
+    )
+    assert env["registered"] is True, env
+    (call,) = port.calls
+    assert call.get("shipping_discount_cop") == 7900
+    assert [it.discounted_units for it in call["items"]] == [()]
+    assert (call["coupon_code"], call["discount_cop"]) == ("ENVIOGRATIS", 7900)
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@ from typing import Any
 
 from src.sdk.connectorkit import (
     DiscountLineItem,
+    LineDiscount,
     PromotionDTO,
     compute_discount,
 )
@@ -34,6 +35,9 @@ class AppliedDiscount:
     reason: str | None
     min_subtotal_cop: int | None
     description: str | None
+    #: Reparto por unidad sobre los ítems (índice = posición en `items`): es
+    #: el precio con descuento que el pedido escribe en Medusa.
+    line_discounts: tuple[LineDiscount, ...] = ()
 
 
 def applied_coupon(metadata: dict[str, Any]) -> dict[str, Any] | None:
@@ -239,6 +243,7 @@ async def coupon_discount_for_items(
         reason=result.reason,
         min_subtotal_cop=result.min_subtotal_cop,
         description=promotion.description,
+        line_discounts=result.line_discounts,
     )
 
 
