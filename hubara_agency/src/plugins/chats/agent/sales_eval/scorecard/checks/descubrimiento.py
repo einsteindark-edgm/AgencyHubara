@@ -7,8 +7,12 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     PRICE_RE,
     failed,
+    in_focus,
     is_legacy,
+    judged,
+    judged_turns,
     not_applicable,
+    not_judged,
     passed,
     quote,
     sent_texts,
@@ -93,17 +97,20 @@ def _customer_words(turn: Turn) -> str | None:
 def check_max_questions_before_show(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     shown = _show_index(traj) is not None
     count = 0
-    for turn in _discovery_turns_before_show(traj):
+    scope = _discovery_turns_before_show(traj)
+    for turn in scope:
         for text in turn.sent_texts:
             if "?" not in text:
                 continue
-            count += 1
-            if count > _MAX_QUESTIONS_BEFORE_SHOW:
+            count += 1  # el prefijo cuenta: las preguntas ya hechas siguen hechas
+            if count > _MAX_QUESTIONS_BEFORE_SHOW and judged(traj, turn):
                 where = "antes de mostrar productos" if shown else "sin llegar a mostrar productos"
                 return failed(
                     "DES-01", turn.turn,
                     f"turno {turn.turn}: {_ORDINALS.get(count, f'{count}ª')} pregunta {where} {quote(text)}",
                 )
+    if in_focus(traj) and not any(judged(traj, t) for t in scope):
+        return not_judged("DES-01", traj, "el turno no es de descubrimiento antes de mostrar productos")
     if not shown and count == 0:
         return not_applicable("DES-01", "sin descubrimiento")
     return passed("DES-01", f"{count} pregunta(s) antes de mostrar productos")
@@ -120,7 +127,7 @@ def check_one_question_per_bubble(traj: Trajectory, ctx: CheckContext) -> CheckR
                 "DES-02", turn.turn, f"turno {turn.turn}: {len(questions)} preguntas en una burbuja {quote(text)}"
             )
     if not any_text:
-        return not_applicable("DES-02", "el bot no envió texto")
+        return not_judged("DES-02", traj, "el bot no envió texto")
     return passed("DES-02")
 
 
@@ -134,9 +141,9 @@ def _is_catalog_request(turn: Turn) -> bool:
 
 @code_check("DES-03")
 def check_catalog_requested_sent(traj: Trajectory, ctx: CheckContext) -> CheckResult:
-    requests = [t for t in traj.turns if _is_catalog_request(t)]
+    requests = [t for t in judged_turns(traj) if _is_catalog_request(t)]
     if not requests:
-        return not_applicable("DES-03", "el cliente no pidió el catálogo")
+        return not_judged("DES-03", traj, "el cliente no pidió el catálogo")
     for turn in requests:
         if not set(turn.intents) & CATALOG_DISPLAY_INTENTS:
             return failed(
@@ -183,6 +190,8 @@ def check_search_before_naming(traj: Trajectory, ctx: CheckContext) -> CheckResu
     named = False
     for turn in traj.turns:
         grounded = grounded or any(tc.name in _GROUNDING_TOOLS for tc in turn.tools)
+        if not judged(traj, turn):
+            continue  # el prefijo solo aporta búsquedas hechas
         for text in turn.sent_texts:
             name = _naming(text, titles)
             if name is None:
@@ -194,7 +203,7 @@ def check_search_before_naming(traj: Trajectory, ctx: CheckContext) -> CheckResu
                     f"turno {turn.turn}: nombró «{name}» sin buscar antes en el catálogo {quote(text)}",
                 )
     if not named:
-        return not_applicable("DES-05", "el bot no nombró productos ni precios")
+        return not_judged("DES-05", traj, "el bot no nombró productos ni precios")
     return passed("DES-05")
 
 
@@ -224,9 +233,11 @@ def _product_recorded(turn: Turn) -> bool:
 @code_check("DES-08")
 def check_chosen_product_recorded(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     titles = _titles(ctx)
-    choices = [t for i, t in enumerate(traj.turns) if _is_product_choice(traj, i, titles)]
+    choices = [
+        t for i, t in enumerate(traj.turns) if judged(traj, t) and _is_product_choice(traj, i, titles)
+    ]
     if not choices:
-        return not_applicable("DES-08", "el cliente no eligió un producto de un catálogo mostrado")
+        return not_judged("DES-08", traj, "el cliente no eligió un producto de un catálogo mostrado")
     for turn in choices:
         if is_legacy(traj):
             if not turn.tool_attempted("set_order_slot"):
@@ -242,9 +253,9 @@ def check_chosen_product_recorded(traj: Trajectory, ctx: CheckContext) -> CheckR
 
 @code_check("DES-09")
 def check_design_before_aroma(traj: Trajectory, ctx: CheckContext) -> CheckResult:
-    scope = _discovery_turns_before_show(traj)
+    scope = [t for t in _discovery_turns_before_show(traj) if judged(traj, t)]
     if not scope:
-        return not_applicable("DES-09", "sin turnos de descubrimiento antes del catálogo")
+        return not_judged("DES-09", traj, "sin turnos de descubrimiento antes del catálogo")
     for turn in scope:
         for text in turn.sent_texts:
             if "?" in text and _AROMA_RE.search(text):
@@ -283,6 +294,8 @@ def _bot_texts(traj: Trajectory) -> list[tuple[Turn, str]]:
     los componentes que redacta el LLM (botones, intro de listas)."""
     out: list[tuple[Turn, str]] = []
     for t in traj.turns:
+        if not judged(traj, t):
+            continue
         out.extend((t, x) for x in t.sent_texts)
         for tc in t.tools:
             for key in _TEXT_TOOL_ARGS.get(tc.name, ()):
@@ -296,7 +309,7 @@ def _bot_texts(traj: Trajectory) -> list[tuple[Turn, str]]:
 def check_prices_are_catalog_prices(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     with_amounts = [(t, x) for t, x in _bot_texts(traj) if extract_cop_amounts(x)]
     if not with_amounts:
-        return not_applicable("DES-10", "el bot no escribió montos")
+        return not_judged("DES-10", traj, "el bot no escribió montos")
     if not ctx.catalog_available or not ctx.catalog_prices:
         return unknown("DES-10", "sin precios del catálogo")
     for turn, text in with_amounts:

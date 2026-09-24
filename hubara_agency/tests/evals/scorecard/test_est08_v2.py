@@ -174,7 +174,7 @@ def test_topics_travel_to_the_scorecard_row() -> None:
 
     row = next(r for r in record["results"] if r["check_id"] == "EST-08")
     assert [t["topic"] for t in row["topics"]] == ["catálogo", "envío"]
-    assert record["registry_version"] == 3
+    assert record["registry_version"] == 4
 
 
 def test_rows_without_topics_keep_the_v2_shape() -> None:
@@ -186,15 +186,17 @@ def test_rows_without_topics_keep_the_v2_shape() -> None:
 def test_registry_describes_the_burst_rule() -> None:
     spec = SPECS_BY_ID["EST-08"]
 
-    assert REGISTRY_VERSION == 3
+    assert REGISTRY_VERSION == 4
     assert "ráfaga" in spec.rule.lower() or "ráfaga" in spec.applies.lower()
 
 
 def test_only_est08_decides_by_topics() -> None:
     """Los asuntos solo deciden EST-08: otro check con una clave `asuntos`
-    vacía conserva su veredicto."""
+    vacía (el modo turno la pasa siempre) conserva su veredicto."""
     import json as _json
 
     result = jc.parse_judge_output("EST-04", _json.dumps({"veredicto": "pasa", "turno": 2, "asuntos": []}))
+    focus = jc.parse_focus_output("EST-04", _json.dumps({"turnos": [{"turno": 2, "veredicto": "pasa"}]}), [2])
 
     assert result is not None and result.verdict == "pasa"
+    assert focus[2].verdict == "pasa"

@@ -15,7 +15,7 @@ Funciones puras (sin I/O): el caller lee el vault.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from src.plugins.chats.shared.purchase_signals import (
@@ -137,6 +137,8 @@ class Trajectory:
     closing_motivo: str | None = None
     started_at_ms: int | None = None
     closed_at_ms: int | None = None
+    # Modo turno (laboratorio): el turno que se juzga; el resto es contexto.
+    focus_turn: int | None = None
 
     @property
     def first_contact(self) -> bool | None:
@@ -205,6 +207,36 @@ def _episode_fields(episode: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def turn_from_trace(raw: dict[str, Any], default_turn: int = 1) -> Turn:
+    """Un turno desde su registro de traza (la forma que escribe el worker).
+
+    El laboratorio arma así el turno simulado: misma forma que la traza real."""
+    tools = tuple(_tool_from_trace(x) for x in raw.get("tools") or [] if isinstance(x, dict))
+    guards = tuple(str(g) for g in raw.get("guards") or [])
+    signal = raw.get("signal")
+    return Turn(
+        turn=int(raw.get("turn") or default_turn),
+        at_ms=_as_int(raw.get("turn_started_ms")) or _as_int(raw.get("recorded_at_ms")),
+        trigger=str(raw.get("trigger") or "customer"),
+        inbound_text=str(raw.get("inbound_text") or ""),
+        signal=signal.get("kind") if isinstance(signal, dict) else None,
+        sent_texts=tuple(str(x) for x in raw.get("sent_texts") or []),
+        llm_text=str(raw.get("llm_text") or ""),
+        suppressed_reason=raw.get("suppressed_reason"),
+        discarded_narration=tuple(str(x) for x in raw.get("discarded_narration") or []),
+        tools=tools,
+        intents=_intents_for(tools, guards),
+        guards=guards,
+        stage_in=raw.get("stage_in"),
+        stage_out=raw.get("stage_out"),
+        draft=dict(raw.get("draft") or {}),
+        confirmed=bool(raw.get("confirmed")),
+        state=dict(raw.get("state") or {}),
+        first_contact=bool(raw.get("first_contact")),
+        inbound=_inbound_from_trace(raw.get("inbound")),
+    )
+
+
 def build_trajectory(
     traces: list[dict[str, Any]], *, session_id: str, episode: dict[str, Any]
 ) -> Trajectory:
@@ -216,38 +248,86 @@ def build_trajectory(
     )
     turns: list[Turn] = []
     for raw in ordered:
-        tools = tuple(_tool_from_trace(x) for x in raw.get("tools") or [] if isinstance(x, dict))
-        guards = tuple(str(g) for g in raw.get("guards") or [])
-        signal = raw.get("signal")
-        turns.append(
-            Turn(
-                turn=int(raw.get("turn") or len(turns) + 1),
-                at_ms=_as_int(raw.get("turn_started_ms")) or _as_int(raw.get("recorded_at_ms")),
-                trigger=str(raw.get("trigger") or "customer"),
-                inbound_text=str(raw.get("inbound_text") or ""),
-                signal=signal.get("kind") if isinstance(signal, dict) else None,
-                sent_texts=tuple(str(x) for x in raw.get("sent_texts") or []),
-                llm_text=str(raw.get("llm_text") or ""),
-                suppressed_reason=raw.get("suppressed_reason"),
-                discarded_narration=tuple(str(x) for x in raw.get("discarded_narration") or []),
-                tools=tools,
-                intents=_intents_for(tools, guards),
-                guards=guards,
-                stage_in=raw.get("stage_in"),
-                stage_out=raw.get("stage_out"),
-                draft=dict(raw.get("draft") or {}),
-                confirmed=bool(raw.get("confirmed")),
-                state=dict(raw.get("state") or {}),
-                first_contact=bool(raw.get("first_contact")),
-                inbound=_inbound_from_trace(raw.get("inbound")),
-            )
-        )
+        turn = turn_from_trace(raw, default_turn=len(turns) + 1)
+        if turn.trigger == COMPLEMENT_TRIGGER and turns:
+            turns[-1] = _with_complement(turns[-1], turn)
+            continue
+        turns.append(turn)
     return Trajectory(
         session_id=session_id,
         episode_id=episode_id,
         fidelity="trace" if turns else "empty",
         turns=tuple(turns),
         **_episode_fields(episode),
+    )
+
+
+# El bot nuevo (canary/on) manda el complemento de un turno como turno aparte
+# (`trigger: complement`, con una nota `[SISTEMA]` que lleva los asuntos del
+# clasificador). Para el scorecard es parte del turno que complementa: los
+# checks de "en ese mismo turno" lo cuentan, los de pares de turnos no ven un
+# turno de más, y el juez no lee la nota del clasificador (EST-08 saca los
+# asuntos por su cuenta).
+COMPLEMENT_TRIGGER = "complement"
+
+
+def _with_complement(turn: Turn, complement: Turn) -> Turn:
+    return replace(
+        turn,
+        sent_texts=(*turn.sent_texts, *complement.sent_texts),
+        discarded_narration=(*turn.discarded_narration, *complement.discarded_narration),
+        tools=(*turn.tools, *complement.tools),
+        intents=(*turn.intents, *complement.intents),
+        guards=(*turn.guards, *complement.guards),
+        stage_out=complement.stage_out or turn.stage_out,
+        draft=complement.draft if complement.draft is not None else turn.draft,
+        confirmed=complement.confirmed if complement.confirmed is not None else turn.confirmed,
+        state=complement.state or turn.state,
+    )
+
+
+# ── Modo turno (laboratorio, plan §5.2) ─────────────────────────────────────
+def _order_turn(traj: Trajectory) -> int | None:
+    """Turno en que la orden del episodio empezó a existir (registro o estado).
+    En legacy `register_order` puede no traer `ok`: el intento cuenta."""
+    registered = (
+        (lambda t: t.tool_attempted("register_order")) if traj.fidelity == "legacy" else (lambda t: t.tool_ok("register_order"))
+    )
+    return next(
+        (t.turn for t in traj.turns if registered(t) or (t.state or {}).get("order_id")),
+        None,
+    )
+
+
+def focus_trajectory(
+    real: Trajectory, candidate: Turn, *, episode_at: dict[str, Any] | None = None
+) -> Trajectory:
+    """Trayectoria para juzgar SOLO `candidate`: los turnos reales anteriores
+    (contexto) + el candidato. Sin turnos posteriores.
+
+    Los campos del episodio son los del momento del turno (`episode_at`, la
+    entrada de `episodes_at` del caso del laboratorio): nunca los del cierre, y
+    la orden solo si ya existía — la del episodio real cuenta desde el turno
+    que la registró; una orden sin registro dentro del episodio es anterior a
+    él. Por eso `episode_at["order_id"]` DEBE ser la orden al inicio del turno
+    (p. ej. el estado de la traza anterior), no la final del episodio: si la
+    orden nació sin `register_order` en la trayectoria (operador, carrito),
+    este corte no la ve. Sin `episode_at` no hay orden ni cierre.
+    """
+    at = episode_at or {}
+    order_id = at.get("order_id") if episode_at is not None else None
+    registered = _order_turn(real)
+    if order_id and registered is not None and registered > candidate.turn:
+        order_id = None
+    return replace(
+        real,
+        turns=(*(t for t in real.turns if t.turn < candidate.turn), candidate),
+        closing_tag=None,
+        closing_motivo=None,
+        closed_at_ms=None,
+        order_id=order_id or None,
+        started_at_ms=_as_int(at.get("started_at_ms")) or real.started_at_ms,
+        focus_turn=candidate.turn,
     )
 
 
