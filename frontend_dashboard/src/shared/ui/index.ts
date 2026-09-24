@@ -13,3 +13,6 @@ export { ErrorBoundary } from "./ErrorBoundary";
 export { Toolbar, StatusBar, type SectionKey } from "./chrome";
 export { Markdown } from "./Markdown";
 export { DateRangeFilter } from "./DateRangeFilter";
+export { Modal } from "./Modal";
+export { SequenceTrace } from "./SequenceTrace";
+export { TraceStepDetail } from "./TraceStepDetail";
