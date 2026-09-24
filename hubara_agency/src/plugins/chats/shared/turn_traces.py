@@ -47,7 +47,8 @@ def _parse_lines(lines: list[str]) -> list[dict[str, Any]]:
 def read_traces(vault_dir: Path, session_id: str) -> list[dict[str, Any]]:
     path = trace_path(vault_dir, session_id)
     try:
-        return _parse_lines(path.read_text(encoding="utf-8").splitlines())
+        # Un corte a mitad de escritura o un byte raro no tumba a quien lee.
+        return _parse_lines(path.read_text(encoding="utf-8", errors="replace").splitlines())
     except OSError:
         return []
 

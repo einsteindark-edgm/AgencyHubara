@@ -589,13 +589,25 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 
 ### Requirement: Hilo de cada turno del bot en el chat (laboratorio, PR 17)
 
-El panel del chat SHALL ofrecer, al final de cada turno del bot, un botón visible siempre (también en la app Android) que abre el hilo de ese turno: el diagrama de secuencia de la traza (`GET /api/chats/sessions/{sesión}/turns/trace?turn_key=`). `GET /api/dashboard/sessions/{sesión}` MUST marcar cada burbuja con el `turn_key` del turno que la produjo: el mensaje del cliente, con el turno que lo procesó (por wamid, o el primero que arrancó después, dentro de 30 min); lo del bot, con el último turno que arrancó antes. Los mensajes del operador humano y los eventos de sistema no llevan turno. Solo lectura.
+El panel del chat SHALL ofrecer, al final de cada turno del bot, un botón visible siempre (también en la app Android) que abre el hilo de ese turno: el diagrama de secuencia de la traza (`GET /api/chats/sessions/{sesión}/turns/trace?turn_key=`). `GET /api/dashboard/sessions/{sesión}` MUST marcar cada burbuja con el `turn_key` del turno que la produjo: el mensaje del cliente, con el turno que lo procesó (por wamid, o el primero que arrancó después, dentro de 30 min); lo del bot, con el último turno que arrancó antes y que todavía no había terminado (hasta 1 min después de escribir su traza, `recorded_at_ms`). Los mensajes del operador humano, los ecos de otro agente (`sender`), las plantillas que llegan después del turno (ETA, remarketing, campañas) y los eventos de sistema no llevan turno. Una traza rota nunca deja sin historial al chat: el historial sale igual, sin botones. Solo lectura.
 
 #### Scenario: Un botón por turno
 
 - GIVEN un chat con dos turnos del bot y un mensaje del operador humano
 - WHEN el operador abre la conversación
 - THEN ve dos botones "Hilo del turno", al final de cada turno, y ninguno en el mensaje del operador
+
+#### Scenario: Una plantilla posterior no es del turno
+
+- GIVEN un turno del bot que terminó a las 10:00 y una plantilla de ETA que salió a las 10:15
+- WHEN el operador abre la conversación
+- THEN la burbuja de la plantilla no tiene botón de turno (su hilo no la trae)
+
+#### Scenario: Una traza rota no tumba el chat
+
+- GIVEN la traza del chat con una línea cortada a mitad de escritura
+- WHEN el operador abre la conversación
+- THEN ve todo el historial; los turnos que se pueden leer conservan su botón
 
 #### Scenario: Traza v1
 

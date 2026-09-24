@@ -91,3 +91,39 @@ def test_a_customer_message_long_before_any_turn_is_not_guessed() -> None:
     annotate_turn_keys(messages, [t1], SID)
 
     assert messages[0].get("turn_key") is None
+
+
+def test_a_template_sent_long_after_the_turn_is_not_that_turn() -> None:
+    """ETA, remarketing o una campaña mandan su plantilla minutos u horas
+    después: no la produjo el turno anterior del bot (su hilo no la trae)."""
+    t1 = {**_trace(1, T0, wamids=["wamid.A"], sent=["¡Hola!"], key="run:x/t:1"), "recorded_at_ms": T0 + 9_000}
+    messages = [
+        {"ui_type": "agent_message", "content": "¡Hola!", "timestamp": _iso(T0 + 7_000)},
+        {"ui_type": "agent_message", "kind": "template", "content": "Tu pedido va en camino", "timestamp": _iso(T0 + 15 * 60_000)},
+    ]
+
+    annotate_turn_keys(messages, [t1], SID)
+
+    assert [m.get("turn_key") for m in messages] == ["run:x/t:1", None]
+
+
+def test_an_echo_of_another_agent_is_not_a_turn_of_the_bot() -> None:
+    t1 = _trace(1, T0, wamids=["wamid.A"], sent=["¡Hola!"], key="run:x/t:1")
+    messages = [{"ui_type": "agent_message", "sender": "mba", "content": "Hola, soy el asistente de Meta", "timestamp": _iso(T0 + 5_000)}]
+
+    annotate_turn_keys(messages, [t1], SID)
+
+    assert messages[0].get("turn_key") is None
+
+
+def test_a_broken_trace_does_not_break_the_annotation() -> None:
+    broken = {"turn": 1, "turn_started_ms": True, "inbound": [{"wamid": ["no", "hashable"]}, "texto suelto"]}
+    weird = {**_trace(2, T0, wamids=[], sent=["ok"], key="run:x/t:2"), "inbound": [{"wamid": {"x": 1}}]}
+    messages = [
+        {"ui_type": "user_message", "content": "hola", "timestamp": _iso(T0 - 1_000), "wamid": "wamid.A"},
+        {"ui_type": "agent_message", "content": "ok", "timestamp": _iso(T0 + 4_000)},
+    ]
+
+    annotate_turn_keys(messages, [broken, weird], SID)
+
+    assert [m.get("turn_key") for m in messages] == ["run:x/t:2", "run:x/t:2"]

@@ -27,12 +27,17 @@ def _vault_dir() -> Path:
     return Path(WORKSPACE_VAULT_DIR)
 
 
+def _number(value: Any) -> int:
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+
 def _traces(session_id: str) -> list[dict[str, Any]]:
     require_valid_session_id(session_id)
     traces = turn_traces.read_traces(_vault_dir(), session_id)
+    # Una traza con un campo raro va al principio: no tumba el índice.
     return sorted(
         (t for t in traces if isinstance(t, dict)),
-        key=lambda t: (int(t.get("turn_started_ms") or 0), int(t.get("turn") or 0)),
+        key=lambda t: (_number(t.get("turn_started_ms")), _number(t.get("turn"))),
     )
 
 

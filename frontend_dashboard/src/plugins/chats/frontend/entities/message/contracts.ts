@@ -79,8 +79,9 @@ export const chatMessageSchema = z.object({
   wamid: z.string().optional(),
   /** Turno del bot que produjo este mensaje (traza por turno): el panel pone
    *  un botón por turno que abre su hilo. Ausente en mensajes del operador,
-   *  eventos de sistema e historial sin traza. */
-  turn_key: z.string().optional(),
+   *  eventos de sistema e historial sin traza. Un valor raro deja la burbuja
+   *  sin botón: nunca tumba la sesión (L-10). */
+  turn_key: z.string().optional().catch(undefined),
   /** Forma real del mensaje (ver `chatEventSchema`). Ausente = normal. */
   event: chatEventSchema.optional(),
   /** El cliente respondió CITANDO un mensaje. `author`/`text`/`image_url`

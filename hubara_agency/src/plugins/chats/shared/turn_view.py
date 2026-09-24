@@ -9,11 +9,15 @@
   * `annotate_turn_keys`: a cada burbuja del chat, el turno que la produjo.
     El mensaje del cliente va al turno que lo procesó (por su wamid si la
     traza lo trae; si no, el primer turno que arrancó después, dentro de la
-    ventana); lo del bot, al último turno que arrancó antes. El operador
-    humano y los eventos de sistema no son de ningún turno del bot.
+    ventana); lo del bot, al último turno que arrancó antes Y que todavía no
+    había terminado (`recorded_at_ms` de la traza): una plantilla de ETA, de
+    remarketing o de una campaña que llega después no es de ese turno. El
+    operador humano, el eco de otro agente (`sender`) y los eventos de
+    sistema no son de ningún turno del bot. Una traza rota se salta.
 """
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from datetime import datetime, timezone
 from typing import Any
 
@@ -22,6 +26,10 @@ from typing import Any
 _WINDOW_MS = 30 * 60_000
 #: El timestamp del mensaje y el inicio del turno salen de relojes distintos.
 _SLACK_MS = 5_000
+#: Lo que el turno manda después de escribir su traza (cierre, escalación).
+_AFTER_TRACE_MS = 60_000
+#: Sin `recorded_at_ms` (traza vieja), un turno nunca dura más que esto.
+_TURN_MAX_MS = 10 * 60_000
 _BOT_TYPES = frozenset({"agent_message", "agent_tool_call", "tool_execution_result", "ui_component_sent"})
 
 
@@ -74,32 +82,43 @@ def _ms(value: Any) -> int | None:
     return None
 
 
+def _number(value: Any) -> int | None:
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _turn_end(trace: dict[str, Any], started: int) -> int:
+    recorded = _number(trace.get("recorded_at_ms"))
+    return recorded + _AFTER_TRACE_MS if recorded is not None else started + _TURN_MAX_MS
+
+
 def annotate_turn_keys(messages: list[dict[str, Any]], traces: list[dict[str, Any]], session_id: str) -> None:
     ordered = sorted(
-        (t for t in traces if isinstance(t, dict) and isinstance(t.get("turn_started_ms"), (int, float))),
+        (t for t in traces if isinstance(t, dict) and _number(t.get("turn_started_ms")) is not None),
         key=lambda t: int(t["turn_started_ms"]),
     )
     if not ordered:
         return
-    by_wamid = {
-        m.get("wamid"): turn_key_of(t, session_id)
-        for t in ordered
-        for m in t.get("inbound") or []
-        if isinstance(m, dict) and m.get("wamid")
-    }
+    starts = [int(t["turn_started_ms"]) for t in ordered]
+    by_wamid: dict[str, str] = {}
+    for trace in ordered:
+        inbound = trace.get("inbound")
+        for m in inbound if isinstance(inbound, list) else []:
+            if isinstance(m, dict) and isinstance(m.get("wamid"), str) and m["wamid"]:
+                by_wamid[m["wamid"]] = turn_key_of(trace, session_id)
     for msg in messages:
         ui_type = msg.get("ui_type")
         at = _ms(msg.get("timestamp"))
         key: str | None = None
         if ui_type == "user_message":
-            key = by_wamid.get(msg.get("wamid"))
+            wamid = msg.get("wamid")
+            key = by_wamid.get(wamid) if isinstance(wamid, str) else None
             if key is None and at is not None:
-                after = next((t for t in ordered if int(t["turn_started_ms"]) >= at - _SLACK_MS), None)
-                if after is not None and int(after["turn_started_ms"]) - at <= _WINDOW_MS:
-                    key = turn_key_of(after, session_id)
-        elif ui_type in _BOT_TYPES and at is not None:
-            before = [t for t in ordered if int(t["turn_started_ms"]) <= at + _SLACK_MS]
-            if before and at - int(before[-1]["turn_started_ms"]) <= _WINDOW_MS:
-                key = turn_key_of(before[-1], session_id)
+                i = bisect_left(starts, at - _SLACK_MS)
+                if i < len(ordered) and starts[i] - at <= _WINDOW_MS:
+                    key = turn_key_of(ordered[i], session_id)
+        elif ui_type in _BOT_TYPES and at is not None and not msg.get("sender"):
+            i = bisect_right(starts, at + _SLACK_MS) - 1
+            if i >= 0 and at <= _turn_end(ordered[i], starts[i]):
+                key = turn_key_of(ordered[i], session_id)
         if key is not None:
             msg["turn_key"] = key

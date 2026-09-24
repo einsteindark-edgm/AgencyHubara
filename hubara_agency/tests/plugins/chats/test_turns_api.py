@@ -81,3 +81,41 @@ def test_each_bubble_of_the_chat_carries_its_turn(client: TestClient) -> None:
     messages = client.get(f"/api/dashboard/sessions/{SID}").json()["messages"]
 
     assert [m.get("turn_key") for m in messages] == [f"{SID}/ep_001/t1", f"{SID}/ep_001/t1", "run:x/t:2", "run:x/t:2"]
+
+
+def _traces_file(tmp_path: Path) -> Path:
+    return tmp_path / SID / "evals" / "turn_traces.jsonl"
+
+
+def test_a_trace_file_with_broken_bytes_does_not_break_the_chat(client: TestClient, tmp_path: Path) -> None:
+    """Un corte a mitad de escritura (o un byte raro) en la traza no puede
+    dejar sin historial el chat de producción ni sin índice sus turnos."""
+    with _traces_file(tmp_path).open("ab") as f:
+        f.write(b'{"turn": 3, "inbound_text": "\xff\xfe roto"}\n')
+
+    history = client.get(f"/api/dashboard/sessions/{SID}")
+    turns = client.get(f"/api/chats/sessions/{SID}/turns")
+
+    assert history.status_code == 200 and len(history.json()["messages"]) == 4
+    assert turns.status_code == 200 and len(turns.json()["turns"]) == 3
+
+
+def test_a_failure_annotating_turns_leaves_the_chat_without_buttons_not_broken(client: TestClient, monkeypatch) -> None:
+    def boom(*_a, **_kw):
+        raise RuntimeError("traza inesperada")
+
+    monkeypatch.setattr(dash_mod, "annotate_turn_keys", boom)
+
+    response = client.get(f"/api/dashboard/sessions/{SID}")
+
+    assert response.status_code == 200
+    assert all("turn_key" not in m for m in response.json()["messages"])
+
+
+def test_a_trace_with_a_bad_start_time_does_not_break_the_turn_index(client: TestClient, tmp_path: Path) -> None:
+    with _traces_file(tmp_path).open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"turn": "3a", "episode_id": "ep_001", "turn_started_ms": "ayer", "inbound_text": "x"}) + "\n")
+
+    response = client.get(f"/api/chats/sessions/{SID}/turns")
+
+    assert response.status_code == 200 and len(response.json()["turns"]) == 3

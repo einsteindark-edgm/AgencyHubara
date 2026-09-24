@@ -677,6 +677,10 @@ def _resolve_reply_quotes(
             reply_to["text"] = bubble["text"]
 
 
+def _annotate_turns(messages: list[dict], session_id: str) -> None:
+    annotate_turn_keys(messages, turn_traces.read_traces(WORKSPACE_VAULT_DIR, session_id), session_id)
+
+
 @router.get("/sessions/{session_id}")
 async def get_session_history(session_id: str):
     """
@@ -754,8 +758,13 @@ async def get_session_history(session_id: str):
 
     _resolve_reply_quotes(messages, data.get("outbound_text_index"))
     # Cada burbuja con el turno del bot que la produjo: el panel pone un botón
-    # por turno que abre su hilo (plan del laboratorio PR 17).
-    annotate_turn_keys(messages, turn_traces.read_traces(WORKSPACE_VAULT_DIR, session_id), session_id)
+    # por turno que abre su hilo (plan del laboratorio PR 17). Fuera del loop
+    # de eventos (la traza de un chat largo pesa MB) y nunca a costa del chat:
+    # si algo falla, el historial sale igual, sin botones.
+    try:
+        await asyncio.to_thread(_annotate_turns, messages, session_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("dashboard: sin botones de turno para {}", session_id, exc_info=True)
 
     # Forma real del mensaje para el panel del chat: los botones vuelven a ser
     # botones, la foto su foto, el caption del cliente separado de lo que
