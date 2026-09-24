@@ -1,4 +1,4 @@
-import { useCheckStats, type VerdictTotals } from "@plugins/agents_admin/frontend/entities/check-stats";
+import { useCheckStats, type StatsBot, type VerdictTotals } from "@plugins/agents_admin/frontend/entities/check-stats";
 import {
   EPISODE_VERDICT_ORDER,
   episodeVerdictColor,
@@ -11,6 +11,8 @@ import { StageFunnel } from "@plugins/agents_admin/frontend/features/stage-funne
 
 interface Props {
   days: number;
+  /** Solo los episodios de ese bot (encendido del bot nuevo); null = todos. */
+  bot?: StatsBot | null;
   onSelectVerdict: (v: Exclude<EpisodeVerdict, "SIN_DATOS">) => void;
   onSelectCheck: (checkId: string) => void;
 }
@@ -65,8 +67,8 @@ function VerdictTiles({
 }
 
 /** Pestaña Resumen: una sola fetch de agregados alimenta tiles, Pareto, embudo y tendencia. */
-export function SummaryView({ days, onSelectVerdict, onSelectCheck }: Props) {
-  const stats = useCheckStats(days);
+export function SummaryView({ days, bot = null, onSelectVerdict, onSelectCheck }: Props) {
+  const stats = useCheckStats(days, bot);
 
   if (stats.isLoading) return <p className="text-sm text-fg-muted">Cargando agregados del scorecard…</p>;
   if (stats.isError) {

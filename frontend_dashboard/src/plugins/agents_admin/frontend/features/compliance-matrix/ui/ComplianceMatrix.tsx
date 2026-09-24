@@ -10,6 +10,7 @@ import {
   statusLabel,
   useCheckRegistry,
   useScorecards,
+  type ScorecardBot,
   type CheckStatus,
   type EpisodeRef,
   type EpisodeVerdict,
@@ -25,6 +26,8 @@ import {
 
 interface Props {
   days?: number;
+  /** Solo los episodios de ese bot (encendido del bot nuevo); null = todos. */
+  bot?: ScorecardBot | null;
   verdictFilter: VerdictFilter;
   onVerdictFilterChange: (v: VerdictFilter) => void;
   /** Check elegido en el Pareto: solo episodios que lo fallan. */
@@ -70,6 +73,7 @@ const CELL_BG: Partial<Record<CheckStatus, string>> = {
  */
 export function ComplianceMatrix({
   days = 30,
+  bot = null,
   verdictFilter,
   onVerdictFilterChange,
   checkFilter,
@@ -78,7 +82,7 @@ export function ComplianceMatrix({
   onSelectEpisode,
   rowCap = ROW_CAP,
 }: Props) {
-  const list = useScorecards(days);
+  const list = useScorecards(days, bot);
   const registry = useCheckRegistry();
   const [stage, setStage] = useState<string | null>(null);
   const [onlyFailing, setOnlyFailing] = useState(false);

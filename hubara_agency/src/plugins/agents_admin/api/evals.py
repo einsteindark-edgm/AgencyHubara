@@ -154,14 +154,23 @@ async def scorecard_checks(request: Request) -> dict[str, Any]:
     return await _forward(request, "GET", "/api/chats/evals/checks")
 
 
+#: Filtro de Calidad LLM durante el encendido del bot nuevo (lab PR 18).
+_BOT_PATTERN = "^(actual|nuevo)$"
+
+
+def _with_bot(params: dict[str, Any], bot: str | None) -> dict[str, Any]:
+    return {**params, "bot": bot} if bot else params
+
+
 @router.get("/evals/scorecards")
 async def list_scorecards(
     request: Request,
     days: int = Query(default=30, ge=1, le=180),
+    bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
 ) -> dict[str, Any]:
     """Último scorecard por episodio (lista y matriz de cumplimiento)."""
     return await _forward(
-        request, "GET", "/api/chats/evals/scorecards", params={"days": days}
+        request, "GET", "/api/chats/evals/scorecards", params=_with_bot({"days": days}, bot)
     )
 
 
@@ -192,10 +201,11 @@ async def rescore_scorecard(
 async def scorecard_stats(
     request: Request,
     days: int = Query(default=56, ge=7, le=365),
+    bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
 ) -> dict[str, Any]:
     """Pareto, tendencia semanal por check y embudo de etapa final."""
     return await _forward(
-        request, "GET", "/api/chats/evals/checks/stats", params={"days": days}
+        request, "GET", "/api/chats/evals/checks/stats", params=_with_bot({"days": days}, bot)
     )
 
 

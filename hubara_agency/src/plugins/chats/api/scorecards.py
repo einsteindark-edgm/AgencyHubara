@@ -10,6 +10,8 @@ cast de `agents_admin` (`/api/agents/evals/*`).
   * GET  /evals/scorecard           → detalle: scorecard + trayectoria + puntaje legado
   * POST /evals/scorecard/rescore   → recalcula (código ya; juez en el worker)
   * GET  /evals/checks/stats        → Pareto, tendencia semanal, embudo
+    (`?bot=actual|nuevo` en la lista y en las gráficas: qué bot respondió
+    el episodio, desde el `mode` de su traza — plan del laboratorio PR 18)
   * POST /evals/labels              → etiqueta humana de un check
   * GET  /evals/labels              → etiquetas de un episodio
   * GET  /evals/labels/queue        → qué etiquetar primero
@@ -44,8 +46,10 @@ from src.plugins.chats.agent.sales_eval.scorecard.registry import (
     SPECS_BY_ID,
     specs_payload,
 )
+from src.plugins.chats.agent.sales_eval.scorecard.bot import episode_bot
 from src.plugins.chats.agent.sales_eval.scorecard.stats import STAGE_ORDER
 from src.plugins.chats.agent.sales_eval.scorecard.trajectory import Trajectory
+from src.plugins.chats.shared import turn_traces
 
 router = APIRouter()
 
@@ -140,13 +144,32 @@ def scorecard_checks() -> dict[str, Any]:
     }
 
 
+_BOT_PATTERN = "^(actual|nuevo)$"
+
+
+def _with_bot(rows: list[dict[str, Any]], bot: str | None) -> list[dict[str, Any]]:
+    """Cada fila con el bot que respondió el episodio; si `bot`, solo esas."""
+    vault = get_vault_dir()
+    out = []
+    for row in rows:
+        sid, ep = str(row.get("session_id") or ""), str(row.get("episode_id") or "")
+        traces = turn_traces.traces_for_episode(vault, sid, ep) if _SESSION_ID_RE.match(sid) else []
+        row = {**row, "bot": episode_bot(traces)}
+        if bot is None or row["bot"] == bot:
+            out.append(row)
+    return out
+
+
 @router.get("/evals/scorecards")
-def list_scorecards(days: int = Query(default=30, ge=1, le=180)) -> dict[str, Any]:
+def list_scorecards(
+    days: int = Query(default=30, ge=1, le=180),
+    bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
+) -> dict[str, Any]:
     dates = _dates(days)
-    rows = store.list_scorecards(
-        store.scorecards_dir(get_vault_dir()), dates=dates, episode_since=dates[-1]
+    rows = _with_bot(
+        store.list_scorecards(store.scorecards_dir(get_vault_dir()), dates=dates, episode_since=dates[-1]), bot
     )
-    return {"days": days, "count": len(rows), "registry_version": REGISTRY_VERSION, "scorecards": rows}
+    return {"days": days, "bot": bot, "count": len(rows), "registry_version": REGISTRY_VERSION, "scorecards": rows}
 
 
 @router.get("/evals/scorecard")
@@ -219,13 +242,18 @@ async def rescore(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str
 
 
 @router.get("/evals/checks/stats")
-def check_stats(days: int = Query(default=56, ge=7, le=365)) -> dict[str, Any]:
+def check_stats(
+    days: int = Query(default=56, ge=7, le=365),
+    bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
+) -> dict[str, Any]:
     dates = _dates(days)
     rows = store.list_scorecards(
         store.scorecards_dir(get_vault_dir()), dates=dates, episode_since=dates[-1]
     )
+    if bot is not None:
+        rows = _with_bot(rows, bot)
     weeks = stats.weeks_between(dates[-1], dates[0])
-    return {"days": days, **stats.compute_stats(rows, weeks=weeks)}
+    return {"days": days, "bot": bot, **stats.compute_stats(rows, weeks=weeks)}
 
 
 @router.post("/evals/labels")

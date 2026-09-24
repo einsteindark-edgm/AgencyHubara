@@ -119,4 +119,20 @@ describe("AgentsQuality (scorecard por etapa)", () => {
     fireEvent.click(screen.getByRole("tab", { name: /calibración/i }));
     expect(await screen.findByRole("table", { name: /calibración del juez/i })).toBeInTheDocument();
   });
+
+  it("filtra por bot durante el encendido: las gráficas y la matriz piden solo ese bot (PR 18)", async () => {
+    renderIt();
+    await screen.findByRole("list", { name: /veredictos de los episodios/i });
+
+    const picker = screen.getByRole("radiogroup", { name: "Bot que respondió" });
+    expect(within(picker).getByRole("radio", { name: "Todos" })).toBeChecked();
+    fireEvent.click(within(picker).getByRole("radio", { name: "Bot nuevo" }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/checks/stats?days=56&bot=nuevo"))).toBe(true),
+    );
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/scorecards?days=56&bot=nuevo"))).toBe(true),
+    );
+  });
 });
