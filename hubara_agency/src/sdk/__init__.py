@@ -14,6 +14,7 @@ Organización (importá el kit que necesitás — no hay God-module):
 - ``src.sdk.dashboardkit``   → push al dashboard vía bus in-process / SSE (canal 1).
 - ``src.sdk.agentkit``       → workers conversacionales (turn loop, tools, registries).
 - ``src.sdk.connectorkit``   → ports de capability hacia vendors externos (F-SDK-4).
+- ``src.sdk.labkit``         → laboratorio de conversaciones: almacén S3 y lanzador de la caja.
 - ``src.sdk.testkit``        → TCK: suite de conformance + certificación (F-SDK-2).
 - ``src.sdk.cli``            → ``uv run python -m src.sdk.cli`` (F-SDK-3).
 

@@ -67,6 +67,8 @@ from src.plugins.chats.agent.sales_eval.workflows.evaluate_episode import (
 from src.plugins.chats.agent.sales_eval.workflows.golden_eval import GoldenEvalWorkflow
 from src.plugins.chats.agent.sales_eval.workflows.score_episode import ScoreEpisodeWorkflow
 from src.plugins.chats.agent.sales_eval.workflows.sales_eval import SalesEvalWorkflow
+from src.plugins.chats.agent.sales_lab.launch.activities import LAB_LAUNCH_ACTIVITIES
+from src.plugins.chats.agent.sales_eval.workflows.lab_launch import LabLaunchWorkflow
 
 _SCHEDULE_ID = "sales-eval-schedule"
 _WORKFLOW_ID = "sales-eval"
@@ -215,7 +217,14 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=task_queue,
-        workflows=[SalesEvalWorkflow, GoldenEvalWorkflow, EvaluateEpisodeWorkflow, ScoreEpisodeWorkflow],
+        workflows=[
+            SalesEvalWorkflow,
+            GoldenEvalWorkflow,
+            EvaluateEpisodeWorkflow,
+            ScoreEpisodeWorkflow,
+            # Laboratorio de conversaciones (plan §3.7): el botón "Nueva corrida".
+            LabLaunchWorkflow,
+        ],
         activities=[
             select_conversations_to_eval_activity,
             evaluate_sales_conversation_activity,
@@ -224,6 +233,8 @@ async def main() -> None:
             score_episode_scorecard_activity,
             # HU-SC-8: selección del scorecard en el barrido diario.
             select_scorecard_units_activity,
+            # Lanzador de corridas del laboratorio: exportar, orden, caja, SSM, avance.
+            *LAB_LAUNCH_ACTIVITIES,
         ],
         workflow_runner=otel_workflow_runner(),
     )
