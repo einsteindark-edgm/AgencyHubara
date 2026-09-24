@@ -640,7 +640,7 @@ async def test_inbound_ids_travel_as_fourth_signal_arg_when_enabled(monkeypatch)
     await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
 
     args = client.start_calls[0]["start_signal_args"]
-    assert len(args) == 4 and args[3] == _META
+    assert len(args) == 4 and args[3] == {**_META, "perception_mode": "off"}
 
 
 @pytest.mark.asyncio
@@ -686,7 +686,10 @@ async def test_the_perception_mode_travels_with_the_inbound_ids(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ceiling", [None, "off", "encendido"])
-async def test_without_a_valid_ceiling_no_mode_travels(monkeypatch, ceiling):
+async def test_without_a_valid_ceiling_the_mode_travels_as_off(monkeypatch, ceiling):
+    """El modo `off` viaja EXPLÍCITO: el workflow se queda con el último modo
+    que recibió, así que sin esto un chat en curso seguiría en canary/on
+    después de bajar el techo (el apagado solo llegaría al terminar la sesión)."""
     monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
     if ceiling is None:
         monkeypatch.delenv("SALES_PERCEPTION_MODE_CEILING", raising=False)
@@ -697,4 +700,4 @@ async def test_without_a_valid_ceiling_no_mode_travels(monkeypatch, ceiling):
 
     await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
 
-    assert client.start_calls[0]["start_signal_args"][3] == _META
+    assert client.start_calls[0]["start_signal_args"][3] == {**_META, "perception_mode": "off"}
