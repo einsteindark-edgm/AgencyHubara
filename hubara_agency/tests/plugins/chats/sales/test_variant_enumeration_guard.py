@@ -131,3 +131,27 @@ async def test_activity_degrades_when_catalog_is_down(guard_env: Path, monkeypat
     monkeypatch.setattr(mod, "get_catalog_client", lambda: _Broken())
     assert await mod.apply_variant_enumeration_guard_activity("wa_test_enum", ENUMERATION) is False
     assert _intents(guard_env) == []
+
+
+# Prueba en vivo 2026-09-24 (cupón AMOR2026 con cupo): el bot escribió las
+# combinaciones del cupón por producto y con precio — la respuesta correcta —
+# y la guarda la reemplazó por un selector de COLORES sueltos: se perdieron los
+# aromas, los otros productos y los precios ("Café" salió como color). Una
+# lista de combinaciones "Color · Aroma" no es una enumeración suelta.
+COMBOS = (
+    "¡Qué bueno que te guste! 🤍\n\nPara que aproveches el *AMOR2026*, te cuento que aplica en "
+    "estas combinaciones:\n\n*Cubo Love* ($21.000 → $18.900): Lila · Lavanda, Azul · Caballero "
+    "de la noche, Amarillo · Café, Gris · Caballero de la noche, Rosado · Caballero de la noche.\n\n"
+    "*Cilindro Love* ($23.500 → $21.150): Rosado · Caballero de la noche, Verde · Limoncillo, "
+    "Azul · Lavanda.\n\n¿Cuál te llama la atención?"
+)
+
+
+def test_a_list_of_color_aroma_combinations_is_not_a_plain_enumeration() -> None:
+    assert find_enumerated_variants(COMBOS, aromas=AROMAS, colors=COLORS) is None
+
+
+def test_one_combination_among_a_plain_list_still_counts_as_enumeration() -> None:
+    text = "Lo tenemos en azul, morado, rosado, blanco y negro; el más pedido es Lila · Lavanda."
+    hit = find_enumerated_variants(text, aromas=AROMAS, colors=COLORS)
+    assert hit is not None and hit[0] == "color"
