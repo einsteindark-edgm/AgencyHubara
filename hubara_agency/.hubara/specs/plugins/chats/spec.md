@@ -587,6 +587,38 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - WHEN el operador usa "Crear pedido"
 - THEN el sugerido muestra `discount_cop`/`coupon_code` y el registro descuenta lo mismo que descontaría el bot
 
+### Requirement: Cupo por unidad de un cupón
+
+Un cupón con filas de cupo (Marketing → Cupones: producto + color + aroma +
+unidades) MUST aplicar SOLO a esas combinaciones mientras queden unidades.
+Las vendidas MUST derivarse de los pedidos de Medusa (líneas con
+`metadata.coupon_quota_id`, sin cancelados ni de prueba), nunca de un
+contador. Si no se pueden leer, el cupón con cupo MUST NOT aplicarse (falla
+cerrada). Un cupón sin filas se comporta como siempre.
+
+#### Scenario: El cupón vale solo en la combinación con unidades
+
+- GIVEN AMOR26 tiene 5 unidades de Cubo Love · Rosado · Café, 2 vendidas
+- WHEN el cliente da el código y el bot llama `apply_coupon`
+- THEN el envelope trae `units: [{title, color, aroma, units_left: 3, price_cop, discounted_price_cop}]` y el resumen dice que otros colores, aromas o productos van a precio normal
+
+#### Scenario: El cupón no permite decir cuántas quedan (D3)
+
+- GIVEN el cupón tiene `show_units_left=false`
+- THEN `apply_coupon` y `list_promotions` omiten `units_left` y el resumen le pide al bot no decir el número
+
+#### Scenario: Agotado
+
+- GIVEN todas las filas del cupón están en 0
+- WHEN el cliente da el código
+- THEN `apply_coupon` responde `applied=false, reason=quota_exhausted`, no guarda nada en el episodio, el turno sigue y el bot ofrece el precio normal sin inventar otro descuento
+- AND `list_promotions` lo muestra como agotado (`exhausted=true`)
+
+#### Scenario: No se pueden leer las vendidas
+
+- GIVEN Medusa no responde al leer los pedidos
+- THEN `apply_coupon` responde `applied=false, reason=quota_unavailable` y `list_promotions` marca `units_unavailable=true`
+
 ## Out of scope
 
 - Verificación por visión/IA del CONTENIDO de un PDF (¿es un pago real?) — decisión 2026-09-01: la clasificación de PDFs es determinista (todo PDF → verificación humana)
