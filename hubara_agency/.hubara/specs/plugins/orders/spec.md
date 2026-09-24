@@ -394,6 +394,18 @@ reintento de reconciliación MUST conservar el cupo de cada unidad.
 - WHEN la reconciliación lo reintenta
 - THEN cada unidad con descuento viaja con el mismo `quota_id` y la línea en Medusa lleva `coupon_quota_id`
 
+#### Scenario: El reintento no se cuenta a sí mismo (L-28)
+
+- GIVEN el intento original SÍ creó el draft en Medusa aunque el adapter reportó falla (timeout) y ese draft se llevó la última unidad
+- WHEN la reconciliación relee el cupo bajo el candado
+- THEN ese draft (misma `metadata.session_key` + `metadata.order_fingerprint`) no cuenta como vendido para él, el port lo reusa por fingerprint y el registro queda `resolved` — no `abandoned` ni duplicado
+
+#### Scenario: Sin poder releer el cupo
+
+- GIVEN el candado está ocupado, o Medusa o el vault no responden al releer el cupo
+- WHEN la reconciliación reintenta
+- THEN NO registra, suma un intento (`quota_unavailable: …`) y el registro sigue `pending`; el barrido continúa con los demás pedidos aunque uno falle
+
 ## Out of scope (NO go en este spec)
 
 - Listado/historial completo de órdenes archivadas (>30 días entregadas) — fuera del kanban

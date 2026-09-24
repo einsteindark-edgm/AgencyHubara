@@ -648,8 +648,25 @@ cerrada). Un cupón sin filas se comporta como siempre.
 
 - GIVEN dos clientes confirmaron la última unidad
 - WHEN ambos llaman `register_order`
-- THEN, bajo el candado del código, uno crea el pedido y el otro recibe `quota_changed` con `new_total_cop`, sin draft
-- AND "Crear pedido" del dashboard reparte y registra con las mismas reglas y el mismo candado
+- THEN, bajo el candado del código, uno crea el pedido y el otro recibe `quota_changed` con `new_total_cop` y `error=quota_changed`, sin draft
+- AND "Crear pedido" del dashboard reparte y registra con las mismas reglas y el mismo candado, y ante `quota_changed` devuelve el total NUEVO
+
+#### Scenario: Los rechazos del cupo se corrigen, no se escalan
+
+- GIVEN `register_order` rechaza por `quota_changed`, `quota_busy` o `invalid_variant_attribute`
+- THEN el envelope trae `error` con ese código (#353: con `error` el bot corrige y reintenta; sin `error` escala ORDER_REGISTRATION_FAILED)
+
+#### Scenario: Ítems en otro orden al registrar
+
+- GIVEN el cliente confirmó [Cubo Love Rosado · Café, Vela Buda] con descuento en el cubo
+- WHEN el bot llama `register_order` con [Vela Buda, Cubo Love Rosado · Café]
+- THEN es el mismo pedido confirmado (el reparto se compara por producto + color + aroma + precio, no por posición) y el descuento va a la línea del cubo
+
+#### Scenario: No se puede releer el cupo al registrar
+
+- GIVEN el cliente confirmó el total con descuento
+- WHEN al registrar Medusa (vendidas) o el vault (filas del cupo) no responden
+- THEN NO se crea el draft, el pedido queda en `failed_order_registrations` (pending) con el reparto CONFIRMADO, y el envelope trae `audit_id` SIN `error` (el bot escala como con Medusa caído) — nunca un "total nuevo" falso
 
 ## Out of scope
 

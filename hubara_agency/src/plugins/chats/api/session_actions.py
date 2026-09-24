@@ -65,6 +65,7 @@ from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
 from src.plugins.chats.agent.sales.config.shipping import shipping_rate_for_city
 from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+    REASON_QUOTA_UNAVAILABLE,
     remember_confirmed_split,
     resolve_item_variants,
     split_key,
@@ -543,6 +544,23 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
         if (
             discount is not None
             and discount.quota
+            and discount.reason == REASON_QUOTA_UNAVAILABLE
+            and body.expected_discount_cop
+        ):
+            # El formulario mostró un descuento que ahora no se puede releer
+            # (Medusa o el vault no responden): NO es "cambiaron las unidades"
+            # con el precio lleno como total nuevo — no se registra nada.
+            return {
+                "registered": False,
+                "order_id": None,
+                "error_detail": "quota_unavailable",
+                "subtotal_cop": subtotal_cop,
+                "shipping_cop": shipping_cop,
+                "total_cop": None,
+            }
+        if (
+            discount is not None
+            and discount.quota
             and body.expected_discount_cop is not None
             and body.expected_discount_cop != discount_cop
         ):
@@ -597,6 +615,10 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
                 # candado: el operador ve el total NUEVO (el de la tool).
                 failed["discount_cop"] = int(envelope.get("new_discount_cop") or 0)
                 failed["total_cop"] = int(envelope.get("new_total_cop") or total_cop)
+            if envelope.get("audit_id"):
+                # Quedó en `failed_order_registrations` y la reconciliación lo
+                # reintenta sola: crearlo otra vez a mano puede duplicarlo.
+                failed["saved_for_retry"] = True
             return failed
         order_id = str(envelope["order_id"])
         provider = envelope.get("provider")

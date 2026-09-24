@@ -112,6 +112,8 @@ export const createOrderResultSchema = z.object({
   discount_cop: z.number().nullable().default(null),
   total_cop: z.number().nullable().default(null),
   payment_instructions_sent: z.boolean().default(false),
+  /** El intento quedó guardado y la reconciliación lo reintenta sola. */
+  saved_for_retry: z.boolean().default(false),
 });
 
 export type OrderIntakeItem = z.infer<typeof orderIntakeItemSchema>;

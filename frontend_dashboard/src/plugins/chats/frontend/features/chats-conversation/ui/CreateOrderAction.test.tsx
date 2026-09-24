@@ -456,6 +456,16 @@ describe("CreateOrderAction", () => {
         { error_detail: "quota_busy" },
         /Otro pedido con el mismo cupón se está registrando; intenta de nuevo en unos segundos\./,
       ],
+      [
+        "no se pueden leer las unidades del cupón",
+        { error_detail: "quota_unavailable" },
+        /No se pudieron leer las unidades con descuento del cupón.*No se registró nada/,
+      ],
+      [
+        "Medusa lo rechazó y quedó guardado para reintentar",
+        { error_detail: "medusa_api_error: HTTP 503 /admin/draft-orders: down", saved_for_retry: true },
+        /quedó guardado y el sistema lo reintenta solo: no lo crees de nuevo/,
+      ],
     ])("si el registro rechaza por %s lo explica", async (_case, rejection, message) => {
       createAsync.mockResolvedValue({ registered: false, order_id: null, ...rejection });
       await openForm(WITH_COUPON);

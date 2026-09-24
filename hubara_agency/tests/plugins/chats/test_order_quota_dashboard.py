@@ -278,3 +278,54 @@ def test_dashboard_quota_changed_inside_the_lock_answers_with_the_new_total(tmp_
     assert res["discount_cop"] == 0
     assert res["total_cop"] == 21000 + res["shipping_cop"]
     assert port.calls == []
+
+
+@dataclass
+class _SalesDown:
+    async def sold_units(self, *, since: datetime) -> dict[str, int]:
+        from src.platform.promotions.port import PromotionsUnavailableError
+
+        raise PromotionsUnavailableError("timeout")
+
+
+def test_dashboard_order_with_the_quota_unreadable_is_not_quota_changed(tmp_path: Path) -> None:
+    """El formulario mostró −$2.100 y al enviar Medusa no responde: NO es
+    "cambiaron las unidades" con el precio lleno como total nuevo (el operador
+    le cobraría de más al cliente creyendo que otro se llevó la unidad). No se
+    registra nada y se dice por qué."""
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    client = _orders_client(tmp_path, port, _SalesDown())
+
+    res = client.post(f"/api/chats/session-actions/{_S}/order", json={
+        "items": [{"handle": "cubo-love", "quantity": 1, "color": "Rosado", "aroma": "Café"}],
+        "shipping": _SHIP, "payment_method": "transfer", "expected_discount_cop": 2100,
+    }).json()
+
+    assert (res["registered"], res["error_detail"]) == (False, "quota_unavailable")
+    assert port.calls == []
+
+
+@dataclass
+class _DownPort:
+    async def register_order(self, **kw: Any) -> OrderRegistrationResult:
+        return OrderRegistrationResult(success=False, order_id=None, provider="medusa",
+                                       error_detail="medusa_api_error: HTTP 503 /admin/draft-orders: down")
+
+
+def test_dashboard_failure_kept_for_reconciliation_says_it_retries_by_itself(tmp_path: Path) -> None:
+    """Medusa rechazó y el intento quedó en `failed_order_registrations`: el
+    operador tiene que saber que el sistema lo reintenta solo (crearlo otra
+    vez a mano puede duplicarlo)."""
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    client = _orders_client(tmp_path, _DownPort(), _Sales())  # type: ignore[arg-type]
+
+    res = client.post(f"/api/chats/session-actions/{_S}/order", json={
+        "items": [{"handle": "cubo-love", "quantity": 1}],
+        "shipping": _SHIP, "payment_method": "transfer",
+    }).json()
+
+    assert res["registered"] is False
+    assert res["saved_for_retry"] is True
+    saved = json.loads((tmp_path / _S / "metadata.json").read_text(encoding="utf-8"))
+    assert [r["status"] for r in saved["failed_order_registrations"]] == ["pending"]

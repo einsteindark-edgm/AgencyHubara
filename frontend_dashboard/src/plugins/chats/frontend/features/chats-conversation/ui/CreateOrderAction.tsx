@@ -167,6 +167,8 @@ const ERROR_LABEL: Record<string, string> = {
     "Cambiaron las unidades con descuento del cupón: revisa el total y vuelve a crear el pedido.",
   quota_busy:
     "Otro pedido con el mismo cupón se está registrando; intenta de nuevo en unos segundos.",
+  quota_unavailable:
+    "No se pudieron leer las unidades con descuento del cupón (Medusa no respondió). No se registró nada: intenta de nuevo en un minuto.",
 };
 
 const MISSING_LABEL: Record<string, string> = {
@@ -186,6 +188,12 @@ function formatCop(value: number): string {
  *  nuevo: el operador tiene que verlo antes de volver a crear el pedido. */
 function rejectionMessage(result: CreateOrderResult): string {
   const detail = result.error_detail ?? "";
+  if (result.saved_for_retry) {
+    return (
+      `No se pudo registrar ahora${detail ? ` (${detail})` : ""}. El intento quedó guardado y el ` +
+      "sistema lo reintenta solo: no lo crees de nuevo; míralo en Pedidos."
+    );
+  }
   if (detail === "quota_changed" && result.total_cop !== null && result.discount_cop !== null) {
     return (
       "Cambiaron las unidades con descuento del cupón: el total ahora es " +
