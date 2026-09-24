@@ -118,7 +118,9 @@ def _unit(
     discount = compute_discount(per_unit, [line]).discount_cop
     if discount <= 0:
         return None
-    unit: dict[str, Any] = {"title": quota.title, "color": quota.color, "aroma": quota.aroma}
+    unit: dict[str, Any] = {
+        "handle": quota.handle, "title": quota.title, "color": quota.color, "aroma": quota.aroma,
+    }
     if show:
         unit["units_left"] = status.units_left
     unit["price_cop"] = price

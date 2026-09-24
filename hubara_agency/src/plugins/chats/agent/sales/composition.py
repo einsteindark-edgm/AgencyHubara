@@ -53,6 +53,10 @@ from src.plugins.chats.agent.sales.use_cases.ingest_delivery_status import (
 from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
     IngestInboundMessage,
 )
+from src.plugins.chats.agent.sales.use_cases.coupon_application import (
+    CouponApplication,
+    resolve_coupon_application,
+)
 from src.plugins.chats.agent.sales.use_cases.ingest_handover import IngestHandover
 from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import emit_watchdog_events
 from src.plugins.chats.agent.sales.use_cases.ingest_standby import IngestStandby
@@ -135,8 +139,30 @@ def build_ingest_use_case() -> IngestInboundMessage:
         tenant_id=tenant_id,
         web_cart_reader=get_web_cart_reader(),
         catalog=get_catalog_client(),
+        campaign_coupon=_validate_campaign_coupon,
     )
     return _INGEST_USE_CASE
+
+
+async def _validate_campaign_coupon(code: str, now_ms: int) -> CouponApplication:
+    """El cupón que anuncia la campaña, validado contra Medusa y su cupo con
+    los mismos puertos del SDK que usa `apply_coupon` (se resuelven al
+    llamar: sin Medusa configurado falla y el ingest degrada al bot)."""
+    from src.sdk.connectorkit import (
+        get_catalog_client,
+        get_coupon_sales_reader,
+        get_promo_quota_store,
+        get_promotions_port,
+    )
+
+    return await resolve_coupon_application(
+        code,
+        promotions=get_promotions_port(),
+        quotas=get_promo_quota_store(),
+        sales=get_coupon_sales_reader(),
+        catalog=get_catalog_client(),
+        now_ms=now_ms,
+    )
 
 
 def build_ingest_delivery_status_use_case() -> IngestDeliveryStatus:

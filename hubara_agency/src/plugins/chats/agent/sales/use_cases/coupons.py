@@ -167,12 +167,15 @@ def set_applied_coupon(
     now_ms: int,
     eligible: list[dict[str, Any]] | None = None,
     quota: bool = False,
+    units: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Mutates: fija el cupón en el episodio activo (lo crea si no hay).
 
     `eligible`: los productos a los que aplica (nombre + precios) — la nota
     de cada turno los recuerda para que el bot ofrezca ESOS. `quota`: el
-    cupón tiene cupo por unidad (esas combinaciones pueden agotarse)."""
+    cupón tiene cupo por unidad (esas combinaciones pueden agotarse).
+    `units`: esas combinaciones (handle, color, aroma, precios) — las leen
+    la nota de cada turno y el selector de variantes."""
     episode = get_active_episode(metadata) or ensure_active_episode(
         metadata, now_ms=now_ms
     )
@@ -182,6 +185,7 @@ def set_applied_coupon(
         "applied_at_ms": now_ms,
         "eligible_products": list(eligible or []),
         **({"quota": True} if quota else {}),
+        **({"units": list(units)} if units else {}),
     }
     return metadata
 

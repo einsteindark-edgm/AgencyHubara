@@ -22,6 +22,13 @@ from typing import Any
 
 from src.sdk.connectorkit import CAMPAIGN_ATTRIBUTION_WINDOW_MS
 
+from src.plugins.chats.agent.sales.use_cases.coupon_application import (
+    COUPON_REASON_TEXT,
+    TRANSIENT_REASONS,
+    CouponApplication,
+    exhausted_text,
+)
+
 
 def unanswered_campaign_touch(
     metadata: dict[str, Any], now_ms: int
@@ -103,8 +110,44 @@ def quote_campaign_in_turn(touch: dict[str, Any], text: str) -> str:
     )
 
 
-def build_campaign_reply_note(touch: dict[str, Any]) -> str:
+def _coupon_line(code: str, coupon: CouponApplication | None) -> str:
+    """Qué pasó con el cupón de la campaña (el ingest lo valida y lo aplica
+    solo; `coupon` None = no se pudo validar a tiempo)."""
+    if coupon is not None and coupon.applied:
+        if coupon.quota:
+            return (
+                f"Cupón de la campaña: {code} — ya quedó aplicado al pedido, no le "
+                "pidas el código. Vale SOLO en las combinaciones de [CUPÓN "
+                "APLICADO]: ofrécelas primero; cualquier otro color o aroma va a "
+                "precio normal (díselo)."
+            )
+        return (
+            f"Cupón de la campaña: {code} — ya quedó aplicado al pedido, no le "
+            "pidas el código. [CUPÓN APLICADO] dice a qué productos aplica."
+        )
+    if coupon is not None and coupon.reason and coupon.reason not in TRANSIENT_REASONS:
+        why = (
+            exhausted_text(code)
+            if coupon.reason == "quota_exhausted"
+            else COUPON_REASON_TEXT.get(coupon.reason, "Ese cupón no se puede usar.")
+        )
+        return (
+            f"Cupón de la campaña: {code} — no se pudo aplicar: {why} No prometas "
+            "descuento; si el cliente lo pide, explícaselo con honestidad."
+        )
+    return (
+        f"Cupón de la campaña: {code} — todavía no pude aplicarlo: llama "
+        f"apply_coupon(code='{code}') ANTES de ofrecer productos o precios."
+    )
+
+
+def build_campaign_reply_note(
+    touch: dict[str, Any], *, coupon: CouponApplication | None = None
+) -> str:
     """Nota de `plugin_context` para el turno que responde a la campaña.
+
+    `coupon`: el cupón de la campaña ya validado por el ingest (None = no se
+    pudo validar: el bot lo aplica con `apply_coupon`).
 
     Tuteo colombiano (REGLA #1, guard test_no_voseo_in_agent_strings.py).
     """
@@ -116,13 +159,9 @@ def build_campaign_reply_note(touch: dict[str, Any]) -> str:
     message = touch.get("message")
     if isinstance(message, str) and message.strip():
         lines.append(f"Lo que recibió: «{message.strip()}»")
-    coupon = touch.get("coupon_code")
-    if isinstance(coupon, str) and coupon.strip():
-        lines.append(
-            f"Cupón de la campaña: {coupon.strip()}. Si lo menciona o quiere "
-            "usarlo, valídalo con apply_coupon y ofrece los productos a los que "
-            "aplica."
-        )
+    code = touch.get("coupon_code")
+    if isinstance(code, str) and code.strip():
+        lines.append(_coupon_line(code.strip(), coupon))
     handles = [
         h for h in touch.get("product_handles") or [] if isinstance(h, str) and h
     ]

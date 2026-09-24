@@ -393,3 +393,176 @@ async def test_campaign_reply_turn_opens_with_facts_of_the_previous_episode():
     assert "Duo Zodiacal" not in loader.calls[0]["message"]
     assert lines[1].startswith("[El cliente responde a la campaña")
     assert lines[-1] == "Me gusta"
+
+
+# --- Cupón de la campaña: se aplica solo -------------------------------------
+#
+# Conversación de prueba del 2026-09-24 (campaña con AMOR2026 y cupo por
+# unidad): el cliente contestó «Me gusta», la nota decía «si lo menciona,
+# valídalo con apply_coupon», el bot nunca lo llamó y todo quedó a precio
+# lleno, con todos los aromas y colores del catálogo.
+
+_UNITS = (
+    {"handle": "cubo-love", "title": "Cubo Love", "color": "Amarillo", "aroma": "Café",
+     "units_left": 1, "price_cop": 21000, "discounted_price_cop": 18900},
+    {"handle": "cubo-love", "title": "Cubo Love", "color": "Lila", "aroma": "Lavanda",
+     "units_left": 1, "price_cop": 21000, "discounted_price_cop": 18900},
+)
+
+
+def _amor_promo():
+    from src.platform.promotions.port import PromotionDTO
+
+    return PromotionDTO(
+        id="promo_amor26", code="AMOR26", discount_type="percentage", value=10,
+        currency_code=None, target_type="items", allocation="across", max_quantity=None,
+        product_ids=("prod_cubo",), variant_ids=(), collection_ids=(),
+        min_subtotal_cop=None, is_automatic=False, status="active", starts_at_ms=None,
+        ends_at_ms=None, budget_type=None, budget_limit=None, budget_used=None,
+        description="Amor y amistad",
+    )
+
+
+def _applied_with_units():
+    from src.plugins.chats.agent.sales.use_cases.coupon_application import (
+        CouponApplication,
+    )
+    from src.plugins.chats.agent.sales.use_cases.coupon_quota import as_eligible
+
+    return CouponApplication(
+        "AMOR26", None, _amor_promo(), eligible=tuple(as_eligible(_UNITS)), units=_UNITS
+    )
+
+
+class _Applier:
+    def __init__(self, result=None, *, error: Exception | None = None, delay: float = 0) -> None:
+        self.result = result
+        self.error = error
+        self.delay = delay
+        self.codes: list[str] = []
+
+    async def __call__(self, code: str, now_ms: int):
+        import asyncio
+
+        self.codes.append(code)
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def _use_case_with_coupon(store: _Store, loader: _Loader, applier: _Applier) -> IngestInboundMessage:
+    return IngestInboundMessage(
+        history_store=_History(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=store,  # type: ignore[arg-type]
+        campaign_coupon=applier,
+    )
+
+
+@pytest.mark.asyncio
+async def test_campaign_reply_applies_the_campaign_coupon_without_asking_for_it():
+    now = int(time.time() * 1000)
+    store = _Store(_stale_trilogia_metadata(now))
+    loader = _Loader()
+    applier = _Applier(_applied_with_units())
+
+    await _use_case_with_coupon(store, loader, applier).execute(_message("Me gusta"))
+
+    assert applier.codes == ["AMOR26"]
+    new = store.data[_SESSION]["episodes"][-1]
+    assert new["applied_coupon"]["code"] == "AMOR26"
+    assert [u["color"] for u in new["applied_coupon"]["units"]] == ["Amarillo", "Lila"]
+    context = "\n".join(loader.calls[0]["extra_context"])
+    assert "[CUPÓN APLICADO: AMOR26" in context
+    assert "ya quedó aplicado" in context
+    assert "no le pidas el código" in context
+
+
+@pytest.mark.asyncio
+async def test_campaign_coupon_that_no_longer_applies_is_explained_not_promised():
+    from src.plugins.chats.agent.sales.use_cases.coupon_application import (
+        CouponApplication,
+    )
+
+    now = int(time.time() * 1000)
+    store = _Store(_stale_trilogia_metadata(now))
+    loader = _Loader()
+    applier = _Applier(CouponApplication("AMOR26", "expired"))
+
+    await _use_case_with_coupon(store, loader, applier).execute(_message("Me gusta"))
+
+    new = store.data[_SESSION]["episodes"][-1]
+    assert "applied_coupon" not in new
+    context = "\n".join(loader.calls[0]["extra_context"])
+    assert "no se pudo aplicar" in context and "ya venció" in context
+    assert "No prometas descuento" in context
+    assert "[CUPÓN APLICADO" not in context
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "applier",
+    [
+        _Applier(_applied_with_units(), delay=1),
+        _Applier(error=RuntimeError("medusa caído")),
+    ],
+    ids=["medusa-lento", "medusa-caido"],
+)
+async def test_campaign_coupon_falls_back_to_apply_coupon_when_it_cannot_be_checked(
+    applier, monkeypatch
+):
+    import src.plugins.chats.agent.sales.use_cases.ingest_inbound_message as ingest
+
+    monkeypatch.setattr(ingest, "_CAMPAIGN_COUPON_TIMEOUT_S", 0.05)
+    now = int(time.time() * 1000)
+    store = _Store(_stale_trilogia_metadata(now))
+    loader = _Loader()
+
+    await _use_case_with_coupon(store, loader, applier).execute(_message("Me gusta"))
+
+    assert "applied_coupon" not in store.data[_SESSION]["episodes"][-1]
+    context = "\n".join(loader.calls[0]["extra_context"])
+    assert "apply_coupon(code='AMOR26')" in context
+    assert "ANTES de ofrecer" in context
+
+
+@pytest.mark.asyncio
+async def test_opt_out_and_second_message_do_not_apply_the_campaign_coupon():
+    now = int(time.time() * 1000)
+    loader = _Loader()
+    opted = _Applier(_applied_with_units())
+    await _use_case_with_coupon(_Store(_stale_trilogia_metadata(now)), loader, opted).execute(
+        _message("No más")
+    )
+    assert opted.codes == []
+
+    once = _Applier(_applied_with_units())
+    use_case = _use_case_with_coupon(_Store(_stale_trilogia_metadata(now)), _Loader(), once)
+    await use_case.execute(_message("Me gusta"))
+    await use_case.execute(_message("el cubo love"))
+    assert once.codes == ["AMOR26"]
+
+
+@pytest.mark.asyncio
+async def test_webhook_ingest_validates_campaign_coupons_with_the_sdk_ports(monkeypatch):
+    """Gotcha #1 (tests verdes, feature muerta): el webhook real tiene que
+    llegar a Medusa y al cupo por los puertos del SDK."""
+    import src.plugins.chats.agent.sales.composition as comp
+    import src.sdk.connectorkit as ck
+    from src.platform.promotions.port import FakePromotionsPort
+    from src.platform.promotions.quota_store import FakePromoQuotaStore
+
+    monkeypatch.setattr(ck, "get_promotions_port", lambda: FakePromotionsPort([_amor_promo()]))
+    monkeypatch.setattr(ck, "get_promo_quota_store", lambda: FakePromoQuotaStore())
+    monkeypatch.setattr(ck, "get_coupon_sales_reader", lambda: None)
+    monkeypatch.setattr(ck, "get_catalog_client", lambda: None)
+    monkeypatch.setattr(ck, "get_web_cart_reader", lambda: None)
+    monkeypatch.setattr(comp, "_INGEST_USE_CASE", None)
+
+    use_case = comp.build_ingest_use_case()
+    application = await use_case._check_campaign_coupon("amor26", int(time.time() * 1000))
+
+    assert application is not None
+    assert (application.applied, application.code) == (True, "AMOR26")

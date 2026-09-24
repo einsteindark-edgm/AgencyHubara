@@ -20,11 +20,16 @@ from src.sdk.connectorkit import (
     PromotionsUnavailableError,
     compute_discount,
     normalize_coupon_code,
-    resolve_coupon,
 )
 
+from src.plugins.chats.agent.sales.use_cases.coupon_application import (
+    COUPON_REASON_TEXT,
+    CouponApplication,
+    exhausted_text,
+    resolve_coupon_application,
+    store_coupon_application,
+)
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
-    as_eligible,
     quota_offer,
     units_text,
 )
@@ -36,31 +41,7 @@ from src.plugins.chats.agent.sales.use_cases.coupons import (
     eligible_products_text,
     format_cop,
     is_whole_catalog,
-    set_applied_coupon,
 )
-
-_REASON_TEXT = {
-    "invalid_format": "El código no tiene una forma válida (solo letras y números, sin guiones ni espacios).",
-    "not_found": "Ese código no existe.",
-    "inactive": "Ese cupón ya no está activo.",
-    "not_started": "Ese cupón todavía no empieza a regir.",
-    "expired": "Ese cupón ya venció.",
-    "budget_exhausted": "Ese cupón ya se agotó.",
-    "unavailable": "No pude validar el cupón ahora mismo (sistema de promociones caído).",
-    "scope_unresolved": "No pude confirmar a qué productos aplica ese cupón, así que no lo apliqué.",
-    "quota_unavailable": "No pude confirmar cuántas unidades con descuento quedan, así que no apliqué el cupón.",
-    "shipping_not_supported": (
-        "Ese cupón es de envío y el envío lo cobra la transportadora a su tarifa, "
-        "sin descuentos: no se aplica."
-    ),
-}
-
-
-def _exhausted_text(code: str) -> str:
-    return (
-        f"Las unidades con descuento de {code} ya se agotaron. Ofrécele el precio "
-        "normal con honestidad; no inventes otro descuento."
-    )
 
 
 async def _product_titles(catalog: Any, promotion: PromotionDTO) -> list[str] | str:
@@ -244,64 +225,51 @@ class ApplyCouponTool(ToolBase):
                 ensure_ascii=False,
             )
 
-        try:
-            promotions = await self._promotions.list_active()
-            # Inactivas/vencidas también cuentan para explicar la razón.
-            extra = await self._promotions.get_by_code(normalized)
-            if extra is not None and all(p.id != extra.id for p in promotions):
-                promotions = [*promotions, extra]
-        except PromotionsUnavailableError as exc:
-            logger.warning("🎟️ [TOOL apply_coupon] unavailable session={} err={}", ctx.session_key, exc)
+        now_ms = self._now_ms()
+        application = await resolve_coupon_application(
+            normalized,
+            promotions=self._promotions,
+            quotas=self._quotas,
+            sales=self._sales,
+            catalog=self._catalog,
+            now_ms=now_ms,
+        )
+        if application.reason == "unavailable":
+            logger.warning("🎟️ [TOOL apply_coupon] unavailable session={}", ctx.session_key)
             return json.dumps(
                 {"applied": False, "code": normalized, "reason": "unavailable",
-                 "summary": _REASON_TEXT["unavailable"] + " Pídele al cliente que lo intente en un momento."},
+                 "summary": COUPON_REASON_TEXT["unavailable"] + " Pídele al cliente que lo intente en un momento."},
                 ensure_ascii=False,
             )
-
-        now_ms = self._now_ms()
-        resolution = resolve_coupon(normalized, promotions, now_ms=now_ms)
-        if not resolution.ok or resolution.promotion is None:
-            reason = resolution.reason or "not_found"
-            logger.info("🎟️ [TOOL apply_coupon] rejected session={} code={} reason={}", ctx.session_key, normalized, reason)
-            return json.dumps(
-                {
-                    "applied": False,
-                    "code": normalized,
-                    "reason": reason,
-                    "summary": _REASON_TEXT.get(reason, "Ese cupón no se puede aplicar.")
-                    + " Díselo al cliente con honestidad; no apliques ningún descuento.",
-                },
-                ensure_ascii=False,
-            )
-
-        promotion = resolution.promotion
-        offer = await quota_offer(
-            promotion, quotas=self._quotas, sales=self._sales, catalog=self._catalog
-        )
-        if offer.reason is not None:
+        if application.reason is not None or application.promotion is None:
+            reason = application.reason or "not_found"
             logger.info(
                 "🎟️ [TOOL apply_coupon] rejected session={} code={} reason={}",
-                ctx.session_key, normalized, offer.reason,
+                ctx.session_key, normalized, reason,
             )
-            text = (
-                _exhausted_text(promotion.code)
-                if offer.reason == "quota_exhausted"
-                else _REASON_TEXT[offer.reason] + " Díselo al cliente con honestidad."
-            )
+            if application.promotion is None:
+                text = (
+                    COUPON_REASON_TEXT.get(reason, "Ese cupón no se puede aplicar.")
+                    + " Díselo al cliente con honestidad; no apliques ningún descuento."
+                )
+            elif reason == "quota_exhausted":
+                text = exhausted_text(application.code)
+            else:
+                text = COUPON_REASON_TEXT[reason] + " Díselo al cliente con honestidad."
             return json.dumps(
-                {"applied": False, "code": promotion.code, "reason": offer.reason, "summary": text},
+                {"applied": False, "code": application.code, "reason": reason, "summary": text},
                 ensure_ascii=False,
             )
-        if offer.has_quota:
-            return self._applied_with_quota(ctx, promotion, offer, now_ms)
-        whole_catalog = is_whole_catalog(promotion)
-        eligible = await eligible_products(self._catalog, promotion)
+
+        promotion = application.promotion
         store.update(
             ctx.session_key,
-            lambda md: set_applied_coupon(
-                md, promotion=promotion, now_ms=now_ms, eligible=eligible
-            ),
+            lambda md: store_coupon_application(md, application, now_ms=now_ms),
         )
+        if application.quota:
+            return self._applied_with_quota(promotion, application)
+        whole_catalog = is_whole_catalog(promotion)
+        eligible = list(application.eligible)
         logger.info("🎟️ [TOOL apply_coupon] applied session={} code={}", ctx.session_key, promotion.code)
 
         envelope: dict[str, Any] = {
@@ -347,24 +315,17 @@ class ApplyCouponTool(ToolBase):
         envelope["summary"] = summary
         return json.dumps(envelope, ensure_ascii=False)
 
-    def _applied_with_quota(
-        self, ctx: ToolContext, promotion: PromotionDTO, offer: Any, now_ms: int
-    ) -> str:
+    def _applied_with_quota(self, promotion: PromotionDTO, application: CouponApplication) -> str:
         """Cupón con cupo: vale SOLO en las combinaciones que quedan. El
         reparto real (qué unidades del pedido llevan descuento) lo hacen
         `present_order_confirmation`/`register_order`."""
-        eligible = as_eligible(offer.units)
-        self._store.update(
-            ctx.session_key,
-            lambda md: set_applied_coupon(md, promotion=promotion, now_ms=now_ms, eligible=eligible, quota=True),
-        )
-        logger.info("🎟️ [TOOL apply_coupon] applied (cupo) session={} code={}", ctx.session_key, promotion.code)
+        logger.info("🎟️ [TOOL apply_coupon] applied (cupo) code={}", promotion.code)
         summary = (
             f"Cupón {promotion.code} aplicado: {describe_promotion(promotion)} SOLO en estas "
-            f"unidades: {units_text(offer.units)}. Otros colores, aromas o productos van a "
+            f"unidades: {units_text(application.units)}. Otros colores, aromas o productos van a "
             "precio normal. Para aplicarlo necesitas el color y el aroma de cada producto"
         )
-        if not offer.show_units_left:
+        if not application.show_units_left:
             summary += "; no le digas cuántas quedan"
         summary += (
             ". El total final lo calcula `present_order_confirmation`/`register_order`; "
@@ -376,8 +337,8 @@ class ApplyCouponTool(ToolBase):
                 "code": promotion.code,
                 "discount": describe_promotion(promotion),
                 "whole_catalog": False,
-                "units": list(offer.units),
-                "eligible_products": eligible,
+                "units": list(application.units),
+                "eligible_products": list(application.eligible),
                 "min_subtotal_cop": promotion.min_subtotal_cop,
                 "summary": summary,
             },
