@@ -22,16 +22,25 @@ const createAsync = vi.fn();
 let suggestState = { isPending: false };
 let createState = { isPending: false };
 
-vi.mock("@plugins/chats/frontend/entities/order-intake", () => ({
-  useSuggestOrderFromChat: () => ({
-    mutateAsync: suggestAsync,
-    ...suggestState,
-  }),
-  useCreateOrderFromChat: () => ({
-    mutateAsync: createAsync,
-    ...createState,
-  }),
-}));
+// Los hooks se reemplazan, pero la respuesta pasa por los schemas REALES del
+// entity (L-10): el componente recibe la forma parseada, con sus defaults,
+// igual que en producción.
+vi.mock("@plugins/chats/frontend/entities/order-intake", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@plugins/chats/frontend/entities/order-intake")>();
+  return {
+    ...actual,
+    useSuggestOrderFromChat: () => ({
+      mutateAsync: async () => actual.orderSuggestionSchema.parse(await suggestAsync()),
+      ...suggestState,
+    }),
+    useCreateOrderFromChat: () => ({
+      mutateAsync: async (body: unknown) =>
+        actual.createOrderResultSchema.parse(await createAsync(body)),
+      ...createState,
+    }),
+  };
+});
 
 const SUGGESTION = {
   session_key: "wa_573001234567",
@@ -312,5 +321,133 @@ describe("CreateOrderAction", () => {
     suggestAsync.mockResolvedValue(SUGGESTION);
     fireEvent.click(screen.getByRole("button", { name: /reintentar/i }));
     expect(await screen.findByLabelText(/dirección/i)).toHaveValue("Calle 45 #12-30");
+  });
+  describe("cupo por unidad: color, aroma y descuento por línea", () => {
+    const CUBO = {
+      handle: "cubo-love",
+      title: "Cubo Love",
+      variant_label: null,
+      quantity: 2,
+      unit_price_cop: 21000,
+      line_total_cop: 42000,
+      variant_resolved: true,
+      evidence: null,
+      color: "Rosado",
+      aroma: "Café",
+      colors: ["Rosado", "Azul"],
+      aromas: ["Café", "Lavanda"],
+      coupon_units: 1,
+      coupon_discount_cop: 2100,
+    };
+    const WITH_COUPON = {
+      ...SUGGESTION,
+      items: [CUBO],
+      subtotal_cop: 42000,
+      discount_cop: 2100,
+      coupon_code: "AMOR26",
+    };
+
+    it("pide color y aroma de las listas del producto, preseleccionados, y los manda en el pedido", async () => {
+      createAsync.mockResolvedValue({ registered: true, order_id: "order_1" });
+      await openForm(WITH_COUPON);
+
+      const color = screen.getByLabelText(/color de cubo love/i);
+      const aroma = screen.getByLabelText(/aroma de cubo love/i);
+      expect(color).toHaveValue("Rosado");
+      expect(aroma).toHaveValue("Café");
+      expect(
+        within(color).getAllByRole("option").map((o) => o.textContent),
+      ).toEqual(expect.arrayContaining(["Rosado", "Azul"]));
+
+      fireEvent.change(aroma, { target: { value: "Lavanda" } });
+      fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+
+      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+      expect(createAsync.mock.calls[0][0].items).toEqual([
+        { handle: "cubo-love", quantity: 2, color: "Rosado", aroma: "Lavanda" },
+      ]);
+    });
+
+    it("si el producto no tiene listas no pide color ni aroma (y no los manda)", async () => {
+      createAsync.mockResolvedValue({ registered: true, order_id: "order_1" });
+      await openForm({
+        ...SUGGESTION,
+        items: [{ ...CUBO, color: null, aroma: null, colors: [], aromas: ["Café"] }],
+      });
+
+      expect(screen.queryByLabelText(/color de cubo love/i)).not.toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText(/aroma de cubo love/i), {
+        target: { value: "Café" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+
+      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+      expect(createAsync.mock.calls[0][0].items).toEqual([
+        { handle: "cubo-love", quantity: 2, aroma: "Café" },
+      ]);
+    });
+
+    it("muestra cuántas unidades de la línea llevan el descuento del cupón", async () => {
+      await openForm(WITH_COUPON);
+
+      expect(screen.getByText("1 de 2 con AMOR26 (−$2.100)")).toBeInTheDocument();
+    });
+
+    it("con cupón y sin color o aroma avisa que el descuento los necesita", async () => {
+      await openForm({
+        ...WITH_COUPON,
+        items: [{ ...CUBO, color: null, coupon_units: 0, coupon_discount_cop: 0 }],
+      });
+
+      expect(screen.getByLabelText(/color de cubo love/i)).toHaveValue("");
+      expect(
+        screen.getByText(/el descuento del cupón necesita el color y el aroma/i),
+      ).toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText(/color de cubo love/i), {
+        target: { value: "Azul" },
+      });
+
+      expect(
+        screen.queryByText(/el descuento del cupón necesita el color y el aroma/i),
+      ).not.toBeInTheDocument();
+    });
+
+    it("sin cupón no hay aviso aunque falte el color", async () => {
+      await openForm({ ...SUGGESTION, items: [{ ...CUBO, color: null, coupon_units: 0 }] });
+
+      expect(
+        screen.queryByText(/el descuento del cupón necesita/i),
+      ).not.toBeInTheDocument();
+    });
+
+    it.each([
+      [
+        "un color que el producto no tiene",
+        {
+          error_detail: "invalid_variant_attribute",
+          problems: ['Cubo Love no tiene el color "Verde" (opciones: Rosado, Azul)'],
+        },
+        /Cubo Love no tiene el color "Verde" \(opciones: Rosado, Azul\)/,
+      ],
+      [
+        "cambiaron las unidades con descuento",
+        { error_detail: "quota_changed", total_cop: 49900 },
+        /Cambiaron las unidades con descuento del cupón: revisa el total y vuelve a crear el pedido\./,
+      ],
+      [
+        "otro pedido con el mismo cupón se está registrando",
+        { error_detail: "quota_busy" },
+        /Otro pedido con el mismo cupón se está registrando; intenta de nuevo en unos segundos\./,
+      ],
+    ])("si el registro rechaza por %s lo explica", async (_case, rejection, message) => {
+      createAsync.mockResolvedValue({ registered: false, order_id: null, ...rejection });
+      await openForm(WITH_COUPON);
+
+      fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(message);
+      expect(screen.getByRole("dialog", { name: /crear pedido/i })).toBeInTheDocument();
+    });
   });
 });

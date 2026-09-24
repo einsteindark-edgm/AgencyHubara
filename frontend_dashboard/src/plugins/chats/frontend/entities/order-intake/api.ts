@@ -39,7 +39,15 @@ export function useSuggestOrderFromChat(sessionId: string | null) {
 }
 
 export interface CreateOrderVariables {
-  items: Array<{ handle: string; variant_label?: string; quantity: number }>;
+  /** `color`/`aroma`: valor de la lista del producto (cupo por unidad); se
+   *  omiten cuando el producto no tiene ese atributo. */
+  items: Array<{
+    handle: string;
+    variant_label?: string;
+    quantity: number;
+    color?: string;
+    aroma?: string;
+  }>;
   shipping: {
     city: string;
     neighborhood?: string;

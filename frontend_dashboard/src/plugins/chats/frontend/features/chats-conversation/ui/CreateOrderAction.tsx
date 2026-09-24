@@ -26,6 +26,10 @@
  *  - **El envío no se muestra como número editable**: la tarifa es mínima y la
  *    transportadora la recalcula; el total real vuelve en la respuesta del
  *    registro.
+ *  - **Cupo por unidad** (CUPONES_PLAN fase 6): cada línea pide color y aroma
+ *    de las listas CERRADAS del producto (solo si las tiene) y muestra
+ *    cuántas unidades llevan el descuento del cupón; el registro relee el
+ *    reparto bajo el candado del código (`quota_changed` / `quota_busy`).
  *  - F5.3 (CLAUDE.md frontend, regla 3): el flujo multi-paso es un reducer con
  *    unión discriminada — "cargando" y "error" a la vez es irrepresentable.
  */
@@ -58,6 +62,16 @@ interface FormItem {
   variantLabel: string;
   quantity: number;
   unitPriceCop: number;
+  /** Color/aroma elegido de la lista del producto ("" = sin elegir). */
+  color: string;
+  aroma: string;
+  /** Listas CERRADAS del producto (vacía = el producto no tiene el atributo). */
+  colors: string[];
+  aromas: string[];
+  /** Reparto del cupón que calculó la sugerencia para ESTA línea. Se descarta
+   *  al editar la línea: el registro lo recalcula con lo que quede. */
+  couponUnits: number;
+  couponDiscountCop: number;
 }
 
 interface ShippingForm {
@@ -130,12 +144,17 @@ const PAYMENT_LABEL: Record<PaymentMethod, string> = {
 /** `error_detail` del backend → algo que el operador entienda. */
 const ERROR_LABEL: Record<string, string> = {
   catalog_unavailable:
-    "El catálogo no está disponible en este momento: no se puede precisar el pedido. Reintentá en un minuto.",
+    "El catálogo no está disponible en este momento: no se puede precisar el pedido. Intenta de nuevo en un minuto.",
   amount_mismatch:
-    "Los montos no cuadran con los ítems. Revisá las cantidades y volvé a intentar.",
+    "Los montos no cuadran con los ítems. Revisa las cantidades y vuelve a intentar.",
   missing_receiver_name: "Falta el nombre de quién recibe (lo exige la transportadora).",
   registration_failed:
-    "Medusa rechazó el registro. El intento quedó guardado para reconciliar; reintentá o registralo a mano.",
+    "Medusa rechazó el registro. El intento quedó guardado para reconciliar; intenta de nuevo o regístralo a mano.",
+  // Cupo por unidad: el reparto del cupón se relee bajo candado al registrar.
+  quota_changed:
+    "Cambiaron las unidades con descuento del cupón: revisa el total y vuelve a crear el pedido.",
+  quota_busy:
+    "Otro pedido con el mismo cupón se está registrando; intenta de nuevo en unos segundos.",
 };
 
 const MISSING_LABEL: Record<string, string> = {
@@ -158,7 +177,36 @@ function itemsFrom(suggestion: OrderSuggestion): FormItem[] {
     variantLabel: item.variant_label ?? "",
     quantity: item.quantity,
     unitPriceCop: item.unit_price_cop,
+    color: item.color ?? "",
+    aroma: item.aroma ?? "",
+    colors: item.colors,
+    aromas: item.aromas,
+    couponUnits: item.coupon_units,
+    couponDiscountCop: item.coupon_discount_cop,
   }));
+}
+
+/** Color/aroma para el cuerpo del registro: solo los atributos que el
+ *  producto TIENE (lista no vacía) y que el operador eligió. */
+function variantAttrsOf(item: FormItem): { color?: string; aroma?: string } {
+  return {
+    ...(item.colors.length > 0 && item.color ? { color: item.color } : {}),
+    ...(item.aromas.length > 0 && item.aroma ? { aroma: item.aroma } : {}),
+  };
+}
+
+/** Aviso de la línea cuando hay cupón y falta el color o el aroma que el
+ *  cupo por unidad necesita para contarla; `null` si no falta nada. */
+function couponHintOf(item: FormItem): string | null {
+  const missingColor = item.colors.length > 0 && !item.color;
+  const missingAroma = item.aromas.length > 0 && !item.aroma;
+  if (!missingColor && !missingAroma) return null;
+  const needs = [
+    item.colors.length > 0 ? "el color" : null,
+    item.aromas.length > 0 ? "el aroma" : null,
+  ].filter(Boolean);
+  const pick = needs.length > 1 ? "elígelos" : "elígelo";
+  return `El descuento del cupón necesita ${needs.join(" y ")} de este producto: ${pick} para que se aplique.`;
 }
 
 function shippingFrom(suggestion: OrderSuggestion): ShippingForm {
@@ -232,6 +280,15 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
     setPaymentMethod("");
   };
 
+  /** Edita una línea. El reparto del cupón que trajo la sugerencia deja de
+   *  valer (el registro lo recalcula con lo que quede), así que se descarta. */
+  const editItem = (index: number, patch: Partial<Pick<FormItem, "quantity" | "color" | "aroma">>) =>
+    setItems((prev) =>
+      prev.map((it, i) =>
+        i === index ? { ...it, ...patch, couponUnits: 0, couponDiscountCop: 0 } : it,
+      ),
+    );
+
   const missing = missingOf(shipping, items, paymentMethod);
   const subtotal = items.reduce((acc, it) => acc + it.unitPriceCop * it.quantity, 0);
   const busy = phase.k === "submitting";
@@ -245,6 +302,7 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
           handle: it.handle,
           ...(it.variantLabel ? { variant_label: it.variantLabel } : {}),
           quantity: it.quantity,
+          ...variantAttrsOf(it),
         })),
         shipping: {
           city: shipping.city.trim(),
@@ -349,7 +407,7 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                 <div style={okStyle}>
                   Pedido creado: <b>{phase.reference}</b>. La conversación queda
                   con el pago pendiente de verificación — cuando el cliente
-                  pague, usá "Confirmar pago".
+                  pague, usa "Confirmar pago".
                   {phase.paymentInstructionsSent
                     ? " Ya le enviamos las instrucciones de pago."
                     : ""}
@@ -369,7 +427,7 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                     No se pudo leer la conversación automáticamente
                     {suggestion.error_detail ? ` (${suggestion.error_detail})` : ""}.
                     El formulario abre con lo que el bot había anotado —
-                    completá lo que falte a mano.
+                    completa lo que falte a mano.
                   </div>
                 )}
                 {suggestion.already_registered_order_id && (
@@ -392,45 +450,72 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                   <h3 style={sectionTitleStyle}>Productos</h3>
                   {items.length === 0 && (
                     <p style={mutedStyle}>
-                      Sin productos: elegilos abajo.
+                      Sin productos: elígelos abajo.
                     </p>
                   )}
-                  {items.map((item, index) => (
-                    <div key={`${item.handle}-${item.variantLabel}-${index}`} style={itemRowStyle}>
-                      <span style={{ flex: 1 }}>
-                        {item.title}
-                        {item.variantLabel ? ` · ${item.variantLabel}` : ""}
-                        <span style={mutedStyle}> {formatCop(item.unitPriceCop)} c/u</span>
-                      </span>
-                      <label style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                        <span style={lblStyle}>Cantidad de {item.title}</span>
-                        <input
-                          type="number"
-                          min={1}
-                          max={500}
-                          value={item.quantity}
-                          style={{ ...inputStyle, width: 64 }}
-                          onChange={(e) =>
-                            setItems((prev) =>
-                              prev.map((it, i) =>
-                                i === index
-                                  ? { ...it, quantity: Math.max(1, Number(e.target.value) || 1) }
-                                  : it,
-                              ),
-                            )
-                          }
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        aria-label={`Quitar ${item.title}`}
-                        style={ghostStyle}
-                        onClick={() => setItems((prev) => prev.filter((_, i) => i !== index))}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
+                  {items.map((item, index) => {
+                    const couponHint = suggestion.coupon_code ? couponHintOf(item) : null;
+                    return (
+                      <div key={`${item.handle}-${item.variantLabel}-${index}`} style={itemBlockStyle}>
+                        <div style={itemRowStyle}>
+                          <span style={{ flex: 1 }}>
+                            {item.title}
+                            {item.variantLabel ? ` · ${item.variantLabel}` : ""}
+                            <span style={mutedStyle}> {formatCop(item.unitPriceCop)} c/u</span>
+                          </span>
+                          <label style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <span style={lblStyle}>Cantidad de {item.title}</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={500}
+                              value={item.quantity}
+                              style={{ ...inputStyle, width: 64 }}
+                              onChange={(e) =>
+                                editItem(index, {
+                                  quantity: Math.max(1, Number(e.target.value) || 1),
+                                })
+                              }
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            aria-label={`Quitar ${item.title}`}
+                            style={ghostStyle}
+                            onClick={() => setItems((prev) => prev.filter((_, i) => i !== index))}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        {(item.colors.length > 0 || item.aromas.length > 0) && (
+                          <div style={attrsRowStyle}>
+                            {item.colors.length > 0 && (
+                              <AttrSelect
+                                label={`Color de ${item.title}`}
+                                value={item.color}
+                                options={item.colors}
+                                onChange={(color) => editItem(index, { color })}
+                              />
+                            )}
+                            {item.aromas.length > 0 && (
+                              <AttrSelect
+                                label={`Aroma de ${item.title}`}
+                                value={item.aroma}
+                                options={item.aromas}
+                                onChange={(aroma) => editItem(index, { aroma })}
+                              />
+                            )}
+                          </div>
+                        )}
+                        {item.couponUnits > 0 && (
+                          <span style={couponLineStyle}>
+                            {`${item.couponUnits} de ${item.quantity} con ${suggestion.coupon_code ?? "el cupón"} (−${formatCop(item.couponDiscountCop)})`}
+                          </span>
+                        )}
+                        {couponHint && <span style={hintStyle}>{couponHint}</span>}
+                      </div>
+                    );
+                  })}
 
                   <AddItem
                     catalog={suggestion.catalog}
@@ -505,7 +590,7 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                     />
                     <span style={{ fontSize: "0.72rem" }}>
                       Enviarle las instrucciones de pago al cliente (datos
-                      bancarios / link). Desactivalo si ya se los pasaste vos.
+                      bancarios / link). Desactívalo si ya se los pasaste tú.
                     </span>
                   </label>
                 )}
@@ -589,6 +674,34 @@ function Field({ label, value, source, onChange }: FieldProps) {
   );
 }
 
+/** Selector de color/aroma: solo los valores de la lista CERRADA del
+ *  producto (un valor fuera de la lista no registra nada en el backend). */
+function AttrSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <span style={lblStyle}>{label}</span>
+      <select value={value} style={inputStyle} onChange={(e) => onChange(e.target.value)}>
+        <option value="">— elegir —</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 /** Selector de la lista CERRADA del catálogo (producto × variante): el
  *  operador corrige lo que eligió el modelo sin poder inventar un producto. */
 function AddItem({
@@ -616,6 +729,14 @@ function AddItem({
             variantLabel: variant.label,
             quantity: 1,
             unitPriceCop: variant.unit_price_cop,
+            // El selector del catálogo no trae las listas de color/aroma:
+            // el backend resuelve la variante con lo que tenga el chat.
+            color: "",
+            aroma: "",
+            colors: [],
+            aromas: [],
+            couponUnits: 0,
+            couponDiscountCop: 0,
           });
         }}
       >
@@ -744,12 +865,35 @@ const badgeStyle: React.CSSProperties = {
   color: "var(--fg-faint, rgba(235,235,235,0.38))",
 };
 
+const itemBlockStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+  padding: "4px 0",
+  borderBottom: "1px solid var(--line, rgba(255,255,255,0.08))",
+};
+
 const itemRowStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 8,
-  padding: "4px 0",
-  borderBottom: "1px solid var(--line, rgba(255,255,255,0.08))",
+};
+
+const attrsRowStyle: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+};
+
+const couponLineStyle: React.CSSProperties = {
+  fontSize: "0.68rem",
+  fontWeight: 600,
+  color: "var(--color-ok, #5be07b)",
+};
+
+const hintStyle: React.CSSProperties = {
+  fontSize: "0.68rem",
+  color: "var(--color-warn, #ffb44a)",
 };
 
 const totalsStyle: React.CSSProperties = {

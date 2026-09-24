@@ -31,6 +31,16 @@ export const orderIntakeItemSchema = z.object({
   variant_resolved: z.boolean().default(false),
   /** Cita textual del cliente que justifica el ítem. */
   evidence: z.string().nullable().default(null),
+  /** Color/aroma resuelto del borrador estructurado del chat (`null` = sin resolver). */
+  color: z.string().nullable().default(null),
+  aroma: z.string().nullable().default(null),
+  /** Listas CERRADAS del producto (`[]` = el producto no tiene ese atributo). */
+  colors: z.array(z.string()).default([]),
+  aromas: z.array(z.string()).default([]),
+  /** Cupo por unidad: cuántas unidades de la línea llevan el descuento del cupón. */
+  coupon_units: z.number().default(0),
+  /** Descuento del cupón sobre esta línea (COP). */
+  coupon_discount_cop: z.number().default(0),
 });
 
 export const orderIntakeShippingSchema = z.object({
