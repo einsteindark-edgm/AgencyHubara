@@ -1,13 +1,24 @@
 """Contrato `lab@v1`, lado lanzador: el botón "Nueva corrida" (plan §3.7 y §4.3).
 
 Rutas bajo `/api/chats/lab` (protegidas por `require_auth` como toda ruta de
-plugin). Las de lectura de corridas (banco, conversaciones, hilo, resumen)
-llegan con el PR 8.
+plugin).
 
+Lanzador (PR 7):
   GET  /lab/estimate?arms=A1,B,C&reps=3&bench=new
   POST /lab/runs                  {arms, reps, bench}  → 202 | 409 | 422 | 503
   GET  /lab/runs/active
   POST /lab/runs/active/cancel
+
+Lecturas (PR 8), SOLO desde `runs/<corrida>/` del S3 del laboratorio:
+  GET  /lab/runs
+  GET  /lab/runs/{run}/bench
+  GET  /lab/runs/{run}/conversations
+  GET  /lab/runs/{run}/conversations/{sid}?episode=
+  GET  /lab/runs/{run}/conversations/{sid}/turns/trace?turn_key=&arm=&rep=
+  GET  /lab/runs/{run}/conversations/{sid}/evaluations?arm=
+  GET  /lab/runs/{run}/summary?arm=
+  GET  /lab/runs/{run}/diff?base=A1&cand=B
+El `turn_key` va como query (lleva `/`, que no viaja en un segmento de ruta).
 
 Candados: A1 (el control) siempre va; repeticiones 1 o 3; una corrida a la
 vez (workflow `lab-launch` con conflicto FAIL → 409); topes por corrida y por
@@ -31,7 +42,7 @@ from src.plugins.chats.agent.sales_lab.launch.contracts import LabLaunchInput
 from src.plugins.chats.agent.sales_lab.launch.costs import check_caps, estimate_run_usd, month_spent_usd
 from src.plugins.chats.agent.sales_eval.workflows.lab_launch import LAB_LAUNCH_WORKFLOW_ID
 from src.sdk import get_task_queue
-from src.sdk.labkit import IMAGE_RE, LabStorePort, get_lab_store
+from src.sdk.labkit import IMAGE_RE, RUN_ID_RE, LabStorePort, get_lab_store
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, get_temporal_client
 
 router = APIRouter()
@@ -229,3 +240,203 @@ async def cancel_active() -> dict[str, Any]:
         raise HTTPException(404, detail="No hay una corrida en curso.")
     await client.get_workflow_handle(LAB_LAUNCH_WORKFLOW_ID).signal("cancel")
     return {"cancel_requested": True, "run_id": status.get("run_id")}
+
+
+
+# ── Lecturas del contrato lab@v1 (PR 8) ──────────────────────────────────────
+
+_SID_RE = re.compile(r"^wa_[A-Za-z0-9_+]{3,40}$")
+_EPISODE_RE = re.compile(r"^ep_\d{1,6}$")
+_READ_ARMS = ("A0", *ARMS)
+
+
+def _run_id(run: str) -> str:
+    if not RUN_ID_RE.match(run):
+        raise HTTPException(422, detail="Corrida inválida.")
+    return run
+
+
+def _sid(sid: str) -> str:
+    if not _SID_RE.match(sid):
+        raise HTTPException(422, detail="Conversación inválida.")
+    return sid
+
+
+def _arm(arm: str) -> str:
+    if arm not in _READ_ARMS:
+        raise HTTPException(422, detail="Brazo inválido: A0, A1, B o C.")
+    return arm
+
+
+def _json_key(store: LabStorePort, key: str, *, missing: str) -> Any:
+    raw = store.get_bytes(key)
+    if raw is None:
+        raise HTTPException(404, detail=missing)
+    try:
+        return json.loads(raw)
+    except ValueError:
+        raise HTTPException(502, detail=f"{key} no es JSON válido.") from None
+
+
+def _jsonl_key(store: LabStorePort, key: str) -> list[dict[str, Any]]:
+    raw = store.get_bytes(key)
+    if not raw:
+        return []
+    out = []
+    for line in raw.decode("utf-8").splitlines():
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(item, dict):
+            out.append(item)
+    return out
+
+
+@router.get("/lab/runs")
+def list_runs() -> dict[str, Any]:
+    store = _store()
+    run_ids = sorted({k.split("/")[1] for k in store.list_keys("runs/") if k.count("/") >= 2})
+    runs: list[dict[str, Any]] = []
+    for run_id in run_ids:
+        manifest = json.loads(store.get_bytes(f"runs/{run_id}/manifest.json") or b"{}")
+        progress = json.loads(store.get_bytes(f"runs/{run_id}/progress.json") or b"{}")
+        if not manifest and not progress:
+            continue
+        runs.append(
+            {
+                "run_id": run_id,
+                "bench_id": manifest.get("bench_id"),
+                "arms": manifest.get("arms") or [],
+                "reps": manifest.get("reps"),
+                "registry_version": manifest.get("registry_version"),
+                "counts": manifest.get("counts") or {},
+                "phase": progress.get("phase"),
+                "turns_done": progress.get("turns_done"),
+                "turns_total": progress.get("turns_total"),
+                "spent_usd": progress.get("spent_usd"),
+                "error": progress.get("error"),
+                "notes": progress.get("notes") or [],
+                "started_at_ms": progress.get("started_at_ms"),
+                "updated_at_ms": progress.get("updated_at_ms"),
+            }
+        )
+    runs.sort(key=lambda r: r.get("started_at_ms") or 0, reverse=True)
+    return {"runs": runs}
+
+
+@router.get("/lab/runs/{run}/bench")
+def run_bench(run: str) -> dict[str, Any]:
+    return _json_key(_store(), f"runs/{_run_id(run)}/bench_report.json", missing="La corrida no existe o no publicó su banco.")
+
+
+@router.get("/lab/runs/{run}/conversations")
+def run_conversations(run: str) -> dict[str, Any]:
+    rows = _json_key(_store(), f"runs/{_run_id(run)}/conversations.json", missing="La corrida no publicó conversaciones.")
+    return {"conversations": rows}
+
+
+def _episode_window(episodes: list[dict[str, Any]], episode_id: str) -> tuple[int, int | None] | None:
+    ordered = sorted((e for e in episodes if isinstance(e, dict)), key=lambda e: e.get("started_at_ms") or 0)
+    for i, ep in enumerate(ordered):
+        if ep.get("episode_id") == episode_id:
+            start = int(ep.get("started_at_ms") or 0) - 5_000
+            nxt = ordered[i + 1].get("started_at_ms") if i + 1 < len(ordered) else None
+            return start, int(nxt) if isinstance(nxt, (int, float)) else None
+    return None
+
+
+def _event_ms(event: dict[str, Any]) -> int | None:
+    value = event.get("timestamp")
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
+
+
+@router.get("/lab/runs/{run}/conversations/{sid}")
+def run_thread(run: str, sid: str, episode: str | None = Query(None, max_length=20)) -> dict[str, Any]:
+    thread = _json_key(_store(), f"runs/{_run_id(run)}/threads/{_sid(sid)}.json", missing="Conversación sin hilo en esta corrida.")
+    if episode is None:
+        return thread
+    if not _EPISODE_RE.match(episode):
+        raise HTTPException(422, detail="Episodio inválido.")
+    window = _episode_window(thread.get("episodes") or [], episode)
+    if window is None:
+        raise HTTPException(404, detail="Episodio desconocido.")
+    start, end = window
+    messages = [
+        m for m in thread.get("messages") or []
+        if (ts := _event_ms(m)) is not None and ts >= start and (end is None or ts < end)
+    ]
+    turns = [t for t in thread.get("turns") or [] if t.get("episode_id") == episode]
+    return {**thread, "episode_id": episode, "messages": messages, "turns": turns}
+
+
+def _steps_v1(trace: dict[str, Any]) -> list[dict[str, Any]]:
+    """Pasos de una traza v1 (sin tiempos ni orden de guardas): lo que se sabe."""
+    text = str(trace.get("inbound_text") or "")
+    steps: list[dict[str, Any]] = [
+        {"kind": "inbound", "messages": [{"text": line} for line in text.splitlines() if line.strip()] or [{"text": text}]}
+    ]
+    for tool in trace.get("tools") or []:
+        if isinstance(tool, dict):
+            steps.append({"kind": "tool", **{k: tool.get(k) for k in ("name", "ok", "error", "args", "notes", "excerpt")}})
+    for guard in trace.get("guards") or []:
+        steps.append({"kind": "guard", "name": guard})
+    sent = [t for t in trace.get("sent_texts") or [] if t]
+    if sent:
+        steps.append({"kind": "outbound", "bubbles": [{"kind": "text", "text": t, "delivered": None} for t in sent]})
+    return [{"i": i, "at_ms": None, **step} for i, step in enumerate(steps, 1)]
+
+
+@router.get("/lab/runs/{run}/conversations/{sid}/turns/trace")
+def run_turn_trace(
+    run: str,
+    sid: str,
+    turn_key: str = Query(..., max_length=200),
+    arm: str = Query("A0"),
+    rep: int = Query(0, ge=0, le=2),
+) -> dict[str, Any]:
+    traces = _jsonl_key(_store(), f"runs/{_run_id(run)}/turns/{_arm(arm)}/{rep}/{_sid(sid)}.jsonl")
+    for trace in traces:
+        synthesized = f"{sid}/{trace.get('episode_id')}/t{trace.get('turn')}"
+        if turn_key in (trace.get("turn_key"), synthesized):
+            steps = trace.get("steps")
+            if isinstance(steps, list) and steps:
+                inbound = trace.get("inbound") or [{"text": line} for line in str(trace.get("inbound_text") or "").splitlines()]
+                return {"fidelity": "v2", "arm": arm, "rep": rep, "trace": trace,
+                        "steps": [{"i": 0, "at_ms": 0, "kind": "inbound", "messages": inbound}, *steps]}
+            return {"fidelity": "v1", "arm": arm, "rep": rep, "trace": trace, "steps": _steps_v1(trace)}
+    raise HTTPException(404, detail="Ese turno no tiene traza en este brazo.")
+
+
+@router.get("/lab/runs/{run}/conversations/{sid}/evaluations")
+def run_evaluations(run: str, sid: str, arm: str = Query("A0"), rep: int = Query(0, ge=0, le=2)) -> dict[str, Any]:
+    records = _jsonl_key(_store(), f"runs/{_run_id(run)}/scores/{_arm(arm)}/{rep}/{_sid(sid)}.jsonl")
+    return {"arm": arm, "rep": rep, "episodes": records}
+
+
+@router.get("/lab/runs/{run}/summary")
+def run_summary(run: str, arm: str = Query("A0")) -> dict[str, Any]:
+    summary = _json_key(_store(), f"runs/{_run_id(run)}/summary.json", missing="La corrida no publicó su resumen.")
+    arm = _arm(arm)
+    data = (summary.get("arms") or {}).get(arm)
+    if data is None:
+        raise HTTPException(404, detail=f"El brazo {arm} todavía no tiene resultados en esta corrida.")
+    return data
+
+
+@router.get("/lab/runs/{run}/diff")
+def run_diff(run: str, base: str = Query("A1"), cand: str = Query("B")) -> dict[str, Any]:
+    summary = _json_key(_store(), f"runs/{_run_id(run)}/summary.json", missing="La corrida no publicó su resumen.")
+    diffs = summary.get("diffs") or {}
+    key = f"{_arm(base)}:{_arm(cand)}"
+    if key not in diffs:
+        raise HTTPException(404, detail=f"Sin comparación {base} → {cand} en esta corrida todavía.")
+    return diffs[key]
