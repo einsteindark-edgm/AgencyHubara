@@ -1,5 +1,5 @@
 import { VerdictTiles } from "@/shared/ui";
-import { useCheckStats } from "@plugins/agents_admin/frontend/entities/check-stats";
+import { useCheckStats, type StatsBot } from "@plugins/agents_admin/frontend/entities/check-stats";
 import type { EpisodeVerdict } from "@plugins/agents_admin/frontend/entities/scorecard";
 import { CheckTrend } from "@plugins/agents_admin/frontend/features/check-trend";
 import { FailurePareto } from "@plugins/agents_admin/frontend/features/failure-pareto";
@@ -7,13 +7,15 @@ import { StageFunnel } from "@plugins/agents_admin/frontend/features/stage-funne
 
 interface Props {
   days: number;
+  /** Solo los episodios de ese bot (encendido del bot nuevo); null = todos. */
+  bot?: StatsBot | null;
   onSelectVerdict: (v: Exclude<EpisodeVerdict, "SIN_DATOS">) => void;
   onSelectCheck: (checkId: string) => void;
 }
 
 /** Pestaña Resumen: una sola fetch de agregados alimenta tiles, Pareto, embudo y tendencia. */
-export function SummaryView({ days, onSelectVerdict, onSelectCheck }: Props) {
-  const stats = useCheckStats(days);
+export function SummaryView({ days, bot = null, onSelectVerdict, onSelectCheck }: Props) {
+  const stats = useCheckStats(days, bot);
 
   if (stats.isLoading) return <p className="text-sm text-fg-muted">Cargando agregados del scorecard…</p>;
   if (stats.isError) {
@@ -27,7 +29,9 @@ export function SummaryView({ days, onSelectVerdict, onSelectCheck }: Props) {
   if (data.episodes === 0) {
     return (
       <p className="rounded-lg border border-line p-4 text-sm text-fg-muted">
-        Aún no hay scorecards: se generan al cerrar cada episodio.
+        {bot
+          ? `Aún no hay episodios del bot ${bot} en los últimos ${days} días.`
+          : "Aún no hay scorecards: se generan al cerrar cada episodio."}
       </p>
     );
   }

@@ -47,6 +47,8 @@ export const funnelRowSchema = verdictTotalsSchema.extend({
 
 export const checkStatsSchema = z.object({
   days: z.number().default(56),
+  /** Bot por el que filtró el servidor (PR 18); null = todos o una API anterior al filtro. */
+  bot: z.enum(["actual", "nuevo"]).nullable().catch(null).default(null),
   episodes: z.number().default(0),
   verdicts: verdictTotalsSchema.catch(EMPTY_TOTALS),
   pareto: z.array(paretoItemSchema).default([]),

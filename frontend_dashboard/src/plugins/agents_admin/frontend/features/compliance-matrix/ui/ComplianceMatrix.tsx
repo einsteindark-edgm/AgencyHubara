@@ -6,6 +6,7 @@ import {
   stageLabel,
   useCheckRegistry,
   useScorecards,
+  type ScorecardBot,
   type EpisodeRef,
 } from "@plugins/agents_admin/frontend/entities/scorecard";
 
@@ -21,6 +22,8 @@ import {
 
 interface Props {
   days?: number;
+  /** Solo los episodios de ese bot (encendido del bot nuevo); null = todos. */
+  bot?: ScorecardBot | null;
   verdictFilter: VerdictFilter;
   onVerdictFilterChange: (v: VerdictFilter) => void;
   /** Check elegido en el Pareto: solo episodios que lo fallan. */
@@ -51,6 +54,7 @@ const ROW_CAP = 120;
  */
 export function ComplianceMatrix({
   days = 30,
+  bot = null,
   verdictFilter,
   onVerdictFilterChange,
   checkFilter,
@@ -59,7 +63,7 @@ export function ComplianceMatrix({
   onSelectEpisode,
   rowCap = ROW_CAP,
 }: Props) {
-  const list = useScorecards(days);
+  const list = useScorecards(days, bot);
   const registry = useCheckRegistry();
   const [stage, setStage] = useState<string | null>(null);
   const [onlyFailing, setOnlyFailing] = useState(false);
@@ -93,7 +97,9 @@ export function ComplianceMatrix({
   if (allRows.length === 0) {
     return (
       <p className="rounded-lg border border-line p-4 text-sm text-fg-muted">
-        Aún no hay scorecards: se generan al cerrar cada episodio.
+        {bot
+          ? `Aún no hay episodios del bot ${bot} en los últimos ${days} días.`
+          : "Aún no hay scorecards: se generan al cerrar cada episodio."}
       </p>
     );
   }

@@ -881,6 +881,12 @@ El modo de cada conversación SHALL salir del estado `<vault>/_rollout/perceptio
 - WHEN el operador pide `on`
 - THEN el botón está deshabilitado y el panel dice qué chequeo falla; un PUT directo da 422 `not_ready` con los chequeos que fallan
 
+#### Scenario: Calidad LLM separa los bots durante el encendido (PR 18)
+
+- GIVEN episodios de producción en canary, unos respondidos por el bot nuevo (algún turno con modo `on`/`canary` en la traza) y otros por el actual (sin modo o en `shadow`)
+- WHEN el operador elige "Bot nuevo" o "Bot actual" en Calidad LLM
+- THEN el resumen y la matriz muestran solo los episodios de ese bot (`?bot=nuevo|actual` en `/evals/checks/stats` y `/evals/scorecards`)
+
 #### Scenario: El techo manda
 
 - GIVEN estado `on` y techo `shadow` en Terraform

@@ -26,7 +26,7 @@ class _Fake:
 
     async def request(self, method, url, *, params=None, json=None, headers=None, files=None):
         if self._capture is not None:
-            self._capture.update(method=method, url=url, json=json, headers=headers)
+            self._capture.update(method=method, url=url, json=json, headers=headers, params=params)
         if self._exc is not None:
             raise self._exc
         return self._result

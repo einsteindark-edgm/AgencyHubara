@@ -69,4 +69,4 @@ export {
   triggerLabel,
   truncate,
 } from "./lib";
-export { useCheckRegistry, useRescoreScorecard, useScorecard, useScorecards } from "./api";
+export { useCheckRegistry, useRescoreScorecard, useScorecard, useScorecards, type ScorecardBot } from "./api";
