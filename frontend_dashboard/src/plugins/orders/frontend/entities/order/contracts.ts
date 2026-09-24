@@ -107,6 +107,17 @@ export const orderItemDetailSchema = z.object({
   selected_variant_title: z.string().nullable().default(null),
   variant_unresolved_tokens: z.array(z.string()).default([]),
   variant_unresolved_tag_kinds: z.array(z.string()).default([]),
+  // Cupón (pedido #44): la línea llega a Medusa con el precio YA descontado
+  // (`unit_price_cop`) y `discount_total` en 0; estos campos lo explican.
+  // Defaults para payloads viejos.
+  coupon_code: z.string().nullable().default(null),
+  list_unit_price_cop: z.number().int().nullable().default(null),
+  discount_unit_cop: z.number().int().default(0),
+  // Color/aroma de la línea (C-3, metadata de la línea en Medusa): el cupo
+  // por unidad cuenta por producto + color + aroma. null = sin el atributo;
+  // default para payloads viejos.
+  color: z.string().nullable().default(null),
+  aroma: z.string().nullable().default(null),
 });
 
 export type OrderItemDetail = z.infer<typeof orderItemDetailSchema>;
@@ -207,6 +218,10 @@ export const vaultOrderRecordSchema = z.object({
   // default, así que el banner normalmente ve `pending` | `abandoned`.
   status: z.enum(["pending", "resolved", "abandoned"]).default("pending"),
   attempts: z.number().int().default(0),
+  // Por qué la reconciliación lo dejó (C-4). "quota_changed" = ya no quedan
+  // las unidades con descuento: un humano confirma el total nuevo con el
+  // cliente antes de registrarlo a mano. Default para backends viejos.
+  abandon_reason: z.string().nullable().default(null),
   raw: z.record(z.string(), z.unknown()).default({}),
 });
 

@@ -143,8 +143,8 @@ async def _register_ok(ctx, vault, items, catalog=None) -> dict:
             shipping=_SAMPLE_SHIPPING,
             payment_method="transfer",
             subtotal_cop=subtotal,
-            shipping_cop=0,
-            total_cop=subtotal,
+            shipping_cop=7900,  # tarifa publicada de Bogotá
+            total_cop=subtotal + 7900,
         )
     )
 

@@ -92,6 +92,56 @@ describe("ItemsPanel — clase de match de variante", () => {
   });
 });
 
+describe("ItemsPanel — cupón por línea (pedido #44)", () => {
+  // La línea llega a Medusa con el precio YA descontado y `discount_total`
+  // queda en 0: sin esta nota el operador ve $18.900 sin saber por qué.
+  it("explica el precio con descuento: cupón, descuento por unidad y precio de lista", () => {
+    renderItems([
+      item({
+        title: "Cubo Love",
+        quantity: 2,
+        unit_price_cop: 18900,
+        total_cop: 37800,
+        coupon_code: "AMOR26",
+        list_unit_price_cop: 21000,
+        discount_unit_cop: 2100,
+      }),
+    ]);
+
+    const note = screen.getByText(/Cupón AMOR26/).textContent ?? "";
+    expect(note).toMatch(/2[.,]100/);
+    expect(note).toMatch(/21[.,]000/);
+  });
+
+  it("una línea sin cupón no muestra nota de cupón", () => {
+    renderItems([item({})]);
+    expect(screen.queryByText(/Cupón/)).not.toBeInTheDocument();
+  });
+});
+
+describe("ItemsPanel — color y aroma de la línea (C-3)", () => {
+  // El cupo por unidad cuenta por producto + color + aroma: el operador tiene
+  // que ver qué combinación se registró para despachar la correcta.
+  it("muestra el color y el aroma que se registraron", () => {
+    renderItems([item({ title: "Cubo Love", color: "Rosado", aroma: "Café" })]);
+    expect(screen.getByText("Color: Rosado · Aroma: Café")).toBeInTheDocument();
+  });
+
+  it("muestra solo el atributo que la línea tiene", () => {
+    renderItems([item({ title: "Cubo Love", color: "Rosado", aroma: null })]);
+    expect(screen.getByText("Color: Rosado")).toBeInTheDocument();
+    expect(screen.queryByText(/Aroma:/)).not.toBeInTheDocument();
+  });
+
+  it("sin color ni aroma (o un backend viejo sin los campos) no muestra nada", () => {
+    const [plain] = [item({})];
+    expect(plain.color).toBeNull();
+    expect(plain.aroma).toBeNull();
+    renderItems([plain]);
+    expect(screen.queryByText(/Color:|Aroma:/)).not.toBeInTheDocument();
+  });
+});
+
 describe("ItemsPanel — desglose del cobro", () => {
   function renderTotals(summary: Record<string, unknown>) {
     const detail = {

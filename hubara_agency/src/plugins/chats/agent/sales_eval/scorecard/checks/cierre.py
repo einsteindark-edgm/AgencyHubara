@@ -222,11 +222,15 @@ _AMOUNT_TOOLS = ("verify_order_for_checkout", "register_order", "present_order_c
 
 def _amount_problem(turn: Turn) -> str | None:
     for tc in turn.tools:
-        if tc.name == "register_order" and tc.error in ("amount_mismatch", "price_mismatch"):
+        if tc.name == "register_order" and tc.error in (
+            "amount_mismatch", "price_mismatch", "shipping_mismatch"
+        ):
             return f"register_order reportó {tc.error}"
         if tc.name == "verify_order_for_checkout" and tc.ok is False:
             return f"verify_order_for_checkout falló ({tc.error or 'sin detalle'})"
-        if tc.name == "present_order_confirmation" and tc.error in ("price_drift", "price_mismatch"):
+        if tc.name == "present_order_confirmation" and tc.error in (
+            "price_drift", "price_mismatch", "shipping_mismatch"
+        ):
             return f"present_order_confirmation reportó {tc.error}"
     return None
 

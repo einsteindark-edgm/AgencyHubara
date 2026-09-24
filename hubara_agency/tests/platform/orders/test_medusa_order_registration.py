@@ -17,6 +17,10 @@ Usa **respx** (httpx mock) para interceptar las llamadas a
 """
 from __future__ import annotations
 
+import json
+from dataclasses import replace
+from types import SimpleNamespace
+
 import pytest
 import respx
 from httpx import Response
@@ -24,11 +28,12 @@ from httpx import Response
 from src.platform.medusa.client import HttpMedusaClient
 from src.platform.medusa.service import MedusaProductService
 from src.platform.medusa.settings import MedusaSettings
+from src.platform.orders import variant_matching
 from src.platform.orders.medusa_order import (
     MedusaOrderConfigError,
     MedusaOrderRegistration,
 )
-from src.platform.orders.port import OrderItem, OrderShipping
+from src.platform.orders.port import DiscountedUnits, OrderItem, OrderShipping
 
 
 # ----------------------------------------------------------------------
@@ -1007,6 +1012,26 @@ def test_fingerprint_is_stable_and_content_sensitive():
     )
 
 
+def test_fingerprint_includes_the_coupon_split_and_keeps_orders_without_coupon_stable():
+    """El reparto del cupón es contenido del pedido: el mismo carrito con la
+    unidad con descuento en OTRA línea es otro draft. Sin cupón el fingerprint
+    es el de siempre (un reintento que cruza el deploy encuentra su draft)."""
+    from src.platform.orders.medusa_order import _compute_order_fingerprint
+
+    cubo = OrderItem(handle="cubo-love", quantity=1, unit_price_cop=21_000)
+    cilindro = OrderItem(
+        handle="cilindro-love", quantity=1, unit_price_cop=21_000, variant_label="Rosado"
+    )
+    assert _compute_order_fingerprint([cubo, cilindro], 49_900, "transfer") == "8430bdd5172f787d"
+
+    off = (DiscountedUnits(units=1, discount_unit_cop=2_100),)
+    on_cubo = [replace(cubo, discounted_units=off), cilindro]
+    on_cilindro = [cubo, replace(cilindro, discounted_units=off)]
+    assert _compute_order_fingerprint(on_cubo, 47_800, "transfer") != _compute_order_fingerprint(
+        on_cilindro, 47_800, "transfer"
+    )
+
+
 @pytest.mark.asyncio
 @respx.mock
 async def test_idempotency_pre_check_reuses_existing_draft(adapter):
@@ -1220,14 +1245,51 @@ async def test_register_order_without_attribution_omits_keys(adapter):
     assert "attribution_channel" not in body["metadata"]
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_register_order_with_coupon_sends_promo_codes_and_metadata(adapter):
-    """Cupón aplicado (2026-09-21): el código viaja como `promo_codes` (Medusa
-    aplica la promoción → `discount_total`/`total` reales) y el monto que el
-    bot prometió queda en metadata como auditoría."""
+# ----------------------------------------------------------------------
+# Cupón (Fase 0 — guard del #44): Hubara escribe el descuento en el precio
+# ----------------------------------------------------------------------
+
+
+def _single_variant_payload(handle: str, title: str) -> dict:
+    """Producto de la tienda real: una sola variante "Unico" (color y aroma
+    son etiquetas)."""
+    return {
+        "products": [
+            {
+                "id": f"prod_{handle}",
+                "title": title,
+                "handle": handle,
+                "status": "published",
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "variants": [
+                    {
+                        "id": f"var_{handle}",
+                        "title": "Unico",
+                        "sku": f"HUB-{handle.upper()}",
+                        "manage_inventory": False,
+                        "allow_backorder": False,
+                        "prices": [],
+                        "options": [{"id": "ov1", "value": "Unico"}],
+                    }
+                ],
+                "options": [],
+                "images": [],
+                "tags": [],
+                "categories": [],
+                "sales_channels": [],
+            }
+        ],
+        "count": 1,
+        "offset": 0,
+        "limit": 1,
+    }
+
+
+def _mock_draft_flow(handle: str, title: str):
+    """Rutas respx del registro completo; devuelve la del POST del draft."""
     respx.get(f"{_BASE_URL}/admin/products").mock(
-        return_value=Response(200, json=_product_payload_for_handle("cruz-de-vida"))
+        return_value=Response(200, json=_single_variant_payload(handle, title))
     )
     respx.get(f"{_BASE_URL}/admin/customers").mock(
         return_value=Response(200, json={"customers": [], "count": 0, "offset": 0, "limit": 1})
@@ -1244,29 +1306,163 @@ async def test_register_order_with_coupon_sends_promo_codes_and_metadata(adapter
     respx.get(f"{_BASE_URL}/admin/draft-orders").mock(
         return_value=Response(200, json={"draft_orders": [], "count": 0, "offset": 0, "limit": 50})
     )
-    draft_route = respx.post(f"{_BASE_URL}/admin/draft-orders").mock(
+    return respx.post(f"{_BASE_URL}/admin/draft-orders").mock(
         return_value=Response(200, json={"draft_order": {"id": "draft_c_001", "status": "draft", "items": [], "shipping_methods": []}})
+    )
+
+
+def _medusa_total(body: dict) -> int:
+    """Lo que Medusa cobra por el draft: Σ unit_price × cantidad + envío."""
+    items = sum(line["unit_price"] * line["quantity"] for line in body["items"])
+    return items + sum(method["amount"] for method in body["shipping_methods"])
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_register_order_with_coupon_sends_discounted_unit_price_and_no_promo_codes(adapter):
+    """Guard del #44: Medusa 2.12.5 vincula `promo_codes` a un draft SIN
+    descontar cuando la promoción filtra productos (al crear el draft no carga
+    `items.product`). Hubara escribe el descuento en el precio: 2 × Cubo Love a
+    $21.000 con AMOR26 (10%) → una línea a $18.900 y Medusa cobra lo que
+    confirmó el bot ($45.700), no $49.900."""
+    draft_route = _mock_draft_flow("cubo-love", "Cubo Love")
+
+    result = await adapter.register_order(
+        session_key="wa_c",
+        items=[
+            OrderItem(
+                handle="cubo-love",
+                quantity=2,
+                unit_price_cop=21_000,
+                discounted_units=(DiscountedUnits(units=2, discount_unit_cop=2_100),),
+            )
+        ],
+        shipping=_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=42_000,
+        shipping_cop=7_900,
+        total_cop=45_700,
+        coupon_code="AMOR26",
+        discount_cop=4_200,
+    )
+
+    assert result.success is True
+    body = json.loads(draft_route.calls[-1].request.content)
+    assert "promo_codes" not in body
+    (line,) = body["items"]
+    assert (line["quantity"], line["unit_price"]) == (2, 18_900)
+    assert line["metadata"]["coupon_code"] == "AMOR26"
+    assert line["metadata"]["list_unit_price_cop"] == 21_000
+    assert line["metadata"]["discount_unit_cop"] == 2_100
+    assert body["metadata"]["coupon_code"] == "AMOR26"
+    assert body["metadata"]["discount_cop"] == 4_200
+    assert _medusa_total(body) == 45_700
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_register_order_puts_discounted_units_in_their_own_line(adapter):
+    """AMOR26 descuenta hasta 10 unidades por línea: de 12 Cubo Love, 10 van en
+    una línea a $18.900 (con la auditoría del cupón) y 2 en otra a precio de
+    lista, sin marca de cupón."""
+    draft_route = _mock_draft_flow("cubo-love", "Cubo Love")
+
+    await adapter.register_order(
+        session_key="wa_c",
+        items=[
+            OrderItem(
+                handle="cubo-love",
+                quantity=12,
+                unit_price_cop=21_000,
+                discounted_units=(DiscountedUnits(units=10, discount_unit_cop=2_100),),
+            )
+        ],
+        shipping=_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=252_000,
+        shipping_cop=7_900,
+        total_cop=238_900,
+        coupon_code="AMOR26",
+        discount_cop=21_000,
+    )
+
+    body = json.loads(draft_route.calls[-1].request.content)
+    lines = [
+        (line["quantity"], line["unit_price"], line["metadata"].get("coupon_code"))
+        for line in body["items"]
+    ]
+    assert lines == [(10, 18_900, "AMOR26"), (2, 21_000, None)]
+    assert _medusa_total(body) == 238_900
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_register_order_refuses_a_draft_whose_total_is_not_the_confirmed_one(adapter):
+    """SEC-07 en el borde: si las líneas + el envío no suman el total que
+    confirmó el bot (p. ej. el reintento de un registro viejo con cupón pero
+    sin reparto), NO se crea un draft con otro total — el #44 no se repite en
+    silencio; el pedido queda para registro manual."""
+    draft_route = _mock_draft_flow("cubo-love", "Cubo Love")
+
+    result = await adapter.register_order(
+        session_key="wa_c",
+        items=[OrderItem(handle="cubo-love", quantity=2, unit_price_cop=21_000)],
+        shipping=_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=42_000,
+        shipping_cop=7_900,
+        total_cop=45_700,
+        coupon_code="AMOR26",
+        discount_cop=4_200,
+    )
+
+    assert result.success is False
+    assert (result.error_detail or "").startswith("amount_mismatch")
+    assert not draft_route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_register_order_refuses_a_payload_whose_lines_do_not_add_up_to_the_total(
+    adapter, monkeypatch
+):
+    """La defensa del borde mira el payload REAL, no los inputs: si la
+    resolución de variantes perdiera una unidad (un bug futuro de
+    `variant_matching`), las líneas que Medusa cobraría ya no suman el total
+    confirmado y el draft no se crea."""
+    draft_route = _mock_draft_flow("cubo-love", "Cubo Love")
+    variant = SimpleNamespace(id="var_cubo-love", sku="HUB-CUBO-LOVE", title="Unico")
+    loses_a_unit = variant_matching.VariantResolution(
+        lines=(variant_matching.VariantLine(variant, 1),)
+    )
+    monkeypatch.setattr(
+        MedusaOrderRegistration,
+        "_resolve_variant",
+        staticmethod(lambda product, label, quantity: loses_a_unit),
     )
 
     result = await adapter.register_order(
         session_key="wa_c",
-        items=_ITEMS,
+        items=[
+            OrderItem(
+                handle="cubo-love",
+                quantity=2,
+                unit_price_cop=21_000,
+                discounted_units=(DiscountedUnits(units=2, discount_unit_cop=2_100),),
+            )
+        ],
         shipping=_SHIPPING,
         payment_method="transfer",
-        subtotal_cop=17000,
-        shipping_cop=5000,
-        total_cop=19450,
-        coupon_code="MAMA15",
-        discount_cop=2550,
+        subtotal_cop=42_000,
+        shipping_cop=7_900,
+        total_cop=45_700,
+        coupon_code="AMOR26",
+        discount_cop=4_200,
     )
-    assert result.success is True
-    import json as _json
 
-    body = _json.loads(draft_route.calls[-1].request.content)
-    assert body["promo_codes"] == ["MAMA15"]
-    assert body["metadata"]["coupon_code"] == "MAMA15"
-    assert body["metadata"]["discount_cop"] == 2550
-    assert body["metadata"]["total_cop"] == 19450
+    assert result.success is False
+    assert (result.error_detail or "").startswith("amount_mismatch")
+    assert not draft_route.called
 
 
 @pytest.mark.asyncio
@@ -1302,3 +1498,109 @@ async def test_register_order_without_coupon_has_no_promo_codes(adapter):
     body = _json.loads(draft_route.calls[-1].request.content)
     assert "promo_codes" not in body
     assert "coupon_code" not in body["metadata"]
+
+
+# ---------------------------------------------------------------------------
+# Cupo por unidad (central de cupones, Fase 5): la línea con descuento lleva
+# la marca del cupo que consumió — de ahí se derivan las vendidas.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_register_order_writes_quota_line_metadata(adapter):
+    draft_route = _mock_draft_flow("cubo-love", "Cubo Love")
+
+    await adapter.register_order(
+        session_key="wa_c",
+        items=[
+            OrderItem(
+                handle="cubo-love",
+                quantity=3,
+                unit_price_cop=21_000,
+                variant_label="Rosado · Café",
+                discounted_units=(
+                    DiscountedUnits(units=1, discount_unit_cop=2_100, quota_id="q_rosado_cafe"),
+                ),
+            )
+        ],
+        shipping=_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=63_000,
+        shipping_cop=7_900,
+        total_cop=68_800,
+        coupon_code="AMOR26",
+        discount_cop=2_100,
+    )
+
+    body = json.loads(draft_route.calls[-1].request.content)
+    lines = [
+        (line["quantity"], line["unit_price"], line["metadata"].get("coupon_quota_id"))
+        for line in body["items"]
+    ]
+    assert lines == [(1, 18_900, "q_rosado_cafe"), (2, 21_000, None)]
+
+
+def test_fingerprint_includes_the_quota_of_each_discounted_group():
+    """Dos cupos distintos con el mismo descuento son pedidos distintos (no se
+    reusa el draft de otra combinación)."""
+    from src.platform.orders.medusa_order import _compute_order_fingerprint
+
+    cubo = OrderItem(handle="cubo-love", quantity=1, unit_price_cop=21_000)
+    plain = replace(cubo, discounted_units=(DiscountedUnits(units=1, discount_unit_cop=2_100),))
+    q1 = replace(cubo, discounted_units=(DiscountedUnits(1, 2_100, quota_id="q1"),))
+    q2 = replace(cubo, discounted_units=(DiscountedUnits(1, 2_100, quota_id="q2"),))
+
+    fp = lambda items: _compute_order_fingerprint(items, 18_900, "transfer")  # noqa: E731
+    assert len({fp([plain]), fp([q1]), fp([q2])}) == 3
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_register_order_writes_the_color_and_aroma_of_each_line(adapter):
+    """C1 (premortem): el color y el aroma que eligió el cliente llegan a la
+    línea de Medusa. Los productos "Unico" no tienen variante que los diga:
+    sin esto el equipo no sabe qué despachar."""
+    draft_route = _mock_draft_flow("cubo-love", "Cubo Love")
+
+    await adapter.register_order(
+        session_key="wa_c",
+        items=[OrderItem(handle="cubo-love", quantity=1, unit_price_cop=21_000, color="Rosado", aroma="Café")],
+        shipping=_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=21_000,
+        shipping_cop=7_900,
+        total_cop=28_900,
+    )
+
+    (line,) = json.loads(draft_route.calls[-1].request.content)["items"]
+    assert (line["metadata"]["color"], line["metadata"]["aroma"]) == ("Rosado", "Café")
+
+
+def test_fingerprint_tells_colors_apart_and_keeps_orders_without_them_stable():
+    """Dos pedidos que solo difieren en el color son pedidos distintos (el
+    pre-check no puede devolver el draft del otro); sin color/aroma el hash es
+    el de siempre (un reintento que cruza el deploy encuentra su draft)."""
+    from src.platform.orders.medusa_order import _compute_order_fingerprint
+
+    plain = OrderItem(handle="cubo-love", quantity=1, unit_price_cop=21_000)
+    rosado = replace(plain, color="Rosado", aroma="Café")
+    azul = replace(plain, color="Azul", aroma="Café")
+
+    assert _compute_order_fingerprint([rosado], 1, "x") != _compute_order_fingerprint([azul], 1, "x")
+    assert _compute_order_fingerprint([plain], 22_000, "transfer") == _legacy_fingerprint([plain], 22_000, "transfer")
+
+
+def _legacy_fingerprint(items, total_cop, payment_method):
+    import hashlib
+
+    parts = sorted(
+        f"{it.handle}:{it.quantity}:{it.unit_price_cop}:{it.variant_label or ''}"
+        + "".join(
+            f":-{g.units}x{g.discount_unit_cop}" + (f"@{g.quota_id}" if g.quota_id else "")
+            for g in it.discounted_units
+        )
+        for it in items
+    )
+    raw = "|".join(parts) + f"|total={total_cop}|pay={payment_method}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]

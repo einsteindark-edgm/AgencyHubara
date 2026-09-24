@@ -100,6 +100,23 @@ describe("CampaignsList", () => {
     expect(getByText(/40 enviados/)).toBeTruthy();
   });
 
+  it("la campaña frenada al dispararse dice por qué no salió (el cupón ya no servía)", () => {
+    const blocked = makeCampaign({
+      id: "mkt-3",
+      status: "failed",
+      failureReason: "No se envió: el cupón PAPA20 está pausado.",
+    });
+    const { getByText } = render(
+      <CampaignsList
+        campaigns={[blocked]}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onCreated={vi.fn()}
+      />,
+    );
+    expect(getByText("No se envió: el cupón PAPA20 está pausado.")).toBeTruthy();
+  });
+
   it("filtra por estado con las pills", () => {
     const { getByRole, queryByText } = render(
       <CampaignsList
@@ -127,5 +144,18 @@ describe("CampaignsList", () => {
     );
     fireEvent.click(getByRole("button", { name: /Nueva campaña/ }));
     expect(createMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("pinta el slot de cabecera arriba de la lista (selector de la sección)", () => {
+    const { getByTestId } = render(
+      <CampaignsList
+        campaigns={[]}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onCreated={vi.fn()}
+        header={<div data-testid="slot" />}
+      />,
+    );
+    expect(getByTestId("slot")).toBeTruthy();
   });
 });

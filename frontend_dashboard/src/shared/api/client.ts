@@ -9,7 +9,7 @@
  * No abstrae métodos custom (DELETE, PATCH) hasta que se necesiten.
  */
 
-import { getAccessToken, notifyUnauthorized } from "../config/auth-token";
+import { getAccessToken, getIdToken, notifyUnauthorized } from "../config/auth-token";
 import { env } from "../config/env";
 
 export class ApiError extends Error {
@@ -64,6 +64,12 @@ async function request<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
   const token = getAccessToken();
   if (token && !headers.has("authorization")) {
     headers.set("authorization", `Bearer ${token}`);
+  }
+  // C-6: el ID token (trae el email) para el actor de la auditoría. El
+  // backend lo verifica y, si algo no cuadra, lo ignora — nunca rechaza.
+  const idToken = getIdToken();
+  if (idToken && !headers.has("x-hubara-id-token")) {
+    headers.set("x-hubara-id-token", idToken);
   }
 
   const res = await fetch(url, {

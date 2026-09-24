@@ -39,26 +39,32 @@ Idempotencia (la propiedad crítica):
     falso-resuelto de "migrar un stub a otro stub".
 
 Persistencia:
-  * Read-modify-write de `metadata.json` con escritura atómica (`os.replace`
-    sobre un tmp) para que un crash a mitad de escritura no deje el JSON
-    corrupto (que el scanner skipearía, perdiendo el record).
+  * Cada escritura guarda SOLO el record, sobre una lectura fresca de la
+    sesión y bajo el lock de `FilesystemMetadataStore.update` (escritura
+    atómica, un crash a mitad no deja el JSON corrupto): lo que otros
+    escribieron mientras se reintentaba no se revierte (premortem C3).
 """
 from __future__ import annotations
 
 import json
 import logging
-import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from src.platform.orders.port import (
+    DiscountedUnits,
     OrderItem,
     OrderRegistrationPort,
     OrderRegistrationResult,
     OrderShipping,
+    order_fingerprint,
 )
+from src.platform.promotions.port import PromotionsUnavailableError
+from src.platform.promotions.quota_lock import QuotaLockTimeout
+from src.platform.promotions.quota_store import QuotaStoreError
+from src.platform.state import FilesystemMetadataStore
 
 log = logging.getLogger(__name__)
 
@@ -122,6 +128,67 @@ class ReconciliationOutcome:
 # ----------------------------------------------------------------------
 
 
+class QuotaRecheck(Protocol):
+    """Re-chequeo del cupo por unidad al reintentar (central de cupones).
+
+    `own_order` = (sesión, fingerprint) del pedido que se reintenta: si su
+    draft SÍ llegó a Medusa (respondió tarde), sus unidades no cuentan como
+    vendidas para él mismo (L-28)."""
+
+    def hold(self, code: str) -> Any: ...
+
+    async def units_left(
+        self, quota_ids: set[str], *, own_order: tuple[str, str] | None = None
+    ) -> dict[str, int]: ...
+
+
+#: El re-chequeo no pudo leer (candado ocupado, Medusa o el vault caídos): el
+#: pedido NO se registra y sigue pendiente — nunca "a ciegas".
+_QUOTA_READ_ERRORS = (QuotaLockTimeout, PromotionsUnavailableError, QuotaStoreError)
+
+
+class _DefaultQuotaRecheck:
+    """El candado por código y lo vendido derivado de Medusa (composición de
+    promociones). Solo se arma si el record tiene unidades con cupo."""
+
+    def __init__(self) -> None:
+        from src.platform.promotions.composition import (
+            get_coupon_sales_reader,
+            get_promo_quota_store,
+            get_quota_lock,
+        )
+
+        self._store = get_promo_quota_store()
+        self._sales = get_coupon_sales_reader()
+        self._lock = get_quota_lock()
+
+    def hold(self, code: str) -> Any:
+        return self._lock.hold(code, timeout_s=60.0)
+
+    async def units_left(
+        self, quota_ids: set[str], *, own_order: tuple[str, str] | None = None
+    ) -> dict[str, int]:
+        from src.platform.promotions.coupon_sales import quota_board
+
+        exclude = {own_order} if own_order else None
+        left: dict[str, int] = {}
+        for sheet in self._store.list_sheets():
+            if quota_ids & {q.id for q in sheet.quotas}:
+                for status in await quota_board(sheet, self._sales, exclude=exclude):
+                    left[status.quota.id] = status.units_left
+        return left
+
+
+def _quota_units_needed(record: dict[str, Any]) -> dict[str, int]:
+    """Unidades con cupo que el record volvería a escribir, por cupo."""
+    needed: dict[str, int] = {}
+    for line in record.get("coupon_line_discounts") or []:
+        quota_id = line.get("quota_id") if isinstance(line, dict) else None
+        if quota_id:
+            needed[str(quota_id)] = needed.get(str(quota_id), 0) + int(line.get("units") or 0)
+    return needed
+
+
 async def reconcile_one(
     *,
     vault_dir: str | Path,
@@ -129,6 +196,7 @@ async def reconcile_one(
     audit_id: str,
     port: OrderRegistrationPort,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    quota_recheck: QuotaRecheck | None = None,
 ) -> ReconciliationOutcome:
     """Reintenta registrar en Medusa UN pedido fallido. Idempotente.
 
@@ -144,6 +212,11 @@ async def reconcile_one(
         `abandoned` y devuelve `OUTCOME_ABANDONED`.
       * El reintento se considera EXITOSO solo si el port confirma con un
         provider real (≠ "stub"). Un stub→stub NO resuelve.
+      * Cupo por unidad: si el record escribe unidades con `quota_id`, el
+        reintento corre bajo el candado del código y relee cuántas quedan;
+        si ya no alcanzan (otro cliente se las llevó mientras Medusa estaba
+        caído) NO se registra: queda `abandoned` con `quota_changed` para un
+        humano — nunca se vende dos veces la última unidad.
     """
     metadata_file = Path(vault_dir) / session_key / "metadata.json"
     data = _read_metadata(metadata_file)
@@ -163,7 +236,7 @@ async def reconcile_one(
             outcome=OUTCOME_NOT_FOUND,
             error_detail=f"no se encontró order_id={audit_id} en la sesión",
         )
-    record, _commit = located
+    record, _ = located
 
     status = str(record.get("status", STATUS_PENDING))
     prior_attempts = list(record.get("reconciliation_attempts") or [])
@@ -182,15 +255,19 @@ async def reconcile_one(
             session_key=session_key,
             audit_id=audit_id,
             outcome=OUTCOME_ABANDONED,
-            error_detail="record previamente abandonado (max_attempts alcanzado)",
+            error_detail=(
+                "record previamente abandonado: quota_changed — ya no quedan las unidades con "
+                "descuento; re-confirmar el total con el cliente y registrarlo a mano"
+                if record.get("abandon_reason") == "quota_changed"
+                else "record previamente abandonado (max_attempts alcanzado)"
+            ),
             attempts=len(prior_attempts),
         )
 
     if len(prior_attempts) >= max_attempts:
         record["status"] = STATUS_ABANDONED
         record["abandoned_at_ms"] = _now_ms()
-        _commit(data, record)
-        _atomic_write_json(metadata_file, data)
+        _save_record(metadata_file, audit_id, record)
         log.warning(
             "reconcile_one: audit_id=%s abandonado tras %d reintentos",
             audit_id, len(prior_attempts),
@@ -218,12 +295,72 @@ async def reconcile_one(
             attempts=len(prior_attempts),
         )
 
-    result: OrderRegistrationResult = await port.register_order(
-        session_key=session_key,
-        items=items,
-        shipping=shipping,
-        **kwargs,
-    )
+    needed = _quota_units_needed(record)
+    result: OrderRegistrationResult
+    if needed:
+        recheck = quota_recheck or _DefaultQuotaRecheck()
+        # El draft del intento original pudo llegar a Medusa aunque el
+        # adapter reportara falla (timeout): ese draft es ESTE pedido y no
+        # cuenta como vendido para él (L-28); el port lo reusa por fingerprint.
+        own = (session_key, order_fingerprint(items, kwargs["total_cop"], kwargs["payment_method"]))
+        try:
+            async with recheck.hold(str(record.get("coupon_code") or "")):
+                # Otra corrida (el barrido y "Reintentar" a la vez) pudo
+                # terminarlo mientras se esperaba el candado: se relee.
+                now_status = _current_status(metadata_file, audit_id)
+                if now_status != STATUS_PENDING:
+                    return ReconciliationOutcome(
+                        session_key=session_key,
+                        audit_id=audit_id,
+                        outcome=(
+                            OUTCOME_ALREADY_RESOLVED if now_status == STATUS_RESOLVED else OUTCOME_ABANDONED
+                        ),
+                        attempts=len(prior_attempts),
+                    )
+                left = await recheck.units_left(set(needed), own_order=own)
+                gone = sorted(q for q, n in needed.items() if left.get(q, 0) < n)
+                if gone:
+                    record["status"] = STATUS_ABANDONED
+                    record["abandoned_at_ms"] = _now_ms()
+                    record["abandon_reason"] = "quota_changed"
+                    _save_record(metadata_file, audit_id, record)
+                    log.warning(
+                        "reconcile_one: audit_id=%s NO se reintenta: el cupo %s ya no alcanza",
+                        audit_id, gone,
+                    )
+                    return ReconciliationOutcome(
+                        session_key=session_key,
+                        audit_id=audit_id,
+                        outcome=OUTCOME_ABANDONED,
+                        error_detail=(
+                            f"quota_changed: ya no quedan las unidades con descuento ({', '.join(gone)}); "
+                            "registrar a mano con el total nuevo"
+                        ),
+                        attempts=len(prior_attempts),
+                    )
+                result = await port.register_order(
+                    session_key=session_key, items=items, shipping=shipping, **kwargs,
+                )
+        except _QUOTA_READ_ERRORS as exc:
+            # Sin releer el cupo no se registra (podría vender dos veces la
+            # última unidad): cuenta como intento fallido y sigue pendiente.
+            log.warning(
+                "reconcile_one: audit_id=%s sin re-chequeo del cupo (%s): sigue pendiente",
+                audit_id, exc,
+            )
+            result = OrderRegistrationResult(
+                success=False,
+                order_id=None,
+                provider=str(record.get("provider") or "medusa"),
+                error_detail=f"quota_unavailable: no pude releer el cupo ({type(exc).__name__}: {exc})",
+            )
+    else:
+        result = await port.register_order(
+            session_key=session_key,
+            items=items,
+            shipping=shipping,
+            **kwargs,
+        )
 
     now = _now_ms()
     # Un reintento solo "resuelve" si fue a un provider real. Un stub→stub
@@ -245,8 +382,7 @@ async def reconcile_one(
         record["resolved_order_id"] = result.order_id
         record["resolved_at_ms"] = now
         record["resolution"] = "auto"
-        _commit(data, record)
-        _atomic_write_json(metadata_file, data)
+        _save_record(metadata_file, audit_id, record)
         log.info(
             "reconcile_one: audit_id=%s RESUELTO → order_id=%s provider=%s",
             audit_id, result.order_id, result.provider,
@@ -267,8 +403,7 @@ async def reconcile_one(
         outcome = OUTCOME_ABANDONED
     else:
         outcome = OUTCOME_STILL_FAILING
-    _commit(data, record)
-    _atomic_write_json(metadata_file, data)
+    _save_record(metadata_file, audit_id, record)
     log.warning(
         "reconcile_one: audit_id=%s sigue fallando (intento %d/%d): %s",
         audit_id, len(new_attempts), max_attempts, result.error_detail,
@@ -314,7 +449,7 @@ def mark_resolved_manually(
             outcome=OUTCOME_NOT_FOUND,
             error_detail=f"no se encontró order_id={audit_id} en la sesión",
         )
-    record, _commit = located
+    record, _ = located
 
     if str(record.get("status", STATUS_PENDING)) == STATUS_RESOLVED:
         return ReconciliationOutcome(
@@ -333,8 +468,7 @@ def mark_resolved_manually(
         record["resolved_order_id"] = resolved_order_id
     if note:
         record["resolution_note"] = note
-    _commit(data, record)
-    _atomic_write_json(metadata_file, data)
+    _save_record(metadata_file, audit_id, record)
     log.info(
         "mark_resolved_manually: audit_id=%s resuelto manualmente (order_id=%s)",
         audit_id, resolved_order_id or "(sin id)",
@@ -368,14 +502,29 @@ def _read_metadata(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
-    """Escribe JSON atómicamente (tmp + os.replace) para no corromper en crash."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    os.replace(tmp, path)
+def _save_record(metadata_file: Path, audit_id: str, record: dict[str, Any]) -> None:
+    """Guarda SOLO este record sobre una lectura fresca de la sesión, bajo el
+    mismo lock que `FilesystemMetadataStore.update`: lo que otros escribieron
+    mientras se reintentaba (un humano tomó la conversación, un tag, otro
+    registro) no se revierte (premortem C3). Sin el record en la lectura
+    fresca (o lectura ilegible) no escribe."""
+
+    def _mutate(fresh: dict[str, Any]) -> dict[str, Any] | None:
+        located = _locate_record(fresh, audit_id)
+        if located is None:
+            return None
+        _, commit = located
+        commit(fresh, record)
+        return fresh
+
+    FilesystemMetadataStore(metadata_file.parent.parent).update(metadata_file.parent.name, _mutate)
+
+
+def _current_status(metadata_file: Path, audit_id: str) -> str | None:
+    """Estado del record en disco AHORA (None si ya no está)."""
+    data = _read_metadata(metadata_file)
+    located = _locate_record(data, audit_id) if isinstance(data, dict) else None
+    return str(located[0].get("status", STATUS_PENDING)) if located else None
 
 
 def _locate_record(data: dict[str, Any], audit_id: str):
@@ -436,6 +585,18 @@ def _rebuild_order_args(
         )
         for it in raw_items
     ]
+    # Color/aroma que escribió el intento original (premortem C1): mismo
+    # contenido en Medusa y mismo fingerprint. Records viejos no los traen.
+    chosen = record.get("item_variants")
+    if isinstance(chosen, list) and len(chosen) == len(items):
+        items = [
+            replace(
+                item,
+                color=str(c.get("color")) if isinstance(c, dict) and c.get("color") else None,
+                aroma=str(c.get("aroma")) if isinstance(c, dict) and c.get("aroma") else None,
+            )
+            for item, c in zip(items, chosen)
+        ]
     raw_shipping = record["shipping"]
     shipping = OrderShipping(
         city=str(raw_shipping["city"]),
@@ -451,11 +612,29 @@ def _rebuild_order_args(
             else None
         ),
     )
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "payment_method": str(record["payment_method"]),
         "subtotal_cop": int(record["subtotal_cop"]),
         "shipping_cop": int(record["shipping_cop"]),
         "total_cop": int(record["total_cop"]),
         "currency": str(record.get("currency", "COP")),
     }
+    # Cupón (pedido #44): el reintento lleva el MISMO reparto que el intento
+    # original — sin él Medusa quedaría con el total de lista.
+    if record.get("coupon_code"):
+        groups: dict[int, list[DiscountedUnits]] = {}
+        for line in record.get("coupon_line_discounts") or []:
+            groups.setdefault(int(line["index"]), []).append(
+                DiscountedUnits(
+                    units=int(line["units"]),
+                    discount_unit_cop=int(line["discount_unit_cop"]),
+                    quota_id=str(line["quota_id"]) if line.get("quota_id") else None,
+                )
+            )
+        items = [
+            replace(item, discounted_units=tuple(groups.get(i, ())))
+            for i, item in enumerate(items)
+        ]
+        kwargs["coupon_code"] = str(record["coupon_code"])
+        kwargs["discount_cop"] = int(record.get("discount_cop") or 0)
     return items, shipping, kwargs

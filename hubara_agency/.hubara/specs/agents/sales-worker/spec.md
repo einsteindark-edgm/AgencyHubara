@@ -287,7 +287,7 @@ opción directa (queda cubierta por el link de pago). Los ids de método en
 
 - GIVEN un pedido registrado con `payment_method` transfer o payment_link (montos validados por SEC-07: subtotal = Σ ítems, total = subtotal + envío)
 - WHEN el flush renderiza el intent `payment_instructions`
-- THEN el mensaje muestra `*Productos*`, `*Envío*` (o "sin costo" si es 0) y `*Total*` (`*Total sin recargo*` para link de pago), en ese orden, antes de la referencia del pedido
+- THEN el mensaje muestra `*Productos*`, `*Envío*` (o "sin costo" si es 0, que solo alcanza un intent encolado antes de la regla "Sin envío gratis") y `*Total*` (`*Total sin recargo*` para link de pago), en ese orden, antes de la referencia del pedido
 - AND un intent sin `subtotal_cop`/`shipping_cop` (encolado antes del deploy) sigue mostrando la línea única `*Valor*` — el sistema nunca inventa un reparto
 
 #### Scenario: Aviso determinista del link de pago
@@ -319,7 +319,7 @@ tal. Los textos viven en `config/shipping.py` (`SHIPPING_RATES_MESSAGE`,
 
 #### Scenario: Resumen del pedido contra entrega — envío "Por confirmar"
 
-- GIVEN el LLM invoca `present_order_confirmation` con `payment_method=cash_on_delivery` y `shipping_cop` (tarifa mínima estimada, incluso 0)
+- GIVEN el LLM invoca `present_order_confirmation` con `payment_method=cash_on_delivery` y `shipping_cop` (la tarifa mínima publicada; ver "Sin envío gratis")
 - WHEN el flush renderiza el intent `order_confirmation`
 - THEN el body muestra los ítems, `Subtotal productos: $X COP`, `Envío: Por confirmar*`, `📍 Dirección: …`, `💳 Medio de pago: Contra entrega` y la nota `📌 El valor final del envío se recalculará directamente con la transportadora antes de despachar y te lo confirmaremos para cerrar tu pedido.`
 - AND NO aparece el valor del envío ni una línea de total
@@ -329,9 +329,25 @@ tal. Los textos viven en `config/shipping.py` (`SHIPPING_RATES_MESSAGE`,
 
 - GIVEN el LLM invoca `present_order_confirmation` con `payment_method` transfer o payment_link
 - WHEN el flush renderiza el intent `order_confirmation`
-- THEN el body muestra `Subtotal productos: $X COP`, `Envío (tarifa mínima): $Y COP` (o `Envío: sin costo` si es 0) y `Total: $Z COP`, seguidos de dirección y medio de pago
+- THEN el body muestra `Subtotal productos: $X COP`, `Envío (tarifa mínima): $Y COP` y `Total: $Z COP`, seguidos de dirección y medio de pago (el render de `Envío: sin costo` para 0 solo lo alcanza un intent encolado antes de la regla "Sin envío gratis")
 - AND NO aparece "Por confirmar" ni la nota 📌 (solo aplican a contra entrega)
 - AND el envelope al LLM trae el total y le pide aclarar "tarifa mínima" si menciona el envío
+
+#### Scenario: Sin envío gratis — el envío es siempre una tarifa publicada (decisión del operador, 2026-09-23)
+
+El envío lo cobra la transportadora a su tarifa y no lleva descuentos ni
+"envío gratis" (la promoción de remarketing "Envío Gratis por objeción de
+precio" se eliminó). El `shipping_cop` que manda el LLM es un monto (L-19):
+el sistema lo compara contra la tabla (`config/shipping.py`).
+
+- GIVEN el LLM llama `present_order_confirmation` con un `shipping_cop` que no es una tarifa publicada ($7.900 / $16.940), p. ej. 0
+- THEN responde `queued=false, error=shipping_mismatch` con las tarifas publicadas y NO encola nada
+- AND GIVEN el LLM llama `register_order` con un envío que no es tarifa publicada, o con la nacional para Bogotá
+- THEN responde `registered=false, error_detail=shipping_mismatch` y el pedido NO llega a Medusa (aunque subtotal + envío = total)
+- AND fuera de Bogotá valen $7.900 (municipio cercano) y $16.940 (nacional): no hay lista de municipios cercanos y lo decide el bot con la política publicada
+- AND con contra entrega el bot igual pasa la tarifa publicada y registra total = subtotal + envío − cupón (la confirmación no le da un total)
+- AND los rechazos de validación de `register_order` (`shipping_mismatch`, `amount_mismatch`, `price_mismatch`, `missing_receiver_name`) llevan `error`: el bot corrige y reintenta, y solo el rechazo de Medusa (sin `error`) escala `ORDER_REGISTRATION_FAILED`
+- AND remarketing NUNCA ofrece envío gratis ni descuentos, tampoco si el cliente dijo que estaba caro; lo único que puede recordar es el cupón que ya le dio la campaña que abrió la conversación, tal como vino
 
 ### Requirement: El precio sale del catálogo, nunca del anuncio ni del cliente (2026-09-16)
 

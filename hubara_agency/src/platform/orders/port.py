@@ -24,8 +24,25 @@ Por que un Port y no llamar `HttpMedusaClient` directo desde la tool:
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
+
+
+@dataclass(frozen=True)
+class DiscountedUnits:
+    """Unidades de un item que llevan el descuento del cupon.
+
+    `units` unidades pagan `OrderItem.unit_price_cop - discount_unit_cop`
+    (pesos enteros). El reparto lo calcula Hubara con las reglas del cupon
+    (L-19); el adapter solo lo escribe.
+    """
+    units: int
+    discount_unit_cop: int
+    #: Cupo por unidad que consumen estas unidades (central de cupones): la
+    #: línea lo lleva como `metadata.coupon_quota_id` y de ahí se derivan
+    #: las vendidas del cupo. None = cupón sin cupo.
+    quota_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -35,11 +52,19 @@ class OrderItem:
     `handle` se resuelve a `variant_id` dentro del adapter (via
     `MedusaProductService.list(handle=...)`). El adapter elige la
     variante por `variant_label` si esta presente, sino la primera.
+
+    `unit_price_cop` es SIEMPRE el precio de lista; las unidades con
+    descuento de cupon van en `discounted_units`.
     """
     handle: str
     quantity: int
     unit_price_cop: int
     variant_label: str | None = None
+    discounted_units: tuple[DiscountedUnits, ...] = ()
+    #: Color y aroma elegidos (premortem C1): los productos "Unico" no tienen
+    #: variante que los diga, así que viajan a la metadata de la línea.
+    color: str | None = None
+    aroma: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,8 +141,39 @@ class OrderRegistrationPort(Protocol):
         discount_cop: int = 0,
     ) -> OrderRegistrationResult: ...
 
-    # `coupon_code` / `discount_cop` (cupones Medusa, 2026-09-21): el código
-    # viaja como `promo_codes` del draft y el monto ya viene descontado en
-    # `total_cop` (lo recomputa la tool desde el snapshot del episodio). Los
-    # callers los mandan SOLO cuando hay cupón, así los adapters/fakes viejos
-    # siguen siendo compatibles.
+    # Cupón (Fase 0, pedido #44): `total_cop` ya viene descontado (lo
+    # recomputa la tool desde el snapshot del episodio, L-19) y el reparto
+    # viaja en `OrderItem.discounted_units`. Solo productos: el envío va
+    # completo (no hay cupones de envío). `coupon_code` / `discount_cop`
+    # quedan como auditoría. Los callers los mandan SOLO cuando hay cupón,
+    # así los adapters/fakes viejos siguen siendo compatibles.
+
+
+def order_fingerprint(items: list[OrderItem], total_cop: int, payment_method: str) -> str:
+    """Hash estable y corto del contenido de la orden.
+
+    Dos `register_order` con el MISMO contenido (retry de Temporal / doble
+    llamada del LLM / reconciliación) producen el mismo fingerprint; una
+    compra distinta del mismo cliente produce uno distinto. El adapter de
+    Medusa lo guarda en `metadata.order_fingerprint` del draft y lo usa en su
+    pre-check de idempotencia; la reconciliación lo usa para no contar como
+    vendido el draft del mismo pedido que reintenta (L-28).
+
+    Determinístico: se ordenan los items para que el orden de llegada no
+    cambie el hash. El reparto del cupón (`discounted_units`) es contenido
+    del pedido, pero solo entra cuando existe: sin cupón el hash es el de
+    siempre y un reintento que cruza un deploy sigue encontrando su draft.
+    """
+    parts = sorted(
+        f"{it.handle}:{it.quantity}:{it.unit_price_cop}:{it.variant_label or ''}"
+        + "".join(
+            f":-{g.units}x{g.discount_unit_cop}" + (f"@{g.quota_id}" if g.quota_id else "")
+            for g in it.discounted_units
+        )
+        # Color/aroma solo cuando existen: sin ellos el hash es el de siempre.
+        + (f":c={it.color}" if it.color else "")
+        + (f":a={it.aroma}" if it.aroma else "")
+        for it in items
+    )
+    raw = "|".join(parts) + f"|total={total_cop}|pay={payment_method}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]

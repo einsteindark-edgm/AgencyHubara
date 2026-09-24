@@ -229,3 +229,41 @@ async def test_rechazo_131050_marca_la_baja_con_la_campana_y_no_cuenta_como_fall
     assert tracker.result["failed"] == []
     assert tracker.result["opted_out"] == ["wa_b"]
     assert summary == {"sent": 2, "failed": 0, "planned": 3, "opted_out": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_plan_blocked_by_the_coupon_sends_nothing_and_does_not_mark_it_sent() -> None:
+    """A12: al dispararse, el cupón ya no servía — la activity dejó la
+    campaña fallida con el motivo; el workflow no manda nada ni la pisa."""
+    tracker = Tracker()
+    blocked = CampaignSendPlan(
+        campaign_id="mkt-1",
+        template_name="campaign_promo_marketing_v1",
+        recipients=[],
+        skipped=[],
+        unit_cost_usd_micros=0,
+        total_cost_usd_micros=0,
+        blocked_reason="No se envió: el cupón MAMA15 está pausado en Medusa.",
+    )
+    fakes = _fakes(tracker)
+
+    @activity.defn(name="load_campaign_send_plan")
+    async def fake_plan(campaign_id: str) -> CampaignSendPlan:
+        return blocked
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=QUEUE,
+            workflows=[CampaignSendWorkflow],
+            activities=[fake_plan, *fakes[1:]],
+        ):
+            summary = await env.client.execute_workflow(
+                CampaignSendWorkflow.run,
+                args=["mkt-1", "Promo madre"],
+                id="campaign-send-blocked",
+                task_queue=QUEUE,
+            )
+
+    assert summary["blocked_reason"] == blocked.blocked_reason
+    assert (tracker.statuses, tracker.sends, tracker.result) == ([], [], None)

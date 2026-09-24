@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { setAccessToken } from "../config/auth-token";
+import { setAccessToken, setIdToken } from "../config/auth-token";
 import { env } from "../config/env";
 import { apiClient, apiFileUrl, ApiError } from "./client";
 
@@ -51,6 +51,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   fetchMock.mockReset();
   setAccessToken(null); // no filtrar el token entre tests
+  setIdToken(null);
 });
 
 describe("apiClient", () => {
@@ -136,6 +137,37 @@ describe("apiClient", () => {
 
     const [, init] = fetchMock.mock.calls[0];
     expect((init.headers as Headers).get("authorization")).toBeNull();
+  });
+});
+
+describe("apiClient — ID token para el actor de la auditoría (C-6)", () => {
+  // El backend registra QUIÉN cambió un cupón con el email del ID token de
+  // Cognito (el access token no trae email): va en cada request si lo hay.
+  it("attaches X-Hubara-Id-Token when there is an ID token", async () => {
+    setAccessToken("acc");
+    setIdToken("the-id-token");
+    fetchMock.mockResolvedValueOnce(
+      new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+
+    await apiClient.patch("/api/marketing/coupons/promo_01", { percentage: 15 });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init.headers as Headers).get("x-hubara-id-token")).toBe("the-id-token");
+    expect((init.headers as Headers).get("authorization")).toBe("Bearer acc");
+  });
+
+  it("omits X-Hubara-Id-Token without an ID token (blank counts as none)", async () => {
+    setAccessToken("acc");
+    setIdToken("  ");
+    fetchMock.mockResolvedValueOnce(
+      new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+
+    await apiClient.get("/api/marketing/coupons");
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init.headers as Headers).get("x-hubara-id-token")).toBeNull();
   });
 });
 

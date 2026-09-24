@@ -95,25 +95,30 @@ const PRODUCTS = [
   },
 ];
 
-vi.mock("@plugins/marketing/frontend/entities/promotion", async (importOriginal) => ({
+vi.mock("@plugins/marketing/frontend/entities/coupon", async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  usePromotions: () => ({
-    data: {
-      promotions: [
-        {
-          code: "MAMA15",
-          discountType: "percentage",
-          value: 15,
-          targetType: "items",
-          name: "Madres",
-          endsAtMs: null,
-          minSubtotalCop: null,
-          productCount: 0,
-        },
-      ],
-      unavailable: false,
-    },
+  useCoupons: () => ({
+    data: [
+      {
+        promotionId: "promo_mama",
+        campaignId: "procamp_mama",
+        code: "MAMA15",
+        campaignName: "Madres",
+        percentage: 15,
+        products: "all",
+        startsOn: "2026-05-01",
+        endsOn: "2026-05-10",
+        endsOnLabel: "10 de mayo",
+        status: "active",
+        state: "active",
+        manageable: true,
+        unmanageableReason: null,
+        acceptsUnits: true,
+        units: null,
+      },
+    ],
     isPending: false,
+    error: null,
   }),
 }));
 
@@ -298,20 +303,20 @@ describe("CampaignBuilder — mensaje", () => {
   });
 });
 
-describe("CampaignBuilder — cupón contra Medusa", () => {
-  it("avisa si el cupón escrito no existe entre los vigentes de Medusa", () => {
+describe("CampaignBuilder — cupón de la central", () => {
+  it("avisa si el cupón de la campaña no está activo ni programado en la central", () => {
     // Incidente AMOR/AMOR26: la campaña anunció un código que no existía.
-    const { getByText } = render(
+    const { getByRole } = render(
       <CampaignBuilder campaign={makeCampaign({ couponCode: "PAPA20" })} />,
     );
-    expect(getByText(/PAPA20 no está entre los cupones vigentes de Medusa/)).toBeTruthy();
+    expect(getByRole("alert").textContent).toMatch(/PAPA20 no está activo ni programado/);
   });
 
-  it("un cupón vigente de Medusa no muestra aviso", () => {
+  it("un cupón vigente de la central no muestra aviso", () => {
     const { queryByText } = render(
       <CampaignBuilder campaign={makeCampaign({ couponCode: "MAMA15" })} />,
     );
-    expect(queryByText(/no está entre los cupones vigentes/)).toBeNull();
+    expect(queryByText(/no está activo ni programado/)).toBeNull();
   });
 });
 
@@ -484,20 +489,24 @@ describe("CampaignBuilder — carrusel de productos", () => {
 });
 
 describe("CampaignBuilder — cupón", () => {
-  it("el código se sanea a letras y números (VELAS_10 → VELAS10) al escribir", () => {
-    const { getByPlaceholderText } = render(
-      <CampaignBuilder campaign={makeCampaign({ goal: "discount_general" })} />,
+  it("elegir un cupón de la central dispara el PUT con código, % y vigencia", () => {
+    const { getByLabelText } = render(
+      <CampaignBuilder campaign={makeCampaign({ goal: "discount_general", couponCode: "" })} />,
     );
-    const input = getByPlaceholderText("PAPA20") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "velas_10" } });
-    expect(input.value).toBe("VELAS10");
+    fireEvent.change(getByLabelText("Cupón"), { target: { value: "MAMA15" } });
+    expect(updateMock.mutate.mock.calls[0]?.[0]).toMatchObject({
+      couponCode: "MAMA15",
+      percent: 15,
+      validUntil: "10 de mayo",
+    });
   });
 
-  it("ofrece los cupones vigentes de Medusa y elegir uno dispara el PUT", () => {
+  it("'Crear cupón' llega al Page por onCreateCoupon", () => {
+    const onCreateCoupon = vi.fn();
     const { getByRole } = render(
-      <CampaignBuilder campaign={makeCampaign({ goal: "discount_general" })} />,
+      <CampaignBuilder campaign={makeCampaign()} onCreateCoupon={onCreateCoupon} />,
     );
-    fireEvent.click(getByRole("button", { name: /MAMA15 · 15%/ }));
-    expect(updateMock.mutate.mock.calls[0]?.[0]).toMatchObject({ couponCode: "MAMA15" });
+    fireEvent.click(getByRole("button", { name: "Crear cupón" }));
+    expect(onCreateCoupon).toHaveBeenCalledTimes(1);
   });
 });
