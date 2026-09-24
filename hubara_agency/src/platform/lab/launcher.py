@@ -50,9 +50,9 @@ class Boto3LabLauncher(Boto3Launcher):
         self._send(ssm, instance_id, loop)
 
     def dispatch(self, run_id: str, image: str) -> str:  # type: ignore[override]
-        if not RUN_ID_RE.match(run_id):
+        if not RUN_ID_RE.fullmatch(run_id):
             raise ValueError(f"id de corrida inválido: {run_id!r}")
-        if not IMAGE_RE.match(image):
+        if not IMAGE_RE.fullmatch(image):
             raise ValueError(f"imagen inválida: {image!r}")
         ec2, ssm = self._clients()
         stdout = self._send(
@@ -61,7 +61,7 @@ class Boto3LabLauncher(Boto3Launcher):
         return _last_line(stdout)
 
     def cancel(self, run_id: str) -> str:
-        if not RUN_ID_RE.match(run_id):
+        if not RUN_ID_RE.fullmatch(run_id):
             raise ValueError(f"id de corrida inválido: {run_id!r}")
         ec2, ssm = self._clients()
         return _last_line(self._send(ssm, self._instance_id(ec2), f"/opt/lab/cancel.sh {_shell_quote(run_id)}"))
