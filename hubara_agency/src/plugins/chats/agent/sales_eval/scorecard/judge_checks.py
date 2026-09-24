@@ -419,8 +419,9 @@ def _result_from(check_id: str, data: dict[str, Any]) -> CheckResult | None:
         critique=_clip(str(data.get("critica") or ""), _EVIDENCE_MAX),
         source="judge",
     )
-    topics = _parse_topics(data.get("asuntos"))
-    return _with_topics(result, topics) if topics else result
+    if "asuntos" not in data:
+        return result  # no es un check por asuntos (solo EST-08 los pide)
+    return _with_topics(result, _parse_topics(data.get("asuntos")))
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -448,12 +449,17 @@ def _parse_topics(raw: Any) -> tuple[dict[str, Any], ...]:
 
 def _with_topics(result: CheckResult, topics: tuple[dict[str, Any], ...]) -> CheckResult:
     """El veredicto sale de los asuntos: uno sin cubrir es `falla` en su turno,
-    aunque el juez haya escrito `pasa`. Un juez que no supo decidir se respeta."""
+    aunque el juez haya escrito `pasa`. Un juez que no supo decidir se respeta.
+
+    Sin asuntos no hay nada que cubrir (un "hola"): no aplica. Un `falla` que
+    no nombra ningún asunto sin cubrir no se puede sostener: desconocido."""
     if result.verdict == "desconocido":
         return replace(result, topics=topics)
+    if not topics:
+        return replace(result, verdict="desconocido" if result.verdict == "falla" else "no_aplica", topics=topics)
     missed = [t for t in topics if not t["covered"]]
     if not missed:
-        return replace(result, verdict="pasa", topics=topics)
+        return replace(result, verdict="desconocido" if result.verdict == "falla" else "pasa", topics=topics)
     first = min(missed, key=lambda t: t["turn"] if t["turn"] is not None else 10**9)
     where = f"T{first['turn']}" if first["turn"] is not None else "T?"
     msg = f", mensaje {first['msg']}" if first["msg"] is not None else ""
