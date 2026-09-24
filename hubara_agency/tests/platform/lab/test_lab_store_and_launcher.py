@@ -168,3 +168,16 @@ def test_lab_store_composition(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("LAB_BUCKET", "agencyhubara-lab-000000000000")
     assert isinstance(composition.get_lab_store(), S3LabStore)
     composition.get_lab_store.cache_clear()
+
+
+@pytest.mark.parametrize(("run_id", "image"), [
+    ("run-20260923-a1b2\n", "ghcr.io/o/agencyhubara:abc"),
+    ("run-20260923-a1b2", "ghcr.io/o/agencyhubara:abc\n"),
+])
+def test_the_launcher_refuses_ids_with_a_trailing_newline(run_id: str, image: str) -> None:
+    """`re.match` con `$` acepta un salto de línea al final: la orden llegaría
+    a la caja, que la rechaza (bash `=~`) y la corrida falla más tarde y peor."""
+    from src.platform.lab.launcher import Boto3LabLauncher
+
+    with pytest.raises(ValueError):
+        Boto3LabLauncher(region="us-east-1").dispatch(run_id, image)

@@ -35,6 +35,13 @@ LAB_LAUNCH_WORKFLOW_ID = "lab-launch"
 _CANCEL_GRACE = timedelta(minutes=20)
 
 
+# Respuestas de `dispatch.sh` que no arrancan la corrida, en palabras del operador.
+_BOX_REFUSALS = {
+    "busy": "la caja está ocupada con otra corrida: espera a que termine (o cancélala) y vuelve a lanzar",
+    "lost": "la caja perdió esta corrida (se reinició o su runner murió): lanza una nueva",
+}
+
+
 def _error_text(exc: BaseException) -> str:
     cause = exc.cause if isinstance(exc, ActivityError) and exc.cause is not None else exc
     return str(getattr(cause, "message", None) or cause)[:500]
@@ -104,9 +111,15 @@ class LabLaunchWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             if answer not in ("dispatched", "already_dispatched"):
-                raise RuntimeError(f"la caja no aceptó la orden: {answer!r}")
+                raise RuntimeError(_BOX_REFUSALS.get(answer) or f"la caja no aceptó la orden: {answer!r}")
             self._phase("running")
-            progress = await self._follow(inp.run_id)
+            try:
+                progress = await self._follow(inp.run_id)
+            except (ActivityError, RuntimeError):
+                # La caja puede seguir gastando: se le pide parar antes de soltar
+                # el candado `lab-launch` (si no, una corrida nueva entra en ella).
+                await self._stop_box(inp.run_id)
+                raise
             self._phase(
                 progress.phase if progress.phase in TERMINAL_PHASES else "failed",
                 turns_done=progress.turns_done,
@@ -135,6 +148,18 @@ class LabLaunchWorkflow:
             heartbeat_timeout=timedelta(minutes=2),
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
+
+    async def _stop_box(self, run_id: str) -> None:
+        try:
+            await workflow.execute_activity(
+                "lab_cancel_run",
+                run_id,
+                result_type=str,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+        except ActivityError:
+            workflow.logger.warning("lab: no se pudo pedirle a la caja que pare %s", run_id)
 
     async def _follow(self, run_id: str) -> LabProgress:
         poll = workflow.start_activity(
