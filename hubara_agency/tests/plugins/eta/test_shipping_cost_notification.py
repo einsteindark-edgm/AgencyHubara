@@ -80,8 +80,8 @@ def test_render_shipping_cod_charges_the_grand_total():
         "Valor del pedido: $ 50.000\n"
         "Valor del envío: $ 12.000\n"
         "Total: $ 62.000\n"
-        "Recuerda que al recibirlo pagas $ 62.000 al repartidor (efectivo o "
-        f"transferencia).\n\nPuedes seguir tu envío aquí: {URL}"
+        "Recuerda que al recibirlo pagas $ 62.000 al repartidor.\n\n"
+        f"Puedes seguir tu envío aquí: {URL}"
     )
 
 
@@ -169,3 +169,12 @@ def test_template_variables_shipping_cost_without_order_total_or_link():
     assert build_status_template_variables("delivered", {}, shipping_cost=12000)[
         "status_label"
     ] == "Entregado"
+
+
+def test_render_shipping_cod_without_cost_omits_payment_method_hint():
+    msg = render_stage_notification(
+        stage="shipping", customer_name="Ana", order_display_id="#9",
+        total_label="$ 50.000", pay_type="cod", payment_confirmed=False,
+    )
+    assert "pagas $ 50.000 al repartidor." in msg
+    assert "efectivo o transferencia" not in msg

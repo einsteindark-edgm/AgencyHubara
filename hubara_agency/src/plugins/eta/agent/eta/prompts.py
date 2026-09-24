@@ -274,8 +274,7 @@ def render_stage_notification(
                 )
             elif pay == "cod":
                 lines.append(
-                    f"Recuerda que al recibirlo pagas {por_cobrar} al repartidor "
-                    "(efectivo o transferencia)."
+                    f"Recuerda que al recibirlo pagas {por_cobrar} al repartidor."
                 )
             else:
                 lines.append("Te aviso cuando esté por llegar.")
@@ -291,8 +290,7 @@ def render_stage_notification(
             )
         elif pay == "cod":
             body = (
-                f"{head} Recuerda que al recibirlo pagas {monto} al repartidor "
-                "(efectivo o transferencia)."
+                f"{head} Recuerda que al recibirlo pagas {monto} al repartidor."
             )
         else:
             body = f"{head} Te aviso cuando esté por llegar."
