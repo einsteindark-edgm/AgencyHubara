@@ -35,6 +35,10 @@ class LabStorePort(Protocol):
 
     def list_keys(self, prefix: str) -> list[str]: ...
 
+    def list_children(self, prefix: str) -> list[str]:
+        """Nombres de las "carpetas" inmediatas bajo `prefix` (sin recorrer cada objeto)."""
+        ...
+
 
 class FilesystemLabStore:
     def __init__(self, root: Path) -> None:
@@ -62,6 +66,12 @@ class FilesystemLabStore:
             return []
         keys = (p.relative_to(self.root).as_posix() for p in self.root.rglob("*") if p.is_file())
         return sorted(k for k in keys if k.startswith(prefix))
+
+    def list_children(self, prefix: str) -> list[str]:
+        folder = self.root / check_key(prefix.rstrip("/")) if prefix.strip("/") else self.root
+        if not folder.is_dir():
+            return []
+        return sorted(p.name for p in folder.iterdir() if p.is_dir())
 
 
 class S3LabStore:
@@ -98,3 +108,11 @@ class S3LabStore:
         for page in self._s3().get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix):
             keys.extend(obj["Key"] for obj in page.get("Contents") or [])
         return sorted(keys)
+
+    def list_children(self, prefix: str) -> list[str]:
+        prefix = prefix if prefix.endswith("/") else prefix + "/"
+        names: list[str] = []
+        pages = self._s3().get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix, Delimiter="/")
+        for page in pages:
+            names.extend(p["Prefix"][len(prefix):].rstrip("/") for p in page.get("CommonPrefixes") or [])
+        return sorted(n for n in names if n)
