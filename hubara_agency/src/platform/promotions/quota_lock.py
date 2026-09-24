@@ -19,7 +19,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable, Generic, TypeVar
+from typing import AsyncIterator, Awaitable, Callable, Generic, TypeVar
 
 A = TypeVar("A")
 R = TypeVar("R")
