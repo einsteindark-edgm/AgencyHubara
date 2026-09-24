@@ -67,8 +67,8 @@ async def test_fakes_capture_instead_of_acting() -> None:
     acts = {a.__temporal_activity_definition.name: a for a in sandbox_activities(
         [_named(n) for n in FAKED_IN_SANDBOX], capture=capture)}
 
-    assert await acts["read_idle_timeout_seconds"]("wa_570000000001") >= 3600
-    assert await acts["send_typing_indicator_activity"]("wa_570000000001") is None
+    assert await acts["read_idle_timeout_seconds"]("wa_573000000099") >= 3600
+    assert await acts["send_typing_indicator_activity"]("wa_573000000099") is None
     result = await acts["orchestration.dispatch_event"]({"event_type": "EpisodeClosedEvent", "source_plugin": "chats",
                                                           "source_worker": "sales", "payload": {}})
     assert result["matches"] == [] and result["event_type"] == "EpisodeClosedEvent"
@@ -90,8 +90,8 @@ async def test_the_trace_is_persisted_for_real_and_announces_the_end_of_the_turn
     [trace] = sandbox_activities([_named("persist_turn_trace", calls)], capture=capture)
 
     assert not capture.turn_done.is_set()
-    assert await trace("wa_570000000001", '{"turn_started_ms": 1}') is True
+    assert await trace("wa_573000000099", '{"turn_started_ms": 1}') is True
 
-    assert calls == [("persist_turn_trace", ("wa_570000000001", '{"turn_started_ms": 1}'))]
+    assert calls == [("persist_turn_trace", ("wa_573000000099", '{"turn_started_ms": 1}'))]
     assert capture.turn_done.is_set()
     assert capture.trace_payload == {"turn_started_ms": 1}
