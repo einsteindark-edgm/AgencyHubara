@@ -685,8 +685,13 @@ Rama `claude/coupon-central` (worktree `intelligent-rhodes-82a5f3`), sobre `main
   permiten en cupones de porcentaje de solo lectura (AMOR26): el cupo vive en Hubara.
 - Las vendidas se cuentan desde `QuotaSheet.counting_since` (primer guardado, nunca avanza, −1 h de margen de reloj).
 - Color y aroma: el LLM los manda por ítem; si no, se toman del borrador estructurado (`order_draft.items`).
-- Revisión de gates (`hubara-gate-reviewer`) aplicada: 2 altas, 7 medias y 11 bajas atendidas (ver commit
-  `fix(...)… revisión de gates`); L-10 (precio por variante) y L-7 (flock breve en handlers) quedan anotadas.
+- Dos revisiones de gates (`hubara-gate-reviewer`), ambas con todos los gates verdes y hallazgos reales:
+  - 1ª: cupo a medias, alcance por etiquetas, archivo roto = sin límite, reintentos de escrituras, etc. → commit
+    "revisión de gates", lección **L-27**. Quedan anotadas: precio por variante (hoy todas son "Unico") y flock
+    breve dentro de handlers async.
+  - 2ª: el reintento del mismo pedido en la última unidad se duplicaba (HIGH), doble envío en "Crear pedido" (HIGH),
+    reconciliación que podía sobrevender, formulario que confirmaba otro total → commit "segunda revisión",
+    lección **L-28**.
 
 **Pendiente:**
 1. Merge de #342 → rebase/merge de `main` en esta rama → PR (o dos: backend+central y front) — **no pusheado**.
