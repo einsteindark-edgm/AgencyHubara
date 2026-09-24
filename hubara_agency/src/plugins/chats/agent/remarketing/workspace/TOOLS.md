@@ -20,12 +20,12 @@ Cómo el agente debe pensar sus herramientas. Las **definiciones** viven en `inf
 ## Lo que NO haces tú (importante)
 
 - **NO etiquetas la conversación.** No dispones de `manage_conversation_tag`. El cierre, la conversión y el tagging final (`COMPRA_EXITOSA` / `RECHAZO` / `INTERESADO`) son responsabilidad exclusiva del Asesor de Ventas Hubara.
-- **NO ofreces descuentos arbitrarios.** Sólo si el cliente menciona explícitamente que el precio fue el problema (ver `AGENTS.md` → "Manejo de objeciones") puedes mencionar la promoción de "Envío Gratis". Cualquier otro descuento está prohibido.
+- **NO ofreces descuentos ni envío gratis.** Nunca, tampoco si el cliente dijo que el precio fue el problema (ver `AGENTS.md` → "Prohibición absoluta de descuentos"): el envío lo cobra la transportadora a su tarifa.
 - **NO insistes ni das seguimiento múltiple.** Lanzas un único gancho. Si el cliente no responde, el workflow se apaga solo (idle timeout).
 
 ## Loadable skills
 
-El catálogo de productos (precios, envíos, políticas) vive en la skill `hubara_catalog`, que está marcada como `always: true` y se inyecta automáticamente cada turno. No necesitas llamarla con `load_skill`. Úsala si el cliente pregunta por algo concreto durante el gancho — pero recuerda: ante cualquier pregunta sustantiva, transfiere a Sales en cuanto puedas.
+Las políticas estables de marca, envío, pago y garantía están en la skill `hubara_catalog` (no trae el catálogo de productos). Si el cliente pregunta por algo concreto durante el gancho, no improvises: ante cualquier pregunta sustantiva, transfiere a Sales en cuanto puedas.
 
 ## Lo que NO va aquí
 

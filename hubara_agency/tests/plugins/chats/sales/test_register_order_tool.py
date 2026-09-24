@@ -170,8 +170,8 @@ async def test_register_order_without_receiver_name_rejects(ctx, vault):
             shipping=shipping,
             payment_method="transfer",
             subtotal_cop=17000,
-            shipping_cop=0,
-            total_cop=17000,
+            shipping_cop=7900,
+            total_cop=24900,
         )
     )
     assert result["registered"] is False
@@ -194,8 +194,8 @@ async def test_register_order_passes_receiver_and_cedula_to_port(ctx, vault):
             shipping=shipping,
             payment_method="cash_on_delivery",
             subtotal_cop=17000,
-            shipping_cop=0,
-            total_cop=17000,
+            shipping_cop=7900,
+            total_cop=24900,
         )
     )
     assert result["registered"] is True
@@ -215,8 +215,8 @@ async def test_register_order_cedula_is_optional(ctx, vault):
             shipping=_SAMPLE_SHIPPING,
             payment_method="transfer",
             subtotal_cop=17000,
-            shipping_cop=0,
-            total_cop=17000,
+            shipping_cop=7900,
+            total_cop=24900,
         )
     )
     assert result["registered"] is True
@@ -258,8 +258,8 @@ async def test_register_order_persists_to_metadata(ctx, vault):
             shipping=_SAMPLE_SHIPPING,
             payment_method="transfer",
             subtotal_cop=17000,
-            shipping_cop=0,
-            total_cop=17000,
+            shipping_cop=7900,
+            total_cop=24900,
         )
     )
     assert result["registered"] is True
@@ -275,7 +275,7 @@ async def test_register_order_persists_to_metadata(ctx, vault):
     assert order["items"] == _SAMPLE_ITEMS
     assert order["shipping"] == _SAMPLE_SHIPPING
     assert order["payment_method"] == "transfer"
-    assert order["total_cop"] == 17000
+    assert order["total_cop"] == 24900
     assert order["currency"] == "COP"
     assert isinstance(order["registered_at_ms"], int)
     # Raw payload del provider queda guardado para auditoria/debug.
@@ -295,7 +295,7 @@ async def test_register_order_rejects_inconsistent_total(ctx, vault):
             shipping=_SAMPLE_SHIPPING,
             payment_method="transfer",
             subtotal_cop=17000,
-            shipping_cop=0,
+            shipping_cop=7900,
             total_cop=1000,  # ← inventado, no cuadra
         )
     )
@@ -316,8 +316,8 @@ async def test_register_order_rejects_subtotal_not_matching_items(ctx, vault):
             shipping=_SAMPLE_SHIPPING,
             payment_method="transfer",
             subtotal_cop=5000,  # ← no es 1 × 17000
-            shipping_cop=0,
-            total_cop=5000,
+            shipping_cop=7900,
+            total_cop=12900,
         )
     )
     assert result["registered"] is False
@@ -362,8 +362,8 @@ async def test_register_order_attaches_order_id_to_active_episode(ctx, vault):
         shipping=_SAMPLE_SHIPPING,
         payment_method="transfer",
         subtotal_cop=17000,
-        shipping_cop=0,
-        total_cop=17000,
+        shipping_cop=7900,
+        total_cop=24900,
     )
 
     metadata = _read_metadata(vault, ctx.session_key)
@@ -389,8 +389,8 @@ async def test_register_order_creates_episode_when_none_active(ctx, vault):
         shipping=_SAMPLE_SHIPPING,
         payment_method="transfer",
         subtotal_cop=17000,
-        shipping_cop=0,
-        total_cop=17000,
+        shipping_cop=7900,
+        total_cop=24900,
     )
 
     metadata = _read_metadata(vault, ctx.session_key)
@@ -436,8 +436,8 @@ async def test_register_order_failure_does_not_attach_order_id(ctx, vault):
         shipping=_SAMPLE_SHIPPING,
         payment_method="transfer",
         subtotal_cop=17000,
-        shipping_cop=0,
-        total_cop=17000,
+        shipping_cop=7900,
+        total_cop=24900,
     )
 
     metadata = _read_metadata(vault, ctx.session_key)
@@ -462,14 +462,14 @@ async def test_register_order_forwards_correct_dtos_to_port(ctx, vault):
         shipping=_SAMPLE_SHIPPING,
         payment_method="transfer",
         subtotal_cop=17000,
-        shipping_cop=0,
-        total_cop=17000,
+        shipping_cop=7900,
+        total_cop=24900,
     )
     assert len(fake.calls) == 1
     call = fake.calls[0]
     assert call["session_key"] == ctx.session_key
     assert call["payment_method"] == "transfer"
-    assert call["total_cop"] == 17000
+    assert call["total_cop"] == 24900
     assert call["currency"] == "COP"
     item = call["items"][0]
     assert isinstance(item, OrderItem)
@@ -497,8 +497,8 @@ async def test_register_order_idempotent_history(ctx, vault):
             shipping=_SAMPLE_SHIPPING,
             payment_method="card",
             subtotal_cop=17000,
-            shipping_cop=0,
-            total_cop=17000,
+            shipping_cop=7900,
+            total_cop=24900,
         )
     )
     fake.fixed_order_id = "draft_v2"  # segunda llamada devuelve otro id
@@ -509,8 +509,8 @@ async def test_register_order_idempotent_history(ctx, vault):
             shipping=_SAMPLE_SHIPPING,
             payment_method="cash_on_delivery",
             subtotal_cop=17000,
-            shipping_cop=5000,
-            total_cop=22000,
+            shipping_cop=7900,
+            total_cop=24900,
         )
     )
     assert r1["order_id"] != r2["order_id"]
@@ -542,8 +542,8 @@ async def test_register_order_summary_directs_llm_to_next_step(ctx, vault):
             shipping=_SAMPLE_SHIPPING,
             payment_method="transfer",
             subtotal_cop=17000,
-            shipping_cop=0,
-            total_cop=17000,
+            shipping_cop=7900,
+            total_cop=24900,
         )
     )
     summary = result["summary"]
@@ -561,7 +561,7 @@ async def test_register_order_summary_directs_llm_to_next_step(ctx, vault):
     assert decision["session_id"] == ctx.session_key
     assert decision["order_id"] == fake.fixed_order_id
     assert decision["payment_method"] == "transfer"
-    assert decision["total_cop"] == 17000
+    assert decision["total_cop"] == 24900
     assert decision["currency"] == "COP"
     assert decision["motivo"]  # motivo sintético no vacío
 
@@ -579,8 +579,8 @@ async def test_register_order_failure_emits_no_decision(ctx, vault):
             shipping=_SAMPLE_SHIPPING,
             payment_method="transfer",
             subtotal_cop=17000,
-            shipping_cop=0,
-            total_cop=17000,
+            shipping_cop=7900,
+            total_cop=24900,
         )
     )
     assert result["registered"] is False
@@ -609,14 +609,18 @@ async def test_register_order_on_failure_persists_audit_log(ctx, vault):
         shipping=_SAMPLE_SHIPPING,
         payment_method="transfer",
         subtotal_cop=17000,
-        shipping_cop=0,
-        total_cop=17000,
+        shipping_cop=7900,
+        total_cop=24900,
     )
     result = json.loads(raw)
     assert result["registered"] is False
     assert result["order_id"] is None
     assert "audit_id" in result and result["audit_id"].startswith("AUDIT-")
     assert "HTTP 503" in result["error_detail"]
+    # Sin `error`: el guion de cierre distingue así "Medusa lo rechazó →
+    # ORDER_REGISTRATION_FAILED" de "rechazo de validación → corrige y
+    # reintenta" (esos sí llevan `error`).
+    assert "error" not in result
 
     metadata = _read_metadata(vault, ctx.session_key)
     # NO se setea registered_order para no fingir éxito.
@@ -648,8 +652,8 @@ async def test_register_order_on_failure_directs_llm_to_escalate(ctx, vault):
             shipping=_SAMPLE_SHIPPING,
             payment_method="transfer",
             subtotal_cop=17000,
-            shipping_cop=0,
-            total_cop=17000,
+            shipping_cop=7900,
+            total_cop=24900,
         )
     )
     summary = result["summary"]
@@ -684,8 +688,8 @@ async def test_register_order_failure_preserves_previous_success(ctx, vault):
         shipping=_SAMPLE_SHIPPING,
         payment_method="transfer",
         subtotal_cop=17000,
-        shipping_cop=0,
-        total_cop=17000,
+        shipping_cop=7900,
+        total_cop=24900,
     )
     metadata = _read_metadata(vault, ctx.session_key)
     # El éxito previo sigue ahí (defense in depth).
@@ -719,8 +723,8 @@ async def test_register_order_handles_corrupted_metadata_gracefully(
             shipping=_SAMPLE_SHIPPING,
             payment_method="card",
             subtotal_cop=17000,
-            shipping_cop=0,
-            total_cop=17000,
+            shipping_cop=7900,
+            total_cop=24900,
         )
     )
     assert result["registered"] is True
@@ -743,8 +747,8 @@ async def test_register_order_default_port_is_stub(ctx, vault):
             shipping=_SAMPLE_SHIPPING,
             payment_method="transfer",
             subtotal_cop=17000,
-            shipping_cop=0,
-            total_cop=17000,
+            shipping_cop=7900,
+            total_cop=24900,
         )
     )
     # Stub siempre devuelve success=True con id local HUB-*.
@@ -779,8 +783,8 @@ async def test_attribution_from_session_origin_travels_to_port(ctx, vault):
     tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=fake)
     await tool.execute_with_context(
         ctx, items=_SAMPLE_ITEMS, shipping=_SAMPLE_SHIPPING,
-        payment_method="transfer", subtotal_cop=17000, shipping_cop=0,
-        total_cop=17000,
+        payment_method="transfer", subtotal_cop=17000, shipping_cop=7900,
+        total_cop=24900,
     )
     assert fake.calls[0]["attribution"] == {
         "meta_ad_id": "120210000000000001",
@@ -795,7 +799,7 @@ async def test_attribution_none_when_session_has_no_origin(ctx, vault):
     tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=fake)
     await tool.execute_with_context(
         ctx, items=_SAMPLE_ITEMS, shipping=_SAMPLE_SHIPPING,
-        payment_method="transfer", subtotal_cop=17000, shipping_cop=0,
-        total_cop=17000,
+        payment_method="transfer", subtotal_cop=17000, shipping_cop=7900,
+        total_cop=24900,
     )
     assert fake.calls[0]["attribution"] is None

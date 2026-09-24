@@ -214,8 +214,11 @@ class ManageConversationTagTool(ToolBase):
                             "CONFIRMADO_PAGO_PENDIENTE y escala con "
                             "`escalate_to_human(reason_category="
                             "PAYMENT_VERIFICATION_PENDING)`. Si "
-                            "`register_order` falla (registered=false), "
-                            "no marques este tag, escala con "
+                            "`register_order` devolvió `registered=false` "
+                            "con `error` (rechazo de validación), corrige "
+                            "lo que dice su `summary` y vuelve a llamarla; "
+                            "solo si Medusa lo rechazó (sin `error`, con "
+                            "`audit_id`) no marques este tag y escala con "
                             "ORDER_REGISTRATION_FAILED."
                         ),
                     },
