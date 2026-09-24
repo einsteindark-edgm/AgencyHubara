@@ -4,7 +4,7 @@
  * cada corrida con sus bots, su estado y su costo.
  */
 
-import { armLabel, formatUsd, useRunBench, type LabRun } from "@plugins/lab/frontend/entities/lab-run";
+import { apiErrorDetail, armLabel, formatUsd, type LabRun, useRunBench } from "@plugins/lab/frontend/entities/lab-run";
 
 interface Props {
   runs: LabRun[];
@@ -34,12 +34,13 @@ const TABLE = "mt-3 w-full border-collapse overflow-hidden rounded-[10px] border
 
 function phaseText(run: LabRun): string {
   const label = run.phase ? (PHASE_LABEL[run.phase] ?? run.phase) : "Sin estado";
+  if (run.stale) return `${label} · sin reportes de la caja desde ${when(run.updated_at_ms)}`;
   return run.phase === "failed" && run.error ? `${label}: ${run.error}` : label;
 }
 
 function when(ms: number | null): string {
   if (ms === null) return "—";
-  return new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
+  return new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(ms));
 }
 
 export function BenchRuns({ runs, selectedRun, onSelectRun }: Props) {
@@ -50,7 +51,13 @@ export function BenchRuns({ runs, selectedRun, onSelectRun }: Props) {
   return (
     <div className="bg-canvas p-4">
       {bench.isPending && selectedRun ? <p className="text-[12.5px] text-fg-muted">Cargando el banco…</p> : null}
-      {bench.isError ? <p className="text-[12.5px] text-fg-muted">Esta corrida todavía no publicó su banco.</p> : null}
+      {bench.isError ? (
+        <p className="text-[12.5px] text-fg-muted">
+          {apiErrorDetail(bench.error).status === 404
+            ? "Esta corrida todavía no publicó su banco."
+            : "No se pudo leer el banco de esta corrida; vuelve a intentarlo en un momento."}
+        </p>
+      ) : null}
       {bench.data ? (
         <>
           <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-2.5">

@@ -28,7 +28,7 @@ export type ThreadItem =
 export const PRODUCTION_ARM = "A0";
 const NOT_RUN = "Este bot todavía no respondió este turno.";
 
-const TIME_FMT = new Intl.DateTimeFormat("es-CO", { timeZone: BOGOTA_TZ, hour: "2-digit", minute: "2-digit", hour12: false });
+const TIME_FMT = new Intl.DateTimeFormat("es-CO", { timeZone: BOGOTA_TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 
 function hhmm(ms: number | null): string {
   return ms === null || !Number.isFinite(ms) ? "" : TIME_FMT.format(new Date(ms)).replace(/^24:/, "00:");
@@ -88,13 +88,21 @@ function productionView(thread: LabThread): ThreadItem[] {
   let day = "";
   let open: ThreadTurn | null = null;
   const shown = new Set<string>();
+  // Un turno puede cerrarse y reabrirse (un mensaje que no está en el banco
+  // entre dos de su ráfaga): cada chip lleva su propia key.
+  const chips = new Map<string, number>();
+  const chipKey = (turn: ThreadTurn): string => {
+    const n = chips.get(turn.turn_key) ?? 0;
+    chips.set(turn.turn_key, n + 1);
+    return n === 0 ? `chip-${turn.turn_key}` : `chip-${turn.turn_key}-${n}`;
+  };
 
   thread.messages.forEach((m, idx) => {
     const ms = msOf(m);
     const turn = turnOf(m);
     if (m.role === "user" && open) {
       if (turn !== open) {
-        items.push(chip(open, PRODUCTION_ARM, `chip-${open.turn_key}`));
+        items.push(chip(open, PRODUCTION_ARM, chipKey(open)));
         open = null;
       }
     }
@@ -117,7 +125,7 @@ function productionView(thread: LabThread): ThreadItem[] {
     }
     items.push({ type: "msg", key: `m-${idx}`, dir: dirOf(m), text: m.content, time: hhmm(ms), hasImage: m.has_image });
   });
-  if (open) items.push(chip(open, PRODUCTION_ARM, `chip-${(open as ThreadTurn).turn_key}`));
+  if (open) items.push(chip(open, PRODUCTION_ARM, chipKey(open as ThreadTurn)));
   return items;
 }
 

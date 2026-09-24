@@ -36,7 +36,9 @@ export default function LabPage() {
   const list = runs.data?.runs ?? [];
   const [picked, setPicked] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("conv");
-  const run = list.find((r) => r.run_id === picked) ?? list[0] ?? null;
+  // Por defecto, la última corrida TERMINADA (la más nueva puede estar corriendo
+  // o haber fallado sin publicar nada).
+  const run = list.find((r) => r.run_id === picked) ?? list.find((r) => r.phase === "done") ?? list[0] ?? null;
   const error = runs.isError ? apiErrorDetail(runs.error) : null;
   // 404 en /api/lab/runs = el API de este entorno no tiene el plugin prendido
   // (ENABLED_PLUGINS del deploy); el build del dashboard trae todas las secciones.

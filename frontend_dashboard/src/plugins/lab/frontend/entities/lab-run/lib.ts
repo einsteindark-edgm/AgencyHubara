@@ -1,4 +1,4 @@
-import { ApiError } from "@/shared/api";
+import { ApiError } from "@/shared/sdk";
 
 import type { EpisodeVerdict } from "./model";
 

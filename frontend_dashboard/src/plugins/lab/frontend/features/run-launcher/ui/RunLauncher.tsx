@@ -74,6 +74,7 @@ export function RunLauncher({ lastBenchId }: Props) {
   const [open, setOpen] = useState(false);
   const activeQuery = useActiveRun();
   const status = activeQuery.data?.active ?? null;
+  const last = status ? null : (activeQuery.data?.last ?? null);
   const progressPct = status && status.turns_total ? Math.min(100, Math.round(((status.turns_done ?? 0) / status.turns_total) * 100)) : null;
 
   return (
@@ -89,6 +90,7 @@ export function RunLauncher({ lastBenchId }: Props) {
       </button>
       {open ? (
         <div id={panelId} className="order-last grid basis-full gap-3 border-t border-line bg-canvas px-4 py-3.5">
+          {!status && last && (last.phase === "failed" || last.phase === "cancelled") ? <LastRun last={last} /> : null}
           {status ? <Progress status={status} /> : <LaunchForm lastBenchId={lastBenchId} onClose={() => setOpen(false)} />}
         </div>
       ) : null}
@@ -205,6 +207,16 @@ function LaunchForm({ lastBenchId, onClose }: { lastBenchId: string | null; onCl
         </button>
       </div>
     </>
+  );
+}
+
+/** Si la caja no prendió o nunca reportó, este es el único rastro de la corrida. */
+function LastRun({ last }: { last: ActiveStatus }) {
+  const what = last.phase === "failed" ? `falló${last.error ? `: ${last.error}` : ""}` : "fue cancelada";
+  return (
+    <p className={"m-0 text-[12.5px] " + (last.phase === "failed" ? "text-danger" : "text-fg-muted")}>
+      {`La última corrida${last.run_id ? ` (${last.run_id})` : ""} ${what}`}
+    </p>
   );
 }
 
