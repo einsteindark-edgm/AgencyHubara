@@ -388,7 +388,10 @@ register_tool_extension(
 register_tool_extension(
     "sales.present_variant_picker",
     lambda workspace: PresentVariantPickerTool(
-        workspace=str(workspace), catalog=_catalog
+        workspace=str(workspace),
+        catalog=_catalog,
+        # Cupón con cupo: sus combinaciones van arriba del picker.
+        metadata_store=build_session_metadata_store(),
     ),
 )
 

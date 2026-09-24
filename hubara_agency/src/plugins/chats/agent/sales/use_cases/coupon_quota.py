@@ -268,6 +268,81 @@ def draft_vs_coupon_lines(
     return lines
 
 
+def picker_coupon_block(
+    applied: dict[str, Any] | None,
+    draft: dict[str, Any] | None,
+    *,
+    handle: str,
+    variant_type: str,
+) -> dict[str, Any] | None:
+    """Lo que el selector de aromas/colores muestra ARRIBA cuando el cupón
+    aplicado tiene cupo en ese producto: sus combinaciones con el precio con
+    descuento, o el aviso de que lo ya elegido va a precio normal.
+
+    Conversación de prueba del 2026-09-24: el selector mostró los 11 aromas
+    y los 9 colores del Cubo Love y el cupón solo valía en 5 combinaciones.
+    None = el picker sale como siempre (sin cupón, o sin cupo en ese
+    producto)."""
+    if not isinstance(applied, dict) or variant_type not in ("scent", "color"):
+        return None
+    units = [
+        u for u in applied.get("units") or [] if isinstance(u, dict) and u.get("handle") == handle
+    ]
+    if not units:
+        return None
+    field, other = ("aroma", "color") if variant_type == "scent" else ("color", "aroma")
+    title = str(units[0].get("title") or "")
+    item = next(
+        (i for i in draft_items(draft) if product_key(i.get("producto")) == product_key(title)), {}
+    )
+    chosen = str(item.get(other) or "").strip()
+    rows = [u for u in units if not chosen or product_key(u.get(other)) == product_key(chosen)]
+    code = str(applied.get("code") or "")
+    promotion = applied.get("promotion") if isinstance(applied.get("promotion"), dict) else {}
+    percent = (
+        f" ({float(promotion['value']):g}% menos)"
+        if promotion.get("discount_type") == "percentage" and promotion.get("value") is not None
+        else ""
+    )
+    normal = format_cop(int(units[0].get("price_cop") or 0))
+    if not rows:
+        discounted = format_cop(int(units[0].get("discounted_price_cop") or 0))
+        notice = (
+            f"En {chosen}, el {title} no tiene el descuento de {code}: va a precio normal "
+            f"({normal}). Con el descuento ({discounted}) están: "
+            f"{', '.join(dict.fromkeys(_combo(u) for u in units))}."
+        )
+        return {
+            "code": code,
+            "notice": notice,
+            "rows": [],
+            "summary": (
+                f" El mensaje avisa que en {chosen} el {title} no tiene el descuento de {code} "
+                f"(precio normal {normal}); si el cliente quiere el descuento, ofrécele las "
+                "combinaciones del cupón."
+            ),
+        }
+    labels = list(
+        dict.fromkeys(
+            (str(u.get(field)) if chosen else _combo(u), format_cop(int(u["discounted_price_cop"])))
+            for u in rows
+        )
+    )
+    shown = [f"{label} — {price}" for label, price in labels]
+    noun = "aromas" if variant_type == "scent" else "colores"
+    return {
+        "code": code,
+        "title": f"🎟️ Con tu cupón {code}" + (f" en {chosen}" if chosen else "") + percent,
+        "rows": shown,
+        "others": f"Otros {noun}, a precio normal ({normal}):",
+        "summary": (
+            f" Arriba del mensaje van las combinaciones con el cupón {code}: "
+            f"{', '.join(label for label, _ in labels)}; lo demás va a precio normal ({normal}). "
+            "Si el cliente elige una sin cupón, dile que va a precio normal."
+        ),
+    }
+
+
 def as_eligible(units: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
     """Las unidades en la forma de `eligible_products` (la nota de cada turno
     recuerda ESTAS combinaciones, no el producto entero)."""
