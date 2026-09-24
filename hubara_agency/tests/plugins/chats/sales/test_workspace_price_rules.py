@@ -23,8 +23,11 @@ REMARKETING = Path("src/plugins/chats/agent/remarketing/workspace")
 AGENT_WORKSPACES = (WORKSPACE, REMARKETING)
 
 _STRICT_THRESHOLD_RE = re.compile(
-    r"(mayores a|superiores a|mayor a|superior a|>)\s*\$?\s*45[.,]?000", re.IGNORECASE
+    r"(mayores a|superiores a|mayor a|superior a|m[aá]s de|>)\s*\$?\s*45[.,]?000", re.IGNORECASE
 )
+#: Todo el Python del agente (descripciones de tools, prompts del juez del
+#: scorecard, docstrings): el LLM también lee esas cifras.
+AGENT_PY_ROOT = Path("src/plugins/chats/agent")
 
 
 def _md_files() -> list[Path]:
@@ -42,6 +45,22 @@ def test_cod_threshold_is_inclusive_everywhere() -> None:
         f"{p}: {m.group(0)!r}"
         for p in _md_files()
         for m in _STRICT_THRESHOLD_RE.finditer(p.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], "el umbral de contra entrega es INCLUSIVO (desde $45.000)"
+
+
+def test_cod_threshold_is_inclusive_in_agent_python() -> None:
+    """Mismo contrato en el código: la descripción de `payment_method` de
+    `register_order` decía "solo pedidos > $45.000" y el juez del scorecard
+    "por más de $45.000" (un "desde $45.000" correcto le parecía una
+    condición cambiada). Las líneas de comentario citan incidentes y quedan
+    fuera."""
+    offenders = [
+        f"{p}:{n}: {m.group(0)!r}"
+        for p in sorted(AGENT_PY_ROOT.rglob("*.py"))
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if not line.lstrip().startswith("#")
+        for m in _STRICT_THRESHOLD_RE.finditer(line)
     ]
     assert offenders == [], "el umbral de contra entrega es INCLUSIVO (desde $45.000)"
 

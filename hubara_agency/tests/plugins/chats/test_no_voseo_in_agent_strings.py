@@ -116,25 +116,39 @@ def test_no_voseo_in_chats_agent_python_strings() -> None:
 
 # Los prompts en Markdown (workspace/ + skills/) los lee el LLM en cada turno y
 # copia su registro: el voseo ahí se filtra igual que en un string de Python.
-# EXENTO: IDENTITY.md de ventas, cuya REGLA #1 cita el voseo PROHIBIDO como
-# dato (tabla de conversión y ejemplos) — misma justificación que el
-# vocabulario de un detector.
-_MD_EXEMPT = {
-    "sales/workspace/IDENTITY.md",
+# EXENTA solo la sección "## REGLA #1" de IDENTITY.md de ventas: cita el
+# voseo PROHIBIDO como dato (tabla de conversión y ejemplos) — misma
+# justificación que el vocabulario de un detector. El resto del archivo sí
+# se revisa.
+_MD_EXEMPT_SECTIONS = {
+    "sales/workspace/IDENTITY.md": "## REGLA #1",
 }
 
 
-def test_no_voseo_in_chats_agent_markdown_prompts() -> None:
-    files = sorted(
-        p
-        for p in _AGENT_ROOT.rglob("*.md")
-        if str(p.relative_to(_AGENT_ROOT)).replace("\\", "/") not in _MD_EXEMPT
+def _md_lines_to_scan(path: Path) -> list[tuple[int, str]]:
+    rel = str(path.relative_to(_AGENT_ROOT)).replace("\\", "/")
+    lines = list(enumerate(path.read_text(encoding="utf-8").splitlines(), 1))
+    heading = _MD_EXEMPT_SECTIONS.get(rel)
+    if heading is None:
+        return lines
+    start = next(i for i, (_, line) in enumerate(lines) if line.startswith(heading))
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i][1].startswith("## ")),
+        None,
     )
+    # Acotada: si desaparece el encabezado siguiente, la exención se tragaría
+    # el resto del archivo en silencio.
+    assert end is not None, f"la sección exenta de {rel} no tiene fin"
+    return lines[:start] + lines[end:]
+
+
+def test_no_voseo_in_chats_agent_markdown_prompts() -> None:
+    files = sorted(_AGENT_ROOT.rglob("*.md"))
     assert files, "no hay prompts .md en el árbol del agente"
     violations = [
         f"{p.relative_to(_AGENT_ROOT)}:{lineno}: voseo '{m.group(0)}' → {line.strip()[:100]}"
         for p in files
-        for lineno, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        for lineno, line in _md_lines_to_scan(p)
         for m in _PATTERN.finditer(line)
     ]
     assert not violations, (

@@ -72,6 +72,7 @@ from src.platform.orders.port import (
 )
 from src.platform.orders.reconciliation import STATUS_PENDING
 from src.plugins.chats.agent.sales.config.shipping import (
+    CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
     SHIPPING_COP_PARAM_DESCRIPTION,
     SHIPPING_RATE_RULE,
     is_published_shipping_rate,
@@ -222,7 +223,8 @@ class RegisterOrderTool(ToolBase):
                     "Método de pago elegido por el cliente: 'transfer' = "
                     "pago anticipado (Nequi/llave), 'payment_link' = link "
                     "de pago (con recargo), 'cash_on_delivery' = contra "
-                    "entrega (solo pedidos > $45.000 COP)."
+                    f"entrega (pedidos desde {format_cop(CASH_ON_DELIVERY_MIN_PRODUCTS_COP)} "
+                    "COP en productos, inclusive)."
                 ),
             },
             "subtotal_cop": {"type": "integer", "minimum": 0},
