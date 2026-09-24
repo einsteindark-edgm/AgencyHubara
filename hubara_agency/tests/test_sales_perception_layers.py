@@ -91,13 +91,16 @@ class LLM:
         return llm_chat
 
 
+_PRIOR = [{"role": "user", "content": "Hola"}, {"role": "assistant", "content": "¡Buenas!"}]
+
+
 async def _run(tmp_path: Path, *, meta: dict | None, llm: LLM, classifier: Classifier,
-               tool_results: dict | None = None) -> Tracker:
+               tool_results: dict | None = None, prior_history: list[dict] | None = None) -> Tracker:
     tracker = Tracker()
     workspace = tmp_path / "ws"
     workspace.mkdir()
     base = _make_fake_activities(tracker, workspace_path=str(workspace), tool_results=tool_results or {},
-                                 prior_history=[{"role": "user", "content": "Hola"}, {"role": "assistant", "content": "¡Buenas!"}])
+                                 prior_history=_PRIOR if prior_history is None else prior_history)
     results = tool_results or {}
 
     @activity.defn(name="execute_tool")
@@ -315,3 +318,52 @@ async def test_the_classifier_reads_what_the_customer_wrote_not_the_turn_decorat
 
     [perceived] = classifier.perceived
     assert [m["text"] for m in perceived.messages] == ["sí"]
+
+
+# ── A-PM06: la verificación juzga lo que el cliente recibe en el turno ──────
+
+
+@pytest.mark.asyncio
+async def test_on_the_verification_reads_every_bubble_the_customer_gets_in_the_turn(tmp_path: Path) -> None:
+    """Primer contacto: el workflow manda la Burbuja 1 (saludo) ANTES del texto
+    final. El cliente recibe las dos; la verificación del modo activo solo
+    leía el texto final y podía pedir un complemento por algo que el saludo
+    ya había dicho (o dar por cubierto algo que no salió)."""
+    from tests.test_sales_workflow_debounce import FIRST_CONTACT_GREETING
+
+    classifier = Classifier()
+    llm = LLM([_tool("send_reply", text=CATALOG_REPLY)])
+    tracker = await _run(tmp_path, meta={"perception_mode": "on", "perception_profile": "jev-v1"}, llm=llm,
+                         classifier=classifier, prior_history=[])
+
+    sent = [m for (_s, m) in tracker.send_whatsapp_calls]
+    assert sent[:2] == [FIRST_CONTACT_GREETING, CATALOG_REPLY]
+    assert classifier.verified[0].reply_text == f"{FIRST_CONTACT_GREETING}\n\n{CATALOG_REPLY}"
+
+
+@pytest.mark.asyncio
+async def test_on_and_shadow_verify_the_same_text_for_the_same_turn(tmp_path: Path) -> None:
+    """Misma vara en sombra y en activo: lo que el clasificador juzga es lo que
+    el cliente recibe, antes (activo) o después (sombra) de enviarlo."""
+    texts = {}
+    for mode in ("shadow", "on"):
+        (tmp_path / mode).mkdir()
+        classifier = Classifier()
+        await _run(tmp_path / mode, meta={"perception_mode": mode, "perception_profile": "jev-v1"},
+                   llm=LLM([_tool("send_reply", text=CATALOG_REPLY)]), classifier=classifier, prior_history=[])
+        texts[mode] = classifier.verified[0].reply_text
+
+    assert texts["on"] == texts["shadow"]
+
+
+@pytest.mark.asyncio
+async def test_on_a_text_the_guards_hold_back_is_not_verified_as_sent(tmp_path: Path) -> None:
+    """Si una guarda retiene el texto final (texto administrativo), la
+    verificación no lo cuenta como respuesta: juzga solo lo que sí sale."""
+    classifier = Classifier()
+    leak = "La conversación quedó etiquetada como `INTERESADO` en el sistema."
+    llm = LLM([_tool("send_reply", text=leak)])
+    await _run(tmp_path, meta={"perception_mode": "on", "perception_profile": "jev-v1"}, llm=llm, classifier=classifier)
+
+    assert classifier.verified and "INTERESADO" not in classifier.verified[0].reply_text
+

@@ -840,6 +840,13 @@ El turno de ventas SHALL poder usar un clasificador (Jev u OpenAI por OpenRouter
 - AND si el cliente escribe antes del complemento, su mensaje manda y el complemento se descarta
 - AND la verificación en la traza guarda su costo (`cost_usd`) y `complement_scheduled: true` solo si este turno agendó el complemento (el laboratorio espera ese segundo turno sin adivinar)
 
+#### Scenario: La verificación juzga lo que el cliente recibe en el turno
+
+- GIVEN modo `on` en el primer contacto: el workflow manda el saludo (Burbuja 1) y después el texto del `send_reply`
+- WHEN la verificación corre antes de enviar el texto final
+- THEN juzga el saludo y el texto final juntos, tal como los recibe el cliente (lo ya enviado en el turno + el texto final si sale, después de las guardas); un texto que una guarda retiene no cuenta como respuesta
+- AND en `shadow` juzga exactamente el mismo texto, leído de lo enviado: la vara es la misma en los dos modos
+
 #### Scenario: Clasificador caído
 
 - GIVEN modo `on` y el clasificador responde error o timeout

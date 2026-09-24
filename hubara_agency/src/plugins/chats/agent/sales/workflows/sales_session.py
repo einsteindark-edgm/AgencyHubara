@@ -301,6 +301,15 @@ def _perception_step(out: PerceiveOutput, started_ms: int, *, mode: str) -> dict
     }
 
 
+def _reply_as_sent(already_sent: list[str], outgoing: str | None) -> str:
+    """Lo que el cliente recibe en el turno, para la verificación (②/③): las
+    burbujas que ya salieron (saludo de primer contacto, textos previos a las
+    tools) y el texto final si va a salir, ya pasado por las guardas. La misma
+    vara en sombra (lo lee de lo enviado) y en activo (antes de enviarlo).
+    Solo arma el payload de `verify_coverage`: no agrega commands (L-22)."""
+    return "\n\n".join(t for t in [*already_sent, outgoing or ""] if t)
+
+
 def _verify_step(out: VerifyOutput, started_ms: int, *, applied: bool) -> dict[str, Any]:
     return {
         "kind": "verify",
@@ -1449,10 +1458,14 @@ class HubaraSalesSessionWorkflow:
                         and not self._force_shutdown
                         and not admin_no_send
                     ):
-                        verify_reply = (
-                            ""
+                        # Lo que el cliente recibe en el turno: lo ya enviado
+                        # (saludo de primer contacto, textos previos) + el texto
+                        # final si sale (una guarda que lo retiene lo saca).
+                        verify_reply = _reply_as_sent(
+                            trace_sent_texts,
+                            None
                             if (leak_blocked or suppress_text_for_picker or abstained)
-                            else (result.final_content or "")
+                            else result.final_content,
                         )
                         verified_ms = _now_ms()
                         verify_out = await self._verify(
@@ -1598,7 +1611,7 @@ class HubaraSalesSessionWorkflow:
                                     profile=self._perception_profile,
                                     messages=_burst_messages(raw_batch or []),
                                     topics=[{"topic": t.topic, "msg": t.msg, "p": t.p} for t in shadow_plan.topics],
-                                    reply_text="\n\n".join(trace_sent_texts),
+                                    reply_text=_reply_as_sent(trace_sent_texts, None),
                                     components=[
                                         t for t in result.tools_used if t.startswith(("present_", "send_", "request_"))
                                     ],
