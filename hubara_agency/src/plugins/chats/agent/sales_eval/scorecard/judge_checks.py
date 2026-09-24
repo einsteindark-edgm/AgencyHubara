@@ -419,9 +419,9 @@ def _result_from(check_id: str, data: dict[str, Any]) -> CheckResult | None:
         critique=_clip(str(data.get("critica") or ""), _EVIDENCE_MAX),
         source="judge",
     )
-    if "asuntos" not in data:
-        return result  # no es un check por asuntos (solo EST-08 los pide)
-    return _with_topics(result, _parse_topics(data.get("asuntos")))
+    if check_id != _TOPICS_CHECK or not isinstance(data.get("asuntos"), list):
+        return result  # solo EST-08 decide por asuntos (el modo turno pasa la clave siempre)
+    return _with_topics(result, _parse_topics(data["asuntos"]))
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -445,6 +445,9 @@ def _parse_topics(raw: Any) -> tuple[dict[str, Any], ...]:
             }
         )
     return tuple(topics)
+
+
+_TOPICS_CHECK = "EST-08"
 
 
 def _with_topics(result: CheckResult, topics: tuple[dict[str, Any], ...]) -> CheckResult:
