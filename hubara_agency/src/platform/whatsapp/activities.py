@@ -273,6 +273,14 @@ def _merge_outbound_text_index(
 async def send_message_to_session(
     session_id: str, message: str, *, author: str = "agent"
 ) -> bool:
+    """Envia `message` al cliente (ver `_send_freeform`). ``True`` si salió todo."""
+    ok, _bubbles = await _send_freeform(session_id, message, author=author)
+    return ok
+
+
+async def _send_freeform(
+    session_id: str, message: str, *, author: str = "agent"
+) -> tuple[bool, list[dict[str, str]]]:
     """Envia `message` al cliente cuyo `session_id` mapea a un numero de WhatsApp.
 
     Pura (no toca Temporal). Resuelve `phone_number_id` desde `metadata.json` o
@@ -303,8 +311,12 @@ async def send_message_to_session(
 
     Reutilizada por:
       * `send_whatsapp_message_activity` (worker, dentro de workflows —
-        ignora el retorno: mismo comportamiento de siempre).
+        devuelve las burbujas entregadas para la traza v2).
       * `dashboard/handoff.py` (HTTP — propaga False como 502 al operador).
+
+    Devuelve ``(ok, burbujas)``: cada burbuja que Meta aceptó, en orden, con su
+    wamid (``""`` si Meta no lo devolvió). Un hit de idempotencia devuelve el
+    texto sin wamid: ya salió en el intento anterior.
     """
     from_number = session_id.replace(WHATSAPP_SESSION_PREFIX, "")
 
@@ -324,7 +336,9 @@ async def send_message_to_session(
             session_id=session_id,
             note="skipping duplicate free-form send (retry / double-touch)",
         )
-        return True
+        # Salió en el intento anterior: la traza lo cuenta como entregado,
+        # sin wamid (ese resultado se perdió con el intento caído).
+        return True, [{"wamid": "", "text": message}]
 
     # Sanitizar markdown del LLM (`**bold**` → `*bold*`): WhatsApp no
     # renderiza markdown y el cliente ve los asteriscos crudos (caso
@@ -333,7 +347,7 @@ async def send_message_to_session(
 
     chunks = [chunk.strip() for chunk in message.split("\n\n") if chunk.strip()]
     if not chunks:
-        return True
+        return True, []
 
     # PM2-B3: `send_text` (devuelve OutboundResult) en vez del legacy
     # `send_message` (swallow). Ante el primer chunk rechazado se corta.
@@ -343,6 +357,7 @@ async def send_message_to_session(
     sent_bubbles: list[tuple[str, str]] = []
     # wamid de CADA burbuja entregada ("" si Meta no lo devolvió).
     delivered_wamids: list[str] = []
+    delivered_bubbles: list[dict[str, str]] = []
     for chunk in chunks:
         result = await whatsapp_client.send_text(phone_number_id, from_number, chunk)
         if not result.ok:
@@ -350,6 +365,7 @@ async def send_message_to_session(
             break
         delivered += 1
         delivered_wamids.append(result.wa_message_id or "")
+        delivered_bubbles.append({"wamid": result.wa_message_id or "", "text": chunk})
         if result.wa_message_id:
             sent_bubbles.append((result.wa_message_id, chunk))
         await asyncio.sleep(1.5)
@@ -392,8 +408,8 @@ async def send_message_to_session(
             delivered_chunks=delivered,
             total_chunks=len(chunks),
         )
-        return False
-    return True
+        return False, delivered_bubbles
+    return True, delivered_bubbles
 
 
 async def send_image_to_session(
@@ -552,7 +568,13 @@ async def send_document_to_session(
 
 @activity.defn(name="send_whatsapp_message_activity")
 @with_heartbeat(every=10)
-async def send_whatsapp_message_activity(session_id: str, message: str) -> None:
+async def send_whatsapp_message_activity(
+    session_id: str, message: str
+) -> list[dict[str, str]] | None:
+    """Envía el texto del agente y devuelve las burbujas entregadas
+    (`[{wamid, text}]`, traza v2). La anotación admite `None` A PROPÓSITO:
+    Temporal decodifica el resultado grabado con este tipo, y las histories
+    anteriores a la traza v2 grabaron `None` (replay, L-22)."""
     # Tripwire B9 (premortem run 5f43bcd0): este es el ÚNICO camino por el
     # que texto generado por LLM llega a WhatsApp desde workflows. Si todos
     # los guards del workflow fallan (confluencia de flags nueva, workflow
@@ -564,8 +586,9 @@ async def send_whatsapp_message_activity(session_id: str, message: str) -> None:
             session_id=session_id,
             preview=message[:120],
         )
-        return
-    await send_message_to_session(session_id, message)
+        return []
+    _ok, bubbles = await _send_freeform(session_id, message)
+    return bubbles
 
 
 async def _read_metadata_for_typing(session_id: str) -> tuple[str | None, str | None]:
@@ -684,6 +707,13 @@ def record_outbound_in_active_episode(
     return metadata["last_outbound"]
 
 
+# La despedida sale DESPUÉS de que la tool cerró el episodio (el tag cierra en
+# `execute_tool`, el texto se envía al final del turno): sin esta ventana esa
+# burbuja no quedaba en el episodio y su costo se perdía (plan del laboratorio
+# §10). Un turno tarda segundos; dos minutos cubren reintentos del envío.
+_FAREWELL_GRACE_MS = 2 * 60 * 1000
+
+
 def _append_outbound_to_active_episode(
     metadata: dict[str, Any],
     log_entry: OutboundLogEntry,
@@ -691,7 +721,9 @@ def _append_outbound_to_active_episode(
     """Mutates: agrega `log_entry` al `outbound_messages[]` del episodio
     activo y actualiza su `cost_summary`. Si NO hay episodio activo (caso
     raro: outbound sin haber recibido inbound), retorna sin tocar — el
-    OutboundLogEntry se persiste en `metadata.last_outbound` solamente.
+    OutboundLogEntry se persiste en `metadata.last_outbound` solamente. Un
+    episodio que cerró hace menos de `_FAREWELL_GRACE_MS` cuenta como activo:
+    es la despedida del turno que lo cerró.
 
     Detalle de cost: el `log_entry` viene con `cost_usd_micros=None` y
     `pricing=None` porque el send activity NO conoce el pricing todavía
@@ -702,8 +734,12 @@ def _append_outbound_to_active_episode(
     if not episodes:
         return
     last = episodes[-1]
-    if last.get("closed_at_ms") is not None:
-        return  # episodio cerrado — no contaminar
+    closed_at = last.get("closed_at_ms")
+    if closed_at is not None and not (
+        isinstance(closed_at, (int, float))
+        and log_entry.sent_at_ms - closed_at <= _FAREWELL_GRACE_MS
+    ):
+        return  # episodio cerrado hace rato — no contaminar
 
     # Asegurar list + summary inicial
     outbound_list = last.setdefault("outbound_messages", [])

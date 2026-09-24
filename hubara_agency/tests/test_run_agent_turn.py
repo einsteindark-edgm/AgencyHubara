@@ -253,3 +253,14 @@ def test_starts_outbound_detects_client_visible_tools() -> None:
     assert _starts_outbound(["set_order_slot", "search_products"]) is False
     assert _starts_outbound(["verify_order_for_checkout"]) is False
     assert _starts_outbound([]) is False
+
+
+def test_turn_result_steps_default_to_empty_and_serialize() -> None:
+    """Traza v2: `steps` tiene default (remarketing, ETA y los callers que no
+    la leen no cambian) y viaja como JSON dentro del resultado (R-JSON)."""
+    tr = TurnResult(final_content="hola")
+    assert tr.steps == []
+
+    tr.steps.append({"kind": "llm", "at_ms": 1, "round": 1})
+    assert json.loads(json.dumps(asdict(tr)))["steps"] == [{"kind": "llm", "at_ms": 1, "round": 1}]
+    assert TurnResult(final_content="").steps == []  # el default no se comparte

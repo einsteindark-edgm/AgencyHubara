@@ -54,7 +54,10 @@ with workflow.unsafe.imports_passed_through():
     from src.plugins.chats.agent.sales.first_contact_greeting import (
         should_send_first_contact_greeting,
     )
-    from src.plugins.chats.agent.sales.turn_trace import build_turn_payload
+    from src.plugins.chats.agent.sales.turn_trace import (
+        build_turn_payload,
+        context_note_names,
+    )
     from src.platform.whatsapp.capi_activity import (
         LEAD_CLOSING_TAGS,
         PURCHASE_CLOSING_TAGS,
@@ -125,6 +128,60 @@ _MAX_TURN_RESTARTS = 2
 _ORDER_REGISTERED_FALLBACK_FAREWELL = (
     "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a Hubara."
 )
+
+
+# ── Traza v2 (plan del laboratorio §4.1): helpers puros del registro ────────
+# Solo manipulan listas en memoria con el reloj del workflow: no agregan
+# commands a la history (replay-safe sin patch, L-22).
+
+
+def _now_ms() -> int:
+    return int(workflow.now().timestamp() * 1000)
+
+
+def _note_guard(
+    steps: list[dict],
+    guards: list[str],
+    name: str,
+    *,
+    before: str | None = None,
+    after: str | None = None,
+    v1: bool = True,
+) -> None:
+    """Una guarda que actuó: paso v2 en su lugar del turno y, si `v1`, su nombre
+    en el campo v1 `guards` (el que lee el scorecard; no se le suman nombres
+    nuevos para que los checks no cambien)."""
+    steps.append({"kind": "guard", "at_ms": _now_ms(), "name": name, "before": before, "after": after})
+    if v1:
+        guards.append(name)
+
+
+def _text_outbound(text: str, delivered: object) -> dict:
+    """Paso `outbound` de un envío de texto. `delivered` es lo que devolvió
+    `send_whatsapp_message_activity`: `[{wamid, text}]` desde la traza v2;
+    `None` en histories anteriores (no se sabe si salió)."""
+    if isinstance(delivered, list):
+        bubbles = [
+            {"kind": "text", "text": b.get("text", ""), "wamid": b.get("wamid") or None, "delivered": True}
+            for b in delivered
+            if isinstance(b, dict)
+        ] or [{"kind": "text", "text": text, "delivered": False}]
+    else:
+        bubbles = [{"kind": "text", "text": text, "delivered": None}]
+    return {"kind": "outbound", "at_ms": _now_ms(), "bubbles": bubbles}
+
+
+def _flush_outbound(report: object) -> dict | None:
+    """Paso `outbound` del flush de componentes (`[{kind, wamid, ok}]`). Las
+    histories anteriores devuelven la cantidad (int): no hay detalle."""
+    if not isinstance(report, list) or not report:
+        return None
+    bubbles = [
+        {"kind": str(r.get("kind") or "ui"), "wamid": r.get("wamid"), "delivered": bool(r.get("ok"))}
+        for r in report
+        if isinstance(r, dict)
+    ]
+    return {"kind": "outbound", "at_ms": _now_ms(), "bubbles": bubbles} if bubbles else None
 
 
 @workflow.defn(name="HubaraSalesSessionWorkflow")
@@ -462,6 +519,8 @@ class HubaraSalesSessionWorkflow:
                     trace_sent_texts: list[str] = []
                     trace_guards: list[str] = []
                     trace_suppressed: str | None = None
+                    # Traza v2: pasos de TODOS los intentos del turno, en orden.
+                    trace_steps: list[dict] = []
                     restarts = 0
                     while True:
                         hni = None
@@ -489,10 +548,20 @@ class HubaraSalesSessionWorkflow:
                             # ANTES de grabar — el LLM recuerda lo que salió.
                             salvage_leaked_text=True,
                         )
+                        trace_steps.extend(result.steps or [])
                         if result.interrupted:
                             restarts += 1
                             drained = list(self._pending)
                             self._pending.clear()
+                            trace_steps.append(
+                                {
+                                    "kind": "restart",
+                                    "at_ms": _now_ms(),
+                                    "reason": "checkpoint_a",
+                                    "attempt": restarts,
+                                    "drained": len(drained),
+                                }
+                            )
                             raw_batch = [*(raw_batch or []), *drained]
                             msg = self._coalesce_batch(raw_batch)
                             # Run 48ec6df5 (caso 573229041190): un corrientazo
@@ -547,6 +616,9 @@ class HubaraSalesSessionWorkflow:
                         break
                     self._last_response = result.final_content
                     turn_count += 1
+                    # Id determinista del turno (traza v2): no depende del
+                    # contador de la activity de la traza, que puede correrse.
+                    turn_key = f"run:{workflow.info().run_id}/t:{turn_count}"
 
                     # Abstención explícita (incidente wa_573125671604,
                     # 2026-07-17 23:15 UTC): en un turno de handoff sin
@@ -562,6 +634,11 @@ class HubaraSalesSessionWorkflow:
                     if workflow.patched("no-message-abstention-v1"):
                         abstained = is_no_message_abstention(
                             result.final_content
+                        )
+                    if abstained:
+                        _note_guard(
+                            trace_steps, trace_guards, "no_message",
+                            before=result.final_content, after="", v1=False,
                         )
 
                     # ADR-001 + ADR-2026-05-20: si la tool emitio una decision,
@@ -626,8 +703,11 @@ class HubaraSalesSessionWorkflow:
                                 "(autotransferencia) — noop: no se escribe "
                                 "handoff ni se envía el texto del turno."
                             )
+                            _note_guard(
+                                trace_steps, trace_guards, "self_transfer_noop",
+                                before=result.final_content, after="",
+                            )
                             result.final_content = ""
-                            trace_guards.append("self_transfer_noop")
                         else:
                             # Rama legacy solo para replay de histories
                             # pre-deploy (R-DET).
@@ -682,7 +762,7 @@ class HubaraSalesSessionWorkflow:
                         # decisión para emitir EpisodeClosedEvent + CAPI abajo
                         # sin duplicar.
                         if closure.acted:
-                            trace_guards.append("safety_net_order_closure")
+                            _note_guard(trace_steps, trace_guards, "safety_net_order_closure")
                         if closure.acted and episode_closed_decision is None:
                             episode_closed_decision = EpisodeClosedDecision(
                                 session_id=result.order_registered_decision.session_id,
@@ -809,7 +889,7 @@ class HubaraSalesSessionWorkflow:
                                 retry_policy=RetryPolicy(maximum_attempts=3),
                             )
                             if _escalated:
-                                trace_guards.append("safety_net_closing_escalation")
+                                _note_guard(trace_steps, trace_guards, "safety_net_closing_escalation")
                                 # Shutdown DIFERIDO (C3) — ver la rama de la
                                 # red orden↔tag de arriba: mismo patch, misma
                                 # razón (la despedida sale antes de apagar).
@@ -865,12 +945,17 @@ class HubaraSalesSessionWorkflow:
                             f"sin saludo (tools={result.tools_used}); enviando "
                             "la burbuja de apertura antes del menú."
                         )
-                        await workflow.execute_activity(
+                        _note_guard(
+                            trace_steps, trace_guards, "first_contact_greeting",
+                            before="", after=greeting,
+                        )
+                        greeting_delivered = await workflow.execute_activity(
                             send_whatsapp_message_activity,
                             args=[session.session_id, greeting],
                             start_to_close_timeout=timedelta(seconds=90),
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )
+                        trace_steps.append(_text_outbound(greeting, greeting_delivered))
                         await workflow.execute_activity(
                             persist_assistant_message_activity,
                             args=[session.session_id, greeting],
@@ -878,7 +963,6 @@ class HubaraSalesSessionWorkflow:
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )
                         trace_sent_texts.append(greeting)
-                        trace_guards.append("first_contact_greeting")
 
                     # SALUDO DESCARTADO (bug run ddd0d472 / session-wa_573125671604):
                     # cuando el LLM emite texto client-facing JUNTO con una tool
@@ -917,13 +1001,18 @@ class HubaraSalesSessionWorkflow:
                                     "admin-text-guard: pre_tool bloqueado: "
                                     f"{pre_msg[:120]!r}"
                                 )
+                                _note_guard(
+                                    trace_steps, trace_guards, "admin_text_guard_pre_tool",
+                                    before=pre_msg, after="", v1=False,
+                                )
                                 continue
-                            await workflow.execute_activity(
+                            pre_delivered = await workflow.execute_activity(
                                 send_whatsapp_message_activity,
                                 args=[session.session_id, pre_msg],
                                 start_to_close_timeout=timedelta(seconds=90),
                                 retry_policy=RetryPolicy(maximum_attempts=2),
                             )
+                            trace_steps.append(_text_outbound(pre_msg, pre_delivered))
                             trace_sent_texts.append(pre_msg)
                             if workflow.patched("persist-assistant-message-v1"):
                                 await workflow.execute_activity(
@@ -985,7 +1074,10 @@ class HubaraSalesSessionWorkflow:
                                 f"picker: {result.final_content[:120]!r}"
                             )
                             suppress_text_for_picker = True
-                            trace_guards.append("variant_enumeration_guard")
+                            _note_guard(
+                                trace_steps, trace_guards, "variant_enumeration_guard",
+                                before=result.final_content, after="",
+                            )
                             trace_suppressed = "variant_enumeration_guard"
                     if admin_no_send and result.final_content:
                         # Observabilidad del turno admin: el LLM produjo texto
@@ -996,6 +1088,10 @@ class HubaraSalesSessionWorkflow:
                         workflow.logger.warning(
                             "turno admin: final_content suprimido (no va al "
                             f"cliente): {result.final_content[:120]!r}"
+                        )
+                        _note_guard(
+                            trace_steps, trace_guards, "admin_turn",
+                            before=result.final_content, after="", v1=False,
                         )
                     # Última línea determinista (run 5f43bcd0 + premortem D1):
                     # aunque el turno sea normal, texto que huele a reporte
@@ -1023,10 +1119,14 @@ class HubaraSalesSessionWorkflow:
                             "oración removida de la despedida: "
                             f"{result.final_content[:120]!r}"
                         )
+                        _note_guard(
+                            trace_steps, trace_guards, "portavelas_notice_guard",
+                            before=result.final_content,
+                            after=stripped or _ORDER_REGISTERED_FALLBACK_FAREWELL,
+                        )
                         result.final_content = (
                             stripped or _ORDER_REGISTERED_FALLBACK_FAREWELL
                         )
-                        trace_guards.append("portavelas_notice_guard")
                     # Set de patrones VERSIONADO (run 5ed9af2d): el veredicto decide
                     # commands, así que los patrones posteriores al set original solo
                     # aplican bajo su propio patch — histories pre-deploy que SÍ
@@ -1042,7 +1142,10 @@ class HubaraSalesSessionWorkflow:
                         )
                     )
                     if leak_blocked:
-                        trace_guards.append("admin_text_guard")
+                        _note_guard(
+                            trace_steps, trace_guards, "admin_text_guard",
+                            before=result.final_content, after="",
+                        )
                         workflow.logger.warning(
                             "admin-text-guard: final_content bloqueado (texto "
                             f"administrativo): {result.final_content[:120]!r}"
@@ -1057,9 +1160,12 @@ class HubaraSalesSessionWorkflow:
                                 extended=workflow.patched("admin-leak-patterns-v2"),
                             )
                             if salvaged:
+                                _note_guard(
+                                    trace_steps, trace_guards, "admin_text_salvaged",
+                                    before=result.final_content, after=salvaged,
+                                )
                                 result.final_content = salvaged
                                 leak_blocked = False
-                                trace_guards.append("admin_text_salvaged")
                     if (
                         result.final_content
                         and not self._force_shutdown
@@ -1069,13 +1175,23 @@ class HubaraSalesSessionWorkflow:
                     ):
                         # Evitamos enviar respuestas vacías o alucinar respuestas internas durante auto-cierres
                         if not suppress_text_for_picker:
-                            await workflow.execute_activity(
+                            final_delivered = await workflow.execute_activity(
                                 send_whatsapp_message_activity,
                                 args=[session.session_id, result.final_content],
                                 start_to_close_timeout=timedelta(seconds=90),
                                 retry_policy=RetryPolicy(maximum_attempts=2)
                             )
+                            trace_steps.append(
+                                _text_outbound(result.final_content, final_delivered)
+                            )
                             trace_sent_texts.append(result.final_content)
+                        elif trace_suppressed is None:
+                            # El LLM llamó al selector: su texto no sale (el
+                            # selector ES el mensaje, run fe86d4e4).
+                            _note_guard(
+                                trace_steps, trace_guards, "variant_picker_text",
+                                before=result.final_content, after="", v1=False,
+                            )
                         # Persistir la respuesta al JSONL DESPUES del send: si el
                         # send falla y retry, no contaminamos el log con mensajes
                         # que el cliente nunca vio. El dashboard lee este JSONL
@@ -1123,12 +1239,15 @@ class HubaraSalesSessionWorkflow:
                         and not admin_no_send
                         and workflow.patched("flush-ui-intents-v1")
                     ):
-                        await workflow.execute_activity(
+                        flush_report = await workflow.execute_activity(
                             flush_pending_ui_intents_activity,
                             args=[session.session_id],
                             start_to_close_timeout=timedelta(seconds=120),
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )
+                        flush_step = _flush_outbound(flush_report)
+                        if flush_step is not None:
+                            trace_steps.append(flush_step)
 
                     # Auditoría CAPI 2026-09-08: flush del outbox de eventos
                     # de Meta que el turno encoló (tools + UI intents +
@@ -1191,6 +1310,9 @@ class HubaraSalesSessionWorkflow:
                             sent_texts=trace_sent_texts,
                             suppressed_reason=trace_suppressed,
                             guards=trace_guards,
+                            steps=trace_steps,
+                            turn_key=turn_key,
+                            context_notes=context_note_names(msg.plugin_context),
                         )
                         try:
                             await workflow.execute_activity(
