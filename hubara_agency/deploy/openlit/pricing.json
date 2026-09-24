@@ -24,6 +24,14 @@
     "gemini-3.5-flash-lite": {
       "promptPrice": 0.0003,
       "completionPrice": 0.0025
+    },
+    "openrouter-perception": {
+      "promptPrice": 0.00015,
+      "completionPrice": 0.0006
+    },
+    "openai/gpt-4o-mini-2024-07-18": {
+      "promptPrice": 0.00015,
+      "completionPrice": 0.0006
     }
   }
 }

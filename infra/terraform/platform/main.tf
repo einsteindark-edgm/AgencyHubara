@@ -75,6 +75,15 @@ module "mba_config" {
   config  = each.value.mba
 }
 
+# ── Laboratorio de conversaciones: techo del modo, perfil y topes (git = verdad) ─
+module "lab_config" {
+  source   = "./modules/lab-config"
+  for_each = var.tenants
+
+  tenant = each.key
+  config = each.value.lab
+}
+
 # ── GraphAgents (subsistema separado): secretos SSM en /graphagents/ ─────────
 module "graphagents_secrets" {
   source      = "./modules/graphagents-secrets"

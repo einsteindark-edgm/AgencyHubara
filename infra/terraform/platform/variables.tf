@@ -60,6 +60,17 @@ variable "tenants" {
       episode_boundary_event = optional(bool, false)      # nota de frontera episode_closed (D1.10)
       allow_everyone         = optional(bool, false)      # permite ai_audience=EVERYONE desde la tab (D2.3)
     }), {})
+
+    # Laboratorio de conversaciones y capas del bot con clasificador
+    # (LABORATORIO_CONVERSACIONES_PLAN.md §4.4). Defaults = todo apagado. Se
+    # materializa como SSM String en /hubara/<tenant>/<VAR> (modules/lab-config).
+    lab = optional(object({
+      perception_mode_ceiling = optional(string, "off")    # techo del modo: off | shadow | canary | on
+      perception_profile      = optional(string, "jev-v1") # perfil de src/platform/perception/profiles.yaml
+      signal_inbound_meta     = optional(bool, false)      # 4.º argumento de send_message (se enciende tras desplegar el worker)
+      max_usd_per_run         = optional(number, 120)      # tope de gasto de una corrida del laboratorio
+      max_usd_per_month       = optional(number, 300)      # tope mensual del laboratorio
+    }), {})
   }))
 
   validation {
@@ -72,6 +83,23 @@ variable "tenants" {
       for t in values(var.tenants) : [for p in t.mba.customer_allowlist : can(regex("^\\+[1-9][0-9]{7,14}$", p))]
     ]))
     error_message = "tenants.*.mba.customer_allowlist: cada teléfono debe ser E.164 con '+' (p.ej. +573001234567)."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : contains(["off", "shadow", "canary", "on"], t.lab.perception_mode_ceiling)])
+    error_message = "tenants.*.lab.perception_mode_ceiling: off | shadow | canary | on."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : can(regex("^[a-z0-9][a-z0-9-]*$", t.lab.perception_profile))])
+    error_message = "tenants.*.lab.perception_profile: id de perfil (minúsculas, dígitos y guiones), p.ej. jev-v1."
+  }
+
+  validation {
+    condition = alltrue([
+      for t in values(var.tenants) : t.lab.max_usd_per_run > 0 && t.lab.max_usd_per_run <= t.lab.max_usd_per_month
+    ])
+    error_message = "tenants.*.lab: 0 < max_usd_per_run <= max_usd_per_month."
   }
 }
 
@@ -136,6 +164,12 @@ variable "secret_keys" {
     "META_APP_SECRET",
     "META_OAUTH_REDIRECT_URI",
     "META_OAUTH_SCOPES",
+    # Clasificadores del laboratorio de conversaciones (Jev y OpenAI, los dos por
+    # OpenRouter; LABORATORIO_CONVERSACIONES_PLAN.md §1.3). Lo leen el puerto de
+    # percepción (Jev, Decisions API) y el alias `openrouter-perception` del proxy
+    # LiteLLM (OpenAI). El operador crea la llave con límite de crédito y la carga
+    # fuera de banda; con el placeholder el puerto no llama a nadie (fail-open).
+    "OPENROUTER_API_KEY",
   ]
 }
 
