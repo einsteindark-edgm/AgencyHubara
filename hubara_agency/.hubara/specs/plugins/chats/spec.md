@@ -631,6 +631,26 @@ cerrada). Un cupón sin filas se comporta como siempre.
 - GIVEN Medusa no responde al leer los pedidos
 - THEN `apply_coupon` responde `applied=false, reason=quota_unavailable` y `list_promotions` marca `units_unavailable=true`
 
+#### Scenario: El cupo aplica solo a la combinación en la confirmación
+
+- GIVEN AMOR26 tiene 5 unidades de Cubo Love · Rosado · Café y quedan 3
+- WHEN el cliente pide 1 Cubo Love Rosado Café y 1 Cubo Love Azul Lavanda y el bot llama `present_order_confirmation` con `color`/`aroma` por ítem
+- THEN solo la primera lleva 10 % y el resumen dice "1 × Cubo Love Rosado · Café con AMOR26 (−$2.100)"
+- AND un color o aroma que el producto no tiene devuelve `error=invalid_variant_attribute` sin monto ni intent
+
+#### Scenario: Parcial (D2)
+
+- GIVEN queda 1 unidad de la combinación
+- WHEN el cliente pide 2
+- THEN 1 lleva descuento y el resumen dice "1 a precio normal"
+
+#### Scenario: Se llevaron la última
+
+- GIVEN dos clientes confirmaron la última unidad
+- WHEN ambos llaman `register_order`
+- THEN, bajo el candado del código, uno crea el pedido y el otro recibe `quota_changed` con `new_total_cop`, sin draft
+- AND "Crear pedido" del dashboard reparte y registra con las mismas reglas y el mismo candado
+
 ## Out of scope
 
 - Verificación por visión/IA del CONTENIDO de un PDF (¿es un pago real?) — decisión 2026-09-01: la clasificación de PDFs es determinista (todo PDF → verificación humana)

@@ -372,6 +372,28 @@ mínima sin consumir cuota.
 - WHEN se invoca el endpoint
 - THEN se devuelve `{port: "MedusaOrderQueryAdapter", catalog_available: false, error_detail: "<reason>", sample_count: 0}`
 
+### Requirement: La línea con cupo por unidad lleva la marca del cupo
+
+Una línea con descuento de un cupón con cupo por unidad (central de cupones)
+MUST llevar `metadata.coupon_quota_id` además de `coupon_code`,
+`list_unit_price_cop` y `discount_unit_cop`. Las vendidas de cada cupo se
+DERIVAN de esas líneas en `/admin/orders` y `/admin/draft-orders`, sin
+contador aparte: un pedido cancelado (en Medusa o `hubara_stage=cancelled`),
+borrado o marcado de prueba (`hubara_test_order`) deja de contar solo. El
+reintento de reconciliación MUST conservar el cupo de cada unidad.
+
+#### Scenario: Cancelar devuelve la unidad
+
+- GIVEN un pedido con 1 unidad del cupo "Cubo Love · Rosado · Café"
+- WHEN el pedido se cancela (Medusa o Hubara) o se marca de prueba
+- THEN en la siguiente lectura esa unidad vuelve a quedar disponible para el cupón
+
+#### Scenario: Reintento de un registro con cupo
+
+- GIVEN un registro con cupo falló y quedó en `failed_order_registrations`
+- WHEN la reconciliación lo reintenta
+- THEN cada unidad con descuento viaja con el mismo `quota_id` y la línea en Medusa lleva `coupon_quota_id`
+
 ## Out of scope (NO go en este spec)
 
 - Listado/historial completo de órdenes archivadas (>30 días entregadas) — fuera del kanban
