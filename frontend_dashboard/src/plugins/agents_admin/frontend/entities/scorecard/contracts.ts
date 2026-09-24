@@ -117,6 +117,15 @@ export const scorecardListSchema = z.object({
 
 // ── Detalle: resultados + trayectoria ──────────────────────────────────────
 
+/** Cobertura de UN asunto del cliente (EST-08 v2): turno, mensaje de la ráfaga y si se atendió. */
+export const topicCoverageSchema = z.object({
+  topic: z.string(),
+  turn: z.number().nullable().default(null),
+  msg: z.number().nullable().default(null),
+  covered: z.boolean().default(false),
+  evidence: z.string().default(""),
+});
+
 export const checkResultSchema = z.object({
   check_id: z.string(),
   verdict: checkVerdictSchema,
@@ -125,6 +134,8 @@ export const checkResultSchema = z.object({
   evidence: z.string().default(""),
   critique: z.string().default(""),
   source: checkKindSchema,
+  /** Solo EST-08 v2 (registro 3+); los resultados anteriores no la traen. */
+  topics: z.array(topicCoverageSchema).catch([]).default([]),
 });
 
 export const trajectoryToolSchema = z.object({

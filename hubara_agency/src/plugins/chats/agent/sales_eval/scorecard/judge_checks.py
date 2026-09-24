@@ -26,6 +26,7 @@ import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import replace
 from typing import Any, Protocol
 
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext, CheckResult
@@ -130,9 +131,25 @@ JUDGE_PROMPTS: dict[str, str] = {
         "- Confirmar un dato una vez al resumir el pedido es `pasa`."
     ),
     "EST-08": (
-        "- Para cada pregunta directa del cliente, revisa la respuesta del bot en ese turno o el siguiente.\n"
-        "- `falla` si una pregunta quedó sin responder mientras el bot empujaba la venta (pidió datos, mandó "
-        "formularios o cambió de tema)."
+        "- Saca TÚ los asuntos que planteó el cliente en cada turno: preguntas (con o sin \"?\"), pedidos "
+        "(\"me mandas el catálogo\", \"quiero ver los precios\") y datos que piden una reacción. En una "
+        "ráfaga cada mensaje [k] puede traer uno o varios asuntos. Un saludo, un \"gracias\" o un \"ok\" no "
+        "son asuntos.\n"
+        "- Un asunto está cubierto si lo atiende el texto que el bot envió o un componente que el cliente "
+        "recibió (catálogo, fotos, tarifas, formulario), en ese turno o en el siguiente.\n"
+        "- `falla` si algún asunto quedó sin atender, sobre todo si el bot empujó la venta en su lugar (pidió "
+        "datos, mandó formularios o cambió de tema). `pasa` si todos quedaron atendidos.\n"
+        "- Lista TODOS los asuntos en `asuntos`, cubiertos o no, con el turno T y el número de mensaje [k]."
+    ),
+}
+
+# Forma de la respuesta del juez. EST-08 v2 agrega la cobertura por asunto.
+_OUTPUT_DEFAULT = '{"veredicto": "pasa|falla|no_aplica|desconocido", "turno": <número o null>, "evidencia": "...", "critica": "..."}'
+_OUTPUT_BY_CHECK: dict[str, str] = {
+    "EST-08": (
+        '{"veredicto": "pasa|falla|no_aplica|desconocido", "turno": <número o null>, "evidencia": "...", '
+        '"critica": "...", "asuntos": [{"asunto": "...", "turno": <T>, "mensaje": <k o null>, '
+        '"cubierto": true|false, "evidencia": "..."}]}'
     ),
 }
 
@@ -188,34 +205,79 @@ _APPLIES: dict[str, Callable[[Trajectory, CheckContext], tuple[bool, str]]] = {
     ),
     "EST-04": lambda t, c: (_any_sent(t), "el bot no envió texto"),
     "EST-07": lambda t, c: (len(t.turns) > 1, "episodio de un turno"),
+    # v2: sin exigir "?" — una ráfaga de pedidos ("me mandas el catálogo") no lo trae.
     "EST-08": lambda t, c: (
-        any("?" in x.inbound_text for x in t.turns if x.is_customer or x.trigger == "handoff"),
-        "el cliente no hizo preguntas",
+        any(x.inbound_text.strip() for x in t.turns if x.is_customer or x.trigger == "handoff"),
+        "el cliente no escribió",
     ),
 }
 
 _SIGNAL_LABEL = {"deferral": "aplazamiento", "affirmation": "afirmación de compra"}
 
 
-def _clip(text: str, limit: int) -> str:
+def _clip(text: str, limit: int | None) -> str:
     text = " ".join((text or "").split())
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+    return text if limit is None or len(text) <= limit else text[: limit - 1] + "…"
 
 
-def render_transcript(traj: Trajectory, *, text_limit: int = 400) -> str:
-    """La trayectoria como texto numerado por turno (lo que ve el juez)."""
+def _lines(text: str) -> list[str]:
+    return [" ".join(line.split()) for line in (text or "").splitlines() if line.strip()]
+
+
+def _quoted(prefix: str, head: str, text: str) -> list[str]:
+    """Texto entre comillas que conserva sus saltos de línea (listas, párrafos)."""
+    parts = _lines(text) or [""]
+    if len(parts) == 1:
+        return [f'{prefix} {head}: "{parts[0]}"']
+    return [f'{prefix} {head}: "{parts[0]}', *(f"{prefix}   {x}" for x in parts[1:-1]), f'{prefix}   {parts[-1]}"']
+
+
+def _since(ms: int) -> str:
+    seconds = max(0, round(ms / 1000))
+    return f"+{seconds} s" if seconds < 90 else f"+{round(seconds / 60)} min"
+
+
+def _customer_lines(prefix: str, turn: Any) -> list[str]:
+    """Lo que escribió el cliente, un renglón por mensaje de la ráfaga.
+
+    Con la traza v2 cada mensaje trae su hora; en v1 y en episodios legados
+    los mensajes llegan unidos por saltos de línea (`coalesce_inbox`)."""
+    if turn.inbound:
+        texts = [_clip(m.text, None) for m in turn.inbound if m.text.strip()]
+        stamps = [m.ts_ms for m in turn.inbound if m.text.strip()]
+    else:
+        texts, stamps = _lines(turn.inbound_text), []
+    if len(texts) <= 1:
+        return [f"{prefix} cliente: {texts[0] if texts else ''}"]
+    first = stamps[0] if stamps else None
+    out = [f"{prefix} cliente escribió {len(texts)} mensajes:"]
+    for k, text in enumerate(texts, 1):
+        ts = stamps[k - 1] if k - 1 < len(stamps) else None
+        delta = f"({_since(ts - first)}) " if k > 1 and ts is not None and first is not None else ""
+        out.append(f"{prefix}   [{k}] {delta}{text}")
+    return out
+
+
+def render_transcript(traj: Trajectory, *, text_limit: int | None = None) -> str:
+    """La trayectoria como texto numerado por turno (lo que ve el juez).
+
+    v2: sin tope por texto (la traza ya acota a 600) y con los saltos de
+    línea: cada mensaje de una ráfaga en su renglón, con su hora si la hay."""
     lines: list[str] = []
     for t in traj.turns:
         p = f"T{t.turn} ·"
-        who = {"ghost": "sistema (ghosting)", "handoff": "handoff (otro agente → ventas)"}.get(t.trigger, "cliente")
-        if t.inbound_text:
-            lines.append(f"{p} {who}: {_clip(t.inbound_text, text_limit)}")
+        if t.inbound_text or t.inbound:
+            if t.is_customer:
+                lines.extend(_customer_lines(p, t))
+            else:
+                who = {"ghost": "sistema (ghosting)", "handoff": "handoff (otro agente → ventas)"}.get(t.trigger, t.trigger)
+                lines.append(f"{p} {who}: {_clip(t.inbound_text, text_limit or 600)}")
         if t.signal:
             lines.append(f"{p} señal del cliente: {_SIGNAL_LABEL.get(t.signal, t.signal)}")
         for s in t.sent_texts:
-            lines.append(f'{p} bot envió: "{_clip(s, text_limit)}"')
+            lines.extend(_quoted(p, "bot envió", s if text_limit is None else _clip(s, text_limit)))
         if t.suppressed_reason and t.llm_text:
-            lines.append(f'{p} texto suprimido ({t.suppressed_reason}), el cliente NO lo vio: "{_clip(t.llm_text, text_limit)}"')
+            lines.extend(_quoted(p, f"texto suprimido ({t.suppressed_reason}), el cliente NO lo vio", t.llm_text))
         for n in t.discarded_narration:
             lines.append(f'{p} narración descartada: "{_clip(n, 200)}"')
         if t.intents:
@@ -260,7 +322,7 @@ CONVERSACIÓN (episodio {episode_id}, {n} turnos, fidelidad {fidelity}):
 {transcript}
 
 Devuelve SOLO un JSON válido:
-{{"veredicto": "pasa|falla|no_aplica|desconocido", "turno": <número o null>, "evidencia": "...", "critica": "..."}}
+{output}
 """
 
 
@@ -294,6 +356,7 @@ def build_prompt(check_id: str, traj: Trajectory, ctx: CheckContext) -> str:
         n=len(traj.turns),
         fidelity=traj.fidelity,
         transcript=render_transcript(traj),
+        output=_OUTPUT_BY_CHECK.get(check_id, _OUTPUT_DEFAULT),
     )
 
 
@@ -320,13 +383,65 @@ def parse_judge_output(check_id: str, raw: str) -> CheckResult | None:
     if verdict is None:
         return None
     turn = data.get("turno")
-    return CheckResult(
+    result = CheckResult(
         check_id,
         verdict,
         turn=int(turn) if isinstance(turn, (int, float)) else None,
         evidence=_clip(str(data.get("evidencia") or ""), _EVIDENCE_MAX),
         critique=_clip(str(data.get("critica") or ""), _EVIDENCE_MAX),
         source="judge",
+    )
+    if check_id != _TOPICS_CHECK or not isinstance(data.get("asuntos"), list):
+        return result  # solo EST-08 decide por asuntos
+    return _with_topics(result, _parse_topics(data["asuntos"]))
+
+
+def _int_or_none(value: Any) -> int | None:
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _parse_topics(raw: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(raw, list):
+        return ()
+    topics: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict) or not str(item.get("asunto") or "").strip():
+            continue
+        topics.append(
+            {
+                "topic": _clip(str(item["asunto"]), 80),
+                "turn": _int_or_none(item.get("turno")),
+                "msg": _int_or_none(item.get("mensaje")),
+                "covered": item.get("cubierto") is True,
+                "evidence": _clip(str(item.get("evidencia") or ""), 160),
+            }
+        )
+    return tuple(topics)
+
+
+_TOPICS_CHECK = "EST-08"
+
+
+def _with_topics(result: CheckResult, topics: tuple[dict[str, Any], ...]) -> CheckResult:
+    """El veredicto sale de los asuntos: uno sin cubrir es `falla` en su turno,
+    aunque el juez haya escrito `pasa`. Un juez que no supo decidir se respeta.
+
+    Sin asuntos no hay nada que cubrir (un "hola"): no aplica. Un `falla` que
+    no nombra ningún asunto sin cubrir no se puede sostener: desconocido."""
+    if result.verdict == "desconocido":
+        return replace(result, topics=topics)
+    if not topics:
+        return replace(result, verdict="desconocido" if result.verdict == "falla" else "no_aplica", topics=topics)
+    missed = [t for t in topics if not t["covered"]]
+    if not missed:
+        return replace(result, verdict="desconocido" if result.verdict == "falla" else "pasa", topics=topics)
+    first = min(missed, key=lambda t: t["turn"] if t["turn"] is not None else 10**9)
+    where = f"T{first['turn']}" if first["turn"] is not None else "T?"
+    msg = f", mensaje {first['msg']}" if first["msg"] is not None else ""
+    evidence = result.evidence or f"sin respuesta: {first['topic']} ({where}{msg})"
+    return replace(
+        result, verdict="falla", turn=first["turn"] if first["turn"] is not None else result.turn,
+        evidence=evidence, topics=topics,
     )
 
 

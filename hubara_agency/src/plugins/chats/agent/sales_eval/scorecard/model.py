@@ -27,6 +27,8 @@ class CheckResult:
     evidence: str = ""
     critique: str = ""
     source: str = "code"
+    # Cobertura por asunto (EST-08 v2): `{topic, turn, msg, covered, evidence}`.
+    topics: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -50,7 +52,7 @@ VERDICTS = ("pasa", "falla", "no_aplica", "desconocido")
 
 
 def result_dict(r: CheckResult) -> dict[str, Any]:
-    return {
+    row: dict[str, Any] = {
         "check_id": r.check_id,
         "verdict": r.verdict,
         "turn": r.turn,
@@ -58,3 +60,6 @@ def result_dict(r: CheckResult) -> dict[str, Any]:
         "critique": r.critique,
         "source": r.source,
     }
+    if r.topics:
+        row["topics"] = [dict(t) for t in r.topics]
+    return row
