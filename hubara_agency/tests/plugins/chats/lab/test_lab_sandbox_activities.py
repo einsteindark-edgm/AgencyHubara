@@ -50,7 +50,9 @@ def test_real_activities_pass_through_and_effectful_ones_are_replaced() -> None:
     acts = sandbox_activities(real, capture=SandboxCapture())
 
     assert _names(acts) == ["llm_chat", "execute_tool", "orchestration.dispatch_event", "read_idle_timeout_seconds"]
-    assert acts[0] is real[0] and acts[1] is real[1]
+    assert acts[0] is real[0]
+    # `execute_tool` corre la tool real, envuelto: las que leen el pedido en
+    # vivo devuelven lo grabado en el turno real (test_lab_sandbox_order_replay).
     assert acts[2] is not real[2] and acts[3] is not real[3]
 
 

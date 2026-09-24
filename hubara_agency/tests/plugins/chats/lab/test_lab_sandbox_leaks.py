@@ -28,7 +28,7 @@ _LOCAL = {"127.0.0.1", "localhost", "::1"}
 _FORBIDDEN_ENV = ("WHATSAPP_", "MEDUSA_", "META_", "TEMPORAL_API_KEY", "TEMPORAL_ADDRESS", "COGNITO_", "PAYMENT_")
 
 
-def _run_probe(tmp_path: Path, case: dict, *, arm: str = "A1", all_tools: bool = False) -> dict:
+def _run_probe(tmp_path: Path, case: dict, *, arm: str = "A1", all_tools: bool = False, tool: str = "") -> dict:
     bench = _bench(tmp_path)
     (bench / "promotions.json").write_text("[]", encoding="utf-8")
     sandbox = tmp_path / "lab" / "runs" / "run-test" / "A1" / "0" / "case-1"
@@ -42,6 +42,8 @@ def _run_probe(tmp_path: Path, case: dict, *, arm: str = "A1", all_tools: bool =
     env["PERCEPTION_PROVIDER"] = "fake"  # los bots nuevos, sin red en CI
     if all_tools:
         env["PROBE_ALL_TOOLS"] = "1"
+    if tool:
+        env["PROBE_TOOL"] = tool
     proc = subprocess.run(
         [sys.executable, str(_PROBE), str(case_path), str(bench), str(sandbox), str(report_path), arm],
         cwd=_HUBARA, env=env, capture_output=True, text=True, timeout=300,

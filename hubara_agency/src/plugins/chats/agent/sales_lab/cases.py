@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.plugins.chats.agent.sales_lab.recorded_tools import recorded_tool_results
+
 _CASE_TRIGGERS = frozenset({"customer", "handoff"})
 _CLOSING_FIELDS = ("closed_at_ms", "closing_tag", "closing_motivo")
 _REAL_FIELDS = (
@@ -69,6 +71,9 @@ class LabCase:
     draft_before: dict[str, Any] = field(default_factory=dict)
     state_before: dict[str, Any] = field(default_factory=dict)
     first_in_episode: bool = True
+    # Lo que devolvieron en el turno real las tools que leen el pedido en vivo
+    # (`recorded_tools.REPLAYED_TOOLS`): el sandbox se lo da al bot simulado.
+    recorded_tools: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -205,6 +210,7 @@ def build_cases(bench_dir: Path, *, sales_workspace: str) -> CaseSet:
                     for m in inbound
                     if isinstance(m, dict)
                 ]
+            llm_prefix = _llm_prefix(llm_lines, started)
             cases.append(
                 LabCase(
                     case_id=case_id,
@@ -216,7 +222,7 @@ def build_cases(bench_dir: Path, *, sales_workspace: str) -> CaseSet:
                     trigger=trigger,
                     burst=burst,
                     dashboard_prefix=dashboard_prefix,
-                    llm_prefix=_llm_prefix(llm_lines, started),
+                    llm_prefix=llm_prefix,
                     stage_in=trace.get("stage_in"),
                     draft=dict(trace.get("draft") or {}),
                     state=dict(trace.get("state") or {}),
@@ -225,6 +231,7 @@ def build_cases(bench_dir: Path, *, sales_workspace: str) -> CaseSet:
                     draft_before=dict((prev_same or {}).get("draft") or {}),
                     state_before=_state_before(prev_any, prev_same),
                     first_in_episode=prev_same is None,
+                    recorded_tools=recorded_tool_results(llm_lines, llm_prefix),
                 )
             )
     return CaseSet(cases=tuple(cases), exclusions=tuple(exclusions))

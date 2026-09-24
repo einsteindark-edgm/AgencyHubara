@@ -13,6 +13,13 @@ OpenRouter con la llave del laboratorio; en CI, con `PERCEPTION_PROVIDER=fake`. 
 llaves (el guard de la caja lo garantiza) el cliente de WhatsApp simula el
 envío y CAPI se salta; el test de fugas lo verifica.
 
+`execute_tool` corre la tool real, salvo las que leen el estado del pedido
+en vivo (`recorded_tools.REPLAYED_TOOLS`, p. ej. `check_order_status`): en el
+sandbox no hay Medusa y el seguimiento de la metadata es el del inicio del
+turno, así que devuelven lo que devolvieron en el turno REAL (`recorded_tools`
+del caso). Sin grabación, corre la tool con el stub y el caso lo anota
+(`tool_replay`).
+
 Reemplazadas:
   * `persist_turn_trace`: la real + avisa que el turno terminó (el driver
     corta ahí: es la última activity de todo turno). Si la traza dice que
@@ -29,12 +36,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from exoclaw_temporal.config import ExecuteToolInput
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
+
+from src.plugins.chats.agent.sales_lab.recorded_tools import REPLAYED_TOOLS
 
 REAL_IN_SANDBOX = frozenset(
     {
@@ -78,6 +89,9 @@ class SandboxCapture:
     trace_payload: dict[str, Any] | None = None
     trace_payloads: list[dict[str, Any]] = field(default_factory=list)
     turn_done: asyncio.Event = field(default_factory=asyncio.Event)
+    # Tools de lectura del pedido que el bot simulado llamó: con lo grabado en
+    # el turno real (`replayed`) o, sin grabación, con el stub (`unrecorded`).
+    tool_replay: dict[str, list[str]] = field(default_factory=lambda: {"replayed": [], "unrecorded": []})
 
 
 def _jsonable(value: Any) -> Any:
@@ -172,14 +186,44 @@ def _fakes(capture: SandboxCapture, real: dict[str, Any]) -> dict[str, Callable[
 FAKED_IN_SANDBOX = frozenset(_fakes(SandboxCapture(), {}))
 
 
+def _replaying_execute_tool(real: Any, capture: SandboxCapture, recorded: list[dict[str, Any]]) -> Any:
+    """`execute_tool` del sandbox. Una tool de `REPLAYED_TOOLS` devuelve lo
+    que devolvió en el turno real: la n-ésima llamada, la n-ésima grabación, y
+    si el bot simulado la llama más veces, la última (el estado no cambió
+    dentro del turno). Sin grabación corre la tool real (con los puertos del
+    sandbox) y el caso lo anota. Las demás tools corren como siempre."""
+    by_name: dict[str, list[str]] = defaultdict(list)
+    for item in recorded:
+        if isinstance(item, dict) and item.get("name") in REPLAYED_TOOLS and isinstance(item.get("content"), str):
+            by_name[str(item["name"])].append(item["content"])
+    served: Counter[str] = Counter()
+
+    @activity.defn(name="execute_tool")
+    async def execute_tool(input: ExecuteToolInput) -> str:
+        name = getattr(input, "name", None)
+        if name in REPLAYED_TOOLS:
+            contents = by_name.get(name) or []
+            if contents:
+                content = contents[min(served[name], len(contents) - 1)]
+                served[name] += 1
+                capture.tool_replay["replayed"].append(name)
+                return content
+            capture.tool_replay["unrecorded"].append(name)
+        return await real(input)
+
+    return execute_tool
+
+
 def sandbox_activities(
     production: Iterable[Any],
     *,
     capture: SandboxCapture,
     llm_chat: Any | None = None,
+    recorded_tools: list[dict[str, Any]] | None = None,
 ) -> list[Any]:
     """La lista del worker de ventas con los reemplazos del sandbox, en el
-    mismo orden. `llm_chat` reemplaza al LLM real (tests)."""
+    mismo orden. `llm_chat` reemplaza al LLM real (tests); `recorded_tools`,
+    lo que las tools de lectura del pedido devolvieron en el turno real."""
     production = list(production)
     by_name = {a.__temporal_activity_definition.name: a for a in production}
     fakes = _fakes(capture, by_name)
@@ -189,6 +233,8 @@ def sandbox_activities(
             out.append(llm_chat)
         elif name in fakes:
             out.append(fakes[name])
+        elif name == "execute_tool":
+            out.append(_replaying_execute_tool(act, capture, list(recorded_tools or [])))
         elif name in REAL_IN_SANDBOX:
             out.append(act)
         else:
