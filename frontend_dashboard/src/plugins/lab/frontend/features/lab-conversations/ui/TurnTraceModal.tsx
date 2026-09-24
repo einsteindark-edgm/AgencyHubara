@@ -67,7 +67,7 @@ export function TurnTraceModal({ run, sid, turn, arms, initialArm, onClose }: Pr
   const time = turn.burst[n - 1]?.ts_ms ?? turn.at_ms;
   const meta = [
     day,
-    time !== null ? new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(time)) : "",
+    time !== null ? new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", hour: "2-digit", minute: "2-digit", hourCycle: "h23", second: "2-digit" }).format(new Date(time)) : "",
     n > 1 ? `ráfaga de ${n} mensajes` : "1 mensaje",
     arm === "A0" ? "producción" : "simulado",
   ]

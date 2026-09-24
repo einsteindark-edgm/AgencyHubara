@@ -13,6 +13,24 @@ import { z } from "zod";
 const nullableNumber = z.number().nullable().catch(null).default(null);
 const nullableString = z.string().nullable().catch(null).default(null);
 
+/**
+ * Lista tolerante POR ELEMENTO (L-10): un elemento con otra forma se descarta
+ * en vez de vaciar la lista entera (un `.catch([])` a nivel lista dejaba la
+ * sección en blanco por un solo elemento raro).
+ */
+function tolerantArray<T extends z.ZodTypeAny>(item: T) {
+  return z
+    .array(z.unknown())
+    .catch([])
+    .default([])
+    .transform((items) =>
+      items.flatMap((raw) => {
+        const parsed = item.safeParse(raw);
+        return parsed.success ? [parsed.data as z.output<T>] : [];
+      }),
+    );
+}
+
 /** Veredicto del episodio (mismo enum que Calidad LLM). */
 export const episodeVerdictSchema = z.enum(["FALLA", "ALERTA", "PASA", "SIN_DATOS"]).catch("SIN_DATOS");
 
@@ -36,9 +54,11 @@ export const runSchema = z.object({
   notes: z.array(z.string()).catch([]).default([]),
   started_at_ms: nullableNumber,
   updated_at_ms: nullableNumber,
+  /** Sin fase terminal y sin reportes de la caja hace más de 30 min (ausente = no). */
+  stale: z.boolean().optional().catch(undefined),
 });
 
-export const runsSchema = z.object({ runs: z.array(runSchema).catch([]).default([]) });
+export const runsSchema = z.object({ runs: tolerantArray(runSchema) });
 
 export const estimateArmSchema = z.object({
   id: z.string(),
@@ -76,7 +96,11 @@ export const activeStatusSchema = z.object({
   error: nullableString,
 });
 
-export const activeRunSchema = z.object({ active: activeStatusSchema.nullable().catch(null).default(null) });
+export const activeRunSchema = z.object({
+  active: activeStatusSchema.nullable().catch(null).default(null),
+  /** Cómo terminó la última corrida cuando ya no hay una en curso. */
+  last: activeStatusSchema.nullable().catch(null).default(null),
+});
 
 export const launchResultSchema = z.object({
   run_id: z.string(),
@@ -117,7 +141,7 @@ export const conversationRowSchema = z.object({
 });
 
 export const conversationsSchema = z.object({
-  conversations: z.array(conversationRowSchema).catch([]).default([]),
+  conversations: tolerantArray(conversationRowSchema),
 });
 
 export const threadMessageSchema = z.object({
@@ -169,8 +193,8 @@ export const threadSchema = z.object({
   session_id: z.string(),
   episode_id: nullableString,
   episodes: z.array(threadEpisodeSchema).catch([]).default([]),
-  messages: z.array(threadMessageSchema).catch([]).default([]),
-  turns: z.array(threadTurnSchema).catch([]).default([]),
+  messages: tolerantArray(threadMessageSchema),
+  turns: tolerantArray(threadTurnSchema),
 });
 
 // ── Traza de un turno ───────────────────────────────────────────────────────

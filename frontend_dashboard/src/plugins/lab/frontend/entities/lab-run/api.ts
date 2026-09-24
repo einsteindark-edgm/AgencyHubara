@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiClient } from "@/shared/api";
+import { apiClient } from "@/shared/sdk";
 
 import {
   activeRunSchema,
@@ -86,9 +86,16 @@ export function useLabRuns() {
  * 60 s (política realtime); lanzar o cancelar invalidan al instante.
  */
 export function useActiveRun() {
+  const client = useQueryClient();
   return useQuery({
     queryKey: labKeys.active(),
-    queryFn: ({ signal }) => fetchActive(signal),
+    queryFn: async ({ signal }) => {
+      const before = client.getQueryData<{ active: unknown }>(labKeys.active());
+      const now = await fetchActive(signal);
+      // La corrida en curso terminó: la lista (fase, costo) se relee al instante.
+      if (before?.active && !now.active) void client.invalidateQueries({ queryKey: labKeys.runs() });
+      return now;
+    },
     refetchInterval: 60_000,
     staleTime: 10_000,
   });
