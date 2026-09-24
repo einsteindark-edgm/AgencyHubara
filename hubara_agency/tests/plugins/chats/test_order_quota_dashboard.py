@@ -197,3 +197,56 @@ def test_order_intake_prefill_shows_quota_discount_per_line(tmp_path: Path) -> N
     assert (item["colors"], item["aromas"]) == (["Rosado", "Azul"], ["Café", "Lavanda"])
     assert (item["coupon_units"], item["coupon_discount_cop"]) == (1, 2100)
     assert (body["coupon_code"], body["discount_cop"]) == ("AMOR26", 2100)
+
+
+
+def test_dashboard_double_submit_returns_the_first_order_not_a_second_draft(tmp_path: Path) -> None:
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    sales = _Sales({_Q: 4})  # queda 1
+    client = _orders_client(tmp_path, port, sales)
+    body = {"items": [{"handle": "cubo-love", "quantity": 1, "color": "Rosado", "aroma": "Café"}],
+            "shipping": _SHIP, "payment_method": "transfer", "send_payment_instructions": False}
+
+    first = client.post(f"/api/chats/session-actions/{_S}/order", json=body).json()
+    sales.sold[_Q] = 5  # el primer pedido ya consumió la última unidad
+    again = client.post(f"/api/chats/session-actions/{_S}/order", json=body).json()
+
+    assert first["registered"] is True and again["registered"] is True
+    assert again["order_id"] == first["order_id"]
+    assert len(port.calls) == 1
+
+
+def test_dashboard_order_whose_discount_changed_since_the_form_is_quota_changed(tmp_path: Path) -> None:
+    """El formulario mostró −$2.100; al enviar ya no queda la unidad: NO se
+    registra otro total sin que el operador lo vea."""
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    client = _orders_client(tmp_path, port, _Sales({_Q: 5}))
+
+    res = client.post(f"/api/chats/session-actions/{_S}/order", json={
+        "items": [{"handle": "cubo-love", "quantity": 1, "color": "Rosado", "aroma": "Café"}],
+        "shipping": _SHIP, "payment_method": "transfer", "expected_discount_cop": 2100,
+    }).json()
+
+    assert (res["registered"], res["error_detail"]) == (False, "quota_changed")
+    assert res["discount_cop"] == 0 and res["total_cop"] == 21000 + res["shipping_cop"]
+    assert port.calls == []
+
+
+def test_order_intake_catalog_carries_color_and_aroma_lists_for_manual_lines(tmp_path: Path) -> None:
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    (tmp_path / _S / "sessions").mkdir(parents=True, exist_ok=True)
+    (tmp_path / _S / "sessions" / f"{_S}.jsonl").write_text(
+        json.dumps({"timestamp": "2026-09-23T15:00:00+00:00", "role": "user", "content": "hola"}) + "\n",
+        encoding="utf-8",
+    )
+    deps = OrderIntakeDeps(vault_dir=tmp_path, catalog=_Catalog(), llm=_LLM("{}"), quotas=_quotas(), sales=_Sales())
+    app = FastAPI()
+    app.include_router(order_intake.router, prefix="/api/chats")
+    app.dependency_overrides[order_intake.get_order_intake_deps] = lambda: deps
+
+    body = TestClient(app).post(f"/api/chats/order-intake/{_S}/suggest").json()
+
+    [entry] = body["catalog"]
+    assert (entry["colors"], entry["aromas"]) == (["Rosado", "Azul"], ["Café", "Lavanda"])

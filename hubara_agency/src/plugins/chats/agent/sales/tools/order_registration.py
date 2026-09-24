@@ -84,8 +84,10 @@ from src.plugins.chats.agent.sales.pricing import (
 from src.platform.orders.stub import StubOrderRegistration
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
     confirmed_split,
+    resolve_item_variants,
     split_key,
 )
+from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
     coupon_discount_for_items,
@@ -153,6 +155,47 @@ def _with_discounted_units(
         replace(item, discounted_units=tuple(groups.get(i, ())))
         for i, item in enumerate(items)
     ]
+
+
+def _items_key(items: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
+    return sorted(
+        (
+            str(it.get("handle") or ""),
+            int(it.get("quantity") or 0),
+            int(it.get("unit_price_cop") or 0),
+            str(it.get("variant_label") or ""),
+            str(it.get("color") or "").casefold(),
+            str(it.get("aroma") or "").casefold(),
+        )
+        for it in items
+    )
+
+
+def _registered_split_for_same_order(
+    metadata: dict[str, Any], items: list[dict[str, Any]], payment_method: str, code: str
+) -> tuple[LineDiscount, ...] | None:
+    """El reparto con cupo del pedido YA registrado en el episodio activo si
+    `items` es ese mismo pedido (reintento); None si es otro pedido."""
+    record = metadata.get("registered_order")
+    episode = get_active_episode(metadata) or {}
+    if (
+        not isinstance(record, dict)
+        or record.get("success") is not True
+        or str(episode.get("order_id") or "") != str(record.get("order_id") or "")
+        or record.get("coupon_code") != code
+        or record.get("payment_method") != payment_method
+        or _items_key(record.get("items") or []) != _items_key(items)
+    ):
+        return None
+    return tuple(
+        LineDiscount(
+            int(line["index"]),
+            int(line["units"]),
+            int(line["discount_unit_cop"]),
+            quota_id=line.get("quota_id"),
+        )
+        for line in record.get("coupon_line_discounts") or []
+    )
 
 
 #: Un registro con cupo espera a lo sumo esto a que termine otro del mismo
@@ -323,7 +366,7 @@ class RegisterOrderTool(ToolBase):
     def _quota_code(self, session_key: str) -> str | None:
         """Código del cupón aplicado si tiene cupo por unidad (hay que
         registrar bajo su candado); None si no."""
-        if self._quotas is None or self._quota_lock is None:
+        if self._quotas is None:
             return None
         raw = applied_coupon(self._read_metadata(session_key))
         if raw is None:
@@ -469,6 +512,22 @@ class RegisterOrderTool(ToolBase):
         code = self._quota_code(ctx.session_key)
         if code is None:
             return await self._execute(ctx, **args)
+        if self._quota_lock is None:
+            # Con cupo y sin candado se podría vender dos veces la última
+            # unidad: falla cerrada.
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "quota_unavailable",
+                    "summary": (
+                        f"No pude confirmar las unidades con descuento del cupón {code}: el "
+                        "pedido NO se registró. Escala a un colega "
+                        "(`escalate_to_human`, ORDER_REGISTRATION_FAILED)."
+                    ),
+                },
+                ensure_ascii=False,
+            )
         # Cupo por unidad: "releer lo vendido → repartir → crear el draft"
         # corre bajo el candado del código (dos clientes y la última unidad).
         try:
@@ -545,10 +604,44 @@ class RegisterOrderTool(ToolBase):
         # Cupón aplicado en el episodio (`apply_coupon`): el descuento se
         # recomputa acá desde el snapshot + catálogo. NUNCA lo manda el LLM.
         metadata_before = self._read_metadata(ctx.session_key)
+        # Color/aroma de cada ítem: un valor que el producto no tiene NO
+        # registra nada (mismo contrato que present_order_confirmation).
+        variants, invalid_variants = await resolve_item_variants(
+            self._catalog, items, metadata_before
+        )
+        if invalid_variants:
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "invalid_variant_attribute",
+                    "summary": (
+                        "; ".join(v.message() for v in invalid_variants)
+                        + ". El pedido NO se registró: confirma con el cliente una opción "
+                        "de la lista y vuelve a presentar la confirmación."
+                    ),
+                },
+                ensure_ascii=False,
+            )
         discount = await coupon_discount_for_items(
             metadata_before, self._catalog, items, shipping_cop=shipping_cop,
-            quotas=self._quotas, sales=self._sales,
+            quotas=self._quotas, sales=self._sales, variants=variants,
         )
+        if discount is not None and discount.quota:
+            # Reintento del MISMO pedido ya registrado en este episodio: su
+            # propio draft ya cuenta como vendido, así que el reparto fresco
+            # saldría distinto. Se reusa el reparto registrado → mismo
+            # fingerprint → el adapter devuelve el draft existente.
+            previous = _registered_split_for_same_order(
+                metadata_before, items, payment_method, discount.code
+            )
+            if previous is not None:
+                discount = replace(
+                    discount,
+                    line_discounts=previous,
+                    discount_cop=sum(d.units * d.discount_unit_cop for d in previous),
+                    reason=None,
+                )
         # Cupo por unidad: el reparto recién releído (bajo el candado) tiene
         # que ser el que vio el cliente en la confirmación. Si cambió (otro
         # cliente se llevó unidades), NO se crea el draft: total nuevo y a
@@ -556,7 +649,9 @@ class RegisterOrderTool(ToolBase):
         if discount is not None and discount.quota:
             seen = confirmed_split(metadata_before, discount.code)
             fresh = split_key(discount.line_discounts)
-            if seen is not None and seen != fresh:
+            # Sin reparto confirmado el cliente nunca vio qué unidades llevan
+            # descuento: se confirma primero.
+            if seen is None or seen != fresh:
                 new_total = (
                     sum(int(it["unit_price_cop"]) * int(it["quantity"]) for it in items)
                     + shipping_cop

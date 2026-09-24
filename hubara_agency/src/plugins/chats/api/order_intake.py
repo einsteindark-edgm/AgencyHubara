@@ -301,6 +301,14 @@ async def suggest(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
     # Cupón aplicado en el chat: el formulario muestra el mismo descuento
     # que va a exigir el registro (SEC-07).
     dict_catalog = _DictCatalog(products_by_handle)
+    # Listas de color/aroma de cada producto del selector (para las líneas que
+    # el operador agrega a mano). Se agregan DESPUÉS del prompt: el modelo no
+    # las necesita.
+    for entry in catalog:
+        lists = parse_variant_tags(
+            list(getattr(products_by_handle.get(entry["handle"]), "tags", None) or [])
+        )
+        entry.update(colors=list(lists.colors), aromas=list(lists.aromas))
     # Color y aroma de cada ítem (del borrador estructurado del chat) + las
     # listas del producto para los selectores del formulario.
     variants, _invalid = await resolve_item_variants(dict_catalog, items, metadata)

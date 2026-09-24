@@ -51,7 +51,7 @@ import os
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from src.platform.orders.port import (
     DiscountedUnits,
@@ -123,6 +123,53 @@ class ReconciliationOutcome:
 # ----------------------------------------------------------------------
 
 
+class QuotaRecheck(Protocol):
+    """Re-chequeo del cupo por unidad al reintentar (central de cupones)."""
+
+    def hold(self, code: str) -> Any: ...
+
+    async def units_left(self, quota_ids: set[str]) -> dict[str, int]: ...
+
+
+class _DefaultQuotaRecheck:
+    """El candado por código y lo vendido derivado de Medusa (composición de
+    promociones). Solo se arma si el record tiene unidades con cupo."""
+
+    def __init__(self) -> None:
+        from src.platform.promotions.composition import (
+            get_coupon_sales_reader,
+            get_promo_quota_store,
+            get_quota_lock,
+        )
+
+        self._store = get_promo_quota_store()
+        self._sales = get_coupon_sales_reader()
+        self._lock = get_quota_lock()
+
+    def hold(self, code: str) -> Any:
+        return self._lock.hold(code, timeout_s=60.0)
+
+    async def units_left(self, quota_ids: set[str]) -> dict[str, int]:
+        from src.platform.promotions.coupon_sales import quota_board
+
+        left: dict[str, int] = {}
+        for sheet in self._store.list_sheets():
+            if quota_ids & {q.id for q in sheet.quotas}:
+                for status in await quota_board(sheet, self._sales):
+                    left[status.quota.id] = status.units_left
+        return left
+
+
+def _quota_units_needed(record: dict[str, Any]) -> dict[str, int]:
+    """Unidades con cupo que el record volvería a escribir, por cupo."""
+    needed: dict[str, int] = {}
+    for line in record.get("coupon_line_discounts") or []:
+        quota_id = line.get("quota_id") if isinstance(line, dict) else None
+        if quota_id:
+            needed[str(quota_id)] = needed.get(str(quota_id), 0) + int(line.get("units") or 0)
+    return needed
+
+
 async def reconcile_one(
     *,
     vault_dir: str | Path,
@@ -130,6 +177,7 @@ async def reconcile_one(
     audit_id: str,
     port: OrderRegistrationPort,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    quota_recheck: QuotaRecheck | None = None,
 ) -> ReconciliationOutcome:
     """Reintenta registrar en Medusa UN pedido fallido. Idempotente.
 
@@ -145,6 +193,11 @@ async def reconcile_one(
         `abandoned` y devuelve `OUTCOME_ABANDONED`.
       * El reintento se considera EXITOSO solo si el port confirma con un
         provider real (≠ "stub"). Un stub→stub NO resuelve.
+      * Cupo por unidad: si el record escribe unidades con `quota_id`, el
+        reintento corre bajo el candado del código y relee cuántas quedan;
+        si ya no alcanzan (otro cliente se las llevó mientras Medusa estaba
+        caído) NO se registra: queda `abandoned` con `quota_changed` para un
+        humano — nunca se vende dos veces la última unidad.
     """
     metadata_file = Path(vault_dir) / session_key / "metadata.json"
     data = _read_metadata(metadata_file)
@@ -219,12 +272,42 @@ async def reconcile_one(
             attempts=len(prior_attempts),
         )
 
-    result: OrderRegistrationResult = await port.register_order(
-        session_key=session_key,
-        items=items,
-        shipping=shipping,
-        **kwargs,
-    )
+    needed = _quota_units_needed(record)
+    if needed:
+        recheck = quota_recheck or _DefaultQuotaRecheck()
+        async with recheck.hold(str(record.get("coupon_code") or "")):
+            left = await recheck.units_left(set(needed))
+            gone = sorted(q for q, n in needed.items() if left.get(q, 0) < n)
+            if gone:
+                record["status"] = STATUS_ABANDONED
+                record["abandoned_at_ms"] = _now_ms()
+                record["abandon_reason"] = "quota_changed"
+                _commit(data, record)
+                _atomic_write_json(metadata_file, data)
+                log.warning(
+                    "reconcile_one: audit_id=%s NO se reintenta: el cupo %s ya no alcanza",
+                    audit_id, gone,
+                )
+                return ReconciliationOutcome(
+                    session_key=session_key,
+                    audit_id=audit_id,
+                    outcome=OUTCOME_ABANDONED,
+                    error_detail=(
+                        f"quota_changed: ya no quedan las unidades con descuento ({', '.join(gone)}); "
+                        "registrar a mano con el total nuevo"
+                    ),
+                    attempts=len(prior_attempts),
+                )
+            result: OrderRegistrationResult = await port.register_order(
+                session_key=session_key, items=items, shipping=shipping, **kwargs,
+            )
+    else:
+        result = await port.register_order(
+            session_key=session_key,
+            items=items,
+            shipping=shipping,
+            **kwargs,
+        )
 
     now = _now_ms()
     # Un reintento solo "resuelve" si fue a un provider real. Un stub→stub

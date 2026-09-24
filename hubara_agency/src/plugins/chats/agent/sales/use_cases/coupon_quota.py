@@ -121,6 +121,8 @@ async def quota_offer(promotion: PromotionDTO, *, quotas: Any, sales: Any, catal
         return QuotaOffer(True, REASON_QUOTA_UNAVAILABLE)
     if not sheet.quotas:
         return _NO_QUOTA
+    if sales is None or promotion.discount_type != "percentage":
+        return QuotaOffer(True, REASON_QUOTA_UNAVAILABLE, show_units_left=sheet.show_units_left)
     try:
         board = await quota_board(sheet, sales)
     except PromotionsUnavailableError:
@@ -282,7 +284,10 @@ async def quota_split(
     """Qué unidades de cada línea llevan descuento, leyendo lo vendido FRESCO.
 
     `eligible`: líneas que el cupón cubre (alcance real, con etiquetas); las
-    demás no reciben cupo aunque coincidan con una fila."""
+    demás no reciben cupo aunque coincidan con una fila. Sin lector de
+    vendidas, o si el cupón no es de porcentaje, falla CERRADA."""
+    if sales is None or promotion.discount_type != "percentage":
+        return QuotaSplit((), REASON_QUOTA_UNAVAILABLE)
     try:
         board = await quota_board(sheet, sales)
     except PromotionsUnavailableError:

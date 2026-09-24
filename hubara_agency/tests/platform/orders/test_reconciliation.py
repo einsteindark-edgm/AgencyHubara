@@ -550,9 +550,71 @@ async def test_rebuild_order_args_keeps_the_quota_of_each_discounted_group(tmp_p
     _write_metadata(tmp_path, "wa_57312", {"failed_order_registrations": [record]})
     port = KwargsPort()
 
-    await reconcile_one(vault_dir=tmp_path, session_key="wa_57312", audit_id="AUDIT-Q", port=port)
+    await reconcile_one(vault_dir=tmp_path, session_key="wa_57312", audit_id="AUDIT-Q", port=port,
+                        quota_recheck=_Recheck(left={"q_rosado_cafe": 1}))
 
     (call,) = port.calls
     assert call["items"][0].discounted_units == (
         DiscountedUnits(units=1, discount_unit_cop=2100, quota_id="q_rosado_cafe"),
     )
+
+
+
+@dataclass
+class _Recheck:
+    """Re-chequeo del cupo al reintentar: cuántas quedan de cada cupo."""
+
+    left: dict[str, int]
+    held: list[str] = field(default_factory=list)
+
+    def hold(self, code: str):
+        import contextlib
+
+        @contextlib.asynccontextmanager
+        async def _cm():
+            self.held.append(code)
+            yield
+
+        return _cm()
+
+    async def units_left(self, quota_ids: set[str]) -> dict[str, int]:
+        return {q: self.left.get(q, 0) for q in quota_ids}
+
+
+def _quota_record(audit_id: str) -> dict:
+    return _failed_record(
+        audit_id,
+        items=[{"handle": "cubo-love", "quantity": 1, "unit_price_cop": 21000}],
+        subtotal_cop=21000, shipping_cop=7900, total_cop=26800,
+        coupon_code="AMOR26", discount_cop=2100,
+        coupon_line_discounts=[{"index": 0, "units": 1, "discount_unit_cop": 2100, "quota_id": "q_rosado_cafe"}],
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconcile_with_quota_units_gone_leaves_it_for_a_human(tmp_path):
+    """Mientras Medusa estaba caído otro cliente se llevó la unidad: el
+    reintento NO la vende dos veces; queda para registro manual."""
+    _write_metadata(tmp_path, "wa_57313", {"failed_order_registrations": [_quota_record("AUDIT-QG")]})
+    port = KwargsPort()
+    recheck = _Recheck(left={"q_rosado_cafe": 0})
+
+    outcome = await reconcile_one(vault_dir=tmp_path, session_key="wa_57313", audit_id="AUDIT-QG",
+                                  port=port, quota_recheck=recheck)
+
+    assert outcome.outcome == OUTCOME_ABANDONED
+    assert "quota_changed" in (outcome.error_detail or "")
+    assert port.calls == [] and recheck.held == ["AMOR26"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_with_quota_units_left_registers_under_the_lock(tmp_path):
+    _write_metadata(tmp_path, "wa_57314", {"failed_order_registrations": [_quota_record("AUDIT-QL")]})
+    port = KwargsPort()
+    recheck = _Recheck(left={"q_rosado_cafe": 1})
+
+    outcome = await reconcile_one(vault_dir=tmp_path, session_key="wa_57314", audit_id="AUDIT-QL",
+                                  port=port, quota_recheck=recheck)
+
+    assert outcome.outcome == OUTCOME_RESOLVED
+    assert len(port.calls) == 1 and recheck.held == ["AMOR26"]

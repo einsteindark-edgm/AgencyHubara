@@ -261,6 +261,11 @@ class OrderBody(BaseModel):
     items: list[OrderItemBody] = Field(min_length=1, max_length=50)
     shipping: ShippingBody
     payment_method: PAYMENT_METHODS
+    #: Descuento del cupón que el formulario le MOSTRÓ al operador. Con cupo
+    #: por unidad, si al registrar ya no es ese (se vendieron unidades
+    #: mientras tanto) responde `quota_changed` con el total nuevo, sin
+    #: registrar. Omitido = sin comparación (MBA, formularios viejos).
+    expected_discount_cop: int | None = Field(default=None, ge=0)
     #: Mandarle al cliente la plantilla de instrucciones de pago (llave Nequi /
     #: link + recargo). Default ``True`` = comportamiento histórico, el que
     #: usa Meta Business Agent (no manda el campo). Lo apaga el formulario
@@ -507,29 +512,54 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
             "error_detail": "invalid_variant_attribute",
             "problems": [v.message() for v in invalid],
         }
-    # Cupón aplicado en el chat (`apply_coupon`): el mismo descuento que
-    # exige SEC-07 en la tool — el operador no lo recalcula a mano. Con cupo
-    # por unidad, el reparto queda como "confirmado" (el formulario es la
-    # confirmación) y la tool lo relee bajo el candado del código.
-    discount = await coupon_discount_for_items(
-        data_before, deps.catalog, items_with_attrs, shipping_cop=shipping_cop,
-        quotas=deps.quotas, sales=deps.sales, variants=variants,
-    )
-    if discount is not None and discount.quota:
-        confirmed = split_key(discount.line_discounts)
-        store.update(session, lambda md: remember_confirmed_split(md, discount.code, confirmed))
-    discount_cop = discount.discount_cop if discount else 0
-    total_cop = subtotal_cop + shipping_cop - discount_cop
     existing = data_before.get("registered_order")
     episodes = data_before.get("episodes") or []
     last_episode = episodes[-1] if episodes and isinstance(episodes[-1], dict) else {}
+    # El MISMO pedido (ítems + medio de pago) ya registrado en este episodio
+    # es un doble envío: se decide ANTES de recalcular el descuento (con
+    # cupo, el propio pedido ya consumió unidades y el total fresco saldría
+    # distinto → se duplicaría a precio lleno).
+    existing_total = int(existing.get("total_cop") or 0) if isinstance(existing, dict) else 0
     already = (
         isinstance(existing, dict)
         and existing.get("success") is True
         and str(last_episode.get("order_id") or "") == str(existing.get("order_id") or "")
-        and _order_fingerprint(existing.get("items") or [], str(existing.get("payment_method")), int(existing.get("total_cop") or 0))
-        == _order_fingerprint(priced.items, body.payment_method, total_cop)
+        and _order_fingerprint(existing.get("items") or [], str(existing.get("payment_method")), existing_total)
+        == _order_fingerprint(priced.items, body.payment_method, existing_total)
     )
+    if already:
+        total_cop = existing_total
+    else:
+        # Cupón aplicado en el chat (`apply_coupon`): el mismo descuento que
+        # exige SEC-07 en la tool — el operador no lo recalcula a mano. Con
+        # cupo por unidad, el reparto queda como "confirmado" (el formulario
+        # es la confirmación) y la tool lo relee bajo el candado del código.
+        discount = await coupon_discount_for_items(
+            data_before, deps.catalog, items_with_attrs, shipping_cop=shipping_cop,
+            quotas=deps.quotas, sales=deps.sales, variants=variants,
+        )
+        discount_cop = discount.discount_cop if discount else 0
+        total_cop = subtotal_cop + shipping_cop - discount_cop
+        if (
+            discount is not None
+            and discount.quota
+            and body.expected_discount_cop is not None
+            and body.expected_discount_cop != discount_cop
+        ):
+            # El formulario mostró otro descuento: el operador tiene que ver
+            # el total nuevo antes de registrar.
+            return {
+                "registered": False,
+                "order_id": None,
+                "error_detail": "quota_changed",
+                "subtotal_cop": subtotal_cop,
+                "shipping_cop": shipping_cop,
+                "discount_cop": discount_cop,
+                "total_cop": total_cop,
+            }
+        if discount is not None and discount.quota:
+            confirmed = split_key(discount.line_discounts)
+            store.update(session, lambda md: remember_confirmed_split(md, discount.code, confirmed))
     if already:
         order_id = str(existing["order_id"])
         raw_payload = existing.get("raw_provider_payload")

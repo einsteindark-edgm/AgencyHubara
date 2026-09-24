@@ -303,3 +303,99 @@ async def test_register_with_quota_never_sells_the_last_unit_twice(_isolate_vaul
     assert sorted(r["registered"] for r in results) == [False, True]
     assert [r.get("error_detail") for r in results if not r["registered"]] == ["quota_changed"]
     assert len(port.calls) == 1 and sales.sold[_Q] == 5
+
+
+# --- Segunda revisión: idempotencia en el borde del cupo y fallas cerradas ------------
+
+
+def _fingerprint(call: dict[str, Any]) -> str:
+    from src.platform.orders.medusa_order import _compute_order_fingerprint
+
+    return _compute_order_fingerprint(call["items"], call["total_cop"], call["payment_method"])
+
+
+@pytest.mark.asyncio
+async def test_register_retry_of_the_same_order_at_the_last_unit_is_idempotent(_isolate_vault_dir) -> None:
+    """El reintento del MISMO pedido no cuenta su propio draft como vendido:
+    pide el mismo pedido (mismo fingerprint → el adapter reusa el draft) en
+    vez de responder `quota_changed` y terminar duplicándolo a precio lleno."""
+    _seed(_isolate_vault_dir)
+    sales = _Sales({_Q: 4})  # queda 1
+    await _confirm(_confirm_tool(_isolate_vault_dir, sales), _ctx(), [_cubo(color="Rosado", aroma="Café")])
+    port = _Port(sales)
+    tool = _register_tool(_isolate_vault_dir, port)
+
+    first = await _register(tool, _ctx(), total=_WITH_DISCOUNT)
+    again = await _register(tool, _ctx(), total=_WITH_DISCOUNT)
+
+    assert first["registered"] is True and again["registered"] is True, again
+    assert _fingerprint(port.calls[0]) == _fingerprint(port.calls[1])
+
+
+@pytest.mark.asyncio
+async def test_register_without_a_confirmed_split_asks_to_confirm_it(_isolate_vault_dir) -> None:
+    """Con cupo, el cliente tiene que haber VISTO el reparto (confirmación)."""
+    _seed(_isolate_vault_dir)
+    port = _Port(_Sales())
+
+    env = await _register(_register_tool(_isolate_vault_dir, port), _ctx(), total=_WITH_DISCOUNT)
+
+    assert (env["registered"], env["error_detail"]) == (False, "quota_changed")
+    assert port.calls == []
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_a_color_the_product_does_not_have(_isolate_vault_dir) -> None:
+    _seed(_isolate_vault_dir)
+    port = _Port(_Sales())
+    tool = _register_tool(_isolate_vault_dir, port)
+
+    env = json.loads(await tool.execute_with_context(
+        _ctx(), items=[_cubo(color="Verde", aroma="Café")], shipping=_SHIPPING,
+        payment_method="transfer", subtotal_cop=21000, shipping_cop=7900, total_cop=28900,
+    ))
+
+    assert (env["registered"], env["error_detail"]) == (False, "invalid_variant_attribute")
+    assert "Verde" in env["summary"]
+    assert port.calls == []
+
+
+@pytest.mark.asyncio
+async def test_register_with_quota_but_no_lock_fails_closed(_isolate_vault_dir) -> None:
+    _seed(_isolate_vault_dir)
+    port = _Port(_Sales())
+    tool = RegisterOrderTool(workspace=str(_isolate_vault_dir), vault_dir=_isolate_vault_dir, port=port,
+                             catalog=_Catalog(), quotas=_quotas(), sales=port.sales, quota_lock=None)
+
+    env = await _register(tool, _ctx(), total=_WITH_DISCOUNT)
+
+    assert (env["registered"], env["error_detail"]) == (False, "quota_unavailable")
+    assert port.calls == []
+
+
+@pytest.mark.asyncio
+async def test_register_order_returns_quota_busy_when_the_lock_times_out(_isolate_vault_dir, monkeypatch) -> None:
+    import src.plugins.chats.agent.sales.tools.order_registration as reg
+
+    _seed(_isolate_vault_dir)
+    monkeypatch.setattr(reg, "_QUOTA_LOCK_TIMEOUT_S", 0.1)
+    port = _Port(_Sales())
+    lock = VaultQuotaLock(_isolate_vault_dir)
+
+    async with lock.hold("AMOR26", timeout_s=1):
+        env = await _register(_register_tool(_isolate_vault_dir, port), _ctx(), total=_WITH_DISCOUNT)
+
+    assert (env["registered"], env["error_detail"]) == (False, "quota_busy")
+    assert port.calls == []
+
+
+@pytest.mark.asyncio
+async def test_confirmation_with_quota_but_no_sales_reader_does_not_discount(_isolate_vault_dir) -> None:
+    _seed(_isolate_vault_dir)
+    tool = PresentOrderConfirmationTool(workspace=str(_isolate_vault_dir), catalog=_Catalog(),
+                                        quotas=_quotas(), sales=None)
+
+    env = await _confirm(tool, _ctx(), [_cubo(color="Rosado", aroma="Café")])
+
+    assert env["queued"] is True and "discount_cop" not in env
+    assert "no pude confirmar" in env["summary"].lower()

@@ -261,6 +261,14 @@ async def coupon_discount_for_items(
             description=promotion.description, quota=True,
         )
     if sheet is not None and sheet.quotas:
+        subtotal = sum(int(it.get("unit_price_cop") or 0) * int(it.get("quantity") or 0) for it in items)
+        if promotion.min_subtotal_cop is not None and subtotal < promotion.min_subtotal_cop:
+            return AppliedDiscount(
+                code=promotion.code, discount_cop=0, applicable_handles=[],
+                applies_to_shipping=False, reason="min_subtotal",
+                min_subtotal_cop=promotion.min_subtotal_cop,
+                description=promotion.description, quota=True,
+            )
         if variants is None:
             variants, _invalid = await resolve_item_variants(catalog, items, metadata)
         # Alcance real del cupón (productos Y etiquetas) sobre cada línea.
