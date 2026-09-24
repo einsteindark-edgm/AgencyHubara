@@ -37,10 +37,47 @@ def test_anonymize_removes_contact_data(text: str, secret: str) -> None:
     assert secret not in anonymize_text(text)
 
 
+@pytest.mark.parametrize(
+    ("text", "secret"),
+    [
+        # Direcciones escritas sin "#" ni "No." (así las escribe mucha gente).
+        ("mándalo a la cra 7 45-12 por favor", "7 45-12"),
+        ("es en la Cra 7 12 34 apto 501", "7 12 34"),
+        ("calle 10 20 30, barrio Suba", "10 20 30"),
+        # Nombres que el cliente dice de sí mismo o de quien recibe.
+        ("me llamo Carolina Pérez", "Carolina Pérez"),
+        ("mi nombre es Juan Carlos Gómez", "Juan Carlos Gómez"),
+        ("va a nombre de Luisa Fernanda Ruiz", "Luisa Fernanda Ruiz"),
+        ("lo recibe Andrés Mejía en la portería", "Andrés Mejía"),
+    ],
+)
+def test_anonymize_removes_addresses_and_names_the_way_customers_write_them(text: str, secret: str) -> None:
+    assert secret not in anonymize_text(text)
+
+
+def test_anonymize_blanks_the_personal_fields_of_the_shipping_form() -> None:
+    """El Flow de envío llega como `[datos de envío recibidos] k=v; k=v`: los
+    valores personales se tapan; la ciudad (el clasificador la necesita para
+    el asunto del envío) queda."""
+    text = (
+        "[datos de envío recibidos] nombre_recibe=Carolina Pérez; direccion=Cra 7 12 34 apto 501; "
+        "barrio=Chapinero Alto; telefono=3001234567; cedula=1020304050; ciudad=Bogotá"
+    )
+
+    out = anonymize_text(text)
+
+    for secret in ("Carolina", "Cra 7", "Chapinero", "3001234567", "1020304050"):
+        assert secret not in out
+    assert out.startswith("[datos de envío recibidos]")
+    assert "ciudad=Bogotá" in out
+
+
 def test_anonymize_keeps_what_the_classifier_needs() -> None:
     text = "quiero 2 velas de $45.000 para el 14 de febrero, envío a Bogotá"
 
     assert anonymize_text(text) == text
+    # "soy de …" es una ciudad, no un nombre
+    assert anonymize_text("soy de Medellín, ¿tienen envío?") == "soy de Medellín, ¿tienen envío?"
 
 
 def test_anonymize_redacts_given_names_as_whole_words_case_insensitive() -> None:
