@@ -16,21 +16,28 @@ from src.plugins.chats.agent.sales_lab.launch.contracts import (
     LabOrder,
     PollInput,
 )
+from src.platform.orders.facts import OrderFactsStore
 from src.sdk.connectorkit import FakePromotionsPort, OrderFacts, OrderFactsSnapshot
 from src.sdk.labkit import FilesystemLabStore
+from tests.platform.orders.test_order_facts import FakeQuery, _summary
 from tests.plugins.chats.lab.test_bench_export import NOW_MS, SINCE_MS, _vault
 
 
 class FakeFacts:
     def __init__(self) -> None:
         self.asked: list[set[str]] = []
+        self.test_orders: set[str] = set()  # marcados "prueba" en Órdenes
+        self.down = False
 
     async def get_facts(self, order_ids):
         ids = set(order_ids)
         self.asked.append(ids)
+        if self.down:
+            raise ConnectionError("Medusa no responde")
         facts = {
             i: OrderFacts(order_id=i, display_id="31", total_cop=89000, currency_code="cop",
-                          pay_status="paid", stage="delivered", customer="Cliente", is_draft=False)
+                          pay_status="paid", stage="delivered", customer="Cliente", is_draft=False,
+                          is_test=i in self.test_orders)
             for i in ids
         }
         return OrderFactsSnapshot(facts=facts)
@@ -89,6 +96,52 @@ async def test_export_uploads_the_bench_with_promotions_and_the_facts_of_its_ord
     facts = json.loads(store.get_bytes("bench/bench-run-20260923-a1b2/order_facts.json"))
     assert facts["order_01TEST"]["pay_status"] == "paid"
     assert lab["facts"].asked == [{"order_01TEST"}]
+
+
+async def test_export_leaves_out_the_conversation_whose_order_is_marked_as_test(lab) -> None:
+    lab["facts"].test_orders = {"order_01TEST"}
+
+    info = await ActivityEnvironment().run(
+        acts.export_bench_snapshot_activity, ExportBenchInput(bench_id="bench-run-20260923-a1b2", since_ms=SINCE_MS)
+    )
+
+    manifest = json.loads(lab["store"].get_bytes("bench/bench-run-20260923-a1b2/manifest.json"))
+    assert {"session_id": "wa_573001234567", "reason": "pedido_de_prueba"} in manifest["exclusions"]
+    assert (info.sessions, info.customer_turns) == (0, 0)
+    assert not lab["store"].get_bytes("bench/bench-run-20260923-a1b2/vault/wa_573001234567/metadata.json")
+    assert json.loads(lab["store"].get_bytes("bench/bench-run-20260923-a1b2/order_facts.json")) == {}
+
+
+async def test_export_survives_order_facts_down_keeping_the_conversation_with_a_note(lab) -> None:
+    lab["facts"].down = True
+
+    info = await ActivityEnvironment().run(
+        acts.export_bench_snapshot_activity, ExportBenchInput(bench_id="bench-run-20260923-a1b2", since_ms=SINCE_MS)
+    )
+
+    manifest = json.loads(lab["store"].get_bytes("bench/bench-run-20260923-a1b2/manifest.json"))
+    assert info.sessions == 1
+    assert manifest["notes"] == [
+        "1 conversación con pedido quedó en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"
+    ]
+
+
+async def test_a_test_mark_made_after_an_earlier_export_counts_in_the_next_bench(lab, monkeypatch) -> None:
+    # El store del worker `sales_eval` no oye el bus del dashboard (vive en la API):
+    # un valor vencido se serviría tal cual. El banco tiene que leer la marca de hoy.
+    now = [0.0]
+    medusa = FakeQuery([_summary("order_01TEST", 89000)])  # todavía no es de prueba
+    store = OrderFactsStore(medusa, ttl_s=60, clock=lambda: now[0])
+    monkeypatch.setattr(acts, "get_order_facts_port", lambda: store)
+    env = ActivityEnvironment()
+    await env.run(acts.export_bench_snapshot_activity, ExportBenchInput(bench_id="bench-run-20260923-a1b2", since_ms=SINCE_MS))
+
+    medusa.edit("order_01TEST", is_test=True)  # el operador lo marca "prueba" en Órdenes
+    now[0] += 3600
+    await env.run(acts.export_bench_snapshot_activity, ExportBenchInput(bench_id="bench-run-20260923-c3d4", since_ms=SINCE_MS))
+
+    manifest = json.loads(lab["store"].get_bytes("bench/bench-run-20260923-c3d4/manifest.json"))
+    assert {"session_id": "wa_573001234567", "reason": "pedido_de_prueba"} in manifest["exclusions"]
 
 
 async def test_export_without_a_lab_store_fails_without_retries(monkeypatch) -> None:

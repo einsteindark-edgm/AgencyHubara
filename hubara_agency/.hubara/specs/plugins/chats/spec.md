@@ -635,6 +635,28 @@ El panel del chat SHALL ofrecer, al final de cada turno del bot, un botón visib
 - WHEN se abre su hilo
 - THEN se ven los pasos que se saben (ráfaga, tools, guardas, envío), sin tiempos, y el modal lo avisa
 
+### Requirement: El banco del laboratorio deja fuera las conversaciones de prueba (laboratorio, PR 7)
+
+El exportador del banco (botón "Nueva corrida", worker `sales_eval`) MUST dejar fuera, con su motivo en el manifiesto, lo que no es una conversación real con un cliente: sesiones `wa_golden_*` (`golden`), `seeded_test: true` (`sesion_de_prueba`), los números del equipo (`numero_interno`, de `LAB_INTERNAL_NUMBERS`, que se declara por tenant en Terraform: `tenants.<t>.lab.internal_numbers`) y las conversaciones con un pedido marcado "prueba" en Órdenes (`pedido_de_prueba`). La marca de prueba MUST leerse de OrderFacts en el momento del export, con los `order_id` de los episodios de `metadata.json` (nunca de una copia del vault ni de un valor vencido). Si OrderFacts no responde, el export MUST NOT fallar ni excluir: la conversación se queda y el manifiesto lleva una nota con cuántas quedaron sin verificar.
+
+#### Scenario: Pedido marcado prueba
+
+- GIVEN una conversación con un episodio cuyo `order_id` está marcado "prueba" en Órdenes
+- WHEN se arma un banco nuevo
+- THEN la conversación no viaja (ni sus archivos ni sus turnos) y el manifiesto la lista con motivo `pedido_de_prueba`
+
+#### Scenario: La marca se puso después de un banco anterior
+
+- GIVEN un banco que se exportó cuando el pedido todavía no era de prueba, y el operador lo marca después
+- WHEN se arma el banco siguiente
+- THEN la conversación queda fuera con `pedido_de_prueba`
+
+#### Scenario: OrderFacts no responde
+
+- GIVEN Medusa caído al armar el banco
+- WHEN se arma el banco
+- THEN el banco sale igual, las conversaciones con pedido se quedan y el manifiesto anota "N conversaciones con pedido quedaron en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"
+
 
 ### Requirement: Cupo por unidad de un cupón
 

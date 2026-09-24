@@ -17,7 +17,7 @@ from typing import Any
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from src.plugins.chats.agent.sales_lab.launch.bench_export import plan_bench_export, upload_bench
+from src.plugins.chats.agent.sales_lab.launch.bench_export import exclude_test_orders, plan_bench_export, upload_bench
 from src.plugins.chats.agent.sales_lab.launch.contracts import (
     TERMINAL_PHASES,
     BenchInfo,
@@ -27,9 +27,13 @@ from src.plugins.chats.agent.sales_lab.launch.contracts import (
     LabProgress,
     PollInput,
 )
-from src.sdk.connectorkit import get_order_facts_port, get_promotions_port
+from src.sdk.connectorkit import OrderFactsSnapshot, get_order_facts_port, get_promotions_port
 from src.sdk.labkit import LabStorePort, get_lab_launcher, get_lab_store
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, with_heartbeat
+
+
+#: Si Medusa no contesta en este tiempo, el banco sale sin excluir pedidos de prueba y con nota.
+_ORDER_FACTS_TIMEOUT_S = 120.0
 
 
 def _vault_dir() -> Path:
@@ -53,17 +57,20 @@ def _internal_numbers() -> list[str]:
     return [n.strip() for n in (os.getenv("LAB_INTERNAL_NUMBERS") or "").split(",") if n.strip()]
 
 
-def _order_ids(vault: Path, sessions: tuple[str, ...]) -> set[str]:
-    ids: set[str] = set()
-    for sid in sessions:
-        try:
-            meta = json.loads((vault / sid / "metadata.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        for ep in meta.get("episodes") or []:
-            if isinstance(ep, dict) and isinstance(ep.get("order_id"), str) and ep["order_id"]:
-                ids.add(ep["order_id"])
-    return ids
+async def _order_facts(order_ids: frozenset[str]) -> OrderFactsSnapshot:
+    """Los pedidos del banco según OrderFacts, leídos de Medusa en el momento: el
+    store de este worker no oye los eventos del dashboard (viven en la API) y un
+    valor vencido se serviría tal cual, sin la marca "prueba" que se puso
+    después. Nunca tumba el export: si falla o no contesta a tiempo, quedan sin
+    resolver y el manifiesto lo anota."""
+    try:
+        port = get_order_facts_port()
+        for order_id in order_ids:
+            port.invalidate(order_id)
+        return await asyncio.wait_for(port.get_facts(order_ids), timeout=_ORDER_FACTS_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001 — OrderFacts caído no tumba el banco
+        activity.logger.warning("lab.bench_order_facts_unavailable", extra={"error": str(exc)[:200]})
+        return OrderFactsSnapshot(unresolved=frozenset(order_ids), stale=True)
 
 
 def _jsonable(value: Any) -> Any:
@@ -90,9 +97,11 @@ async def export_bench_snapshot_activity(inp: ExportBenchInput) -> BenchInfo:
         now_ms=_now_ms(),
         internal_numbers=_internal_numbers(),
     )
+    snapshot = await _order_facts(plan.order_ids)
+    plan = exclude_test_orders(plan, snapshot)
     promotions = [_jsonable(p) for p in await get_promotions_port().list_active()]
-    snapshot = await get_order_facts_port().get_facts(_order_ids(vault, plan.sessions))
-    facts = {oid: _jsonable(f) for oid, f in snapshot.facts.items()}
+    in_bench = plan.order_ids
+    facts = {oid: _jsonable(f) for oid, f in snapshot.facts.items() if oid in in_bench}
     extra = {
         "promotions.json": json.dumps(promotions, ensure_ascii=False, default=str).encode(),
         "order_facts.json": json.dumps(facts, ensure_ascii=False, default=str).encode(),
@@ -100,7 +109,7 @@ async def export_bench_snapshot_activity(inp: ExportBenchInput) -> BenchInfo:
     result = await asyncio.to_thread(upload_bench, plan, store, extra=extra)
     activity.logger.info(
         "lab.bench_exported",
-        extra={"bench_id": inp.bench_id, "files": result.files, "bytes": result.bytes_uploaded},
+        extra={"bench_id": inp.bench_id, "files": result.files, "bytes": result.bytes_uploaded, "notes": list(plan.notes)},
     )
     return BenchInfo(
         bench_id=inp.bench_id,

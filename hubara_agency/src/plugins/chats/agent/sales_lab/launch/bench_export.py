@@ -17,17 +17,22 @@ Exclusiones con motivo (las de nivel turno, como los mensajes de una persona
 del equipo, las aplica el armado de casos en la caja):
   golden            sesiones `wa_golden_*` que la suite escribió en el vault (#338)
   sesion_de_prueba  `seeded_test: true` (datos sembrados para probar Ads)
-  numero_interno    números del equipo (`LAB_INTERNAL_NUMBERS`)
+  numero_interno    números del equipo (`LAB_INTERNAL_NUMBERS`, Terraform:
+                    `tenants.<t>.lab.internal_numbers`)
+  pedido_de_prueba  un pedido de la conversación está marcado "prueba" en
+                    Órdenes (`exclude_test_orders`, con OrderFacts; si no
+                    responde, no se excluye y el manifiesto lleva la nota)
 """
 from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.sdk.connectorkit import OrderFactsSnapshot
 from src.sdk.labkit import LabStorePort
 
 _SESSION_FILES = ("metadata.json", "evals/turn_traces.jsonl")
@@ -41,14 +46,41 @@ class BenchFile:
 
 
 @dataclass(frozen=True)
+class BenchConversation:
+    """Una conversación del banco: sus archivos, sus turnos del cliente y los
+    pedidos que el vault le vincula (`episodes[].order_id`, solo el vínculo)."""
+
+    session_id: str
+    files: tuple[BenchFile, ...]
+    customer_turns: int
+    order_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class BenchPlan:
     bench_id: str
     since_ms: int
     now_ms: int
-    files: tuple[BenchFile, ...]
-    sessions: tuple[str, ...]
+    conversations: tuple[BenchConversation, ...]
+    shared_files: tuple[BenchFile, ...]  # scorecards y catálogo
     exclusions: tuple[tuple[str, str], ...]
-    customer_turns: int
+    notes: tuple[str, ...] = ()
+
+    @property
+    def files(self) -> tuple[BenchFile, ...]:
+        return tuple(f for c in self.conversations for f in c.files) + self.shared_files
+
+    @property
+    def sessions(self) -> tuple[str, ...]:
+        return tuple(c.session_id for c in self.conversations)
+
+    @property
+    def customer_turns(self) -> int:
+        return sum(c.customer_turns for c in self.conversations)
+
+    @property
+    def order_ids(self) -> frozenset[str]:
+        return frozenset(o for c in self.conversations for o in c.order_ids)
 
     @property
     def prefix(self) -> str:
@@ -66,6 +98,7 @@ class BenchPlan:
             },
             "sessions": list(self.sessions),
             "exclusions": [{"session_id": s, "reason": r} for s, r in sorted(self.exclusions)],
+            "notes": list(self.notes),
         }
 
 
@@ -124,6 +157,15 @@ def _exclusion(session_id: str, metadata: Mapping[str, Any], internal_numbers: I
     return None
 
 
+def _order_ids(metadata: Mapping[str, Any]) -> tuple[str, ...]:
+    ids = [
+        ep["order_id"]
+        for ep in metadata.get("episodes") or []
+        if isinstance(ep, dict) and isinstance(ep.get("order_id"), str) and ep["order_id"]
+    ]
+    return tuple(dict.fromkeys(ids))
+
+
 def _customer_turns(traces: Path, since_ms: int) -> int:
     count = 0
     try:
@@ -162,52 +204,93 @@ def plan_bench_export(
 ) -> BenchPlan:
     prefix = f"bench/{bench_id}"
     internal = tuple(internal_numbers)
-    files: list[BenchFile] = []
-    sessions: list[str] = []
+    conversations: list[BenchConversation] = []
+    shared: list[BenchFile] = []
     exclusions: list[tuple[str, str]] = []
-    turns = 0
     session_dirs = sorted(p for p in vault_dir.iterdir() if p.is_dir() and p.name.startswith("wa_")) if vault_dir.is_dir() else []
     for sdir in session_dirs:
         sid = sdir.name
         history = sdir / "sessions" / f"{sid}.jsonl"
         if not _has_customer_message_since(history, since_ms):
             continue
-        reason = _exclusion(sid, _read_json(sdir / "metadata.json"), internal)
+        metadata = _read_json(sdir / "metadata.json")
+        reason = _exclusion(sid, metadata, internal)
         if reason:
             exclusions.append((sid, reason))
             continue
-        sessions.append(sid)
-        files.append(BenchFile(f"{prefix}/vault/{sid}/sessions/{sid}.jsonl", history))
+        files = [BenchFile(f"{prefix}/vault/{sid}/sessions/{sid}.jsonl", history)]
         for rel in _SESSION_FILES:
             if (sdir / rel).is_file():
                 files.append(BenchFile(f"{prefix}/vault/{sid}/{rel}", sdir / rel))
-        turns += _customer_turns(sdir / "evals" / "turn_traces.jsonl", since_ms)
         if state_dir is not None and state_dir.is_dir():
             for workspace in sorted(p for p in state_dir.iterdir() if p.is_dir()):
                 llm = workspace / "sessions" / f"{sid}.jsonl"
                 if llm.is_file():
                     files.append(BenchFile(f"{prefix}/agent_state/{workspace.name}/sessions/{sid}.jsonl", llm))
+        conversations.append(
+            BenchConversation(
+                session_id=sid,
+                files=tuple(files),
+                customer_turns=_customer_turns(sdir / "evals" / "turn_traces.jsonl", since_ms),
+                order_ids=_order_ids(metadata),
+            )
+        )
     cards = vault_dir / "_evals" / "scorecards"
     since_day = datetime.fromtimestamp(since_ms / 1000, tz=timezone.utc).date()
     if cards.is_dir():
         for card in sorted(cards.glob("*.jsonl")):
             day = _scorecard_date(card)
             if day is not None and day >= since_day:
-                files.append(BenchFile(f"{prefix}/scorecards/{card.name}", card))
+                shared.append(BenchFile(f"{prefix}/scorecards/{card.name}", card))
     if catalog_dir is not None and catalog_dir.is_dir():
         for item in sorted(p for p in catalog_dir.rglob("*") if p.is_file()):
             rel = item.relative_to(catalog_dir).as_posix()
             if rel.startswith(_CATALOG_SKIP_PREFIX):
                 continue
-            files.append(BenchFile(f"{prefix}/catalog/{rel}", item))
+            shared.append(BenchFile(f"{prefix}/catalog/{rel}", item))
     return BenchPlan(
         bench_id=bench_id,
         since_ms=since_ms,
         now_ms=now_ms,
-        files=tuple(files),
-        sessions=tuple(sessions),
+        conversations=tuple(conversations),
+        shared_files=tuple(shared),
         exclusions=tuple(exclusions),
-        customer_turns=turns,
+    )
+
+
+def _unverified_note(count: int) -> str:
+    if count == 1:
+        return "1 conversación con pedido quedó en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"
+    return f"{count} conversaciones con pedido quedaron en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"
+
+
+def exclude_test_orders(plan: BenchPlan, facts: OrderFactsSnapshot) -> BenchPlan:
+    """Saca del banco las conversaciones con un pedido marcado "prueba" en
+    Órdenes. La marca vive en Medusa (`hubara_test_order`) y la lee OrderFacts
+    (`is_test`), nunca una copia del vault.
+
+    Si OrderFacts no pudo leer Medusa (`unresolved` o `stale`), la conversación
+    se queda y el manifiesto lo anota: sin la marca no se adivina."""
+
+    def is_test(order_id: str) -> bool:
+        fact = facts.facts.get(order_id)
+        return fact is not None and fact.is_test
+
+    kept: list[BenchConversation] = []
+    tested: list[str] = []
+    unverified = 0
+    for conv in plan.conversations:
+        if any(is_test(o) for o in conv.order_ids):
+            tested.append(conv.session_id)
+            continue
+        kept.append(conv)
+        if conv.order_ids and (facts.stale or not facts.unresolved.isdisjoint(conv.order_ids)):
+            unverified += 1
+    return replace(
+        plan,
+        conversations=tuple(kept),
+        exclusions=plan.exclusions + tuple((sid, "pedido_de_prueba") for sid in tested),
+        notes=plan.notes + ((_unverified_note(unverified),) if unverified else ()),
     )
 
 

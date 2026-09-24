@@ -70,6 +70,7 @@ variable "tenants" {
       signal_inbound_meta     = optional(bool, false)      # 4.º argumento de send_message (se enciende tras desplegar el worker)
       max_usd_per_run         = optional(number, 120)      # tope de gasto de una corrida del laboratorio
       max_usd_per_month       = optional(number, 300)      # tope mensual del laboratorio
+      internal_numbers        = optional(list(string), []) # teléfonos del equipo, E.164 (+573001234567): sus conversaciones no entran al banco; [] = ninguno
     }), {})
   }))
 
@@ -100,6 +101,13 @@ variable "tenants" {
       for t in values(var.tenants) : t.lab.max_usd_per_run > 0 && t.lab.max_usd_per_run <= t.lab.max_usd_per_month
     ])
     error_message = "tenants.*.lab: 0 < max_usd_per_run <= max_usd_per_month."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for t in values(var.tenants) : [for p in t.lab.internal_numbers : can(regex("^\\+[1-9][0-9]{7,14}$", p))]
+    ]))
+    error_message = "tenants.*.lab.internal_numbers: cada teléfono debe ser E.164 con '+' (p.ej. +573001234567)."
   }
 }
 
