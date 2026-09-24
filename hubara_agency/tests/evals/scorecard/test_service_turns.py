@@ -97,7 +97,8 @@ def test_aggregate_checks_keeps_the_strongest_signal_per_check() -> None:
         {"check_id": "D", "verdict": "desconocido", "turn": 2},
     ]
 
-    assert aggregate_checks(rows) == {"A": "falla", "B": "desconocido", "C": "sin_senal", "D": "pasa"}
+    # D: un turno sin decidir no se esconde detrás de uno que pasó.
+    assert aggregate_checks(rows) == {"A": "falla", "B": "desconocido", "C": "sin_senal", "D": "desconocido"}
 
 
 def test_candidate_with_a_new_turn_number_is_appended_after_the_prefix() -> None:

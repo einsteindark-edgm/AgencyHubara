@@ -262,6 +262,11 @@ def _customer_lines(prefix: str, turn: Any) -> list[str]:
 
 def _turn_lines(t: Any, text_limit: int | None) -> list[str]:
     """Los renglones de un turno en el transcript del juez."""
+    return [*_inbound_lines(t, text_limit), *_reply_lines(t, text_limit)]
+
+
+def _inbound_lines(t: Any, text_limit: int | None) -> list[str]:
+    """Lo que llegó en el turno (el cliente, el sistema o el handoff)."""
     lines: list[str] = []
     p = f"T{t.turn} ·"
     if t.inbound_text or t.inbound:
@@ -272,6 +277,13 @@ def _turn_lines(t: Any, text_limit: int | None) -> list[str]:
             lines.append(f"{p} {who}: {_clip(t.inbound_text, text_limit or 600)}")
     if t.signal:
         lines.append(f"{p} señal del cliente: {_SIGNAL_LABEL.get(t.signal, t.signal)}")
+    return lines
+
+
+def _reply_lines(t: Any, text_limit: int | None) -> list[str]:
+    """Lo que hizo el bot en el turno."""
+    lines: list[str] = []
+    p = f"T{t.turn} ·"
     for s in t.sent_texts:
         lines.extend(_quoted(p, "bot envió", s if text_limit is None else _clip(s, text_limit)))
     if t.suppressed_reason and t.llm_text:
@@ -313,9 +325,13 @@ def render_transcript(
     v2: sin tope por texto (la traza ya acota a 600) y con los saltos de
     línea: cada mensaje de una ráfaga en su renglón, con su hora si la hay.
 
-    Modo turno (`candidates`): los turnos reales son contexto y cada candidato
-    reemplaza al turno real de su número, bajo `T{k} ★ CANDIDATA (a juzgar)`.
-    Nada después de la última candidata."""
+    Modo turno (`candidates`): la conversación REAL, en orden. En el turno k
+    de una candidata va lo que escribió el cliente, después la candidata
+    (`T{k} ★ CANDIDATA (a juzgar)`) y recién después la respuesta real de ese
+    turno: su contexto es exactamente lo real anterior, y la respuesta real
+    (lo que el cliente vio, contexto de los turnos siguientes) no la ancla.
+    Si la candidata es igual al turno real (A0), va una sola vez. Nada
+    después de la última candidata."""
     if not candidates:
         lines: list[str] = []
         for t in traj.turns:
@@ -325,11 +341,20 @@ def render_transcript(
     real = {t.turn: t for t in traj.turns if t.turn <= last}
     out: list[str] = []
     for k in sorted(set(real) | set(candidates)):
-        if k in candidates:
+        turn, candidate = real.get(k), candidates.get(k)
+        if candidate is None:
+            out.extend(_turn_lines(turn, text_limit))
+            continue
+        if turn is None or _reply_lines(candidate, text_limit) == _reply_lines(turn, text_limit):
             out.append(f"T{k} {CANDIDATE_MARK}")
-            out.extend(_turn_lines(candidates[k], text_limit))
-        else:
-            out.extend(_turn_lines(real[k], text_limit))
+            out.extend(_turn_lines(turn if turn is not None else candidate, text_limit))
+            continue
+        out.extend(_inbound_lines(turn, text_limit))
+        out.append(f"T{k} {CANDIDATE_MARK}")
+        out.extend(_reply_lines(candidate, text_limit))
+        if k < last:
+            out.append(f"T{k} · respuesta REAL del bot (la que vio el cliente; contexto de los turnos siguientes):")
+            out.extend(_reply_lines(turn, text_limit))
     return "\n".join(out)
 
 
@@ -406,7 +431,7 @@ def parse_judge_output(check_id: str, raw: str) -> CheckResult | None:
     return _result_from(check_id, data)
 
 
-def _result_from(check_id: str, data: dict[str, Any]) -> CheckResult | None:
+def _result_from(check_id: str, data: dict[str, Any], *, allow_pending: bool = False) -> CheckResult | None:
     verdict = _VERDICT_ALIASES.get(str(data.get("veredicto", "")).strip().lower())
     if verdict is None:
         return None
@@ -421,7 +446,7 @@ def _result_from(check_id: str, data: dict[str, Any]) -> CheckResult | None:
     )
     if check_id != _TOPICS_CHECK or not isinstance(data.get("asuntos"), list):
         return result  # solo EST-08 decide por asuntos (el modo turno pasa la clave siempre)
-    return _with_topics(result, _parse_topics(data["asuntos"]))
+    return _with_topics(result, _parse_topics(data["asuntos"]), allow_pending=allow_pending)
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -441,6 +466,8 @@ def _parse_topics(raw: Any) -> tuple[dict[str, Any], ...]:
                 "turn": _int_or_none(item.get("turno")),
                 "msg": _int_or_none(item.get("mensaje")),
                 "covered": item.get("cubierto") is True,
+                # Solo el modo turno lo pide: los registros de producción no cambian de forma.
+                **({"pending": True} if item.get("pendiente") is True else {}),
                 "evidence": _clip(str(item.get("evidencia") or ""), 160),
             }
         )
@@ -450,7 +477,7 @@ def _parse_topics(raw: Any) -> tuple[dict[str, Any], ...]:
 _TOPICS_CHECK = "EST-08"
 
 
-def _with_topics(result: CheckResult, topics: tuple[dict[str, Any], ...]) -> CheckResult:
+def _with_topics(result: CheckResult, topics: tuple[dict[str, Any], ...], *, allow_pending: bool = False) -> CheckResult:
     """El veredicto sale de los asuntos: uno sin cubrir es `falla` en su turno,
     aunque el juez haya escrito `pasa`. Un juez que no supo decidir se respeta.
 
@@ -460,7 +487,9 @@ def _with_topics(result: CheckResult, topics: tuple[dict[str, Any], ...]) -> Che
         return replace(result, topics=topics)
     if not topics:
         return replace(result, verdict="desconocido" if result.verdict == "falla" else "no_aplica", topics=topics)
-    missed = [t for t in topics if not t["covered"]]
+    # Modo turno: la candidata puede dejar un asunto para su turno siguiente con
+    # un compromiso claro (la regla lo admite). Producción ve ese turno: exige.
+    missed = [t for t in topics if not t["covered"] and not (allow_pending and t.get("pending"))]
     if not missed:
         return replace(result, verdict="desconocido" if result.verdict == "falla" else "pasa", topics=topics)
     first = min(missed, key=lambda t: t["turn"] if t["turn"] is not None else 10**9)
@@ -564,7 +593,7 @@ Cómo decidir:
 
 Reglas de evaluación:
 - Juzga SOLO este criterio y SOLO los turnos marcados ★ CANDIDATA: {turns}.
-- Cada candidata es una respuesta alternativa del bot en ese turno. Su contexto son los turnos ANTERIORES a ella. Lo que aparece después de una candidata es la conversación real, que siguió a otra respuesta: no lo uses para juzgarla.
+- Cada candidata ★ es una respuesta alternativa del bot en su turno. Su contexto es SOLO lo que aparece ANTES de ella: la conversación real hasta el mensaje del cliente de ese turno. Lo que aparece después (la respuesta real de ese turno y los turnos siguientes) es la conversación real, que siguió a la respuesta real y no a la candidata: no lo uses para juzgarla ni la compares con ella.
 - Si la regla admite atender algo "en ese turno o el siguiente", juzga la candidata sola: dejarlo pendiente sin empujar la venta en su lugar no es `falla`.
 - `no_aplica` si la situación del criterio no ocurre en ese turno candidato.
 - `desconocido` si la conversación no alcanza para decidir.
@@ -587,7 +616,9 @@ _FOCUS_ITEM_BY_CHECK: dict[str, str] = {
     "EST-08": (
         '{"turno": <T de la candidata>, "veredicto": "pasa|falla|no_aplica|desconocido", "evidencia": "...", '
         '"critica": "...", "asuntos": [{"asunto": "...", "turno": <T>, "mensaje": <k o null>, '
-        '"cubierto": true|false, "evidencia": "..."}]}'
+        '"cubierto": true|false, "pendiente": true|false, "evidencia": "..."}]} '
+        '(`pendiente`: la candidata deja el asunto para su turno siguiente con un compromiso claro, '
+        'p. ej. "ya te paso el catálogo")'
     ),
 }
 
@@ -652,7 +683,7 @@ def parse_focus_output(check_id: str, raw: str, turns: Iterable[int]) -> dict[in
         asuntos = item.get("asuntos")
         if isinstance(asuntos, list):
             asuntos = [a for a in asuntos if isinstance(a, dict) and _int_or_none(a.get("turno")) in (k, None)]
-        result = _result_from(check_id, {**item, "turno": k, "asuntos": asuntos})
+        result = _result_from(check_id, {**item, "turno": k, "asuntos": asuntos}, allow_pending=True)
         if result is not None:
             out[k] = replace(result, turn=k)
     return out
