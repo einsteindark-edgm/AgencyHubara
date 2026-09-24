@@ -20,6 +20,7 @@ from temporalio.exceptions import ApplicationError
 
 from src.plugins.chats.agent.sales_lab.arms import ARM_PROFILES
 from src.plugins.chats.agent.sales_lab.cases import build_cases
+from src.plugins.chats.agent.sales_lab.launch.costs import AGENT_USD_PER_TURN
 from src.plugins.chats.agent.sales_lab.run.contracts import (
     ArmPublishInput,
     ArmPublishResult,
@@ -135,6 +136,18 @@ def _classifier_fallback(trace: dict) -> str | None:
     return str(step["fallback"]) if step is not None and step.get("fallback") else None
 
 
+def _charged_usd(result: dict) -> float:
+    """Lo que un caso le carga al tope: su costo reportado y, si el LLM del
+    agente no reportó nada (tabla de precios ausente, modelo fuera de ella,
+    proceso muerto), la tarifa medida por turno. Subcontar deja el tope ciego."""
+    reported = result.get("cost_usd")
+    total = float(reported) if isinstance(reported, (int, float)) and not isinstance(reported, bool) else 0.0
+    llm = result.get("llm_cost_usd", reported)
+    if not isinstance(llm, (int, float)) or isinstance(llm, bool) or llm <= 0:
+        total += AGENT_USD_PER_TURN
+    return total
+
+
 @activity.defn(name="lab_run_smoke_turn")
 @with_heartbeat(every=10)
 async def smoke_turn_activity(plan: RunPlan) -> SmokeResult:
@@ -161,7 +174,7 @@ async def smoke_turn_activity(plan: RunPlan) -> SmokeResult:
             timeout_s=SMOKE_TIMEOUT_S,
             arm=arm,
         )
-        cost += float(result.get("cost_usd") or 0.0)
+        cost += _charged_usd(result)
         trace = result.get("trace") or {}
         error = result.get("error") or (None if trace else "el turno no dejó traza")
         fallback = _classifier_fallback(trace) if error is None and arm in ARM_PROFILES else None
@@ -198,7 +211,7 @@ async def simulate_case_activity(inp: SimulateInput) -> CaseOutcome:
         case_id=str(case.get("case_id") or ""),
         ok=error is None,
         error=error,
-        cost_usd=float(result.get("cost_usd") or 0.0),
+        cost_usd=_charged_usd(result),
     )
 
 
