@@ -797,6 +797,38 @@ laboratorio de conversaciones, §4.1.
 - WHEN el worker nuevo la re-juega
 - THEN no diverge y la burbuja queda con `delivered: null`
 
+### Requirement: Capas del turno con clasificador detrás del modo (laboratorio, PR 14)
+
+El turno de ventas SHALL poder usar un clasificador (Jev u OpenAI por OpenRouter) en tres capas, SOLO cuando la señal del cliente trae un modo activo (`inbound_meta.perception_mode` = `shadow`, `canary` u `on`), acotado por el techo de Terraform `SALES_PERCEPTION_MODE_CEILING` (default `off`). Sin modo o con `off`, el turno MUST ser el de hoy: no se consulta `workflow.patched("perception-v1")` ni se agenda ninguna activity nueva. El clasificador MUST fallar abierto: un error o timeout deja el turno como hoy.
+
+#### Scenario: Modo apagado — el turno de hoy
+
+- GIVEN una señal sin `perception_mode` (o con `off`)
+- WHEN corre el turno
+- THEN no corre `perceive_burst` ni `verify_coverage`, la traza dice `mode: off` y las histories anteriores re-juegan sin divergir
+
+#### Scenario: Sombra — se mide sin cambiar la respuesta
+
+- GIVEN modo `shadow`
+- WHEN el cliente manda una ráfaga
+- THEN la percepción corre en paralelo al LLM y la verificación después de enviar
+- AND la respuesta al cliente es la misma que sin modo; la traza guarda `perception`, `plan` y `verify` con `applied: false`
+
+#### Scenario: Encendido — plan, ronda extra y complemento
+
+- GIVEN modo `on` y una ráfaga "¿me mandas el catálogo?" + "¿y el envío a Bogotá?"
+- WHEN el clasificador detecta los dos asuntos
+- THEN el LLM recibe la nota `[PLAN DEL TURNO]` con cada asunto y su mensaje
+- AND si una tool que espera al cliente (ej. `send_shipping_rates`) cortaría el turno sin atender el catálogo, hay UNA ronda más con esa nota (`turn_policy`)
+- AND si la verificación dice con claridad que un asunto quedó sin atender, se envía UN complemento como turno de sistema (`trigger: complement`); si hay duda, el asunto queda pendiente para la percepción del turno siguiente
+- AND si el cliente escribe antes del complemento, su mensaje manda y el complemento se descarta
+
+#### Scenario: Clasificador caído
+
+- GIVEN modo `on` y el clasificador responde error o timeout
+- WHEN corre el turno
+- THEN el turno sale como hoy (sin nota, sin ronda extra, sin complemento) y la traza guarda el motivo en `perception.fallback`
+
 ## Out of scope
 
 - Detalle del prompt engineering / SOUL.md / USER.md — viven en `hubara_vault/_templates/sales/`

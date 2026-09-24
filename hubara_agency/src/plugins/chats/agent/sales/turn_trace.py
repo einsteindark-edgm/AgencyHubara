@@ -186,7 +186,7 @@ TEXT_MAX = 600
 STEPS_MAX = 60
 _MAX_TOOLS = 24
 
-TRIGGERS: tuple[str, ...] = ("customer", "ghost", "handoff")
+TRIGGERS: tuple[str, ...] = ("customer", "ghost", "handoff", "complement")
 
 
 def _bound(text: Any, limit: int = TEXT_MAX) -> str:
@@ -199,6 +199,7 @@ _CONTEXT_NOTE_PREFIXES: tuple[tuple[str, str], ...] = (
     ("[CONTEXTO DE TURNO", "burst_note"),
     ("[DATOS DEL PEDIDO", "draft"),
     ("[HANDOFF_REMARKETING]", "handoff"),
+    ("[PLAN DEL TURNO]", "turn_plan"),
 )
 
 

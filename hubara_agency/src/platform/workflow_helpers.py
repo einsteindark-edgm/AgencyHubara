@@ -136,6 +136,26 @@ class PendingMessage:
     # ts_ms, kind}` que el ingest pasa como 4.º argumento de la señal. Solo
     # va a la traza v2 (`inbound[]`); None en señales de 3 argumentos.
     inbound_meta: dict[str, Any] | None = None
+    # Complemento de la capa ③ (plan del laboratorio, PR 14): turno de
+    # sistema que responde, en una burbuja, el asunto que la respuesta
+    # anterior no cubrió. Lo encola el workflow; nunca viene de una señal.
+    is_complement_trigger: bool = False
+
+
+@dataclass(frozen=True)
+class TurnPolicy:
+    """Capa ② del turno con clasificador (plan del laboratorio §3.2, PR 14).
+
+    En el corte por tool que deja la conversación esperando al cliente (L-11),
+    `extra_round_note(tools_usadas, texto)` decide si falta atender algo del
+    plan del turno: si devuelve una nota, en lugar de cortar hay UNA ronda más
+    de `llm_chat` con esa nota como mensaje de sistema. Regla determinista del
+    caller (sin llamadas nuevas). `None` (el default de `run_agent_turn`) es el
+    turno de hoy: remarketing, ETA y las histories viejas no se enteran.
+    """
+
+    extra_round_note: Callable[[list[str], str], str | None]
+    max_extra_rounds: int = 1
 
 
 @dataclass
@@ -566,8 +586,12 @@ async def run_agent_turn(
     admin_turn: bool = False,
     align_history_with_episode: bool = False,
     salvage_leaked_text: bool = False,
+    turn_policy: TurnPolicy | None = None,
 ) -> TurnResult:
     """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
+
+    `turn_policy` (plan del laboratorio, PR 14): capa ② del turno con
+    clasificador; ver `TurnPolicy`. Default None = el turno de hoy.
 
     `salvage_leaked_text` (run 28a8e407): si el texto final trae párrafos de
     razonamiento, se quitan ANTES de grabar el turno y `final_content` vuelve
@@ -654,6 +678,7 @@ async def run_agent_turn(
         skip_record_when=skip_record_when,
         admin_turn=admin_turn,
         salvage_leaked_text=salvage_leaked_text,
+        turn_policy=turn_policy,
     )
 
 
@@ -668,6 +693,7 @@ async def _run_agent_turn_impl(
     skip_record_when: Callable[[str], bool] | None = None,
     admin_turn: bool = False,
     salvage_leaked_text: bool = False,
+    turn_policy: TurnPolicy | None = None,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -730,6 +756,7 @@ async def _run_agent_turn_impl(
     iteration = 0
     final_content: str | None = None
     tools_used: list[str] = []
+    extra_rounds = 0
     # Bug saludo descartado (run ddd0d472): textos client-facing emitidos JUNTO
     # con tool calls. Solo manipulación de lista en memoria → no agrega commands
     # al history (replay-safe sin gate; el gate vive en el workflow que decide
@@ -1132,6 +1159,23 @@ async def _run_agent_turn_impl(
                 if batch_awaits_customer or not workflow.patched(
                     "turn-cut-on-delivery-v1"
                 ):
+                    # Capa ② (PR 14): el corte dejaría un asunto del plan sin
+                    # atender → UNA ronda más con la nota del caller. Solo con
+                    # `turn_policy` (el workflow de ventas lo pasa detrás de su
+                    # propio `workflow.patched("perception-v1")`).
+                    extra_note = (
+                        turn_policy.extra_round_note(list(tools_used), response.content or "")
+                        if turn_policy is not None and extra_rounds < turn_policy.max_extra_rounds
+                        else None
+                    )
+                    if extra_note:
+                        extra_rounds += 1
+                        steps.append(
+                            {"kind": "guard", "at_ms": _now_ms(), "name": "turn_policy_extra_round",
+                             "before": None, "after": extra_note, "tools": batch_tool_names}
+                        )
+                        messages = [*messages, {"role": "system", "content": extra_note}]
+                        continue
                     workflow.logger.info(
                         f"turno cortado: {batch_tool_names} espera respuesta del cliente"
                     )

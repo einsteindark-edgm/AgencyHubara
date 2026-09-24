@@ -87,6 +87,9 @@ def test_pending_message_is_dataclass_serializable() -> None:
         # Plan del laboratorio, PR 3: ids del mensaje para la traza. Default
         # None → señales de 3 argumentos siguen igual.
         "inbound_meta": None,
+        # Plan del laboratorio, PR 14: complemento de la capa ③. Lo encola el
+        # workflow; default False → nada cambia para lo que ya existía.
+        "is_complement_trigger": False,
     }
 
 

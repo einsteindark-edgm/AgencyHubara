@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from datetime import timedelta
 from typing import Any
@@ -29,9 +30,28 @@ with workflow.unsafe.imports_passed_through():
     from src.platform.workflow_helpers import (
         InboxMsg,
         PendingMessage,
+        TurnPolicy,
         coalesce_inbox,
         coalesce_pending,
         run_agent_turn,
+    )
+    from src.plugins.chats.agent.sales.perception.activities import (
+        perceive_burst_activity,
+        verify_coverage_activity,
+    )
+    from src.plugins.chats.agent.sales.perception.contracts import (
+        PerceiveInput,
+        PerceiveOutput,
+        VerifyInput,
+        VerifyOutput,
+    )
+    from src.plugins.chats.agent.sales.perception.plan import (
+        PlanTopic,
+        TurnPlan,
+        checklist_note,
+        complement_message,
+        pending_round_note,
+        uncovered_topics,
     )
     from src.platform.session_history.activities import (
         persist_assistant_message_activity,
@@ -218,6 +238,87 @@ def _flush_outbound(report: object) -> dict | None:
     return {"kind": "outbound", "at_ms": _now_ms(), "bubbles": bubbles} if bubbles else None
 
 
+# ── Capas del turno con clasificador (plan del laboratorio §3.2, PR 14) ──────
+# El modo llega en el 4.º argumento de la señal (`inbound_meta`); sin modo o
+# con `off` NO se consulta `workflow.patched("perception-v1")` y el turno es
+# idéntico al de hoy (ni un command nuevo en la history).
+_PERCEPTION_MODES = ("off", "shadow", "canary", "on")
+_LAYER_MODES = ("shadow", "canary", "on")
+_ACTING_MODES = ("canary", "on")
+_DEFAULT_PERCEPTION_PROFILE = "jev-v1"
+_PERCEPTION_OPTIONS: dict[str, Any] = {
+    "start_to_close_timeout": timedelta(seconds=10),
+    "retry_policy": RetryPolicy(maximum_attempts=1),
+}
+
+
+def _perception_settings(raw: object) -> tuple[str | None, str | None]:
+    """(modo, perfil) de la señal; lo que no tenga la forma esperada no cuenta."""
+    if not isinstance(raw, dict):
+        return None, None
+    mode, profile = raw.get("perception_mode"), raw.get("perception_profile")
+    mode = mode if isinstance(mode, str) and mode in _PERCEPTION_MODES else None
+    valid_profile = isinstance(profile, str) and 0 < len(profile) <= 40 and profile.replace("-", "").isalnum()
+    return mode, (profile if valid_profile else None)
+
+
+def _burst_messages(batch: list[PendingMessage]) -> list[dict[str, Any]]:
+    """Los mensajes del cliente del turno para el clasificador (sin triggers)."""
+    return [
+        {"text": p.message, "ts_ms": (p.inbound_meta or {}).get("ts_ms")}
+        for p in batch
+        if not (p.is_ghost_trigger or p.is_handoff or p.is_complement_trigger) and (p.message or "").strip()
+    ]
+
+
+def _perception_step(out: PerceiveOutput, started_ms: int, *, mode: str) -> dict[str, Any]:
+    return {
+        "kind": "perception",
+        "at_ms": started_ms,
+        "dur_ms": _now_ms() - started_ms,
+        "model": out.model,
+        "profile": out.profile,
+        "mode": mode,
+        "fallback": None if out.ok else (out.error or "error"),
+        "answers": list(out.answers),
+        "cost_usd": out.cost_usd,
+    }
+
+
+def _verify_step(out: VerifyOutput, started_ms: int, *, applied: bool) -> dict[str, Any]:
+    return {
+        "kind": "verify",
+        "at_ms": started_ms,
+        "dur_ms": _now_ms() - started_ms,
+        "model": out.model,
+        "decision": out.decision,
+        "missing": list(out.missing),
+        "answers": list(out.answers),
+        "applied": applied,
+        "fallback": None if out.ok else (out.error or "error"),
+    }
+
+
+def _plan_of(out: PerceiveOutput) -> TurnPlan:
+    return TurnPlan(
+        ok=out.ok,
+        topics=tuple(PlanTopic(str(t.get("topic")), t.get("msg"), t.get("p")) for t in out.topics if t.get("topic")),
+        stage=out.stage,
+    )
+
+
+def _turn_policy(plan: TurnPlan) -> TurnPolicy | None:
+    """Capa ②: una ronda más si el corte por tool deja un asunto del plan."""
+    if not plan.topics:
+        return None
+
+    def extra_round_note(tools_used: list[str], text: str) -> str | None:
+        missing = uncovered_topics(plan, tools_used=tools_used, text=text)
+        return pending_round_note(missing) if missing else None
+
+    return TurnPolicy(extra_round_note=extra_round_note)
+
+
 @workflow.defn(name="HubaraSalesSessionWorkflow")
 class HubaraSalesSessionWorkflow:
     """Long-running session workflow with ghosting injection mechanism."""
@@ -227,6 +328,11 @@ class HubaraSalesSessionWorkflow:
         self._last_response: str | None = None
         self._processing = False
         self._force_shutdown: bool = False
+        # Capas del turno con clasificador (PR 14): modo y perfil de la última
+        # señal que los trajo, y los asuntos que quedaron pendientes (③).
+        self._perception_mode: str = "off"
+        self._perception_profile: str = _DEFAULT_PERCEPTION_PROFILE
+        self._pending_topics: list[str] = []
 
     @workflow.signal
     async def send_message(
@@ -241,6 +347,11 @@ class HubaraSalesSessionWorkflow:
         valor que no decodifique como el tipo anotado hace que Temporal
         DESCARTE la señal entera (y con ella el mensaje del cliente); acá se
         limpia sin fallar."""
+        mode, profile = _perception_settings(inbound_meta)
+        if mode is not None:
+            self._perception_mode = mode
+        if profile is not None:
+            self._perception_profile = profile
         self._pending.append(
             PendingMessage(
                 message=message,
@@ -277,6 +388,20 @@ class HubaraSalesSessionWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
         return [draft_note] if draft_note else None
+
+    async def _perceive(self, inp: PerceiveInput) -> PerceiveOutput:
+        """Capa ①: nunca tumba el turno (fail-open)."""
+        try:
+            return await workflow.execute_activity(perceive_burst_activity, inp, **_PERCEPTION_OPTIONS)
+        except Exception as exc:  # noqa: BLE001
+            return PerceiveOutput(ok=False, profile=inp.profile, error=f"activity: {type(exc).__name__}")
+
+    async def _verify(self, inp: VerifyInput) -> VerifyOutput:
+        """Capa ③: sin verificación, el turno sale como hoy (`send`)."""
+        try:
+            return await workflow.execute_activity(verify_coverage_activity, inp, **_PERCEPTION_OPTIONS)
+        except Exception as exc:  # noqa: BLE001
+            return VerifyOutput(ok=False, decision="send", error=f"activity: {type(exc).__name__}")
 
     def _coalesce_batch(self, batch: list[PendingMessage]) -> PendingMessage:
         """Coalescea una ráfaga en un solo turno (nota de ráfaga incluida).
@@ -471,6 +596,13 @@ class HubaraSalesSessionWorkflow:
 
                 batch = list(self._pending)
                 self._pending.clear()
+                # Complemento de la capa ③ (PR 14): si el cliente escribió
+                # mientras tanto, su mensaje manda y el complemento se descarta
+                # (lo que quedó pendiente lo vuelve a ver la percepción).
+                # Solo existe con el marker `perception-v1`: sin patch propio.
+                if any(p.is_complement_trigger for p in batch):
+                    customers = [p for p in batch if not p.is_complement_trigger]
+                    batch = customers or [p for p in batch if p.is_complement_trigger][-1:]
                 msgs_to_process: list[PendingMessage]
                 # Bandeja/watermark (PR burst-inbox): la ráfaga se convierte a
                 # InboxMsg y se coalescea en `_coalesce_batch` (nota de ráfaga
@@ -478,7 +610,10 @@ class HubaraSalesSessionWorkflow:
                 # turno si el cliente escribe mientras el LLM piensa (Fase 1
                 # interrupción, ver el loop de restart más abajo).
                 raw_batch = batch
-                msgs_to_process = [self._coalesce_batch(batch)]
+                if len(batch) == 1 and batch[0].is_complement_trigger:
+                    msgs_to_process = [batch[0]]
+                else:
+                    msgs_to_process = [self._coalesce_batch(batch)]
             else:
                 # Legacy: un mensaje a la vez. Solo para workflows pre-deploy.
                 raw_batch = None
@@ -567,8 +702,71 @@ class HubaraSalesSessionWorkflow:
                     # Traza v2: pasos de TODOS los intentos del turno, en orden.
                     trace_steps: list[dict] = []
                     restarts = 0
+                    # Capas ①②③ (plan del laboratorio §3.2, PR 14). `patched`
+                    # SOLO se consulta con un modo activo: con `off` (o sin
+                    # modo) el turno no graba ni un command nuevo.
+                    is_complement = msg.is_complement_trigger
+                    turn_mode = (
+                        self._perception_mode
+                        if raw_batch is not None
+                        and not admin_no_send
+                        and not msg.is_handoff
+                        and not is_complement
+                        else "off"
+                    )
+                    layers = turn_mode in _LAYER_MODES and workflow.patched("perception-v1")
+                    if not layers:
+                        turn_mode = "off"
+                    plan: TurnPlan | None = None
+                    shadow_handle = None
+                    shadow_started_ms = 0
+                    if layers and turn_mode == "shadow":
+                        shadow_burst = _burst_messages(raw_batch or [])
+                        if shadow_burst:
+                            # Sombra: en paralelo al LLM; no suma espera.
+                            shadow_started_ms = _now_ms()
+                            shadow_handle = workflow.start_activity(
+                                perceive_burst_activity,
+                                PerceiveInput(
+                                    session_id=session.session_id,
+                                    profile=self._perception_profile,
+                                    messages=shadow_burst,
+                                    pending=list(self._pending_topics),
+                                ),
+                                **_PERCEPTION_OPTIONS,
+                            )
                     while True:
                         hni = None
+                        policy: TurnPolicy | None = None
+                        if layers and turn_mode in _ACTING_MODES:
+                            burst = _burst_messages(raw_batch or [])
+                            if burst:
+                                perceived_ms = _now_ms()
+                                perceived = await self._perceive(
+                                    PerceiveInput(
+                                        session_id=session.session_id,
+                                        profile=self._perception_profile,
+                                        messages=burst,
+                                        pending=list(self._pending_topics),
+                                    )
+                                )
+                                trace_steps.append(_perception_step(perceived, perceived_ms, mode=turn_mode))
+                                plan = _plan_of(perceived)
+                                note = checklist_note(plan)
+                                if note:
+                                    trace_steps.append(
+                                        {
+                                            "kind": "plan",
+                                            "at_ms": _now_ms(),
+                                            "checklist": [
+                                                {"topic": t.topic, "msg": t.msg, "p": t.p} for t in plan.topics
+                                            ],
+                                        }
+                                    )
+                                    msg = dataclasses.replace(
+                                        msg, plugin_context=[*(msg.plugin_context or []), note]
+                                    )
+                                    policy = _turn_policy(plan)
                         if (
                             raw_batch is not None
                             and restarts < _MAX_TURN_RESTARTS
@@ -592,6 +790,8 @@ class HubaraSalesSessionWorkflow:
                             # Run 28a8e407: el párrafo de razonamiento se cae
                             # ANTES de grabar — el LLM recuerda lo que salió.
                             salvage_leaked_text=True,
+                            # Capa ② (PR 14): None salvo con modo activo.
+                            turn_policy=policy,
                         )
                         trace_steps.extend(result.steps or [])
                         if result.interrupted:
@@ -607,8 +807,11 @@ class HubaraSalesSessionWorkflow:
                                     "drained": len(drained),
                                 }
                             )
-                            raw_batch = [*(raw_batch or []), *drained]
+                            raw_batch = [
+                                p for p in [*(raw_batch or []), *drained] if not p.is_complement_trigger
+                            ]
                             msg = self._coalesce_batch(raw_batch)
+                            is_complement = False
                             # Run 48ec6df5 (caso 573229041190): un corrientazo
                             # durante el turno de ghosting invalida su premisa
                             # — el cliente SÍ volvió. Sin esto, el recompose
@@ -1211,6 +1414,38 @@ class HubaraSalesSessionWorkflow:
                                 )
                                 result.final_content = salvaged
                                 leak_blocked = False
+                    # Capa ③ (PR 14): con el texto ya pasado por las guardas y
+                    # ANTES de enviarlo, el clasificador verifica que atienda
+                    # cada asunto del plan. `complement` → una burbuja más como
+                    # turno de sistema (se encola tras el envío); `pending` → se
+                    # envía y el asunto queda pendiente para la percepción del
+                    # turno siguiente.
+                    verify_out: VerifyOutput | None = None
+                    if (
+                        layers
+                        and turn_mode in _ACTING_MODES
+                        and plan is not None
+                        and plan.topics
+                        and not self._force_shutdown
+                        and not admin_no_send
+                    ):
+                        verify_reply = (
+                            ""
+                            if (leak_blocked or suppress_text_for_picker or abstained)
+                            else (result.final_content or "")
+                        )
+                        verified_ms = _now_ms()
+                        verify_out = await self._verify(
+                            VerifyInput(
+                                session_id=session.session_id,
+                                profile=self._perception_profile,
+                                messages=_burst_messages(raw_batch or []),
+                                topics=[{"topic": t.topic, "msg": t.msg, "p": t.p} for t in plan.topics],
+                                reply_text=verify_reply,
+                                components=[t for t in result.tools_used if t.startswith(("present_", "send_", "request_"))],
+                            )
+                        )
+                        trace_steps.append(_verify_step(verify_out, verified_ms, applied=True))
                     if (
                         result.final_content
                         and not self._force_shutdown
@@ -1313,6 +1548,61 @@ class HubaraSalesSessionWorkflow:
                                 f"session={session.session_id} err={exc!r}"
                             )
 
+                    # Capas (PR 14), después del envío y del flush. Sombra: la
+                    # percepción que corrió en paralelo y la verificación de lo
+                    # que salió; solo quedan en la traza (`applied: false`).
+                    if shadow_handle is not None:
+                        try:
+                            shadow_out = await shadow_handle
+                        except Exception as exc:  # noqa: BLE001 — fail-open
+                            shadow_out = PerceiveOutput(
+                                ok=False, profile=self._perception_profile, error=f"activity: {type(exc).__name__}"
+                            )
+                        trace_steps.append(_perception_step(shadow_out, shadow_started_ms, mode="shadow"))
+                        shadow_plan = _plan_of(shadow_out)
+                        if shadow_plan.topics:
+                            trace_steps.append(
+                                {
+                                    "kind": "plan",
+                                    "at_ms": _now_ms(),
+                                    "applied": False,
+                                    "checklist": [
+                                        {"topic": t.topic, "msg": t.msg, "p": t.p} for t in shadow_plan.topics
+                                    ],
+                                }
+                            )
+                            shadow_verified_ms = _now_ms()
+                            shadow_verify = await self._verify(
+                                VerifyInput(
+                                    session_id=session.session_id,
+                                    profile=self._perception_profile,
+                                    messages=_burst_messages(raw_batch or []),
+                                    topics=[{"topic": t.topic, "msg": t.msg, "p": t.p} for t in shadow_plan.topics],
+                                    reply_text="\n\n".join(trace_sent_texts),
+                                    components=[
+                                        t for t in result.tools_used if t.startswith(("present_", "send_", "request_"))
+                                    ],
+                                )
+                            )
+                            trace_steps.append(_verify_step(shadow_verify, shadow_verified_ms, applied=False))
+                    if verify_out is not None:
+                        if (
+                            verify_out.decision == "complement"
+                            and verify_out.missing
+                            and plan is not None
+                            and not self._pending
+                            and not self._force_shutdown
+                        ):
+                            self._pending.append(
+                                PendingMessage(
+                                    message=complement_message(plan, verify_out.missing),
+                                    is_complement_trigger=True,
+                                )
+                            )
+                        self._pending_topics = list(verify_out.missing) if verify_out.decision == "pending" else []
+                    elif layers and turn_mode in _ACTING_MODES:
+                        self._pending_topics = []
+
                     # HU-SC-0 — TRAZA POR TURNO para el scorecard por etapa.
                     # El evaluador anterior solo veía texto enviado + nombres
                     # de tools: no veía rechazos de guardas, texto suprimido,
@@ -1344,7 +1634,11 @@ class HubaraSalesSessionWorkflow:
                             trigger=(
                                 "ghost"
                                 if is_ghost_turn
-                                else "handoff" if msg.is_handoff else "customer"
+                                else "handoff"
+                                if msg.is_handoff
+                                else "complement"
+                                if is_complement
+                                else "customer"
                             ),
                             inbound_text=msg.message or "",
                             turn_started_ms=turn_started_ms,
@@ -1357,6 +1651,7 @@ class HubaraSalesSessionWorkflow:
                             guards=trace_guards,
                             steps=trace_steps,
                             turn_key=turn_key,
+                            mode=turn_mode,
                             context_notes=context_note_names(msg.plugin_context),
                             inbound=_inbound_trace(list(raw_batch or [msg])),
                         )
