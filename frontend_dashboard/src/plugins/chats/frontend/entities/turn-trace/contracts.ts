@@ -1,0 +1,13 @@
+import { z } from "zod";
+
+/**
+ * Hilo de un turno del bot — `GET /api/chats/sessions/{sesión}/turns/trace`
+ * (plan del laboratorio PR 17). Misma forma que el hilo del Laboratorio: la
+ * traza v2 con sus pasos en orden (la ráfaga primero), o la v1 sintetizada
+ * sin tiempos. Los pasos se pasan tal cual al diagrama de `@/shared/ui`.
+ */
+export const turnThreadSchema = z.object({
+  fidelity: z.enum(["v1", "v2"]).catch("v1"),
+  trace: z.record(z.string(), z.unknown()).catch({}).default({}),
+  steps: z.array(z.record(z.string(), z.unknown())).catch([]).default([]),
+});

@@ -53,6 +53,8 @@ export interface ChatMessage {
   document_filename?: string;
   /** id de Meta del mensaje. */
   wamid?: string;
+  /** Turno del bot que produjo el mensaje (plan del laboratorio PR 17). */
+  turn_key?: string;
   /** Forma real del mensaje detrás del marker, o ausente. */
   event?: ChatEvent;
   /** Mensaje citado por el cliente (reply). Solo `id` si no se resolvió. */

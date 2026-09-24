@@ -77,6 +77,10 @@ export const chatMessageSchema = z.object({
   document_filename: z.string().optional(),
   /** id de Meta del mensaje (destino de las citas del cliente). */
   wamid: z.string().optional(),
+  /** Turno del bot que produjo este mensaje (traza por turno): el panel pone
+   *  un botón por turno que abre su hilo. Ausente en mensajes del operador,
+   *  eventos de sistema e historial sin traza. */
+  turn_key: z.string().optional(),
   /** Forma real del mensaje (ver `chatEventSchema`). Ausente = normal. */
   event: chatEventSchema.optional(),
   /** El cliente respondió CITANDO un mensaje. `author`/`text`/`image_url`

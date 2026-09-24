@@ -145,6 +145,8 @@ export interface ChatMessageItem {
   /** Forma real del mensaje detrás del marker del historial (botones,
    *  foto con caption + visión, tap, reacción). Ausente = mensaje normal. */
   event?: ChatEvent;
+  /** Turno del bot que produjo el mensaje (abre el hilo del turno). */
+  turnKey?: string;
 }
 
 export interface MemoryItem {

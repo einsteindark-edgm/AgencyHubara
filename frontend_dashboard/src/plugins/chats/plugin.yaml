@@ -62,6 +62,9 @@ api:
     # §4.3): el botón "Nueva corrida" (estimado, lanzar, en curso, cancelar).
     # Las lecturas del contrato lab@v1 llegan con el PR 8.
     - { module: src.plugins.chats.api.lab, prefix: /api/chats, tags: [Chats_Lab] }
+    # Plan del laboratorio PR 17: el hilo de cada turno del bot (botón por
+    # turno en el panel del chat).
+    - { module: src.plugins.chats.api.turns, prefix: /api/chats, tags: [Chats_Turns] }
 
 # ── Agente Temporal ────────────────────────────────────────────────────
 # Dos workers en task queues exclusivas: SALES_QUEUE y REMARKETING_QUEUE.

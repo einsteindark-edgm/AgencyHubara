@@ -16,7 +16,9 @@ from src.plugins.chats.shared.chat_events import (
     annotate_touched_buttons,
     detect_chat_event,
 )
+from src.plugins.chats.shared import turn_traces
 from src.plugins.chats.shared.origin import session_origin, with_ad_names
+from src.plugins.chats.shared.turn_view import annotate_turn_keys
 from src.sdk.connectorkit import fetch_meta_ad_names, meta_marketing_token
 from src.sdk.dashboardkit import DashboardEvent, get_dashboard_event_bus
 from src.sdk.messagingkit import postponed_view
@@ -751,6 +753,9 @@ async def get_session_history(session_id: str):
             data = {}
 
     _resolve_reply_quotes(messages, data.get("outbound_text_index"))
+    # Cada burbuja con el turno del bot que la produjo: el panel pone un botón
+    # por turno que abre su hilo (plan del laboratorio PR 17).
+    annotate_turn_keys(messages, turn_traces.read_traces(WORKSPACE_VAULT_DIR, session_id), session_id)
 
     # Forma real del mensaje para el panel del chat: los botones vuelven a ser
     # botones, la foto su foto, el caption del cliente separado de lo que
