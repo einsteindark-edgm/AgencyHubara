@@ -13,12 +13,18 @@ from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from src.sdk.connectorkit import (
+    QuotaStoreError,
     DiscountLineItem,
     LineDiscount,
     PromotionDTO,
     compute_discount,
 )
 
+from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+    ItemVariant,
+    quota_split,
+    resolve_item_variants,
+)
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     ensure_active_episode,
     get_active_episode,
@@ -37,6 +43,11 @@ class AppliedDiscount:
     #: Reparto por unidad sobre los ítems (índice = posición en `items`): es
     #: el precio con descuento que el pedido escribe en Medusa.
     line_discounts: tuple[LineDiscount, ...] = ()
+    #: True = el cupón tiene cupo por unidad (central de cupones): el reparto
+    #: salió de las filas del cupo y lo vendido, no de toda la promoción.
+    quota: bool = False
+    #: Líneas de un producto con cupo que no dicen el color/aroma que exige.
+    missing_attributes: tuple[int, ...] = ()
 
 
 def applied_coupon(metadata: dict[str, Any]) -> dict[str, Any] | None:
@@ -155,11 +166,13 @@ def set_applied_coupon(
     promotion: PromotionDTO,
     now_ms: int,
     eligible: list[dict[str, Any]] | None = None,
+    quota: bool = False,
 ) -> dict[str, Any]:
     """Mutates: fija el cupón en el episodio activo (lo crea si no hay).
 
     `eligible`: los productos a los que aplica (nombre + precios) — la nota
-    de cada turno los recuerda para que el bot ofrezca ESOS."""
+    de cada turno los recuerda para que el bot ofrezca ESOS. `quota`: el
+    cupón tiene cupo por unidad (esas combinaciones pueden agotarse)."""
     episode = get_active_episode(metadata) or ensure_active_episode(
         metadata, now_ms=now_ms
     )
@@ -168,6 +181,7 @@ def set_applied_coupon(
         "promotion": asdict(promotion),
         "applied_at_ms": now_ms,
         "eligible_products": list(eligible or []),
+        **({"quota": True} if quota else {}),
     }
     return metadata
 
@@ -219,19 +233,84 @@ async def discount_line_items(
     return out
 
 
+def quota_product_ids(metadata: dict[str, Any], quotas: Any) -> frozenset[str]:
+    """Productos con cupo en el cupón aplicado del episodio: ahí el color y el
+    aroma de cada línea deciden el descuento y se validan contra las listas
+    del producto. Vacío sin cupón, sin cupo o con el cupo ilegible (en ese
+    caso el descuento igual falla cerrado)."""
+    raw = applied_coupon(metadata)
+    if raw is None or quotas is None:
+        return frozenset()
+    try:
+        sheet = quotas.get(promotion_from_snapshot(raw["promotion"]).id)
+    except (TypeError, KeyError, QuotaStoreError):
+        return frozenset()
+    return frozenset(q.product_id for q in sheet.quotas)
+
+
 async def coupon_discount_for_items(
     metadata: dict[str, Any],
     catalog: Any,
     items: list[dict[str, Any]],
     *,
     shipping_cop: int = 0,
+    quotas: Any = None,
+    sales: Any = None,
+    variants: list[ItemVariant] | None = None,
 ) -> AppliedDiscount | None:
     """Descuento del cupón aplicado en el episodio sobre `items`; None si
-    no hay cupón aplicado."""
+    no hay cupón aplicado.
+
+    Con cupo por unidad (`quotas` con filas para el cupón) el descuento va
+    SOLO a las unidades de las combinaciones que quedan, leyendo lo vendido
+    fresco (`sales`); sin poder leerlo, no descuenta (falla cerrada)."""
     raw = applied_coupon(metadata)
     if raw is None:
         return None
     promotion = promotion_from_snapshot(raw["promotion"])
+    try:
+        sheet = quotas.get(promotion.id) if quotas is not None else None
+    except QuotaStoreError:
+        # Cupo ilegible: NO es "sin cupo" (aplicaría sin límite) — falla cerrada.
+        return AppliedDiscount(
+            code=promotion.code, discount_cop=0, applicable_handles=[],
+            reason="quota_unavailable", min_subtotal_cop=None,
+            description=promotion.description, quota=True,
+        )
+    if sheet is not None and sheet.quotas:
+        subtotal = sum(int(it.get("unit_price_cop") or 0) * int(it.get("quantity") or 0) for it in items)
+        if promotion.min_subtotal_cop is not None and subtotal < promotion.min_subtotal_cop:
+            return AppliedDiscount(
+                code=promotion.code, discount_cop=0, applicable_handles=[],
+                reason="min_subtotal",
+                min_subtotal_cop=promotion.min_subtotal_cop,
+                description=promotion.description, quota=True,
+            )
+        if variants is None:
+            variants, _invalid = await resolve_item_variants(catalog, items, metadata)
+        # Alcance real del cupón (productos Y etiquetas) sobre cada línea.
+        per_unit = replace(promotion, min_subtotal_cop=None)
+        eligible = {
+            i
+            for i, line in enumerate(await discount_line_items(catalog, items))
+            if compute_discount(per_unit, [replace(line, quantity=1)]).discount_cop > 0
+        }
+        split = await quota_split(
+            promotion, items, variants, sheet=sheet, sales=sales, eligible=eligible
+        )
+        return AppliedDiscount(
+            code=promotion.code,
+            discount_cop=sum(d.units * d.discount_unit_cop for d in split.line_discounts),
+            applicable_handles=sorted(
+                {str(items[d.index].get("handle") or "") for d in split.line_discounts}
+            ),
+            reason=split.reason,
+            min_subtotal_cop=None,
+            description=promotion.description,
+            line_discounts=split.line_discounts,
+            quota=True,
+            missing_attributes=split.missing_attributes,
+        )
     lines = await discount_line_items(catalog, items)
     result = compute_discount(promotion, lines, shipping_cop=shipping_cop)
     return AppliedDiscount(
@@ -288,6 +367,10 @@ def build_coupon_note(metadata: dict[str, Any]) -> str | None:
             "productos; lo que se habló antes de otros productos va SIN "
             "descuento — retómalo solo si el cliente lo pide, aclarándolo."
         )
+        if raw.get("quota"):
+            # Cupo por unidad: esas combinaciones pueden agotarse después de
+            # aplicado el cupón (premortem B3).
+            scope += " Esas combinaciones van según disponibilidad: la confirmación dice cuáles quedan."
     else:
         scope = (
             "aplica solo a algunos productos: confirma cuáles con "
@@ -314,5 +397,6 @@ __all__ = [
     "is_whole_catalog",
     "format_cop",
     "promotion_from_snapshot",
+    "quota_product_ids",
     "set_applied_coupon",
 ]

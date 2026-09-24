@@ -62,6 +62,8 @@ export const backendCampaignSchema = z.object({
   updated_at_ms: z.number().int().default(0),
   sent_at_ms: z.number().int().nullable().default(null),
   send_result: backendSendResultSchema.nullable().default(null),
+  /** Por qué NO salió (p. ej. el cupón ya no servía al dispararse). */
+  failure_reason: z.string().nullable().default(null),
   test_sends: z.array(backendTestSendRecordSchema).default([]),
   // Curaduría manual del operador (PUT los REEMPLAZA completos):
   // quitados a mano del segmento / agregados a mano fuera del segmento.

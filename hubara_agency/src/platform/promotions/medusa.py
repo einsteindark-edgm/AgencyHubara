@@ -170,11 +170,15 @@ class MedusaPromotionsPort:
         self._ttl_s = ttl_s
         self._cache: list[PromotionDTO] | None = None
         self._cached_at = 0.0
+        #: Sube con cada `invalidate()`: una lectura que salió ANTES (y vuelve
+        #: después) no guarda lo viejo en el cache.
+        self._generation = 0
 
     async def _all(self) -> list[PromotionDTO]:
         now = time.monotonic()
         if self._cache is not None and now - self._cached_at < self._ttl_s:
             return self._cache
+        generation = self._generation
         try:
             raw_list = await self._client.list_promotions()
         except Exception as exc:  # noqa: BLE001 — el vendor no cruza el port
@@ -188,8 +192,9 @@ class MedusaPromotionsPort:
             for p in (promotion_from_medusa(r, tag_values=tag_values) for r in raw_list)
             if p
         ]
-        self._cache = promotions
-        self._cached_at = now
+        if generation == self._generation:
+            self._cache = promotions
+            self._cached_at = now
         return promotions
 
     async def _tag_values(self, raw_list: list[dict[str, Any]]) -> dict[str, str] | None:
@@ -208,6 +213,13 @@ class MedusaPromotionsPort:
             for t in tags
             if isinstance(t, dict) and t.get("id") and t.get("value")
         }
+
+    def invalidate(self) -> None:
+        """Olvida el cache: la central acaba de escribir en Medusa y este
+        proceso tiene que ver el cambio ya (los demás, en ≤ TTL). Una lectura
+        en vuelo de antes no lo vuelve a llenar (generación nueva)."""
+        self._generation += 1
+        self._cache = None
 
     async def list_active(self) -> list[PromotionDTO]:
         return [p for p in await self._all() if p.status == "active" and not p.is_automatic]

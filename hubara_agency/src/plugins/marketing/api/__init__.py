@@ -16,6 +16,8 @@ from anyio import from_thread
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+from src.plugins.marketing.api.coupons import router as coupons_router
+from src.plugins.marketing.campaign_coupon import check_campaign_coupon
 from src.plugins.marketing.campaign_store import CampaignStore
 from src.plugins.marketing.carousel import CarouselError, resolve_campaign_carousel
 from src.plugins.marketing.domain.campaigns import (
@@ -39,6 +41,7 @@ from src.plugins.marketing.domain.campaigns import (
     segment_for_metadata,
 )
 from src.plugins.marketing.domain.contacts import normalize_phone, parse_contacts_file
+from src.plugins.marketing.domain.coupons import coupon_terms
 from src.plugins.marketing.domain.logic import health_payload
 from src.sdk import get_task_queue
 from src.sdk.connectorkit import (
@@ -59,6 +62,8 @@ from src.sdk.runtime import (
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+# Central de cupones (Marketing → Cupones): /coupons, /coupon-products.
+router.include_router(coupons_router)
 
 _SEGMENT_LABELS: dict[str, tuple[str, str]] = {
     "clientes": ("Clientes", "Ya compraron · alto valor"),
@@ -353,47 +358,41 @@ def get_promotions_port():
     return _factory()
 
 
-#: Por qué el cupón que anuncia la campaña no sirve — para el operador.
-_COUPON_PROBLEM = {
-    "invalid_format": "no tiene una forma válida (solo letras y números)",
-    "not_found": "no existe en Medusa — créalo en Medusa → Promociones o elige uno de los vigentes",
-    "inactive": "está inactivo en Medusa",
-    "not_started": "todavía no empieza a regir en Medusa",
-    "expired": "ya venció en Medusa",
-    "budget_exhausted": "ya agotó sus usos en Medusa",
-    "scope_unresolved": "tiene reglas que no pude leer en Medusa (no sé a qué productos aplica)",
-    "shipping_not_supported": (
-        "es de envío, y el envío lo cobra la transportadora a su tarifa, sin "
-        "descuentos: el bot no lo aplica. Usa un cupón sobre productos"
-    ),
-}
+async def _validate_campaign_coupon(
+    campaign: dict[str, Any], *, at_ms: int | None = None, allow_not_started: bool = False
+) -> None:
+    """Valida el cupón de la campaña para el INSTANTE del envío (`at_ms`: la
+    hora programada; sin ella, ahora) y, si es válido, copia sus términos (el
+    % y el último día) a la campaña: la plantilla anuncia lo que dice el
+    cupón, no lo que tipeó el operador (central de cupones, Fase 7.1).
 
-
-async def _validate_campaign_coupon(campaign: dict[str, Any]) -> None:
-    """El cupón que anuncia la campaña tiene que existir y regir en Medusa —
-    el mismo chequeo que hace el bot con `apply_coupon`. Incidente
-    2026-09-22: la campaña anunció "AMOR" y el código real era AMOR26, así
-    que el cliente que lo escribiera recibía "ese código no existe"."""
-    from src.sdk.connectorkit import PromotionsUnavailableError, resolve_coupon
+    `allow_not_started`: el envío de prueba acepta un cupón programado (el
+    constructor los ofrece); pausado, vencido, borrador o inexistente no."""
+    from src.sdk.connectorkit import PromotionsUnavailableError
 
     code = (campaign.get("coupon_code") or "").strip()
-    if not code:
-        return
-    port = get_promotions_port()
     try:
-        promotions = list(await port.list_active())
-        extra = await port.get_by_code(code)
+        check = await check_campaign_coupon(
+            get_promotions_port(),
+            campaign,
+            at_ms=at_ms if at_ms is not None else _now_ms(),
+            scheduled=at_ms is not None,
+            allow_not_started=allow_not_started,
+        )
     except PromotionsUnavailableError as e:
         raise HTTPException(
             status_code=503,
             detail=f"No pude validar el cupón {code} en Medusa ahora mismo — reintenta en un momento",
         ) from e
-    if extra is not None and all(p.id != extra.id for p in promotions):
-        promotions.append(extra)
-    resolution = resolve_coupon(code, promotions, now_ms=_now_ms())
-    if not resolution.ok:
-        problem = _COUPON_PROBLEM.get(resolution.reason or "", "no se puede usar")
-        raise HTTPException(status_code=422, detail=f"El cupón {code} {problem}")
+    if check is None:
+        return
+    if check.problem:
+        raise HTTPException(status_code=422, detail=f"El cupón {check.code} {check.problem}")
+    terms = coupon_terms(check.promotion)
+    if any(campaign.get(k) != v for k, v in terms.items()):
+        campaign.update(terms)
+        campaign["updated_at_ms"] = _now_ms()
+        _store().save(campaign)
 
 
 @router.get("/promotions")
@@ -488,7 +487,6 @@ async def send_campaign(campaign_id: str, body: SendCampaignBody) -> dict:
             detail=f"Campaña en estado {campaign['status']!r} — no se puede enviar",
         )
     _validate_ready_to_send(campaign)
-    await _validate_campaign_coupon(campaign)
 
     now = _now_ms()
     start_delay = None
@@ -498,6 +496,9 @@ async def send_campaign(campaign_id: str, body: SendCampaignBody) -> dict:
                 status_code=422, detail="schedule_at_ms debe estar en el futuro"
             )
         start_delay = timedelta(milliseconds=body.schedule_at_ms - now)
+    # El cupón tiene que regir cuando el mensaje LLEGA (la hora programada):
+    # uno programado que empieza antes sirve; uno que vence antes, no.
+    await _validate_campaign_coupon(campaign, at_ms=body.schedule_at_ms)
 
     client = await get_temporal_client()
     workflow_id = f"campaign-send-{campaign_id}"
@@ -598,6 +599,10 @@ async def test_send(campaign_id: str, body: TestSendBody) -> dict:
                 "como 3001234567 o +57 300 123 4567"
             ),
         )
+    # Primero el cupón: sus términos (% y "válido hasta") se copian a la
+    # campaña y la prueba tiene que anunciar ESOS, no lo que tipeó el operador.
+    # Un cupón programado (todavía no empieza) sirve para la prueba.
+    await _validate_campaign_coupon(campaign, allow_not_started=True)
     session_metadata = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
     variables = campaign_template_variables(
         campaign, customer_name=customer_name_from_metadata(session_metadata)
@@ -605,7 +610,6 @@ async def test_send(campaign_id: str, body: TestSendBody) -> dict:
     size_error = carousel_size_error(carousel_handles(campaign))
     if size_error:
         raise HTTPException(status_code=422, detail=size_error)
-    await _validate_campaign_coupon(campaign)
     send_kwargs: dict[str, Any] = {}
     if carousel_handles(campaign):
         try:

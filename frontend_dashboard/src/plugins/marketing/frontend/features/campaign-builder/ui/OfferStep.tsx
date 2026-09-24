@@ -1,18 +1,22 @@
 /**
  * Paso 2 — Descuento / Producto según el objetivo:
- *  - todo goal salvo launch → porcentaje (0-100), cupón (uppercase, max 14)
- *    y vigencia (texto libre "15 de junio")
+ *  - todo goal salvo launch → el cupón se ELIGE de la central de cupones
+ *    (solo de porcentaje, activos y programados). El % y el "válido hasta" salen del cupón
+ *    (solo lectura) y se guardan en la campaña al elegirlo; el backend los
+ *    vuelve a copiar del cupón al enviar. Atajo "Crear cupón": el Page abre
+ *    la vista Cupones con el formulario nuevo.
  *  - todo goal → carrusel de 2..10 productos del catálogo: es LA forma de
  *    elegir productos (el selector de producto único se retiró — lo que se
  *    envía son las tarjetas del carrusel)
  */
 
+import { Icon } from "@/shared/ui";
+
 import { goalUsesDiscount } from "@plugins/marketing/frontend/entities/campaign";
 import {
-  promotionLabel,
-  sanitizeCouponCode,
-  usePromotions,
-} from "@plugins/marketing/frontend/entities/promotion";
+  isCouponPickable,
+  useCoupons,
+} from "@plugins/marketing/frontend/entities/coupon";
 
 import type { CampaignDraft } from "../model/draft";
 import { CarouselPicker } from "./CarouselPicker";
@@ -22,25 +26,37 @@ interface Props {
   editable: boolean;
   onPatch: (p: Partial<CampaignDraft>) => void;
   onCommit: (p?: Partial<CampaignDraft>) => void;
+  /** Atajo a la central: el Page cambia a la vista Cupones (alta). */
+  onCreateCoupon?: () => void;
 }
 
-export function OfferStep({ draft, editable, onPatch, onCommit }: Props) {
+export function OfferStep({ draft, editable, onCommit, onCreateCoupon }: Props) {
   const usesDiscount = goalUsesDiscount(draft.goal);
-  // Cupones vigentes en Medusa: el mismo código que el bot valida con
-  // `apply_coupon` — así la campaña promete un cupón que existe de verdad.
-  const { data: promotionsInfo } = usePromotions(usesDiscount);
-  const promotions = promotionsInfo?.promotions ?? [];
-  // Solo con la lista REAL de Medusa (si no respondió, no sabemos).
-  const couponNotInMedusa =
-    draft.couponCode !== "" &&
-    promotionsInfo !== undefined &&
-    !promotionsInfo.unavailable &&
-    !promotions.some((p) => p.code === draft.couponCode);
+  // Cupones de la central: el mismo código que el bot valida con
+  // `apply_coupon` — la campaña solo promete un cupón que rige o va a regir.
+  const { data: coupons, error: couponsError } = useCoupons(usesDiscount);
+  const pickable = (coupons ?? []).filter(isCouponPickable);
+  const picked = pickable.find((c) => c.code === draft.couponCode) ?? null;
+  // Solo con la lista REAL de la central (si no respondió, no sabemos).
+  const couponNotPickable = draft.couponCode !== "" && coupons !== undefined && picked === null;
+  // Un cupón de monto fijo (creado en Medusa) rige pero no se puede anunciar.
+  const fixedAmount =
+    couponNotPickable &&
+    (coupons ?? []).some((c) => c.code === draft.couponCode && c.percentage === null);
+
+  const pick = (code: string) => {
+    const c = pickable.find((p) => p.code === code);
+    onCommit(
+      c
+        ? { couponCode: c.code, percent: c.percentage ?? 0, validUntil: c.endsOnLabel ?? "" }
+        : { couponCode: "", percent: 0, validUntil: "" },
+    );
+  };
 
   if (draft.goal === "") {
     return (
       <p className="text-[11.5px] text-fg-faint">
-        Elegí primero el objetivo de la campaña (paso 1).
+        Elige primero el objetivo de la campaña (paso 1).
       </p>
     );
   }
@@ -48,96 +64,59 @@ export function OfferStep({ draft, editable, onPatch, onCommit }: Props) {
   return (
     <div className="flex flex-col gap-3">
       {usesDiscount ? (
-        <div className="grid grid-cols-3 gap-2.5 max-[900px]:grid-cols-1">
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium text-fg-muted">Porcentaje</span>
-            <div className="flex items-center gap-1.5">
-              <input
-                type="number"
-                min={0}
-                max={100}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-end gap-2">
+            <label className="flex min-w-0 flex-1 flex-col gap-1">
+              <span className="text-[11px] font-medium text-fg-muted">Cupón</span>
+              <select
                 disabled={!editable}
-                value={draft.percent}
-                onChange={(e) => {
-                  const n = Math.max(0, Math.min(100, Number(e.target.value) || 0));
-                  onPatch({ percent: n });
-                }}
-                onBlur={() => onCommit()}
-                className="w-full rounded-md border border-line bg-transparent px-2.5 py-1.5 text-[12.5px] tabular-nums text-fg outline-none focus:border-accent disabled:opacity-60"
-              />
-              <span className="text-[12px] text-fg-muted">%</span>
-            </div>
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium text-fg-muted">
-              Código de cupón
-            </span>
-            <input
-              type="text"
-              maxLength={14}
-              disabled={!editable}
-              value={draft.couponCode}
-              placeholder="PAPA20"
-              list="marketing-coupon-codes"
-              onChange={(e) => onPatch({ couponCode: sanitizeCouponCode(e.target.value) })}
-              onBlur={() => onCommit()}
-              className="w-full rounded-md border border-line bg-transparent px-2.5 py-1.5 text-[12.5px] uppercase tracking-wide text-fg outline-none focus:border-accent disabled:opacity-60 placeholder:normal-case placeholder:text-fg-faint"
-            />
-            <datalist id="marketing-coupon-codes">
-              {promotions.map((p) => (
-                <option key={p.code} value={p.code}>
-                  {promotionLabel(p)}
+                value={picked ? picked.code : ""}
+                onChange={(e) => pick(e.target.value)}
+                className="w-full rounded-md border border-line bg-canvas px-2.5 py-1.5 text-[12.5px] text-fg outline-none focus:border-accent disabled:opacity-60"
+              >
+                <option value="">
+                  {pickable.length > 0 ? "Elige un cupón" : "No hay cupones activos ni programados"}
                 </option>
-              ))}
-            </datalist>
-            {couponNotInMedusa ? (
-              <span role="alert" className="text-[10.5px] leading-snug text-warn">
-                {draft.couponCode} no está entre los cupones vigentes de Medusa: el
-                cliente que lo escriba recibirá "ese código no existe" y el envío
-                se bloqueará. Elige uno de la lista o créalo en Medusa.
-              </span>
-            ) : null}
-            {promotions.length > 0 ? (
-              <span className="text-[10.5px] leading-snug text-fg-faint">
-                En Medusa:{" "}
-                {promotions.map((p) => (
-                  <button
-                    key={p.code}
-                    type="button"
-                    disabled={!editable}
-                    onClick={() => onCommit({ couponCode: p.code })}
-                    className="mr-1 rounded border border-line px-1.5 py-0.5 font-mono text-[10.5px] text-fg-soft hover:border-fg-faint disabled:opacity-50"
-                  >
-                    {p.code} · {promotionLabel(p)}
-                  </button>
+                {pickable.map((c) => (
+                  <option key={c.promotionId} value={c.code}>
+                    {c.code}
+                    {c.percentage !== null ? ` · ${c.percentage}%` : ""}
+                    {c.state === "scheduled" ? " · programado" : ""}
+                  </option>
                 ))}
-              </span>
-            ) : promotionsInfo?.unavailable ? (
-              <span className="text-[10.5px] text-warn">
-                No pude leer los cupones de Medusa — escribe el código a mano.
-              </span>
-            ) : (
-              <span className="text-[10.5px] leading-snug text-fg-faint">
-                Crea el cupón en Medusa (Admin → Promotions) con el mismo código: el
-                bot solo aplica cupones que existan ahí.
-              </span>
-            )}
-          </label>
+              </select>
+            </label>
+            {onCreateCoupon ? (
+              <button
+                type="button"
+                disabled={!editable}
+                onClick={onCreateCoupon}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line px-2.5 py-1.5 text-[12px] font-semibold text-fg hover:bg-white/[0.05] disabled:opacity-50"
+              >
+                <Icon.plus />
+                Crear cupón
+              </button>
+            ) : null}
+          </div>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium text-fg-muted">Válido hasta</span>
-            <input
-              type="text"
-              maxLength={60}
-              disabled={!editable}
-              value={draft.validUntil}
-              placeholder="15 de junio"
-              onChange={(e) => onPatch({ validUntil: e.target.value })}
-              onBlur={() => onCommit()}
-              className="w-full rounded-md border border-line bg-transparent px-2.5 py-1.5 text-[12.5px] text-fg outline-none focus:border-accent disabled:opacity-60 placeholder:text-fg-faint"
-            />
-          </label>
+          {picked ? (
+            <span className="text-[11.5px] text-fg-soft">
+              {picked.percentage !== null ? `${picked.percentage}%` : "Descuento"}
+              {picked.endsOnLabel ? ` · válido hasta el ${picked.endsOnLabel}` : ""}
+            </span>
+          ) : null}
+          {couponNotPickable ? (
+            <span role="alert" className="text-[10.5px] leading-snug text-warn">
+              {fixedAmount
+                ? `${draft.couponCode} es de monto fijo: la campaña solo puede anunciar cupones de porcentaje y el envío se bloqueará. Elige otro.`
+                : `${draft.couponCode} no está activo ni programado en la central de cupones: el cliente que lo escriba no recibirá el descuento y el envío se bloqueará. Elige otro o actívalo en Cupones.`}
+            </span>
+          ) : null}
+          {couponsError ? (
+            <span className="text-[10.5px] text-warn">
+              No pude leer los cupones de la central ahora mismo — reintenta en un momento.
+            </span>
+          ) : null}
         </div>
       ) : (
         <p className="text-[11.5px] text-fg-faint">

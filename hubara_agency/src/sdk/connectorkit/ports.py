@@ -51,6 +51,7 @@ from src.platform.catalog.errors import (
     ProductNotFoundError as ProductNotFoundError,
 )
 from src.platform.catalog.variant_attrs import (
+    match_option as match_option,
     parse_variant_tags as parse_variant_tags,
 )
 from src.platform.catalog.variant_colors import (
@@ -110,7 +111,55 @@ from src.platform.orders.query_port import (
     OrderQueryPort as OrderQueryPort,
 )
 from src.platform.promotions.composition import (
+    get_coupon_audit_log as get_coupon_audit_log,
+    get_coupon_sales_reader as get_coupon_sales_reader,
+    get_promo_quota_store as get_promo_quota_store,
+    get_promotions_admin_port as get_promotions_admin_port,
     get_promotions_port as get_promotions_port,
+    get_quota_lock as get_quota_lock,
+)
+from src.platform.promotions.coupon import (
+    CouponSpecError as CouponSpecError,
+    CouponView as CouponView,
+    parse_coupon_spec as parse_coupon_spec,
+)
+from src.platform.promotions.admin import (
+    CouponCodeTakenError as CouponCodeTakenError,
+    CouponDeleteRefusedError as CouponDeleteRefusedError,
+    CouponNotFoundError as CouponNotFoundError,
+    CouponNotManageableError as CouponNotManageableError,
+    CouponPartialUpdateError as CouponPartialUpdateError,
+    CouponRejectedError as CouponRejectedError,
+    FakePromotionsAdmin as FakePromotionsAdmin,
+    PromotionsAdminPort as PromotionsAdminPort,
+)
+from src.platform.promotions.quotas import (
+    PromoUnitQuota as PromoUnitQuota,
+    QuotaLine as QuotaLine,
+    QuotaStatus as QuotaStatus,
+    REASON_QUOTA_EXHAUSTED as REASON_QUOTA_EXHAUSTED,
+    allocate_units as allocate_units,
+    quota_exhausted as quota_exhausted,
+    quota_product as quota_product,
+    quota_statuses as quota_statuses,
+    validate_quota_rows as validate_quota_rows,
+)
+from src.platform.promotions.quota_store import (
+    FakePromoQuotaStore as FakePromoQuotaStore,
+    QuotaSheet as QuotaSheet,
+    QuotaStoreError as QuotaStoreError,
+)
+from src.platform.promotions.audit import (
+    FakeCouponAuditLog as FakeCouponAuditLog,
+)
+from src.platform.promotions.coupon_sales import (
+    CouponResults as CouponResults,
+    coupon_results as coupon_results,
+    quota_board as quota_board,
+    sold_units_by_quota as sold_units_by_quota,
+)
+from src.platform.promotions.quota_lock import (
+    QuotaLockTimeout as QuotaLockTimeout,
 )
 from src.platform.promotions.port import (
     DiscountLineItem as DiscountLineItem,

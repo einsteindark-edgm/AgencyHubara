@@ -79,6 +79,8 @@ class LineDiscount:
     index: int
     units: int
     discount_unit_cop: int
+    #: Cupo por unidad que consumen (central de cupones); None = sin cupo.
+    quota_id: str | None = None
 
 
 @dataclass(frozen=True)

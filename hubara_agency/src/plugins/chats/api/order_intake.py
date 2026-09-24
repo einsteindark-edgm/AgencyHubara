@@ -49,6 +49,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path as PathParam
 from loguru import logger
 
 from src.plugins.chats.agent.sales.config.shipping import shipping_rate_for_city
+from src.plugins.chats.agent.sales.use_cases.coupon_quota import resolve_item_variants
 from src.plugins.chats.agent.sales.use_cases.coupons import coupon_discount_for_items
 from src.plugins.chats.agent.sales.use_cases.order_pricing import price_order_items
 from src.plugins.chats.shared.order_intake import (
@@ -65,7 +66,12 @@ from src.plugins.chats.shared.order_intake import (
     registered_order_id,
     render_conversation,
 )
-from src.sdk.connectorkit import get_catalog_client
+from src.sdk.connectorkit import (
+    get_catalog_client,
+    get_coupon_sales_reader,
+    get_promo_quota_store,
+    parse_variant_tags,
+)
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, FilesystemMetadataStore
 
 router = APIRouter()
@@ -120,6 +126,9 @@ class OrderIntakeDeps:
     vault_dir: Path
     catalog: Any | None  # CatalogPort — None si este proceso no lo tiene
     llm: ExtractionLLM
+    # Cupo por unidad: el sugerido muestra qué línea lleva descuento.
+    quotas: Any | None = None
+    sales: Any | None = None
 
 
 def _try(name: str, factory: Any) -> Any | None:
@@ -136,6 +145,8 @@ def get_order_intake_deps() -> OrderIntakeDeps:
         vault_dir=WORKSPACE_VAULT_DIR,
         catalog=_try("catalog", get_catalog_client),
         llm=LiteLLMExtractor(),
+        quotas=_try("promo_quota_store", get_promo_quota_store),
+        sales=_try("coupon_sales_reader", get_coupon_sales_reader),
     )
 
 
@@ -200,6 +211,19 @@ class _DictCatalog:
             return self._products[handle]
         except KeyError as exc:
             raise LookupError(handle) from exc
+
+
+def _coupon_reason(discount: Any, discount_cop: int) -> str | None:
+    """Por qué el cupón aplicado no descuenta (o descuenta solo una parte):
+    una línea con cupo sin color/aroma, agotado, cupo ilegible, compra
+    mínima… None si aplica."""
+    if discount is None:
+        return None
+    if discount.missing_attributes:
+        return "missing_attributes"
+    if discount_cop > 0:
+        return None
+    return discount.reason or "no_applicable_items"
 
 
 def _resolve_items(
@@ -289,10 +313,31 @@ async def suggest(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
     shipping_cop = shipping_rate_for_city(shipping.get("city"))
     # Cupón aplicado en el chat: el formulario muestra el mismo descuento
     # que va a exigir el registro (SEC-07).
+    dict_catalog = _DictCatalog(products_by_handle)
+    # Listas de color/aroma de cada producto del selector (para las líneas que
+    # el operador agrega a mano). Se agregan DESPUÉS del prompt: el modelo no
+    # las necesita.
+    for entry in catalog:
+        lists = parse_variant_tags(
+            list(getattr(products_by_handle.get(entry["handle"]), "tags", None) or [])
+        )
+        entry.update(colors=list(lists.colors), aromas=list(lists.aromas))
+    # Color y aroma de cada ítem (del borrador estructurado del chat) + las
+    # listas del producto para los selectores del formulario.
+    variants, _invalid = await resolve_item_variants(dict_catalog, items, metadata)
+    for item, variant in zip(items, variants):
+        attrs = parse_variant_tags(list(getattr(products_by_handle.get(item["handle"]), "tags", None) or []))
+        item.update(color=variant.color, aroma=variant.aroma, colors=list(attrs.colors), aromas=list(attrs.aromas))
     discount = await coupon_discount_for_items(
-        metadata, _DictCatalog(products_by_handle), items, shipping_cop=shipping_cop
+        metadata, dict_catalog, items, shipping_cop=shipping_cop,
+        quotas=deps.quotas, sales=deps.sales, variants=variants,
     )
     discount_cop = discount.discount_cop if discount else 0
+    # Qué unidades de cada línea llevan el descuento (el formulario lo muestra).
+    for index, item in enumerate(items):
+        lines = [d for d in (discount.line_discounts if discount else ()) if d.index == index]
+        item["coupon_units"] = sum(d.units for d in lines)
+        item["coupon_discount_cop"] = sum(d.units * d.discount_unit_cop for d in lines)
     notes = extracted.get("notes")
 
     logger.info(
@@ -315,7 +360,10 @@ async def suggest(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
         "subtotal_cop": subtotal_cop,
         "shipping_cop": shipping_cop,
         "discount_cop": discount_cop,
-        "coupon_code": discount.code if discount and discount_cop > 0 else None,
+        # El cupón aplicado viaja SIEMPRE (también con $0) con el motivo: el
+        # operador tiene que saber que al cliente se le prometió un descuento.
+        "coupon_code": discount.code if discount else None,
+        "coupon_reason": _coupon_reason(discount, discount_cop),
         "total_cop": subtotal_cop + shipping_cop - discount_cop,
         "missing": missing_fields(shipping, items, payment_method),
         "warnings": warnings,

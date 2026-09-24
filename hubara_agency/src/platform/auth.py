@@ -103,6 +103,65 @@ def _verify_token(token: str) -> dict[str, Any]:
     return claims
 
 
+#: Header con el ID token de Cognito que manda el dashboard (C-6). Solo
+#: ENRIQUECE el actor del registro de cambios: la auth la decide el access
+#: token, y un ID token malo jamás tumba el request.
+ID_TOKEN_HEADER = "X-Hubara-Id-Token"
+
+
+def _verify_id_token(token: str) -> dict[str, Any]:
+    """Valida un ID token de Cognito: firma (JWKS del pool), issuer, ``aud``
+    = app client del tenant, ``token_use == "id"`` y vigencia. Levanta si es
+    inválido."""
+    import jwt
+
+    issuer = _issuer()
+    signing_key = _jwk_client(
+        f"{issuer}/.well-known/jwks.json"
+    ).get_signing_key_from_jwt(token)
+    # A diferencia del access token, el ID token SÍ trae ``aud`` (= client id).
+    claims: dict[str, Any] = jwt.decode(
+        token,
+        signing_key.key,
+        algorithms=["RS256"],
+        issuer=issuer,
+        audience=config.COGNITO_APP_CLIENT_ID,
+        options={"require": ["exp", "iss", "aud", "sub"]},
+    )
+    if claims.get("token_use") != "id":
+        raise ValueError("el token no es un ID token de Cognito")
+    return claims
+
+
+def _cognito_actor(request: Any, access_claims: dict[str, Any]) -> str:
+    """El actor de un request autenticado con Cognito.
+
+    Con ``username_attributes=["email"]`` el ``username`` del access token es
+    un UUID opaco: si el request trae el ID token de la MISMA persona (mismo
+    ``sub``) y es válido, el actor es su ``email``. Cualquier problema con el
+    ID token se ignora (actor = ``username``/``sub``)."""
+    fallback = str(
+        access_claims.get("username") or access_claims.get("sub") or UNKNOWN_ACTOR
+    )
+    headers = getattr(request, "headers", None) or {}
+    id_token = str(headers.get(ID_TOKEN_HEADER) or "").strip()
+    if not id_token:
+        return fallback
+    try:
+        id_claims = _verify_id_token(id_token)
+    except Exception as exc:  # noqa: BLE001 — el ID token nunca rechaza el request
+        logger.warning("auth_id_token_ignored", reason=type(exc).__name__)
+        return fallback
+    sub = access_claims.get("sub")
+    email = id_claims.get("email")
+    if not sub or id_claims.get("sub") != sub:
+        logger.warning("auth_id_token_ignored", reason="sub_mismatch")
+        return fallback
+    if not isinstance(email, str) or not email.strip():
+        return fallback
+    return email.strip()
+
+
 def _extract_header_token(request: Request) -> str:
     """Bearer SOLO del header ``Authorization`` ("" si no hay).
 
@@ -129,6 +188,33 @@ def _extract_token(request: Request) -> str:
     return _extract_header_token(request) or (
         request.query_params.get("access_token") or ""
     ).strip()
+
+
+#: Nombre del atributo en `request.state` donde `require_auth` deja QUIÉN
+#: pasó la auth (usuario Cognito, "service" o "local" en dev).
+ACTOR_STATE_KEY = "hubara_actor"
+#: Sin auth en la ruta no hay actor: se dice, no se inventa.
+UNKNOWN_ACTOR = "desconocido"
+
+
+def _set_actor(request: Any, actor: str) -> None:
+    state = getattr(request, "state", None)
+    if state is not None:
+        setattr(state, ACTOR_STATE_KEY, actor)
+
+
+def current_actor(request: Any) -> str:
+    """Quién hace este request, VERIFICADO por `require_auth`.
+
+    Es la identidad para registros de cambios (central de cupones, D6): el
+    `email` del ID token de Cognito de la misma persona (C-6) o, sin él, el
+    `username` del access token (o su `sub`); ``"service"`` para el token
+    M2M, ``"local"`` en dev sin Cognito. Nunca sale del cuerpo del request.
+    Sin `require_auth` en la ruta devuelve ``"desconocido"``.
+    """
+    state = getattr(request, "state", None)
+    actor = getattr(state, ACTOR_STATE_KEY, None) if state is not None else None
+    return actor if isinstance(actor, str) and actor else UNKNOWN_ACTOR
 
 
 def require_auth(request: Request) -> None:
@@ -160,6 +246,7 @@ def require_auth(request: Request) -> None:
         and header_token
         and secrets.compare_digest(header_token, service_token)
     ):
+        _set_actor(request, "service")
         return
 
     # 1b. Ticket SSE (SEC-06): el stream `/events` no puede mandar header, así
@@ -182,6 +269,7 @@ def require_auth(request: Request) -> None:
                 status_code=503,
                 detail="Auth no configurada: COGNITO_* ausente en producción",
             )
+        _set_actor(request, "local")
         return
 
     # 3. Cognito configurado → validar el access-token (header o query para SSE).
@@ -189,8 +277,9 @@ def require_auth(request: Request) -> None:
     if not token:
         raise HTTPException(status_code=401, detail="Falta el bearer token")
     try:
-        _verify_token(token)
+        claims = _verify_token(token)
     except HTTPException:
         raise
     except Exception as exc:  # firma / exp / issuer / claims inválidos
         raise HTTPException(status_code=401, detail="Token inválido") from exc
+    _set_actor(request, _cognito_actor(request, claims))

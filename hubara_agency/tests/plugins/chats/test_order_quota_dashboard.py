@@ -1,0 +1,402 @@
+""""Crear pedido" del dashboard con cupo por unidad (Fase 6 de CUPONES_PLAN.md).
+
+El formulario del chat intervenido consume el cupo IGUAL que el bot: el
+sugerido muestra qué línea lleva descuento (color y aroma de cada ítem), y el
+registro reparte con las mismas reglas, bajo el mismo candado por código.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from src.platform.catalog.dtos import (
+    CatalogManifestDTO,
+    CatalogPriceDTO,
+    CatalogProductDTO,
+    CatalogVariantDTO,
+    SearchResult,
+)
+from src.platform.catalog.errors import ProductNotFoundError
+from src.platform.orders.port import DiscountedUnits, OrderRegistrationResult
+from src.platform.promotions.port import PromotionDTO
+from src.platform.promotions.quota_lock import VaultQuotaLock
+from src.platform.promotions.quota_store import FakePromoQuotaStore
+from src.platform.promotions.quotas import PromoUnitQuota
+from src.plugins.chats.api import order_intake, session_actions
+from src.plugins.chats.api.order_intake import OrderIntakeDeps
+from src.plugins.chats.api.session_actions import SessionActionsDeps
+
+_S = "wa_1000000001"
+_Q = "q_rosado_cafe"
+_CUBO = CatalogProductDTO(
+    id="prod_cubo", handle="cubo-love", title="Cubo Love", status="published",
+    variants=[CatalogVariantDTO(id="v_cubo", title="Unico",
+                                prices=[CatalogPriceDTO(amount="21000", currency_code="cop")])],
+    tags=["Color: Rosado", "Color: Azul", "Aroma: Café", "Aroma: Lavanda"],
+)
+
+
+class _Catalog:
+    _by = {"cubo-love": _CUBO}
+
+    async def get_by_handle(self, handle: str):
+        if handle not in self._by:
+            raise ProductNotFoundError(handle)
+        return self._by[handle]
+
+    async def search(self, q: str = "", *, limit: int = 10, category: str | None = None):
+        results = list(self._by.values())[:limit]
+        return SearchResult(query=q, count=len(results), truncated=False, stale=False,
+                            manifest=CatalogManifestDTO(version="v", fetched_at="t", product_count=len(results)),
+                            results=results)
+
+
+_AMOR26 = PromotionDTO(
+    id="promo_amor26", code="AMOR26", discount_type="percentage", value=10, currency_code=None,
+    target_type="items", allocation="across", max_quantity=None,
+    product_ids=("prod_cubo",), variant_ids=(), collection_ids=(), min_subtotal_cop=None,
+    is_automatic=False, status="active", starts_at_ms=None, ends_at_ms=None,
+    budget_type=None, budget_limit=None, budget_used=None, description="AMOR Y AMISTAD 2026",
+)
+
+
+def _quotas() -> FakePromoQuotaStore:
+    store = FakePromoQuotaStore()
+    store.replace("promo_amor26", "AMOR26",
+                  [PromoUnitQuota(_Q, "promo_amor26", "AMOR26", "prod_cubo", "cubo-love", "Cubo Love",
+                                  "Rosado", "Café", 5, "2026-09-23T17:00:00Z", "ana")],
+                  show_units_left=True, actor="ana", now_iso="2026-09-23T17:00:00Z")
+    return store
+
+
+@dataclass
+class _Sales:
+    sold: dict[str, int] = field(default_factory=dict)
+
+    async def sold_units(self, *, since: datetime) -> dict[str, int]:
+        return dict(self.sold)
+
+
+@dataclass
+class _Port:
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    async def register_order(self, **kw: Any) -> OrderRegistrationResult:
+        self.calls.append(kw)
+        return OrderRegistrationResult(success=True, order_id="order_1", provider="medusa",
+                                       raw_payload={"display_id": 50, "items": [{"title": "Cubo Love"}]})
+
+
+def _episode(**extra: Any) -> dict[str, Any]:
+    promo = {k: list(v) if isinstance(v, tuple) else v for k, v in asdict(_AMOR26).items()}
+    return {"episode_id": "ep_001", "started_at_ms": 1, "closed_at_ms": None,
+            "applied_coupon": {"code": "AMOR26", "applied_at_ms": 1, "promotion": promo}, **extra}
+
+
+def _write_metadata(vault: Path, metadata: dict[str, Any]) -> None:
+    (vault / _S).mkdir(parents=True, exist_ok=True)
+    (vault / _S / "metadata.json").write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
+
+
+# --- /order ------------------------------------------------------------------------
+
+
+def _orders_client(vault: Path, port: _Port, sales: _Sales) -> TestClient:
+    async def flush(session_key: str) -> int:
+        return 0
+
+    async def notify(*_: Any) -> None:
+        return None
+
+    deps = SessionActionsDeps(vault_dir=vault, catalog=_Catalog(), order_port=port, flush=flush,
+                              notify_episode_closed=notify, quotas=_quotas(), sales=sales,
+                              quota_lock=VaultQuotaLock(vault))
+    app = FastAPI()
+    app.include_router(session_actions.router, prefix="/api/chats")
+    app.dependency_overrides[session_actions.get_session_actions_deps] = lambda: deps
+    return TestClient(app)
+
+
+_SHIP = {"city": "Bogotá", "neighborhood": "Chapinero", "address": "Cl 1 # 2-3", "phone": "3001234567",
+         "receiver_name": "Ana Pérez"}
+
+
+def test_dashboard_create_order_consumes_quota_like_the_bot(tmp_path: Path) -> None:
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    client = _orders_client(tmp_path, port, _Sales({_Q: 4}))  # queda 1
+
+    res = client.post(f"/api/chats/session-actions/{_S}/order", json={
+        "items": [{"handle": "cubo-love", "quantity": 2, "color": "Rosado", "aroma": "Café"}],
+        "shipping": _SHIP, "payment_method": "transfer", "send_payment_instructions": False,
+    })
+
+    assert res.status_code == 200, res.text
+    assert res.json()["registered"] is True, res.json()
+    (call,) = port.calls
+    assert call["items"][0].discounted_units == (DiscountedUnits(1, 2100, quota_id=_Q),)
+    assert (call["coupon_code"], call["discount_cop"]) == ("AMOR26", 2100)
+    assert call["total_cop"] == 42000 + call["shipping_cop"] - 2100
+
+
+def test_dashboard_create_order_rejects_a_color_the_product_does_not_have(tmp_path: Path) -> None:
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    client = _orders_client(tmp_path, port, _Sales())
+
+    res = client.post(f"/api/chats/session-actions/{_S}/order", json={
+        "items": [{"handle": "cubo-love", "quantity": 1, "color": "Verde", "aroma": "Café"}],
+        "shipping": _SHIP, "payment_method": "transfer",
+    })
+
+    body = res.json()
+    assert body["registered"] is False
+    assert body["error_detail"] == "invalid_variant_attribute"
+    assert "Verde" in body["problems"][0]
+    assert port.calls == []
+
+
+# --- /order-intake/suggest -----------------------------------------------------------
+
+
+@dataclass
+class _LLM:
+    reply: str
+    model: str = "fake"
+
+    async def extract(self, prompt: str) -> str:
+        return self.reply
+
+
+def test_order_intake_prefill_shows_quota_discount_per_line(tmp_path: Path) -> None:
+    draft = {"items": [{"producto": "Cubo Love", "color": "Rosado", "aroma": "Café", "cantidad": 2}]}
+    _write_metadata(tmp_path, {"episodes": [_episode(order_draft=draft)]})
+    (tmp_path / _S / "sessions").mkdir(parents=True, exist_ok=True)
+    (tmp_path / _S / "sessions" / f"{_S}.jsonl").write_text(
+        json.dumps({"timestamp": "2026-09-23T15:00:00+00:00", "role": "user",
+                    "content": "Quiero 2 Cubo Love rosado con aroma a café"}) + "\n",
+        encoding="utf-8",
+    )
+    reply = json.dumps({"items": [{"handle": "cubo-love", "quantity": 2}], "shipping": {}})
+    deps = OrderIntakeDeps(vault_dir=tmp_path, catalog=_Catalog(), llm=_LLM(reply),
+                           quotas=_quotas(), sales=_Sales({_Q: 4}))
+    app = FastAPI()
+    app.include_router(order_intake.router, prefix="/api/chats")
+    app.dependency_overrides[order_intake.get_order_intake_deps] = lambda: deps
+
+    body = TestClient(app).post(f"/api/chats/order-intake/{_S}/suggest").json()
+
+    [item] = body["items"]
+    assert (item["color"], item["aroma"]) == ("Rosado", "Café")
+    assert (item["colors"], item["aromas"]) == (["Rosado", "Azul"], ["Café", "Lavanda"])
+    assert (item["coupon_units"], item["coupon_discount_cop"]) == (1, 2100)
+    assert (body["coupon_code"], body["discount_cop"]) == ("AMOR26", 2100)
+
+
+
+def test_dashboard_double_submit_returns_the_first_order_not_a_second_draft(tmp_path: Path) -> None:
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    sales = _Sales({_Q: 4})  # queda 1
+    client = _orders_client(tmp_path, port, sales)
+    body = {"items": [{"handle": "cubo-love", "quantity": 1, "color": "Rosado", "aroma": "Café"}],
+            "shipping": _SHIP, "payment_method": "transfer", "send_payment_instructions": False}
+
+    first = client.post(f"/api/chats/session-actions/{_S}/order", json=body).json()
+    sales.sold[_Q] = 5  # el primer pedido ya consumió la última unidad
+    again = client.post(f"/api/chats/session-actions/{_S}/order", json=body).json()
+
+    assert first["registered"] is True and again["registered"] is True
+    assert again["order_id"] == first["order_id"]
+    assert len(port.calls) == 1
+
+
+def test_dashboard_order_whose_discount_changed_since_the_form_is_quota_changed(tmp_path: Path) -> None:
+    """El formulario mostró −$2.100; al enviar ya no queda la unidad: NO se
+    registra otro total sin que el operador lo vea."""
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    client = _orders_client(tmp_path, port, _Sales({_Q: 5}))
+
+    res = client.post(f"/api/chats/session-actions/{_S}/order", json={
+        "items": [{"handle": "cubo-love", "quantity": 1, "color": "Rosado", "aroma": "Café"}],
+        "shipping": _SHIP, "payment_method": "transfer", "expected_discount_cop": 2100,
+    }).json()
+
+    assert (res["registered"], res["error_detail"]) == (False, "quota_changed")
+    assert res["discount_cop"] == 0 and res["total_cop"] == 21000 + res["shipping_cop"]
+    assert port.calls == []
+
+
+def test_order_intake_catalog_carries_color_and_aroma_lists_for_manual_lines(tmp_path: Path) -> None:
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    (tmp_path / _S / "sessions").mkdir(parents=True, exist_ok=True)
+    (tmp_path / _S / "sessions" / f"{_S}.jsonl").write_text(
+        json.dumps({"timestamp": "2026-09-23T15:00:00+00:00", "role": "user", "content": "hola"}) + "\n",
+        encoding="utf-8",
+    )
+    deps = OrderIntakeDeps(vault_dir=tmp_path, catalog=_Catalog(), llm=_LLM("{}"), quotas=_quotas(), sales=_Sales())
+    app = FastAPI()
+    app.include_router(order_intake.router, prefix="/api/chats")
+    app.dependency_overrides[order_intake.get_order_intake_deps] = lambda: deps
+
+    body = TestClient(app).post(f"/api/chats/order-intake/{_S}/suggest").json()
+
+    [entry] = body["catalog"]
+    assert (entry["colors"], entry["aromas"]) == (["Rosado", "Azul"], ["Café", "Lavanda"])
+
+
+@dataclass
+class _SalesThatMove:
+    """Lo vendido cambia entre lecturas (otro pedido entra en el medio)."""
+
+    reads: list[dict[str, int]]
+
+    async def sold_units(self, *, since: datetime) -> dict[str, int]:
+        return dict(self.reads.pop(0) if len(self.reads) > 1 else self.reads[0])
+
+
+def test_dashboard_quota_changed_inside_the_lock_answers_with_the_new_total(tmp_path: Path) -> None:
+    """La última unidad se fue ENTRE el cálculo del formulario y el candado: el
+    operador tiene que ver el total nuevo, no el que ya no vale."""
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    client = _orders_client(tmp_path, port, _SalesThatMove([{_Q: 4}, {_Q: 5}]))
+
+    res = client.post(f"/api/chats/session-actions/{_S}/order", json={
+        "items": [{"handle": "cubo-love", "quantity": 1, "color": "Rosado", "aroma": "Café"}],
+        "shipping": _SHIP, "payment_method": "transfer", "expected_discount_cop": 2100,
+    }).json()
+
+    assert (res["registered"], res["error_detail"]) == (False, "quota_changed")
+    assert res["discount_cop"] == 0
+    assert res["total_cop"] == 21000 + res["shipping_cop"]
+    assert port.calls == []
+
+
+@dataclass
+class _SalesDown:
+    async def sold_units(self, *, since: datetime) -> dict[str, int]:
+        from src.platform.promotions.port import PromotionsUnavailableError
+
+        raise PromotionsUnavailableError("timeout")
+
+
+def test_dashboard_order_with_the_quota_unreadable_is_not_quota_changed(tmp_path: Path) -> None:
+    """El formulario mostró −$2.100 y al enviar Medusa no responde: NO es
+    "cambiaron las unidades" con el precio lleno como total nuevo (el operador
+    le cobraría de más al cliente creyendo que otro se llevó la unidad). No se
+    registra nada y se dice por qué."""
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    client = _orders_client(tmp_path, port, _SalesDown())
+
+    res = client.post(f"/api/chats/session-actions/{_S}/order", json={
+        "items": [{"handle": "cubo-love", "quantity": 1, "color": "Rosado", "aroma": "Café"}],
+        "shipping": _SHIP, "payment_method": "transfer", "expected_discount_cop": 2100,
+    }).json()
+
+    assert (res["registered"], res["error_detail"]) == (False, "quota_unavailable")
+    assert port.calls == []
+
+
+@dataclass
+class _DownPort:
+    async def register_order(self, **kw: Any) -> OrderRegistrationResult:
+        return OrderRegistrationResult(success=False, order_id=None, provider="medusa",
+                                       error_detail="medusa_api_error: HTTP 503 /admin/draft-orders: down")
+
+
+def test_dashboard_failure_kept_for_reconciliation_says_it_retries_by_itself(tmp_path: Path) -> None:
+    """Medusa rechazó y el intento quedó en `failed_order_registrations`: el
+    operador tiene que saber que el sistema lo reintenta solo (crearlo otra
+    vez a mano puede duplicarlo)."""
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    client = _orders_client(tmp_path, _DownPort(), _Sales())  # type: ignore[arg-type]
+
+    res = client.post(f"/api/chats/session-actions/{_S}/order", json={
+        "items": [{"handle": "cubo-love", "quantity": 1}],
+        "shipping": _SHIP, "payment_method": "transfer",
+    }).json()
+
+    assert res["registered"] is False
+    assert res["saved_for_retry"] is True
+    saved = json.loads((tmp_path / _S / "metadata.json").read_text(encoding="utf-8"))
+    assert [r["status"] for r in saved["failed_order_registrations"]] == ["pending"]
+
+
+# --- Contratos del formulario (premortem D1/D2/D4) -----------------------------------
+
+
+def _suggest(tmp_path: Path, sales: Any, draft_items: list[dict[str, Any]]) -> dict[str, Any]:
+    _write_metadata(tmp_path, {"episodes": [_episode(order_draft={"items": draft_items})]})
+    (tmp_path / _S / "sessions").mkdir(parents=True, exist_ok=True)
+    (tmp_path / _S / "sessions" / f"{_S}.jsonl").write_text(
+        json.dumps({"timestamp": "2026-09-23T15:00:00+00:00", "role": "user", "content": "Quiero un Cubo Love"}) + "\n",
+        encoding="utf-8",
+    )
+    reply = json.dumps({"items": [{"handle": "cubo-love", "quantity": 1}], "shipping": {}})
+    deps = OrderIntakeDeps(vault_dir=tmp_path, catalog=_Catalog(), llm=_LLM(reply), quotas=_quotas(), sales=sales)
+    app = FastAPI()
+    app.include_router(order_intake.router, prefix="/api/chats")
+    app.dependency_overrides[order_intake.get_order_intake_deps] = lambda: deps
+    return TestClient(app).post(f"/api/chats/order-intake/{_S}/suggest").json()
+
+
+def test_suggestion_names_the_coupon_and_why_it_gives_nothing(tmp_path: Path) -> None:
+    """D2: con el cupón aplicado y $0 de descuento el formulario igual tiene
+    que saber del cupón (y por qué no descuenta): antes llegaba `null` y el
+    operador registraba a precio lleno sin saber que al cliente se le
+    prometió un descuento."""
+    sold_out = _suggest(tmp_path, _Sales({_Q: 5}), [{"producto": "Cubo Love", "color": "Rosado", "aroma": "Café"}])
+    no_attrs = _suggest(tmp_path, _Sales(), [{"producto": "Cubo Love"}])
+
+    assert (sold_out["coupon_code"], sold_out["discount_cop"], sold_out["coupon_reason"]) == (
+        "AMOR26", 0, "quota_exhausted",
+    )
+    assert (no_attrs["coupon_code"], no_attrs["coupon_reason"]) == ("AMOR26", "missing_attributes")
+
+
+def test_dry_run_returns_the_numbers_without_registering_anything(tmp_path: Path) -> None:
+    """D4: tras editar líneas el formulario pide el total nuevo sin registrar
+    (aunque el descuento que había visto ya no sea el mismo)."""
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    client = _orders_client(tmp_path, port, _Sales({_Q: 4}))  # queda 1
+
+    res = client.post(f"/api/chats/session-actions/{_S}/order", json={
+        "items": [{"handle": "cubo-love", "quantity": 2, "color": "Rosado", "aroma": "Café"}],
+        "shipping": _SHIP, "payment_method": "transfer", "expected_discount_cop": 4200, "dry_run": True,
+    }).json()
+
+    assert (res["registered"], res["dry_run"], res["error_detail"]) == (False, True, None)
+    assert (res["discount_cop"], res["coupon_code"]) == (2100, "AMOR26")
+    assert res["total_cop"] == 42000 + res["shipping_cop"] - 2100
+    assert port.calls == []
+    episode = json.loads((tmp_path / _S / "metadata.json").read_text(encoding="utf-8"))["episodes"][-1]
+    assert "coupon_confirmed_split" not in episode
+
+
+def test_resubmit_with_another_city_or_color_is_a_new_order_not_the_old_one(tmp_path: Path) -> None:
+    """C4: el doble envío se reconoce por el MISMO pedido (ítems, color/aroma,
+    medio de pago Y dirección). Si el operador corrige la ciudad o el color,
+    no le devuelve el pedido viejo con el envío/color equivocado."""
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    client = _orders_client(tmp_path, port, _Sales())
+    body = {"items": [{"handle": "cubo-love", "quantity": 1, "color": "Rosado", "aroma": "Café"}],
+            "shipping": _SHIP, "payment_method": "transfer", "send_payment_instructions": False}
+
+    first = client.post(f"/api/chats/session-actions/{_S}/order", json=body).json()
+    other_city = client.post(f"/api/chats/session-actions/{_S}/order",
+                             json={**body, "shipping": {**_SHIP, "city": "Medellín"}}).json()
+
+    assert first["registered"] is True and other_city["registered"] is True
+    assert other_city.get("already_registered") is False
+    assert len(port.calls) == 2

@@ -23,6 +23,11 @@ from src.sdk.connectorkit import (
     resolve_coupon,
 )
 
+from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+    as_eligible,
+    quota_offer,
+    units_text,
+)
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     clear_applied_coupon,
     describe_promotion,
@@ -43,6 +48,7 @@ _REASON_TEXT = {
     "budget_exhausted": "Ese cupón ya se agotó.",
     "unavailable": "No pude validar el cupón ahora mismo (sistema de promociones caído).",
     "scope_unresolved": "No pude confirmar a qué productos aplica ese cupón, así que no lo apliqué.",
+    "quota_unavailable": "No pude confirmar cuántas unidades con descuento quedan, así que no apliqué el cupón.",
     "shipping_not_supported": (
         "Ese cupón es de envío y el envío lo cobra la transportadora a su tarifa, "
         "sin descuentos: no se aplica."
@@ -50,11 +56,33 @@ _REASON_TEXT = {
 }
 
 
+def _exhausted_text(code: str) -> str:
+    return (
+        f"Las unidades con descuento de {code} ya se agotaron. Ofrécele el precio "
+        "normal con honestidad; no inventes otro descuento."
+    )
+
+
 async def _product_titles(catalog: Any, promotion: PromotionDTO) -> list[str] | str:
     """Nombres de los productos a los que aplica, o "todo el catálogo"."""
     if is_whole_catalog(promotion):
         return "todo el catálogo"
     return [p["title"] for p in await eligible_products(catalog, promotion)]
+
+
+def _promotion_summary(p: dict[str, Any]) -> str:
+    if p.get("exhausted"):
+        return f"{p['code']} (agotado: ya no quedan unidades con descuento)"
+    if p.get("units_unavailable"):
+        return f"{p['code']} (no pude confirmar cuántas unidades quedan; no lo ofrezcas)"
+    if "units" in p:
+        return f"{p['code']} ({p['discount']}, SOLO en: {units_text(p['units'])})"
+    scope = (
+        "todo el catálogo"
+        if p["products"] == "todo el catálogo"
+        else ", ".join(p["products"]) or "productos seleccionados"
+    )
+    return f"{p['code']} ({p['discount']}, {scope})"
 
 
 class ListPromotionsTool(ToolBase):
@@ -69,11 +97,21 @@ class ListPromotionsTool(ToolBase):
     parameters: dict[str, Any] = {"type": "object", "properties": {}}
 
     def __init__(
-        self, workspace: str | Path, *, promotions: PromotionsPort, catalog: Any = None
+        self,
+        workspace: str | Path,
+        *,
+        promotions: PromotionsPort,
+        catalog: Any = None,
+        quotas: Any = None,
+        sales: Any = None,
     ) -> None:
+        """`quotas`/`sales`: cupo por unidad (almacén + lector de vendidas del
+        SDK). Sin ellos, los cupones se listan como siempre."""
         self._workspace = Path(workspace)
         self._promotions = promotions
         self._catalog = catalog
+        self._quotas = quotas
+        self._sales = sales
 
     async def execute_with_context(self, ctx: ToolContext) -> str:
         try:
@@ -96,28 +134,28 @@ class ListPromotionsTool(ToolBase):
             if promo.target_type == "shipping_methods":
                 # El envío lo cobra la transportadora sin descuentos: no se ofrece.
                 continue
-            out.append(
-                {
-                    "code": promo.code,
-                    "discount": describe_promotion(promo),
-                    "products": await _product_titles(self._catalog, promo),
-                    "min_subtotal_cop": promo.min_subtotal_cop,
-                    "ends_at_ms": promo.ends_at_ms,
-                    "name": promo.description,
-                }
-            )
+            entry: dict[str, Any] = {
+                "code": promo.code,
+                "discount": describe_promotion(promo),
+                "products": await _product_titles(self._catalog, promo),
+                "min_subtotal_cop": promo.min_subtotal_cop,
+                "ends_at_ms": promo.ends_at_ms,
+                "name": promo.description,
+            }
+            offer = await quota_offer(promo, quotas=self._quotas, sales=self._sales, catalog=self._catalog)
+            if offer.has_quota:
+                # Cupo por unidad: el cupón vale SOLO en estas combinaciones.
+                entry["units"] = list(offer.units)
+                entry["products"] = [u["title"] for u in offer.units]
+                if offer.reason is not None:
+                    entry["exhausted"] = offer.reason == "quota_exhausted"
+                    entry["units_unavailable"] = offer.reason == "quota_unavailable"
+            out.append(entry)
         if not out:
             summary = "No hay promociones ni cupones vigentes. No prometas descuentos."
         else:
             summary = "Cupones vigentes: " + "; ".join(
-                f"{p['code']} ({p['discount']}, "
-                + (
-                    "todo el catálogo"
-                    if p["products"] == "todo el catálogo"
-                    else ", ".join(p["products"]) or "productos seleccionados"
-                )
-                + ")"
-                for p in out
+                _promotion_summary(p) for p in out
             ) + ". El cliente lo aplica dándote el código → `apply_coupon`."
         return json.dumps({"promotions": out, "summary": summary}, ensure_ascii=False)
 
@@ -167,15 +205,20 @@ class ApplyCouponTool(ToolBase):
         metadata_store: Any,
         catalog: Any = None,
         now_ms: Callable[[], int] | None = None,
+        quotas: Any = None,
+        sales: Any = None,
     ) -> None:
         """`metadata_store`: store de `metadata.json` del vault (DI desde la
         composición — `build_session_metadata_store`; las tools no importan
-        platform ni el runtime del SDK, que arrastra temporalio: R-DIP)."""
+        platform ni el runtime del SDK, que arrastra temporalio: R-DIP).
+        `quotas`/`sales`: cupo por unidad (sin ellos, como siempre)."""
         self._workspace = Path(workspace)
         self._promotions = promotions
         self._catalog = catalog
         self._store = metadata_store
         self._now_ms = now_ms or (lambda: int(time.time() * 1000))
+        self._quotas = quotas
+        self._sales = sales
 
     async def execute_with_context(
         self, ctx: ToolContext, code: str, items: list[dict[str, Any]] | None = None
@@ -232,6 +275,25 @@ class ApplyCouponTool(ToolBase):
             )
 
         promotion = resolution.promotion
+        offer = await quota_offer(
+            promotion, quotas=self._quotas, sales=self._sales, catalog=self._catalog
+        )
+        if offer.reason is not None:
+            logger.info(
+                "🎟️ [TOOL apply_coupon] rejected session={} code={} reason={}",
+                ctx.session_key, normalized, offer.reason,
+            )
+            text = (
+                _exhausted_text(promotion.code)
+                if offer.reason == "quota_exhausted"
+                else _REASON_TEXT[offer.reason] + " Díselo al cliente con honestidad."
+            )
+            return json.dumps(
+                {"applied": False, "code": promotion.code, "reason": offer.reason, "summary": text},
+                ensure_ascii=False,
+            )
+        if offer.has_quota:
+            return self._applied_with_quota(ctx, promotion, offer, now_ms)
         whole_catalog = is_whole_catalog(promotion)
         eligible = await eligible_products(self._catalog, promotion)
         store.update(
@@ -284,6 +346,43 @@ class ApplyCouponTool(ToolBase):
         )
         envelope["summary"] = summary
         return json.dumps(envelope, ensure_ascii=False)
+
+    def _applied_with_quota(
+        self, ctx: ToolContext, promotion: PromotionDTO, offer: Any, now_ms: int
+    ) -> str:
+        """Cupón con cupo: vale SOLO en las combinaciones que quedan. El
+        reparto real (qué unidades del pedido llevan descuento) lo hacen
+        `present_order_confirmation`/`register_order`."""
+        eligible = as_eligible(offer.units)
+        self._store.update(
+            ctx.session_key,
+            lambda md: set_applied_coupon(md, promotion=promotion, now_ms=now_ms, eligible=eligible, quota=True),
+        )
+        logger.info("🎟️ [TOOL apply_coupon] applied (cupo) session={} code={}", ctx.session_key, promotion.code)
+        summary = (
+            f"Cupón {promotion.code} aplicado: {describe_promotion(promotion)} SOLO en estas "
+            f"unidades: {units_text(offer.units)}. Otros colores, aromas o productos van a "
+            "precio normal. Para aplicarlo necesitas el color y el aroma de cada producto"
+        )
+        if not offer.show_units_left:
+            summary += "; no le digas cuántas quedan"
+        summary += (
+            ". El total final lo calcula `present_order_confirmation`/`register_order`; "
+            "no prometas otro monto."
+        )
+        return json.dumps(
+            {
+                "applied": True,
+                "code": promotion.code,
+                "discount": describe_promotion(promotion),
+                "whole_catalog": False,
+                "units": list(offer.units),
+                "eligible_products": eligible,
+                "min_subtotal_cop": promotion.min_subtotal_cop,
+                "summary": summary,
+            },
+            ensure_ascii=False,
+        )
 
 
 __all__ = ["ApplyCouponTool", "ListPromotionsTool"]

@@ -171,8 +171,109 @@ decisión del operador, 2026-09-23).
 - WHEN el operador envía (o prueba) la campaña
 - THEN responde 422 "El cupón AMOR no existe en Medusa…" y el builder ya lo advertía bajo el campo
 
+#### Scenario: Cupón programado y envío programado
+
+- GIVEN AMOR27 empieza mañana
+- WHEN el operador programa el envío para después de que empiece, o manda una prueba
+- THEN se acepta (el cupón se valida para el instante del envío); un cupón que vence ANTES del envío programado responde 422 aunque hoy rija
+
+#### Scenario: El cupón cambió antes de que saliera el envío programado
+
+- GIVEN una campaña programada con AMOR27
+- WHEN al dispararse AMOR27 está pausado, vencido o ya no existe
+- THEN no sale ningún mensaje, la campaña queda `failed` con `failure_reason` a la vista del operador
+- AND si sigue valiendo, la campaña copia el % y el "válido hasta" de ese momento; si Medusa no responde se reintenta y, en el último intento, se frena con el motivo
+
 #### Scenario: La campaña anuncia un cupón de envío
 
 - GIVEN en Medusa existe `ENVIOGRATIS` sobre el envío
 - WHEN el operador abre el builder o envía una campaña con ese código
 - THEN el builder no lo lista entre los cupones vigentes y el envío responde 422 "El cupón ENVIOGRATIS es de envío, y el envío lo cobra la transportadora…"
+
+### Requirement: Central de cupones
+
+Marketing → Cupones MUST ser la central de control de los cupones: crea,
+edita, pausa y borra promociones de **porcentaje** sobre productos (D8)
+escribiendo en Medusa por el `PromotionsAdminPort` (promoción + campaña en UNA
+llamada al crear). El "hasta" MUST ser un día incluido en hora de Bogotá
+(la campaña cierra a las 00:00 del día siguiente). Cualquier usuario del
+dashboard puede operar la central (D6), y cada cambio MUST quedar en el
+registro con el actor que verificó `require_auth` (`current_actor`), nunca uno
+que venga en el cuerpo del request.
+
+#### Scenario: Crear un cupón desde la central
+
+- GIVEN el operador llena código AMOR27, 10 %, un producto, del 22 al 27-sep
+- WHEN guarda con "Crear y activar"
+- THEN Medusa tiene la promoción AMOR27 activa con su campaña `2026-09-22T05:00Z → 2026-09-28T05:00Z`
+- AND el registro de cambios dice quién la creó
+
+#### Scenario: Código ocupado
+
+- GIVEN ya existe AMOR26 en Medusa (con cualquier combinación de mayúsculas)
+- WHEN el operador intenta crear AMOR26, o renombrar un borrador a "amor26"
+- THEN la central responde 409 "Ese código ya existe." y no escribe nada
+
+#### Scenario: Cupón editado fuera de Hubara (D7)
+
+- GIVEN AMOR26 tiene una condición por etiquetas creada en Medusa Admin
+- THEN la central lo muestra en solo lectura con el motivo
+- AND editarlo o pausarlo responde 409 y ninguna escritura toca Medusa
+
+#### Scenario: Editar solo lo que cambió
+
+- WHEN el operador cambia solo el porcentaje de un cupón gestionable
+- THEN la central manda solo `POST /admin/promotions/{id}` con el nuevo valor
+- AND si un paso de una edición falla, responde 502 con el paso y el estado releído de Medusa (reintentar es seguro); si falla el PRIMER paso responde el error original (nada cambió)
+
+#### Scenario: Medusa no confirma una escritura que sí salió
+
+- WHEN crear, editar, pausar o borrar se corta después de enviarse (timeout, 5xx)
+- THEN la central relee Medusa: si quedó aplicado, responde como éxito y lo registra; si no se puede saber, responde 503 diciendo que el resultado es DESCONOCIDO (verificar antes de reintentar) y lo registra como `*_unconfirmed` — nunca "no se hizo ningún cambio"
+
+#### Scenario: Campaña de Medusa compartida
+
+- GIVEN dos promociones cuelgan de la misma campaña de Medusa (armado en Medusa Admin)
+- THEN la central las muestra en solo lectura y borrar un borrador nunca borra una campaña que otra promoción usa
+
+#### Scenario: Borrar
+
+- GIVEN un cupón con ventas, o que no es borrador
+- WHEN el operador intenta borrarlo
+- THEN responde 409 y le sugiere pausarlo; un borrador sin ventas se borra con su campaña y su cupo
+
+### Requirement: Cupo por unidad administrado en la central
+
+Las filas del cupo (producto + color + aroma + unidades) MUST validarse contra
+las listas cerradas del producto (sus etiquetas `Color:`/`Aroma:`) y contra los
+productos del cupón; el guardado es todo o nada, con errores por fila. El
+cupo vive en Hubara, así que se puede poner también a un cupón de porcentaje
+de solo lectura. Las vendidas y los resultados MUST derivarse de los pedidos.
+
+#### Scenario: Color que el producto no tiene
+
+- WHEN el operador guarda una fila Cubo Love · Verde y el producto no tiene "Color: Verde"
+- THEN responde 422 con el error en esa fila y no guarda ninguna
+
+#### Scenario: Bajar las unidades por debajo de lo vendido
+
+- GIVEN una fila con 3 vendidas
+- WHEN el operador la deja en 1
+- THEN la central muestra 0 disponibles y el aviso de sobreventa
+
+#### Scenario: Dos personas editan las unidades
+
+- GIVEN el operador A cargó las unidades y el operador B guardó después
+- WHEN A guarda con la versión que cargó (`expected_updated_at`)
+- THEN responde 409 `units_changed` sin escribir, y el editor ofrece "Recargar" sin perder el borrador
+
+#### Scenario: Productos que salen del cupón
+
+- WHEN una edición quita productos del cupón
+- THEN sus filas del cupo se quitan (bajo el candado) y el registro de cambios lo dice (`units_pruned`)
+
+### Requirement: La campaña anuncia los términos del cupón
+
+Cuando la campaña lleva cupón, el envío y el envío de prueba MUST copiar el
+porcentaje y el último día incluido del cupón a la campaña ("válido hasta 27
+de septiembre"), en vez de usar lo que tipeó el operador.

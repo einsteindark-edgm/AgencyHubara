@@ -255,6 +255,13 @@ def test_suggest_prellena_el_formulario_con_lo_que_dijo_el_cliente(h: _Harness) 
             "line_total_cop": 104000,
             "variant_resolved": True,
             "evidence": "quiero el Dúo Zodiacal de Leo … quiero 2",
+            # Cupo por unidad: el Dúo no tiene listas de color/aroma ni cupón.
+            "color": None,
+            "aroma": None,
+            "colors": [],
+            "aromas": [],
+            "coupon_units": 0,
+            "coupon_discount_cop": 0,
         }
     ]
     # Totales = catálogo + tarifa mínima de envío por ciudad (Bogotá).

@@ -75,6 +75,9 @@ export interface Campaign {
   updatedAtMs: number;
   sentAtMs: number | null;
   sendResult: CampaignSendResult | null;
+  /** Por qué NO salió una campaña fallida (p. ej. el cupón ya no servía al
+   *  dispararse el envío programado). */
+  failureReason?: string | null;
   testSends: CampaignTestSend[];
   /** Curaduría manual: sesiones quitadas a mano de la audiencia. */
   excludedSessionIds: string[];

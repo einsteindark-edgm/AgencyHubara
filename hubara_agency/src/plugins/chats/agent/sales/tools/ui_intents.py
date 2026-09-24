@@ -935,6 +935,16 @@ class PresentOrderConfirmationTool(ToolBase):
                         "handle": {"type": "string"},
                         "quantity": {"type": "integer", "minimum": 1},
                         "unit_price_cop": {"type": "integer", "minimum": 0},
+                        "color": {
+                            "type": "string",
+                            "maxLength": 60,
+                            "description": "Color elegido, de la lista del producto (si tiene).",
+                        },
+                        "aroma": {
+                            "type": "string",
+                            "maxLength": 60,
+                            "description": "Aroma elegido, de la lista del producto (si tiene).",
+                        },
                     },
                     "required": ["handle", "quantity", "unit_price_cop"],
                 },
@@ -968,9 +978,15 @@ class PresentOrderConfirmationTool(ToolBase):
         self,
         workspace: str | Path,
         catalog: CatalogPort,
+        quotas: Any = None,
+        sales: Any = None,
     ) -> None:
+        """`quotas`/`sales`: cupo por unidad (central de cupones). Sin ellos,
+        el cupón descuenta como siempre."""
         self._workspace = Path(workspace)
         self._catalog = catalog
+        self._quotas = quotas
+        self._sales = sales
 
     async def execute_with_context(
         self,
@@ -1036,26 +1052,45 @@ class PresentOrderConfirmationTool(ToolBase):
         # manda montos de descuento. Catálogo caído → sin ids → solo aplica
         # una promo sin filtro de productos. Import local: el paquete
         # use_cases arrastra el workflow → activities → esta tool (ciclo).
+        from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+            coupon_note,
+            missing_attributes_text,
+            remember_confirmed_split,
+            resolve_item_variants,
+            split_key,
+            split_summary,
+        )
         from src.plugins.chats.agent.sales.use_cases.coupons import (
             coupon_discount_for_items,
+            quota_product_ids,
         )
 
         from src.plugins.chats.agent.sales.use_cases.order_draft import (
             get_projectable_draft,
         )
 
-        metadata = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(ctx.session_key)
-        discount = await coupon_discount_for_items(
-            metadata,
-            self._catalog,
-            items,
-            shipping_cop=shipping_cop,
+        metadata_now = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(ctx.session_key)
+        # Color y aroma de cada ítem: en un producto con cupo lo que manda el
+        # LLM tiene que existir en las listas del producto; si no, NO hay monto
+        # (se corrige primero). Sin cupón no se valida (se acepta como antes).
+        variants, invalid_variants = await resolve_item_variants(
+            self._catalog, items, metadata_now,
+            strict_products=quota_product_ids(metadata_now, self._quotas),
         )
-        draft_city = (get_projectable_draft(metadata) or {}).get("ciudad")
-        discount_cop = discount.discount_cop if discount else 0
-        total = subtotal + shipping_cop + tax_cop - discount_cop
-        reference_id = f"HUB-hubara-{ctx.session_key}-{int(time.time())}"
+        if invalid_variants:
+            return json.dumps({
+                "queued": False,
+                "error": "invalid_variant_attribute",
+                "message": (
+                    "; ".join(v.message() for v in invalid_variants)
+                    + ". NO se encoló la confirmación: confirma con el cliente una "
+                    "opción de la lista y vuelve a llamar present_order_confirmation."
+                ),
+            }, ensure_ascii=False)
+        draft_city = (get_projectable_draft(metadata_now) or {}).get("ciudad")
 
+        # Los rechazos baratos (precio, envío) van ANTES del descuento: el
+        # cupo por unidad relee lo vendido en Medusa (premortem B8).
         if price_mismatches:
             logger.warning(
                 "🚨 [TOOL present_order_confirmation] price_mismatch session={} {}",
@@ -1107,6 +1142,42 @@ class PresentOrderConfirmationTool(ToolBase):
                 ),
             }, ensure_ascii=False)
 
+        discount = await coupon_discount_for_items(
+            metadata_now,
+            self._catalog,
+            items,
+            shipping_cop=shipping_cop,
+            quotas=self._quotas,
+            sales=self._sales,
+            variants=variants,
+        )
+        if discount is not None and discount.quota and discount.missing_attributes:
+            # La tarjeta TERMINA el turno: si sale sin el color/aroma de una
+            # línea con cupo, el cliente confirma a precio lleno sin que el bot
+            # alcance a preguntar. Se pregunta primero.
+            return json.dumps({
+                "queued": False,
+                "error": "missing_variant_attributes",
+                "message": (
+                    f"El cupón {discount.code} vale solo para ciertas combinaciones y falta "
+                    f"elegir: {missing_attributes_text(variants, discount.missing_attributes)}. "
+                    "NO se encoló la confirmación: pregúntaselo al cliente "
+                    "(`present_variant_picker`) y vuelve a llamar present_order_confirmation "
+                    "con `color` y `aroma` en cada ítem."
+                ),
+            }, ensure_ascii=False)
+        discount_cop = discount.discount_cop if discount else 0
+        if discount is not None and discount.quota:
+            logger.info(
+                "🎟️ [TOOL present_order_confirmation] cupo session={} code={} discount={} reason={}",
+                ctx.session_key, discount.code, discount_cop, discount.reason,
+            )
+        total = subtotal + shipping_cop + tax_cop - discount_cop
+        reference_id = f"HUB-hubara-{ctx.session_key}-{int(time.time())}"
+        # Lo que la tarjeta dice del cupo (qué unidades llevan descuento, o por
+        # qué no): la tarjeta termina el turno — el bot no alcanza a decirlo.
+        note = coupon_note(discount.code, items, variants, discount) if discount else None
+
         intent = {
             "kind": "order_confirmation",
             "params": {
@@ -1124,6 +1195,7 @@ class PresentOrderConfirmationTool(ToolBase):
                     if discount and discount_cop > 0
                     else {}
                 ),
+                **({"coupon_note": note} if note else {}),
             },
             "analytics": {
                 "component_id": "order_confirmation",
@@ -1136,6 +1208,14 @@ class PresentOrderConfirmationTool(ToolBase):
             },
         }
         _append_intent(ctx.session_key, intent)
+        if discount is not None and discount.quota:
+            # El reparto que ve el cliente: `register_order` lo compara con el
+            # que relee bajo el candado (la última unidad no se vende dos veces).
+            confirmed = split_key(discount.line_discounts, items, variants)
+            FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(
+                ctx.session_key,
+                lambda md: remember_confirmed_split(md, discount.code, confirmed),
+            )
 
         # Regla del operador (2026-09-07): con CONTRA ENTREGA el resumen que
         # ve el cliente NO trae el valor del envío ni un total con envío
@@ -1175,10 +1255,28 @@ class PresentOrderConfirmationTool(ToolBase):
                 f" El total ${total:,} COP YA incluye el descuento del cupón "
                 f"{discount.code}: pásalo tal cual a `register_order`."
             )
+            if discount.quota:
+                # Cupo por unidad: qué unidades llevan descuento y cuáles no
+                # (dilo así; register_order necesita el mismo color y aroma).
+                summary += (
+                    " Con descuento: "
+                    + split_summary(discount.code, items, variants, discount)
+                    + ". Pasa el mismo `color` y `aroma` de cada ítem a `register_order`."
+                )
         elif discount and discount.reason == "min_subtotal":
             summary += (
                 f" El cupón {discount.code} NO aplica: requiere compra mínima de "
                 f"${discount.min_subtotal_cop or 0:,} COP en productos — díselo."
+            )
+        elif discount and discount.reason == "quota_unavailable":
+            summary += (
+                f" No pude confirmar cuántas unidades con descuento de {discount.code} "
+                "quedan, así que la confirmación va sin descuento — díselo."
+            )
+        elif discount and discount.reason == "quota_exhausted":
+            summary += (
+                f" Las unidades con descuento de {discount.code} ya se agotaron: el "
+                "pedido va a precio normal — díselo con honestidad."
             )
         elif discount and discount.reason == "no_applicable_items":
             summary += f" El cupón {discount.code} no aplica a estos productos — díselo."

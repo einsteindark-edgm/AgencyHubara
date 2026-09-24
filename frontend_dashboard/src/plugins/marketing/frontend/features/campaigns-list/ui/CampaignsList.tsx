@@ -7,7 +7,7 @@
  * martillaría el vault).
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import { Icon } from "@/shared/ui";
 
@@ -37,9 +37,11 @@ interface Props {
   onSelect: (id: string) => void;
   /** El Page selecciona la campaña recién creada (useSelection). */
   onCreated: (id: string) => void;
+  /** Slot arriba del header (el selector Campañas | Cupones del Page). */
+  header?: ReactNode;
 }
 
-export function CampaignsList({ campaigns, selectedId, onSelect, onCreated }: Props) {
+export function CampaignsList({ campaigns, selectedId, onSelect, onCreated, header }: Props) {
   const [filter, setFilter] = useState<StatusFilter>("all");
   const create = useCreateCampaign();
 
@@ -60,6 +62,7 @@ export function CampaignsList({ campaigns, selectedId, onSelect, onCreated }: Pr
   return (
     <aside className="sidebar">
       <div className="side-header">
+        {header}
         <div className="flex items-center gap-2">
           <span className="text-sm font-bold tracking-tight text-fg">Campañas</span>
           <span className="text-[11px] text-fg-faint">{campaigns.length}</span>
@@ -164,6 +167,9 @@ function CampaignCard({
           <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
           {meta.label}
         </span>
+        {c.status === "failed" && c.failureReason ? (
+          <span className="text-[10.5px] text-fg-faint">{c.failureReason}</span>
+        ) : null}
         {c.status === "sent" && c.sendResult ? (
           <span className="text-[10.5px] tabular-nums text-fg-faint">
             {c.sendResult.sent} enviados

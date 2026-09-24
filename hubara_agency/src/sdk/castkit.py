@@ -38,8 +38,9 @@ import httpx
 from fastapi import HTTPException, Request
 
 from src.platform import config as _config
+from src.platform.auth import current_actor as current_actor
 
-__all__ = ["forward"]
+__all__ = ["current_actor", "forward"]
 
 #: Modos de identidad del hop (ver ``forward``):
 #: ``propagate`` porta el ``Authorization`` del request entrante (el default:
