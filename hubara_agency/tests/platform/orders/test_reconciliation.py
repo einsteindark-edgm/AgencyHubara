@@ -528,3 +528,31 @@ async def test_reconcile_one_atomic_write_no_tmp_leftover(tmp_path):
                         audit_id="AUDIT-1", port=port)
     leftovers = list((tmp_path / "wa_57311").glob("*.tmp"))
     assert leftovers == []
+
+
+@pytest.mark.asyncio
+async def test_rebuild_order_args_keeps_the_quota_of_each_discounted_group(tmp_path):
+    """El reintento conserva el cupo que consumió cada unidad con descuento:
+    sin `quota_id` la línea no llevaría `coupon_quota_id` y la unidad NO
+    contaría como vendida (el cupo vendería de más)."""
+    record = _failed_record(
+        "AUDIT-Q",
+        items=[{"handle": "cubo-love", "quantity": 2, "unit_price_cop": 21000}],
+        subtotal_cop=42000,
+        shipping_cop=7900,
+        total_cop=47800,
+        coupon_code="AMOR26",
+        discount_cop=2100,
+        coupon_line_discounts=[
+            {"index": 0, "units": 1, "discount_unit_cop": 2100, "quota_id": "q_rosado_cafe"}
+        ],
+    )
+    _write_metadata(tmp_path, "wa_57312", {"failed_order_registrations": [record]})
+    port = KwargsPort()
+
+    await reconcile_one(vault_dir=tmp_path, session_key="wa_57312", audit_id="AUDIT-Q", port=port)
+
+    (call,) = port.calls
+    assert call["items"][0].discounted_units == (
+        DiscountedUnits(units=1, discount_unit_cop=2100, quota_id="q_rosado_cafe"),
+    )

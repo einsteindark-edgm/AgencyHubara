@@ -38,6 +38,10 @@ class DiscountedUnits:
     """
     units: int
     discount_unit_cop: int
+    #: Cupo por unidad que consumen estas unidades (central de cupones): la
+    #: línea lo lleva como `metadata.coupon_quota_id` y de ahí se derivan
+    #: las vendidas del cupo. None = cupón sin cupo.
+    quota_id: str | None = None
 
 
 @dataclass(frozen=True)

@@ -473,6 +473,7 @@ class MedusaOrderRegistration:
                                 "coupon_code": coupon_code,
                                 "list_unit_price_cop": it.unit_price_cop,
                                 "discount_unit_cop": discount,
+                                **({"coupon_quota_id": quota_id} if quota_id else {}),
                             }
                             if discount
                             else {}
@@ -480,7 +481,7 @@ class MedusaOrderRegistration:
                     },
                 }
                 for line in resolution.lines
-                for units, discount in _discount_chunks(line.quantity, pending)
+                for units, discount, quota_id in _discount_chunks(line.quantity, pending)
             ]
             first = resolution.lines[0].variant
             mismatch = (
@@ -870,7 +871,10 @@ def _compute_order_fingerprint(
     """
     parts = sorted(
         f"{it.handle}:{it.quantity}:{it.unit_price_cop}:{it.variant_label or ''}"
-        + "".join(f":-{g.units}x{g.discount_unit_cop}" for g in it.discounted_units)
+        + "".join(
+            f":-{g.units}x{g.discount_unit_cop}" + (f"@{g.quota_id}" if g.quota_id else "")
+            for g in it.discounted_units
+        )
         for it in items
     )
     raw = "|".join(parts) + f"|total={total_cop}|pay={payment_method}"
@@ -917,40 +921,42 @@ def _medusa_total_cop(
     lines = sum(
         units * (it.unit_price_cop - discount)
         for it in items
-        for units, discount in _discount_chunks(it.quantity, _pending_discounts(it))
+        for units, discount, _quota in _discount_chunks(it.quantity, _pending_discounts(it))
     )
     return lines + max(shipping_cop - shipping_discount_cop, 0)
 
 
-def _pending_discounts(item: OrderItem) -> list[list[int]]:
-    """Grupos `[unidades, descuento_por_unidad]` del ítem, mutables para que
-    `_discount_chunks` los consuma línea a línea."""
+def _pending_discounts(item: OrderItem) -> list[list[Any]]:
+    """Grupos `[unidades, descuento_por_unidad, quota_id]` del ítem, mutables
+    para que `_discount_chunks` los consuma línea a línea."""
     return [
-        [group.units, group.discount_unit_cop]
+        [group.units, group.discount_unit_cop, group.quota_id]
         for group in item.discounted_units
         if group.units > 0 and group.discount_unit_cop > 0
     ]
 
 
-def _discount_chunks(quantity: int, pending: list[list[int]]) -> list[tuple[int, int]]:
+def _discount_chunks(
+    quantity: int, pending: list[list[Any]]
+) -> list[tuple[int, int, str | None]]:
     """Parte las `quantity` unidades de una línea en tramos
-    `(unidades, descuento_por_unidad)`.
+    `(unidades, descuento_por_unidad, quota_id)`.
 
     Consume en orden los grupos con descuento pendientes del ítem (muta
     `pending`, así una línea de variante siguiente sigue donde quedó esta);
     las unidades que sobran van a precio de lista (descuento 0).
     """
-    chunks: list[tuple[int, int]] = []
+    chunks: list[tuple[int, int, str | None]] = []
     left = quantity
     while left > 0 and pending:
         units = min(left, pending[0][0])
-        chunks.append((units, pending[0][1]))
+        chunks.append((units, pending[0][1], pending[0][2]))
         pending[0][0] -= units
         left -= units
         if pending[0][0] == 0:
             pending.pop(0)
     if left > 0:
-        chunks.append((left, 0))
+        chunks.append((left, 0, None))
     return chunks
 
 

@@ -468,6 +468,7 @@ def _rebuild_order_args(
                 DiscountedUnits(
                     units=int(line["units"]),
                     discount_unit_cop=int(line["discount_unit_cop"]),
+                    quota_id=str(line["quota_id"]) if line.get("quota_id") else None,
                 )
             )
         items = [

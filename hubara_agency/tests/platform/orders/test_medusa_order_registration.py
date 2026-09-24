@@ -1528,3 +1528,58 @@ async def test_register_order_without_coupon_has_no_promo_codes(adapter):
     body = _json.loads(draft_route.calls[-1].request.content)
     assert "promo_codes" not in body
     assert "coupon_code" not in body["metadata"]
+
+
+# ---------------------------------------------------------------------------
+# Cupo por unidad (central de cupones, Fase 5): la línea con descuento lleva
+# la marca del cupo que consumió — de ahí se derivan las vendidas.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_register_order_writes_quota_line_metadata(adapter):
+    draft_route = _mock_draft_flow("cubo-love", "Cubo Love")
+
+    await adapter.register_order(
+        session_key="wa_c",
+        items=[
+            OrderItem(
+                handle="cubo-love",
+                quantity=3,
+                unit_price_cop=21_000,
+                variant_label="Rosado · Café",
+                discounted_units=(
+                    DiscountedUnits(units=1, discount_unit_cop=2_100, quota_id="q_rosado_cafe"),
+                ),
+            )
+        ],
+        shipping=_SHIPPING,
+        payment_method="transfer",
+        subtotal_cop=63_000,
+        shipping_cop=7_900,
+        total_cop=68_800,
+        coupon_code="AMOR26",
+        discount_cop=2_100,
+    )
+
+    body = json.loads(draft_route.calls[-1].request.content)
+    lines = [
+        (line["quantity"], line["unit_price"], line["metadata"].get("coupon_quota_id"))
+        for line in body["items"]
+    ]
+    assert lines == [(1, 18_900, "q_rosado_cafe"), (2, 21_000, None)]
+
+
+def test_fingerprint_includes_the_quota_of_each_discounted_group():
+    """Dos cupos distintos con el mismo descuento son pedidos distintos (no se
+    reusa el draft de otra combinación)."""
+    from src.platform.orders.medusa_order import _compute_order_fingerprint
+
+    cubo = OrderItem(handle="cubo-love", quantity=1, unit_price_cop=21_000)
+    plain = replace(cubo, discounted_units=(DiscountedUnits(units=1, discount_unit_cop=2_100),))
+    q1 = replace(cubo, discounted_units=(DiscountedUnits(1, 2_100, quota_id="q1"),))
+    q2 = replace(cubo, discounted_units=(DiscountedUnits(1, 2_100, quota_id="q2"),))
+
+    fp = lambda items: _compute_order_fingerprint(items, 18_900, "transfer")  # noqa: E731
+    assert len({fp([plain]), fp([q1]), fp([q2])}) == 3
