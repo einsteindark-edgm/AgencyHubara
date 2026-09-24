@@ -27,6 +27,8 @@ from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
 )
 from src.plugins.chats.agent.sales.config.shipping import (
     ORDER_SUMMARY_SHIPPING_NOTE,
+    SHIPPING_RATE_BOGOTA_COP,
+    SHIPPING_RATE_NATIONAL_COP,
     SHIPPING_RATES_MESSAGE,
 )
 
@@ -176,7 +178,8 @@ async def test_order_summary_prepaid_shows_minimum_shipping_and_total(
 @pytest.mark.asyncio
 async def test_order_summary_prepaid_zero_shipping_says_no_cost():
     """Mismo criterio que payment_instructions (#236): envío 0 = "sin costo",
-    nunca se inventa un reparto."""
+    nunca se inventa un reparto. Render legacy: desde 2026-09-23 las tools
+    rechazan un envío 0; solo lo alcanza un intent encolado antes."""
     wa_client = _wa_client()
     await _dispatch(
         wa_client,
@@ -375,3 +378,218 @@ async def test_order_confirmation_envelope_cod_does_not_hand_llm_a_total(
     (intent,) = _read_intents(tmp_path, "s_ship")
     assert intent["params"]["shipping_cop"] == 16940
     assert intent["params"]["total_cop"] == 55440
+
+
+# ---------------------------------------------------------------------------
+# Regla 4 — el envío es SIEMPRE una tarifa mínima publicada: sin "envío
+# gratis" ni descuentos, lo cobra la transportadora (operador, 2026-09-23)
+# ---------------------------------------------------------------------------
+
+from src.platform.orders.port import OrderRegistrationResult  # noqa: E402
+from src.plugins.chats.agent.sales.tools.order_registration import (  # noqa: E402
+    RegisterOrderTool,
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shipping_cop", [0, 12_000])
+async def test_order_confirmation_rejects_shipping_that_is_not_a_published_rate(
+    tmp_path: Path, shipping_cop: int
+):
+    """Envío $0 ("envío gratis") o inventado: no se le muestra ningún resumen
+    al cliente y el bot recibe las tarifas publicadas para corregir."""
+    tool = PresentOrderConfirmationTool(
+        workspace=str(tmp_path), catalog=_OneProductCatalog()
+    )
+    result = json.loads(
+        await tool.execute_with_context(
+            _ctx(),
+            items=[{"handle": "velon-amor-eterno", "quantity": 1, "unit_price_cop": 38500}],
+            shipping_cop=shipping_cop,
+            shipping_address_summary="Calle 1 # 2-3, Bogotá",
+            payment_method="transfer",
+        )
+    )
+    assert (result["queued"], result.get("error")) == (False, "shipping_mismatch")
+    assert "7.900" in result["message"] and "16.940" in result["message"]
+    assert not (tmp_path / "isolated_vault" / "s_ship" / "metadata.json").exists()
+
+
+def _rate(amount: int) -> str:
+    return f"{amount:,}".replace(",", ".")
+
+
+def test_confirmation_tool_describes_shipping_as_a_published_rate_never_free():
+    """La descripción del parámetro es lo que guía al LLM: ya no dice "0 si
+    envío gratis" sino las tarifas publicadas — armadas desde las constantes,
+    así no divergen del validador si cambia una tarifa (L-19)."""
+    desc = PresentOrderConfirmationTool.parameters["properties"]["shipping_cop"]["description"]
+    assert "gratis" not in desc.lower() or "no existe envío gratis" in desc.lower()
+    assert _rate(SHIPPING_RATE_BOGOTA_COP) in desc and _rate(SHIPPING_RATE_NATIONAL_COP) in desc
+
+
+def test_register_order_describes_shipping_as_a_published_rate():
+    """`register_order` también le dice al LLM qué envío pasar (antes el
+    parámetro no tenía descripción y con contra entrega el bot mandaba 0)."""
+    desc = RegisterOrderTool.parameters["properties"]["shipping_cop"].get("description", "")
+    assert _rate(SHIPPING_RATE_BOGOTA_COP) in desc and _rate(SHIPPING_RATE_NATIONAL_COP) in desc
+    assert "contra entrega" in desc.lower()
+
+
+@pytest.mark.asyncio
+async def test_order_confirmation_uses_the_draft_city_when_known(tmp_path: Path):
+    """Con la ciudad ya en el borrador (Bogotá), la tarifa nacional no pasa la
+    confirmación: si no, el cliente confirmaría un total que después
+    `register_order` rechaza."""
+    md = tmp_path / "isolated_vault" / "s_ship" / "metadata.json"
+    md.parent.mkdir(parents=True)
+    md.write_text(
+        json.dumps({"episodes": [{
+            "episode_id": "ep_1", "started_at_ms": 1, "closed_at_ms": None,
+            "order_draft": {"slots": {"ciudad": "Bogotá"}},
+        }]}),
+        encoding="utf-8",
+    )
+    tool = PresentOrderConfirmationTool(workspace=str(tmp_path), catalog=_OneProductCatalog())
+    result = json.loads(
+        await tool.execute_with_context(
+            _ctx(),
+            items=[{"handle": "velon-amor-eterno", "quantity": 1, "unit_price_cop": 38500}],
+            shipping_cop=SHIPPING_RATE_NATIONAL_COP,
+            shipping_address_summary="Calle 1 # 2-3, Chapinero",
+            payment_method="transfer",
+        )
+    )
+    assert (result["queued"], result.get("error")) == (False, "shipping_mismatch")
+    # $16.940 SÍ es una tarifa publicada: el rechazo nombra la ciudad.
+    assert "no es la tarifa publicada para Bogotá" in result["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case", ["missing_receiver_name", "amount_mismatch", "price_mismatch", "shipping_mismatch"]
+)
+async def test_register_order_validation_rejections_mark_the_tool_as_failed(
+    _isolate_vault_dir: Path, case: str
+):
+    """Un rechazo de validación es "corrige y reintenta": lleva `error` para
+    que el workflow no deje salir un `send_reply` del mismo lote ("listo, tu
+    pedido quedó registrado") sin que exista la orden (`batch_tool_failed`)."""
+    port = _CapturingPort()
+    tool = RegisterOrderTool(
+        workspace=str(_isolate_vault_dir), vault_dir=_isolate_vault_dir, port=port,
+        catalog=_OneProductCatalog(),
+    )
+    shipping = {"city": "Bogotá", "neighborhood": "Centro", "address": "Calle 1 # 2-3",
+                "phone": "3001234567", "receiver_name": "Ana Pérez"}
+    unit_price, shipping_cop, total = 38500, SHIPPING_RATE_BOGOTA_COP, 38500 + SHIPPING_RATE_BOGOTA_COP
+    if case == "missing_receiver_name":
+        shipping = {**shipping, "receiver_name": ""}
+    elif case == "amount_mismatch":
+        total = 1000
+    elif case == "price_mismatch":
+        unit_price, total = 30000, 30000 + SHIPPING_RATE_BOGOTA_COP
+    else:
+        shipping_cop, total = 0, 38500
+    env = json.loads(
+        await tool.execute_with_context(
+            _ctx(),
+            items=[{"handle": "velon-amor-eterno", "quantity": 1, "unit_price_cop": unit_price}],
+            shipping=shipping,
+            payment_method="transfer",
+            subtotal_cop=unit_price,
+            shipping_cop=shipping_cop,
+            total_cop=total,
+        )
+    )
+    assert (env["registered"], env["error_detail"], env.get("error")) == (False, case, case)
+    assert port.calls == []
+
+
+@pytest.mark.asyncio
+async def test_register_order_reports_the_shipping_before_the_total(_isolate_vault_dir: Path):
+    """Contra entrega con envío 0 y el total ya sumado con la tarifa: el primer
+    rechazo tiene que ser el del envío. Si SEC-07 va antes, dice "total
+    esperado = subtotal", el modelo quita el envío del total y recién el
+    siguiente rechazo se lo hace poner: 3 llamadas en vez de 2."""
+    port = _CapturingPort()
+    tool = RegisterOrderTool(
+        workspace=str(_isolate_vault_dir), vault_dir=_isolate_vault_dir, port=port,
+        catalog=_OneProductCatalog(),
+    )
+    env = json.loads(
+        await tool.execute_with_context(
+            _ctx(),
+            items=[{"handle": "velon-amor-eterno", "quantity": 1, "unit_price_cop": 38500}],
+            shipping={"city": "Bogotá", "neighborhood": "Centro", "address": "Calle 1 # 2-3",
+                      "phone": "3001234567", "receiver_name": "Ana Pérez"},
+            payment_method="cash_on_delivery",
+            subtotal_cop=38500,
+            shipping_cop=0,
+            total_cop=38500 + SHIPPING_RATE_BOGOTA_COP,
+        )
+    )
+    assert env.get("error") == "shipping_mismatch"
+    assert port.calls == []
+
+
+class _CapturingPort:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def register_order(self, **kwargs) -> OrderRegistrationResult:
+        self.calls.append(kwargs)
+        return OrderRegistrationResult(success=True, order_id="order_1", provider="medusa")
+
+
+async def _register(vault: Path, port: _CapturingPort, *, city: str, shipping_cop: int) -> dict:
+    tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=port)
+    return json.loads(
+        await tool.execute_with_context(
+            _ctx(),
+            items=[{"handle": "velon-amor-eterno", "quantity": 1, "unit_price_cop": 38500}],
+            shipping={
+                "city": city,
+                "neighborhood": "Centro",
+                "address": "Calle 1 # 2-3",
+                "phone": "3001234567",
+                "receiver_name": "Ana Pérez",
+            },
+            payment_method="transfer",
+            subtotal_cop=38500,
+            shipping_cop=shipping_cop,
+            total_cop=38500 + shipping_cop,
+        )
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("city", "shipping_cop"), [("Bogotá", 0), ("Bogotá", 16_940), ("Medellín", 12_000)]
+)
+async def test_register_order_rejects_shipping_that_is_not_the_published_rate(
+    _isolate_vault_dir: Path, city: str, shipping_cop: int
+):
+    """Aunque los montos cuadren (SEC-07), un envío $0, inventado, o la tarifa
+    nacional para Bogotá no se registran: el pedido no llega a Medusa."""
+    port = _CapturingPort()
+    env = await _register(_isolate_vault_dir, port, city=city, shipping_cop=shipping_cop)
+    assert (env["registered"], env.get("error_detail")) == (False, "shipping_mismatch")
+    assert "7.900" in env["summary"] and "16.940" in env["summary"]
+    assert port.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("city", "shipping_cop"),
+    [("Bogotá D.C.", 7_900), ("Chía", 7_900), ("Medellín", 16_940)],
+)
+async def test_register_order_accepts_the_published_rates(
+    _isolate_vault_dir: Path, city: str, shipping_cop: int
+):
+    """No hay lista de "municipios cercanos": fuera de Bogotá valen las dos
+    tarifas publicadas (el bot decide con la política)."""
+    port = _CapturingPort()
+    env = await _register(_isolate_vault_dir, port, city=city, shipping_cop=shipping_cop)
+    assert env["registered"] is True, env
+    assert port.calls[0]["shipping_cop"] == shipping_cop

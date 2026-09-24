@@ -80,3 +80,47 @@ def shipping_rate_for_city(city: str | None) -> int:
     if "bogota" in folded:
         return SHIPPING_RATE_BOGOTA_COP
     return SHIPPING_RATE_NATIONAL_COP
+
+
+def _cop(amount: int) -> str:
+    return "$" + f"{amount:,}".replace(",", ".")
+
+
+# Decisión del operador (2026-09-23): el envío lo cobra la transportadora a su
+# tarifa, SIN descuentos ni "envío gratis". El monto que manda el LLM tiene que
+# ser una tarifa mínima publicada (L-19: un monto del LLM se compara contra la
+# tabla).
+SHIPPING_RATE_RULE = (
+    f"El envío es SIEMPRE una tarifa mínima publicada: {_cop(SHIPPING_RATE_BOGOTA_COP)} "
+    f"para Bogotá y municipios cercanos, {_cop(SHIPPING_RATE_NATIONAL_COP)} a nivel "
+    "nacional. No existe envío gratis ni descuento en el envío: lo cobra la "
+    "transportadora. Pasa esa tarifa también con contra entrega (el resumen "
+    "igual dice \"Por confirmar\")."
+)
+
+
+#: Descripción del parámetro `shipping_cop` de `present_order_confirmation` y
+#: `register_order`: la guía del LLM sale de las MISMAS constantes que valida
+#: `is_published_shipping_rate` (un umbral en dos lugares diverge — L-19).
+SHIPPING_COP_PARAM_DESCRIPTION = (
+    f"Tarifa MÍNIMA publicada de envío en COP: {SHIPPING_RATE_BOGOTA_COP} "
+    f"({_cop(SHIPPING_RATE_BOGOTA_COP)}) para Bogotá y municipios cercanos, "
+    f"{SHIPPING_RATE_NATIONAL_COP} ({_cop(SHIPPING_RATE_NATIONAL_COP)}) a nivel "
+    "nacional. No existe envío gratis: nunca 0. También con contra entrega "
+    "(el resumen igual dice \"Por confirmar\" y el total a registrar es "
+    "subtotal + envío − cupón)."
+)
+
+
+def is_published_shipping_rate(shipping_cop: int, city: str | None = None) -> bool:
+    """¿``shipping_cop`` es una tarifa mínima publicada para esta ciudad?
+
+    Bogotá paga la de Bogotá. Fuera de Bogotá valen las dos: no hay lista de
+    "municipios cercanos" y esa decisión la toma el bot con la política
+    publicada. Nunca $0 ni un monto inventado.
+    """
+    if shipping_cop not in (SHIPPING_RATE_BOGOTA_COP, SHIPPING_RATE_NATIONAL_COP):
+        return False
+    if city is not None and "bogota" in _fold(city):
+        return shipping_cop == SHIPPING_RATE_BOGOTA_COP
+    return True

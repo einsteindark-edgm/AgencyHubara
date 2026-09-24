@@ -92,8 +92,8 @@ async def _register(tool, ctx, unit_price: int) -> dict:
         shipping=_SHIPPING,
         payment_method="cash_on_delivery",
         subtotal_cop=unit_price,
-        shipping_cop=0,
-        total_cop=unit_price,
+        shipping_cop=16940,  # tarifa publicada nacional (Cali)
+        total_cop=unit_price + 16940,
     ))
 
 
@@ -126,7 +126,7 @@ async def test_catalog_price_is_registered(ctx, _isolate_vault_dir: Path) -> Non
     tool = RegisterOrderTool(workspace=str(_isolate_vault_dir), vault_dir=_isolate_vault_dir, port=port, catalog=FakeCatalog())
     result = await _register(tool, ctx, 49500)
     assert result["registered"] is True
-    assert port.calls[0]["total_cop"] == 49500
+    assert port.calls[0]["total_cop"] == 49500 + 16940
 
 
 @pytest.mark.asyncio

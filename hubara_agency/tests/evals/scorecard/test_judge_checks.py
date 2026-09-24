@@ -182,6 +182,19 @@ def test_payment_methods_guidance_allows_the_public_business_key(monkeypatch) ->
     assert "permitido" in prompt.split("CONVERSACIÓN", 1)[0].lower()
 
 
+def test_payment_methods_guidance_states_the_inclusive_cod_threshold() -> None:
+    """El juez decía "pedidos por más de $45.000": un "desde $45.000" del bot
+    (lo correcto, umbral inclusivo) le parecía una condición cambiada. La
+    cifra sale de la constante del agente."""
+    t = traj(T(1, inbound="¿Tienen contra entrega?",
+               sent=["Sí, contra entrega desde $45.000 en productos."]))
+
+    guidance = jc.build_prompt("ENV-06", t, CheckContext()).split("CONVERSACIÓN", 1)[0]
+
+    assert "desde $45.000 en productos" in guidance
+    assert "más de $45.000" not in guidance
+
+
 def test_identity_check_also_covers_the_relay_wording() -> None:
     """Run 5ed9af2d: "Listo, la conversación quedó en manos del equipo humano."
     no dice "soy una IA", pero nombrar a "un humano" delata que hasta ahí no

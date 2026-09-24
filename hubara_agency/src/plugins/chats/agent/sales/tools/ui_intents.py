@@ -50,7 +50,12 @@ from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp import limits as wa_limits
 from src.plugins.chats.agent.sales.config.shipping import (
+    SHIPPING_COP_PARAM_DESCRIPTION,
+    SHIPPING_RATE_BOGOTA_COP,
+    SHIPPING_RATE_NATIONAL_COP,
+    SHIPPING_RATE_RULE,
     cash_on_delivery_available,
+    is_published_shipping_rate,
 )
 from src.plugins.chats.agent.sales.pricing import (
     accepted_prices,
@@ -911,7 +916,8 @@ class PresentOrderConfirmationTool(ToolBase):
         "'Por confirmar' (lo recalcula la transportadora antes de "
         "despachar) y NO se muestra total; con pago anticipado o link se "
         "muestra el envío como tarifa mínima + total. `shipping_cop` es la "
-        "tarifa mínima (Bogotá y cercanos $7.900 / nacional $16.940). "
+        f"tarifa mínima (Bogotá y cercanos {format_cop(SHIPPING_RATE_BOGOTA_COP)} / "
+        f"nacional {format_cop(SHIPPING_RATE_NATIONAL_COP)}). "
         "Llámala SOLO después de que `verify_order_for_checkout` retornó "
         "verified=True y discrepancy=False. Si hay discrepancia, primero "
         "informa al cliente honestamente y pídele confirmación con el "
@@ -946,7 +952,7 @@ class PresentOrderConfirmationTool(ToolBase):
             "shipping_cop": {
                 "type": "integer",
                 "minimum": 0,
-                "description": "Costo de envío en COP. 0 si envío gratis.",
+                "description": SHIPPING_COP_PARAM_DESCRIPTION,
             },
             "tax_cop": {
                 "type": "integer",
@@ -1056,6 +1062,10 @@ class PresentOrderConfirmationTool(ToolBase):
             coupon_discount_for_items,
         )
 
+        from src.plugins.chats.agent.sales.use_cases.order_draft import (
+            get_projectable_draft,
+        )
+
         metadata_now = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(ctx.session_key)
         # Color y aroma de cada ítem: lo que manda el LLM tiene que existir en
         # las listas del producto; si no, NO hay monto (se corrige primero).
@@ -1081,6 +1091,7 @@ class PresentOrderConfirmationTool(ToolBase):
             sales=self._sales,
             variants=variants,
         )
+        draft_city = (get_projectable_draft(metadata_now) or {}).get("ciudad")
         discount_cop = discount.discount_cop if discount else 0
         total = subtotal + shipping_cop + tax_cop - discount_cop
         reference_id = f"HUB-hubara-{ctx.session_key}-{int(time.time())}"
@@ -1106,6 +1117,33 @@ class PresentOrderConfirmationTool(ToolBase):
                     "llamar present_order_confirmation con los precios EXACTOS "
                     "del catálogo (verify_order_for_checkout te los devuelve "
                     "en unit_price_cop). Nunca inventes ni negocies precios."
+                ),
+            }, ensure_ascii=False)
+
+        # Envío = tarifa mínima publicada, nunca $0 ni inventada (decisión del
+        # operador 2026-09-23: sin descuentos ni envío gratis). Con la ciudad
+        # del borrador, la misma regla que `register_order` (Bogotá solo la
+        # suya): el cliente no confirma un total que el registro rechazaría.
+        if not is_published_shipping_rate(
+            int(shipping_cop), draft_city if isinstance(draft_city, str) else None
+        ):
+            logger.warning(
+                "🚨 [TOOL present_order_confirmation] shipping_mismatch session={} shipping_cop={}",
+                ctx.session_key, shipping_cop,
+            )
+            return json.dumps({
+                "queued": False,
+                "error": "shipping_mismatch",
+                "message": (
+                    f"El envío que pasaste ({format_cop(int(shipping_cop))}) no es "
+                    + (
+                        f"la tarifa publicada para {draft_city}. "
+                        if isinstance(draft_city, str) and draft_city.strip()
+                        else "una tarifa publicada. "
+                    )
+                    + f"NO se encoló la confirmación. {SHIPPING_RATE_RULE} "
+                    "Si le dijiste al cliente otro valor de envío, acláraselo con "
+                    "honestidad y vuelve a llamar present_order_confirmation."
                 ),
             }, ensure_ascii=False)
 

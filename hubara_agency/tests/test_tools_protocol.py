@@ -231,6 +231,10 @@ async def test_tag_tool_rejects_confirmado_pago_pendiente_without_register_order
     assert "error" in payload
     assert "precondition_failed" in payload["error"]
     assert "register_order" in payload["error"]
+    # Un rechazo de validación de `register_order` (con `error`) se corrige
+    # y se reintenta; solo el de Medusa (sin `error`) escala.
+    assert "vuelve a llamarla" in payload["error"]
+    assert "sin `error`" in payload["error"]
 
     # El tag NO se escribió — sigue siendo INTERESADO
     data = json.loads((chat_dir / "metadata.json").read_text(encoding="utf-8"))

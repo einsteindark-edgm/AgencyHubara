@@ -147,7 +147,7 @@ async def test_order_confirmation_uses_variant_retailer(tmp_path: Path):
                     "unit_price_cop": 23000,
                 },
             ],
-            shipping_cop=8000,
+            shipping_cop=7900,
             shipping_address_summary="Calle 1 # 2-3, Bogotá",
             payment_method="transfer",
         )
