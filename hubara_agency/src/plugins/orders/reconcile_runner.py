@@ -72,13 +72,25 @@ async def reconcile_all_pending(
 
     outcomes: list[ReconciliationOutcome] = []
     for r in pending:
-        outcome = await reconcile_one(
-            vault_dir=vault_dir,
-            session_key=r.session_key,
-            audit_id=r.order_id,
-            port=port,
-            max_attempts=max_attempts,
-        )
+        try:
+            outcome = await reconcile_one(
+                vault_dir=vault_dir,
+                session_key=r.session_key,
+                audit_id=r.order_id,
+                port=port,
+                max_attempts=max_attempts,
+            )
+        except Exception as exc:  # noqa: BLE001 — un pedido no frena el barrido
+            log.exception(
+                "reconcile_all_pending: audit_id=%s session=%s reventó; sigue el barrido",
+                r.order_id, r.session_key,
+            )
+            outcome = ReconciliationOutcome(
+                session_key=r.session_key,
+                audit_id=r.order_id,
+                outcome=OUTCOME_ERROR,
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
         outcomes.append(outcome)
 
     summary = ReconciliationSummary(

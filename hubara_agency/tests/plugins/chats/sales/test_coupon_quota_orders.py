@@ -399,3 +399,141 @@ async def test_confirmation_with_quota_but_no_sales_reader_does_not_discount(_is
 
     assert env["queued"] is True and "discount_cop" not in env
     assert "no pude confirmar" in env["summary"].lower()
+
+
+# --- Premortem tras #353: rechazos con `error` y cupo ilegible al registrar ---------------
+
+
+@pytest.mark.asyncio
+async def test_register_quota_rejections_carry_error_so_the_bot_fixes_and_retries(
+    _isolate_vault_dir, monkeypatch
+) -> None:
+    """#353: `registered=false` CON `error` → el bot corrige y reintenta (y el
+    workflow no deja salir un send_reply del mismo paso); SIN `error` escala
+    como si Medusa hubiera rechazado el pedido. Los rechazos del cupo son de
+    la primera clase."""
+    import src.plugins.chats.agent.sales.tools.order_registration as reg
+
+    _seed(_isolate_vault_dir)
+    tool = _register_tool(_isolate_vault_dir, _Port(_Sales()))
+
+    changed = await _register(tool, _ctx(), total=_WITH_DISCOUNT)  # sin reparto confirmado
+    bad_color = json.loads(await tool.execute_with_context(
+        _ctx(), items=[_cubo(color="Verde", aroma="Café")], shipping=_SHIPPING,
+        payment_method="transfer", subtotal_cop=21000, shipping_cop=7900, total_cop=28900,
+    ))
+    monkeypatch.setattr(reg, "_QUOTA_LOCK_TIMEOUT_S", 0.1)
+    async with VaultQuotaLock(_isolate_vault_dir).hold("AMOR26", timeout_s=1):
+        busy = await _register(tool, _ctx(), total=_WITH_DISCOUNT)
+
+    assert [e.get("error") for e in (changed, bad_color, busy)] == [
+        "quota_changed", "invalid_variant_attribute", "quota_busy",
+    ]
+
+
+class _BrokenQuotas:
+    """Hoja de cupos ilegible (disco del vault con problemas)."""
+
+    def get(self, promotion_id: str) -> Any:
+        from src.platform.promotions.quota_store import QuotaStoreError
+
+        raise QuotaStoreError(f"no pude leer {promotion_id}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unreadable", ["sales", "quota_sheet"])
+async def test_register_that_cannot_reread_the_quota_keeps_the_confirmed_order_for_retry(
+    _isolate_vault_dir, unreadable: str
+) -> None:
+    """Sin poder releer lo vendido NO es "cambiaron las unidades" (el cliente
+    leería un total falso): no se crea nada, el pedido queda guardado con el
+    reparto que el cliente CONFIRMÓ para que la reconciliación lo reintente
+    bajo el candado, y el bot escala como con Medusa caído (sin `error`)."""
+    path = _seed(_isolate_vault_dir)
+    sales = _Sales({_Q: 4})
+    await _confirm(_confirm_tool(_isolate_vault_dir, sales), _ctx(), [_cubo(color="Rosado", aroma="Café")])
+    port = _Port(sales)
+    tool = _register_tool(_isolate_vault_dir, port)
+    if unreadable == "sales":
+        sales.down = True
+    else:
+        tool = RegisterOrderTool(workspace=str(_isolate_vault_dir), vault_dir=_isolate_vault_dir, port=port,
+                                 catalog=_Catalog(), quotas=_BrokenQuotas(), sales=sales,
+                                 quota_lock=VaultQuotaLock(_isolate_vault_dir))
+
+    env = await _register(tool, _ctx(), total=_WITH_DISCOUNT)
+
+    assert env["registered"] is False and "error" not in env, env
+    assert str(env["error_detail"]).startswith("quota_unavailable")
+    assert env["audit_id"] and "ORDER_REGISTRATION_FAILED" in env["summary"]
+    assert port.calls == []
+    (record,) = json.loads(path.read_text(encoding="utf-8"))["failed_order_registrations"]
+    assert (record["status"], record["total_cop"], record["discount_cop"]) == ("pending", _WITH_DISCOUNT, 2100)
+    assert record["coupon_line_discounts"] == [
+        {"index": 0, "units": 1, "discount_unit_cop": 2100, "quota_id": _Q},
+    ]
+
+
+_BUDA = {"handle": "vela-buda", "quantity": 1, "unit_price_cop": 40000}
+_MIXED_TOTAL = 21000 + 40000 + 7900 - 2100
+
+
+async def _register_items(tool: RegisterOrderTool, items: list[dict[str, Any]], *, total: int) -> dict[str, Any]:
+    return json.loads(await tool.execute_with_context(
+        _ctx(), items=items, shipping=_SHIPPING, payment_method="transfer",
+        subtotal_cop=sum(i["unit_price_cop"] * i["quantity"] for i in items), shipping_cop=7900, total_cop=total,
+    ))
+
+
+@pytest.mark.asyncio
+async def test_register_with_the_items_in_another_order_is_the_same_confirmed_order(_isolate_vault_dir) -> None:
+    """El LLM puede listar los ítems en otro orden al registrar: es el MISMO
+    pedido (no `quota_changed` con el mismo total) y el descuento va a la
+    línea del cubo, no a la que quedó en su posición."""
+    _seed(_isolate_vault_dir)
+    sales = _Sales({_Q: 4})
+    await _confirm(_confirm_tool(_isolate_vault_dir, sales), _ctx(), [_cubo(color="Rosado", aroma="Café"), _BUDA])
+    port = _Port(sales)
+
+    env = await _register_items(_register_tool(_isolate_vault_dir, port),
+                                [_BUDA, _cubo(color="Rosado", aroma="Café")], total=_MIXED_TOTAL)
+
+    assert env["registered"] is True, env
+    (call,) = port.calls
+    assert [it.discounted_units for it in call["items"]] == [(), (DiscountedUnits(1, 2100, quota_id=_Q),)]
+
+
+@pytest.mark.asyncio
+async def test_retry_of_the_same_order_with_reordered_items_reuses_the_draft(_isolate_vault_dir) -> None:
+    """Reintento del pedido YA registrado con los ítems en otro orden: el
+    reparto registrado se aplica a la línea correcta (mismo fingerprint → el
+    adapter reusa el draft) en vez de descontarle a otra y duplicar."""
+    _seed(_isolate_vault_dir)
+    sales = _Sales({_Q: 4})  # queda 1: el reintento ve su propio draft como vendido
+    await _confirm(_confirm_tool(_isolate_vault_dir, sales), _ctx(), [_cubo(color="Rosado", aroma="Café"), _BUDA])
+    port = _Port(sales)
+    tool = _register_tool(_isolate_vault_dir, port)
+
+    first = await _register_items(tool, [_cubo(color="Rosado", aroma="Café"), _BUDA], total=_MIXED_TOTAL)
+    again = await _register_items(tool, [_BUDA, _cubo(color="Rosado", aroma="Café")], total=_MIXED_TOTAL)
+
+    assert first["registered"] is True and again["registered"] is True, again
+    assert _fingerprint(port.calls[0]) == _fingerprint(port.calls[1])
+    assert port.calls[1]["items"][0].discounted_units == ()
+
+
+def test_prompts_treat_quota_rejections_as_fix_and_retry() -> None:
+    """Los rechazos del cupo llevan `error` (#353): la descripción de la tool y
+    el guion de cierre los ponen con los que se corrigen y reintentan, no con
+    el rechazo de Medusa que escala."""
+    from src.plugins.chats.agent.sales.tools import order_registration as reg
+
+    retry = reg.RegisterOrderTool.description.split("sin `error`")[0]
+    stage = (Path(reg.__file__).parents[1] / "workspace" / "skills" / "etapa_cierre" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    step4 = stage[stage.index("4. Lee el envelope"): stage.index("\n5. ")]
+    with_error = next(line for line in step4.splitlines() if "con `error`" in line)
+    for reason in ("invalid_variant_attribute", "quota_changed", "quota_busy"):
+        assert reason in retry, reason
+        assert reason in with_error, reason

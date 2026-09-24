@@ -242,3 +242,35 @@ async def test_reader_without_count_keeps_paging_until_a_short_page() -> None:
         sold = await reader.sold_units(since=since)
 
     assert sold == {_Q: 3}
+
+
+# --- L-28: el reintento de un pedido no cuenta su propio draft -----------------------
+
+
+def test_sold_units_leave_out_the_order_being_retried() -> None:
+    """Si el intento original SÍ creó el draft (Medusa respondió tarde), ese
+    draft es el MISMO pedido que se reintenta: no cuenta como vendido para
+    él (misma sesión y mismo fingerprint). Otra sesión con el mismo
+    fingerprint es otro cliente y sí cuenta."""
+    own = _order("order_own", [_line(1)], meta={"session_key": "wa_a", "order_fingerprint": "fp1"})
+    other = _order("order_other", [_line(2)], meta={"session_key": "wa_b", "order_fingerprint": "fp1"})
+
+    assert sold_units_by_quota([own, other], exclude={("wa_a", "fp1")}) == {_Q: 2}
+
+
+@pytest.mark.asyncio
+async def test_reader_and_board_pass_the_excluded_order_down() -> None:
+    since = datetime(2026, 9, 22, 5, 0, tzinfo=timezone.utc)
+    own = _order("order_own", [_line(1)], created="2026-09-23T12:00:00Z",
+                 meta={"session_key": "wa_a", "order_fingerprint": "fp1"})
+    with respx.mock() as mock:
+        mock.get(f"{_BASE}/admin/orders").mock(return_value=_page("orders", []))
+        mock.get(f"{_BASE}/admin/draft-orders").mock(return_value=_page("draft_orders", [own]))
+        reader = CouponSalesReader(HttpMedusaClient(base_url=_BASE, admin_token="sk_test", timeout=5.0))
+        sheet = QuotaSheet("promo_1", "AMOR26", (_row(_Q, 1, "2026-09-23T10:00:00Z"),))
+
+        counted = await reader.sold_units(since=since)
+        board = await quota_board(sheet, reader, exclude={("wa_a", "fp1")})
+
+    assert counted == {_Q: 1}
+    assert [(s.quota.id, s.units_left) for s in board] == [(_Q, 1)]

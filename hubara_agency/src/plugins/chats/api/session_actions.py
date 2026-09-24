@@ -558,7 +558,7 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
                 "total_cop": total_cop,
             }
         if discount is not None and discount.quota:
-            confirmed = split_key(discount.line_discounts)
+            confirmed = split_key(discount.line_discounts, items_with_attrs, variants)
             store.update(session, lambda md: remember_confirmed_split(md, discount.code, confirmed))
     if already:
         order_id = str(existing["order_id"])
@@ -584,7 +584,7 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
             )
         )
         if not envelope.get("registered"):
-            return {
+            failed: dict[str, Any] = {
                 "registered": False,
                 "order_id": None,
                 "error_detail": envelope.get("error_detail") or "registration_failed",
@@ -592,6 +592,12 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
                 "shipping_cop": shipping_cop,
                 "total_cop": total_cop,
             }
+            if envelope.get("error_detail") == "quota_changed":
+                # Otro pedido se llevó unidades entre el cálculo de arriba y el
+                # candado: el operador ve el total NUEVO (el de la tool).
+                failed["discount_cop"] = int(envelope.get("new_discount_cop") or 0)
+                failed["total_cop"] = int(envelope.get("new_total_cop") or total_cop)
+            return failed
         order_id = str(envelope["order_id"])
         provider = envelope.get("provider")
         portavelas_handles = list((envelope.get("portavelas") or {}).get("handles") or [])

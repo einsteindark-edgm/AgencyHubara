@@ -1179,7 +1179,7 @@ class PresentOrderConfirmationTool(ToolBase):
         if discount is not None and discount.quota:
             # El reparto que ve el cliente: `register_order` lo compara con el
             # que relee bajo el candado (la última unidad no se vende dos veces).
-            confirmed = split_key(discount.line_discounts)
+            confirmed = split_key(discount.line_discounts, items, variants)
             FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(
                 ctx.session_key,
                 lambda md: remember_confirmed_split(md, discount.code, confirmed),

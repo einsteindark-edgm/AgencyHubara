@@ -59,7 +59,11 @@ from src.platform.orders.port import (
     OrderRegistrationPort,
     OrderRegistrationResult,
     OrderShipping,
+    order_fingerprint,
 )
+from src.platform.promotions.port import PromotionsUnavailableError
+from src.platform.promotions.quota_lock import QuotaLockTimeout
+from src.platform.promotions.quota_store import QuotaStoreError
 
 log = logging.getLogger(__name__)
 
@@ -124,11 +128,22 @@ class ReconciliationOutcome:
 
 
 class QuotaRecheck(Protocol):
-    """Re-chequeo del cupo por unidad al reintentar (central de cupones)."""
+    """Re-chequeo del cupo por unidad al reintentar (central de cupones).
+
+    `own_order` = (sesión, fingerprint) del pedido que se reintenta: si su
+    draft SÍ llegó a Medusa (respondió tarde), sus unidades no cuentan como
+    vendidas para él mismo (L-28)."""
 
     def hold(self, code: str) -> Any: ...
 
-    async def units_left(self, quota_ids: set[str]) -> dict[str, int]: ...
+    async def units_left(
+        self, quota_ids: set[str], *, own_order: tuple[str, str] | None = None
+    ) -> dict[str, int]: ...
+
+
+#: El re-chequeo no pudo leer (candado ocupado, Medusa o el vault caídos): el
+#: pedido NO se registra y sigue pendiente — nunca "a ciegas".
+_QUOTA_READ_ERRORS = (QuotaLockTimeout, PromotionsUnavailableError, QuotaStoreError)
 
 
 class _DefaultQuotaRecheck:
@@ -149,13 +164,16 @@ class _DefaultQuotaRecheck:
     def hold(self, code: str) -> Any:
         return self._lock.hold(code, timeout_s=60.0)
 
-    async def units_left(self, quota_ids: set[str]) -> dict[str, int]:
+    async def units_left(
+        self, quota_ids: set[str], *, own_order: tuple[str, str] | None = None
+    ) -> dict[str, int]:
         from src.platform.promotions.coupon_sales import quota_board
 
+        exclude = {own_order} if own_order else None
         left: dict[str, int] = {}
         for sheet in self._store.list_sheets():
             if quota_ids & {q.id for q in sheet.quotas}:
-                for status in await quota_board(sheet, self._sales):
+                for status in await quota_board(sheet, self._sales, exclude=exclude):
                     left[status.quota.id] = status.units_left
         return left
 
@@ -273,33 +291,52 @@ async def reconcile_one(
         )
 
     needed = _quota_units_needed(record)
+    result: OrderRegistrationResult
     if needed:
         recheck = quota_recheck or _DefaultQuotaRecheck()
-        async with recheck.hold(str(record.get("coupon_code") or "")):
-            left = await recheck.units_left(set(needed))
-            gone = sorted(q for q, n in needed.items() if left.get(q, 0) < n)
-            if gone:
-                record["status"] = STATUS_ABANDONED
-                record["abandoned_at_ms"] = _now_ms()
-                record["abandon_reason"] = "quota_changed"
-                _commit(data, record)
-                _atomic_write_json(metadata_file, data)
-                log.warning(
-                    "reconcile_one: audit_id=%s NO se reintenta: el cupo %s ya no alcanza",
-                    audit_id, gone,
+        # El draft del intento original pudo llegar a Medusa aunque el
+        # adapter reportara falla (timeout): ese draft es ESTE pedido y no
+        # cuenta como vendido para él (L-28); el port lo reusa por fingerprint.
+        own = (session_key, order_fingerprint(items, kwargs["total_cop"], kwargs["payment_method"]))
+        try:
+            async with recheck.hold(str(record.get("coupon_code") or "")):
+                left = await recheck.units_left(set(needed), own_order=own)
+                gone = sorted(q for q, n in needed.items() if left.get(q, 0) < n)
+                if gone:
+                    record["status"] = STATUS_ABANDONED
+                    record["abandoned_at_ms"] = _now_ms()
+                    record["abandon_reason"] = "quota_changed"
+                    _commit(data, record)
+                    _atomic_write_json(metadata_file, data)
+                    log.warning(
+                        "reconcile_one: audit_id=%s NO se reintenta: el cupo %s ya no alcanza",
+                        audit_id, gone,
+                    )
+                    return ReconciliationOutcome(
+                        session_key=session_key,
+                        audit_id=audit_id,
+                        outcome=OUTCOME_ABANDONED,
+                        error_detail=(
+                            f"quota_changed: ya no quedan las unidades con descuento ({', '.join(gone)}); "
+                            "registrar a mano con el total nuevo"
+                        ),
+                        attempts=len(prior_attempts),
+                    )
+                result = await port.register_order(
+                    session_key=session_key, items=items, shipping=shipping, **kwargs,
                 )
-                return ReconciliationOutcome(
-                    session_key=session_key,
-                    audit_id=audit_id,
-                    outcome=OUTCOME_ABANDONED,
-                    error_detail=(
-                        f"quota_changed: ya no quedan las unidades con descuento ({', '.join(gone)}); "
-                        "registrar a mano con el total nuevo"
-                    ),
-                    attempts=len(prior_attempts),
-                )
-            result: OrderRegistrationResult = await port.register_order(
-                session_key=session_key, items=items, shipping=shipping, **kwargs,
+        except _QUOTA_READ_ERRORS as exc:
+            # Sin releer el cupo no se registra (podría vender dos veces la
+            # última unidad): cuenta como intento fallido y sigue pendiente.
+            log.warning(
+                "reconcile_one: audit_id=%s sin re-chequeo del cupo (%s): sigue pendiente",
+                audit_id, exc,
+            )
+            result = OrderRegistrationResult(
+                success=False,
+                order_id=None,
+                provider=str(record.get("provider") or "medusa"),
+                error_detail=f"quota_unavailable: no pude releer el cupo ({type(exc).__name__}: {exc})",
             )
     else:
         result = await port.register_order(

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
 from src.platform.orders.state import META_KEY_STAGE, META_KEY_TEST_ORDER
 from src.platform.promotions.port import PromotionsUnavailableError
@@ -26,6 +26,10 @@ LINE_DISCOUNT_UNIT_KEY = "discount_unit_cop"
 #: Lo mínimo para contar: la línea con su metadata y el estado del pedido.
 ORDER_FIELDS = "id,display_id,status,created_at,canceled_at,metadata,*items"
 _CLOCK_MARGIN = timedelta(hours=1)
+
+#: Un pedido por (`metadata.session_key`, `metadata.order_fingerprint`): lo
+#: que escribe el adapter de Medusa en cada draft.
+OrderKey = tuple[str, str]
 
 
 @dataclass(frozen=True)
@@ -87,10 +91,22 @@ def _lines(order: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
     return out
 
 
-def sold_units_by_quota(orders: Iterable[dict[str, Any]]) -> dict[str, int]:
-    """Unidades vendidas de cada cupo: Σ cantidad de las líneas con su marca."""
+def _order_key(order: dict[str, Any]) -> OrderKey:
+    meta = order.get("metadata") if isinstance(order.get("metadata"), dict) else {}
+    return (str(meta.get("session_key") or ""), str(meta.get("order_fingerprint") or ""))
+
+
+def sold_units_by_quota(
+    orders: Iterable[dict[str, Any]], *, exclude: Optional[set[OrderKey]] = None
+) -> dict[str, int]:
+    """Unidades vendidas de cada cupo: Σ cantidad de las líneas con su marca.
+
+    `exclude`: pedidos (sesión, fingerprint) que NO cuentan — el reintento de
+    un pedido cuyo draft sí llegó a Medusa no se cuenta a sí mismo (L-28)."""
     sold: dict[str, int] = {}
     for order in _live(orders):
+        if exclude and _order_key(order) in exclude:
+            continue
         for qty, meta in _lines(order):
             quota_id = meta.get(LINE_QUOTA_KEY)
             if quota_id:
@@ -156,20 +172,25 @@ def _created(order: dict[str, Any]) -> datetime | None:
     return _parse_iso(order.get("created_at"))
 
 
-async def quota_board(sheet: QuotaSheet, reader: Any) -> list[QuotaStatus]:
+async def quota_board(
+    sheet: QuotaSheet, reader: Any, *, exclude: Optional[set[OrderKey]] = None
+) -> list[QuotaStatus]:
     """Cuántas quedan de cada fila del cupo, leyendo lo vendido de Medusa.
 
     Una línea con la marca de un cupo no puede ser anterior al primer
     guardado de filas (`counting_since`, que nunca avanza): desde ahí se leen
     los pedidos, sin depender de las fechas de la campaña que el operador
-    puede mover. Sin filas no lee nada."""
+    puede mover. Sin filas no lee nada. `exclude`: ver `sold_units_by_quota`."""
     if not sheet.quotas:
         return []
     fixed = _parse_iso(sheet.counting_since)
     starts = [d for d in (_parse_iso(q.created_at) for q in sheet.quotas) if d is not None]
     since = fixed or (min(starts) if starts else datetime(2000, 1, 1, tzinfo=timezone.utc))
     # Margen por la diferencia de reloj entre este host y Medusa.
-    sold = await reader.sold_units(since=since - _CLOCK_MARGIN)
+    since -= _CLOCK_MARGIN
+    sold = await (
+        reader.sold_units(since=since, exclude=exclude) if exclude else reader.sold_units(since=since)
+    )
     return quota_statuses(list(sheet.quotas), sold)
 
 
@@ -179,8 +200,10 @@ class UnavailableCouponSalesReader:
     async def orders_since(self, since: datetime) -> list[dict[str, Any]]:
         raise PromotionsUnavailableError("Medusa no está configurado en este deployment")
 
-    async def sold_units(self, *, since: datetime) -> dict[str, int]:
-        return sold_units_by_quota(await self.orders_since(since))
+    async def sold_units(
+        self, *, since: datetime, exclude: Optional[set[OrderKey]] = None
+    ) -> dict[str, int]:
+        return sold_units_by_quota(await self.orders_since(since), exclude=exclude)
 
     async def results(self, code: str, *, since: datetime) -> CouponResults:
         return coupon_results(code, await self.orders_since(since))
@@ -206,8 +229,10 @@ class CouponSalesReader:
             raise PromotionsUnavailableError(f"no pude leer los pedidos: {exc}") from exc
         return orders + drafts
 
-    async def sold_units(self, *, since: datetime) -> dict[str, int]:
-        return sold_units_by_quota(await self.orders_since(since))
+    async def sold_units(
+        self, *, since: datetime, exclude: Optional[set[OrderKey]] = None
+    ) -> dict[str, int]:
+        return sold_units_by_quota(await self.orders_since(since), exclude=exclude)
 
     async def results(self, code: str, *, since: datetime) -> CouponResults:
         return coupon_results(code, await self.orders_since(since))

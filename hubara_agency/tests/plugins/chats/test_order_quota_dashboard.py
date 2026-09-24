@@ -250,3 +250,31 @@ def test_order_intake_catalog_carries_color_and_aroma_lists_for_manual_lines(tmp
 
     [entry] = body["catalog"]
     assert (entry["colors"], entry["aromas"]) == (["Rosado", "Azul"], ["Café", "Lavanda"])
+
+
+@dataclass
+class _SalesThatMove:
+    """Lo vendido cambia entre lecturas (otro pedido entra en el medio)."""
+
+    reads: list[dict[str, int]]
+
+    async def sold_units(self, *, since: datetime) -> dict[str, int]:
+        return dict(self.reads.pop(0) if len(self.reads) > 1 else self.reads[0])
+
+
+def test_dashboard_quota_changed_inside_the_lock_answers_with_the_new_total(tmp_path: Path) -> None:
+    """La última unidad se fue ENTRE el cálculo del formulario y el candado: el
+    operador tiene que ver el total nuevo, no el que ya no vale."""
+    _write_metadata(tmp_path, {"episodes": [_episode()]})
+    port = _Port()
+    client = _orders_client(tmp_path, port, _SalesThatMove([{_Q: 4}, {_Q: 5}]))
+
+    res = client.post(f"/api/chats/session-actions/{_S}/order", json={
+        "items": [{"handle": "cubo-love", "quantity": 1, "color": "Rosado", "aroma": "Café"}],
+        "shipping": _SHIP, "payment_method": "transfer", "expected_discount_cop": 2100,
+    }).json()
+
+    assert (res["registered"], res["error_detail"]) == (False, "quota_changed")
+    assert res["discount_cop"] == 0
+    assert res["total_cop"] == 21000 + res["shipping_cop"]
+    assert port.calls == []

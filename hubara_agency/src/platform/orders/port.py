@@ -24,6 +24,7 @@ Por que un Port y no llamar `HttpMedusaClient` directo desde la tool:
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -143,3 +144,30 @@ class OrderRegistrationPort(Protocol):
     # `shipping_discount_cop` (envío). `coupon_code` / `discount_cop` quedan
     # como auditoría. Los callers mandan estos kwargs SOLO cuando hay cupón,
     # así los adapters/fakes viejos siguen siendo compatibles.
+
+
+def order_fingerprint(items: list[OrderItem], total_cop: int, payment_method: str) -> str:
+    """Hash estable y corto del contenido de la orden.
+
+    Dos `register_order` con el MISMO contenido (retry de Temporal / doble
+    llamada del LLM / reconciliación) producen el mismo fingerprint; una
+    compra distinta del mismo cliente produce uno distinto. El adapter de
+    Medusa lo guarda en `metadata.order_fingerprint` del draft y lo usa en su
+    pre-check de idempotencia; la reconciliación lo usa para no contar como
+    vendido el draft del mismo pedido que reintenta (L-28).
+
+    Determinístico: se ordenan los items para que el orden de llegada no
+    cambie el hash. El reparto del cupón (`discounted_units`) es contenido
+    del pedido, pero solo entra cuando existe: sin cupón el hash es el de
+    siempre y un reintento que cruza un deploy sigue encontrando su draft.
+    """
+    parts = sorted(
+        f"{it.handle}:{it.quantity}:{it.unit_price_cop}:{it.variant_label or ''}"
+        + "".join(
+            f":-{g.units}x{g.discount_unit_cop}" + (f"@{g.quota_id}" if g.quota_id else "")
+            for g in it.discounted_units
+        )
+        for it in items
+    )
+    raw = "|".join(parts) + f"|total={total_cop}|pay={payment_method}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]

@@ -316,11 +316,62 @@ async def quota_split(
     return QuotaSplit((), "no_applicable_items")
 
 
-def split_key(line_discounts: tuple[LineDiscount, ...] | list[Any]) -> list[list[Any]]:
-    """Forma comparable (y JSON) del reparto: `[[línea, unidades, descuento, cupo]]`."""
-    return sorted(
-        [int(d.index), int(d.units), int(d.discount_unit_cop), d.quota_id] for d in line_discounts
+def _line_identity(item: dict[str, Any], variant: ItemVariant) -> tuple[str, str, str, int]:
+    """Qué es una línea para el cupo: producto, color y aroma canónicos y precio."""
+    return (
+        str(item.get("handle") or ""),
+        variant.color or "",
+        variant.aroma or "",
+        int(item.get("unit_price_cop") or 0),
     )
+
+
+def split_key(
+    line_discounts: tuple[LineDiscount, ...] | list[Any],
+    items: list[dict[str, Any]],
+    variants: list[ItemVariant],
+) -> list[list[Any]]:
+    """Forma comparable (y JSON) del reparto SIN depender del orden de las
+    líneas: `[[handle, color, aroma, precio, unidades, descuento, cupo]]`, con
+    las unidades de líneas iguales sumadas. El mismo pedido con los ítems en
+    otro orden tiene el mismo reparto."""
+    units: dict[tuple[Any, ...], int] = {}
+    for d in line_discounts:
+        ident = (*_line_identity(items[d.index], variants[d.index]), int(d.discount_unit_cop), d.quota_id or "")
+        units[ident] = units.get(ident, 0) + int(d.units)
+    return sorted(
+        [handle, color, aroma, price, n, discount, quota]
+        for (handle, color, aroma, price, discount, quota), n in units.items()
+    )
+
+
+def line_discounts_from_key(
+    key: list[list[Any]], items: list[dict[str, Any]], variants: list[ItemVariant]
+) -> tuple[LineDiscount, ...] | None:
+    """El reparto `key` (de `split_key`) puesto sobre ESTAS líneas: cada
+    entrada va a las líneas iguales, sin pasar su cantidad. None si no cabe
+    (no es el pedido que se confirmó)."""
+    room = [int(it.get("quantity") or 0) for it in items]
+    idents = [_line_identity(it, v) for it, v in zip(items, variants)]
+    out: list[LineDiscount] = []
+    for entry in key:
+        try:
+            handle, color, aroma, price, n, discount, quota = entry
+            pending, ident = int(n), (handle, color, aroma, int(price))
+        except (TypeError, ValueError):
+            return None
+        for index, line in enumerate(idents):
+            if pending <= 0:
+                break
+            if line != ident or room[index] <= 0:
+                continue
+            take = min(pending, room[index])
+            room[index] -= take
+            pending -= take
+            out.append(LineDiscount(index, take, int(discount), quota_id=quota or None))
+        if pending > 0:
+            return None
+    return tuple(sorted(out, key=lambda d: d.index))
 
 
 #: Clave del episodio con el reparto que se le mostró al cliente en la
@@ -371,6 +422,7 @@ __all__ = [
     "QuotaOffer",
     "QuotaSplit",
     "confirmed_split",
+    "line_discounts_from_key",
     "quota_split",
     "remember_confirmed_split",
     "resolve_item_variants",

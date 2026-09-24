@@ -89,7 +89,9 @@ from src.plugins.chats.agent.sales.pricing import (
 )
 from src.platform.orders.stub import StubOrderRegistration
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+    REASON_QUOTA_UNAVAILABLE,
     confirmed_split,
+    line_discounts_from_key,
     resolve_item_variants,
     split_key,
 )
@@ -163,44 +165,61 @@ def _with_discounted_units(
     ]
 
 
-def _items_key(items: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
-    return sorted(
-        (
-            str(it.get("handle") or ""),
-            int(it.get("quantity") or 0),
-            int(it.get("unit_price_cop") or 0),
-            str(it.get("variant_label") or ""),
-            str(it.get("color") or "").casefold(),
-            str(it.get("aroma") or "").casefold(),
-        )
-        for it in items
+def _item_identity(it: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        str(it.get("handle") or ""),
+        int(it.get("quantity") or 0),
+        int(it.get("unit_price_cop") or 0),
+        str(it.get("variant_label") or ""),
+        str(it.get("color") or "").casefold(),
+        str(it.get("aroma") or "").casefold(),
     )
+
+
+def _items_key(items: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
+    return sorted(_item_identity(it) for it in items)
 
 
 def _registered_split_for_same_order(
     metadata: dict[str, Any], items: list[dict[str, Any]], payment_method: str, code: str
 ) -> tuple[LineDiscount, ...] | None:
     """El reparto con cupo del pedido YA registrado en el episodio activo si
-    `items` es ese mismo pedido (reintento); None si es otro pedido."""
+    `items` es ese mismo pedido (reintento), puesto sobre `items` aunque
+    vengan en otro orden; None si es otro pedido."""
     record = metadata.get("registered_order")
     episode = get_active_episode(metadata) or {}
+    registered_items = record.get("items") if isinstance(record, dict) else None
     if (
         not isinstance(record, dict)
         or record.get("success") is not True
         or str(episode.get("order_id") or "") != str(record.get("order_id") or "")
         or record.get("coupon_code") != code
         or record.get("payment_method") != payment_method
-        or _items_key(record.get("items") or []) != _items_key(items)
+        or not isinstance(registered_items, list)
+        or _items_key(registered_items) != _items_key(items)
     ):
         return None
+    # Cada línea del registro va a SU ítem en este pedido (mismo producto,
+    # cantidad, precio y variante), no a la que quedó en su posición.
+    free = list(range(len(items)))
+    moved: dict[int, int] = {}
+    for i, it in enumerate(registered_items):
+        j = next(k for k in free if _item_identity(items[k]) == _item_identity(it))
+        free.remove(j)
+        moved[i] = j
     return tuple(
-        LineDiscount(
-            int(line["index"]),
-            int(line["units"]),
-            int(line["discount_unit_cop"]),
-            quota_id=line.get("quota_id"),
+        sorted(
+            (
+                LineDiscount(
+                    moved[int(line["index"])],
+                    int(line["units"]),
+                    int(line["discount_unit_cop"]),
+                    quota_id=line.get("quota_id"),
+                )
+                for line in record.get("coupon_line_discounts") or []
+            ),
+            key=lambda d: d.index,
         )
-        for line in record.get("coupon_line_discounts") or []
     )
 
 
@@ -232,9 +251,10 @@ class RegisterOrderTool(ToolBase):
         "(reason_category='PAYMENT_VERIFICATION_PENDING')` con la despedida "
         "en su `customer_message` (NUNCA `COMPRA_EXITOSA`). Si es `false` "
         "con `error` (`shipping_mismatch`, `amount_mismatch`, "
-        "`price_mismatch`, `missing_receiver_name`), el pedido no se "
-        "registró por un dato de la llamada: corrige lo que dice el "
-        "`summary` y vuelve a llamarla, sin escalar. Si es `false` sin "
+        "`price_mismatch`, `missing_receiver_name`, `invalid_variant_attribute`, "
+        "`quota_changed`, `quota_busy`), el pedido no se registró por un dato "
+        "de la llamada o del cupo: haz lo que dice el `summary` y vuelve a "
+        "intentarlo, sin escalar. Si es `false` sin "
         "`error` (Medusa caído / config rota), llama `escalate_to_human"
         "(reason_category='ORDER_REGISTRATION_FAILED')` para que un colega "
         "registre manualmente — los datos quedan persistidos en metadata "
@@ -554,6 +574,7 @@ class RegisterOrderTool(ToolBase):
                     "registered": False,
                     "order_id": None,
                     "error_detail": "quota_busy",
+                    "error": "quota_busy",
                     "summary": (
                         f"Otro pedido con el cupón {code} se está registrando en este "
                         "momento. Espera unos segundos y vuelve a llamar `register_order` "
@@ -663,6 +684,7 @@ class RegisterOrderTool(ToolBase):
                     "registered": False,
                     "order_id": None,
                     "error_detail": "invalid_variant_attribute",
+                    "error": "invalid_variant_attribute",
                     "summary": (
                         "; ".join(v.message() for v in invalid_variants)
                         + ". El pedido NO se registró: confirma con el cliente una opción "
@@ -693,35 +715,69 @@ class RegisterOrderTool(ToolBase):
         # Cupo por unidad: el reparto recién releído (bajo el candado) tiene
         # que ser el que vio el cliente en la confirmación. Si cambió (otro
         # cliente se llevó unidades), NO se crea el draft: total nuevo y a
-        # confirmar otra vez.
+        # confirmar otra vez. El reparto se compara sin importar el orden de
+        # los ítems (el LLM puede listarlos en otro orden al registrar).
+        quota_unreadable = False
         if discount is not None and discount.quota:
             seen = confirmed_split(metadata_before, discount.code)
-            fresh = split_key(discount.line_discounts)
-            # Sin reparto confirmado el cliente nunca vio qué unidades llevan
-            # descuento: se confirma primero.
-            if seen is None or seen != fresh:
+            fresh = split_key(discount.line_discounts, items, variants)
+            confirmed_lines = (
+                line_discounts_from_key(seen, items, variants)
+                if seen and discount.reason == REASON_QUOTA_UNAVAILABLE
+                else None
+            )
+            if confirmed_lines is not None:
+                # Lo vendido no se pudo releer (Medusa o el vault): NO es
+                # "cambiaron las unidades" — el cliente leería un total falso.
+                # No se crea nada: el pedido queda guardado con el reparto que
+                # el cliente CONFIRMÓ, la reconciliación lo reintenta bajo el
+                # candado (relee el cupo) y el bot escala como con Medusa caído.
+                discount = replace(
+                    discount,
+                    line_discounts=confirmed_lines,
+                    discount_cop=sum(d.units * d.discount_unit_cop for d in confirmed_lines),
+                    reason=None,
+                )
+                quota_unreadable = True
+            elif seen is None or seen != fresh:
                 new_total = (
                     sum(int(it["unit_price_cop"]) * int(it["quantity"]) for it in items)
                     + shipping_cop
                     - discount.discount_cop
                 )
                 logger.info(
-                    "🧾 [TOOL register_order] quota_changed session={} code={} confirmed={} fresh={}",
-                    ctx.session_key, discount.code, seen, fresh,
+                    "🧾 [TOOL register_order] quota_changed session={} code={} reason={} confirmed={} fresh={}",
+                    ctx.session_key, discount.code, discount.reason, seen, fresh,
                 )
+                if seen is None:
+                    # El cliente nunca vio qué unidades llevan descuento.
+                    why = (
+                        f"El cliente todavía no vio qué unidades llevan el descuento de "
+                        f"{discount.code}: el pedido NO se registró."
+                    )
+                elif discount.reason == REASON_QUOTA_UNAVAILABLE:
+                    why = (
+                        "El pedido no es el que el cliente confirmó y no pude releer las "
+                        f"unidades con descuento de {discount.code}: el pedido NO se registró."
+                    )
+                else:
+                    why = (
+                        f"Mientras el cliente confirmaba cambiaron las unidades con "
+                        f"descuento de {discount.code}: el total ahora es "
+                        f"{format_cop(new_total)}. El pedido NO se registró. Explícale "
+                        "el cambio con honestidad."
+                    )
                 return json.dumps(
                     {
                         "registered": False,
                         "order_id": None,
                         "error_detail": "quota_changed",
+                        "error": "quota_changed",
                         "new_total_cop": new_total,
                         "new_discount_cop": discount.discount_cop,
                         "summary": (
-                            f"Mientras el cliente confirmaba cambiaron las unidades con "
-                            f"descuento de {discount.code}: el total ahora es "
-                            f"{format_cop(new_total)}. El pedido NO se registró. Explícale "
-                            "el cambio con honestidad y vuelve a llamar "
-                            "`present_order_confirmation` para que confirme el total nuevo."
+                            f"{why} Vuelve a llamar `present_order_confirmation` para que "
+                            "el cliente confirme el total."
                         ),
                     },
                     ensure_ascii=False,
@@ -828,18 +884,32 @@ class RegisterOrderTool(ToolBase):
         # Delegar al port (Medusa adapter o stub). La atribución CTWA viaja a
         # la metadata de la orden Medusa — es el join venta↔campaña del
         # dashboard (2026-07-09; sin esto Medusa no sabe de qué ad vino la venta).
-        result: OrderRegistrationResult = await self._port.register_order(
-            session_key=ctx.session_key,
-            items=order_items,
-            shipping=order_shipping,
-            payment_method=payment_method,
-            subtotal_cop=subtotal_cop,
-            shipping_cop=shipping_cop,
-            total_cop=total_cop,
-            currency=currency,
-            attribution=self._session_attribution(ctx.session_key),
-            **coupon_kwargs,
-        )
+        result: OrderRegistrationResult
+        if quota_unreadable:
+            # Queda como un registro fallido `pending` (abajo) con el reparto
+            # confirmado: la reconciliación lo reintenta bajo el candado.
+            result = OrderRegistrationResult(
+                success=False,
+                order_id=None,
+                provider="medusa",
+                error_detail=(
+                    f"quota_unavailable: no pude releer las unidades vendidas del cupón "
+                    f"{coupon_code}; el pedido queda guardado para reintentarlo"
+                ),
+            )
+        else:
+            result = await self._port.register_order(
+                session_key=ctx.session_key,
+                items=order_items,
+                shipping=order_shipping,
+                payment_method=payment_method,
+                subtotal_cop=subtotal_cop,
+                shipping_cop=shipping_cop,
+                total_cop=total_cop,
+                currency=currency,
+                attribution=self._session_attribution(ctx.session_key),
+                **coupon_kwargs,
+            )
 
         # Generar un fallback order_id si el port no devolvio uno (no
         # deberia pasar — el stub siempre devuelve uno, el adapter Medusa

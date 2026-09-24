@@ -577,7 +577,7 @@ class _Recheck:
 
         return _cm()
 
-    async def units_left(self, quota_ids: set[str]) -> dict[str, int]:
+    async def units_left(self, quota_ids: set[str], *, own_order: tuple[str, str] | None = None) -> dict[str, int]:
         return {q: self.left.get(q, 0) for q in quota_ids}
 
 
@@ -618,3 +618,100 @@ async def test_reconcile_with_quota_units_left_registers_under_the_lock(tmp_path
 
     assert outcome.outcome == OUTCOME_RESOLVED
     assert len(port.calls) == 1 and recheck.held == ["AMOR26"]
+
+
+# --- Premortem: el re-chequeo del cupo no tumba el barrido ni se cuenta a sí mismo ------
+
+
+@dataclass
+class _BrokenRecheck:
+    """El re-chequeo no puede leer: candado ocupado, Medusa o el vault caídos."""
+
+    error: Exception
+    on_hold: bool = False
+
+    def hold(self, code: str):
+        import contextlib
+
+        @contextlib.asynccontextmanager
+        async def _cm():
+            if self.on_hold:
+                raise self.error
+            yield
+
+        return _cm()
+
+    async def units_left(self, quota_ids: set[str], *, own_order: tuple[str, str] | None = None) -> dict[str, int]:
+        raise self.error
+
+
+def _broken(kind: str) -> _BrokenRecheck:
+    from src.platform.promotions.port import PromotionsUnavailableError
+    from src.platform.promotions.quota_lock import QuotaLockTimeout
+    from src.platform.promotions.quota_store import QuotaStoreError
+
+    return {
+        "lock": _BrokenRecheck(QuotaLockTimeout("ocupado"), on_hold=True),
+        "medusa": _BrokenRecheck(PromotionsUnavailableError("timeout")),
+        "vault": _BrokenRecheck(QuotaStoreError("ilegible")),
+    }[kind]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["lock", "medusa", "vault"])
+async def test_reconcile_that_cannot_recheck_the_quota_stays_pending(tmp_path, kind):
+    """Sin poder releer el cupo NO se registra (podría vender dos veces la
+    última unidad) y tampoco explota: el intento cuenta y el pedido sigue
+    pendiente para el próximo barrido."""
+    path = _write_metadata(tmp_path, "wa_57316", {"failed_order_registrations": [_quota_record("AUDIT-QB")]})
+    port = KwargsPort()
+
+    outcome = await reconcile_one(vault_dir=tmp_path, session_key="wa_57316", audit_id="AUDIT-QB",
+                                  port=port, quota_recheck=_broken(kind))
+
+    assert outcome.outcome == OUTCOME_STILL_FAILING
+    assert (outcome.error_detail or "").startswith("quota_unavailable")
+    assert port.calls == []
+    (rec,) = json.loads(path.read_text(encoding="utf-8"))["failed_order_registrations"]
+    assert rec["status"] == STATUS_PENDING and len(rec["reconciliation_attempts"]) == 1
+
+
+@dataclass
+class _OwnDraftRecheck:
+    """Medusa ya tiene el draft del intento original (respondió tarde): con
+    él adentro no queda ninguna unidad; sin él, queda la que es suya."""
+
+    own_orders: list[tuple[str, str] | None] = field(default_factory=list)
+
+    def hold(self, code: str):
+        import contextlib
+
+        @contextlib.asynccontextmanager
+        async def _cm():
+            yield
+
+        return _cm()
+
+    async def units_left(self, quota_ids: set[str], *, own_order: tuple[str, str] | None = None) -> dict[str, int]:
+        self.own_orders.append(own_order)
+        return {q: 1 if own_order else 0 for q in quota_ids}
+
+
+@pytest.mark.asyncio
+async def test_reconcile_does_not_count_its_own_draft_as_sold(tmp_path):
+    """L-28: el re-chequeo deja afuera el draft del MISMO pedido (misma sesión
+    y mismo fingerprint): sin eso lo abandonaba por "quota_changed" aunque el
+    pedido ya existía, y el humano lo registraba otra vez (duplicado)."""
+    from src.platform.orders.medusa_order import _compute_order_fingerprint
+
+    _write_metadata(tmp_path, "wa_57317", {"failed_order_registrations": [_quota_record("AUDIT-QP")]})
+    port = KwargsPort()
+    recheck = _OwnDraftRecheck()
+
+    outcome = await reconcile_one(vault_dir=tmp_path, session_key="wa_57317", audit_id="AUDIT-QP",
+                                  port=port, quota_recheck=recheck)
+
+    assert outcome.outcome == OUTCOME_RESOLVED
+    items = [OrderItem(handle="cubo-love", quantity=1, unit_price_cop=21000,
+                       discounted_units=(DiscountedUnits(1, 2100, quota_id="q_rosado_cafe"),))]
+    assert recheck.own_orders == [("wa_57317", _compute_order_fingerprint(items, 26800, "transfer"))]
