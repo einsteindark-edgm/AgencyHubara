@@ -3,7 +3,7 @@ del dashboard (sin I/O; el router solo orquesta ports).
 """
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -11,9 +11,11 @@ from src.sdk.connectorkit import (
     CouponResults,
     CouponSpecError,
     CouponView,
+    DiscountLineItem,
     PromotionDTO,
     QuotaSheet,
     QuotaStatus,
+    compute_discount,
 )
 
 _MONTHS = (
@@ -36,9 +38,9 @@ def coupon_terms(promo: PromotionDTO) -> dict[str, Any]:
     """Lo que la campaña anuncia del cupón, sacado del cupón (no del
     operador): el % si es de porcentaje y el último día incluido, en hora de
     Bogotá ("27 de septiembre" para una campaña que cierra el 28 a las 00:00)."""
-    terms: dict[str, Any] = {}
-    if promo.discount_type == "percentage" and promo.target_type == "items":
-        terms["percent"] = promo.value
+    is_percent = promo.discount_type == "percentage" and promo.target_type == "items"
+    # Un cupón que no es de porcentaje no anuncia un % (ni el que tipeó el operador).
+    terms: dict[str, Any] = {"percent": promo.value if is_percent else 0}
     if promo.ends_at_ms is not None:
         last = datetime.fromtimestamp((promo.ends_at_ms - 1) / 1000, tz=_BOGOTA).date()
         terms["valid_until"] = day_label(last)
@@ -148,3 +150,22 @@ def audit_diff(before: CouponView, after: CouponView) -> dict[str, list[Any]]:
     b = coupon_json(before)
     a = coupon_json(after)
     return {f: [b[f], a[f]] for f in EDITABLE_FIELDS if b[f] != a[f]}
+
+
+def coupon_product_ids(promo: PromotionDTO, products: list[Any]) -> tuple[str, ...]:
+    """Los productos del catálogo que el cupón REALMENTE descuenta (productos
+    Y etiquetas, con la semántica de Medusa). Es la lista contra la que se
+    validan las filas del cupo."""
+    per_unit = replace(promo, min_subtotal_cop=None)
+    out: list[str] = []
+    for product in products:
+        line = DiscountLineItem(
+            handle=str(getattr(product, "handle", "") or ""),
+            quantity=1,
+            unit_price_cop=100_000,
+            product_id=str(getattr(product, "id", "") or "") or None,
+            tags=tuple(str(t) for t in getattr(product, "tags", None) or []),
+        )
+        if compute_discount(per_unit, [line]).discount_cop > 0:
+            out.append(str(product.id))
+    return tuple(out)

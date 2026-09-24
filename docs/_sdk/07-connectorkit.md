@@ -235,20 +235,23 @@ leyendo con `PromotionsPort`; los comandos solo los usa la API.
 
 | Símbolo | Qué es |
 |---|---|
-| `CouponSpec`, `parse_coupon_spec`, `CouponSpecError(field, message)` | el formulario validado: código `[A-Z0-9]{3,14}`, porcentaje entero 1–100, productos o `"all"`, fechas en días de Bogotá con el "hasta" **inclusivo** |
-| `CouponView`, `coupon_view_from_medusa(raw, now)` | lo que hay en Medusa: estado (`draft/scheduled/active/paused/expired`) y si es **gestionable** (porcentaje sobre productos, a lo sumo una regla `items.product.id in`, sin condiciones de compra, con campaña). Lo demás: solo lectura con `unmanageable_reason` |
-| `PromotionsAdminPort` (`list_coupons`, `get_coupon`, `create_coupon`, `update_coupon`, `set_status`, `delete_coupon`) | adapter real `platform/promotions/admin.py`: crear = UNA llamada con la campaña en línea; editar = solo lo que cambió (promoción, regla de productos, campaña), pasos idempotentes; toda escritura limpia el cache del `PromotionsPort` del proceso |
+| `parse_coupon_spec`, `CouponSpecError(field, message)` | el formulario validado: código `[A-Z0-9]{3,14}`, porcentaje entero 1–100, productos o `"all"`, fechas en días de Bogotá con el "hasta" **inclusivo** |
+| `CouponView` | lo que hay en Medusa: estado (`draft/scheduled/active/paused/expired`) y si es **gestionable** (porcentaje sobre productos, a lo sumo una regla `items.product.id in`, sin condiciones de compra, con campaña). Lo demás: solo lectura con `unmanageable_reason` |
+| `PromotionsAdminPort` (`list_coupons`, `get_coupon`, `create_coupon`, `update_coupon`, `set_status`, `delete_coupon`) + `get_promotions_admin_port()` | adapter real `platform/promotions/admin.py`: crear = UNA llamada con la campaña en línea; editar = solo lo que cambió (promoción, regla de productos, campaña), pasos idempotentes; las escrituras NO idempotentes no se reintentan tras un timeout; toda escritura limpia el cache del `PromotionsPort` del proceso. Sin Medusa: cada operación levanta `PromotionsUnavailableError` |
 | errores `CouponCodeTakenError` / `CouponRejectedError` / `CouponNotFoundError` / `CouponNotManageableError` / `CouponDeleteRefusedError` / `CouponPartialUpdateError(step, view)` | el vendor no cruza el port; `PromotionsUnavailableError` si Medusa no responde |
 | `FakePromotionsAdmin` | doble oficial = el adapter real sobre Medusa en memoria (`.medusa.writes` para asertar que NO se escribió); contract suite fake/real (respx sobre el mismo simulador) en `tests/platform/promotions/test_promotions_admin_contract.py` |
-| `PromoUnitQuota`, `validate_quota_rows`, `quota_product`, `quota_id_for` | las filas del cupo, validadas contra las listas cerradas del producto (tags `Color:`/`Aroma:`); el id es el de la combinación (re-guardar no pierde vendidas) |
-| `quota_statuses`, `allocate_units`, `unit_discount_cop`, `quota_exhausted` | dominio puro: cuántas quedan, el reparto de un pedido (parcial si no alcanza; falla cerrada sin color/aroma), el descuento por unidad redondeado igual que el pedido |
-| `PromoQuotaStore` / `QuotaSheet` / `FakePromoQuotaStore` / `get_promo_quota_store()` | el cupo vive en el vault (`_promotions/quotas/<promotion_id>.json`, flock): la API de Medusa no deja escribir metadata en promociones |
-| `sold_units_by_quota`, `coupon_results`, `quota_board`, `get_coupon_sales_reader()` | las VENDIDAS se derivan de los pedidos y drafts de Medusa (`items[].metadata.coupon_quota_id`, más las claves `coupon_code`/`discount_unit_cop` de la línea con descuento); cancelados, de prueba y duplicados no cuentan. Sin Medusa: `PromotionsUnavailableError` (falla cerrada) |
-| `CouponAuditPort` / `FakeCouponAuditLog` / `get_coupon_audit_log()` | registro de cambios append-only (`_promotions/audit.jsonl`) con el actor de `castkit.current_actor` |
-| `register_under_quota`, `QuotaChanged`, `QuotaLockTimeout`, `get_quota_lock()` | candado por código (flock async) que relee lo vendido y recalcula el reparto antes de registrar: nunca se vende dos veces la última unidad |
+| `PromoUnitQuota`, `validate_quota_rows`, `quota_product` | las filas del cupo, validadas contra las listas cerradas del producto (tags `Color:`/`Aroma:`) y el alcance real del cupón; el id es el de la combinación (re-guardar no pierde vendidas) |
+| `QuotaStatus`, `quota_statuses`, `QuotaLine`, `allocate_units`, `quota_exhausted`, `REASON_QUOTA_EXHAUSTED` | dominio puro: cuántas quedan y el reparto de un pedido (parcial si no alcanza; falla cerrada sin color/aroma), con el mismo redondeo por unidad que la línea con descuento |
+| `QuotaSheet`, `QuotaStoreError`, `FakePromoQuotaStore`, `get_promo_quota_store()` | el cupo vive en el vault (`_promotions/quotas/<promotion_id>.json`, flock): la API de Medusa no deja escribir metadata en promociones. `counting_since` fija desde cuándo se cuentan las vendidas y nunca avanza. Un archivo ilegible levanta `QuotaStoreError`: NO es "sin cupo" |
+| `sold_units_by_quota`, `coupon_results`, `CouponResults`, `quota_board`, `get_coupon_sales_reader()` | las VENDIDAS se derivan de los pedidos y drafts de Medusa (`items[].metadata.coupon_quota_id` de la línea con descuento; `coupon_code`/`discount_unit_cop` para los resultados); cancelados, de prueba y duplicados no cuentan. Sin Medusa: `PromotionsUnavailableError` (falla cerrada) |
+| `FakeCouponAuditLog`, `get_coupon_audit_log()` | registro de cambios append-only (`_promotions/audit.jsonl`) con el actor de `castkit.current_actor` |
+| `get_quota_lock()`, `QuotaLockTimeout` | candado async por código (flock, nunca bloquea el event loop): `register_order` relee lo vendido y recalcula el reparto bajo él — la última unidad no se vende dos veces |
+| `match_option` (junto a `parse_variant_tags`) | el matching de color/aroma contra la lista cerrada del producto |
 
-Quién lo usa: `src/plugins/marketing/api/coupons.py` (la central). El bot de
-ventas y "Crear pedido" consumen el cupo en la Fase 5/6 del plan.
+Quién lo usa:
+- `src/plugins/marketing/api/coupons.py`: la central (CRUD, unidades, resultados).
+- `apply_coupon` / `list_promotions`: unidades que quedan, agotado y falla cerrada.
+- `present_order_confirmation` / `register_order` y "Crear pedido" (`chats/api/session_actions.py`, `order_intake.py`): reparto por unidad, `quota_changed` y `coupon_quota_id` en la línea.
 
 ## Reglas al agregar un port (regla de oro del kit)
 

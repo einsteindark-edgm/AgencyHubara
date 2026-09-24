@@ -24,6 +24,7 @@ from src.sdk.connectorkit import (
     PromotionsUnavailableError,
     QuotaLine,
     QuotaStatus,
+    QuotaStoreError,
     allocate_units,
     compute_discount,
     match_option,
@@ -69,28 +70,36 @@ def _cop_price(product: Any) -> int | None:
     return None
 
 
-async def _prices(catalog: Any) -> dict[str, int]:
+async def _catalog_by_id(catalog: Any) -> dict[str, tuple[int, tuple[str, ...]]]:
+    """Precio COP y etiquetas de cada producto del catálogo, por id."""
     if catalog is None:
         return {}
     try:
         result = await catalog.search("", limit=500)
     except Exception:  # noqa: BLE001 — sin catálogo no hay precio (no se ofrece)
         return {}
-    out: dict[str, int] = {}
+    out: dict[str, tuple[int, tuple[str, ...]]] = {}
     for product in getattr(result, "results", None) or []:
         price = _cop_price(product)
         if price is not None:
-            out[str(getattr(product, "id", ""))] = price
+            tags = tuple(str(t) for t in getattr(product, "tags", None) or [])
+            out[str(getattr(product, "id", ""))] = (price, tags)
     return out
 
 
-def _unit(status: QuotaStatus, promotion: PromotionDTO, price: int, *, show: bool) -> dict[str, Any]:
+def _unit(
+    status: QuotaStatus, promotion: PromotionDTO, price: int, tags: tuple[str, ...], *, show: bool
+) -> dict[str, Any] | None:
+    """La unidad con su precio con descuento, calculado con el alcance REAL
+    del cupón (productos Y etiquetas). None si el cupón no cubre ese producto
+    (una fila fuera de alcance no se ofrece)."""
     quota = status.quota
-    per_unit = replace(promotion, min_subtotal_cop=None, product_ids=(), variant_ids=(),
-                       collection_ids=(), tag_values=())
+    per_unit = replace(promotion, min_subtotal_cop=None)
     line = DiscountLineItem(handle=quota.handle, quantity=1, unit_price_cop=price,
-                            product_id=quota.product_id)
+                            product_id=quota.product_id, tags=tags)
     discount = compute_discount(per_unit, [line]).discount_cop
+    if discount <= 0:
+        return None
     unit: dict[str, Any] = {"title": quota.title, "color": quota.color, "aroma": quota.aroma}
     if show:
         unit["units_left"] = status.units_left
@@ -101,10 +110,15 @@ def _unit(status: QuotaStatus, promotion: PromotionDTO, price: int, *, show: boo
 
 async def quota_offer(promotion: PromotionDTO, *, quotas: Any, sales: Any, catalog: Any) -> QuotaOffer:
     """El cupo del cupón para el bot. Sin `quotas` (worker viejo) o sin filas:
-    `has_quota=False` y el cupón aplica como siempre."""
+    `has_quota=False` y el cupón aplica como siempre. Todo lo que impide
+    saber qué unidades quedan (cupo ilegible, Medusa caído, catálogo sin
+    precios) es `quota_unavailable`: falla CERRADA."""
     if quotas is None:
         return _NO_QUOTA
-    sheet = quotas.get(promotion.id)
+    try:
+        sheet = quotas.get(promotion.id)
+    except QuotaStoreError:
+        return QuotaOffer(True, REASON_QUOTA_UNAVAILABLE)
     if not sheet.quotas:
         return _NO_QUOTA
     try:
@@ -113,12 +127,16 @@ async def quota_offer(promotion: PromotionDTO, *, quotas: Any, sales: Any, catal
         return QuotaOffer(True, REASON_QUOTA_UNAVAILABLE, show_units_left=sheet.show_units_left)
     if quota_exhausted(board) == REASON_QUOTA_EXHAUSTED:
         return QuotaOffer(True, REASON_QUOTA_EXHAUSTED, show_units_left=sheet.show_units_left)
-    prices = await _prices(catalog)
+    known = await _catalog_by_id(catalog)
     units = tuple(
-        _unit(s, promotion, prices[s.quota.product_id], show=sheet.show_units_left)
+        unit
         for s in board
-        if s.units_left > 0 and s.quota.product_id in prices
+        if s.units_left > 0 and s.quota.product_id in known
+        for unit in [_unit(s, promotion, *known[s.quota.product_id], show=sheet.show_units_left)]
+        if unit is not None
     )
+    if not units:
+        return QuotaOffer(True, REASON_QUOTA_UNAVAILABLE, show_units_left=sheet.show_units_left)
     return QuotaOffer(True, None, units, sheet.show_units_left)
 
 
@@ -259,8 +277,12 @@ async def quota_split(
     *,
     sheet: Any,
     sales: Any,
+    eligible: set[int] | None = None,
 ) -> QuotaSplit:
-    """Qué unidades de cada línea llevan descuento, leyendo lo vendido FRESCO."""
+    """Qué unidades de cada línea llevan descuento, leyendo lo vendido FRESCO.
+
+    `eligible`: líneas que el cupón cubre (alcance real, con etiquetas); las
+    demás no reciben cupo aunque coincidan con una fila."""
     try:
         board = await quota_board(sheet, sales)
     except PromotionsUnavailableError:
@@ -268,12 +290,12 @@ async def quota_split(
     lines = [
         QuotaLine(
             product_id=v.product_id or "",
-            quantity=int(it.get("quantity") or 0),
+            quantity=int(it.get("quantity") or 0) if eligible is None or i in eligible else 0,
             unit_price_cop=int(it.get("unit_price_cop") or 0),
             color=v.color,
             aroma=v.aroma,
         )
-        for it, v in zip(items, variants)
+        for i, (it, v) in enumerate(zip(items, variants))
     ]
     allocation = allocate_units(board, lines, percentage=promotion.value)
     discounts = tuple(

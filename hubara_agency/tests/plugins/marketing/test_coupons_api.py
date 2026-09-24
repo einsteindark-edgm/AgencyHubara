@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
@@ -67,6 +68,24 @@ class _Sales:
 
 
 @dataclass
+class _Reader:
+    """`PromotionsPort` sobre la MISMA Medusa en memoria de la central (con
+    la traducción de etiquetas que hace el adapter real)."""
+
+    admin: FakePromotionsAdmin
+    tags: dict[str, str] = field(default_factory=lambda: {"ptag_1": "Color: Rosado"})
+
+    async def get_by_code(self, code: str):
+        from src.platform.promotions.medusa import promotion_from_medusa
+
+        for raw in await self.admin.medusa.list_promotions():
+            promo = promotion_from_medusa(raw, tag_values=self.tags)
+            if promo is not None and promo.code == code.upper():
+                return promo
+        return None
+
+
+@dataclass
 class World:
     admin: FakePromotionsAdmin
     store: FakePromoQuotaStore
@@ -86,6 +105,7 @@ def _world(monkeypatch, *, seed: list[dict[str, Any]] | None = None, app: FastAP
     monkeypatch.setattr(coupons_api, "sales_reader", lambda: sales)
     monkeypatch.setattr(coupons_api, "catalog", lambda: _Catalog([_CUBO, _VASO]))
     monkeypatch.setattr(coupons_api, "now", lambda: _NOW)
+    monkeypatch.setattr(coupons_api, "promotions_reader", lambda: _Reader(admin))
     if app is None:
         app = FastAPI()
         app.include_router(coupons_api.router, prefix="/api/marketing")
@@ -465,3 +485,85 @@ def test_marketing_router_mounts_the_coupon_central(monkeypatch) -> None:
     app.include_router(marketing_api.router, prefix="/api/marketing")
 
     assert TestClient(app).get("/api/marketing/coupons").status_code == 200
+
+
+# --- Revisión de gates: bordes ------------------------------------------------------
+
+
+def test_units_respect_the_real_scope_of_a_tag_rule_coupon(monkeypatch) -> None:
+    """AMOR26 (productos + etiquetas): una fila de un producto que la regla
+    por etiquetas deja afuera se rechaza — el bot no puede prometer ese
+    descuento."""
+    from src.sdk.connectorkit import FakePromotionsPort, PromotionDTO
+
+    promo = PromotionDTO(
+        id="promo_amor26", code="AMOR26", discount_type="percentage", value=10, currency_code=None,
+        target_type="items", allocation="each", max_quantity=10,
+        product_ids=("prod_cubo", "prod_vaso"), variant_ids=(), collection_ids=(), min_subtotal_cop=None,
+        is_automatic=False, status="active", starts_at_ms=None, ends_at_ms=None, budget_type=None,
+        budget_limit=None, budget_used=None, description=None, tag_values=("Color: Rosado",),
+    )
+    seed = _tagged_amor26()
+    seed["application_method"]["target_rules"][0]["values"].append({"value": "prod_vaso"})
+    w = _world(monkeypatch, seed=[seed])
+    monkeypatch.setattr(coupons_api, "promotions_reader", lambda: FakePromotionsPort([promo]))
+
+    res = w.client.put("/api/marketing/coupons/promo_amor26/units", json={
+        "rows": [
+            {"product_id": "prod_cubo", "color": "Rosado", "aroma": "Café", "units": 2},
+            # El Vaso no tiene la etiqueta "Color: Rosado": fuera del cupón.
+            {"product_id": "prod_vaso", "color": "Blanco", "units": 1},
+        ],
+    })
+
+    assert res.status_code == 422
+    assert [(e["row"], e["field"]) for e in res.json()["detail"]["rows"]] == [(1, "product_id")]
+
+
+@pytest.mark.parametrize("bad", ["..", "promo%2F1", "a" * 80])
+def test_unsafe_promotion_id_is_404(monkeypatch, bad) -> None:
+    w = _world(monkeypatch)
+
+    assert w.client.get(f"/api/marketing/coupons/{bad}/units").status_code == 404
+
+
+def test_catalog_down_is_503_not_500(monkeypatch) -> None:
+    w = _world(monkeypatch)
+
+    class Down:
+        async def search(self, *a, **k):
+            raise RuntimeError("snapshot roto")
+
+    monkeypatch.setattr(coupons_api, "catalog", lambda: Down())
+
+    assert w.client.post("/api/marketing/coupons", json=_BODY).status_code == 503
+    assert w.client.get("/api/marketing/coupon-products").status_code == 503
+
+
+def test_patch_of_a_coupon_deleted_meanwhile_is_404(monkeypatch) -> None:
+    from src.sdk.connectorkit import CouponNotFoundError
+
+    w = _world(monkeypatch)
+    pid = _create(w)["promotion_id"]
+
+    async def gone(*a, **k):
+        raise CouponNotFoundError("borrado")
+
+    monkeypatch.setattr(w.admin, "update_coupon", gone)
+
+    assert w.client.patch(f"/api/marketing/coupons/{pid}", json={"percentage": 20}).status_code == 404
+
+
+def test_unreadable_quota_file_is_503_not_an_empty_quota(monkeypatch) -> None:
+    from src.sdk.connectorkit import QuotaStoreError
+
+    w = _world(monkeypatch)
+    pid = _create(w)["promotion_id"]
+
+    def broken(promotion_id):
+        raise QuotaStoreError("roto")
+
+    monkeypatch.setattr(w.store, "get", broken)
+
+    assert w.client.get(f"/api/marketing/coupons/{pid}/units").status_code == 503
+    assert w.client.get(f"/api/marketing/coupons/{pid}").status_code == 503

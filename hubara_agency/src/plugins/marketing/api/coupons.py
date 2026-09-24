@@ -14,6 +14,7 @@ ocupado, no gestionable, con ventas) · 503 `{message}` (Medusa no responde)
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, time, timezone
 from typing import Any
 
@@ -22,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from src.plugins.marketing.domain.coupons import (
     audit_diff,
+    coupon_product_ids,
     coupon_json,
     results_json,
     spec_patch,
@@ -40,6 +42,7 @@ from src.sdk.connectorkit import (
     CouponView,
     PromotionsUnavailableError,
     QuotaSheet,
+    QuotaStoreError,
     parse_coupon_spec,
     quota_board,
     quota_product,
@@ -50,6 +53,9 @@ from src.sdk.connectorkit import (
 router = APIRouter()
 
 _BOGOTA_OFFSET_H = 5  # Colombia: UTC−5 todo el año
+#: Un id de promoción de Medusa (`promo_01K…`): nada que arme una ruta o
+#: una URL distinta.
+_PROMOTION_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 # --- Providers (módulo, monkeypatcheables en tests; imports perezosos: la
@@ -80,6 +86,15 @@ def sales_reader() -> Any:
     return get_coupon_sales_reader()
 
 
+def promotions_reader() -> Any:
+    """Lectura de Medusa con el alcance REAL de cada cupón (traduce las
+    reglas por etiquetas): la usa el cupo para no aceptar productos que el
+    cupón no cubre."""
+    from src.sdk.connectorkit import get_promotions_port
+
+    return get_promotions_port()
+
+
 def catalog() -> Any:
     from src.sdk.catalogkit import get_catalog_client
 
@@ -101,7 +116,21 @@ def _unavailable() -> HTTPException:
     return _fail(503, "Medusa no responde ahora mismo; no se hizo ningún cambio. Reintenta en un momento.")
 
 
+def _pid(promotion_id: str) -> str:
+    if not _PROMOTION_ID_RE.fullmatch(promotion_id or ""):
+        raise _fail(404, "Ese cupón no existe en Medusa.")
+    return promotion_id
+
+
+def _sheet(promotion_id: str) -> QuotaSheet:
+    try:
+        return quota_store().get(_pid(promotion_id))
+    except QuotaStoreError as e:
+        raise _fail(503, "No pude leer las unidades guardadas de este cupón; no se hizo ningún cambio.") from e
+
+
 async def _view(promotion_id: str) -> CouponView:
+    _pid(promotion_id)
     try:
         return await promotions_admin().get_coupon(promotion_id)
     except CouponNotFoundError as e:
@@ -115,7 +144,10 @@ def _spec_error(e: CouponSpecError) -> HTTPException:
 
 
 async def _catalog_products() -> list[Any]:
-    result = await catalog().search("", limit=500)
+    try:
+        result = await catalog().search("", limit=500)
+    except Exception as e:  # noqa: BLE001 — el catálogo es un port externo
+        raise _fail(503, "El catálogo no responde ahora mismo; reintenta en un momento.") from e
     return list(result.results)
 
 
@@ -210,7 +242,7 @@ async def create_coupon(body: CouponBody, request: Request) -> dict[str, Any]:
 @router.get("/coupons/{promotion_id}")
 async def get_coupon(promotion_id: str) -> dict[str, Any]:
     view = await _view(promotion_id)
-    sheet = quota_store().get(promotion_id)
+    sheet = _sheet(promotion_id)
     try:
         board = await quota_board(sheet, sales_reader())
     except PromotionsUnavailableError:
@@ -239,6 +271,8 @@ async def update_coupon(promotion_id: str, patch: dict[str, Any], request: Reque
     await _check_products(spec.products, keep=before.products or ())
     try:
         after = await promotions_admin().update_coupon(promotion_id, spec)
+    except CouponNotFoundError as e:
+        raise _fail(404, "Ese cupón ya no existe en Medusa.") from e
     except CouponNotManageableError as e:
         raise _fail(409, e.reason) from e
     except CouponCodeTakenError as e:
@@ -268,6 +302,7 @@ class StatusBody(BaseModel):
 
 @router.post("/coupons/{promotion_id}/status")
 async def set_coupon_status(promotion_id: str, body: StatusBody, request: Request) -> dict[str, Any]:
+    _pid(promotion_id)
     if body.status not in ("active", "inactive"):
         raise HTTPException(
             status_code=422, detail={"field": "status", "message": "El estado va como activo o pausado."}
@@ -311,7 +346,7 @@ async def delete_coupon(promotion_id: str, request: Request) -> Response:
 
 @router.get("/coupons/{promotion_id}/units")
 async def get_coupon_units(promotion_id: str) -> dict[str, Any]:
-    sheet = quota_store().get(promotion_id)
+    sheet = _sheet(promotion_id)
     try:
         board = await quota_board(sheet, sales_reader())
     except PromotionsUnavailableError as e:
@@ -332,16 +367,25 @@ async def put_coupon_units(promotion_id: str, body: UnitsBody, request: Request)
     view = await _view(promotion_id)
     if view.percentage is None:
         raise _fail(409, "El cupo por unidad es solo para cupones de porcentaje.")
+    catalog_products = await _catalog_products()
     products = {
         p.id: quota_product(p.id, p.handle, p.title, list(p.tags or []))
-        for p in await _catalog_products()
+        for p in catalog_products
     }
+    # Alcance REAL del cupón (con la regla por etiquetas traducida): una fila
+    # de un producto que el cupón no cubre haría prometer un descuento falso.
+    try:
+        promotion = await promotions_reader().get_by_code(view.code)
+    except PromotionsUnavailableError as e:
+        raise _unavailable() from e
+    if promotion is None or promotion.scope_unresolved:
+        raise _fail(409, "No pude confirmar a qué productos aplica este cupón; revisa sus reglas en Medusa.")
     actor = current_actor(request)
     quotas, errors = validate_quota_rows(
         body.rows,
         promotion_id=promotion_id,
         code=view.code,
-        coupon_products=view.products,
+        coupon_products=coupon_product_ids(promotion, catalog_products),
         products=products,
         actor=actor,
         now_iso=now().strftime("%Y-%m-%dT%H:%M:%SZ"),

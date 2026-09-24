@@ -446,3 +446,60 @@ async def test_admin_write_clears_local_promotions_cache() -> None:
         seen = await reader.get_by_code("AMOR27")
 
     assert seen is not None and seen.value == 10
+
+
+
+@pytest.mark.asyncio
+async def test_writes_are_not_retried_after_a_read_timeout() -> None:
+    """Un POST que se cortó por timeout PUDO haber creado la promoción:
+    reintentarlo daría "ya existe" sobre el cupón recién creado. Las
+    escrituras solo se reintentan si la conexión ni siquiera se abrió."""
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(f"{_BASE}/admin/promotions").mock(
+            return_value=httpx.Response(200, json={"promotions": [], "count": 0, "offset": 0, "limit": 100})
+        )
+        post = mock.post(f"{_BASE}/admin/promotions").mock(side_effect=httpx.ReadTimeout("slow"))
+        client = HttpMedusaClient(base_url=_BASE, admin_token="sk_test", timeout=5.0)
+        port = MedusaPromotionsAdmin(client, clock=_clock)
+        with pytest.raises(PromotionsUnavailableError):
+            await port.create_coupon(_spec())
+
+    assert post.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_rename_whose_campaign_step_hits_a_taken_identifier_is_a_partial_update() -> None:
+    orphan = {"id": "procamp_x", "name": "vieja", "campaign_identifier": "BORRADOR2"}
+    sim = InMemoryMedusaPromotions()
+    sim._orphan_campaigns["procamp_x"] = orphan
+    with respx.mock(assert_all_called=False) as mock:
+        mock.route(host="medusa.test").mock(side_effect=_medusa_http(sim))
+        client = HttpMedusaClient(base_url=_BASE, admin_token="sk_test", timeout=5.0)
+        port = MedusaPromotionsAdmin(client, clock=_clock)
+        draft = await port.create_coupon(_spec(code="BORRADOR1", status="draft"))
+        with pytest.raises(CouponPartialUpdateError) as err:
+            await port.update_coupon(draft.promotion_id, _spec(code="BORRADOR2", status="draft"))
+
+    assert err.value.step == "campaign"
+    assert err.value.view is not None and err.value.view.code == "BORRADOR2"
+
+
+@pytest.mark.asyncio
+async def test_created_coupon_is_returned_even_if_the_reread_fails() -> None:
+    """La promoción ya existe en Medusa: responder "no se hizo ningún cambio"
+    mentiría (y dejaría el cambio sin registro)."""
+    sim = InMemoryMedusaPromotions()
+    medusa = _medusa_http(sim)
+
+    async def reread_down(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.startswith("/admin/promotions/"):
+            return httpx.Response(503, json={"message": "down"})
+        return await medusa(request)
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.route(host="medusa.test").mock(side_effect=reread_down)
+        client = HttpMedusaClient(base_url=_BASE, admin_token="sk_test", timeout=5.0)
+        port = MedusaPromotionsAdmin(client, clock=_clock)
+        view = await port.create_coupon(_spec())
+
+    assert view.code == "AMOR27" and view.percentage == 10

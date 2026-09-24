@@ -611,6 +611,9 @@ async def test_send(campaign_id: str, body: TestSendBody) -> dict:
                 "como 3001234567 o +57 300 123 4567"
             ),
         )
+    # Primero el cupón: sus términos (% y "válido hasta") se copian a la
+    # campaña y la prueba tiene que anunciar ESOS, no lo que tipeó el operador.
+    await _validate_campaign_coupon(campaign)
     session_metadata = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
     variables = campaign_template_variables(
         campaign, customer_name=customer_name_from_metadata(session_metadata)
@@ -618,7 +621,6 @@ async def test_send(campaign_id: str, body: TestSendBody) -> dict:
     size_error = carousel_size_error(carousel_handles(campaign))
     if size_error:
         raise HTTPException(status_code=422, detail=size_error)
-    await _validate_campaign_coupon(campaign)
     send_kwargs: dict[str, Any] = {}
     if carousel_handles(campaign):
         try:

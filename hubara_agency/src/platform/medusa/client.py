@@ -594,7 +594,7 @@ class HttpMedusaClient:
     async def create_promotion(self, payload: dict[str, Any]) -> dict[str, Any]:
         """`POST /admin/promotions` — con `campaign` en línea crea promoción y
         campaña en UNA llamada (atómico)."""
-        data = await self._request("POST", "/admin/promotions", json=payload)
+        data = await self._request("POST", "/admin/promotions", json=payload, idempotent=False)
         return data["promotion"]
 
     async def update_promotion(self, promotion_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -615,6 +615,7 @@ class HttpMedusaClient:
             "POST",
             f"/admin/promotions/{promotion_id}/target-rules/batch",
             json={"create": create or [], "update": update or [], "delete": delete or []},
+            idempotent=False,
         )
 
     async def update_campaign(self, campaign_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -623,10 +624,10 @@ class HttpMedusaClient:
         return data["campaign"]
 
     async def delete_promotion(self, promotion_id: str) -> dict[str, Any]:
-        return await self._request("DELETE", f"/admin/promotions/{promotion_id}")
+        return await self._request("DELETE", f"/admin/promotions/{promotion_id}", idempotent=False)
 
     async def delete_campaign(self, campaign_id: str) -> dict[str, Any]:
-        return await self._request("DELETE", f"/admin/campaigns/{campaign_id}")
+        return await self._request("DELETE", f"/admin/campaigns/{campaign_id}", idempotent=False)
 
     async def list_product_tags(self, ids: list[str]) -> list[dict[str, Any]]:
         """`GET /admin/product-tags` de esos ids — `{id, value}` de cada
@@ -662,13 +663,20 @@ class HttpMedusaClient:
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
+        idempotent: bool = True,
     ) -> dict[str, Any]:
+        # Una escritura NO idempotente (crear/borrar una promoción) que se
+        # cortó por timeout PUDO haberse aplicado: solo se reintenta si la
+        # conexión ni siquiera se abrió.
+        retryable: tuple[type[Exception], ...] = (
+            (httpx.TransportError, httpx.RemoteProtocolError)
+            if idempotent
+            else (httpx.ConnectError,)
+        )
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(3),
             wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
-            retry=retry_if_exception_type(
-                (httpx.TransportError, httpx.RemoteProtocolError)
-            ),
+            retry=retry_if_exception_type(retryable),
             reraise=True,
         ):
             with attempt:

@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import itertools
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol, runtime_checkable
 
@@ -28,6 +29,8 @@ from src.platform.promotions.coupon import (
     day_start_utc,
 )
 from src.platform.promotions.port import PromotionsUnavailableError
+
+log = logging.getLogger(__name__)
 
 
 class CouponNotFoundError(LookupError):
@@ -126,7 +129,7 @@ class MedusaPromotionsAdmin:
             raise CouponCodeTakenError(f"Ya existe una promoción con el código {spec.code}.")
         created = await self._call(self._client.create_promotion(coupon_to_medusa_payload(spec)))
         self._changed()
-        return self._view(await self._raw(str(created["id"])))
+        return await self._reread(created)
 
     async def update_coupon(self, promotion_id: str, spec: CouponSpec) -> CouponView:
         """Lleva la promoción a `spec` tocando SOLO lo que cambió.
@@ -153,10 +156,10 @@ class MedusaPromotionsAdmin:
     async def set_status(self, promotion_id: str, status: str) -> CouponView:
         if status not in ("active", "inactive"):
             raise CouponRejectedError("El estado va como activo o pausado.")
-        await self._manageable_raw(promotion_id)
-        await self._call(self._client.update_promotion(promotion_id, {"status": status}))
+        before = await self._manageable_raw(promotion_id)
+        updated = await self._call(self._client.update_promotion(promotion_id, {"status": status}))
         self._changed()
-        return self._view(await self._raw(promotion_id))
+        return await self._reread({**before, **updated, "status": status})
 
     async def delete_coupon(self, promotion_id: str) -> None:
         """Borra promoción + campaña. SOLO un borrador: lo que ya se pudo usar
@@ -170,11 +173,26 @@ class MedusaPromotionsAdmin:
         self._changed()
         campaign_id = (raw.get("campaign") or {}).get("id") or raw.get("campaign_id")
         if campaign_id:
-            await self._call(self._client.delete_campaign(str(campaign_id)))
+            try:
+                await self._call(self._client.delete_campaign(str(campaign_id)))
+            except (PromotionsUnavailableError, CouponNotFoundError, CouponRejectedError) as exc:
+                # La promoción ya no existe (el cupón quedó borrado); la
+                # campaña huérfana queda en Medusa y hay que borrarla a mano
+                # (su identificador bloquea volver a crear el mismo código).
+                log.warning("cupón %s borrado; su campaña %s quedó: %s", promotion_id, campaign_id, exc)
 
     async def raw_promotion(self, promotion_id: str) -> dict[str, Any]:
         """La promoción tal cual la devuelve Medusa (diagnóstico / tests)."""
         return await self._raw(promotion_id)
+
+    async def _reread(self, written: dict[str, Any]) -> CouponView:
+        """La promoción tal como quedó; si releer falla, lo que devolvió la
+        escritura (el cambio YA está hecho en Medusa: no decir lo contrario)."""
+        try:
+            return self._view(await self._raw(str(written["id"])))
+        except PromotionsUnavailableError:
+            log.warning("promoción %s escrita pero no pude releerla", written.get("id"))
+            return self._view(written)
 
     async def _manageable_raw(self, promotion_id: str) -> dict[str, Any]:
         raw = await self._raw(promotion_id)
@@ -186,7 +204,12 @@ class MedusaPromotionsAdmin:
     async def _step(self, promotion_id: str, step: str, awaitable: Any) -> None:
         try:
             await self._call(awaitable)
-        except (PromotionsUnavailableError, CouponRejectedError, CouponNotFoundError) as exc:
+        except (
+            PromotionsUnavailableError,
+            CouponRejectedError,
+            CouponNotFoundError,
+            CouponCodeTakenError,
+        ) as exc:
             try:
                 view = self._view(await self._raw(promotion_id))
             except Exception:  # noqa: BLE001 — releer es best-effort
@@ -442,6 +465,13 @@ class InMemoryMedusaPromotions:
         campaign = next((c for c in self._campaigns() if c.get("id") == campaign_id), None)
         if campaign is None:
             raise _error(404, path, "not_found", f"Campaign with id: {campaign_id} was not found")
+        ident = payload.get("campaign_identifier")
+        if ident is not None and any(
+            c.get("campaign_identifier") == ident and c.get("id") != campaign_id for c in self._campaigns()
+        ):
+            raise _error(
+                400, path, "invalid_data", f"Campaign with campaign_identifier: {ident}, already exists."
+            )
         self.writes.append(("POST", path))
         campaign.update(payload)
         return copy.deepcopy(campaign)

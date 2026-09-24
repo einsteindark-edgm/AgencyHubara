@@ -35,9 +35,17 @@ class QuotaSheet:
     show_units_left: bool = True
     updated_at: str = ""
     updated_by: str = ""
+    #: Desde cuándo se cuentan las vendidas: el primer guardado de filas y
+    #: NUNCA avanza (borrar y volver a crear una fila no "devuelve" unidades).
+    counting_since: str = ""
 
     def with_quotas(self, quotas: tuple[PromoUnitQuota, ...]) -> "QuotaSheet":
         return replace(self, quotas=quotas)
+
+
+class QuotaStoreError(RuntimeError):
+    """El cupo guardado no se pudo leer (archivo roto o disco). Falla
+    CERRADA: quien lo lea NO debe tratarlo como "cupón sin cupo"."""
 
 
 def _check_id(promotion_id: str) -> str:
@@ -71,6 +79,7 @@ def _merge(
         show_units_left=show_units_left,
         updated_at=now_iso,
         updated_by=actor,
+        counting_since=current.counting_since or (now_iso if kept else ""),
     )
 
 
@@ -82,13 +91,13 @@ def _to_json(sheet: QuotaSheet) -> dict[str, Any]:
 
 def _from_json(promotion_id: str, data: Any) -> QuotaSheet:
     if not isinstance(data, dict):
-        return QuotaSheet(promotion_id, "", ())
+        raise QuotaStoreError(f"cupo de {promotion_id} ilegible")
     quotas: list[PromoUnitQuota] = []
     for row in data.get("quotas") or []:
         try:
             quotas.append(PromoUnitQuota(**row))
-        except TypeError:
-            continue  # fila de otra versión: no se inventa
+        except TypeError as exc:
+            raise QuotaStoreError(f"fila de cupo ilegible en {promotion_id}: {exc}") from exc
     return QuotaSheet(
         promotion_id=promotion_id,
         code=str(data.get("code") or ""),
@@ -96,6 +105,7 @@ def _from_json(promotion_id: str, data: Any) -> QuotaSheet:
         show_units_left=bool(data.get("show_units_left", True)),
         updated_at=str(data.get("updated_at") or ""),
         updated_by=str(data.get("updated_by") or ""),
+        counting_since=str(data.get("counting_since") or ""),
     )
 
 
@@ -132,8 +142,8 @@ class VaultPromoQuotaStore:
             data = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return QuotaSheet(promotion_id, "", ())
-        except (OSError, ValueError):
-            return QuotaSheet(promotion_id, "", ())
+        except (OSError, ValueError) as exc:
+            raise QuotaStoreError(f"no pude leer el cupo de {promotion_id}: {exc}") from exc
         return _from_json(promotion_id, data)
 
     def get(self, promotion_id: str) -> QuotaSheet:
@@ -175,10 +185,21 @@ class VaultPromoQuotaStore:
         )
 
     def list_sheets(self) -> list[QuotaSheet]:
+        """Hojas legibles con filas (una rota se saltea acá; quien la lea por
+        su id recibe el error)."""
         if not self._dir.is_dir():
             return []
-        sheets = [self._read(p.stem) for p in sorted(self._dir.glob("*.json")) if _SAFE_ID.fullmatch(p.stem)]
-        return [s for s in sheets if s.quotas]
+        sheets: list[QuotaSheet] = []
+        for path in sorted(self._dir.glob("*.json")):
+            if not _SAFE_ID.fullmatch(path.stem):
+                continue
+            try:
+                sheet = self._read(path.stem)
+            except QuotaStoreError:
+                continue
+            if sheet.quotas:
+                sheets.append(sheet)
+        return sheets
 
     def delete(self, promotion_id: str) -> None:
         self._path(promotion_id).unlink(missing_ok=True)
@@ -221,5 +242,6 @@ __all__ = [
     "FakePromoQuotaStore",
     "PromoQuotaStore",
     "QuotaSheet",
+    "QuotaStoreError",
     "VaultPromoQuotaStore",
 ]

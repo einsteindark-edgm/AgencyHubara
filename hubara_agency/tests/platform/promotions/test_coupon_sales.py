@@ -195,8 +195,9 @@ async def test_quota_board_counts_sales_since_the_first_quota_row() -> None:
 
     board = await quota_board(sheet, reader)
 
-    # Una línea con marca de cupo no puede ser anterior a la fila más vieja.
-    assert reader.since == [datetime(2026, 9, 22, 10, 0, tzinfo=timezone.utc)]
+    # Una línea con marca de cupo no puede ser anterior a la fila más vieja
+    # (menos una hora de margen por el reloj).
+    assert reader.since == [datetime(2026, 9, 22, 9, 0, tzinfo=timezone.utc)]
     assert [(s.quota.id, s.units_left) for s in board] == [("q1", 3), ("q2", 1)]
 
 
@@ -206,3 +207,38 @@ async def test_quota_board_without_rows_reads_nothing() -> None:
 
     assert await quota_board(QuotaSheet("promo_1", "", ()), reader) == []
     assert reader.since == []
+
+
+@pytest.mark.asyncio
+async def test_quota_board_counts_from_counting_since_with_a_clock_margin() -> None:
+    reader = _Reader({})
+    sheet = QuotaSheet("promo_1", "AMOR26", (_row("q1", 5, "2026-09-25T09:00:00Z"),),
+                       counting_since="2026-09-23T17:00:00Z")
+
+    await quota_board(sheet, reader)
+
+    # Una hora de margen por la diferencia de reloj entre el host y Medusa.
+    assert reader.since == [datetime(2026, 9, 23, 16, 0, tzinfo=timezone.utc)]
+
+
+@pytest.mark.asyncio
+async def test_reader_without_count_keeps_paging_until_a_short_page() -> None:
+    """Sin `count` en la respuesta NO se corta en la primera página (contaría
+    menos vendidas y el cupo vendería de más)."""
+    since = datetime(2026, 9, 22, 5, 0, tzinfo=timezone.utc)
+    pages = {
+        0: [_order("order_a", [_line(1)], status="pending", created="2026-09-23T10:00:00Z"),
+            _order("order_b", [_line(1)], status="pending", created="2026-09-23T09:00:00Z")],
+        2: [_order("order_c", [_line(1)], status="pending", created="2026-09-23T08:00:00Z")],
+    }
+
+    def orders(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"orders": pages.get(int(request.url.params["offset"]), [])})
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(f"{_BASE}/admin/orders").mock(side_effect=orders)
+        mock.get(f"{_BASE}/admin/draft-orders").mock(return_value=httpx.Response(200, json={"draft_orders": []}))
+        reader = CouponSalesReader(HttpMedusaClient(base_url=_BASE, admin_token="sk_test", timeout=5.0), page_size=2)
+        sold = await reader.sold_units(since=since)
+
+    assert sold == {_Q: 3}

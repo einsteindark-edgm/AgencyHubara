@@ -64,6 +64,7 @@ from src.sdk.connectorkit import (
     DiscountedUnits,
     LineDiscount,
     QuotaLockTimeout,
+    QuotaStoreError,
     enqueue_capi_event,
     normalize_capi_contents,
     product_retailer_id,
@@ -331,7 +332,11 @@ class RegisterOrderTool(ToolBase):
             promotion = promotion_from_snapshot(raw["promotion"])
         except (TypeError, KeyError):
             return None
-        return promotion.code if self._quotas.get(promotion.id).quotas else None
+        try:
+            has_quota = bool(self._quotas.get(promotion.id).quotas)
+        except QuotaStoreError:
+            has_quota = True  # ilegible: se registra bajo candado y falla cerrada
+        return promotion.code if has_quota else None
 
     async def _portavelas_handles(self, items: list[dict[str, Any]]) -> list[str]:
         """Handles del pedido cuyo producto trae portavela según el catálogo.

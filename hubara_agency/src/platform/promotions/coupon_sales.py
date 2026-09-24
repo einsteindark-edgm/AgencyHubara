@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from src.platform.orders.state import META_KEY_STAGE, META_KEY_TEST_ORDER
@@ -25,6 +25,7 @@ LINE_DISCOUNT_UNIT_KEY = "discount_unit_cop"
 
 #: Lo mínimo para contar: la línea con su metadata y el estado del pedido.
 ORDER_FIELDS = "id,display_id,status,created_at,canceled_at,metadata,*items"
+_CLOCK_MARGIN = timedelta(hours=1)
 
 
 @dataclass(frozen=True)
@@ -158,14 +159,17 @@ def _created(order: dict[str, Any]) -> datetime | None:
 async def quota_board(sheet: QuotaSheet, reader: Any) -> list[QuotaStatus]:
     """Cuántas quedan de cada fila del cupo, leyendo lo vendido de Medusa.
 
-    Una línea con la marca de un cupo no puede ser anterior a la fila más
-    vieja: desde ahí se leen los pedidos (sin depender de las fechas de la
-    campaña, que el operador puede mover). Sin filas no lee nada."""
+    Una línea con la marca de un cupo no puede ser anterior al primer
+    guardado de filas (`counting_since`, que nunca avanza): desde ahí se leen
+    los pedidos, sin depender de las fechas de la campaña que el operador
+    puede mover. Sin filas no lee nada."""
     if not sheet.quotas:
         return []
+    fixed = _parse_iso(sheet.counting_since)
     starts = [d for d in (_parse_iso(q.created_at) for q in sheet.quotas) if d is not None]
-    since = min(starts) if starts else datetime(2000, 1, 1, tzinfo=timezone.utc)
-    sold = await reader.sold_units(since=since)
+    since = fixed or (min(starts) if starts else datetime(2000, 1, 1, tzinfo=timezone.utc))
+    # Margen por la diferencia de reloj entre este host y Medusa.
+    sold = await reader.sold_units(since=since - _CLOCK_MARGIN)
     return quota_statuses(list(sheet.quotas), sold)
 
 
@@ -220,5 +224,12 @@ class CouponSalesReader:
             out.extend(fresh)
             offset += len(rows)
             count = page.get("count")
-            if len(fresh) < len(rows) or not rows or not isinstance(count, int) or offset >= count:
+            # Corta al pasar `since`, con una página corta o cuando `count`
+            # dice que no hay más. Sin `count` sigue paginando: cortar antes
+            # contaría menos vendidas (el cupo vendería de más).
+            if (
+                len(fresh) < len(rows)
+                or len(rows) < self._page_size
+                or (isinstance(count, int) and offset >= count)
+            ):
                 return out

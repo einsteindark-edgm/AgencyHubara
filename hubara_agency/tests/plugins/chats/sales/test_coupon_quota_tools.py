@@ -205,3 +205,53 @@ def test_sales_worker_gives_coupon_tools_the_quota_dependencies(tmp_path: Path, 
         assert tool._quotas is not None and tool._sales is not None, name
     register = dict(_EXTENSIONS)["sales.register_order"](tmp_path)
     assert register._quota_lock is not None
+
+
+
+@pytest.mark.asyncio
+async def test_apply_coupon_with_unreadable_quota_file_fails_closed(tmp_path: Path) -> None:
+    from src.platform.promotions.quota_store import QuotaStoreError
+
+    class Broken:
+        def get(self, promotion_id):
+            raise QuotaStoreError("roto")
+
+    tool, md = _apply_tool(tmp_path, quotas=Broken(), sales=_Sales())
+    out = json.loads(await tool.execute_with_context(_ctx(), code="AMOR26"))
+
+    assert (out["applied"], out["reason"]) == (False, "quota_unavailable")
+    assert applied_coupon(md.read(KEY)) is None
+
+
+@pytest.mark.asyncio
+async def test_apply_coupon_without_any_offerable_unit_fails_closed(tmp_path: Path) -> None:
+    """Catálogo caído: sin precios no hay unidades que ofrecer — NO se dice
+    "SOLO en estas unidades: ." (vacío)."""
+    class NoCatalog:
+        async def search(self, *a, **k):
+            raise RuntimeError("down")
+
+    md = FilesystemMetadataStore(tmp_path)
+    md.write(KEY, {"episodes": [{"id": "ep_1", "status": "active"}]})
+    tool = ApplyCouponTool(tmp_path, promotions=FakePromotionsPort([_promo()]), metadata_store=md,
+                           catalog=NoCatalog(), now_ms=lambda: _NOW,
+                           quotas=_store_with([_row("q1", "Rosado", "Café", 5)]), sales=_Sales())
+    out = json.loads(await tool.execute_with_context(_ctx(), code="AMOR26"))
+
+    assert (out["applied"], out["reason"]) == (False, "quota_unavailable")
+
+
+@pytest.mark.asyncio
+async def test_units_outside_the_real_scope_are_not_offered(tmp_path: Path) -> None:
+    """Una fila de un producto que la promoción NO cubre (p. ej. quedó fuera
+    de la regla por etiquetas) no se ofrece como unidad con descuento."""
+    store = _store_with([
+        _row("q1", "Rosado", "Café", 5),
+        PromoUnitQuota("q2", "promo_amor26", "AMOR26", "prod_buda", "vela-buda", "Vela Buda",
+                       None, None, 3, "2026-09-23T17:00:00Z", "ana"),
+    ])
+    tool, _ = _apply_tool(tmp_path, quotas=store, sales=_Sales())
+
+    out = json.loads(await tool.execute_with_context(_ctx(), code="AMOR26"))
+
+    assert [u["title"] for u in out["units"]] == ["Cubo Love"]

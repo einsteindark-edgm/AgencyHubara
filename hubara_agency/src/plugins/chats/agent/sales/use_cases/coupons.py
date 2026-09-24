@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from src.sdk.connectorkit import (
+    QuotaStoreError,
     DiscountLineItem,
     LineDiscount,
     PromotionDTO,
@@ -250,11 +251,28 @@ async def coupon_discount_for_items(
     if raw is None:
         return None
     promotion = promotion_from_snapshot(raw["promotion"])
-    sheet = quotas.get(promotion.id) if quotas is not None else None
+    try:
+        sheet = quotas.get(promotion.id) if quotas is not None else None
+    except QuotaStoreError:
+        # Cupo ilegible: NO es "sin cupo" (aplicaría sin límite) — falla cerrada.
+        return AppliedDiscount(
+            code=promotion.code, discount_cop=0, applicable_handles=[],
+            applies_to_shipping=False, reason="quota_unavailable", min_subtotal_cop=None,
+            description=promotion.description, quota=True,
+        )
     if sheet is not None and sheet.quotas:
         if variants is None:
             variants, _invalid = await resolve_item_variants(catalog, items, metadata)
-        split = await quota_split(promotion, items, variants, sheet=sheet, sales=sales)
+        # Alcance real del cupón (productos Y etiquetas) sobre cada línea.
+        per_unit = replace(promotion, min_subtotal_cop=None)
+        eligible = {
+            i
+            for i, line in enumerate(await discount_line_items(catalog, items))
+            if compute_discount(per_unit, [replace(line, quantity=1)]).discount_cop > 0
+        }
+        split = await quota_split(
+            promotion, items, variants, sheet=sheet, sales=sales, eligible=eligible
+        )
         return AppliedDiscount(
             code=promotion.code,
             discount_cop=sum(d.units * d.discount_unit_cop for d in split.line_discounts),

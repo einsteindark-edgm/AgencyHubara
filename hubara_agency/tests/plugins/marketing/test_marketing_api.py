@@ -1341,3 +1341,28 @@ def test_campaign_uses_coupon_percent_and_inclusive_end_date(
     assert res.status_code == 200, res.text
     saved = CampaignStore(_isolate_vault_dir).get(campaign_id)
     assert (saved["percent"], saved["valid_until"]) == (15, "27 de septiembre")
+
+
+
+def test_test_send_announces_the_coupon_terms_not_what_the_operator_typed(
+    client: TestClient, monkeypatch
+) -> None:
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    sent: list[dict] = []
+
+    async def _fake_send(session_id, template, variables, **kw):
+        sent.append(variables)
+        return type("R", (), {"wa_message_id": "wamid.x"})()
+
+    promo = _promo_dto("AMOR26", value=15, ends_at_ms=1_790_571_600_000)  # hasta 27-sep
+    monkeypatch.setattr(api_mod, "send_template_to_session", _fake_send)
+    monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([promo]))
+    campaign_id = _campaign_with_coupon(client, "AMOR26")
+    client.put(f"/api/marketing/campaigns/{campaign_id}", json={"valid_until": "cuando quieras"})
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/test", json={"phone": "3001234567"})
+
+    assert res.status_code == 200, res.text
+    assert "27 de septiembre" in json.dumps(sent[0], ensure_ascii=False)
+    assert "cuando quieras" not in json.dumps(sent[0], ensure_ascii=False)

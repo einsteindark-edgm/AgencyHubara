@@ -85,3 +85,27 @@ def test_vault_quota_store_concurrent_writes_keep_all_rows(tmp_path: Path) -> No
         p.join(timeout=60)
 
     assert len(VaultPromoQuotaStore(tmp_path).get("promo_1").quotas) == 40
+
+
+def test_corrupt_quota_file_fails_closed_instead_of_meaning_no_quota(tmp_path: Path) -> None:
+    """Un archivo roto NO es "sin cupo" (eso aplicaría el cupón sin límite)."""
+    from src.platform.promotions.quota_store import QuotaStoreError
+
+    store = VaultPromoQuotaStore(tmp_path)
+    store.replace("promo_1", "AMOR27", [_q("q1")], show_units_left=True, actor="a", now_iso="t")
+    (tmp_path / "_promotions" / "quotas" / "promo_1.json").write_text("{roto", encoding="utf-8")
+
+    with pytest.raises(QuotaStoreError):
+        store.get("promo_1")
+
+
+def test_counting_since_is_fixed_at_the_first_save_and_never_moves(store: PromoQuotaStore) -> None:
+    first = store.replace("promo_1", "AMOR27", [_q("q1")], show_units_left=True, actor="a",
+                          now_iso="2026-09-23T17:00:00Z")
+    # Borrar la única fila y volver a crearla NO adelanta desde cuándo se cuenta.
+    store.replace("promo_1", "AMOR27", [], show_units_left=True, actor="a", now_iso="2026-09-24T09:00:00Z")
+    again = store.replace("promo_1", "AMOR27", [_q("q1", created_at="2026-09-25T09:00:00Z")],
+                          show_units_left=True, actor="a", now_iso="2026-09-25T09:00:00Z")
+
+    assert first.counting_since == "2026-09-23T17:00:00Z"
+    assert again.counting_since == "2026-09-23T17:00:00Z"
