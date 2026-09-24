@@ -43,6 +43,7 @@ from src.plugins.chats.agent.sales_lab.launch.bench_export import plan_bench_exp
 from src.plugins.chats.agent.sales_lab.launch.contracts import LabLaunchInput
 from src.plugins.chats.agent.sales_lab.launch.costs import check_caps, estimate_run_usd, month_spent_usd
 from src.plugins.chats.agent.sales_eval.workflows.lab_launch import LAB_LAUNCH_WORKFLOW_ID
+from src.plugins.chats.shared.turn_view import trace_view
 from src.sdk import get_task_queue
 from src.sdk.labkit import IMAGE_RE, RUN_ID_RE, LabStorePort, get_lab_store
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, get_temporal_client
@@ -408,23 +409,6 @@ def run_thread(run: str, sid: str, episode: str | None = Query(None, max_length=
     return {**thread, "episode_id": episode, "messages": messages, "turns": turns}
 
 
-def _steps_v1(trace: dict[str, Any]) -> list[dict[str, Any]]:
-    """Pasos de una traza v1 (sin tiempos ni orden de guardas): lo que se sabe."""
-    text = str(trace.get("inbound_text") or "")
-    steps: list[dict[str, Any]] = [
-        {"kind": "inbound", "messages": [{"text": line} for line in text.splitlines() if line.strip()] or [{"text": text}]}
-    ]
-    for tool in trace.get("tools") or []:
-        if isinstance(tool, dict):
-            steps.append({"kind": "tool", **{k: tool.get(k) for k in ("name", "ok", "error", "args", "notes", "excerpt")}})
-    for guard in trace.get("guards") or []:
-        steps.append({"kind": "guard", "name": guard})
-    sent = [t for t in trace.get("sent_texts") or [] if t]
-    if sent:
-        steps.append({"kind": "outbound", "bubbles": [{"kind": "text", "text": t, "delivered": None} for t in sent]})
-    return [{"i": i, "at_ms": None, **step} for i, step in enumerate(steps, 1)]
-
-
 @router.get("/lab/runs/{run}/conversations/{sid}/turns/trace")
 def run_turn_trace(
     run: str,
@@ -437,12 +421,7 @@ def run_turn_trace(
     for trace in traces:
         synthesized = f"{sid}/{trace.get('episode_id')}/t{trace.get('turn')}"
         if turn_key in (trace.get("turn_key"), synthesized):
-            steps = trace.get("steps")
-            if isinstance(steps, list) and steps:
-                inbound = trace.get("inbound") or [{"text": line} for line in str(trace.get("inbound_text") or "").splitlines()]
-                return {"fidelity": "v2", "arm": arm, "rep": rep, "trace": trace,
-                        "steps": [{"i": 0, "at_ms": 0, "kind": "inbound", "messages": inbound}, *steps]}
-            return {"fidelity": "v1", "arm": arm, "rep": rep, "trace": trace, "steps": _steps_v1(trace)}
+            return {"arm": arm, "rep": rep, **trace_view(trace)}
     raise HTTPException(404, detail="Ese turno no tiene traza en este brazo.")
 
 

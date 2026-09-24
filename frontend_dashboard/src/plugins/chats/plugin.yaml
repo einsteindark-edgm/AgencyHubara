@@ -65,6 +65,9 @@ api:
     # Contrato perception-rollout@v1 (plan del laboratorio, PR 16): el encendido
     # del bot nuevo por etapas. El panel de Agents lo consume por cast.
     - { module: src.plugins.chats.api.perception, prefix: /api/chats, tags: [Chats_Perception] }
+    # Plan del laboratorio PR 17: el hilo de cada turno del bot (botón por
+    # turno en el panel del chat).
+    - { module: src.plugins.chats.api.turns, prefix: /api/chats, tags: [Chats_Turns] }
 
 # ── Agente Temporal ────────────────────────────────────────────────────
 # Dos workers en task queues exclusivas: SALES_QUEUE y REMARKETING_QUEUE.

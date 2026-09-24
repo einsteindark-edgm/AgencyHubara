@@ -34,9 +34,6 @@ def estimate_run_usd(arms: list[str], *, reps: int, turns: int, control: bool = 
 _DATED_RUN_RE = re.compile(r"run-(\d{6})\d{2}-")
 
 
-_DATED_RUN_RE = re.compile(r"run-(\d{6})\d{2}-")
-
-
 def _same_month(ms: int, now_ms: int) -> bool:
     a = datetime.fromtimestamp(ms / 1000, tz=_BOGOTA)
     b = datetime.fromtimestamp(now_ms / 1000, tz=_BOGOTA)
