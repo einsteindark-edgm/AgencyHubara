@@ -114,7 +114,8 @@ async def test_est08_topics_are_kept_for_the_candidate_turn() -> None:
     r3 = out[3][0]
     assert (r3.verdict, r3.turn) == ("falla", 3)
     assert [t["topic"] for t in r3.topics] == ["precio"]
-    assert out[6][0].verdict == "pasa"
+    # T6 sin asuntos planteados: no hay nada que cubrir (igual que en producción)
+    assert out[6][0].verdict == "no_aplica"
 
 
 async def test_judge_error_is_unknown_for_every_candidate() -> None:
