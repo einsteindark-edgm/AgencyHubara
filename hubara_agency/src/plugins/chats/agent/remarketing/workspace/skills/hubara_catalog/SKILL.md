@@ -15,15 +15,14 @@ metadata: {"exoclaw": {"always": false}}
 
 ## ENVÍOS Y PAGOS (políticas estables — útiles si el cliente las menciona en el gancho)
 
-- **Envíos a Bogotá**: $12.000 a $15.000 aprox. 1 a 2 días hábiles.
-- **Envíos Nacionales**: 2 a 3 días hábiles.
-- **Pago Contra Entrega**: solo habilitado para compras totales **mayores a $45.000 COP**.
-- **Pago convencional**: vía plataforma web, incluye todos los métodos bancarios del país.
+- **Tarifas mínimas de envío**: Bogotá y municipios cercanos $7.900, Nivel Nacional $16.940. Son MÍNIMAS: el valor definitivo se confirma al despachar según tamaño y peso. El envío lo cobra la transportadora: no existe envío gratis.
+- **Tiempos**: Bogotá 1 a 2 días hábiles; resto del país 2 a 3 días hábiles.
+- **Pago Contra Entrega**: compras **desde $45.000 COP en productos** (inclusive).
+- **Otros medios de pago**: pago anticipado (Nequi) o link de pago, siempre dentro de este chat; los detalles los da el Asesor de Ventas.
 
 ## POLÍTICAS ADICIONALES
 
-- **Descuento de Bienvenida**: 5% automático para primeras compras a través de la web.
-- **Descuento Testimonio**: cupón del 10% para la próxima compra a clientes recurrentes que manden foto/video contando su experiencia por nuestro chat.
+- **Descuentos y cupones**: tú no ofreces ninguno (ver `AGENTS.md`). Si el cliente pregunta por un cupón, el Asesor de Ventas lo valida con el sistema cuando retome la conversación.
 - **Garantía**: 48 horas de cobertura desde la fecha de recepción para envíos rotos o defectuosos, siempre y cuando la vela nunca se haya encendido (debe conservar su empaque y tamaño de mecha).
 
 ## En modo Recuperación tu trabajo es UN solo gancho

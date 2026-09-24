@@ -117,8 +117,8 @@ async def _register(ctx, vault, *, payment_method: str, port=None) -> dict:
         shipping=_SHIPPING,
         payment_method=payment_method,
         subtotal_cop=35000,
-        shipping_cop=12000,
-        total_cop=47000,
+        shipping_cop=7900,
+        total_cop=42900,
     ))
 
 
@@ -136,7 +136,7 @@ async def test_register_transfer_success_queues_payment_instructions(ctx, vault)
     (intent,) = data["pending_ui_intents"]
     assert intent["kind"] == "payment_instructions"
     assert intent["params"]["order_id"] == "order_test_001"
-    assert intent["params"]["total_cop"] == 47000
+    assert intent["params"]["total_cop"] == 42900
     assert intent["params"]["method"] == "transfer"
     # Los datos bancarios NUNCA viajan en el intent (no pasan por el LLM)
     serialized = json.dumps(intent["params"])
@@ -159,7 +159,7 @@ async def test_register_payment_link_queues_link_notice(ctx, vault):
     (intent,) = data["pending_ui_intents"]
     assert intent["kind"] == "payment_instructions"
     assert intent["params"]["method"] == "payment_link"
-    assert intent["params"]["total_cop"] == 47000
+    assert intent["params"]["total_cop"] == 42900
 
 
 # El shape real del draft que devuelve POST /admin/draft-orders (verificado
@@ -511,8 +511,8 @@ async def test_register_transfer_intent_carries_amount_breakdown(ctx, vault):
     await _register(ctx, vault, payment_method="transfer")
     intent = _read_metadata(vault, ctx.session_key)["pending_ui_intents"][0]
     assert intent["params"]["subtotal_cop"] == 35000
-    assert intent["params"]["shipping_cop"] == 12000
-    assert intent["params"]["total_cop"] == 47000
+    assert intent["params"]["shipping_cop"] == 7900
+    assert intent["params"]["total_cop"] == 42900
 
 
 @pytest.mark.asyncio
@@ -520,7 +520,7 @@ async def test_register_payment_link_intent_carries_amount_breakdown(ctx, vault)
     await _register(ctx, vault, payment_method="payment_link")
     intent = _read_metadata(vault, ctx.session_key)["pending_ui_intents"][0]
     assert intent["params"]["subtotal_cop"] == 35000
-    assert intent["params"]["shipping_cop"] == 12000
+    assert intent["params"]["shipping_cop"] == 7900
 
 
 async def _dispatch_text(monkeypatch, params: dict[str, Any]) -> str:
@@ -590,6 +590,8 @@ async def test_dispatch_payment_link_splits_and_labels_total_without_surcharge(
 
 @pytest.mark.asyncio
 async def test_dispatch_free_shipping_says_so(monkeypatch):
+    """Render legacy: desde 2026-09-23 las tools rechazan un envío 0
+    (`shipping_mismatch`); solo lo alcanza un intent encolado antes."""
     text = await _dispatch_text(monkeypatch, {
         "order_id": "order_test_001",
         "subtotal_cop": 47000,

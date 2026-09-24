@@ -48,7 +48,7 @@ _VOSEO_DENYLIST = [
     # Presente indicativo voseo (-ás / -és / -ís)
     "tenés", "querés", "podés", "sabés", "pensás", "contás", "pasás", "usás",
     "llevás", "dejás", "mirás", "recibís", "preferís", "compartís", "decís",
-    "vivís", "escribís", "parseás",
+    "vivís", "escribís", "parseás", "dudás", "elegís", "mandás",
     # Imperativos afirmativos voseo (tilde en última sílaba)
     "esperá", "mirá", "mandá", "llamá", "usá", "empezá", "cerrá", "informá",
     "avisá", "invitá", "continuá", "reasoná", "considerá", "tocá", "recordá",
@@ -57,7 +57,7 @@ _VOSEO_DENYLIST = [
     # Imperativos con enclítico (voseo)
     "decime", "contame", "mirame", "mostrame", "avisame", "pedile", "mandale",
     "decile", "contale", "preguntale", "fijate", "acordate", "llevate",
-    "sentate", "pegale", "invitalo", "describílos", "decílo",
+    "sentate", "pegale", "invitalo", "describílos", "decílo", "resolvelas",
 ]
 
 # Fronteras unicode-aware: el token no puede estar pegado a otra letra
@@ -111,4 +111,33 @@ def test_no_voseo_in_chats_agent_python_strings() -> None:
         "Voseo rioplatense detectado (viola REGLA #1 de IDENTITY.md — usá tuteo "
         "colombiano: 'dime', 'cuéntame', 'puedes', 'usa', 'mira'):\n  "
         + "\n  ".join(violations)
+    )
+
+
+# Los prompts en Markdown (workspace/ + skills/) los lee el LLM en cada turno y
+# copia su registro: el voseo ahí se filtra igual que en un string de Python.
+# EXENTO: IDENTITY.md de ventas, cuya REGLA #1 cita el voseo PROHIBIDO como
+# dato (tabla de conversión y ejemplos) — misma justificación que el
+# vocabulario de un detector.
+_MD_EXEMPT = {
+    "sales/workspace/IDENTITY.md",
+}
+
+
+def test_no_voseo_in_chats_agent_markdown_prompts() -> None:
+    files = sorted(
+        p
+        for p in _AGENT_ROOT.rglob("*.md")
+        if str(p.relative_to(_AGENT_ROOT)).replace("\\", "/") not in _MD_EXEMPT
+    )
+    assert files, "no hay prompts .md en el árbol del agente"
+    violations = [
+        f"{p.relative_to(_AGENT_ROOT)}:{lineno}: voseo '{m.group(0)}' → {line.strip()[:100]}"
+        for p in files
+        for lineno, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        for m in _PATTERN.finditer(line)
+    ]
+    assert not violations, (
+        "Voseo rioplatense en un prompt del agente (REGLA #1 de IDENTITY.md — "
+        "tuteo colombiano):\n  " + "\n  ".join(violations)
     )
