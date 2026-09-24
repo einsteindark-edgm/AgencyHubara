@@ -49,7 +49,8 @@ async def test_transcript_marks_candidates_and_replaces_the_real_turn() -> None:
     assert "T3 ★ CANDIDATA (a juzgar)" in prompt
     assert "T6 ★ CANDIDATA (a juzgar)" in prompt
     assert "te muestro el catálogo" in prompt
-    assert "¿Para qué espacio sería?" not in prompt, "el texto real del turno candidato no se muestra"
+    # La respuesta real de T3 es contexto de T6: va DESPUÉS de su candidata (no la ancla).
+    assert prompt.index("T3 ★ CANDIDATA") < prompt.index("¿Para qué espacio sería?")
     assert "T2 · bot envió" in prompt, "el prefijo real es contexto"
     assert "T7 ·" not in prompt, "sin turnos posteriores a la última candidata"
     assert '"turnos"' in prompt
