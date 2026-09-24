@@ -20,3 +20,8 @@ observability = {
   instance_type  = "t3.large"
   root_volume_gb = 60
 }
+
+# Laboratorio de conversaciones (LABORATORIO_CONVERSACIONES_PLAN.md §3, PR 6).
+lab = {
+  enabled = true
+}

@@ -74,3 +74,16 @@ variable "graphagents" {
   })
   default = {}
 }
+
+# ── Laboratorio de conversaciones (caja bajo demanda + S3 privado) ───────────
+# LABORATORIO_CONVERSACIONES_PLAN.md §3 / PR 6. `enabled = false` no crea nada.
+variable "lab" {
+  description = "Caja del laboratorio: t3.large (8 GB) con Temporal dev + LiteLLM + worker sales_lab; se apaga sola sin trabajo."
+  type = object({
+    enabled               = optional(bool, false)
+    instance_type         = optional(string, "t3.large")
+    root_volume_gb        = optional(number, 40)
+    autostop_idle_minutes = optional(number, 10)
+  })
+  default = {}
+}
