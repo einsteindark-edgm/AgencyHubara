@@ -142,3 +142,35 @@ def test_worker_refuses_to_start_against_temporal_cloud() -> None:
 
     assert out.returncode == 2
     assert "TEMPORAL_URL" in out.stderr
+
+
+def test_a_bench_download_cut_in_the_middle_is_not_taken_as_complete(box, tmp_path: Path) -> None:
+    """Un error de S3 (o el timeout) a mitad de la bajada dejaba `manifest.json`
+    y nada más: los reintentos y las corridas siguientes de la caja tomaban ese
+    banco a medias como completo."""
+    store = box["store"]
+    keys = store.list_keys("bench/bench-x/")
+    dest = tmp_path / "lab" / "bench" / "bench-x"
+
+    class Flaky:
+        def __init__(self) -> None:
+            self.gets = 0
+
+        def list_keys(self, prefix):
+            return store.list_keys(prefix)
+
+        def get_bytes(self, key):
+            self.gets += 1
+            if self.gets > 1:
+                raise OSError("S3 se cortó")
+            return store.get_bytes(key)
+
+    with pytest.raises(OSError):
+        run_acts._download_bench(Flaky(), "bench-x", dest)
+    assert not dest.exists()
+
+    run_acts._download_bench(store, "bench-x", dest)
+
+    assert sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()) == sorted(
+        k[len("bench/bench-x/"):] for k in keys
+    )

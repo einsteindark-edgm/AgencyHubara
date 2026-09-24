@@ -181,3 +181,30 @@ def test_the_launcher_refuses_ids_with_a_trailing_newline(run_id: str, image: st
 
     with pytest.raises(ValueError):
         Boto3LabLauncher(region="us-east-1").dispatch(run_id, image)
+
+
+def test_list_children_gives_the_immediate_folders_of_a_prefix(tmp_path: Path) -> None:
+    """Listar las corridas no puede recorrer cada objeto (unos 20 por
+    conversación por corrida): basta con los nombres de las carpetas."""
+    store = FilesystemLabStore(tmp_path)
+    for key in ("runs/run-a/progress.json", "runs/run-a/threads/x.json", "runs/run-b/manifest.json", "bench/x/manifest.json"):
+        store.put_bytes(key, b"{}")
+
+    assert store.list_children("runs/") == ["run-a", "run-b"]
+    assert store.list_children("nada/") == []
+
+
+def test_s3_lists_children_with_a_delimiter() -> None:
+    from types import SimpleNamespace
+
+    class Pages:
+        kwargs: dict = {}
+
+        def paginate(self, **kwargs):
+            Pages.kwargs = kwargs
+            return [{"CommonPrefixes": [{"Prefix": "runs/run-b/"}, {"Prefix": "runs/run-a/"}]}]
+
+    store = S3LabStore("bucket", client=SimpleNamespace(get_paginator=lambda _name: Pages()))
+
+    assert store.list_children("runs/") == ["run-a", "run-b"]
+    assert Pages.kwargs["Delimiter"] == "/" and Pages.kwargs["Prefix"] == "runs/"
