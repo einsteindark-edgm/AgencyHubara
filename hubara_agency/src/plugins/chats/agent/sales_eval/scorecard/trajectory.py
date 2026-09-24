@@ -61,6 +61,16 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
+class InboundMsg:
+    """Un mensaje de la ráfaga del turno (traza v2, `inbound[]`)."""
+
+    seq: int | None
+    ts_ms: int | None
+    kind: str
+    text: str
+
+
+@dataclass(frozen=True)
 class Turn:
     turn: int
     at_ms: int | None
@@ -80,6 +90,9 @@ class Turn:
     confirmed: bool | None
     state: dict[str, Any]
     first_contact: bool | None
+    # Los mensajes de la ráfaga con su hora (traza v2). Vacío en trazas v1 y
+    # en episodios legados: ahí solo está `inbound_text`, unido por saltos de línea.
+    inbound: tuple[InboundMsg, ...] = ()
 
     # ── helpers de lectura para los checks ────────────────────────────────
     def tool(self, name: str) -> ToolCall | None:
@@ -156,6 +169,21 @@ def _tool_from_trace(raw: dict[str, Any]) -> ToolCall:
     )
 
 
+def _inbound_from_trace(raw: Any) -> tuple[InboundMsg, ...]:
+    if not isinstance(raw, list):
+        return ()
+    return tuple(
+        InboundMsg(
+            seq=_as_int(m.get("seq")),
+            ts_ms=_as_int(m.get("ts_ms")),
+            kind=str(m.get("kind") or "text"),
+            text=str(m.get("text") or ""),
+        )
+        for m in raw
+        if isinstance(m, dict)
+    )
+
+
 def _intents_for(tools: tuple[ToolCall, ...], guards: tuple[str, ...]) -> tuple[str, ...]:
     intents: list[str] = []
     for t in tools:
@@ -211,6 +239,7 @@ def build_trajectory(
                 confirmed=bool(raw.get("confirmed")),
                 state=dict(raw.get("state") or {}),
                 first_contact=bool(raw.get("first_contact")),
+                inbound=_inbound_from_trace(raw.get("inbound")),
             )
         )
     return Trajectory(

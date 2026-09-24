@@ -265,6 +265,28 @@ function CheckDetail({
           </blockquote>
         </>
       )}
+      {result && result.topics.length > 0 && (
+        <>
+          <h5 className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-fg-faint">Asuntos del cliente</h5>
+          <ul aria-label="Asuntos del cliente" className="space-y-0.5 text-xs text-fg-soft">
+            {result.topics.map((t, i) => (
+              <li key={`${t.topic}-${i}`} className="flex items-baseline gap-1.5" title={t.evidence || undefined}>
+                <StatusDot status={t.covered ? "pasa" : "mayor"} />
+                <span>
+                  {[
+                    t.topic,
+                    t.turn != null ? `T${t.turn}` : null,
+                    t.msg != null ? `mensaje ${t.msg}` : null,
+                    t.covered ? "cubierto" : "sin respuesta",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       {result?.critique && (
         <>
           <h5 className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-fg-faint">Crítica del juez</h5>
