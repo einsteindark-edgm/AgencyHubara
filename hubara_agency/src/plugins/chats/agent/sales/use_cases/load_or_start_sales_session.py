@@ -85,15 +85,18 @@ def _perception_meta(session_id: str) -> dict[str, str]:
     """Modo y perfil de las capas con clasificador para ESTA conversación
     (plan del laboratorio, PR 14 y 16): el del control del dashboard
     (`<vault>/_rollout/perception.json`), nunca por encima del techo de
-    Terraform `SALES_PERCEPTION_MODE_CEILING` (default `off`). Sin modo activo
-    no viaja nada y el turno es el de hoy."""
+    Terraform `SALES_PERCEPTION_MODE_CEILING` (default `off`).
+
+    `off` viaja EXPLÍCITO: el workflow se queda con el último modo que
+    recibió, así que sin esto un chat en curso seguiría en canary/on después
+    de apagar o de bajar el techo, hasta que su sesión termine."""
     from src.plugins.chats.agent.sales.perception.rollout import effective_mode
     from src.plugins.chats.agent.sales.perception.rollout_store import read_state
 
     ceiling = (os.getenv("SALES_PERCEPTION_MODE_CEILING") or "off").strip().lower()
     mode = effective_mode(read_state(_vault_dir()), ceiling=ceiling, session_id=session_id)
     if mode not in _PERCEPTION_MODES:
-        return {}
+        return {"perception_mode": "off"}
     profile = (os.getenv("SALES_PERCEPTION_PROFILE") or "").strip() or _DEFAULT_PERCEPTION_PROFILE
     return {"perception_mode": mode, "perception_profile": profile}
 

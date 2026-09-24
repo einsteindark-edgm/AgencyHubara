@@ -77,3 +77,68 @@ async def test_verify_fails_open(monkeypatch) -> None:
     )
 
     assert out.decision == "send" and not out.ok
+
+
+class _RecordingPort:
+    """Lo que de verdad sale hacia el proveedor: el `state` como lo anonimiza
+    un adaptador (decisión 2 del plan). Delega la respuesta en el fake."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+        self.sent: list[str] = []
+
+    async def ask(self, state, questions, *, timeout_s, redact=()):
+        from src.platform.perception.anonymize import anonymize_text
+
+        self.sent.append(anonymize_text(state, redact=redact))
+        return await self.inner.ask(state, questions, timeout_s=timeout_s, redact=redact)
+
+
+@pytest.fixture
+def recording_port(monkeypatch, _isolate_vault_dir):
+    """El cliente dejó sus datos de envío en el borrador del episodio: el
+    nombre de quien recibe y el barrio NO salen hacia el clasificador, aunque
+    el cliente o el asesor los repitan en el turno (y aunque no se anuncien con
+    "me llamo")."""
+    import json
+
+    from src.sdk import connectorkit
+
+    session = _isolate_vault_dir / SID
+    session.mkdir(parents=True)
+    draft = {"slots": {"nombre_recibe": "Carolina Pérez", "direccion": "Cra 7 # 12-34 apto 501", "barrio": "Chapinero Alto"}}
+    (session / "metadata.json").write_text(json.dumps({"episodes": [{"id": "ep_1", "order_draft": draft}]}))
+    port = _RecordingPort(connectorkit.get_perception_port("jev-v1"))
+
+    def _port(_profile: str) -> _RecordingPort:
+        return port
+
+    _port.cache_clear = lambda: None  # el fixture autouse lo limpia al final
+    monkeypatch.setattr(connectorkit, "get_perception_port", _port)
+    return port
+
+
+PERSONAL = [
+    {"text": "es para Carolina, que vive en Chapinero Alto", "ts_ms": 1_000},
+    {"text": "¿cuánto sale el envío?", "ts_ms": 5_000},
+]
+
+
+async def test_perceive_never_sends_this_customers_names_or_address(recording_port) -> None:
+    await ActivityEnvironment().run(perceive_burst_activity, PerceiveInput(session_id=SID, profile="jev-v1", messages=PERSONAL))
+
+    [sent] = recording_port.sent
+    for secret in ("Carolina", "Pérez", "Chapinero"):
+        assert secret not in sent
+    assert "envío" in sent
+
+
+async def test_verify_never_sends_this_customers_names_even_in_the_reply(recording_port) -> None:
+    await ActivityEnvironment().run(
+        verify_coverage_activity,
+        VerifyInput(session_id=SID, profile="jev-v1", messages=PERSONAL, topics=[{"topic": "envio", "msg": 2, "p": 0.9}],
+                    reply_text="Listo Carolina, a Chapinero Alto el envío sale en $12.000", components=[]),
+    )
+
+    [sent] = recording_port.sent
+    assert "Carolina" not in sent and "Chapinero" not in sent

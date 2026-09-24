@@ -8,6 +8,10 @@ turno sigue como hoy (fail-open) y la traza guarda el motivo.
 """
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
+import structlog
 from temporalio import activity
 
 from src.plugins.chats.agent.sales.perception.contracts import (
@@ -29,7 +33,44 @@ from src.plugins.chats.agent.sales.perception.questions import (
     verify_questions,
 )
 
+logger = structlog.get_logger()
+
 TIMEOUT_S = 3.0
+
+# Datos de envío del borrador que el clasificador no necesita (decisión 2 del
+# plan). Los nombres se tapan también palabra por palabra: el cliente o el
+# asesor repiten solo el nombre ("Listo Carolina"). El barrio y la dirección,
+# completos: partirlos taparía palabras del producto ("alto", "centro").
+_PERSONAL_SLOTS = ("nombre_recibe", "direccion", "barrio", "telefono")
+_NAME_SLOTS = ("nombre_recibe",)
+_NAME_TOKEN_RE = re.compile(r"[^\W\d_]{3,}")
+
+
+def _redact_terms(session_id: str) -> list[str]:
+    """Lo que hay que tapar de ESTE cliente antes de que el turno salga hacia
+    el clasificador externo. Sin borrador legible, queda lo genérico
+    (teléfonos, correos, direcciones, nombres anunciados)."""
+    # Al llamar: `use_cases` importa el workflow, que importa estas activities
+    # (import circular), y los tests aíslan el vault parcheando el módulo.
+    from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+    from src.plugins.chats.agent.sales.turn_trace import draft_slots
+    from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
+    from src.sdk.runtime import WORKSPACE_VAULT_DIR
+
+    try:
+        slots = draft_slots(get_active_episode(FilesystemMetadataStore(Path(WORKSPACE_VAULT_DIR)).read(session_id)))
+    except Exception as exc:  # noqa: BLE001 — anonimizar nunca tumba el turno
+        logger.warning("perception.redact_terms_unavailable", error=repr(exc)[:200])
+        return []
+    terms: set[str] = set()
+    for key in _PERSONAL_SLOTS:
+        value = slots.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        terms.add(value.strip())
+        if key in _NAME_SLOTS:
+            terms.update(_NAME_TOKEN_RE.findall(value))
+    return sorted(terms)
 
 
 def _answers_for_trace(result, *, picked: set[str], detect: float = 0.70) -> list[dict]:
@@ -55,7 +96,9 @@ async def perceive_burst_activity(inp: PerceiveInput) -> PerceiveOutput:
     try:
         port = get_perception_port(inp.profile)
         state = burst_state(inp.messages, pending=inp.pending, last_bot_text=inp.last_bot_text)
-        result = await port.ask(state, rafaga_questions(inp.messages), timeout_s=TIMEOUT_S)
+        result = await port.ask(
+            state, rafaga_questions(inp.messages), timeout_s=TIMEOUT_S, redact=_redact_terms(inp.session_id)
+        )
     except Exception as exc:  # noqa: BLE001 — fail-open: el turno sale como hoy
         return PerceiveOutput(ok=False, profile=inp.profile, error=f"unexpected: {exc!r}"[:300])
     plan = plan_from_answers(result, n_messages=len(inp.messages))
@@ -86,7 +129,10 @@ async def verify_coverage_activity(inp: VerifyInput) -> VerifyOutput:
     try:
         port = get_perception_port(inp.profile)
         result = await port.ask(
-            reply_state(inp.messages, inp.reply_text, inp.components), verify_questions(plan), timeout_s=TIMEOUT_S
+            reply_state(inp.messages, inp.reply_text, inp.components),
+            verify_questions(plan),
+            timeout_s=TIMEOUT_S,
+            redact=_redact_terms(inp.session_id),
         )
     except Exception as exc:  # noqa: BLE001 — fail-open
         return VerifyOutput(ok=False, decision="send", error=f"unexpected: {exc!r}"[:300])

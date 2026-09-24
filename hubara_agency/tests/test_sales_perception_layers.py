@@ -16,7 +16,9 @@ de `workflow.patched`). Con modo:
 """
 from __future__ import annotations
 
+import asyncio
 import json
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -46,8 +48,10 @@ def _tool(name: str, **args) -> LLMResponseData:
 
 
 class Classifier:
-    def __init__(self, *, perceive_ok: bool = True, decision: str = "send", missing: list[str] | None = None) -> None:
+    def __init__(self, *, perceive_ok: bool = True, decision: str = "send", missing: list[str] | None = None,
+                 latency_ms: int = 0) -> None:
         self.perceive_ok = perceive_ok
+        self.latency_ms = latency_ms
         self.decision = decision
         self.missing = missing or []
         self.perceived: list[PerceiveInput] = []
@@ -60,7 +64,8 @@ class Classifier:
             if not self.perceive_ok:
                 return PerceiveOutput(ok=False, profile=inp.profile, error="timeout")
             return PerceiveOutput(ok=True, profile=inp.profile, model="typesafe/jev-1.13", topics=TOPICS,
-                                  stage="descubrimiento", answers=[{"q": "topic.catalogo", "type": "noul", "p": 0.96, "picked": True}])
+                                  stage="descubrimiento", answers=[{"q": "topic.catalogo", "type": "noul", "p": 0.96, "picked": True}],
+                                  latency_ms=self.latency_ms)
 
         @activity.defn(name="verify_coverage")
         async def verify(inp: VerifyInput) -> VerifyOutput:
@@ -117,6 +122,44 @@ async def _run(tmp_path: Path, *, meta: dict | None, llm: LLM, classifier: Class
             for i, text in enumerate(BURST):
                 args = [text, None, None] if meta is None else [text, None, None, {**meta, "ts_ms": 1_000 + i * 7_000}]
                 await handle.signal(HubaraSalesSessionWorkflow.send_message, args=args)
+            await handle.result()
+    return tracker
+
+
+async def _run_turns(tmp_path: Path, turns: list[tuple[str, dict]], *, llm: LLM, classifier: Classifier) -> Tracker:
+    """Un mensaje por turno: el siguiente sale recién cuando el anterior dejó
+    su traza (el reloj del servidor de pruebas avanza de a 1 s)."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    base = _make_fake_activities(tracker, workspace_path=str(workspace), tool_results={},
+                                 prior_history=[{"role": "user", "content": "Hola"}, {"role": "assistant", "content": "¡Buenas!"}])
+
+    @activity.defn(name="execute_tool")
+    async def execute_tool(input: ExecuteToolInput) -> str:
+        tracker.execute_tool_calls.append(input.name)
+        if input.name == "send_reply":
+            return json.dumps({"reply": {"text": input.params.get("text", "")}}, ensure_ascii=False)
+        return "ok"
+
+    replaced = {"llm_chat", "execute_tool"}
+    acts = [a for a in base if a.__temporal_activity_definition.name not in replaced] + [
+        llm.activity(), execute_tool, *classifier.activities()
+    ]
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(env.client, task_queue=SALES_QUEUE, workflows=[HubaraSalesSessionWorkflow], activities=acts):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(session_id="wa_layers", runtime_workspace_path=str(workspace)),
+                id="session-wa_layers", task_queue=SALES_QUEUE,
+            )
+            for n, (text, meta) in enumerate(turns, 1):
+                await handle.signal(HubaraSalesSessionWorkflow.send_message, args=[text, None, None, {**meta, "ts_ms": n * 60_000}])
+                for _ in range(40):
+                    if sum(1 for t in tracker.turn_traces if t["trigger"] == "customer") >= n:
+                        break
+                    await env.sleep(timedelta(seconds=1))
+                    await asyncio.sleep(0.05)
             await handle.result()
     return tracker
 
@@ -218,3 +261,52 @@ async def test_a_failing_classifier_leaves_the_turn_as_today(tmp_path: Path) -> 
     assert tracker.send_whatsapp_calls == [("wa_layers", CATALOG_REPLY)]
     perception = next(s for s in _customer_trace(tracker)["steps"] if s["kind"] == "perception")
     assert perception["fallback"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_turning_off_reaches_a_live_session_on_its_next_message(tmp_path: Path) -> None:
+    """"Apagar" (o bajar el techo) viaja como `perception_mode: off` en la
+    siguiente señal: la conversación en curso deja las capas en su próximo
+    turno, sin esperar a que el workflow termine."""
+    classifier = Classifier()
+    on = {"perception_mode": "on", "perception_profile": "jev-v1"}
+
+    tracker = await _run_turns(
+        tmp_path, [(BURST[0], on), (BURST[1], {"perception_mode": "off"})],
+        llm=LLM([_tool("send_reply", text=CATALOG_REPLY)]), classifier=classifier,
+    )
+
+    customer = [t for t in tracker.turn_traces if t["trigger"] == "customer"]
+    assert [t["mode"] for t in customer] == ["on", "off"]
+    assert len(classifier.perceived) == 1
+
+
+@pytest.mark.asyncio
+async def test_shadow_records_the_classifier_latency_not_the_whole_turn(tmp_path: Path) -> None:
+    """La vara del canary (p95 < 1500 ms, PR 16) se mide con este paso. En
+    sombra la percepción corre en paralelo al LLM y su resultado se lee después
+    de enviar: la duración del paso es la del clasificador, no la del turno."""
+    classifier = Classifier(latency_ms=420)
+    tracker = await _run(tmp_path, meta={"perception_mode": "shadow", "perception_profile": "jev-v1"},
+                         llm=LLM([_tool("send_reply", text=CATALOG_REPLY)]), classifier=classifier)
+
+    [step] = [s for s in _customer_trace(tracker)["steps"] if s["kind"] == "perception"]
+    assert step["latency_ms"] == 420
+    assert step["dur_ms"] == 420
+
+
+@pytest.mark.asyncio
+async def test_the_classifier_reads_what_the_customer_wrote_not_the_turn_decoration(tmp_path: Path) -> None:
+    """El ingest le agrega al turno la campaña citada o el resumen del episodio
+    anterior (para el LLM). El clasificador lee el texto crudo del cliente
+    (`inbound_meta.text`): si leyera la cita, un "sí" a una campaña de envíos
+    parecería una pregunta por el envío."""
+    classifier = Classifier()
+    await _run_turns(
+        tmp_path,
+        [("[Respondiendo a la campaña «20 % y envío a todo el país»] sí", {"perception_mode": "shadow", "text": "sí"})],
+        llm=LLM([_tool("send_reply", text=CATALOG_REPLY)]), classifier=classifier,
+    )
+
+    [perceived] = classifier.perceived
+    assert [m["text"] for m in perceived.messages] == ["sí"]
