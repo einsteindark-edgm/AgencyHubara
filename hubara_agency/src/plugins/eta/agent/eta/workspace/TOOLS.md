@@ -61,7 +61,7 @@ Sin valor de envío (el operador no lo escribió en el modal):
 - **`pago_confirmado`**:
   `Tu pedido {numero_pedido} ({productos}) ya va en camino 🚚. Recuerda que está pagado, así que al recibirlo no tienes que pagar nada. Te aviso cuando esté por llegar.`
 - **`contra_entrega`**:
-  `Tu pedido {numero_pedido} ({productos}) ya va en camino 🚚. Recuerda que al recibirlo pagas {monto_total} al repartidor (efectivo o transferencia).`
+  `Tu pedido {numero_pedido} ({productos}) ya va en camino 🚚. Recuerda que al recibirlo pagas {monto_total} al repartidor.`
 - **`pago_pendiente`** (sin mencionar el pago):
   `Tu pedido {numero_pedido} ({productos}) ya va en camino 🚚. Te aviso cuando esté por llegar.`
 
@@ -75,7 +75,7 @@ Total: {total}
 <cierre>
 ```
 `<cierre>`: pagado → `El valor del pedido ya está pagado. Te aviso cuando esté por llegar.`;
-contra entrega → `Recuerda que al recibirlo pagas {total} al repartidor (efectivo o transferencia).`;
+contra entrega → `Recuerda que al recibirlo pagas {total} al repartidor.`;
 pendiente → `Te aviso cuando esté por llegar.` Sin total del pedido conocido,
 solo la línea `Valor del envío`.
 
