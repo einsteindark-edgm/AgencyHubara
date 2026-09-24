@@ -160,16 +160,22 @@ def _now_ms() -> int:
     return int(workflow.now().timestamp() * 1000)
 
 
+_RAW_TEXT_MAX = 2000
+
+
 def _clean_inbound_meta(raw: object) -> dict[str, Any] | None:
-    """`{wamid, ts_ms, kind}` de la señal, con cada campo validado; lo que no
-    tenga la forma esperada queda en None (nunca falla: es solo traza)."""
+    """`{wamid, ts_ms, kind, text}` de la señal, con cada campo validado; lo
+    que no tenga la forma esperada queda en None (nunca falla: es solo traza).
+    `text` es lo que escribió el cliente, sin lo que el ingest le agrega al
+    turno para el LLM (campaña citada, resumen del episodio anterior)."""
     if not isinstance(raw, dict):
         return None
-    wamid, ts_ms, kind = raw.get("wamid"), raw.get("ts_ms"), raw.get("kind")
+    wamid, ts_ms, kind, text = raw.get("wamid"), raw.get("ts_ms"), raw.get("kind"), raw.get("text")
     return {
         "wamid": wamid if isinstance(wamid, str) and wamid else None,
         "ts_ms": int(ts_ms) if isinstance(ts_ms, (int, float)) and not isinstance(ts_ms, bool) else None,
         "kind": kind if isinstance(kind, str) and kind else "text",
+        "text": text[:_RAW_TEXT_MAX] if isinstance(text, str) else None,
     }
 
 
@@ -263,19 +269,29 @@ def _perception_settings(raw: object) -> tuple[str | None, str | None]:
 
 
 def _burst_messages(batch: list[PendingMessage]) -> list[dict[str, Any]]:
-    """Los mensajes del cliente del turno para el clasificador (sin triggers)."""
-    return [
-        {"text": p.message, "ts_ms": (p.inbound_meta or {}).get("ts_ms")}
-        for p in batch
-        if not (p.is_ghost_trigger or p.is_handoff or p.is_complement_trigger) and (p.message or "").strip()
-    ]
+    """Los mensajes del cliente del turno para el clasificador (sin triggers):
+    el texto crudo del cliente si viajó, si no el mensaje del turno."""
+    out = []
+    for p in batch:
+        if p.is_ghost_trigger or p.is_handoff or p.is_complement_trigger:
+            continue
+        meta = p.inbound_meta or {}
+        text = meta.get("text") or p.message
+        if (text or "").strip():
+            out.append({"text": text, "ts_ms": meta.get("ts_ms")})
+    return out
 
 
 def _perception_step(out: PerceiveOutput, started_ms: int, *, mode: str) -> dict[str, Any]:
+    # La duración es la del clasificador (la mide el adaptador): en sombra el
+    # resultado se lee después de enviar, y `ahora - inicio` sería el turno
+    # entero (la vara del canary, p95 < 1500 ms, nunca se cumpliría). Payload
+    # de la traza: sin efecto en el replay (L-22).
     return {
         "kind": "perception",
         "at_ms": started_ms,
-        "dur_ms": _now_ms() - started_ms,
+        "dur_ms": out.latency_ms or (_now_ms() - started_ms),
+        "latency_ms": out.latency_ms,
         "model": out.model,
         "profile": out.profile,
         "mode": mode,
