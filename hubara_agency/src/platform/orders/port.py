@@ -29,17 +29,33 @@ from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
+class DiscountedUnits:
+    """Unidades de un item que llevan el descuento del cupon.
+
+    `units` unidades pagan `OrderItem.unit_price_cop - discount_unit_cop`
+    (pesos enteros). El reparto lo calcula Hubara con las reglas del cupon
+    (L-19); el adapter solo lo escribe.
+    """
+    units: int
+    discount_unit_cop: int
+
+
+@dataclass(frozen=True)
 class OrderItem:
     """Item del pedido — input al port.
 
     `handle` se resuelve a `variant_id` dentro del adapter (via
     `MedusaProductService.list(handle=...)`). El adapter elige la
     variante por `variant_label` si esta presente, sino la primera.
+
+    `unit_price_cop` es SIEMPRE el precio de lista; las unidades con
+    descuento de cupon van en `discounted_units`.
     """
     handle: str
     quantity: int
     unit_price_cop: int
     variant_label: str | None = None
+    discounted_units: tuple[DiscountedUnits, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -114,10 +130,12 @@ class OrderRegistrationPort(Protocol):
         attribution: dict[str, Any] | None = None,
         coupon_code: str | None = None,
         discount_cop: int = 0,
+        shipping_discount_cop: int = 0,
     ) -> OrderRegistrationResult: ...
 
-    # `coupon_code` / `discount_cop` (cupones Medusa, 2026-09-21): el código
-    # viaja como `promo_codes` del draft y el monto ya viene descontado en
-    # `total_cop` (lo recomputa la tool desde el snapshot del episodio). Los
-    # callers los mandan SOLO cuando hay cupón, así los adapters/fakes viejos
-    # siguen siendo compatibles.
+    # Cupón (Fase 0, pedido #44): `total_cop` ya viene descontado (lo
+    # recomputa la tool desde el snapshot del episodio, L-19) y el reparto
+    # viaja en `OrderItem.discounted_units` (productos) o en
+    # `shipping_discount_cop` (envío). `coupon_code` / `discount_cop` quedan
+    # como auditoría. Los callers mandan estos kwargs SOLO cuando hay cupón,
+    # así los adapters/fakes viejos siguen siendo compatibles.

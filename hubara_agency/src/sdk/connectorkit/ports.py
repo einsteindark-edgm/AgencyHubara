@@ -103,6 +103,7 @@ from src.platform.orders.facts import (
     OrderFactsSnapshot as OrderFactsSnapshot,
 )
 from src.platform.orders.port import (
+    DiscountedUnits as DiscountedUnits,
     OrderRegistrationPort as OrderRegistrationPort,
 )
 from src.platform.orders.query_port import (
@@ -123,6 +124,7 @@ from src.platform.promotions.rules import (
     COUPON_CODE_RE as COUPON_CODE_RE,
     CouponResolution as CouponResolution,
     DiscountResult as DiscountResult,
+    LineDiscount as LineDiscount,
     compute_discount as compute_discount,
     normalize_coupon_code as normalize_coupon_code,
     resolve_coupon as resolve_coupon,

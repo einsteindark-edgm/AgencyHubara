@@ -49,6 +49,17 @@ function partialMatchNote(item: OrderItemDetail): string {
   return `${chosen}Sin resolver: ${item.variant_unresolved_tokens.join(", ")} ${verify}`;
 }
 
+// Pedido #44: el precio de la línea ya trae el descuento del cupón (Medusa no
+// lo ve como descuento), así que la línea explica de dónde sale.
+function couponNote(item: OrderItemDetail): string {
+  const off = item.discount_unit_cop > 0 ? `: −${fmtMoney(item.discount_unit_cop)} c/u` : "";
+  const list =
+    item.list_unit_price_cop != null
+      ? ` (precio de lista ${fmtMoney(item.list_unit_price_cop)})`
+      : "";
+  return `Cupón ${item.coupon_code}${off}${list}`;
+}
+
 function ItemRow({ item }: { item: OrderItemDetail }) {
   return (
     <div className="item-row" style={{ alignItems: "flex-start" }}>
@@ -126,6 +137,11 @@ function ItemRow({ item }: { item: OrderItemDetail }) {
         <div className="ir-s">
           {item.sku ?? "—"} · {item.quantity} und × {fmtMoney(item.unit_price_cop)}
         </div>
+        {item.coupon_code && (
+          <div style={{ fontSize: 10, color: "var(--fg-soft)", lineHeight: 1.35 }}>
+            {couponNote(item)}
+          </div>
+        )}
       </div>
       <div className="ir-t">{fmtMoney(item.total_cop)}</div>
     </div>

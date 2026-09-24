@@ -497,6 +497,7 @@ class MedusaOrderQuery:
         items_detail = [
             OrderItemDTO(
                 **_variant_match_fields(it, single_variant_handles),
+                **_coupon_fields(it),
                 title=str(it.get("title", "—")),
                 sku=it.get("sku") or it.get("variant_sku"),
                 quantity=int(it.get("quantity", 0)),
@@ -631,6 +632,22 @@ def _format_medusa_error(exc: MedusaAPIError) -> str:
     if 500 <= exc.status_code < 600:
         return f"medusa_unavailable: HTTP {exc.status_code} {exc.path}"
     return f"medusa_api_error: HTTP {exc.status_code} {exc.path}"
+
+
+def _coupon_fields(item: dict[str, Any]) -> dict[str, Any]:
+    """Auditoría del cupón de una línea (pedido #44): `register_order` escribe
+    el precio ya descontado y deja en la metadata el código, el precio de
+    lista y el descuento por unidad. Sin cupón → {} (defaults del DTO)."""
+    meta = item.get("metadata")
+    meta = meta if isinstance(meta, dict) else {}
+    code = meta.get("coupon_code")
+    if not isinstance(code, str) or not code:
+        return {}
+    return {
+        "coupon_code": code,
+        "list_unit_price_cop": _to_int_cop(meta.get("list_unit_price_cop")) or None,
+        "discount_unit_cop": _to_int_cop(meta.get("discount_unit_cop")),
+    }
 
 
 def _to_int_cop(value: Any) -> int:

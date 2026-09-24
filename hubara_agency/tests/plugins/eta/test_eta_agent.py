@@ -604,6 +604,31 @@ async def test_claim_facts_include_items_label(_isolate_vault_dir: Path, monkeyp
     assert facts["items_label"] == "3× Vela Cruz de Vida, Vela Sándalo"
 
 
+async def test_claim_facts_items_label_groups_the_lines_of_the_same_product(
+    _isolate_vault_dir: Path, monkeypatch
+):
+    """Con cupón, un producto puede venir de Medusa en dos líneas (unidades con
+    descuento y a precio de lista, L-26): el cliente lee UN producto con su
+    cantidad total, y los demás no se pierden en "y N más"."""
+    _write_meta(_isolate_vault_dir, SID, {"eta_tracking": {"order_id": ORDER, "notified_stages": []}})
+
+    class _Port:
+        async def get(self, oid):
+            return SimpleNamespace(
+                summary=SimpleNamespace(customer="Ana María", display_id="#45", total_cop=80000, pay_type="cod"),
+                items_detail=[
+                    SimpleNamespace(title="Vela Cruz de Vida", quantity=1),
+                    SimpleNamespace(title="Vela Cruz de Vida", quantity=2),
+                    SimpleNamespace(title="Vela Sándalo", quantity=1),
+                    SimpleNamespace(title="Cubo Love", quantity=1),
+                ],
+            )
+
+    monkeypatch.setattr("src.platform.orders.composition.get_order_query_port", lambda: _Port())
+    facts = await ActivityEnvironment().run(claim_eta_notification_activity, SID, ORDER, "shipping")
+    assert facts["items_label"] == "3× Vela Cruz de Vida, Vela Sándalo, Cubo Love"
+
+
 async def test_all_trackings_terminal(_isolate_vault_dir: Path):
     """Cierre proactivo: True solo cuando TODOS los pedidos están terminales."""
     _write_meta(

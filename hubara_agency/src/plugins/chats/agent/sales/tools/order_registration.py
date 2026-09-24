@@ -52,6 +52,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +61,8 @@ from loguru import logger
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.sdk.connectorkit import (
+    DiscountedUnits,
+    LineDiscount,
     enqueue_capi_event,
     normalize_capi_contents,
     product_retailer_id,
@@ -104,20 +107,40 @@ def _order_reference(raw_payload: dict[str, Any] | None) -> str | None:
     display_id = raw.get("display_id")
     if display_id is None:
         return None
-    items = raw.get("items") or []
-    parts: list[str] = []
-    for it in items[:3]:
+    # Un producto puede venir en varias líneas (unidades con cupón y a precio
+    # de lista, L-26): el cliente lee UN producto con su cantidad total.
+    quantities: dict[str, int] = {}
+    for it in raw.get("items") or []:
         title = (it.get("title") or "").strip()
-        qty = it.get("quantity") or 0
         if title:
-            parts.append(f"{qty}× {title}" if qty > 1 else title)
-    if len(items) > 3:
-        parts.append(f"y {len(items) - 3} más")
+            quantities[title] = quantities.get(title, 0) + int(it.get("quantity") or 0)
+    parts = [
+        f"{qty}× {title}" if qty > 1 else title
+        for title, qty in list(quantities.items())[:3]
+    ]
+    if len(quantities) > 3:
+        parts.append(f"y {len(quantities) - 3} más")
     label = ", ".join(parts)
     reference = f"#{display_id}"
     if label:
         reference = f"{reference} ({label})"
     return reference[:120]
+
+
+def _with_discounted_units(
+    items: list[OrderItem], line_discounts: tuple[LineDiscount, ...]
+) -> list[OrderItem]:
+    """Ítems del port con el reparto del cupón (`LineDiscount.index` es la
+    posición del ítem en el pedido)."""
+    groups: dict[int, list[DiscountedUnits]] = {}
+    for line in line_discounts:
+        groups.setdefault(line.index, []).append(
+            DiscountedUnits(units=line.units, discount_unit_cop=line.discount_unit_cop)
+        )
+    return [
+        replace(item, discounted_units=tuple(groups.get(i, ())))
+        for i, item in enumerate(items)
+    ]
 
 
 class RegisterOrderTool(ToolBase):
@@ -439,6 +462,16 @@ class RegisterOrderTool(ToolBase):
             )
         discount_cop = discount.discount_cop if discount else 0
         coupon_code = discount.code if discount and discount_cop > 0 else None
+        # Pedido #44: el reparto por unidad viaja en cada ítem (o en el envío) y
+        # el adapter lo escribe como precio de línea — Medusa no aplica la
+        # promoción a un draft. Solo con cupón: los ports/fakes sin estos
+        # kwargs siguen andando.
+        coupon_kwargs: dict[str, Any] = {}
+        if discount is not None and coupon_code:
+            order_items = _with_discounted_units(order_items, discount.line_discounts)
+            coupon_kwargs = {"coupon_code": coupon_code, "discount_cop": discount_cop}
+            if discount.applies_to_shipping:
+                coupon_kwargs["shipping_discount_cop"] = discount_cop
 
         # SEC-07: consistencia de montos server-side. El LLM manda los precios;
         # recomputamos el subtotal desde los line items para que un total
@@ -532,8 +565,7 @@ class RegisterOrderTool(ToolBase):
             total_cop=total_cop,
             currency=currency,
             attribution=self._session_attribution(ctx.session_key),
-            # Solo con cupón: los ports/fakes sin estos kwargs siguen andando.
-            **({"coupon_code": coupon_code, "discount_cop": discount_cop} if coupon_code else {}),
+            **coupon_kwargs,
         )
 
         # Generar un fallback order_id si el port no devolvio uno (no
@@ -572,6 +604,23 @@ class RegisterOrderTool(ToolBase):
             "shipping_cop": shipping_cop,
             "discount_cop": discount_cop,
             "coupon_code": coupon_code,
+            # El reparto del cupón: el reintento de reconciliación escribe en
+            # Medusa las MISMAS líneas con descuento (pedido #44).
+            **(
+                {
+                    "coupon_line_discounts": [
+                        {
+                            "index": line.index,
+                            "units": line.units,
+                            "discount_unit_cop": line.discount_unit_cop,
+                        }
+                        for line in discount.line_discounts
+                    ],
+                    "shipping_discount_cop": coupon_kwargs.get("shipping_discount_cop", 0),
+                }
+                if discount is not None and coupon_code
+                else {}
+            ),
             "total_cop": total_cop,
             "currency": currency,
             "registered_at_ms": int(time.time() * 1000),
