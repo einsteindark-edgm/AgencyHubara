@@ -39,6 +39,7 @@ import {
   useCreateOrderFromChat,
   useSuggestOrderFromChat,
   type CatalogOption,
+  type CreateOrderResult,
   type IntakeFieldSource,
   type OrderSuggestion,
   type PaymentMethod,
@@ -68,8 +69,8 @@ interface FormItem {
   /** Listas CERRADAS del producto (vacía = el producto no tiene el atributo). */
   colors: string[];
   aromas: string[];
-  /** Reparto del cupón que calculó la sugerencia para ESTA línea. Se descarta
-   *  al editar la línea: el registro lo recalcula con lo que quede. */
+  /** Reparto del cupón que calculó la sugerencia para ESTA línea (solo vale
+   *  mientras ninguna línea se edite). */
   couponUnits: number;
   couponDiscountCop: number;
 }
@@ -98,7 +99,12 @@ type Phase =
   | { k: "form" }
   | { k: "submitting" }
   | { k: "submit_failed"; message: string }
-  | { k: "done"; reference: string; paymentInstructionsSent: boolean };
+  | {
+      k: "done";
+      reference: string;
+      paymentInstructionsSent: boolean;
+      totalCop: number | null;
+    };
 
 type PhaseAction =
   | { type: "read" }
@@ -106,7 +112,12 @@ type PhaseAction =
   | { type: "read_fail"; message: string }
   | { type: "submit" }
   | { type: "submit_fail"; message: string }
-  | { type: "submit_ok"; reference: string; paymentInstructionsSent: boolean };
+  | {
+      type: "submit_ok";
+      reference: string;
+      paymentInstructionsSent: boolean;
+      totalCop: number | null;
+    };
 
 function phaseReducer(_state: Phase, action: PhaseAction): Phase {
   switch (action.type) {
@@ -125,6 +136,7 @@ function phaseReducer(_state: Phase, action: PhaseAction): Phase {
         k: "done",
         reference: action.reference,
         paymentInstructionsSent: action.paymentInstructionsSent,
+        totalCop: action.totalCop,
       };
   }
 }
@@ -168,6 +180,25 @@ const MISSING_LABEL: Record<string, string> = {
 
 function formatCop(value: number): string {
   return `$${value.toLocaleString("es-CO")}`;
+}
+
+/** Mensaje de un registro rechazado. `quota_changed` con montos dice el total
+ *  nuevo: el operador tiene que verlo antes de volver a crear el pedido. */
+function rejectionMessage(result: CreateOrderResult): string {
+  const detail = result.error_detail ?? "";
+  if (detail === "quota_changed" && result.total_cop !== null && result.discount_cop !== null) {
+    return (
+      "Cambiaron las unidades con descuento del cupón: el total ahora es " +
+      `${formatCop(result.total_cop)} (descuento ${formatCop(result.discount_cop)}). ` +
+      "Revisa y vuelve a crear el pedido."
+    );
+  }
+  return (
+    ERROR_LABEL[detail] ??
+    (result.problems.length
+      ? `No se pudo registrar: ${result.problems.join("; ")}`
+      : `No se pudo registrar el pedido${detail ? ` (${detail})` : ""}.`)
+  );
 }
 
 function itemsFrom(suggestion: OrderSuggestion): FormItem[] {
@@ -245,6 +276,9 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
   const [shipping, setShipping] = useState<ShippingForm>(EMPTY_SHIPPING);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | "">("");
   const [sendInstructions, setSendInstructions] = useState(true);
+  /** El operador tocó alguna línea (cantidad, color, aroma, agregar, quitar):
+   *  el descuento y el reparto de la sugerencia ya no valen. */
+  const [linesEdited, setLinesEdited] = useState(false);
 
   const suggest = useSuggestOrderFromChat(chatId);
   const create = useCreateOrderFromChat(chatId);
@@ -258,6 +292,7 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
       setShipping(shippingFrom(result));
       setPaymentMethod(result.payment_method ?? "");
       setSendInstructions(true);
+      setLinesEdited(false);
       dispatch({ type: "read_ok" });
     } catch (error) {
       dispatch({
@@ -278,16 +313,18 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
     setItems([]);
     setShipping(EMPTY_SHIPPING);
     setPaymentMethod("");
+    setLinesEdited(false);
   };
 
-  /** Edita una línea. El reparto del cupón que trajo la sugerencia deja de
-   *  valer (el registro lo recalcula con lo que quede), así que se descarta. */
+  /** Cambia las líneas. El descuento y el reparto que trajo la sugerencia
+   *  dejan de valer: el registro los recalcula con lo que quede. */
+  const changeItems = (update: (prev: FormItem[]) => FormItem[]) => {
+    setItems(update);
+    setLinesEdited(true);
+  };
   const editItem = (index: number, patch: Partial<Pick<FormItem, "quantity" | "color" | "aroma">>) =>
-    setItems((prev) =>
-      prev.map((it, i) =>
-        i === index ? { ...it, ...patch, couponUnits: 0, couponDiscountCop: 0 } : it,
-      ),
-    );
+    changeItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
+  const hasCoupon = Boolean(suggestion?.coupon_code);
 
   const missing = missingOf(shipping, items, paymentMethod);
   const subtotal = items.reduce((acc, it) => acc + it.unitPriceCop * it.quantity, 0);
@@ -318,23 +355,20 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
         },
         payment_method: paymentMethod,
         send_payment_instructions: sendInstructions,
+        // El descuento que el operador VIO: solo si no tocó ninguna línea.
+        ...(suggestion?.coupon_code && !linesEdited
+          ? { expected_discount_cop: suggestion.discount_cop }
+          : {}),
       });
       if (!result.registered) {
-        const detail = result.error_detail ?? "";
-        dispatch({
-          type: "submit_fail",
-          message:
-            ERROR_LABEL[detail] ??
-            (result.problems?.length
-              ? `No se pudo registrar: ${result.problems.join("; ")}`
-              : `No se pudo registrar el pedido${detail ? ` (${detail})` : ""}.`),
-        });
+        dispatch({ type: "submit_fail", message: rejectionMessage(result) });
         return;
       }
       dispatch({
         type: "submit_ok",
         reference: result.order_reference ?? result.order_id ?? "",
         paymentInstructionsSent: Boolean(result.payment_instructions_sent),
+        totalCop: result.total_cop,
       });
     } catch (error) {
       dispatch({
@@ -405,7 +439,11 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
             {phase.k === "done" && (
               <>
                 <div style={okStyle}>
-                  Pedido creado: <b>{phase.reference}</b>. La conversación queda
+                  Pedido creado: <b>{phase.reference}</b>.
+                  {phase.totalCop !== null
+                    ? ` Total registrado: ${formatCop(phase.totalCop)} (con envío).`
+                    : ""}{" "}
+                  La conversación queda
                   con el pago pendiente de verificación — cuando el cliente
                   pague, usa "Confirmar pago".
                   {phase.paymentInstructionsSent
@@ -454,7 +492,7 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                     </p>
                   )}
                   {items.map((item, index) => {
-                    const couponHint = suggestion.coupon_code ? couponHintOf(item) : null;
+                    const couponHint = hasCoupon ? couponHintOf(item) : null;
                     return (
                       <div key={`${item.handle}-${item.variantLabel}-${index}`} style={itemBlockStyle}>
                         <div style={itemRowStyle}>
@@ -482,7 +520,7 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                             type="button"
                             aria-label={`Quitar ${item.title}`}
                             style={ghostStyle}
-                            onClick={() => setItems((prev) => prev.filter((_, i) => i !== index))}
+                            onClick={() => changeItems((prev) => prev.filter((_, i) => i !== index))}
                           >
                             ✕
                           </button>
@@ -507,7 +545,7 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                             )}
                           </div>
                         )}
-                        {item.couponUnits > 0 && (
+                        {!linesEdited && item.couponUnits > 0 && (
                           <span style={couponLineStyle}>
                             {`${item.couponUnits} de ${item.quantity} con ${suggestion.coupon_code ?? "el cupón"} (−${formatCop(item.couponDiscountCop)})`}
                           </span>
@@ -519,7 +557,7 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
 
                   <AddItem
                     catalog={suggestion.catalog}
-                    onAdd={(item) => setItems((prev) => [...prev, item])}
+                    onAdd={(item) => changeItems((prev) => [...prev, item])}
                   />
                 </section>
 
@@ -599,12 +637,17 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                   <span>Productos</span>
                   <span>{formatCop(subtotal)}</span>
                 </div>
-                {suggestion && suggestion.discount_cop > 0 && (
+                {!linesEdited && suggestion.discount_cop > 0 && (
                   <div style={totalsStyle}>
                     <span>
                       Descuento cupón {suggestion.coupon_code ?? ""} (aplicado en el chat)
                     </span>
                     <span>−{formatCop(suggestion.discount_cop)}</span>
+                  </div>
+                )}
+                {linesEdited && hasCoupon && (
+                  <div style={totalsStyle}>
+                    <span>Descuento del cupón: se recalcula al crear el pedido</span>
                   </div>
                 )}
                 <p style={mutedStyle}>
@@ -729,12 +772,12 @@ function AddItem({
             variantLabel: variant.label,
             quantity: 1,
             unitPriceCop: variant.unit_price_cop,
-            // El selector del catálogo no trae las listas de color/aroma:
-            // el backend resuelve la variante con lo que tenga el chat.
+            // Las listas vienen del catálogo: la línea manual pide color y
+            // aroma igual que una sugerida.
             color: "",
             aroma: "",
-            colors: [],
-            aromas: [],
+            colors: product.colors,
+            aromas: product.aromas,
             couponUnits: 0,
             couponDiscountCop: 0,
           });

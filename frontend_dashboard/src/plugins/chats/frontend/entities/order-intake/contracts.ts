@@ -58,6 +58,9 @@ export const catalogOptionSchema = z.object({
   variants: z.array(
     z.object({ label: z.string(), unit_price_cop: z.number() }),
   ),
+  /** Listas CERRADAS del producto para una línea agregada a mano (`[]` = no aplica). */
+  colors: z.array(z.string()).default([]),
+  aromas: z.array(z.string()).default([]),
 });
 
 export const paymentMethodSchema = z.enum([
@@ -105,6 +108,8 @@ export const createOrderResultSchema = z.object({
   problems: z.array(z.string()).default([]),
   subtotal_cop: z.number().nullable().default(null),
   shipping_cop: z.number().nullable().default(null),
+  /** Solo en `quota_changed`: el descuento recalculado del cupón. */
+  discount_cop: z.number().nullable().default(null),
   total_cop: z.number().nullable().default(null),
   payment_instructions_sent: z.boolean().default(false),
 });

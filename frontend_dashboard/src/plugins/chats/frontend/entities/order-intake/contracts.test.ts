@@ -90,3 +90,40 @@ describe("createOrderResultSchema · rechazos del cupo por unidad", () => {
     ]);
   });
 });
+
+describe("orderSuggestionSchema · catálogo con listas de color y aroma", () => {
+  it("parsea las listas de cada producto del catálogo y las deja vacías si no vienen", () => {
+    const parsed = orderSuggestionSchema.parse({
+      ...BASE,
+      catalog: [
+        {
+          handle: "cubo-love",
+          title: "Cubo Love",
+          variants: [{ label: "", unit_price_cop: 21000 }],
+          colors: ["Rosado", "Azul"],
+          aromas: ["Café"],
+        },
+        { handle: "luz-serena", title: "Luz Serena", variants: [] },
+      ],
+    });
+
+    expect(parsed.catalog[0]).toMatchObject({ colors: ["Rosado", "Azul"], aromas: ["Café"] });
+    expect(parsed.catalog[1]).toMatchObject({ colors: [], aromas: [] });
+  });
+});
+
+describe("createOrderResultSchema · quota_changed trae el total nuevo", () => {
+  it("conserva el descuento y el total recalculados", () => {
+    const parsed = createOrderResultSchema.parse({
+      registered: false,
+      order_id: null,
+      error_detail: "quota_changed",
+      subtotal_cop: 42000,
+      shipping_cop: 7900,
+      discount_cop: 4200,
+      total_cop: 45700,
+    });
+
+    expect(parsed).toMatchObject({ discount_cop: 4200, total_cop: 45700 });
+  });
+});
