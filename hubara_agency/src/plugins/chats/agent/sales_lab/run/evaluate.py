@@ -8,7 +8,8 @@ comparan con la misma regla.
 
   * La trayectoria real sale de las trazas del banco (`vault/<sesión>/evals`).
   * El episodio "al momento" de cada turno es el del caso (`episodes_at`):
-    nunca el cierre, que es del futuro.
+    nunca el cierre, que es del futuro, y con la orden del inicio del turno
+    (`state_before`), no la final.
   * El complemento del bot nuevo (segundo turno de sistema) es parte de la
     respuesta de su turno.
   * Un turno sin resultado simulado (el caso falló) queda fuera y se anota
@@ -68,11 +69,19 @@ def real_trajectory(bench_dir: Path, sid: str, episode_id: str) -> Trajectory:
     return build_trajectory(traces, session_id=sid, episode=episode or {"episode_id": episode_id})
 
 
-def _episode_at(case: Mapping[str, Any]) -> dict[str, Any] | None:
-    return next(
+def episode_at(case: Mapping[str, Any]) -> dict[str, Any] | None:
+    """El episodio como estaba al inicio del turno del caso. `episodes_at`
+    ya viene sin cierre, pero con la orden FINAL del episodio abierto: la del
+    momento es la del estado anterior (`state_before`), para que un turno
+    anterior a la orden no la vea (revisión de #358)."""
+    found = next(
         (e for e in case.get("episodes_at") or [] if isinstance(e, dict) and e.get("episode_id") == case.get("episode_id")),
         None,
     )
+    if found is None:
+        return None
+    state = case.get("state_before")
+    return {**found, "order_id": state.get("order_id")} if isinstance(state, Mapping) else dict(found)
 
 
 async def score_arm(
@@ -105,7 +114,7 @@ async def score_arm(
             }
         candidates = {k: by_turn[k] for k in wanted if k in by_turn}
         missing = [k for k in wanted if k not in by_turn]
-        episodes_at = {int(c["turn"]): at for c in ep_cases if (at := _episode_at(c)) is not None}
+        episodes_at = {int(c["turn"]): at for c in ep_cases if (at := episode_at(c)) is not None}
         judge_results: dict[int, list] = {}
         if judge is not None and candidates:
             judge_results = await run_judge_checks_focus(real, candidates, ctx, judge, episodes_at=episodes_at)
