@@ -829,6 +829,25 @@ El turno de ventas SHALL poder usar un clasificador (Jev u OpenAI por OpenRouter
 - WHEN corre el turno
 - THEN el turno sale como hoy (sin nota, sin ronda extra, sin complemento) y la traza guarda el motivo en `perception.fallback`
 
+#### Scenario: Bajar el modo llega a la conversación en curso
+
+- GIVEN `SALES_SIGNAL_INBOUND_META=on` y una conversación viva cuyo workflow quedó en `on`
+- WHEN el techo baja a `off` (o el control lo apaga) y el cliente escribe
+- THEN la señal lleva `perception_mode: off` EXPLÍCITO (el workflow se queda con el último modo recibido) y el siguiente turno corre sin capas, sin esperar a que la sesión termine
+
+#### Scenario: Ningún dato personal sale hacia el clasificador
+
+- GIVEN modo `shadow`, `canary` u `on`
+- WHEN la ráfaga y la respuesta del asesor salen hacia OpenRouter o TypeSafe
+- THEN van sin teléfonos, correos, direcciones (también sin `#`: "cra 7 45-12"), nombres anunciados ("me llamo …", "a nombre de …"), valores personales del formulario de envío, ni el nombre de quien recibe, la dirección y el barrio del borrador del episodio
+- AND el clasificador lee lo que escribió el cliente (`inbound_meta.text`), no la campaña citada ni el resumen del episodio anterior que el turno le agrega al LLM
+
+#### Scenario: La traza mide al clasificador, no al turno
+
+- GIVEN modo `shadow` (la percepción se lee después de enviar)
+- WHEN se guarda el paso `perception`
+- THEN `latency_ms` y `dur_ms` son la latencia del clasificador (la vara del canary, p95 < 1500 ms, se mide con este valor)
+
 ## Out of scope
 
 - Detalle del prompt engineering / SOUL.md / USER.md — viven en `hubara_vault/_templates/sales/`

@@ -77,11 +77,15 @@ _DEFAULT_PERCEPTION_PROFILE = "jev-v1"
 def _perception_meta() -> dict[str, str]:
     """Modo y perfil de las capas con clasificador (plan del laboratorio,
     PR 14), acotados por el techo de Terraform `SALES_PERCEPTION_MODE_CEILING`
-    (default `off`: no viaja nada y el turno es el de hoy). El control del
-    dashboard (PR 16) podrá bajarlo, nunca subirlo."""
+    (default `off`: el turno es el de hoy). El control del dashboard (PR 16)
+    podrá bajarlo, nunca subirlo.
+
+    `off` viaja EXPLÍCITO: el workflow se queda con el último modo que
+    recibió, así que sin esto un chat en curso seguiría en canary/on después
+    de bajar el techo, hasta que su sesión termine."""
     mode = (os.getenv("SALES_PERCEPTION_MODE_CEILING") or "").strip().lower()
     if mode not in _PERCEPTION_MODES:
-        return {}
+        return {"perception_mode": "off"}
     profile = (os.getenv("SALES_PERCEPTION_PROFILE") or "").strip() or _DEFAULT_PERCEPTION_PROFILE
     return {"perception_mode": mode, "perception_profile": profile}
 
