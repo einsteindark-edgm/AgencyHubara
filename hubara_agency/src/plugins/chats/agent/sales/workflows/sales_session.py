@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import timedelta
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -139,6 +140,39 @@ def _now_ms() -> int:
     return int(workflow.now().timestamp() * 1000)
 
 
+def _clean_inbound_meta(raw: object) -> dict[str, Any] | None:
+    """`{wamid, ts_ms, kind}` de la señal, con cada campo validado; lo que no
+    tenga la forma esperada queda en None (nunca falla: es solo traza)."""
+    if not isinstance(raw, dict):
+        return None
+    wamid, ts_ms, kind = raw.get("wamid"), raw.get("ts_ms"), raw.get("kind")
+    return {
+        "wamid": wamid if isinstance(wamid, str) and wamid else None,
+        "ts_ms": int(ts_ms) if isinstance(ts_ms, (int, float)) and not isinstance(ts_ms, bool) else None,
+        "kind": kind if isinstance(kind, str) and kind else "text",
+    }
+
+
+def _inbound_trace(batch: list[PendingMessage]) -> list[dict[str, Any]]:
+    """`inbound[]` de la traza: los mensajes del cliente del turno, en orden de
+    llegada (sin el trigger de ghosting ni los handoff)."""
+    out: list[dict[str, Any]] = []
+    for p in batch:
+        if p.is_ghost_trigger or p.is_handoff:
+            continue
+        meta = p.inbound_meta or {}
+        out.append(
+            {
+                "seq": len(out) + 1,
+                "wamid": meta.get("wamid"),
+                "ts_ms": meta.get("ts_ms"),
+                "kind": meta.get("kind") or "text",
+                "text": p.message,
+            }
+        )
+    return out
+
+
 def _note_guard(
     steps: list[dict],
     guards: list[str],
@@ -200,9 +234,20 @@ class HubaraSalesSessionWorkflow:
         message: str,
         media: list[str] | None = None,
         plugin_context: list[str] | None = None,
+        inbound_meta: Any = None,
     ) -> None:
+        """Mensaje del cliente. `inbound_meta` (4.º argumento, opcional) trae
+        `{wamid, ts_ms, kind}` para la traza. Tipado `Any` a propósito: un
+        valor que no decodifique como el tipo anotado hace que Temporal
+        DESCARTE la señal entera (y con ella el mensaje del cliente); acá se
+        limpia sin fallar."""
         self._pending.append(
-            PendingMessage(message=message, media=media, plugin_context=plugin_context)
+            PendingMessage(
+                message=message,
+                media=media,
+                plugin_context=plugin_context,
+                inbound_meta=_clean_inbound_meta(inbound_meta),
+            )
         )
 
     @workflow.query
@@ -255,9 +300,9 @@ class HubaraSalesSessionWorkflow:
         inbox_batch = [
             InboxMsg(
                 seq=i,
-                wamid=None,
+                wamid=(p.inbound_meta or {}).get("wamid"),
                 text=p.message,
-                ts_ms=0,
+                ts_ms=(p.inbound_meta or {}).get("ts_ms") or 0,
                 media=p.media,
                 plugin_context=p.plugin_context,
                 is_handoff=p.is_handoff,
@@ -1313,6 +1358,7 @@ class HubaraSalesSessionWorkflow:
                             steps=trace_steps,
                             turn_key=turn_key,
                             context_notes=context_note_names(msg.plugin_context),
+                            inbound=_inbound_trace(list(raw_batch or [msg])),
                         )
                         try:
                             await workflow.execute_activity(

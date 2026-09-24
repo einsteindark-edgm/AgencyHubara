@@ -132,6 +132,10 @@ class PendingMessage:
     plugin_context: list[str] | None = None
     is_handoff: bool = False
     is_ghost_trigger: bool = False
+    # Ids del mensaje del cliente (plan del laboratorio, PR 3): `{wamid,
+    # ts_ms, kind}` que el ingest pasa como 4.º argumento de la señal. Solo
+    # va a la traza v2 (`inbound[]`); None en señales de 3 argumentos.
+    inbound_meta: dict[str, Any] | None = None
 
 
 @dataclass

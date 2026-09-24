@@ -84,6 +84,9 @@ def test_pending_message_is_dataclass_serializable() -> None:
         # run 5f43bcd0: marker estructural del trigger de ghosting. Default
         # False → mensajes pre-deploy deserializan igual (R-JSON).
         "is_ghost_trigger": False,
+        # Plan del laboratorio, PR 3: ids del mensaje para la traza. Default
+        # None → señales de 3 argumentos siguen igual.
+        "inbound_meta": None,
     }
 
 
