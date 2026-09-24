@@ -150,3 +150,20 @@ def test_episode_transcript_is_unchanged_without_candidates() -> None:
     real = pr281_before_fix()
 
     assert jc.render_transcript(real, candidates=None) == jc.render_transcript(real)
+
+
+async def test_a_future_check_is_judged_one_candidate_at_a_time_without_later_turns(monkeypatch) -> None:
+    """Revisión #358: con varias candidatas el transcript llega hasta la última,
+    así que el juez de T3 veía T4–T6. Para un check `future` (TAG-07) eso es
+    información del futuro que puede dar un `pasa` falso: se pregunta una
+    candidata por vez, con el transcript cortado en ella."""
+    real, cands = _candidates()
+    monkeypatch.setitem(jc._APPLIES, "TAG-07", lambda traj, ctx: (True, ""))
+    judge = FakeJudge(default=_turns((3, "pasa"), (6, "pasa")))
+
+    out = await jc.run_judge_checks_focus(real, cands, CATALOG_CTX, judge, samples=1, only=["TAG-07"])
+
+    assert len(judge.prompts) == 2
+    first = next(p for p in judge.prompts if "T3 ★ CANDIDATA" in p)
+    assert "T4 ·" not in first and "T6 ★" not in first
+    assert (out[3][0].verdict, out[6][0].verdict) == ("pasa", "pasa")

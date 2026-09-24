@@ -696,20 +696,39 @@ async def _judge_focus_one(
         for k in applicable:
             out[k] = CheckResult(check_id, "desconocido", turn=k, evidence="catálogo no disponible", source="judge")
         return out
-    prompt = build_focus_prompt(check_id, real, {k: candidates[k] for k in applicable}, ctx)
+    # El transcript llega hasta la última candidata: con varias, el juez de
+    # T3 vería T4…Tn. Para un check `future` eso es información del futuro
+    # (un `pasa` con evidencia posterior): se pregunta una candidata por vez,
+    # con el transcript cortado en ella. Los checks `turn` comparten llamada
+    # (el prompt pide juzgar cada candidata solo con lo anterior).
+    groups = [[k] for k in applicable] if future else [applicable]
+    for group in groups:
+        out |= await _ask_focus(check_id, real, {k: candidates[k] for k in group}, ctx, judge, samples, sleep)
+    return out
+
+
+async def _ask_focus(
+    check_id: str,
+    real: Trajectory,
+    candidates: Mapping[int, Turn],
+    ctx: CheckContext,
+    judge: JudgePort,
+    samples: int,
+    sleep: Sleep,
+) -> dict[int, CheckResult]:
+    turns = sorted(candidates)
+    prompt = build_focus_prompt(check_id, real, candidates, ctx)
     parsed: list[dict[int, CheckResult]] = []
     for _ in range(max(1, samples)):
         try:
             raw = await _generate(judge, prompt, sleep)
         except Exception as exc:  # noqa: BLE001 — el juez caído no tumba el scorecard
-            return out | _focus_unknown(check_id, applicable, f"{JUDGE_ERROR_PREFIX}: {exc!r}"[:200])
-        by_turn = parse_focus_output(check_id, raw, applicable)
+            return _focus_unknown(check_id, turns, f"{JUDGE_ERROR_PREFIX}: {exc!r}"[:200])
+        by_turn = parse_focus_output(check_id, raw, turns)
         if by_turn is None:
-            return out | _focus_unknown(check_id, applicable, "respuesta del juez ilegible")
+            return _focus_unknown(check_id, turns, "respuesta del juez ilegible")
         parsed.append(by_turn)
-    for k in applicable:
-        out[k] = _agreed(check_id, k, [p.get(k) for p in parsed])
-    return out
+    return {k: _agreed(check_id, k, [p.get(k) for p in parsed]) for k in turns}
 
 
 async def run_judge_checks_focus(

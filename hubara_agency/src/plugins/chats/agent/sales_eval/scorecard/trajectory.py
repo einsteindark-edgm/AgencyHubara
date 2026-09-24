@@ -260,9 +260,13 @@ def build_trajectory(
 
 # ── Modo turno (laboratorio, plan §5.2) ─────────────────────────────────────
 def _order_turn(traj: Trajectory) -> int | None:
-    """Turno en que la orden del episodio empezó a existir (registro o estado)."""
+    """Turno en que la orden del episodio empezó a existir (registro o estado).
+    En legacy `register_order` puede no traer `ok`: el intento cuenta."""
+    registered = (
+        (lambda t: t.tool_attempted("register_order")) if traj.fidelity == "legacy" else (lambda t: t.tool_ok("register_order"))
+    )
     return next(
-        (t.turn for t in traj.turns if t.tool_ok("register_order") or (t.state or {}).get("order_id")),
+        (t.turn for t in traj.turns if registered(t) or (t.state or {}).get("order_id")),
         None,
     )
 
@@ -277,7 +281,10 @@ def focus_trajectory(
     entrada de `episodes_at` del caso del laboratorio): nunca los del cierre, y
     la orden solo si ya existía — la del episodio real cuenta desde el turno
     que la registró; una orden sin registro dentro del episodio es anterior a
-    él. Sin `episode_at` no hay orden ni cierre.
+    él. Por eso `episode_at["order_id"]` DEBE ser la orden al inicio del turno
+    (p. ej. el estado de la traza anterior), no la final del episodio: si la
+    orden nació sin `register_order` en la trayectoria (operador, carrito),
+    este corte no la ve. Sin `episode_at` no hay orden ni cierre.
     """
     at = episode_at or {}
     order_id = at.get("order_id") if episode_at is not None else None

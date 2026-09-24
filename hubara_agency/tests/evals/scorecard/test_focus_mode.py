@@ -447,3 +447,28 @@ def test_no_signal_is_a_verdict_counted_apart_and_outside_compliance() -> None:
     assert card.counts["sin_senal"] == 2
     assert card.compliance == 1.0
     assert card.verdict == "PASA"
+
+
+def test_an_order_attempted_later_in_a_legacy_trajectory_does_not_leak_to_earlier_turns() -> None:
+    """Revisión #358: en una trayectoria legacy `register_order` puede venir
+    sin `ok` (None). Igual es el turno en que nació la orden: los anteriores
+    no la ven aunque `episode_at` traiga la orden final."""
+    from dataclasses import replace
+
+    from src.plugins.chats.agent.sales_eval.scorecard.trajectory import ToolCall, focus_trajectory
+    from tests.evals.scorecard.incidents import pr281_before_fix
+
+    real = pr281_before_fix()
+    turns = tuple(
+        replace(t, tools=(*t.tools, ToolCall(name="register_order", ok=None)), state={**(t.state or {}), "order_id": None})
+        if t.turn == 3
+        else replace(t, tools=tuple(x for x in t.tools if x.name != "register_order"), state={**(t.state or {}), "order_id": None})
+        for t in real.turns
+    )
+    legacy = replace(real, fidelity="legacy", turns=turns)
+
+    early = focus_trajectory(legacy, legacy.turns[0], episode_at={"order_id": "ord_1"})
+    late = focus_trajectory(legacy, legacy.turns[3], episode_at={"order_id": "ord_1"})
+
+    assert early.order_id is None
+    assert late.order_id == "ord_1"
