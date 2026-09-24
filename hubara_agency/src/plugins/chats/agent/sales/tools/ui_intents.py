@@ -1053,6 +1053,7 @@ class PresentOrderConfirmationTool(ToolBase):
         # una promo sin filtro de productos. Import local: el paquete
         # use_cases arrastra el workflow → activities → esta tool (ciclo).
         from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+            missing_attributes_text,
             remember_confirmed_split,
             resolve_item_variants,
             split_key,
@@ -1060,6 +1061,7 @@ class PresentOrderConfirmationTool(ToolBase):
         )
         from src.plugins.chats.agent.sales.use_cases.coupons import (
             coupon_discount_for_items,
+            quota_product_ids,
         )
 
         from src.plugins.chats.agent.sales.use_cases.order_draft import (
@@ -1067,10 +1069,12 @@ class PresentOrderConfirmationTool(ToolBase):
         )
 
         metadata_now = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(ctx.session_key)
-        # Color y aroma de cada ítem: lo que manda el LLM tiene que existir en
-        # las listas del producto; si no, NO hay monto (se corrige primero).
+        # Color y aroma de cada ítem: en un producto con cupo lo que manda el
+        # LLM tiene que existir en las listas del producto; si no, NO hay monto
+        # (se corrige primero). Sin cupón no se valida (se acepta como antes).
         variants, invalid_variants = await resolve_item_variants(
-            self._catalog, items, metadata_now
+            self._catalog, items, metadata_now,
+            strict_products=quota_product_ids(metadata_now, self._quotas),
         )
         if invalid_variants:
             return json.dumps({
@@ -1091,6 +1095,21 @@ class PresentOrderConfirmationTool(ToolBase):
             sales=self._sales,
             variants=variants,
         )
+        if discount is not None and discount.quota and discount.missing_attributes:
+            # La tarjeta TERMINA el turno: si sale sin el color/aroma de una
+            # línea con cupo, el cliente confirma a precio lleno sin que el bot
+            # alcance a preguntar. Se pregunta primero.
+            return json.dumps({
+                "queued": False,
+                "error": "missing_variant_attributes",
+                "message": (
+                    f"El cupón {discount.code} vale solo para ciertas combinaciones y falta "
+                    f"elegir: {missing_attributes_text(variants, discount.missing_attributes)}. "
+                    "NO se encoló la confirmación: pregúntaselo al cliente "
+                    "(`present_variant_picker`) y vuelve a llamar present_order_confirmation "
+                    "con `color` y `aroma` en cada ítem."
+                ),
+            }, ensure_ascii=False)
         draft_city = (get_projectable_draft(metadata_now) or {}).get("ciudad")
         discount_cop = discount.discount_cop if discount else 0
         total = subtotal + shipping_cop + tax_cop - discount_cop
@@ -1235,12 +1254,6 @@ class PresentOrderConfirmationTool(ToolBase):
             summary += (
                 f" El cupón {discount.code} NO aplica: requiere compra mínima de "
                 f"${discount.min_subtotal_cop or 0:,} COP en productos — díselo."
-            )
-        elif discount and discount.reason == "missing_attributes":
-            summary += (
-                f" El cupón {discount.code} vale solo para ciertas combinaciones: "
-                "pregúntale al cliente el color y el aroma de cada producto y vuelve a "
-                "presentar la confirmación con `color` y `aroma` en cada ítem."
             )
         elif discount and discount.reason == "quota_unavailable":
             summary += (

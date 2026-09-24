@@ -70,7 +70,10 @@ from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
     resolve_item_variants,
     split_key,
 )
-from src.plugins.chats.agent.sales.use_cases.coupons import coupon_discount_for_items
+from src.plugins.chats.agent.sales.use_cases.coupons import (
+    coupon_discount_for_items,
+    quota_product_ids,
+)
 from src.plugins.chats.agent.sales.tools.order_registration import (
     RegisterOrderTool,
     _order_reference,
@@ -505,7 +508,10 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
     # solo si el último episodio de la sesión ya la tiene anotada (el mismo
     # pedido semanas después, en un episodio nuevo, es una venta nueva).
     data_before = store.read(session)
-    variants, invalid = await resolve_item_variants(deps.catalog, items_with_attrs, data_before)
+    variants, invalid = await resolve_item_variants(
+        deps.catalog, items_with_attrs, data_before,
+        strict_products=quota_product_ids(data_before, deps.quotas),
+    )
     if invalid:
         return {
             "registered": False,

@@ -11,6 +11,7 @@ el LLM solo repite lo que dice el envelope.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -188,6 +189,13 @@ class ItemVariant:
     title: str
     color: str | None
     aroma: str | None
+    #: Las listas del producto (sus etiquetas), para pedirle al cliente.
+    colors: tuple[str, ...] = ()
+    aromas: tuple[str, ...] = ()
+
+
+#: "Café, Lavanda" / "Rosado y Azul" / "Café/Lavanda": varios valores en uno.
+_SEVERAL = re.compile(r"\s*(?:,|/|\+|\by\b)\s*", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -200,6 +208,12 @@ class InvalidAttribute:
 
     def message(self) -> str:
         word = "color" if self.field == "color" else "aroma"
+        parts = [t for t in _SEVERAL.split(self.value) if t]
+        if len(parts) > 1 and all(match_option(t, list(self.options)) for t in parts):
+            return (
+                f'{self.title}: "{self.value}" son varios {word}s — para el cupón va una línea por '
+                "combinación de color y aroma (con su cantidad)"
+            )
         return f'{self.title} no tiene el {word} "{self.value}" (opciones: {", ".join(self.options)})'
 
 
@@ -215,14 +229,22 @@ def _draft_attrs(metadata: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
 
 
 async def resolve_item_variants(
-    catalog: Any, items: list[dict[str, Any]], metadata: dict[str, Any] | None = None
+    catalog: Any,
+    items: list[dict[str, Any]],
+    metadata: dict[str, Any] | None = None,
+    *,
+    strict_products: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[list[ItemVariant], list[InvalidAttribute]]:
     """Color y aroma canónicos de cada línea.
 
-    Lo que manda el LLM (`color`/`aroma` del ítem) se valida contra las listas
-    cerradas del producto (sus etiquetas): un valor que no existe es un
-    error — no se calcula monto. Si no lo manda, se toma del borrador
-    estructurado del pedido cuando coincide con la lista; si no, queda None.
+    Lo que manda el LLM (`color`/`aroma` del ítem) se busca en las listas
+    cerradas del producto (sus etiquetas); si no lo manda, se toma del
+    borrador estructurado del pedido cuando coincide con la lista; si no,
+    queda None. Solo en los productos de `strict_products` (los que tienen
+    cupo en el cupón aplicado) un valor que no está en la lista es un error:
+    ahí decide el descuento. En el resto se acepta como antes — lo que guarda
+    `set_order_slot` (varios aromas, colores de `metadata.colores`, familias)
+    no siempre está en las etiquetas.
     """
     drafts = _draft_attrs(metadata)
     variants: list[ItemVariant] = []
@@ -250,14 +272,20 @@ async def resolve_item_variants(
                 chosen[field] = canonical
             else:
                 chosen[field] = match_option(str(draft.get(field) or ""), options)
+        product_id = str(getattr(product, "id", "") or "") or None
         variants.append(
             ItemVariant(
-                product_id=str(getattr(product, "id", "") or "") or None,
+                product_id=product_id,
                 title=title,
                 color=chosen["color"],
                 aroma=chosen["aroma"],
+                colors=tuple(attrs.colors),
+                aromas=tuple(attrs.aromas),
             )
         )
+    invalid = [
+        bad for bad in invalid if variants[bad.index].product_id in strict_products
+    ]
     return variants, invalid
 
 
@@ -393,6 +421,23 @@ def confirmed_split(metadata: dict[str, Any], code: str) -> list[list[Any]] | No
     return sorted([list(x) for x in raw["split"]])
 
 
+def missing_attributes_text(variants: list[ItemVariant], indices: tuple[int, ...] | list[int]) -> str:
+    """"Cubo Love: color (Rosado, Azul) y aroma (Café, Lavanda)"."""
+    parts = []
+    for index in dict.fromkeys(indices):
+        variant = variants[index]
+        need = [
+            f"{word} ({', '.join(options)})"
+            for word, value, options in (
+                ("color", variant.color, variant.colors),
+                ("aroma", variant.aroma, variant.aromas),
+            )
+            if options and not value
+        ]
+        parts.append(f"{variant.title}: {' y '.join(need)}" if need else variant.title)
+    return "; ".join(parts)
+
+
 def split_summary(
     code: str, items: list[dict[str, Any]], variants: list[ItemVariant], split: Any
 ) -> str:
@@ -423,6 +468,7 @@ __all__ = [
     "QuotaSplit",
     "confirmed_split",
     "line_discounts_from_key",
+    "missing_attributes_text",
     "quota_split",
     "remember_confirmed_split",
     "resolve_item_variants",

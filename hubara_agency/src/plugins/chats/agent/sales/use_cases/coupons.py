@@ -231,6 +231,21 @@ async def discount_line_items(
     return out
 
 
+def quota_product_ids(metadata: dict[str, Any], quotas: Any) -> frozenset[str]:
+    """Productos con cupo en el cupón aplicado del episodio: ahí el color y el
+    aroma de cada línea deciden el descuento y se validan contra las listas
+    del producto. Vacío sin cupón, sin cupo o con el cupo ilegible (en ese
+    caso el descuento igual falla cerrado)."""
+    raw = applied_coupon(metadata)
+    if raw is None or quotas is None:
+        return frozenset()
+    try:
+        sheet = quotas.get(promotion_from_snapshot(raw["promotion"]).id)
+    except (TypeError, KeyError, QuotaStoreError):
+        return frozenset()
+    return frozenset(q.product_id for q in sheet.quotas)
+
+
 async def coupon_discount_for_items(
     metadata: dict[str, Any],
     catalog: Any,
@@ -372,5 +387,6 @@ __all__ = [
     "is_whole_catalog",
     "format_cop",
     "promotion_from_snapshot",
+    "quota_product_ids",
     "set_applied_coupon",
 ]

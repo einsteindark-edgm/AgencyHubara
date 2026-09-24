@@ -189,14 +189,19 @@ async def test_confirmation_takes_color_and_aroma_from_the_order_draft(_isolate_
 
 
 @pytest.mark.asyncio
-async def test_confirmation_without_attributes_asks_for_them_and_discounts_nothing(_isolate_vault_dir) -> None:
-    _seed(_isolate_vault_dir)
+async def test_confirmation_without_attributes_asks_for_them_before_any_card(_isolate_vault_dir) -> None:
+    """Sin color/aroma en una línea con cupo NO sale la tarjeta a precio lleno:
+    la tarjeta termina el turno y el cliente confirmaría sin el descuento que
+    le prometieron. Se piden primero (con las opciones del producto)."""
+    path = _seed(_isolate_vault_dir)
 
     env = await _confirm(_confirm_tool(_isolate_vault_dir, _Sales()), _ctx(), [_cubo()])
 
-    assert env["queued"] is True
-    assert "discount_cop" not in env
-    assert "color y el aroma" in env["summary"]
+    assert (env["queued"], env["error"]) == (False, "missing_variant_attributes")
+    assert "Cubo Love" in env["message"] and "Rosado" in env["message"] and "Café" in env["message"]
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert "pending_ui_intents" not in saved
+    assert "coupon_confirmed_split" not in saved["episodes"][-1]
 
 
 @pytest.mark.asyncio
@@ -537,3 +542,60 @@ def test_prompts_treat_quota_rejections_as_fix_and_retry() -> None:
     for reason in ("invalid_variant_attribute", "quota_changed", "quota_busy"):
         assert reason in retry, reason
         assert reason in with_error, reason
+
+
+
+# --- B1: el color/aroma se valida SOLO donde el cupo lo necesita ----------------------------
+
+_Catalog.products["cubo-sol"] = _product("cubo-sol", "Cubo Sol", "21000", "prod_sol", _TAGS)
+
+
+def _seed_without_coupon(vault: Path) -> Path:
+    path = vault / KEY / "metadata.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"episodes": [{"episode_id": "ep_001", "started_at_ms": 1}]}), encoding="utf-8")
+    return path
+
+
+@pytest.mark.asyncio
+async def test_order_without_coupon_accepts_attributes_outside_the_tag_lists(_isolate_vault_dir) -> None:
+    """Sin cupón nada cambia: `set_order_slot` guarda valores que no están en
+    las etiquetas (dos aromas, colores de `metadata.colores`, familias) y el
+    LLM los copia; la confirmación y el registro los aceptan como antes."""
+    _seed_without_coupon(_isolate_vault_dir)
+    item = _cubo(color="naranja", aroma="Drakar, Café")
+
+    confirmed = await _confirm(_confirm_tool(_isolate_vault_dir, _Sales()), _ctx(), [item])
+    registered = json.loads(await _register_tool(_isolate_vault_dir, _Port(_Sales())).execute_with_context(
+        _ctx(), items=[item], shipping=_SHIPPING, payment_method="transfer",
+        subtotal_cop=21000, shipping_cop=7900, total_cop=28900,
+    ))
+
+    assert confirmed["queued"] is True, confirmed
+    assert registered["registered"] is True, registered
+
+
+@pytest.mark.asyncio
+async def test_coupon_with_quota_only_checks_the_products_it_covers(_isolate_vault_dir) -> None:
+    """AMOR26 tiene cupo solo en Cubo Love: una línea de otro producto con un
+    color fuera de su lista no frena la confirmación."""
+    _seed(_isolate_vault_dir)
+
+    env = await _confirm(_confirm_tool(_isolate_vault_dir, _Sales()), _ctx(), [
+        _cubo(color="Rosado", aroma="Café"),
+        {"handle": "cubo-sol", "quantity": 1, "unit_price_cop": 21000, "color": "naranja"},
+    ])
+
+    assert env["queued"] is True, env
+    assert env["discount_cop"] == 2100
+
+
+@pytest.mark.asyncio
+async def test_two_aromas_in_one_quota_line_asks_for_one_line_per_combination(_isolate_vault_dir) -> None:
+    _seed(_isolate_vault_dir)
+
+    env = await _confirm(_confirm_tool(_isolate_vault_dir, _Sales()), _ctx(),
+                         [_cubo(2, color="Rosado", aroma="Café, Lavanda")])
+
+    assert (env["queued"], env["error"]) == (False, "invalid_variant_attribute")
+    assert "una línea por combinación" in env["message"]

@@ -100,6 +100,7 @@ from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
     coupon_discount_for_items,
     promotion_from_snapshot,
+    quota_product_ids,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     attach_order_to_active_episode,
@@ -676,7 +677,8 @@ class RegisterOrderTool(ToolBase):
         # Color/aroma de cada ítem: un valor que el producto no tiene NO
         # registra nada (mismo contrato que present_order_confirmation).
         variants, invalid_variants = await resolve_item_variants(
-            self._catalog, items, metadata_before
+            self._catalog, items, metadata_before,
+            strict_products=quota_product_ids(metadata_before, self._quotas),
         )
         if invalid_variants:
             return json.dumps(
