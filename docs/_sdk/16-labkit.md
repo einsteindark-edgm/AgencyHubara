@@ -13,7 +13,7 @@ El kit expone esas dos piezas a los plugins sin tocar `src.platform` (P-28).
 
 | Símbolo | Qué es |
 |---|---|
-| `LabStorePort` | contrato del almacén: `put_file` (streaming), `put_bytes`, `get_bytes` (None si no existe), `list_keys(prefix)`. Claves relativas; nunca `..` ni `/` inicial |
+| `LabStorePort` | contrato del almacén: `put_file` (streaming), `put_bytes`, `get_bytes` (None si no existe), `list_keys(prefix)`, `list_children(prefix)` (las "carpetas" inmediatas, sin recorrer cada objeto: en S3 con `Delimiter`). Claves relativas; nunca `..` ni `/` inicial |
 | `S3LabStore` / `FilesystemLabStore` | adaptadores con la MISMA suite de contrato (el de disco es para tests y desarrollo) |
 | `get_lab_store()` | `LAB_BUCKET` (Terraform, `/hubara/<tenant>/LAB_BUCKET`) → S3; `LAB_STORE_DIR` → disco; ninguno → `None` (laboratorio apagado: la API responde 503) |
 | `LabBoxLauncher` / `Boto3LabLauncher` | prende la caja (tag `Role=lab`) y le da órdenes por SSM: `dispatch(run_id, imagen)` → `dispatched` \| `already_dispatched` (idempotente por id), `cancel(run_id)`. Reutiliza `Boto3Launcher` de GraphAgents |
