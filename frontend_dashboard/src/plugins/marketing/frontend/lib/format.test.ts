@@ -54,6 +54,15 @@ describe("apiErrorDetail", () => {
     );
   });
 
+  it("un detail objeto con message (central de cupones) muestra el message", () => {
+    const err = new ApiError(409, { detail: { message: "Ese código ya existe." } });
+    expect(apiErrorDetail(err)).toBe("Ese código ya existe.");
+    const field = new ApiError(422, {
+      detail: { field: "percentage", message: "El descuento es un número entero entre 1 y 100." },
+    });
+    expect(apiErrorDetail(field)).toBe("El descuento es un número entero entre 1 y 100.");
+  });
+
   it("cae al status cuando no hay detail", () => {
     expect(apiErrorDetail(new ApiError(502, null))).toBe("Error 502");
   });

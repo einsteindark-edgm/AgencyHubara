@@ -292,7 +292,7 @@ async def delete_coupon(promotion_id: str, request: Request) -> Response:
     except PromotionsUnavailableError as e:
         raise _unavailable() from e
     if results.orders:
-        raise _fail(409, "Este cupón ya tiene ventas: no se borra, pausalo.")
+        raise _fail(409, "Este cupón ya tiene ventas: no se borra; páusalo.")
     try:
         await promotions_admin().delete_coupon(promotion_id)
     except CouponNotManageableError as e:

@@ -187,10 +187,10 @@ def _attribute(
     given = str(raw).strip() if raw is not None else ""
     if not options:
         if given:
-            return None, QuotaRowError(index, field, f"{title} no tiene {many}; dejá el {one} vacío.")
+            return None, QuotaRowError(index, field, f"{title} no tiene {many}; deja el {one} vacío.")
         return None, None
     if not given:
-        return None, QuotaRowError(index, field, f"Elegí el {one} de {title}.")
+        return None, QuotaRowError(index, field, f"Elige el {one} de {title}.")
     canonical = match_option(given, options)
     if canonical is None:
         return None, QuotaRowError(
@@ -240,7 +240,7 @@ def validate_quota_rows(
         qid = quota_id_for(promotion_id, product_id, color, aroma)
         if qid in seen:
             errors.append(
-                QuotaRowError(index, "product_id", "Esa combinación está repetida; sumá las unidades en una fila.")
+                QuotaRowError(index, "product_id", "Esa combinación está repetida; suma las unidades en una fila.")
             )
             continue
         seen.add(qid)

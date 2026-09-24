@@ -128,4 +128,17 @@ describe("CampaignsList", () => {
     fireEvent.click(getByRole("button", { name: /Nueva campaña/ }));
     expect(createMutate).toHaveBeenCalledTimes(1);
   });
+
+  it("pinta el slot de cabecera arriba de la lista (selector de la sección)", () => {
+    const { getByTestId } = render(
+      <CampaignsList
+        campaigns={[]}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onCreated={vi.fn()}
+        header={<div data-testid="slot" />}
+      />,
+    );
+    expect(getByTestId("slot")).toBeTruthy();
+  });
 });

@@ -67,10 +67,10 @@ def _parse_products(raw: Any) -> tuple[str, ...] | None:
     if raw == "all":
         return None
     if not isinstance(raw, (list, tuple)):
-        raise CouponSpecError("products", 'Elegí productos o "todo el catálogo".')
+        raise CouponSpecError("products", 'Elige productos o "todo el catálogo".')
     ids = tuple(dict.fromkeys(str(p).strip() for p in raw if str(p or "").strip()))
     if not ids:
-        raise CouponSpecError("products", 'Elegí al menos un producto o "todo el catálogo".')
+        raise CouponSpecError("products", 'Elige al menos un producto o "todo el catálogo".')
     return ids
 
 

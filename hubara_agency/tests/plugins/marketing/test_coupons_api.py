@@ -325,7 +325,7 @@ def test_delete_coupon_with_sales_returns_409(monkeypatch) -> None:
     res = w.client.delete(f"/api/marketing/coupons/{draft['promotion_id']}")
 
     assert res.status_code == 409
-    assert "pausalo" in res.json()["detail"]["message"].lower()
+    assert "páusalo" in res.json()["detail"]["message"].lower()
 
 
 def test_delete_draft_without_sales_removes_coupon_and_its_units(monkeypatch) -> None:

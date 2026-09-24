@@ -81,6 +81,12 @@ export function apiErrorDetail(err: unknown): string {
     if (body && typeof body === "object" && "detail" in body) {
       const detail = (body as { detail?: unknown }).detail;
       if (typeof detail === "string" && detail) return detail;
+      // Central de cupones: `{message, field?|rows?|step?}` — el message ya
+      // está escrito para el operador.
+      if (detail && typeof detail === "object" && "message" in detail) {
+        const message = (detail as { message?: unknown }).message;
+        if (typeof message === "string" && message) return message;
+      }
       if (detail !== undefined) return JSON.stringify(detail);
     }
     return `Error ${err.status}`;

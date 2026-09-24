@@ -7,7 +7,7 @@
  * martillaría el vault).
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import { Icon } from "@/shared/ui";
 
@@ -37,9 +37,11 @@ interface Props {
   onSelect: (id: string) => void;
   /** El Page selecciona la campaña recién creada (useSelection). */
   onCreated: (id: string) => void;
+  /** Slot arriba del header (el selector Campañas | Cupones del Page). */
+  header?: ReactNode;
 }
 
-export function CampaignsList({ campaigns, selectedId, onSelect, onCreated }: Props) {
+export function CampaignsList({ campaigns, selectedId, onSelect, onCreated, header }: Props) {
   const [filter, setFilter] = useState<StatusFilter>("all");
   const create = useCreateCampaign();
 
@@ -60,6 +62,7 @@ export function CampaignsList({ campaigns, selectedId, onSelect, onCreated }: Pr
   return (
     <aside className="sidebar">
       <div className="side-header">
+        {header}
         <div className="flex items-center gap-2">
           <span className="text-sm font-bold tracking-tight text-fg">Campañas</span>
           <span className="text-[11px] text-fg-faint">{campaigns.length}</span>
