@@ -140,6 +140,7 @@ describe("groupResultsByFamily", () => {
       evidence: "",
       critique: "",
       source: "code",
+      topics: [],
     };
     const groups = groupResultsByFamily(registry, [extra], { includeUnevaluated: false });
     expect(groups).toHaveLength(1);
@@ -232,8 +233,8 @@ describe("buildStripModel", () => {
 
   it("distingue primer fallo de primer crítico cuando difieren", () => {
     const rs: CheckResult[] = [
-      { check_id: "DES-01", verdict: "falla", level: "mayor", turn: 2, evidence: "", critique: "", source: "code" },
-      { check_id: "CON-01", verdict: "falla", level: "critico", turn: 4, evidence: "", critique: "", source: "code" },
+      { check_id: "DES-01", verdict: "falla", level: "mayor", turn: 2, evidence: "", critique: "", source: "code", topics: [] },
+      { check_id: "CON-01", verdict: "falla", level: "critico", turn: 4, evidence: "", critique: "", source: "code", topics: [] },
     ];
     const m = buildStripModel(trajectory, rs);
     expect(m.firstFailure?.checkId).toBe("DES-01");

@@ -88,6 +88,8 @@ def compute_scorecard(
             "critique": r.critique,
             "source": r.source,
         }
+        if r.topics:
+            row["topics"] = [dict(t) for t in r.topics]
         rows.append(row)
         if r.verdict == "falla":
             counts[level] += 1

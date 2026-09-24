@@ -94,6 +94,7 @@ def _previous_judge_results(found: dict[str, Any] | None) -> list[Any]:
             evidence=str(r.get("evidence") or ""),
             critique=str(r.get("critique") or ""),
             source="judge",
+            topics=tuple(t for t in r.get("topics") or [] if isinstance(t, dict)),
         )
         for r in found.get("results") or []
         if isinstance(r, dict) and r.get("source") == "judge" and r.get("check_id") in SPECS_BY_ID
