@@ -15,6 +15,7 @@ mes desde Terraform (`LAB_MAX_USD_PER_RUN` / `LAB_MAX_USD_PER_MONTH`) → 422.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -106,7 +107,7 @@ def _bench_turns(store: LabStorePort, bench: str) -> tuple[str | None, int]:
             internal_numbers=[n for n in (os.getenv("LAB_INTERNAL_NUMBERS") or "").split(",") if n.strip()],
         )
         return None, plan.customer_turns
-    if not _BENCH_RE.match(bench):
+    if not _BENCH_RE.fullmatch(bench):
         raise HTTPException(422, detail={"reason": "bench", "message": "Banco inválido."})
     raw = store.get_bytes(f"bench/{bench}/manifest.json")
     if raw is None:
@@ -162,7 +163,7 @@ async def _active_status(client: Any) -> dict[str, Any] | None:
     run_id = status.get("run_id")
     store = get_lab_store()
     if run_id and store is not None:
-        raw = store.get_bytes(f"runs/{run_id}/progress.json")
+        raw = await asyncio.to_thread(store.get_bytes, f"runs/{run_id}/progress.json")
         try:
             progress = json.loads(raw) if raw else {}
         except ValueError:
@@ -186,9 +187,11 @@ async def launch(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str,
     reps = _parse_reps(body.get("reps") if isinstance(body.get("reps"), int) else 0)
     bench = str(body.get("bench") or "new")
     image = (os.getenv("HUBARA_IMAGE") or "").strip()
-    if not IMAGE_RE.match(image):
+    if not IMAGE_RE.fullmatch(image):
         raise HTTPException(503, detail="No conozco la imagen desplegada (HUBARA_IMAGE).")
-    est = _estimate(store, arms, reps, bench)
+    # Recorre el vault y lista S3: fuera del event loop, que también atiende el
+    # webhook de WhatsApp, la bandeja y el SSE.
+    est = await asyncio.to_thread(_estimate, store, arms, reps, bench)
     if not est["fits"]:
         raise HTTPException(422, detail={"reason": est["reason"], "estimate": est})
     now = datetime.fromtimestamp(_now_ms() / 1000, tz=_BOGOTA)
