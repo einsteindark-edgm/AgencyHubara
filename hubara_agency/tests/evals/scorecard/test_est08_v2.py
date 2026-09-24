@@ -144,6 +144,28 @@ def test_all_topics_covered_passes() -> None:
     assert result is not None and result.verdict == "pasa"
 
 
+def test_a_failure_that_names_no_uncovered_topic_is_unknown() -> None:
+    """El juez escribe `falla` pero todos los asuntos que lista están cubiertos:
+    sin el asunto que faltó, la falla no se puede sostener (antes se volvía
+    `pasa` con solo omitir el asunto no cubierto)."""
+    topics = [dict(t, cubierto=True) for t in _TOPICS_ONE_MISSED]
+
+    result = jc.parse_judge_output("EST-08", _answer("falla", topics))
+
+    assert result is not None and result.verdict == "desconocido"
+
+
+def test_no_topics_means_nothing_to_cover() -> None:
+    """Un "hola" no plantea asuntos: EST-08 no aplica. Antes el veredicto del
+    juez se respetaba y un `pasa` gratis subía el cumplimiento sin que el bot
+    hiciera nada."""
+    lenient = jc.parse_judge_output("EST-08", _answer("pasa", []))
+    strict = jc.parse_judge_output("EST-08", _answer("falla", []))
+
+    assert lenient is not None and lenient.verdict == "no_aplica"
+    assert strict is not None and strict.verdict == "desconocido"
+
+
 def test_topics_travel_to_the_scorecard_row() -> None:
     judged = jc.parse_judge_output("EST-08", _answer("falla", _TOPICS_ONE_MISSED, 2))
     assert isinstance(judged, CheckResult)
