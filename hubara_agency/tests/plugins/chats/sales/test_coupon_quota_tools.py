@@ -255,3 +255,20 @@ async def test_units_outside_the_real_scope_are_not_offered(tmp_path: Path) -> N
     out = json.loads(await tool.execute_with_context(_ctx(), code="AMOR26"))
 
     assert [u["title"] for u in out["units"]] == ["Cubo Love"]
+
+
+@pytest.mark.asyncio
+async def test_turn_note_of_a_quota_coupon_says_availability_can_change(tmp_path: Path) -> None:
+    """B3: la nota de cada turno repite las combinaciones y precios del
+    momento en que se aplicó el cupón; con cupo pueden agotarse, así que la
+    nota lo dice (la confirmación es la que dice cuáles quedan)."""
+    from src.plugins.chats.agent.sales.use_cases.coupons import build_coupon_note
+
+    store = _store_with([_row("q1", "Rosado", "Café", 5)])
+    tool, md = _apply_tool(tmp_path, quotas=store, sales=_Sales({"q1": 2}))
+    await tool.execute_with_context(_ctx(), code="AMOR26")
+
+    note = build_coupon_note(md.read(KEY)) or ""
+
+    assert "Cubo Love Rosado · Café" in note
+    assert "según disponibilidad" in note

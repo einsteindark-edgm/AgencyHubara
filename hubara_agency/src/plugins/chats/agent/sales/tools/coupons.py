@@ -349,7 +349,7 @@ class ApplyCouponTool(ToolBase):
         eligible = as_eligible(offer.units)
         self._store.update(
             ctx.session_key,
-            lambda md: set_applied_coupon(md, promotion=promotion, now_ms=now_ms, eligible=eligible),
+            lambda md: set_applied_coupon(md, promotion=promotion, now_ms=now_ms, eligible=eligible, quota=True),
         )
         logger.info("🎟️ [TOOL apply_coupon] applied (cupo) session={} code={}", ctx.session_key, promotion.code)
         summary = (

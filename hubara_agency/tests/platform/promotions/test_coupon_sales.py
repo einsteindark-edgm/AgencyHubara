@@ -274,3 +274,47 @@ async def test_reader_and_board_pass_the_excluded_order_down() -> None:
 
     assert counted == {_Q: 1}
     assert [(s.quota.id, s.units_left) for s in board] == [(_Q, 1)]
+
+
+# --- B8: Medusa filtra por fecha; si no acepta el filtro, se lee como antes -----------
+
+
+@pytest.mark.asyncio
+async def test_reader_asks_medusa_only_for_orders_since_the_start() -> None:
+    since = datetime(2026, 9, 22, 5, 0, tzinfo=timezone.utc)
+    with respx.mock() as mock:
+        orders = mock.get(f"{_BASE}/admin/orders").mock(return_value=_page("orders", []))
+        drafts = mock.get(f"{_BASE}/admin/draft-orders").mock(return_value=_page("draft_orders", [
+            _order("order_draft", [_line(2)], created="2026-09-23T12:00:00Z"),
+        ]))
+        reader = CouponSalesReader(HttpMedusaClient(base_url=_BASE, admin_token="sk_test", timeout=5.0))
+
+        sold = await reader.sold_units(since=since)
+
+    assert sold == {_Q: 2}
+    for route in (orders, drafts):
+        assert route.calls[0].request.url.params["created_at[$gte]"] == since.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_reader_falls_back_to_a_full_scan_if_medusa_rejects_the_date_filter() -> None:
+    """Un Medusa que no acepta `created_at[$gte]` (400) no apaga los cupones
+    con cupo: se lee sin el filtro y se corta por fecha de este lado."""
+    since = datetime(2026, 9, 22, 5, 0, tzinfo=timezone.utc)
+
+    def drafts(request: httpx.Request) -> httpx.Response:
+        if "created_at[$gte]" in request.url.params:
+            return httpx.Response(400, json={"type": "invalid_data", "message": "Unrecognized fields: 'created_at'"})
+        return _page("draft_orders", [
+            _order("order_new", [_line(1)], created="2026-09-23T12:00:00Z"),
+            _order("order_old", [_line(4)], created="2026-09-20T12:00:00Z"),
+        ])
+
+    with respx.mock() as mock:
+        mock.get(f"{_BASE}/admin/orders").mock(return_value=_page("orders", []))
+        mock.get(f"{_BASE}/admin/draft-orders").mock(side_effect=drafts)
+        reader = CouponSalesReader(HttpMedusaClient(base_url=_BASE, admin_token="sk_test", timeout=5.0))
+
+        sold = await reader.sold_units(since=since)
+
+    assert sold == {_Q: 1}

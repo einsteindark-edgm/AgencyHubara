@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
+from src.platform.medusa.client import MedusaAPIError
 from src.platform.orders.state import META_KEY_STAGE, META_KEY_TEST_ORDER
 from src.platform.promotions.port import PromotionsUnavailableError
 from src.platform.promotions.quota_store import QuotaSheet
@@ -238,11 +239,25 @@ class CouponSalesReader:
         return coupon_results(code, await self.orders_since(since))
 
     async def _scan(self, list_page: Any, key: str, since: datetime) -> list[dict[str, Any]]:
+        # Medusa filtra por fecha (menos páginas en campañas largas —
+        # premortem B8); si no acepta el filtro (400), se lee como antes y se
+        # corta por fecha de este lado.
+        try:
+            return await self._pages(list_page, key, since, created_gte=since.isoformat())
+        except MedusaAPIError as exc:
+            if exc.status_code != 400:
+                raise
+            return await self._pages(list_page, key, since, created_gte=None)
+
+    async def _pages(
+        self, list_page: Any, key: str, since: datetime, *, created_gte: str | None
+    ) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         offset = 0
         while True:
             page = await list_page(
-                limit=self._page_size, offset=offset, order="-created_at", fields=ORDER_FIELDS
+                limit=self._page_size, offset=offset, order="-created_at", fields=ORDER_FIELDS,
+                **({"created_gte": created_gte} if created_gte else {}),
             )
             rows = [r for r in page.get(key) or [] if isinstance(r, dict)]
             fresh = [r for r in rows if (_created(r) or since) >= since]

@@ -643,3 +643,178 @@ def test_remembering_the_split_never_writes_over_an_unreadable_session() -> None
     assert remember_confirmed_split({}, "AMOR26", []) is None
     saved = remember_confirmed_split({"episodes": [{"episode_id": "ep_1", "started_at_ms": 1}]}, "AMOR26", [])
     assert saved is not None and saved["episodes"][-1]["coupon_confirmed_split"] == {"code": "AMOR26", "split": []}
+
+
+# --- Premortem del cupo en el bot (B-series) ----------------------------------------------
+
+_Q_AZUL = "q_azul_lavanda"
+
+
+def _quotas_two(*, rosado: int = 5, azul: int = 5) -> FakePromoQuotaStore:
+    store = FakePromoQuotaStore()
+    store.replace(
+        "promo_amor26", "AMOR26",
+        [PromoUnitQuota(_Q, "promo_amor26", "AMOR26", "prod_cubo", "cubo-love", "Cubo Love",
+                        "Rosado", "Café", rosado, "2026-09-23T17:00:00Z", "ana"),
+         PromoUnitQuota(_Q_AZUL, "promo_amor26", "AMOR26", "prod_cubo", "cubo-love", "Cubo Love",
+                        "Azul", "Lavanda", azul, "2026-09-23T17:00:00Z", "ana")],
+        show_units_left=True, actor="ana", now_iso="2026-09-23T17:00:00Z",
+    )
+    return store
+
+
+@pytest.mark.asyncio
+async def test_sold_out_combination_is_told_as_sold_out_not_as_not_applicable(_isolate_vault_dir) -> None:
+    """B3: se agotó Rosado · Café pero quedan de Azul · Lavanda. Decirle al
+    cliente "el cupón no aplica a estos productos" es falso."""
+    _seed(_isolate_vault_dir)
+    tool = PresentOrderConfirmationTool(workspace=str(_isolate_vault_dir), catalog=_Catalog(),
+                                        quotas=_quotas_two(), sales=_Sales({_Q: 5}))
+
+    env = await _confirm(tool, _ctx(), [_cubo(color="Rosado", aroma="Café")])
+
+    assert env["queued"] is True, env
+    assert "se agotaron" in env["summary"] and "no aplica" not in env["summary"]
+
+
+@pytest.mark.asyncio
+async def test_card_itself_says_which_units_carry_the_coupon(_isolate_vault_dir) -> None:
+    """B4: la tarjeta TERMINA el turno — lo que el bot "diría" después (1 a
+    precio normal, no pude confirmar el cupo) no le llega al cliente. Va en
+    la tarjeta."""
+    path = _seed(_isolate_vault_dir)
+
+    await _confirm(_confirm_tool(_isolate_vault_dir, _Sales({_Q: 4})), _ctx(), [_cubo(2, color="Rosado", aroma="Café")])
+
+    (intent,) = json.loads(path.read_text(encoding="utf-8"))["pending_ui_intents"]
+    assert "1 a precio normal" in intent["params"]["coupon_note"]
+
+
+@pytest.mark.asyncio
+async def test_card_says_the_units_could_not_be_checked(_isolate_vault_dir) -> None:
+    path = _seed(_isolate_vault_dir)
+
+    await _confirm(_confirm_tool(_isolate_vault_dir, _Sales(down=True)), _ctx(), [_cubo(color="Rosado", aroma="Café")])
+
+    (intent,) = json.loads(path.read_text(encoding="utf-8"))["pending_ui_intents"]
+    assert "no pude confirmar" in intent["params"]["coupon_note"].lower()
+
+
+@pytest.mark.asyncio
+async def test_order_card_prints_the_coupon_note() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from src.platform.whatsapp import dtos as wa_dtos
+    from src.plugins.chats.agent.sales.activities.flush_ui_intents import _dispatch_intent
+
+    wa = SimpleNamespace(send_text=AsyncMock(return_value=SimpleNamespace(ok=True)),
+                         send_interactive_buttons=AsyncMock(return_value=SimpleNamespace(ok=True)))
+    await _dispatch_intent(
+        wa_client=wa, wa_dtos=wa_dtos, kind="order_confirmation", fallback={},
+        params={"reference_id": "HUB-1", "items": [{"title": "Cubo Love", "quantity": 2, "unit_price_cop": 21000}],
+                "subtotal_cop": 42000, "shipping_cop": 7900, "total_cop": 47800, "currency": "COP",
+                "shipping_address_summary": "Calle 1", "payment_method": "transfer",
+                "discount_cop": 2100, "coupon_code": "AMOR26",
+                "coupon_note": "1 × Cubo Love Rosado · Café con AMOR26 (−$2.100); 1 a precio normal"},
+        phone_number_id="phone-1", to_number="573000000000", last_inbound_message_id=None,
+    )
+
+    body = wa.send_interactive_buttons.await_args.args[2].body
+    assert "1 a precio normal" in body
+
+
+@pytest.mark.asyncio
+async def test_offer_skips_rows_whose_color_no_longer_exists_on_the_product(_isolate_vault_dir) -> None:
+    """B6: una fila vieja (color renombrado en Medusa) no se ofrece: la
+    confirmación la rechazaría con `invalid_variant_attribute`."""
+    from src.plugins.chats.agent.sales.use_cases.coupon_quota import quota_offer
+
+    store = FakePromoQuotaStore()
+    store.replace("promo_amor26", "AMOR26", [
+        PromoUnitQuota(_Q, "promo_amor26", "AMOR26", "prod_cubo", "cubo-love", "Cubo Love",
+                       "Rosado", "Café", 5, "2026-09-23T17:00:00Z", "ana"),
+        PromoUnitQuota("q_verde", "promo_amor26", "AMOR26", "prod_cubo", "cubo-love", "Cubo Love",
+                       "Verde", "Café", 5, "2026-09-23T17:00:00Z", "ana"),
+    ], show_units_left=True, actor="ana", now_iso="2026-09-23T17:00:00Z")
+
+    offer = await quota_offer(_AMOR26, quotas=store, sales=_Sales(), catalog=_Catalog())
+
+    assert [u["color"] for u in offer.units] == ["Rosado"]
+
+
+@pytest.mark.asyncio
+async def test_quota_respects_the_coupon_max_quantity_per_line(_isolate_vault_dir) -> None:
+    """B10: un cupón de Medusa con `each` + máximo 1 por línea sigue valiendo
+    1 unidad por línea aunque el cupo tenga más."""
+    from dataclasses import replace as dc_replace
+
+    promo = dc_replace(_AMOR26, allocation="each", max_quantity=1)
+    path = _isolate_vault_dir / KEY / "metadata.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"episodes": [{
+        "episode_id": "ep_001", "started_at_ms": 1,
+        "applied_coupon": {"code": "AMOR26", "promotion": _snapshot(promo), "applied_at_ms": 1},
+    }]}), encoding="utf-8")
+
+    env = await _confirm(_confirm_tool(_isolate_vault_dir, _Sales()), _ctx(), [_cubo(3, color="Rosado", aroma="Café")])
+
+    assert env["discount_cop"] == 2100
+
+
+@pytest.mark.asyncio
+async def test_label_that_contradicts_the_chosen_color_is_rejected_on_a_quota_line(_isolate_vault_dir) -> None:
+    """B7: el descuento y el cupo van por `color`/`aroma`; si el
+    `variant_label` dice otra cosa, la línea de Medusa diría una y cobraría
+    otra. Se corrige antes."""
+    _seed(_isolate_vault_dir)
+
+    env = await _confirm(_confirm_tool(_isolate_vault_dir, _Sales()), _ctx(),
+                         [_cubo(color="Rosado", aroma="Café", variant_label="Lavanda, Azul")])
+
+    assert (env["queued"], env["error"]) == (False, "invalid_variant_attribute")
+    assert "Lavanda, Azul" in env["message"]
+
+
+@pytest.mark.asyncio
+async def test_confirmation_rejected_for_price_does_not_scan_medusa(_isolate_vault_dir) -> None:
+    """B8: un rechazo barato (precio, envío) no espera el barrido de Medusa."""
+    _seed(_isolate_vault_dir)
+
+    @dataclass
+    class _CountingSales(_Sales):
+        reads: int = 0
+
+        async def sold_units(self, *, since: datetime) -> dict[str, int]:
+            self.reads += 1
+            return await super().sold_units(since=since)
+
+    sales = _CountingSales()
+    env = await _confirm(_confirm_tool(_isolate_vault_dir, sales), _ctx(),
+                         [{**_cubo(color="Rosado", aroma="Café"), "unit_price_cop": 19000}])
+
+    assert env["error"] == "price_mismatch"
+    assert sales.reads == 0
+
+
+@pytest.mark.asyncio
+async def test_a_hung_sales_read_fails_closed_within_the_deadline(_isolate_vault_dir, monkeypatch) -> None:
+    """C10/B8: Medusa lento no deja la confirmación (ni el candado del
+    registro) colgada: pasado el plazo, `quota_unavailable`."""
+    import src.plugins.chats.agent.sales.use_cases.coupon_quota as cq
+
+    monkeypatch.setattr(cq, "QUOTA_READ_TIMEOUT_S", 0.05)
+    _seed(_isolate_vault_dir)
+
+    @dataclass
+    class _HungSales(_Sales):
+        async def sold_units(self, *, since: datetime) -> dict[str, int]:
+            await asyncio.sleep(5)
+            return {}
+
+    env = await asyncio.wait_for(
+        _confirm(_confirm_tool(_isolate_vault_dir, _HungSales()), _ctx(), [_cubo(color="Rosado", aroma="Café")]),
+        timeout=2,
+    )
+
+    assert "discount_cop" not in env and "no pude confirmar" in env["summary"].lower()

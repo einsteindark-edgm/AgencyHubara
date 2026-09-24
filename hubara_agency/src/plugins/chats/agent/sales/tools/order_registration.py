@@ -557,6 +557,10 @@ class RegisterOrderTool(ToolBase):
         if self._quota_lock is None:
             # Con cupo y sin candado se podría vender dos veces la última
             # unidad: falla cerrada.
+            logger.error(
+                "🧾 [TOOL register_order] cupo sin candado configurado session={} code={}: falla cerrada",
+                ctx.session_key, code,
+            )
             return json.dumps(
                 {
                     "registered": False,
@@ -576,6 +580,10 @@ class RegisterOrderTool(ToolBase):
             async with self._quota_lock.hold(code, timeout_s=_QUOTA_LOCK_TIMEOUT_S):
                 return await self._execute(ctx, **args)
         except QuotaLockTimeout:
+            logger.warning(
+                "🧾 [TOOL register_order] quota_busy session={} code={} (otro registro tiene el candado)",
+                ctx.session_key, code,
+            )
             return json.dumps(
                 {
                     "registered": False,

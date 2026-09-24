@@ -167,11 +167,13 @@ def set_applied_coupon(
     promotion: PromotionDTO,
     now_ms: int,
     eligible: list[dict[str, Any]] | None = None,
+    quota: bool = False,
 ) -> dict[str, Any]:
     """Mutates: fija el cupón en el episodio activo (lo crea si no hay).
 
     `eligible`: los productos a los que aplica (nombre + precios) — la nota
-    de cada turno los recuerda para que el bot ofrezca ESOS."""
+    de cada turno los recuerda para que el bot ofrezca ESOS. `quota`: el
+    cupón tiene cupo por unidad (esas combinaciones pueden agotarse)."""
     episode = get_active_episode(metadata) or ensure_active_episode(
         metadata, now_ms=now_ms
     )
@@ -180,6 +182,7 @@ def set_applied_coupon(
         "promotion": asdict(promotion),
         "applied_at_ms": now_ms,
         "eligible_products": list(eligible or []),
+        **({"quota": True} if quota else {}),
     }
     return metadata
 
@@ -361,6 +364,10 @@ def build_coupon_note(metadata: dict[str, Any]) -> str | None:
             "productos; lo que se habló antes de otros productos va SIN "
             "descuento — retómalo solo si el cliente lo pide, aclarándolo."
         )
+        if raw.get("quota"):
+            # Cupo por unidad: esas combinaciones pueden agotarse después de
+            # aplicado el cupón (premortem B3).
+            scope += " Esas combinaciones van según disponibilidad: la confirmación dice cuáles quedan."
     else:
         scope = (
             "aplica solo a algunos productos: confirma cuáles con "

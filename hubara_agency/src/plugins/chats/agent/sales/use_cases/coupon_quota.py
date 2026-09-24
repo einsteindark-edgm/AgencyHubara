@@ -11,9 +11,13 @@ el LLM solo repite lo que dice el envelope.
 """
 from __future__ import annotations
 
+import asyncio
 import re
+import unicodedata
 from dataclasses import dataclass, replace
 from typing import Any
+
+from loguru import logger
 
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
 from src.plugins.chats.shared.draft_items import draft_items, product_key
@@ -35,6 +39,10 @@ from src.sdk.connectorkit import (
 )
 
 REASON_QUOTA_UNAVAILABLE = "quota_unavailable"
+#: Plazo para leer lo vendido de Medusa (premortem C10/B8): Medusa lento no
+#: deja colgada la confirmación ni el candado del registro — pasado el plazo,
+#: `quota_unavailable` (falla cerrada).
+QUOTA_READ_TIMEOUT_S = 20.0
 #: El cupo exige color/aroma y la línea no lo dice (falla cerrada).
 REASON_MISSING_ATTRIBUTES = "missing_attributes"
 
@@ -58,6 +66,15 @@ class QuotaOffer:
 
 
 _NO_QUOTA = QuotaOffer(has_quota=False)
+
+
+async def _board(sheet: Any, sales: Any, *, code: str) -> list[QuotaStatus] | None:
+    """Lo que queda de cada fila, o None si no se pudo leer a tiempo."""
+    try:
+        return await asyncio.wait_for(quota_board(sheet, sales), timeout=QUOTA_READ_TIMEOUT_S)
+    except (PromotionsUnavailableError, asyncio.TimeoutError) as exc:
+        logger.warning("🎟️ [cupo] {}: no pude leer las vendidas ({}): falla cerrada", code, exc or "timeout")
+        return None
 
 
 def _cop_price(product: Any) -> int | None:
@@ -124,9 +141,8 @@ async def quota_offer(promotion: PromotionDTO, *, quotas: Any, sales: Any, catal
         return _NO_QUOTA
     if sales is None or promotion.discount_type != "percentage":
         return QuotaOffer(True, REASON_QUOTA_UNAVAILABLE, show_units_left=sheet.show_units_left)
-    try:
-        board = await quota_board(sheet, sales)
-    except PromotionsUnavailableError:
+    board = await _board(sheet, sales, code=promotion.code)
+    if board is None:
         return QuotaOffer(True, REASON_QUOTA_UNAVAILABLE, show_units_left=sheet.show_units_left)
     if quota_exhausted(board) == REASON_QUOTA_EXHAUSTED:
         return QuotaOffer(True, REASON_QUOTA_EXHAUSTED, show_units_left=sheet.show_units_left)
@@ -134,13 +150,28 @@ async def quota_offer(promotion: PromotionDTO, *, quotas: Any, sales: Any, catal
     units = tuple(
         unit
         for s in board
-        if s.units_left > 0 and s.quota.product_id in known
+        if s.units_left > 0 and s.quota.product_id in known and _row_still_exists(s.quota, known[s.quota.product_id][1])
         for unit in [_unit(s, promotion, *known[s.quota.product_id], show=sheet.show_units_left)]
         if unit is not None
     )
     if not units:
         return QuotaOffer(True, REASON_QUOTA_UNAVAILABLE, show_units_left=sheet.show_units_left)
     return QuotaOffer(True, None, units, sheet.show_units_left)
+
+
+def _row_still_exists(quota: Any, tags: tuple[str, ...]) -> bool:
+    """¿El color/aroma de la fila sigue en las listas del producto? Una fila
+    vieja (color renombrado en Medusa) no se ofrece: la confirmación la
+    rechazaría (premortem B6)."""
+    lists = parse_variant_tags(list(tags))
+    for value, options in ((quota.color, lists.colors), (quota.aroma, lists.aromas)):
+        if value and match_option(value, list(options)) is None:
+            logger.warning(
+                "🎟️ [cupo] {}: la fila {} ({} · {}) ya no existe en el producto: no se ofrece",
+                quota.code, quota.id, quota.color, quota.aroma,
+            )
+            return False
+    return True
 
 
 def unit_label(unit: dict[str, Any]) -> str:
@@ -207,6 +238,11 @@ class InvalidAttribute:
     options: tuple[str, ...]
 
     def message(self) -> str:
+        if self.field == "variant_label":
+            return (
+                f'{self.title}: el variant_label "{self.value}" no coincide con el color y el aroma '
+                f'elegidos ({" · ".join(self.options)}); el descuento va por color y aroma — corrige uno de los dos'
+            )
         word = "color" if self.field == "color" else "aroma"
         parts = [t for t in _SEVERAL.split(self.value) if t]
         if len(parts) > 1 and all(match_option(t, list(self.options)) for t in parts):
@@ -215,6 +251,25 @@ class InvalidAttribute:
                 "combinación de color y aroma (con su cantidad)"
             )
         return f'{self.title} no tiene el {word} "{self.value}" (opciones: {", ".join(self.options)})'
+
+
+def _fold(text: str) -> str:
+    """Sin tildes y en minúsculas, para comparar texto libre con la lista."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+
+
+def _label_contradicts(label: str, chosen: dict[str, str | None], attrs: Any) -> bool:
+    """¿El label nombra un color (o aroma) de la lista distinto del elegido?"""
+    folded = _fold(label)
+    for field, options in (("color", attrs.colors), ("aroma", attrs.aromas)):
+        picked = chosen.get(field)
+        if not picked:
+            continue
+        for option in options:
+            if option != picked and re.search(rf"\b{re.escape(_fold(option))}\b", folded):
+                return True
+    return False
 
 
 def _draft_attrs(metadata: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
@@ -277,6 +332,15 @@ async def resolve_item_variants(
             else:
                 chosen[field] = match_option(str(draft.get(field) or ""), options)
         product_id = str(getattr(product, "id", "") or "") or None
+        # Con cupo el descuento va por color/aroma: un `variant_label` que
+        # nombra OTRO color u otro aroma de las listas del producto dejaría la
+        # línea de Medusa diciendo una cosa y cobrando otra (premortem B7).
+        # Un label sin colores/aromas ("Unico") no contradice nada. Solo se
+        # revisa en productos con cupo (abajo).
+        label = str(item.get("variant_label") or "").strip()
+        if label and _label_contradicts(label, chosen, attrs):
+            chosen_values = tuple(v for v in (chosen["color"], chosen["aroma"]) if v)
+            invalid.append(InvalidAttribute(index, "variant_label", label, title, chosen_values))
         variants.append(
             ItemVariant(
                 product_id=product_id,
@@ -320,14 +384,20 @@ async def quota_split(
     vendidas, o si el cupón no es de porcentaje, falla CERRADA."""
     if sales is None or promotion.discount_type != "percentage":
         return QuotaSplit((), REASON_QUOTA_UNAVAILABLE)
-    try:
-        board = await quota_board(sheet, sales)
-    except PromotionsUnavailableError:
+    board = await _board(sheet, sales, code=promotion.code)
+    if board is None:
         return QuotaSplit((), REASON_QUOTA_UNAVAILABLE)
+    # El tope por línea del cupón de Medusa (`each` + máximo) sigue valiendo
+    # con cupo (premortem B10).
+    cap = promotion.max_quantity if promotion.allocation == "each" and promotion.max_quantity else None
     lines = [
         QuotaLine(
             product_id=v.product_id or "",
-            quantity=int(it.get("quantity") or 0) if eligible is None or i in eligible else 0,
+            quantity=(
+                min(int(it.get("quantity") or 0), cap or int(it.get("quantity") or 0))
+                if eligible is None or i in eligible
+                else 0
+            ),
             unit_price_cop=int(it.get("unit_price_cop") or 0),
             color=v.color,
             aroma=v.aroma,
@@ -335,17 +405,51 @@ async def quota_split(
         for i, (it, v) in enumerate(zip(items, variants))
     ]
     allocation = allocate_units(board, lines, percentage=promotion.value)
-    discounts = tuple(
+    discounts = _cap_once(promotion, tuple(
         LineDiscount(g.line, g.units, g.discount_unit_cop, quota_id=g.quota_id)
         for g in allocation.grants
-    )
+    ))
     if discounts:
         return QuotaSplit(discounts, None, allocation.missing_attributes)
     if allocation.missing_attributes:
         return QuotaSplit((), REASON_MISSING_ATTRIBUTES, allocation.missing_attributes)
-    if quota_exhausted(board) == REASON_QUOTA_EXHAUSTED:
+    # La combinación pedida se agotó (aunque queden otras): decirle "no
+    # aplica a estos productos" sería falso (premortem B3).
+    if quota_exhausted(board) == REASON_QUOTA_EXHAUSTED or _hits_sold_out(board, lines):
         return QuotaSplit((), REASON_QUOTA_EXHAUSTED)
     return QuotaSplit((), "no_applicable_items")
+
+
+def _cap_once(promotion: PromotionDTO, discounts: tuple[LineDiscount, ...]) -> tuple[LineDiscount, ...]:
+    """`once` + máximo: a lo sumo `max_quantity` unidades en el pedido, las
+    más baratas primero (como Medusa)."""
+    if promotion.allocation != "once" or not promotion.max_quantity:
+        return discounts
+    left = promotion.max_quantity
+    kept: list[LineDiscount] = []
+    for d in sorted(discounts, key=lambda d: d.discount_unit_cop):
+        units = min(d.units, left)
+        if units > 0:
+            kept.append(replace(d, units=units))
+            left -= units
+    return tuple(sorted(kept, key=lambda d: d.index))
+
+
+def _same_value(line_value: str | None, row_value: str | None) -> bool:
+    return row_value is None or (bool(line_value) and match_option(line_value or "", [row_value]) is not None)
+
+
+def _hits_sold_out(board: list[QuotaStatus], lines: list[QuotaLine]) -> bool:
+    """¿Alguna línea pedida es de una combinación que ya no tiene unidades?"""
+    return any(
+        s.units_left <= 0
+        and s.quota.product_id == line.product_id
+        and _same_value(line.color, s.quota.color)
+        and _same_value(line.aroma, s.quota.aroma)
+        for line in lines
+        if line.quantity > 0
+        for s in board
+    )
 
 
 def _line_identity(item: dict[str, Any], variant: ItemVariant) -> tuple[str, str, str, int]:
@@ -448,6 +552,23 @@ def missing_attributes_text(variants: list[ItemVariant], indices: tuple[int, ...
     return "; ".join(parts)
 
 
+def coupon_note(
+    code: str, items: list[dict[str, Any]], variants: list[ItemVariant], discount: Any
+) -> str | None:
+    """Lo que la TARJETA de confirmación dice del cupo (premortem B4): la
+    tarjeta termina el turno, así que lo que el bot "diría" después no llega.
+    None si el cupón no tiene cupo o no hay nada que aclarar."""
+    if discount is None or not getattr(discount, "quota", False):
+        return None
+    if discount.discount_cop > 0:
+        return split_summary(code, items, variants, discount)
+    return {
+        REASON_QUOTA_UNAVAILABLE: f"No pude confirmar las unidades con descuento de {code}: este resumen va sin descuento.",
+        REASON_QUOTA_EXHAUSTED: f"Se agotaron las unidades con descuento de {code} de esta combinación: va a precio normal.",
+        "no_applicable_items": f"{code} no aplica a estos productos o combinaciones: va a precio normal.",
+    }.get(discount.reason or "")
+
+
 def split_summary(
     code: str, items: list[dict[str, Any]], variants: list[ItemVariant], split: Any
 ) -> str:
@@ -477,6 +598,7 @@ __all__ = [
     "QuotaOffer",
     "QuotaSplit",
     "confirmed_split",
+    "coupon_note",
     "line_discounts_from_key",
     "missing_attributes_text",
     "quota_split",

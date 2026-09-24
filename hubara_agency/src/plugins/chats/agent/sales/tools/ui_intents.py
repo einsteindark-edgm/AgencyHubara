@@ -1053,6 +1053,7 @@ class PresentOrderConfirmationTool(ToolBase):
         # una promo sin filtro de productos. Import local: el paquete
         # use_cases arrastra el workflow → activities → esta tool (ciclo).
         from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+            coupon_note,
             missing_attributes_text,
             remember_confirmed_split,
             resolve_item_variants,
@@ -1086,35 +1087,10 @@ class PresentOrderConfirmationTool(ToolBase):
                     "opción de la lista y vuelve a llamar present_order_confirmation."
                 ),
             }, ensure_ascii=False)
-        discount = await coupon_discount_for_items(
-            metadata_now,
-            self._catalog,
-            items,
-            shipping_cop=shipping_cop,
-            quotas=self._quotas,
-            sales=self._sales,
-            variants=variants,
-        )
-        if discount is not None and discount.quota and discount.missing_attributes:
-            # La tarjeta TERMINA el turno: si sale sin el color/aroma de una
-            # línea con cupo, el cliente confirma a precio lleno sin que el bot
-            # alcance a preguntar. Se pregunta primero.
-            return json.dumps({
-                "queued": False,
-                "error": "missing_variant_attributes",
-                "message": (
-                    f"El cupón {discount.code} vale solo para ciertas combinaciones y falta "
-                    f"elegir: {missing_attributes_text(variants, discount.missing_attributes)}. "
-                    "NO se encoló la confirmación: pregúntaselo al cliente "
-                    "(`present_variant_picker`) y vuelve a llamar present_order_confirmation "
-                    "con `color` y `aroma` en cada ítem."
-                ),
-            }, ensure_ascii=False)
         draft_city = (get_projectable_draft(metadata_now) or {}).get("ciudad")
-        discount_cop = discount.discount_cop if discount else 0
-        total = subtotal + shipping_cop + tax_cop - discount_cop
-        reference_id = f"HUB-hubara-{ctx.session_key}-{int(time.time())}"
 
+        # Los rechazos baratos (precio, envío) van ANTES del descuento: el
+        # cupo por unidad relee lo vendido en Medusa (premortem B8).
         if price_mismatches:
             logger.warning(
                 "🚨 [TOOL present_order_confirmation] price_mismatch session={} {}",
@@ -1166,6 +1142,42 @@ class PresentOrderConfirmationTool(ToolBase):
                 ),
             }, ensure_ascii=False)
 
+        discount = await coupon_discount_for_items(
+            metadata_now,
+            self._catalog,
+            items,
+            shipping_cop=shipping_cop,
+            quotas=self._quotas,
+            sales=self._sales,
+            variants=variants,
+        )
+        if discount is not None and discount.quota and discount.missing_attributes:
+            # La tarjeta TERMINA el turno: si sale sin el color/aroma de una
+            # línea con cupo, el cliente confirma a precio lleno sin que el bot
+            # alcance a preguntar. Se pregunta primero.
+            return json.dumps({
+                "queued": False,
+                "error": "missing_variant_attributes",
+                "message": (
+                    f"El cupón {discount.code} vale solo para ciertas combinaciones y falta "
+                    f"elegir: {missing_attributes_text(variants, discount.missing_attributes)}. "
+                    "NO se encoló la confirmación: pregúntaselo al cliente "
+                    "(`present_variant_picker`) y vuelve a llamar present_order_confirmation "
+                    "con `color` y `aroma` en cada ítem."
+                ),
+            }, ensure_ascii=False)
+        discount_cop = discount.discount_cop if discount else 0
+        if discount is not None and discount.quota:
+            logger.info(
+                "🎟️ [TOOL present_order_confirmation] cupo session={} code={} discount={} reason={}",
+                ctx.session_key, discount.code, discount_cop, discount.reason,
+            )
+        total = subtotal + shipping_cop + tax_cop - discount_cop
+        reference_id = f"HUB-hubara-{ctx.session_key}-{int(time.time())}"
+        # Lo que la tarjeta dice del cupo (qué unidades llevan descuento, o por
+        # qué no): la tarjeta termina el turno — el bot no alcanza a decirlo.
+        note = coupon_note(discount.code, items, variants, discount) if discount else None
+
         intent = {
             "kind": "order_confirmation",
             "params": {
@@ -1183,6 +1195,7 @@ class PresentOrderConfirmationTool(ToolBase):
                     if discount and discount_cop > 0
                     else {}
                 ),
+                **({"coupon_note": note} if note else {}),
             },
             "analytics": {
                 "component_id": "order_confirmation",
