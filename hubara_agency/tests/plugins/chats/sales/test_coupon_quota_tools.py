@@ -288,5 +288,5 @@ async def test_turn_note_of_a_quota_coupon_says_availability_can_change(tmp_path
 
     note = build_coupon_note(md.read(KEY)) or ""
 
-    assert "Cubo Love Rosado · Café" in note
+    assert "Cubo Love ($21.000 → $18.900): Rosado · Café" in note
     assert "según disponibilidad" in note

@@ -22,6 +22,8 @@ from src.sdk.connectorkit import (
 
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
     ItemVariant,
+    combos_by_product_text,
+    draft_vs_coupon_lines,
     quota_split,
     resolve_item_variants,
 )
@@ -363,8 +365,22 @@ def build_coupon_note(metadata: dict[str, Any]) -> str | None:
             "cliente lo menciona, explícaselo con amabilidad.]"
         )
     eligible = [p for p in (raw.get("eligible_products") or []) if isinstance(p, dict)]
+    units = [u for u in (raw.get("units") or []) if isinstance(u, dict)]
     if is_whole_catalog(promotion):
         scope = "aplica a todo el catálogo."
+    elif units:
+        # Cupo por unidad (conversación de prueba del 2026-09-24): las
+        # combinaciones por producto y qué dice el cupo de lo ya elegido.
+        episode = get_active_episode(metadata) or {}
+        scope = " ".join(
+            [
+                "vale SOLO en estas combinaciones, según disponibilidad (la "
+                "confirmación dice cuáles quedan): "
+                f"{combos_by_product_text(units)}. Ofrécelas primero; cualquier "
+                "otro color o aroma va a precio normal: dilo antes de tomar el pedido.",
+                *draft_vs_coupon_lines(episode.get("order_draft"), units),
+            ]
+        )
     elif eligible:
         scope = (
             f"aplica SOLO a: {eligible_products_text(eligible)}. Ofrece estos "

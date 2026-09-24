@@ -199,6 +199,75 @@ def units_text(units: tuple[dict[str, Any], ...] | list[dict[str, Any]]) -> str:
     return ", ".join(parts)
 
 
+def _combo(unit: dict[str, Any]) -> str:
+    """"Rosado · Café" (la combinación, sin el producto)."""
+    return " · ".join(str(v) for v in (unit.get("color"), unit.get("aroma")) if v)
+
+
+def combos_by_product_text(units: list[dict[str, Any]]) -> str:
+    """"Cubo Love ($21.000 → $18.900): Lila · Lavanda, Amarillo · Café; …" —
+    las combinaciones del cupo agrupadas por producto y precio."""
+    groups: dict[tuple[str, int, int], list[str]] = {}
+    for unit in units:
+        key = (
+            str(unit.get("title") or ""),
+            int(unit.get("price_cop") or 0),
+            int(unit.get("discounted_price_cop") or 0),
+        )
+        groups.setdefault(key, []).append(_combo(unit))
+    return "; ".join(
+        f"{title} ({format_cop(price)} → {format_cop(discounted)}): {', '.join(combos)}"
+        for (title, price, discounted), combos in groups.items()
+    )
+
+
+def draft_vs_coupon_lines(
+    draft: dict[str, Any] | None, units: list[dict[str, Any]]
+) -> list[str]:
+    """Qué dice el cupo de lo que ya eligió el cliente, producto por producto.
+
+    Conversación de prueba del 2026-09-24: Sándalo · Amarillo no estaba en el
+    cupón (sí Amarillo · Café) y a "¿sí está disponible?" el bot contestó "sí"
+    sin decir que iba a precio normal. Con un solo atributo elegido ya se
+    sabe si hay descuento (y en qué colores o aromas)."""
+    lines: list[str] = []
+    for item in draft_items(draft):
+        rows = [u for u in units if product_key(u.get("title")) == product_key(item.get("producto"))]
+        if not rows:
+            continue
+        fields = [f for f in ("color", "aroma") if any(u.get(f) for u in rows)]
+        picked = {f: str(item.get(f)).strip() for f in fields if str(item.get(f) or "").strip()}
+        if not picked:
+            continue
+        label = f"{rows[0]['title']} " + " · ".join(picked[f] for f in fields if f in picked)
+        compatible = [
+            u for u in rows if all(product_key(u.get(f)) == product_key(v) for f, v in picked.items())
+        ]
+        normal = format_cop(int(rows[0].get("price_cop") or 0))
+        complete = len(picked) == len(fields)
+        if compatible and complete:
+            lines.append(
+                f"El pedido tiene {label}: esa combinación lleva el descuento (según disponibilidad)."
+            )
+        elif compatible:
+            missing = next(f for f in fields if f not in picked)
+            options = list(dict.fromkeys(str(u[missing]) for u in compatible if u.get(missing)))
+            noun = "los colores" if missing == "color" else "los aromas"
+            lines.append(f"Para {label}, el descuento va SOLO en {noun}: {', '.join(options)}.")
+        elif complete:
+            lines.append(
+                f"OJO: el pedido tiene {label} y esa combinación NO tiene el descuento del "
+                f"cupón: va a precio normal ({normal}). Díselo al cliente antes de seguir y "
+                "ofrécele las que sí lo tienen."
+            )
+        else:
+            lines.append(
+                f"OJO: {label} NO tiene el descuento del cupón (va a precio normal, {normal}): "
+                "díselo al cliente y ofrécele las combinaciones con descuento."
+            )
+    return lines
+
+
 def as_eligible(units: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
     """Las unidades en la forma de `eligible_products` (la nota de cada turno
     recuerda ESTAS combinaciones, no el producto entero)."""
