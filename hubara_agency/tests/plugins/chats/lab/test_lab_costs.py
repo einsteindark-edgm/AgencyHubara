@@ -70,3 +70,23 @@ def test_caps(estimate: float, spent: float, fits: bool, reason: str | None) -> 
 
     assert (result.fits, result.reason) == (fits, reason)
     assert result.month_left == pytest.approx(300.0 - spent)
+
+
+def test_the_month_spend_only_reads_this_months_runs(tmp_path) -> None:
+    """El gasto del mes se consulta en cada estimado: solo se leen las corridas
+    del mes (el id lleva la fecha de Bogotá), no las de 180 días de retención."""
+    from src.plugins.chats.agent.sales_lab.launch.costs import month_spent_usd
+    from src.sdk.labkit import FilesystemLabStore
+
+    now = 1_790_200_000_000  # 2026-09-24 en Bogotá
+    store = FilesystemLabStore(tmp_path)
+    store.put_bytes("runs/run-20260910-090000-aa11/progress.json",
+                    b'{"started_at_ms": 1789000000000, "spent_usd": 12.5}')
+    store.put_bytes("runs/run-20260812-090000-bb22/progress.json",
+                    b'{"started_at_ms": 1786000000000, "spent_usd": 99.0}')
+    read: list[str] = []
+    real = store.get_bytes
+    store.get_bytes = lambda key: read.append(key) or real(key)  # type: ignore[method-assign]
+
+    assert month_spent_usd(store, now_ms=now) == 12.5
+    assert read == ["runs/run-20260910-090000-aa11/progress.json"]

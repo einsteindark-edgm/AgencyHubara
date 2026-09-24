@@ -171,7 +171,7 @@ def test_active_run_merges_the_workflow_phase_and_the_box_progress(env) -> None:
 
 
 def test_no_active_run(env) -> None:
-    assert env["http"].get("/api/chats/lab/runs/active").json() == {"active": None}
+    assert env["http"].get("/api/chats/lab/runs/active").json() == {"active": None, "last": None}
 
 
 def test_cancel_signals_the_workflow_or_404(env) -> None:
@@ -239,3 +239,16 @@ def test_a_bench_id_must_match_whole(env) -> None:
     resp = env["http"].get("/api/chats/lab/estimate", params={"bench": "bench-run-20260920-ffff\n"})
 
     assert resp.status_code == 422 and resp.json()["detail"]["message"] == "Banco inválido."
+
+
+def test_the_last_run_that_failed_before_reporting_stays_visible(env) -> None:
+    """Si la caja no prende o nunca reporta, la corrida no tiene progreso en
+    S3: al cerrar el lanzador, su error sigue a la vista (antes desaparecía y el
+    operador relanzaba a ciegas)."""
+    env["client"].running = False
+    env["client"].status = {"phase": "failed", "run_id": "run-20260923-a1b2", "error": "la caja no prendió"}
+
+    body = env["http"].get("/api/chats/lab/runs/active").json()
+
+    assert body["active"] is None
+    assert (body["last"]["phase"], body["last"]["error"]) == ("failed", "la caja no prendió")
