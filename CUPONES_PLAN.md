@@ -668,7 +668,8 @@ Son acciones del operador en Medusa Admin; no son desarrollo.
 
 Rama `claude/coupon-central` (worktree `intelligent-rhodes-82a5f3`). `main` ya trae #342 (Fase 0, mismo árbol que
 el que la rama tenía por merge) y #353 (envío = tarifa publicada; rechazos de `register_order` con `error`): ambos
-mergeados a la rama el 24-sep. #346 (sin cupones de envío) sigue abierto. Nada pusheado todavía.
+mergeados a la rama el 24-sep. #346 (sin cupones de envío) también, el mismo día: el bot y el builder de campañas no
+ofrecen cupones de envío y la central los muestra sin % (ni cupo por unidad ni campaña).
 
 | Fase | Estado | Dónde |
 |---|---|---|
@@ -729,8 +730,7 @@ Verificación: backend `tests/platform` 1.670, `architecture + plugins + conform
 
 **Pendiente:**
 1. PR (o dos: backend+central y front) y deploy EN SERIE: `api`, `worker-sales`, `worker-orders` (reconciliación),
-   `worker-marketing-campaigns` (revalida el cupón al disparar) y frontend (§8). Al integrar #346 hay conflicto
-   esperado en `shipping_discount_cop` (`medusa_order.py`, `reconciliation.py`, `order_registration.py`).
+   `worker-marketing-campaigns` (revalida el cupón al disparar) y frontend (§8).
 2. **Filtro `created_at[$gte]` en Medusa 2.12.5 sin verificar en vivo** (la lectura de prod quedó bloqueada por el
    clasificador de permisos). Es seguro igual: si Medusa responde 400 se lee todo y se corta de este lado. Verificar
    con un GET de solo lectura (`/admin/draft-orders?limit=1&created_at[$gte]=…`) cuando haya permiso.

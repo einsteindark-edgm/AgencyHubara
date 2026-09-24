@@ -323,7 +323,12 @@ def coupon_view_from_medusa(
     ]
     products = tuple(v for r in product_rules for v in _rule_values(r)) or None
     reason = _unmanageable_reason(raw, method, campaign_shared=campaign_shared)
-    is_percentage = str(method.get("type") or "") == "percentage"
+    # Un cupón de envío no tiene efecto (#346: el envío lo cobra la
+    # transportadora sin descuentos) → sin %: ni cupo por unidad ni campaña.
+    is_percentage = (
+        str(method.get("type") or "") == "percentage"
+        and method.get("target_type") != "shipping_methods"
+    )
     value = method.get("value")
     status = str(raw.get("status") or "active")
     return CouponView(

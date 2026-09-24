@@ -204,10 +204,10 @@ compra, campaña con vigencia y presupuesto). El kit expone:
 |---|---|
 | `PromotionsPort` (`list_active()`, `get_by_code()`) | contrato; adapter real `platform/promotions/medusa.py` (`GET /admin/promotions`, cache 60 s), `NullPromotionsPort` sin Medusa |
 | `PromotionDTO` | SNAPSHOT JSON-safe de la promoción (se persiste en `episodes[-1].applied_coupon` cuando el cliente aplica un cupón) |
-| `resolve_coupon(code, promotions, now_ms)` | valida forma (`COUPON_CODE_RE = [A-Z0-9]{3,20}`, sin `_`: colisión con el guard anti-leak), existencia, estado, vigencia y presupuesto |
-| `compute_discount(promo, items: DiscountLineItem[], shipping_cop)` | el MONTO (COP entero) y su reparto por unidad (`line_discounts`, suma exacta) — percentage redondeado a peso por unidad / fixed each / fixed across prorrateado (resto a la última línea) / envío; `max_quantity` por línea (`each`) o por pedido, más baratas primero (`once`), como Medusa; `buyget` = unsupported |
+| `resolve_coupon(code, promotions, now_ms)` | valida forma (`COUPON_CODE_RE = [A-Z0-9]{3,20}`, sin `_`: colisión con el guard anti-leak), existencia, estado, vigencia y presupuesto; rechaza los cupones de envío (`shipping_not_supported`: el envío lo cobra la transportadora a su tarifa, sin descuentos — decisión del operador 2026-09-23) |
+| `compute_discount(promo, items: DiscountLineItem[], shipping_cop)` | el MONTO (COP entero) y su reparto por unidad (`line_discounts`, suma exacta) — percentage redondeado a peso por unidad / fixed each / fixed across prorrateado (resto a la última línea); `max_quantity` por línea (`each`) o por pedido, más baratas primero (`once`), como Medusa; `buyget` = `unsupported`; cupón de envío = `shipping_not_supported` (`shipping_cop` ya no cambia el resultado) |
 | `LineDiscount(index, units, discount_unit_cop)` | un tramo del reparto: `units` unidades del ítem `index` llevan `discount_unit_cop` pesos menos cada una — es el precio que `register_order` escribe en la línea del draft |
-| `DiscountedUnits(units, discount_unit_cop)` | el mismo tramo del lado del `OrderRegistrationPort`: `OrderItem.discounted_units` (con `unit_price_cop` siempre de lista) + kwarg `shipping_discount_cop` para un cupón de envío |
+| `DiscountedUnits(units, discount_unit_cop)` | el mismo tramo del lado del `OrderRegistrationPort`: `OrderItem.discounted_units` (con `unit_price_cop` siempre de lista) |
 | `FakePromotionsPort` | doble oficial; contract suite en `tests/platform/promotions/test_promotions_port_contract.py` |
 | `get_promotions_port()` | factory (Medusa si `MEDUSA_BASE_URL`, si no Null) |
 
@@ -218,8 +218,8 @@ descuento desde el snapshot con los precios del catálogo — L-19: el LLM
 solo repite el total que devuelve el envelope), y `register_order` escribe el
 reparto en el draft: las unidades con descuento van en su propia línea con
 `unit_price` = lista − descuento y `metadata.coupon_code` /
-`list_unit_price_cop` / `discount_unit_cop`; un cupón de envío baja el monto
-del envío. El pedido guarda `metadata.coupon_code` / `discount_cop` como
+`list_unit_price_cop` / `discount_unit_cop`; el envío va siempre completo. El
+pedido guarda `metadata.coupon_code` / `discount_cop` como
 auditoría. **Nunca `promo_codes`** (lección L-26): Medusa 2.12.5 lo vincula a
 un draft SIN descontar cuando la promo filtra productos, o descontaría dos
 veces un cupón sin reglas. Así el `total` de Medusa —el que leen OrderFacts,

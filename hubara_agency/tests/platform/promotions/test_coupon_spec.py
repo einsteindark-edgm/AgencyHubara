@@ -326,6 +326,19 @@ def test_fixed_amount_promotion_is_not_manageable() -> None:
     assert "monto fijo" in view.unmanageable_reason
 
 
+def test_shipping_coupon_has_no_percentage_so_it_takes_no_units() -> None:
+    """#346: el envío lo cobra la transportadora sin descuentos y el bot no
+    aplica cupones de envío. Sin % la central no le ofrece cupo por unidad ni
+    lo lista para una campaña (`accepts_units` / `isCouponPickable`)."""
+    raw = _medusa()
+    raw["application_method"].update(target_type="shipping_methods")
+
+    view = coupon_view_from_medusa(raw, now=_at(2026, 9, 23))
+
+    assert view.percentage is None
+    assert view.manageable is False
+
+
 @pytest.mark.parametrize(
     ("mutate", "reason_fragment"),
     [

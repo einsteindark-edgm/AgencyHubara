@@ -159,9 +159,11 @@ cuerpo en un solo párrafo ("Encabezado. Cuerpo"), seguido de la oferta y la baj
 
 Si la campaña tiene `coupon_code`, el envío y el envío de prueba MUST validarlo
 contra Medusa con la misma regla que usa el bot (`resolve_coupon`): código
-inexistente, inactivo, sin empezar, vencido, agotado o con reglas ilegibles →
-422 con el motivo y nada sale; Medusa caído → 503. El builder avisa cuando el
-código escrito no está entre los vigentes.
+inexistente, inactivo, sin empezar, vencido, agotado, con reglas ilegibles o
+de envío → 422 con el motivo y nada sale; Medusa caído → 503. El builder avisa
+cuando el código escrito no está entre los vigentes, y no ofrece cupones de
+envío (el envío lo cobra la transportadora a su tarifa, sin descuentos —
+decisión del operador, 2026-09-23).
 
 #### Scenario: La campaña anuncia un código que no existe
 
@@ -181,6 +183,12 @@ código escrito no está entre los vigentes.
 - WHEN al dispararse AMOR27 está pausado, vencido o ya no existe
 - THEN no sale ningún mensaje, la campaña queda `failed` con `failure_reason` a la vista del operador
 - AND si sigue valiendo, la campaña copia el % y el "válido hasta" de ese momento; si Medusa no responde se reintenta y, en el último intento, se frena con el motivo
+
+#### Scenario: La campaña anuncia un cupón de envío
+
+- GIVEN en Medusa existe `ENVIOGRATIS` sobre el envío
+- WHEN el operador abre el builder o envía una campaña con ese código
+- THEN el builder no lo lista entre los cupones vigentes y el envío responde 422 "El cupón ENVIOGRATIS es de envío, y el envío lo cobra la transportadora…"
 
 ### Requirement: Central de cupones
 

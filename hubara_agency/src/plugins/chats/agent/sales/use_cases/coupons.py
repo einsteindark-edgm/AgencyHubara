@@ -36,7 +36,6 @@ class AppliedDiscount:
     code: str
     discount_cop: int
     applicable_handles: list[str]
-    applies_to_shipping: bool
     #: None = aplicó; "no_applicable_items" | "min_subtotal" | "unsupported"
     reason: str | None
     min_subtotal_cop: int | None
@@ -275,7 +274,7 @@ async def coupon_discount_for_items(
         # Cupo ilegible: NO es "sin cupo" (aplicaría sin límite) — falla cerrada.
         return AppliedDiscount(
             code=promotion.code, discount_cop=0, applicable_handles=[],
-            applies_to_shipping=False, reason="quota_unavailable", min_subtotal_cop=None,
+            reason="quota_unavailable", min_subtotal_cop=None,
             description=promotion.description, quota=True,
         )
     if sheet is not None and sheet.quotas:
@@ -283,7 +282,7 @@ async def coupon_discount_for_items(
         if promotion.min_subtotal_cop is not None and subtotal < promotion.min_subtotal_cop:
             return AppliedDiscount(
                 code=promotion.code, discount_cop=0, applicable_handles=[],
-                applies_to_shipping=False, reason="min_subtotal",
+                reason="min_subtotal",
                 min_subtotal_cop=promotion.min_subtotal_cop,
                 description=promotion.description, quota=True,
             )
@@ -305,7 +304,6 @@ async def coupon_discount_for_items(
             applicable_handles=sorted(
                 {str(items[d.index].get("handle") or "") for d in split.line_discounts}
             ),
-            applies_to_shipping=False,
             reason=split.reason,
             min_subtotal_cop=None,
             description=promotion.description,
@@ -319,7 +317,6 @@ async def coupon_discount_for_items(
         code=promotion.code,
         discount_cop=result.discount_cop,
         applicable_handles=list(result.applicable_handles),
-        applies_to_shipping=result.applies_to_shipping,
         reason=result.reason,
         min_subtotal_cop=result.min_subtotal_cop,
         description=promotion.description,
@@ -328,7 +325,8 @@ async def coupon_discount_for_items(
 
 
 def describe_promotion(promotion: PromotionDTO) -> str:
-    """"15%" / "$5.000" / "$5.000 por unidad" / "envío" — para el cliente."""
+    """"15%" / "$5.000" / "$5.000 por unidad" — para el cliente (solo cupones
+    de productos: los de envío no se aplican ni se ofrecen)."""
     if promotion.discount_type == "percentage":
         label = f"{promotion.value}%"
     elif promotion.discount_type == "fixed":
@@ -337,8 +335,6 @@ def describe_promotion(promotion: PromotionDTO) -> str:
             label += " por unidad"
     else:
         label = "promoción especial (la aplica el equipo)"
-    if promotion.target_type == "shipping_methods":
-        label += " en el envío"
     return label
 
 
@@ -355,6 +351,13 @@ def build_coupon_note(metadata: dict[str, Any]) -> str | None:
         promotion = promotion_from_snapshot(raw["promotion"])
     except (TypeError, KeyError):
         return None
+    if promotion.target_type == "shipping_methods":
+        # Guardado antes de la decisión del operador (2026-09-23): no aplica.
+        return (
+            f"[CUPÓN SIN EFECTO: {promotion.code} es de envío y el envío lo cobra "
+            "la transportadora a su tarifa, sin descuentos. No lo apliques; si el "
+            "cliente lo menciona, explícaselo con amabilidad.]"
+        )
     eligible = [p for p in (raw.get("eligible_products") or []) if isinstance(p, dict)]
     if is_whole_catalog(promotion):
         scope = "aplica a todo el catálogo."

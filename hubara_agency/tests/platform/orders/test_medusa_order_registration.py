@@ -1467,36 +1467,6 @@ async def test_register_order_refuses_a_payload_whose_lines_do_not_add_up_to_the
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_shipping_coupon_lowers_shipping_amount_not_items(adapter):
-    """Un cupón de envío baja el monto del método de envío; las líneas quedan a
-    precio de lista y sin marca de cupón."""
-    draft_route = _mock_draft_flow("cubo-love", "Cubo Love")
-
-    await adapter.register_order(
-        session_key="wa_c",
-        items=[OrderItem(handle="cubo-love", quantity=2, unit_price_cop=21_000)],
-        shipping=_SHIPPING,
-        payment_method="transfer",
-        subtotal_cop=42_000,
-        shipping_cop=7_900,
-        total_cop=42_000,
-        coupon_code="ENVIOGRATIS",
-        discount_cop=7_900,
-        shipping_discount_cop=7_900,
-    )
-
-    body = json.loads(draft_route.calls[-1].request.content)
-    assert body["shipping_methods"][0]["amount"] == 0
-    (line,) = body["items"]
-    assert line["unit_price"] == 21_000
-    assert "coupon_code" not in line["metadata"]
-    assert body["metadata"]["coupon_code"] == "ENVIOGRATIS"
-    assert body["metadata"]["discount_cop"] == 7_900
-    assert _medusa_total(body) == 42_000
-
-
-@pytest.mark.asyncio
-@respx.mock
 async def test_register_order_without_coupon_has_no_promo_codes(adapter):
     respx.get(f"{_BASE_URL}/admin/products").mock(
         return_value=Response(200, json=_product_payload_for_handle("cruz-de-vida"))

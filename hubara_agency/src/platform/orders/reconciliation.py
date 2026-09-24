@@ -637,6 +637,4 @@ def _rebuild_order_args(
         ]
         kwargs["coupon_code"] = str(record["coupon_code"])
         kwargs["discount_cop"] = int(record.get("discount_cop") or 0)
-        if int(record.get("shipping_discount_cop") or 0) > 0:
-            kwargs["shipping_discount_cop"] = int(record["shipping_discount_cop"])
     return items, shipping, kwargs

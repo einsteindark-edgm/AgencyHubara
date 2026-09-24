@@ -49,6 +49,10 @@ _REASON_TEXT = {
     "unavailable": "No pude validar el cupón ahora mismo (sistema de promociones caído).",
     "scope_unresolved": "No pude confirmar a qué productos aplica ese cupón, así que no lo apliqué.",
     "quota_unavailable": "No pude confirmar cuántas unidades con descuento quedan, así que no apliqué el cupón.",
+    "shipping_not_supported": (
+        "Ese cupón es de envío y el envío lo cobra la transportadora a su tarifa, "
+        "sin descuentos: no se aplica."
+    ),
 }
 
 
@@ -126,6 +130,9 @@ class ListPromotionsTool(ToolBase):
         for promo in promotions:
             if promo.scope_unresolved:
                 # Reglas ilegibles: no sabemos a qué aplica — no se ofrece.
+                continue
+            if promo.target_type == "shipping_methods":
+                # El envío lo cobra la transportadora sin descuentos: no se ofrece.
                 continue
             entry: dict[str, Any] = {
                 "code": promo.code,
@@ -314,7 +321,7 @@ class ApplyCouponTool(ToolBase):
                 "ESTOS productos; lo que hablaron antes de otros productos va SIN "
                 "descuento (retómalo solo si el cliente lo pide, aclarándolo)"
             )
-        elif promotion.target_type != "shipping_methods":
+        else:
             summary += (
                 " solo en algunos productos que no pude identificar en el catálogo; "
                 "no prometas descuento en un producto concreto"

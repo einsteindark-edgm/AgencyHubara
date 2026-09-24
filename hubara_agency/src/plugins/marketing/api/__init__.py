@@ -419,6 +419,8 @@ async def list_promotions() -> dict:
                 "product_count": len(p.product_ids) + len(p.variant_ids) + len(p.collection_ids),
             }
             for p in promotions
+            # El bot no aplica cupones de envío: el builder tampoco los ofrece.
+            if p.target_type != "shipping_methods"
         ],
         "unavailable": False,
     }

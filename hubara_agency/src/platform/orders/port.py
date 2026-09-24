@@ -139,14 +139,13 @@ class OrderRegistrationPort(Protocol):
         attribution: dict[str, Any] | None = None,
         coupon_code: str | None = None,
         discount_cop: int = 0,
-        shipping_discount_cop: int = 0,
     ) -> OrderRegistrationResult: ...
 
     # Cupón (Fase 0, pedido #44): `total_cop` ya viene descontado (lo
     # recomputa la tool desde el snapshot del episodio, L-19) y el reparto
-    # viaja en `OrderItem.discounted_units` (productos) o en
-    # `shipping_discount_cop` (envío). `coupon_code` / `discount_cop` quedan
-    # como auditoría. Los callers mandan estos kwargs SOLO cuando hay cupón,
+    # viaja en `OrderItem.discounted_units`. Solo productos: el envío va
+    # completo (no hay cupones de envío). `coupon_code` / `discount_cop`
+    # quedan como auditoría. Los callers los mandan SOLO cuando hay cupón,
     # así los adapters/fakes viejos siguen siendo compatibles.
 
 
