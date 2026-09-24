@@ -26,9 +26,10 @@ export function worstVerdict(verdicts: EpisodeVerdict[]): EpisodeVerdict {
   return verdicts.reduce<EpisodeVerdict>((worst, v) => (RANK[v] < RANK[worst] ? v : worst), "SIN_DATOS");
 }
 
-export function formatUsd(value: number | null | undefined): string {
+/** Dólares con coma decimal; `digits` sube la precisión (costo por turno: 4). */
+export function formatUsd(value: number | null | undefined, digits = 2): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";
-  return `US$${value.toLocaleString("es-CO", { maximumFractionDigits: 2 })}`;
+  return `US$${value.toLocaleString("es-CO", { maximumFractionDigits: digits })}`;
 }
 
 /**

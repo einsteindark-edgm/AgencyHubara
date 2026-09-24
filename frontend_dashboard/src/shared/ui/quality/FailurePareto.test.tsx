@@ -32,4 +32,12 @@ describe("FailurePareto", () => {
     render(<FailurePareto pareto={[]} days={56} onSelectCheck={() => {}} />);
     expect(screen.getByText(/ningún check falló en los últimos 56 días/i)).toBeInTheDocument();
   });
+
+  it("fuera de producción el período lo dice quien lo usa (una corrida del laboratorio no son días)", () => {
+    const { rerender } = render(<FailurePareto pareto={[]} period="en esta corrida" onSelectCheck={() => {}} />);
+    expect(screen.getByText("Ningún check falló en esta corrida.")).toBeInTheDocument();
+
+    rerender(<FailurePareto pareto={stats.pareto} period="en esta corrida" onSelectCheck={() => {}} />);
+    expect(screen.getByRole("group", { name: "Pareto de fallos por check en esta corrida" })).toBeInTheDocument();
+  });
 });

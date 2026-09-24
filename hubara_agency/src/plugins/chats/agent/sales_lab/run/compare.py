@@ -8,8 +8,13 @@ por episodio, brazo y repetición.
   * `paired_bootstrap`: diferencia pareada por conversación (la unidad que se
     re-muestrea es la conversación, no el turno: los turnos de una misma
     conversación no son independientes). Semilla fija: la misma corrida da
-    siempre el mismo intervalo. Si el intervalo de 95 % cruza el cero, la
-    diferencia es "aún no concluyente".
+    siempre el mismo intervalo. Si el intervalo de 95 % cruza el cero, o hay
+    menos de `MIN_CONCLUSIVE_SESSIONS` conversaciones, la diferencia es "aún
+    no concluyente".
+  * Por check se hacen decenas de comparaciones a la vez: una se mueve por
+    azar casi siempre. Se corrige con Holm (p del bootstrap, α = 5 %).
+  * Un episodio sin turnos calificados (el tope o el límite de la corrida no
+    llegó a simularlo) no cuenta: no es una falla del bot.
   * `pass_k`: el episodio pasa en TODAS las repeticiones.
   * `fidelity`: el simulador del bot actual (A1) contra lo que pasó (A0),
     turno por turno y solo checks de código; la vara es 90 %.
@@ -25,8 +30,16 @@ from typing import Any
 from src.plugins.chats.agent.sales_eval.scorecard.service import aggregate_checks
 
 FIDELITY_THRESHOLD = 0.9
+#: Con menos conversaciones el intervalo del bootstrap es demasiado optimista.
+MIN_CONCLUSIVE_SESSIONS = 15
+ALPHA = 0.05
 _DECIDED = ("pasa", "falla")
 _ITERATIONS_CHECKS = 1000
+
+
+def _evaluated(rec: Mapping[str, Any]) -> bool:
+    """El episodio tiene al menos un turno calificado."""
+    return bool(rec.get("by_turn"))
 
 
 def arm_row(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -53,19 +66,34 @@ def paired_bootstrap(
     """Media de (candidato − base) por conversación, con intervalo de 95 %."""
     sessions = sorted(s for s in base.keys() & cand.keys() if base[s] and cand[s])
     if not sessions:
-        return {"delta": None, "low": None, "high": None, "conclusive": False, "sessions": 0}
+        return {"delta": None, "low": None, "high": None, "p": None, "conclusive": False, "sessions": 0}
     diffs = [_mean(list(cand[s])) - _mean(list(base[s])) for s in sessions]
     rng = random.Random(seed)
     n = len(diffs)
     means = sorted(_mean([diffs[rng.randrange(n)] for _ in range(n)]) for _ in range(iterations))
     low, high = _percentile(means, 0.025), _percentile(means, 0.975)
+    # p de dos colas del bootstrap: qué tan seguido el remuestreo cae del otro lado del cero.
+    below = sum(1 for m in means if m <= 0) / len(means)
+    above = sum(1 for m in means if m >= 0) / len(means)
     return {
         "delta": round(_mean(diffs), 4),
         "low": round(low, 4),
         "high": round(high, 4),
-        "conclusive": low > 0 or high < 0,
+        "p": round(min(1.0, 2 * min(below, above)), 4),
+        "conclusive": n >= MIN_CONCLUSIVE_SESSIONS and (low > 0 or high < 0),
         "sessions": n,
     }
+
+
+def _holm(checks: list[dict[str, Any]]) -> None:
+    """Holm–Bonferroni sobre las p de los checks: el de menor p se compara con
+    α/m, el siguiente con α/(m−1)… y al primero que no pasa, ninguno de los
+    que siguen es concluyente."""
+    m = len(checks)
+    holding = True
+    for rank, check in enumerate(sorted(checks, key=lambda c: c["p"])):
+        holding = holding and check["p"] <= ALPHA / (m - rank)
+        check["conclusive"] = bool(check["conclusive"] and holding)
 
 
 def _key(rec: Mapping[str, Any]) -> tuple[str, str]:
@@ -73,7 +101,7 @@ def _key(rec: Mapping[str, Any]) -> tuple[str, str]:
 
 
 def pass_k(reps: list[list[Mapping[str, Any]]]) -> dict[str, Any]:
-    by_rep = [{_key(r): str(r.get("verdict")) for r in rep} for rep in reps]
+    by_rep = [{_key(r): str(r.get("verdict")) for r in rep if _evaluated(r)} for rep in reps]
     common = set.intersection(*(set(m) for m in by_rep)) if by_rep else set()
     passed = sum(1 for k in common if all(m[k] == "PASA" for m in by_rep))
     return {"k": len(reps), "episodes": len(common), "rate": (passed / len(common)) if common else None}
@@ -150,7 +178,8 @@ def _episode_pass(reps: list[list[Mapping[str, Any]]]) -> dict[str, list[float]]
     out: dict[str, list[float]] = defaultdict(list)
     for rep in reps:
         for rec in rep:
-            out[str(rec.get("session_id"))].append(1.0 if rec.get("verdict") == "PASA" else 0.0)
+            if _evaluated(rec):
+                out[str(rec.get("session_id"))].append(1.0 if rec.get("verdict") == "PASA" else 0.0)
     return out
 
 
@@ -176,6 +205,7 @@ def diff_entry(
         boot = paired_bootstrap(base_checks.get(cid, {}), cand_checks.get(cid, {}), iterations=_ITERATIONS_CHECKS)
         if boot["sessions"]:
             checks.append({"check_id": cid, **boot})
+    _holm(checks)
     return {
         "base": base_arm,
         "cand": cand_arm,

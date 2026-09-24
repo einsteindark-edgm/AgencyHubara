@@ -1,11 +1,15 @@
 /**
  * Textos del Resumen del laboratorio (plan §5.6): diferencias pareadas con
- * intervalo de 95 %. Si el intervalo cruza el cero la diferencia es "aún no
- * concluyente" y el tablero no declara ganador.
+ * intervalo de 95 %. Si el intervalo cruza el cero, o hay pocas
+ * conversaciones en común, la diferencia es "aún no concluyente" y el tablero
+ * no declara ganador. Por check, además, la caja corrige por comparaciones
+ * múltiples (Holm).
  */
 import { armLabel, type Interval } from "@plugins/lab/frontend/entities/lab-run";
 
 const MINUS = "−";
+/** Mínimo de conversaciones en común para concluir (`MIN_CONCLUSIVE_SESSIONS` en `run/compare.py`). */
+export const MIN_CONCLUSIVE_SESSIONS = 15;
 
 function number(value: number): string {
   const rounded = Math.round(Math.abs(value) * 10) / 10;
@@ -37,6 +41,12 @@ export type ConclusionTone = "ok" | "bad" | "neutral";
 
 export function conclusion(base: string, cand: string, i: Interval): { tone: ConclusionTone; text: string } {
   if (!i.conclusive || i.delta === null || i.delta === 0) {
+    if (i.sessions > 0 && i.sessions < MIN_CONCLUSIVE_SESSIONS) {
+      return {
+        tone: "neutral",
+        text: `Aún no concluyente: ${i.sessions} conversaciones en común son pocas (hacen falta ${MIN_CONCLUSIVE_SESSIONS})`,
+      };
+    }
     return { tone: "neutral", text: "Aún no concluyente: el intervalo cruza el cero" };
   }
   const more = i.delta > 0;

@@ -75,14 +75,15 @@ def test_paired_bootstrap_is_deterministic_and_says_when_it_is_conclusive() -> N
 def test_bootstrap_only_pairs_conversations_present_in_both() -> None:
     out = paired_bootstrap({"wa_1": [1.0], "wa_2": [0.0]}, {"wa_1": [1.0]})
     assert out["sessions"] == 1
-    assert paired_bootstrap({}, {}) == {"delta": None, "low": None, "high": None, "conclusive": False, "sessions": 0}
+    assert paired_bootstrap({}, {}) == {"delta": None, "low": None, "high": None, "p": None, "conclusive": False, "sessions": 0}
 
 
 def test_pass_k_needs_every_repetition() -> None:
+    turn = {1: {"EST-06": "pasa"}}
     reps = [
-        [_rec("wa_1", "ep_1", "PASA", {}), _rec("wa_2", "ep_1", "PASA", {})],
-        [_rec("wa_1", "ep_1", "PASA", {}), _rec("wa_2", "ep_1", "FALLA", {})],
-        [_rec("wa_1", "ep_1", "PASA", {}), _rec("wa_2", "ep_1", "PASA", {})],
+        [_rec("wa_1", "ep_1", "PASA", turn), _rec("wa_2", "ep_1", "PASA", turn)],
+        [_rec("wa_1", "ep_1", "PASA", turn), _rec("wa_2", "ep_1", "FALLA", turn)],
+        [_rec("wa_1", "ep_1", "PASA", turn), _rec("wa_2", "ep_1", "PASA", turn)],
     ]
 
     assert pass_k(reps) == {"k": 3, "episodes": 2, "rate": 0.5}

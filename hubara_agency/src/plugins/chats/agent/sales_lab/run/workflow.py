@@ -11,10 +11,15 @@ Fases (las ve el lanzador en `runs/<corrida>/progress.json`):
               (PR 11) y después corren A1 (PR 13) y los bots nuevos B y C
               (PR 15): cada caso × repetición en su sandbox, con tope de gasto
   evaluating  scorecard en modo turno por brazo y repetición (A0 re-medido
-              igual), con juez salvo que el gasto haya llegado al tope; después
-              el resumen: gráficas, diferencias con intervalo, fidelidad y
-              arena (PR 13)
+              igual), por pedazos de sesiones: cada pedazo deja su avance (el
+              lanzador da la corrida por caída a los 20 min sin noticias) y
+              suma el gasto del juez. Con juez salvo que el gasto haya llegado
+              al tope o el juez no quepa en lo que queda; después el resumen:
+              gráficas, diferencias con intervalo, fidelidad y arena (PR 13)
   done | failed | cancelled
+
+Un bot que la corrida no alcanzó a simular (tope de gasto, límite de
+historia) queda pendiente: no se califica ni se compara.
 """
 from __future__ import annotations
 
@@ -50,17 +55,28 @@ RUNNABLE_ARMS = SIMULATED_ARMS
 ARMS_PENDING_NOTE = "{arms}: el simulador no conoce ese bot (corre A1, B y C)"
 SPEND_CAP_NOTE = "la corrida se detuvo al llegar al tope de gasto"
 NO_JUDGE_NOTE = "calificada sin juez (solo checks de código): el gasto ya estaba en el tope"
+NO_JUDGE_FIT_NOTE = "calificada sin juez (solo checks de código): el juez (≈US${usd:.2f}) no cabía en lo que quedaba del tope"
+NOT_SIMULATED_NOTE = "{arms}: la corrida no alcanzó a simularlo (queda pendiente, no cuenta como falla)"
+EVALUATION_HISTORY_NOTE = "la calificación se detuvo cerca del límite de historia de Temporal: {arms} sin calificar"
 CONTROL = "A0"
 CONCURRENCY = 4
-_EVALUATE = {
-    "start_to_close_timeout": timedelta(hours=2),
+_EVALUATE = {  # un pedazo (≤ 12 turnos por defecto): ~3–5 min con juez
+    "start_to_close_timeout": timedelta(minutes=30),
     "heartbeat_timeout": timedelta(minutes=2),
-    "retry_policy": RetryPolicy(maximum_attempts=2),
+    "retry_policy": RetryPolicy(maximum_attempts=3),
 }
 # Un caso que murió sin reportar su costo (timeout, proceso matado) igual gastó
 # LLM: se le carga la tarifa medida por turno (`launch.costs.AGENT_USD_PER_TURN`,
 # US$7,09 en ~404 turnos) para que el tope nunca se subcuente.
 UNREPORTED_CASE_USD = 7.09 / 404
+# El juez, a la tarifa medida por turno calificado (`launch.costs.JUDGE_USD_PER_TURN`):
+# con ella se decide si la pasada del juez cabe en lo que queda del tope.
+JUDGE_TURN_USD = 30.0 / (9 * 404)
+# Temporal corta un workflow en 51.200 eventos (un caso simulado deja ~9). Al
+# llegar a `LabRunInput.history_limit` la corrida deja de simular y califica lo
+# que alcanzó; la calificación se detiene (entre repeticiones) con este margen más.
+HISTORY_NOTE = "la corrida dejó de simular cerca del límite de historia de Temporal"
+EVALUATION_HISTORY_HEADROOM = 8_000
 _CASE = {
     "start_to_close_timeout": timedelta(minutes=20),
     "heartbeat_timeout": timedelta(minutes=2),
@@ -78,6 +94,9 @@ class LabRunWorkflow:
         # Lo gastado vive en el estado: un fallo a mitad lo reporta igual (el tope
         # del mes en producción suma `spent_usd` de progress.json).
         self._spent = 0.0
+        self._history_limit = inp.history_limit
+        # Repeticiones que se alcanzaron a simular, por bot.
+        self._simulated: dict[str, int] = {}
         await progress(ProgressUpdate(run_id=inp.run_id, phase="preparing"))
         try:
             plan = await workflow.execute_activity(
@@ -133,19 +152,21 @@ class LabRunWorkflow:
 
     async def _simulate(self, run_id, plan, arms, cases, notes, progress) -> dict:
         """Corre los brazos simulados: cada caso × repetición en su sandbox, de
-        a `CONCURRENCY`. Entre lotes: cancelación y tope de gasto. Al terminar
-        cada repetición se publica lo que corrió."""
+        a `CONCURRENCY`. Entre lotes: cancelación, tope de gasto y límite de
+        historia. Al terminar cada repetición se publica lo que corrió."""
         total = cases * plan.reps * len(arms)
         done = 0
         failed = 0
         stopped = False
+        out_of_history = False
         for arm in arms:
             for rep in range(plan.reps):
+                self._simulated[arm] = rep + 1
                 for start in range(0, cases, CONCURRENCY):
                     if await workflow.execute_activity("lab_run_cancel_requested", run_id, result_type=bool, **_QUICK):
                         await self._publish(run_id, arm, rep)
                         await progress(ProgressUpdate(run_id=run_id, phase="cancelled", turns_done=done,
-                                                      turns_total=total, spent_usd=self._spent, notes=notes))
+                                                      turns_total=total, spent_usd=round(self._spent, 6), notes=notes))
                         return {"phase": "cancelled"}
                     batch = [
                         workflow.execute_activity(
@@ -166,50 +187,85 @@ class LabRunWorkflow:
                                                   turns_total=total, spent_usd=round(self._spent, 6), notes=notes))
                     if plan.spend_limit_usd > 0 and self._spent >= plan.spend_limit_usd:
                         stopped = True
+                    elif workflow.info().get_current_history_length() >= self._history_limit:
+                        out_of_history = True
+                    if stopped or out_of_history:
                         break
                 await self._publish(run_id, arm, rep)
-                if stopped:
+                if stopped or out_of_history:
                     break
-            if stopped:
+            if stopped or out_of_history:
                 break
         final_notes = list(notes)
         if failed:
             final_notes.append(f"{failed} {'caso sin terminar' if failed == 1 else 'casos sin terminar'} (ver sus errores)")
         if stopped:
             final_notes.append(SPEND_CAP_NOTE)
+        if out_of_history:
+            final_notes.append(HISTORY_NOTE)
+        never = [a for a in arms if not self._simulated.get(a)]
+        if never:
+            final_notes.append(NOT_SIMULATED_NOTE.format(arms=", ".join(never)))
         return {"phase": "simulated", "cases": cases, "turns_done": done, "turns_total": total,
                 "spent_usd": round(self._spent, 6), "stopped": stopped, "notes": final_notes}
 
     async def _evaluate(self, run_id, plan, arms, outcome, progress) -> dict:
-        """Califica cada brazo en modo turno (A0 una vez; los simulados, cada
-        repetición) y publica el resumen. Sin juez si el gasto llegó al tope."""
+        """Califica cada brazo simulado en modo turno (A0 una vez; los
+        simulados, cada repetición que se alcanzó a simular) por pedazos, y
+        publica el resumen. Sin juez si el gasto llegó al tope o si la pasada
+        del juez (tarifa medida por turno) no cabe en lo que queda: igual para
+        todos los bots, para que se comparen con la misma vara."""
         notes = list(outcome["notes"])
-        judge = not outcome["stopped"]
-        if not judge:
+        reps_of = {CONTROL: 1, **{a: self._simulated.get(a, 0) for a in arms}}
+        judge_usd = JUDGE_TURN_USD * (outcome["cases"] + outcome["turns_done"])
+        judge = not outcome["stopped"] and (
+            plan.spend_limit_usd <= 0 or self._spent + judge_usd <= plan.spend_limit_usd
+        )
+        if outcome["stopped"]:
             notes.append(NO_JUDGE_NOTE)
-        state = {k: outcome[k] for k in ("turns_done", "turns_total", "spent_usd")}
-        await progress(ProgressUpdate(run_id=run_id, phase="evaluating", notes=notes, **state))
-        for arm in [CONTROL, *arms]:
-            for rep in range(1 if arm == CONTROL else plan.reps):
+        elif not judge:
+            notes.append(NO_JUDGE_FIT_NOTE.format(usd=judge_usd))
+        state = {k: outcome[k] for k in ("turns_done", "turns_total")}
+
+        async def report(phase: str) -> None:
+            await progress(ProgressUpdate(run_id=run_id, phase=phase, notes=notes, spent_usd=round(self._spent, 6), **state))
+
+        await report("evaluating")
+        evaluated: dict[str, int] = {}
+        order = [(arm, rep) for arm in [CONTROL, *arms] for rep in range(reps_of[arm])]
+        for position, (arm, rep) in enumerate(order):
+            if workflow.info().get_current_history_length() >= self._history_limit + EVALUATION_HISTORY_HEADROOM:
+                left = sorted({a for a, _ in order[position:]}, key=[CONTROL, *arms].index)
+                notes.append(EVALUATION_HISTORY_NOTE.format(arms=", ".join(left)))
+                break
+            offset: int | None = 0
+            while offset is not None:
                 if await workflow.execute_activity("lab_run_cancel_requested", run_id, result_type=bool, **_QUICK):
-                    await progress(ProgressUpdate(run_id=run_id, phase="cancelled", notes=notes, **state))
+                    await report("cancelled")
                     return {"phase": "cancelled"}
-                await workflow.execute_activity(
+                result = await workflow.execute_activity(
                     "lab_run_evaluate_arm",
-                    EvaluateInput(run_id=run_id, bench_id=plan.bench_id, arm=arm, rep=rep, judge=judge),
+                    EvaluateInput(run_id=run_id, bench_id=plan.bench_id, arm=arm, rep=rep, judge=judge, offset=offset),
                     result_type=EvaluateResult,
                     **_EVALUATE,
                 )
+                self._spent += result.judge_usd
+                await report("evaluating")
+                offset = result.next_offset
+            evaluated[arm] = rep + 1
+        scored = [a for a in [CONTROL, *arms] if evaluated.get(a)]
         summary = await workflow.execute_activity(
             "lab_run_summarize",
-            SummarizeInput(run_id=run_id, arms=[CONTROL, *arms], reps=plan.reps),
+            SummarizeInput(run_id=run_id, arms=scored, reps=plan.reps, reps_by_arm=evaluated,
+                           arms_pending=[a for a in arms if not evaluated.get(a)]),
             result_type=SummarizeResult,
             start_to_close_timeout=timedelta(minutes=20),
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
         notes.extend(summary.notes)
-        await progress(ProgressUpdate(run_id=run_id, phase="done", notes=notes, **state))
-        return {"phase": "done", "cases": outcome["cases"], "turns_done": state["turns_done"], "notes": notes}
+        await report("done")
+        return {"phase": "done", "cases": outcome["cases"], "turns_done": state["turns_done"],
+                "spent_usd": round(self._spent, 6), "notes": notes}
 
     async def _publish(self, run_id: str, arm: str, rep: int) -> None:
         await workflow.execute_activity(
