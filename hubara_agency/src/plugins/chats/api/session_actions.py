@@ -64,7 +64,16 @@ from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
 )
 from src.plugins.chats.agent.sales.config.shipping import shipping_rate_for_city
 from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
-from src.plugins.chats.agent.sales.use_cases.coupons import coupon_discount_for_items
+from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+    REASON_QUOTA_UNAVAILABLE,
+    remember_confirmed_split,
+    resolve_item_variants,
+    split_key,
+)
+from src.plugins.chats.agent.sales.use_cases.coupons import (
+    coupon_discount_for_items,
+    quota_product_ids,
+)
 from src.plugins.chats.agent.sales.tools.order_registration import (
     RegisterOrderTool,
     _order_reference,
@@ -83,7 +92,10 @@ from src.sdk.connectorkit import (
     schedule_capi_flush,
     ProductNotFoundError,
     get_catalog_client,
+    get_coupon_sales_reader,
     get_order_registration_port,
+    get_promo_quota_store,
+    get_quota_lock,
 )
 from src.sdk.eventkit import dispatch_envelope_with_client, envelope_for
 from src.sdk.messagingkit import (
@@ -120,6 +132,10 @@ class SessionActionsDeps:
     order_port: Any | None  # OrderRegistrationPort — None → stub de la tool
     flush: Callable[[str], Awaitable[int]]  # instrucciones de pago
     notify_episode_closed: Callable[[str, str, str], Awaitable[None]]
+    # Cupo por unidad (central de cupones): el mismo reparto y candado que el bot.
+    quotas: Any | None = None
+    sales: Any | None = None
+    quota_lock: Any | None = None
 
 
 async def _notify_episode_closed(session_key: str, episode_id: str, closing_tag: str) -> None:
@@ -152,6 +168,9 @@ def get_session_actions_deps() -> SessionActionsDeps:
         order_port=_try("order_port", get_order_registration_port),
         flush=flush_pending_ui_intents,
         notify_episode_closed=_notify_episode_closed,
+        quotas=_try("promo_quota_store", get_promo_quota_store),
+        sales=_try("coupon_sales_reader", get_coupon_sales_reader),
+        quota_lock=_try("quota_lock", get_quota_lock),
     )
 
 
@@ -219,6 +238,9 @@ class OrderItemBody(BaseModel):
     handle: str = Field(min_length=1, max_length=128)
     variant_label: str | None = Field(default=None, max_length=120)
     quantity: int = Field(ge=1, le=500)
+    #: Color/aroma de la lista del producto (cupo por unidad).
+    color: str | None = Field(default=None, max_length=60)
+    aroma: str | None = Field(default=None, max_length=60)
 
 
 class ShippingBody(BaseModel):
@@ -243,6 +265,11 @@ class OrderBody(BaseModel):
     items: list[OrderItemBody] = Field(min_length=1, max_length=50)
     shipping: ShippingBody
     payment_method: PAYMENT_METHODS
+    #: Descuento del cupón que el formulario le MOSTRÓ al operador. Con cupo
+    #: por unidad, si al registrar ya no es ese (se vendieron unidades
+    #: mientras tanto) responde `quota_changed` con el total nuevo, sin
+    #: registrar. Omitido = sin comparación (MBA, formularios viejos).
+    expected_discount_cop: int | None = Field(default=None, ge=0)
     #: Mandarle al cliente la plantilla de instrucciones de pago (llave Nequi /
     #: link + recargo). Default ``True`` = comportamiento histórico, el que
     #: usa Meta Business Agent (no manda el campo). Lo apaga el formulario
@@ -250,6 +277,10 @@ class OrderBody(BaseModel):
     #: el mensaje automático encima sería ruido. El intent se encola igual
     #: (auditoría); lo que se saltea es el flush.
     send_payment_instructions: bool = True
+    #: Solo calcular (subtotal, envío, descuento del cupón y total) con estos
+    #: ítems, sin registrar ni guardar nada: el formulario lo pide tras editar
+    #: líneas para que el operador VEA el total antes de crear el pedido.
+    dry_run: bool = False
 
 
 class TagBody(BaseModel):
@@ -396,12 +427,23 @@ def _apply_tag(
     return closed_id, escalated
 
 
-def _order_fingerprint(items: list[dict[str, Any]], payment_method: str, total_cop: int) -> tuple:
+def _order_fingerprint(
+    items: list[dict[str, Any]], payment_method: str, total_cop: int, shipping: dict[str, Any] | None = None
+) -> tuple:
+    """Identidad del pedido para reconocer un doble envío: ítems (con color y
+    aroma), medio de pago y dirección — sin el conteo del cupo (L-28). Un
+    pedido corregido (otra ciudad u otro color) es OTRO pedido."""
+    def _norm(value: Any) -> str:
+        return str(value or "").strip().casefold()
+
+    ship = shipping or {}
     return (
         tuple(sorted((str(i.get("handle")), str(i.get("variant_label") or ""), int(i.get("quantity", 0)),
-                      int(i.get("unit_price_cop", 0))) for i in items)),
+                      int(i.get("unit_price_cop", 0)), _norm(i.get("color")), _norm(i.get("aroma")))
+                     for i in items)),
         payment_method,
         int(total_cop),
+        (_norm(ship.get("city")), _norm(ship.get("address"))),
     )
 
 
@@ -465,29 +507,125 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
     shipping_cop = shipping_rate_for_city(body.shipping.city)
     subtotal_cop = priced.subtotal_cop
     store = FilesystemMetadataStore(deps.vault_dir)
-    tool = RegisterOrderTool(str(deps.vault_dir), vault_dir=deps.vault_dir, port=deps.order_port, catalog=deps.catalog)
+    tool = RegisterOrderTool(
+        str(deps.vault_dir), vault_dir=deps.vault_dir, port=deps.order_port, catalog=deps.catalog,
+        quotas=deps.quotas, sales=deps.sales, quota_lock=deps.quota_lock,
+    )
+    # Color/aroma de cada ítem (cupo por unidad): un valor que el producto no
+    # tiene NO registra nada — mismo contrato que `present_order_confirmation`.
+    attrs = {
+        i: {k: v for k, v in (("color", b.color), ("aroma", b.aroma)) if v}
+        for i, b in enumerate(body.items)
+    }
+    items_with_attrs = [dict(it, **attrs.get(i, {})) for i, it in enumerate(priced.items)]
 
     # Idempotencia por contenido, acotada al EPISODIO: la orden previa cuenta
     # solo si el último episodio de la sesión ya la tiene anotada (el mismo
     # pedido semanas después, en un episodio nuevo, es una venta nueva).
     data_before = store.read(session)
-    # Cupón aplicado en el chat (`apply_coupon`): el mismo descuento que
-    # exige SEC-07 en la tool — el operador no lo recalcula a mano.
-    discount = await coupon_discount_for_items(
-        data_before, deps.catalog, priced.items, shipping_cop=shipping_cop
+    variants, invalid = await resolve_item_variants(
+        deps.catalog, items_with_attrs, data_before,
+        strict_products=quota_product_ids(data_before, deps.quotas),
     )
-    discount_cop = discount.discount_cop if discount else 0
-    total_cop = subtotal_cop + shipping_cop - discount_cop
+    if invalid:
+        return {
+            "registered": False,
+            "order_id": None,
+            "error_detail": "invalid_variant_attribute",
+            "problems": [v.message() for v in invalid],
+        }
     existing = data_before.get("registered_order")
     episodes = data_before.get("episodes") or []
     last_episode = episodes[-1] if episodes and isinstance(episodes[-1], dict) else {}
+    # El MISMO pedido (ítems + medio de pago) ya registrado en este episodio
+    # es un doble envío: se decide ANTES de recalcular el descuento (con
+    # cupo, el propio pedido ya consumió unidades y el total fresco saldría
+    # distinto → se duplicaría a precio lleno).
+    existing_total = int(existing.get("total_cop") or 0) if isinstance(existing, dict) else 0
     already = (
         isinstance(existing, dict)
         and existing.get("success") is True
         and str(last_episode.get("order_id") or "") == str(existing.get("order_id") or "")
-        and _order_fingerprint(existing.get("items") or [], str(existing.get("payment_method")), int(existing.get("total_cop") or 0))
-        == _order_fingerprint(priced.items, body.payment_method, total_cop)
+        and _order_fingerprint(existing.get("items") or [], str(existing.get("payment_method")), existing_total,
+                               existing.get("shipping") if isinstance(existing.get("shipping"), dict) else None)
+        == _order_fingerprint(items_with_attrs, body.payment_method, existing_total, body.shipping.model_dump())
     )
+    if already and body.dry_run:
+        return {
+            "registered": False,
+            "dry_run": True,
+            "already_registered": True,
+            "order_id": None,
+            "error_detail": None,
+            "subtotal_cop": subtotal_cop,
+            "shipping_cop": shipping_cop,
+            "discount_cop": int(existing.get("discount_cop") or 0),
+            "total_cop": existing_total,
+            "coupon_code": existing.get("coupon_code"),
+        }
+    if already:
+        total_cop = existing_total
+    else:
+        # Cupón aplicado en el chat (`apply_coupon`): el mismo descuento que
+        # exige SEC-07 en la tool — el operador no lo recalcula a mano. Con
+        # cupo por unidad, el reparto queda como "confirmado" (el formulario
+        # es la confirmación) y la tool lo relee bajo el candado del código.
+        discount = await coupon_discount_for_items(
+            data_before, deps.catalog, items_with_attrs, shipping_cop=shipping_cop,
+            quotas=deps.quotas, sales=deps.sales, variants=variants,
+        )
+        discount_cop = discount.discount_cop if discount else 0
+        total_cop = subtotal_cop + shipping_cop - discount_cop
+        if (
+            discount is not None
+            and discount.quota
+            and discount.reason == REASON_QUOTA_UNAVAILABLE
+            and body.expected_discount_cop
+        ):
+            # El formulario mostró un descuento que ahora no se puede releer
+            # (Medusa o el vault no responden): NO es "cambiaron las unidades"
+            # con el precio lleno como total nuevo — no se registra nada.
+            return {
+                "registered": False,
+                "order_id": None,
+                "error_detail": "quota_unavailable",
+                "subtotal_cop": subtotal_cop,
+                "shipping_cop": shipping_cop,
+                "total_cop": None,
+            }
+        if body.dry_run:
+            # Nada se registra ni se guarda: el operador ve el total primero.
+            return {
+                "registered": False,
+                "dry_run": True,
+                "order_id": None,
+                "error_detail": None,
+                "subtotal_cop": subtotal_cop,
+                "shipping_cop": shipping_cop,
+                "discount_cop": discount_cop,
+                "total_cop": total_cop,
+                "coupon_code": discount.code if discount else None,
+            }
+        if (
+            discount is not None
+            and discount.quota
+            and body.expected_discount_cop is not None
+            and body.expected_discount_cop != discount_cop
+        ):
+            # El formulario mostró otro descuento: el operador tiene que ver
+            # el total nuevo antes de registrar.
+            return {
+                "registered": False,
+                "order_id": None,
+                "error_detail": "quota_changed",
+                "subtotal_cop": subtotal_cop,
+                "shipping_cop": shipping_cop,
+                "discount_cop": discount_cop,
+                "total_cop": total_cop,
+            }
+        if discount is not None and discount.quota:
+            confirmed = split_key(discount.line_discounts, items_with_attrs, variants)
+            store.update(session, lambda md: remember_confirmed_split(md, discount.code, confirmed))
     if already:
         order_id = str(existing["order_id"])
         raw_payload = existing.get("raw_provider_payload")
@@ -496,8 +634,9 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
     else:
         tool_items = [
             {"handle": it["handle"], "quantity": it["quantity"], "unit_price_cop": it["unit_price_cop"],
-             **({"variant_label": it["variant_label"]} if it.get("variant_label") else {})}
-            for it in priced.items
+             **({"variant_label": it["variant_label"]} if it.get("variant_label") else {}),
+             **{k: it[k] for k in ("color", "aroma") if it.get(k)}}
+            for it in items_with_attrs
         ]
         envelope = json.loads(
             await tool.execute_with_context(
@@ -511,7 +650,7 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
             )
         )
         if not envelope.get("registered"):
-            return {
+            failed: dict[str, Any] = {
                 "registered": False,
                 "order_id": None,
                 "error_detail": envelope.get("error_detail") or "registration_failed",
@@ -519,6 +658,16 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
                 "shipping_cop": shipping_cop,
                 "total_cop": total_cop,
             }
+            if envelope.get("error_detail") == "quota_changed":
+                # Otro pedido se llevó unidades entre el cálculo de arriba y el
+                # candado: el operador ve el total NUEVO (el de la tool).
+                failed["discount_cop"] = int(envelope.get("new_discount_cop") or 0)
+                failed["total_cop"] = int(envelope.get("new_total_cop") or total_cop)
+            if envelope.get("audit_id"):
+                # Quedó en `failed_order_registrations` y la reconciliación lo
+                # reintenta sola: crearlo otra vez a mano puede duplicarlo.
+                failed["saved_for_retry"] = True
+            return failed
         order_id = str(envelope["order_id"])
         provider = envelope.get("provider")
         portavelas_handles = list((envelope.get("portavelas") or {}).get("handles") or [])

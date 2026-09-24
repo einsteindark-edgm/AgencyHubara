@@ -53,6 +53,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     # plugin necesita para armar envelopes sin tocar src.platform (D1.2 mba):
     "CheckoutItem": "src.platform.catalog.checkout_port",
     "parse_variant_tags": "src.platform.catalog.variant_attrs",
+    "match_option": "src.platform.catalog.variant_attrs",
     "parse_variant_colors": "src.platform.catalog.variant_colors",
     "deslugify": "src.platform.catalog.categories",
     # Identidad estable (2026-09-14): retailer_id de Meta = SKU, no id de Medusa.
@@ -86,6 +87,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "OrderFactsSnapshot": "src.platform.orders.facts",
     "InMemoryOrderFacts": "src.platform.orders.facts",
     "OrderRegistrationPort": "src.platform.orders.port",
+    # Reparto del cupón por ítem (L-26): viaja con el port de registro.
+    "DiscountedUnits": "src.platform.orders.port",
     # Cupones / promociones (Medusa Admin → Promotions): port + DTOs + dobles
     # + reglas puras (el monto del descuento nace acá, nunca en el LLM):
     "PromotionsPort": "src.platform.promotions.port",
@@ -97,9 +100,42 @@ _LAZY_EXPORTS: dict[str, str] = {
     "COUPON_CODE_RE": "src.platform.promotions.rules",
     "CouponResolution": "src.platform.promotions.rules",
     "DiscountResult": "src.platform.promotions.rules",
+    "LineDiscount": "src.platform.promotions.rules",
     "compute_discount": "src.platform.promotions.rules",
     "normalize_coupon_code": "src.platform.promotions.rules",
     "resolve_coupon": "src.platform.promotions.rules",
+    # Central de cupones (Marketing → Cupones, CUPONES_PLAN.md): comandos a
+    # Medusa (solo la API), cupo por unidad en el vault, ventas DERIVADAS de
+    # los pedidos, registro de cambios y el candado de la última unidad:
+    "CouponSpecError": "src.platform.promotions.coupon",
+    "CouponView": "src.platform.promotions.coupon",
+    "parse_coupon_spec": "src.platform.promotions.coupon",
+    "PromotionsAdminPort": "src.platform.promotions.admin",
+    "FakePromotionsAdmin": "src.platform.promotions.admin",
+    "CouponCodeTakenError": "src.platform.promotions.admin",
+    "CouponDeleteRefusedError": "src.platform.promotions.admin",
+    "CouponNotFoundError": "src.platform.promotions.admin",
+    "CouponNotManageableError": "src.platform.promotions.admin",
+    "CouponPartialUpdateError": "src.platform.promotions.admin",
+    "CouponRejectedError": "src.platform.promotions.admin",
+    "REASON_QUOTA_EXHAUSTED": "src.platform.promotions.quotas",
+    "PromoUnitQuota": "src.platform.promotions.quotas",
+    "QuotaLine": "src.platform.promotions.quotas",
+    "QuotaStatus": "src.platform.promotions.quotas",
+    "allocate_units": "src.platform.promotions.quotas",
+    "quota_exhausted": "src.platform.promotions.quotas",
+    "quota_product": "src.platform.promotions.quotas",
+    "quota_statuses": "src.platform.promotions.quotas",
+    "validate_quota_rows": "src.platform.promotions.quotas",
+    "QuotaSheet": "src.platform.promotions.quota_store",
+    "QuotaStoreError": "src.platform.promotions.quota_store",
+    "FakePromoQuotaStore": "src.platform.promotions.quota_store",
+    "FakeCouponAuditLog": "src.platform.promotions.audit",
+    "CouponResults": "src.platform.promotions.coupon_sales",
+    "coupon_results": "src.platform.promotions.coupon_sales",
+    "quota_board": "src.platform.promotions.coupon_sales",
+    "sold_units_by_quota": "src.platform.promotions.coupon_sales",
+    "QuotaLockTimeout": "src.platform.promotions.quota_lock",
     "WebCartReaderPort": "src.platform.carts.port",
     # DTOs + fakes + errores del web cart (HU web-cart) — viajan con su port:
     "WebCartItem": "src.platform.carts.port",
@@ -119,6 +155,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_order_facts_port": "src.platform.orders.composition",
     "get_order_registration_port": "src.platform.orders.composition",
     "get_promotions_port": "src.platform.promotions.composition",
+    "get_promotions_admin_port": "src.platform.promotions.composition",
+    "get_promo_quota_store": "src.platform.promotions.composition",
+    "get_coupon_audit_log": "src.platform.promotions.composition",
+    "get_coupon_sales_reader": "src.platform.promotions.composition",
+    "get_quota_lock": "src.platform.promotions.composition",
     "get_web_cart_reader": "src.platform.carts.composition",
     # Percepción (plan del laboratorio §4.2): preguntas tipadas a un
     # clasificador (Jev u OpenAI por OpenRouter), con fake y nulo oficiales.

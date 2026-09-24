@@ -24,6 +24,7 @@ vi.mock("@/shared/api", () => ({
 }));
 
 const setAccessTokenMock = vi.fn();
+const setIdTokenMock = vi.fn();
 const saveSessionMock = vi.fn();
 const clearSessionMock = vi.fn();
 let loaded: PersistedSession | null = null;
@@ -37,6 +38,7 @@ vi.mock("@/shared/config", () => ({
     cognitoClientId: "cid",
   },
   setAccessToken: (t: string | null) => setAccessTokenMock(t),
+  setIdToken: (t: string | null) => setIdTokenMock(t),
   saveSession: (s: PersistedSession) => saveSessionMock(s),
   clearSession: () => clearSessionMock(),
   loadSession: () => loaded,
@@ -50,6 +52,7 @@ beforeEach(() => {
   refresh.mockReset();
   respondNewPassword.mockReset();
   setAccessTokenMock.mockReset();
+  setIdTokenMock.mockReset();
   saveSessionMock.mockReset();
   clearSessionMock.mockReset();
   loaded = null;
@@ -118,6 +121,8 @@ describe("useMobileAuth", () => {
       username: "op@hubara.co",
     });
     expect(setAccessTokenMock).toHaveBeenCalledWith("ACC");
+    // C-6: el ID token viaja en X-Hubara-Id-Token (actor = email en la auditoría).
+    expect(setIdTokenMock).toHaveBeenCalledWith("ID");
     expect(saveSessionMock).toHaveBeenCalledWith(
       expect.objectContaining({ refreshToken: "REF", username: "op@hubara.co" }),
     );
@@ -187,6 +192,7 @@ describe("useMobileAuth", () => {
     const { result } = renderHook(() => useMobileAuth());
     await waitFor(() => expect(result.current.state.status).toBe("authenticated"));
     expect(setAccessTokenMock).toHaveBeenCalledWith("ACC");
+    expect(setIdTokenMock).toHaveBeenCalledWith("ID");
     expect(initiateAuth).not.toHaveBeenCalled();
     expect(refresh).not.toHaveBeenCalled();
   });
@@ -206,6 +212,7 @@ describe("useMobileAuth", () => {
     expect(result.current.state.status).toBe("unauthenticated");
     expect(clearSessionMock).toHaveBeenCalled();
     expect(setAccessTokenMock).toHaveBeenCalledWith(null);
+    expect(setIdTokenMock).toHaveBeenLastCalledWith(null);
   });
 
   it("PM2-A10: el email se normaliza (trim + minúsculas) antes de Cognito", async () => {

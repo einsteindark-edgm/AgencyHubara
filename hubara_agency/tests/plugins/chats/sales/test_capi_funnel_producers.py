@@ -148,14 +148,14 @@ async def test_register_order_success_enqueues_order_created(tmp_path: Path) -> 
             },
             payment_method="transfer",
             subtotal_cop=58000,
-            shipping_cop=0,
-            total_cop=58000,
+            shipping_cop=7900,
+            total_cop=65900,
         )
     )
     assert result["registered"] is True
     entries = _outbox(path)
     assert [(e["event_name"], e["event_id"], e["value"]) for e in entries] == [
-        ("OrderCreated", "ordercreated_draft_777", 58000)
+        ("OrderCreated", "ordercreated_draft_777", 65900)
     ]
     assert entries[0]["order_id"] == "draft_777"
 
@@ -395,8 +395,8 @@ async def test_register_order_persists_capi_contents_and_order_created_carries_t
             },
             payment_method="transfer",
             subtotal_cop=42000,
-            shipping_cop=0,
-            total_cop=42000,
+            shipping_cop=7900,
+            total_cop=49900,
         )
     )
     assert result["registered"] is True

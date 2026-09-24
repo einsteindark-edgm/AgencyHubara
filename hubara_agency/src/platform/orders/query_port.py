@@ -70,6 +70,15 @@ class OrderItemDTO:
     selected_variant_title: str | None = None
     variant_unresolved_tokens: list[str] = field(default_factory=list)
     variant_unresolved_tag_kinds: list[str] = field(default_factory=list)
+    # Cupón (pedido #44): la línea llega a Medusa con el precio YA descontado
+    # (Medusa no aplica promociones a un draft → `discount_total` 0). Su
+    # metadata guarda el precio de lista y el descuento para explicarlo.
+    coupon_code: str | None = None
+    list_unit_price_cop: int | None = None
+    discount_unit_cop: int = 0
+    # Color y aroma que se despachan (metadata de la línea, premortem C1).
+    color: str | None = None
+    aroma: str | None = None
 
 
 @dataclass(frozen=True)

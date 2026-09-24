@@ -323,8 +323,8 @@ async def test_register_order_stops_draft_projection(ctx, vault):
         },
         payment_method="transfer",
         subtotal_cop=23000,
-        shipping_cop=0,
-        total_cop=23000,
+        shipping_cop=7900,
+        total_cop=30900,
     )
 
     meta = _read_metadata(vault, ctx.session_key)

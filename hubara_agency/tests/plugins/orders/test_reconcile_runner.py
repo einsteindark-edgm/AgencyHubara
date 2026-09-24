@@ -170,3 +170,27 @@ async def test_runner_is_idempotent_on_second_pass(tmp_path):
     assert first.resolved == 1
     assert second.total == 0  # ya no hay pendientes
     assert port.calls == ["good"]  # solo una vez
+
+
+@pytest.mark.asyncio
+async def test_one_record_that_blows_up_does_not_stop_the_sweep(tmp_path, monkeypatch):
+    """Un pedido que revienta (p. ej. el re-chequeo de su cupo) no deja sin
+    reintentar a los demás: cuenta como error y el barrido sigue."""
+    import src.plugins.orders.reconcile_runner as runner
+
+    _write(tmp_path, "wa_1", {"failed_order_registrations": [_failed_record("AUDIT-BOOM", "vela-boom")]})
+    _write(tmp_path, "wa_2", {"failed_order_registrations": [_failed_record("AUDIT-OK", "vela-ok")]})
+    real = runner.reconcile_one
+
+    async def flaky(**kwargs):
+        if kwargs["audit_id"] == "AUDIT-BOOM":
+            raise RuntimeError("boom")
+        return await real(**kwargs)
+
+    monkeypatch.setattr(runner, "reconcile_one", flaky)
+    port = FakePort(succeed_handles={"vela-ok"})
+
+    summary = await reconcile_all_pending(vault_dir=tmp_path, port=port)
+
+    assert (summary.total, summary.resolved, summary.errors) == (2, 1, 1)
+    assert _read(tmp_path, "wa_2")["failed_order_registrations"][0]["status"] == STATUS_RESOLVED

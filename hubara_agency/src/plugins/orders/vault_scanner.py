@@ -51,6 +51,9 @@ class VaultOrderRecord:
     registered_at_ms: int
     status: str = STATUS_PENDING       # pending | resolved | abandoned
     attempts: int = 0                  # reintentos de reconciliación acumulados
+    #: Por qué quedó `abandoned` además del tope de reintentos: `quota_changed`
+    #: = se acabaron las unidades con descuento (re-confirmar el total).
+    abandon_reason: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -132,5 +135,6 @@ def _to_record(
         registered_at_ms=int(raw.get("registered_at_ms") or 0),
         status=str(raw.get("status") or STATUS_PENDING),
         attempts=len(raw.get("reconciliation_attempts") or []),
+        abandon_reason=str(raw["abandon_reason"]) if raw.get("abandon_reason") else None,
         raw=raw,
     )

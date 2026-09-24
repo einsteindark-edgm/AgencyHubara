@@ -48,7 +48,7 @@ _VOSEO_DENYLIST = [
     # Presente indicativo voseo (-ás / -és / -ís)
     "tenés", "querés", "podés", "sabés", "pensás", "contás", "pasás", "usás",
     "llevás", "dejás", "mirás", "recibís", "preferís", "compartís", "decís",
-    "vivís", "escribís", "parseás",
+    "vivís", "escribís", "parseás", "dudás", "elegís", "mandás",
     # Imperativos afirmativos voseo (tilde en última sílaba)
     "esperá", "mirá", "mandá", "llamá", "usá", "empezá", "cerrá", "informá",
     "avisá", "invitá", "continuá", "reasoná", "considerá", "tocá", "recordá",
@@ -57,7 +57,7 @@ _VOSEO_DENYLIST = [
     # Imperativos con enclítico (voseo)
     "decime", "contame", "mirame", "mostrame", "avisame", "pedile", "mandale",
     "decile", "contale", "preguntale", "fijate", "acordate", "llevate",
-    "sentate", "pegale", "invitalo", "describílos", "decílo",
+    "sentate", "pegale", "invitalo", "describílos", "decílo", "resolvelas",
 ]
 
 # Fronteras unicode-aware: el token no puede estar pegado a otra letra
@@ -111,4 +111,47 @@ def test_no_voseo_in_chats_agent_python_strings() -> None:
         "Voseo rioplatense detectado (viola REGLA #1 de IDENTITY.md — usá tuteo "
         "colombiano: 'dime', 'cuéntame', 'puedes', 'usa', 'mira'):\n  "
         + "\n  ".join(violations)
+    )
+
+
+# Los prompts en Markdown (workspace/ + skills/) los lee el LLM en cada turno y
+# copia su registro: el voseo ahí se filtra igual que en un string de Python.
+# EXENTA solo la sección "## REGLA #1" de IDENTITY.md de ventas: cita el
+# voseo PROHIBIDO como dato (tabla de conversión y ejemplos) — misma
+# justificación que el vocabulario de un detector. El resto del archivo sí
+# se revisa.
+_MD_EXEMPT_SECTIONS = {
+    "sales/workspace/IDENTITY.md": "## REGLA #1",
+}
+
+
+def _md_lines_to_scan(path: Path) -> list[tuple[int, str]]:
+    rel = str(path.relative_to(_AGENT_ROOT)).replace("\\", "/")
+    lines = list(enumerate(path.read_text(encoding="utf-8").splitlines(), 1))
+    heading = _MD_EXEMPT_SECTIONS.get(rel)
+    if heading is None:
+        return lines
+    start = next(i for i, (_, line) in enumerate(lines) if line.startswith(heading))
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i][1].startswith("## ")),
+        None,
+    )
+    # Acotada: si desaparece el encabezado siguiente, la exención se tragaría
+    # el resto del archivo en silencio.
+    assert end is not None, f"la sección exenta de {rel} no tiene fin"
+    return lines[:start] + lines[end:]
+
+
+def test_no_voseo_in_chats_agent_markdown_prompts() -> None:
+    files = sorted(_AGENT_ROOT.rglob("*.md"))
+    assert files, "no hay prompts .md en el árbol del agente"
+    violations = [
+        f"{p.relative_to(_AGENT_ROOT)}:{lineno}: voseo '{m.group(0)}' → {line.strip()[:100]}"
+        for p in files
+        for lineno, line in _md_lines_to_scan(p)
+        for m in _PATTERN.finditer(line)
+    ]
+    assert not violations, (
+        "Voseo rioplatense en un prompt del agente (REGLA #1 de IDENTITY.md — "
+        "tuteo colombiano):\n  " + "\n  ".join(violations)
     )

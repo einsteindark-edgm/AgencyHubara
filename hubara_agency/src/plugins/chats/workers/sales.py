@@ -158,14 +158,27 @@ _catalog = get_catalog_client()
 # Cupones (2026-09-21): las promociones viven en Medusa (Admin → Promotions).
 # El bot solo las lee/valida; el monto lo calcula el sistema (use case
 # coupons) en present_order_confirmation / register_order.
-from src.sdk.connectorkit import get_promotions_port  # noqa: E402
+# Cupo por unidad (central de cupones): las filas viven en el vault y las
+# vendidas se derivan de los pedidos de Medusa — un cupón con cupo aplica
+# SOLO a esas combinaciones producto + color + aroma.
+from src.sdk.connectorkit import (  # noqa: E402
+    get_coupon_sales_reader,
+    get_promo_quota_store,
+    get_promotions_port,
+    get_quota_lock,
+)
 
 _promotions = get_promotions_port()
+_coupon_sales = get_coupon_sales_reader()
 
 register_tool_extension(
     "sales.list_promotions",
     lambda workspace: ListPromotionsTool(
-        workspace=str(workspace), promotions=_promotions, catalog=_catalog
+        workspace=str(workspace),
+        promotions=_promotions,
+        catalog=_catalog,
+        quotas=get_promo_quota_store(),
+        sales=_coupon_sales,
     ),
 )
 register_tool_extension(
@@ -175,6 +188,8 @@ register_tool_extension(
         promotions=_promotions,
         catalog=_catalog,
         metadata_store=build_session_metadata_store(),
+        quotas=get_promo_quota_store(),
+        sales=_coupon_sales,
     ),
 )
 
@@ -269,6 +284,10 @@ register_tool_extension(
         # Incidente 943e6bff: decide contra el catálogo si el pedido trae
         # portavela — solo entonces la despedida/nota lo mencionan.
         catalog=_catalog,
+        # Cupo por unidad: relee lo vendido bajo el candado del código.
+        quotas=get_promo_quota_store(),
+        sales=_coupon_sales,
+        quota_lock=get_quota_lock(),
     ),
 )
 
@@ -317,7 +336,10 @@ register_tool_extension(
 register_tool_extension(
     "sales.present_order_confirmation",
     lambda workspace: PresentOrderConfirmationTool(
-        workspace=str(workspace), catalog=_catalog
+        workspace=str(workspace),
+        catalog=_catalog,
+        quotas=get_promo_quota_store(),
+        sales=_coupon_sales,
     ),
 )
 # Regla del operador 2026-09-07: "¿cuánto vale el envío?" → mensaje estándar

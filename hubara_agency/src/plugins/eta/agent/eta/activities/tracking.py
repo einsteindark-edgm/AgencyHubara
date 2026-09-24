@@ -177,15 +177,19 @@ def _items_label(detail: object) -> str:
     """Resumen humano de los productos del pedido: "2× Vela Cruz de Vida,
     1× Vela Sándalo" (máx 3, luego "y N más"). El cliente no sabe qué es
     "#6" — el mensaje SIEMPRE nombra qué se está moviendo."""
-    items = getattr(detail, "items_detail", None) or []
-    parts: list[str] = []
-    for it in items[:3]:
+    # Un producto puede venir en varias líneas (unidades con cupón y a precio
+    # de lista, L-26): el cliente lee UN producto con su cantidad total.
+    quantities: dict[str, int] = {}
+    for it in getattr(detail, "items_detail", None) or []:
         title = getattr(it, "title", "") or ""
-        qty = getattr(it, "quantity", 0) or 0
         if title:
-            parts.append(f"{qty}× {title}" if qty > 1 else title)
-    if len(items) > 3:
-        parts.append(f"y {len(items) - 3} más")
+            quantities[title] = quantities.get(title, 0) + int(getattr(it, "quantity", 0) or 0)
+    parts = [
+        f"{qty}× {title}" if qty > 1 else title
+        for title, qty in list(quantities.items())[:3]
+    ]
+    if len(quantities) > 3:
+        parts.append(f"y {len(quantities) - 3} más")
     return ", ".join(parts)
 
 @activity.defn(name="start_eta_tracking_activity")

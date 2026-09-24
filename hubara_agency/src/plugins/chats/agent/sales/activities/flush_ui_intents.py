@@ -122,6 +122,10 @@ def _sanitize_intent_client_text(
     return out
 
 
+#: Máximo del cuerpo de un mensaje con botones en WhatsApp.
+_MAX_ORDER_BODY = 1024
+
+
 def _format_cop(amount: int, currency: str) -> str:
     return f"${amount:,}".replace(",", ".") + f" {currency}"
 
@@ -910,6 +914,15 @@ async def _dispatch_intent(
         if payment_method == "cash_on_delivery":
             body_lines.extend(["", ORDER_SUMMARY_SHIPPING_NOTE])
         body = "\n".join(body_lines)
+        # Cupo por unidad (premortem B4): qué unidades llevan el descuento, o
+        # por qué no — la tarjeta termina el turno del bot, así que el cliente
+        # lo lee acá. Va al final y cabe en el cuerpo (máx. de WhatsApp).
+        note = params.get("coupon_note")
+        if isinstance(note, str) and note.strip():
+            room = _MAX_ORDER_BODY - len(body) - len("\n\n🎟️ ")
+            if room >= 40:
+                text = note.strip()
+                body += "\n\n🎟️ " + (text if len(text) <= room else text[: room - 1].rstrip() + "…")
         ref = params.get("reference_id", "HUB")
         return await wa_client.send_interactive_buttons(
             phone_number_id,

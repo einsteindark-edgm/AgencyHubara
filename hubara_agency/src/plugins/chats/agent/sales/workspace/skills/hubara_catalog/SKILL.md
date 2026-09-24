@@ -37,6 +37,6 @@ metadata: {"exoclaw": {"always": false}}
 | Confirmar precio exacto de un producto que el cliente eligió | `get_product_by_handle(handle="<handle visto en search>")` |
 | Sugerir 3 opciones al cliente | `search_products(q="vela", limit=3)` |
 
-**Categorías**: nunca las niegues de memoria — resolvelas con `category=` o mirá `list_categories()`.
+**Categorías**: nunca las niegues de memoria — resuélvelas con `category=` o mira `list_categories()`.
 
 **Regla absoluta**: cualquier `handle`, `title` o `price` que menciones al cliente debe venir del último `tool_result`. Si la tool retorna `count: 0`, dile honestamente "no manejamos ese producto" — NO inventes uno que se parezca.

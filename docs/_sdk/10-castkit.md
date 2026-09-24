@@ -122,6 +122,26 @@ Regla: `service` es para casts **server-to-server sin operador detrás**. Un
 cast disparado por el dashboard sigue en `propagate` (la identidad del
 operador es la que audita el provider).
 
+## `current_actor(request)`: quién hizo el cambio (registros de auditoría)
+
+`require_auth` deja en `request.state.hubara_actor` la identidad que ACABA de
+validar, y `current_actor(request)` la devuelve:
+
+| Cómo pasó la auth | `current_actor` |
+|---|---|
+| Access token de Cognito | su `username` (o `sub` si no trae `username`) |
+| Token de servicio M2M | `"service"` |
+| Dev/tests sin Cognito | `"local"` |
+| Ruta montada sin `require_auth` | `"desconocido"` (no se inventa) |
+
+Es la identidad para registros de cambios cuando el dashboard NO tiene roles
+(caso vivo: la central de cupones de marketing, decisión D6 de
+`CUPONES_PLAN.md` — cualquier usuario crea cupones y cada cambio queda con
+quién lo hizo). **Nunca** se toma el actor del cuerpo del request: el
+dashboard puede mandar cualquier cosa ahí. Tests: `tests/platform/test_auth_actor.py`
+y `tests/plugins/marketing/test_coupons_api.py::test_post_coupon_creates_it_in_medusa_and_audits_actor`
+(un `"actor"` en el cuerpo no cuenta).
+
 ## Las 3 patas (regla de oro)
 
 - **(a) Check**: dos gates. `tests/architecture/test_castkit_loopback.py` —

@@ -399,6 +399,31 @@ class CampaignSendPlan:
     #: Productos del carrusel (vacío = plantilla simple). Las tarjetas las
     #: resuelve una activity aparte (sube fotos a Meta) — el plan es puro.
     carousel_handles: list[str] = field(default_factory=list)
+    #: El envío NO sale (el cupón ya no sirve a la hora del disparo): el
+    #: motivo, que la campaña ya guarda como `failure_reason`.
+    blocked_reason: str | None = None
+
+
+def block_campaign_send(campaign: dict[str, Any], reason: str, *, now_ms: int) -> dict[str, Any]:
+    """La campaña queda FALLIDA con el motivo a la vista del operador (sin
+    enviar nada). Mutación in-place; devuelve la campaña."""
+    campaign["status"] = STATUS_FAILED
+    campaign["failure_reason"] = reason
+    campaign["updated_at_ms"] = now_ms
+    return campaign
+
+
+def blocked_send_plan(campaign: dict[str, Any], reason: str) -> CampaignSendPlan:
+    """Un plan sin destinatarios que el workflow no ejecuta."""
+    return CampaignSendPlan(
+        campaign_id=campaign["id"],
+        template_name=campaign_template_name(campaign),
+        recipients=[],
+        skipped=[],
+        unit_cost_usd_micros=0,
+        total_cost_usd_micros=0,
+        blocked_reason=reason,
+    )
 
 
 def build_send_plan(
@@ -652,6 +677,8 @@ def new_campaign(
         "updated_at_ms": now_ms,
         "sent_at_ms": None,
         "send_result": None,
+        # Por qué NO salió (p. ej. el cupón ya no servía al dispararse).
+        "failure_reason": None,
         "test_sends": [],
     }
 

@@ -6,6 +6,7 @@ Leen/escriben el vault vía SDK (P-28) y delegan la decisión al dominio puro
 idempotencia por fingerprint, clasificación de errores Meta y persistencia
 del OutboundLogEntry con su costo.
 """
+import asyncio
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -13,6 +14,7 @@ from typing import Any
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from src.plugins.marketing.campaign_coupon import check_campaign_coupon
 from src.plugins.marketing.campaign_store import CampaignStore
 from src.plugins.marketing.carousel import CarouselError, resolve_campaign_carousel
 from src.plugins.marketing.domain.campaigns import (
@@ -20,9 +22,12 @@ from src.plugins.marketing.domain.campaigns import (
     STATUS_SENT,
     CampaignSendPlan,
     append_campaign_touch,
+    block_campaign_send,
+    blocked_send_plan,
     build_campaign_touch,
     build_send_plan,
 )
+from src.plugins.marketing.domain.coupons import coupon_terms
 from src.sdk.connectorkit import FilesystemAttributionStore
 from src.sdk.messagingkit import (
     OPT_OUT_SOURCE_META,
@@ -34,7 +39,17 @@ from src.sdk.messagingkit import (
 from src.sdk.runtime import (
     WORKSPACE_VAULT_DIR,
     FilesystemMetadataStore,
+    with_heartbeat,
 )
+
+#: Intentos de `load_campaign_send_plan` (el workflow usa este número): en el
+#: último, un Medusa que no responde ya no se reintenta — el envío se frena
+#: con el motivo a la vista.
+PLAN_MAX_ATTEMPTS = 3
+#: Tope de la validación del cupón: la activity termina (y deja el motivo)
+#: antes de su propio timeout aunque Medusa se cuelgue.
+_COUPON_CHECK_TIMEOUT_S = 15
+
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
@@ -42,6 +57,67 @@ def _now_ms() -> int:
 
 def _store() -> CampaignStore:
     return CampaignStore(WORKSPACE_VAULT_DIR)
+
+
+def get_promotions_port() -> Any:
+    """Provider a nivel módulo (lazy + monkeypatcheable en tests): el import
+    arrastra la composición de Medusa (gate `test_sdk_lazy_surface`)."""
+    from src.sdk.connectorkit import get_promotions_port as _factory
+
+    return _factory()
+
+
+async def _coupon_blocks_send(store: CampaignStore, campaign: dict[str, Any], *, now_ms: int) -> str | None:
+    """Re-valida el cupón AL DISPARAR: una campaña programada guardó los
+    términos de cuando se programó, y el cupón pudo pausarse, vencer o
+    cambiar de %. Si ya no sirve, el envío NO sale y la campaña queda
+    fallida con el motivo; si sirve, se copian sus términos de ahora (% y
+    "válido hasta"). Devuelve el motivo, o None si el envío sigue."""
+    from src.sdk.connectorkit import NullPromotionsPort, PromotionsUnavailableError
+
+    code = (campaign.get("coupon_code") or "").strip()
+    if not code:
+        return None
+    port = get_promotions_port()
+    if isinstance(port, NullPromotionsPort):
+        # Config del worker, no del cupón: reintentar no lo arregla.
+        return _block(store, campaign, now_ms, (
+            f"No se envió: el worker de campañas no tiene Medusa configurado para "
+            f"validar el cupón {code}."
+        ))
+    # El port del proceso cachea 60 s: un cupón pausado justo antes del
+    # disparo no puede colarse por el cache (se lee Medusa fresca).
+    invalidate = getattr(port, "invalidate", None)
+    if callable(invalidate):
+        invalidate()
+    try:
+        check = await asyncio.wait_for(
+            check_campaign_coupon(port, campaign, at_ms=now_ms), timeout=_COUPON_CHECK_TIMEOUT_S
+        )
+    except (PromotionsUnavailableError, TimeoutError) as exc:
+        if activity.info().attempt < PLAN_MAX_ATTEMPTS:
+            raise ApplicationError(
+                f"No pude validar el cupón {code} en Medusa: {exc}", type="CampaignCouponUnavailable"
+            ) from exc
+        return _block(store, campaign, now_ms, (
+            f"No se envió: no pude validar el cupón {code} en Medusa a la hora del envío (no respondió)."
+        ))
+    if check is None:
+        return None
+    if check.problem:
+        return _block(store, campaign, now_ms, f"No se envió: el cupón {code} {check.problem}.")
+    terms = coupon_terms(check.promotion)
+    if any(campaign.get(k) != v for k, v in terms.items()):
+        campaign.update(terms)
+        campaign["updated_at_ms"] = now_ms
+        store.save(campaign)
+    return None
+
+
+def _block(store: CampaignStore, campaign: dict[str, Any], now_ms: int, reason: str) -> str:
+    activity.logger.warning("campaña %s frenada: %s", campaign.get("id"), reason)
+    store.save(block_campaign_send(campaign, reason, now_ms=now_ms))
+    return reason
 
 
 def _require_campaign(store: CampaignStore, campaign_id: str) -> dict[str, Any]:
@@ -56,25 +132,31 @@ def _require_campaign(store: CampaignStore, campaign_id: str) -> dict[str, Any]:
 
 
 @activity.defn(name="load_campaign_send_plan")
+@with_heartbeat(every=10)
 async def load_campaign_send_plan_activity(campaign_id: str) -> CampaignSendPlan:
     """Resuelve audiencia real + variables + costo estimado de la campaña.
 
-    Corre EN el momento del disparo (también para programadas): quiet hours
-    se evalúa con la hora local del cliente AHORA, y la cadencia (48h entre
-    campañas al mismo contacto) contra los touches vigentes.
+    Corre EN el momento del disparo (también para programadas): el cupón se
+    re-valida AHORA (si ya no sirve, el plan sale frenado con el motivo),
+    quiet hours se evalúa con la hora local del cliente AHORA, y la cadencia
+    (48h entre campañas al mismo contacto) contra los touches vigentes.
     """
     store = _store()
     campaign = _require_campaign(store, campaign_id)
+    now_utc = datetime.now(timezone.utc)
+    now_ms = int(now_utc.timestamp() * 1000)
+    blocked = await _coupon_blocks_send(store, campaign, now_ms=now_ms)
+    if blocked is not None:
+        return blocked_send_plan(campaign, blocked)
     sessions = [
         (s.session_id, s.metadata)
         for s in FilesystemAttributionStore(WORKSPACE_VAULT_DIR).scan_sessions()
     ]
-    now_utc = datetime.now(timezone.utc)
     return build_send_plan(
         campaign,
         sessions,
         get_current_rate_card(),
-        now_ms=int(now_utc.timestamp() * 1000),
+        now_ms=now_ms,
         is_quiet_hours=lambda session_id: is_quiet_hours_for_session(
             session_id, now_utc
         ),
