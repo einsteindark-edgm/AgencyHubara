@@ -2,8 +2,11 @@
  * Texto del registro de cambios del cupón (quién / qué / cuándo). El
  * `detail` de cada entrada lo arma el backend (`audit_diff`: `{campo: [antes,
  * después]}`; `set_status`: `{status}`; `units`: `{rows, show_units_left}`;
- * `update_partial` suma `failed_step`). Todo en español para el operador:
- * los pasos de Medusa con su nombre y los productos por su título (D14).
+ * `update_partial` suma `failed_step` y, si no se pudo releer, `applied_steps`
+ * y `state_unknown`; `*_unconfirmed` = Medusa no confirmó una escritura que SÍ
+ * salió; `units_pruned` = filas de productos que salieron del cupón). Todo en
+ * español para el operador: los pasos de Medusa con su nombre y los
+ * productos por su título (D14).
  */
 
 import type { CouponChange } from "@plugins/marketing/frontend/entities/coupon";
@@ -15,6 +18,11 @@ const ACTION_LABEL: Record<string, string> = {
   set_status: "Cambió el estado",
   delete: "Borró el cupón",
   units: "Cambió las unidades con descuento",
+  // Medusa no confirmó una escritura que SÍ salió: puede haberse aplicado.
+  update_unconfirmed: "Editó el cupón (Medusa no confirmó: verifica cómo quedó)",
+  set_status_unconfirmed: "Cambió el estado (Medusa no confirmó: verifica cómo quedó)",
+  delete_unconfirmed: "Borró el cupón (Medusa no confirmó: verifica si sigue)",
+  units_pruned: "Quitó las unidades de productos que salieron del cupón",
 };
 
 const FIELD_LABEL: Record<string, string> = {
@@ -26,7 +34,13 @@ const FIELD_LABEL: Record<string, string> = {
   ends_on: "hasta",
   status: "estado",
   failed_step: "paso que falló",
+  applied_steps: "pasos aplicados",
+  state_unknown: "cómo quedó en Medusa",
   show_units_left: "mostrar cuántas quedan",
+  orphaned_campaign_id: "campaña que quedó en Medusa",
+  already_deleted: "ya estaba borrado en Medusa",
+  units_deleted: "unidades borradas",
+  orphan_campaigns_deleted: "campañas huérfanas borradas",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -64,6 +78,12 @@ function showProducts(value: unknown, titles: ReadonlyMap<string, string>): stri
   return value.map((id) => titles.get(String(id)) ?? String(id)).join(", ");
 }
 
+/** "promotion, products" → "código y descuento, productos". */
+function showSteps(value: unknown): string {
+  const steps = String(value ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return steps.length ? steps.map((s) => STEP_LABEL[s] ?? s).join(", ") : "ninguno";
+}
+
 /** Líneas legibles del detalle ("descuento: 10 → 15"). `productTitles`:
  *  id → título del catálogo, para no mostrar ids crudos. */
 export function changeSummary(
@@ -78,7 +98,11 @@ export function changeSummary(
         ? (v: unknown) => showProducts(v, productTitles)
         : key === "failed_step"
           ? (v: unknown) => STEP_LABEL[String(v)] ?? show(v)
-          : show;
+          : key === "applied_steps"
+            ? (v: unknown) => showSteps(v)
+            : key === "state_unknown"
+              ? (v: unknown) => (v ? "no se pudo leer" : "releído")
+              : show;
     if (key === "rows" && Array.isArray(value)) {
       lines.push(...value.map((r) => String(r)));
     } else if (Array.isArray(value) && value.length === 2 && change.action.startsWith("update")) {

@@ -167,6 +167,9 @@ function CampaignCard({
           <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
           {meta.label}
         </span>
+        {c.status === "failed" && c.failureReason ? (
+          <span className="text-[10.5px] text-fg-faint">{c.failureReason}</span>
+        ) : null}
         {c.status === "sent" && c.sendResult ? (
           <span className="text-[10.5px] tabular-nums text-fg-faint">
             {c.sendResult.sent} enviados

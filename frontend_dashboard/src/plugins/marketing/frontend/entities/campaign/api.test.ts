@@ -30,6 +30,7 @@ const backendSent: BackendCampaign = {
     unit_cost_usd_micros: 12_500,
     spent_usd_micros: 500_000,
   },
+  failure_reason: null,
   test_sends: [{ phone: "573001234567", at_ms: 5, wa_message_id: null }],
   excluded_session_ids: ["wa_573009990000"],
   extra_session_ids: ["wa_+573008881122"],
