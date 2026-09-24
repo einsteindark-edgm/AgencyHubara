@@ -74,7 +74,7 @@ def test_the_thread_of_one_turn(client: TestClient) -> None:
 def test_an_unknown_turn_is_404_and_a_bad_session_is_refused(client: TestClient) -> None:
     assert client.get(f"/api/chats/sessions/{SID}/turns/trace", params={"turn_key": "run:x/t:9"}).status_code == 404
     assert client.get("/api/chats/sessions/..%2Fetc/turns").status_code in (400, 404, 422)
-    assert client.get("/api/chats/sessions/wa_573009999999/turns").json() == {"turns": []}
+    assert client.get("/api/chats/sessions/wa_573007654321/turns").json() == {"turns": []}
 
 
 def test_each_bubble_of_the_chat_carries_its_turn(client: TestClient) -> None:
