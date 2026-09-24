@@ -70,6 +70,7 @@ def _client(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> TestClient:
          f"/api/chats/lab/runs/{RUN}/conversations/{SID}/turns/trace", {"turn_key": "run:abc/t:3", "arm": "B", "rep": 1}),
         ("GET", f"/api/lab/runs/{RUN}/conversations/{SID}/evaluations?arm=A1", f"/api/chats/lab/runs/{RUN}/conversations/{SID}/evaluations", {"arm": "A1", "rep": 0}),
         ("GET", f"/api/lab/runs/{RUN}/summary?arm=C", f"/api/chats/lab/runs/{RUN}/summary", {"arm": "C"}),
+        ("GET", f"/api/lab/runs/{RUN}/report", f"/api/chats/lab/runs/{RUN}/report", None),
         ("GET", f"/api/lab/runs/{RUN}/diff?base=A1&cand=B", f"/api/chats/lab/runs/{RUN}/diff", {"base": "A1", "cand": "B"}),
     ],
 )

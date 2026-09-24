@@ -18,6 +18,8 @@ El kit expone esas dos piezas a los plugins sin tocar `src.platform` (P-28).
 | `get_lab_store()` | `LAB_BUCKET` (Terraform, `/hubara/<tenant>/LAB_BUCKET`) → S3; `LAB_STORE_DIR` → disco; ninguno → `None` (laboratorio apagado: la API responde 503) |
 | `LabBoxLauncher` / `Boto3LabLauncher` | prende la caja (tag `Role=lab`) y le da órdenes por SSM: `dispatch(run_id, imagen)` → `dispatched` \| `already_dispatched` (idempotente por id), `cancel(run_id)`. Reutiliza `Boto3Launcher` de GraphAgents |
 | `RUN_ID_RE` / `IMAGE_RE` | la forma que aceptan los scripts de la caja |
+| `installed_sandbox_ports(promotions_path=, catalog=)` | (caja, PR 11) pone en modo sandbox los puertos que hablan con Medusa: promociones del banco, pedido stub, verificación contra el snapshot; `SnapshotLiveMedusa` y `SandboxNoMedusaError` son sus piezas |
+| `bench_catalog_client(dir)` | (caja, PR 13) `CatalogPort` sobre el snapshot del catálogo que viajó con el banco, sin tope de edad: el contexto del scorecard al calificar la corrida |
 
 ## Prefijos del bucket
 

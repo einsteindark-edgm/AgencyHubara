@@ -79,3 +79,32 @@ class ArmPublishInput:
 class ArmPublishResult:
     published: int
     missing: int
+
+
+@dataclass(frozen=True)
+class EvaluateInput:
+    """Calificar un brazo en una repetición (modo turno, PR 13)."""
+
+    run_id: str
+    bench_id: str
+    arm: str
+    rep: int
+    judge: bool = True
+
+
+@dataclass(frozen=True)
+class EvaluateResult:
+    episodes: int
+    judge_errors: int = 0
+
+
+@dataclass(frozen=True)
+class SummarizeInput:
+    run_id: str
+    arms: list[str]
+    reps: int
+
+
+@dataclass(frozen=True)
+class SummarizeResult:
+    notes: list[str] = field(default_factory=list)

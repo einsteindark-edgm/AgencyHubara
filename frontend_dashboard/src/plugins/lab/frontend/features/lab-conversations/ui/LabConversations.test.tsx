@@ -133,6 +133,33 @@ describe("LabConversations", () => {
     expect(within(panel).queryByText("CON-05")).toBeNull();
   });
 
+  it("en modo turno un check aparece por turno y los sin señal se cuentan", async () => {
+    const base = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((url: string) =>
+      String(url).includes(`/conversations/${SID}/evaluations`)
+        ? json({
+            arm: "B", rep: 0,
+            episodes: [{ session_id: SID, episode_id: "ep_1", verdict: "PASA", results: [
+              { check_id: "EST-06", verdict: "pasa", turn: 1 },
+              { check_id: "EST-06", verdict: "pasa", turn: 2 },
+              { check_id: "CIE-03", verdict: "sin_senal", turn: 2 },
+            ] }],
+          })
+        : base!(url),
+    );
+    renderTab();
+    await screen.findByText("Buenas tardes");
+    fireEvent.click(screen.getByRole("tab", { name: "Evaluaciones" }));
+
+    const panel = await screen.findByRole("tabpanel", { name: "Evaluaciones" });
+    const checks = await within(panel).findAllByRole("article");
+    expect(checks.map((c) => c.textContent)).toEqual([
+      expect.stringContaining("turno 1"),
+      expect.stringContaining("turno 2"),
+    ]);
+    expect(within(panel).getByText(/1 check sin señal/)).toBeInTheDocument();
+  });
+
   it("elegir otra conversación la marca", async () => {
     renderTab();
     const list = await screen.findByRole("list", { name: "Conversaciones del banco" });

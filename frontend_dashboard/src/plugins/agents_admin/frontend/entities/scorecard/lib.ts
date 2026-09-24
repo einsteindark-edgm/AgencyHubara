@@ -1,9 +1,13 @@
 import {
+  QUALITY_STAGE_ORDER,
   QUALITY_VERDICT_ORDER,
   clipText,
   formatDuration,
   qualityLevelColor,
   qualityLevelLabel,
+  qualityStageColor,
+  qualityStageLabel,
+  qualityStageRank,
   qualityStatus,
   qualityStatusColor,
   qualityStatusGlyph,
@@ -42,56 +46,18 @@ import type {
  * La presentación genérica de veredictos, niveles y estados (y los tipos de
  * vista de la tira) vive en `@/shared/lib` (`quality-view`, `trajectory-strip`)
  * porque otros plugins pintan las mismas gráficas; aquí se re-exporta con los
- * nombres de siempre. Etapas, orden del guion y derivaciones siguen acá.
+ * nombres de siempre. Las derivaciones del contrato siguen acá.
  */
 
 // ── Etapas ─────────────────────────────────────────────────────────────────
+// El vocabulario de etapas vive en `@/shared/lib` (el laboratorio pinta el
+// mismo embudo); aquí se re-exporta con los nombres de siempre.
 
-export const STAGE_ORDER = [
-  "descubrimiento",
-  "variantes",
-  "confirmacion",
-  "datos_envio",
-  "cierre",
-  "postcierre",
-  "transversal",
-] as const;
-
-const STAGE_LABELS: Record<string, string> = {
-  descubrimiento: "descubrimiento",
-  variantes: "variantes",
-  confirmacion: "confirmación",
-  datos_envio: "datos de envío",
-  cierre: "cierre",
-  postcierre: "post-cierre",
-  transversal: "transversal",
-};
-
-/** Cada etapa con su token (identidad reforzada SIEMPRE con texto visible). */
-const STAGE_COLORS: Record<string, string> = {
-  descubrimiento: "var(--color-info)",
-  variantes: "var(--color-violet)",
-  confirmacion: "var(--color-cyan)",
-  datos_envio: "var(--color-yellow)",
-  cierre: "var(--color-pink)",
-  postcierre: "var(--color-accent)",
-  transversal: "var(--color-neutral)",
-};
-
-export function stageLabel(stage: string | null | undefined): string {
-  if (!stage) return "sin etapa";
-  return STAGE_LABELS[stage] ?? stage.replaceAll("_", " ");
-}
-
-export function stageColor(stage: string | null | undefined): string {
-  return (stage && STAGE_COLORS[stage]) || "var(--color-neutral)";
-}
-
-/** Índice de orden de una etapa (desconocidas al final, antes de transversal no). */
-export function stageRank(stage: string | null | undefined): number {
-  const i = STAGE_ORDER.indexOf((stage ?? "") as (typeof STAGE_ORDER)[number]);
-  return i === -1 ? STAGE_ORDER.length : i;
-}
+export const STAGE_ORDER = QUALITY_STAGE_ORDER;
+export const stageLabel = qualityStageLabel;
+export const stageColor = qualityStageColor;
+/** Índice de orden de una etapa (desconocidas al final). */
+export const stageRank = qualityStageRank;
 
 // ── Veredictos de episodio ─────────────────────────────────────────────────
 
@@ -139,6 +105,7 @@ export const STATUS_ORDER: readonly CheckStatus[] = [
   "mayor",
   "menor",
   "desconocido",
+  "sin_senal",
   "pasa",
   "no_aplica",
   "sin_resultado",

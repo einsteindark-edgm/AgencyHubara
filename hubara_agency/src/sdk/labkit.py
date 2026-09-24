@@ -20,9 +20,16 @@ Sandbox de un turno (worker `sales_lab`, en la caja): `installed_sandbox_ports`
 pone los puertos de plataforma que hablan con Medusa en modo sandbox (sin
 Medusa, promociones del banco, pedido stub, verificación contra el snapshot)
 ANTES de importar el worker de ventas.
+
+Calificar una corrida (worker `sales_lab`, PR 13): `bench_catalog_client`
+lee el snapshot del catálogo que viajó con el banco, para el contexto del
+scorecard.
 """
 from __future__ import annotations
 
+from src.platform.lab.bench_catalog import (
+    bench_catalog_client as bench_catalog_client,
+)
 from src.platform.lab.composition import (
     get_lab_launcher as get_lab_launcher,
 )

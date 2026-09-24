@@ -123,3 +123,31 @@ def test_ids_are_validated(http, path: str) -> None:
 
 def test_unknown_run_is_404(http) -> None:
     assert http.get("/api/chats/lab/runs/run-20200101-0000/bench").status_code == 404
+
+
+def test_report_serves_what_the_summary_tab_needs_beyond_the_charts(http) -> None:
+    """PR 13: fidelidad del simulador, arena de los bots nuevos, el scorecard
+    de producción de referencia y qué comparaciones hay (sin sus listas)."""
+    store = api.get_lab_store()
+    summary = json.loads(store.get_bytes(f"runs/{RUN}/summary.json"))
+    summary.update({
+        "mode": "turn",
+        "arms": {"A0": {}, "A1": {}, "B": {}},
+        "production": {"reps": 1, "episodes": 1},
+        "fidelity": {"n": 10, "agreement": 0.95, "ok": True, "threshold": 0.9},
+        "arena": {"B": {"profile": "jev-v1", "metrics": [], "topics": {"turns": 0}}},
+        "judge": {"used": True, "errors": 0},
+        "diffs": {"A1:B": {"changed_turns": [{"turn": 1}] * 50}},
+    })
+    store.put_bytes(f"runs/{RUN}/summary.json", json.dumps(summary).encode())
+
+    report = http.get(f"/api/chats/lab/runs/{RUN}/report").json()
+
+    assert report["mode"] == "turn" and report["arms"] == ["A0", "A1", "B"]
+    assert report["fidelity"]["ok"] is True and report["arena"]["B"]["profile"] == "jev-v1"
+    assert report["production"]["episodes"] == 1 and report["judge"]["used"] is True
+    assert report["diffs"] == ["A1:B"]  # las listas de turnos van por /diff
+
+
+def test_report_of_a_run_without_summary_is_404(http) -> None:
+    assert http.get("/api/chats/lab/runs/run-20260922-dead/report").status_code == 404

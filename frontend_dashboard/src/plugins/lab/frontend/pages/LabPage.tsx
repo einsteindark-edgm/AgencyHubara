@@ -3,8 +3,9 @@
  * aprobado 2026-09-23 §09). Se parece a Chats pero no tiene compositor: su
  * única acción es lanzar o cancelar una corrida, que no toca a ningún cliente.
  *
- * Barra: la corrida elegida y el botón "Nueva corrida". Pestañas:
- * Conversaciones y Banco y corridas (Resumen llega con los bots simulados).
+ * Barra: la corrida elegida y el botón "Nueva corrida". Pestañas: Resumen
+ * (gráficas de Calidad LLM por bot, comparación y arena), Conversaciones y
+ * Banco y corridas.
  * Los Pages no reciben props (PluginHost); los datos vienen de la entity
  * local, que solo llama a `/api/lab/*`.
  */
@@ -14,11 +15,13 @@ import { useState } from "react";
 import { BenchRuns } from "@plugins/lab/frontend/features/bench-runs";
 import { LabConversations } from "@plugins/lab/frontend/features/lab-conversations";
 import { RunLauncher } from "@plugins/lab/frontend/features/run-launcher";
+import { RunSummary } from "@plugins/lab/frontend/features/run-summary";
 import { apiErrorDetail, useLabRuns, type LabRun } from "@plugins/lab/frontend/entities/lab-run";
 
-type Tab = "conv" | "banco";
+type Tab = "resumen" | "conv" | "banco";
 
 const TABS: Array<[Tab, string]> = [
+  ["resumen", "Resumen"],
   ["conv", "Conversaciones"],
   ["banco", "Banco y corridas"],
 ];
@@ -93,6 +96,11 @@ export default function LabPage() {
         {runs.isPending ? <p className="p-4 text-[12.5px] text-fg-muted">Cargando las corridas…</p> : null}
         {error ? <p className="p-4 text-[12.5px] text-fg-muted">{errorText}</p> : null}
         {runs.isSuccess && !run ? <p className="p-4 text-[12.5px] text-fg-muted">Todavía no hay corridas. Usa Nueva corrida para lanzar la primera.</p> : null}
+        {run && tab === "resumen" ? (
+          <div className="p-4">
+            <RunSummary key={run.run_id} run={run} onOpenConversations={() => setTab("conv")} />
+          </div>
+        ) : null}
         {run && tab === "conv" ? <LabConversations key={run.run_id} run={run} /> : null}
         {run && tab === "banco" ? <BenchRuns runs={list} selectedRun={run.run_id} onSelectRun={setPicked} /> : null}
       </div>

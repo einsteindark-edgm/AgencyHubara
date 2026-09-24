@@ -21,15 +21,21 @@ from src.plugins.chats.agent.sales_lab.run.contracts import (
     ArmPublishInput,
     ArmPublishResult,
     CaseOutcome,
+    EvaluateInput,
+    EvaluateResult,
     ProgressUpdate,
     PublishResult,
     RunPlan,
     SimulateInput,
     SmokeResult,
+    SummarizeInput,
+    SummarizeResult,
 )
+from src.plugins.chats.agent.sales_lab.run.evaluate import score_arm
 from src.plugins.chats.agent.sales_lab.run.publish import publish_arm, publish_control
+from src.plugins.chats.agent.sales_lab.run.summary import build_summary, with_verdicts
 from src.plugins.chats.agent.sales_lab.sandbox.process import run_case_in_subprocess
-from src.sdk.labkit import LabStorePort, get_lab_store
+from src.sdk.labkit import LabStorePort, bench_catalog_client, get_lab_store
 from src.sdk.runtime import with_heartbeat
 
 SALES_WORKSPACE = "app-hubara-agency-src-plugins-chats-agent-sales-workspace"
@@ -206,6 +212,113 @@ async def cancel_requested_activity(run_id: str) -> bool:
     return (_lab_root() / "runs" / run_id / "CANCEL").exists()
 
 
+def _judge():
+    """El juez del scorecard (el mismo alias de producción, por el LiteLLM de
+    la caja). `LAB_JUDGE=off` lo apaga (tests, o una corrida sin juez)."""
+    if (os.getenv("LAB_JUDGE") or "on").strip().lower() in {"off", "0", "false"}:
+        return None
+    from src.plugins.chats.agent.sales_eval.evals import composition
+
+    return composition.get_judge()
+
+
+def _jsonl_rows(raw: bytes | None) -> list[dict]:
+    out = []
+    for line in (raw or b"").decode("utf-8").splitlines():
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(item, dict):
+            out.append(item)
+    return out
+
+
+def _put_by_session(store: LabStorePort, prefix: str, records: list[dict]) -> None:
+    by_sid: dict[str, list[dict]] = {}
+    for rec in records:
+        by_sid.setdefault(str(rec.get("session_id")), []).append(rec)
+    for sid, rows in by_sid.items():
+        store.put_bytes(f"{prefix}/{sid}.jsonl", ("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n").encode())
+
+
+@activity.defn(name="lab_run_evaluate_arm")
+@with_heartbeat(every=10)
+async def evaluate_arm_activity(inp: EvaluateInput) -> EvaluateResult:
+    """Califica un brazo en una repetición con el scorecard en modo turno y
+    publica `scores/<brazo>/<rep>/<sesión>.jsonl`. A0 se re-mide con sus
+    propios turnos (el registro de producción queda en el resumen)."""
+    from src.plugins.chats.agent.sales_eval.scorecard.catalog_context import build_check_context
+
+    store = _store()
+    cases = _cases(inp.run_id)
+    bench_dir = _lab_root() / "bench" / inp.bench_id
+    prefix = f"runs/{inp.run_id}"
+    rows = None
+    if inp.arm != "A0":
+        sids = sorted({str(c["session_id"]) for c in cases})
+        rows = {
+            sid: _jsonl_rows(await asyncio.to_thread(store.get_bytes, f"{prefix}/turns/{inp.arm}/{inp.rep}/{sid}.jsonl"))
+            for sid in sids
+        }
+    ctx = await build_check_context(catalog=bench_catalog_client(bench_dir / "catalog"))
+    judge = _judge() if inp.judge else None
+    records = await score_arm(bench_dir, cases, arm=inp.arm, rep=inp.rep, rows=rows, ctx=ctx, judge=judge)
+    await asyncio.to_thread(_put_by_session, store, f"{prefix}/scores/{inp.arm}/{inp.rep}", records)
+    return EvaluateResult(episodes=len(records), judge_errors=sum(int(r.get("judge_errors") or 0) for r in records))
+
+
+def _read_arm(store: LabStorePort, prefix: str) -> list[dict]:
+    rows: list[dict] = []
+    for key in sorted(store.list_keys(prefix + "/")):
+        if key.endswith(".jsonl"):
+            rows.extend(_jsonl_rows(store.get_bytes(key)))
+    return rows
+
+
+def _summarize(store: LabStorePort, inp: SummarizeInput) -> SummarizeResult:
+    from src.plugins.chats.agent.sales_eval.scorecard.registry import CHECKS, REGISTRY_VERSION
+
+    prefix = f"runs/{inp.run_id}"
+    scores: dict[str, list[list[dict]]] = {}
+    rows: dict[str, list[list[dict]]] = {}
+    metrics: dict[str, list[dict]] = {}
+    for arm in inp.arms:
+        reps = 1 if arm == "A0" else inp.reps
+        scores[arm] = [_read_arm(store, f"{prefix}/scores/{arm}/{rep}") for rep in range(reps)]
+        if arm != "A0":
+            rows[arm] = [_read_arm(store, f"{prefix}/turns/{arm}/{rep}") for rep in range(reps)]
+            metrics[arm] = [
+                json.loads(raw) for rep in range(reps) if (raw := store.get_bytes(f"{prefix}/metrics/{arm}/{rep}.json"))
+            ]
+    previous = json.loads(store.get_bytes(f"{prefix}/summary.json") or b"{}")
+    production = _read_arm(store, f"{prefix}/production/scores")
+    code_checks = {c.id for c in CHECKS if c.kind == "code" and getattr(c, "focus", "turn") != "future"}
+    summary = build_summary(run_id=inp.run_id, registry_version=REGISTRY_VERSION, previous=previous, scores=scores,
+                            metrics=metrics, rows=rows, code_checks=code_checks, production_records=production)
+    store.put_bytes(f"{prefix}/summary.json", json.dumps(summary, ensure_ascii=False).encode())
+    index = json.loads(store.get_bytes(f"{prefix}/conversations.json") or b"[]")
+    store.put_bytes(f"{prefix}/conversations.json", json.dumps(with_verdicts(index, scores), ensure_ascii=False).encode())
+    notes = []
+    fid = summary.get("fidelity") or {}
+    if fid.get("agreement") is not None and not fid.get("ok"):
+        notes.append(
+            f"fidelidad del simulador {fid['agreement'] * 100:.0f} % (vara 90 %): A1 no reproduce bien a A0, "
+            "la comparación pierde valor"
+        )
+    if summary["judge"]["errors"]:
+        notes.append(f"{summary['judge']['errors']} llamadas al juez fallaron (esos checks quedan desconocidos)")
+    return SummarizeResult(notes=notes)
+
+
+@activity.defn(name="lab_run_summarize")
+async def summarize_activity(inp: SummarizeInput) -> SummarizeResult:
+    """Resumen de la corrida: gráficas por brazo, diferencias con intervalo,
+    fidelidad y arena (`summary.json`), y el veredicto de cada brazo en el
+    índice de conversaciones."""
+    return await asyncio.to_thread(_summarize, _store(), inp)
+
+
 LAB_RUN_ACTIVITIES = [
     prepare_run_activity,
     publish_control_activity,
@@ -214,4 +327,6 @@ LAB_RUN_ACTIVITIES = [
     publish_arm_activity,
     write_progress_activity,
     cancel_requested_activity,
+    evaluate_arm_activity,
+    summarize_activity,
 ]

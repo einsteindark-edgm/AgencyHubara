@@ -142,6 +142,10 @@ def publish_control(
         by_sid[str(card.get("session_id"))].append(card)
     for sid, rows in by_sid.items():
         store.put_bytes(f"{prefix}/scores/{CONTROL}/0/{sid}.jsonl", _jsonl(rows))
+        # Copia intacta del scorecard de producción: la evaluación re-mide A0
+        # en modo turno (y pisa `scores/A0/0/`); la validación §5.3 compara
+        # contra esta copia.
+        store.put_bytes(f"{prefix}/production/scores/{sid}.jsonl", _jsonl(rows))
     verdicts: dict[str, dict[str, str]] = defaultdict(dict)
     for card in cards:
         verdicts[str(card.get("session_id"))][str(card.get("episode_id"))] = str(card.get("verdict") or "SIN_DATOS")
