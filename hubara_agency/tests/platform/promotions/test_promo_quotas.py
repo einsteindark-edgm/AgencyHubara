@@ -16,6 +16,7 @@ from src.platform.promotions.quotas import (
     QuotaProduct,
     allocate_units,
     quota_id_for,
+    quota_product,
     validate_quota_rows,
     quota_exhausted,
     quota_statuses,
@@ -238,3 +239,12 @@ def test_same_combination_twice_is_rejected() -> None:
 
     assert [(e.row, e.field) for e in errors] == [(1, "product_id")]
     assert "repetida" in errors[0].message
+
+
+def test_quota_product_reads_closed_lists_from_catalog_tags() -> None:
+    product = quota_product(
+        "prod_cubo", "cubo-love", "Cubo Love",
+        ["Color: Rosado", "Aroma: Café", "color: rosado", "San Valentín"],
+    )
+
+    assert product == QuotaProduct("prod_cubo", "cubo-love", "Cubo Love", ["Rosado"], ["Café"])

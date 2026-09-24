@@ -16,6 +16,7 @@ from anyio import from_thread
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+from src.plugins.marketing.api.coupons import router as coupons_router
 from src.plugins.marketing.campaign_store import CampaignStore
 from src.plugins.marketing.carousel import CarouselError, resolve_campaign_carousel
 from src.plugins.marketing.domain.campaigns import (
@@ -39,6 +40,7 @@ from src.plugins.marketing.domain.campaigns import (
     segment_for_metadata,
 )
 from src.plugins.marketing.domain.contacts import normalize_phone, parse_contacts_file
+from src.plugins.marketing.domain.coupons import coupon_terms
 from src.plugins.marketing.domain.logic import health_payload
 from src.sdk import get_task_queue
 from src.sdk.connectorkit import (
@@ -59,6 +61,8 @@ from src.sdk.runtime import (
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+# Central de cupones (Marketing → Cupones): /coupons, /coupon-products.
+router.include_router(coupons_router)
 
 _SEGMENT_LABELS: dict[str, tuple[str, str]] = {
     "clientes": ("Clientes", "Ya compraron · alto valor"),
@@ -366,6 +370,20 @@ _COUPON_PROBLEM = {
 
 
 async def _validate_campaign_coupon(campaign: dict[str, Any]) -> None:
+    """Valida el cupón de la campaña y, si es válido, copia sus términos (el %
+    y el último día) a la campaña: la plantilla anuncia lo que dice el cupón,
+    no lo que tipeó el operador (central de cupones, Fase 7.1)."""
+    promotion = await _resolve_campaign_coupon(campaign)
+    if promotion is None:
+        return
+    terms = coupon_terms(promotion)
+    if any(campaign.get(k) != v for k, v in terms.items()):
+        campaign.update(terms)
+        campaign["updated_at_ms"] = _now_ms()
+        _store().save(campaign)
+
+
+async def _resolve_campaign_coupon(campaign: dict[str, Any]) -> Any:
     """El cupón que anuncia la campaña tiene que existir y regir en Medusa —
     el mismo chequeo que hace el bot con `apply_coupon`. Incidente
     2026-09-22: la campaña anunció "AMOR" y el código real era AMOR26, así
@@ -374,7 +392,7 @@ async def _validate_campaign_coupon(campaign: dict[str, Any]) -> None:
 
     code = (campaign.get("coupon_code") or "").strip()
     if not code:
-        return
+        return None
     port = get_promotions_port()
     try:
         promotions = list(await port.list_active())
@@ -390,6 +408,7 @@ async def _validate_campaign_coupon(campaign: dict[str, Any]) -> None:
     if not resolution.ok:
         problem = _COUPON_PROBLEM.get(resolution.reason or "", "no se puede usar")
         raise HTTPException(status_code=422, detail=f"El cupón {code} {problem}")
+    return resolution.promotion
 
 
 @router.get("/promotions")

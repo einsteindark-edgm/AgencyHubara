@@ -11,7 +11,11 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from src.platform.catalog.variant_attrs import match_option, normalize_label
+from src.platform.catalog.variant_attrs import (
+    match_option,
+    normalize_label,
+    parse_variant_tags,
+)
 
 
 @dataclass(frozen=True)
@@ -256,3 +260,10 @@ def validate_quota_rows(
             )
         )
     return quotas, errors
+
+
+def quota_product(product_id: str, handle: str, title: str, tags: list[str] | None) -> QuotaProduct:
+    """Producto del catálogo → sus listas cerradas de color y aroma (tags
+    "Color: X" / "Aroma: Y", las mismas que usa el bot)."""
+    attrs = parse_variant_tags(list(tags or []))
+    return QuotaProduct(product_id, handle, title, list(attrs.colors), list(attrs.aromas))

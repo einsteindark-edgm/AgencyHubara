@@ -131,6 +131,32 @@ def _extract_token(request: Request) -> str:
     ).strip()
 
 
+#: Nombre del atributo en `request.state` donde `require_auth` deja QUIÉN
+#: pasó la auth (usuario Cognito, "service" o "local" en dev).
+ACTOR_STATE_KEY = "hubara_actor"
+#: Sin auth en la ruta no hay actor: se dice, no se inventa.
+UNKNOWN_ACTOR = "desconocido"
+
+
+def _set_actor(request: Any, actor: str) -> None:
+    state = getattr(request, "state", None)
+    if state is not None:
+        setattr(state, ACTOR_STATE_KEY, actor)
+
+
+def current_actor(request: Any) -> str:
+    """Quién hace este request, VERIFICADO por `require_auth`.
+
+    Es la identidad para registros de cambios (central de cupones, D6): el
+    `username` del access token de Cognito (o su `sub`), ``"service"`` para
+    el token M2M, ``"local"`` en dev sin Cognito. Nunca sale del cuerpo del
+    request. Sin `require_auth` en la ruta devuelve ``"desconocido"``.
+    """
+    state = getattr(request, "state", None)
+    actor = getattr(state, ACTOR_STATE_KEY, None) if state is not None else None
+    return actor if isinstance(actor, str) and actor else UNKNOWN_ACTOR
+
+
 def require_auth(request: Request) -> None:
     """Dependency: exige auth válida para las rutas del dashboard.
 
@@ -160,6 +186,7 @@ def require_auth(request: Request) -> None:
         and header_token
         and secrets.compare_digest(header_token, service_token)
     ):
+        _set_actor(request, "service")
         return
 
     # 1b. Ticket SSE (SEC-06): el stream `/events` no puede mandar header, así
@@ -182,6 +209,7 @@ def require_auth(request: Request) -> None:
                 status_code=503,
                 detail="Auth no configurada: COGNITO_* ausente en producción",
             )
+        _set_actor(request, "local")
         return
 
     # 3. Cognito configurado → validar el access-token (header o query para SSE).
@@ -189,8 +217,9 @@ def require_auth(request: Request) -> None:
     if not token:
         raise HTTPException(status_code=401, detail="Falta el bearer token")
     try:
-        _verify_token(token)
+        claims = _verify_token(token)
     except HTTPException:
         raise
     except Exception as exc:  # firma / exp / issuer / claims inválidos
         raise HTTPException(status_code=401, detail="Token inválido") from exc
+    _set_actor(request, str(claims.get("username") or claims.get("sub") or UNKNOWN_ACTOR))
