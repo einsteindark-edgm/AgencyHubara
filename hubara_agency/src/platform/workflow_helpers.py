@@ -215,6 +215,14 @@ class TurnResult:
     # Run 28a8e407: el texto final traía un párrafo de razonamiento y
     # `final_content` ya es solo lo rescatable (lo mismo que quedó grabado).
     salvaged_leak: bool = False
+    # Traza v2 (plan del laboratorio §4.1): lo que pasó en el turno, EN ORDEN
+    # — cada `llm_chat` (ronda, fin, tools pedidas, tokens, qué pasó con su
+    # texto), cada `execute_tool` (`event` = índice en `tool_events`), cada
+    # corte y cada guarda del helper. `at_ms` absoluto (reloj del workflow);
+    # el caller lo relativiza al armar la traza. Lista en memoria: no agrega
+    # commands a la history (replay-safe sin patch). También viaja en el
+    # resultado interrumpido (Checkpoint A): el intento abortado se ve.
+    steps: list[dict[str, Any]] = field(default_factory=list)
 
 
 # Tope del resultado de cada tool que viaja en `TurnResult.tool_events`: el
@@ -291,6 +299,11 @@ PRESENTATIONAL_TOOLS: frozenset[str] = TURN_ENDING_TOOLS | frozenset(
 # ya NO admite restart limpio (Fase 1 interrupción): el cliente vio (o verá)
 # algo de este turno.
 _OUTBOUND_TOOL_PREFIXES: tuple[str, ...] = ("present_", "send_", "request_")
+
+
+def _now_ms() -> int:
+    """Reloj del workflow en ms (determinista en replay)."""
+    return int(workflow.now().timestamp() * 1000)
 
 
 def _ends_turn(tool_names: list[str], *, version: int = 1) -> bool:
@@ -723,6 +736,8 @@ async def _run_agent_turn_impl(
     # `send_reply` que SÍ salieron: tool_call_id → texto enviado (el
     # historial guarda eso, no el borrador que mandó el modelo).
     delivered_replies: dict[str, str] = {}
+    # Traza v2: pasos del turno en orden (ver `TurnResult.steps`).
+    steps: list[dict[str, Any]] = []
     # L-11 (run b730c006): corte de turno en tools que esperan al cliente +
     # descarte del content que acompaña tools internas. Gated: ambos cambian la
     # cantidad de commands del turno (menos llm_chat/execute_tool; menos sends
@@ -759,6 +774,7 @@ async def _run_agent_turn_impl(
     while iteration < session.llm.max_iterations:
         iteration += 1
 
+        llm_started_ms = _now_ms()
         response = await workflow.execute_activity(
             llm_chat,
             LLMChatInput(
@@ -777,6 +793,18 @@ async def _run_agent_turn_impl(
             turn_completion_tokens += int(
                 response.usage.get("completion_tokens", 0) or 0
             )
+        llm_step: dict[str, Any] = {
+            "kind": "llm",
+            "at_ms": llm_started_ms,
+            "dur_ms": _now_ms() - llm_started_ms,
+            "round": iteration,
+            "finish": response.finish_reason,
+            "tool_calls": [tc.name for tc in response.tool_calls or []],
+            "tokens_in": int((response.usage or {}).get("prompt_tokens", 0) or 0) or None,
+            "tokens_out": int((response.usage or {}).get("completion_tokens", 0) or 0) or None,
+            "text_fate": "none",
+        }
+        steps.append(llm_step)
 
         # Checkpoint A — restart limpio (Fase 1, caso contra-entrega del run
         # eda8d460): el cliente escribió MIENTRAS el LLM pensaba y este turno
@@ -799,8 +827,9 @@ async def _run_agent_turn_impl(
                 "turno interrumpido pre-outbound (corrientazo): llegó mensaje "
                 "nuevo del cliente; el caller recompone el batch y relanza"
             )
+            steps.append({"kind": "cut", "at_ms": _now_ms(), "reason": "checkpoint_a"})
             return TurnResult(
-                final_content="", tools_used=tools_used, interrupted=True
+                final_content="", tools_used=tools_used, interrupted=True, steps=steps
             )
 
         if response.has_tool_calls:
@@ -834,7 +863,9 @@ async def _run_agent_turn_impl(
             if response.content:
                 sanitized_pre = sanitize_llm_text(response.content)
                 if sanitized_pre.text:
+                    llm_step["text"] = sanitized_pre.text
                     if workflow.patched("no-pre-tool-forward-v1"):
+                        llm_step["text_fate"] = "discarded_default_deny"
                         discarded_narration.append(sanitized_pre.text)
                         workflow.logger.info(
                             "pre-tool content descartado (default-deny: el texto "
@@ -842,8 +873,10 @@ async def _run_agent_turn_impl(
                             f"{batch_tool_names}): {sanitized_pre.text[:120]!r}"
                         )
                     elif not turn_cut_v1 or _keeps_pre_tool_content(batch_tool_names):
+                        llm_step["text_fate"] = "pre_tool_message"
                         pre_tool_messages.append(sanitized_pre.text)
                     else:
+                        llm_step["text_fate"] = "discarded_internal_tools"
                         workflow.logger.info(
                             "pre-tool content descartado (narración junto a tools "
                             f"internas {batch_tool_names}): {sanitized_pre.text[:120]!r}"
@@ -859,6 +892,7 @@ async def _run_agent_turn_impl(
                     outbound_tool_texts.extend(
                         v for v in tc.arguments.values() if isinstance(v, str)
                     )
+                tool_started_ms = _now_ms()
                 result = await workflow.execute_activity(
                     execute_tool,
                     ExecuteToolInput(
@@ -878,6 +912,16 @@ async def _run_agent_turn_impl(
                         "result": result[:_TOOL_EVENT_RESULT_MAX]
                         if isinstance(result, str)
                         else "",
+                    }
+                )
+                steps.append(
+                    {
+                        "kind": "tool",
+                        "at_ms": tool_started_ms,
+                        "dur_ms": _now_ms() - tool_started_ms,
+                        "name": tc.name,
+                        "call_id": tc.id,
+                        "event": len(tool_events) - 1,
                     }
                 )
 
@@ -1004,6 +1048,9 @@ async def _run_agent_turn_impl(
                 "escalation-ends-turn-v1"
             ):
                 final_content = sanitize_llm_text(escalation_farewell).text
+                steps.append(
+                    {"kind": "cut", "at_ms": _now_ms(), "reason": "escalation", "text": final_content}
+                )
                 if final_content:
                     messages = [
                         *messages,
@@ -1030,7 +1077,14 @@ async def _run_agent_turn_impl(
                     workflow.logger.info(
                         f"turno terminado por send_reply ({batch_tool_names})"
                     )
+                    steps.append(
+                        {"kind": "cut", "at_ms": _now_ms(), "reason": "send_reply", "text": final_content}
+                    )
                     break
+                steps.append(
+                    {"kind": "guard", "at_ms": _now_ms(), "name": "send_reply_retry",
+                     "before": "\n\n".join(batch_reply_texts), "after": ""}
+                )
                 for call_id in [
                     tc.id for tc in response.tool_calls if tc.id in delivered_replies
                 ]:
@@ -1078,10 +1132,16 @@ async def _run_agent_turn_impl(
                         f"turno cortado: {batch_tool_names} espera respuesta del cliente"
                     )
                     final_content = ""
+                    steps.append(
+                        {"kind": "cut", "at_ms": _now_ms(), "reason": "awaits_customer", "tools": batch_tool_names}
+                    )
                     break
                 workflow.logger.info(
                     f"sin corte: {batch_tool_names} se negó y no mostró nada al "
                     "cliente; el modelo lee el rechazo"
+                )
+                steps.append(
+                    {"kind": "guard", "at_ms": _now_ms(), "name": "no_cut_tool_rejected", "tools": batch_tool_names}
                 )
 
             # El tag AUTOSUFICIENTE termina el turno (run b06636a6, 2026-09-18).
@@ -1138,6 +1198,9 @@ async def _run_agent_turn_impl(
                     f"turno terminado por cierre de tag ({batch_tool_names}; "
                     f"admin={admin_turn}, con_texto={bool(final_content)})"
                 )
+                steps.append(
+                    {"kind": "cut", "at_ms": _now_ms(), "reason": "tag_closure", "text": final_content}
+                )
                 break
         else:
             # ── Empty-content recovery (post-mortem run df5a8fe2-bb7c-4627-b861-dc19643467be) ──
@@ -1186,6 +1249,7 @@ async def _run_agent_turn_impl(
                         ),
                     },
                 ]
+                steps.append({"kind": "guard", "at_ms": _now_ms(), "name": "empty_content_nudge"})
                 # Continue the loop — next iteration retries llm_chat.
                 continue
 
@@ -1206,6 +1270,13 @@ async def _run_agent_turn_impl(
                     },
                 )
             final_content = sanitized.text
+            llm_step["text_fate"] = "final"
+            llm_step["text"] = final_content
+            if sanitized.changed:
+                steps.append(
+                    {"kind": "guard", "at_ms": _now_ms(), "name": "sanitizer", "before": raw_content,
+                     "after": final_content, "actions": list(sanitized.actions)}
+                )
             # Final empty-content fallback: model failed to recover even after
             # the nudge (or we hit max_iterations). Use a HUMAN-sounding
             # natural recovery line that mirrors what a real seller would say
@@ -1234,6 +1305,9 @@ async def _run_agent_turn_impl(
                         },
                     )
                     final_content = "¡Perdón! Justo se me cortó un segundito. ¿Me repites lo que necesitabas?"
+                    steps.append(
+                        {"kind": "guard", "at_ms": _now_ms(), "name": "fallback_line", "before": "", "after": final_content}
+                    )
                 else:
                     workflow.logger.info(
                         "LLM final response vacío en turno proactivo — se "
@@ -1255,6 +1329,9 @@ async def _run_agent_turn_impl(
                     "el LLM componía el texto final (se procesa en el "
                     "siguiente turno)"
                 )
+                steps.append(
+                    {"kind": "cut", "at_ms": _now_ms(), "reason": "checkpoint_b", "text": final_content}
+                )
                 final_content = ""
                 break
 
@@ -1271,6 +1348,10 @@ async def _run_agent_turn_impl(
             "¡Perdón! Justo se me cortó un segundito. ¿Me repites lo que necesitabas?"
             if fabricate_fallback_on_empty
             else ""
+        )
+        steps.append(
+            {"kind": "guard", "at_ms": _now_ms(), "name": "fallback_line",
+             "reason": "max_iterations", "before": "", "after": final_content}
         )
 
     # Lo que NO salió, el LLM no lo recuerda (runs b06636a6 → 5ed9af2d).
@@ -1320,6 +1401,10 @@ async def _run_agent_turn_impl(
                 f"de razonamiento): {final_content[:120]!r}"
             )
             discarded_narration.append(final_content)
+            steps.append(
+                {"kind": "guard", "at_ms": _now_ms(), "name": "salvage_leak",
+                 "before": final_content, "after": salvaged}
+            )
             if (
                 recorded
                 and recorded[-1].get("role") == "assistant"
@@ -1409,4 +1494,5 @@ async def _run_agent_turn_impl(
         tool_events=tool_events,
         discarded_narration=discarded_narration,
         salvaged_leak=salvaged_leak,
+        steps=steps,
     )

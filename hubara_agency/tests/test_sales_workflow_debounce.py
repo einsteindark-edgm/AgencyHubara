@@ -37,6 +37,7 @@ from exoclaw_temporal.config import (
 from src.platform.contracts import PaymentPendingClosureResult
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.llm_history_reset import ResetLLMHistoryInput
+from src.platform.observability.cost_attribution import RecordEpisodeLLMUsageInput
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 
 SALES_QUEUE = get_task_queue("chats", "sales")
@@ -101,6 +102,8 @@ def _make_fake_activities(
     payment_closure_result: PaymentPendingClosureResult | None = None,
     closing_escalation_result: bool = False,
     variant_guard_result: bool = False,
+    send_returns_none: bool = False,
+    flush_results: list[dict] | None = None,
 ):
     """Crea las activities fakes con `tracker` cerrado en closure.
 
@@ -146,11 +149,13 @@ def _make_fake_activities(
     async def fake_read_idle_timeout(session_id: str) -> int:
         return 60
 
+    # Traza v2: el flush devuelve lo que entregó (`[{kind, wamid, ok}]`). Las
+    # histories viejas traen un int: el workflow acepta las dos formas.
     @activity.defn(name="flush_pending_ui_intents_activity")
-    async def fake_flush_ui_intents(session_id: str) -> int:
+    async def fake_flush_ui_intents(session_id: str) -> list[dict]:
         tracker.flush_calls += 1
         tracker.timeline.append("flush")
-        return 0
+        return list(flush_results or [])
 
     @activity.defn(name="flush_capi_outbox_activity")
     async def fake_flush_capi_outbox(session_id: str) -> dict:
@@ -218,10 +223,15 @@ def _make_fake_activities(
         tracker.record_turn_calls += 1
         tracker.record_turn_new_messages.append(list(input.new_messages))
 
+    # Traza v2: el envío devuelve las burbujas entregadas con su wamid. Con
+    # `send_returns_none` se simula la forma vieja (histories previas: None).
     @activity.defn(name="send_whatsapp_message_activity")
-    async def fake_send_whatsapp(session_id: str, message: str) -> None:
+    async def fake_send_whatsapp(session_id: str, message: str) -> list[dict] | None:
         tracker.send_whatsapp_calls.append((session_id, message))
         tracker.timeline.append(f"send:{message}")
+        if send_returns_none:
+            return None
+        return [{"wamid": f"wamid.out{len(tracker.send_whatsapp_calls)}", "text": message}]
 
     @activity.defn(name="persist_assistant_message_activity")
     async def fake_persist(
@@ -307,7 +317,13 @@ def _make_fake_activities(
         tracker.turn_traces.append(json.loads(payload_json))
         return True
 
+    # Costo del turno al episodio: solo corre cuando el LLM reporta `usage`.
+    @activity.defn(name="record_episode_llm_usage")
+    async def fake_record_episode_llm_usage(input: RecordEpisodeLLMUsageInput) -> None:
+        return None
+
     return [
+        fake_record_episode_llm_usage,
         fake_persist_turn_trace,
         fake_variant_guard,
         fake_first_contact_greeting,
