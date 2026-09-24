@@ -40,6 +40,28 @@ CONTROL = "A0"
 _MERGED_LISTS = ("sent_texts", "tools", "guards")
 
 
+def evaluation_chunk(
+    cases: list[dict[str, Any]], offset: int, *, max_turns: int
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Un pedazo de la evaluación: las sesiones (en orden) desde la `offset`
+    que caben en `max_turns` turnos, y la sesión donde empieza el siguiente
+    (None = no queda nada). Una sesión nunca se parte: sus episodios se
+    publican juntos (`scores/<brazo>/<rep>/<sesión>.jsonl`)."""
+    by_sid: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for case in cases:
+        by_sid[str(case["session_id"])].append(case)
+    sids = sorted(by_sid)
+    chunk: list[dict[str, Any]] = []
+    index = max(0, offset)
+    while index < len(sids):
+        size = len(by_sid[sids[index]])
+        if chunk and len(chunk) + size > max_turns:
+            break
+        chunk.extend(by_sid[sids[index]])
+        index += 1
+    return chunk, (index if index < len(sids) else None)
+
+
 def candidate_turn(row: Mapping[str, Any]) -> Turn:
     """El turno simulado, con su complemento (si hubo) como parte de la respuesta."""
     merged = dict(row)

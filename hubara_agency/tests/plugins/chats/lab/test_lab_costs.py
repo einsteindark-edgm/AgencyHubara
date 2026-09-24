@@ -2,7 +2,8 @@
 
 Números del plan: el agente gastó US$7,09 en los 91 episodios reales (~404
 turnos) y el juez ~US$30 en una corrida de decisión. Corrida de decisión
-(A1, B y C × 3) ≈ US$95; corrida rápida (A1 y un bot nuevo × 1) ≈ US$20.
+(A1, B y C × 3) ≈ US$97; corrida rápida (A1 y un bot nuevo × 1) ≈ US$24,
+contando la pasada del juez sobre el control real (A0).
 La API no deja lanzar lo que no cabe en el tope por corrida ni en lo que
 queda del mes.
 """
@@ -22,19 +23,20 @@ from src.sdk.labkit import FilesystemLabStore
 SEP_23 = 1_790_208_000_000  # 2026-09-24T00:00Z ≈ 23-sep 19:00 Bogotá
 
 
-def test_decision_run_costs_about_95_dollars() -> None:
-    assert estimate_run_usd(["A1", "B", "C"], reps=3, turns=400) == pytest.approx(95, abs=5)
+def test_decision_run_costs_about_97_dollars() -> None:
+    assert estimate_run_usd(["A1", "B", "C"], reps=3, turns=400) == pytest.approx(97, abs=5)
 
 
-def test_quick_run_costs_about_20_dollars() -> None:
-    assert estimate_run_usd(["A1", "C"], reps=1, turns=400) == pytest.approx(20, abs=2)
+def test_quick_run_costs_about_24_dollars() -> None:
+    assert estimate_run_usd(["A1", "C"], reps=1, turns=400) == pytest.approx(24, abs=2)
 
 
 def test_estimate_scales_with_turns_and_arms() -> None:
-    one = estimate_run_usd(["A1"], reps=1, turns=100)
+    """Los bots y las repeticiones escalan; la pasada del juez sobre A0 es una sola."""
+    one = estimate_run_usd(["A1"], reps=1, turns=100, control=False)
 
-    assert estimate_run_usd(["A1"], reps=1, turns=200) == pytest.approx(2 * one)
-    assert estimate_run_usd(["A1", "B"], reps=3, turns=100) > 6 * one * 0.99
+    assert estimate_run_usd(["A1"], reps=1, turns=200, control=False) == pytest.approx(2 * one)
+    assert estimate_run_usd(["A1", "B"], reps=3, turns=100, control=False) > 6 * one * 0.99
 
 
 def _progress(store, run_id: str, started_ms: int, spent: float) -> None:

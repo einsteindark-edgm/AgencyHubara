@@ -26,6 +26,15 @@ describe("textos del Resumen", () => {
     expect(conclusion("A1", "B", unsure)).toEqual({ tone: "neutral", text: "Aún no concluyente: el intervalo cruza el cero" });
   });
 
+  it("con pocas conversaciones en común no hay conclusión aunque el intervalo no cruce el cero", () => {
+    const few = { delta: 0.3, low: 0.1, high: 0.5, conclusive: false, sessions: 9 };
+
+    expect(conclusion("A1", "B", few)).toEqual({
+      tone: "neutral",
+      text: "Aún no concluyente: 9 conversaciones en común son pocas (hacen falta 15)",
+    });
+  });
+
   it("los checks que más se movieron primero, con los concluyentes antes", () => {
     const rows = [
       { check_id: "A", delta: 0.02, low: -0.1, high: 0.1, conclusive: false, sessions: 10 },

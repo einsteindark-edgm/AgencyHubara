@@ -9,6 +9,9 @@ LAB_TASK_QUEUE = "queue-sales-lab"  # solo existe en el Temporal de la caja (nam
 @dataclass(frozen=True)
 class LabRunInput:
     run_id: str
+    # Eventos de historia a partir de los cuales la corrida deja de simular y
+    # califica lo que alcanzó: Temporal corta un workflow en 51.200 eventos.
+    history_limit: int = 40_000
 
 
 @dataclass(frozen=True)
@@ -83,19 +86,24 @@ class ArmPublishResult:
 
 @dataclass(frozen=True)
 class EvaluateInput:
-    """Calificar un brazo en una repetición (modo turno, PR 13)."""
+    """Calificar un pedazo de un brazo en una repetición (modo turno, PR 13):
+    las sesiones que caben en el pedazo desde la `offset` (en orden)."""
 
     run_id: str
     bench_id: str
     arm: str
     rep: int
     judge: bool = True
+    offset: int = 0
 
 
 @dataclass(frozen=True)
 class EvaluateResult:
     episodes: int
     judge_errors: int = 0
+    turns: int = 0  # turnos calificados en el pedazo
+    judge_usd: float = 0.0  # lo que gastó el juez en el pedazo
+    next_offset: int | None = None  # None = el brazo quedó calificado
 
 
 @dataclass(frozen=True)
@@ -103,6 +111,10 @@ class SummarizeInput:
     run_id: str
     arms: list[str]
     reps: int
+    # Repeticiones calificadas por brazo (el tope o el límite de la corrida
+    # pueden cortar antes de `reps`) y los bots que no alcanzaron a simularse.
+    reps_by_arm: dict[str, int] = field(default_factory=dict)
+    arms_pending: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

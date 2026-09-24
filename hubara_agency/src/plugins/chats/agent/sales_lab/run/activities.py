@@ -20,7 +20,7 @@ from temporalio.exceptions import ApplicationError
 
 from src.plugins.chats.agent.sales_lab.arms import ARM_PROFILES
 from src.plugins.chats.agent.sales_lab.cases import build_cases
-from src.plugins.chats.agent.sales_lab.launch.costs import AGENT_USD_PER_TURN
+from src.plugins.chats.agent.sales_lab.launch.costs import AGENT_USD_PER_TURN, JUDGE_USD_PER_TURN
 from src.plugins.chats.agent.sales_lab.run.contracts import (
     ArmPublishInput,
     ArmPublishResult,
@@ -35,7 +35,7 @@ from src.plugins.chats.agent.sales_lab.run.contracts import (
     SummarizeInput,
     SummarizeResult,
 )
-from src.plugins.chats.agent.sales_lab.run.evaluate import score_arm
+from src.plugins.chats.agent.sales_lab.run.evaluate import evaluation_chunk, score_arm
 from src.plugins.chats.agent.sales_lab.run.publish import publish_arm, publish_control
 from src.plugins.chats.agent.sales_lab.run.summary import build_summary, with_verdicts
 from src.plugins.chats.agent.sales_lab.sandbox.process import run_case_in_subprocess
@@ -45,6 +45,9 @@ from src.sdk.runtime import with_heartbeat
 SALES_WORKSPACE = "app-hubara-agency-src-plugins-chats-agent-sales-workspace"
 SMOKE_TIMEOUT_S = 600.0
 CASE_TIMEOUT_S = 600.0
+#: Turnos por pedazo de la evaluación (sesiones enteras): con juez, ~3–5 min;
+#: la caja reporta avance al terminar cada uno (`LAB_EVAL_CHUNK_TURNS`).
+EVAL_CHUNK_TURNS = 12
 
 
 def _cases(run_id: str) -> list[dict]:
@@ -289,16 +292,27 @@ def _put_by_session(store: LabStorePort, prefix: str, records: list[dict]) -> No
         store.put_bytes(f"{prefix}/{sid}.jsonl", ("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n").encode())
 
 
+def _eval_chunk_turns() -> int:
+    try:
+        return max(1, int(os.getenv("LAB_EVAL_CHUNK_TURNS") or EVAL_CHUNK_TURNS))
+    except ValueError:
+        return EVAL_CHUNK_TURNS
+
+
 @activity.defn(name="lab_run_evaluate_arm")
 @with_heartbeat(every=10)
 async def evaluate_arm_activity(inp: EvaluateInput) -> EvaluateResult:
-    """Califica un brazo en una repetición con el scorecard en modo turno y
-    publica `scores/<brazo>/<rep>/<sesión>.jsonl`. A0 se re-mide con sus
-    propios turnos (el registro de producción queda en el resumen)."""
+    """Califica un PEDAZO de un brazo en una repetición (sesiones enteras
+    desde `offset`) con el scorecard en modo turno y publica
+    `scores/<brazo>/<rep>/<sesión>.jsonl`. A0 se re-mide con sus propios
+    turnos (el registro de producción queda en el resumen). Por pedazos: con
+    juez, un brazo entero tarda ~1 h, y la caja tiene que reportar avance
+    antes de que el lanzador la dé por caída; un reintento repite solo el
+    pedazo. El juez se cobra a la tarifa medida por turno calificado."""
     from src.plugins.chats.agent.sales_eval.scorecard.catalog_context import build_check_context
 
     store = _store()
-    cases = _cases(inp.run_id)
+    cases, next_offset = evaluation_chunk(_cases(inp.run_id), inp.offset, max_turns=_eval_chunk_turns())
     bench_dir = _lab_root() / "bench" / inp.bench_id
     prefix = f"runs/{inp.run_id}"
     rows = None
@@ -312,7 +326,14 @@ async def evaluate_arm_activity(inp: EvaluateInput) -> EvaluateResult:
     judge = _judge() if inp.judge else None
     records = await score_arm(bench_dir, cases, arm=inp.arm, rep=inp.rep, rows=rows, ctx=ctx, judge=judge)
     await asyncio.to_thread(_put_by_session, store, f"{prefix}/scores/{inp.arm}/{inp.rep}", records)
-    return EvaluateResult(episodes=len(records), judge_errors=sum(int(r.get("judge_errors") or 0) for r in records))
+    turns = sum(len(r.get("by_turn") or []) for r in records)
+    return EvaluateResult(
+        episodes=len(records),
+        judge_errors=sum(int(r.get("judge_errors") or 0) for r in records),
+        turns=turns,
+        judge_usd=round(JUDGE_USD_PER_TURN * turns, 6) if judge is not None else 0.0,
+        next_offset=next_offset,
+    )
 
 
 def _read_arm(store: LabStorePort, prefix: str) -> list[dict]:
@@ -331,7 +352,7 @@ def _summarize(store: LabStorePort, inp: SummarizeInput) -> SummarizeResult:
     rows: dict[str, list[list[dict]]] = {}
     metrics: dict[str, list[dict]] = {}
     for arm in inp.arms:
-        reps = 1 if arm == "A0" else inp.reps
+        reps = inp.reps_by_arm.get(arm, 1 if arm == "A0" else inp.reps)
         scores[arm] = [_read_arm(store, f"{prefix}/scores/{arm}/{rep}") for rep in range(reps)]
         if arm != "A0":
             rows[arm] = [_read_arm(store, f"{prefix}/turns/{arm}/{rep}") for rep in range(reps)]
@@ -342,7 +363,8 @@ def _summarize(store: LabStorePort, inp: SummarizeInput) -> SummarizeResult:
     production = _read_arm(store, f"{prefix}/production/scores")
     code_checks = {c.id for c in CHECKS if c.kind == "code" and getattr(c, "focus", "turn") != "future"}
     summary = build_summary(run_id=inp.run_id, registry_version=REGISTRY_VERSION, previous=previous, scores=scores,
-                            metrics=metrics, rows=rows, code_checks=code_checks, production_records=production)
+                            metrics=metrics, rows=rows, code_checks=code_checks, production_records=production,
+                            arms_pending=list(inp.arms_pending))
     store.put_bytes(f"{prefix}/summary.json", json.dumps(summary, ensure_ascii=False).encode())
     index = json.loads(store.get_bytes(f"{prefix}/conversations.json") or b"[]")
     store.put_bytes(f"{prefix}/conversations.json", json.dumps(with_verdicts(index, scores), ensure_ascii=False).encode())

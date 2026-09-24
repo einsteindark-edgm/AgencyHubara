@@ -25,6 +25,12 @@ describe("lib del laboratorio", () => {
     expect(worstVerdict([])).toBe("SIN_DATOS");
   });
 
+  it("el costo por turno se ve con 4 decimales (el clasificador cuesta US$0,0002)", () => {
+    expect(formatUsd(0.0192, 4)).toBe("US$0,0192");
+    expect(formatUsd(0.0002, 4)).toBe("US$0,0002");
+    expect(formatUsd(0.0002)).toBe("US$0");
+  });
+
   it("formatea dólares con coma decimal", () => {
     expect(formatUsd(95)).toBe("US$95");
     expect(formatUsd(3.214)).toBe("US$3,21");

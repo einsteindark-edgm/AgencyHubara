@@ -4,9 +4,13 @@ Lo publica la caja en `runs/<corrida>/summary.json`; la API lo sirve por
 `/lab/runs/{corrida}/summary?arm=` y `/diff?base=&cand=`.
 
   arms.<brazo>     la MISMA forma que Calidad LLM (`stats.compute_stats`) en
-                   modo turno, + pass^k sobre las repeticiones
+                   modo turno, + pass^k sobre las repeticiones. Un episodio
+                   sin turnos calificados (no se alcanzó a simular) no cuenta
+  arms_pending     bots pedidos que la corrida no alcanzó a simular (tope de
+                   gasto o límite de la corrida): pendientes, no fallas
   production       lo que decía el scorecard de producción (modo episodio),
-                   como referencia (lo publicó el control, PR 8)
+                   como referencia (lo publicó el control, PR 8; un reintento
+                   del resumen la conserva)
   diffs            "A0:A1" (fidelidad) y "A1:B", "A1:C" (base = bot actual)
   fidelity         A1 contra A0 en checks de código, turno por turno
   arena.<brazo>    bots nuevos: métricas de la corrida (PR 15) y acuerdo /
@@ -34,7 +38,7 @@ Records = list[list[dict[str, Any]]]
 
 
 def _arm_stats(reps: Records) -> dict[str, Any]:
-    rows = [arm_row(r) for r in (reps[0] if reps else [])]
+    rows = [arm_row(r) for r in (reps[0] if reps else []) if r.get("by_turn")]
     dates = sorted(str(r.get("episode_date") or "") for r in rows if r.get("episode_date"))
     weeks = stats.weeks_between(dates[0], dates[-1]) if dates else []
     return {"reps": len(reps), "mode": "turn", **stats.compute_stats(rows, weeks=weeks), "pass_k": pass_k(reps)}
@@ -76,6 +80,7 @@ def build_summary(
     rows: Mapping[str, Records],
     code_checks: set[str],
     production_records: list[dict[str, Any]] | None = None,
+    arms_pending: list[str] | None = None,
 ) -> dict[str, Any]:
     arms = {arm: _arm_stats(reps) for arm, reps in scores.items()}
     base = CURRENT if CURRENT in scores else CONTROL
@@ -86,14 +91,19 @@ def build_summary(
         if cand in scores and base in scores:
             diffs[f"{base}:{cand}"] = diff_entry(base, cand, scores[base], scores[cand])
     previous_arms = previous.get("arms") or {}
+    # El control publicó `arms.A0` (producción); un resumen ya escrito la trae
+    # en `production` y su `arms.A0` es el re-medido: el reintento no la pisa.
+    if "production" in previous:
+        production = previous.get("production")
+    else:
+        production = previous_arms.get(CONTROL) if isinstance(previous_arms, Mapping) else None
     return {
         "run_id": run_id,
         "registry_version": registry_version,
         "mode": "turn",
         "arms": arms,
-        "arms_pending": [],
-        "production": previous_arms.get(CONTROL) if isinstance(previous_arms, Mapping) and CONTROL in previous_arms
-        else previous.get("production"),
+        "arms_pending": [a for a in (arms_pending or []) if a not in scores],
+        "production": production,
         "diffs": diffs,
         "fidelity": fidelity(scores[CONTROL][0], scores[CURRENT], code_checks=code_checks)
         if CONTROL in scores and CURRENT in scores and scores[CONTROL]

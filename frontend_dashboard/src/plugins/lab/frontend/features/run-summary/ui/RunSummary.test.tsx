@@ -135,6 +135,45 @@ describe("RunSummary", () => {
     expect(row).toHaveTextContent("85 %");
   });
 
+  it("la arena muestra el costo por turno con 4 decimales", async () => {
+    renderTab();
+
+    const arena = await screen.findByRole("region", { name: "Arena de clasificadores" });
+    expect(within(arena).getByRole("row", { name: /Nuevo \+ Jev/ })).toHaveTextContent("US$0,019");
+  });
+
+  it("un bot que la corrida no alcanzó a simular queda pendiente, no como falla", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const u = String(url);
+      if (u.endsWith(`/runs/${RUN}/report`)) return json({ ...REPORT, arms_pending: ["C"] });
+      if (u.includes(`/runs/${RUN}/summary?arm=A1`)) return json(summary(20));
+      return json({ detail: "no" }, 404);
+    });
+    renderTab();
+
+    expect(await screen.findByText(/Nuevo \+ OpenAI: la corrida no alcanzó a simularlo/)).toBeInTheDocument();
+  });
+
+  it("el Pareto del laboratorio habla de la corrida, no de días", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const u = String(url);
+      if (u.endsWith(`/runs/${RUN}/report`)) return json(REPORT);
+      if (u.includes(`/runs/${RUN}/summary?arm=A1`)) return json({ ...summary(20), pareto: [] });
+      return json({ detail: "no" }, 404);
+    });
+    renderTab();
+
+    expect(await screen.findByText("Ningún check falló en esta corrida.")).toBeInTheDocument();
+  });
+
+  it("la tabla de checks dice qué hace falta para ser concluyente", async () => {
+    renderTab();
+
+    const cmp = await screen.findByRole("region", { name: "Comparación" });
+    expect(await within(cmp).findByText(/al menos 15 conversaciones/)).toBeInTheDocument();
+    expect(within(cmp).getByText(/comparaciones múltiples \(Holm\)/)).toBeInTheDocument();
+  });
+
   it("elegir un veredicto lleva a las conversaciones", async () => {
     const open = renderTab();
 

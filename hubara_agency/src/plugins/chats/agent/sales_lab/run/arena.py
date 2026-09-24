@@ -13,12 +13,16 @@ que devuelve el sandbox):
 del scorecard saca POR SU CUENTA (nunca usa la percepción del brazo); los
 alimenta la evaluación de la corrida. El juez (EST-08) escribe cada asunto en
 texto libre: `judge_topic_codes` lo lleva a los 17 códigos del clasificador
-por palabras clave. Es un mapeo APROXIMADO (lo que no calza se cuenta aparte):
-sirve para comparar B contra C con la misma vara, no como verdad absoluta.
+por palabras clave (al comienzo de una palabra: "apagó" no es "pago"). Es un
+mapeo APROXIMADO (lo que no calza se cuenta aparte): sirve para comparar B
+contra C con la misma vara, no como verdad absoluta. Sin predicciones no hay
+precisión (None, no 1,0): un clasificador que siempre cae a "turno como hoy"
+no puede verse perfecto.
 """
 from __future__ import annotations
 
 import math
+import re
 import unicodedata
 from collections import Counter
 from collections.abc import Iterable
@@ -128,11 +132,12 @@ def calibration(pairs: Iterable[tuple[float, bool]]) -> dict[str, Any]:
 
 # Del más específico al más general: el primer código que calza se queda con
 # el asunto ("datos de envío" es datos_envio, no envio; "costo del envío" es
-# envio, no precio).
+# envio, no precio; "enviar fotos" es foto, no envio).
 TOPIC_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("estado_pedido", ("estado del pedido", "mi pedido", "seguimiento", "guia", "ya pague")),
     ("datos_envio", ("datos de envio", "direccion", "quien recibe", "barrio", "datos para el envio")),
     ("tiempos", ("tiempo", "tarda", "demora", "cuando llega", "fecha de entrega", "cuando esta listo")),
+    ("foto", ("foto", "imagen")),
     ("envio", ("envio", "domicilio", "despacho", "flete", "enviar")),
     ("pagos", ("pago", "pagar", "nequi", "transferencia", "daviplata", "tarjeta", "efectivo", "contraentrega")),
     ("catalogo", ("catalogo", "disenos", "modelos", "opciones", "productos")),
@@ -140,13 +145,16 @@ TOPIC_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("medidas", ("medida", "tamano", "alto", "ancho", "cm")),
     ("variante", ("color", "variante")),
     ("aroma", ("aroma", "olor", "fragancia")),
-    ("personalizacion", ("personaliz", "dedicatoria", "nombre")),
+    ("personalizacion", ("personaliz", "dedicatoria", "grabad", "con su nombre", "con el nombre")),
     ("disponibilidad", ("disponib", "stock", "agotad")),
     ("confirma_compra", ("confirma", "quiero comprar", "lo quiero", "compra")),
     ("aplaza", ("luego", "despues", "otro dia", "aplaz", "mas tarde")),
     ("queja", ("queja", "problema", "reclamo", "llego mal", "roto")),
-    ("foto", ("foto", "imagen")),
     ("saludo", ("saludo", "hola", "buenas")),
+)
+# Cada clave calza al comienzo de una palabra (o pegada a un número: "20cm").
+_TOPIC_PATTERNS = tuple(
+    (code, re.compile(r"(?<![a-z])(?:" + "|".join(re.escape(w) for w in words) + ")")) for code, words in TOPIC_KEYWORDS
 )
 
 
@@ -160,7 +168,7 @@ def judge_topic_codes(topics: Iterable[dict[str, Any]]) -> tuple[set[str], int]:
     unmapped = 0
     for topic in topics:
         text = _plain(str(topic.get("topic") or "")) if isinstance(topic, dict) else ""
-        code = next((c for c, words in TOPIC_KEYWORDS if any(w in text for w in words)), None)
+        code = next((c for c, pattern in _TOPIC_PATTERNS if pattern.search(text)), None)
         if code is None:
             unmapped += 1
         else:
@@ -195,7 +203,8 @@ def topic_arena(pairs: Iterable[tuple[dict[str, tuple[float, bool]], set[str]]])
         predicted += len(picked)
         judged_total += len(judged)
         probs.extend((p, code in judged) for code, (p, _) in perceived.items())
-    precision = hits / predicted if predicted else 1.0
-    recall = hits / judged_total if judged_total else 1.0
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    precision = hits / predicted if predicted else None
+    recall = hits / judged_total if judged_total else None
+    # F1 micro = 2·aciertos / (predichos + del juez): definido aunque un lado esté vacío.
+    f1 = 2 * hits / (predicted + judged_total) if predicted + judged_total else None
     return {"turns": len(pairs), "precision": precision, "recall": recall, "f1": f1, "calibration": calibration(probs)}

@@ -27,7 +27,7 @@ import {
 import { toQualityFunnel } from "@/shared/lib";
 import { CheckTrend, FailurePareto, StageFunnel, VerdictTiles } from "@/shared/ui";
 
-import { conclusion, intervalText, pct, points, topChecks } from "../lib/summary-view";
+import { MIN_CONCLUSIVE_SESSIONS, conclusion, intervalText, pct, points, topChecks } from "../lib/summary-view";
 
 interface Props {
   run: LabRun | null;
@@ -113,7 +113,6 @@ function Charts({ run, arm, onOpenConversations }: { run: string; arm: string; o
     return <p className="text-sm text-fg-muted">{apiErrorDetail(summary.error).message ?? "No se pudieron leer las gráficas."}</p>;
   }
   const data = summary.data;
-  const days = Math.max(7, data.trend[0]?.weeks.length ? data.trend[0].weeks.length * 7 : 7);
   return (
     <div className="flex flex-col gap-3">
       <p className="m-0 text-xs text-fg-muted">
@@ -125,7 +124,7 @@ function Charts({ run, arm, onOpenConversations }: { run: string; arm: string; o
         <section className={CARD} aria-labelledby="lab-pareto-title">
           <h3 id="lab-pareto-title" className={H3}>Qué arreglar primero</h3>
           <p className="mb-2 mt-1 text-[11px] text-fg-faint">Fallos por check, coloreados por nivel, con el acumulado.</p>
-          <FailurePareto pareto={data.pareto} days={days} selectedCheckId={check} onSelectCheck={setCheck} />
+          <FailurePareto pareto={data.pareto} period="en esta corrida" selectedCheckId={check} onSelectCheck={setCheck} />
         </section>
         <section className={CARD} aria-labelledby="lab-funnel-title">
           <h3 id="lab-funnel-title" className={H3}>Dónde terminan los episodios</h3>
@@ -209,6 +208,9 @@ function Comparison({ run, keys }: { run: string; keys: string[] }) {
                   ))}
                 </tbody>
               </table>
+              <p className="m-0 mt-1 text-[11px] text-fg-faint">
+                {`Concluyente: al menos ${MIN_CONCLUSIVE_SESSIONS} conversaciones en común y el intervalo sin cruzar el cero, corregido por comparaciones múltiples (Holm).`}
+              </p>
             </div>
           ) : null}
           {diff.data.changed_turns.length > 0 ? (
@@ -262,7 +264,7 @@ function Arena({ arena }: { arena: Record<string, ArenaArm> }) {
                   <td className="py-1 pr-3 font-mono">{a.profile ?? "—"}</td>
                   <td className="py-1 pr-3">{ms(m?.perception?.p95_ms ?? null)}</td>
                   <td className="py-1 pr-3">{fine(m?.perception?.fallback_rate ?? null)}</td>
-                  <td className="py-1 pr-3">{m?.cost_per_turn_usd === null || !m ? "—" : formatUsd(m.cost_per_turn_usd)}</td>
+                  <td className="py-1 pr-3">{m?.cost_per_turn_usd === null || !m ? "—" : formatUsd(m.cost_per_turn_usd, 4)}</td>
                   <td className="py-1 pr-3">{fine(m?.complement_rate ?? null)}</td>
                   <td className="py-1 pr-3">{fine(m?.extra_round_rate ?? null)}</td>
                   <td className="py-1 pr-3">{pct(a.topics.f1)}</td>
@@ -299,6 +301,11 @@ export function RunSummary({ run, onOpenConversations }: Props) {
       {data.mode !== "turn" ? (
         <p className="m-0 text-xs text-fg-muted">
           Los bots simulados todavía no se calificaron: se muestra el scorecard de producción.
+        </p>
+      ) : null}
+      {data.mode === "turn" && data.arms_pending.length > 0 ? (
+        <p className="m-0 text-xs text-fg-muted">
+          {`${data.arms_pending.map(armLabel).join(", ")}: la corrida no alcanzó a simularlo (quedó pendiente; no cuenta como falla).`}
         </p>
       ) : null}
       <BotPicker arms={arms} value={arm} onChange={setPicked} />
