@@ -20,7 +20,7 @@ from src.plugins.chats.agent.sales_lab.run.workflow import ARMS_PENDING_NOTE, SP
 from tests.plugins.chats.lab.test_lab_cases import SID
 from tests.plugins.chats.lab.test_lab_run_box import RUN, _run, box  # noqa: F401  (fixture)
 
-SIM = "wa_570891101418"
+SIM = "wa_573009876543"
 
 
 def _fake_result(case: dict, *, cost: float = 0.01, error: str | None = None) -> dict:
