@@ -147,13 +147,19 @@ async def quota_offer(promotion: PromotionDTO, *, quotas: Any, sales: Any, catal
     if quota_exhausted(board) == REASON_QUOTA_EXHAUSTED:
         return QuotaOffer(True, REASON_QUOTA_EXHAUSTED, show_units_left=sheet.show_units_left)
     known = await _catalog_by_id(catalog)
-    units = tuple(
-        unit
+    # Solo cuentan las filas que el cupón cubre (alcance real, con precio) y
+    # que siguen existiendo en el producto: una fila fuera de alcance con
+    # unidades no hace que el cupón "tenga" (premortem A15).
+    in_scope = [
+        (s, unit)
         for s in board
-        if s.units_left > 0 and s.quota.product_id in known and _row_still_exists(s.quota, known[s.quota.product_id][1])
+        if s.quota.product_id in known and _row_still_exists(s.quota, known[s.quota.product_id][1])
         for unit in [_unit(s, promotion, *known[s.quota.product_id], show=sheet.show_units_left)]
         if unit is not None
-    )
+    ]
+    units = tuple(unit for s, unit in in_scope if s.units_left > 0)
+    if not units and in_scope:
+        return QuotaOffer(True, REASON_QUOTA_EXHAUSTED, show_units_left=sheet.show_units_left)
     if not units:
         return QuotaOffer(True, REASON_QUOTA_UNAVAILABLE, show_units_left=sheet.show_units_left)
     return QuotaOffer(True, None, units, sheet.show_units_left)

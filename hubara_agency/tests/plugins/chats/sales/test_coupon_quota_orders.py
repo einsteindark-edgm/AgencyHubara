@@ -818,3 +818,23 @@ async def test_a_hung_sales_read_fails_closed_within_the_deadline(_isolate_vault
     )
 
     assert "discount_cop" not in env and "no pude confirmar" in env["summary"].lower()
+
+
+@pytest.mark.asyncio
+async def test_offer_is_exhausted_when_only_rows_outside_the_coupon_scope_have_units() -> None:
+    """A15: una fila de un producto que el cupón ya no cubre no cuenta para
+    "quedan": con las del alcance agotadas el cupón está agotado (no "no pude
+    confirmar")."""
+    from src.plugins.chats.agent.sales.use_cases.coupon_quota import quota_offer
+
+    store = FakePromoQuotaStore()
+    store.replace("promo_amor26", "AMOR26", [
+        PromoUnitQuota(_Q, "promo_amor26", "AMOR26", "prod_cubo", "cubo-love", "Cubo Love",
+                       "Rosado", "Café", 5, "2026-09-23T17:00:00Z", "ana"),
+        PromoUnitQuota("q_buda", "promo_amor26", "AMOR26", "prod_buda", "vela-buda", "Vela Buda",
+                       None, None, 5, "2026-09-23T17:00:00Z", "ana"),
+    ], show_units_left=True, actor="ana", now_iso="2026-09-23T17:00:00Z")
+
+    offer = await quota_offer(_AMOR26, quotas=store, sales=_Sales({_Q: 5}), catalog=_Catalog())
+
+    assert offer.reason == "quota_exhausted"
