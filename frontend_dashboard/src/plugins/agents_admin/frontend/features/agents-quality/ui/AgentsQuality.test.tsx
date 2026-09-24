@@ -135,4 +135,64 @@ describe("AgentsQuality (scorecard por etapa)", () => {
       expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/scorecards?days=56&bot=nuevo"))).toBe(true),
     );
   });
+
+  it("el filtro de bot solo aparece en las vistas que filtra (PR 18)", async () => {
+    renderIt();
+    await screen.findByRole("list", { name: /veredictos de los episodios/i });
+    expect(screen.getByRole("radiogroup", { name: "Bot que respondió" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /métricas legadas/i }));
+    expect(screen.queryByRole("radiogroup", { name: "Bot que respondió" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /goldens/i }));
+    expect(screen.queryByRole("radiogroup", { name: "Bot que respondió" })).not.toBeInTheDocument();
+  });
+
+  it("si el servidor no filtró por bot, lo dice (API sin desplegar)", async () => {
+    renderIt();
+    await screen.findByRole("list", { name: /veredictos de los episodios/i });
+
+    fireEvent.click(screen.getByRole("radio", { name: "Bot nuevo" }));
+
+    expect(await screen.findByText(/el servidor no filtró por bot/i)).toBeInTheDocument();
+  });
+
+  it("con el servidor filtrando, no hay aviso", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const hit = ROUTES.find(([p]) => url.includes(p));
+      const body = hit ? hit[1]() : {};
+      const bot = new URL(url, "http://x").searchParams.get("bot");
+      return Promise.resolve(json(bot && body && typeof body === "object" ? { ...body, bot } : body));
+    });
+    renderIt();
+    await screen.findByRole("list", { name: /veredictos de los episodios/i });
+
+    fireEvent.click(screen.getByRole("radio", { name: "Bot nuevo" }));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/scorecards?days=56&bot=nuevo"))).toBe(true),
+    );
+    expect(screen.queryByText(/el servidor no filtró por bot/i)).not.toBeInTheDocument();
+  });
+
+  it("cambiar de bot cierra la conversación abierta (puede no ser de ese bot)", async () => {
+    renderIt();
+    fireEvent.click(await screen.findByRole("tab", { name: /conversaciones/i }));
+    const table = await screen.findByRole("table", { name: /matriz de cumplimiento/i });
+    fireEvent.click(within(table).getAllByRole("row").filter((r) => r.closest("tbody"))[0]);
+    expect(screen.queryByText(/elige una conversación en la matriz/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("radio", { name: "Bot actual" }));
+
+    expect(await screen.findByText(/elige una conversación en la matriz/i)).toBeInTheDocument();
+  });
+
+  it("con filtro, el vacío dice de qué bot", async () => {
+    statsPayload = { episodes: 0 };
+    renderIt();
+    await screen.findByText(/aún no hay scorecards/i);
+
+    fireEvent.click(screen.getByRole("radio", { name: "Bot nuevo" }));
+
+    expect(await screen.findByText(/aún no hay episodios del bot nuevo/i)).toBeInTheDocument();
+  });
 });

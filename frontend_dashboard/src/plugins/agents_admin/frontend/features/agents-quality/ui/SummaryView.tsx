@@ -82,7 +82,9 @@ export function SummaryView({ days, bot = null, onSelectVerdict, onSelectCheck }
   if (data.episodes === 0) {
     return (
       <p className="rounded-lg border border-line p-4 text-sm text-fg-muted">
-        Aún no hay scorecards: se generan al cerrar cada episodio.
+        {bot
+          ? `Aún no hay episodios del bot ${bot} en los últimos ${days} días.`
+          : "Aún no hay scorecards: se generan al cerrar cada episodio."}
       </p>
     );
   }

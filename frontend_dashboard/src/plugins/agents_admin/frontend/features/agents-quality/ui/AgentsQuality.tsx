@@ -84,6 +84,15 @@ export function AgentsQuality() {
   const [bot, setBot] = useState<ScorecardBot | null>(null);
   const { data: list } = useScorecards(WINDOW_DAYS, bot);
   const failingCount = (list?.scorecards ?? []).filter((s) => s.verdict === "FALLA").length;
+  // El filtro de bot solo aplica al scorecard (Resumen y Conversaciones). Si la
+  // API todavía no lo soporta, ignora `?bot=` y devuelve todos: se avisa.
+  const botFilterShown = tab === "resumen" || tab === "conversaciones";
+  const serverIgnoredBot = bot !== null && list !== undefined && list.bot !== bot;
+  const chooseBot = (value: ScorecardBot | null) => {
+    setBot(value);
+    // La conversación abierta puede no ser de ese bot.
+    setSelectedEpisode(null);
+  };
 
   const goConversations = (verdict: VerdictFilter, check: string | null) => {
     setVerdictFilter(verdict);
@@ -137,26 +146,33 @@ export function AgentsQuality() {
             );
           })}
         </div>
-        <div role="radiogroup" aria-label="Bot que respondió" className="flex items-center gap-1">
-          {BOT_OPTIONS.map((o) => (
-            <label
-              key={o.label}
-              className={
-                "cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium transition " +
-                (bot === o.value ? "bg-white/10 text-fg" : "text-fg-muted hover:bg-white/5")
-              }
-            >
-              <input
-                type="radio"
-                name="quality-bot"
-                className="sr-only"
-                checked={bot === o.value}
-                onChange={() => setBot(o.value)}
-              />
-              {o.label}
-            </label>
-          ))}
-        </div>
+        {botFilterShown && (
+          <div role="radiogroup" aria-label="Bot que respondió" className="flex items-center gap-1">
+            {BOT_OPTIONS.map((o) => (
+              <label
+                key={o.label}
+                className={
+                  "cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium transition " +
+                  (bot === o.value ? "bg-white/10 text-fg" : "text-fg-muted hover:bg-white/5")
+                }
+              >
+                <input
+                  type="radio"
+                  name="quality-bot"
+                  className="sr-only"
+                  checked={bot === o.value}
+                  onChange={() => chooseBot(o.value)}
+                />
+                {o.label}
+              </label>
+            ))}
+          </div>
+        )}
+        {botFilterShown && serverIgnoredBot && (
+          <p role="status" className="text-xs text-yellow">
+            El servidor no filtró por bot: lo que ves son todos los episodios.
+          </p>
+        )}
         {failingCount > 0 && (
           <button
             type="button"

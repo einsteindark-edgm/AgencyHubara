@@ -147,16 +147,20 @@ def scorecard_checks() -> dict[str, Any]:
 _BOT_PATTERN = "^(actual|nuevo)$"
 
 
-def _with_bot(rows: list[dict[str, Any]], bot: str | None) -> list[dict[str, Any]]:
-    """Cada fila con el bot que respondió el episodio; si `bot`, solo esas."""
+def _with_bot(rows: list[dict[str, Any]], bot: str) -> list[dict[str, Any]]:
+    """Solo las filas del bot pedido, con su `bot`. Las trazas de cada sesión se
+    leen UNA vez (la lista va a 56 días y el cast corta a los 15 s); un
+    episodio "mixto" no es de ninguno."""
     vault = get_vault_dir()
+    by_session: dict[str, list[dict[str, Any]]] = {}
     out = []
     for row in rows:
         sid, ep = str(row.get("session_id") or ""), str(row.get("episode_id") or "")
-        traces = turn_traces.traces_for_episode(vault, sid, ep) if _SESSION_ID_RE.match(sid) else []
-        row = {**row, "bot": episode_bot(traces)}
-        if bot is None or row["bot"] == bot:
-            out.append(row)
+        if sid not in by_session:
+            by_session[sid] = turn_traces.read_traces(vault, sid) if _SESSION_ID_RE.fullmatch(sid) else []
+        answered_by = episode_bot(t for t in by_session[sid] if t.get("episode_id") == ep)
+        if answered_by == bot:
+            out.append({**row, "bot": answered_by})
     return out
 
 
@@ -166,9 +170,9 @@ def list_scorecards(
     bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
 ) -> dict[str, Any]:
     dates = _dates(days)
-    rows = _with_bot(
-        store.list_scorecards(store.scorecards_dir(get_vault_dir()), dates=dates, episode_since=dates[-1]), bot
-    )
+    rows = store.list_scorecards(store.scorecards_dir(get_vault_dir()), dates=dates, episode_since=dates[-1])
+    if bot is not None:
+        rows = _with_bot(rows, bot)
     return {"days": days, "bot": bot, "count": len(rows), "registry_version": REGISTRY_VERSION, "scorecards": rows}
 
 

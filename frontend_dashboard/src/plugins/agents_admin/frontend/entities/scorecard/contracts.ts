@@ -110,6 +110,8 @@ export const scorecardRowSchema = z.object({
 /** Respuesta de GET /api/agents/evals/scorecards?days=N. */
 export const scorecardListSchema = z.object({
   days: z.number().default(30),
+  /** Bot por el que filtró el servidor (PR 18); null = todos o una API anterior al filtro. */
+  bot: z.enum(["actual", "nuevo"]).nullable().catch(null).default(null),
   count: z.number().default(0),
   registry_version: z.number().default(0),
   scorecards: z.array(scorecardRowSchema).default([]),
