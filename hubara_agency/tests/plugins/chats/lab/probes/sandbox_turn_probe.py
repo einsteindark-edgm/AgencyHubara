@@ -26,6 +26,7 @@ from exoclaw_temporal.config import LLMChatInput, LLMResponseData, ToolCallData 
 _connects: list[str] = []
 _lookups: list[str] = []
 _writes: list[str] = []
+_tools_called: list[str] = []
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND
 
 
@@ -57,10 +58,23 @@ async def main() -> dict:
     from src.plugins.chats.agent.sales_lab.sandbox.turn import run_case
 
     calls = {"n": 0}
+    all_tools = os.environ.get("PROBE_ALL_TOOLS") == "1"
 
     @activity.defn(name="llm_chat")
     async def fake_llm(input: LLMChatInput) -> LLMResponseData:
         calls["n"] += 1
+        if calls["n"] == 1 and all_tools:
+            # TODAS las tools que el turno le ofrece al LLM, con argumentos
+            # vacíos: cada una corre su código hasta donde llegue.
+            names = [(d.get("function") or {}).get("name") or d.get("name") for d in input.tool_definitions()]
+            names = [n for n in names if isinstance(n, str) and n]
+            _tools_called.extend(names)
+            return LLMResponseData(
+                content="",
+                finish_reason="tool_calls",
+                has_tool_calls=True,
+                tool_calls=[ToolCallData(id=f"t{i}", name=n, arguments={}) for i, n in enumerate(names)],
+            )
         if calls["n"] == 1:
             return LLMResponseData(
                 content="",
@@ -81,5 +95,5 @@ async def main() -> dict:
 
 if __name__ == "__main__":
     report = {"result": asyncio.run(main())}
-    report.update(connects=_connects, lookups=_lookups, writes=sorted(set(_writes)))
+    report.update(connects=_connects, lookups=_lookups, writes=sorted(set(_writes)), tools_called=_tools_called)
     REPORT.write_text(json.dumps(report, ensure_ascii=False, default=str), encoding="utf-8")
