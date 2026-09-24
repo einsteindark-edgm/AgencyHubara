@@ -566,3 +566,42 @@ async def test_webhook_ingest_validates_campaign_coupons_with_the_sdk_ports(monk
 
     assert application is not None
     assert (application.applied, application.code) == (True, "AMOR26")
+
+
+@pytest.mark.asyncio
+async def test_webhook_shares_one_sales_read_between_campaign_replies(monkeypatch):
+    """Campaña masiva: cada primera respuesta valida el cupón; las vendidas
+    de Medusa se leen una vez y se comparten unos segundos."""
+    import src.plugins.chats.agent.sales.composition as comp
+    import src.sdk.connectorkit as ck
+    from src.platform.promotions.port import FakePromotionsPort
+    from src.platform.promotions.quota_store import FakePromoQuotaStore
+    from src.platform.promotions.quotas import PromoUnitQuota
+
+    class _Reader:
+        calls = 0
+
+        async def sold_units(self, *, since, exclude=None):
+            _Reader.calls += 1
+            return {}
+
+    quotas = FakePromoQuotaStore()
+    quotas.replace(
+        "promo_amor26", "AMOR26",
+        [PromoUnitQuota("q1", "promo_amor26", "AMOR26", "prod_cubo", "cubo-love", "Cubo Love",
+                        "Rosado", "Café", 5, "2026-09-24T19:00:00Z", "ana")],
+        show_units_left=True, actor="ana", now_iso="2026-09-24T19:00:00Z",
+    )
+    monkeypatch.setattr(ck, "get_promotions_port", lambda: FakePromotionsPort([_amor_promo()]))
+    monkeypatch.setattr(ck, "get_promo_quota_store", lambda: quotas)
+    monkeypatch.setattr(ck, "get_coupon_sales_reader", lambda: _Reader())
+    monkeypatch.setattr(ck, "get_catalog_client", lambda: None)
+    monkeypatch.setattr(ck, "get_web_cart_reader", lambda: None)
+    monkeypatch.setattr(comp, "_INGEST_USE_CASE", None)
+
+    use_case = comp.build_ingest_use_case()
+    now = int(time.time() * 1000)
+    await use_case._check_campaign_coupon("AMOR26", now)
+    await use_case._check_campaign_coupon("AMOR26", now)
+
+    assert _Reader.calls == 1

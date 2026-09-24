@@ -9,8 +9,10 @@ aromas y colores a precio lleno.
 """
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from src.sdk.connectorkit import (
     PromotionDTO,
@@ -124,6 +126,34 @@ async def resolve_coupon_application(
         )
     eligible = await eligible_products(catalog, promotion)
     return CouponApplication(promotion.code, None, promotion, eligible=tuple(eligible))
+
+
+class RecentSoldUnits:
+    """Las vendidas del cupo leídas hace menos de `ttl_s`, compartidas entre
+    las respuestas a una misma campaña: una campaña masiva no escanea los
+    pedidos de Medusa una vez por cliente (lecturas simultáneas esperan la
+    misma). Solo sirve para OFRECER: el registro las relee bajo el candado.
+    Una lectura fallida no se recuerda; con `exclude` va directo a Medusa."""
+
+    def __init__(
+        self, reader: Any, *, ttl_s: float = 30.0, clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        self._reader = reader
+        self._ttl_s = ttl_s
+        self._clock = clock
+        self._lock = asyncio.Lock()
+        self._recent: dict[Any, tuple[float, dict[str, int]]] = {}
+
+    async def sold_units(self, *, since: Any, exclude: Any = None) -> dict[str, int]:
+        if exclude:
+            return await self._reader.sold_units(since=since, exclude=exclude)
+        async with self._lock:
+            hit = self._recent.get(since)
+            if hit is not None and self._clock() - hit[0] < self._ttl_s:
+                return dict(hit[1])
+            sold = await self._reader.sold_units(since=since)
+            self._recent[since] = (self._clock(), dict(sold))
+            return dict(sold)
 
 
 def store_coupon_application(

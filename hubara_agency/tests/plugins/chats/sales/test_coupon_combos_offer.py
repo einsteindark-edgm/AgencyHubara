@@ -215,3 +215,42 @@ def test_sales_worker_gives_the_variant_picker_the_session_metadata(tmp_path, mo
 
     tool = dict(_EXTENSIONS)["sales.present_variant_picker"](tmp_path)
     assert tool._metadata_store is not None
+
+
+# --- set_order_slot: el aviso llega en el MISMO turno --------------------------
+#
+# La nota de cada turno se arma cuando llega el mensaje: si el cliente dice de
+# una vez "lo quiero en Sándalo y amarillo", la nota recién lo vería el turno
+# siguiente. La tool que guarda la elección lo dice en su respuesta.
+
+
+@pytest.mark.asyncio
+async def test_set_order_slot_says_right_away_when_the_choice_has_no_coupon(tmp_path) -> None:
+    from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
+
+    vault = tmp_path / "isolated_vault"
+    FilesystemMetadataStore(vault).write(KEY, _metadata({"producto": "Cubo Love"}))
+    tool = SetOrderSlotTool(workspace=str(vault), vault_dir=vault)
+    ctx = ToolContext(session_key=KEY, channel="whatsapp", chat_id=KEY)
+
+    out = json.loads(await tool.execute_with_context(
+        ctx, producto="Cubo Love", aroma="Sándalo", color="Amarillo",
+    ))
+
+    assert "Cubo Love Amarillo · Sándalo" in out["summary"]
+    assert "NO tiene el descuento" in out["summary"]
+    assert "precio normal ($21.000)" in out["summary"]
+
+
+@pytest.mark.asyncio
+async def test_set_order_slot_without_a_quota_coupon_says_nothing_about_coupons(tmp_path) -> None:
+    from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
+
+    vault = tmp_path / "isolated_vault"
+    FilesystemMetadataStore(vault).write(KEY, {"episodes": [{"episode_id": "ep_1", "closed_at_ms": None}]})
+    tool = SetOrderSlotTool(workspace=str(vault), vault_dir=vault)
+    ctx = ToolContext(session_key=KEY, channel="whatsapp", chat_id=KEY)
+
+    out = json.loads(await tool.execute_with_context(ctx, producto="Cubo Love", aroma="Sándalo"))
+
+    assert "cupón" not in out["summary"] and "descuento" not in out["summary"]
