@@ -123,3 +123,28 @@ def test_ids_are_validated(http, path: str) -> None:
 
 def test_unknown_run_is_404(http) -> None:
     assert http.get("/api/chats/lab/runs/run-20200101-0000/bench").status_code == 404
+
+
+def test_the_runs_list_never_walks_every_object(http, monkeypatch) -> None:
+    store = api.get_lab_store()
+    walked: list[str] = []
+    real = store.list_keys
+    monkeypatch.setattr(store, "list_keys", lambda prefix: walked.append(prefix) or real(prefix))
+
+    assert len(http.get("/api/chats/lab/runs").json()["runs"]) == 2
+    assert "runs/" not in walked
+
+
+def test_a_run_that_stopped_reporting_is_marked_stale(http, monkeypatch) -> None:
+    """La caja se cayó a mitad: la corrida no puede quedar "Corriendo" para
+    siempre; tampoco una terminada se marca."""
+    store = api.get_lab_store()
+    store.put_bytes("runs/run-20260923-live/progress.json", json.dumps({
+        "run_id": "run-20260923-live", "phase": "simulating", "started_at_ms": T0, "updated_at_ms": T0,
+    }).encode())
+    monkeypatch.setattr(api, "_now_ms", lambda: T0 + 2 * 3_600_000)
+
+    runs = {r["run_id"]: r for r in http.get("/api/chats/lab/runs").json()["runs"]}
+
+    assert runs["run-20260923-live"]["stale"] is True
+    assert runs[RUN]["stale"] is False and runs["run-20260922-dead"]["stale"] is False
