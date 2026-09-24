@@ -154,6 +154,7 @@ async def simulate_case_activity(inp: SimulateInput) -> CaseOutcome:
         bench_dir=_lab_root() / "bench" / inp.bench_id,
         sandbox_dir=_lab_root() / "runs" / inp.run_id / inp.arm / str(inp.rep) / str(inp.index),
         timeout_s=CASE_TIMEOUT_S,
+        arm=inp.arm,
     )
     out = _results_dir(inp.run_id, inp.arm, inp.rep)
     out.mkdir(parents=True, exist_ok=True)

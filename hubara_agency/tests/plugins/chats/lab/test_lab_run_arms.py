@@ -5,8 +5,10 @@ resultado se publica en `runs/<corrida>/` con la identidad del caso REAL:
 la traza del turno simulado en `turns/A1/<rep>/<sesión>.jsonl` (misma sesión,
 episodio, turno y `turn_key` que el turno real, para que el hilo del
 laboratorio la encuentre) y la salida en el hilo (`outputs.A1`). El gasto
-real de cada caso se suma y la corrida corta al llegar al tope. B y C
-esperan a las capas nuevas (PR 14 y 15).
+real de cada caso se suma y la corrida corta al llegar al tope. Los bots
+nuevos (B = Jev, C = OpenAI, PR 15) corren igual, con su brazo en el caso;
+cada brazo publica sus métricas (`metrics/<brazo>/<rep>.json`) y el
+complemento viaja con su caso.
 """
 from __future__ import annotations
 
@@ -43,9 +45,10 @@ def sims(box, monkeypatch):  # noqa: F811
 
     state: dict = {"calls": [], "cost": 0.01}
 
-    async def fake_case(case, *, bench_dir, sandbox_dir, timeout_s):
-        state["calls"].append((case["case_id"], sandbox_dir.parts[-3:]))
-        return _fake_result(case, cost=state["cost"])
+    async def fake_case(case, *, bench_dir, sandbox_dir, timeout_s, arm="A1"):
+        state["calls"].append((case["case_id"], sandbox_dir.parts[-3:], arm))
+        result = _fake_result(case, cost=state["cost"])
+        return state["decorate"](result, arm) if state.get("decorate") else result
 
     monkeypatch.setattr(run_acts, "run_case_in_subprocess", fake_case)
     return state
@@ -103,19 +106,74 @@ async def test_the_run_stops_at_the_spend_cap(box, sims) -> None:  # noqa: F811
 
 
 @pytest.mark.asyncio
-async def test_new_bot_arms_wait_for_their_layers(box, sims) -> None:  # noqa: F811
+async def test_the_new_bot_runs_every_case_with_its_arm(box, sims) -> None:  # noqa: F811
     await _run(box)  # la orden del fixture pide A1 y B
 
+    b_calls = [c for c in sims["calls"] if c[1][0] == "B"]
+    assert len(b_calls) == 2 and {c[2] for c in b_calls} == {"B"}
     progress = json.loads(box["store"].get_bytes(f"runs/{RUN}/progress.json"))
-    assert ARMS_PENDING_NOTE.format(arms="B") in progress["notes"]
-    assert not [c for c in sims["calls"] if c[1][0] == "B"]
+    assert progress["notes"] == [] and (progress["turns_done"], progress["turns_total"]) == (4, 4)
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_arm_is_reported_and_not_run(box, sims) -> None:  # noqa: F811
+    order = json.loads(box["store"].get_bytes(f"orders/{RUN}.json"))
+    box["store"].put_bytes(f"orders/{RUN}.json", json.dumps({**order, "arms": ["A1", "Z"]}).encode())
+
+    await _run(box)
+
+    progress = json.loads(box["store"].get_bytes(f"runs/{RUN}/progress.json"))
+    assert ARMS_PENDING_NOTE.format(arms="Z") in progress["notes"]
+    assert not [c for c in sims["calls"] if c[1][0] == "Z"]
+
+
+@pytest.mark.asyncio
+async def test_each_arm_publishes_its_metrics(box, sims) -> None:  # noqa: F811
+    def with_layers(result: dict, arm: str) -> dict:
+        if arm == "B" and result.get("trace"):
+            result["trace"]["mode"] = "on"
+            result["trace"]["steps"] = [{"kind": "perception", "dur_ms": 300, "cost_usd": 0.0001}]
+            result["llm_cost_usd"], result["perception_cost_usd"] = 0.01, 0.0001
+        return result
+
+    sims["decorate"] = with_layers
+    await _run(box)
+
+    b = json.loads(box["store"].get_bytes(f"runs/{RUN}/metrics/B/0.json"))
+    assert (b["arm"], b["rep"], b["profile"], b["turns"]) == ("B", 0, "jev-v1", 2)
+    assert b["perception"]["p95_ms"] == 300
+    a1 = json.loads(box["store"].get_bytes(f"runs/{RUN}/metrics/A1/0.json"))
+    assert a1["profile"] is None and a1["perception"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_complement_travels_with_its_case(box, sims) -> None:  # noqa: F811
+    def with_complement(result: dict, arm: str) -> dict:
+        if arm == "B" and result.get("trace"):
+            result["complement_trace"] = {
+                "session_id": SIM, "trigger": "complement", "sent_texts": ["Y el envío a Bogotá cuesta $X"],
+                "llm_text": "Y el envío a Bogotá cuesta $X", "steps": [],
+            }
+        return result
+
+    sims["decorate"] = with_complement
+    await _run(box)
+
+    thread = json.loads(box["store"].get_bytes(f"runs/{RUN}/threads/{SID}.json"))
+    turn2 = next(t for t in thread["turns"] if t["turn"] == 2)
+    assert turn2["outputs"]["B"]["complement_texts"] == ["Y el envío a Bogotá cuesta $X"]
+    assert "complement_texts" not in turn2["outputs"]["A1"]
+    raw = box["store"].get_bytes(f"runs/{RUN}/turns/B/0/{SID}.jsonl").decode()
+    rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    assert rows[0]["complement"]["sent_texts"] == ["Y el envío a Bogotá cuesta $X"]
+    assert SIM not in raw
 
 
 @pytest.mark.asyncio
 async def test_a_failed_case_is_counted_and_the_run_goes_on(box, sims, monkeypatch) -> None:  # noqa: F811
     from src.plugins.chats.agent.sales_lab.run import activities as run_acts
 
-    async def flaky(case, *, bench_dir, sandbox_dir, timeout_s):
+    async def flaky(case, *, bench_dir, sandbox_dir, timeout_s, arm="A1"):
         sims["calls"].append((case["case_id"], sandbox_dir.parts[-3:]))
         if sandbox_dir.parts[-3] == "A1" and case["turn"] == 2:
             return _fake_result(case, error="el turno no terminó en 600 s")
@@ -127,5 +185,5 @@ async def test_a_failed_case_is_counted_and_the_run_goes_on(box, sims, monkeypat
 
     assert result["phase"] == "done"
     progress = json.loads(box["store"].get_bytes(f"runs/{RUN}/progress.json"))
-    assert (progress["turns_done"], progress["turns_total"]) == (1, 2)
+    assert (progress["turns_done"], progress["turns_total"]) == (3, 4)  # A1 y B × 2 casos; falla A1 turno 2
     assert any("1 caso sin terminar" in n for n in progress["notes"])

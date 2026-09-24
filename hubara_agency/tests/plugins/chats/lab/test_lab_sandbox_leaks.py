@@ -28,7 +28,7 @@ _LOCAL = {"127.0.0.1", "localhost", "::1"}
 _FORBIDDEN_ENV = ("WHATSAPP_", "MEDUSA_", "META_", "TEMPORAL_API_KEY", "TEMPORAL_ADDRESS", "COGNITO_", "PAYMENT_")
 
 
-def _run_probe(tmp_path: Path, case: dict) -> dict:
+def _run_probe(tmp_path: Path, case: dict, *, arm: str = "A1") -> dict:
     bench = _bench(tmp_path)
     (bench / "promotions.json").write_text("[]", encoding="utf-8")
     sandbox = tmp_path / "lab" / "runs" / "run-test" / "A1" / "0" / "case-1"
@@ -39,8 +39,9 @@ def _run_probe(tmp_path: Path, case: dict) -> dict:
     env["PYTHONPATH"] = str(_HUBARA)
     env["HUBARA_ENV"] = "lab"
     env["ENABLED_PLUGINS"] = "chats"
+    env["PERCEPTION_PROVIDER"] = "fake"  # los bots nuevos, sin red en CI
     proc = subprocess.run(
-        [sys.executable, str(_PROBE), str(case_path), str(bench), str(sandbox), str(report_path)],
+        [sys.executable, str(_PROBE), str(case_path), str(bench), str(sandbox), str(report_path), arm],
         cwd=_HUBARA, env=env, capture_output=True, text=True, timeout=300,
     )
     assert proc.returncode == 0, proc.stderr[-4000:]
@@ -104,3 +105,27 @@ def test_a_burst_arrives_as_one_turn_like_in_production(tmp_path: Path) -> None:
     assert result["error"] is None and result["llm_calls"] == 1
     inbound = result["trace"]["inbound_text"]
     assert "catálogo" in inbound and "envío a Bogotá" in inbound
+
+
+def test_the_new_bot_runs_its_layers_inside_the_sandbox(tmp_path: Path) -> None:
+    """Brazo B (PR 15): el MISMO workflow con el modo `on` y el perfil de Jev
+    en la señal. La percepción arma el plan con los dos asuntos de la ráfaga
+    y todo pasa dentro de la caja (el proveedor falso no abre red)."""
+    burst = [
+        {"text": "vi que hacen velas con otros diseños, ¿me mandas el catálogo?", "ts_ms": 1, "wamid": "wamid.B"},
+        {"text": "y el envío a Bogotá cuánto sale?", "ts_ms": 2, "wamid": "wamid.C"},
+    ]
+    report = _run_probe(tmp_path, _case(burst=burst), arm="B")
+    result = report["result"]
+
+    assert result["error"] is None and result["arm"] == "B"
+    trace = result["trace"]
+    assert trace["mode"] == "on"
+    perception = next(s for s in trace["steps"] if s["kind"] == "perception")
+    assert perception["profile"] == "jev-v1" and perception.get("fallback") is None  # None no se persiste
+    plan = next(s for s in trace["steps"] if s["kind"] == "plan")
+    assert {"catalogo", "envio"} <= {c["topic"] for c in plan["checklist"]}
+    assert any(s["kind"] == "verify" for s in trace["steps"])
+    assert result["complement_trace"] is None
+    assert result["cost_usd"] == result["llm_cost_usd"] + result["perception_cost_usd"]
+    assert set(report["connects"]) <= _LOCAL, report["connects"]

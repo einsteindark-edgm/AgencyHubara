@@ -8,8 +8,8 @@ Fases (las ve el lanzador en `runs/<corrida>/progress.json`):
   preparing   baja la orden y el banco
   running     arma los casos y publica el control real (A0); si hay brazos
               simulados, un turno de humo del banco tiene que pasar antes
-              (PR 11) y después corre A1 (PR 13): cada caso × repetición en
-              su sandbox, con tope de gasto; B y C esperan las capas (PR 14–15)
+              (PR 11) y después corren A1 (PR 13) y los bots nuevos B y C
+              (PR 15): cada caso × repetición en su sandbox, con tope de gasto
   evaluating  scorecard por turno y juez (PR 12+)
   done | failed | cancelled
 """
@@ -34,12 +34,13 @@ with workflow.unsafe.imports_passed_through():
         SimulateInput,
         SmokeResult,
     )
+    from src.plugins.chats.agent.sales_lab.arms import SIMULATED_ARMS
 
 _QUICK = {"start_to_close_timeout": timedelta(minutes=2), "retry_policy": RetryPolicy(maximum_attempts=3)}
-#: Brazos que el simulador ya sabe correr. B y C necesitan las capas nuevas
-#: del bot (PR 14) y sus perfiles de clasificador (PR 15).
-RUNNABLE_ARMS = ("A1",)
-ARMS_PENDING_NOTE = "{arms}: esperan las capas del bot nuevo (PR 14 y 15 del plan)"
+#: Brazos que el simulador sabe correr: el bot actual (A1) y los bots nuevos
+#: con Jev (B) y con OpenAI (C). Un brazo desconocido se informa, no se corre.
+RUNNABLE_ARMS = SIMULATED_ARMS
+ARMS_PENDING_NOTE = "{arms}: el simulador no conoce ese bot (corre A1, B y C)"
 SPEND_CAP_NOTE = "la corrida se detuvo al llegar al tope de gasto"
 CONCURRENCY = 4
 _CASE = {

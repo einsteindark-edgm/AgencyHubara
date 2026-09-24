@@ -26,6 +26,7 @@ async def run_case_in_subprocess(
     bench_dir: Path,
     sandbox_dir: Path,
     timeout_s: float,
+    arm: str = "A1",
 ) -> dict[str, Any]:
     sandbox_dir.parent.mkdir(parents=True, exist_ok=True)
     case_file = sandbox_dir.parent / f"{sandbox_dir.name}.case.json"
@@ -36,7 +37,7 @@ async def run_case_in_subprocess(
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", SANDBOX_MODULE,
             "--case", str(case_file), "--bench", str(bench_dir), "--sandbox", str(sandbox_dir),
-            "--out", str(out_file), "--timeout", str(timeout_s),
+            "--out", str(out_file), "--timeout", str(timeout_s), "--arm", arm,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
             env=dict(os.environ),

@@ -296,6 +296,10 @@ def _verify_step(out: VerifyOutput, started_ms: int, *, applied: bool) -> dict[s
         "answers": list(out.answers),
         "applied": applied,
         "fallback": None if out.ok else (out.error or "error"),
+        "cost_usd": out.cost_usd,
+        # True solo si este turno agendó el complemento (lo lee el
+        # laboratorio para esperar ese segundo turno sin adivinar).
+        "complement_scheduled": False,
     }
 
 
@@ -1599,6 +1603,10 @@ class HubaraSalesSessionWorkflow:
                                     is_complement_trigger=True,
                                 )
                             )
+                            for step in reversed(trace_steps):
+                                if step.get("kind") == "verify":
+                                    step["complement_scheduled"] = True
+                                    break
                         self._pending_topics = list(verify_out.missing) if verify_out.decision == "pending" else []
                     elif layers and turn_mode in _ACTING_MODES:
                         self._pending_topics = []

@@ -4,7 +4,7 @@ app, un turno real del banco con el workflow de producción sobre el servidor
 de pruebas de Temporal y un LLM falso, y hooks de auditoría de Python que
 anotan cada conexión y cada escritura. Escribe un reporte JSON.
 
-Uso: python sandbox_turn_probe.py <case.json> <bench_dir> <sandbox_dir> <report.json>
+Uso: python sandbox_turn_probe.py <case.json> <bench_dir> <sandbox_dir> <report.json> [brazo]
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 CASE, BENCH, SANDBOX, REPORT = (Path(p) for p in sys.argv[1:5])
+ARM = sys.argv[5] if len(sys.argv) > 5 else "A1"
 
 from src.plugins.chats.agent.sales_lab.sandbox.env import prepare_case_env  # noqa: E402
 
@@ -72,7 +73,8 @@ async def main() -> dict:
     case = json.loads(CASE.read_text(encoding="utf-8"))
     async with await WorkflowEnvironment.start_time_skipping() as env:
         sys.addaudithook(_hook)  # el servidor de pruebas ya bajó y arrancó: de acá en adelante, el turno
-        result = await run_case(case, bench_dir=BENCH, sandbox_dir=SANDBOX, client=env.client, llm_chat=fake_llm, timeout_s=120)
+        result = await run_case(case, bench_dir=BENCH, sandbox_dir=SANDBOX, client=env.client, llm_chat=fake_llm, timeout_s=120,
+                              arm=ARM)
     result["llm_calls"] = calls["n"]
     return result
 
