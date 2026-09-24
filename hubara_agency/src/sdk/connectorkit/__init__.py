@@ -53,6 +53,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     # plugin necesita para armar envelopes sin tocar src.platform (D1.2 mba):
     "CheckoutItem": "src.platform.catalog.checkout_port",
     "parse_variant_tags": "src.platform.catalog.variant_attrs",
+    "match_option": "src.platform.catalog.variant_attrs",
     "parse_variant_colors": "src.platform.catalog.variant_colors",
     "deslugify": "src.platform.catalog.categories",
     # Identidad estable (2026-09-14): retailer_id de Meta = SKU, no id de Medusa.

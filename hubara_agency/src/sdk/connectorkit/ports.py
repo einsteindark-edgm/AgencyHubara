@@ -51,6 +51,7 @@ from src.platform.catalog.errors import (
     ProductNotFoundError as ProductNotFoundError,
 )
 from src.platform.catalog.variant_attrs import (
+    match_option as match_option,
     parse_variant_tags as parse_variant_tags,
 )
 from src.platform.catalog.variant_colors import (

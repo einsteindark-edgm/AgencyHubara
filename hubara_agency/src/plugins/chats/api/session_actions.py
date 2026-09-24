@@ -64,6 +64,11 @@ from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
 )
 from src.plugins.chats.agent.sales.config.shipping import shipping_rate_for_city
 from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
+from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+    remember_confirmed_split,
+    resolve_item_variants,
+    split_key,
+)
 from src.plugins.chats.agent.sales.use_cases.coupons import coupon_discount_for_items
 from src.plugins.chats.agent.sales.tools.order_registration import (
     RegisterOrderTool,
@@ -83,7 +88,10 @@ from src.sdk.connectorkit import (
     schedule_capi_flush,
     ProductNotFoundError,
     get_catalog_client,
+    get_coupon_sales_reader,
     get_order_registration_port,
+    get_promo_quota_store,
+    get_quota_lock,
 )
 from src.sdk.eventkit import dispatch_envelope_with_client, envelope_for
 from src.sdk.messagingkit import (
@@ -120,6 +128,10 @@ class SessionActionsDeps:
     order_port: Any | None  # OrderRegistrationPort — None → stub de la tool
     flush: Callable[[str], Awaitable[int]]  # instrucciones de pago
     notify_episode_closed: Callable[[str, str, str], Awaitable[None]]
+    # Cupo por unidad (central de cupones): el mismo reparto y candado que el bot.
+    quotas: Any | None = None
+    sales: Any | None = None
+    quota_lock: Any | None = None
 
 
 async def _notify_episode_closed(session_key: str, episode_id: str, closing_tag: str) -> None:
@@ -152,6 +164,9 @@ def get_session_actions_deps() -> SessionActionsDeps:
         order_port=_try("order_port", get_order_registration_port),
         flush=flush_pending_ui_intents,
         notify_episode_closed=_notify_episode_closed,
+        quotas=_try("promo_quota_store", get_promo_quota_store),
+        sales=_try("coupon_sales_reader", get_coupon_sales_reader),
+        quota_lock=_try("quota_lock", get_quota_lock),
     )
 
 
@@ -219,6 +234,9 @@ class OrderItemBody(BaseModel):
     handle: str = Field(min_length=1, max_length=128)
     variant_label: str | None = Field(default=None, max_length=120)
     quantity: int = Field(ge=1, le=500)
+    #: Color/aroma de la lista del producto (cupo por unidad).
+    color: str | None = Field(default=None, max_length=60)
+    aroma: str | None = Field(default=None, max_length=60)
 
 
 class ShippingBody(BaseModel):
@@ -465,17 +483,41 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
     shipping_cop = shipping_rate_for_city(body.shipping.city)
     subtotal_cop = priced.subtotal_cop
     store = FilesystemMetadataStore(deps.vault_dir)
-    tool = RegisterOrderTool(str(deps.vault_dir), vault_dir=deps.vault_dir, port=deps.order_port, catalog=deps.catalog)
+    tool = RegisterOrderTool(
+        str(deps.vault_dir), vault_dir=deps.vault_dir, port=deps.order_port, catalog=deps.catalog,
+        quotas=deps.quotas, sales=deps.sales, quota_lock=deps.quota_lock,
+    )
+    # Color/aroma de cada ítem (cupo por unidad): un valor que el producto no
+    # tiene NO registra nada — mismo contrato que `present_order_confirmation`.
+    attrs = {
+        i: {k: v for k, v in (("color", b.color), ("aroma", b.aroma)) if v}
+        for i, b in enumerate(body.items)
+    }
+    items_with_attrs = [dict(it, **attrs.get(i, {})) for i, it in enumerate(priced.items)]
 
     # Idempotencia por contenido, acotada al EPISODIO: la orden previa cuenta
     # solo si el último episodio de la sesión ya la tiene anotada (el mismo
     # pedido semanas después, en un episodio nuevo, es una venta nueva).
     data_before = store.read(session)
+    variants, invalid = await resolve_item_variants(deps.catalog, items_with_attrs, data_before)
+    if invalid:
+        return {
+            "registered": False,
+            "order_id": None,
+            "error_detail": "invalid_variant_attribute",
+            "problems": [v.message() for v in invalid],
+        }
     # Cupón aplicado en el chat (`apply_coupon`): el mismo descuento que
-    # exige SEC-07 en la tool — el operador no lo recalcula a mano.
+    # exige SEC-07 en la tool — el operador no lo recalcula a mano. Con cupo
+    # por unidad, el reparto queda como "confirmado" (el formulario es la
+    # confirmación) y la tool lo relee bajo el candado del código.
     discount = await coupon_discount_for_items(
-        data_before, deps.catalog, priced.items, shipping_cop=shipping_cop
+        data_before, deps.catalog, items_with_attrs, shipping_cop=shipping_cop,
+        quotas=deps.quotas, sales=deps.sales, variants=variants,
     )
+    if discount is not None and discount.quota:
+        confirmed = split_key(discount.line_discounts)
+        store.update(session, lambda md: remember_confirmed_split(md, discount.code, confirmed))
     discount_cop = discount.discount_cop if discount else 0
     total_cop = subtotal_cop + shipping_cop - discount_cop
     existing = data_before.get("registered_order")
@@ -496,8 +538,9 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
     else:
         tool_items = [
             {"handle": it["handle"], "quantity": it["quantity"], "unit_price_cop": it["unit_price_cop"],
-             **({"variant_label": it["variant_label"]} if it.get("variant_label") else {})}
-            for it in priced.items
+             **({"variant_label": it["variant_label"]} if it.get("variant_label") else {}),
+             **{k: it[k] for k in ("color", "aroma") if it.get(k)}}
+            for it in items_with_attrs
         ]
         envelope = json.loads(
             await tool.execute_with_context(

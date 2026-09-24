@@ -19,6 +19,11 @@ from src.sdk.connectorkit import (
     compute_discount,
 )
 
+from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+    ItemVariant,
+    quota_split,
+    resolve_item_variants,
+)
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     ensure_active_episode,
     get_active_episode,
@@ -38,6 +43,11 @@ class AppliedDiscount:
     #: Reparto por unidad sobre los ítems (índice = posición en `items`): es
     #: el precio con descuento que el pedido escribe en Medusa.
     line_discounts: tuple[LineDiscount, ...] = ()
+    #: True = el cupón tiene cupo por unidad (central de cupones): el reparto
+    #: salió de las filas del cupo y lo vendido, no de toda la promoción.
+    quota: bool = False
+    #: Líneas de un producto con cupo que no dicen el color/aroma que exige.
+    missing_attributes: tuple[int, ...] = ()
 
 
 def applied_coupon(metadata: dict[str, Any]) -> dict[str, Any] | None:
@@ -226,13 +236,39 @@ async def coupon_discount_for_items(
     items: list[dict[str, Any]],
     *,
     shipping_cop: int = 0,
+    quotas: Any = None,
+    sales: Any = None,
+    variants: list[ItemVariant] | None = None,
 ) -> AppliedDiscount | None:
     """Descuento del cupón aplicado en el episodio sobre `items`; None si
-    no hay cupón aplicado."""
+    no hay cupón aplicado.
+
+    Con cupo por unidad (`quotas` con filas para el cupón) el descuento va
+    SOLO a las unidades de las combinaciones que quedan, leyendo lo vendido
+    fresco (`sales`); sin poder leerlo, no descuenta (falla cerrada)."""
     raw = applied_coupon(metadata)
     if raw is None:
         return None
     promotion = promotion_from_snapshot(raw["promotion"])
+    sheet = quotas.get(promotion.id) if quotas is not None else None
+    if sheet is not None and sheet.quotas:
+        if variants is None:
+            variants, _invalid = await resolve_item_variants(catalog, items, metadata)
+        split = await quota_split(promotion, items, variants, sheet=sheet, sales=sales)
+        return AppliedDiscount(
+            code=promotion.code,
+            discount_cop=sum(d.units * d.discount_unit_cop for d in split.line_discounts),
+            applicable_handles=sorted(
+                {str(items[d.index].get("handle") or "") for d in split.line_discounts}
+            ),
+            applies_to_shipping=False,
+            reason=split.reason,
+            min_subtotal_cop=None,
+            description=promotion.description,
+            line_discounts=split.line_discounts,
+            quota=True,
+            missing_attributes=split.missing_attributes,
+        )
     lines = await discount_line_items(catalog, items)
     result = compute_discount(promotion, lines, shipping_cop=shipping_cop)
     return AppliedDiscount(

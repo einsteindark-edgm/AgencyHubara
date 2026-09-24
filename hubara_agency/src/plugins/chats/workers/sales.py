@@ -162,6 +162,7 @@ from src.sdk.connectorkit import (  # noqa: E402
     get_coupon_sales_reader,
     get_promo_quota_store,
     get_promotions_port,
+    get_quota_lock,
 )
 
 _promotions = get_promotions_port()
@@ -280,6 +281,10 @@ register_tool_extension(
         # Incidente 943e6bff: decide contra el catálogo si el pedido trae
         # portavela — solo entonces la despedida/nota lo mencionan.
         catalog=_catalog,
+        # Cupo por unidad: relee lo vendido bajo el candado del código.
+        quotas=get_promo_quota_store(),
+        sales=_coupon_sales,
+        quota_lock=get_quota_lock(),
     ),
 )
 
@@ -328,7 +333,10 @@ register_tool_extension(
 register_tool_extension(
     "sales.present_order_confirmation",
     lambda workspace: PresentOrderConfirmationTool(
-        workspace=str(workspace), catalog=_catalog
+        workspace=str(workspace),
+        catalog=_catalog,
+        quotas=get_promo_quota_store(),
+        sales=_coupon_sales,
     ),
 )
 # Regla del operador 2026-09-07: "¿cuánto vale el envío?" → mensaje estándar

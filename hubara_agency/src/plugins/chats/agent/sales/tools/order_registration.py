@@ -63,6 +63,7 @@ from src.platform.config import WORKSPACE_VAULT_DIR
 from src.sdk.connectorkit import (
     DiscountedUnits,
     LineDiscount,
+    QuotaLockTimeout,
     enqueue_capi_event,
     normalize_capi_contents,
     product_retailer_id,
@@ -80,8 +81,14 @@ from src.plugins.chats.agent.sales.pricing import (
     format_cop,
 )
 from src.platform.orders.stub import StubOrderRegistration
+from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+    confirmed_split,
+    split_key,
+)
 from src.plugins.chats.agent.sales.use_cases.coupons import (
+    applied_coupon,
     coupon_discount_for_items,
+    promotion_from_snapshot,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     attach_order_to_active_episode,
@@ -135,12 +142,21 @@ def _with_discounted_units(
     groups: dict[int, list[DiscountedUnits]] = {}
     for line in line_discounts:
         groups.setdefault(line.index, []).append(
-            DiscountedUnits(units=line.units, discount_unit_cop=line.discount_unit_cop)
+            DiscountedUnits(
+                units=line.units,
+                discount_unit_cop=line.discount_unit_cop,
+                quota_id=line.quota_id,
+            )
         )
     return [
         replace(item, discounted_units=tuple(groups.get(i, ())))
         for i, item in enumerate(items)
     ]
+
+
+#: Un registro con cupo espera a lo sumo esto a que termine otro del mismo
+#: código (el adapter de Medusa acota el suyo a ~45 s).
+_QUOTA_LOCK_TIMEOUT_S = 60.0
 
 
 class RegisterOrderTool(ToolBase):
@@ -192,6 +208,16 @@ class RegisterOrderTool(ToolBase):
                         "variant_label": {
                             "type": "string",
                             "maxLength": 80,
+                        },
+                        "color": {
+                            "type": "string",
+                            "maxLength": 60,
+                            "description": "Color elegido (de la lista del producto), si tiene.",
+                        },
+                        "aroma": {
+                            "type": "string",
+                            "maxLength": 60,
+                            "description": "Aroma elegido (de la lista del producto), si tiene.",
                         },
                     },
                     "required": ["handle", "quantity", "unit_price_cop"],
@@ -264,7 +290,13 @@ class RegisterOrderTool(ToolBase):
         vault_dir: str | Path | None = None,
         port: OrderRegistrationPort | None = None,
         catalog: CatalogPort | None = None,
+        quotas: Any = None,
+        sales: Any = None,
+        quota_lock: Any = None,
     ) -> None:
+        """`quotas`/`sales`/`quota_lock`: cupo por unidad (central de cupones).
+        Con cupo, el reparto se relee BAJO el candado del código antes de
+        crear el draft (nunca se vende dos veces la última unidad)."""
         # Mismo patrón que `ManageConversationTagTool`: el `workspace` que
         # llega es el RUNTIME WORKSPACE CANONICO compartido — NO se usa
         # para metadata. `vault_dir` (DI-friendly): default vault canónico.
@@ -283,6 +315,23 @@ class RegisterOrderTool(ToolBase):
         # workflow. Sin catálogo (tests legacy / dev) la tool es conservadora:
         # NO lo menciona.
         self._catalog = catalog
+        self._quotas = quotas
+        self._sales = sales
+        self._quota_lock = quota_lock
+
+    def _quota_code(self, session_key: str) -> str | None:
+        """Código del cupón aplicado si tiene cupo por unidad (hay que
+        registrar bajo su candado); None si no."""
+        if self._quotas is None or self._quota_lock is None:
+            return None
+        raw = applied_coupon(self._read_metadata(session_key))
+        if raw is None:
+            return None
+        try:
+            promotion = promotion_from_snapshot(raw["promotion"])
+        except (TypeError, KeyError):
+            return None
+        return promotion.code if self._quotas.get(promotion.id).quotas else None
 
     async def _portavelas_handles(self, items: list[dict[str, Any]]) -> list[str]:
         """Handles del pedido cuyo producto trae portavela según el catálogo.
@@ -407,6 +456,45 @@ class RegisterOrderTool(ToolBase):
         total_cop: int,
         currency: str = "COP",
     ) -> str:
+        args = dict(
+            items=items, shipping=shipping, payment_method=payment_method,
+            subtotal_cop=subtotal_cop, shipping_cop=shipping_cop,
+            total_cop=total_cop, currency=currency,
+        )
+        code = self._quota_code(ctx.session_key)
+        if code is None:
+            return await self._execute(ctx, **args)
+        # Cupo por unidad: "releer lo vendido → repartir → crear el draft"
+        # corre bajo el candado del código (dos clientes y la última unidad).
+        try:
+            async with self._quota_lock.hold(code, timeout_s=_QUOTA_LOCK_TIMEOUT_S):
+                return await self._execute(ctx, **args)
+        except QuotaLockTimeout:
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "quota_busy",
+                    "summary": (
+                        f"Otro pedido con el cupón {code} se está registrando en este "
+                        "momento. Espera unos segundos y vuelve a llamar `register_order` "
+                        "con los mismos datos."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
+    async def _execute(
+        self,
+        ctx: ToolContext,
+        items: list[dict[str, Any]],
+        shipping: dict[str, Any],
+        payment_method: str,
+        subtotal_cop: int,
+        shipping_cop: int,
+        total_cop: int,
+        currency: str = "COP",
+    ) -> str:
         # Convertir JSON-schema params a frozen DTOs del port.
         order_items = [
             OrderItem(
@@ -453,8 +541,43 @@ class RegisterOrderTool(ToolBase):
         # recomputa acá desde el snapshot + catálogo. NUNCA lo manda el LLM.
         metadata_before = self._read_metadata(ctx.session_key)
         discount = await coupon_discount_for_items(
-            metadata_before, self._catalog, items, shipping_cop=shipping_cop
+            metadata_before, self._catalog, items, shipping_cop=shipping_cop,
+            quotas=self._quotas, sales=self._sales,
         )
+        # Cupo por unidad: el reparto recién releído (bajo el candado) tiene
+        # que ser el que vio el cliente en la confirmación. Si cambió (otro
+        # cliente se llevó unidades), NO se crea el draft: total nuevo y a
+        # confirmar otra vez.
+        if discount is not None and discount.quota:
+            seen = confirmed_split(metadata_before, discount.code)
+            fresh = split_key(discount.line_discounts)
+            if seen is not None and seen != fresh:
+                new_total = (
+                    sum(int(it["unit_price_cop"]) * int(it["quantity"]) for it in items)
+                    + shipping_cop
+                    - discount.discount_cop
+                )
+                logger.info(
+                    "🧾 [TOOL register_order] quota_changed session={} code={} confirmed={} fresh={}",
+                    ctx.session_key, discount.code, seen, fresh,
+                )
+                return json.dumps(
+                    {
+                        "registered": False,
+                        "order_id": None,
+                        "error_detail": "quota_changed",
+                        "new_total_cop": new_total,
+                        "new_discount_cop": discount.discount_cop,
+                        "summary": (
+                            f"Mientras el cliente confirmaba cambiaron las unidades con "
+                            f"descuento de {discount.code}: el total ahora es "
+                            f"{format_cop(new_total)}. El pedido NO se registró. Explícale "
+                            "el cambio con honestidad y vuelve a llamar "
+                            "`present_order_confirmation` para que confirme el total nuevo."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
         if discount is not None and self._catalog is None:
             logger.warning(
                 "🧾 [TOOL register_order] cupón {} sin catálogo: descuento solo si la promo es global",
@@ -613,6 +736,7 @@ class RegisterOrderTool(ToolBase):
                             "index": line.index,
                             "units": line.units,
                             "discount_unit_cop": line.discount_unit_cop,
+                            **({"quota_id": line.quota_id} if line.quota_id else {}),
                         }
                         for line in discount.line_discounts
                     ],

@@ -195,6 +195,13 @@ def test_sales_worker_gives_coupon_tools_the_quota_dependencies(tmp_path: Path, 
     import src.plugins.chats.workers.sales  # noqa: F401  (registra las tools)
     from src.platform.tool_extensions import _EXTENSIONS  # type: ignore
 
-    for name in ("sales.apply_coupon", "sales.list_promotions"):
+    for name in (
+        "sales.apply_coupon",
+        "sales.list_promotions",
+        "sales.present_order_confirmation",
+        "sales.register_order",
+    ):
         tool = dict(_EXTENSIONS)[name](tmp_path)  # ejecuta el lambda (caza NameError)
         assert tool._quotas is not None and tool._sales is not None, name
+    register = dict(_EXTENSIONS)["sales.register_order"](tmp_path)
+    assert register._quota_lock is not None
