@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  couponUnitsToBody,
   mapBackendCoupon,
   mapBackendCouponDetail,
   mapBackendCouponProducts,
@@ -164,6 +165,34 @@ describe("backendCouponUnitsSchema (GET/PUT /units)", () => {
     expect(units.rows).toHaveLength(1);
     expect(units.showUnitsLeft).toBe(false);
     expect(units.unavailable).toBe(false);
+  });
+});
+
+describe("versión del cupo por unidad (C-5)", () => {
+  it("parsea `updated_at` de lo guardado; null si nunca se guardó o el backend no lo manda", () => {
+    const saved = mapBackendCouponUnits(
+      backendCouponUnitsSchema.parse({ rows: [UNIT_ROW], updated_at: "2026-09-23T15:00:00Z" }),
+    );
+    expect(saved.updatedAt).toBe("2026-09-23T15:00:00Z");
+    expect(mapBackendCouponUnits(backendCouponUnitsSchema.parse({ rows: [] })).updatedAt).toBeNull();
+    // El detalle trae el mismo bloque de unidades.
+    const detail = mapBackendCouponDetail(
+      backendCouponDetailSchema.parse({ coupon: COUPON_FIXTURE, units: { rows: [], updated_at: "v2" } }),
+    );
+    expect(detail.units.updatedAt).toBe("v2");
+  });
+
+  it("el PUT manda la versión que se editó como `expected_updated_at` (null = nunca guardado)", () => {
+    const base = { rows: [], showUnitsLeft: true };
+    expect(couponUnitsToBody({ ...base, expectedUpdatedAt: "v2" })).toMatchObject({
+      expected_updated_at: "v2",
+    });
+    expect(couponUnitsToBody({ ...base, expectedUpdatedAt: null })).toHaveProperty(
+      "expected_updated_at",
+      null,
+    );
+    // Sin versión (nadie la pidió) no se manda: el backend no compara.
+    expect(couponUnitsToBody(base)).not.toHaveProperty("expected_updated_at");
   });
 });
 

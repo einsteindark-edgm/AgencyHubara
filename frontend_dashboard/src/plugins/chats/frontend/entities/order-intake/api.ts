@@ -59,9 +59,13 @@ export interface CreateOrderVariables {
   payment_method: PaymentMethod;
   /** `false` = el operador ya acordó el pago por chat y no quiere el mensaje automático. */
   send_payment_instructions: boolean;
-  /** Descuento del cupón que el operador VIO (sugerencia sin líneas editadas).
-   *  Si el backend recalcula otro, responde `quota_changed` y no registra. */
+  /** Descuento del cupón que el operador VIO (el de la sugerencia, el del
+   *  cálculo tras editar líneas o el nuevo de un `quota_changed`). Si el
+   *  backend recalcula otro, responde `quota_changed` y no registra. */
   expected_discount_cop?: number;
+  /** `true` = solo calcular (C-1): mismas validaciones, NADA se registra ni se
+   *  le manda al cliente; la respuesta trae los montos (`dry_run: true`). */
+  dry_run?: boolean;
 }
 
 /**

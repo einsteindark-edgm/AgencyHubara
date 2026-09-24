@@ -8,6 +8,8 @@
  *  - 422 `{detail: {field, message}}` — dato inválido del formulario
  *  - 422 `{detail: {message, rows: [{row, field, message}]}}` — filas del cupo
  *  - 409/503/404 `{detail: {message}}` · 502 `{detail: {message, step, coupon}}`
+ *  - 409 `{detail: {code: "units_changed", message}}` — el cupo cambió desde la
+ *    versión que se editó (C-5, `expected_updated_at`)
  */
 
 import { z } from "zod";
@@ -62,6 +64,8 @@ export const backendCouponUnitsSchema = z.object({
   rows: z.array(backendCouponUnitRowSchema).default([]),
   show_units_left: z.boolean().default(true),
   unavailable: z.boolean().default(false),
+  /** Versión de lo guardado (ISO; null = nunca se guardó) — C-5. */
+  updated_at: z.string().nullable().default(null),
 });
 
 export type BackendCouponUnits = z.infer<typeof backendCouponUnitsSchema>;
@@ -79,6 +83,7 @@ export const backendCouponDetailSchema = z.object({
     rows: [],
     show_units_left: true,
     unavailable: false,
+    updated_at: null,
   }),
   changes: z.array(backendCouponChangeSchema).default([]),
 });
@@ -123,6 +128,12 @@ export type BackendCouponProductsResponse = z.infer<
 
 export const backendFieldErrorSchema = z.object({
   detail: z.object({ field: z.string(), message: z.string() }),
+});
+
+/** 409 del PUT del cupo: otra persona lo guardó después de la versión que
+ *  se editó (C-5). */
+export const backendUnitsConflictSchema = z.object({
+  detail: z.object({ code: z.literal("units_changed"), message: z.string() }),
 });
 
 export const backendRowsErrorSchema = z.object({

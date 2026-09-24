@@ -8,6 +8,7 @@
  * SOLO para dar orden de magnitud al operador — siempre etiquetada "aprox".
  */
 
+import { BOGOTA_TZ } from "@/shared/lib";
 import { ApiError } from "@/shared/sdk";
 
 const INT_CO = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 });
@@ -48,25 +49,42 @@ export function usdMicrosToCop(
   return Math.round((micros / 1_000_000) * rate);
 }
 
-/** "12 jul, 14:30" — timestamp corto es-CO para historial de pruebas. */
-/** Fecha con año ("22 sept 2025") — para registros que se miran meses después
- *  (bajas), donde el día y mes solos son ambiguos. */
+/* Fechas SIEMPRE en hora de Colombia (D14): el navegador del operador puede
+ * estar en otra zona (VPN, viaje) y "cuándo" es el de la tienda. */
+const DAY_MONTH = new Intl.DateTimeFormat("es-CO", {
+  timeZone: BOGOTA_TZ,
+  day: "numeric",
+  month: "short",
+});
+const DAY_MONTH_YEAR = new Intl.DateTimeFormat("es-CO", {
+  timeZone: BOGOTA_TZ,
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+const HOUR_MINUTE = new Intl.DateTimeFormat("es-CO", {
+  timeZone: BOGOTA_TZ,
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+const YEAR = new Intl.DateTimeFormat("en-CA", { timeZone: BOGOTA_TZ, year: "numeric" });
+
+/** Fecha con año ("22 de sept de 2025") — para registros que se miran meses
+ *  después (bajas), donde el día y mes solos son ambiguos. */
 export function fmtDateMs(ms: number): string {
-  return new Date(ms).toLocaleDateString("es-CO", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return DAY_MONTH_YEAR.format(new Date(ms));
 }
 
-export function fmtDateTimeMs(ms: number): string {
+/** "23 de sept, 22:30" — timestamp corto (historial de pruebas, registro de
+ *  cambios, ventas del cupón); con el año si no es el año en curso. `nowMs`
+ *  se lee en render (regla 5): no llamarla desde un mapper ni un queryFn. */
+export function fmtDateTimeMs(ms: number, nowMs: number = Date.now()): string {
   const d = new Date(ms);
-  const date = d.toLocaleDateString("es-CO", { day: "numeric", month: "short" });
-  const time = d.toLocaleTimeString("es-CO", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  const sameYear = YEAR.format(d) === YEAR.format(new Date(nowMs));
+  const date = (sameYear ? DAY_MONTH : DAY_MONTH_YEAR).format(d);
+  // Algunos ICU emiten "24:05" para la medianoche con hour12:false.
+  const time = HOUR_MINUTE.format(d).replace(/^24:/, "00:");
   return `${date}, ${time}`;
 }
 

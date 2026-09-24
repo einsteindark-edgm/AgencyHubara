@@ -113,6 +113,19 @@ export function VaultOrdersBanner({
   );
 }
 
+/** C-4: la reconciliación no registró porque ya no quedan las unidades con
+ *  descuento — reintentar no sirve; un humano confirma el total nuevo. */
+const QUOTA_CHANGED_MESSAGE =
+  "Ya no quedan las unidades con descuento: confirma el total nuevo con el cliente antes de registrarlo a mano";
+
+/** Motivo del abandono. El campo es `abandon_reason` (C-4); un backend que
+ *  todavía no lo expone lo deja en el registro crudo del vault. */
+function abandonReasonOf(r: VaultOrderRecord): string | null {
+  if (r.abandon_reason) return r.abandon_reason;
+  const raw = r.raw.abandon_reason;
+  return typeof raw === "string" && raw ? raw : null;
+}
+
 // Estilo compartido de los botones de acción de la fila (mismo idioma inline
 // del resto del banner; la migración a tokens es F4).
 const vaultActionBtnStyle = (busy: boolean): React.CSSProperties => ({
@@ -145,6 +158,8 @@ function VaultOrderRow({ r }: { r: VaultOrderRecord }) {
   let estado = r.status === "abandoned" ? "Abandonado" : "Pendiente";
   if (retry.isError || resolve.isError) estado = "Error de red";
   else if (outcome === "still_failing") estado = "Medusa sigue caído";
+  const quotaChanged =
+    r.status === "abandoned" && abandonReasonOf(r) === "quota_changed";
 
   return (
     <tr style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
@@ -184,12 +199,17 @@ function VaultOrderRow({ r }: { r: VaultOrderRecord }) {
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
         }}
-        title={r.error_detail ?? ""}
+        title={quotaChanged ? QUOTA_CHANGED_MESSAGE : (r.error_detail ?? "")}
       >
         {estado}
         {r.attempts > 0
           ? ` · ${r.attempts} intento${r.attempts === 1 ? "" : "s"}`
           : ""}
+        {quotaChanged && (
+          <div style={{ whiteSpace: "normal", color: "var(--color-warn)", marginTop: 2 }}>
+            {QUOTA_CHANGED_MESSAGE}
+          </div>
+        )}
       </td>
       <td style={{ padding: "4px 8px", whiteSpace: "nowrap" }}>
         {confirmingResolve ? (

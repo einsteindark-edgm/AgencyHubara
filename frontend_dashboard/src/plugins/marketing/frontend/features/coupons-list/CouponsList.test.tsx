@@ -95,6 +95,13 @@ describe("CouponsList", () => {
     expect(getByText(/Medusa no responde/)).toBeTruthy();
   });
 
+  it("mientras carga no dice 0 ni 'Sin cupones' (D9)", () => {
+    const { getByText, queryByText, queryAllByText } = renderList({ coupons: [], loading: true });
+    expect(getByText("Cargando cupones…")).toBeTruthy();
+    expect(queryByText(/Sin cupones en este estado/)).toBeNull();
+    expect(queryAllByText("0")).toHaveLength(0);
+  });
+
   it("pinta el slot de cabecera arriba de la lista (selector de la sección)", () => {
     const { getByTestId } = renderList({ header: <div data-testid="slot" /> });
     expect(getByTestId("slot")).toBeTruthy();

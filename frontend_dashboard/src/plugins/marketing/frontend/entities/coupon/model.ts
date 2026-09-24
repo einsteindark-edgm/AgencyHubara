@@ -9,7 +9,11 @@
 
 import { ApiError } from "@/shared/sdk";
 
-import { backendFieldErrorSchema, backendRowsErrorSchema } from "./contracts";
+import {
+  backendFieldErrorSchema,
+  backendRowsErrorSchema,
+  backendUnitsConflictSchema,
+} from "./contracts";
 
 export type CouponState = "draft" | "scheduled" | "active" | "paused" | "expired";
 
@@ -64,6 +68,9 @@ export interface CouponUnits {
   showUnitsLeft: boolean;
   /** Medusa no respondió: las vendidas no están al día. */
   unavailable: boolean;
+  /** Versión de lo guardado (ISO; null = nunca se guardó). El editor la
+   *  devuelve al guardar como `expectedUpdatedAt` (C-5). */
+  updatedAt: string | null;
 }
 
 export interface CouponChange {
@@ -131,6 +138,9 @@ export interface CouponUnitRowInput {
 export interface CouponUnitsInput {
   rows: CouponUnitRowInput[];
   showUnitsLeft: boolean;
+  /** La versión que se editó (C-5): si otra persona guardó después, el PUT
+   *  responde 409 `units_changed` y no pisa lo suyo. Omitida = sin chequeo. */
+  expectedUpdatedAt?: string | null;
 }
 
 /* ── Helpers ────────────────────────────────────────────────────────────── */
@@ -151,9 +161,11 @@ export function couponUnitsLabel(u: CouponUnitsSummary): string {
   return `quedan ${u.left} de ${u.total}`;
 }
 
-/** Una campaña solo puede anunciar un cupón que rige o va a regir. */
+/** Una campaña solo puede anunciar un cupón de PORCENTAJE que rige o va a
+ *  regir: la campaña guarda su % (sin % el "Descuento definido" nunca se
+ *  cumple y el envío queda bloqueado — D10). */
 export function isCouponPickable(c: Coupon): boolean {
-  return c.state === "active" || c.state === "scheduled";
+  return c.percentage !== null && (c.state === "active" || c.state === "scheduled");
 }
 
 /** Forma válida del código — espejo de `CENTRAL_CODE_RE` (3 a 14 letras o
@@ -170,6 +182,16 @@ function errorBody(err: unknown): unknown {
 export function couponFieldError(err: unknown): { field: string; message: string } | null {
   const parsed = backendFieldErrorSchema.safeParse(errorBody(err));
   return parsed.success ? parsed.data.detail : null;
+}
+
+/** 409 `units_changed` del cupo (C-5): otra persona lo guardó después de la
+ *  versión que se editó — hay que recargar antes de guardar. */
+export function isCouponUnitsConflict(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    err.status === 409 &&
+    backendUnitsConflictSchema.safeParse(err.body).success
+  );
 }
 
 /** 422 del cupo → mensajes por índice de fila (0-based, orden del PUT). */

@@ -281,6 +281,8 @@ describe("CreateOrderAction", () => {
     expect(createAsync.mock.calls[0][0].items).toEqual([
       { handle: "luz-serena", variant_label: "Lavanda / Blanco", quantity: 1 },
     ]);
+    // Sin cupón no hay nada que recalcular: registra al primer clic.
+    expect(createAsync.mock.calls[0][0]).not.toHaveProperty("dry_run");
   });
 
   it("muestra el total de productos y lo recalcula al cambiar la cantidad", async () => {
@@ -355,16 +357,55 @@ describe("CreateOrderAction", () => {
       coupon_units: 1,
       coupon_discount_cop: 2100,
     };
+    // Como lo arma el backend: total = productos + envío − descuento.
     const WITH_COUPON = {
       ...SUGGESTION,
       items: [CUBO],
       subtotal_cop: 42000,
+      shipping_cop: 7900,
       discount_cop: 2100,
+      total_cop: 47800,
+      coupon_code: "AMOR26",
+      coupon_reason: null,
+    };
+    // Cupón aplicado a $0 (C-2): el código viene igual, con el motivo.
+    const CUBO_SIN_COLOR = { ...CUBO, color: null, coupon_units: 0, coupon_discount_cop: 0 };
+    const COUPON_AT_ZERO = {
+      ...WITH_COUPON,
+      items: [CUBO_SIN_COLOR],
+      discount_cop: 0,
+      total_cop: 49900,
+      coupon_reason: "missing_attributes",
+    };
+    /** Respuesta de un cálculo sin registrar (`dry_run`, C-1). */
+    const QUOTE_3_CUBOS = {
+      registered: false,
+      dry_run: true,
+      order_id: null,
+      error_detail: null,
+      subtotal_cop: 63000,
+      shipping_cop: 7900,
+      discount_cop: 2100,
+      total_cop: 68800,
       coupon_code: "AMOR26",
     };
+    const REGISTERED = { registered: true, order_id: "order_1", order_reference: "#31" };
+
+    /** El backend real: con `dry_run` calcula sin registrar; sin él, registra. */
+    function backendReplies(quote: unknown, registered: unknown = REGISTERED) {
+      createAsync.mockImplementation(async (body: { dry_run?: boolean }) =>
+        body.dry_run ? quote : registered,
+      );
+    }
+
+    const clickCreate = () =>
+      fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+
+    /** Fila del resumen (etiqueta + valor) que contiene `label`. */
+    const summaryRow = (label: RegExp) => screen.getByText(label).parentElement?.textContent ?? "";
 
     it("pide color y aroma de las listas del producto, preseleccionados, y los manda en el pedido", async () => {
-      createAsync.mockResolvedValue({ registered: true, order_id: "order_1" });
+      backendReplies({ ...QUOTE_3_CUBOS, subtotal_cop: 42000, total_cop: 47800 });
       await openForm(WITH_COUPON);
 
       const color = screen.getByLabelText(/color de cubo love/i);
@@ -376,26 +417,32 @@ describe("CreateOrderAction", () => {
       ).toEqual(expect.arrayContaining(["Rosado", "Azul"]));
 
       fireEvent.change(aroma, { target: { value: "Lavanda" } });
-      fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+      clickCreate();
+      await screen.findByRole("status");
+      clickCreate();
 
-      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
-      expect(createAsync.mock.calls[0][0].items).toEqual([
-        { handle: "cubo-love", quantity: 2, color: "Rosado", aroma: "Lavanda" },
-      ]);
+      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(2));
+      for (const [body] of createAsync.mock.calls) {
+        expect(body.items).toEqual([
+          { handle: "cubo-love", quantity: 2, color: "Rosado", aroma: "Lavanda" },
+        ]);
+      }
     });
 
     it("si el producto no tiene listas no pide color ni aroma (y no los manda)", async () => {
-      createAsync.mockResolvedValue({ registered: true, order_id: "order_1" });
+      createAsync.mockResolvedValue(REGISTERED);
       await openForm({
         ...SUGGESTION,
-        items: [{ ...CUBO, color: null, aroma: null, colors: [], aromas: ["Café"] }],
+        items: [
+          { ...CUBO, color: null, aroma: null, colors: [], aromas: ["Café"], coupon_units: 0, coupon_discount_cop: 0 },
+        ],
       });
 
       expect(screen.queryByLabelText(/color de cubo love/i)).not.toBeInTheDocument();
       fireEvent.change(screen.getByLabelText(/aroma de cubo love/i), {
         target: { value: "Café" },
       });
-      fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+      clickCreate();
 
       await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
       expect(createAsync.mock.calls[0][0].items).toEqual([
@@ -409,11 +456,14 @@ describe("CreateOrderAction", () => {
       expect(screen.getByText("1 de 2 con AMOR26 (−$2.100)")).toBeInTheDocument();
     });
 
+    it("muestra el cupón y su descuento en el resumen", async () => {
+      await openForm(WITH_COUPON);
+
+      expect(summaryRow(/^Cupón AMOR26$/)).toContain("−$2.100");
+    });
+
     it("con cupón y sin color o aroma avisa que el descuento los necesita", async () => {
-      await openForm({
-        ...WITH_COUPON,
-        items: [{ ...CUBO, color: null, coupon_units: 0, coupon_discount_cop: 0 }],
-      });
+      await openForm(COUPON_AT_ZERO);
 
       expect(screen.getByLabelText(/color de cubo love/i)).toHaveValue("");
       expect(
@@ -430,11 +480,45 @@ describe("CreateOrderAction", () => {
     });
 
     it("sin cupón no hay aviso aunque falte el color", async () => {
-      await openForm({ ...SUGGESTION, items: [{ ...CUBO, color: null, coupon_units: 0 }] });
+      await openForm({
+        ...SUGGESTION,
+        items: [{ ...CUBO, color: null, coupon_units: 0, coupon_discount_cop: 0 }],
+      });
 
       expect(
         screen.queryByText(/el descuento del cupón necesita/i),
       ).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ["missing_attributes", "falta elegir color y aroma"],
+      ["quota_exhausted", "se agotaron las unidades con descuento"],
+      ["quota_unavailable", "no se pudieron leer las unidades (intenta en un minuto)"],
+      ["min_subtotal", "el pedido no alcanza el mínimo del cupón"],
+      ["no_applicable_items", "ningún producto del pedido aplica para el cupón"],
+      ["unsupported", "este cupón no se puede aplicar desde aquí"],
+    ])("el cupón sin descuento (%s) se ve en el resumen con el motivo", async (reason, label) => {
+      await openForm({ ...COUPON_AT_ZERO, coupon_reason: reason });
+
+      expect(screen.getByText(`Cupón AMOR26: sin descuento — ${label}`)).toBeInTheDocument();
+    });
+
+    it("un descuento parcial dice por qué no es completo", async () => {
+      await openForm({ ...WITH_COUPON, coupon_reason: "quota_exhausted" });
+
+      expect(summaryRow(/^Cupón AMOR26$/)).toContain("−$2.100");
+      expect(screen.getByText(/descuento parcial: se agotaron las unidades con descuento/i)).toBeInTheDocument();
+    });
+
+    it("con el cupón a $0 manda el descuento esperado en 0 (el que vio el operador)", async () => {
+      createAsync.mockResolvedValue(REGISTERED);
+      await openForm(COUPON_AT_ZERO);
+
+      clickCreate();
+
+      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+      expect(createAsync.mock.calls[0][0].expected_discount_cop).toBe(0);
+      expect(createAsync.mock.calls[0][0]).not.toHaveProperty("dry_run");
     });
 
     it.each([
@@ -470,26 +554,28 @@ describe("CreateOrderAction", () => {
       createAsync.mockResolvedValue({ registered: false, order_id: null, ...rejection });
       await openForm(WITH_COUPON);
 
-      fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+      clickCreate();
 
       expect(await screen.findByRole("alert")).toHaveTextContent(message);
       expect(screen.getByRole("dialog", { name: /crear pedido/i })).toBeInTheDocument();
     });
-      it("sin editar ninguna línea manda el descuento que vio el operador", async () => {
-      createAsync.mockResolvedValue({ registered: true, order_id: "order_1" });
+
+    it("sin editar ninguna línea manda el descuento que vio el operador", async () => {
+      createAsync.mockResolvedValue(REGISTERED);
       await openForm(WITH_COUPON);
 
-      fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+      clickCreate();
 
       await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
       expect(createAsync.mock.calls[0][0].expected_discount_cop).toBe(2100);
+      expect(createAsync.mock.calls[0][0]).not.toHaveProperty("dry_run");
     });
 
     it("sin cupón no manda descuento esperado", async () => {
-      createAsync.mockResolvedValue({ registered: true, order_id: "order_1" });
+      createAsync.mockResolvedValue(REGISTERED);
       await openForm();
 
-      fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+      clickCreate();
 
       await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
       expect(createAsync.mock.calls[0][0]).not.toHaveProperty("expected_discount_cop");
@@ -506,57 +592,143 @@ describe("CreateOrderAction", () => {
         fireEvent.change(screen.getByLabelText(/agregar producto/i), {
           target: { value: "luz-serena||Lavanda / Blanco" },
         })],
-    ])("al editar %s ya no manda el descuento viejo y el resumen dice que se recalcula", async (_what, edit) => {
-      createAsync.mockResolvedValue({ registered: true, order_id: "order_1" });
+      ["una línea quitada", () =>
+        fireEvent.click(screen.getByRole("button", { name: /quitar cubo dos/i }))],
+    ])(
+      "al editar %s, el primer clic recalcula SIN registrar y el segundo registra con el descuento que vio",
+      async (_what, edit) => {
+        backendReplies(QUOTE_3_CUBOS);
+        await openForm({ ...WITH_COUPON, items: [CUBO, { ...CUBO, handle: "cubo-dos", title: "Cubo Dos", coupon_units: 0, coupon_discount_cop: 0 }] });
+        expect(screen.getByText("−$2.100")).toBeInTheDocument();
+
+        edit();
+
+        // El descuento viejo ya no vale: el resumen dice que se recalcula.
+        expect(screen.queryByText("−$2.100")).not.toBeInTheDocument();
+        expect(
+          screen.getByText(/descuento del cupón: se recalcula al crear el pedido/i),
+        ).toBeInTheDocument();
+
+        clickCreate();
+
+        // 1er clic: cálculo sin registrar (nada de instrucciones de pago).
+        const notice = await screen.findByRole("status");
+        expect(notice).toHaveTextContent(/el total es \$68\.800 \(descuento \$2\.100\)/);
+        expect(createAsync).toHaveBeenCalledTimes(1);
+        expect(createAsync.mock.calls[0][0].dry_run).toBe(true);
+        expect(createAsync.mock.calls[0][0]).not.toHaveProperty("expected_discount_cop");
+        expect(summaryRow(/^Total$/)).toContain("$68.800");
+        expect(screen.queryByText(/pedido creado/i)).not.toBeInTheDocument();
+
+        // 2º clic: registra contra el descuento que el operador acaba de ver.
+        clickCreate();
+
+        await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(2));
+        expect(createAsync.mock.calls[1][0]).not.toHaveProperty("dry_run");
+        expect(createAsync.mock.calls[1][0].expected_discount_cop).toBe(2100);
+        expect(await screen.findByText(/pedido creado/i)).toBeInTheDocument();
+      },
+    );
+
+    it("si después del cálculo vuelve a editar, recalcula otra vez antes de registrar", async () => {
+      backendReplies(QUOTE_3_CUBOS);
       await openForm(WITH_COUPON);
-      expect(screen.getByText("−$2.100")).toBeInTheDocument();
 
-      edit();
+      fireEvent.change(screen.getByLabelText(/cantidad de cubo love/i), { target: { value: "3" } });
+      clickCreate();
+      await screen.findByRole("status");
+      fireEvent.change(screen.getByLabelText(/cantidad de cubo love/i), { target: { value: "4" } });
 
-      expect(screen.queryByText("−$2.100")).not.toBeInTheDocument();
-      expect(
-        screen.getByText(/descuento del cupón: se recalcula al crear el pedido/i),
-      ).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
-      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
-      expect(createAsync.mock.calls[0][0]).not.toHaveProperty("expected_discount_cop");
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      clickCreate();
+
+      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(2));
+      expect(createAsync.mock.calls[1][0].dry_run).toBe(true);
     });
 
-    it("al quitar una línea tampoco manda el descuento viejo", async () => {
-      createAsync.mockResolvedValue({ registered: true, order_id: "order_1" });
-      await openForm({ ...WITH_COUPON, items: [CUBO, { ...CUBO, handle: "cubo-dos", title: "Cubo Dos" }] });
-
-      fireEvent.click(screen.getByRole("button", { name: /quitar cubo dos/i }));
-      fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
-
-      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
-      expect(createAsync.mock.calls[0][0]).not.toHaveProperty("expected_discount_cop");
-    });
-
-    it("si cambió el descuento muestra el total y el descuento nuevos", async () => {
-      createAsync.mockResolvedValue({
-        registered: false,
-        order_id: null,
-        error_detail: "quota_changed",
-        subtotal_cop: 42000,
-        shipping_cop: 7900,
-        discount_cop: 4200,
-        total_cop: 45700,
-      });
+    it("si después del cálculo cambia la ciudad, recalcula el total (el envío depende de ella)", async () => {
+      backendReplies(QUOTE_3_CUBOS);
       await openForm(WITH_COUPON);
 
-      fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+      fireEvent.change(screen.getByLabelText(/cantidad de cubo love/i), { target: { value: "3" } });
+      clickCreate();
+      await screen.findByRole("status");
+      fireEvent.change(screen.getByLabelText(/ciudad/i), { target: { value: "Medellín" } });
+      clickCreate();
+
+      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(2));
+      expect(createAsync.mock.calls[1][0].dry_run).toBe(true);
+    });
+
+    it("si el cálculo falla lo explica y no registra", async () => {
+      backendReplies({ registered: false, order_id: null, error_detail: "catalog_unavailable" });
+      await openForm(WITH_COUPON);
+
+      fireEvent.change(screen.getByLabelText(/cantidad de cubo love/i), { target: { value: "3" } });
+      clickCreate();
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(/catálogo/i);
+      expect(createAsync).toHaveBeenCalledTimes(1);
+      expect(createAsync.mock.calls[0][0].dry_run).toBe(true);
+    });
+
+    it("si cambió el descuento muestra el total nuevo, lo adopta y el siguiente clic registra contra él", async () => {
+      createAsync
+        .mockResolvedValueOnce({
+          registered: false,
+          order_id: null,
+          error_detail: "quota_changed",
+          subtotal_cop: 42000,
+          shipping_cop: 7900,
+          discount_cop: 4200,
+          total_cop: 45700,
+        })
+        .mockResolvedValueOnce(REGISTERED);
+      await openForm(WITH_COUPON);
+
+      clickCreate();
 
       expect(await screen.findByRole("alert")).toHaveTextContent(
-        "Cambiaron las unidades con descuento del cupón: el total ahora es $45.700 (descuento $4.200). Revisa y vuelve a crear el pedido.",
+        "Cambiaron las unidades con descuento del cupón: el total ahora es $45.700 (descuento $4.200). Si el cliente está de acuerdo, vuelve a crear el pedido.",
       );
+      // El resumen muestra lo NUEVO (el descuento viejo y su reparto ya no valen).
+      expect(summaryRow(/^Cupón AMOR26$/)).toContain("−$4.200");
+      expect(summaryRow(/^Total$/)).toContain("$45.700");
+      expect(screen.queryByText("−$2.100")).not.toBeInTheDocument();
+      expect(screen.queryByText("1 de 2 con AMOR26 (−$2.100)")).not.toBeInTheDocument();
+
+      clickCreate();
+
+      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(2));
+      expect(createAsync.mock.calls[1][0].expected_discount_cop).toBe(4200);
+      expect(createAsync.mock.calls[1][0]).not.toHaveProperty("dry_run");
+      expect(await screen.findByText(/pedido creado/i)).toBeInTheDocument();
+    });
+
+    it("si cambió el descuento pero no vinieron los montos, el siguiente clic recalcula antes de registrar", async () => {
+      createAsync
+        .mockResolvedValueOnce({ registered: false, order_id: null, error_detail: "quota_changed" })
+        .mockResolvedValueOnce({ ...QUOTE_3_CUBOS, subtotal_cop: 42000, discount_cop: 0, total_cop: 49900 });
+      await openForm(WITH_COUPON);
+
+      clickCreate();
+      await screen.findByRole("alert");
+      clickCreate();
+
+      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(2));
+      expect(createAsync.mock.calls[1][0].dry_run).toBe(true);
+      expect(await screen.findByRole("status")).toHaveTextContent(/el total es \$49\.900/);
     });
 
     it("un producto agregado a mano pide color y aroma de su lista del catálogo", async () => {
-      createAsync.mockResolvedValue({ registered: true, order_id: "order_1" });
+      backendReplies({ ...QUOTE_3_CUBOS, subtotal_cop: 21000, discount_cop: 0, total_cop: 28900 });
       await openForm({
         ...WITH_COUPON,
         items: [],
+        subtotal_cop: 0,
+        discount_cop: 0,
+        total_cop: 7900,
+        coupon_reason: "no_applicable_items",
         catalog: [
           {
             handle: "cubo-love",
@@ -580,11 +752,33 @@ describe("CreateOrderAction", () => {
       fireEvent.change(screen.getByLabelText(/aroma de cubo love/i), { target: { value: "Café" } });
       expect(screen.queryByText(/el descuento del cupón necesita/i)).not.toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
-      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
-      expect(createAsync.mock.calls[0][0].items).toEqual([
+      clickCreate();
+      await screen.findByRole("status");
+      clickCreate();
+
+      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(2));
+      expect(createAsync.mock.calls[1][0].items).toEqual([
         { handle: "cubo-love", quantity: 1, color: "Azul", aroma: "Café" },
       ]);
+      expect(createAsync.mock.calls[1][0].expected_discount_cop).toBe(0);
     });
+  });
+
+  it("si el pedido ya estaba registrado lo dice en vez de 'Pedido creado'", async () => {
+    createAsync.mockResolvedValue({
+      registered: true,
+      already_registered: true,
+      order_id: "order_1",
+      order_reference: "#22 (Dúo Zodiacal)",
+      total_cop: 111900,
+    });
+    await openForm();
+
+    fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /este pedido ya estaba registrado: #22 \(dúo zodiacal\)/i,
+    );
+    expect(screen.queryByText(/pedido creado/i)).not.toBeInTheDocument();
   });
 });

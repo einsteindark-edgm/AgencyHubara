@@ -9,7 +9,7 @@
  */
 import { useEffect, type ReactNode } from "react";
 import { useAuth } from "react-oidc-context";
-import { setAccessToken } from "@/shared/config";
+import { setAccessToken, setIdToken } from "@/shared/config";
 
 function Centered({ children }: { children: ReactNode }) {
   return (
@@ -57,11 +57,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
   if (!auth.isAuthenticated) {
     setAccessToken(null);
+    setIdToken(null);
     return <Centered>Redirigiendo al login…</Centered>;
   }
   // Autenticado: empujá el token al store ANTES de montar el árbol. Side-effect
   // en render a propósito — el store NO es estado de React, y el orden importa
   // (el EventStreamProvider abre el SSE al montar, y lee el token de acá).
   setAccessToken(auth.user?.access_token ?? null);
+  // C-6: el ID token (con el email) para el actor de la auditoría.
+  setIdToken(auth.user?.id_token ?? null);
   return <>{children}</>;
 }

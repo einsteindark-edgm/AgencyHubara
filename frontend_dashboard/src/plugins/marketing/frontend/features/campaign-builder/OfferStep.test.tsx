@@ -39,6 +39,8 @@ const couponsMock = {
     makeCoupon({ promotionId: "promo_03", code: "PAUSADO5", percentage: 5, state: "paused" }),
     makeCoupon({ promotionId: "promo_04", code: "VIEJO15", percentage: 15, state: "expired" }),
     makeCoupon({ promotionId: "promo_05", code: "BORRADOR1", state: "draft" }),
+    // Activo pero de monto fijo (creado en Medusa): la campaña no lo puede anunciar.
+    makeCoupon({ promotionId: "promo_06", code: "FIJO5000", percentage: null, acceptsUnits: false, manageable: false }),
   ] as Coupon[] | undefined,
   isPending: false,
   error: null as Error | null,
@@ -121,6 +123,19 @@ describe("OfferStep — cupón de la central", () => {
     // Incidente AMOR/AMOR26: la campaña anunció un código que no servía.
     const { getByRole } = renderStep(makeDraft({ couponCode: "VIEJO15", percent: 15 }));
     expect(getByRole("alert").textContent).toMatch(/VIEJO15 no está activo ni programado/);
+  });
+
+  it("un cupón de monto fijo no se ofrece: la campaña solo anuncia porcentajes (D10)", () => {
+    const { getByLabelText } = renderStep(makeDraft());
+    const select = getByLabelText("Cupón") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).not.toContain("FIJO5000");
+  });
+
+  it("si la campaña ya tiene un cupón de monto fijo, explica por qué hay que cambiarlo", () => {
+    const { getByRole } = renderStep(makeDraft({ couponCode: "FIJO5000" }));
+    expect(getByRole("alert").textContent).toMatch(
+      /FIJO5000 es de monto fijo: la campaña solo puede anunciar cupones de porcentaje/,
+    );
   });
 
   it("'Crear cupón' pide la vista Cupones con el formulario nuevo", () => {

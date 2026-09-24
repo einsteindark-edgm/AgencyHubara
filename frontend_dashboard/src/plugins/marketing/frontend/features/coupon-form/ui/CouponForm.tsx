@@ -10,6 +10,10 @@
  * Validación inline (espejo del backend) al tocar cada campo y al enviar;
  * el 422 del backend se pega a su campo, los demás errores (409 código
  * ocupado, 503, 502 edición a medias) van en un aviso con su mensaje.
+ *
+ * En edición, la mutación la pone el detalle (`update`, D6): el detalle
+ * re-siembra este formulario tras una edición a medias y el aviso tiene que
+ * seguir a la vista.
  */
 
 import { useId, useState, type ReactNode } from "react";
@@ -24,6 +28,7 @@ import {
   useUpdateCoupon,
   type Coupon,
   type CouponInput,
+  type CouponUpdateMutation,
 } from "@plugins/marketing/frontend/entities/coupon";
 import { apiErrorDetail } from "@plugins/marketing/frontend/lib/format";
 
@@ -42,6 +47,9 @@ import {
 interface Props {
   /** Sin cupón = alta. */
   coupon?: Coupon;
+  /** Edición: la mutación del detalle (sobrevive al re-sembrado). Sin ella,
+   *  el formulario usa una propia. */
+  update?: CouponUpdateMutation;
   /** Alta: el Page selecciona el cupón creado. */
   onCreated?: (promotionId: string) => void;
   onCancel?: () => void;
@@ -50,7 +58,7 @@ interface Props {
 const INPUT_CLS =
   "w-full rounded-md border border-line bg-transparent px-2.5 py-1.5 text-[12.5px] text-fg outline-none focus:border-accent disabled:opacity-60 read-only:opacity-70 placeholder:text-fg-faint";
 
-export function CouponForm({ coupon, onCreated, onCancel }: Props) {
+export function CouponForm({ coupon, update: liftedUpdate, onCreated, onCancel }: Props) {
   const isNew = coupon === undefined;
   const readOnly = !isNew && !coupon.manageable;
   const codeEditable = isNew || coupon.status === "draft";
@@ -62,9 +70,14 @@ export function CouponForm({ coupon, onCreated, onCancel }: Props) {
   const [submitted, setSubmitted] = useState(false);
 
   const create = useCreateCoupon();
-  const update = useUpdateCoupon(coupon?.promotionId ?? "");
+  const ownUpdate = useUpdateCoupon(coupon?.promotionId ?? "");
+  const update = liftedUpdate ?? ownUpdate;
   const mutation = isNew ? create : update;
-  const { data: products = [], isPending: productsLoading } = useCouponProducts();
+  const {
+    data: products = [],
+    isPending: productsLoading,
+    error: productsError,
+  } = useCouponProducts();
 
   const clientErrors = validateCouponForm(values);
   const backend = couponFieldError(mutation.error);
@@ -203,6 +216,7 @@ export function CouponForm({ coupon, onCreated, onCancel }: Props) {
         readOnly={readOnly}
         products={products}
         loading={productsLoading}
+        loadError={productsError ? apiErrorDetail(productsError) : null}
         error={errorFor("products")}
         onMode={(productsMode) => {
           touch("products");
@@ -297,6 +311,7 @@ function ProductsField({
   readOnly,
   products,
   loading,
+  loadError,
   error,
   onMode,
   onToggle,
@@ -305,6 +320,8 @@ function ProductsField({
   readOnly: boolean;
   products: { id: string; title: string }[];
   loading: boolean;
+  /** El catálogo no cargó (D9): sin él no hay productos para elegir. */
+  loadError: string | null;
   error: string | undefined;
   onMode: (mode: CouponFormValues["productsMode"]) => void;
   onToggle: (id: string) => void;
@@ -348,6 +365,11 @@ function ProductsField({
         <div className="flex max-h-48 flex-col gap-1 overflow-y-auto pt-1">
           {loading && listed.length === 0 ? (
             <span className="text-[11px] text-fg-faint">Cargando productos…</span>
+          ) : null}
+          {loadError ? (
+            <span className="text-[11px] leading-snug text-danger">
+              No se pudieron cargar los productos del catálogo: {loadError}
+            </span>
           ) : null}
           {listed.map((p) => (
             <label key={p.id} className="flex items-center gap-2 text-[12px] text-fg-soft">

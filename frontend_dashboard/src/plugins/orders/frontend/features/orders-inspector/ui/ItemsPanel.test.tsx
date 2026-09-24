@@ -119,6 +119,29 @@ describe("ItemsPanel — cupón por línea (pedido #44)", () => {
   });
 });
 
+describe("ItemsPanel — color y aroma de la línea (C-3)", () => {
+  // El cupo por unidad cuenta por producto + color + aroma: el operador tiene
+  // que ver qué combinación se registró para despachar la correcta.
+  it("muestra el color y el aroma que se registraron", () => {
+    renderItems([item({ title: "Cubo Love", color: "Rosado", aroma: "Café" })]);
+    expect(screen.getByText("Color: Rosado · Aroma: Café")).toBeInTheDocument();
+  });
+
+  it("muestra solo el atributo que la línea tiene", () => {
+    renderItems([item({ title: "Cubo Love", color: "Rosado", aroma: null })]);
+    expect(screen.getByText("Color: Rosado")).toBeInTheDocument();
+    expect(screen.queryByText(/Aroma:/)).not.toBeInTheDocument();
+  });
+
+  it("sin color ni aroma (o un backend viejo sin los campos) no muestra nada", () => {
+    const [plain] = [item({})];
+    expect(plain.color).toBeNull();
+    expect(plain.aroma).toBeNull();
+    renderItems([plain]);
+    expect(screen.queryByText(/Color:|Aroma:/)).not.toBeInTheDocument();
+  });
+});
+
 describe("ItemsPanel — desglose del cobro", () => {
   function renderTotals(summary: Record<string, unknown>) {
     const detail = {

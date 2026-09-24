@@ -112,6 +112,58 @@ describe("orderSuggestionSchema · catálogo con listas de color y aroma", () =>
   });
 });
 
+describe("orderSuggestionSchema · motivo del cupón (C-2)", () => {
+  it("el cupón viene también a $0, con el motivo", () => {
+    const parsed = orderSuggestionSchema.parse({
+      ...BASE,
+      coupon_code: "AMOR26",
+      discount_cop: 0,
+      coupon_reason: "missing_attributes",
+    });
+
+    expect(parsed).toMatchObject({
+      coupon_code: "AMOR26",
+      discount_cop: 0,
+      coupon_reason: "missing_attributes",
+    });
+  });
+
+  it("un backend sin `coupon_reason` sigue parseando (null = el cupón aplica)", () => {
+    expect(orderSuggestionSchema.parse(BASE).coupon_reason).toBeNull();
+  });
+});
+
+describe("createOrderResultSchema · cálculo sin registrar (dry run, C-1)", () => {
+  it("parsea los montos recalculados y el cupón del cálculo", () => {
+    const parsed = createOrderResultSchema.parse({
+      registered: false,
+      dry_run: true,
+      order_id: null,
+      error_detail: null,
+      subtotal_cop: 42000,
+      shipping_cop: 7900,
+      discount_cop: 2100,
+      total_cop: 47800,
+      coupon_code: "AMOR26",
+    });
+
+    expect(parsed).toMatchObject({
+      registered: false,
+      dry_run: true,
+      discount_cop: 2100,
+      total_cop: 47800,
+      coupon_code: "AMOR26",
+    });
+  });
+
+  it("una respuesta sin esos campos no es un cálculo y no trae cupón", () => {
+    const parsed = createOrderResultSchema.parse({ registered: true, order_id: "order_1" });
+
+    expect(parsed.dry_run).toBe(false);
+    expect(parsed.coupon_code).toBeNull();
+  });
+});
+
 describe("createOrderResultSchema · quota_changed trae el total nuevo", () => {
   it("conserva el descuento y el total recalculados", () => {
     const parsed = createOrderResultSchema.parse({

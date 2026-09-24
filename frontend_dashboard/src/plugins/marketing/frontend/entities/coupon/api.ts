@@ -10,10 +10,16 @@
  * Realtime: el estado depende de la hora (programado → activo → vencido) y
  * las unidades que quedan salen de los pedidos de Medusa — la lista usa el
  * refetch numérico ≥60 s (red de seguridad, regla #2) y el evento `orders`
- * del stream invalida ventas y cupos (`useCouponOrdersEvents`).
+ * del stream invalida la lista, el cupón abierto y sus ventas
+ * (`useCouponOrdersEvents`) — nunca el catálogo de productos (D12).
  */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseMutationResult,
+} from "@tanstack/react-query";
 import { useCallback } from "react";
 
 import { useDashboardEvents, useInvalidateOnReconnect } from "@/shared/api";
@@ -98,6 +104,7 @@ export function mapBackendCouponUnits(b: BackendCouponUnits): CouponUnits {
     })),
     showUnitsLeft: b.show_units_left,
     unavailable: b.unavailable,
+    updatedAt: b.updated_at,
   };
 }
 
@@ -177,6 +184,10 @@ export function couponUnitsToBody(input: CouponUnitsInput): Record<string, unkno
       units: r.units,
     })),
     show_units_left: input.showUnitsLeft,
+    // C-5: la versión editada (null = nunca guardado) viaja tal cual.
+    ...(input.expectedUpdatedAt !== undefined
+      ? { expected_updated_at: input.expectedUpdatedAt }
+      : {}),
   };
 }
 
@@ -242,13 +253,18 @@ export function useCouponProducts(enabled = true) {
   });
 }
 
-/** Un pedido nuevo o cancelado mueve las unidades que quedan y las ventas. */
-export function useCouponOrdersEvents(): void {
+/** Un pedido nuevo o cancelado mueve las unidades que quedan y las ventas:
+ *  refresca la lista y el cupón abierto (`promotionId`) con sus ventas. El
+ *  catálogo de productos NO depende de los pedidos (D12). */
+export function useCouponOrdersEvents(promotionId: string | null): void {
   const qc = useQueryClient();
-  const invalidate = useCallback(
-    () => qc.invalidateQueries({ queryKey: couponKeys.all }),
-    [qc],
-  );
+  const invalidate = useCallback(() => {
+    qc.invalidateQueries({ queryKey: couponKeys.list() });
+    if (promotionId) {
+      qc.invalidateQueries({ queryKey: couponKeys.detail(promotionId) });
+      qc.invalidateQueries({ queryKey: couponKeys.sales(promotionId) });
+    }
+  }, [qc, promotionId]);
   useDashboardEvents("orders", invalidate);
   useInvalidateOnReconnect(invalidate);
 }
@@ -266,21 +282,36 @@ function useInvalidateCoupon(promotionId?: string) {
   };
 }
 
-/** POST /coupons — 409 "Ese código ya existe.", 422 `{field, message}`. */
+/** POST /coupons — 409 "Ese código ya existe.", 422 `{field, message}`.
+ *  El cupón creado entra a la lista con la respuesta del alta (D9): el Page
+ *  lo selecciona YA, sin esperar el refetch de la lista (que igual corre). */
 export function useCreateCoupon() {
+  const qc = useQueryClient();
   const invalidate = useInvalidateCoupon();
   return useMutation<Coupon, Error, CouponInput>({
     mutationFn: async (input) => {
       const raw = await apiClient.post<unknown>(BASE, couponInputToBody(input));
       return mapBackendCoupon(backendCouponSchema.parse(raw));
     },
-    onSuccess: invalidate,
+    onSuccess: (created) => {
+      qc.setQueryData<Coupon[]>(couponKeys.list(), (list) =>
+        list
+          ? [created, ...list.filter((c) => c.promotionId !== created.promotionId)]
+          : list,
+      );
+      invalidate();
+    },
   });
 }
 
+/** La edición del cupón. El detalle es su dueño (D6): el formulario se
+ *  re-siembra con lo que quedó en Medusa y el error — p. ej. el 502 "quedó a
+ *  medias" — tiene que sobrevivir a ese re-montaje. */
+export type CouponUpdateMutation = UseMutationResult<Coupon, Error, CouponPatch>;
+
 /** PATCH /coupons/{id} — 409 si no es gestionable; 502 si quedó a medias
  *  (por eso se invalida también en error: el detalle trae lo real). */
-export function useUpdateCoupon(promotionId: string) {
+export function useUpdateCoupon(promotionId: string): CouponUpdateMutation {
   const invalidate = useInvalidateCoupon(promotionId);
   return useMutation<Coupon, Error, CouponPatch>({
     mutationFn: async (patch) => {
@@ -308,7 +339,9 @@ export function useSetCouponStatus(promotionId: string) {
   });
 }
 
-/** DELETE /coupons/{id} — solo borradores sin ventas (409 si no). */
+/** DELETE /coupons/{id} — solo borradores sin ventas (409 si no). El cupón
+ *  sale de la lista AL INSTANTE (D9): si no, la selección caía de nuevo en
+ *  él hasta el refetch y su detalle (ya borrado) se pedía otra vez → 404. */
 export function useDeleteCoupon(promotionId: string) {
   const qc = useQueryClient();
   return useMutation<void, Error, void>({
@@ -316,6 +349,9 @@ export function useDeleteCoupon(promotionId: string) {
       await apiClient.delete<unknown>(idPath(promotionId));
     },
     onSuccess: () => {
+      qc.setQueryData<Coupon[]>(couponKeys.list(), (list) =>
+        list?.filter((c) => c.promotionId !== promotionId),
+      );
       qc.removeQueries({ queryKey: couponKeys.detail(promotionId) });
       qc.removeQueries({ queryKey: couponKeys.sales(promotionId) });
       qc.invalidateQueries({ queryKey: couponKeys.list() });
@@ -324,7 +360,8 @@ export function useDeleteCoupon(promotionId: string) {
 }
 
 /** PUT /coupons/{id}/units — reemplaza las filas del cupo (todo o nada;
- *  422 con errores por fila). */
+ *  422 con errores por fila; 409 `units_changed` si otra persona guardó
+ *  después de la versión editada). Devuelve lo guardado con su versión. */
 export function usePutCouponUnits(promotionId: string) {
   const invalidate = useInvalidateCoupon(promotionId);
   return useMutation<CouponUnits, Error, CouponUnitsInput>({

@@ -19,7 +19,7 @@ import {
 } from "@plugins/marketing/frontend/lib/format";
 
 export function CouponSalesInspector({ couponId }: { couponId: string }) {
-  useCouponOrdersEvents();
+  useCouponOrdersEvents(couponId);
   const { data, isPending, error } = useCouponSales(couponId);
 
   return (

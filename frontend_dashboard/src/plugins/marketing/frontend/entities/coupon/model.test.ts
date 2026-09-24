@@ -13,6 +13,7 @@ import {
   couponRowErrors,
   couponUnitsLabel,
   isCouponPickable,
+  isCouponUnitsConflict,
   sanitizeCouponCode,
   type Coupon,
 } from "./model";
@@ -68,6 +69,12 @@ describe("isCouponPickable", () => {
       expect(isCouponPickable(makeCoupon({ state }))).toBe(false);
     }
   });
+
+  it("solo cupones de porcentaje: uno de monto fijo dejaría el envío bloqueado (D10)", () => {
+    // La campaña guarda el % del cupón; sin % el "Descuento definido" nunca
+    // se cumple y el botón Enviar queda deshabilitado para siempre.
+    expect(isCouponPickable(makeCoupon({ percentage: null }))).toBe(false);
+  });
 });
 
 describe("sanitizeCouponCode", () => {
@@ -91,6 +98,25 @@ describe("couponFieldError", () => {
   it("null para errores sin campo (409, 503, red)", () => {
     expect(couponFieldError(new ApiError(409, { detail: { message: "Ese código ya existe." } }))).toBeNull();
     expect(couponFieldError(new Error("boom"))).toBeNull();
+  });
+});
+
+describe("isCouponUnitsConflict (C-5)", () => {
+  it("reconoce el 409 de 'otra persona cambió las unidades'", () => {
+    const err = new ApiError(409, {
+      detail: {
+        code: "units_changed",
+        message: "Otra persona cambió las unidades de este cupón. Recarga para ver lo nuevo antes de guardar.",
+      },
+    });
+    expect(isCouponUnitsConflict(err)).toBe(true);
+  });
+
+  it("otros errores no son ese conflicto", () => {
+    expect(isCouponUnitsConflict(new ApiError(409, { detail: { message: "Ese código ya existe." } }))).toBe(false);
+    expect(isCouponUnitsConflict(new ApiError(422, { detail: { code: "units_changed" } }))).toBe(false);
+    expect(isCouponUnitsConflict(new Error("boom"))).toBe(false);
+    expect(isCouponUnitsConflict(null)).toBe(false);
   });
 });
 

@@ -2,6 +2,8 @@ export { env } from "./env";
 export {
   getAccessToken,
   setAccessToken,
+  getIdToken,
+  setIdToken,
   setUnauthorizedHandler,
   notifyUnauthorized,
 } from "./auth-token";

@@ -30,6 +30,10 @@
  *    de las listas CERRADAS del producto (solo si las tiene) y muestra
  *    cuántas unidades llevan el descuento del cupón; el registro relee el
  *    reparto bajo el candado del código (`quota_changed` / `quota_busy`).
+ *  - **Se registra contra lo que el operador VIO** (`CouponQuote`): el
+ *    descuento de la sugerencia; tras editar líneas, un primer clic calcula
+ *    sin registrar (`dry_run`) y muestra el total, y el segundo registra; un
+ *    `quota_changed` con montos se adopta como lo nuevo que vio.
  *  - F5.3 (CLAUDE.md frontend, regla 3): el flujo multi-paso es un reducer con
  *    unión discriminada — "cargando" y "error" a la vez es irrepresentable.
  */
@@ -40,10 +44,18 @@ import {
   useSuggestOrderFromChat,
   type CatalogOption,
   type CreateOrderResult,
+  type CreateOrderVariables,
   type IntakeFieldSource,
   type OrderSuggestion,
   type PaymentMethod,
 } from "@plugins/chats/frontend/entities/order-intake";
+
+import {
+  couponReasonLabel,
+  quoteFromResult,
+  quoteFromSuggestion,
+  type CouponQuote,
+} from "../model/orderQuote";
 
 interface Props {
   chatId: string | null;
@@ -70,7 +82,7 @@ interface FormItem {
   colors: string[];
   aromas: string[];
   /** Reparto del cupón que calculó la sugerencia para ESTA línea (solo vale
-   *  mientras ninguna línea se edite). */
+   *  mientras la cotización sea la de la sugerencia y no esté vieja). */
   couponUnits: number;
   couponDiscountCop: number;
 }
@@ -97,6 +109,10 @@ type Phase =
   | { k: "reading" }
   | { k: "read_failed"; message: string }
   | { k: "form" }
+  /** Calculando el pedido editado SIN registrar (`dry_run`). */
+  | { k: "quoting" }
+  /** Cálculo listo: el operador revisa el total y vuelve a hacer clic. */
+  | { k: "quoted" }
   | { k: "submitting" }
   | { k: "submit_failed"; message: string }
   | {
@@ -104,12 +120,16 @@ type Phase =
       reference: string;
       paymentInstructionsSent: boolean;
       totalCop: number | null;
+      /** El backend reconoció el mismo pedido ya registrado (C4). */
+      alreadyRegistered: boolean;
     };
 
 type PhaseAction =
   | { type: "read" }
   | { type: "read_ok" }
   | { type: "read_fail"; message: string }
+  | { type: "quote" }
+  | { type: "quote_ok" }
   | { type: "submit" }
   | { type: "submit_fail"; message: string }
   | {
@@ -117,6 +137,7 @@ type PhaseAction =
       reference: string;
       paymentInstructionsSent: boolean;
       totalCop: number | null;
+      alreadyRegistered: boolean;
     };
 
 function phaseReducer(_state: Phase, action: PhaseAction): Phase {
@@ -127,6 +148,10 @@ function phaseReducer(_state: Phase, action: PhaseAction): Phase {
       return { k: "form" };
     case "read_fail":
       return { k: "read_failed", message: action.message };
+    case "quote":
+      return { k: "quoting" };
+    case "quote_ok":
+      return { k: "quoted" };
     case "submit":
       return { k: "submitting" };
     case "submit_fail":
@@ -137,6 +162,7 @@ function phaseReducer(_state: Phase, action: PhaseAction): Phase {
         reference: action.reference,
         paymentInstructionsSent: action.paymentInstructionsSent,
         totalCop: action.totalCop,
+        alreadyRegistered: action.alreadyRegistered,
       };
   }
 }
@@ -195,10 +221,11 @@ function rejectionMessage(result: CreateOrderResult): string {
     );
   }
   if (detail === "quota_changed" && result.total_cop !== null && result.discount_cop !== null) {
+    // El formulario ADOPTA estos montos: el siguiente clic registra contra ellos.
     return (
       "Cambiaron las unidades con descuento del cupón: el total ahora es " +
       `${formatCop(result.total_cop)} (descuento ${formatCop(result.discount_cop)}). ` +
-      "Revisa y vuelve a crear el pedido."
+      "Si el cliente está de acuerdo, vuelve a crear el pedido."
     );
   }
   return (
@@ -284,9 +311,13 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
   const [shipping, setShipping] = useState<ShippingForm>(EMPTY_SHIPPING);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | "">("");
   const [sendInstructions, setSendInstructions] = useState(true);
-  /** El operador tocó alguna línea (cantidad, color, aroma, agregar, quitar):
-   *  el descuento y el reparto de la sugerencia ya no valen. */
-  const [linesEdited, setLinesEdited] = useState(false);
+  /** Lo que el operador VIO del cupón (null = sin cupón): contra ese
+   *  descuento se registra. */
+  const [quote, setQuote] = useState<CouponQuote | null>(null);
+  /** Cambió algo que mueve el descuento o el total después de verlo (una
+   *  línea; la ciudad si ya se mostró el total): el próximo clic recalcula
+   *  sin registrar antes de registrar. */
+  const [quoteStale, setQuoteStale] = useState(false);
 
   const suggest = useSuggestOrderFromChat(chatId);
   const create = useCreateOrderFromChat(chatId);
@@ -300,7 +331,8 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
       setShipping(shippingFrom(result));
       setPaymentMethod(result.payment_method ?? "");
       setSendInstructions(true);
-      setLinesEdited(false);
+      setQuote(quoteFromSuggestion(result));
+      setQuoteStale(false);
       dispatch({ type: "read_ok" });
     } catch (error) {
       dispatch({
@@ -321,54 +353,91 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
     setItems([]);
     setShipping(EMPTY_SHIPPING);
     setPaymentMethod("");
-    setLinesEdited(false);
+    setQuote(null);
+    setQuoteStale(false);
   };
 
-  /** Cambia las líneas. El descuento y el reparto que trajo la sugerencia
-   *  dejan de valer: el registro los recalcula con lo que quede. */
+  /** Cambia las líneas. El descuento y el reparto que vio el operador dejan
+   *  de valer: el próximo clic los recalcula (sin registrar) y se los muestra. */
   const changeItems = (update: (prev: FormItem[]) => FormItem[]) => {
     setItems(update);
-    setLinesEdited(true);
+    setQuoteStale(true);
   };
   const editItem = (index: number, patch: Partial<Pick<FormItem, "quantity" | "color" | "aroma">>) =>
     changeItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
-  const hasCoupon = Boolean(suggestion?.coupon_code);
+  const changeCity = (city: string) => {
+    setShipping((s) => ({ ...s, city }));
+    // El envío sale de la ciudad: un total ya mostrado deja de valer.
+    if (quote?.totals) setQuoteStale(true);
+  };
+  const hasCoupon = quote !== null;
+  /** La cotización vigente (la que el operador tiene a la vista). */
+  const shownQuote = quote && !quoteStale ? quote : null;
+  const shownTotals = shownQuote?.totals ?? null;
 
   const missing = missingOf(shipping, items, paymentMethod);
   const subtotal = items.reduce((acc, it) => acc + it.unitPriceCop * it.quantity, 0);
-  const busy = phase.k === "submitting";
+  const busy = phase.k === "submitting" || phase.k === "quoting";
+
+  const orderBody = (method: PaymentMethod): CreateOrderVariables => ({
+    items: items.map((it) => ({
+      handle: it.handle,
+      ...(it.variantLabel ? { variant_label: it.variantLabel } : {}),
+      quantity: it.quantity,
+      ...variantAttrsOf(it),
+    })),
+    shipping: {
+      city: shipping.city.trim(),
+      ...(shipping.neighborhood.trim()
+        ? { neighborhood: shipping.neighborhood.trim() }
+        : {}),
+      address: shipping.address.trim(),
+      phone: shipping.phone.trim(),
+      receiver_name: shipping.receiverName.trim(),
+      ...(shipping.nationalId.trim()
+        ? { national_id: shipping.nationalId.trim() }
+        : {}),
+    },
+    payment_method: method,
+    send_payment_instructions: sendInstructions,
+  });
 
   const submit = async () => {
     if (missing.length > 0 || busy || !paymentMethod) return;
-    dispatch({ type: "submit" });
+    // Con cupón y algo cambiado desde que el operador vio el descuento: este
+    // clic SOLO calcula (nada se registra ni se le manda al cliente).
+    const recalc = quote !== null && quoteStale;
+    dispatch({ type: recalc ? "quote" : "submit" });
     try {
       const result = await create.mutateAsync({
-        items: items.map((it) => ({
-          handle: it.handle,
-          ...(it.variantLabel ? { variant_label: it.variantLabel } : {}),
-          quantity: it.quantity,
-          ...variantAttrsOf(it),
-        })),
-        shipping: {
-          city: shipping.city.trim(),
-          ...(shipping.neighborhood.trim()
-            ? { neighborhood: shipping.neighborhood.trim() }
+        ...orderBody(paymentMethod),
+        ...(recalc
+          ? { dry_run: true }
+          : quote
+            ? // El descuento que el operador VIO (0 incluido): si el backend
+              // calcula otro, responde `quota_changed` y no registra.
+              { expected_discount_cop: quote.discountCop }
             : {}),
-          address: shipping.address.trim(),
-          phone: shipping.phone.trim(),
-          receiver_name: shipping.receiverName.trim(),
-          ...(shipping.nationalId.trim()
-            ? { national_id: shipping.nationalId.trim() }
-            : {}),
-        },
-        payment_method: paymentMethod,
-        send_payment_instructions: sendInstructions,
-        // El descuento que el operador VIO: solo si no tocó ninguna línea.
-        ...(suggestion?.coupon_code && !linesEdited
-          ? { expected_discount_cop: suggestion.discount_cop }
-          : {}),
       });
+      if (result.dry_run) {
+        const fresh = quote ? quoteFromResult(quote, result) : null;
+        if (!fresh) {
+          dispatch({ type: "submit_fail", message: "No se pudo calcular el total. Intenta de nuevo." });
+          return;
+        }
+        setQuote(fresh);
+        setQuoteStale(false);
+        dispatch({ type: "quote_ok" });
+        return;
+      }
       if (!result.registered) {
+        if (result.error_detail === "quota_changed" && quote) {
+          // Lo nuevo es lo que el operador ve ahora: el siguiente clic
+          // registra contra ESO (sin montos, recalcula antes de registrar).
+          const fresh = quoteFromResult(quote, result);
+          if (fresh) setQuote(fresh);
+          setQuoteStale(fresh === null);
+        }
         dispatch({ type: "submit_fail", message: rejectionMessage(result) });
         return;
       }
@@ -377,6 +446,7 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
         reference: result.order_reference ?? result.order_id ?? "",
         paymentInstructionsSent: Boolean(result.payment_instructions_sent),
         totalCop: result.total_cop,
+        alreadyRegistered: result.already_registered,
       });
     } catch (error) {
       dispatch({
@@ -446,17 +516,29 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
 
             {phase.k === "done" && (
               <>
-                <div style={okStyle}>
-                  Pedido creado: <b>{phase.reference}</b>.
-                  {phase.totalCop !== null
-                    ? ` Total registrado: ${formatCop(phase.totalCop)} (con envío).`
-                    : ""}{" "}
-                  La conversación queda
-                  con el pago pendiente de verificación — cuando el cliente
-                  pague, usa "Confirmar pago".
-                  {phase.paymentInstructionsSent
-                    ? " Ya le enviamos las instrucciones de pago."
-                    : ""}
+                <div role="status" style={okStyle}>
+                  {phase.alreadyRegistered ? (
+                    <>
+                      Este pedido ya estaba registrado: <b>{phase.reference}</b>.
+                      {phase.totalCop !== null
+                        ? ` Total registrado: ${formatCop(phase.totalCop)} (con envío).`
+                        : ""}{" "}
+                      No se creó otro ni se reenviaron las instrucciones de pago.
+                    </>
+                  ) : (
+                    <>
+                      Pedido creado: <b>{phase.reference}</b>.
+                      {phase.totalCop !== null
+                        ? ` Total registrado: ${formatCop(phase.totalCop)} (con envío).`
+                        : ""}{" "}
+                      La conversación queda
+                      con el pago pendiente de verificación — cuando el cliente
+                      pague, usa "Confirmar pago".
+                      {phase.paymentInstructionsSent
+                        ? " Ya le enviamos las instrucciones de pago."
+                        : ""}
+                    </>
+                  )}
                 </div>
                 <div style={footerStyle}>
                   <button type="button" style={primaryStyle} onClick={close}>
@@ -466,7 +548,12 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
               </>
             )}
 
-            {suggestion && (phase.k === "form" || phase.k === "submitting" || phase.k === "submit_failed") && (
+            {suggestion &&
+              (phase.k === "form" ||
+                phase.k === "quoting" ||
+                phase.k === "quoted" ||
+                phase.k === "submitting" ||
+                phase.k === "submit_failed") && (
               <>
                 {suggestion.degraded && (
                   <div style={warnStyle}>
@@ -553,9 +640,9 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                             )}
                           </div>
                         )}
-                        {!linesEdited && item.couponUnits > 0 && (
+                        {shownQuote?.source === "suggestion" && item.couponUnits > 0 && (
                           <span style={couponLineStyle}>
-                            {`${item.couponUnits} de ${item.quantity} con ${suggestion.coupon_code ?? "el cupón"} (−${formatCop(item.couponDiscountCop)})`}
+                            {`${item.couponUnits} de ${item.quantity} con ${shownQuote.code} (−${formatCop(item.couponDiscountCop)})`}
                           </span>
                         )}
                         {couponHint && <span style={hintStyle}>{couponHint}</span>}
@@ -574,7 +661,7 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                     label="Ciudad"
                     value={shipping.city}
                     source={suggestion.field_sources.city ?? null}
-                    onChange={(v) => setShipping((s) => ({ ...s, city: v }))}
+                    onChange={changeCity}
                   />
                   <Field
                     label="Barrio"
@@ -643,26 +730,42 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
 
                 <div style={totalsStyle}>
                   <span>Productos</span>
-                  <span>{formatCop(subtotal)}</span>
+                  <span>{formatCop(shownTotals ? shownTotals.subtotalCop : subtotal)}</span>
                 </div>
-                {!linesEdited && suggestion.discount_cop > 0 && (
-                  <div style={totalsStyle}>
-                    <span>
-                      Descuento cupón {suggestion.coupon_code ?? ""} (aplicado en el chat)
-                    </span>
-                    <span>−{formatCop(suggestion.discount_cop)}</span>
-                  </div>
-                )}
-                {linesEdited && hasCoupon && (
+                {shownQuote && <CouponSummary quote={shownQuote} />}
+                {quote && quoteStale && (
                   <div style={totalsStyle}>
                     <span>Descuento del cupón: se recalcula al crear el pedido</span>
                   </div>
                 )}
-                <p style={mutedStyle}>
-                  El envío se calcula al crear el pedido (tarifa mínima según la
-                  ciudad) y la transportadora lo confirma al despachar.
-                </p>
+                {shownTotals ? (
+                  <>
+                    <div style={totalsStyle}>
+                      <span>Envío</span>
+                      <span>{formatCop(shownTotals.shippingCop)}</span>
+                    </div>
+                    <div style={totalsStyle}>
+                      <span>Total</span>
+                      <span>{formatCop(shownTotals.totalCop)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <p style={mutedStyle}>
+                    El envío se calcula al crear el pedido (tarifa mínima según la
+                    ciudad) y la transportadora lo confirma al despachar.
+                  </p>
+                )}
 
+                {phase.k === "quoted" && shownTotals && (
+                  <div role="status" style={infoStyle}>
+                    Recalculamos el pedido: el total es {formatCop(shownTotals.totalCop)} (
+                    {shownQuote && shownQuote.discountCop > 0
+                      ? `descuento ${formatCop(shownQuote.discountCop)}`
+                      : "sin descuento del cupón"}
+                    ). Si el cliente está de acuerdo, haz clic otra vez en «Crear pedido»
+                    para registrarlo.
+                  </div>
+                )}
                 {missing.length > 0 && (
                   <div style={warnStyle}>
                     Falta completar: {missing.map((m) => MISSING_LABEL[m] ?? m).join(", ")}.
@@ -684,7 +787,11 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                     disabled={missing.length > 0 || busy}
                     onClick={() => void submit()}
                   >
-                    {busy ? "Creando…" : "Crear pedido"}
+                    {phase.k === "quoting"
+                      ? "Calculando…"
+                      : phase.k === "submitting"
+                        ? "Creando…"
+                        : "Crear pedido"}
                   </button>
                 </div>
               </>
@@ -699,6 +806,28 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
 function SourceBadge({ source }: { source: IntakeFieldSource }) {
   if (!source) return null;
   return <span style={badgeStyle}>{SOURCE_LABEL[source]}</span>;
+}
+
+/** Fila del cupón en el resumen — también a $0 (C-2), con el motivo: que el
+ *  cupón no desaparezca justo cuando el operador tiene que corregir algo. */
+function CouponSummary({ quote }: { quote: CouponQuote }) {
+  const reason = couponReasonLabel(quote.reason);
+  if (quote.discountCop <= 0) {
+    return (
+      <div style={{ ...totalsStyle, color: "var(--color-warn, #ffb44a)" }}>
+        <span>{`Cupón ${quote.code}: sin descuento${reason ? ` — ${reason}` : ""}`}</span>
+      </div>
+    );
+  }
+  return (
+    <>
+      <div style={totalsStyle}>
+        <span>{`Cupón ${quote.code}`}</span>
+        <span>−{formatCop(quote.discountCop)}</span>
+      </div>
+      {reason && <span style={hintStyle}>{`Descuento parcial: ${reason}.`}</span>}
+    </>
+  );
 }
 
 interface FieldProps {
@@ -981,6 +1110,14 @@ const okStyle: React.CSSProperties = {
   borderRadius: 6,
   background: "var(--color-ok-soft, rgba(91,224,123,0.18))",
   color: "var(--color-ok, #5be07b)",
+};
+
+const infoStyle: React.CSSProperties = {
+  fontSize: "0.72rem",
+  padding: "6px 8px",
+  borderRadius: 6,
+  background: "var(--color-info-soft, rgba(95,169,255,0.18))",
+  color: "var(--color-info, #5fa9ff)",
 };
 
 const footerStyle: React.CSSProperties = {

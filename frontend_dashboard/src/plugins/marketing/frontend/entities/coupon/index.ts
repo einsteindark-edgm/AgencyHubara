@@ -21,9 +21,11 @@ export {
   couponRowErrors,
   couponUnitsLabel,
   isCouponPickable,
+  isCouponUnitsConflict,
   sanitizeCouponCode,
 } from "./model";
 export { couponKeys } from "./keys";
+export type { CouponUpdateMutation } from "./api";
 export {
   useCoupon,
   useCouponOrdersEvents,

@@ -82,7 +82,13 @@ export const orderSuggestionSchema = z.object({
   shipping_cop: z.number().default(0),
   /** Cupón aplicado en el chat (`apply_coupon`): el registro lo descuenta. */
   discount_cop: z.number().default(0),
+  /** El cupón aplicado en el episodio SIEMPRE que haya uno — también cuando
+   *  da $0 (C-2): el formulario lo muestra con su motivo. */
   coupon_code: z.string().nullable().default(null),
+  /** Por qué el descuento es 0 o parcial (C-2): `null` = aplica ·
+   *  `missing_attributes` · `quota_exhausted` · `quota_unavailable` ·
+   *  `min_subtotal` · `no_applicable_items` · `unsupported`. */
+  coupon_reason: z.string().nullable().default(null),
   total_cop: z.number().default(0),
   /** Campos que el operador TIENE que completar antes de poder registrar. */
   missing: z.array(z.string()).default([]),
@@ -100,6 +106,9 @@ export const orderSuggestionSchema = z.object({
 
 export const createOrderResultSchema = z.object({
   registered: z.boolean(),
+  /** Cálculo SIN registrar (C-1, `dry_run: true`): los montos que quedaría
+   *  el pedido; nada se guarda. Un error de validación vuelve sin este flag. */
+  dry_run: z.boolean().default(false),
   already_registered: z.boolean().default(false),
   order_id: z.string().nullable().default(null),
   /** Referencia humana ("#22 (Dúo Zodiacal)") — lo que el operador le dice al cliente. */
@@ -108,9 +117,11 @@ export const createOrderResultSchema = z.object({
   problems: z.array(z.string()).default([]),
   subtotal_cop: z.number().nullable().default(null),
   shipping_cop: z.number().nullable().default(null),
-  /** Solo en `quota_changed`: el descuento recalculado del cupón. */
+  /** En `quota_changed` y en el cálculo (dry run): el descuento del cupón. */
   discount_cop: z.number().nullable().default(null),
   total_cop: z.number().nullable().default(null),
+  /** Solo en el cálculo (dry run): el cupón aplicado (`null` = ninguno). */
+  coupon_code: z.string().nullable().default(null),
   payment_instructions_sent: z.boolean().default(false),
   /** El intento quedó guardado y la reconciliación lo reintenta sola. */
   saved_for_retry: z.boolean().default(false),

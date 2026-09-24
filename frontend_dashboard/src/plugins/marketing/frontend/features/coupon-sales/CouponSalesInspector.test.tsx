@@ -20,7 +20,7 @@ const eventsMock = vi.fn();
 vi.mock("@plugins/marketing/frontend/entities/coupon", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useCouponSales: () => salesMock,
-  useCouponOrdersEvents: () => eventsMock(),
+  useCouponOrdersEvents: (id: string | null) => eventsMock(id),
 }));
 
 import { CouponSalesInspector } from "./ui/CouponSalesInspector";
@@ -72,7 +72,8 @@ describe("CouponSalesInspector", () => {
   it("se suscribe a los eventos de pedidos (las ventas cambian solas)", () => {
     eventsMock.mockClear();
     render(<CouponSalesInspector couponId="promo_01" />);
-    expect(eventsMock).toHaveBeenCalled();
+    // Solo el cupón abierto (D12): nada de invalidar toda la central.
+    expect(eventsMock).toHaveBeenCalledWith("promo_01");
   });
 
   it("sin ventas lo dice", () => {

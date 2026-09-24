@@ -36,11 +36,21 @@ interface Props {
   onNew: () => void;
   /** Aviso sobre la lista (p. ej. Medusa no responde). */
   notice?: string | null;
+  /** La lista todavía no llegó: ni "0" ni "Sin cupones" (D9). */
+  loading?: boolean;
   /** Slot arriba del header (el selector Campañas | Cupones del Page). */
   header?: ReactNode;
 }
 
-export function CouponsList({ coupons, selectedId, onSelect, onNew, notice, header }: Props) {
+export function CouponsList({
+  coupons,
+  selectedId,
+  onSelect,
+  onNew,
+  notice,
+  loading = false,
+  header,
+}: Props) {
   const [filter, setFilter] = useState<StateFilter>("all");
 
   const counts = useMemo(() => {
@@ -63,7 +73,9 @@ export function CouponsList({ coupons, selectedId, onSelect, onNew, notice, head
         {header}
         <div className="flex items-center gap-2">
           <span className="text-sm font-bold tracking-tight text-fg">Cupones</span>
-          <span className="text-[11px] text-fg-faint">{coupons.length}</span>
+          {loading ? null : (
+            <span className="text-[11px] text-fg-faint">{coupons.length}</span>
+          )}
           <button
             type="button"
             onClick={onNew}
@@ -83,7 +95,7 @@ export function CouponsList({ coupons, selectedId, onSelect, onNew, notice, head
               className={"pill" + (filter === f.key ? " on" : "")}
               onClick={() => setFilter(f.key)}
             >
-              {f.label} <span className="ct">{counts[f.key]}</span>
+              {f.label} {loading ? null : <span className="ct">{counts[f.key]}</span>}
             </button>
           ))}
         </div>
@@ -98,7 +110,9 @@ export function CouponsList({ coupons, selectedId, onSelect, onNew, notice, head
             onSelect={onSelect}
           />
         ))}
-        {list.length === 0 ? (
+        {loading ? (
+          <p className="px-3 py-4 text-center text-[11.5px] text-fg-muted">Cargando cupones…</p>
+        ) : list.length === 0 ? (
           <p className="px-3 py-4 text-center text-[11.5px] text-fg-faint">
             Sin cupones en este estado.
           </p>

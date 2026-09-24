@@ -60,7 +60,18 @@ function couponNote(item: OrderItemDetail): string {
   return `Cupón ${item.coupon_code}${off}${list}`;
 }
 
+// C-3: la combinación que se registró (el cupo por unidad cuenta por
+// producto + color + aroma) — lo que hay que despachar.
+function attributesNote(item: OrderItemDetail): string | null {
+  const parts = [
+    item.color ? `Color: ${item.color}` : null,
+    item.aroma ? `Aroma: ${item.aroma}` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 function ItemRow({ item }: { item: OrderItemDetail }) {
+  const attributes = attributesNote(item);
   return (
     <div className="item-row" style={{ alignItems: "flex-start" }}>
       <div className="ir-thumb">
@@ -132,6 +143,11 @@ function ItemRow({ item }: { item: OrderItemDetail }) {
             La variante que pidió el cliente NO matchea con ninguna variante
             real del producto en Medusa. Verificá manualmente antes de despachar
             (el LLM puede haber registrado la primera variante por defecto).
+          </div>
+        )}
+        {attributes && (
+          <div style={{ fontSize: 11, color: "var(--fg-soft)", lineHeight: 1.35 }}>
+            {attributes}
           </div>
         )}
         <div className="ir-s">

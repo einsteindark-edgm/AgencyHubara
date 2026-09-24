@@ -1,7 +1,7 @@
 /**
  * Paso 2 — Descuento / Producto según el objetivo:
  *  - todo goal salvo launch → el cupón se ELIGE de la central de cupones
- *    (solo activos y programados). El % y el "válido hasta" salen del cupón
+ *    (solo de porcentaje, activos y programados). El % y el "válido hasta" salen del cupón
  *    (solo lectura) y se guardan en la campaña al elegirlo; el backend los
  *    vuelve a copiar del cupón al enviar. Atajo "Crear cupón": el Page abre
  *    la vista Cupones con el formulario nuevo.
@@ -39,6 +39,10 @@ export function OfferStep({ draft, editable, onCommit, onCreateCoupon }: Props) 
   const picked = pickable.find((c) => c.code === draft.couponCode) ?? null;
   // Solo con la lista REAL de la central (si no respondió, no sabemos).
   const couponNotPickable = draft.couponCode !== "" && coupons !== undefined && picked === null;
+  // Un cupón de monto fijo (creado en Medusa) rige pero no se puede anunciar.
+  const fixedAmount =
+    couponNotPickable &&
+    (coupons ?? []).some((c) => c.code === draft.couponCode && c.percentage === null);
 
   const pick = (code: string) => {
     const c = pickable.find((p) => p.code === code);
@@ -103,9 +107,9 @@ export function OfferStep({ draft, editable, onCommit, onCreateCoupon }: Props) 
           ) : null}
           {couponNotPickable ? (
             <span role="alert" className="text-[10.5px] leading-snug text-warn">
-              {draft.couponCode} no está activo ni programado en la central de cupones: el
-              cliente que lo escriba no recibirá el descuento y el envío se bloqueará. Elige
-              otro o actívalo en Cupones.
+              {fixedAmount
+                ? `${draft.couponCode} es de monto fijo: la campaña solo puede anunciar cupones de porcentaje y el envío se bloqueará. Elige otro.`
+                : `${draft.couponCode} no está activo ni programado en la central de cupones: el cliente que lo escriba no recibirá el descuento y el envío se bloqueará. Elige otro o actívalo en Cupones.`}
             </span>
           ) : null}
           {couponsError ? (

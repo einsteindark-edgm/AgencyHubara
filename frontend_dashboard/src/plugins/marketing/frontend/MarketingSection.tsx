@@ -171,7 +171,8 @@ function CouponsView({
 }) {
   const { showSidebar, showInspector } = usePluginHost();
   const [selectedId, setSelectedId] = useSelection(COUPON_SELECTION_KEY);
-  const { data: coupons = [], error } = useCoupons();
+  const { data, error, isPending, refetch } = useCoupons();
+  const coupons = useMemo(() => data ?? [], [data]);
 
   // Mismo fallback que campañas: sin selección válida, el primero.
   const coupon = useMemo(
@@ -194,6 +195,7 @@ function CouponsView({
           onSelect={select}
           onNew={() => setCreating(true)}
           notice={error ? apiErrorDetail(error) : null}
+          loading={isPending}
         />
       )}
 
@@ -209,9 +211,26 @@ function CouponsView({
           <CouponDetail
             key={coupon.promotionId}
             couponId={coupon.promotionId}
-            renderForm={(c) => <CouponForm coupon={c} />}
+            renderForm={(c, update) => <CouponForm coupon={c} update={update} />}
             onDeleted={() => setSelectedId(null)}
           />
+        ) : isPending ? (
+          // D9: mientras carga NO es "no hay cupones".
+          <p className="m-auto text-[12px] text-fg-muted">Cargando cupones…</p>
+        ) : error && data === undefined ? (
+          <div role="alert" className="m-auto flex max-w-sm flex-col items-center gap-3 text-center">
+            <p className="text-[12.5px] font-semibold text-danger">
+              No se pudieron cargar los cupones.
+            </p>
+            <p className="text-[12px] leading-relaxed text-fg-muted">{apiErrorDetail(error)}</p>
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="rounded-md border border-line px-3 py-1.5 text-[12px] font-semibold text-fg hover:bg-white/[0.05]"
+            >
+              Reintentar
+            </button>
+          </div>
         ) : (
           <div className="m-auto flex max-w-sm flex-col items-center gap-3 text-center">
             <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent/15 text-accent-fg">

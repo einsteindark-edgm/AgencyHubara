@@ -4,14 +4,20 @@
  * luego color/aroma de las listas cerradas de ESE producto (un selector sin
  * lista no aparece y el valor va null). Guardar reemplaza todas las filas
  * (todo o nada); el 422 marca cada fila con su motivo.
+ *
+ * El borrador sigue a lo guardado mientras el operador no cambie nada; con
+ * cambios propios, lo de otra persona NO lo pisa: se avisa y "Recargar" lo
+ * trae (D7). Guardar manda la versión editada: si alguien guardó después, el
+ * 409 lo dice sin perder el borrador (C-5).
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useReducer, useRef } from "react";
 
 import { Icon } from "@/shared/ui";
 
 import {
   couponRowErrors,
+  isCouponUnitsConflict,
   usePutCouponUnits,
   type Coupon,
   type CouponProduct,
@@ -20,29 +26,42 @@ import {
 import { apiErrorDetail } from "@plugins/marketing/frontend/lib/format";
 
 import {
-  draftRowsFromUnits,
+  MAX_UNIT_ROWS,
   draftToUnitsInput,
-  newDraftRow,
+  initUnitsDraft,
+  serverChangedSince,
+  serverErrorsByKey,
+  unitsDraftReducer,
   validateUnitRows,
+  withAttribute,
   withProduct,
-  type UnitDraftRow,
 } from "../model/units-draft";
 
 interface Props {
   coupon: Coupon;
+  /** Lo guardado (del detalle del cupón). */
   units: CouponUnits;
   products: CouponProduct[];
+  /** Vuelve a pedir el detalle ("Recargar" tras un cambio de otra persona). */
+  onReload: () => void;
 }
 
 const SELECT_CLS =
   "w-full rounded-md border border-line bg-canvas px-2 py-1 text-[12px] text-fg outline-none focus:border-accent";
 
-export function UnitsEditor({ coupon, units, products }: Props) {
-  const [rows, setRows] = useState<UnitDraftRow[]>(() => draftRowsFromUnits(units.rows));
-  const [showUnitsLeft, setShowUnitsLeft] = useState(units.showUnitsLeft);
-  const [submitted, setSubmitted] = useState(false);
+export function UnitsEditor({ coupon, units, products, onReload }: Props) {
+  const [draft, dispatch] = useReducer(unitsDraftReducer, units, initUnitsDraft);
   const nextKey = useRef(0);
   const save = usePutCouponUnits(coupon.promotionId);
+  const { rows, showUnitsLeft, submitted } = draft;
+
+  // Lo guardado cambió (otra persona, o el refetch de un guardado): sin
+  // cambios propios el editor lo sigue (ajuste en render, sin efecto); con
+  // cambios, NO se pisan — se avisa y el operador recarga.
+  const serverChanged = serverChangedSince(draft, units);
+  if (serverChanged && !draft.dirty) {
+    dispatch({ type: "reseed", units });
+  }
 
   const productsById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
   // Solo los productos del cupón (o todo el catálogo), en el orden del catálogo.
@@ -56,23 +75,34 @@ export function UnitsEditor({ coupon, units, products }: Props) {
   const savedById = useMemo(() => new Map(units.rows.map((r) => [r.id, r])), [units.rows]);
 
   const clientErrors = validateUnitRows(rows, productsById);
-  const serverErrors = couponRowErrors(save.error);
-  const rowErrors = (i: number): string[] =>
-    submitted && clientErrors.has(i) ? clientErrors.get(i)! : (serverErrors.get(i) ?? []);
+  // D13: el 422 viene por índice del ENVÍO → a la fila que lo tuvo.
+  const serverErrors = serverErrorsByKey(couponRowErrors(save.error), draft);
+  const rowErrors = (i: number, key: string): string[] =>
+    submitted && clientErrors.has(i) ? clientErrors.get(i)! : (serverErrors.get(key) ?? []);
   const generalError = save.error ? apiErrorDetail(save.error) : null;
-
-  const patchRow = (i: number, next: UnitDraftRow) =>
-    setRows((rs) => rs.map((r, j) => (j === i ? next : r)));
+  const conflict = isCouponUnitsConflict(save.error);
+  const atCap = rows.length >= MAX_UNIT_ROWS;
 
   const addRow = () => {
     nextKey.current += 1;
-    setRows((rs) => [...rs, newDraftRow(`new-${nextKey.current}`)]);
+    dispatch({ type: "add", key: `new-${nextKey.current}` });
+  };
+
+  const reload = () => {
+    dispatch({ type: "discard" });
+    save.reset();
+    onReload();
   };
 
   const onSave = () => {
-    setSubmitted(true);
+    dispatch({ type: "submit" });
     if (clientErrors.size > 0) return;
-    save.mutate(draftToUnitsInput(rows, showUnitsLeft));
+    dispatch({ type: "sent" });
+    save.mutate(draftToUnitsInput(rows, showUnitsLeft, draft.base.updatedAt), {
+      // La respuesta del PUT es la versión nueva: la próxima vez se edita
+      // sobre ella (y el refetch viejo que llegue no cuenta como cambio).
+      onSuccess: (saved) => dispatch({ type: "saved", units: saved }),
+    });
   };
 
   return (
@@ -104,14 +134,16 @@ export function UnitsEditor({ coupon, units, products }: Props) {
               row.productId && !allowed.some((p) => p.id === row.productId)
                 ? [...allowed, { id: row.productId, title: row.title || row.productId }]
                 : allowed;
-            const errors = rowErrors(i);
+            const errors = rowErrors(i, row.key);
             return (
               <tr key={row.key} aria-label={`fila ${n}`} className="border-t border-line align-top">
                 <td className="py-1.5 pr-2">
                   <select
                     aria-label={`Producto de la fila ${n}`}
                     value={row.productId}
-                    onChange={(e) => patchRow(i, withProduct(row, e.target.value))}
+                    onChange={(e) =>
+                      dispatch({ type: "patch", row: withProduct(row, e.target.value) })
+                    }
                     className={SELECT_CLS}
                   >
                     <option value="">Elige el producto</option>
@@ -142,7 +174,9 @@ export function UnitsEditor({ coupon, units, products }: Props) {
                     placeholder="Elige el color"
                     values={product?.colors}
                     value={row.color}
-                    onChange={(color) => patchRow(i, { ...row, color })}
+                    onChange={(color) =>
+                      dispatch({ type: "patch", row: withAttribute(row, { color }) })
+                    }
                   />
                 </td>
                 <td className="py-1.5 pr-2">
@@ -151,7 +185,9 @@ export function UnitsEditor({ coupon, units, products }: Props) {
                     placeholder="Elige el aroma"
                     values={product?.aromas}
                     value={row.aroma}
-                    onChange={(aroma) => patchRow(i, { ...row, aroma })}
+                    onChange={(aroma) =>
+                      dispatch({ type: "patch", row: withAttribute(row, { aroma }) })
+                    }
                   />
                 </td>
                 <td className="py-1.5 pr-2">
@@ -161,7 +197,9 @@ export function UnitsEditor({ coupon, units, products }: Props) {
                     inputMode="numeric"
                     maxLength={5}
                     value={row.units}
-                    onChange={(e) => patchRow(i, { ...row, units: e.target.value })}
+                    onChange={(e) =>
+                      dispatch({ type: "patch", row: { ...row, units: e.target.value } })
+                    }
                     className={SELECT_CLS + " tabular-nums"}
                   />
                 </td>
@@ -175,7 +213,7 @@ export function UnitsEditor({ coupon, units, products }: Props) {
                   <button
                     type="button"
                     aria-label={`Quitar la fila ${n}`}
-                    onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
+                    onClick={() => dispatch({ type: "remove", key: row.key })}
                     className="rounded p-1 text-fg-faint hover:bg-white/[0.05] hover:text-danger"
                   >
                     <Icon.trash />
@@ -198,16 +236,20 @@ export function UnitsEditor({ coupon, units, products }: Props) {
         <button
           type="button"
           onClick={addRow}
-          className="inline-flex items-center gap-1 rounded-md border border-line px-2.5 py-1 text-[11.5px] font-semibold text-fg hover:bg-white/[0.05]"
+          disabled={atCap}
+          className="inline-flex items-center gap-1 rounded-md border border-line px-2.5 py-1 text-[11.5px] font-semibold text-fg hover:bg-white/[0.05] disabled:opacity-50"
         >
           <Icon.plus />
           Agregar fila
         </button>
+        {atCap ? (
+          <span className="text-[11px] text-fg-muted">Un cupón lleva hasta {MAX_UNIT_ROWS} filas.</span>
+        ) : null}
         <label className="flex items-center gap-1.5 text-[12px] text-fg-soft">
           <input
             type="checkbox"
             checked={showUnitsLeft}
-            onChange={(e) => setShowUnitsLeft(e.target.checked)}
+            onChange={(e) => dispatch({ type: "show-units-left", value: e.target.checked })}
             className="accent-accent"
           />
           Mostrar al cliente cuántas quedan
@@ -226,11 +268,35 @@ export function UnitsEditor({ coupon, units, products }: Props) {
       </div>
 
       {generalError ? (
-        <p role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-[11.5px] text-danger">
-          {generalError}
-        </p>
+        <div
+          role="alert"
+          className="flex items-center gap-3 rounded-md bg-danger-soft px-3 py-2 text-[11.5px] text-danger"
+        >
+          <span>{generalError}</span>
+          {conflict ? <ReloadButton onClick={reload} /> : null}
+        </div>
+      ) : serverChanged && draft.dirty ? (
+        <div className="flex items-center gap-3 rounded-md bg-warn-soft px-3 py-2 text-[11.5px] text-warn">
+          <span>
+            Otra persona cambió las unidades de este cupón mientras editabas. Recarga para ver lo
+            nuevo (lo que no guardaste se pierde).
+          </span>
+          <ReloadButton onClick={reload} />
+        </div>
       ) : null}
     </div>
+  );
+}
+
+function ReloadButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="ml-auto shrink-0 rounded-md border border-current px-2.5 py-1 text-[11.5px] font-semibold hover:opacity-80"
+    >
+      Recargar
+    </button>
   );
 }
 

@@ -8,7 +8,14 @@ import { fmtDateTimeMs } from "@plugins/marketing/frontend/lib/format";
 
 import { changeActionLabel, changeSummary } from "../model/changes";
 
-export function ChangesLog({ changes }: { changes: CouponChange[] }) {
+export function ChangesLog({
+  changes,
+  productTitles,
+}: {
+  changes: CouponChange[];
+  /** id → título del catálogo (los productos se leen por su nombre). */
+  productTitles: ReadonlyMap<string, string>;
+}) {
   if (changes.length === 0) {
     return <p className="text-[11.5px] text-fg-faint">Todavía no hay cambios registrados.</p>;
   }
@@ -16,7 +23,7 @@ export function ChangesLog({ changes }: { changes: CouponChange[] }) {
     <ul className="flex flex-col divide-y divide-line">
       {changes.map((c, i) => {
         const ms = Date.parse(c.ts);
-        const lines = changeSummary(c);
+        const lines = changeSummary(c, productTitles);
         return (
           <li key={`${c.ts}-${i}`} className="flex flex-col gap-0.5 py-2">
             <div className="flex items-center gap-2 text-[12px]">

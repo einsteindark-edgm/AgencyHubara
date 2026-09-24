@@ -15,18 +15,21 @@ import { ApiError } from "@/shared/sdk";
 
 const createMock = { mutate: vi.fn(), isPending: false, error: null as Error | null };
 const updateMock = { mutate: vi.fn(), isPending: false, error: null as Error | null };
+const PRODUCTS = [
+  { id: "prod_cubo", handle: "cubo-love", title: "Cubo Love", colors: ["Rojo"], aromas: [] },
+  { id: "prod_buda", handle: "vela-buda", title: "Vela Buda", colors: [], aromas: ["Lavanda"] },
+];
+const productsMock = {
+  data: PRODUCTS as typeof PRODUCTS | undefined,
+  isPending: false,
+  error: null as Error | null,
+};
 
 vi.mock("@plugins/marketing/frontend/entities/coupon", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useCreateCoupon: () => createMock,
   useUpdateCoupon: () => updateMock,
-  useCouponProducts: () => ({
-    data: [
-      { id: "prod_cubo", handle: "cubo-love", title: "Cubo Love", colors: ["Rojo"], aromas: [] },
-      { id: "prod_buda", handle: "vela-buda", title: "Vela Buda", colors: [], aromas: ["Lavanda"] },
-    ],
-    isPending: false,
-  }),
+  useCouponProducts: () => productsMock,
 }));
 
 import type { Coupon } from "@plugins/marketing/frontend/entities/coupon";
@@ -75,6 +78,8 @@ beforeEach(() => {
   updateMock.mutate.mockClear();
   createMock.error = null;
   updateMock.error = null;
+  productsMock.data = PRODUCTS;
+  productsMock.error = null;
 });
 
 describe("CouponForm — alta", () => {
@@ -172,6 +177,17 @@ describe("CouponForm — alta", () => {
     expect(getByLabelText("Hasta")).toHaveAccessibleDescription("La fecha va como AAAA-MM-DD.");
   });
 
+  it("si el catálogo no carga, lo dice donde se eligen los productos (D9)", () => {
+    productsMock.data = undefined;
+    productsMock.error = new ApiError(503, {
+      detail: { message: "Medusa no responde ahora mismo; no se hizo ningún cambio." },
+    });
+    const { getByLabelText, getByText } = render(<CouponForm />);
+    fireEvent.click(getByLabelText("Productos elegidos"));
+    expect(getByText(/No se pudieron cargar los productos del catálogo/)).toBeTruthy();
+    expect(getByText(/Medusa no responde ahora mismo/)).toBeTruthy();
+  });
+
   it("un error sin campo (código ocupado) se muestra con su mensaje", () => {
     createMock.error = new ApiError(409, { detail: { message: "Ese código ya existe." } });
     const { getByText } = render(<CouponForm />);
@@ -201,6 +217,30 @@ describe("CouponForm — edición", () => {
     fireEvent.click(getByRole("button", { name: "Guardar cambios" }));
     expect(updateMock.mutate).toHaveBeenCalledTimes(1);
     expect(updateMock.mutate.mock.calls[0]?.[0]).toEqual({ percentage: 15 });
+  });
+
+  it("usa la mutación que le pasa el detalle: el error 'a medias' sobrevive al re-sembrado (D6)", () => {
+    // El detalle es dueño de la edición: el formulario se re-monta tras el
+    // refetch de un 502 parcial y el aviso tiene que seguir ahí.
+    const lifted = {
+      mutate: vi.fn(),
+      isPending: false,
+      error: new ApiError(502, {
+        detail: { message: "El cambio quedó a medias en Medusa; reintentar es seguro.", step: "campaign" },
+      }),
+    };
+    const { getByRole, getByLabelText, getByText } = render(
+      <CouponForm
+        coupon={makeCoupon()}
+        update={lifted as unknown as Parameters<typeof CouponForm>[0]["update"]}
+      />,
+    );
+    expect(getByText("El cambio quedó a medias en Medusa; reintentar es seguro.")).toBeTruthy();
+
+    fill(getByLabelText, { "Descuento (%)": "15" });
+    fireEvent.click(getByRole("button", { name: "Guardar cambios" }));
+    expect(lifted.mutate).toHaveBeenCalledWith({ percentage: 15 });
+    expect(updateMock.mutate).not.toHaveBeenCalled();
   });
 
   it("no gestionable: todo deshabilitado y sin botón de guardar", () => {

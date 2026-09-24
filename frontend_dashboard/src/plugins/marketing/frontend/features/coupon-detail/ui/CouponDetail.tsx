@@ -7,9 +7,15 @@
  * Medusa — el cupo por unidad sí se edita (vive en Hubara). El formulario de
  * datos lo compone el Page por `renderForm` (features no se importan entre
  * sí). Debajo: "Unidades con descuento" y el registro de cambios.
+ *
+ * Premortem: un refetch fallido NO borra el panel ni lo escrito (D5: el
+ * error completo solo sin datos; con datos, un aviso). La edición del cupón
+ * vive ACÁ y se le pasa al formulario (D6): se re-siembra solo cuando cambian
+ * los datos editables (no al pausar/activar) y el error "quedó a medias"
+ * sobrevive al re-sembrado.
  */
 
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 
 import {
   COUPON_STATE_META,
@@ -17,8 +23,9 @@ import {
   useCouponProducts,
   useDeleteCoupon,
   useSetCouponStatus,
+  useUpdateCoupon,
   type Coupon,
-  type CouponUnits,
+  type CouponUpdateMutation,
 } from "@plugins/marketing/frontend/entities/coupon";
 import { apiErrorDetail } from "@plugins/marketing/frontend/lib/format";
 import { TONE_CLS } from "@plugins/marketing/frontend/lib/tones";
@@ -28,25 +35,32 @@ import { UnitsEditor } from "./UnitsEditor";
 
 interface Props {
   couponId: string;
-  /** El Page inyecta el formulario de edición (feature coupon-form). */
-  renderForm: (coupon: Coupon) => ReactNode;
+  /** El Page inyecta el formulario de edición (feature coupon-form) con la
+   *  mutación de edición de ESTE detalle (su error sobrevive al re-sembrado). */
+  renderForm: (coupon: Coupon, update: CouponUpdateMutation) => ReactNode;
   /** Tras borrar, el Page limpia la selección. */
   onDeleted: () => void;
 }
 
 export function CouponDetail({ couponId, renderForm, onDeleted }: Props) {
-  const { data, isPending, error } = useCoupon(couponId);
-  const { data: products = [] } = useCouponProducts();
+  const { data, error, refetch } = useCoupon(couponId);
+  const update = useUpdateCoupon(couponId);
+  const { data: products = [], error: productsError } = useCouponProducts();
+  const productTitles = useMemo(
+    () => new Map(products.map((p) => [p.id, p.title])),
+    [products],
+  );
 
-  if (error) {
-    return (
+  // D5: el error ocupa el panel SOLO si no hay datos; un refetch fallido con
+  // datos deja el cupón (y lo que el operador escribió) y avisa arriba.
+  if (!data) {
+    return error ? (
       <p className="m-auto max-w-sm text-center text-[12px] text-danger">
         {apiErrorDetail(error)}
       </p>
+    ) : (
+      <p className="m-auto text-[12px] text-fg-muted">Cargando cupón…</p>
     );
-  }
-  if (isPending || !data) {
-    return <p className="m-auto text-[12px] text-fg-muted">Cargando cupón…</p>;
   }
 
   const { coupon, units, changes } = data;
@@ -59,22 +73,39 @@ export function CouponDetail({ couponId, renderForm, onDeleted }: Props) {
           {coupon.unmanageableReason ?? "Este cupón se ve en solo lectura."}
         </div>
       ) : null}
+      {error ? (
+        <div
+          role="status"
+          className="shrink-0 border-b border-line bg-danger-soft px-5 py-2 text-[11.5px] font-medium text-danger"
+        >
+          No se pudo actualizar el cupón (lo que ves puede no estar al día): {apiErrorDetail(error)}
+        </div>
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-5 py-4">
           <Section title="Datos del cupón">
             {/* Tras guardar (o una edición a medias) el formulario se
-                re-siembra con lo que quedó en Medusa. */}
-            <Fragment key={formSignature(coupon)}>{renderForm(coupon)}</Fragment>
+                re-siembra con lo que quedó en Medusa; el error de la edición
+                vive en `update` (acá), así que sobrevive al re-sembrado. */}
+            <Fragment key={formSignature(coupon)}>{renderForm(coupon, update)}</Fragment>
           </Section>
 
           <Section title="Unidades con descuento">
+            {coupon.acceptsUnits && productsError ? (
+              <p className="mb-2 text-[11.5px] leading-snug text-danger">
+                No se pudieron cargar los productos del catálogo (sin la lista no se eligen
+                producto, color y aroma): {apiErrorDetail(productsError)}
+              </p>
+            ) : null}
             {coupon.acceptsUnits ? (
+              // Sin `key` por lo guardado: el editor sigue lo nuevo él mismo
+              // y NO pisa un borrador con cambios (D7).
               <UnitsEditor
-                key={unitsSignature(units)}
                 coupon={coupon}
                 units={units}
                 products={products}
+                onReload={() => void refetch()}
               />
             ) : (
               <p className="text-[11.5px] text-fg-faint">
@@ -84,7 +115,7 @@ export function CouponDetail({ couponId, renderForm, onDeleted }: Props) {
           </Section>
 
           <Section title="Registro de cambios">
-            <ChangesLog changes={changes} />
+            <ChangesLog changes={changes} productTitles={productTitles} />
           </Section>
         </div>
       </div>
@@ -92,6 +123,9 @@ export function CouponDetail({ couponId, renderForm, onDeleted }: Props) {
   );
 }
 
+/** Solo los datos EDITABLES: pausar/activar (estado) o un refetch que no los
+ *  cambia no re-siembran el formulario ni borran lo que el operador escribió
+ *  (D6). `status`/`manageable` los lee el formulario en vivo. */
 function formSignature(c: Coupon): string {
   return JSON.stringify([
     c.code,
@@ -100,16 +134,6 @@ function formSignature(c: Coupon): string {
     c.products,
     c.startsOn,
     c.endsOn,
-    c.status,
-    c.manageable,
-  ]);
-}
-
-/** Cambia cuando cambian las filas guardadas → el editor se re-siembra. */
-function unitsSignature(units: CouponUnits): string {
-  return JSON.stringify([
-    units.showUnitsLeft,
-    units.rows.map((r) => [r.id, r.productId, r.color, r.aroma, r.units]),
   ]);
 }
 
