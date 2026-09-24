@@ -393,6 +393,80 @@ register_tool_extension(
 )
 
 
+# Activities del worker de ventas. Constante de módulo (no inline en `main`)
+# para que el sandbox del laboratorio (sales_lab/sandbox) arme SU lista desde
+# esta: las mismas activities, con fakes solo donde hay efectos. Una activity
+# nueva acá que el sandbox no clasifique hace fallar la corrida (y su test).
+SALES_ACTIVITIES = [
+    # Set conversacional compartido — TODO worker que corra
+    # run_agent_turn lo spread-ea desde workflow_helpers (fuente
+    # única, L-3). Nunca listar esas activities a mano.
+    # EXCEPCIÓN Sales (dieta de prompt): `build_prompt` se reemplaza
+    # por el override por-etapa `sales_build_prompt` — MISMO nombre
+    # de activity, mismo contrato → el workflow no cambia (cero
+    # replay implications). Registrar ambas rompería el Worker
+    # (nombre duplicado), por eso se filtra la genérica.
+    *(
+        a
+        for a in CONVERSATIONAL_TURN_ACTIVITIES
+        if a is not generic_build_prompt
+    ),
+    sales_build_prompt,
+    send_whatsapp_message_activity,
+    send_typing_indicator_activity,
+    persist_assistant_message_activity,
+    decide_ghosting_action,
+    bootstrap_sales_session_activity,
+    read_and_clear_pending_handoff_activity,
+    # Draft del pedido al turno de handoff (run 019f6db3): sin esto
+    # el LLM arranca ciego y re-pregunta/pisa lo ya elegido.
+    read_order_draft_note_activity,
+    # Dynamic ghosting timeout (sesión c4e3416f): extiende el wait
+    # cuando hay un WhatsApp Flow pendiente esperando nfm_reply.
+    read_idle_timeout_seconds_activity,
+    start_or_signal_sales_workflow_activity,
+    schedule_remarketing_workflow_activity,
+    # ADR-2026-05-20: declarative orchestration activities.
+    write_pending_handoff_activity,
+    dispatch_event_activity,
+    # HU-002: render UI intents emitidos por decision tools (post-LLM).
+    flush_pending_ui_intents_activity,
+    # Saludo de primer contacto cuando el turno sale por tool (menú)
+    # sin saludo — runs dc32f7fe / 3ce50ef3.
+    build_first_contact_greeting_activity,
+    # Guarda de enumeración de variantes (run 9bd495be): 4+ aromas o
+    # colores listados en texto plano → picker curado.
+    apply_variant_enumeration_guard_activity,
+    # HU-SC-0: traza por turno para el scorecard por etapa.
+    persist_turn_trace_activity,
+    # Fix integridad orden↔tag: red de seguridad determinística que
+    # garantiza el cierre "pago pendiente" + escalación tras un
+    # register_order exitoso aunque el LLM no emita el tag/escalación.
+    ensure_payment_pending_closure_activity,
+    # Patrón A (CONFIRMADO_SIN_DATOS): garantiza la escalación a humano
+    # cuando el LLM marca un closing tag que la exige pero no escala.
+    ensure_closing_escalation_activity,
+    # HU-002 / A.5: transcripción de audio inbound (Groq/OpenAI).
+    transcribe_audio_activity,
+    # HU dialecto colombiano: hora de Bogotá + saludo apropiado
+    # inyectado al plugin_context. Disponible para uso desde el
+    # workflow si se requiere recomputar la hora mid-session
+    # (ghosting trigger, handoff resume). El path normal del
+    # cliente entrante usa el helper puro `context.py` desde
+    # `load_or_start_sales_session.py`.
+    compute_bogota_context_activity,
+    # HU-WA24H-001 Sprint CAPI: Meta Conversions API event
+    # dispatch (Lead / Purchase) en cierre de episode. Disparado
+    # por el workflow vía `_map_closing_tag_to_capi_event`. Tiene
+    # guards internos completos — skip silencioso si no aplica.
+    send_capi_event_activity,
+    # Auditoría CAPI 2026-09-08: flush del outbox tras cada turno
+    # (ViewContent / AddToCart / InitiateCheckout / OrderCreated /
+    # QualifiedLead / Purchase encolados por tools + UI intents).
+    flush_capi_outbox_activity,
+]
+
+
 async def main() -> None:
     """Worker Exclusivo para el Dominio de Ventas de WhatsApp."""
     ensure_plugin_enabled("chats")  # P-21: self-gate del toggle (INV-2)
@@ -404,74 +478,7 @@ async def main() -> None:
         client,
         task_queue=task_queue,
         workflows=[HubaraSalesSessionWorkflow],
-        activities=[
-            # Set conversacional compartido — TODO worker que corra
-            # run_agent_turn lo spread-ea desde workflow_helpers (fuente
-            # única, L-3). Nunca listar esas activities a mano.
-            # EXCEPCIÓN Sales (dieta de prompt): `build_prompt` se reemplaza
-            # por el override por-etapa `sales_build_prompt` — MISMO nombre
-            # de activity, mismo contrato → el workflow no cambia (cero
-            # replay implications). Registrar ambas rompería el Worker
-            # (nombre duplicado), por eso se filtra la genérica.
-            *(
-                a
-                for a in CONVERSATIONAL_TURN_ACTIVITIES
-                if a is not generic_build_prompt
-            ),
-            sales_build_prompt,
-            send_whatsapp_message_activity,
-            send_typing_indicator_activity,
-            persist_assistant_message_activity,
-            decide_ghosting_action,
-            bootstrap_sales_session_activity,
-            read_and_clear_pending_handoff_activity,
-            # Draft del pedido al turno de handoff (run 019f6db3): sin esto
-            # el LLM arranca ciego y re-pregunta/pisa lo ya elegido.
-            read_order_draft_note_activity,
-            # Dynamic ghosting timeout (sesión c4e3416f): extiende el wait
-            # cuando hay un WhatsApp Flow pendiente esperando nfm_reply.
-            read_idle_timeout_seconds_activity,
-            start_or_signal_sales_workflow_activity,
-            schedule_remarketing_workflow_activity,
-            # ADR-2026-05-20: declarative orchestration activities.
-            write_pending_handoff_activity,
-            dispatch_event_activity,
-            # HU-002: render UI intents emitidos por decision tools (post-LLM).
-            flush_pending_ui_intents_activity,
-            # Saludo de primer contacto cuando el turno sale por tool (menú)
-            # sin saludo — runs dc32f7fe / 3ce50ef3.
-            build_first_contact_greeting_activity,
-            # Guarda de enumeración de variantes (run 9bd495be): 4+ aromas o
-            # colores listados en texto plano → picker curado.
-            apply_variant_enumeration_guard_activity,
-            # HU-SC-0: traza por turno para el scorecard por etapa.
-            persist_turn_trace_activity,
-            # Fix integridad orden↔tag: red de seguridad determinística que
-            # garantiza el cierre "pago pendiente" + escalación tras un
-            # register_order exitoso aunque el LLM no emita el tag/escalación.
-            ensure_payment_pending_closure_activity,
-            # Patrón A (CONFIRMADO_SIN_DATOS): garantiza la escalación a humano
-            # cuando el LLM marca un closing tag que la exige pero no escala.
-            ensure_closing_escalation_activity,
-            # HU-002 / A.5: transcripción de audio inbound (Groq/OpenAI).
-            transcribe_audio_activity,
-            # HU dialecto colombiano: hora de Bogotá + saludo apropiado
-            # inyectado al plugin_context. Disponible para uso desde el
-            # workflow si se requiere recomputar la hora mid-session
-            # (ghosting trigger, handoff resume). El path normal del
-            # cliente entrante usa el helper puro `context.py` desde
-            # `load_or_start_sales_session.py`.
-            compute_bogota_context_activity,
-            # HU-WA24H-001 Sprint CAPI: Meta Conversions API event
-            # dispatch (Lead / Purchase) en cierre de episode. Disparado
-            # por el workflow vía `_map_closing_tag_to_capi_event`. Tiene
-            # guards internos completos — skip silencioso si no aplica.
-            send_capi_event_activity,
-            # Auditoría CAPI 2026-09-08: flush del outbox tras cada turno
-            # (ViewContent / AddToCart / InitiateCheckout / OrderCreated /
-            # QualifiedLead / Purchase encolados por tools + UI intents).
-            flush_capi_outbox_activity,
-        ],
+        activities=SALES_ACTIVITIES,
         # OTel obs: el TracingInterceptor (en get_temporal_client) crea spans
         # dentro del workflow sandbox → necesita opentelemetry como passthrough
         # o rompe con RestrictedWorkflowAccessError. Ver otel_workflow_runner.

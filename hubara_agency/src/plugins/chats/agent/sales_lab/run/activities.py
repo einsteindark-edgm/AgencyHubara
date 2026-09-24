@@ -19,11 +19,14 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from src.plugins.chats.agent.sales_lab.cases import build_cases
-from src.plugins.chats.agent.sales_lab.run.contracts import ProgressUpdate, PublishResult, RunPlan
+from src.plugins.chats.agent.sales_lab.run.contracts import ProgressUpdate, PublishResult, RunPlan, SmokeResult
 from src.plugins.chats.agent.sales_lab.run.publish import publish_control
+from src.plugins.chats.agent.sales_lab.sandbox.process import run_case_in_subprocess
 from src.sdk.labkit import LabStorePort, get_lab_store
+from src.sdk.runtime import with_heartbeat
 
 SALES_WORKSPACE = "app-hubara-agency-src-plugins-chats-agent-sales-workspace"
+SMOKE_TIMEOUT_S = 600.0
 
 
 def _lab_root() -> Path:
@@ -105,6 +108,33 @@ async def publish_control_activity(plan: RunPlan) -> PublishResult:
     return PublishResult(sessions=int(manifest["counts"]["sessions"]), cases=int(manifest["counts"]["cases"]))
 
 
+@activity.defn(name="lab_run_smoke_turn")
+@with_heartbeat(every=10)
+async def smoke_turn_activity(plan: RunPlan) -> SmokeResult:
+    """Plan §3.3: antes de simular, el primer caso del banco corre de punta a
+    punta en el sandbox (el mismo camino que los brazos). Si no pasa, la
+    corrida no arranca: es más barato fallar acá que a mitad de 3.600 turnos."""
+    cases_path = _lab_root() / "runs" / plan.run_id / "cases.jsonl"
+    lines = [line for line in cases_path.read_text(encoding="utf-8").splitlines() if line.strip()] if cases_path.is_file() else []
+    if not lines:
+        return SmokeResult(ok=False, error="el banco no tiene casos para el turno de humo")
+    case = json.loads(lines[0])
+    result = await run_case_in_subprocess(
+        case,
+        bench_dir=_lab_root() / "bench" / plan.bench_id,
+        sandbox_dir=_lab_root() / "runs" / plan.run_id / "smoke" / "case",
+        timeout_s=SMOKE_TIMEOUT_S,
+    )
+    trace = result.get("trace") or {}
+    error = result.get("error") or (None if trace else "el turno no dejó traza")
+    return SmokeResult(
+        ok=error is None,
+        case_id=str(case.get("case_id") or ""),
+        error=error,
+        sent_texts=[str(t) for t in trace.get("sent_texts") or []],
+    )
+
+
 @activity.defn(name="lab_run_progress")
 async def write_progress_activity(update: ProgressUpdate) -> None:
     store = _store()
@@ -131,6 +161,7 @@ async def cancel_requested_activity(run_id: str) -> bool:
 LAB_RUN_ACTIVITIES = [
     prepare_run_activity,
     publish_control_activity,
+    smoke_turn_activity,
     write_progress_activity,
     cancel_requested_activity,
 ]

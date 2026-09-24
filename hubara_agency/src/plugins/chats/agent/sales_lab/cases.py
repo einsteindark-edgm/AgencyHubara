@@ -19,6 +19,11 @@ Reglas:
     de metadatos de exoclaw no cuenta).
   * episodios del momento = los que ya habían empezado; uno que cerró después
     se ve abierto (sin los campos del cierre).
+  * estado al INICIO del turno (`draft_before`, `state_before`) = el que dejó
+    la traza anterior: el borrador y el cierre/orden, de la traza anterior del
+    MISMO episodio; el tag, la ruta y la escalación (de la sesión), de la
+    última traza anterior de cualquier episodio. `draft` y `state` son los de
+    la traza del turno: el estado al TERMINAR (lo que evalúa el scorecard).
 """
 from __future__ import annotations
 
@@ -61,6 +66,9 @@ class LabCase:
     state: dict[str, Any]
     episodes_at: list[dict[str, Any]]
     real: dict[str, Any] = field(default_factory=dict)
+    draft_before: dict[str, Any] = field(default_factory=dict)
+    state_before: dict[str, Any] = field(default_factory=dict)
+    first_in_episode: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -146,6 +154,16 @@ def _episodes_at(episodes: list[Any], started_ms: int) -> list[dict[str, Any]]:
     return out
 
 
+_SESSION_STATE = ("tag", "route", "escalation_reason")
+_EPISODE_STATE = ("closing_tag", "order_id")
+
+
+def _state_before(prev_any: dict[str, Any] | None, prev_same: dict[str, Any] | None) -> dict[str, Any]:
+    session = (prev_any or {}).get("state") or {}
+    episode = (prev_same or {}).get("state") or {}
+    return {k: session.get(k) for k in _SESSION_STATE} | {k: episode.get(k) for k in _EPISODE_STATE}
+
+
 def build_cases(bench_dir: Path, *, sales_workspace: str) -> CaseSet:
     manifest = json.loads((bench_dir / "manifest.json").read_text(encoding="utf-8"))
     since_ms = int(manifest.get("since_ms") or 0)
@@ -164,7 +182,11 @@ def build_cases(bench_dir: Path, *, sales_workspace: str) -> CaseSet:
             _jsonl(sdir / "evals" / "turn_traces.jsonl"),
             key=lambda t: (_ms(t.get("turn_started_ms")) or 0, int(t.get("turn") or 0)),
         )
+        previous: list[dict[str, Any]] = []
         for trace in traces:
+            prev_any = previous[-1] if previous else None
+            prev_same = next((t for t in reversed(previous) if t.get("episode_id") == trace.get("episode_id")), None)
+            previous.append(trace)
             started = _ms(trace.get("turn_started_ms"))
             if started is None or started < since_ms:
                 continue
@@ -200,6 +222,9 @@ def build_cases(bench_dir: Path, *, sales_workspace: str) -> CaseSet:
                     state=dict(trace.get("state") or {}),
                     episodes_at=_episodes_at(metadata.get("episodes") or [], started),
                     real={k: trace[k] for k in _REAL_FIELDS if k in trace},
+                    draft_before=dict((prev_same or {}).get("draft") or {}),
+                    state_before=_state_before(prev_any, prev_same),
+                    first_in_episode=prev_same is None,
                 )
             )
     return CaseSet(cases=tuple(cases), exclusions=tuple(exclusions))

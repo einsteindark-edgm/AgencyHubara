@@ -99,10 +99,50 @@ def test_case_carries_the_burst_and_the_real_prefix_lengths(tmp_path: Path) -> N
     assert case.case_id == f"{SID}/ep_001/t2"
 
 
-def test_case_carries_the_state_of_that_moment(tmp_path: Path) -> None:
+def test_case_carries_the_state_after_the_turn_for_the_scorecard(tmp_path: Path) -> None:
     case = _case(build_cases(_bench(tmp_path), sales_workspace=WS).cases, 2)
 
+    # `draft` y `state` son los de la traza del MISMO turno: el estado al
+    # TERMINAR el turno (lo que evalúa el scorecard), no el de su inicio.
     assert (case.stage_in, case.draft, case.state["tag"]) == ("descubrimiento", {"producto": "cubo-love"}, "INTERESADO")
+
+
+def test_case_carries_the_state_before_the_turn_from_the_previous_trace(tmp_path: Path) -> None:
+    """El sandbox arranca el turno con el estado de su INICIO: el que dejó la
+    traza anterior. Usar el de la misma traza metería información del futuro
+    (el borrador que el bot llenó en ese turno)."""
+    cases = build_cases(_bench(tmp_path), sales_workspace=WS).cases
+    first, second = _case(cases, 1), _case(cases, 2)
+
+    assert first.first_in_episode is True
+    assert first.draft_before == {}
+    empty = {"tag": None, "route": None, "escalation_reason": None, "closing_tag": None, "order_id": None}
+    assert first.state_before == empty  # la traza anterior (ep_000, antes del corte) no trae estado
+    assert second.first_in_episode is False
+    assert second.draft_before == {}  # el turno 1 no había llenado nada
+    assert second.state_before == empty | {"route": "ventas"}
+
+
+def test_session_state_before_comes_from_the_previous_episode_too(tmp_path: Path) -> None:
+    """El tag y la ruta son de la sesión: al primer turno de un episodio los
+    trae la última traza del episodio anterior; lo del episodio (cierre,
+    orden) no pasa de un episodio al otro."""
+    b = _bench(tmp_path)
+    traces_path = b / "vault" / SID / "evals" / "turn_traces.jsonl"
+    extra = {"turn": 1, "episode_id": "ep_002", "trigger": "customer", "turn_started_ms": T0 + 3_800_500,
+             "inbound_text": "ok gracias", "sent_texts": ["con gusto"], "draft": {}, "state": {"tag": "RECHAZO"}}
+    traces_path.write_text(traces_path.read_text(encoding="utf-8") + json.dumps(extra) + "\n", encoding="utf-8")
+
+    case = next(c for c in build_cases(b, sales_workspace=WS).cases if c.episode_id == "ep_002")
+
+    assert case.first_in_episode is True
+    assert case.state_before["tag"] is None  # la última traza anterior es el ghost del ep_001 (sin state)
+    assert case.draft_before == {}
+
+
+def test_case_carries_the_episodes_of_that_moment(tmp_path: Path) -> None:
+    case = _case(build_cases(_bench(tmp_path), sales_workspace=WS).cases, 2)
+
     [episode] = case.episodes_at
     assert episode["episode_id"] == "ep_001"
     assert episode["closed_at_ms"] is None and "closing_tag" not in episode  # a esa hora seguía abierto

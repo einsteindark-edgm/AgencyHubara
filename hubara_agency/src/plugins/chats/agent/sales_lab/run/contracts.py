@@ -36,3 +36,13 @@ class ProgressUpdate:
     spent_usd: float = 0.0
     error: str | None = None
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SmokeResult:
+    """El turno de humo: un caso real del banco, de punta a punta en el sandbox."""
+
+    ok: bool
+    case_id: str | None = None
+    error: str | None = None
+    sent_texts: list[str] = field(default_factory=list)
