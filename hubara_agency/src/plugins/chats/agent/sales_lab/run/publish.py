@@ -175,3 +175,65 @@ def publish_control(
     }
     store.put_bytes(f"{prefix}/manifest.json", json.dumps(manifest, ensure_ascii=False).encode())
     return manifest
+
+
+def _real_identity(trace: dict[str, Any], case: dict[str, Any], *, sim_session_id: str, source: str) -> dict[str, Any]:
+    """La traza del turno simulado con la identidad del caso REAL: misma
+    sesión, episodio, turno y `turn_key` (el hilo del laboratorio la busca
+    así). El número ficticio del sandbox no sale de la caja."""
+    real = str(case["session_id"])
+    body = json.dumps(trace, ensure_ascii=False)
+    if sim_session_id:
+        body = body.replace(sim_session_id, real).replace(sim_session_id.removeprefix("wa_"), real.removeprefix("wa_"))
+    out = json.loads(body)
+    out.update(
+        session_id=real,
+        episode_id=case.get("episode_id"),
+        turn=case.get("turn"),
+        turn_key=case.get("turn_key"),
+        case_id=case.get("case_id"),
+        source=source,
+    )
+    return out
+
+
+def publish_arm(
+    store: LabStorePort,
+    *,
+    run_id: str,
+    arm: str,
+    rep: int,
+    cases: list[dict[str, Any]],
+    results: dict[int, dict[str, Any]],
+) -> tuple[int, int]:
+    """Sube lo que corrió un brazo simulado en una repetición:
+    `turns/<brazo>/<rep>/<sid>.jsonl` y, en la repetición 0, la salida del
+    brazo en cada turno del hilo (`outputs.<brazo>`). Devuelve (publicados,
+    sin resultado)."""
+    prefix = f"runs/{run_id}"
+    source = f"lab:{run_id}:{arm}:{rep}"
+    by_sid: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    outputs: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    missing = 0
+    for index, case in enumerate(cases):
+        result = results.get(index) or {}
+        trace = result.get("trace")
+        if not isinstance(trace, dict):
+            missing += 1
+            continue
+        real = _real_identity(trace, case, sim_session_id=str(result.get("sim_session_id") or ""), source=source)
+        by_sid[str(case["session_id"])].append(real)
+        outputs[str(case["session_id"])][str(case["case_id"])] = {k: real[k] for k in _OUTPUT_FIELDS if k in real}
+    for sid, rows in by_sid.items():
+        store.put_bytes(f"{prefix}/turns/{arm}/{rep}/{sid}.jsonl", _jsonl(rows))
+    if rep == 0:
+        for sid, by_case in outputs.items():
+            raw = store.get_bytes(f"{prefix}/threads/{sid}.json")
+            if raw is None:
+                continue
+            thread = json.loads(raw)
+            for turn in thread.get("turns") or []:
+                if turn.get("case_id") in by_case:
+                    turn.setdefault("outputs", {})[arm] = by_case[turn["case_id"]]
+            store.put_bytes(f"{prefix}/threads/{sid}.json", json.dumps(thread, ensure_ascii=False).encode())
+    return sum(len(rows) for rows in by_sid.values()), missing

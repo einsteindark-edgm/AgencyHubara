@@ -17,14 +17,35 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from src.plugins.chats.agent.sales_lab.cases import build_cases
-from src.plugins.chats.agent.sales_lab.run.contracts import ProgressUpdate, PublishResult, RunPlan, SmokeResult
-from src.plugins.chats.agent.sales_lab.run.publish import publish_control
+from src.plugins.chats.agent.sales_lab.run.contracts import (
+    ArmPublishInput,
+    ArmPublishResult,
+    CaseOutcome,
+    ProgressUpdate,
+    PublishResult,
+    RunPlan,
+    SimulateInput,
+    SmokeResult,
+)
+from src.plugins.chats.agent.sales_lab.run.publish import publish_arm, publish_control
 from src.plugins.chats.agent.sales_lab.sandbox.process import run_case_in_subprocess
 from src.sdk.labkit import LabStorePort, get_lab_store
 from src.sdk.runtime import with_heartbeat
 
 SALES_WORKSPACE = "app-hubara-agency-src-plugins-chats-agent-sales-workspace"
 SMOKE_TIMEOUT_S = 600.0
+CASE_TIMEOUT_S = 600.0
+
+
+def _cases(run_id: str) -> list[dict]:
+    path = _lab_root() / "runs" / run_id / "cases.jsonl"
+    if not path.is_file():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _results_dir(run_id: str, arm: str, rep: int) -> Path:
+    return _lab_root() / "runs" / run_id / "results" / arm / str(rep)
 
 
 def _lab_root() -> Path:
@@ -115,7 +136,50 @@ async def smoke_turn_activity(plan: RunPlan) -> SmokeResult:
         case_id=str(case.get("case_id") or ""),
         error=error,
         sent_texts=[str(t) for t in trace.get("sent_texts") or []],
+        cost_usd=float(result.get("cost_usd") or 0.0),
     )
+
+
+@activity.defn(name="lab_run_simulate_case")
+@with_heartbeat(every=10)
+async def simulate_case_activity(inp: SimulateInput) -> CaseOutcome:
+    """Un caso de un brazo simulado, en su sandbox (un proceso). El resultado
+    queda en disco de la caja hasta que `lab_run_publish_arm` lo sube."""
+    cases = _cases(inp.run_id)
+    if not 0 <= inp.index < len(cases):
+        return CaseOutcome(case_id="", ok=False, error=f"no hay caso {inp.index}")
+    case = cases[inp.index]
+    result = await run_case_in_subprocess(
+        case,
+        bench_dir=_lab_root() / "bench" / inp.bench_id,
+        sandbox_dir=_lab_root() / "runs" / inp.run_id / inp.arm / str(inp.rep) / str(inp.index),
+        timeout_s=CASE_TIMEOUT_S,
+    )
+    out = _results_dir(inp.run_id, inp.arm, inp.rep)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{inp.index}.json").write_text(json.dumps(result, ensure_ascii=False, default=str), encoding="utf-8")
+    error = result.get("error") or (None if result.get("trace") else "el turno no dejó traza")
+    return CaseOutcome(
+        case_id=str(case.get("case_id") or ""),
+        ok=error is None,
+        error=error,
+        cost_usd=float(result.get("cost_usd") or 0.0),
+    )
+
+
+@activity.defn(name="lab_run_publish_arm")
+async def publish_arm_activity(inp: ArmPublishInput) -> ArmPublishResult:
+    cases = _cases(inp.run_id)
+    folder = _results_dir(inp.run_id, inp.arm, inp.rep)
+    results: dict[int, dict] = {}
+    for index in range(len(cases)):
+        path = folder / f"{index}.json"
+        if path.is_file():
+            results[index] = json.loads(path.read_text(encoding="utf-8"))
+    published, missing = await asyncio.to_thread(
+        publish_arm, _store(), run_id=inp.run_id, arm=inp.arm, rep=inp.rep, cases=cases, results=results
+    )
+    return ArmPublishResult(published=published, missing=missing)
 
 
 @activity.defn(name="lab_run_progress")
@@ -145,6 +209,8 @@ LAB_RUN_ACTIVITIES = [
     prepare_run_activity,
     publish_control_activity,
     smoke_turn_activity,
+    simulate_case_activity,
+    publish_arm_activity,
     write_progress_activity,
     cancel_requested_activity,
 ]

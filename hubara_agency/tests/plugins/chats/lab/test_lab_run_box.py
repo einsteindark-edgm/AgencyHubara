@@ -15,7 +15,7 @@ from temporalio.worker import Worker
 
 from src.plugins.chats.agent.sales_lab.run import activities as run_acts
 from src.plugins.chats.agent.sales_lab.run.contracts import LAB_TASK_QUEUE, LabRunInput
-from src.plugins.chats.agent.sales_lab.run.workflow import SIMULATION_PENDING_NOTE, LabRunWorkflow
+from src.plugins.chats.agent.sales_lab.run.workflow import ARMS_PENDING_NOTE, LabRunWorkflow
 from src.sdk.labkit import FilesystemLabStore
 from tests.plugins.chats.lab.test_lab_cases import SID, _bench
 
@@ -62,8 +62,8 @@ async def test_an_order_builds_the_cases_and_publishes_the_control(box) -> None:
     assert result["phase"] == "done" and result["cases"] == 2
     store = box["store"]
     progress = json.loads(store.get_bytes(f"runs/{RUN}/progress.json"))
-    assert (progress["phase"], progress["turns_done"], progress["turns_total"]) == ("done", 2, 2)
-    assert progress["notes"] == [SIMULATION_PENDING_NOTE]
+    assert (progress["phase"], progress["turns_done"], progress["turns_total"]) == ("done", 2, 2)  # A1 sobre 2 casos
+    assert progress["notes"] == [ARMS_PENDING_NOTE.format(arms="B")]
     assert store.get_bytes(f"runs/{RUN}/threads/{SID}.json") is not None
     assert (box["root"] / "bench" / "bench-x" / "manifest.json").is_file()
 
@@ -74,7 +74,7 @@ async def test_a_smoke_turn_of_the_bench_runs_before_simulating(box) -> None:
     pasar; si no pasa, la corrida no arranca (y dice por qué)."""
     await _run(box)
 
-    assert box["smoke"]["calls"] == [f"{SID}/ep_001/t1"]
+    assert box["smoke"]["calls"][0] == f"{SID}/ep_001/t1"  # el primero es el humo; después, A1
 
 
 @pytest.mark.asyncio
