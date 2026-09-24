@@ -725,6 +725,28 @@ async def test_canary_acts_on_the_test_number_and_the_rest_measures_in_shadow(mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("raw", ['{"mode": "canary", "canary_percent": NaN}', '{"mode": "canary", "test_numbers": 7}', "{roto"])
+async def test_an_unreadable_rollout_never_stops_the_customer_message(monkeypatch, tmp_path, raw):
+    """El estado del control lo puede dejar raro una edición a mano: el
+    mensaje del cliente viaja igual y el modo cuenta como `off` (antes una
+    excepción acá dejaba al bot mudo para TODOS los clientes)."""
+    from src.plugins.chats.agent.sales.use_cases import load_or_start_sales_session as los
+
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", "on")
+    (tmp_path / "_rollout").mkdir()
+    (tmp_path / "_rollout" / "perception.json").write_text(raw, encoding="utf-8")
+    monkeypatch.setattr(los, "_vault_dir", lambda: tmp_path)
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    args = client.start_calls[0]["start_signal_args"]
+    assert args[0] == "hola" and args[3] == {**_META, "perception_mode": "off"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("ceiling", "state"), [(None, "on"), ("off", "on"), ("encendido", "on"), ("on", None), ("on", "off")])
 async def test_without_an_active_mode_the_mode_travels_as_off(monkeypatch, tmp_path, ceiling, state):
     """El modo `off` viaja EXPLÍCITO: el workflow se queda con el último modo

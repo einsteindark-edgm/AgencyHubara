@@ -89,12 +89,17 @@ def _perception_meta(session_id: str) -> dict[str, str]:
 
     `off` viaja EXPLÍCITO: el workflow se queda con el último modo que
     recibió, así que sin esto un chat en curso seguiría en canary/on después
-    de apagar o de bajar el techo, hasta que su sesión termine."""
+    de apagar o de bajar el techo, hasta que su sesión termine. Un estado
+    ilegible (editado a mano) cuenta como `off`: el mensaje viaja igual."""
     from src.plugins.chats.agent.sales.perception.rollout import effective_mode
     from src.plugins.chats.agent.sales.perception.rollout_store import read_state
 
     ceiling = (os.getenv("SALES_PERCEPTION_MODE_CEILING") or "off").strip().lower()
-    mode = effective_mode(read_state(_vault_dir()), ceiling=ceiling, session_id=session_id)
+    try:
+        mode = effective_mode(read_state(_vault_dir()), ceiling=ceiling, session_id=session_id)
+    except Exception as exc:  # noqa: BLE001 — el control nunca frena el mensaje del cliente
+        logger.warning("perception.rollout_state_unreadable", error=repr(exc)[:200])
+        mode = "off"
     if mode not in _PERCEPTION_MODES:
         return {"perception_mode": "off"}
     profile = (os.getenv("SALES_PERCEPTION_PROFILE") or "").strip() or _DEFAULT_PERCEPTION_PROFILE

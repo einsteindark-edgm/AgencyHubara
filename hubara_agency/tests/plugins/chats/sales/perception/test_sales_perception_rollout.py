@@ -91,3 +91,10 @@ def test_canary_acts_on_test_numbers_and_a_stable_share_the_rest_stays_in_shadow
 
 def test_an_unknown_mode_is_off() -> None:
     assert effective_mode(RolloutState(mode="encendido"), ceiling="on", session_id=TEST) == "off"
+
+
+def test_canary_needs_enough_shadow_turns() -> None:
+    """Menos del 1 % de caídas no se puede medir con 40 turnos: la vara pide
+    un mínimo de turnos medidos en la sombra."""
+    assert "shadow_turns" in can_set_mode("canary", _facts(shadow_turns=40))
+    assert can_set_mode("canary", _facts(shadow_turns=400)) == ()

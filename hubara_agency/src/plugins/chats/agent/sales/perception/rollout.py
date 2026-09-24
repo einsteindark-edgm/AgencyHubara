@@ -8,7 +8,8 @@ Patrón de `src/plugins/mba/domain/rollout_policy.py`: hechos → chequeos.
 * Subir exige que el modo llegue al worker (`SALES_SIGNAL_INBOUND_META`), no
   pasar el techo y la llave del clasificador (`OPENROUTER_API_KEY`).
 * Canary y encendido exigen la vara de la sombra (§8.3): 7 días o más, menos
-  del 1 % de caídas a "turno como hoy" y p95 de la percepción < 1,5 s.
+  del 1 % de caídas a "turno como hoy" y p95 de la percepción < 1,5 s, con al
+  menos 150 turnos medidos (menos no alcanza para medir el 1 %).
 
 Por conversación (`effective_mode`): en canary actúan los números de prueba
 y un porcentaje estable de conversaciones (hash del id); las demás siguen en
@@ -21,6 +22,7 @@ from dataclasses import dataclass
 
 MODES: tuple[str, ...] = ("off", "shadow", "canary", "on")
 SHADOW_MIN_DAYS = 7
+SHADOW_MIN_TURNS = 150
 SHADOW_MAX_FALLBACK_RATE = 0.01
 SHADOW_MAX_P95_MS = 1500
 
@@ -70,7 +72,9 @@ def readiness(target: str, facts: RolloutFacts) -> tuple[Check, ...]:
         p95 = facts.shadow_p95_ms
         checks += [
             Check("shadow_days", facts.shadow_days >= SHADOW_MIN_DAYS,
-                  f"{facts.shadow_days} días en sombra ({facts.shadow_turns} turnos); mínimo {SHADOW_MIN_DAYS}"),
+                  f"{facts.shadow_days} días en sombra; mínimo {SHADOW_MIN_DAYS}"),
+            Check("shadow_turns", facts.shadow_turns >= SHADOW_MIN_TURNS,
+                  f"{facts.shadow_turns} turnos medidos en sombra; mínimo {SHADOW_MIN_TURNS}"),
             Check("shadow_fallbacks", fallback is not None and fallback < SHADOW_MAX_FALLBACK_RATE,
                   "caídas en sombra: " + (f"{fallback:.1%}" if fallback is not None else "sin datos") + " (menos de 1 %)"),
             Check("shadow_p95", p95 is not None and p95 < SHADOW_MAX_P95_MS,

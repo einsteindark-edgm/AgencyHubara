@@ -22,13 +22,18 @@ export function usePerceptionRollout() {
     queryKey: rolloutKeys.current(),
     queryFn: ({ signal }) => fetchRollout(signal),
     staleTime: 30_000,
+    // Red de seguridad: otro operador (u otra pestaña) puede haber movido el modo.
+    refetchInterval: 60_000,
   });
 }
 
+/** Un error puede ser un 504 del cast ("PUEDE haberse aplicado"): se relee
+ * el estado para que el panel nunca muestre un modo que ya no es. */
 export function useSetPerceptionRollout() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: putRollout,
     onSuccess: (data) => client.setQueryData(rolloutKeys.current(), data),
+    onError: () => client.invalidateQueries({ queryKey: rolloutKeys.current() }),
   });
 }
