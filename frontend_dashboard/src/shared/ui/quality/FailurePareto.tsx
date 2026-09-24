@@ -1,17 +1,15 @@
 import { useMemo, type KeyboardEvent } from "react";
 
 import {
+  QUALITY_LEVEL_ORDER,
   paretoWithCumulative,
-  type ParetoItem,
-} from "@plugins/agents_admin/frontend/entities/check-stats";
-import {
-  levelColor,
-  levelLabel,
-  type CheckLevel,
-} from "@plugins/agents_admin/frontend/entities/scorecard";
+  qualityLevelColor as levelColor,
+  qualityLevelLabel as levelLabel,
+  type ParetoItemView,
+} from "@/shared/lib";
 
 interface Props {
-  pareto: readonly ParetoItem[];
+  pareto: readonly ParetoItemView[];
   days: number;
   selectedCheckId?: string | null;
   /** Elegir una barra: la composición filtra la matriz a los episodios que fallan ese check. */
@@ -25,7 +23,7 @@ const R = 46;
 const T = 22;
 const B = 58;
 
-const LEVELS: CheckLevel[] = ["critico", "mayor", "menor"];
+const LEVELS = QUALITY_LEVEL_ORDER;
 
 function niceMax(v: number): number {
   if (v <= 4) return 4;

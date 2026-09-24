@@ -13,3 +13,11 @@ export { ErrorBoundary } from "./ErrorBoundary";
 export { Toolbar, StatusBar, type SectionKey } from "./chrome";
 export { Markdown } from "./Markdown";
 export { DateRangeFilter } from "./DateRangeFilter";
+// Gráficas de calidad de un bot (Calidad LLM de agents_admin + laboratorio).
+// Reciben formas de vista genéricas de `@/shared/lib` (`quality-view`, `trajectory-strip`).
+export { FailurePareto } from "./quality/FailurePareto";
+export { StageFunnel } from "./quality/StageFunnel";
+export { CheckTrend } from "./quality/CheckTrend";
+export { VerdictTiles } from "./quality/VerdictTiles";
+export { TrajectoryStrip } from "./quality/TrajectoryStrip";
+export { ComplianceMatrixTable, ComplianceMatrixLegend } from "./quality/ComplianceMatrixTable";
