@@ -651,6 +651,14 @@ cerrada). Un cupón sin filas se comporta como siempre.
 - THEN, bajo el candado del código, uno crea el pedido y el otro recibe `quota_changed` con `new_total_cop` y `error=quota_changed`, sin draft
 - AND "Crear pedido" del dashboard reparte y registra con las mismas reglas y el mismo candado, y ante `quota_changed` devuelve el total NUEVO
 
+#### Scenario: "Crear pedido" con cupón
+
+- GIVEN el operador abre "Crear pedido" en un chat con cupón aplicado
+- THEN la sugerencia trae `coupon_code` aunque el descuento sea $0, con `coupon_reason` (`missing_attributes`, `quota_exhausted`, `quota_unavailable`, `min_subtotal`, `no_applicable_items`)
+- AND tras editar líneas el formulario pide `dry_run: true` (calcula sin registrar ni guardar) y registra solo después de que el operador vio ese total (`expected_discount_cop`)
+- AND si al enviar no se puede releer el cupo responde `quota_unavailable` (no `quota_changed`), y un rechazo guardado para reintento trae `saved_for_retry: true`
+- AND el doble envío se reconoce por ítems + color/aroma + medio de pago + dirección: corregir la ciudad o el color es un pedido nuevo
+
 #### Scenario: Los rechazos del cupo se corrigen, no se escalan
 
 - GIVEN `register_order` rechaza por `quota_changed`, `quota_busy` o `invalid_variant_attribute`
@@ -661,6 +669,24 @@ cerrada). Un cupón sin filas se comporta como siempre.
 - GIVEN el cliente confirmó [Cubo Love Rosado · Café, Vela Buda] con descuento en el cubo
 - WHEN el bot llama `register_order` con [Vela Buda, Cubo Love Rosado · Café]
 - THEN es el mismo pedido confirmado (el reparto se compara por producto + color + aroma + precio, no por posición) y el descuento va a la línea del cubo
+
+#### Scenario: El color/aroma se valida solo donde decide el cupo
+
+- GIVEN un pedido SIN cupón (o una línea de un producto sin cupo) con `color`/`aroma` que no están en las etiquetas del producto (dos aromas, colores de `metadata.colores`, familias)
+- THEN la confirmación y el registro los aceptan como antes y el valor llega tal cual a la línea de Medusa
+- AND en un producto con cupo un valor fuera de la lista devuelve `invalid_variant_attribute` (dos valores en uno piden "una línea por combinación", y un `variant_label` que nombra OTRO color o aroma de la lista también se rechaza)
+
+#### Scenario: Falta el color o el aroma en una línea con cupo
+
+- GIVEN una línea de un producto con cupo sin `color`/`aroma` (ni en el ítem ni en el borrador, que solo completa un producto que está UNA vez en el pedido)
+- WHEN el bot llama `present_order_confirmation`
+- THEN responde `queued=false, error=missing_variant_attributes` con las listas del producto, sin tarjeta ni reparto guardado — la tarjeta termina el turno y el cliente confirmaría a precio lleno sin que el bot alcance a preguntar
+
+#### Scenario: La tarjeta dice qué unidades llevan el cupón
+
+- GIVEN un cupón con cupo
+- WHEN sale la tarjeta de confirmación
+- THEN su cuerpo incluye la nota del cupo: qué unidades llevan descuento y cuántas van a precio normal, o que no se pudo confirmar el cupo, o que la combinación se agotó (nunca "no aplica" si lo que pasó es que se agotó)
 
 #### Scenario: No se puede releer el cupo al registrar
 
