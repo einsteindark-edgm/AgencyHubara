@@ -1,7 +1,7 @@
 """Composición de la central de cupones: el deployment decide el adapter."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
@@ -56,3 +56,30 @@ def test_admin_port_with_medusa_invalidates_the_local_reader_on_write(monkeypatc
     admin._changed()
 
     assert calls == ["invalidate"]
+
+
+def test_quota_store_audit_and_lock_live_in_the_vault(_isolate_vault_dir) -> None:
+    store = composition.get_promo_quota_store()
+    audit = composition.get_coupon_audit_log()
+
+    store.replace("promo_1", "AMOR27", [], show_units_left=True, actor="ana", now_iso="t")
+    audit.append(actor="ana", action="create", promotion_id="promo_1", code="AMOR27")
+
+    assert (_isolate_vault_dir / "_promotions" / "quotas" / "promo_1.json").exists()
+    assert (_isolate_vault_dir / "_promotions" / "audit.jsonl").exists()
+    assert composition.get_quota_lock() is not None
+
+
+@pytest.mark.asyncio
+async def test_sales_reader_without_medusa_is_unavailable(monkeypatch) -> None:
+    composition.get_coupon_sales_reader.cache_clear()
+
+    def no_settings():
+        raise RuntimeError("MEDUSA_BASE_URL missing")
+
+    monkeypatch.setattr(composition, "get_medusa_settings", no_settings)
+    reader = composition.get_coupon_sales_reader()
+    composition.get_coupon_sales_reader.cache_clear()
+
+    with pytest.raises(PromotionsUnavailableError):
+        await reader.sold_units(since=datetime(2026, 9, 22))
