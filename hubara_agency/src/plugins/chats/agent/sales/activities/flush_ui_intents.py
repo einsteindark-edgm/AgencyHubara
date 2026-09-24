@@ -1123,6 +1123,21 @@ def _render_variant_picker_text(params: dict[str, Any]) -> str | None:
 
     intro = (params.get("intro_text") or "Estas son las opciones:").strip()
     text_lines: list[str] = [intro, ""]
+    # Cupón con cupo en este producto: sus combinaciones (o el aviso de que
+    # lo ya elegido va a precio normal) van antes de la lista completa.
+    coupon = params.get("coupon")
+    if isinstance(coupon, dict):
+        notice = str(coupon.get("notice") or "").strip()
+        if notice:
+            text_lines += [notice, ""]
+        coupon_rows = [str(r).strip() for r in coupon.get("rows") or [] if str(r).strip()]
+        if coupon_rows:
+            text_lines.append(f"*{str(coupon.get('title') or '').strip()}*")
+            text_lines += coupon_rows
+            text_lines.append("")
+            others = str(coupon.get("others") or "").strip()
+            if others:
+                text_lines.append(others)
     for sec in sections_payload:
         sec_title = (sec.get("title") or "").strip()
         rows = sec.get("rows") or []

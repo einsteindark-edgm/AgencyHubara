@@ -620,7 +620,30 @@ cerrada). Un cupón sin filas se comporta como siempre.
 
 - GIVEN AMOR26 tiene 5 unidades de Cubo Love · Rosado · Café, 2 vendidas
 - WHEN el cliente da el código y el bot llama `apply_coupon`
-- THEN el envelope trae `units: [{title, color, aroma, units_left: 3, price_cop, discounted_price_cop}]` y el resumen dice que otros colores, aromas o productos van a precio normal
+- THEN el envelope trae `units: [{handle, title, color, aroma, units_left: 3, price_cop, discounted_price_cop}]` y el resumen dice que otros colores, aromas o productos van a precio normal
+- AND el episodio guarda esas combinaciones (`applied_coupon.units`) para la nota de cada turno y el selector de variantes
+
+#### Scenario: El cliente responde a una campaña que anuncia un cupón
+
+- GIVEN la campaña anunció AMOR2026 (con cupo) y el cliente responde por primera vez sin dar el código ("Me gusta")
+- THEN el webhook valida el cupón (Medusa + cupo, timeout corto) y lo deja aplicado en el episodio de la campaña; la nota dice que ya quedó aplicado y que no le pida el código
+- AND si ya no aplica (vencido, agotado, inexistente) la nota dice por qué y que no prometa descuento; si Medusa no responde a tiempo, la nota le pide llamar `apply_coupon` ANTES de ofrecer productos o precios
+- AND un "NO MÁS" (baja) no aplica nada
+- AND en una campaña masiva las vendidas de Medusa se leen una vez y se comparten unos segundos entre respuestas (el registro las relee bajo el candado)
+
+#### Scenario: La nota de cada turno dice qué combinaciones llevan el cupón y qué va a precio normal
+
+- GIVEN un cupón con cupo aplicado
+- THEN `[CUPÓN APLICADO]` agrupa las combinaciones por producto con precio y precio con descuento ("Cubo Love ($21.000 → $18.900): Lila · Lavanda, …")
+- AND si el borrador tiene una combinación sin descuento (Cubo Love Amarillo · Sándalo) la nota lo dice con el precio normal para que el bot se lo diga al cliente; con un solo atributo elegido dice en qué colores o aromas va el descuento
+- AND `set_order_slot` lo dice en su respuesta en el MISMO turno en que el cliente elige (la nota del turno se armó antes de la elección)
+
+#### Scenario: El selector de variantes pone primero las combinaciones del cupón
+
+- GIVEN un cupón con cupo en el Cubo Love
+- WHEN el bot muestra el selector de aromas del Cubo Love
+- THEN arriba van "🎟️ Con tu cupón AMOR2026 (10% menos)" y sus combinaciones con precio; debajo "Otros aromas, a precio normal ($21.000)" y la lista completa
+- AND con un aroma ya elegido, el selector de colores muestra solo los colores con descuento de ese aroma, o avisa que en ese aroma va a precio normal y en qué combinaciones sí hay descuento
 
 #### Scenario: El cupón no permite decir cuántas quedan (D3)
 

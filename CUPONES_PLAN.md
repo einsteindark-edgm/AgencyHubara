@@ -728,9 +728,18 @@ salvo lo anotado abajo. Lo que habría pasado en producción:
 Verificación: backend `tests/platform` 1.670, `architecture + plugins + conformance` 2.830, resto 1.108 (+2 skip),
 `lint-imports` 6/6, `sdk.cli check` OK; front `tsc` limpio, `test:arch` 23, `npm test` 1.270.
 
+**Prueba en vivo 2026-09-24 (#364 desplegado a las 10:30, imagen `1c61d748`):** campaña de prueba con AMOR2026
+(10 %, 18 combinaciones de cupo). Salió mal (L-32): el bot nunca aplicó el cupón —la nota de la campaña decía
+"si lo menciona, valídalo con apply_coupon"—, dijo "Todas aplican con el código AMOR2026 al pagar", mostró los 11
+aromas y 9 colores, y a "¿sí está disponible Sándalo · Amarillo?" (fuera del cupo) contestó "Sí", a precio lleno.
+Arreglo en la rama `fix/campaign-coupon-combos`: el webhook aplica el cupón de la campaña al abrir el episodio; la
+nota de cada turno agrupa las combinaciones por producto y avisa cuando lo elegido va a precio normal; el selector
+de aromas/colores pone arriba las combinaciones del cupón. Despliegue: `api` (webhook) y `worker-sales` (selector y
+nota).
+
 **Pendiente:**
-1. PR (o dos: backend+central y front) y deploy EN SERIE: `api`, `worker-sales`, `worker-orders` (reconciliación),
-   `worker-marketing-campaigns` (revalida el cupón al disparar) y frontend (§8).
+1. ~~PR y deploy de la central~~ (#364, desplegado). Arreglo de L-32: PR + deploy de `api` y `worker-sales`.
+   El formulario de envío sigue mostrando el subtotal sin el descuento del cupón (el total real sale en la tarjeta).
 2. **Filtro `created_at[$gte]` en Medusa 2.12.5 sin verificar en vivo** (la lectura de prod quedó bloqueada por el
    clasificador de permisos). Es seguro igual: si Medusa responde 400 se lee todo y se corta de este lado. Verificar
    con un GET de solo lectura (`/admin/draft-orders?limit=1&created_at[$gte]=…`) cuando haya permiso.

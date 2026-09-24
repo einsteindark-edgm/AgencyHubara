@@ -68,6 +68,26 @@ from src.plugins.chats.shared.draft_items import (
 )
 
 
+def _coupon_lines(data: dict[str, Any]) -> list[str]:
+    """Qué dice el cupón con cupo del episodio de lo ya elegido (vacío sin
+    cupón con cupo): con descuento, a precio normal o en qué colores/aromas."""
+    from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+        draft_vs_coupon_lines,
+    )
+    from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
+        get_active_episode,
+    )
+
+    episode = get_active_episode(data) or {}
+    applied = episode.get("applied_coupon")
+    if not isinstance(applied, dict):
+        return []
+    units = [u for u in applied.get("units") or [] if isinstance(u, dict)]
+    if not units:
+        return []
+    return [f"Cupón {applied.get('code')}: {line}" for line in draft_vs_coupon_lines(episode.get("order_draft"), units)]
+
+
 class SetOrderSlotTool(ToolBase):
     """Fija datos del pedido en el order_draft del episodio activo (advisory)."""
 
@@ -679,6 +699,13 @@ class SetOrderSlotTool(ToolBase):
                 "cliente cambia algo, volve a llamar set_order_slot."
             ),
         }
+        # Cupón con cupo: lo que dice de lo recién elegido, en ESTE turno (la
+        # nota del turno se armó antes de la elección — conversación de
+        # prueba del 2026-09-24, Sándalo · Amarillo fuera del cupo).
+        coupon_lines = _coupon_lines(data)
+        if coupon_lines:
+            envelope["coupon"] = coupon_lines
+            envelope["summary"] += " " + " ".join(coupon_lines)
         if color_family is not None:
             envelope["color_family"] = color_family
             if color_family["shade_requested"]:

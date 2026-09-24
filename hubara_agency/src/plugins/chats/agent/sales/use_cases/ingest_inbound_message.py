@@ -99,6 +99,10 @@ from src.plugins.chats.agent.sales.use_cases.order_draft import (
     get_projectable_draft,
     update_order_draft,
 )
+from src.plugins.chats.agent.sales.use_cases.coupon_application import (
+    CouponApplication,
+    store_coupon_application,
+)
 from src.plugins.chats.agent.sales.use_cases.coupons import build_coupon_note
 from src.plugins.chats.agent.sales.use_cases.web_product_ref import (
     apply_web_product_capture,
@@ -135,9 +139,17 @@ if TYPE_CHECKING:
 #: root can wire `get_temporal_client` directly without wrapping.
 TemporalClientFactory = Callable[[], Awaitable["Client"]]
 
+#: `(código, now_ms) → CouponApplication`: valida el cupón de la campaña
+#: contra Medusa y su cupo (`resolve_coupon_application`), sin escribir.
+CampaignCouponApplier = Callable[[str, int], Awaitable[CouponApplication]]
+
 # HU web-cart: timeout de la hidratación inline (patrón L-2 — el webhook no
 # puede demorar el primer turno; cualquier fallo degrada en silencio).
 _WEB_CART_HYDRATION_TIMEOUT_S = 3.0
+
+#: Validar el cupón de la campaña (promociones de Medusa + vendidas del cupo)
+#: antes del primer turno. Si no alcanza, el bot lo aplica con `apply_coupon`.
+_CAMPAIGN_COUPON_TIMEOUT_S = 5.0
 
 #: Cap de descarga para documentos PDF inbound (comprobantes). La restricción
 #: de subida la impone WhatsApp (100 MB); de nuestro lado, por encima de este
@@ -164,8 +176,12 @@ class IngestInboundMessage:
         temporal_client_factory: TemporalClientFactory | None = None,
         web_cart_reader: WebCartReaderPort | None = None,
         catalog: CatalogPort | None = None,
+        campaign_coupon: CampaignCouponApplier | None = None,
     ) -> None:
         self._history_store = history_store
+        # Cupón de la campaña: se valida y aplica solo cuando el cliente
+        # responde (sin esto el bot lo aplica con `apply_coupon`).
+        self._campaign_coupon = campaign_coupon
         self._load_session = load_session
         self._metadata_store = metadata_store
         self._event_bus = event_bus
@@ -594,6 +610,39 @@ class IngestInboundMessage:
                 if updated_ref is not None:
                     metadata = updated_ref
 
+        # --- 2g. Cupón de la campaña: se aplica solo ---
+        # Conversación de prueba del 2026-09-24 (AMOR2026 con cupo por
+        # unidad): la nota pedía validarlo "si lo menciona", el bot nunca
+        # llamó apply_coupon y ofreció todo a precio lleno. Quien responde a
+        # una campaña con cupón viene por esa promoción: se valida acá
+        # (Medusa + cupo, timeout corto — L-2) y queda en el episodio de la
+        # campaña (RMW atómico, FM-01). Si no se puede validar a tiempo, la
+        # nota le pide al bot `apply_coupon` antes de ofrecer precios. Un
+        # "NO MÁS" ya apagó la campaña (`campaign_reply_touch` = None).
+        if campaign_reply_touch is not None:
+            coupon_code = str(campaign_reply_touch.get("coupon_code") or "").strip()
+            if coupon_code:
+                application = await self._check_campaign_coupon(coupon_code, now_ms)
+                if application is not None and application.applied:
+                    campaign_episode_id = (metadata.get("episodes") or [{}])[-1].get(
+                        "episode_id"
+                    )
+
+                    def _coupon_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                        episodes = fresh.get("episodes") or []
+                        if not episodes or episodes[-1].get("episode_id") != campaign_episode_id:
+                            return None  # otra ráfaga abrió otro episodio
+                        if episodes[-1].get("applied_coupon"):
+                            return None  # ya tiene un cupón: no se pisa
+                        return store_coupon_application(fresh, application, now_ms=now_ms)
+
+                    stored = self._metadata_store.update(session_id, _coupon_mutator)
+                    if stored is not None:
+                        metadata = stored
+                campaign_reply_note = build_campaign_reply_note(
+                    campaign_reply_touch, coupon=application
+                )
+
         # --- 2d. HU-WA24H-001 Sprint 2: watchdog wiring ---
         # Después de persistir el timestamp, emitir los eventos que el
         # dispatcher manifest convertirá en (a) arranque del
@@ -914,6 +963,35 @@ class IngestInboundMessage:
     # =========================================================================
     # Helpers
     # =========================================================================
+
+    async def _check_campaign_coupon(
+        self, code: str, now_ms: int
+    ) -> CouponApplication | None:
+        """Valida el cupón de la campaña con timeout corto (L-2). None = no se
+        pudo saber (sin wiring, Medusa lento o caído): el bot lo aplica con
+        `apply_coupon`. Nunca tumba el ingest."""
+        import asyncio
+
+        if self._campaign_coupon is None:
+            return None
+        try:
+            application = await asyncio.wait_for(
+                self._campaign_coupon(code, now_ms),
+                timeout=_CAMPAIGN_COUPON_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001 — degrada al apply_coupon del bot
+            logger.warning(
+                "campaign_coupon_check_failed", code=code, reason=type(exc).__name__
+            )
+            return None
+        logger.info(
+            "campaign_coupon_checked",
+            code=code,
+            applied=application.applied,
+            reason=application.reason,
+            units=len(application.units),
+        )
+        return application
 
     async def _resolve_product_ref(self, sku: str) -> tuple[Any, str | None]:
         """Resolves a `ref: HUB-…` SKU against the catalog WITHOUT mutating
