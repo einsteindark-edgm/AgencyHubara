@@ -70,6 +70,26 @@ def _inbound_meta_enabled() -> bool:
     return (os.getenv("SALES_SIGNAL_INBOUND_META") or "").strip().lower() in {"on", "1", "true"}
 
 
+_PERCEPTION_MODES = ("shadow", "canary", "on")
+_DEFAULT_PERCEPTION_PROFILE = "jev-v1"
+
+
+def _perception_meta() -> dict[str, str]:
+    """Modo y perfil de las capas con clasificador (plan del laboratorio,
+    PR 14), acotados por el techo de Terraform `SALES_PERCEPTION_MODE_CEILING`
+    (default `off`: el turno es el de hoy). El control del dashboard (PR 16)
+    podrá bajarlo, nunca subirlo.
+
+    `off` viaja EXPLÍCITO: el workflow se queda con el último modo que
+    recibió, así que sin esto un chat en curso seguiría en canary/on después
+    de bajar el techo, hasta que su sesión termine."""
+    mode = (os.getenv("SALES_PERCEPTION_MODE_CEILING") or "").strip().lower()
+    if mode not in _PERCEPTION_MODES:
+        return {"perception_mode": "off"}
+    profile = (os.getenv("SALES_PERCEPTION_PROFILE") or "").strip() or _DEFAULT_PERCEPTION_PROFILE
+    return {"perception_mode": mode, "perception_profile": profile}
+
+
 class LoadOrStartSalesSession:
     """Resuelve la ruta del mensaje y asegura que el workflow correcto este corriendo.
 
@@ -356,7 +376,7 @@ class LoadOrStartSalesSession:
                     message,
                     None,
                     plugin_context,
-                    *([inbound_meta] if inbound_meta and _inbound_meta_enabled() else []),
+                    *([{**inbound_meta, **_perception_meta()}] if inbound_meta and _inbound_meta_enabled() else []),
                 ],
                 id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             )

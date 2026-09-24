@@ -640,7 +640,7 @@ async def test_inbound_ids_travel_as_fourth_signal_arg_when_enabled(monkeypatch)
     await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
 
     args = client.start_calls[0]["start_signal_args"]
-    assert len(args) == 4 and args[3] == _META
+    assert len(args) == 4 and args[3] == {**_META, "perception_mode": "off"}
 
 
 @pytest.mark.asyncio
@@ -665,3 +665,39 @@ async def test_remarketing_signal_never_gets_the_fourth_arg(monkeypatch):
     await use_case.execute(session_id="wa_9", message="hola", phone_number_id=None, inbound_meta=_META)
 
     assert running.signals and all(len(args) == 3 for _fn, args in running.signals)
+
+
+@pytest.mark.asyncio
+async def test_the_perception_mode_travels_with_the_inbound_ids(monkeypatch):
+    """Plan del laboratorio, PR 14: el modo de las capas nuevas viaja en el
+    4.º argumento, acotado por el techo de Terraform
+    (`SALES_PERCEPTION_MODE_CEILING`) y con el perfil activo."""
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", "shadow")
+    monkeypatch.setenv("SALES_PERCEPTION_PROFILE", "openai-lp-v1")
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    meta = client.start_calls[0]["start_signal_args"][3]
+    assert meta == {**_META, "perception_mode": "shadow", "perception_profile": "openai-lp-v1"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ceiling", [None, "off", "encendido"])
+async def test_without_a_valid_ceiling_the_mode_travels_as_off(monkeypatch, ceiling):
+    """El modo `off` viaja EXPLÍCITO: el workflow se queda con el último modo
+    que recibió, así que sin esto un chat en curso seguiría en canary/on
+    después de bajar el techo (el apagado solo llegaría al terminar la sesión)."""
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    if ceiling is None:
+        monkeypatch.delenv("SALES_PERCEPTION_MODE_CEILING", raising=False)
+    else:
+        monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", ceiling)
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    assert client.start_calls[0]["start_signal_args"][3] == {**_META, "perception_mode": "off"}

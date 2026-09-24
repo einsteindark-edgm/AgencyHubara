@@ -1,0 +1,153 @@
+"""Activities de las capas ① (percibir la ráfaga) y ③ (verificar la respuesta).
+
+Llaman al clasificador por el puerto del SDK (`get_perception_port(perfil)`)
+y NUNCA fallan: el puerto ya devuelve `ok=False` ante timeout, error del
+proveedor, llave ausente o respuesta con otra forma, y acá cualquier
+excepción inesperada también se convierte en un resultado vacío. Así el
+turno sigue como hoy (fail-open) y la traza guarda el motivo.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import structlog
+from temporalio import activity
+
+from src.plugins.chats.agent.sales.perception.contracts import (
+    PerceiveInput,
+    PerceiveOutput,
+    VerifyInput,
+    VerifyOutput,
+)
+from src.plugins.chats.agent.sales.perception.plan import (
+    PlanTopic,
+    TurnPlan,
+    coverage_decision,
+    plan_from_answers,
+)
+from src.plugins.chats.agent.sales.perception.questions import (
+    burst_state,
+    rafaga_questions,
+    reply_state,
+    verify_questions,
+)
+
+logger = structlog.get_logger()
+
+TIMEOUT_S = 3.0
+
+# Datos de envío del borrador que el clasificador no necesita (decisión 2 del
+# plan). Los nombres se tapan también palabra por palabra: el cliente o el
+# asesor repiten solo el nombre ("Listo Carolina"). El barrio y la dirección,
+# completos: partirlos taparía palabras del producto ("alto", "centro").
+_PERSONAL_SLOTS = ("nombre_recibe", "direccion", "barrio", "telefono")
+_NAME_SLOTS = ("nombre_recibe",)
+_NAME_TOKEN_RE = re.compile(r"[^\W\d_]{3,}")
+
+
+def _redact_terms(session_id: str) -> list[str]:
+    """Lo que hay que tapar de ESTE cliente antes de que el turno salga hacia
+    el clasificador externo. Sin borrador legible, queda lo genérico
+    (teléfonos, correos, direcciones, nombres anunciados)."""
+    # Al llamar: `use_cases` importa el workflow, que importa estas activities
+    # (import circular), y los tests aíslan el vault parcheando el módulo.
+    from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+    from src.plugins.chats.agent.sales.turn_trace import draft_slots
+    from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
+    from src.sdk.runtime import WORKSPACE_VAULT_DIR
+
+    try:
+        slots = draft_slots(get_active_episode(FilesystemMetadataStore(Path(WORKSPACE_VAULT_DIR)).read(session_id)))
+    except Exception as exc:  # noqa: BLE001 — anonimizar nunca tumba el turno
+        logger.warning("perception.redact_terms_unavailable", error=repr(exc)[:200])
+        return []
+    terms: set[str] = set()
+    for key in _PERSONAL_SLOTS:
+        value = slots.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        terms.add(value.strip())
+        if key in _NAME_SLOTS:
+            terms.update(_NAME_TOKEN_RE.findall(value))
+    return sorted(terms)
+
+
+def _answers_for_trace(result, *, picked: set[str], detect: float = 0.70) -> list[dict]:
+    out = []
+    for a in result.answers:
+        out.append(
+            {
+                "q": a.id,
+                "type": a.kind,
+                "p": a.p,
+                "choice": a.choice,
+                "confidence": a.confidence,
+                "picked": a.id in picked if a.kind == "noul" else None,
+            }
+        )
+    return out
+
+
+@activity.defn(name="perceive_burst")
+async def perceive_burst_activity(inp: PerceiveInput) -> PerceiveOutput:
+    from src.sdk.connectorkit import get_perception_port
+
+    try:
+        port = get_perception_port(inp.profile)
+        state = burst_state(inp.messages, pending=inp.pending, last_bot_text=inp.last_bot_text)
+        result = await port.ask(
+            state, rafaga_questions(inp.messages), timeout_s=TIMEOUT_S, redact=_redact_terms(inp.session_id)
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-open: el turno sale como hoy
+        return PerceiveOutput(ok=False, profile=inp.profile, error=f"unexpected: {exc!r}"[:300])
+    plan = plan_from_answers(result, n_messages=len(inp.messages))
+    picked = {f"topic.{t.topic}" for t in plan.topics}
+    return PerceiveOutput(
+        ok=plan.ok,
+        profile=inp.profile,
+        model=result.model,
+        topics=[{"topic": t.topic, "msg": t.msg, "p": t.p} for t in plan.topics],
+        stage=plan.stage,
+        answers=_answers_for_trace(result, picked=picked),
+        error=result.error,
+        latency_ms=result.latency_ms,
+        cost_usd=result.cost_usd,
+    )
+
+
+@activity.defn(name="verify_coverage")
+async def verify_coverage_activity(inp: VerifyInput) -> VerifyOutput:
+    from src.sdk.connectorkit import get_perception_port
+
+    plan = TurnPlan(
+        ok=True,
+        topics=tuple(PlanTopic(str(t.get("topic")), t.get("msg"), t.get("p")) for t in inp.topics if t.get("topic")),
+    )
+    if not plan.topics:
+        return VerifyOutput(ok=True, decision="send")
+    try:
+        port = get_perception_port(inp.profile)
+        result = await port.ask(
+            reply_state(inp.messages, inp.reply_text, inp.components),
+            verify_questions(plan),
+            timeout_s=TIMEOUT_S,
+            redact=_redact_terms(inp.session_id),
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-open
+        return VerifyOutput(ok=False, decision="send", error=f"unexpected: {exc!r}"[:300])
+    decision = coverage_decision(plan, result)
+    covered = {f"cover.{k}" for k, p in decision.covered.items() if p >= 0.70}
+    return VerifyOutput(
+        ok=result.ok,
+        decision=decision.decision,
+        missing=list(decision.missing),
+        answers=_answers_for_trace(result, picked=covered),
+        model=result.model,
+        error=result.error,
+        latency_ms=result.latency_ms,
+        cost_usd=result.cost_usd,
+    )
+
+
+PERCEPTION_ACTIVITIES = [perceive_burst_activity, verify_coverage_activity]
