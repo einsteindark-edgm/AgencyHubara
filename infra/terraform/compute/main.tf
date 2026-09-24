@@ -102,8 +102,9 @@ module "lab" {
   instance_type         = var.lab.instance_type
   root_volume_gb        = var.lab.root_volume_gb
   autostop_idle_minutes = var.lab.autostop_idle_minutes
+  max_run_hours         = var.lab.max_run_hours
   image_repo            = var.image_repo
-  app_role_names        = [for m in module.app : m.role_name]
-  tenants               = keys(var.tenants)
+  app_role_names        = [for tenant, m in module.app : m.role_name if contains(var.lab.tenants, tenant)]
+  tenants               = var.lab.tenants
   use_local             = local.use_local
 }

@@ -24,4 +24,5 @@ observability = {
 # Laboratorio de conversaciones (LABORATORIO_CONVERSACIONES_PLAN.md §3, PR 6).
 lab = {
   enabled = true
+  tenants = ["hubara"] # solo sus cajas de app lanzan corridas y leen el banco
 }

@@ -9,14 +9,20 @@
 #              arranque de la caja: lab-temporal-reset.service). El puerto 7233
 #              solo existe en la red interna; la UI en 127.0.0.1:8233 se ve por
 #              port-forward de SSM (runbook §7). Imagen oficial FIJADA POR DIGEST.
-#   litellm    El mismo proxy y la misma versión que producción, con el mismo
-#              litellm_config.yaml (lo copia el cloud-init). Llaves: SOLO las de
-#              /hubara-lab (DeepSeek, Gemini y la llave de OpenRouter del laboratorio).
+#   litellm    El mismo proxy, versión y healthcheck que producción, con el
+#              litellm_config.yaml de la imagen de la corrida (lo instala
+#              dispatch.sh). Llaves: SOLO las de /hubara-lab (DeepSeek, Gemini y
+#              la llave de OpenRouter del laboratorio), en su propio env file.
 #   sales_lab  La MISMA imagen de GHCR que producción, con el worker del
 #              laboratorio. Sin llaves de producción: su guard de arranque no
 #              arranca si ve TEMPORAL_API_KEY, WHATSAPP_*, MEDUSA_* o META_*, si
 #              TEMPORAL_URL no es `temporal:7233` o si una carpeta sale de /lab.
+#              Solo monta /lab/runs y /lab/bench (no la base de Temporal).
 #              Perfil `run`: solo corre por `docker compose run` (una por corrida).
+#
+# Env files (los escribe dispatch.sh, 0600): compose.env solo interpola
+# HUBARA_IMAGE; litellm.env y sales_lab.env llevan las llaves de cada uno. El
+# token de GHCR no va a ningún env file: dispatch.sh lo pasa directo a docker login.
 name: hubara-lab
 
 services:
@@ -44,14 +50,22 @@ services:
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
       - /opt/lab/litellm_config.yaml:/app/config.yaml:ro
-    env_file: /opt/lab/.env
+    env_file: /opt/lab/litellm.env
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   sales_lab:
     image: ${HUBARA_IMAGE:?falta HUBARA_IMAGE}
     profiles: ["run"]
+    # Igual que producción (x-app): el backend no se instala como paquete.
+    working_dir: /app/hubara_agency
     command: ["python", "-m", "src.plugins.chats.workers.sales_lab"]
-    env_file: /opt/lab/.env
+    env_file: /opt/lab/sales_lab.env
     environment:
       TEMPORAL_URL: temporal:7233
       TEMPORAL_NAMESPACE: hubara-lab
@@ -61,7 +75,10 @@ services:
       OTEL_SDK_DISABLED: "true"
       HUBARA_ENV: lab
     volumes:
-      - /lab:/lab
+      - /lab/runs:/lab/runs
+      - /lab/bench:/lab/bench
     depends_on:
-      - temporal
-      - litellm
+      temporal:
+        condition: service_started
+      litellm:
+        condition: service_healthy

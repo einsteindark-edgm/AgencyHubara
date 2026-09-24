@@ -8,11 +8,15 @@
 # Candados (plan §3.5):
 #   1. Físico: el disco del vault solo está en la caja de producción.
 #   2. IAM: el rol de la caja lee SOLO /hubara-lab/* (nunca /hubara/<tenant>/*) y
-#      solo su bucket; la app de producción solo escribe bench/ y lee runs/, y
-#      solo puede prender y dar órdenes a la instancia con tag Role=lab, con el
-#      documento AWS-RunShellScript.
+#      solo su bucket. OJO: AmazonSSMManagedInstanceCore (la necesita el agente
+#      SSM) trae ssm:GetParameter/GetParameters sobre "*", y los permisos se
+#      suman: el candado es el Deny explícito de abajo, no el Allow acotado.
+#      La app de producción solo escribe bench/ y orders/ y lee runs/; su
+#      política `launch-lab` solo prende la instancia Role=lab y le da órdenes
+#      con AWS-RunShellScript (la política `wake_graphagents` de app-instance,
+#      anterior al laboratorio, ya da ssm:SendCommand sobre "*": ver issue aparte).
 #   3. Código: el worker sales_lab no arranca con llaves ni rutas de producción.
-#   4. CI: test de fugas (PR 11).
+#   4. CI: test de fugas (PR 11) y tests/infra/test_lab_box_iam.py.
 #
 # Sin puertos de entrada (ni SSH): todo por SSM. Stateless: reemplazarla no
 # pierde nada (los resultados viven en S3), por eso user_data SÍ reemplaza la
@@ -34,6 +38,10 @@ variable "app_role_names" {
 variable "tenants" {
   description = "Tenants cuyo /hubara/<tenant>/LAB_BUCKET se publica (lo lee el lanzador de corridas)."
   type        = list(string)
+}
+variable "max_run_hours" {
+  description = "Tope de una corrida: el autoapagado detiene un runner que lleva más que esto, y un apagado de respaldo corta la caja una hora después."
+  type        = number
 }
 variable "use_local" {
   type    = bool
@@ -117,6 +125,15 @@ resource "aws_s3_bucket_lifecycle_configuration" "lab" {
       days = 180
     }
   }
+  # Una subida cortada (caja apagada a mitad) no deja partes cobrando para siempre.
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 2
+    }
+  }
 }
 
 # Solo TLS: nada entra ni sale del bucket en claro.
@@ -193,20 +210,45 @@ data "aws_iam_policy_document" "lab_box" {
       "arn:aws:ssm:*:*:parameter/hubara-lab/*",
     ]
   }
+  # El candado real: AmazonSSMManagedInstanceCore permite GetParameter(s) sobre
+  # "*" y un Deny explícito le gana. Sin esto, desde la caja se leerían
+  # /hubara/<tenant>/WHATSAPP_ACCESS_TOKEN, TEMPORAL_API_KEY, MEDUSA_*, etc.
   statement {
-    sid       = "DecryptSecureString"
+    sid    = "DenyEveryParameterOutsideTheLab"
+    effect = "Deny"
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:GetParametersByPath",
+      "ssm:GetParameterHistory",
+    ]
+    not_resources = [
+      "arn:aws:ssm:*:*:parameter/hubara-lab",
+      "arn:aws:ssm:*:*:parameter/hubara-lab/*",
+    ]
+  }
+  statement {
+    sid       = "DecryptLabSecureStringsViaSsm"
     actions   = ["kms:Decrypt"]
     resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["ssm.${var.region}.amazonaws.com"]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "kms:EncryptionContext:PARAMETER_ARN"
+      values   = ["arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/hubara-lab/*"]
+    }
   }
+  # Sin condición de prefijo: S3 contesta 404 (no 403) a una clave que no existe
+  # solo si el rol puede listar el bucket, y la caja lee progress.json antes de
+  # crearlo. El bucket es del laboratorio: listarlo no expone nada más.
   statement {
     sid       = "ListOwnBucket"
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.lab.arn]
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values   = ["bench/*", "orders/*", "runs/*"]
-    }
   }
   statement {
     sid       = "ReadBenchAndOrders"
@@ -249,6 +291,7 @@ resource "aws_iam_instance_profile" "lab" {
 
 # ── Permisos de la app de producción para lanzar corridas ───────────────────
 # Estrecho a propósito: NO se copia `wake_graphagents` (que da SendCommand sobre *).
+# Solo va a los roles de los tenants del laboratorio (var.app_role_names).
 data "aws_iam_policy_document" "app_launch_lab" {
   statement {
     sid       = "WriteBenchAndOrders"
@@ -260,15 +303,11 @@ data "aws_iam_policy_document" "app_launch_lab" {
     actions   = ["s3:GetObject"]
     resources = ["${aws_s3_bucket.lab.arn}/runs/*", "${aws_s3_bucket.lab.arn}/bench/*", "${aws_s3_bucket.lab.arn}/orders/*"]
   }
+  # Sin condición de prefijo, por la misma razón que en la caja (404 y no 403).
   statement {
     sid       = "ListBenchAndRuns"
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.lab.arn]
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values   = ["bench/*", "orders/*", "runs/*"]
-    }
   }
   statement {
     sid       = "StartLabBox"
@@ -337,21 +376,25 @@ resource "aws_instance" "lab" {
   vpc_security_group_ids = [aws_security_group.lab.id]
   iam_instance_profile   = aws_iam_instance_profile.lab.name
 
-  # gzip: el cloud-init lleva el compose, el litellm_config y los scripts
-  # (el límite de user_data es 16 KB; cloud-init descomprime solo).
+  # gzip: el cloud-init lleva el compose y los scripts (el límite de user_data
+  # es 16 KB; cloud-init descomprime solo). La configuración del proxy de LLM
+  # NO viaja acá: dispatch.sh la saca de la imagen de cada corrida (la misma
+  # de producción), así un cambio de ids de modelo no deja la caja con los viejos
+  # ni obliga a reemplazarla.
   user_data_base64 = base64gzip(templatefile("${path.module}/cloud-init.yaml.tftpl", {
-    region             = var.region
-    bucket             = local.bucket
-    ghcr_owner         = local.ghcr_owner
-    autostop_minutes   = var.autostop_idle_minutes
-    compose_b64        = filebase64("${local.lab_dir}/docker-compose.lab.yml")
-    litellm_config_b64 = filebase64("${path.module}/../../../../../exoclaw-temporal/litellm_config.yaml")
-    dispatch_b64       = filebase64("${local.lab_dir}/dispatch.sh")
-    cancel_b64         = filebase64("${local.lab_dir}/cancel.sh")
-    autostop_b64       = filebase64("${local.lab_dir}/autostop.sh")
+    region           = var.region
+    bucket           = local.bucket
+    ghcr_owner       = local.ghcr_owner
+    autostop_minutes = var.autostop_idle_minutes
+    max_run_hours    = var.max_run_hours
+    backstop_minutes = (var.max_run_hours + 1) * 60
+    compose_b64      = filebase64("${local.lab_dir}/docker-compose.lab.yml")
+    dispatch_b64     = filebase64("${local.lab_dir}/dispatch.sh")
+    cancel_b64       = filebase64("${local.lab_dir}/cancel.sh")
+    autostop_b64     = filebase64("${local.lab_dir}/autostop.sh")
   }))
-  # Stateless: un cambio del cloud-init (compose, config, scripts) crea la caja
-  # de nuevo en vez de pedirla apagada para editar user_data.
+  # Stateless: un cambio del cloud-init (compose, scripts) crea la caja de nuevo
+  # en vez de pedirla apagada para editar user_data.
   user_data_replace_on_change = true
 
   root_block_device {

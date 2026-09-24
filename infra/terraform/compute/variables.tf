@@ -84,6 +84,17 @@ variable "lab" {
     instance_type         = optional(string, "t3.large")
     root_volume_gb        = optional(number, 40)
     autostop_idle_minutes = optional(number, 10)
+    # Tope de una corrida: el autoapagado detiene un runner colgado pasado este
+    # tiempo, y un apagado de respaldo corta la caja una hora después.
+    max_run_hours = optional(number, 12)
+    # Tenants que usan el laboratorio. El bucket es uno solo (sin prefijo por
+    # tenant): la política de lanzar corridas y el LAB_BUCKET van SOLO a estos.
+    # Por defecto ninguno; cada tenant del laboratorio se declara en el tfvars.
+    tenants = optional(list(string), [])
   })
   default = {}
+  validation {
+    condition     = var.lab.max_run_hours >= 1 && var.lab.max_run_hours <= 48
+    error_message = "lab.max_run_hours debe estar entre 1 y 48."
+  }
 }
