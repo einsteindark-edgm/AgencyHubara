@@ -50,7 +50,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.platform.whatsapp.activities import send_typing_indicator_activity
     from src.plugins.chats.agent.remarketing.contracts import RemarketingSessionInput
-    from src.plugins.chats.agent.remarketing.use_cases.product_truth import (
+    from src.plugins.chats.shared.product_truth import (
         invented_product_claim,
     )
     from src.plugins.chats.shared.contracts.events import (
