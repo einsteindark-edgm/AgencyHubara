@@ -217,3 +217,23 @@ async def test_a_message_that_is_not_from_a_campaign_is_still_an_orphan(tmp_path
 
     assert [o["wa_message_id"] for o in _orphans(tmp_path)] == ["wamid.OTRO"]
     assert "delivery" not in store.read(_SESSION)["campaign_touches"][0]
+
+
+@pytest.mark.asyncio
+async def test_each_status_goes_to_the_campaign_of_its_message(tmp_path: Path) -> None:
+    """Un cliente con dos campañas: cada aviso de Meta cae en la campaña de SU
+    mensaje (el id del mensaje es único), nunca en la otra."""
+    use_case, store = _use_case(tmp_path)
+    store.write(_SESSION, {"campaign_touches": [
+        {**_touch(), "campaign_id": "mkt-amor", "wa_message_id": "wamid.AMOR"},
+        {**_touch(), "campaign_id": "mkt-halloween", "wa_message_id": "wamid.HALLOWEEN",
+         "sent_at_ms": _SENT_AT + 3 * 86_400_000},
+    ]})
+
+    await use_case.execute("wamid.HALLOWEEN", "read", _PRICING, timestamp_ms=_SENT_AT + 3 * 86_400_000 + 60_000)
+    await use_case.execute("wamid.AMOR", "failed", None, timestamp_ms=_SENT_AT + 1_000, error_code=131049)
+
+    amor, halloween = store.read(_SESSION)["campaign_touches"]
+    assert amor["delivery"]["status"] == "failed" and amor["delivery"]["error_code"] == 131049
+    assert halloween["delivery"]["status"] == "read" and halloween["delivery"]["cost_usd_micros"] == 12500
+

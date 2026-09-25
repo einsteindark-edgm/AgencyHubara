@@ -104,6 +104,46 @@ def test_the_window_counts_what_was_sent_in_it(tmp_path: Path) -> None:
     assert [c.id for c in list_ads_campaigns(tmp_path, since_ms=_T0 + _DAY_MS)] == []
 
 
+def test_two_campaigns_keep_their_numbers_apart(tmp_path: Path) -> None:
+    """Varias campañas (pregunta del operador, 2026-09-25): envío, entrega y
+    costo van a SU campaña por el id de campaña del touch; una respuesta va a
+    la última campaña que recibió el cliente en los 7 días previos
+    (last-touch, como Meta). Entre dos campañas al mismo cliente hay al menos
+    48 h (respiro de marketing)."""
+    first, second = _T0, _T0 + 3 * _DAY_MS
+
+    def touch(campaign_id: str, name: str, at: int, wamid: str, delivery: dict) -> dict:
+        return {"campaign_id": campaign_id, "campaign_name": name, "sent_at_ms": at,
+                "wa_message_id": wamid, "delivery": delivery}
+
+    read = {**_delivered(), "status": "read", "read_at_ms": second + 60_000}
+    # Recibió las dos y respondió después de la segunda.
+    _seed(tmp_path, "wa_573000000001", {
+        "campaign_touches": [touch("mkt-amor", "Amor y amistad", first, "wamid.A1", _delivered()),
+                             touch("mkt-halloween", "Halloween", second, "wamid.H1", read)],
+        "episodes": [{"episode_id": "ep_003", "started_at_ms": second + 3_600_000,
+                      "closed_at_ms": None, "referral_snapshot": {"channel": "direct"}}],
+    })
+    # Solo recibió la primera, y respondió.
+    _seed(tmp_path, "wa_573000000002", {
+        "campaign_touches": [touch("mkt-amor", "Amor y amistad", first, "wamid.A2", _delivered())],
+        "episodes": [_reply_episode()],
+    })
+    # Solo la segunda, y falló.
+    _seed(tmp_path, "wa_573000000003", {"campaign_touches": [touch(
+        "mkt-halloween", "Halloween", second, "wamid.H2",
+        {"status": "failed", "failed_at_ms": second + 1_000, "error_code": 131049})]})
+
+    rows = {c.id: c for c in list_ads_campaigns(tmp_path)}
+    amor, halloween = rows["mkt-amor"], rows["mkt-halloween"]
+
+    assert (amor.name, halloween.name) == ("Amor y amistad", "Halloween")
+    a, h = amor.whatsapp_send, halloween.whatsapp_send
+    assert (a.sent, a.delivered, a.read, a.failed, a.replied, amor.started) == (2, 2, 0, 0, 1, 1)
+    assert (h.sent, h.delivered, h.read, h.failed, h.replied, halloween.started) == (2, 1, 1, 1, 1, 1)
+    assert (a.cost_usd_micros, h.cost_usd_micros) == (2 * 12500, 12500)
+
+
 def test_a_meta_campaign_has_no_whatsapp_send_stats(tmp_path: Path) -> None:
     _seed(tmp_path, "wa_573000000001", {"episodes": [{
         "episode_id": "ep_001", "started_at_ms": _T0, "closed_at_ms": None,
