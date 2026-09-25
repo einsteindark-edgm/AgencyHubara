@@ -219,7 +219,7 @@ def test_without_catalog_the_hook_affirms_no_product_attributes() -> None:
 
 # ------------------------------------------------ lo que NO existe (guarda)
 
-from src.plugins.chats.agent.remarketing.use_cases.product_truth import (  # noqa: E402
+from src.plugins.chats.shared.product_truth import (  # noqa: E402
     invented_product_claim,
     unavailable_terms,
 )

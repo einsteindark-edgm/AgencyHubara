@@ -26,7 +26,7 @@ from src.plugins.chats.agent.remarketing.use_cases.context import (
     context_from_metadata,
     customer_text_for,
 )
-from src.plugins.chats.agent.remarketing.use_cases.product_truth import (
+from src.plugins.chats.shared.product_truth import (
     unavailable_terms,
 )
 from src.sdk.catalogkit import CatalogError, get_catalog_client

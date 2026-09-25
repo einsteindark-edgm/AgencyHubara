@@ -1,4 +1,10 @@
-"""Veracidad del gancho de remarketing (puro, sin I/O).
+"""Veracidad de producto frente al catálogo (puro, sin I/O).
+
+Compartido por los dos agentes que le hablan al cliente (acá y no en uno de
+ellos: Ventas y remarketing son independientes por contrato de import-linter):
+Ventas nombra en la nota del turno lo que el cliente pidió y no existe
+(`sales/use_cases/catalog_gap.py`); el remarketing lo usa en el trigger y en
+la guarda de salida del gancho.
 
 Incidente 2026-09-23/25: el cliente mandó la foto de una vela de dragón y
 preguntó «¿y en vaso también?» — nada de eso existe en el catálogo y Ventas
@@ -41,6 +47,11 @@ _SHOP_WORDS = frozenset({
     "todas", "todos", "esas", "esos", "estas", "estos", "otra", "otro", "otras",
     "otros", "cual", "cuales", "alguna", "alguno", "ella", "ellas", "ellos",
     "nada", "mucho", "mucha", "algo", "forma", "diseno", "texto", "tamano",
+    # frases de la charla de Ventas («en cuanto pueda», «con nequi»): la nota
+    # de Ventas no puede acusar de inexistente lo que no es un producto.
+    "cuanto", "acuerdo", "serio", "pronto", "momento", "gusto", "total",
+    "tarjeta", "nequi", "daviplata", "bancolombia", "cuenta", "dinero", "plata",
+    "contraentrega", "tarde", "manana", "noche", "semana", "cumpleanos",
 })
 
 #: popularidad/valoración sin datos de ventas («las más pedidas», «de las más
