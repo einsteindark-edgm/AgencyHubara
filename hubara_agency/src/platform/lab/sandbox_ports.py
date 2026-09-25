@@ -13,7 +13,12 @@ Los plugins lo usan por `src.sdk.labkit`.
 | Verificar precio al cobrar (en vivo)  | el verificador REAL con `SnapshotLiveMedusa`     |
 | Promociones y cupones (Medusa)        | `promotions.json` exportado con el banco         |
 | Registrar pedido (draft order real)   | `StubOrderRegistration` (id ficticio `HUB-…`)    |
-| Estado de pedido (Medusa en vivo)     | vacío (`EmptyOrderQuery`)                         |
+| Estado de pedido (Medusa en vivo)     | vacío (`EmptyOrderQuery`) (*)                     |
+
+(*) El laboratorio (`sales_lab`) no llega a este puerto en los turnos del
+banco: `check_order_status` devuelve lo que devolvió en el turno REAL
+(`recorded_tools`); sin grabación, corre con este puerto vacío y el caso lo
+anota.
 
 El catálogo no se reemplaza: ya es un snapshot en disco
 (`CATALOG_SNAPSHOT_DIR` apunta a la copia del sandbox). WhatsApp y CAPI

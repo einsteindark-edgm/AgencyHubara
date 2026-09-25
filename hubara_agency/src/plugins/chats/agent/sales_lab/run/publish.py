@@ -235,6 +235,11 @@ def publish_arm(
             continue
         sim = str(result.get("sim_session_id") or "")
         real = _real_identity(trace, case, sim_session_id=sim, source=source)
+        # De dónde salió el estado del pedido que vio el bot simulado: lo que
+        # devolvió producción en ese turno, o el stub del sandbox (sin grabación).
+        replay = result.get("tool_replay")
+        if isinstance(replay, dict) and (replay.get("replayed") or replay.get("unrecorded")):
+            real["tool_replay"] = {k: [str(n) for n in replay.get(k) or []] for k in ("replayed", "unrecorded")}
         output = {k: real[k] for k in _OUTPUT_FIELDS if k in real}
         complement = result.get("complement_trace")
         if isinstance(complement, dict):

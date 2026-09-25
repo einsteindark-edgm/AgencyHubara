@@ -25,6 +25,10 @@ fuente (`case.draft_before` / `case.state_before`, ver `cases.py`):
     recientes, señal del cliente, handoff): el turno de handoff siembra su
     propio resumen;
   * `status_history` y la espera del formulario de envío, hasta el inicio;
+  * el seguimiento de entrega (`eta_tracking`), hasta el inicio: sin los
+    pedidos cuyo seguimiento empezó después y con la etapa del último aviso
+    anterior (`check_order_status` lo lee: si no, el bot simulado veía un
+    pedido "entregado" que al momento del turno iba en camino);
   * `phone_number_id` ficticio: el envío simulado nunca apunta al negocio.
 """
 from __future__ import annotations
@@ -115,6 +119,38 @@ def _episode_as_of(ep: dict[str, Any], case: dict[str, Any], *, sales_workspace_
     return out
 
 
+def _tracking_entry_as_of(entry: dict[str, Any], at: int) -> dict[str, Any] | None:
+    started = _ms(entry.get("started_at_ms"))
+    if started is not None and started > at:
+        return None
+    events = [e for e in entry.get("events") or [] if isinstance(e, dict) and (_ms(e.get("at_ms")) or 0) <= at]
+    stages: list[str] = []
+    for event in events:
+        stage = event.get("stage")
+        if isinstance(stage, str) and stage not in stages:
+            stages.append(stage)
+    last = events[-1].get("stage") if events else None
+    return {**entry, "events": events, "notified_stages": stages, "current_stage": last if isinstance(last, str) else None}
+
+
+def tracking_as_of(tracking: Any, at: int) -> Any:
+    """El seguimiento de entrega (ETA) como estaba en `at`: shape v2 (mapa
+    por pedido) o v1 (un pedido en la raíz). None = todavía no había."""
+    if not isinstance(tracking, dict):
+        return tracking
+    orders = tracking.get("orders")
+    if isinstance(orders, dict):
+        kept = {
+            oid: cut
+            for oid, entry in orders.items()
+            if isinstance(entry, dict) and (cut := _tracking_entry_as_of(entry, at)) is not None
+        }
+        return {**tracking, "orders": kept} if kept else None
+    if tracking.get("order_id"):
+        return _tracking_entry_as_of(tracking, at)
+    return tracking
+
+
 def metadata_as_of(metadata: dict[str, Any], case: dict[str, Any], *, sales_workspace_path: str) -> dict[str, Any]:
     """La metadata como estaba al EMPEZAR el turno del caso (ver docstring)."""
     at = int(case["at_ms"])
@@ -136,6 +172,12 @@ def metadata_as_of(metadata: dict[str, Any], case: dict[str, Any], *, sales_work
     waiting = meta.get("shipping_flow_awaiting_reply_since_ms")
     if isinstance(waiting, (int, float)) and waiting > at:
         meta.pop("shipping_flow_awaiting_reply_since_ms")
+    if "eta_tracking" in meta:
+        tracking = tracking_as_of(meta["eta_tracking"], at)
+        if tracking is None:
+            meta.pop("eta_tracking")
+        else:
+            meta["eta_tracking"] = tracking
     episodes = [dict(e) for e in case.get("episodes_at") or [] if isinstance(e, dict)]
     for i, ep in enumerate(episodes):
         if ep.get("episode_id") == case.get("episode_id"):
@@ -185,7 +227,8 @@ def _llm_lines(lines: list[dict[str, Any]], case: dict[str, Any]) -> list[dict[s
     return [head, *messages]
 
 
-def _scrub(text: str, real_sid: str, sim_sid: str) -> str:
+def scrub_text(text: str, real_sid: str, sim_sid: str) -> str:
+    """El número real → el ficticio del sandbox (también sus últimos 10 dígitos)."""
     real, sim = real_sid.removeprefix("wa_"), sim_sid.removeprefix("wa_")
     text = text.replace(real, sim)
     if len(real) > 10:
@@ -195,13 +238,13 @@ def _scrub(text: str, real_sid: str, sim_sid: str) -> str:
 
 def _write_json(path: Path, value: Any, real: str, sim: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_scrub(json.dumps(value, ensure_ascii=False), real, sim), encoding="utf-8")
+    path.write_text(scrub_text(json.dumps(value, ensure_ascii=False), real, sim), encoding="utf-8")
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]], real: str, sim: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
-    path.write_text(_scrub(body, real, sim), encoding="utf-8")
+    path.write_text(scrub_text(body, real, sim), encoding="utf-8")
 
 
 def materialize_case(

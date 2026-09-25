@@ -36,7 +36,7 @@ from typing import Any
 from src.plugins.chats.agent.sales_lab.arms import signal_meta
 from src.plugins.chats.agent.sales_lab.sandbox.activities import SandboxCapture, sandbox_activities
 from src.plugins.chats.agent.sales_lab.sandbox.clock import frozen_clock
-from src.plugins.chats.agent.sales_lab.sandbox.materialize import materialize_case
+from src.plugins.chats.agent.sales_lab.sandbox.materialize import materialize_case, scrub_text
 
 PROD_SALES_WORKSPACE = "app-hubara-agency-src-plugins-chats-agent-sales-workspace"
 DEFAULT_TIMEOUT_S = 600.0
@@ -162,7 +162,18 @@ async def run_case(
 
         workflow_cls = sales_worker.HubaraSalesSessionWorkflow
 
-        activities = sandbox_activities(sales_worker.SALES_ACTIVITIES, capture=capture, llm_chat=llm_chat)
+        activities = sandbox_activities(
+            sales_worker.SALES_ACTIVITIES,
+            capture=capture,
+            llm_chat=llm_chat,
+            # Lo que las tools de lectura del pedido devolvieron en el turno real,
+            # con el número ficticio del sandbox (el real nunca entra al sandbox).
+            recorded_tools=[
+                {**r, "content": scrub_text(str(r.get("content") or ""), str(case["session_id"]), box.session_id)}
+                for r in case.get("recorded_tools") or []
+                if isinstance(r, dict)
+            ],
+        )
         context = turn_context(metadata, at_ms=at_ms)
         messages = [m for m in case.get("burst") or [] if isinstance(m, dict) and str(m.get("text") or "").strip()]
         if not messages:
@@ -220,4 +231,5 @@ async def run_case(
     result["cost_usd"] = round(llm + classifier, 8)
     result["effects"] = capture.effects
     result["plugin_context"] = context
+    result["tool_replay"] = capture.tool_replay
     return result

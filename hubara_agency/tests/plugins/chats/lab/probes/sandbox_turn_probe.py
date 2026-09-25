@@ -27,6 +27,7 @@ _connects: list[str] = []
 _lookups: list[str] = []
 _writes: list[str] = []
 _tools_called: list[str] = []
+_tool_messages: list[dict] = []
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND
 
 
@@ -59,10 +60,21 @@ async def main() -> dict:
 
     calls = {"n": 0}
     all_tools = os.environ.get("PROBE_ALL_TOOLS") == "1"
+    one_tool = os.environ.get("PROBE_TOOL") or ""
 
     @activity.defn(name="llm_chat")
     async def fake_llm(input: LLMChatInput) -> LLMResponseData:
         calls["n"] += 1
+        # Lo que el LLM recibió de las tools (para ver qué le devolvió el sandbox).
+        _tool_messages.extend(m for m in input.messages if isinstance(m, dict) and m.get("role") == "tool")
+        if calls["n"] == 1 and one_tool:
+            _tools_called.append(one_tool)
+            return LLMResponseData(
+                content="",
+                finish_reason="tool_calls",
+                has_tool_calls=True,
+                tool_calls=[ToolCallData(id="t1", name=one_tool, arguments={})],
+            )
         if calls["n"] == 1 and all_tools:
             # TODAS las tools que el turno le ofrece al LLM, con argumentos
             # vacíos: cada una corre su código hasta donde llegue.
@@ -95,5 +107,6 @@ async def main() -> dict:
 
 if __name__ == "__main__":
     report = {"result": asyncio.run(main())}
-    report.update(connects=_connects, lookups=_lookups, writes=sorted(set(_writes)), tools_called=_tools_called)
+    report.update(connects=_connects, lookups=_lookups, writes=sorted(set(_writes)), tools_called=_tools_called,
+                  tool_messages=_tool_messages)
     REPORT.write_text(json.dumps(report, ensure_ascii=False, default=str), encoding="utf-8")
