@@ -98,6 +98,8 @@ data "aws_iam_policy_document" "tf_perms" {
       # dlm: la política de backup del vault (compute/backup.tf) — sin esto el
       # apply de compute falla al leer/gestionar el DLM Lifecycle Policy.
       "dlm:*",
+      "cloudwatch:*", 
+      "sns:*",
     ]
     resources = ["*"]
   }
