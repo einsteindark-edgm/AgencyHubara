@@ -744,6 +744,13 @@ en un selector de colores sueltos, y la pregunta quedó como confirmación de co
 `fix/coupon-quantity-check`: cantidad contra lo que queda, relectura del cupo con cada mensaje, "(queda N)" si el cupón
 lo permite, guarda que respeta las combinaciones y preguntas que no son un "sí". Despliegue: `api` y `worker-sales`.
 
+**El cupón entra por tema (pedido del operador, 2026-09-24):** el cupo se relee y se ofrece SOLO en el mensaje que toca
+el cupón (código, "cupón"/"descuento"/"promo", un producto o una combinación del cupón, o el producto del que se habla en
+el pedido). En otro tema no se lee el cupo, la nota lo recuerda en una línea y el bot atiende con el catálogo normal, que
+no limita colores, aromas ni unidades; `set_order_slot` solo habla del cupón si la llamada toca un producto del cupón. El
+cupo decide el precio, nunca la venta: "(queda 1 con descuento)", y "si la quiere igual, se vende a precio normal".
+Decisión en código: `coupon_in_play` (`use_cases/coupons.py`), un solo lugar para la relectura y la nota.
+
 **Pendiente:**
 1. ~~PR y deploy de la central~~ (#364, desplegado). ~~Arreglo de L-32~~ (#370, desplegado). Arreglo de L-33: PR + deploy
    de `api` y `worker-sales`.

@@ -651,12 +651,26 @@ cerrada). Un cupón sin filas se comporta como siempre.
 - THEN `set_order_slot` (en el mismo turno) y la nota del turno dicen "queda 1 con el descuento: 1 a $21.150 y 1 a precio normal ($23.500)" para que el bot se lo diga antes de seguir, nunca "sí, las 2"
 - AND con el cupón que no deja decir cuántas quedan (D3) se dice el reparto sin "queda N"; si ya no queda ninguna, las N van a precio normal
 
-#### Scenario: Cada mensaje relee cuánto queda del cupo
+#### Scenario: Cada mensaje que toca el cupón relee cuánto queda del cupo
 
 - GIVEN un episodio con un cupón con cupo aplicado
-- WHEN llega un mensaje del cliente
+- WHEN llega un mensaje del cliente que toca el cupón: lo nombra (código, "cupón", "descuento", "promo", "10 %"), nombra un producto del cupón o una combinación color + aroma de su cupo, o el producto del que se habla en el pedido es del cupón
 - THEN el webhook relee el cupo (vault) menos lo vendido (Medusa, lectura compartida unos segundos) y lo guarda en el episodio antes del turno; una combinación que otro cliente se llevó queda como agotada ("ya no quedan unidades con el descuento") y con todo vendido la nota dice que todo va a precio normal
 - AND si Medusa no responde a tiempo queda lo último que se supo; no se relee en una conversación con un humano ni cuando el cupón se acaba de validar
+
+#### Scenario: Otro tema va al catálogo normal, sin límite
+
+- GIVEN un episodio con un cupón con cupo aplicado
+- WHEN el cliente habla de otra cosa ("¿Tienen portavelas?", "¿hacen envíos a Cali?") o el pedido pasó a un producto que no es del cupón
+- THEN el webhook NO relee el cupo y la nota del turno recuerda el cupón en una línea, sin combinaciones ni cuántas quedan: el bot atiende con el catálogo normal (todos los colores, aromas y cantidades, a precio normal y sin límite) y no mete el cupón en la conversación
+- AND `set_order_slot` solo habla del cupón cuando la llamada toca un producto del cupón (no con otro producto ni con los datos del envío)
+- AND si el cliente vuelve al cupón, ese mensaje relee el cupo y la nota trae de nuevo las combinaciones y cuántas quedan
+
+#### Scenario: El cupo decide el precio, nunca la venta
+
+- GIVEN un cupón con cupo aplicado
+- WHEN el cliente pide una combinación que no es del cupón, o más unidades de las que quedan con descuento
+- THEN el bot le dice que va (o que las demás van) a precio normal y, si la quiere igual, se vende: la nota, `set_order_slot`, `apply_coupon` y el selector dicen que el cupo no limita la venta ("(queda 1 con descuento)", nunca "según disponibilidad")
 
 #### Scenario: Una lista de combinaciones no es una enumeración suelta
 
