@@ -2154,9 +2154,13 @@ class PresentVariantPickerTool(ToolBase):
         self,
         workspace: str | Path,
         catalog: CatalogPort | None = None,
+        metadata_store: Any = None,
     ) -> None:
+        """`metadata_store`: metadata de la sesión (DI) para ver el cupón
+        aplicado y lo ya elegido; sin él, el picker sale como siempre."""
         self._workspace = Path(workspace)
         self._catalog = catalog
+        self._metadata_store = metadata_store
 
     async def _valid_labels_for(
         self, variant_type: str, handle: str | None
@@ -2262,10 +2266,19 @@ class PresentVariantPickerTool(ToolBase):
                     ),
                 }, ensure_ascii=False)
 
+        # Cupón con cupo en este producto: sus combinaciones van ARRIBA
+        # (conversación de prueba del 2026-09-24: salieron los 11 aromas y el
+        # cupón valía en 5 combinaciones).
+        coupon = self._coupon_block(ctx.session_key, handle, variant_type)
+
         # Construcción del intent (sections con emoji desde closed-list) —
         # compartida con la guarda de enumeración del workflow.
         intent = build_variant_picker_intent(
-            variant_type=variant_type, labels=labels, intro_text=intro_text, handle=handle
+            variant_type=variant_type,
+            labels=labels,
+            intro_text=intro_text,
+            handle=handle,
+            coupon=coupon,
         )
         if intent is None:
             return json.dumps({
@@ -2299,7 +2312,39 @@ class PresentVariantPickerTool(ToolBase):
                 + ", ".join(removed_invalid)
                 + ". No las ofrezcas ni las aceptes si el cliente las pide."
             )
+        if coupon is not None:
+            envelope["summary"] += coupon["summary"]
         return json.dumps(envelope, ensure_ascii=False)
+
+    def _coupon_block(
+        self, session_key: str, handle: str | None, variant_type: str
+    ) -> dict[str, Any] | None:
+        """Bloque del cupón aplicado para este producto (ver
+        `picker_coupon_block`). Sin metadata o ilegible: el picker de siempre."""
+        if self._metadata_store is None or not handle:
+            return None
+        from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
+            picker_coupon_block,
+        )
+        from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
+            get_active_episode,
+        )
+
+        try:
+            episode = get_active_episode(self._metadata_store.read(session_key)) or {}
+        except Exception as exc:  # noqa: BLE001 — sin metadata, el picker de siempre
+            logger.warning(
+                "🎨 [TOOL present_variant_picker] session={} metadata ilegible ({}): "
+                "picker sin cupón",
+                session_key, exc,
+            )
+            return None
+        return picker_coupon_block(
+            episode.get("applied_coupon"),
+            episode.get("order_draft"),
+            handle=handle,
+            variant_type=variant_type,
+        )
 
 
 
@@ -2309,11 +2354,13 @@ def build_variant_picker_intent(
     labels: list[str],
     intro_text: str,
     handle: str | None,
+    coupon: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Intent `variant_picker` (texto curado con emojis) para `labels` ya
     validados. `None` si no queda ninguna row. Lo usan la tool
     `present_variant_picker` y la guarda de enumeración del workflow
-    (run 9bd495be) — un solo formato para las variantes."""
+    (run 9bd495be) — un solo formato para las variantes. `coupon`: el
+    bloque del cupón con cupo (`picker_coupon_block`) que va arriba."""
     from src.platform.whatsapp.variant_emoji import (
         color_emoji,
         group_colors,
@@ -2393,6 +2440,11 @@ def build_variant_picker_intent(
             "handle": handle,
             "page": 1,
             "total_pages": 1,
+            **(
+                {"coupon": {k: v for k, v in coupon.items() if k != "summary"}}
+                if coupon
+                else {}
+            ),
         },
         "analytics": {
             "component_id": f"variant_picker.{variant_type}",

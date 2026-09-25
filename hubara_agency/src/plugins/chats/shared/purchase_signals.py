@@ -98,6 +98,10 @@ def detect_purchase_affirmation(text: str | None) -> bool:
     norm = _normalize(text)
     if _NEGATION.search(norm):
         return False
+    if "?" in norm or "¿" in norm:
+        # Una pregunta ("Si tienes 2 de esa ?", prueba en vivo 2026-09-24)
+        # no es un sí: solo cuenta una frase de compra explícita.
+        return bool(_AFFIRMATION_ANY.search(norm))
     return bool(_AFFIRMATION_START.search(norm) or _AFFIRMATION_ANY.search(norm))
 
 

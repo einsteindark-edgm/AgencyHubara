@@ -113,3 +113,17 @@ def test_confirmation_is_episode_scoped() -> None:
     md["episodes"][0]["closed_at_ms"] = NOW + 10
     md["episodes"].append({"episode_id": "ep_002", "closed_at_ms": None})
     assert has_purchase_confirmation(md) is False
+
+
+def test_a_question_that_starts_with_si_is_not_a_purchase_yes():
+    """Prueba en vivo 2026-09-24: "Si tienes 2 de esa ?" (pregunta por la
+    existencia) quedó registrado como confirmación de compra."""
+    assert detect_purchase_affirmation("Si tienes 2 de esa ?") is False
+    assert detect_purchase_affirmation("¿Sí hay en azul?") is False
+    assert detect_purchase_affirmation("si hay de lavanda?") is False
+
+
+def test_a_question_with_an_explicit_purchase_phrase_still_counts():
+    assert detect_purchase_affirmation("¿me lo mandas? lo quiero") is True
+    assert detect_purchase_affirmation("Sí, lo quiero") is True
+    assert detect_purchase_affirmation("sí") is True

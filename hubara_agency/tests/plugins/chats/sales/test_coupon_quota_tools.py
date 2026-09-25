@@ -108,13 +108,33 @@ async def test_apply_coupon_lists_eligible_units_with_units_left(tmp_path: Path)
     assert out["applied"] is True
     # Solo las combinaciones con unidades (Azul · Lavanda ya se vendió toda).
     assert out["units"] == [
-        {"title": "Cubo Love", "color": "Rosado", "aroma": "Café", "units_left": 3,
+        {"handle": "cubo-love", "title": "Cubo Love", "color": "Rosado", "aroma": "Café", "units_left": 3,
          "price_cop": 21000, "discounted_price_cop": 18900},
     ]
     assert "Cubo Love Rosado · Café" in out["summary"] and "quedan 3" in out["summary"]
     assert "SOLO" in out["summary"]
+    # "quedan 3" es del descuento, no del producto: el catálogo no tiene límite.
+    assert "no limita la venta" in out["summary"]
     snapshot = applied_coupon(md.read(KEY))
     assert snapshot is not None and snapshot["code"] == "AMOR26"
+
+
+@pytest.mark.asyncio
+async def test_applied_quota_coupon_remembers_each_combination_in_the_episode(tmp_path: Path) -> None:
+    """La nota de cada turno y el selector de variantes leen del episodio QUÉ
+    combinaciones llevan el cupón (producto, color y aroma), no solo un
+    título armado ("Cubo Love Rosado · Café")."""
+    store = _store_with([_row("q1", "Rosado", "Café", 5)])
+    tool, md = _apply_tool(tmp_path, quotas=store, sales=_Sales({}))
+
+    await tool.execute_with_context(_ctx(), code="AMOR26")
+
+    snapshot = applied_coupon(md.read(KEY))
+    assert snapshot is not None
+    assert snapshot["units"] == [
+        {"handle": "cubo-love", "title": "Cubo Love", "color": "Rosado", "aroma": "Café",
+         "units_left": 5, "price_cop": 21000, "discounted_price_cop": 18900},
+    ]
 
 
 @pytest.mark.asyncio
@@ -179,7 +199,7 @@ async def test_list_promotions_shows_units_left_and_marks_exhausted(tmp_path: Pa
     gone_out = json.loads(await gone.execute_with_context(_ctx()))
 
     [promo] = live_out["promotions"]
-    assert promo["units"] == [{"title": "Cubo Love", "color": "Rosado", "aroma": "Café", "units_left": 4,
+    assert promo["units"] == [{"handle": "cubo-love", "title": "Cubo Love", "color": "Rosado", "aroma": "Café", "units_left": 4,
                                "price_cop": 21000, "discounted_price_cop": 18900}]
     assert promo.get("exhausted") is not True
     [spent] = gone_out["promotions"]
@@ -270,5 +290,22 @@ async def test_turn_note_of_a_quota_coupon_says_availability_can_change(tmp_path
 
     note = build_coupon_note(md.read(KEY)) or ""
 
-    assert "Cubo Love Rosado · Café" in note
-    assert "según disponibilidad" in note
+    assert "Cubo Love ($21.000 → $18.900): Rosado · Café" in note
+    # Se agotan las unidades CON DESCUENTO, no el producto ("según
+    # disponibilidad" se leía como existencia — pedido del operador 2026-09-24).
+    assert "mientras queden unidades con descuento" in note
+    assert "la confirmación dice cuáles quedan" in note
+
+
+@pytest.mark.asyncio
+async def test_quota_offer_keeps_the_sold_out_combinations_apart() -> None:
+    """Para decir "ya no quedan con descuento" (y no "no tiene descuento")
+    cuando el cliente eligió una combinación que otro se llevó."""
+    from src.plugins.chats.agent.sales.use_cases.coupon_quota import quota_offer
+
+    store = _store_with([_row("q1", "Rosado", "Café", 5), _row("q2", "Azul", "Lavanda", 2)])
+
+    offer = await quota_offer(_promo(), quotas=store, sales=_Sales({"q2": 2}), catalog=_Catalog())
+
+    assert [(u["color"], u["units_left"]) for u in offer.units] == [("Rosado", 5)]
+    assert [(u["color"], u["aroma"], u["units_left"]) for u in offer.sold_out] == [("Azul", "Lavanda", 0)]

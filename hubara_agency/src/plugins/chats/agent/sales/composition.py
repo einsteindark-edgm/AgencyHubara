@@ -29,7 +29,7 @@ que cambia.
 """
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import os
@@ -53,6 +53,13 @@ from src.plugins.chats.agent.sales.use_cases.ingest_delivery_status import (
 from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
     IngestInboundMessage,
 )
+from src.plugins.chats.agent.sales.use_cases.coupon_application import (
+    CouponApplication,
+    RecentSoldUnits,
+    resolve_coupon_application,
+)
+from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer, quota_offer
+from src.plugins.chats.agent.sales.use_cases.coupons import promotion_from_snapshot
 from src.plugins.chats.agent.sales.use_cases.ingest_handover import IngestHandover
 from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import emit_watchdog_events
 from src.plugins.chats.agent.sales.use_cases.ingest_standby import IngestStandby
@@ -127,6 +134,7 @@ def build_ingest_use_case() -> IngestInboundMessage:
     # Imports via src.sdk.connectorkit (P-28: plugins no tocan platform).
     from src.sdk.connectorkit import get_catalog_client, get_web_cart_reader
 
+    validate_campaign_coupon, coupon_units_now = _coupon_checks()
     _INGEST_USE_CASE = IngestInboundMessage(
         history_store=history_store,
         load_session=load_session,
@@ -135,8 +143,63 @@ def build_ingest_use_case() -> IngestInboundMessage:
         tenant_id=tenant_id,
         web_cart_reader=get_web_cart_reader(),
         catalog=get_catalog_client(),
+        campaign_coupon=validate_campaign_coupon,
+        coupon_units_now=coupon_units_now,
     )
     return _INGEST_USE_CASE
+
+
+def _coupon_checks() -> tuple[
+    Callable[[str, int], Awaitable[CouponApplication]],
+    Callable[[dict[str, Any]], Awaitable[QuotaOffer]],
+]:
+    """Lo que el webhook mira del cupón, con los mismos puertos del SDK que
+    usa `apply_coupon` (se resuelven al primer uso: sin Medusa configurado
+    falla y el ingest degrada al bot):
+
+    * validar el cupón que anuncia la campaña (L-32);
+    * releer cuánto queda del cupo del cupón aplicado, con cada mensaje.
+
+    Las vendidas de Medusa se comparten unos segundos entre las dos y entre
+    clientes (`RecentSoldUnits`): una campaña masiva no escanea Medusa una
+    vez por mensaje. El registro las relee bajo el candado."""
+    shared: dict[str, Any] = {}
+
+    def _sales() -> RecentSoldUnits | None:
+        from src.sdk.connectorkit import get_coupon_sales_reader
+
+        if "sales" not in shared:
+            reader = get_coupon_sales_reader()
+            shared["sales"] = RecentSoldUnits(reader) if reader is not None else None
+        return shared["sales"]
+
+    async def _validate(code: str, now_ms: int) -> CouponApplication:
+        from src.sdk.connectorkit import (
+            get_catalog_client,
+            get_promo_quota_store,
+            get_promotions_port,
+        )
+
+        return await resolve_coupon_application(
+            code,
+            promotions=get_promotions_port(),
+            quotas=get_promo_quota_store(),
+            sales=_sales(),
+            catalog=get_catalog_client(),
+            now_ms=now_ms,
+        )
+
+    async def _units_now(promotion: dict[str, Any]) -> QuotaOffer:
+        from src.sdk.connectorkit import get_catalog_client, get_promo_quota_store
+
+        return await quota_offer(
+            promotion_from_snapshot(promotion),
+            quotas=get_promo_quota_store(),
+            sales=_sales(),
+            catalog=get_catalog_client(),
+        )
+
+    return _validate, _units_now
 
 
 def build_ingest_delivery_status_use_case() -> IngestDeliveryStatus:

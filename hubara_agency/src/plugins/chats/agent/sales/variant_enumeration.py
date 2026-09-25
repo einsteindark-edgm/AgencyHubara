@@ -48,6 +48,29 @@ def _find_labels(text_norm: str, labels: list[str]) -> list[tuple[int, str]]:
     return hits
 
 
+#: Combinaciones "Color · Aroma" (o al revés): así se listan las del cupón.
+_PAIR_SEP = r"\s*·\s*"
+MIN_COMBINATIONS = 2
+
+
+def _alternation(labels: list[str]) -> str:
+    return "|".join(
+        re.escape(n) for n in sorted({_normalize(x) for x in labels}, key=len, reverse=True) if n
+    )
+
+
+def _count_combinations(text_norm: str, *, aromas: list[str], colors: list[str]) -> int:
+    """Cuántos pares "Color · Aroma" (o "Aroma · Color") trae el texto."""
+    col, aro = _alternation(colors), _alternation(aromas)
+    if not col or not aro:
+        return 0
+    pattern = (
+        rf"(?<!\w)(?:{col}){_PAIR_SEP}(?:{aro})(?!\w)"
+        rf"|(?<!\w)(?:{aro}){_PAIR_SEP}(?:{col})(?!\w)"
+    )
+    return len(re.findall(pattern, text_norm))
+
+
 def find_enumerated_variants(
     text: str | None,
     *,
@@ -56,10 +79,16 @@ def find_enumerated_variants(
     min_count: int = MIN_ENUMERATED,
 ) -> tuple[str, list[str]] | None:
     """`("scent"|"color", labels)` si el texto enumera `min_count`+ labels de
-    un tipo; el tipo con más labels gana (empate → aromas). `None` si no."""
+    un tipo; el tipo con más labels gana (empate → aromas). `None` si no.
+
+    Una lista de combinaciones "Color · Aroma" (las de un cupón con cupo) no
+    es una enumeración suelta: el picker de un solo tipo la destrozaría
+    (prueba en vivo 2026-09-24: se perdieron aromas, productos y precios)."""
     if not text:
         return None
     norm = _normalize(text)
+    if _count_combinations(norm, aromas=aromas, colors=colors) >= MIN_COMBINATIONS:
+        return None
     scents = _find_labels(norm, aromas)
     cols = _find_labels(norm, colors)
     # Un label presente en ambas listas (ej. "Café") cuenta para el tipo que
