@@ -45,9 +45,13 @@ def _parse_lines(lines: list[str]) -> list[dict[str, Any]]:
 
 
 def read_traces(vault_dir: Path, session_id: str) -> list[dict[str, Any]]:
+    """Todas las trazas válidas de la sesión. Una escritura cortada a mitad
+    (disco lleno) puede dejar bytes que no son UTF-8: se reemplazan y la línea
+    rota se descarta, nunca tumba a quien lee (chat, Calidad LLM, encendido)."""
     path = trace_path(vault_dir, session_id)
     try:
-        return _parse_lines(path.read_text(encoding="utf-8").splitlines())
+        # Un corte a mitad de escritura o un byte raro no tumba a quien lee.
+        return _parse_lines(path.read_text(encoding="utf-8", errors="replace").splitlines())
     except OSError:
         return []
 

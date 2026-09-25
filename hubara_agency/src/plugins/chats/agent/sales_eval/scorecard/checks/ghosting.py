@@ -4,8 +4,13 @@ from __future__ import annotations
 from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     failed,
+    in_focus,
     is_legacy,
+    judged,
+    judged_turns,
+    no_signal,
     not_applicable,
+    not_judged,
     passed,
     quote,
     unknown,
@@ -20,9 +25,9 @@ _FORM_IDLE_MS = 600_000
 def gho_01(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if is_legacy(traj):
         return unknown("GHO-01", "sin trazas: los turnos de ghosting no quedan en el historial")
-    ghosts = [t for t in traj.turns if t.is_ghost]
+    ghosts = [t for t in judged_turns(traj) if t.is_ghost]
     if not ghosts:
-        return not_applicable("GHO-01", "sin turno de ghosting")
+        return not_judged("GHO-01", traj, "sin turno de ghosting")
     for t in ghosts:
         if t.sent_texts:
             return failed("GHO-01", t.turn, f"turno {t.turn}: el ghosting le escribió al cliente {quote(t.sent_texts[0])}")
@@ -36,8 +41,10 @@ def gho_02(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     pairs = [
         (form, nxt)
         for form, nxt in zip(traj.turns, traj.turns[1:])
-        if "shipping_flow" in form.intents and nxt.is_ghost
+        if "shipping_flow" in form.intents and nxt.is_ghost and judged(traj, nxt)
     ]
+    if not pairs and in_focus(traj):
+        return no_signal("GHO-02", "el ghosting después del formulario llega en otro turno")
     if not pairs:
         return not_applicable("GHO-02", "sin ghosting inmediatamente después del formulario")
     for form, ghost in pairs:
@@ -49,4 +56,4 @@ def gho_02(traj: Trajectory, ctx: CheckContext) -> CheckResult:
                 "GHO-02", ghost.turn,
                 f"turno {ghost.turn}: ghosting a los {waited // 1000} s del formulario (mínimo 600 s)",
             )
-    return passed("GHO-02", "el ghosting respetó la espera del formulario")
+    return passed("GHO-02", "el ghosting respetó la espera del formulario", turn=traj.focus_turn)

@@ -1,72 +1,21 @@
-import { useCheckStats, type VerdictTotals } from "@plugins/agents_admin/frontend/entities/check-stats";
-import {
-  EPISODE_VERDICT_ORDER,
-  episodeVerdictColor,
-  episodeVerdictLabel,
-  type EpisodeVerdict,
-} from "@plugins/agents_admin/frontend/entities/scorecard";
+import { VerdictTiles } from "@/shared/ui";
+import { useCheckStats, type StatsBot } from "@plugins/agents_admin/frontend/entities/check-stats";
+import type { EpisodeVerdict } from "@plugins/agents_admin/frontend/entities/scorecard";
 import { CheckTrend } from "@plugins/agents_admin/frontend/features/check-trend";
 import { FailurePareto } from "@plugins/agents_admin/frontend/features/failure-pareto";
 import { StageFunnel } from "@plugins/agents_admin/frontend/features/stage-funnel";
 
 interface Props {
   days: number;
+  /** Solo los episodios de ese bot (encendido del bot nuevo); null = todos. */
+  bot?: StatsBot | null;
   onSelectVerdict: (v: Exclude<EpisodeVerdict, "SIN_DATOS">) => void;
   onSelectCheck: (checkId: string) => void;
 }
 
-function VerdictTiles({
-  totals,
-  episodes,
-  onSelectVerdict,
-}: {
-  totals: VerdictTotals;
-  episodes: number;
-  onSelectVerdict: Props["onSelectVerdict"];
-}) {
-  return (
-    <ul aria-label="Veredictos de los episodios" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-      {EPISODE_VERDICT_ORDER.map((v) => {
-        const n = totals[v];
-        const share = episodes ? Math.round((100 * n) / episodes) : 0;
-        const body = (
-          <>
-            <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-fg-faint">
-              <span className="inline-block h-2 w-2 rounded-full" style={{ background: episodeVerdictColor(v) }} aria-hidden="true" />
-              {episodeVerdictLabel(v)}
-            </span>
-            <span className="text-2xl font-bold tabular-nums leading-tight" style={{ color: episodeVerdictColor(v) }}>
-              {n}
-            </span>
-            <span className="text-[11px] text-fg-faint">{share} % de {episodes}</span>
-          </>
-        );
-        return (
-          <li key={v}>
-            {v === "SIN_DATOS" ? (
-              <div className="flex h-full flex-col rounded-lg border border-line p-2.5" title="Episodios sin trayectoria evaluable">
-                {body}
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => onSelectVerdict(v)}
-                aria-label={`${episodeVerdictLabel(v)}: ${n} episodios — ver en Conversaciones`}
-                className="flex h-full w-full flex-col rounded-lg border border-line p-2.5 text-left transition hover:bg-white/5"
-              >
-                {body}
-              </button>
-            )}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
 /** Pestaña Resumen: una sola fetch de agregados alimenta tiles, Pareto, embudo y tendencia. */
-export function SummaryView({ days, onSelectVerdict, onSelectCheck }: Props) {
-  const stats = useCheckStats(days);
+export function SummaryView({ days, bot = null, onSelectVerdict, onSelectCheck }: Props) {
+  const stats = useCheckStats(days, bot);
 
   if (stats.isLoading) return <p className="text-sm text-fg-muted">Cargando agregados del scorecard…</p>;
   if (stats.isError) {
@@ -80,7 +29,9 @@ export function SummaryView({ days, onSelectVerdict, onSelectCheck }: Props) {
   if (data.episodes === 0) {
     return (
       <p className="rounded-lg border border-line p-4 text-sm text-fg-muted">
-        Aún no hay scorecards: se generan al cerrar cada episodio.
+        {bot
+          ? `Aún no hay episodios del bot ${bot} en los últimos ${days} días.`
+          : "Aún no hay scorecards: se generan al cerrar cada episodio."}
       </p>
     );
   }

@@ -14,11 +14,12 @@ deployment.**
 
 ## Cómo funciona
 
-- **`src.sdk.connectorkit`** re-exporta los 10 ports + sus factories de
+- **`src.sdk.connectorkit`** re-exporta los ports + sus factories de
   composición: `OrderQueryPort`/`OrderCommandPort`/`OrderRegistrationPort`
   (commerce), `CatalogPort`/`CheckoutVerificationPort`, `MetaCatalogPort`,
   `AudioTranscriptionPort`, `ImageVisionPort`, `CustomerScoringPort`,
-  `AttributionReadPort` — y el nuevo **`WebCartReaderPort`**.
+  `AttributionReadPort`, **`WebCartReaderPort`** y **`PerceptionPort`**
+  (sección "Percepción", abajo).
 - **`WebCartReaderPort`** (HU web-cart hot lead, `src/platform/carts/`):
   lee un carrito de la **Store API** de Medusa v2 (`GET /store/carts/{id}`
   con `x-publishable-api-key` — env `MEDUSA_PUBLISHABLE_API_KEY`; sin ella
@@ -265,6 +266,84 @@ Quién lo usa:
 - `src/plugins/marketing/api/coupons.py`: la central (CRUD, unidades, resultados).
 - `apply_coupon` / `list_promotions`: unidades que quedan, agotado y falla cerrada.
 - `present_order_confirmation` / `register_order` y "Crear pedido" (`chats/api/session_actions.py`, `order_intake.py`): reparto por unidad, `quota_changed` y `coupon_quota_id` en la línea.
+
+## Percepción: `PerceptionPort` (clasificador de ráfagas)
+
+Preguntas **cerradas y tipadas** sobre una conversación, respondidas por un
+clasificador con probabilidad (plan del laboratorio de conversaciones, §4.2).
+Las usa el turno de ventas detrás de su modo (`off` por defecto) y el
+laboratorio. Las preguntas tienen la forma nativa de Jev:
+
+| Tipo | `criteria` | Respuesta (`TypedAnswer`) |
+|---|---|---|
+| `noul` | `{"true": …, "false": …}` | `p` = probabilidad de sí |
+| `choice` | `{opción: descripción}` | `choice`, `probs` por opción y `confidence` |
+| `score` | `(nivel0, nivel1, …)`, en orden | `score` (0..n-1, fraccionario) y `probs` por nivel |
+
+| Símbolo | Qué es |
+|---|---|
+| `PerceptionPort.ask(state, questions, *, timeout_s, redact=())` | contrato; **nunca lanza**: timeout, error del proveedor, llave ausente o respuesta con otra forma → `PerceptionResult(ok=False, error=…)` y el llamador sigue sin clasificador (fail-open) |
+| `get_perception_port(perfil)` | factory por perfil de `platform/perception/profiles.yaml` (ids de modelo FIJOS, L-23). `PERCEPTION_PROVIDER=fake` o `off` fuerza el fake o el nulo en todo el proceso |
+| `openrouter_decisions` | Jev (`typesafe/jev-1.13`) por la Decisions API de OpenRouter (`POST /api/alpha/decisions`, alpha); no pasa por LiteLLM. Llave `OPENROUTER_API_KEY` |
+| `litellm` | OpenAI con logprobs por el alias `openrouter-perception` del proxy: un código de un token por pregunta (`S`/`N`, `A`…, `0`…), probabilidad renormalizada sobre los códigos permitidos, calibración opcional por pregunta (temperature scaling) |
+| `FakePerceptionAdapter` / `NullPerceptionAdapter` | dobles oficiales; contract suite en `tests/platform/perception/test_perception_contract.py` (respuestas grabadas de los dos proveedores) |
+| `anonymize_text(text, redact=())` | quita teléfonos, correos, direcciones y los nombres de `redact`; los perfiles que salen de la caja la aplican siempre |
+
+Los juegos de preguntas (p. ej. `rafaga-v1`) son dominio de cada agente y
+viven en su plugin, no en platform: el perfil solo nombra el juego para que
+la traza y el laboratorio digan con qué se midió.
+
+## Percepción: `PerceptionPort` (clasificador de ráfagas)
+
+Preguntas **cerradas y tipadas** sobre una conversación, respondidas por un
+clasificador con probabilidad (plan del laboratorio de conversaciones, §4.2).
+Las usa el turno de ventas detrás de su modo (`off` por defecto) y el
+laboratorio. Las preguntas tienen la forma nativa de Jev:
+
+| Tipo | `criteria` | Respuesta (`TypedAnswer`) |
+|---|---|---|
+| `noul` | `{"true": …, "false": …}` | `p` = probabilidad de sí |
+| `choice` | `{opción: descripción}` | `choice`, `probs` por opción y `confidence` |
+| `score` | `(nivel0, nivel1, …)`, en orden | `score` (0..n-1, fraccionario) y `probs` por nivel |
+
+| Símbolo | Qué es |
+|---|---|
+| `PerceptionPort.ask(state, questions, *, timeout_s, redact=())` | contrato; **nunca lanza**: timeout, error del proveedor, llave ausente o respuesta con otra forma → `PerceptionResult(ok=False, error=…)` y el llamador sigue sin clasificador (fail-open) |
+| `get_perception_port(perfil)` | factory por perfil de `platform/perception/profiles.yaml` (ids de modelo FIJOS, L-23). `PERCEPTION_PROVIDER=fake` o `off` fuerza el fake o el nulo en todo el proceso |
+| `openrouter_decisions` | Jev (`typesafe/jev-1.13`) por la Decisions API de OpenRouter (`POST /api/alpha/decisions`, alpha); no pasa por LiteLLM. Llave `OPENROUTER_API_KEY` |
+| `litellm` | OpenAI con logprobs por el alias `openrouter-perception` del proxy: un código de un token por pregunta (`S`/`N`, `A`…, `0`…), probabilidad renormalizada sobre los códigos permitidos, calibración opcional por pregunta (temperature scaling) |
+| `FakePerceptionAdapter` / `NullPerceptionAdapter` | dobles oficiales; contract suite en `tests/platform/perception/test_perception_contract.py` (respuestas grabadas de los dos proveedores) |
+| `anonymize_text(text, redact=())` | quita teléfonos, correos, direcciones y los nombres de `redact`; los perfiles que salen de la caja la aplican siempre |
+
+Los juegos de preguntas (p. ej. `rafaga-v1`) son dominio de cada agente y
+viven en su plugin, no en platform: el perfil solo nombra el juego para que
+la traza y el laboratorio digan con qué se midió.
+
+## Percepción: `PerceptionPort` (clasificador de ráfagas)
+
+Preguntas **cerradas y tipadas** sobre una conversación, respondidas por un
+clasificador con probabilidad (plan del laboratorio de conversaciones, §4.2).
+Las usa el turno de ventas detrás de su modo (`off` por defecto) y el
+laboratorio. Las preguntas tienen la forma nativa de Jev:
+
+| Tipo | `criteria` | Respuesta (`TypedAnswer`) |
+|---|---|---|
+| `noul` | `{"true": …, "false": …}` | `p` = probabilidad de sí |
+| `choice` | `{opción: descripción}` | `choice`, `probs` por opción y `confidence` |
+| `score` | `(nivel0, nivel1, …)`, en orden | `score` (0..n-1, fraccionario) y `probs` por nivel |
+
+| Símbolo | Qué es |
+|---|---|
+| `PerceptionPort.ask(state, questions, *, timeout_s, redact=())` | contrato; **nunca lanza**: timeout, error del proveedor, llave ausente o respuesta con otra forma → `PerceptionResult(ok=False, error=…)` y el llamador sigue sin clasificador (fail-open) |
+| `get_perception_port(perfil)` | factory por perfil de `platform/perception/profiles.yaml` (ids de modelo FIJOS, L-23). `PERCEPTION_PROVIDER=fake` o `off` fuerza el fake o el nulo en todo el proceso |
+| `openrouter_decisions` | Jev (`typesafe/jev-1.13`) por la Decisions API de OpenRouter (`POST /api/alpha/decisions`, alpha); no pasa por LiteLLM. Llave `OPENROUTER_API_KEY` |
+| `litellm` | OpenAI con logprobs por el alias `openrouter-perception` del proxy: un código de un token por pregunta (`S`/`N`, `A`…, `0`…), probabilidad renormalizada sobre los códigos permitidos, calibración opcional por pregunta (temperature scaling) |
+| `FakePerceptionAdapter` / `NullPerceptionAdapter` | dobles oficiales; contract suite en `tests/platform/perception/test_perception_contract.py` (respuestas grabadas de los dos proveedores) |
+| `anonymize_text(text, redact=())` | quita teléfonos, correos, direcciones y los nombres de `redact`; los perfiles que salen de la caja la aplican siempre |
+
+Los juegos de preguntas (p. ej. `rafaga-v1`) son dominio de cada agente y
+viven en su plugin, no en platform: el perfil solo nombra el juego para que
+la traza y el laboratorio digan con qué se midió.
 
 ## Reglas al agregar un port (regla de oro del kit)
 

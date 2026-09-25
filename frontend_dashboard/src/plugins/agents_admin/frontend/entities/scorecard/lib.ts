@@ -1,3 +1,27 @@
+import {
+  QUALITY_STAGE_ORDER,
+  QUALITY_VERDICT_ORDER,
+  clipText,
+  formatDuration,
+  qualityLevelColor,
+  qualityLevelLabel,
+  qualityStageColor,
+  qualityStageLabel,
+  qualityStageRank,
+  qualityStatus,
+  qualityStatusColor,
+  qualityStatusGlyph,
+  qualityStatusLabel,
+  qualityVerdictColor,
+  qualityVerdictLabel,
+  type StageBand,
+  type StripChip,
+  type StripCheck,
+  type StripColumn,
+  type StripModel,
+  type StripPoint,
+} from "@/shared/lib";
+
 import type {
   CheckDefinition,
   CheckFamily,
@@ -18,85 +42,33 @@ import type {
  * `@theme`) y el modelo de la tira de trayectoria. Sin React ni fetch: lo
  * consumen varias features (tira, panel, matriz, pareto, embudo, tendencia),
  * así que vive en la entity y no se duplica.
+ *
+ * La presentación genérica de veredictos, niveles y estados (y los tipos de
+ * vista de la tira) vive en `@/shared/lib` (`quality-view`, `trajectory-strip`)
+ * porque otros plugins pintan las mismas gráficas; aquí se re-exporta con los
+ * nombres de siempre. Las derivaciones del contrato siguen acá.
  */
 
 // ── Etapas ─────────────────────────────────────────────────────────────────
+// El vocabulario de etapas vive en `@/shared/lib` (el laboratorio pinta el
+// mismo embudo); aquí se re-exporta con los nombres de siempre.
 
-export const STAGE_ORDER = [
-  "descubrimiento",
-  "variantes",
-  "confirmacion",
-  "datos_envio",
-  "cierre",
-  "postcierre",
-  "transversal",
-] as const;
-
-const STAGE_LABELS: Record<string, string> = {
-  descubrimiento: "descubrimiento",
-  variantes: "variantes",
-  confirmacion: "confirmación",
-  datos_envio: "datos de envío",
-  cierre: "cierre",
-  postcierre: "post-cierre",
-  transversal: "transversal",
-};
-
-/** Cada etapa con su token (identidad reforzada SIEMPRE con texto visible). */
-const STAGE_COLORS: Record<string, string> = {
-  descubrimiento: "var(--color-info)",
-  variantes: "var(--color-violet)",
-  confirmacion: "var(--color-cyan)",
-  datos_envio: "var(--color-yellow)",
-  cierre: "var(--color-pink)",
-  postcierre: "var(--color-accent)",
-  transversal: "var(--color-neutral)",
-};
-
-export function stageLabel(stage: string | null | undefined): string {
-  if (!stage) return "sin etapa";
-  return STAGE_LABELS[stage] ?? stage.replaceAll("_", " ");
-}
-
-export function stageColor(stage: string | null | undefined): string {
-  return (stage && STAGE_COLORS[stage]) || "var(--color-neutral)";
-}
-
-/** Índice de orden de una etapa (desconocidas al final, antes de transversal no). */
-export function stageRank(stage: string | null | undefined): number {
-  const i = STAGE_ORDER.indexOf((stage ?? "") as (typeof STAGE_ORDER)[number]);
-  return i === -1 ? STAGE_ORDER.length : i;
-}
+export const STAGE_ORDER = QUALITY_STAGE_ORDER;
+export const stageLabel = qualityStageLabel;
+export const stageColor = qualityStageColor;
+/** Índice de orden de una etapa (desconocidas al final). */
+export const stageRank = qualityStageRank;
 
 // ── Veredictos de episodio ─────────────────────────────────────────────────
 
-export const EPISODE_VERDICT_ORDER: readonly EpisodeVerdict[] = [
-  "FALLA",
-  "ALERTA",
-  "PASA",
-  "SIN_DATOS",
-];
-
-const EPISODE_VERDICT_LABELS: Record<EpisodeVerdict, string> = {
-  FALLA: "Falla",
-  ALERTA: "Alerta",
-  PASA: "Pasa",
-  SIN_DATOS: "Sin datos",
-};
-
-const EPISODE_VERDICT_COLORS: Record<EpisodeVerdict, string> = {
-  FALLA: "var(--color-red)",
-  ALERTA: "var(--color-orange)",
-  PASA: "var(--color-green)",
-  SIN_DATOS: "var(--color-neutral)",
-};
+export const EPISODE_VERDICT_ORDER: readonly EpisodeVerdict[] = QUALITY_VERDICT_ORDER;
 
 export function episodeVerdictLabel(v: EpisodeVerdict): string {
-  return EPISODE_VERDICT_LABELS[v];
+  return qualityVerdictLabel(v);
 }
 
 export function episodeVerdictColor(v: EpisodeVerdict): string {
-  return EPISODE_VERDICT_COLORS[v];
+  return qualityVerdictColor(v);
 }
 
 export function compareEpisodeVerdict(a: EpisodeVerdict, b: EpisodeVerdict): number {
@@ -105,14 +77,8 @@ export function compareEpisodeVerdict(a: EpisodeVerdict, b: EpisodeVerdict): num
 
 // ── Checks: veredicto, nivel, estado visual ────────────────────────────────
 
-const LEVEL_LABELS: Record<CheckLevel, string> = {
-  critico: "crítico",
-  mayor: "mayor",
-  menor: "menor",
-};
-
 export function levelLabel(level: CheckLevel): string {
-  return LEVEL_LABELS[level];
+  return qualityLevelLabel(level);
 }
 
 const CHECK_VERDICT_LABELS: Record<CheckVerdict, string> = {
@@ -130,8 +96,7 @@ export function checkStatus(
   verdict: CheckVerdict | null | undefined,
   level: CheckLevel,
 ): CheckStatus {
-  if (!verdict) return "sin_resultado";
-  return verdict === "falla" ? level : verdict;
+  return qualityStatus(verdict, level);
 }
 
 /** Severidad de presentación: fallas primero, luego lo incierto, luego lo sano. */
@@ -140,6 +105,7 @@ export const STATUS_ORDER: readonly CheckStatus[] = [
   "mayor",
   "menor",
   "desconocido",
+  "sin_senal",
   "pasa",
   "no_aplica",
   "sin_resultado",
@@ -149,51 +115,21 @@ export function compareStatus(a: CheckStatus, b: CheckStatus): number {
   return STATUS_ORDER.indexOf(a) - STATUS_ORDER.indexOf(b);
 }
 
-const STATUS_GLYPHS: Record<CheckStatus, string> = {
-  pasa: "✓",
-  critico: "✗",
-  mayor: "✗",
-  menor: "✗",
-  no_aplica: "–",
-  desconocido: "?",
-  sin_resultado: "·",
-};
-
-const STATUS_LABELS: Record<CheckStatus, string> = {
-  pasa: "pasa",
-  critico: "falla crítica",
-  mayor: "falla mayor",
-  menor: "falla menor",
-  no_aplica: "no aplica",
-  desconocido: "desconocido",
-  sin_resultado: "sin evaluar",
-};
-
-const STATUS_COLORS: Record<CheckStatus, string> = {
-  pasa: "var(--color-green)",
-  critico: "var(--color-red)",
-  mayor: "var(--color-orange)",
-  menor: "var(--color-yellow)",
-  no_aplica: "var(--color-neutral)",
-  desconocido: "var(--color-violet)",
-  sin_resultado: "var(--color-line-strong)",
-};
-
 export function statusGlyph(s: CheckStatus): string {
-  return STATUS_GLYPHS[s];
+  return qualityStatusGlyph(s);
 }
 
 export function statusLabel(s: CheckStatus): string {
-  return STATUS_LABELS[s];
+  return qualityStatusLabel(s);
 }
 
 export function statusColor(s: CheckStatus): string {
-  return STATUS_COLORS[s];
+  return qualityStatusColor(s);
 }
 
 /** Color de un nivel (Pareto, tendencia): mismo token que su falla. */
 export function levelColor(level: CheckLevel): string {
-  return STATUS_COLORS[level];
+  return qualityLevelColor(level);
 }
 
 const FIDELITY_LABELS: Record<Fidelity, string> = {
@@ -212,15 +148,7 @@ export function formatCompliance(c: number | null | undefined): string {
   return c === null || c === undefined ? "—" : `${Math.round(c * 100)} %`;
 }
 
-export function formatDuration(ms: number): string {
-  const totalSec = Math.round(ms / 1000);
-  if (totalSec < 60) return `${totalSec} s`;
-  const totalMin = Math.floor(totalSec / 60);
-  if (totalMin < 60) return `${totalMin} min`;
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-  return m ? `${h} h ${m} min` : `${h} h`;
-}
+export { formatDuration };
 
 export function failurePointLabel(p: FailurePoint | null | undefined): string | null {
   if (!p) return null;
@@ -228,7 +156,7 @@ export function failurePointLabel(p: FailurePoint | null | undefined): string | 
 }
 
 export function truncate(text: string, max: number): string {
-  return text.length > max ? text.slice(0, Math.max(0, max - 1)) + "…" : text;
+  return clipText(text, max);
 }
 
 /** `{producto: "cubo-love", color: "Azul"}` → `producto=cubo-love · color=Azul`. */
@@ -350,96 +278,20 @@ export function groupResultsByFamily(
 
 // ── Tira de trayectoria ────────────────────────────────────────────────────
 
-export type StripLaneId =
-  | "cliente"
-  | "bot"
-  | "tools"
-  | "componentes"
-  | "estado"
-  | "guardas"
-  | "checks";
-
-export type StripEventLaneId = Exclude<StripLaneId, "checks">;
-
-export const STRIP_LANES: ReadonlyArray<{ id: StripLaneId; label: string }> = [
-  { id: "cliente", label: "cliente" },
-  { id: "bot", label: "bot" },
-  { id: "tools", label: "tools" },
-  { id: "componentes", label: "componentes" },
-  { id: "estado", label: "estado" },
-  { id: "guardas", label: "guardas" },
-  { id: "checks", label: "checks" },
-];
-
-export type StripChipKind =
-  | "customer"
-  | "system"
-  | "handoff"
-  | "signal"
-  | "sent"
-  | "suppressed"
-  | "discarded"
-  | "tool_ok"
-  | "tool_rejected"
-  | "tool_unknown"
-  | "intent"
-  | "tag"
-  | "route"
-  | "confirmed"
-  | "guard";
-
-export interface StripChip {
-  kind: StripChipKind;
-  /** Texto corto visible en el chip. */
-  text: string;
-  /** Texto completo para el tooltip. */
-  detail: string;
-  /** Estado señalado por un check fallado en el mismo turno. */
-  alert: boolean;
-}
-
-export interface StripCheck {
-  checkId: string;
-  name: string;
-  verdict: CheckVerdict;
-  level: CheckLevel;
-  status: CheckStatus;
-  /** false = el check no trae turno y se ancla al último. */
-  anchored: boolean;
-}
-
-export interface StripColumn {
-  index: number;
-  turn: number;
-  atMs: number | null;
-  trigger: string;
-  stage: string | null;
-  /** Hueco (ms) desde el turno anterior cuando supera `GAP_THRESHOLD_MS`. */
-  gapBeforeMs: number | null;
-  lanes: Record<StripEventLaneId, StripChip[]>;
-  checks: StripCheck[];
-  isFirstFailure: boolean;
-  isFirstCritical: boolean;
-}
-
-export interface StageBand {
-  stage: string | null;
-  label: string;
-  from: number;
-  to: number;
-}
-
-export interface StripPoint {
-  turn: number;
-  checkId: string;
-}
-
-export interface StripModel {
-  columns: StripColumn[];
-  bands: StageBand[];
-  firstFailure: StripPoint | null;
-  firstCritical: StripPoint | null;
-}
+// Tipos de vista y carriles: `@/shared/lib` (trajectory-strip). Re-exportados
+// con los nombres de siempre para los consumidores de la entity.
+export type {
+  StageBand,
+  StripCheck,
+  StripChip,
+  StripChipKind,
+  StripColumn,
+  StripEventLaneId,
+  StripLaneId,
+  StripModel,
+  StripPoint,
+} from "@/shared/lib";
+export { STRIP_LANES } from "@/shared/lib";
 
 /** Huecos entre turnos que la tira señala (30 min). */
 export const GAP_THRESHOLD_MS = 30 * 60 * 1000;
@@ -610,6 +462,8 @@ export function buildStripModel(
       turn: t.turn,
       atMs: t.at_ms,
       trigger: t.trigger,
+      triggerNote: t.trigger !== "customer" ? triggerLabel(t.trigger) : null,
+      botSilent: t.trigger === "ghost",
       stage: t.stage_out ?? t.stage_in,
       gapBeforeMs: gap !== null && gap > GAP_THRESHOLD_MS ? gap : null,
       lanes: {
@@ -630,7 +484,15 @@ export function buildStripModel(
   for (const col of columns) {
     const last = bands[bands.length - 1];
     if (last && last.stage === col.stage) last.to = col.index;
-    else bands.push({ stage: col.stage, label: stageLabel(col.stage), from: col.index, to: col.index });
+    else {
+      bands.push({
+        stage: col.stage,
+        label: stageLabel(col.stage),
+        color: stageColor(col.stage),
+        from: col.index,
+        to: col.index,
+      });
+    }
   }
 
   return { columns, bands, firstFailure, firstCritical };

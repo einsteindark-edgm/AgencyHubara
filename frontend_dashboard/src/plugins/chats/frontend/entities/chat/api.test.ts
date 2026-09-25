@@ -189,6 +189,7 @@ interface RawMsg {
   document_filename?: string;
   timestamp?: string | number;
   wamid?: string;
+  turn_key?: string;
   reply_to?: { id: string; author?: string; text?: string; image_url?: string };
   /** Forma real del mensaje que proyecta el backend (ver `chatEventSchema`). */
   event?: ChatEvent;
@@ -762,5 +763,19 @@ describe("pospuesto manual y vencido (rojo en la bandeja)", () => {
       description: "había que retomar el lun 28 sep",
       overdue: true,
     });
+  });
+});
+
+
+describe("useChatMessages — turno del bot de cada burbuja (laboratorio PR 17)", () => {
+  it("la burbuja lleva el turno que la produjo; el operador humano no", async () => {
+    const data = await runMessages([
+      { ui_type: "user_message", role: "user", content: "hola", turn_key: "run:x/t:1", timestamp: "2026-09-24T12:00:00+00:00" },
+      { ui_type: "agent_message", role: "assistant", content: "¡Hola!", turn_key: "run:x/t:1", timestamp: "2026-09-24T12:00:05+00:00" },
+      { ui_type: "ui_component_sent", role: "assistant", content: "🛍️ El bot envió el catálogo", turn_key: "run:x/t:1", timestamp: "2026-09-24T12:00:06+00:00" },
+      { ui_type: "human_message", role: "assistant", sender: "human", content: "te escribo yo", timestamp: "2026-09-24T12:01:00+00:00" },
+    ]);
+    const bubbles = (data ?? []).filter((m) => m.kind !== "day");
+    expect(bubbles.map((m) => m.turnKey)).toEqual(["run:x/t:1", "run:x/t:1", "run:x/t:1", undefined]);
   });
 });

@@ -15,6 +15,7 @@ import {
   formatDuration,
   groupResultsByFamily,
   levelLabel,
+  stageColor,
   stageLabel,
   statusGlyph,
   statusLabel,
@@ -140,6 +141,7 @@ describe("groupResultsByFamily", () => {
       evidence: "",
       critique: "",
       source: "code",
+      topics: [],
     };
     const groups = groupResultsByFamily(registry, [extra], { includeUnevaluated: false });
     expect(groups).toHaveLength(1);
@@ -232,8 +234,8 @@ describe("buildStripModel", () => {
 
   it("distingue primer fallo de primer crítico cuando difieren", () => {
     const rs: CheckResult[] = [
-      { check_id: "DES-01", verdict: "falla", level: "mayor", turn: 2, evidence: "", critique: "", source: "code" },
-      { check_id: "CON-01", verdict: "falla", level: "critico", turn: 4, evidence: "", critique: "", source: "code" },
+      { check_id: "DES-01", verdict: "falla", level: "mayor", turn: 2, evidence: "", critique: "", source: "code", topics: [] },
+      { check_id: "CON-01", verdict: "falla", level: "critico", turn: 4, evidence: "", critique: "", source: "code", topics: [] },
     ];
     const m = buildStripModel(trajectory, rs);
     expect(m.firstFailure?.checkId).toBe("DES-01");
@@ -246,6 +248,15 @@ describe("buildStripModel", () => {
     // turno 8 (480 000 ms) → turno 9 (20 000 000 ms): 5 h 25 min.
     expect(model.columns[8].gapBeforeMs).toBe(19_520_000);
     expect(model.columns[1].gapBeforeMs).toBeNull();
+  });
+
+  it("resuelve para la vista el color de cada banda y la nota del disparador", () => {
+    expect(model.bands.map((b) => b.color)).toEqual(model.bands.map((b) => stageColor(b.stage)));
+    const ghost = model.columns[7];
+    expect(ghost.trigger).toBe("ghost");
+    expect(ghost).toMatchObject({ triggerNote: "ghosting", botSilent: true });
+    expect(model.columns[8]).toMatchObject({ trigger: "handoff", triggerNote: "handoff", botSilent: false });
+    expect(model.columns[0]).toMatchObject({ trigger: "customer", triggerNote: null, botSilent: false });
   });
 
   it("devuelve un modelo vacío sin turnos", () => {

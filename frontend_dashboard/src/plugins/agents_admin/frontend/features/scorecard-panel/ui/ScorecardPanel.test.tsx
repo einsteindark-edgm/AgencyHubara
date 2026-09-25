@@ -93,6 +93,37 @@ describe("ScorecardPanel", () => {
     await waitFor(() => expect(screen.getByText(/El cliente aplazó; el formulario no debía salir/)).toBeInTheDocument());
   });
 
+  it("EST-08 muestra cada asunto con su mensaje y si quedó cubierto", () => {
+    const withTopics = scorecardDetailSchema.parse({
+      ...detailFixture,
+      scorecard: {
+        ...detailFixture.scorecard,
+        results: [
+          ...detailFixture.scorecard.results,
+          {
+            check_id: "EST-08",
+            verdict: "falla",
+            level: "mayor",
+            turn: 2,
+            evidence: "sin respuesta: catálogo (T2, mensaje 1)",
+            critique: "",
+            source: "judge",
+            topics: [
+              { topic: "catálogo", turn: 2, msg: 1, covered: false, evidence: "me mandas el catálogo" },
+              { topic: "envío", turn: 2, msg: 2, covered: true, evidence: "tarifas" },
+            ],
+          },
+        ],
+      },
+    });
+    renderWithClient(
+      <ScorecardPanel episode={EPISODE} detail={withTopics} registry={registry} selectedCheckId="EST-08" onSelectCheck={() => {}} />,
+    );
+    const list = screen.getByRole("list", { name: /asuntos del cliente/i });
+    expect(list).toHaveTextContent("catálogo · T2 · mensaje 1 · sin respuesta");
+    expect(list).toHaveTextContent("envío · T2 · mensaje 2 · cubierto");
+  });
+
   it("etiqueta el check seleccionado con nota", async () => {
     renderWithClient(
       <ScorecardPanel episode={EPISODE} detail={detail} registry={registry} selectedCheckId="CON-01" onSelectCheck={() => {}} />,

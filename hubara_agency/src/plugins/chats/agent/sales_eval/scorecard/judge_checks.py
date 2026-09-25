@@ -25,7 +25,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from dataclasses import replace
 from typing import Any, Protocol
 
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext, CheckResult
@@ -33,6 +34,8 @@ from src.plugins.chats.agent.sales_eval.scorecard.registry import CHECKS, SPECS_
 from src.plugins.chats.agent.sales_eval.scorecard.trajectory import (
     CATALOG_DISPLAY_INTENTS,
     Trajectory,
+    Turn,
+    focus_trajectory,
 )
 
 SAMPLES = 2
@@ -130,9 +133,25 @@ JUDGE_PROMPTS: dict[str, str] = {
         "- Confirmar un dato una vez al resumir el pedido es `pasa`."
     ),
     "EST-08": (
-        "- Para cada pregunta directa del cliente, revisa la respuesta del bot en ese turno o el siguiente.\n"
-        "- `falla` si una pregunta quedó sin responder mientras el bot empujaba la venta (pidió datos, mandó "
-        "formularios o cambió de tema)."
+        "- Saca TÚ los asuntos que planteó el cliente en cada turno: preguntas (con o sin \"?\"), pedidos "
+        "(\"me mandas el catálogo\", \"quiero ver los precios\") y datos que piden una reacción. En una "
+        "ráfaga cada mensaje [k] puede traer uno o varios asuntos. Un saludo, un \"gracias\" o un \"ok\" no "
+        "son asuntos.\n"
+        "- Un asunto está cubierto si lo atiende el texto que el bot envió o un componente que el cliente "
+        "recibió (catálogo, fotos, tarifas, formulario), en ese turno o en el siguiente.\n"
+        "- `falla` si algún asunto quedó sin atender, sobre todo si el bot empujó la venta en su lugar (pidió "
+        "datos, mandó formularios o cambió de tema). `pasa` si todos quedaron atendidos.\n"
+        "- Lista TODOS los asuntos en `asuntos`, cubiertos o no, con el turno T y el número de mensaje [k]."
+    ),
+}
+
+# Forma de la respuesta del juez. EST-08 v2 agrega la cobertura por asunto.
+_OUTPUT_DEFAULT = '{"veredicto": "pasa|falla|no_aplica|desconocido", "turno": <número o null>, "evidencia": "...", "critica": "..."}'
+_OUTPUT_BY_CHECK: dict[str, str] = {
+    "EST-08": (
+        '{"veredicto": "pasa|falla|no_aplica|desconocido", "turno": <número o null>, "evidencia": "...", '
+        '"critica": "...", "asuntos": [{"asunto": "...", "turno": <T>, "mensaje": <k o null>, '
+        '"cubierto": true|false, "evidencia": "..."}]}'
     ),
 }
 
@@ -188,55 +207,155 @@ _APPLIES: dict[str, Callable[[Trajectory, CheckContext], tuple[bool, str]]] = {
     ),
     "EST-04": lambda t, c: (_any_sent(t), "el bot no envió texto"),
     "EST-07": lambda t, c: (len(t.turns) > 1, "episodio de un turno"),
+    # v2: sin exigir "?" — una ráfaga de pedidos ("me mandas el catálogo") no lo trae.
     "EST-08": lambda t, c: (
-        any("?" in x.inbound_text for x in t.turns if x.is_customer or x.trigger == "handoff"),
-        "el cliente no hizo preguntas",
+        any(x.inbound_text.strip() for x in t.turns if x.is_customer or x.trigger == "handoff"),
+        "el cliente no escribió",
     ),
 }
 
 _SIGNAL_LABEL = {"deferral": "aplazamiento", "affirmation": "afirmación de compra"}
 
 
-def _clip(text: str, limit: int) -> str:
+def _clip(text: str, limit: int | None) -> str:
     text = " ".join((text or "").split())
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+    return text if limit is None or len(text) <= limit else text[: limit - 1] + "…"
 
 
-def render_transcript(traj: Trajectory, *, text_limit: int = 400) -> str:
-    """La trayectoria como texto numerado por turno (lo que ve el juez)."""
+def _lines(text: str) -> list[str]:
+    return [" ".join(line.split()) for line in (text or "").splitlines() if line.strip()]
+
+
+def _quoted(prefix: str, head: str, text: str) -> list[str]:
+    """Texto entre comillas que conserva sus saltos de línea (listas, párrafos)."""
+    parts = _lines(text) or [""]
+    if len(parts) == 1:
+        return [f'{prefix} {head}: "{parts[0]}"']
+    return [f'{prefix} {head}: "{parts[0]}', *(f"{prefix}   {x}" for x in parts[1:-1]), f'{prefix}   {parts[-1]}"']
+
+
+def _since(ms: int) -> str:
+    seconds = max(0, round(ms / 1000))
+    return f"+{seconds} s" if seconds < 90 else f"+{round(seconds / 60)} min"
+
+
+def _customer_lines(prefix: str, turn: Any) -> list[str]:
+    """Lo que escribió el cliente, un renglón por mensaje de la ráfaga.
+
+    Con la traza v2 cada mensaje trae su hora; en v1 y en episodios legados
+    los mensajes llegan unidos por saltos de línea (`coalesce_inbox`)."""
+    if turn.inbound:
+        texts = [_clip(m.text, None) for m in turn.inbound if m.text.strip()]
+        stamps = [m.ts_ms for m in turn.inbound if m.text.strip()]
+    else:
+        texts, stamps = _lines(turn.inbound_text), []
+    if len(texts) <= 1:
+        return [f"{prefix} cliente: {texts[0] if texts else ''}"]
+    first = stamps[0] if stamps else None
+    out = [f"{prefix} cliente escribió {len(texts)} mensajes:"]
+    for k, text in enumerate(texts, 1):
+        ts = stamps[k - 1] if k - 1 < len(stamps) else None
+        delta = f"({_since(ts - first)}) " if k > 1 and ts is not None and first is not None else ""
+        out.append(f"{prefix}   [{k}] {delta}{text}")
+    return out
+
+
+def _turn_lines(t: Any, text_limit: int | None) -> list[str]:
+    """Los renglones de un turno en el transcript del juez."""
+    return [*_inbound_lines(t, text_limit), *_reply_lines(t, text_limit)]
+
+
+def _inbound_lines(t: Any, text_limit: int | None) -> list[str]:
+    """Lo que llegó en el turno (el cliente, el sistema o el handoff)."""
     lines: list[str] = []
-    for t in traj.turns:
-        p = f"T{t.turn} ·"
-        who = {"ghost": "sistema (ghosting)", "handoff": "handoff (otro agente → ventas)"}.get(t.trigger, "cliente")
-        if t.inbound_text:
-            lines.append(f"{p} {who}: {_clip(t.inbound_text, text_limit)}")
-        if t.signal:
-            lines.append(f"{p} señal del cliente: {_SIGNAL_LABEL.get(t.signal, t.signal)}")
-        for s in t.sent_texts:
-            lines.append(f'{p} bot envió: "{_clip(s, text_limit)}"')
-        if t.suppressed_reason and t.llm_text:
-            lines.append(f'{p} texto suprimido ({t.suppressed_reason}), el cliente NO lo vio: "{_clip(t.llm_text, text_limit)}"')
-        for n in t.discarded_narration:
-            lines.append(f'{p} narración descartada: "{_clip(n, 200)}"')
-        if t.intents:
-            lines.append(f"{p} componentes enviados: {', '.join(t.intents)}")
-        if t.tools:
-            parts = []
-            for c in t.tools:
-                status = "ok" if c.ok is True else f"RECHAZADA: {c.error}" if c.ok is False else "?"
-                args = ", ".join(f"{k}={v}" for k, v in c.args.items() if k in ("tag", "reason_category", "q", "producto", "aroma", "color", "cantidad"))
-                lines_args = f" [{args}]" if args else ""
-                parts.append(f"{c.name}({status}){lines_args}")
-            lines.append(f"{p} tools: " + " · ".join(parts))
-        if t.guards:
-            lines.append(f"{p} guardas que actuaron: {', '.join(t.guards)}")
-        if t.stage_in or t.stage_out:
-            lines.append(f"{p} etapa: {t.stage_in or '?'} → {t.stage_out or '?'}")
-        tag = t.state.get("tag") if isinstance(t.state, dict) else None
-        if tag:
-            route = t.state.get("route")
-            lines.append(f"{p} estado: {tag}" + (f" (ruta {route})" if route else ""))
-    return "\n".join(lines)
+    p = f"T{t.turn} ·"
+    if t.inbound_text or t.inbound:
+        if t.is_customer:
+            lines.extend(_customer_lines(p, t))
+        else:
+            who = {"ghost": "sistema (ghosting)", "handoff": "handoff (otro agente → ventas)"}.get(t.trigger, t.trigger)
+            lines.append(f"{p} {who}: {_clip(t.inbound_text, text_limit or 600)}")
+    if t.signal:
+        lines.append(f"{p} señal del cliente: {_SIGNAL_LABEL.get(t.signal, t.signal)}")
+    return lines
+
+
+def _reply_lines(t: Any, text_limit: int | None) -> list[str]:
+    """Lo que hizo el bot en el turno."""
+    lines: list[str] = []
+    p = f"T{t.turn} ·"
+    for s in t.sent_texts:
+        lines.extend(_quoted(p, "bot envió", s if text_limit is None else _clip(s, text_limit)))
+    if t.suppressed_reason and t.llm_text:
+        lines.extend(_quoted(p, f"texto suprimido ({t.suppressed_reason}), el cliente NO lo vio", t.llm_text))
+    for n in t.discarded_narration:
+        lines.append(f'{p} narración descartada: "{_clip(n, 200)}"')
+    if t.intents:
+        lines.append(f"{p} componentes enviados: {', '.join(t.intents)}")
+    if t.tools:
+        parts = []
+        for c in t.tools:
+            status = "ok" if c.ok is True else f"RECHAZADA: {c.error}" if c.ok is False else "?"
+            args = ", ".join(f"{k}={v}" for k, v in c.args.items() if k in ("tag", "reason_category", "q", "producto", "aroma", "color", "cantidad"))
+            lines_args = f" [{args}]" if args else ""
+            parts.append(f"{c.name}({status}){lines_args}")
+        lines.append(f"{p} tools: " + " · ".join(parts))
+    if t.guards:
+        lines.append(f"{p} guardas que actuaron: {', '.join(t.guards)}")
+    if t.stage_in or t.stage_out:
+        lines.append(f"{p} etapa: {t.stage_in or '?'} → {t.stage_out or '?'}")
+    tag = t.state.get("tag") if isinstance(t.state, dict) else None
+    if tag:
+        route = t.state.get("route")
+        lines.append(f"{p} estado: {tag}" + (f" (ruta {route})" if route else ""))
+    return lines
+
+
+CANDIDATE_MARK = "★ CANDIDATA (a juzgar)"
+
+
+def render_transcript(
+    traj: Trajectory,
+    *,
+    text_limit: int | None = None,
+    candidates: Mapping[int, Turn] | None = None,
+) -> str:
+    """La trayectoria como texto numerado por turno (lo que ve el juez).
+
+    v2: sin tope por texto (la traza ya acota a 600) y con los saltos de
+    línea: cada mensaje de una ráfaga en su renglón, con su hora si la hay.
+
+    Modo turno (`candidates`): la conversación REAL, en orden. En el turno k
+    de una candidata va lo que escribió el cliente, después la candidata
+    (`T{k} ★ CANDIDATA (a juzgar)`) y recién después la respuesta real de ese
+    turno: su contexto es exactamente lo real anterior, y la respuesta real
+    (lo que el cliente vio, contexto de los turnos siguientes) no la ancla.
+    Si la candidata es igual al turno real (A0), va una sola vez. Nada
+    después de la última candidata."""
+    if not candidates:
+        lines: list[str] = []
+        for t in traj.turns:
+            lines.extend(_turn_lines(t, text_limit))
+        return "\n".join(lines)
+    last = max(candidates)
+    real = {t.turn: t for t in traj.turns if t.turn <= last}
+    out: list[str] = []
+    for k in sorted(set(real) | set(candidates)):
+        turn, candidate = real.get(k), candidates.get(k)
+        if candidate is None:
+            out.extend(_turn_lines(turn, text_limit))
+            continue
+        if turn is None or _reply_lines(candidate, text_limit) == _reply_lines(turn, text_limit):
+            out.append(f"T{k} {CANDIDATE_MARK}")
+            out.extend(_turn_lines(turn if turn is not None else candidate, text_limit))
+            continue
+        out.extend(_inbound_lines(turn, text_limit))
+        out.append(f"T{k} {CANDIDATE_MARK}")
+        out.extend(_reply_lines(candidate, text_limit))
+        if k < last:
+            out.append(f"T{k} · respuesta REAL del bot (la que vio el cliente; contexto de los turnos siguientes):")
+            out.extend(_reply_lines(turn, text_limit))
+    return "\n".join(out)
 
 
 _TEMPLATE = """Eres auditor de calidad del asesor de ventas por WhatsApp de Hubara (velas artesanales hechas en Colombia).
@@ -260,7 +379,7 @@ CONVERSACIÓN (episodio {episode_id}, {n} turnos, fidelidad {fidelity}):
 {transcript}
 
 Devuelve SOLO un JSON válido:
-{{"veredicto": "pasa|falla|no_aplica|desconocido", "turno": <número o null>, "evidencia": "...", "critica": "..."}}
+{output}
 """
 
 
@@ -294,6 +413,7 @@ def build_prompt(check_id: str, traj: Trajectory, ctx: CheckContext) -> str:
         n=len(traj.turns),
         fidelity=traj.fidelity,
         transcript=render_transcript(traj),
+        output=_OUTPUT_BY_CHECK.get(check_id, _OUTPUT_DEFAULT),
     )
 
 
@@ -316,17 +436,77 @@ def parse_judge_output(check_id: str, raw: str) -> CheckResult | None:
         return None
     if not isinstance(data, dict):
         return None
+    return _result_from(check_id, data)
+
+
+def _result_from(check_id: str, data: dict[str, Any], *, allow_pending: bool = False) -> CheckResult | None:
     verdict = _VERDICT_ALIASES.get(str(data.get("veredicto", "")).strip().lower())
     if verdict is None:
         return None
     turn = data.get("turno")
-    return CheckResult(
+    result = CheckResult(
         check_id,
         verdict,
         turn=int(turn) if isinstance(turn, (int, float)) else None,
         evidence=_clip(str(data.get("evidencia") or ""), _EVIDENCE_MAX),
         critique=_clip(str(data.get("critica") or ""), _EVIDENCE_MAX),
         source="judge",
+    )
+    if check_id != _TOPICS_CHECK or not isinstance(data.get("asuntos"), list):
+        return result  # solo EST-08 decide por asuntos (el modo turno pasa la clave siempre)
+    return _with_topics(result, _parse_topics(data["asuntos"]), allow_pending=allow_pending)
+
+
+def _int_or_none(value: Any) -> int | None:
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _parse_topics(raw: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(raw, list):
+        return ()
+    topics: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict) or not str(item.get("asunto") or "").strip():
+            continue
+        topics.append(
+            {
+                "topic": _clip(str(item["asunto"]), 80),
+                "turn": _int_or_none(item.get("turno")),
+                "msg": _int_or_none(item.get("mensaje")),
+                "covered": item.get("cubierto") is True,
+                # Solo el modo turno lo pide: los registros de producción no cambian de forma.
+                **({"pending": True} if item.get("pendiente") is True else {}),
+                "evidence": _clip(str(item.get("evidencia") or ""), 160),
+            }
+        )
+    return tuple(topics)
+
+
+_TOPICS_CHECK = "EST-08"
+
+
+def _with_topics(result: CheckResult, topics: tuple[dict[str, Any], ...], *, allow_pending: bool = False) -> CheckResult:
+    """El veredicto sale de los asuntos: uno sin cubrir es `falla` en su turno,
+    aunque el juez haya escrito `pasa`. Un juez que no supo decidir se respeta.
+
+    Sin asuntos no hay nada que cubrir (un "hola"): no aplica. Un `falla` que
+    no nombra ningún asunto sin cubrir no se puede sostener: desconocido."""
+    if result.verdict == "desconocido":
+        return replace(result, topics=topics)
+    if not topics:
+        return replace(result, verdict="desconocido" if result.verdict == "falla" else "no_aplica", topics=topics)
+    # Modo turno: la candidata puede dejar un asunto para su turno siguiente con
+    # un compromiso claro (la regla lo admite). Producción ve ese turno: exige.
+    missed = [t for t in topics if not t["covered"] and not (allow_pending and t.get("pending"))]
+    if not missed:
+        return replace(result, verdict="desconocido" if result.verdict == "falla" else "pasa", topics=topics)
+    first = min(missed, key=lambda t: t["turn"] if t["turn"] is not None else 10**9)
+    where = f"T{first['turn']}" if first["turn"] is not None else "T?"
+    msg = f", mensaje {first['msg']}" if first["msg"] is not None else ""
+    evidence = result.evidence or f"sin respuesta: {first['topic']} ({where}{msg})"
+    return replace(
+        result, verdict="falla", turn=first["turn"] if first["turn"] is not None else result.turn,
+        evidence=evidence, topics=topics,
     )
 
 
@@ -402,3 +582,230 @@ async def run_judge_checks(
             return await _judge_one(check_id, traj, ctx, judge, samples, sleep)
 
     return list(await asyncio.gather(*(bounded(i) for i in ids)))
+
+
+# ── Modo turno (laboratorio, plan §5.2–5.5) ─────────────────────────────────
+# Una llamada por check y por episodio (no por turno): el juez ve el prefijo
+# real como contexto y todas las candidatas marcadas, y responde una entrada
+# por candidata. El prefiltro de aplicabilidad corre por candidata sobre su
+# trayectoria foco.
+
+_FOCUS_TEMPLATE = """Eres auditor de calidad del asesor de ventas por WhatsApp de Hubara (velas artesanales hechas en Colombia).
+Evalúas UN solo criterio sobre las respuestas CANDIDATAS del bot marcadas con ★ en la conversación de abajo.
+
+CRITERIO {id} — {name}
+Aplica cuando: {applies}
+Regla: {rule}
+Cómo decidir:
+{guidance}
+
+Reglas de evaluación:
+- Juzga SOLO este criterio y SOLO los turnos marcados ★ CANDIDATA: {turns}.
+- Cada candidata ★ es una respuesta alternativa del bot en su turno. Su contexto es SOLO lo que aparece ANTES de ella: la conversación real hasta el mensaje del cliente de ese turno. Lo que aparece después (la respuesta real de ese turno y los turnos siguientes) es la conversación real, que siguió a la respuesta real y no a la candidata: no lo uses para juzgarla ni la compares con ella.
+- Si la regla admite atender algo "en ese turno o el siguiente", juzga la candidata sola: dejarlo pendiente sin empujar la venta en su lugar no es `falla`.
+- `no_aplica` si la situación del criterio no ocurre en ese turno candidato.
+- `desconocido` si la conversación no alcanza para decidir.
+- Las etiquetas y escalaciones del estado las pone el mismo bot que evalúas: el estado del sistema no es prueba de que actuó bien.
+- Lo que el cliente vio son los textos enviados y los componentes; el texto suprimido y la narración descartada no le llegaron.
+- La evidencia es una cita textual corta (máximo 25 palabras) del turno candidato.
+{catalog}
+CONVERSACIÓN (episodio {episode_id}, fidelidad {fidelity}):
+{transcript}
+
+Devuelve SOLO un JSON válido, con una entrada por turno candidato:
+{output}
+"""
+
+_FOCUS_ITEM_DEFAULT = (
+    '{"turno": <T de la candidata>, "veredicto": "pasa|falla|no_aplica|desconocido", '
+    '"evidencia": "...", "critica": "..."}'
+)
+_FOCUS_ITEM_BY_CHECK: dict[str, str] = {
+    "EST-08": (
+        '{"turno": <T de la candidata>, "veredicto": "pasa|falla|no_aplica|desconocido", "evidencia": "...", '
+        '"critica": "...", "asuntos": [{"asunto": "...", "turno": <T>, "mensaje": <k o null>, '
+        '"cubierto": true|false, "pendiente": true|false, "evidencia": "..."}]} '
+        '(`pendiente`: la candidata deja el asunto para su turno siguiente con un compromiso claro, '
+        'p. ej. "ya te paso el catálogo")'
+    ),
+}
+
+
+def _guidance(check_id: str) -> str:
+    guidance = JUDGE_PROMPTS[check_id]
+    if check_id == "ENV-06":
+        from src.plugins.chats.agent.sales.config.payments import get_nequi_number
+
+        key = get_nequi_number()
+        guidance = guidance.replace("{nequi}", f" ({key})" if key else "")
+    return guidance
+
+
+def build_focus_prompt(
+    check_id: str, real: Trajectory, candidates: Mapping[int, Turn], ctx: CheckContext
+) -> str:
+    """Prompt de un check en modo turno: el prefijo real y las candidatas marcadas."""
+    spec = SPECS_BY_ID[check_id]
+    catalog = ""
+    if check_id == "DES-06" and ctx.catalog_summary:
+        catalog = "\nCATÁLOGO REAL VIGENTE (lista cerrada):\n" + ctx.catalog_summary + "\n"
+    item = _FOCUS_ITEM_BY_CHECK.get(check_id, _FOCUS_ITEM_DEFAULT)
+    return _FOCUS_TEMPLATE.format(
+        id=spec.id,
+        name=spec.name,
+        applies=spec.applies,
+        rule=spec.rule,
+        guidance=_guidance(check_id),
+        turns=", ".join(f"T{k}" for k in sorted(candidates)),
+        catalog=catalog,
+        episode_id=real.episode_id or "?",
+        fidelity=real.fidelity,
+        transcript=render_transcript(real, candidates=candidates),
+        output='{"turnos": [' + item + ", ...]}",
+    )
+
+
+def parse_focus_output(check_id: str, raw: str, turns: Iterable[int]) -> dict[int, CheckResult] | None:
+    """JSON del juez en modo turno → un resultado por turno candidato pedido.
+
+    `None` si la respuesta no se puede leer. Un turno que el juez no respondió
+    no aparece. Los asuntos de EST-08 se quedan con los del turno candidato."""
+    match = re.search(r"\{.*\}", raw or "", re.DOTALL)
+    if not match:
+        return None
+    try:
+        data: Any = json.loads(match.group(0))
+    except (json.JSONDecodeError, ValueError):
+        return None
+    items = data.get("turnos") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return None
+    wanted = set(turns)
+    out: dict[int, CheckResult] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        k = _int_or_none(item.get("turno"))
+        if k is None or k not in wanted or k in out:
+            continue
+        asuntos = item.get("asuntos")
+        if isinstance(asuntos, list):
+            asuntos = [a for a in asuntos if isinstance(a, dict) and _int_or_none(a.get("turno")) in (k, None)]
+        result = _result_from(check_id, {**item, "turno": k, "asuntos": asuntos}, allow_pending=True)
+        if result is not None:
+            out[k] = replace(result, turn=k)
+    return out
+
+
+def _focus_unknown(check_id: str, turns: Iterable[int], critique: str) -> dict[int, CheckResult]:
+    return {k: CheckResult(check_id, "desconocido", turn=k, critique=critique, source="judge") for k in turns}
+
+
+def _agreed(check_id: str, k: int, answers: list[CheckResult | None]) -> CheckResult:
+    """El veredicto de un turno si todas las muestras lo respondieron igual."""
+    got = [a for a in answers if a is not None]
+    if len(got) < len(answers):
+        return CheckResult(
+            check_id, "desconocido", turn=k, critique="el juez no respondió el turno candidato", source="judge"
+        )
+    verdicts = [a.verdict for a in got]
+    if len(set(verdicts)) > 1:
+        return CheckResult(
+            check_id, "desconocido", turn=k,
+            critique="juez inconsistente entre muestras: " + " vs ".join(verdicts), source="judge",
+        )
+    return got[0]
+
+
+async def _judge_focus_one(
+    check_id: str,
+    real: Trajectory,
+    candidates: Mapping[int, Turn],
+    focus: Mapping[int, Trajectory],
+    ctx: CheckContext,
+    judge: JudgePort,
+    samples: int,
+    sleep: Sleep,
+) -> dict[int, CheckResult]:
+    out: dict[int, CheckResult] = {}
+    future = SPECS_BY_ID[check_id].focus == "future"
+    applicable: list[int] = []
+    for k in sorted(candidates):
+        applies, reason = _APPLIES[check_id](focus[k], ctx)
+        if applies:
+            applicable.append(k)
+            continue
+        # Un check `future` que todavía no aplica puede aplicar con el cierre.
+        verdict = "sin_senal" if future else "no_aplica"
+        out[k] = CheckResult(check_id, verdict, turn=k, evidence=reason, source="judge")
+    if not applicable:
+        return out
+    if check_id == "DES-06" and not ctx.catalog_available:
+        for k in applicable:
+            out[k] = CheckResult(check_id, "desconocido", turn=k, evidence="catálogo no disponible", source="judge")
+        return out
+    # El transcript llega hasta la última candidata: con varias, el juez de
+    # T3 vería T4…Tn. Para un check `future` eso es información del futuro
+    # (un `pasa` con evidencia posterior): se pregunta una candidata por vez,
+    # con el transcript cortado en ella. Los checks `turn` comparten llamada
+    # (el prompt pide juzgar cada candidata solo con lo anterior).
+    groups = [[k] for k in applicable] if future else [applicable]
+    for group in groups:
+        out |= await _ask_focus(check_id, real, {k: candidates[k] for k in group}, ctx, judge, samples, sleep)
+    return out
+
+
+async def _ask_focus(
+    check_id: str,
+    real: Trajectory,
+    candidates: Mapping[int, Turn],
+    ctx: CheckContext,
+    judge: JudgePort,
+    samples: int,
+    sleep: Sleep,
+) -> dict[int, CheckResult]:
+    turns = sorted(candidates)
+    prompt = build_focus_prompt(check_id, real, candidates, ctx)
+    parsed: list[dict[int, CheckResult]] = []
+    for _ in range(max(1, samples)):
+        try:
+            raw = await _generate(judge, prompt, sleep)
+        except Exception as exc:  # noqa: BLE001 — el juez caído no tumba el scorecard
+            return _focus_unknown(check_id, turns, f"{JUDGE_ERROR_PREFIX}: {exc!r}"[:200])
+        by_turn = parse_focus_output(check_id, raw, turns)
+        if by_turn is None:
+            return _focus_unknown(check_id, turns, "respuesta del juez ilegible")
+        parsed.append(by_turn)
+    return {k: _agreed(check_id, k, [p.get(k) for p in parsed]) for k in turns}
+
+
+async def run_judge_checks_focus(
+    real: Trajectory,
+    candidates: Mapping[int, Turn],
+    ctx: CheckContext,
+    judge: JudgePort,
+    *,
+    samples: int = SAMPLES,
+    only: Iterable[str] | None = None,
+    episodes_at: Mapping[int, dict[str, Any]] | None = None,
+    sleep: Sleep = asyncio.sleep,
+) -> dict[int, list[CheckResult]]:
+    """Checks de juez en modo turno: turno candidato → resultados (orden de registro).
+
+    UNA llamada por check (y muestra) para todo el episodio, con las candidatas
+    marcadas en el transcript; el acuerdo entre muestras se mide por turno."""
+    if not candidates:
+        return {}
+    wanted = set(only) if only is not None else None
+    ids = [c.id for c in CHECKS if c.kind == "judge" and (wanted is None or c.id in wanted)]
+    focus = {
+        k: focus_trajectory(real, candidates[k], episode_at=(episodes_at or {}).get(k)) for k in candidates
+    }
+    semaphore = asyncio.Semaphore(_CONCURRENCY)
+
+    async def bounded(check_id: str) -> dict[int, CheckResult]:
+        async with semaphore:
+            return await _judge_focus_one(check_id, real, candidates, focus, ctx, judge, samples, sleep)
+
+    per_check = await asyncio.gather(*(bounded(i) for i in ids))
+    return {k: [results[k] for results in per_check] for k in sorted(candidates)}

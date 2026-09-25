@@ -337,6 +337,12 @@ replacements:
     files: ["infra/terraform/**", "infra/scripts/**", "infra/robotocore/**", "infra/compose/**"]
     from: "agencyhubara"
     to: "{{prefix}}"
+  - id: caja-laboratorio               # /hubara-lab/* (SSM), proyecto compose y namespace del lab
+    # DESPUÉS de prefijo-recursos: si corriera antes, "agencyhubara-lab"
+    # (bucket, rol, SG, tags de la caja) quedaría "agency{{slug}}-lab"
+    files: ["infra/compose/**", "infra/terraform/compute/**"]
+    from: "hubara-lab"
+    to: "{{slug}}-lab"
   - id: nombre-proyecto-titulo          # descripciones/comentarios en tf/scripts
     files: ["infra/terraform/**", "infra/scripts/**", "infra/robotocore/**"]
     from: "AgencyHubara"

@@ -180,6 +180,16 @@ _MAX_INBOUND_DOCUMENT_BYTES = 10 * 1024 * 1024
 logger = structlog.get_logger()
 
 
+def _inbound_meta(parsed: WhatsAppMessage) -> dict[str, Any]:
+    """`{wamid, ts_ms, kind}` del inbound (Meta manda la hora en segundos)."""
+    ts = str(parsed.timestamp or "").strip()
+    return {
+        "wamid": parsed.message_id or None,
+        "ts_ms": int(ts) * 1000 if ts.isdigit() else None,
+        "kind": parsed.msg_type or "text",
+    }
+
+
 class IngestInboundMessage:
     """Procesa un `WhatsAppMessage` ya parseado: history + routing + signal."""
 
@@ -1005,6 +1015,11 @@ class IngestInboundMessage:
             message=turn_message,
             phone_number_id=parsed.phone_number_id,
             **route_kwargs,
+            # Traza v2 (plan del laboratorio, PR 3): wamid, hora y tipo del
+            # mensaje; el workflow arma `inbound[]` de la ráfaga con esto. El
+            # texto crudo (sin la campaña citada ni el episodio anterior) es lo
+            # que lee el clasificador de las capas nuevas (PR 14).
+            inbound_meta={**_inbound_meta(parsed), "text": effective.text},
             extra_context=[
                 note
                 for note in (

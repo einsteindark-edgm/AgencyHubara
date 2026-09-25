@@ -1,5 +1,7 @@
 import type { z } from "zod";
 
+import type { QualityStatus } from "@/shared/lib";
+
 import type {
   checkDefinitionSchema,
   checkFamilySchema,
@@ -42,15 +44,9 @@ export type Trajectory = z.infer<typeof trajectorySchema>;
 export type LegacyScore = z.infer<typeof legacyScoreSchema>;
 export type ScorecardDetail = z.infer<typeof scorecardDetailSchema>;
 
-/** Estado visual de un check: la falla toma su nivel; sin resultado = no evaluado. */
-export type CheckStatus =
-  | "pasa"
-  | "critico"
-  | "mayor"
-  | "menor"
-  | "no_aplica"
-  | "desconocido"
-  | "sin_resultado";
+/** Estado visual de un check: la falla toma su nivel; sin resultado = no
+ * evaluado; `sin_senal` solo existe en el modo turno del laboratorio. */
+export type CheckStatus = QualityStatus;
 
 /** Episodio identificado por sesión + episodio (unidad del scorecard). */
 export interface EpisodeRef {

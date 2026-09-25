@@ -38,7 +38,9 @@ Un futuro PR podria abstraer un `WorkflowDispatcherPort` con
 """
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+import os
+from pathlib import Path
+from typing import Any, Awaitable, Callable
 
 import structlog
 from temporalio.client import Client, WorkflowExecutionStatus
@@ -63,6 +65,45 @@ logger = structlog.get_logger()
 
 
 ClientFactory = Callable[[], Awaitable[Client]]
+
+
+def _inbound_meta_enabled() -> bool:
+    return (os.getenv("SALES_SIGNAL_INBOUND_META") or "").strip().lower() in {"on", "1", "true"}
+
+
+_PERCEPTION_MODES = ("shadow", "canary", "on")
+_DEFAULT_PERCEPTION_PROFILE = "jev-v1"
+
+
+def _vault_dir() -> Path:
+    from src.sdk.runtime import WORKSPACE_VAULT_DIR
+
+    return Path(WORKSPACE_VAULT_DIR)
+
+
+def _perception_meta(session_id: str) -> dict[str, str]:
+    """Modo y perfil de las capas con clasificador para ESTA conversación
+    (plan del laboratorio, PR 14 y 16): el del control del dashboard
+    (`<vault>/_rollout/perception.json`), nunca por encima del techo de
+    Terraform `SALES_PERCEPTION_MODE_CEILING` (default `off`).
+
+    `off` viaja EXPLÍCITO: el workflow se queda con el último modo que
+    recibió, así que sin esto un chat en curso seguiría en canary/on después
+    de apagar o de bajar el techo, hasta que su sesión termine. Un estado
+    ilegible (editado a mano) cuenta como `off`: el mensaje viaja igual."""
+    from src.plugins.chats.agent.sales.perception.rollout import effective_mode
+    from src.plugins.chats.agent.sales.perception.rollout_store import read_state
+
+    ceiling = (os.getenv("SALES_PERCEPTION_MODE_CEILING") or "off").strip().lower()
+    try:
+        mode = effective_mode(read_state(_vault_dir()), ceiling=ceiling, session_id=session_id)
+    except Exception as exc:  # noqa: BLE001 — el control nunca frena el mensaje del cliente
+        logger.warning("perception.rollout_state_unreadable", error=repr(exc)[:200])
+        mode = "off"
+    if mode not in _PERCEPTION_MODES:
+        return {"perception_mode": "off"}
+    profile = (os.getenv("SALES_PERCEPTION_PROFILE") or "").strip() or _DEFAULT_PERCEPTION_PROFILE
+    return {"perception_mode": mode, "perception_profile": profile}
 
 
 class LoadOrStartSalesSession:
@@ -113,7 +154,13 @@ class LoadOrStartSalesSession:
         phone_number_id: str | None,
         extra_context: list[str] | None = None,
         prefer_sales: bool = False,
+        inbound_meta: dict[str, Any] | None = None,
     ) -> None:
+        # `inbound_meta`: `{wamid, ts_ms, kind}` del mensaje para la traza v2
+        # (plan del laboratorio, PR 3). Viaja como 4.º argumento de la señal
+        # de VENTAS solo con `SALES_SIGNAL_INBOUND_META=on`: se enciende
+        # después de desplegar el worker que acepta ese argumento (un worker
+        # viejo que lo recibe falla la tarea del workflow hasta reiniciarse).
         # `prefer_sales`: el turno TIENE que ir a Ventas aunque la ruta sea
         # remarketing (hoy: respuesta a una campaña — su nota solo viaja por
         # el plugin_context de Sales). Cancela el remarketing vivo y deja la
@@ -341,7 +388,12 @@ class LoadOrStartSalesSession:
                 id=workflow_id,
                 task_queue=get_task_queue("chats", "sales"),
                 start_signal="send_message",
-                start_signal_args=[message, None, plugin_context],
+                start_signal_args=[
+                    message,
+                    None,
+                    plugin_context,
+                    *([{**inbound_meta, **_perception_meta(session_id)}] if inbound_meta and _inbound_meta_enabled() else []),
+                ],
                 id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             )
             # El mensaje ya viajó DENTRO del start_workflow (start_signal) — no

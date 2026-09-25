@@ -859,7 +859,7 @@ async def test_flush_discards_stale_intent_past_ttl_and_logs_warning(
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _TTL_SESSION_ID)
 
-    assert sent == 0
+    assert sum(r["ok"] for r in sent) == 0
     wa_client_mod.send_cta_url.assert_not_awaited()
     assert _read_ttl_metadata(ttl_vault)["pending_ui_intents"] == []
     assert "stale" in caplog.text.lower()
@@ -883,7 +883,7 @@ async def test_flush_dispatches_fresh_intent_normally(ttl_vault):
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _TTL_SESSION_ID)
 
-    assert sent == 1
+    assert sum(r["ok"] for r in sent) == 1
     wa_client_mod.send_cta_url.assert_awaited_once()
     assert _read_ttl_metadata(ttl_vault)["pending_ui_intents"] == []
 
@@ -913,7 +913,7 @@ async def test_flush_mixed_queue_only_dispatches_fresh(ttl_vault):
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _TTL_SESSION_ID)
 
-    assert sent == 1
+    assert sum(r["ok"] for r in sent) == 1
     wa_client_mod.send_cta_url.assert_awaited_once()
     assert _read_ttl_metadata(ttl_vault)["pending_ui_intents"] == []
 
@@ -938,7 +938,7 @@ async def test_flush_discards_intent_without_queued_at_ms(ttl_vault, caplog):
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _TTL_SESSION_ID)
 
-    assert sent == 0
+    assert sum(r["ok"] for r in sent) == 0
     wa_client_mod.send_cta_url.assert_not_awaited()
     assert _read_ttl_metadata(ttl_vault)["pending_ui_intents"] == []
     assert "stale" in caplog.text.lower()

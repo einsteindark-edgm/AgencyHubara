@@ -10,6 +10,8 @@ cast de `agents_admin` (`/api/agents/evals/*`).
   * GET  /evals/scorecard           → detalle: scorecard + trayectoria + puntaje legado
   * POST /evals/scorecard/rescore   → recalcula (código ya; juez en el worker)
   * GET  /evals/checks/stats        → Pareto, tendencia semanal, embudo
+    (`?bot=actual|nuevo` en la lista y en las gráficas: qué bot respondió
+    el episodio, desde el `mode` de su traza — plan del laboratorio PR 18)
   * POST /evals/labels              → etiqueta humana de un check
   * GET  /evals/labels              → etiquetas de un episodio
   * GET  /evals/labels/queue        → qué etiquetar primero
@@ -44,8 +46,10 @@ from src.plugins.chats.agent.sales_eval.scorecard.registry import (
     SPECS_BY_ID,
     specs_payload,
 )
+from src.plugins.chats.agent.sales_eval.scorecard.bot import episode_bot
 from src.plugins.chats.agent.sales_eval.scorecard.stats import STAGE_ORDER
 from src.plugins.chats.agent.sales_eval.scorecard.trajectory import Trajectory
+from src.plugins.chats.shared import turn_traces
 
 router = APIRouter()
 
@@ -94,6 +98,7 @@ def _previous_judge_results(found: dict[str, Any] | None) -> list[Any]:
             evidence=str(r.get("evidence") or ""),
             critique=str(r.get("critique") or ""),
             source="judge",
+            topics=tuple(t for t in r.get("topics") or [] if isinstance(t, dict)),
         )
         for r in found.get("results") or []
         if isinstance(r, dict) and r.get("source") == "judge" and r.get("check_id") in SPECS_BY_ID
@@ -140,13 +145,36 @@ def scorecard_checks() -> dict[str, Any]:
     }
 
 
+_BOT_PATTERN = "^(actual|nuevo)$"
+
+
+def _with_bot(rows: list[dict[str, Any]], bot: str) -> list[dict[str, Any]]:
+    """Solo las filas del bot pedido, con su `bot`. Las trazas de cada sesión se
+    leen UNA vez (la lista va a 56 días y el cast corta a los 15 s); un
+    episodio "mixto" no es de ninguno."""
+    vault = get_vault_dir()
+    by_session: dict[str, list[dict[str, Any]]] = {}
+    out = []
+    for row in rows:
+        sid, ep = str(row.get("session_id") or ""), str(row.get("episode_id") or "")
+        if sid not in by_session:
+            by_session[sid] = turn_traces.read_traces(vault, sid) if _SESSION_ID_RE.fullmatch(sid) else []
+        answered_by = episode_bot(t for t in by_session[sid] if t.get("episode_id") == ep)
+        if answered_by == bot:
+            out.append({**row, "bot": answered_by})
+    return out
+
+
 @router.get("/evals/scorecards")
-def list_scorecards(days: int = Query(default=30, ge=1, le=180)) -> dict[str, Any]:
+def list_scorecards(
+    days: int = Query(default=30, ge=1, le=180),
+    bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
+) -> dict[str, Any]:
     dates = _dates(days)
-    rows = store.list_scorecards(
-        store.scorecards_dir(get_vault_dir()), dates=dates, episode_since=dates[-1]
-    )
-    return {"days": days, "count": len(rows), "registry_version": REGISTRY_VERSION, "scorecards": rows}
+    rows = store.list_scorecards(store.scorecards_dir(get_vault_dir()), dates=dates, episode_since=dates[-1])
+    if bot is not None:
+        rows = _with_bot(rows, bot)
+    return {"days": days, "bot": bot, "count": len(rows), "registry_version": REGISTRY_VERSION, "scorecards": rows}
 
 
 @router.get("/evals/scorecard")
@@ -219,13 +247,18 @@ async def rescore(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str
 
 
 @router.get("/evals/checks/stats")
-def check_stats(days: int = Query(default=56, ge=7, le=365)) -> dict[str, Any]:
+def check_stats(
+    days: int = Query(default=56, ge=7, le=365),
+    bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
+) -> dict[str, Any]:
     dates = _dates(days)
     rows = store.list_scorecards(
         store.scorecards_dir(get_vault_dir()), dates=dates, episode_since=dates[-1]
     )
+    if bot is not None:
+        rows = _with_bot(rows, bot)
     weeks = stats.weeks_between(dates[-1], dates[0])
-    return {"days": days, **stats.compute_stats(rows, weeks=weeks)}
+    return {"days": days, "bot": bot, **stats.compute_stats(rows, weeks=weeks)}
 
 
 @router.post("/evals/labels")

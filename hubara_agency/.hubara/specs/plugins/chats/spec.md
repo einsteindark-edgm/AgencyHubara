@@ -607,6 +607,62 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - WHEN el operador usa "Crear pedido"
 - THEN el sugerido muestra `discount_cop`/`coupon_code` y el registro descuenta lo mismo que descontaría el bot
 
+### Requirement: Hilo de cada turno del bot en el chat (laboratorio, PR 17)
+
+El panel del chat SHALL ofrecer, al final de cada turno del bot, un botón visible siempre (también en la app Android) que abre el hilo de ese turno: el diagrama de secuencia de la traza (`GET /api/chats/sessions/{sesión}/turns/trace?turn_key=`). `GET /api/dashboard/sessions/{sesión}` MUST marcar cada burbuja con el `turn_key` del turno que la produjo: el mensaje del cliente, con el turno que lo procesó (por wamid, o el primero que arrancó después, dentro de 30 min); lo del bot, con el último turno que arrancó antes y que todavía no había terminado (hasta 1 min después de escribir su traza, `recorded_at_ms`). Los mensajes del operador humano, los ecos de otro agente (`sender`), las plantillas que llegan después del turno (ETA, remarketing, campañas) y los eventos de sistema no llevan turno. Una traza rota nunca deja sin historial al chat: el historial sale igual, sin botones. Solo lectura.
+
+#### Scenario: Un botón por turno
+
+- GIVEN un chat con dos turnos del bot y un mensaje del operador humano
+- WHEN el operador abre la conversación
+- THEN ve dos botones "Hilo del turno", al final de cada turno, y ninguno en el mensaje del operador
+
+#### Scenario: Una plantilla posterior no es del turno
+
+- GIVEN un turno del bot que terminó a las 10:00 y una plantilla de ETA que salió a las 10:15
+- WHEN el operador abre la conversación
+- THEN la burbuja de la plantilla no tiene botón de turno (su hilo no la trae)
+
+#### Scenario: Una traza rota no tumba el chat
+
+- GIVEN la traza del chat con una línea cortada a mitad de escritura
+- WHEN el operador abre la conversación
+- THEN ve todo el historial; los turnos que se pueden leer conservan su botón
+
+#### Scenario: Traza v1
+
+- GIVEN un turno anterior a la traza v2
+- WHEN se abre su hilo
+- THEN se ven los pasos que se saben (ráfaga, tools, guardas, envío), sin tiempos, y el modal lo avisa
+
+### Requirement: El banco del laboratorio deja fuera las conversaciones de prueba (laboratorio, PR 7)
+
+El exportador del banco (botón "Nueva corrida", worker `sales_eval`) MUST dejar fuera, con su motivo en el manifiesto, lo que no es una conversación real con un cliente: sesiones `wa_golden_*` (`golden`), `seeded_test: true` (`sesion_de_prueba`), los números del equipo (`numero_interno`, de `LAB_INTERNAL_NUMBERS`, que se declara por tenant en Terraform: `tenants.<t>.lab.internal_numbers`) y las conversaciones con un pedido marcado "prueba" en Órdenes (`pedido_de_prueba`). La marca de prueba MUST leerse de OrderFacts en el momento del export (lectura fresca de Medusa, no lo que quedó en su caché), con los `order_id` de los episodios de `metadata.json`, nunca de una copia del vault. Si OrderFacts no responde (falla, tarda más de 120 s o no puede leer Medusa), el export MUST NOT fallar por eso ni adivinar: un pedido que OrderFacts ya conocía como de prueba excluye igual, las demás conversaciones con pedido se quedan y el manifiesto anota cuántas quedaron sin verificar. Sin promociones (Medusa caído) el export sí falla, a la vista: la caja las necesita para simular los cupones.
+
+#### Scenario: Pedido marcado prueba
+
+- GIVEN una conversación con un episodio cuyo `order_id` está marcado "prueba" en Órdenes
+- WHEN se arma un banco nuevo
+- THEN la conversación no viaja (ni sus archivos ni sus turnos) y el manifiesto la lista con motivo `pedido_de_prueba`
+
+#### Scenario: La marca se puso después de un banco anterior
+
+- GIVEN un banco que se exportó cuando el pedido todavía no era de prueba, y el operador lo marca después
+- WHEN se arma el banco siguiente
+- THEN la conversación queda fuera con `pedido_de_prueba`
+
+#### Scenario: OrderFacts no responde
+
+- GIVEN OrderFacts falla o no contesta en 120 s al armar el banco (las promociones sí se leyeron)
+- WHEN se arma el banco
+- THEN el banco sale igual, las conversaciones con pedido se quedan y el manifiesto anota "1 conversación con pedido quedó en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"; con varias dice "Hasta N conversaciones…", porque OrderFacts no dice cuál pedido quedó sin actualizar
+
+#### Scenario: Medusa caído
+
+- GIVEN Medusa no responde y no hay promociones en caché
+- WHEN se arma el banco
+- THEN el export falla a la vista (el lanzador muestra el error) sin esperar a OrderFacts, y no queda un banco con manifiesto que la caja pueda usar
+
 ### Requirement: Estados de Meta de los mensajes de campaña
 
 El webhook de estados (`statuses[]`) MUST leer la hora del estado y el código

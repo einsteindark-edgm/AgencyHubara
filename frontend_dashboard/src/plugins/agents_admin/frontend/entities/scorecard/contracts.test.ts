@@ -5,6 +5,7 @@ import detailFixture from "./fixtures/scorecard-detail.json";
 import listFixture from "./fixtures/scorecards.json";
 import {
   checkRegistrySchema,
+  checkResultSchema,
   scorecardDetailSchema,
   scorecardListSchema,
 } from "./contracts";
@@ -110,5 +111,30 @@ describe("scorecardDetailSchema", () => {
     expect(t.state.changes).toEqual([]);
     expect(t.tools[0].ok).toBeNull();
     expect(t.sent_texts).toEqual([]);
+  });
+});
+
+describe("checkResultSchema — EST-08 v2", () => {
+  it("parsea la cobertura por asunto que devuelve el juez", () => {
+    const r = checkResultSchema.parse({
+      check_id: "EST-08",
+      verdict: "falla",
+      level: "mayor",
+      turn: 2,
+      source: "judge",
+      topics: [
+        { topic: "catálogo", turn: 2, msg: 1, covered: false, evidence: "me mandas el catálogo" },
+        { topic: "envío", turn: 2, msg: null, covered: true },
+      ],
+    });
+    expect(r.topics).toEqual([
+      { topic: "catálogo", turn: 2, msg: 1, covered: false, evidence: "me mandas el catálogo" },
+      { topic: "envío", turn: 2, msg: null, covered: true, evidence: "" },
+    ]);
+  });
+
+  it("un resultado sin asuntos (registro v2) queda con la lista vacía", () => {
+    const r = checkResultSchema.parse({ check_id: "CON-01", verdict: "pasa", level: "critico", source: "code" });
+    expect(r.topics).toEqual([]);
   });
 });

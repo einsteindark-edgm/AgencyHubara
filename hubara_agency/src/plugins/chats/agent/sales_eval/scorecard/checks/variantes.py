@@ -9,8 +9,12 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     PRICE_RE,
     failed,
+    in_focus,
     is_legacy,
+    judged,
+    judged_turns,
     not_applicable,
+    not_judged,
     passed,
     quote,
     sent_texts,
@@ -28,7 +32,7 @@ _PRICE_INTENTS = ("products_list", "product_detail", "order_confirmation")
 def var_01(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     texts = list(sent_texts(traj))
     if not texts:
-        return not_applicable("VAR-01", "el bot no envió texto")
+        return not_judged("VAR-01", traj, "el bot no envió texto")
     if not ctx.catalog_available:
         return unknown("VAR-01", "catálogo no disponible para reconocer aromas y colores")
     for t, text in texts:
@@ -47,7 +51,7 @@ def var_01(traj: Trajectory, ctx: CheckContext) -> CheckResult:
 def var_01b(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if is_legacy(traj):
         return unknown("VAR-01b", "sin trazas: no se ven las guardas")
-    for t in traj.turns:
+    for t in judged_turns(traj):
         if "variant_enumeration_guard" in t.guards:
             return failed(
                 "VAR-01b", t.turn,
@@ -58,9 +62,9 @@ def var_01b(traj: Trajectory, ctx: CheckContext) -> CheckResult:
 
 @code_check("VAR-02")
 def var_02(traj: Trajectory, ctx: CheckContext) -> CheckResult:
-    calls = [(t, c) for t in traj.turns for c in t.tools_named("present_variant_picker")]
+    calls = [(t, c) for t in judged_turns(traj) for c in t.tools_named("present_variant_picker")]
     if not calls:
-        return not_applicable("VAR-02", "sin picker de variantes")
+        return not_judged("VAR-02", traj, "sin picker de variantes")
     if is_legacy(traj):
         return unknown("VAR-02", "sin trazas: no se ve el resultado del picker")
     for t, c in calls:
@@ -72,14 +76,14 @@ def var_02(traj: Trajectory, ctx: CheckContext) -> CheckResult:
 @code_check("VAR-03")
 def var_03(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     any_picker = False
-    for t in traj.turns:
+    for t in judged_turns(traj):
         pickers = [c for c in t.tools_named("present_variant_picker") if c.ok is not False]
         any_picker = any_picker or bool(pickers)
         repeated = [k for k, n in Counter(str(c.args.get("variant_type") or "?") for c in pickers).items() if n > 1]
         if repeated:
             return failed("VAR-03", t.turn, f"turno {t.turn}: picker de {repeated[0]} duplicado")
     if not any_picker:
-        return not_applicable("VAR-03", "sin picker de variantes")
+        return not_judged("VAR-03", traj, "sin picker de variantes")
     return passed("VAR-03", "sin pickers duplicados")
 
 
@@ -87,10 +91,14 @@ def var_03(traj: Trajectory, ctx: CheckContext) -> CheckResult:
 def var_04(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     choices = []
     for prev, t in zip(traj.turns, traj.turns[1:]):
-        if "variant_picker" in prev.intents and t.inbound_text.startswith("[el cliente seleccionó:"):
+        if (
+            judged(traj, t)
+            and "variant_picker" in prev.intents
+            and t.inbound_text.startswith("[el cliente seleccionó:")
+        ):
             choices.append(t)
     if not choices:
-        return not_applicable("VAR-04", "el cliente no eligió desde un picker")
+        return not_judged("VAR-04", traj, "el cliente no eligió desde un picker")
     legacy = is_legacy(traj)
     for t in choices:
         recorded = t.tool_ok("set_order_slot") or (legacy and t.tool_attempted("set_order_slot"))
@@ -109,13 +117,17 @@ def var_06(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if is_legacy(traj):
         return unknown("VAR-06", "sin trazas: no se ve el pedido en cada turno")
     known = False
+    known_at_focus = False
     for prev, t in zip(traj.turns, traj.turns[1:]):
         known = known or bool((prev.draft or {}).get("cantidad"))
-        if not known:
+        if not known or not judged(traj, t):
             continue
+        known_at_focus = True
         for text in t.sent_texts:
             if "?" in text and _QUANTITY_Q.search(text):
                 return failed("VAR-06", t.turn, f"turno {t.turn}: vuelve a preguntar la cantidad {quote(text)}")
+    if in_focus(traj) and not known_at_focus:
+        return not_judged("VAR-06", traj, "la cantidad no se conocía antes del turno")
     if not known and not any((t.draft or {}).get("cantidad") for t in traj.turns):
         return not_applicable("VAR-06", "el pedido nunca tuvo cantidad")
     return passed("VAR-06", "no re-preguntó la cantidad")
@@ -127,6 +139,8 @@ def var_07(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if not requests:
         return not_applicable("VAR-07", "no pidió confirmación ni datos de envío")
     first = requests[0]
+    if not judged(traj, first):
+        return not_judged("VAR-07", traj, "el primer pedido de confirmación o datos fue antes")
     for t in traj.turns:
         if t.turn > first.turn:
             break
@@ -144,9 +158,9 @@ def var_07(traj: Trajectory, ctx: CheckContext) -> CheckResult:
 
 @code_check("VAR-09")
 def var_09(traj: Trajectory, ctx: CheckContext) -> CheckResult:
-    calls = [(t, c) for t in traj.turns for c in t.tools_named("send_quick_replies")]
+    calls = [(t, c) for t in judged_turns(traj) for c in t.tools_named("send_quick_replies")]
     if not calls:
-        return not_applicable("VAR-09", "sin botones rápidos")
+        return not_judged("VAR-09", traj, "sin botones rápidos")
     if is_legacy(traj):
         return unknown("VAR-09", "sin trazas: no se ven los botones rechazados")
     for t, c in calls:

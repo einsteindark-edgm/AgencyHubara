@@ -58,6 +58,16 @@ api:
     # Lee la conversación con DeepSeek y devuelve el formulario PRE-LLENADO;
     # no registra nada (eso lo hace session-actions@v1 /order).
     - { module: src.plugins.chats.api.order_intake, prefix: /api/chats, tags: [Chats_OrderIntake] }
+    # Laboratorio de conversaciones (LABORATORIO_CONVERSACIONES_PLAN.md §3.7 y
+    # §4.3): el botón "Nueva corrida" (estimado, lanzar, en curso, cancelar).
+    # Las lecturas del contrato lab@v1 llegan con el PR 8.
+    - { module: src.plugins.chats.api.lab, prefix: /api/chats, tags: [Chats_Lab] }
+    # Contrato perception-rollout@v1 (plan del laboratorio, PR 16): el encendido
+    # del bot nuevo por etapas. El panel de Agents lo consume por cast.
+    - { module: src.plugins.chats.api.perception, prefix: /api/chats, tags: [Chats_Perception] }
+    # Plan del laboratorio PR 17: el hilo de cada turno del bot (botón por
+    # turno en el panel del chat).
+    - { module: src.plugins.chats.api.turns, prefix: /api/chats, tags: [Chats_Turns] }
 
 # ── Agente Temporal ────────────────────────────────────────────────────
 # Dos workers en task queues exclusivas: SALES_QUEUE y REMARKETING_QUEUE.
@@ -445,6 +455,9 @@ agent:
         # Scorecard por etapa a demanda (HU-SC-2): "Recalcular con juez" desde
         # el dashboard. Lo arranca la API de evals (el juez excede el timeout del cast).
         - ScoreEpisodeWorkflow
+        # Laboratorio (plan §3.7): el botón "Nueva corrida" de la sección
+        # Laboratorio. Id fijo `lab-launch` (una corrida a la vez).
+        - LabLaunchWorkflow
       deployment:
         replicas: 1
         cpu_request: 250m

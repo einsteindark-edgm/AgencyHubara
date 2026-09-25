@@ -112,7 +112,7 @@ async def test_quick_replies_success_appends_ui_component_note(vault):
 
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
-    assert sent == 1
+    assert sum(r["ok"] for r in sent) == 1
 
     events = _read_history(vault)
     assert len(events) == 1
@@ -147,7 +147,7 @@ async def test_shipping_flow_appends_form_note(vault, monkeypatch):
 
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
-    assert sent == 1
+    assert sum(r["ok"] for r in sent) == 1
 
     events = _read_history(vault)
     assert len(events) == 1
@@ -187,7 +187,7 @@ async def test_variant_picker_persists_rendered_text_as_plain_message(vault):
 
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
-    assert sent == 1
+    assert sum(r["ok"] for r in sent) == 1
 
     events = _read_history(vault)
     assert len(events) == 1
@@ -231,7 +231,7 @@ async def test_failed_send_appends_no_history_event(vault, monkeypatch):
 
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
-    assert sent == 0
+    assert sum(r["ok"] for r in sent) == 0
     assert _read_history(vault) == []
 
 
@@ -262,7 +262,7 @@ async def test_multiple_intents_append_in_send_order(vault):
 
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
-    assert sent == 2
+    assert sum(r["ok"] for r in sent) == 2
 
     events = _read_history(vault)
     assert [e["component_kind"] for e in events] == [
@@ -390,7 +390,8 @@ async def test_sent_component_event_carries_its_wamid(vault):
     )
 
     env = ActivityEnvironment()
-    assert await env.run(flush_pending_ui_intents_activity, _SESSION_ID) == 1
+    report = await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
+    assert [r["wamid"] for r in report if r["ok"]] == ["wamid.test.1"]
 
     (ev,) = _read_history(vault)
     assert ev["wamid"] == "wamid.test.1"

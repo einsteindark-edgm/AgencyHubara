@@ -295,17 +295,27 @@ async def _gallery_inter_delay() -> None:
 
 @activity.defn(name="flush_pending_ui_intents_activity")
 @with_heartbeat(every=5)
-async def flush_pending_ui_intents_activity(session_id: str) -> int:
-    """Activity del workflow: delega en `flush_pending_ui_intents` (la lógica
-    es una función plana para que también la pueda invocar un handler HTTP)."""
-    return await flush_pending_ui_intents(session_id)
+async def flush_pending_ui_intents_activity(session_id: str) -> list[dict[str, Any]] | int:
+    """Activity del workflow: delega en `flush_pending_ui_intents_report` (la
+    lógica es una función plana para que también la pueda invocar un handler
+    HTTP). Devuelve qué entregó, intent por intent (`[{kind, wamid, ok}]`,
+    traza v2). La anotación admite `int` A PROPÓSITO: Temporal decodifica el
+    resultado grabado con este tipo, y las histories anteriores a la traza v2
+    grabaron la cantidad (replay, L-22)."""
+    return await flush_pending_ui_intents_report(session_id)
 
 
 async def flush_pending_ui_intents(session_id: str) -> int:
+    """Cantidad de intents enviados (excluye los que fallaron y los unknown)."""
+    return sum(1 for r in await flush_pending_ui_intents_report(session_id) if r["ok"])
+
+
+async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any]]:
     """Lee `metadata.json[pending_ui_intents]` y dispatch a `send_*`.
 
-    Devuelve la cantidad de intents enviados (excluye los que fallaron y
-    los unknown).
+    Devuelve un registro por intent intentado, en orden: `{kind, wamid, ok}`
+    (`wamid` de Meta si salió; `None` si falló o no se despachó). Los intents
+    vencidos que se descartan sin intentar no aparecen.
 
     Función PLANA (sin `activity.info()` ni heartbeat): la invoca la activity
     de arriba desde el workflow Sales y, desde D1.2b, el endpoint
@@ -325,7 +335,7 @@ async def flush_pending_ui_intents(session_id: str) -> int:
 
     metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
     if not metadata_file.exists():
-        return 0
+        return []
     try:
         data = json.loads(metadata_file.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
@@ -333,11 +343,11 @@ async def flush_pending_ui_intents(session_id: str) -> int:
             "flush_ui_intents.bad_metadata",
             extra={"session_id": session_id},
         )
-        return 0
+        return []
 
     intents = list(data.get("pending_ui_intents") or [])
     if not intents:
-        return 0
+        return []
 
     # PREMORTEM C4: descartar intents vencidos ANTES de resolver teléfono o
     # dispatch — un turno suprimido no puede convertirse en un mensaje
@@ -376,7 +386,7 @@ async def flush_pending_ui_intents(session_id: str) -> int:
         _safe_write_metadata(metadata_file, data)
     intents = fresh_intents
     if not intents:
-        return 0
+        return []
 
     # Resolve target phone
     phone_number_id = data.get("phone_number_id") or os.getenv(
@@ -391,13 +401,13 @@ async def flush_pending_ui_intents(session_id: str) -> int:
         # Limpiar igual — no podemos enviar, mejor no acumular forever
         data["pending_ui_intents"] = []
         _safe_write_metadata(metadata_file, data)
-        return 0
+        return []
 
     last_inbound_msg_id = data.get("last_inbound_message_id")
     bus = get_event_bus()
     tenant_id = os.getenv("HUBARA_TENANT_ID", "hubara")
 
-    sent_count = 0
+    report: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
 
     # PREMORTEM #1: idempotency on Temporal retry.
@@ -446,6 +456,7 @@ async def flush_pending_ui_intents(session_id: str) -> int:
                 },
             )
             failed.append({"kind": kind, "error": str(e)})
+            report.append({"kind": kind, "wamid": None, "ok": False})
             # Pop el intent fallido (NO retry automático — el LLM puede
             # decidir reemitir en próxima iteración) y persistir.
             intents_pending.pop(0)
@@ -455,6 +466,7 @@ async def flush_pending_ui_intents(session_id: str) -> int:
         if result is None:
             # kind desconocido o intent inválido (sin imagen, etc)
             failed.append({"kind": kind, "error": "no_dispatch"})
+            report.append({"kind": kind, "wamid": None, "ok": False})
             intents_pending.pop(0)
             _safe_write_metadata(metadata_file, data)
             continue
@@ -469,6 +481,7 @@ async def flush_pending_ui_intents(session_id: str) -> int:
                 },
             )
             failed.append({"kind": kind, "error": result.error})
+            report.append({"kind": kind, "wamid": None, "ok": False})
             intents_pending.pop(0)
             _safe_write_metadata(metadata_file, data)
             continue
@@ -487,7 +500,7 @@ async def flush_pending_ui_intents(session_id: str) -> int:
             # de persistir.
             _reload_flow_awaiting_flag(metadata_file, data)
         _safe_write_metadata(metadata_file, data)
-        sent_count += 1
+        report.append({"kind": kind, "wamid": result.wa_message_id, "ok": True})
 
         # Auditoría CAPI 2026-09-08: lo que el cliente acaba de VER es la
         # señal de embudo para Meta (ViewContent / AddToCart /
@@ -540,7 +553,7 @@ async def flush_pending_ui_intents(session_id: str) -> int:
         data["ui_intents_failures"] = history[-50:]
         _safe_write_metadata(metadata_file, data)
 
-    return sent_count
+    return report
 
 
 async def _dispatch_intent(

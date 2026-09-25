@@ -796,6 +796,140 @@ La traza SHALL atribuirse al episodio abierto cuando ARRANCÓ el turno (el
 - THEN la traza es de `ep_007` (el episodio abierto al arrancar el turno) y encadena su numeración
 - AND `ep_008` no recibe un turno fantasma
 
+### Requirement: La traza guarda los pasos del turno en orden (traza v2, 2026-09-23)
+
+La traza (versión 2) SHALL registrar, además de los campos v1, los `steps` del
+turno en el orden en que pasaron, con su tiempo relativo al inicio del turno:
+cada `llm_chat` (ronda, motivo de fin, tools pedidas, tokens y qué pasó con su
+texto), cada `execute_tool` (con su resultado), cada corte del turno (cliente
+esperando, escalación, `send_reply`, cierre de tag, Checkpoints A y B), cada
+guarda con el texto antes y después, cada reinicio por corrientazo y cada
+burbuja o componente que salió, con su wamid. SHALL traer también un
+`turn_key` determinista (`run:<run_id>/t:<n>`), `source` (`prod` o
+`lab:<corrida>:<brazo>:<rep>`) y `mode`. El campo v1 `guards` SHALL seguir igual
+(ordenado y sin nombres nuevos), para que el scorecard no cambie. El registro
+SHALL armarse en memoria del workflow, sin agregar commands a la history; las
+activities de envío SHALL seguir aceptando el resultado que grabaron las
+histories anteriores (`None` del envío, un entero del flush). Plan del
+laboratorio de conversaciones, §4.1.
+
+#### Scenario: Turno con una búsqueda
+
+- WHEN el LLM pide `search_products`, lee el resultado y responde
+- THEN `steps` es `llm → tool → llm → outbound`, la narración junto a la tool figura como descartada y la burbuja trae su wamid
+
+#### Scenario: Corrientazo
+
+- WHEN el cliente escribe mientras el LLM piensa y el turno se reinicia
+- THEN `steps` muestra el intento abortado, el corte `checkpoint_a`, el `restart` y el intento que respondió
+
+#### Scenario: Ráfaga con los ids de cada mensaje
+
+- GIVEN `SALES_SIGNAL_INBOUND_META=on` en la API y el worker que acepta el 4.º argumento de `send_message`
+- WHEN el cliente manda dos mensajes seguidos
+- THEN la traza trae `inbound[]` con el `wamid`, la hora (`ts_ms`) y el tipo de cada mensaje, en orden
+- AND una señal de 3 argumentos (history anterior o variable apagada) sigue funcionando, con `wamid` y `ts_ms` en null
+- AND un 4.º argumento con otra forma se ignora: nunca se descarta el mensaje del cliente
+
+#### Scenario: History anterior a la traza v2
+
+- GIVEN una history que grabó `None` como resultado del envío y un entero como resultado del flush
+- WHEN el worker nuevo la re-juega
+- THEN no diverge y la burbuja queda con `delivered: null`
+
+### Requirement: Capas del turno con clasificador detrás del modo (laboratorio, PR 14)
+
+El turno de ventas SHALL poder usar un clasificador (Jev u OpenAI por OpenRouter) en tres capas, SOLO cuando la señal del cliente trae un modo activo (`inbound_meta.perception_mode` = `shadow`, `canary` u `on`), acotado por el techo de Terraform `SALES_PERCEPTION_MODE_CEILING` (default `off`). Sin modo o con `off`, el turno MUST ser el de hoy: no se consulta `workflow.patched("perception-v1")` ni se agenda ninguna activity nueva. El clasificador MUST fallar abierto: un error o timeout deja el turno como hoy.
+
+#### Scenario: Modo apagado — el turno de hoy
+
+- GIVEN una señal sin `perception_mode` (o con `off`)
+- WHEN corre el turno
+- THEN no corre `perceive_burst` ni `verify_coverage`, la traza dice `mode: off` y las histories anteriores re-juegan sin divergir
+
+#### Scenario: Sombra — se mide sin cambiar la respuesta
+
+- GIVEN modo `shadow`
+- WHEN el cliente manda una ráfaga
+- THEN la percepción corre en paralelo al LLM y la verificación después de enviar
+- AND la respuesta al cliente es la misma que sin modo; la traza guarda `perception`, `plan` y `verify` con `applied: false`
+
+#### Scenario: Encendido — plan, ronda extra y complemento
+
+- GIVEN modo `on` y una ráfaga "¿me mandas el catálogo?" + "¿y el envío a Bogotá?"
+- WHEN el clasificador detecta los dos asuntos
+- THEN el LLM recibe la nota `[PLAN DEL TURNO]` con cada asunto y su mensaje
+- AND si una tool que espera al cliente (ej. `send_shipping_rates`) cortaría el turno sin atender el catálogo, hay UNA ronda más con esa nota (`turn_policy`)
+- AND si la verificación dice con claridad que un asunto quedó sin atender, se envía UN complemento como turno de sistema (`trigger: complement`); si hay duda, el asunto queda pendiente para la percepción del turno siguiente
+- AND si el cliente escribe antes del complemento, su mensaje manda y el complemento se descarta
+- AND la verificación en la traza guarda su costo (`cost_usd`) y `complement_scheduled: true` solo si este turno agendó el complemento (el laboratorio espera ese segundo turno sin adivinar)
+
+#### Scenario: La verificación juzga lo que el cliente recibe en el turno
+
+- GIVEN modo `on` en el primer contacto: el workflow manda el saludo (Burbuja 1) y después el texto del `send_reply`
+- WHEN la verificación corre antes de enviar el texto final
+- THEN juzga el saludo y el texto final juntos, tal como los recibe el cliente (lo ya enviado en el turno + el texto final si sale, después de las guardas); un texto que una guarda retiene no cuenta como respuesta
+- AND en `shadow` juzga exactamente el mismo texto, leído de lo enviado: la vara es la misma en los dos modos
+
+#### Scenario: Clasificador caído
+
+- GIVEN modo `on` y el clasificador responde error o timeout
+- WHEN corre el turno
+- THEN el turno sale como hoy (sin nota, sin ronda extra, sin complemento) y la traza guarda el motivo en `perception.fallback`
+
+#### Scenario: Bajar el modo llega a la conversación en curso
+
+- GIVEN `SALES_SIGNAL_INBOUND_META=on` y una conversación viva cuyo workflow quedó en `on`
+- WHEN el techo baja a `off` (o el control lo apaga) y el cliente escribe
+- THEN la señal lleva `perception_mode: off` EXPLÍCITO (el workflow se queda con el último modo recibido) y el siguiente turno corre sin capas, sin esperar a que la sesión termine
+
+#### Scenario: Ningún dato personal sale hacia el clasificador
+
+- GIVEN modo `shadow`, `canary` u `on`
+- WHEN la ráfaga y la respuesta del asesor salen hacia OpenRouter o TypeSafe
+- THEN van sin teléfonos, correos, direcciones (también sin `#`: "cra 7 45-12"), nombres anunciados ("me llamo …", "a nombre de …"), valores personales del formulario de envío, ni el nombre de quien recibe, la dirección y el barrio del borrador del episodio
+- AND el clasificador lee lo que escribió el cliente (`inbound_meta.text`), no la campaña citada ni el resumen del episodio anterior que el turno le agrega al LLM
+
+#### Scenario: La traza mide al clasificador, no al turno
+
+- GIVEN modo `shadow` (la percepción se lee después de enviar)
+- WHEN se guarda el paso `perception`
+- THEN `latency_ms` y `dur_ms` son la latencia del clasificador (la vara del canary, p95 < 1500 ms, se mide con este valor)
+
+### Requirement: Encendido del bot nuevo por etapas desde Agents (laboratorio, PR 16)
+
+El modo de cada conversación SHALL salir del estado `<vault>/_rollout/perception.json`, que escribe el panel "Bot nuevo" de la sección Agents (contrato `perception-rollout@v1` de chats, consumido por cast `/api/agents/perception/rollout`). El ingest lo lee en cada mensaje y MUST acotarlo al techo de Terraform `SALES_PERCEPTION_MODE_CEILING`. En `canary`, el modo `on` aplica a los números de prueba y a un porcentaje estable de conversaciones (bucket por hash del `session_id`); el resto queda en `shadow`. Apagar y bajar MUST pasar siempre: escriben sin recorrer el vault ni revalidar lo guardado, y el panel muestra Apagar aunque no pueda leer el estado o haya otro cambio en vuelo. Subir MUST exigir los chequeos: `SALES_SIGNAL_INBOUND_META` encendido, dentro del techo, llave presente (el placeholder de Terraform no cuenta), y para `canary`/`on` la vara de la sombra medida con el perfil vigente en las últimas dos semanas y sin la suite golden: 7 días distintos con turnos, al menos 150 turnos, caídas < 1 % y p95 de la latencia del clasificador < 1500 ms. Cada cambio MUST quedar firmado (`updated_by`, el usuario del token) y en el log (`perception.rollout_changed`).
+
+#### Scenario: Apagar es inmediato
+
+- GIVEN modo `on` en el estado
+- WHEN el operador pulsa "Apagar" en Agents
+- THEN el PUT con `{mode: off}` pasa sin chequeos y el siguiente mensaje de cada conversación, también de las que están en curso, viaja con `perception_mode: off` (turno de hoy)
+
+#### Scenario: Subir sin la vara de la sombra
+
+- GIVEN 3 días de sombra medida
+- WHEN el operador pide `on`
+- THEN el botón está deshabilitado y el panel dice qué chequeo falla; un PUT directo da 422 `not_ready` con los chequeos que fallan
+
+#### Scenario: Calidad LLM separa los bots durante el encendido (PR 18)
+
+- GIVEN episodios de producción en canary, unos respondidos por el bot nuevo (algún turno con modo `on`/`canary` en la traza) y otros por el actual (sin modo o en `shadow`)
+- WHEN el operador elige "Bot nuevo" o "Bot actual" en Calidad LLM
+- THEN el resumen y la matriz muestran solo los episodios de ese bot (`?bot=nuevo|actual` en `/evals/checks/stats` y `/evals/scorecards`)
+
+#### Scenario: El techo manda
+
+- GIVEN estado `on` y techo `shadow` en Terraform
+- WHEN llega un mensaje
+- THEN la conversación corre en `shadow` y el panel dice "Encendido (corre en sombra por el techo)"
+
+#### Scenario: Una subida lenta no pisa un apagado
+
+- GIVEN un operador pide `canary` y las métricas de la sombra tardan
+- WHEN mientras tanto otro operador pulsa Apagar
+- THEN el apagado se escribe de inmediato y la subida responde 409 `changed` sin tocar el estado
+
 ## Out of scope
 
 - Detalle del prompt engineering / SOUL.md / USER.md — viven en `hubara_vault/_templates/sales/`

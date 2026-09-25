@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import {
   useScorecards,
   type EpisodeRef,
+  type ScorecardBot,
 } from "@plugins/agents_admin/frontend/entities/scorecard";
 import {
   ComplianceMatrix,
@@ -26,6 +27,14 @@ const STATS_DAYS = WINDOW_DAYS;
 const LEGACY_WINDOW_DAYS = 30;
 
 type Tab = "resumen" | "conversaciones" | "calibracion" | "legado" | "goldens";
+
+/** Durante el encendido del bot nuevo (plan del laboratorio PR 18), las mismas
+ *  gráficas separan los episodios de cada bot (el `mode` de su traza). */
+const BOT_OPTIONS: ReadonlyArray<{ value: ScorecardBot | null; label: string }> = [
+  { value: null, label: "Todos" },
+  { value: "actual", label: "Bot actual" },
+  { value: "nuevo", label: "Bot nuevo" },
+];
 
 const TABS: ReadonlyArray<{ id: Tab; label: string; icon: () => ReactNode }> = [
   { id: "resumen", label: "Resumen", icon: Icon.spark },
@@ -72,8 +81,18 @@ export function AgentsQuality() {
 
   // Alerta: episodios con veredicto FALLA (cayó al menos un check crítico).
   // Mismo query que la matriz (cache compartido).
-  const { data: list } = useScorecards(WINDOW_DAYS);
+  const [bot, setBot] = useState<ScorecardBot | null>(null);
+  const { data: list } = useScorecards(WINDOW_DAYS, bot);
   const failingCount = (list?.scorecards ?? []).filter((s) => s.verdict === "FALLA").length;
+  // El filtro de bot solo aplica al scorecard (Resumen y Conversaciones). Si la
+  // API todavía no lo soporta, ignora `?bot=` y devuelve todos: se avisa.
+  const botFilterShown = tab === "resumen" || tab === "conversaciones";
+  const serverIgnoredBot = bot !== null && list !== undefined && list.bot !== bot;
+  const chooseBot = (value: ScorecardBot | null) => {
+    setBot(value);
+    // La conversación abierta puede no ser de ese bot.
+    setSelectedEpisode(null);
+  };
 
   const goConversations = (verdict: VerdictFilter, check: string | null) => {
     setVerdictFilter(verdict);
@@ -127,6 +146,33 @@ export function AgentsQuality() {
             );
           })}
         </div>
+        {botFilterShown && (
+          <div role="radiogroup" aria-label="Bot que respondió" className="flex items-center gap-1">
+            {BOT_OPTIONS.map((o) => (
+              <label
+                key={o.label}
+                className={
+                  "cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium transition " +
+                  (bot === o.value ? "bg-white/10 text-fg" : "text-fg-muted hover:bg-white/5")
+                }
+              >
+                <input
+                  type="radio"
+                  name="quality-bot"
+                  className="sr-only"
+                  checked={bot === o.value}
+                  onChange={() => chooseBot(o.value)}
+                />
+                {o.label}
+              </label>
+            ))}
+          </div>
+        )}
+        {botFilterShown && serverIgnoredBot && (
+          <p role="status" className="text-xs text-yellow">
+            El servidor no filtró por bot: lo que ves son todos los episodios.
+          </p>
+        )}
         {failingCount > 0 && (
           <button
             type="button"
@@ -152,6 +198,7 @@ export function AgentsQuality() {
         {tab === "resumen" && (
           <SummaryView
             days={STATS_DAYS}
+            bot={bot}
             onSelectVerdict={(v) => goConversations(v, null)}
             onSelectCheck={(id) => goConversations("todos", id)}
           />
@@ -161,6 +208,7 @@ export function AgentsQuality() {
           <div className="flex min-w-0 flex-col gap-3">
             <ComplianceMatrix
               days={WINDOW_DAYS}
+              bot={bot}
               verdictFilter={verdictFilter}
               onVerdictFilterChange={setVerdictFilter}
               checkFilter={checkFilter}

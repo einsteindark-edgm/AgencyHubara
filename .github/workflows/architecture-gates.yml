@@ -155,6 +155,19 @@ jobs:
           OTEL_SDK_DISABLED: "true"
         run: uv run pytest tests/plugins/test_premortem_invariants.py -q
 
+      - name: Laboratorio de conversaciones (sandbox del turno + test de fugas)
+        # LABORATORIO_CONVERSACIONES_PLAN.md §3.5, candado 4: un turno real del
+        # banco corre en un proceso aparte con el workflow de ventas de
+        # producción, sobre el servidor de pruebas de Temporal y un LLM falso;
+        # los hooks de auditoría de Python fallan el test si abre una conexión
+        # no local o escribe fuera de su sandbox. SIN los dummies de Medusa a
+        # propósito: el sandbox no puede necesitar Medusa.
+        if: needs.changes.outputs.central == 'true'
+        working-directory: hubara_agency
+        env:
+          OTEL_SDK_DISABLED: "true"
+        run: uv run pytest tests/plugins/chats/lab tests/platform/lab -q
+
       - name: Guards del proxy LLM (ids upstream revisados + thinking + multimodal + resumen)
         # `tests/platform/` NO corre completo acá (cuelga con los dummies de Medusa),
         # así que los guards que cargan el `litellm_config.yaml` REAL se nombran uno
@@ -177,6 +190,9 @@ jobs:
           tests/platform/test_llm_thinking_disabled.py
           tests/platform/test_multimodal_via_proxy.py
           tests/platform/customer_scoring/test_llm_summary.py
+          tests/platform/perception
+          tests/platform/test_perception_alias_body.py
+          tests/infra
           -q
 
       - name: PR solo de GraphAgents — central no aplica

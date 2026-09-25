@@ -110,12 +110,23 @@ export const scorecardRowSchema = z.object({
 /** Respuesta de GET /api/agents/evals/scorecards?days=N. */
 export const scorecardListSchema = z.object({
   days: z.number().default(30),
+  /** Bot por el que filtró el servidor (PR 18); null = todos o una API anterior al filtro. */
+  bot: z.enum(["actual", "nuevo"]).nullable().catch(null).default(null),
   count: z.number().default(0),
   registry_version: z.number().default(0),
   scorecards: z.array(scorecardRowSchema).default([]),
 });
 
 // ── Detalle: resultados + trayectoria ──────────────────────────────────────
+
+/** Cobertura de UN asunto del cliente (EST-08 v2): turno, mensaje de la ráfaga y si se atendió. */
+export const topicCoverageSchema = z.object({
+  topic: z.string(),
+  turn: z.number().nullable().default(null),
+  msg: z.number().nullable().default(null),
+  covered: z.boolean().default(false),
+  evidence: z.string().default(""),
+});
 
 export const checkResultSchema = z.object({
   check_id: z.string(),
@@ -125,6 +136,8 @@ export const checkResultSchema = z.object({
   evidence: z.string().default(""),
   critique: z.string().default(""),
   source: checkKindSchema,
+  /** Solo EST-08 v2 (registro 3+); los resultados anteriores no la traen. */
+  topics: z.array(topicCoverageSchema).catch([]).default([]),
 });
 
 export const trajectoryToolSchema = z.object({

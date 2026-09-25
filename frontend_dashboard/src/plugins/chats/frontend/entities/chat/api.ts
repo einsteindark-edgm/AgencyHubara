@@ -321,6 +321,7 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
         dayIso,
         status: "read",
         event: m.event,
+        turnKey: m.turn_key,
       };
     }
     return {
@@ -329,6 +330,7 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
       time: formatBogotaHourMinute(unix) || undefined,
       dayIso,
       event: m.event,
+      turnKey: m.turn_key,
     };
   }
   const sender = getMessageSender(m);
@@ -349,6 +351,7 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
     documentName: m.document_filename ?? undefined,
     replyTo: adaptQuote(m.reply_to),
     event: m.event,
+    turnKey: m.turn_key,
   };
 }
 

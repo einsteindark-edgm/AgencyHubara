@@ -11,6 +11,8 @@
 #   • apply best-effort + ASSERTS sobre los servicios de alta fidelidad en Moto:
 #     S3, Cognito, SSM, IAM. Esos asserts son el gate (CloudFront/ACM son
 #     best-effort en el emulador — el plan ya los validó).
+#   • `terraform test` de platform (tests/*.tftest.hcl, provider simulado): el
+#     VALOR que calcula cada módulo y las validaciones de variables.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -66,6 +68,9 @@ assert "SSM MBA_CUSTOMER_ALLOWLIST (mba-config) existe" "a ssm get-parameter --n
 assert "SSM MBA_STANDBY_ENABLED apagado por default"   "a ssm get-parameter --name /hubara/vincenzo/MBA_STANDBY_ENABLED --query Parameter.Value --output text | grep -qx 0"
 assert "SSM HUBARA_PUBLIC_API_URL = api_url del tenant"  "a ssm get-parameter --name /hubara/hubara/HUBARA_PUBLIC_API_URL --query Parameter.Value --output text | grep -qE '^https://[^ ]+$'"
 assert "SSM /graphagents/AGENTSPAN_MASTER_KEY existe" "a ssm get-parameter --name /graphagents/AGENTSPAN_MASTER_KEY"
+assert "SSM LAB_INTERNAL_NUMBERS (lab-config) existe" "a ssm get-parameter --name /hubara/hubara/LAB_INTERNAL_NUMBERS"
+echo "  — terraform test (lógica de los módulos, provider simulado) —"
+terraform -chdir="$PLATFORM" test -no-color || FAIL=1
 
 # ── compute ─────────────────────────────────────────────────────────────────
 run_root "$COMPUTE" "$HERE/local.compute.tfvars"
