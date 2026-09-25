@@ -20,6 +20,7 @@ from src.plugins.chats.shared.origin import session_origin, with_ad_names
 from src.sdk.connectorkit import fetch_meta_ad_names, meta_marketing_token
 from src.sdk.dashboardkit import DashboardEvent, get_dashboard_event_bus
 from src.sdk.messagingkit import postponed_view
+from src.sdk.runtime import BoundedTTLCache
 
 router = APIRouter()
 
@@ -33,7 +34,9 @@ router = APIRouter()
 # tiene por qué recibir un call por request. Best-effort: sin token / Graph
 # caído → {} y el dashboard degrada al headline del referral.
 _AD_NAMES_TTL_S = 15 * 60
-_ad_names_cache: dict[str, tuple[float, dict[str, dict[str, str | None]]]] = {}
+_ad_names_cache: BoundedTTLCache[str, dict[str, dict[str, str | None]]] = BoundedTTLCache(
+    ttl_s=_AD_NAMES_TTL_S, max_entries=16
+)
 
 
 def _resolve_ad_names(ad_ids: list[str]) -> dict[str, dict[str, str | None]]:
@@ -44,12 +47,11 @@ def _resolve_ad_names(ad_ids: list[str]) -> dict[str, dict[str, str | None]]:
     if not token:
         return {}
     key = ",".join(ids)
-    now = time.monotonic()
     hit = _ad_names_cache.get(key)
-    if hit and now - hit[0] < _AD_NAMES_TTL_S:
-        return hit[1]
+    if hit is not None:
+        return hit
     names = fetch_meta_ad_names(ids, token=token)
-    _ad_names_cache[key] = (now, names)
+    _ad_names_cache.put(key, names)
     return names
 
 

@@ -29,7 +29,9 @@ activas). Para que una page-view del dashboard (campañas + conversaciones +
 serie diaria de la campaña seleccionada) NO dispare 3 scans completos, el scan
 se cachea en proceso con un TTL corto y los 3 endpoints lo comparten. El cache
 vive acá (capa API) — NO en el use case, que sigue puro (R-STATELESS): con
-`sessions=None` escanea fresco, y así lo hacen los tests.
+`sessions=None` escanea fresco, y así lo hacen los tests. Todos los caches de
+este módulo son `BoundedTTLCache` (TTL + tope de entradas): un dict con TTL
+que solo se mira al leer crece sin límite (incidente 2026-09-25).
 """
 from __future__ import annotations
 
@@ -68,7 +70,7 @@ from src.plugins.ads.segmentation import (
     merge_meta_adsets,
     scope_source_ids,
 )
-from src.sdk.runtime import WORKSPACE_VAULT_DIR
+from src.sdk.runtime import WORKSPACE_VAULT_DIR, BoundedTTLCache
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -89,7 +91,17 @@ router.include_router(_meta_router, prefix="/meta")
 # refetch de TanStack) instantáneas. Subirlo reduce I/O a costa de frescura.
 _SCAN_TTL_S = 15.0
 _DAY_MS = 24 * 60 * 60 * 1000
-_scan_cache: dict[str, tuple[float, list[tuple[FsPath, dict[str, Any]]]]] = {}
+# Incidente 2026-09-25: cada entrada es el scan completo de la ventana (~8 MB
+# con 265 sesiones en prod). La key usaba el `since_ms` exacto (cambia cada
+# ms), así que ningún request acertaba y cada uno dejaba una entrada que nadie
+# borraba, hasta dejar la caja sin RAM. Ahora el `since_ms` se redondea al
+# minuto (requests seguidos comparten scan) y el cache tiene tope: 4 cubre las
+# ventanas de una page-view (listado + serie diaria) con margen.
+_SCAN_BUCKET_MS = 60 * 1000
+_SCAN_MAX_ENTRIES = 4
+_scan_cache: BoundedTTLCache[str, list[tuple[FsPath, dict[str, Any]]]] = BoundedTTLCache(
+    ttl_s=_SCAN_TTL_S, max_entries=_SCAN_MAX_ENTRIES
+)
 
 # Cache del enrichment de nombres Meta (fix 2026-07-01). Los nombres de
 # ads/campañas cambian casi nunca — TTL largo (10 min) para no pegarle a
@@ -97,7 +109,12 @@ _scan_cache: dict[str, tuple[float, list[tuple[FsPath, dict[str, Any]]]]] = {}
 # best-effort ({} en error) y un {} también se cachea (evita martillar a
 # Graph cuando está caído — se reintenta recién al expirar el TTL).
 _META_NAMES_TTL_S = 600.0
-_meta_names_cache: dict[str, tuple[float, dict[str, dict[str, str | None]]]] = {}
+# Tope de los caches de Meta: su key (ventana en días, set de ad ids) cambia
+# con cada día o chat nuevo; sin tope, una entrada por valor para siempre.
+_META_MAX_ENTRIES = 16
+_meta_names_cache: BoundedTTLCache[str, dict[str, dict[str, str | None]]] = BoundedTTLCache(
+    ttl_s=_META_NAMES_TTL_S, max_entries=_META_MAX_ENTRIES
+)
 
 
 def _meta_names_token() -> str:
@@ -118,19 +135,20 @@ def _cached_meta_names(ad_ids: list[str]) -> dict[str, dict[str, str | None]]:
     if not token:
         return {}
     key = ",".join(sorted(ad_ids))
-    now = time.monotonic()
     hit = _meta_names_cache.get(key)
-    if hit is not None and (now - hit[0]) < _META_NAMES_TTL_S:
-        return hit[1]
+    if hit is not None:
+        return hit
     names = fetch_meta_ad_names(ad_ids, token=token)
-    _meta_names_cache[key] = (now, names)
+    _meta_names_cache.put(key, names)
     return names
 
 
 #: Campañas Meta (Marketing API) para el merge del listado — cache TTL por ventana.
 #: 60s: el spend/estado no cambia más rápido y el listado se pide en cada page-view.
 _META_CAMPAIGN_TTL_S = 60.0
-_meta_campaign_cache: dict[str, tuple[float, tuple[list, list]]] = {}
+_meta_campaign_cache: BoundedTTLCache[str, tuple[list, list]] = BoundedTTLCache(
+    ttl_s=_META_CAMPAIGN_TTL_S, max_entries=_META_MAX_ENTRIES
+)
 
 
 def _meta_store():
@@ -171,10 +189,9 @@ def _cached_meta_campaigns(
         date.fromtimestamp(since_ms / 1000) if since_ms else until_d - timedelta(days=90)
     )
     key = f"{since_d}|{until_d}"
-    now = time.monotonic()
     hit = _meta_campaign_cache.get(key)
-    if hit is not None and (now - hit[0]) < _META_CAMPAIGN_TTL_S:
-        return hit[1]
+    if hit is not None:
+        return hit
     try:
         ads = _meta_ads()
         metas = ads.list_campaigns(token.access_token, token.account_id)
@@ -186,13 +203,15 @@ def _cached_meta_campaigns(
         )
     except Exception:  # noqa: BLE001
         return [], []
-    _meta_campaign_cache[key] = (now, (metas, metrics))
+    _meta_campaign_cache.put(key, (metas, metrics))
     return metas, metrics
 
 
 #: Métricas por adset (insights level=adset) para el drill-down — cache TTL por
 #: ventana, mismo criterio que las de campaña (60s).
-_meta_adset_cache: dict[str, tuple[float, list]] = {}
+_meta_adset_cache: BoundedTTLCache[str, list] = BoundedTTLCache(
+    ttl_s=_META_CAMPAIGN_TTL_S, max_entries=_META_MAX_ENTRIES
+)
 
 
 def _cached_meta_adsets(since_ms: int | None, until_ms: int | None) -> list:
@@ -215,10 +234,9 @@ def _cached_meta_adsets(since_ms: int | None, until_ms: int | None) -> list:
         date.fromtimestamp(since_ms / 1000) if since_ms else until_d - timedelta(days=90)
     )
     key = f"{since_d}|{until_d}"
-    now = time.monotonic()
     hit = _meta_adset_cache.get(key)
-    if hit is not None and (now - hit[0]) < _META_CAMPAIGN_TTL_S:
-        return hit[1]
+    if hit is not None:
+        return hit
     try:
         rows = _meta_ads().fetch_adset_metrics(
             token.access_token,
@@ -228,13 +246,15 @@ def _cached_meta_adsets(since_ms: int | None, until_ms: int | None) -> list:
         )
     except Exception:  # noqa: BLE001
         return []
-    _meta_adset_cache[key] = (now, rows)
+    _meta_adset_cache.put(key, rows)
     return rows
 
 
 #: Métricas por anuncio (insights level=ad) — último nivel del drill-down
 #: (2026-09-10). Mismo TTL por ventana que campaña/adset.
-_meta_ad_cache: dict[str, tuple[float, list]] = {}
+_meta_ad_cache: BoundedTTLCache[str, list] = BoundedTTLCache(
+    ttl_s=_META_CAMPAIGN_TTL_S, max_entries=_META_MAX_ENTRIES
+)
 
 
 def _cached_meta_ads(since_ms: int | None, until_ms: int | None) -> list:
@@ -254,10 +274,9 @@ def _cached_meta_ads(since_ms: int | None, until_ms: int | None) -> list:
         date.fromtimestamp(since_ms / 1000) if since_ms else until_d - timedelta(days=90)
     )
     key = f"{since_d}|{until_d}"
-    now = time.monotonic()
     hit = _meta_ad_cache.get(key)
-    if hit is not None and (now - hit[0]) < _META_CAMPAIGN_TTL_S:
-        return hit[1]
+    if hit is not None:
+        return hit
     try:
         rows = _meta_ads().fetch_ad_metrics(
             token.access_token,
@@ -267,14 +286,16 @@ def _cached_meta_ads(since_ms: int | None, until_ms: int | None) -> list:
         )
     except Exception:  # noqa: BLE001
         return []
-    _meta_ad_cache[key] = (now, rows)
+    _meta_ad_cache.put(key, rows)
     return rows
 
 
 #: Creativo por anuncio (thumbnail grande + textos + iframe de preview). Los
 #: URLs firmados de Meta expiran — 10 min es el mismo TTL que los nombres.
 _META_CREATIVE_TTL_S = 600.0
-_meta_creative_cache: dict[str, tuple[float, Any]] = {}
+_meta_creative_cache: BoundedTTLCache[str, Any] = BoundedTTLCache(
+    ttl_s=_META_CREATIVE_TTL_S, max_entries=64
+)
 
 
 def _scope_names(
@@ -328,17 +349,20 @@ def _cached_sessions(since_ms: int | None) -> list[tuple[FsPath, dict[str, Any]]
 
     El scan SOLO depende de `since_ms` (pre-filtro por mtime; el `until_ms` del
     rango custom se aplica per-episodio en cada use case). Por eso la key es
-    `since_ms`: los 3 endpoints de una page-view (preset o rango custom) comparten
-    el mismo `since` → un solo scan. Cache-miss → scan O(sesiones en ventana) (con
-    skip por mtime); cache-hit → O(1).
+    `since_ms`, redondeado hacia abajo al minuto: un preset (`now - días`)
+    cambia cada ms, y sin redondeo ningún request acertaba. Se escanea con el
+    valor redondeado — una ventana hasta 1 min más ancha es un superconjunto, y
+    cada use case filtra los episodios con su propio `since_ms` exacto.
+    Cache-miss → scan O(sesiones en ventana) (con skip por mtime); cache-hit → O(1).
     """
+    if since_ms is not None:
+        since_ms -= since_ms % _SCAN_BUCKET_MS
     key = f"{WORKSPACE_VAULT_DIR}|{since_ms if since_ms is not None else 'all'}"
-    now = time.monotonic()
     hit = _scan_cache.get(key)
-    if hit is not None and (now - hit[0]) < _SCAN_TTL_S:
-        return hit[1]
+    if hit is not None:
+        return hit
     data = scan_ad_sessions(WORKSPACE_VAULT_DIR, since_ms=since_ms)
-    _scan_cache[key] = (now, data)
+    _scan_cache.put(key, data)
     return data
 
 
@@ -753,11 +777,8 @@ def get_ad_creative(
     ser null si Meta no lo rinde). 404 si no hay conexión a Meta o el anuncio
     no expone creativo — el frontend cae a la miniatura de la lista.
     """
-    now = time.monotonic()
-    hit = _meta_creative_cache.get(ad_id)
-    if hit is not None and (now - hit[0]) < _META_CREATIVE_TTL_S:
-        creative = hit[1]
-    else:
+    creative = _meta_creative_cache.get(ad_id)
+    if creative is None:
         try:
             token = _meta_store().load()
         except Exception:  # noqa: BLE001
@@ -769,7 +790,7 @@ def get_ad_creative(
         except Exception:  # noqa: BLE001 — Graph caído / ad borrado → sin creativo
             creative = None
         if creative is not None:
-            _meta_creative_cache[ad_id] = (now, creative)
+            _meta_creative_cache.put(ad_id, creative)
     if creative is None:
         raise HTTPException(status_code=404, detail="creative_unavailable")
     return asdict(creative)
