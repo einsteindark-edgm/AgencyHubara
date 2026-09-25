@@ -597,7 +597,11 @@ CAMPAIGN_TOUCHES_CAP = 20
 
 
 def build_campaign_touch(
-    campaign: dict[str, Any], *, sent_at_ms: int, test: bool = False
+    campaign: dict[str, Any],
+    *,
+    sent_at_ms: int,
+    test: bool = False,
+    wa_message_id: str | None = None,
 ) -> dict[str, Any]:
     """El touch que queda en el metadata del contacto al enviarle la campaña.
 
@@ -608,6 +612,9 @@ def build_campaign_touch(
     (bug 2026-09-22: contestó "AMOR26" y el bot retomó un pedido viejo).
     `test`: envío de prueba del operador — el bot lo trata igual, la
     atribución (Ads/stats) lo ignora.
+    `wa_message_id`: el id que Meta le dio al mensaje. El webhook de estados
+    encuentra el touch por ese id y anota si se entregó, si se leyó y cuánto
+    costó (Ads, 2026-09-25).
     """
     variables = campaign_template_variables(campaign, customer_name=None)
     touch: dict[str, Any] = {
@@ -618,6 +625,8 @@ def build_campaign_touch(
         "coupon_code": (campaign.get("coupon_code") or "").strip() or None,
         "product_handles": carousel_handles(campaign),
     }
+    if wa_message_id:
+        touch["wa_message_id"] = wa_message_id
     if test:
         touch["test"] = True
     return touch

@@ -640,7 +640,12 @@ async def test_send(campaign_id: str, body: TestSendBody) -> dict:
     # Igual que el envío real: el contacto queda con el touch (marcado como
     # prueba, la atribución lo ignora) para que si responde el bot sepa qué
     # campaña recibió (bug 2026-09-22).
-    touch = build_campaign_touch(campaign, sent_at_ms=_now_ms(), test=True)
+    touch = build_campaign_touch(
+        campaign,
+        sent_at_ms=_now_ms(),
+        test=True,
+        wa_message_id=getattr(result, "wa_message_id", None),
+    )
     FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(
         session_id, lambda metadata: append_campaign_touch(metadata, touch)
     )

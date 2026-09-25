@@ -42,6 +42,7 @@ class Tracker:
     def __init__(self) -> None:
         self.sends: list[tuple[str, str, dict]] = []
         self.touches: list[tuple[str, str, str]] = []
+        self.touch_messages: list[str | None] = []
         self.opt_outs: list[tuple[str, str]] = []
         self.statuses: list[str] = []
         self.result: dict | None = None
@@ -87,9 +88,13 @@ def _fakes(
 
     @activity.defn(name="stamp_campaign_touch")
     async def fake_touch(
-        session_id: str, campaign_id: str, campaign_name: str
+        session_id: str,
+        campaign_id: str,
+        campaign_name: str,
+        wa_message_id: str | None = None,
     ) -> None:
         tracker.touches.append((session_id, campaign_id, campaign_name))
+        tracker.touch_messages.append(wa_message_id)
 
     @activity.defn(name="record_campaign_send_result")
     async def fake_record(campaign_id: str, result: dict) -> None:
@@ -128,6 +133,17 @@ async def test_envia_a_cada_destinatario_y_estampa_touch() -> None:
     assert tracker.result["failed"] == []
     assert tracker.result["spent_usd_micros"] == 37500
     assert summary["sent"] == 3
+
+
+@pytest.mark.asyncio
+async def test_el_touch_guarda_el_id_del_mensaje_que_devolvio_meta() -> None:
+    """Ads (2026-09-25): entregado, leído y precio llegan por webhook con el
+    id del mensaje — el touch de cada destinatario lo guarda para que el
+    webhook sepa de qué campaña es."""
+    tracker = Tracker()
+    await _run(tracker)
+
+    assert tracker.touch_messages == ["wamid-wa_a", "wamid-wa_b", "wamid-wa_c"]
 
 
 @pytest.mark.asyncio
@@ -189,7 +205,9 @@ async def test_con_carrusel_prepara_las_tarjetas_una_vez_y_las_manda_a_todos() -
         return {"wa_message_id": "w", "ok": True, "error": None}
 
     @activity.defn(name="stamp_campaign_touch")
-    async def fake_touch(session_id: str, campaign_id: str, campaign_name: str) -> None:
+    async def fake_touch(
+        session_id: str, campaign_id: str, campaign_name: str, wa_message_id: str | None = None
+    ) -> None:
         pass
 
     @activity.defn(name="record_campaign_send_result")

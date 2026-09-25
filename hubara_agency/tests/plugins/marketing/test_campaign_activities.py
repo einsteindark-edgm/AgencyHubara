@@ -215,6 +215,22 @@ async def test_stamp_campaign_touch_guarda_lo_que_recibio_el_cliente(
     assert "test" not in touch
 
 
+@pytest.mark.asyncio
+async def test_stamp_campaign_touch_guarda_el_id_del_mensaje(_isolate_vault_dir: Path) -> None:
+    """Ads (2026-09-25): el webhook de estados encuentra el touch por el id
+    del mensaje y anota ahí si se entregó, si se leyó y cuánto costó."""
+    vault = _isolate_vault_dir
+    _seed_session(vault, "wa_573001234567", {"tag": "INTERESADO"})
+    _seed_campaign(vault)
+
+    await ActivityEnvironment().run(
+        stamp_campaign_touch_activity, "wa_573001234567", "mkt-1", "Promo madre", "wamid.CAMP1"
+    )
+
+    metadata = json.loads((vault / "wa_573001234567" / "metadata.json").read_text())
+    assert metadata["campaign_touches"][-1]["wa_message_id"] == "wamid.CAMP1"
+
+
 # --- El cupón se re-valida al DISPARAR el envío (premortem A12) ----------------
 
 
