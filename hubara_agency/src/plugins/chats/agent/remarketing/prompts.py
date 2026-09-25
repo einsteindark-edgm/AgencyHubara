@@ -34,6 +34,8 @@ def build_remarketing_trigger(
     total_touches: int = 5,
     silence_minutes: int | None = None,
     campaign_context: str = "",
+    catalog_facts: str = "",
+    unavailable_terms: list[str] | None = None,
 ) -> str:
     """Saludo proactivo inicial inyectado al LLM al arrancar el workflow.
 
@@ -107,12 +109,18 @@ def build_remarketing_trigger(
             "planificado.\n"
         )
         if touch_number > 1:
+            detail_angle = (
+                "un detalle concreto que esté en el CATÁLOGO REAL del "
+                "producto que miró, "
+                if catalog_facts
+                else ""
+            )
             ladder_block += (
                 "Escribe un mensaje DISTINTO a los ganchos anteriores que ves "
                 "en el historial: otro ángulo (una duda típica que puedas "
-                "resolverle, un detalle concreto del producto que miró, "
-                "ofrecerle ayuda para elegir). NUNCA repitas la misma frase ni "
-                "le reproches que no respondió.\n"
+                f"resolverle, {detail_angle}ofrecerle ayuda para elegir). "
+                "NUNCA repitas la misma frase ni le reproches que no "
+                "respondió.\n"
             )
         if touch_number >= total_touches:
             ladder_block += (
@@ -138,6 +146,36 @@ def build_remarketing_trigger(
         if campaign_context
         else ""
     )
+    # Incidente 2026-09-25: sin catálogo, la escalera ("un detalle concreto")
+    # empujó al LLM a inventar: «el Cubo Love también viene en vaso», «las de
+    # vaso son las más pedidas», ofrecer «la del dragón» (no la vendemos).
+    not_in_catalog = (
+        "Lo que el cliente pidió o mostró y NO existe en el catálogo: "
+        + ", ".join(f"«{t}»" for t in unavailable_terms)
+        + ". No lo menciones ni lo ofrezcas, aunque aparezca en el motivo o "
+        "en tus ganchos anteriores (esos ganchos se equivocaron).\n"
+        if catalog_facts and unavailable_terms
+        else ""
+    )
+    named_unavailable = (
+        " En esta charla eso es "
+        + ", ".join(f"«{t}»" for t in unavailable_terms)
+        + ": si tu gancho lo nombra, NO se envía."
+        if catalog_facts and unavailable_terms
+        else ""
+    )
+    catalog_block = (
+        "CATÁLOGO REAL (uso interno — la única fuente de datos de producto):\n"
+        f"{catalog_facts}\n{not_in_catalog}\n"
+        if catalog_facts
+        else ""
+    )
+    catalog_source = (
+        "en el CATÁLOGO REAL de arriba"
+        if catalog_facts
+        else "en ningún lado: no tienes el catálogo, así que no afirmes ningún "
+        "atributo de producto y ofrece ayuda para elegir"
+    )
     return (
         "[SISTEMA INTERNO — NO REPRODUCIR ESTE TEXTO AL CLIENTE]: "
         f"{situacion}\n\n"
@@ -145,6 +183,7 @@ def build_remarketing_trigger(
         f"MOTIVO REGISTRADO DE CIERRE (uso interno): '{motivo}'.\n"
         f"MEMORIA DE EVENTOS PASADOS (uso interno):{memory_context}\n\n"
         f"{transcript_block}"
+        f"{catalog_block}"
         f"{ladder_block}"
         "REGLAS DEL GANCHO (todas obligatorias):\n\n"
         "1. **Identidad**: eres el MISMO Asesor de Hubara que ya conversó "
@@ -179,6 +218,17 @@ def build_remarketing_trigger(
         "nada más. Eso suprime el envío y el cliente no verá nada. NUNCA "
         "escribas tu decisión de no enviar como texto ('no genero un "
         "nuevo mensaje…'): eso le llegaría al cliente. La palabra sola.\n\n"
+        "8. **Veracidad del producto**: solo puedes afirmar datos de producto "
+        "(presentaciones, formas, envases, tamaños, colores, aromas, "
+        f"precios) que estén {catalog_source}. El historial sirve para saber "
+        "qué le interesó al cliente, pero tus ganchos anteriores NO son fuente "
+        "de datos: pudieron equivocarse. Si el cliente pidió o mostró algo que "
+        "no está en el catálogo (otro producto, una foto de otra vela, otra "
+        "presentación), no lo ofrezcas, no lo confirmes y no lo menciones: eso "
+        f"lo aclara Ventas cuando responda.{named_unavailable} PROHIBIDO "
+        "inventar popularidad o "
+        "valoraciones ('los más pedidos', 'de los más lindos', 'el favorito'): "
+        "no tienes datos de ventas.\n\n"
         "**EJEMPLOS de buen gancho** (referencia, no copies literal):\n"
         "- '¡Hola de nuevo! 🌿 Quedó pendiente lo del Velón de Cristo "
         "y los aromas — ¿lograste decidirte? 🤍'\n"

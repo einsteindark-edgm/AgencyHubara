@@ -186,3 +186,14 @@ async def test_trigger_falls_back_to_input_motivo_when_tag_has_none(tmp_path) ->
     (inp,) = tracker.trigger_v2_inputs
     assert inp.motivo == STRATEGIST_MOTIVO
     assert inp.transcript == ""
+
+
+@pytest.mark.asyncio
+async def test_trigger_receives_the_real_catalog_facts(tmp_path) -> None:
+    """Incidente 2026-09-25 («el Cubo Love también viene en vaso»): la ficha
+    real del catálogo que armó el contexto llega al trigger del gancho."""
+    tracker = Tracker()
+    facts = "Productos que existen (1): Cubo Love.\n- Cubo Love: … Presentación única."
+    await _run_workflow(tracker, RemarketingContext(tag_motivo=TAG_MOTIVO, catalog_facts=facts), tmp_path)
+    (inp,) = tracker.trigger_v2_inputs
+    assert inp.catalog_facts == facts

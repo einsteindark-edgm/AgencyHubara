@@ -50,6 +50,9 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.platform.whatsapp.activities import send_typing_indicator_activity
     from src.plugins.chats.agent.remarketing.contracts import RemarketingSessionInput
+    from src.plugins.chats.agent.remarketing.use_cases.product_truth import (
+        invented_product_claim,
+    )
     from src.plugins.chats.shared.contracts.events import (
         CustomerRepliedDuringRemarketingEvent,
     )
@@ -82,6 +85,9 @@ class RemarketingSessionWorkflow:
         # Se guarda la REFERENCIA: el cliente puede escribir antes o después
         # de que se encole, así que la posición en el batch no lo identifica.
         self._proactive_trigger: PendingMessage | None = None
+        # Lo que el cliente pidió y NO existe en el catálogo (contexto del
+        # gancho) — la guarda de veracidad bloquea el gancho que lo mencione.
+        self._unavailable_terms: list[str] = []
 
     @workflow.signal
     async def send_message(
@@ -175,6 +181,7 @@ class RemarketingSessionWorkflow:
             start_to_close_timeout=timedelta(seconds=15),
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
+        self._unavailable_terms = list(context.unavailable_terms)
         return await workflow.execute_activity(
             build_remarketing_trigger_v2_activity,
             RemarketingTriggerInput(
@@ -188,9 +195,28 @@ class RemarketingSessionWorkflow:
                 silence_minutes=context.silence_minutes if ladder else None,
                 # Campaña que abrió el episodio (runs edbb0d8b / 8e73b7dc).
                 campaign_context=context.campaign_context,
+                # Ficha real del catálogo (incidente 2026-09-25: «el Cubo
+                # Love también viene en vaso»). Solo cambia el input de la
+                # activity, no los comandos → replay-safe sin patch.
+                catalog_facts=context.catalog_facts,
+                unavailable_terms=list(context.unavailable_terms),
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+
+    def _skip_record_predicate(self):
+        """Qué respuestas del gancho NO entran al historial del LLM.
+
+        La abstención (runs 01a0b0da…) y, bajo la guarda de veracidad, el
+        gancho bloqueado por inventar: si quedara grabado, el siguiente toque
+        lo copiaría (así se propagó «las de vaso», incidente 2026-09-25).
+        """
+        if not workflow.patched("remarketing-product-truth-guard-v1"):
+            return is_no_message_abstention
+        terms = self._unavailable_terms
+        return lambda content: is_no_message_abstention(content) or (
+            invented_product_claim(content or "", terms) is not None
         )
 
     async def _record_touch(self, session_id: str, kind: str) -> None:
@@ -515,7 +541,7 @@ class RemarketingSessionWorkflow:
                         # siguiente intento (15 abstenciones apiladas, prompt
                         # 8k→27k tokens). La abstención no entra al historial.
                         skip_record_when=(
-                            is_no_message_abstention if ladder else None
+                            self._skip_record_predicate() if ladder else None
                         ),
                         # Episodio abierto por campaña: el gancho no ve los
                         # ganchos/turnos del episodio anterior (runs edbb0d8b
@@ -561,6 +587,30 @@ class RemarketingSessionWorkflow:
                             f"{result.final_content[:120]!r}"
                         )
                         abstained = True
+
+                    # Veracidad del producto (incidente 2026-09-25: «el Cubo
+                    # Love también viene en vaso», «las de vaso son las más
+                    # pedidas»): el gancho que menciona algo que el cliente
+                    # pidió y NO existe, o inventa popularidad, equivale a
+                    # abstención. La regla del prompt sola no alcanzó (A/B con
+                    # el modelo de prod). patched(): histories en vuelo que SÍ
+                    # enviaron ese gancho replayean sin la rama.
+                    if (
+                        not abstained
+                        and result.transfer_decision is None
+                        and result.final_content
+                        and workflow.patched("remarketing-product-truth-guard-v1")
+                    ):
+                        claim = invented_product_claim(
+                            result.final_content, self._unavailable_terms
+                        )
+                        if claim is not None:
+                            workflow.logger.warning(
+                                "product-truth-guard: gancho con dato inventado "
+                                f"({claim!r}) bloqueado (≈abstención): "
+                                f"{result.final_content[:120]!r}"
+                            )
+                            abstained = True
 
                     # ADR-001 + ADR-2026-05-20: si la tool emitio una decision
                     # de transferir a Sales, convertirla a un CompletionEvent y
