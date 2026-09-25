@@ -28,6 +28,9 @@ Notas de diseño:
   padre del vault, ``.`` el vault mismo, ``_analytics`` no es una sesión. No es
   política de formato — un plugin puede exigir además ``wa_<dígitos>``, pero
   con ``fullmatch`` (el ``$`` de ``match`` acepta un salto de línea final).
+- ``BoundedTTLCache`` es el cache en proceso de una capa API (TTL + tope de
+  entradas). Un ``dict`` con TTL que solo se mira al leer crece sin límite si
+  la key cambia por request (incidente 2026-09-25, API de Ads).
 - ``client_ip`` es la IP real del cliente detrás de Caddy/CloudFront (primer
   hop de ``X-Forwarded-For``); la clave correcta para cualquier límite por IP
   en un router expuesto (el peer es siempre el proxy).
@@ -74,4 +77,7 @@ from src.platform.temporal.client import (
 )
 from src.platform.temporal.heartbeat import (
     with_heartbeat as with_heartbeat,
+)
+from src.platform.ttl_cache import (
+    BoundedTTLCache as BoundedTTLCache,
 )
