@@ -72,6 +72,7 @@ from src.plugins.chats.agent.sales.use_cases.campaign_reply import (
     build_campaign_reply_note,
     campaign_label,
     mark_campaign_episode,
+    quoted_campaign_touch,
     quote_campaign_in_turn,
     unanswered_campaign_touch,
 )
@@ -318,7 +319,10 @@ class IngestInboundMessage:
             # LLM no ve (la plantilla no entra a su historial). Corre ANTES
             # de pisar `last_inbound_at_ms` (lo usa para saber si ya
             # respondió).
-            _campaign_touch = unanswered_campaign_touch(metadata, now_ms)
+            # Si cita el mensaje de una campaña, es de ESA (2026-09-25).
+            _campaign_touch = unanswered_campaign_touch(
+                metadata, now_ms, quoted_message_id=(parsed.context or {}).get("id")
+            )
             if _campaign_touch is not None:
                 close_episode(
                     metadata,
@@ -424,13 +428,19 @@ class IngestInboundMessage:
             and parsed.text
             and detect_marketing_opt_out(parsed.text, metadata, now_ms)
         ):
-            # Queda registrado cuándo, por qué vía y qué campaña lo provocó
-            # (la del touch reciente): métrica de bajas por campaña.
+            # Queda registrado cuándo, por qué vía y qué campaña lo provocó:
+            # la que citó (2026-09-25) o la del touch reciente — métrica de
+            # bajas por campaña. Una prueba citada no carga la baja.
+            _quoted = quoted_campaign_touch(metadata, (parsed.context or {}).get("id"))
             mark_marketing_opt_out(
                 metadata,
                 now_ms=now_ms,
                 source=OPT_OUT_SOURCE_TEXT,
-                campaign_id=opt_out_campaign_id(metadata, now_ms),
+                campaign_id=(
+                    _quoted["campaign_id"]
+                    if _quoted is not None and not _quoted.get("test")
+                    else opt_out_campaign_id(metadata, now_ms)
+                ),
             )
             # Pidió la baja: no se le sigue conversando la campaña.
             campaign_reply_note = None

@@ -877,3 +877,111 @@ async def test_webhook_rereads_the_quota_through_the_same_shared_sales_read(monk
 
     assert offer.has_quota
     assert _Reader.calls == 1
+
+
+# --- La respuesta que CITA un mensaje de campaña es de esa campaña -------------
+#
+# Pedido del operador (2026-09-25): con varias campañas, la respuesta iba a la
+# última que recibió el cliente. Si el cliente responde citando el mensaje de
+# una campaña anterior (deslizar → responder), es de ESA campaña: la nota del
+# bot habla de su cupón y sus productos, el episodio queda marcado con ella y
+# Ads / Marketing la atribuyen ahí.
+
+
+def _amor_and_halloween(now_ms: int) -> tuple[dict, dict]:
+    amor = _touch(now_ms - 3 * _DAY_MS, wa_message_id="wamid.AMOR")
+    halloween = _touch(
+        now_ms - 60_000,
+        campaign_id="cmp_halloween",
+        campaign_name="Halloween",
+        message="Noche de brujas: 10% en velas de temporada.",
+        coupon_code="BOO10",
+        product_handles=["vela-calabaza"],
+        wa_message_id="wamid.BOO",
+    )
+    return amor, halloween
+
+
+def test_a_reply_quoting_an_older_campaign_belongs_to_that_campaign():
+    now = 100 * _DAY_MS
+    amor, halloween = _amor_and_halloween(now)
+    metadata = {"last_inbound_at_ms": now - 10 * _DAY_MS, "campaign_touches": [amor, halloween]}
+
+    assert unanswered_campaign_touch(metadata, now, quoted_message_id="wamid.AMOR") == amor
+    # Sin cita (o citando otra cosa): la última que no había respondido.
+    assert unanswered_campaign_touch(metadata, now) == halloween
+    assert unanswered_campaign_touch(metadata, now, quoted_message_id="wamid.BOT") == halloween
+
+
+def test_quoting_a_campaign_already_answered_is_not_a_reply_to_the_newer_one():
+    """Respondió a Amor el martes y el viernes vuelve a citar ese mensaje:
+    sigue esa conversación — no es una respuesta a Halloween."""
+    now = 100 * _DAY_MS
+    amor, halloween = _amor_and_halloween(now)
+    metadata = {"last_inbound_at_ms": now - 2 * _DAY_MS, "campaign_touches": [amor, halloween]}
+
+    assert unanswered_campaign_touch(metadata, now, quoted_message_id="wamid.AMOR") is None
+
+
+def test_quoting_a_campaign_past_the_window_is_not_a_campaign_reply():
+    now = 100 * _DAY_MS
+    old = _touch(now - 8 * _DAY_MS, wa_message_id="wamid.OLD")
+    fresh = _touch(now - 60_000, campaign_id="cmp_halloween", wa_message_id="wamid.BOO")
+    metadata = {"last_inbound_at_ms": now - 20 * _DAY_MS, "campaign_touches": [old, fresh]}
+
+    assert unanswered_campaign_touch(metadata, now, quoted_message_id="wamid.OLD") is None
+
+
+def test_the_episode_remembers_the_exact_message_and_whether_it_was_a_test():
+    from src.plugins.chats.agent.sales.use_cases.campaign_reply import mark_campaign_episode
+
+    episode: dict = {}
+    mark_campaign_episode(episode, _touch(1, wa_message_id="wamid.AMOR", test=True))
+
+    assert episode["opened_by_campaign"]["wa_message_id"] == "wamid.AMOR"
+    # El bot trata igual prueba y envío real; la atribución no cuenta la prueba.
+    assert episode["opened_by_campaign"]["test"] is True
+
+
+def _two_campaigns_metadata(now_ms: int) -> dict:
+    amor, halloween = _amor_and_halloween(now_ms)
+    return {
+        "active_route": "ventas",
+        "tag": "NO_ETIQUETADO",
+        "last_inbound_at_ms": now_ms - 10 * _DAY_MS,
+        "episodes": [{"episode_id": "ep_001", "started_at_ms": now_ms - 11 * _DAY_MS,
+                      "closed_at_ms": now_ms - 10 * _DAY_MS, "closing_tag": "SIN_RESPUESTA",
+                      "order_id": None}],
+        "campaign_touches": [amor, halloween],
+    }
+
+
+def _quoting(text: str, quoted_id: str) -> WhatsAppMessage:
+    import dataclasses
+
+    return dataclasses.replace(_message(text), context={"from": "PID", "id": quoted_id})
+
+
+@pytest.mark.asyncio
+async def test_the_bot_gets_the_quoted_campaign_and_the_episode_is_marked_with_it():
+    now = int(time.time() * 1000)
+    store = _Store(_two_campaigns_metadata(now))
+    loader = _Loader()
+
+    await _use_case(store, loader).execute(_quoting("¿Todavía sirve el cupón?", "wamid.AMOR"))
+
+    context = "\n".join(loader.calls[0]["extra_context"])
+    assert "AMOR26" in context and "BOO10" not in context
+    opened = store.data[_SESSION]["episodes"][-1]["opened_by_campaign"]
+    assert opened["campaign_id"] == "cmp_amor"
+    assert opened["wa_message_id"] == "wamid.AMOR"
+
+
+@pytest.mark.asyncio
+async def test_an_opt_out_quoting_a_campaign_is_charged_to_that_campaign():
+    now = int(time.time() * 1000)
+    store = _Store(_two_campaigns_metadata(now))
+
+    await _use_case(store, _Loader()).execute(_quoting("NO MÁS", "wamid.AMOR"))
+
+    assert store.data[_SESSION]["marketing_opt_out_campaign_id"] == "cmp_amor"
