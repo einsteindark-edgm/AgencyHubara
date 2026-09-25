@@ -79,8 +79,11 @@ def test_referral_meta_del_episodio_gana_sobre_el_touch(tmp_path: Path) -> None:
             ],
         },
     )
-    campaigns = {c.id for c in list_ads_campaigns(tmp_path)}
-    assert campaigns == {"AD_B"}
+    rows = {c.id: c for c in list_ads_campaigns(tmp_path)}
+    # La conversación es del anuncio; la campaña existe desde el envío
+    # (2026-09-25) pero sin conversaciones.
+    assert set(rows) == {"AD_B", "mkt-abc"}
+    assert rows["AD_B"].started == 1 and rows["mkt-abc"].started == 0
 
 
 def test_episodio_fuera_de_ventana_no_se_atribuye(tmp_path: Path) -> None:
@@ -106,5 +109,8 @@ def test_episodio_fuera_de_ventana_no_se_atribuye(tmp_path: Path) -> None:
             ],
         },
     )
-    ids = {c.id for c in list_ads_campaigns(tmp_path)}
-    assert ids == {"direct"}
+    rows = {c.id: c for c in list_ads_campaigns(tmp_path)}
+    # Ninguna conversación cae en la ventana del touch: las dos son directas.
+    # La campaña existe desde el envío (2026-09-25) con 0 conversaciones.
+    assert set(rows) == {"direct", "mkt-abc"}
+    assert rows["direct"].started == 2 and rows["mkt-abc"].started == 0

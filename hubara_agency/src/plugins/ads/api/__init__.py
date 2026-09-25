@@ -44,6 +44,7 @@ from fastapi import APIRouter, HTTPException, Path, Query
 
 from src.plugins.ads.agent_referrals import AGENT_SOURCES, count_agent_referrals
 from src.plugins.ads.aggregation import (
+    CAMPAIGN_SOURCE_TYPE,
     SYNTHETIC_CAMPAIGN_IDS,
     bogota_day_start_ms,
     list_ads_campaigns,
@@ -465,7 +466,13 @@ def get_ads_campaigns(
     # exactos — incluye el enrichment de nombres reales (fix 2026-07-01).
     # Best-effort: sin token o Graph caído, names={} y cada bucket pasa
     # intacto (una fila por ad con headline, como antes).
-    ad_ids = [c.id for c in campaigns if c.id not in SYNTHETIC_CAMPAIGN_IDS]
+    # Las campañas de WhatsApp (`mkt-…`, plugin marketing) no son de Meta: no
+    # se le preguntan (la Graph API bisecaba el lote por cada id ajeno).
+    ad_ids = [
+        c.id
+        for c in campaigns
+        if c.id not in SYNTHETIC_CAMPAIGN_IDS and c.source_type != CAMPAIGN_SOURCE_TYPE
+    ]
     if ad_ids:
         campaigns = group_buckets_by_campaign(
             campaigns, _cached_meta_names(ad_ids)
