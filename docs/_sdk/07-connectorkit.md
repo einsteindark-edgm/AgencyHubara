@@ -41,6 +41,18 @@ deployment.**
   (glob `wa_*` + pre-filtro mtime superset + parse tolerante) migró DESDE el
   plugin ads — que ya no conoce el layout del vault para descubrir sesiones.
   Sus 71 tests de agregación pasan INTACTOS (firmas públicas preservadas).
+- **Touch de campaña = registro por destinatario** (2026-09-25): además de
+  `matching_campaign_touch` (atribución de respuestas, 7 días, last-touch), el
+  touch que estampa el envío de marketing guarda el id del mensaje
+  (`wa_message_id`) y el webhook de estados de chats anota ahí lo que dice
+  Meta. Writers: marketing (id) y chats (`delivery`); reader: ads (la fila de
+  la campaña con enviados/entregados/leídos/gasto real desde el envío).
+
+  | Símbolo | Para qué |
+  |---|---|
+  | `campaign_touch_for_message(touches, wa_message_id)` | El touch de ese mensaje de campaña, o None. |
+  | `apply_campaign_delivery(touch, status=, at_ms=, error_code=, pricing=, cost_usd_micros=, rate_card_version=)` | Mutates `touch["delivery"]`: entregado/leído con la hora más temprana (leído implica entregado; nunca retrocede), fallido con el código de Meta, precio una sola vez. True si cambió algo. |
+  | `campaign_delivery(touch) -> CampaignDelivery` | Lectura tolerante: `delivered`, `read`, `failed`, `priced`, `cost_usd_micros`, `has_message_id`. |
 - **Fake oficial**: `InMemoryAttributionStore` — misma semántica superset que
   el adapter real, verificado por la **contract suite**
   (`tests/platform/test_attribution_store.py`) que corre parametrizada
