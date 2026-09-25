@@ -277,3 +277,40 @@ de solo lectura. Las vendidas y los resultados MUST derivarse de los pedidos.
 Cuando la campaña lleva cupón, el envío y el envío de prueba MUST copiar el
 porcentaje y el último día incluido del cupón a la campaña ("válido hasta 27
 de septiembre"), en vez de usar lo que tipeó el operador.
+
+### Requirement: La campaña existe en Ads desde el envío, con las estadísticas de su envío
+
+Cada envío REAL de una campaña MUST estampar en el touch del destinatario el id
+del mensaje que devolvió Meta (`wa_message_id`), y el webhook de estados MUST
+anotar en ese touch si se entregó, si se leyó o si falló (con su código) y el
+precio de Meta (`delivery`). Ads MUST mostrar la fila de la campaña desde el
+envío (aunque nadie haya respondido) con su envío: enviados, entregados,
+leídos, fallidos, respuestas, bajas y gasto real (`whatsapp_send`), además del
+embudo de sus conversaciones. Los envíos de prueba MUST NOT contar. El costo
+de la plantilla MUST NOT sumarse dos veces: si cayó en una conversación que
+el contacto tenía abierta, esa fila no lo repite (pedido del operador,
+2026-09-25).
+
+#### Scenario: Campaña enviada que todavía nadie respondió
+
+- GIVEN una campaña real enviada a 100 contactos
+- WHEN Meta avisa que 90 se entregaron y 60 se leyeron
+- THEN Ads muestra la fila de la campaña (insignia WhatsApp) con enviados 100, entregados 90, leídos 60 y el gasto real, con 0 conversaciones
+
+#### Scenario: El embudo y el costo de una campaña con ventas
+
+- GIVEN 12 contactos respondieron y 2 compraron por 94.000 COP
+- THEN el panel "WhatsApp · envío de la campaña" muestra enviados → entregados → leídos → respondieron → ventas, el costo por respuesta y por venta y el ROAS aproximado (US$1 ≈ $4.000)
+- AND los mensajes sin precio todavía y los enviados antes del registro de entregas se avisan aparte, nunca como $0
+
+#### Scenario: Varias campañas al mismo cliente
+
+- GIVEN el cliente recibió Amor (lunes) y Halloween (jueves)
+- THEN envío, entrega, lectura, fallos y costo van a cada campaña por el id de su mensaje
+- AND su respuesta y su venta cuentan para UNA sola campaña, en Ads y en el inspector de Marketing: la que citó al responder o, sin cita, la última que no había respondido (nunca una prueba)
+
+#### Scenario: Envíos de prueba
+
+- GIVEN el operador hizo envíos de prueba y respondió
+- THEN la campaña no aparece en Ads por esas pruebas (el touch de prueba guarda el id del mensaje, pero la atribución lo ignora)
+

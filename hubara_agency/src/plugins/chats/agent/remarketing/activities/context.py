@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +22,18 @@ from src.plugins.chats.agent.remarketing.contracts import (
 )
 from src.plugins.chats.agent.remarketing.prompts import build_remarketing_trigger
 from src.plugins.chats.agent.remarketing.use_cases.context import (
+    catalog_facts_for,
     context_from_metadata,
+    customer_text_for,
 )
+from src.plugins.chats.shared.product_truth import (
+    unavailable_terms,
+)
+from src.sdk.catalogkit import CatalogError, get_catalog_client
+
+#: el snapshot publicado son ~30 productos; el tope solo evita un prompt
+#: desbordado si el catálogo crece.
+_CATALOG_LIMIT = 200
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -61,7 +72,30 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
     session_dir = Path(WORKSPACE_VAULT_DIR) / session_id
     metadata = _read_json(session_dir / "metadata.json")
     events = _read_jsonl(session_dir / "sessions" / f"{session_id}.jsonl")
-    return context_from_metadata(metadata, events, now_ms=int(time.time() * 1000))
+    context = context_from_metadata(metadata, events, now_ms=int(time.time() * 1000))
+    products = await _catalog_products()
+    if not products:
+        return context
+    mentioned = f"{context.tag_motivo}\n{context.transcript}"
+    return replace(
+        context,
+        catalog_facts=catalog_facts_for(products, mentioned=mentioned),
+        unavailable_terms=unavailable_terms(customer_text_for(metadata, events), products),
+    )
+
+
+async def _catalog_products() -> list[Any]:
+    """Productos del snapshot que lee Ventas; [] si no está (nunca tumba el gancho).
+
+    Sin catálogo el trigger le prohíbe al LLM afirmar atributos de producto:
+    degradar a "no sé" es seguro, inventar no (incidente 2026-09-25).
+    """
+    try:
+        result = await get_catalog_client().search("", limit=_CATALOG_LIMIT)
+    except (CatalogError, OSError, ValueError) as exc:
+        activity.logger.warning("remarketing: catálogo no disponible para el gancho: %s", exc)
+        return []
+    return list(result.results)
 
 
 @activity.defn(name="build_remarketing_trigger_v2_activity")
@@ -75,4 +109,6 @@ async def build_remarketing_trigger_v2_activity(input: RemarketingTriggerInput) 
         touch_number=input.touch_number,
         silence_minutes=input.silence_minutes,
         campaign_context=input.campaign_context,
+        catalog_facts=input.catalog_facts,
+        unavailable_terms=input.unavailable_terms,
     )

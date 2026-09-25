@@ -67,6 +67,173 @@ def matching_campaign_touch(
     return best
 
 
+def _touch_that_opened(
+    opened: dict[str, Any], campaign_touches: list[Any] | None
+) -> dict[str, Any] | None:
+    """El touch que registró el episodio: por el id del mensaje si la marca lo
+    trae; si no (marcas de antes de 2026-09-25), por campaña + hora de envío."""
+    wamid = opened.get("wa_message_id")
+    for touch in campaign_touches or []:
+        if not isinstance(touch, dict):
+            continue
+        if wamid:
+            if touch.get("wa_message_id") == wamid:
+                return touch
+        elif (
+            touch.get("campaign_id") == opened.get("campaign_id")
+            and touch.get("sent_at_ms") == opened.get("sent_at_ms")
+        ):
+            return touch
+    return None
+
+
+def attributed_campaign_touch(
+    episode: dict[str, Any] | None,
+    campaign_touches: list[Any] | None,
+    at_ms: int | None,
+) -> dict[str, Any] | None:
+    """La campaña (touch REAL) a la que se atribuye un episodio, o None.
+
+    Si una respuesta a campaña abrió el episodio (`opened_by_campaign`, lo
+    escribe el webhook de chats: el mensaje de campaña que el cliente citó
+    o, sin cita, el último envío que no había respondido), es esa campaña: la
+    misma decisión que vio el bot. Si lo abrió un envío de PRUEBA → None, aunque
+    haya otro envío real en ventana (respondía a la prueba). Sin esa marca
+    (episodios viejos) → el último touch real en ventana
+    (`matching_campaign_touch`). Readers: ads y marketing (2026-09-25)."""
+    opened = episode.get("opened_by_campaign") if isinstance(episode, dict) else None
+    if not isinstance(opened, dict) or not opened.get("campaign_id"):
+        return matching_campaign_touch(campaign_touches, at_ms)
+    if opened.get("test"):
+        return None
+    touch = _touch_that_opened(opened, campaign_touches)
+    if touch is not None:
+        return None if touch.get("test") else touch
+    # El contacto guarda sus últimas campañas (tope): la marca alcanza.
+    return {k: opened[k] for k in ("campaign_id", "campaign_name", "sent_at_ms") if k in opened}
+
+
+# --- Lo que Meta dice de cada mensaje de campaña (2026-09-25) ---------------
+#
+# El touch es el registro POR DESTINATARIO de una campaña: además de la
+# atribución lleva el id del mensaje (`wa_message_id`, lo escribe el send del
+# plugin marketing) y `delivery` (lo escribe el webhook de estados de chats):
+#
+#     "delivery": {"status": "read", "delivered_at_ms": …, "read_at_ms": …,
+#                  "failed_at_ms": …, "error_code": 131049,
+#                  "pricing": {billable, pricing_type, category},
+#                  "cost_usd_micros": 12500, "rate_card_version": "…"}
+#
+# Ads lo lee para entregados/leídos/gasto de la campaña (`campaign_delivery`).
+
+
+def campaign_touch_for_message(
+    campaign_touches: list[Any] | None, wa_message_id: str
+) -> dict[str, Any] | None:
+    """El touch del mensaje de campaña con ese `wa_message_id`, o None si el
+    mensaje no es de una campaña (o el touch es de antes de guardar el id)."""
+    if not wa_message_id or not campaign_touches:
+        return None
+    for touch in campaign_touches:
+        if isinstance(touch, dict) and touch.get("wa_message_id") == wa_message_id:
+            return touch
+    return None
+
+
+@dataclass(frozen=True)
+class CampaignDelivery:
+    """Lo que se sabe del mensaje de campaña de UN destinatario."""
+
+    delivered: bool = False
+    read: bool = False
+    #: Meta avisó que no se pudo entregar (y nunca se entregó).
+    failed: bool = False
+    #: Ya llegó el precio de Meta (`cost_usd_micros` puede ser 0: gratis).
+    priced: bool = False
+    cost_usd_micros: int | None = None
+    #: El touch guarda el id del mensaje (touches de antes de 2026-09-25 no):
+    #: sin id no hay forma de saber si se entregó ni cuánto costó.
+    has_message_id: bool = False
+
+
+def _earliest(delivery: dict[str, Any], key: str, at_ms: int) -> None:
+    current = delivery.get(key)
+    if not isinstance(current, int) or at_ms < current:
+        delivery[key] = at_ms
+
+
+def apply_campaign_delivery(
+    touch: dict[str, Any],
+    *,
+    status: str,
+    at_ms: int | None,
+    error_code: int | None = None,
+    pricing: dict[str, Any] | None = None,
+    cost_usd_micros: int | None = None,
+    rate_card_version: str | None = None,
+) -> bool:
+    """Mutates: anota en `touch["delivery"]` un estado de Meta del mensaje.
+
+    - `delivered`/`read` guardan la hora más temprana; leído implica
+      entregado (Meta puede mandar `read` antes que `delivered`), y el estado
+      nunca retrocede.
+    - `failed` guarda la hora y el código de error de Meta.
+    - El precio (`pricing` + `cost_usd_micros` + versión de la tarifa) se
+      anota una sola vez, con el primer estado que lo trae: un webhook
+      duplicado no lo pisa.
+
+    `at_ms`: hora del estado según Meta; sin ella, la del envío. Devuelve
+    True si cambió algo (False = webhook repetido o sin nada nuevo)."""
+    before = touch.get("delivery") if isinstance(touch.get("delivery"), dict) else {}
+    delivery = dict(before)
+    when = at_ms if isinstance(at_ms, int) else touch.get("sent_at_ms")
+    if isinstance(when, int):
+        if status in ("delivered", "read"):
+            _earliest(delivery, "delivered_at_ms", when)
+        if status == "read":
+            _earliest(delivery, "read_at_ms", when)
+        if status == "failed":
+            _earliest(delivery, "failed_at_ms", when)
+    if status == "failed" and error_code is not None and delivery.get("error_code") is None:
+        delivery["error_code"] = error_code
+    if (
+        isinstance(pricing, dict)
+        and isinstance(cost_usd_micros, int)
+        and not isinstance(delivery.get("cost_usd_micros"), int)
+    ):
+        delivery["pricing"] = dict(pricing)
+        delivery["cost_usd_micros"] = cost_usd_micros
+        delivery["rate_card_version"] = rate_card_version
+    delivery["status"] = (
+        "read" if "read_at_ms" in delivery
+        else "delivered" if "delivered_at_ms" in delivery
+        else "failed" if "failed_at_ms" in delivery
+        else "sent"
+    )
+    if delivery == before:
+        return False
+    touch["delivery"] = delivery
+    return True
+
+
+def campaign_delivery(touch: dict[str, Any]) -> CampaignDelivery:
+    """Lectura del `delivery` de un touch (tolerante a shapes viejos o rotos)."""
+    raw = touch.get("delivery")
+    delivery = raw if isinstance(raw, dict) else {}
+    read = isinstance(delivery.get("read_at_ms"), int)
+    delivered = read or isinstance(delivery.get("delivered_at_ms"), int)
+    cost = delivery.get("cost_usd_micros")
+    cost = cost if isinstance(cost, int) and not isinstance(cost, bool) else None
+    return CampaignDelivery(
+        delivered=delivered,
+        read=read,
+        failed=not delivered and isinstance(delivery.get("failed_at_ms"), int),
+        priced=cost is not None,
+        cost_usd_micros=cost,
+        has_message_id=bool(touch.get("wa_message_id")),
+    )
+
+
 @dataclass(frozen=True)
 class AttributionSession:
     """Una sesión WhatsApp con su metadata de atribución parseada.

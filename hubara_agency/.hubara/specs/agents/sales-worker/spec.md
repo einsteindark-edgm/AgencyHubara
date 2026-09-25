@@ -716,6 +716,30 @@ para que ventas no avance el cierre.
 - THEN el handoff empieza con `[EL CLIENTE APLAZÓ]` y prohíbe pedir datos de envío
 - AND ventas responde texto y no manda el formulario
 
+### Requirement: Lo que no existe en el catálogo se dice (2026-09-23)
+
+Cuando el mensaje del cliente (incluida la descripción de una foto) pide o
+muestra un producto, forma, envase, diseño o presentación que no aparece en el
+catálogo, el ingest SHALL detectarlo sin LLM (`unavailable_terms` de
+`chats/shared/product_truth`, el mismo detector de la guarda del remarketing)
+e inyectar al `plugin_context` una nota que NOMBRA esos términos como
+inexistentes. El agente MUST decirle al cliente que no los manejamos y ofrecer
+la alternativa real más cercana; MUST NOT responder solo con el catálogo. Sin
+catálogo o con el catálogo caído no hay nota y el turno sigue (nunca bloquea).
+Con la conversación en manos de un humano no se calcula.
+
+#### Scenario: Foto con una vela de dragón y «¿y en vaso también?»
+
+- GIVEN ningún producto del catálogo viene en vaso ni tiene diseño de dragón
+- WHEN el cliente manda la foto y escribe «Estás y en vaso también»
+- THEN el turno lleva la nota con «dragón» y «vaso»
+- AND la respuesta dice que eso no lo manejamos y ofrece lo más parecido (Cubo Love, Cilindro Love, Cubo de corazón)
+
+#### Scenario: Pregunta por un producto real
+
+- WHEN el cliente pregunta «¿El cubo de corazón viene en azul?» y el catálogo tiene azul
+- THEN el turno no lleva la nota
+
 ### Requirement: Variantes siempre en formato picker
 
 Si el texto final del turno enumera 4 o más aromas o colores del catálogo y el

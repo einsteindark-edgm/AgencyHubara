@@ -86,6 +86,35 @@ genérico del intent del Window Strategist.
 - THEN el trigger que ve el LLM usa el motivo del tag, dice que NO hay pedido a medias e incluye esos mensajes
 - AND el LLM puede responder `NO_MESSAGE` si el transcript muestra que el gancho no corresponde
 
+### Requirement: El gancho solo afirma datos de producto que existen en el catálogo
+
+El agente de remarketing no tiene tools de catálogo. El contexto del gancho
+MUST traer del snapshot del catálogo (el mismo que lee Sales) la lista de
+productos que existen y la ficha real (descripción, presentación, colores,
+aromas) de los productos nombrados en el motivo o el transcript, y MUST
+detectar lo que el cliente pidió o mostró que NO existe en el catálogo
+(p. ej. «en vaso», «de dragón»). El trigger MUST declarar el catálogo como la
+única fuente de datos de producto y nombrar lo que no existe. El workflow MUST
+NOT enviar un gancho que mencione algo que no existe o que invente popularidad
+(«los más pedidos», «de los más lindos»): lo trata como abstención (no envía,
+no persiste, no lo graba en el historial del LLM, devuelve el routing a
+ventas). Sin catálogo disponible el trigger MUST prohibir afirmar atributos de
+producto y la detección MUST NOT adivinar. Incidente 2026-09-25.
+
+#### Scenario: El cliente preguntó por una presentación que no existe
+
+- GIVEN el cliente escribió «¿y en vaso también?» y ningún producto del catálogo tiene vaso
+- AND Cubo Love tiene una sola variante
+- WHEN el gancho responde «el Cubo Love también viene en vaso»
+- THEN el mensaje NO se envía al cliente y el toque cuenta como abstención
+- AND el siguiente toque no ve ese gancho en su historial LLM
+
+#### Scenario: Gancho veraz
+
+- GIVEN el mismo contexto
+- WHEN el gancho responde «¿Te ayudo a elegir el aroma de tu Cubo Love?»
+- THEN el mensaje se envía normalmente
+
 ### Requirement: La reactivación sigue una escalera de toques por cada ghosting
 
 Decisión del operador 2026-09-18 (runs `01a0b0da`…`01a0b586`: tras el primer

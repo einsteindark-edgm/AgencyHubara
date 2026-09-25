@@ -18,6 +18,7 @@ Acá se digiere lo que el gancho necesita:
 """
 from __future__ import annotations
 
+import unicodedata
 from typing import Any
 
 from src.plugins.chats.agent.remarketing.contracts import RemarketingContext
@@ -103,6 +104,111 @@ def campaign_context_for(episode: dict[str, Any] | None) -> str:
     if handles:
         parts.append("productos: " + ", ".join(handles))
     return " — ".join(parts)
+
+
+#: valores que Medusa pone cuando el producto NO tiene un eje de selección
+#: real (una sola variante): no son una "presentación".
+_PLACEHOLDER_OPTION_VALUES = frozenset({"unico", "único", "default option value"})
+#: tope de la descripción en la ficha: alcanza para anclar un detalle real sin
+#: inflar el prompt (el gancho es 1-2 frases).
+_FICHA_DESCRIPTION_CHARS = 280
+
+
+def _fold(text: str) -> str:
+    """minúsculas sin tildes: «CUBO DE CORAZON» ≡ «Cubo de corazón»."""
+    decomposed = unicodedata.normalize("NFKD", text.lower())
+    return " ".join("".join(c for c in decomposed if not unicodedata.combining(c)).split())
+
+
+def _tag_values(tags: list[str], prefix: str) -> list[str]:
+    out: list[str] = []
+    for tag in tags or []:
+        head, sep, value = tag.partition(":")
+        if sep and head.strip().lower() == prefix and value.strip() and value.strip() not in out:
+            out.append(value.strip())
+    return out
+
+
+def _real_options(product: Any) -> dict[str, list[str]]:
+    options = getattr(product, "options", None) or {}
+    real: dict[str, list[str]] = {}
+    for axis, values in options.items():
+        kept = [v for v in values or [] if _fold(v) not in _PLACEHOLDER_OPTION_VALUES]
+        if kept:
+            real[axis] = kept
+    return real
+
+
+def _short(description: str | None) -> str:
+    text = " ".join((description or "").split())
+    if len(text) <= _FICHA_DESCRIPTION_CHARS:
+        return text
+    return text[:_FICHA_DESCRIPTION_CHARS].rsplit(" ", 1)[0] + "…"
+
+
+def _ficha(product: Any) -> str:
+    parts = [f"- {product.title}: {_short(product.description)}".rstrip(": ")]
+    options = _real_options(product)
+    if options:
+        parts.append(
+            "Opciones: " + "; ".join(f"{axis}: {', '.join(vals)}" for axis, vals in options.items())
+        )
+    else:
+        parts.append(
+            "Presentación única (no viene en otras formas, envases, tamaños ni versiones)"
+        )
+    colors = _tag_values(product.tags, "color")
+    if colors:
+        parts.append("Colores: " + ", ".join(colors))
+    aromas = _tag_values(product.tags, "aroma")
+    if aromas:
+        parts.append("Aromas: " + ", ".join(aromas))
+    return " | ".join(parts)
+
+
+def catalog_facts_for(products: list[Any], *, mentioned: str) -> str:
+    """(productos del snapshot, texto de la charla) → ficha para el gancho.
+
+    Incidente 2026-09-25: el cliente preguntó por velas «en vaso» y mandó la
+    foto de una vela de dragón — ninguna existe — y el gancho, sin catálogo,
+    terminó afirmando «el Cubo Love también viene en vaso». Acá va lo que SÍ
+    existe: todos los nombres del catálogo (para que lo que no esté ahí no se
+    ofrezca) y la ficha real de los que se nombraron en la charla (motivo +
+    transcript), con su presentación, colores y aromas.
+    """
+    if not products:
+        return ""
+    text = _fold(mentioned)
+    named = [p for p in products if _fold(p.title) and _fold(p.title) in text]
+    lines = [
+        f"Productos que existen ({len(products)}): "
+        + ", ".join(p.title for p in products)
+        + ". Cualquier otro producto, forma, envase o presentación NO existe."
+    ]
+    if named:
+        lines.append("Ficha de los productos de esta charla:")
+        lines.extend(_ficha(p) for p in named)
+    return "\n".join(lines)
+
+
+def customer_text_for(metadata: dict[str, Any] | None, events: list[dict[str, Any]]) -> str:
+    """Lo que el cliente escribió en el episodio activo + el motivo de Ventas.
+
+    Todo el episodio, no solo la cola del transcript: en el incidente del
+    2026-09-25 el «¿y en vaso también?» ya había salido de la ventana de 12
+    mensajes (la llenaban los ganchos), pero seguía vivo en el motivo y en
+    los ganchos que lo repetían.
+    """
+    meta = metadata or {}
+    lines = [
+        e["content"]
+        for e in episode_events(events, _active_episode(meta))
+        if e.get("role") == "user" and isinstance(e.get("content"), str)
+    ]
+    motivo = meta.get("motivo")
+    if isinstance(motivo, str):
+        lines.append(motivo)
+    return "\n".join(lines)
 
 
 def context_from_metadata(

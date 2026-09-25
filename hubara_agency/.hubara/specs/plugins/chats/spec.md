@@ -663,6 +663,51 @@ El exportador del banco (botón "Nueva corrida", worker `sales_eval`) MUST dejar
 - WHEN se arma el banco
 - THEN el export falla a la vista (el lanzador muestra el error) sin esperar a OrderFacts, y no queda un banco con manifiesto que la caja pueda usar
 
+### Requirement: Estados de Meta de los mensajes de campaña
+
+El webhook de estados (`statuses[]`) MUST leer la hora del estado y el código
+de error de un `failed`, y si el id del mensaje es de un touch de campaña MUST
+anotar en ese touch entregado / leído / fallido y el precio (tarifa vigente
+cuando salió), aunque el contacto no tenga conversación abierta. Ese estado
+MUST NOT ir al registro de huérfanos. Si el mensaje también está en la
+conversación abierta, esa conversación MUST seguir materializando su costo
+(reengagement cuenta sus toques).
+
+#### Scenario: Plantilla de campaña a un contacto sin conversación abierta
+
+- GIVEN el touch `mkt-amor` del contacto guarda `wamid.CAMP1` y el contacto no tiene conversación abierta
+- WHEN llegan `delivered` y luego `read` con precio de marketing
+- THEN el touch queda `status: read` con las horas de entrega y lectura y `cost_usd_micros` de la tarjeta vigente, y nada va a `_orphan_delivery_statuses.jsonl`
+
+#### Scenario: Plantilla de campaña que falló
+
+- WHEN llega `failed` con `errors[0].code = 131049`
+- THEN el touch queda `status: failed` con ese código
+
+### Requirement: La respuesta que cita el mensaje de una campaña es de esa campaña
+
+Si el cliente responde CITANDO el mensaje de una campaña (`context.id` = el
+`wa_message_id` de su touch), el webhook MUST tratarlo como respuesta a ESA
+campaña aunque después le haya llegado otra: la nota del bot lleva su mensaje,
+su cupón y sus productos, y el episodio nuevo queda marcado con ella
+(`opened_by_campaign`, con el id del mensaje y si era prueba). Si ya la había
+respondido, o pasó la ventana de 7 días, MUST NOT abrir una respuesta a otra
+campaña. Sin cita, la regla sigue siendo la última campaña que no había
+respondido. Una baja ("NO MÁS") citando una campaña MUST quedar a nombre de
+esa campaña (salvo que sea una prueba). Ads y Marketing atribuyen la
+conversación con esa marca (`attributed_campaign_touch`).
+
+#### Scenario: El cliente cita la campaña anterior
+
+- GIVEN le llegaron Amor (lunes, cupón AMOR26) y Halloween (jueves, cupón BOO10) y no respondió ninguna
+- WHEN el viernes responde citando el mensaje de Amor
+- THEN la nota habla de Amor y AMOR26 (no de BOO10) y el episodio nuevo queda con `opened_by_campaign.campaign_id` de Amor
+
+#### Scenario: Vuelve a citar una campaña que ya respondió
+
+- GIVEN respondió a Amor el martes y le llegó Halloween el jueves
+- WHEN el viernes cita otra vez el mensaje de Amor
+- THEN no es una respuesta a Halloween: sigue la conversación de Amor
 
 ### Requirement: Cupo por unidad de un cupón
 

@@ -19,6 +19,7 @@ export type {
   WaCostByCategory,
   WaCostEntry,
   WaCostRow,
+  WhatsappSend,
 } from "./model";
 export {
   ADS_DATE_RANGES,

@@ -178,6 +178,27 @@ export function waCostBreakdown(
   return [...known, ...unknown];
 }
 
+/** El ENVÍO de una campaña de WhatsApp (sección Marketing), 2026-09-25: lo
+ *  que para una campaña de Meta son gasto, impresiones y clicks. Cuenta los
+ *  envíos REALES de la ventana (las pruebas no). */
+export interface WhatsappSend {
+  sent: number;
+  delivered: number;
+  read: number;
+  /** Meta avisó que no se pudo entregar. */
+  failed: number;
+  /** Destinatarios que respondieron (abrieron conversación). */
+  replied: number;
+  /** Bajas ("NO MÁS" o desde WhatsApp) que provocó esta campaña. */
+  optedOut: number;
+  /** Gasto real (precio de Meta) en USD micros. null = aún ningún precio. */
+  costUsdMicros: number | null;
+  /** Enviados cuyo precio todavía no llegó. */
+  costPending: number;
+  /** Enviados antes del registro de entregas: sin datos de entrega ni costo. */
+  untracked: number;
+}
+
 /**
  * Una campaña Meta vista desde el dashboard. Muchos campos son `| null`
  * porque hoy solo tenemos lo que clasifica el ingest WhatsApp (origin +
@@ -261,6 +282,11 @@ export interface AdsCampaign {
   capiFailed: number;
   /** Eventos CAPI que no aplicaban (sin clid / ventana vencida / sin config). */
   capiSkipped: number;
+
+  // --- Campaña de WhatsApp (sección Marketing) ---
+  /** El envío de la campaña; solo en filas `hubara_campaign`. Opcional para
+   *  tolerar fixtures históricos. */
+  whatsappSend?: WhatsappSend | null;
 }
 
 /* ── Conversaciones atribuidas (WhatsApp chats originados por un anuncio) ── */

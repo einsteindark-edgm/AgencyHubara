@@ -48,6 +48,25 @@ const backendWaCostFields = {
   wa_msgs_pending: z.number().int().default(0),
 };
 
+/** Envío de una campaña de WhatsApp (sección Marketing), 2026-09-25: lo que
+ *  para una campaña de Meta son gasto/impresiones/clicks. Solo lo trae una fila
+ *  `hubara_campaign`; `.default(null)` tolera un backend viejo. Gasto en USD
+ *  micros (precio de Meta); `null` = todavía ningún precio (≠ costó 0). */
+const backendWhatsappSendSchema = z
+  .object({
+    sent: z.number().int(),
+    delivered: z.number().int(),
+    read: z.number().int(),
+    failed: z.number().int(),
+    replied: z.number().int(),
+    opted_out: z.number().int(),
+    cost_usd_micros: z.number().int().nullable(),
+    cost_pending: z.number().int(),
+    untracked: z.number().int(),
+  })
+  .nullable()
+  .default(null);
+
 export const backendAdsCampaignSchema = z.object({
   // Disponibles hoy
   id: z.string(),
@@ -103,6 +122,9 @@ export const backendAdsCampaignSchema = z.object({
   capi_failed: z.number().int().default(0),
   // Auditoría CAPI 2026-09-08: skips persistidos ("no aplicaba" ≠ "falló").
   capi_skipped: z.number().int().default(0),
+
+  // Envío de la campaña de WhatsApp (solo filas `hubara_campaign`).
+  whatsapp_send: backendWhatsappSendSchema,
 });
 
 export type BackendAdsCampaign = z.infer<typeof backendAdsCampaignSchema>;

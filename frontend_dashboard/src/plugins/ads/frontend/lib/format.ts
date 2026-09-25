@@ -59,3 +59,9 @@ export function fmtDuration(ms: number): string {
   const m = totalMin % 60;
   return m ? `${h}h ${m}m` : `${h}h`;
 }
+
+/** Tasa APROXIMADA USD→COP del dashboard para comparar el costo de WhatsApp
+ *  (USD) con las ventas (COP): la misma que usa la sección Marketing (sus
+ *  costos "US$ + COP aprox."). Los plugins no comparten código de frontend
+ *  (P-22), por eso vive duplicada acá. */
+export const USD_TO_COP_APPROX = 4000;

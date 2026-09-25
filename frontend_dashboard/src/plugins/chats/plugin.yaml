@@ -408,6 +408,10 @@ agent:
           # HU-003 A7: tarifas para que OpenLIT calcule el costo USD por petición.
           # Rellenar las tarifas reales en deploy/openlit/pricing.json.
           OPENLIT_PRICING_JSON: /app/hubara_agency/deploy/openlit/pricing.json
+          # El gancho lee la ficha REAL del catálogo (mismo snapshot que Sales)
+          # para no inventar presentaciones — incidente 2026-09-25.
+          CATALOG_SNAPSHOT_DIR: /app/hubara_vault/catalog
+          CATALOG_MAX_AGE_MINUTES: "30"
           DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
           WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
           WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}

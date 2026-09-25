@@ -476,14 +476,20 @@ def campaign_stats(
     y no cancelados, con su total vivo (la copia congelada solo si Medusa no
     respondió). Sin `order_facts` se usa la copia congelada (legacy).
 
-    `replied` = sesiones cuyo último inbound cae dentro de la ventana
-    post-touch de ESTA campaña. `attributed_*` = episodios que arrancan en
-    ventana y cerraron venta (mismo matcher de 7 días que usa el panel de
-    Ads — `matching_campaign_touch` del read model de atribución).
-    `opted_out` = contactos cuya baja (por texto o desde WhatsApp) la
-    provocó ESTA campaña (`marketing_opt_out_campaign_id`).
+    Cada conversación cuenta para UNA campaña, con la misma regla que Ads
+    (`attributed_campaign_touch` del read model de atribución): la que marcó
+    el webhook al abrir el episodio — la que citó el cliente, o la última que
+    no había respondido; nunca una prueba — y, en episodios viejos sin marca,
+    el último envío real en ventana de 7 días. Antes, dos campañas en ventana
+    se contaban la misma respuesta y la misma venta (2026-09-25).
+
+    `replied` = sesiones con un episodio atribuido a ESTA campaña (sesiones
+    sin episodios: su último inbound, con la misma exclusividad).
+    `attributed_*` = esos episodios que cerraron venta. `opted_out` =
+    contactos cuya baja (por texto o desde WhatsApp) la provocó ESTA campaña
+    (`marketing_opt_out_campaign_id`).
     """
-    from src.sdk.connectorkit import matching_campaign_touch
+    from src.sdk.connectorkit import attributed_campaign_touch, matching_campaign_touch
     from src.sdk.messagingkit import marketing_opt_out_info
 
     campaign_id = campaign["id"]
@@ -495,20 +501,20 @@ def campaign_stats(
         info = marketing_opt_out_info(metadata)
         if info is not None and info.campaign_id == campaign_id:
             opted_out += 1
-        touches = [
-            t
-            for t in (metadata.get("campaign_touches") or [])
-            if isinstance(t, dict) and t.get("campaign_id") == campaign_id
-        ]
-        if not touches:
+        touches = [t for t in (metadata.get("campaign_touches") or []) if isinstance(t, dict)]
+        if not any(t.get("campaign_id") == campaign_id for t in touches):
             continue
-        if matching_campaign_touch(touches, metadata.get("last_inbound_at_ms")):
-            replied += 1
-        for episode in metadata.get("episodes") or []:
-            if not isinstance(episode, dict):
+        episodes = [e for e in metadata.get("episodes") or [] if isinstance(e, dict)]
+        if not episodes:
+            last = matching_campaign_touch(touches, metadata.get("last_inbound_at_ms"))
+            replied += int(last is not None and last.get("campaign_id") == campaign_id)
+            continue
+        answered = False
+        for episode in episodes:
+            touch = attributed_campaign_touch(episode, touches, episode.get("started_at_ms"))
+            if touch is None or touch.get("campaign_id") != campaign_id:
                 continue
-            if matching_campaign_touch(touches, episode.get("started_at_ms")) is None:
-                continue
+            answered = True
             total = episode.get("order_total_cop")
             if order_facts is not None:
                 total = order_facts.revenue_cop(
@@ -517,6 +523,7 @@ def campaign_stats(
             if isinstance(total, (int, float)) and not isinstance(total, bool):
                 orders += 1
                 revenue_cop += int(total)
+        replied += int(answered)
     return {
         "replied": replied,
         "attributed_orders": orders,
@@ -597,7 +604,11 @@ CAMPAIGN_TOUCHES_CAP = 20
 
 
 def build_campaign_touch(
-    campaign: dict[str, Any], *, sent_at_ms: int, test: bool = False
+    campaign: dict[str, Any],
+    *,
+    sent_at_ms: int,
+    test: bool = False,
+    wa_message_id: str | None = None,
 ) -> dict[str, Any]:
     """El touch que queda en el metadata del contacto al enviarle la campaña.
 
@@ -608,6 +619,9 @@ def build_campaign_touch(
     (bug 2026-09-22: contestó "AMOR26" y el bot retomó un pedido viejo).
     `test`: envío de prueba del operador — el bot lo trata igual, la
     atribución (Ads/stats) lo ignora.
+    `wa_message_id`: el id que Meta le dio al mensaje. El webhook de estados
+    encuentra el touch por ese id y anota si se entregó, si se leyó y cuánto
+    costó (Ads, 2026-09-25).
     """
     variables = campaign_template_variables(campaign, customer_name=None)
     touch: dict[str, Any] = {
@@ -618,6 +632,8 @@ def build_campaign_touch(
         "coupon_code": (campaign.get("coupon_code") or "").strip() or None,
         "product_handles": carousel_handles(campaign),
     }
+    if wa_message_id:
+        touch["wa_message_id"] = wa_message_id
     if test:
         touch["test"] = True
     return touch

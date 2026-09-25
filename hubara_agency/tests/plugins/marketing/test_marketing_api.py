@@ -309,6 +309,8 @@ def test_test_send_manda_template_a_la_sesion_del_numero(
     assert touch["campaign_id"] == campaign_id
     assert touch["test"] is True
     assert touch["message"]
+    # Con el id del mensaje, el webhook anota también la entrega de la prueba.
+    assert touch["wa_message_id"] == "wamid-1"
     # El tag del contacto sobrevive (merge, no clobber).
     assert metadata["tag"] == "INTERESADO"
 

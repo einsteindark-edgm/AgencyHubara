@@ -192,7 +192,7 @@ async def mark_campaign_sending_activity(campaign_id: str) -> None:
 
 @activity.defn(name="stamp_campaign_touch")
 async def stamp_campaign_touch_activity(
-    session_id: str, campaign_id: str, campaign_name: str
+    session_id: str, campaign_id: str, campaign_name: str, wa_message_id: str | None = None
 ) -> None:
     """Estampa el identificador de campaña en el metadata del contacto.
 
@@ -204,10 +204,14 @@ async def stamp_campaign_touch_activity(
     productos): el bot no ve la plantilla en su historial y lo necesita
     cuando el cliente responde (bug 2026-09-22). La campaña se lee del
     vault; si ya no existe queda el touch mínimo de atribución.
+
+    `wa_message_id`: el id del mensaje que devolvió Meta. Con él, el webhook
+    de estados anota en este touch si se entregó, si se leyó y cuánto costó:
+    las métricas de envío de la campaña en Ads (2026-09-25).
     """
     campaign = _store().get(campaign_id) or {"id": campaign_id}
     campaign = {**campaign, "id": campaign_id, "name": campaign_name}
-    touch = build_campaign_touch(campaign, sent_at_ms=_now_ms())
+    touch = build_campaign_touch(campaign, sent_at_ms=_now_ms(), wa_message_id=wa_message_id)
 
     def _append_touch(metadata: dict[str, Any]) -> dict[str, Any]:
         return append_campaign_touch(metadata, touch)

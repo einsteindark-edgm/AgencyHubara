@@ -48,6 +48,7 @@ import { AdsCreativesTable } from "@plugins/ads/frontend/features/ads-creatives-
 import { AdsInspector } from "@plugins/ads/frontend/features/ads-inspector";
 import { ConnectMeta } from "@plugins/ads/frontend/features/connect-meta";
 import { CampaignMetaKpis } from "@plugins/ads/frontend/features/campaign-meta-kpis";
+import { CampaignWhatsappKpis } from "@plugins/ads/frontend/features/campaign-whatsapp-kpis";
 import { WhatsappCosts } from "@plugins/ads/frontend/features/whatsapp-costs";
 import { AgentReferralsKpi } from "@plugins/ads/frontend/features/agent-referrals-kpi";
 import { OrdersStaleNotice } from "@plugins/ads/frontend/features/orders-stale-notice";
@@ -251,6 +252,10 @@ export function AdsSection() {
         {/* KPIs Meta del scope activo (gasto/imp/clicks/conv/CPC/costo-conv):
             campaña (merge level=campaign) o segmento (level=adset). */}
         <CampaignMetaKpis campaign={scoped ?? campaign} />
+        {/* Campaña de WhatsApp (sección Marketing): su envío como una campaña
+            de Meta — embudo enviados→ventas, gasto real, costo por respuesta
+            y por venta, ROAS (2026-09-25). Solo filas `hubara_campaign`. */}
+        <CampaignWhatsappKpis campaign={scoped ?? campaign} />
         {/* Costos de WhatsApp del scope activo, por categoría de Meta — con su
             línea divisoria rotulada: NO es el gasto del anuncio (2026-09-18). */}
         <WhatsappCosts campaign={scoped ?? campaign} />

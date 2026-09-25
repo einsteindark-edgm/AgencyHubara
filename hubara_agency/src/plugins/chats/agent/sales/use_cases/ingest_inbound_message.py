@@ -72,6 +72,7 @@ from src.plugins.chats.agent.sales.use_cases.campaign_reply import (
     build_campaign_reply_note,
     campaign_label,
     mark_campaign_episode,
+    quoted_campaign_touch,
     quote_campaign_in_turn,
     unanswered_campaign_touch,
 )
@@ -104,6 +105,7 @@ from src.plugins.chats.agent.sales.use_cases.coupon_application import (
     CouponApplication,
     store_coupon_application,
 )
+from src.plugins.chats.agent.sales.use_cases.catalog_gap import build_catalog_gap_note
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
@@ -160,6 +162,12 @@ _WEB_CART_HYDRATION_TIMEOUT_S = 3.0
 #: Validar el cupón de la campaña (promociones de Medusa + vendidas del cupo)
 #: antes del primer turno. Si no alcanza, el bot lo aplica con `apply_coupon`.
 _CAMPAIGN_COUPON_TIMEOUT_S = 5.0
+
+#: Lo que el cliente pide y no existe: el catálogo es el snapshot local (~30
+#: productos); el tope evita leer de más si crece, el timeout es por si no
+#: responde.
+_CATALOG_GAP_LIMIT = 200
+_CATALOG_GAP_TIMEOUT_S = 2.0
 
 #: Cap de descarga para documentos PDF inbound (comprobantes). La restricción
 #: de subida la impone WhatsApp (100 MB); de nuestro lado, por encima de este
@@ -328,7 +336,10 @@ class IngestInboundMessage:
             # LLM no ve (la plantilla no entra a su historial). Corre ANTES
             # de pisar `last_inbound_at_ms` (lo usa para saber si ya
             # respondió).
-            _campaign_touch = unanswered_campaign_touch(metadata, now_ms)
+            # Si cita el mensaje de una campaña, es de ESA (2026-09-25).
+            _campaign_touch = unanswered_campaign_touch(
+                metadata, now_ms, quoted_message_id=(parsed.context or {}).get("id")
+            )
             if _campaign_touch is not None:
                 close_episode(
                     metadata,
@@ -434,13 +445,19 @@ class IngestInboundMessage:
             and parsed.text
             and detect_marketing_opt_out(parsed.text, metadata, now_ms)
         ):
-            # Queda registrado cuándo, por qué vía y qué campaña lo provocó
-            # (la del touch reciente): métrica de bajas por campaña.
+            # Queda registrado cuándo, por qué vía y qué campaña lo provocó:
+            # la que citó (2026-09-25) o la del touch reciente — métrica de
+            # bajas por campaña. Una prueba citada no carga la baja.
+            _quoted = quoted_campaign_touch(metadata, (parsed.context or {}).get("id"))
             mark_marketing_opt_out(
                 metadata,
                 now_ms=now_ms,
                 source=OPT_OUT_SOURCE_TEXT,
-                campaign_id=opt_out_campaign_id(metadata, now_ms),
+                campaign_id=(
+                    _quoted["campaign_id"]
+                    if _quoted is not None and not _quoted.get("test")
+                    else opt_out_campaign_id(metadata, now_ms)
+                ),
             )
             # Pidió la baja: no se le sigue conversando la campaña.
             campaign_reply_note = None
@@ -969,6 +986,14 @@ class IngestInboundMessage:
         # Cupón aplicado en el episodio: el LLM lo recuerda cada turno y sabe
         # que el monto lo calcula el sistema (no promete otro descuento).
         coupon_note = build_coupon_note(metadata, in_play=coupon_talk)
+        # Lo que el cliente pidió o mostró (la foto reentra como texto) y no
+        # existe en el catálogo (incidente 2026-09-23: «¿y en vaso?» + foto de
+        # una vela de dragón, y Ventas solo reenvió el catálogo).
+        catalog_gap_note = (
+            await self._catalog_gap_note(effective.text)
+            if metadata.get("active_route") != ROUTE_HUMANO
+            else None
+        )
         # Respuesta a campaña: la nota solo viaja por la ruta Sales (el
         # remarketing no recibe plugin_context) — el turno va a Ventas.
         route_kwargs: dict[str, Any] = (
@@ -1006,6 +1031,7 @@ class IngestInboundMessage:
                     order_draft_note,
                     coupon_note,
                     photo_citation_note,
+                    catalog_gap_note,
                 )
                 if note
             ]
@@ -1107,6 +1133,23 @@ class IngestInboundMessage:
             exhausted=exhausted,
         )
         return updated
+
+    async def _catalog_gap_note(self, text: str) -> str | None:
+        """Nota de lo que no existe en el catálogo; None sin catálogo o si
+        falla (un aviso de más no justifica demorar ni tumbar el turno)."""
+        import asyncio
+
+        if self._catalog is None or not text:
+            return None
+        try:
+            result = await asyncio.wait_for(
+                self._catalog.search("", limit=_CATALOG_GAP_LIMIT),
+                timeout=_CATALOG_GAP_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade, never break the ingest
+            logger.warning("catalog_gap_check_failed", reason=type(exc).__name__)
+            return None
+        return build_catalog_gap_note(text, list(result.results))
 
     async def _resolve_product_ref(self, sku: str) -> tuple[Any, str | None]:
         """Resolves a `ref: HUB-…` SKU against the catalog WITHOUT mutating

@@ -45,7 +45,8 @@ from src.plugins.ads.classification import (
 from src.sdk.connectorkit import OrderFactsSnapshot
 from src.sdk.connectorkit import (
     FilesystemAttributionStore,
-    matching_campaign_touch,
+    attributed_campaign_touch,
+    campaign_delivery,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,9 +82,34 @@ SYNTHETIC_CAMPAIGN_IDS: frozenset[str] = frozenset(
 # post-touch y NO vino de un referral Meta se atribuye a esa campaña.
 CAMPAIGN_SOURCE_TYPE = "hubara_campaign"
 
-# El matcher (ventana de 7 días, last-touch) es del read model de atribución
-# de plataforma — lo comparten ads y marketing vía SDK.
-_matching_campaign_touch = matching_campaign_touch
+# La regla de atribución es del read model de plataforma — la comparten ads y
+# marketing vía SDK: la campaña que marcó el webhook al abrir el episodio (la
+# que citó el cliente, o la última sin responder; nunca una prueba) y, en
+# episodios viejos sin marca, el último envío real en ventana de 7 días.
+_attributed_campaign_touch = attributed_campaign_touch
+
+
+@dataclass(frozen=True)
+class WhatsAppSendStats:
+    """El ENVÍO de una campaña de WhatsApp (plugin marketing), leído de los
+    touches de sus destinatarios: lo que para una campaña de Meta son gasto,
+    impresiones y clicks (pedido del operador, 2026-09-25).
+
+    Todo cuenta sobre los touches REALES enviados en la ventana (los de
+    prueba no). `cost_usd_micros` es el precio de Meta de los mensajes (None =
+    todavía ningún precio); `cost_pending` = enviados sin precio aún;
+    `untracked` = enviados antes de que el touch guardara el id del mensaje
+    (de esos no se sabe entrega ni costo)."""
+
+    sent: int = 0
+    delivered: int = 0
+    read: int = 0
+    failed: int = 0
+    replied: int = 0
+    opted_out: int = 0
+    cost_usd_micros: int | None = None
+    cost_pending: int = 0
+    untracked: int = 0
 
 
 @dataclass(frozen=True)
@@ -174,6 +200,9 @@ class AdsCampaignSummary:
     first_resp: str | None = None
     tendency: str | None = None
     days_run: int | None = None
+
+    # --- Envío de una campaña de WhatsApp (solo `hubara_campaign`) ---
+    whatsapp_send: WhatsAppSendStats | None = None
 
 
 @dataclass(frozen=True)
@@ -790,9 +819,14 @@ def merge_wa_cost_categories(
 
 def _episode_wa_cost(
     episode: dict[str, Any] | None,
+    campaign_wamids: frozenset[str] = frozenset(),
 ) -> tuple[int, dict[str, dict[str, int]], int] | None:
     """`(total_usd_micros, by_category, pending)` del episodio, o None si no
     trae `cost_summary`.
+
+    `campaign_wamids`: mensajes de campañas de WhatsApp de la sesión. Si la
+    plantilla cayó en esta conversación (estaba abierta al enviar), su costo
+    es de la campaña — se descuenta acá para no sumarlo dos veces (2026-09-25).
 
     Lectura CRUDA del vault (P-3: ads no importa chats; el shape canónico es
     `_summary_to_dict` del ingest de delivery-status). Tolerante: una categoría
@@ -814,8 +848,134 @@ def _episode_wa_cost(
                 "count": _as_count(entry.get("count")),
                 "usd_micros": _as_count(entry.get("usd_micros")),
             }
+    pending = _as_count(summary.get("messages_pending_count"))
+    for entry in episode.get("outbound_messages") or []:
+        if not isinstance(entry, dict) or entry.get("wa_message_id") not in campaign_wamids:
+            continue
+        cost = entry.get("cost_usd_micros")
+        pricing = entry.get("pricing") if isinstance(entry.get("pricing"), dict) else {}
+        slot = by_category.get(pricing.get("category"))
+        if isinstance(cost, int) and slot is not None:
+            slot["count"] = max(slot["count"] - 1, 0)
+            slot["usd_micros"] = max(slot["usd_micros"] - cost, 0)
+            if slot["count"] == 0 and slot["usd_micros"] == 0:
+                by_category.pop(pricing.get("category"))
+        elif cost is None:
+            pending = max(pending - 1, 0)
     total = sum(entry["usd_micros"] for entry in by_category.values())
-    return total, by_category, _as_count(summary.get("messages_pending_count"))
+    return total, by_category, pending
+
+
+def _empty_bucket(
+    name: str | None, *, source_type: str | None = None, seen_ms: int | None = None
+) -> dict[str, Any]:
+    """Acumulador de una fila del listado antes de sumarle episodios (una
+    campaña de WhatsApp recién enviada arranca así, sin conversaciones)."""
+    return {
+        "source_type": source_type,
+        "started": 0,
+        "first_seen_ms": seen_ms,
+        "last_seen_ms": seen_ms,
+        "name": name,
+        "_name_at_ms": seen_ms,
+        "counts": _empty_state_counts(),
+        # Acumuladores de negocio (ver helpers _episode_*).
+        "revenue": 0,
+        "revenue_count": 0,
+        "llm_cost": 0.0,
+        "llm_tokens": 0,
+        "has_llm": False,
+        "wa_cost": 0,
+        "wa_by_category": {},
+        "wa_pending": 0,
+        "has_wa": False,
+        "dur_sum": 0,
+        "dur_count": 0,
+        "capi_leads": 0,
+        "capi_purchases": 0,
+        "capi_failed": 0,
+        "capi_skipped": 0,
+    }
+
+
+def _in_window(at_ms: Any, since_ms: int | None, until_ms: int | None) -> bool:
+    """¿`at_ms` cae en la ventana de la UI? Sin ventana, todo; sin hora, nada."""
+    if since_ms is None and until_ms is None:
+        return True
+    if not isinstance(at_ms, int):
+        return False
+    return (since_ms is None or at_ms >= since_ms) and (until_ms is None or at_ms < until_ms)
+
+
+def _campaign_wamids(metadata: dict[str, Any]) -> frozenset[str]:
+    """Ids de los mensajes de campañas REALES de la sesión (las de prueba no
+    tienen fila en Ads: su costo queda en la conversación)."""
+    return frozenset(
+        str(t["wa_message_id"])
+        for t in metadata.get("campaign_touches") or []
+        if isinstance(t, dict) and not t.get("test") and t.get("wa_message_id")
+    )
+
+
+def _collect_campaign_sends(
+    sends: dict[str, dict[str, Any]],
+    metadata: dict[str, Any],
+    *,
+    since_ms: int | None,
+    until_ms: int | None,
+) -> None:
+    """Mutates `sends`: suma los touches REALES de la sesión enviados en la
+    ventana, por campaña (enviados, entregados, leídos, fallidos, precio)."""
+    for touch in metadata.get("campaign_touches") or []:
+        if not isinstance(touch, dict) or touch.get("test") or not touch.get("campaign_id"):
+            continue
+        sent_at = touch.get("sent_at_ms")
+        if not isinstance(sent_at, int):
+            continue
+        if since_ms is not None and sent_at < since_ms:
+            continue
+        if until_ms is not None and sent_at >= until_ms:
+            continue
+        slot = sends.setdefault(
+            str(touch["campaign_id"]),
+            {"sent": 0, "delivered": 0, "read": 0, "failed": 0, "cost": 0, "priced": 0,
+             "pending": 0, "untracked": 0, "first": sent_at, "last": sent_at,
+             "name": None, "_name_at": None},
+        )
+        state = campaign_delivery(touch)
+        slot["sent"] += 1
+        slot["delivered"] += int(state.delivered)
+        slot["read"] += int(state.read)
+        slot["failed"] += int(state.failed)
+        if state.cost_usd_micros is not None:
+            slot["cost"] += state.cost_usd_micros
+            slot["priced"] += 1
+        elif not state.has_message_id:
+            slot["untracked"] += 1
+        elif not state.failed:
+            slot["pending"] += 1
+        slot["first"] = min(slot["first"], sent_at)
+        slot["last"] = max(slot["last"], sent_at)
+        if touch.get("campaign_name") and (slot["_name_at"] is None or sent_at >= slot["_name_at"]):
+            slot["name"] = touch["campaign_name"]
+            slot["_name_at"] = sent_at
+
+
+def _send_stats(
+    send: dict[str, Any] | None, replied: int, opted_out: int
+) -> WhatsAppSendStats:
+    send = send or {}
+    return WhatsAppSendStats(
+        sent=send.get("sent", 0),
+        delivered=send.get("delivered", 0),
+        read=send.get("read", 0),
+        failed=send.get("failed", 0),
+        replied=replied,
+        opted_out=opted_out,
+        cost_usd_micros=send["cost"] if send.get("priced") else None,
+        cost_pending=send.get("pending", 0),
+        untracked=send.get("untracked", 0),
+    )
 
 
 # =============================================================================
@@ -853,8 +1013,15 @@ def list_ads_campaigns(
 
     Retorna lista ordenada por `last_seen_ms` descendente.
     """
+    from src.sdk.messagingkit import marketing_opt_out_info
+
     now_ms = int(time.time() * 1000)
     buckets: dict[str, dict[str, Any]] = {}
+    # Campañas de WhatsApp (2026-09-25): lo ENVIADO en la ventana (touches),
+    # quién respondió y quién se dio de baja — la fila existe desde el envío.
+    sends: dict[str, dict[str, Any]] = {}
+    responders: dict[str, set[str]] = {}
+    opted_out: dict[str, int] = {}
 
     for session_dir, metadata in (
         sessions
@@ -868,6 +1035,13 @@ def list_ads_campaigns(
         count_fn = _make_line_counter(session_dir)
         order_totals = _session_order_totals(metadata)
         capi_idx = _session_capi_by_episode(metadata, session_dir.name)
+        campaign_wamids = _campaign_wamids(metadata)
+        _collect_campaign_sends(sends, metadata, since_ms=since_ms, until_ms=until_ms)
+        opt_out = marketing_opt_out_info(metadata)
+        if opt_out is not None and opt_out.campaign_id and _in_window(
+            opt_out.at_ms, since_ms, until_ms
+        ):
+            opted_out[opt_out.campaign_id] = opted_out.get(opt_out.campaign_id, 0) + 1
 
         for ep, state in _iter_episodes(
             metadata,
@@ -882,8 +1056,8 @@ def list_ads_campaigns(
             ep_started_ms = (
                 ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
             )
-            touch = _matching_campaign_touch(
-                metadata.get("campaign_touches"), ep_started_ms
+            touch = _attributed_campaign_touch(
+                ep, metadata.get("campaign_touches"), ep_started_ms
             )
             campaign_id = _episode_to_campaign_id(ep, origin, touch)
             if campaign_id is None:
@@ -907,34 +1081,12 @@ def list_ads_campaigns(
 
             bucket = buckets.setdefault(
                 campaign_id,
-                {
-                    "source_type": source_type,
-                    "started": 0,
-                    "first_seen_ms": ep_started_ms,
-                    "last_seen_ms": ep_started_ms,
-                    "name": headline,
-                    "_name_at_ms": ep_started_ms,
-                    "counts": _empty_state_counts(),
-                    # Acumuladores de negocio (ver helpers _episode_*).
-                    "revenue": 0,
-                    "revenue_count": 0,
-                    "llm_cost": 0.0,
-                    "llm_tokens": 0,
-                    "has_llm": False,
-                    "wa_cost": 0,
-                    "wa_by_category": {},
-                    "wa_pending": 0,
-                    "has_wa": False,
-                    "dur_sum": 0,
-                    "dur_count": 0,
-                    "capi_leads": 0,
-                    "capi_purchases": 0,
-                    "capi_failed": 0,
-                    "capi_skipped": 0,
-                },
+                _empty_bucket(headline, source_type=source_type, seen_ms=ep_started_ms),
             )
             bucket["started"] += 1
             bucket["counts"][state] = bucket["counts"].get(state, 0) + 1
+            if source_type == CAMPAIGN_SOURCE_TYPE:
+                responders.setdefault(campaign_id, set()).add(session_dir.name)
 
             # Ingreso atribuido (frozen en el episodio, backfill desde
             # registered_order). Solo episodios con venta aportan.
@@ -949,7 +1101,7 @@ def list_ads_campaigns(
                 bucket["llm_tokens"] += usage[1]
                 bucket["has_llm"] = True
             # Costo de WhatsApp del episodio (total + por categoría de Meta).
-            wa_cost = _episode_wa_cost(ep)
+            wa_cost = _episode_wa_cost(ep, campaign_wamids)
             if wa_cost is not None:
                 bucket["wa_cost"] += wa_cost[0]
                 merge_wa_cost_categories(bucket["wa_by_category"], wa_cost[1])
@@ -993,6 +1145,16 @@ def list_ads_campaigns(
             ):
                 bucket["name"] = headline
                 bucket["_name_at_ms"] = ep_started_ms
+
+    for camp_id, send in sends.items():
+        bucket = buckets.setdefault(camp_id, _empty_bucket(send["name"]))
+        bucket["source_type"] = CAMPAIGN_SOURCE_TYPE
+        if not bucket["name"]:
+            bucket["name"] = send["name"]
+        if bucket["first_seen_ms"] is None or send["first"] < bucket["first_seen_ms"]:
+            bucket["first_seen_ms"] = send["first"]
+        if bucket["last_seen_ms"] is None or send["last"] > bucket["last_seen_ms"]:
+            bucket["last_seen_ms"] = send["last"]
 
     summaries: list[AdsCampaignSummary] = []
     for camp_id, bucket in buckets.items():
@@ -1047,6 +1209,15 @@ def list_ads_campaigns(
                 capi_purchases_sent=bucket["capi_purchases"],
                 capi_failed=bucket["capi_failed"],
                 capi_skipped=bucket["capi_skipped"],
+                whatsapp_send=(
+                    _send_stats(
+                        sends.get(camp_id),
+                        len(responders.get(camp_id, ())),
+                        opted_out.get(camp_id, 0),
+                    )
+                    if source_type == CAMPAIGN_SOURCE_TYPE
+                    else None
+                ),
             )
         )
 
@@ -1114,8 +1285,8 @@ def list_attributed_conversations(
             _ep_started = (
                 ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
             )
-            touch = _matching_campaign_touch(
-                metadata.get("campaign_touches"), _ep_started
+            touch = _attributed_campaign_touch(
+                ep, metadata.get("campaign_touches"), _ep_started
             )
             ep_campaign_id = _episode_to_campaign_id(ep, origin, touch)
             if source_ids is not None:
@@ -1153,7 +1324,7 @@ def list_attributed_conversations(
                 continue
 
             _usage = ep.get("llm_usage") if isinstance(ep, dict) else None
-            _wa_cost = _episode_wa_cost(ep)
+            _wa_cost = _episode_wa_cost(ep, _campaign_wamids(metadata))
             _capi_slot = capi_idx.get(ep_id) or {}
             if _capi_slot.get("order_canceled_sent"):
                 _capi_event = "OrderCanceled"  # lo último que Meta sabe del pedido
@@ -1343,8 +1514,8 @@ def list_daily_series(
             ep_started_ms = (
                 ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
             )
-            touch = _matching_campaign_touch(
-                metadata.get("campaign_touches"), ep_started_ms
+            touch = _attributed_campaign_touch(
+                ep, metadata.get("campaign_touches"), ep_started_ms
             )
             ep_bucket = _episode_to_campaign_id(ep, origin, touch)
             if source_ids is not None:

@@ -14,14 +14,20 @@ Meta envía un webhook `message_status` por cada outbound nuestro con shape:
 Algoritmo:
   1. Construir `PricingSnapshot` del dict (si pricing está presente — puede
      faltar en `status=failed`).
-  2. Localizar el episodio con `outbound_messages[*].wa_message_id ==
-     wa_message_id` escaneando el vault.
+  2. Localizar la sesión con `outbound_messages[*].wa_message_id ==
+     wa_message_id` (episodio) o con un touch de campaña con ese id
+     (`campaign_touches[*].wa_message_id`) escaneando el vault.
+  2b. Mensaje de campaña (2026-09-25): el touch del contacto anota el estado
+     (entregado / leído / fallido con su código) y el precio — las métricas
+     de envío de la campaña en Ads. Casi toda la audiencia de una campaña no
+     tiene conversación abierta: antes esos estados eran huérfanos.
   3. Si no se encuentra → retry con backoff (race: el outbound activity
      puede no haber persistido todavía al momento del webhook). Max 3
      reintentos en ~3.5s.
   4. Si persiste sin encontrarlo → dead-letter a
      `<vault>/_orphan_delivery_statuses.jsonl`.
-  5. Si el episodio está cerrado → dead-letter (no mutar summary).
+  5. Si el episodio está cerrado → dead-letter (no mutar summary), salvo que
+     el touch de la campaña ya lo haya anotado.
   6. Si la entry ya está materializada (cost_usd_micros != None) → emitir
      analytic event pero NO duplicar el delta en summary (defensa contra
      webhook duplicado de Meta).
@@ -62,6 +68,7 @@ from src.platform.whatsapp.cost import (
     empty_episode_cost_summary,
     materialize_pending_in_summary,
 )
+from src.sdk.connectorkit import apply_campaign_delivery, campaign_touch_for_message
 
 
 log = logging.getLogger(__name__)
@@ -141,6 +148,9 @@ class IngestDeliveryStatus:
         wa_message_id: str,
         status: str,
         pricing: dict[str, Any] | None,
+        *,
+        timestamp_ms: int | None = None,
+        error_code: int | None = None,
     ) -> None:
         """Procesa UN status update.
 
@@ -148,14 +158,16 @@ class IngestDeliveryStatus:
         ``status``: ``"sent" | "delivered" | "read" | "failed"``.
         ``pricing``: dict ``{billable, pricing_type, category}`` o ``None``
         (status=failed puede no traerlo).
+        ``timestamp_ms``: hora del estado según Meta. ``error_code``: el
+        código de un ``failed``. Los usa el touch de una campaña.
         """
         snapshot = _pricing_snapshot_from_dict(pricing)
 
-        # 1. Buscar el episodio con retry (race: outbound puede no haber
+        # 1. Buscar la sesión con retry (race: outbound puede no haber
         # persistido cuando llega el primer webhook 'sent').
-        located = await self._locate_with_retry(wa_message_id)
+        session_id = await self._locate_with_retry(wa_message_id)
 
-        if located is None:
+        if session_id is None:
             self._dead_letter(
                 wa_message_id=wa_message_id,
                 status=status,
@@ -171,8 +183,6 @@ class IngestDeliveryStatus:
             )
             return
 
-        session_id, _episode_idx, _log_entry_idx = located
-
         # 2-5. Mutación bajo el flock del store (D1.4): la sesión también la
         # escriben `IngestStandby` (ecos de MBA) y las connector tools; un
         # read→write plano perdía updates en ambos sentidos. El entry se
@@ -181,6 +191,18 @@ class IngestDeliveryStatus:
         outcome: dict[str, Any] = {}
 
         def _mutate(metadata: dict[str, Any]) -> dict[str, Any] | None:
+            touch_changed = self._record_campaign_delivery(
+                metadata,
+                wa_message_id,
+                status=status,
+                snapshot=snapshot,
+                timestamp_ms=timestamp_ms,
+                error_code=error_code,
+                outcome=outcome,
+            )
+            return metadata if _mutate_episode(metadata) or touch_changed else None
+
+        def _mutate_episode(metadata: dict[str, Any]) -> bool:
             episodes = metadata.get("episodes") or []
             found: tuple[int, int] | None = None
             for ep_idx, episode in enumerate(episodes):
@@ -192,7 +214,7 @@ class IngestDeliveryStatus:
                     break
             if found is None:
                 outcome["reason"] = "entry_disappeared"
-                return None
+                return False
             episode = episodes[found[0]]
             # Episodio cerrado → dead-letter, NO mutar summary: el summary
             # quedó congelado al close_episode; los webhooks tardíos NO deben
@@ -200,7 +222,7 @@ class IngestDeliveryStatus:
             if episode.get("closed_at_ms") is not None:
                 outcome["reason"] = "episode_closed"
                 outcome["episode_id"] = episode.get("episode_id")
-                return None
+                return False
             outbound_messages = list(episode.get("outbound_messages") or [])
             existing_entry = _outbound_log_entry_from_dict(outbound_messages[found[1]])
             # Sin pricing (status=failed sin pricing object): emitir el status
@@ -208,7 +230,7 @@ class IngestDeliveryStatus:
             if snapshot is None:
                 outcome["reason"] = "no_pricing"
                 outcome["cost"] = existing_entry.cost_usd_micros
-                return None
+                return False
             # Idempotencia: si la entry YA tiene cost materializado, este
             # webhook es duplicado. NO llamar materialize_pending_in_summary
             # (acumularía total/by_category otra vez).
@@ -256,7 +278,7 @@ class IngestDeliveryStatus:
                 )
             outcome["reason"] = "materialized"
             outcome["cost"] = cost
-            return metadata
+            return True
 
         try:
             self._metadata_store.update(session_id, _mutate)
@@ -272,6 +294,17 @@ class IngestDeliveryStatus:
             return
 
         reason = outcome.get("reason")
+        if outcome.get("campaign_touch") and reason in ("entry_disappeared", "episode_closed"):
+            # Mensaje de campaña sin conversación abierta (o ya cerrada): el
+            # touch lo anotó — no es un huérfano.
+            await self._emit_event(
+                session_id=session_id,
+                wa_message_id=wa_message_id,
+                status=status,
+                snapshot=snapshot,
+                cost_usd_micros=outcome.get("campaign_cost"),
+            )
+            return
         if reason in ("entry_disappeared", "episode_closed"):
             self._dead_letter(
                 wa_message_id=wa_message_id,
@@ -304,10 +337,8 @@ class IngestDeliveryStatus:
     # Lookup with retry
     # =====================================================================
 
-    async def _locate_with_retry(
-        self, wa_message_id: str
-    ) -> tuple[str, int, int] | None:
-        """Busca (session_id, episode_idx, log_entry_idx) con backoff.
+    async def _locate_with_retry(self, wa_message_id: str) -> str | None:
+        """Busca la sesión del mensaje con backoff.
 
         Total reintentos = 1 inicial + len(retry_delays). Cada delay es
         sleep async (no bloquea el event loop).
@@ -322,8 +353,9 @@ class IngestDeliveryStatus:
                 return result
         return None
 
-    def _locate(self, wa_message_id: str) -> tuple[str, int, int] | None:
-        """Scan del vault: O(sessions × episodes × outbound_messages).
+    def _locate(self, wa_message_id: str) -> str | None:
+        """La sesión cuyo episodio registró el mensaje, o cuyo touch de campaña
+        lo guarda. Scan del vault: O(sessions × episodes × outbound_messages).
 
         Aceptable pre-launch (<10K sessions). Si crece, agregar índice
         secundario ``wa_message_id → (session_id, episode_idx)`` como
@@ -340,15 +372,53 @@ class IngestDeliveryStatus:
             except Exception:  # noqa: BLE001
                 continue
             episodes = metadata.get("episodes") or []
-            for ep_idx, episode in enumerate(episodes):
-                outbound_messages = episode.get("outbound_messages") or []
-                for log_idx, entry in enumerate(outbound_messages):
+            for episode in episodes:
+                for entry in episode.get("outbound_messages") or []:
                     if (
                         isinstance(entry, dict)
                         and entry.get("wa_message_id") == wa_message_id
                     ):
-                        return (session_id, ep_idx, log_idx)
+                        return session_id
+            if campaign_touch_for_message(metadata.get("campaign_touches"), wa_message_id):
+                return session_id
         return None
+
+    def _record_campaign_delivery(
+        self,
+        metadata: dict[str, Any],
+        wa_message_id: str,
+        *,
+        status: str,
+        snapshot: PricingSnapshot | None,
+        timestamp_ms: int | None,
+        error_code: int | None,
+        outcome: dict[str, Any],
+    ) -> bool:
+        """Mutates: anota el estado en el touch de campaña del mensaje (si es
+        de una campaña). El precio sale de la tarjeta vigente cuando SALIÓ el
+        mensaje, igual que el costo de las conversaciones."""
+        touch = campaign_touch_for_message(metadata.get("campaign_touches"), wa_message_id)
+        if touch is None:
+            return False
+        outcome["campaign_touch"] = True
+        cost: int | None = None
+        version: str | None = None
+        if snapshot is not None:
+            sent_at = touch.get("sent_at_ms")
+            rate_card = self._rate_card_for(sent_at if isinstance(sent_at, int) else None)
+            cost = compute_message_cost_micros(snapshot, rate_card)
+            version = rate_card.version
+        changed = apply_campaign_delivery(
+            touch,
+            status=status,
+            at_ms=timestamp_ms,
+            error_code=error_code,
+            pricing=asdict(snapshot) if snapshot is not None else None,
+            cost_usd_micros=cost,
+            rate_card_version=version,
+        )
+        outcome["campaign_cost"] = (touch.get("delivery") or {}).get("cost_usd_micros")
+        return changed
 
     # =====================================================================
     # Dead letter
