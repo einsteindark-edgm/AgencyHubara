@@ -1,0 +1,2206 @@
+{
+  "meta_insights": {
+    "account_currency": "COP",
+    "data": [
+      {
+        "date_start": "2026-09-16",
+        "date_stop": "2026-09-16",
+        "campaign_id": "120247398115530317",
+        "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+        "spend": "14798",
+        "inline_link_clicks": "14",
+        "actions": [
+          {
+            "action_type": "link_click",
+            "value": "14"
+          },
+          {
+            "action_type": "onsite_conversion.messaging_conversation_started_7d",
+            "value": "6"
+          }
+        ]
+      },
+      {
+        "date_start": "2026-09-17",
+        "date_stop": "2026-09-17",
+        "campaign_id": "120247398115530317",
+        "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+        "spend": "13296",
+        "inline_link_clicks": "20",
+        "actions": [
+          {
+            "action_type": "link_click",
+            "value": "20"
+          },
+          {
+            "action_type": "onsite_conversion.messaging_conversation_started_7d",
+            "value": "4"
+          }
+        ]
+      },
+      {
+        "date_start": "2026-09-18",
+        "date_stop": "2026-09-18",
+        "campaign_id": "120247398115530317",
+        "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+        "spend": "18805",
+        "inline_link_clicks": "15",
+        "actions": [
+          {
+            "action_type": "link_click",
+            "value": "15"
+          },
+          {
+            "action_type": "onsite_conversion.messaging_conversation_started_7d",
+            "value": "5"
+          }
+        ]
+      },
+      {
+        "date_start": "2026-09-19",
+        "date_stop": "2026-09-19",
+        "campaign_id": "120247398115530317",
+        "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+        "spend": "9571",
+        "inline_link_clicks": "9",
+        "actions": [
+          {
+            "action_type": "link_click",
+            "value": "9"
+          },
+          {
+            "action_type": "onsite_conversion.messaging_conversation_started_7d",
+            "value": "2"
+          }
+        ]
+      },
+      {
+        "date_start": "2026-09-20",
+        "date_stop": "2026-09-20",
+        "campaign_id": "120247398115530317",
+        "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+        "spend": "18599",
+        "inline_link_clicks": "20",
+        "actions": [
+          {
+            "action_type": "link_click",
+            "value": "20"
+          },
+          {
+            "action_type": "onsite_conversion.messaging_conversation_started_7d",
+            "value": "8"
+          }
+        ]
+      },
+      {
+        "date_start": "2026-09-21",
+        "date_stop": "2026-09-21",
+        "campaign_id": "120247398115530317",
+        "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+        "spend": "17707",
+        "inline_link_clicks": "21",
+        "actions": [
+          {
+            "action_type": "link_click",
+            "value": "21"
+          },
+          {
+            "action_type": "onsite_conversion.messaging_conversation_started_7d",
+            "value": "7"
+          }
+        ]
+      },
+      {
+        "date_start": "2026-09-22",
+        "date_stop": "2026-09-22",
+        "campaign_id": "120247398115530317",
+        "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+        "spend": "15846",
+        "inline_link_clicks": "18",
+        "actions": [
+          {
+            "action_type": "link_click",
+            "value": "18"
+          },
+          {
+            "action_type": "onsite_conversion.messaging_conversation_started_7d",
+            "value": "8"
+          }
+        ]
+      },
+      {
+        "date_start": "2026-09-23",
+        "date_stop": "2026-09-23",
+        "campaign_id": "120247398115530317",
+        "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+        "spend": "9616",
+        "inline_link_clicks": "7",
+        "actions": [
+          {
+            "action_type": "link_click",
+            "value": "7"
+          },
+          {
+            "action_type": "onsite_conversion.messaging_conversation_started_7d",
+            "value": "2"
+          }
+        ]
+      },
+      {
+        "date_start": "2026-09-24",
+        "date_stop": "2026-09-24",
+        "campaign_id": "120247398115530317",
+        "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+        "spend": "20465",
+        "inline_link_clicks": "22",
+        "actions": [
+          {
+            "action_type": "link_click",
+            "value": "22"
+          },
+          {
+            "action_type": "onsite_conversion.messaging_conversation_started_7d",
+            "value": "7"
+          }
+        ]
+      },
+      {
+        "date_start": "2026-09-25",
+        "date_stop": "2026-09-25",
+        "campaign_id": "120247398115530317",
+        "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+        "spend": "9072",
+        "inline_link_clicks": "6",
+        "actions": [
+          {
+            "action_type": "link_click",
+            "value": "6"
+          },
+          {
+            "action_type": "onsite_conversion.messaging_conversation_started_7d",
+            "value": "4"
+          }
+        ]
+      }
+    ]
+  },
+  "manual_sales": {
+    "sales": [
+      {
+        "date": "2026-09-16",
+        "total_orders": 0,
+        "total_revenue": 0
+      },
+      {
+        "date": "2026-09-17",
+        "total_orders": 1,
+        "total_revenue": 52900
+      },
+      {
+        "date": "2026-09-18",
+        "total_orders": 1,
+        "total_revenue": 52900
+      },
+      {
+        "date": "2026-09-19",
+        "total_orders": 0,
+        "total_revenue": 0
+      },
+      {
+        "date": "2026-09-20",
+        "total_orders": 1,
+        "total_revenue": 52900
+      },
+      {
+        "date": "2026-09-21",
+        "total_orders": 1,
+        "total_revenue": 52900
+      },
+      {
+        "date": "2026-09-22",
+        "total_orders": 0,
+        "total_revenue": 0
+      },
+      {
+        "date": "2026-09-23",
+        "total_orders": 0,
+        "total_revenue": 0
+      },
+      {
+        "date": "2026-09-24",
+        "total_orders": 0,
+        "total_revenue": 0
+      },
+      {
+        "date": "2026-09-25",
+        "total_orders": 0,
+        "total_revenue": 0
+      }
+    ]
+  },
+  "entities_payload": {
+    "ad_entities": "[]",
+    "summary": {
+      "total_count": 0
+    }
+  },
+  "campaign_breakdown": {
+    "schema": 1,
+    "campaign": {
+      "id": "120247398115530317",
+      "name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+      "budget_level": "campaign"
+    },
+    "window": {
+      "since": "2026-09-11",
+      "until": "2026-09-25",
+      "timezone": "America/Bogota"
+    },
+    "orders_stale": true,
+    "ads": [
+      {
+        "ad_id": "120247421007140317",
+        "ad_name": "Liliana / Presentación / Video / Decoración / Solución / halloween",
+        "adset_id": "120247421007150317",
+        "adset_name": "LILIANA / abierta / Conversiones / Ubicaciones Advantage+/halloween",
+        "meta": {
+          "spend_cop": 40145,
+          "impressions": 3821,
+          "reach": 3066,
+          "link_clicks": 79,
+          "conversations": 19
+        },
+        "daily": [],
+        "chats": [
+          {
+            "date": "2026-09-16",
+            "headline": "Velas Aromáticas",
+            "state": "calificado",
+            "order": null
+          },
+          {
+            "date": "2026-09-16",
+            "headline": "Velas Aromáticas",
+            "state": "calificado",
+            "order": null
+          },
+          {
+            "date": "2026-09-17",
+            "headline": "Velas Aromáticas",
+            "state": "activo",
+            "order": null
+          },
+          {
+            "date": "2026-09-21",
+            "headline": "Velas Aromáticas",
+            "state": "no_reply",
+            "order": null
+          },
+          {
+            "date": "2026-09-21",
+            "headline": "Velas Aromáticas",
+            "state": "ganado",
+            "order": {
+              "status": "paid",
+              "value_cop": 52900
+            }
+          },
+          {
+            "date": "2026-09-21",
+            "headline": "Velas Aromáticas",
+            "state": "perdido",
+            "order": null
+          },
+          {
+            "date": "2026-09-22",
+            "headline": "Velas Aromáticas",
+            "state": "calificado",
+            "order": null
+          },
+          {
+            "date": "2026-09-22",
+            "headline": "Velas Aromáticas",
+            "state": "activo",
+            "order": null
+          },
+          {
+            "date": "2026-09-22",
+            "headline": "Velas Aromáticas",
+            "state": "activo",
+            "order": null
+          },
+          {
+            "date": "2026-09-23",
+            "headline": "Velas Aromáticas",
+            "state": "ganado",
+            "order": {
+              "status": "pending",
+              "value_cop": 45000
+            }
+          },
+          {
+            "date": "2026-09-24",
+            "headline": "Velas Aromáticas",
+            "state": "calificado",
+            "order": null
+          },
+          {
+            "date": "2026-09-24",
+            "headline": "Velas Aromáticas",
+            "state": "calificado",
+            "order": null
+          },
+          {
+            "date": "2026-09-24",
+            "headline": "Velas Aromáticas",
+            "state": "calificado",
+            "order": null
+          },
+          {
+            "date": "2026-09-24",
+            "headline": "Velas Aromáticas",
+            "state": "calificado",
+            "order": null
+          },
+          {
+            "date": "2026-09-25",
+            "headline": "Velas Aromáticas",
+            "state": "calificado",
+            "order": null
+          },
+          {
+            "date": "2026-09-25",
+            "headline": "Velas Aromáticas",
+            "state": "activo",
+            "order": null
+          },
+          {
+            "date": "2026-09-25",
+            "headline": "Velas Aromáticas",
+            "state": "calificado",
+            "order": null
+          }
+        ]
+      },
+      {
+        "ad_id": "120247421007160317",
+        "ad_name": "Liliana / Presentación / Imagen / Beneficios / Solución / Colección - Copia",
+        "adset_id": "120247421007150317",
+        "adset_name": "LILIANA / abierta / Conversiones / Ubicaciones Advantage+/halloween",
+        "meta": {
+          "spend_cop": 247,
+          "impressions": 67,
+          "reach": 66,
+          "link_clicks": 2,
+          "conversations": 0
+        },
+        "daily": [],
+        "chats": []
+      },
+      {
+        "ad_id": "120247421007170317",
+        "ad_name": "Liliana / Presentación / carrusel  / beneficios / Solución / Colección",
+        "adset_id": "120247421007150317",
+        "adset_name": "LILIANA / abierta / Conversiones / Ubicaciones Advantage+/halloween",
+        "meta": {
+          "spend_cop": 117,
+          "impressions": 45,
+          "reach": 39,
+          "link_clicks": 1,
+          "conversations": 0
+        },
+        "daily": [],
+        "chats": []
+      },
+      {
+        "ad_id": "120247398115620317",
+        "ad_name": "Liliana / Presentación / Video / Decoración / Solución / halloween",
+        "adset_id": "120247398115600317",
+        "adset_name": "LILIANA / Intereses / Conversiones / Ubicaciones Advantage+ /hallowen",
+        "meta": {
+          "spend_cop": 23357,
+          "impressions": 2232,
+          "reach": 1886,
+          "link_clicks": 51,
+          "conversations": 8
+        },
+        "daily": [],
+        "chats": [
+          {
+            "date": "2026-09-16",
+            "headline": "Velas Aromáticas",
+            "state": "calificado",
+            "order": null
+          },
+          {
+            "date": "2026-09-18",
+            "headline": "Velas Aromáticas",
+            "state": "ganado",
+            "order": {
+              "status": "paid",
+              "value_cop": 52900
+            }
+          },
+          {
+            "date": "2026-09-20",
+            "headline": "Velas Aromáticas",
+            "state": "perdido",
+            "order": null
+          },
+          {
+            "date": "2026-09-20",
+            "headline": "Velas Aromáticas",
+            "state": "no_reply",
+            "order": null
+          },
+          {
+            "date": "2026-09-22",
+            "headline": "Velas Aromáticas",
+            "state": "no_reply",
+            "order": null
+          },
+          {
+            "date": "2026-09-25",
+            "headline": "Velas Aromáticas",
+            "state": "calificado",
+            "order": null
+          }
+        ]
+      },
+      {
+        "ad_id": "120247398115610317",
+        "ad_name": "Liliana / Presentación / Imagen / Beneficios / Solución / Colección - Copia",
+        "adset_id": "120247398115600317",
+        "adset_name": "LILIANA / Intereses / Conversiones / Ubicaciones Advantage+ /hallowen",
+        "meta": {
+          "spend_cop": 283,
+          "impressions": 68,
+          "reach": 65,
+          "link_clicks": 2,
+          "conversations": 0
+        },
+        "daily": [],
+        "chats": []
+      },
+      {
+        "ad_id": "120247398115640317",
+        "ad_name": "Liliana / Presentación / carrusel  / beneficios / Solución / Colección",
+        "adset_id": "120247398115600317",
+        "adset_name": "LILIANA / Intereses / Conversiones / Ubicaciones Advantage+ /hallowen",
+        "meta": {
+          "spend_cop": 520,
+          "impressions": 39,
+          "reach": 35,
+          "link_clicks": 0,
+          "conversations": 0
+        },
+        "daily": [],
+        "chats": []
+      },
+      {
+        "ad_id": "120247421040590317",
+        "ad_name": "Liliana / Presentación / Video / Decoración / Solución / halloween",
+        "adset_id": "120247421040600317",
+        "adset_name": "LILIANA / similar / Conversiones / Ubicaciones Advantage+/halloween",
+        "meta": {
+          "spend_cop": 15969,
+          "impressions": 1663,
+          "reach": 1476,
+          "link_clicks": 31,
+          "conversations": 6
+        },
+        "daily": [],
+        "chats": [
+          {
+            "date": "2026-09-17",
+            "headline": "Velas Aromáticas",
+            "state": "calificado",
+            "order": null
+          },
+          {
+            "date": "2026-09-21",
+            "headline": "Velas Aromáticas",
+            "state": "activo",
+            "order": null
+          },
+          {
+            "date": "2026-09-21",
+            "headline": "Velas Aromáticas",
+            "state": "no_reply",
+            "order": null
+          },
+          {
+            "date": "2026-09-24",
+            "headline": "Velas Aromáticas",
+            "state": "calificado",
+            "order": null
+          }
+        ]
+      },
+      {
+        "ad_id": "120247421040610317",
+        "ad_name": "Liliana / Presentación / Imagen / Beneficios / Solución / Colección - Copia",
+        "adset_id": "120247421040600317",
+        "adset_name": "LILIANA / similar / Conversiones / Ubicaciones Advantage+/halloween",
+        "meta": {
+          "spend_cop": 665,
+          "impressions": 40,
+          "reach": 38,
+          "link_clicks": 0,
+          "conversations": 0
+        },
+        "daily": [],
+        "chats": []
+      },
+      {
+        "ad_id": "120247421040620317",
+        "ad_name": "Liliana / Presentación / carrusel  / beneficios / Solución / Colección",
+        "adset_id": "120247421040600317",
+        "adset_name": "LILIANA / similar / Conversiones / Ubicaciones Advantage+/halloween",
+        "meta": {
+          "spend_cop": 171,
+          "impressions": 18,
+          "reach": 15,
+          "link_clicks": 0,
+          "conversations": 0
+        },
+        "daily": [],
+        "chats": []
+      },
+      {
+        "ad_id": "120247418828490317",
+        "ad_name": "Liliana / Presentación / carrusel  / beneficios / Solución / Colección",
+        "adset_id": "120247418828480317",
+        "adset_name": "LILIANA / personalizada / Conversiones / Ubicaciones Advantage+/halloween",
+        "meta": {
+          "spend_cop": 55415,
+          "impressions": 4191,
+          "reach": 3065,
+          "link_clicks": 87,
+          "conversations": 17
+        },
+        "daily": [],
+        "chats": [
+          {
+            "date": "2026-09-16",
+            "headline": "Chatea con nosotros",
+            "state": "calificado",
+            "order": null
+          },
+          {
+            "date": "2026-09-16",
+            "headline": "Chatea con nosotros",
+            "state": "calificado",
+            "order": null
+          },
+          {
+            "date": "2026-09-17",
+            "headline": "Velas aromáticas",
+            "state": "ganado",
+            "order": {
+              "status": "paid",
+              "value_cop": 52900
+            }
+          },
+          {
+            "date": "2026-09-17",
+            "headline": "Chatea con nosotros",
+            "state": "calificado",
+            "order": null
+          },
+          {
+            "date": "2026-09-18",
+            "headline": "Chatea con nosotros",
+            "state": "no_reply",
+            "order": null
+          },
+          {
+            "date": "2026-09-18",
+            "headline": "Chatea con nosotros",
+            "state": "activo",
+            "order": null
+          },
+          {
+            "date": "2026-09-19",
+            "headline": "Velas aromáticas",
+            "state": "no_reply",
+            "order": null
+          },
+          {
+            "date": "2026-09-20",
+            "headline": "Chatea con nosotros",
+            "state": "no_reply",
+            "order": null
+          },
+          {
+            "date": "2026-09-20",
+            "headline": "Chatea con nosotros",
+            "state": "no_reply",
+            "order": null
+          },
+          {
+            "date": "2026-09-20",
+            "headline": "Velas aromáticas",
+            "state": "ganado",
+            "order": {
+              "status": "paid",
+              "value_cop": 52900
+            }
+          },
+          {
+            "date": "2026-09-21",
+            "headline": "Velas aromáticas",
+            "state": "perdido",
+            "order": null
+          },
+          {
+            "date": "2026-09-22",
+            "headline": "Velas aromáticas",
+            "state": "perdido",
+            "order": null
+          },
+          {
+            "date": "2026-09-22",
+            "headline": "Velas aromáticas",
+            "state": "ganado",
+            "order": {
+              "status": "unverified",
+              "value_cop": 61940
+            }
+          }
+        ]
+      },
+      {
+        "ad_id": "120247418828570317",
+        "ad_name": "Liliana / Presentación / Imagen / Beneficios / Solución / Colección - Copia",
+        "adset_id": "120247418828480317",
+        "adset_name": "LILIANA / personalizada / Conversiones / Ubicaciones Advantage+/halloween",
+        "meta": {
+          "spend_cop": 11557,
+          "impressions": 838,
+          "reach": 683,
+          "link_clicks": 22,
+          "conversations": 3
+        },
+        "daily": [],
+        "chats": [
+          {
+            "date": "2026-09-16",
+            "headline": "Velas aromáticas",
+            "state": "ganado",
+            "order": {
+              "status": "cancelled",
+              "value_cop": 49500
+            }
+          },
+          {
+            "date": "2026-09-20",
+            "headline": "Velas aromáticas",
+            "state": "activo",
+            "order": null
+          },
+          {
+            "date": "2026-09-20",
+            "headline": "Velas aromáticas",
+            "state": "no_reply",
+            "order": null
+          },
+          {
+            "date": "2026-09-21",
+            "headline": "Velas aromáticas",
+            "state": "no_reply",
+            "order": null
+          }
+        ]
+      }
+    ]
+  },
+  "currency": "COP",
+  "insights": [
+    {
+      "date": "2026-09-16",
+      "spend_cop": 14798,
+      "inline_link_clicks": 14,
+      "conversations_started": 6
+    },
+    {
+      "date": "2026-09-17",
+      "spend_cop": 13296,
+      "inline_link_clicks": 20,
+      "conversations_started": 4
+    },
+    {
+      "date": "2026-09-18",
+      "spend_cop": 18805,
+      "inline_link_clicks": 15,
+      "conversations_started": 5
+    },
+    {
+      "date": "2026-09-19",
+      "spend_cop": 9571,
+      "inline_link_clicks": 9,
+      "conversations_started": 2
+    },
+    {
+      "date": "2026-09-20",
+      "spend_cop": 18599,
+      "inline_link_clicks": 20,
+      "conversations_started": 8
+    },
+    {
+      "date": "2026-09-21",
+      "spend_cop": 17707,
+      "inline_link_clicks": 21,
+      "conversations_started": 7
+    },
+    {
+      "date": "2026-09-22",
+      "spend_cop": 15846,
+      "inline_link_clicks": 18,
+      "conversations_started": 8
+    },
+    {
+      "date": "2026-09-23",
+      "spend_cop": 9616,
+      "inline_link_clicks": 7,
+      "conversations_started": 2
+    },
+    {
+      "date": "2026-09-24",
+      "spend_cop": 20465,
+      "inline_link_clicks": 22,
+      "conversations_started": 7
+    },
+    {
+      "date": "2026-09-25",
+      "spend_cop": 9072,
+      "inline_link_clicks": 6,
+      "conversations_started": 4
+    }
+  ],
+  "sales": [
+    {
+      "date": "2026-09-16",
+      "total_orders": 0,
+      "total_revenue_cop": 0
+    },
+    {
+      "date": "2026-09-17",
+      "total_orders": 1,
+      "total_revenue_cop": 52900
+    },
+    {
+      "date": "2026-09-18",
+      "total_orders": 1,
+      "total_revenue_cop": 52900
+    },
+    {
+      "date": "2026-09-19",
+      "total_orders": 0,
+      "total_revenue_cop": 0
+    },
+    {
+      "date": "2026-09-20",
+      "total_orders": 1,
+      "total_revenue_cop": 52900
+    },
+    {
+      "date": "2026-09-21",
+      "total_orders": 1,
+      "total_revenue_cop": 52900
+    },
+    {
+      "date": "2026-09-22",
+      "total_orders": 0,
+      "total_revenue_cop": 0
+    },
+    {
+      "date": "2026-09-23",
+      "total_orders": 0,
+      "total_revenue_cop": 0
+    },
+    {
+      "date": "2026-09-24",
+      "total_orders": 0,
+      "total_revenue_cop": 0
+    },
+    {
+      "date": "2026-09-25",
+      "total_orders": 0,
+      "total_revenue_cop": 0
+    }
+  ],
+  "campaigns": [],
+  "days": [
+    {
+      "date": "2026-09-16",
+      "spend_cop": 14798,
+      "inline_link_clicks": 14,
+      "conversations_started": 6,
+      "total_orders": 0,
+      "total_revenue_cop": 0,
+      "metrics": {
+        "drop_off_rate": "0.5714285714285714285714285714",
+        "cost_per_conversation_cop": "2466.333333333333333333333333",
+        "mer": "0",
+        "global_cpa_cop": null,
+        "global_win_rate": "0"
+      },
+      "diagnosis": {
+        "high_friction": true,
+        "poor_profitability": true,
+        "recommendation": "no_revenue_recorded"
+      }
+    },
+    {
+      "date": "2026-09-17",
+      "spend_cop": 13296,
+      "inline_link_clicks": 20,
+      "conversations_started": 4,
+      "total_orders": 1,
+      "total_revenue_cop": 52900,
+      "metrics": {
+        "drop_off_rate": "0.8",
+        "cost_per_conversation_cop": "3324",
+        "mer": "3.978640192539109506618531889",
+        "global_cpa_cop": "13296",
+        "global_win_rate": "0.25"
+      },
+      "diagnosis": {
+        "high_friction": true,
+        "poor_profitability": false,
+        "recommendation": "scale_budget"
+      }
+    },
+    {
+      "date": "2026-09-18",
+      "spend_cop": 18805,
+      "inline_link_clicks": 15,
+      "conversations_started": 5,
+      "total_orders": 1,
+      "total_revenue_cop": 52900,
+      "metrics": {
+        "drop_off_rate": "0.6666666666666666666666666667",
+        "cost_per_conversation_cop": "3761",
+        "mer": "2.813081627226801382611007711",
+        "global_cpa_cop": "18805",
+        "global_win_rate": "0.2"
+      },
+      "diagnosis": {
+        "high_friction": true,
+        "poor_profitability": false,
+        "recommendation": "scale_budget"
+      }
+    },
+    {
+      "date": "2026-09-19",
+      "spend_cop": 9571,
+      "inline_link_clicks": 9,
+      "conversations_started": 2,
+      "total_orders": 0,
+      "total_revenue_cop": 0,
+      "metrics": {
+        "drop_off_rate": "0.7777777777777777777777777778",
+        "cost_per_conversation_cop": "4785.5",
+        "mer": "0",
+        "global_cpa_cop": null,
+        "global_win_rate": "0"
+      },
+      "diagnosis": {
+        "high_friction": true,
+        "poor_profitability": true,
+        "recommendation": "no_revenue_recorded"
+      }
+    },
+    {
+      "date": "2026-09-20",
+      "spend_cop": 18599,
+      "inline_link_clicks": 20,
+      "conversations_started": 8,
+      "total_orders": 1,
+      "total_revenue_cop": 52900,
+      "metrics": {
+        "drop_off_rate": "0.6",
+        "cost_per_conversation_cop": "2324.875",
+        "mer": "2.844238937577289101564600247",
+        "global_cpa_cop": "18599",
+        "global_win_rate": "0.125"
+      },
+      "diagnosis": {
+        "high_friction": true,
+        "poor_profitability": false,
+        "recommendation": "scale_budget"
+      }
+    },
+    {
+      "date": "2026-09-21",
+      "spend_cop": 17707,
+      "inline_link_clicks": 21,
+      "conversations_started": 7,
+      "total_orders": 1,
+      "total_revenue_cop": 52900,
+      "metrics": {
+        "drop_off_rate": "0.6666666666666666666666666667",
+        "cost_per_conversation_cop": "2529.571428571428571428571429",
+        "mer": "2.987519060258654769300276727",
+        "global_cpa_cop": "17707",
+        "global_win_rate": "0.1428571428571428571428571429"
+      },
+      "diagnosis": {
+        "high_friction": true,
+        "poor_profitability": false,
+        "recommendation": "scale_budget"
+      }
+    },
+    {
+      "date": "2026-09-22",
+      "spend_cop": 15846,
+      "inline_link_clicks": 18,
+      "conversations_started": 8,
+      "total_orders": 0,
+      "total_revenue_cop": 0,
+      "metrics": {
+        "drop_off_rate": "0.5555555555555555555555555556",
+        "cost_per_conversation_cop": "1980.75",
+        "mer": "0",
+        "global_cpa_cop": null,
+        "global_win_rate": "0"
+      },
+      "diagnosis": {
+        "high_friction": true,
+        "poor_profitability": true,
+        "recommendation": "no_revenue_recorded"
+      }
+    },
+    {
+      "date": "2026-09-23",
+      "spend_cop": 9616,
+      "inline_link_clicks": 7,
+      "conversations_started": 2,
+      "total_orders": 0,
+      "total_revenue_cop": 0,
+      "metrics": {
+        "drop_off_rate": "0.7142857142857142857142857143",
+        "cost_per_conversation_cop": "4808",
+        "mer": "0",
+        "global_cpa_cop": null,
+        "global_win_rate": "0"
+      },
+      "diagnosis": {
+        "high_friction": true,
+        "poor_profitability": true,
+        "recommendation": "no_revenue_recorded"
+      }
+    },
+    {
+      "date": "2026-09-24",
+      "spend_cop": 20465,
+      "inline_link_clicks": 22,
+      "conversations_started": 7,
+      "total_orders": 0,
+      "total_revenue_cop": 0,
+      "metrics": {
+        "drop_off_rate": "0.6818181818181818181818181818",
+        "cost_per_conversation_cop": "2923.571428571428571428571429",
+        "mer": "0",
+        "global_cpa_cop": null,
+        "global_win_rate": "0"
+      },
+      "diagnosis": {
+        "high_friction": true,
+        "poor_profitability": true,
+        "recommendation": "no_revenue_recorded"
+      }
+    },
+    {
+      "date": "2026-09-25",
+      "spend_cop": 9072,
+      "inline_link_clicks": 6,
+      "conversations_started": 4,
+      "total_orders": 0,
+      "total_revenue_cop": 0,
+      "metrics": {
+        "drop_off_rate": "0.3333333333333333333333333333",
+        "cost_per_conversation_cop": "2268",
+        "mer": "0",
+        "global_cpa_cop": null,
+        "global_win_rate": "0"
+      },
+      "diagnosis": {
+        "high_friction": false,
+        "poor_profitability": true,
+        "recommendation": "no_revenue_recorded"
+      }
+    }
+  ],
+  "period": {
+    "spend_cop": 147775,
+    "inline_link_clicks": 152,
+    "conversations_started": 53,
+    "total_orders": 4,
+    "total_revenue_cop": 211600,
+    "metrics": {
+      "drop_off_rate": "0.6513157894736842105263157895",
+      "cost_per_conversation_cop": "2788.207547169811320754716981",
+      "mer": "1.431906614785992217898832685",
+      "global_cpa_cop": "36943.75",
+      "global_win_rate": "0.07547169811320754716981132075"
+    },
+    "diagnosis": {
+      "high_friction": true,
+      "poor_profitability": true,
+      "recommendation": "rotate_creative"
+    }
+  },
+  "unmatched": {
+    "meta_only": [],
+    "sales_only": []
+  },
+  "scorecard": {
+    "campaign": {
+      "id": "120247398115530317",
+      "name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+      "budget_level": "campaign",
+      "since": "2026-09-11",
+      "until": "2026-09-25",
+      "totals": {
+        "spend_cop": 148446,
+        "impressions": 13022,
+        "link_clicks": 275,
+        "conversations": 53,
+        "chats": 44,
+        "paid_sales": 4,
+        "paid_revenue_cop": 211600,
+        "pending_sales": 1,
+        "pending_revenue_cop": 45000,
+        "unverified_sales": 1,
+        "unverified_revenue_cop": 61940,
+        "cancelled_sales": 1,
+        "cancelled_revenue_cop": 49500,
+        "open_chats": 23,
+        "stale_open_chats": 14,
+        "reach": null
+      },
+      "metrics": {
+        "roas": "1.425434164612047478544386511",
+        "cost_per_sale_cop": "37111.5",
+        "cost_per_chat_cop": "3373.772727272727272727272727",
+        "chat_to_sale": "0.09090909090909090909090909091",
+        "frequency": null,
+        "ctr": "0.02111810781753954845645830134",
+        "click_to_chat": "0.1927272727272727272727272727",
+        "avg_ticket_cop": "52900",
+        "ad_share_of_revenue": "0.7015406427221172022684310019"
+      },
+      "potential_roas": "2.145830807162200396103633645",
+      "verdict": {
+        "action": "hold_budget",
+        "reason": "pending_confirmation"
+      }
+    },
+    "segments": [
+      {
+        "id": "120247418828480317",
+        "name": "LILIANA / personalizada / Conversiones / Ubicaciones Advantage+/halloween",
+        "label": "Personalizada",
+        "totals": {
+          "spend_cop": 66972,
+          "impressions": 5029,
+          "link_clicks": 109,
+          "conversations": 20,
+          "chats": 17,
+          "paid_sales": 2,
+          "paid_revenue_cop": 105800,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 1,
+          "unverified_revenue_cop": 61940,
+          "cancelled_sales": 1,
+          "cancelled_revenue_cop": 49500,
+          "open_chats": 5,
+          "stale_open_chats": 5,
+          "reach": null
+        },
+        "metrics": {
+          "roas": "1.579764677775786896016245595",
+          "cost_per_sale_cop": "33486",
+          "cost_per_chat_cop": "3939.529411764705882352941176",
+          "chat_to_sale": "0.1176470588235294117647058824",
+          "frequency": null,
+          "ctr": "0.02167428912308610061642473653",
+          "click_to_chat": "0.1834862385321100917431192661",
+          "avg_ticket_cop": "52900",
+          "ad_share_of_revenue": "0.6330056710775047258979206049"
+        },
+        "potential_roas": "2.504628800095562324553544765",
+        "share_of_spend": "0.4511539549735257265268178327",
+        "decision": {
+          "action": "keep_pending",
+          "reason": "pending_confirmation"
+        }
+      },
+      {
+        "id": "120247421007150317",
+        "name": "LILIANA / abierta / Conversiones / Ubicaciones Advantage+/halloween",
+        "label": "Abierta",
+        "totals": {
+          "spend_cop": 40509,
+          "impressions": 3933,
+          "link_clicks": 82,
+          "conversations": 19,
+          "chats": 17,
+          "paid_sales": 1,
+          "paid_revenue_cop": 52900,
+          "pending_sales": 1,
+          "pending_revenue_cop": 45000,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 13,
+          "stale_open_chats": 6,
+          "reach": null
+        },
+        "metrics": {
+          "roas": "1.305882643363203238786442519",
+          "cost_per_sale_cop": "40509",
+          "cost_per_chat_cop": "2382.882352941176470588235294",
+          "chat_to_sale": "0.05882352941176470588235294118",
+          "frequency": null,
+          "ctr": "0.02084922451055174167302313755",
+          "click_to_chat": "0.2317073170731707317073170732",
+          "avg_ticket_cop": "52900",
+          "ad_share_of_revenue": "0.7657655954631379962192816635"
+        },
+        "potential_roas": "2.416746895751561381421412526",
+        "share_of_spend": "0.2728871104644113010791803080",
+        "decision": {
+          "action": "keep_pending",
+          "reason": "pending_confirmation"
+        }
+      },
+      {
+        "id": "120247398115600317",
+        "name": "LILIANA / Intereses / Conversiones / Ubicaciones Advantage+ /hallowen",
+        "label": "Intereses",
+        "totals": {
+          "spend_cop": 24160,
+          "impressions": 2339,
+          "link_clicks": 53,
+          "conversations": 8,
+          "chats": 6,
+          "paid_sales": 1,
+          "paid_revenue_cop": 52900,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 2,
+          "stale_open_chats": 1,
+          "reach": null
+        },
+        "metrics": {
+          "roas": "2.189569536423841059602649007",
+          "cost_per_sale_cop": "24160",
+          "cost_per_chat_cop": "4026.666666666666666666666667",
+          "chat_to_sale": "0.1666666666666666666666666667",
+          "frequency": null,
+          "ctr": "0.02265925609234715690466011116",
+          "click_to_chat": "0.1509433962264150943396226415",
+          "avg_ticket_cop": "52900",
+          "ad_share_of_revenue": "0.4567107750472589792060491493"
+        },
+        "potential_roas": "2.189569536423841059602649007",
+        "share_of_spend": "0.1627527855247025854519488568",
+        "decision": {
+          "action": "watch",
+          "reason": "few_chats",
+          "pause_at_cop": null
+        }
+      },
+      {
+        "id": "120247421040600317",
+        "name": "LILIANA / similar / Conversiones / Ubicaciones Advantage+/halloween",
+        "label": "Similar",
+        "totals": {
+          "spend_cop": 16805,
+          "impressions": 1721,
+          "link_clicks": 31,
+          "conversations": 6,
+          "chats": 4,
+          "paid_sales": 0,
+          "paid_revenue_cop": 0,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 3,
+          "stale_open_chats": 2,
+          "reach": null
+        },
+        "metrics": {
+          "roas": "0",
+          "cost_per_sale_cop": null,
+          "cost_per_chat_cop": "4201.25",
+          "chat_to_sale": "0",
+          "frequency": null,
+          "ctr": "0.01801278326554328878558977339",
+          "click_to_chat": "0.1935483870967741935483870968",
+          "avg_ticket_cop": null,
+          "ad_share_of_revenue": null
+        },
+        "potential_roas": "0",
+        "share_of_spend": "0.1132061490373603869420530024",
+        "decision": {
+          "action": "watch",
+          "reason": "few_chats",
+          "pause_at_cop": 55667
+        }
+      }
+    ],
+    "ads": [
+      {
+        "id": "120247418828490317",
+        "name": "Liliana / Presentación / carrusel  / beneficios / Solución / Colección",
+        "label": "Carrusel / beneficios",
+        "segment_id": "120247418828480317",
+        "segment_label": "Personalizada",
+        "totals": {
+          "spend_cop": 55415,
+          "impressions": 4191,
+          "link_clicks": 87,
+          "conversations": 17,
+          "chats": 13,
+          "paid_sales": 2,
+          "paid_revenue_cop": 105800,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 1,
+          "unverified_revenue_cop": 61940,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 4,
+          "stale_open_chats": 4,
+          "reach": 3065
+        },
+        "metrics": {
+          "roas": "1.909230352792565189930524226",
+          "cost_per_sale_cop": "27707.5",
+          "cost_per_chat_cop": "4262.692307692307692307692308",
+          "chat_to_sale": "0.1538461538461538461538461538",
+          "frequency": "1.367373572593800978792822186",
+          "ctr": "0.02075876879026485325697924123",
+          "click_to_chat": "0.1954022988505747126436781609",
+          "avg_ticket_cop": "52900",
+          "ad_share_of_revenue": "0.5237712665406427221172022684"
+        },
+        "potential_roas": "3.026978254985112334205540016",
+        "share_of_spend": "0.3733007288845775568220093502",
+        "fatigue": {
+          "frequency": "1.367373572593800978792822186",
+          "cost_trend": null,
+          "ctr_trend": null,
+          "trend_evaluated": false
+        },
+        "decision": {
+          "action": "keep_pending",
+          "reason": "pending_confirmation"
+        },
+        "has_daily": false
+      },
+      {
+        "id": "120247421007140317",
+        "name": "Liliana / Presentación / Video / Decoración / Solución / halloween",
+        "label": "Video / Decoración",
+        "segment_id": "120247421007150317",
+        "segment_label": "Abierta",
+        "totals": {
+          "spend_cop": 40145,
+          "impressions": 3821,
+          "link_clicks": 79,
+          "conversations": 19,
+          "chats": 17,
+          "paid_sales": 1,
+          "paid_revenue_cop": 52900,
+          "pending_sales": 1,
+          "pending_revenue_cop": 45000,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 13,
+          "stale_open_chats": 6,
+          "reach": 3066
+        },
+        "metrics": {
+          "roas": "1.317723253207124174866110350",
+          "cost_per_sale_cop": "40145",
+          "cost_per_chat_cop": "2361.470588235294117647058824",
+          "chat_to_sale": "0.05882352941176470588235294118",
+          "frequency": "1.246249184605348988910632746",
+          "ctr": "0.02067521591206490447526825438",
+          "click_to_chat": "0.2405063291139240506329113924",
+          "avg_ticket_cop": "52900",
+          "ad_share_of_revenue": "0.7588846880907372400756143667"
+        },
+        "potential_roas": "2.438659858014696724374143729",
+        "share_of_spend": "0.2704350403513735634506824030",
+        "fatigue": {
+          "frequency": "1.246249184605348988910632746",
+          "cost_trend": null,
+          "ctr_trend": null,
+          "trend_evaluated": false
+        },
+        "decision": {
+          "action": "keep_pending",
+          "reason": "pending_confirmation"
+        },
+        "has_daily": false
+      },
+      {
+        "id": "120247398115620317",
+        "name": "Liliana / Presentación / Video / Decoración / Solución / halloween",
+        "label": "Video / Decoración",
+        "segment_id": "120247398115600317",
+        "segment_label": "Intereses",
+        "totals": {
+          "spend_cop": 23357,
+          "impressions": 2232,
+          "link_clicks": 51,
+          "conversations": 8,
+          "chats": 6,
+          "paid_sales": 1,
+          "paid_revenue_cop": 52900,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 2,
+          "stale_open_chats": 1,
+          "reach": 1886
+        },
+        "metrics": {
+          "roas": "2.264845656548358093933296228",
+          "cost_per_sale_cop": "23357",
+          "cost_per_chat_cop": "3892.833333333333333333333333",
+          "chat_to_sale": "0.1666666666666666666666666667",
+          "frequency": "1.183457051961823966065747614",
+          "ctr": "0.02284946236559139784946236559",
+          "click_to_chat": "0.1568627450980392156862745098",
+          "avg_ticket_cop": "52900",
+          "ad_share_of_revenue": "0.4415311909262759924385633270"
+        },
+        "potential_roas": "2.264845656548358093933296228",
+        "share_of_spend": "0.1573434110720396642550152918",
+        "fatigue": {
+          "frequency": "1.183457051961823966065747614",
+          "cost_trend": null,
+          "ctr_trend": null,
+          "trend_evaluated": false
+        },
+        "decision": {
+          "action": "watch",
+          "reason": "few_chats",
+          "pause_at_cop": null
+        },
+        "has_daily": false
+      },
+      {
+        "id": "120247421040590317",
+        "name": "Liliana / Presentación / Video / Decoración / Solución / halloween",
+        "label": "Video / Decoración",
+        "segment_id": "120247421040600317",
+        "segment_label": "Similar",
+        "totals": {
+          "spend_cop": 15969,
+          "impressions": 1663,
+          "link_clicks": 31,
+          "conversations": 6,
+          "chats": 4,
+          "paid_sales": 0,
+          "paid_revenue_cop": 0,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 3,
+          "stale_open_chats": 2,
+          "reach": 1476
+        },
+        "metrics": {
+          "roas": "0",
+          "cost_per_sale_cop": null,
+          "cost_per_chat_cop": "3992.25",
+          "chat_to_sale": "0",
+          "frequency": "1.126693766937669376693766938",
+          "ctr": "0.01864101022248947684906794949",
+          "click_to_chat": "0.1935483870967741935483870968",
+          "avg_ticket_cop": null,
+          "ad_share_of_revenue": null
+        },
+        "potential_roas": "0",
+        "share_of_spend": "0.1075744715249989895315468251",
+        "fatigue": {
+          "frequency": "1.126693766937669376693766938",
+          "cost_trend": null,
+          "ctr_trend": null,
+          "trend_evaluated": false
+        },
+        "decision": {
+          "action": "watch",
+          "reason": "few_chats",
+          "pause_at_cop": 55667
+        },
+        "has_daily": false
+      },
+      {
+        "id": "120247418828570317",
+        "name": "Liliana / Presentación / Imagen / Beneficios / Solución / Colección - Copia",
+        "label": "Imagen / Beneficios",
+        "segment_id": "120247418828480317",
+        "segment_label": "Personalizada",
+        "totals": {
+          "spend_cop": 11557,
+          "impressions": 838,
+          "link_clicks": 22,
+          "conversations": 3,
+          "chats": 4,
+          "paid_sales": 0,
+          "paid_revenue_cop": 0,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 1,
+          "cancelled_revenue_cop": 49500,
+          "open_chats": 1,
+          "stale_open_chats": 1,
+          "reach": 683
+        },
+        "metrics": {
+          "roas": "0",
+          "cost_per_sale_cop": null,
+          "cost_per_chat_cop": "2889.25",
+          "chat_to_sale": "0",
+          "frequency": "1.226939970717423133235724744",
+          "ctr": "0.02625298329355608591885441527",
+          "click_to_chat": "0.1363636363636363636363636364",
+          "avg_ticket_cop": null,
+          "ad_share_of_revenue": null
+        },
+        "potential_roas": "0",
+        "share_of_spend": "0.07785322608894816970480848255",
+        "fatigue": {
+          "frequency": "1.226939970717423133235724744",
+          "cost_trend": null,
+          "ctr_trend": null,
+          "trend_evaluated": false
+        },
+        "decision": {
+          "action": "watch",
+          "reason": "few_chats",
+          "pause_at_cop": 55667
+        },
+        "has_daily": false
+      },
+      {
+        "id": "120247421040610317",
+        "name": "Liliana / Presentación / Imagen / Beneficios / Solución / Colección - Copia",
+        "label": "Imagen / Beneficios",
+        "segment_id": "120247421040600317",
+        "segment_label": "Similar",
+        "totals": {
+          "spend_cop": 665,
+          "impressions": 40,
+          "link_clicks": 0,
+          "conversations": 0,
+          "chats": 0,
+          "paid_sales": 0,
+          "paid_revenue_cop": 0,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 0,
+          "stale_open_chats": 0,
+          "reach": 38
+        },
+        "metrics": {
+          "roas": "0",
+          "cost_per_sale_cop": null,
+          "cost_per_chat_cop": null,
+          "chat_to_sale": null,
+          "frequency": "1.052631578947368421052631579",
+          "ctr": "0",
+          "click_to_chat": null,
+          "avg_ticket_cop": null,
+          "ad_share_of_revenue": null
+        },
+        "potential_roas": "0",
+        "share_of_spend": "0.004479743475742020667448095604",
+        "fatigue": {
+          "frequency": "1.052631578947368421052631579",
+          "cost_trend": null,
+          "ctr_trend": null,
+          "trend_evaluated": false
+        },
+        "decision": {
+          "action": "no_delivery",
+          "reason": "meta_barely_shows_it"
+        },
+        "has_daily": false
+      },
+      {
+        "id": "120247398115640317",
+        "name": "Liliana / Presentación / carrusel  / beneficios / Solución / Colección",
+        "label": "Carrusel / beneficios",
+        "segment_id": "120247398115600317",
+        "segment_label": "Intereses",
+        "totals": {
+          "spend_cop": 520,
+          "impressions": 39,
+          "link_clicks": 0,
+          "conversations": 0,
+          "chats": 0,
+          "paid_sales": 0,
+          "paid_revenue_cop": 0,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 0,
+          "stale_open_chats": 0,
+          "reach": 35
+        },
+        "metrics": {
+          "roas": "0",
+          "cost_per_sale_cop": null,
+          "cost_per_chat_cop": null,
+          "chat_to_sale": null,
+          "frequency": "1.114285714285714285714285714",
+          "ctr": "0",
+          "click_to_chat": null,
+          "avg_ticket_cop": null,
+          "ad_share_of_revenue": null
+        },
+        "potential_roas": "0",
+        "share_of_spend": "0.003502957304339625183568435660",
+        "fatigue": {
+          "frequency": "1.114285714285714285714285714",
+          "cost_trend": null,
+          "ctr_trend": null,
+          "trend_evaluated": false
+        },
+        "decision": {
+          "action": "no_delivery",
+          "reason": "meta_barely_shows_it"
+        },
+        "has_daily": false
+      },
+      {
+        "id": "120247398115610317",
+        "name": "Liliana / Presentación / Imagen / Beneficios / Solución / Colección - Copia",
+        "label": "Imagen / Beneficios",
+        "segment_id": "120247398115600317",
+        "segment_label": "Intereses",
+        "totals": {
+          "spend_cop": 283,
+          "impressions": 68,
+          "link_clicks": 2,
+          "conversations": 0,
+          "chats": 0,
+          "paid_sales": 0,
+          "paid_revenue_cop": 0,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 0,
+          "stale_open_chats": 0,
+          "reach": 65
+        },
+        "metrics": {
+          "roas": "0",
+          "cost_per_sale_cop": null,
+          "cost_per_chat_cop": null,
+          "chat_to_sale": null,
+          "frequency": "1.046153846153846153846153846",
+          "ctr": "0.02941176470588235294117647059",
+          "click_to_chat": "0",
+          "avg_ticket_cop": null,
+          "ad_share_of_revenue": null
+        },
+        "potential_roas": "0",
+        "share_of_spend": "0.001906417148323296013365129407",
+        "fatigue": {
+          "frequency": "1.046153846153846153846153846",
+          "cost_trend": null,
+          "ctr_trend": null,
+          "trend_evaluated": false
+        },
+        "decision": {
+          "action": "no_delivery",
+          "reason": "meta_barely_shows_it"
+        },
+        "has_daily": false
+      },
+      {
+        "id": "120247421007160317",
+        "name": "Liliana / Presentación / Imagen / Beneficios / Solución / Colección - Copia",
+        "label": "Imagen / Beneficios",
+        "segment_id": "120247421007150317",
+        "segment_label": "Abierta",
+        "totals": {
+          "spend_cop": 247,
+          "impressions": 67,
+          "link_clicks": 2,
+          "conversations": 0,
+          "chats": 0,
+          "paid_sales": 0,
+          "paid_revenue_cop": 0,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 0,
+          "stale_open_chats": 0,
+          "reach": 66
+        },
+        "metrics": {
+          "roas": "0",
+          "cost_per_sale_cop": null,
+          "cost_per_chat_cop": null,
+          "chat_to_sale": null,
+          "frequency": "1.015151515151515151515151515",
+          "ctr": "0.02985074626865671641791044776",
+          "click_to_chat": "0",
+          "avg_ticket_cop": null,
+          "ad_share_of_revenue": null
+        },
+        "potential_roas": "0",
+        "share_of_spend": "0.001663904719561321962195006939",
+        "fatigue": {
+          "frequency": "1.015151515151515151515151515",
+          "cost_trend": null,
+          "ctr_trend": null,
+          "trend_evaluated": false
+        },
+        "decision": {
+          "action": "no_delivery",
+          "reason": "meta_barely_shows_it"
+        },
+        "has_daily": false
+      },
+      {
+        "id": "120247421040620317",
+        "name": "Liliana / Presentación / carrusel  / beneficios / Solución / Colección",
+        "label": "Carrusel / beneficios",
+        "segment_id": "120247421040600317",
+        "segment_label": "Similar",
+        "totals": {
+          "spend_cop": 171,
+          "impressions": 18,
+          "link_clicks": 0,
+          "conversations": 0,
+          "chats": 0,
+          "paid_sales": 0,
+          "paid_revenue_cop": 0,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 0,
+          "stale_open_chats": 0,
+          "reach": 15
+        },
+        "metrics": {
+          "roas": "0",
+          "cost_per_sale_cop": null,
+          "cost_per_chat_cop": null,
+          "chat_to_sale": null,
+          "frequency": "1.2",
+          "ctr": "0",
+          "click_to_chat": null,
+          "avg_ticket_cop": null,
+          "ad_share_of_revenue": null
+        },
+        "potential_roas": "0",
+        "share_of_spend": "0.001151934036619376743058081727",
+        "fatigue": {
+          "frequency": "1.2",
+          "cost_trend": null,
+          "ctr_trend": null,
+          "trend_evaluated": false
+        },
+        "decision": {
+          "action": "no_delivery",
+          "reason": "meta_barely_shows_it"
+        },
+        "has_daily": false
+      },
+      {
+        "id": "120247421007170317",
+        "name": "Liliana / Presentación / carrusel  / beneficios / Solución / Colección",
+        "label": "Carrusel / beneficios",
+        "segment_id": "120247421007150317",
+        "segment_label": "Abierta",
+        "totals": {
+          "spend_cop": 117,
+          "impressions": 45,
+          "link_clicks": 1,
+          "conversations": 0,
+          "chats": 0,
+          "paid_sales": 0,
+          "paid_revenue_cop": 0,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 0,
+          "stale_open_chats": 0,
+          "reach": 39
+        },
+        "metrics": {
+          "roas": "0",
+          "cost_per_sale_cop": null,
+          "cost_per_chat_cop": null,
+          "chat_to_sale": null,
+          "frequency": "1.153846153846153846153846154",
+          "ctr": "0.02222222222222222222222222222",
+          "click_to_chat": "0",
+          "avg_ticket_cop": null,
+          "ad_share_of_revenue": null
+        },
+        "potential_roas": "0",
+        "share_of_spend": "0.0007881653934764156663028980235",
+        "fatigue": {
+          "frequency": "1.153846153846153846153846154",
+          "cost_trend": null,
+          "ctr_trend": null,
+          "trend_evaluated": false
+        },
+        "decision": {
+          "action": "no_delivery",
+          "reason": "meta_barely_shows_it"
+        },
+        "has_daily": false
+      }
+    ],
+    "pieces": [
+      {
+        "label": "Video / Decoración",
+        "name": "Liliana / Presentación / Video / Decoración / Solución / halloween",
+        "ad_ids": [
+          "120247421007140317",
+          "120247398115620317",
+          "120247421040590317"
+        ],
+        "totals": {
+          "spend_cop": 79471,
+          "impressions": 7716,
+          "link_clicks": 161,
+          "conversations": 33,
+          "chats": 27,
+          "paid_sales": 2,
+          "paid_revenue_cop": 105800,
+          "pending_sales": 1,
+          "pending_revenue_cop": 45000,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 18,
+          "stale_open_chats": 9,
+          "reach": null
+        },
+        "metrics": {
+          "roas": "1.331303242692302852612902820",
+          "cost_per_sale_cop": "39735.5",
+          "cost_per_chat_cop": "2943.370370370370370370370370",
+          "chat_to_sale": "0.07407407407407407407407407407",
+          "frequency": null,
+          "ctr": "0.02086573354069466044582685329",
+          "click_to_chat": "0.2049689440993788819875776398",
+          "avg_ticket_cop": "52900",
+          "ad_share_of_revenue": "0.7511436672967863894139886578"
+        },
+        "potential_roas": "1.897547533062374954385876609",
+        "delivered_in": [
+          "Abierta",
+          "Intereses",
+          "Similar"
+        ]
+      },
+      {
+        "label": "Carrusel / beneficios",
+        "name": "Liliana / Presentación / carrusel  / beneficios / Solución / Colección",
+        "ad_ids": [
+          "120247418828490317",
+          "120247398115640317",
+          "120247421040620317",
+          "120247421007170317"
+        ],
+        "totals": {
+          "spend_cop": 56223,
+          "impressions": 4293,
+          "link_clicks": 88,
+          "conversations": 17,
+          "chats": 13,
+          "paid_sales": 2,
+          "paid_revenue_cop": 105800,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 1,
+          "unverified_revenue_cop": 61940,
+          "cancelled_sales": 0,
+          "cancelled_revenue_cop": 0,
+          "open_chats": 4,
+          "stale_open_chats": 4,
+          "reach": null
+        },
+        "metrics": {
+          "roas": "1.881792149120466712911086210",
+          "cost_per_sale_cop": "28111.5",
+          "cost_per_chat_cop": "4324.846153846153846153846154",
+          "chat_to_sale": "0.1538461538461538461538461538",
+          "frequency": null,
+          "ctr": "0.02049848590729093873747961798",
+          "click_to_chat": "0.1931818181818181818181818182",
+          "avg_ticket_cop": "52900",
+          "ad_share_of_revenue": "0.5314083175803402646502835539"
+        },
+        "potential_roas": "2.983476513170766412322359177",
+        "delivered_in": [
+          "Personalizada"
+        ]
+      },
+      {
+        "label": "Imagen / Beneficios",
+        "name": "Liliana / Presentación / Imagen / Beneficios / Solución / Colección - Copia",
+        "ad_ids": [
+          "120247418828570317",
+          "120247421040610317",
+          "120247398115610317",
+          "120247421007160317"
+        ],
+        "totals": {
+          "spend_cop": 12752,
+          "impressions": 1013,
+          "link_clicks": 26,
+          "conversations": 3,
+          "chats": 4,
+          "paid_sales": 0,
+          "paid_revenue_cop": 0,
+          "pending_sales": 0,
+          "pending_revenue_cop": 0,
+          "unverified_sales": 0,
+          "unverified_revenue_cop": 0,
+          "cancelled_sales": 1,
+          "cancelled_revenue_cop": 49500,
+          "open_chats": 1,
+          "stale_open_chats": 1,
+          "reach": null
+        },
+        "metrics": {
+          "roas": "0",
+          "cost_per_sale_cop": null,
+          "cost_per_chat_cop": "3188",
+          "chat_to_sale": "0",
+          "frequency": null,
+          "ctr": "0.02566633761105626850937808490",
+          "click_to_chat": "0.1153846153846153846153846154",
+          "avg_ticket_cop": null,
+          "ad_share_of_revenue": null
+        },
+        "potential_roas": "0",
+        "delivered_in": [
+          "Personalizada"
+        ]
+      }
+    ],
+    "cards": [
+      {
+        "ad_id": "120247418828490317",
+        "ad_label": "Carrusel / beneficios",
+        "segment_label": "Personalizada",
+        "headline": "Chatea con nosotros",
+        "chats": 7,
+        "orders": 0,
+        "paid_sales": 0
+      },
+      {
+        "ad_id": "120247418828490317",
+        "ad_label": "Carrusel / beneficios",
+        "segment_label": "Personalizada",
+        "headline": "Velas aromáticas",
+        "chats": 6,
+        "orders": 3,
+        "paid_sales": 2
+      }
+    ],
+    "findings": [
+      {
+        "kind": "campaign_verdict",
+        "level": "campaign",
+        "target": {
+          "type": "campaign",
+          "id": "120247398115530317",
+          "label": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween"
+        },
+        "action": "hold_budget",
+        "reason": "pending_confirmation",
+        "evidence": {
+          "spend_cop": 148446,
+          "chats": 44,
+          "paid_sales": 4,
+          "paid_revenue_cop": 211600,
+          "roas": "1.425434164612047478544386511",
+          "potential_roas": "2.145830807162200396103633645",
+          "unconfirmed_sales": 2,
+          "unconfirmed_revenue_cop": 106940,
+          "cost_per_sale_cop": "37111.5",
+          "avg_ticket_cop": "52900",
+          "ad_share_of_revenue": "0.7015406427221172022684310019",
+          "breakeven_roas": "2.0",
+          "scale_roas": "3.00",
+          "budget_level": "campaign"
+        },
+        "confidence": "alta",
+        "priority": 1
+      },
+      {
+        "kind": "replace_card",
+        "level": "card",
+        "target": {
+          "type": "card",
+          "id": "120247418828490317",
+          "label": "Chatea con nosotros",
+          "segment": "Personalizada",
+          "ad_label": "Carrusel / beneficios"
+        },
+        "action": "replace_card",
+        "reason": "card_does_not_sell",
+        "evidence": {
+          "chats": 7,
+          "orders": 0,
+          "sibling_headline": "Velas aromáticas",
+          "sibling_chats": 6,
+          "sibling_orders": 3
+        },
+        "confidence": "media",
+        "priority": 2
+      },
+      {
+        "kind": "follow_up",
+        "level": "campaign",
+        "target": {
+          "type": "campaign",
+          "id": "120247398115530317",
+          "label": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween"
+        },
+        "action": "follow_up_open_chats",
+        "reason": "open_chats_cooling",
+        "evidence": {
+          "stale_open_chats": 14,
+          "recent_open_chats": 9,
+          "by_segment": [
+            [
+              "Abierta",
+              6
+            ],
+            [
+              "Personalizada",
+              5
+            ],
+            [
+              "Similar",
+              2
+            ],
+            [
+              "Intereses",
+              1
+            ]
+          ]
+        },
+        "confidence": "alta",
+        "priority": 3
+      },
+      {
+        "kind": "compare_pieces",
+        "level": "piece",
+        "target": {
+          "type": "piece",
+          "id": "120247418828490317",
+          "label": "Carrusel / beneficios"
+        },
+        "action": "test_best_piece",
+        "reason": "piece_converts_better",
+        "evidence": {
+          "best_label": "Carrusel / beneficios",
+          "best_chats": 13,
+          "best_paid_sales": 2,
+          "best_chat_to_sale": "0.1538461538461538461538461538",
+          "worse_label": "Video / Decoración",
+          "worse_chats": 27,
+          "worse_paid_sales": 2,
+          "worse_chat_to_sale": "0.07407407407407407407407407407",
+          "segments_without_best": [
+            "Abierta",
+            "Intereses",
+            "Similar"
+          ]
+        },
+        "confidence": "baja",
+        "priority": 4
+      },
+      {
+        "kind": "watch",
+        "level": "segment",
+        "target": {
+          "type": "segment",
+          "id": "120247421040600317",
+          "label": "Similar"
+        },
+        "action": "watch",
+        "reason": "few_chats",
+        "evidence": {
+          "spend_cop": 16805,
+          "chats": 4,
+          "paid_sales": 0,
+          "paid_revenue_cop": 0,
+          "unconfirmed_sales": 0,
+          "roas": "0",
+          "potential_roas": "0",
+          "cost_per_chat_cop": "4201.25",
+          "chat_to_sale": "0",
+          "pause_at_cop": 55667
+        },
+        "confidence": "baja",
+        "priority": 5
+      },
+      {
+        "kind": "watch",
+        "level": "ad",
+        "target": {
+          "type": "ad",
+          "id": "120247418828570317",
+          "label": "Imagen / Beneficios",
+          "segment": "Personalizada"
+        },
+        "action": "watch",
+        "reason": "few_chats",
+        "evidence": {
+          "spend_cop": 11557,
+          "chats": 4,
+          "paid_sales": 0,
+          "paid_revenue_cop": 0,
+          "unconfirmed_sales": 0,
+          "roas": "0",
+          "potential_roas": "0",
+          "cost_per_chat_cop": "2889.25",
+          "chat_to_sale": "0",
+          "pause_at_cop": 55667
+        },
+        "confidence": "baja",
+        "priority": 6
+      },
+      {
+        "kind": "watch",
+        "level": "segment",
+        "target": {
+          "type": "segment",
+          "id": "120247398115600317",
+          "label": "Intereses"
+        },
+        "action": "watch",
+        "reason": "few_chats",
+        "evidence": {
+          "spend_cop": 24160,
+          "chats": 6,
+          "paid_sales": 1,
+          "paid_revenue_cop": 52900,
+          "unconfirmed_sales": 0,
+          "roas": "2.189569536423841059602649007",
+          "potential_roas": "2.189569536423841059602649007",
+          "cost_per_chat_cop": "4026.666666666666666666666667",
+          "chat_to_sale": "0.1666666666666666666666666667",
+          "pause_at_cop": null
+        },
+        "confidence": "baja",
+        "priority": 7
+      }
+    ],
+    "warnings": [
+      {
+        "code": "orders_stale",
+        "detail": {}
+      },
+      {
+        "code": "pending_confirmation",
+        "detail": {
+          "pending_sales": 1,
+          "pending_revenue_cop": 45000,
+          "unverified_sales": 1,
+          "unverified_revenue_cop": 61940
+        }
+      },
+      {
+        "code": "cancelled_excluded",
+        "detail": {
+          "cancelled_sales": 1,
+          "cancelled_revenue_cop": 49500
+        }
+      },
+      {
+        "code": "recent_open",
+        "detail": {
+          "chats": 9,
+          "since": "2026-09-24"
+        }
+      },
+      {
+        "code": "no_daily_series",
+        "detail": {
+          "ads": 5
+        }
+      }
+    ],
+    "thresholds": {
+      "breakeven_roas": "2.0",
+      "scale_roas": "3.00",
+      "min_chats": 10,
+      "pause_multiple_of_cpa": "1.5",
+      "pause_at_cop": 55667,
+      "min_delivery_share": "0.03",
+      "fatigue_frequency": "3.0",
+      "fatigue_cost_rise": "1.3",
+      "fatigue_ctr_drop": "0.7"
+    }
+  },
+  "passed": true,
+  "violations": [],
+  "markdown": "## Liliana / Promocional / Interacción / CBO / Advantage+ / Haloween\nDel 11 sep al 25 sep · solo ventas atribuidas a esta campaña.\n\n**No subas el presupuesto todavía.** Con las ventas confirmadas, cada $1 en anuncios trajo $1,43 en ventas; para que la pauta se pague sola necesitas al menos $2,00. Si se confirman los 2 pedidos que faltan ($106.940), llegaría a $2,15.\n\n### Qué hacer, en orden\n\n1. **Cambia la tarjeta «Chatea con nosotros» del anuncio Carrusel / beneficios (Personalizada).** Trajo 7 chats y ningún pedido; la tarjeta «Velas aromáticas» del mismo anuncio trajo 6 chats y 3 pedidos. Reemplázala por un producto con precio o quítala. _Confianza: media._\n2. **Dale seguimiento a 14 conversaciones abiertas de hace más de 2 días** (Abierta 6, Personalizada 5, Similar 2, Intereses 1). Son personas que preguntaron y no cerraron: escribirles cuesta menos que conseguir un chat nuevo. _Confianza: alta._\n3. **Dale más espacio a Carrusel / beneficios.** Cierra el 15% de sus chats (2 de 13) contra el 7% de Video / Decoración (2 de 27), pero Meta casi no lo muestra en Abierta, Intereses y Similar. Para probarlo, pausa Video / Decoración unos días en uno de esos segmentos. _Confianza: baja: todavía son pocas ventas._\n4. **Vigila Similar.** Lleva $16.805 y 4 chats, sin ventas; con menos de 10 chats todavía es pronto para juzgar. Si llega a $55.667 sin vender, páusalo.\n5. **Vigila Imagen / Beneficios en Personalizada.** Lleva $11.557 y 4 chats, sin ventas; con menos de 10 chats todavía es pronto para juzgar. Si llega a $55.667 sin vender, páusalo.\n6. **Vigila Intereses.** Lleva $24.160 y 6 chats, con 1 venta confirmada; con menos de 10 chats todavía es pronto para juzgar.\n\n### Cómo va la campaña\n\n| Dato | Valor |\n|---|---|\n| Gasto en anuncios | $148.446 |\n| Chats que llegaron a WhatsApp | 44 |\n| Ventas confirmadas | 4 · $211.600 |\n| Por confirmar | 2 · $106.940 |\n| Canceladas (no cuentan) | 1 · $49.500 |\n| Retorno confirmado | 1,43 · de cada $100 vendidos, $70 se fueron en anuncios |\n| Costo por venta · ticket promedio | $37.112 · $52.900 |\n| Presupuesto | a nivel campaña (CBO): Meta lo reparte entre segmentos |\n\n### Segmentos\n\n| Segmento | Gasto | % del gasto | Chats | Ventas confirmadas | Por confirmar | Retorno | Qué hacer |\n|---|--:|--:|--:|--:|--:|--:|---|\n| Personalizada | $66.972 | 45% | 17 | 2 | 1 | 1,58 (2,50 si se confirma) | Mantener: depende de confirmar 1 pedido |\n| Abierta | $40.509 | 27% | 17 | 1 | 1 | 1,31 (2,42 si se confirma) | Mantener: depende de confirmar 1 pedido |\n| Intereses | $24.160 | 16% | 6 | 1 | 0 | 2,19 | Vigilar: pocos chats para juzgar |\n| Similar | $16.805 | 11% | 4 | 0 | 0 | 0,00 | Vigilar: pausar si llega a $55.667 sin vender |\n\n### Anuncios\n\n| Anuncio | Segmento | Gasto | Chats | Ventas confirmadas | Frecuencia | Qué hacer |\n|---|---|--:|--:|--:|--:|---|\n| Carrusel / beneficios | Personalizada | $55.415 | 13 | 2 | 1,37 | Mantener: depende de confirmar 1 pedido |\n| Video / Decoración | Abierta | $40.145 | 17 | 1 | 1,25 | Mantener: depende de confirmar 1 pedido |\n| Video / Decoración | Intereses | $23.357 | 6 | 1 | 1,18 | Vigilar: pocos chats para juzgar |\n| Video / Decoración | Similar | $15.969 | 4 | 0 | 1,13 | Vigilar: pausar si llega a $55.667 sin vender |\n| Imagen / Beneficios | Personalizada | $11.557 | 4 | 0 | 1,23 | Vigilar: pausar si llega a $55.667 sin vender |\n\n_6 anuncios casi no se mostraron (menos del 3% del gasto cada uno): Meta decidió no mostrarlos y no hace falta tocarlos._\n\n### Tarjetas del carrusel\n\n| Tarjeta | Anuncio | Chats | Pedidos |\n|---|---|--:|--:|\n| «Chatea con nosotros» | Carrusel / beneficios (Personalizada) | 7 | 0 |\n| «Velas aromáticas» | Carrusel / beneficios (Personalizada) | 6 | 3 |\n\n### Tener en cuenta\n\n- Orders no respondió por algunos pedidos en este momento; sus montos salen de lo registrado en el chat.\n- 1 pedido pendiente de pago ($45.000) y 1 sin verificar en Orders ($61.940) no cuentan en el retorno hasta confirmarse.\n- 1 pedido cancelado ($49.500) no cuenta, aunque el chat lo marque como ganado.\n- 9 chats de los últimos 2 días (desde el 24 sep) siguen abiertos: todavía pueden llegar ventas.\n- 5 anuncios sin serie diaria: el desgaste se juzgó solo por la frecuencia.\n- Retorno mínimo usado: 2,00 (ajústalo a tu margen).\n\n### Detalle por día\n\n_Ventas de los chats que empezaron ese día._\n\n| Fecha | Gasto | Conversaciones | Ventas | Retorno |\n|---|--:|--:|--:|--:|\n| 16 sep | $14.798 | 6 | 0 | 0,00 |\n| 17 sep | $13.296 | 4 | 1 | 3,98 |\n| 18 sep | $18.805 | 5 | 1 | 2,81 |\n| 19 sep | $9.571 | 2 | 0 | 0,00 |\n| 20 sep | $18.599 | 8 | 1 | 2,84 |\n| 21 sep | $17.707 | 7 | 1 | 2,99 |\n| 22 sep | $15.846 | 8 | 0 | 0,00 |\n| 23 sep | $9.616 | 2 | 0 | 0,00 |\n| 24 sep | $20.465 | 7 | 0 | 0,00 |\n| 25 sep | $9.072 | 4 | 0 | 0,00 |\n\n**QA (no-self-review):** los números reconcilian",
+  "verdict": "hold_budget",
+  "headline": "No subas el presupuesto todavía.",
+  "qa_passed": true
+}

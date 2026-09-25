@@ -121,12 +121,18 @@ def test_approve_409_si_el_run_no_fue_despachado(client) -> None:
 def test_get_agents_trae_el_catalogo_con_input_de_ejemplo(client) -> None:
     agents = client.get("/api/ads/analysis/agents").json()
     ads_analytics = next(a for a in agents if a["id"] == "ads-analytics")
-    # el JSON del viewer (caso dia-del-padre): los 3 bloques del seed del supervisor.
+    # el JSON del viewer (caso dia-del-padre): los 4 bloques del seed del supervisor. El pod
+    # LEE `campaign_breakdown` (null = cuenta completa, sin drill-down) — sin la clave, el
+    # task graph falla LOUD (G-WIRE) y el ejemplo del modal no corre.
     assert set(ads_analytics["example_input"]) == {
         "meta_insights",
         "manual_sales",
         "entities_payload",
+        "campaign_breakdown",
     }
+    assert ads_analytics["example_input"]["campaign_breakdown"] is None
+    # la descripción cuenta el drill-down (qué anuncio / segmento / tarjeta tocar):
+    assert "anuncio" in ads_analytics["description"]
     # El selector necesita DECIR qué análisis hace cada agente (feedback operador
     # 2026-07-09: "hace falta una descripción de qué tipo de análisis va a hacer").
     assert isinstance(ads_analytics.get("description"), str)

@@ -20,7 +20,7 @@ import logging
 import time
 from datetime import date, timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from src.plugins.ads.meta.client import MetaAdsPort
@@ -142,22 +142,73 @@ def meta_insights(days: int = 30, since: str = "", until: str = "") -> dict:
     }
 
 
-@router.get("/analysis-input")
-async def meta_analysis_input(days: int = 14) -> dict:
-    """Arma el JSON que el pod `ads-analytics` de GraphAgents consume, con datos REALES
-    de Graph (lo que el botón "Analizar con IA" usa en vez del seed de ejemplo). El pod
-    YA parsea este shape — no requiere cambios en GraphAgents.
+def _campaign_conversations(
+    ad_ids: frozenset[str], since: str, until: str
+) -> tuple[list, bool]:
+    """Chats atribuidos a los anuncios de la campaña en la ventana (fechas Bogotá,
+    inclusive), con el estado + monto de su pedido leídos de Orders. SYNC: corre en
+    un worker thread (`_order_facts` cruza al event loop con `anyio.from_thread`).
+    Provider a nivel módulo para que los tests lo monkeypatcheen. → (chats, stale)."""
+    from src.plugins.ads import api as ads_api
+    from src.plugins.ads.aggregation import list_attributed_conversations
 
-    `manual_sales` = las órdenes PAGADAS de Medusa agregadas por día (la verdad del
-    pago; sin esto el pod no puede blendear y reporta `insufficient_data` — caso
-    424d6647). `entities_payload` va vacío (las entities del MCP están gateadas; la
-    señal CTWA real vive en `meta_insights.actions`)."""
+    since_ms, until_ms = ads_api._window(None, since, until)
+    sessions = ads_api._cached_sessions(since_ms)
+    facts = ads_api._order_facts(sessions)
+    convs = list_attributed_conversations(
+        ads_api.WORKSPACE_VAULT_DIR,
+        "",
+        sessions=sessions,
+        since_ms=since_ms,
+        until_ms=until_ms,
+        source_ids=ad_ids,
+        order_facts=facts,
+    )
+    return convs, facts.stale
+
+
+def _fill_days(sales: dict, dates: list[str]) -> dict:
+    """Días con gasto en Meta y sin ventas = fila en CERO explícita. Sin esto el pod
+    los excluía del cálculo y el retorno salía inflado (Halloween: 9 de 15 días)."""
+    by_day = {s["date"]: s for s in sales.get("sales", [])}
+    for d in dates:
+        by_day.setdefault(d, {"date": d, "total_orders": 0, "total_revenue": 0})
+    return {"sales": [by_day[d] for d in sorted(by_day)]}
+
+
+@router.get("/analysis-input")
+async def meta_analysis_input(
+    days: int = 14,
+    campaign_id: str | None = None,
+    frm: str | None = Query(None, alias="from"),
+    to: str | None = None,
+) -> dict:
+    """Arma el JSON que el pod `ads-analytics` de GraphAgents consume, con datos REALES
+    de Graph (lo que el botón "Analizar con IA" usa en vez del seed de ejemplo).
+
+    Con `campaign_id` (el botón lo manda con la campaña abierta — rediseño 2026-09-25):
+    SOLO esa campaña — `meta_insights` filtrado, `manual_sales` = ventas CONFIRMADAS
+    de SUS chats por día (Bogotá) y `campaign_breakdown` = el drill-down segmento →
+    anuncio → chats que consume `ctwa-scorecard`. Sin `campaign_id`: la cuenta
+    completa con las órdenes pagadas de la tienda (caso 424d6647) y
+    `campaign_breakdown: null`. En ambos, los días con gasto y sin ventas van en cero.
+    Ventana: `from`+`to` (YYYY-MM-DD, inclusive) o los últimos `days` días.
+    `entities_payload` va vacío (las entities del MCP están gateadas; la señal CTWA
+    real vive en `meta_insights.actions`)."""
+    from anyio import to_thread
+
+    from src.plugins.ads.aggregation import _bogota_date
+    from src.plugins.ads.analysis_seed import attributed_daily_sales, build_campaign_breakdown
+
     token = _store().load()
     if token is None or not token.account_id:
         raise HTTPException(status_code=409, detail="Meta no conectado")
 
-    until_d = date.today()
-    since_d = until_d - timedelta(days=max(1, days))
+    if frm and to:
+        since, until = sorted((frm, to))
+    else:
+        until_d = _bogota_date(int(time.time() * 1000))
+        since, until = (until_d - timedelta(days=max(1, days))).isoformat(), until_d.isoformat()
     ads = _ads()
 
     currency = "COP"
@@ -167,16 +218,37 @@ async def meta_analysis_input(days: int = 14) -> dict:
             break
 
     meta_insights = ads.fetch_raw_insights(
-        token.access_token,
-        token.account_id,
-        since=since_d.isoformat(),
-        until=until_d.isoformat(),
-        currency=currency,
+        token.access_token, token.account_id, since=since, until=until, currency=currency
     )
+    if campaign_id:
+        meta_insights = {
+            **meta_insights,
+            "data": [r for r in meta_insights.get("data", []) if str(r.get("campaign_id")) == campaign_id],
+        }
+    meta_days = sorted({r["date_start"] for r in meta_insights.get("data", []) if r.get("date_start")})
+
+    breakdown = None
+    if campaign_id:
+        kw = {"campaign_id": campaign_id, "since": since, "until": until}
+        period = ads.fetch_campaign_ad_insights(token.access_token, token.account_id, daily=False, **kw)
+        daily = ads.fetch_campaign_ad_insights(token.access_token, token.account_id, daily=True, **kw)
+        budget_level = ads.fetch_campaign_budget_level(token.access_token, campaign_id)
+        ad_ids = frozenset(str(r["ad_id"]) for r in period + daily if r.get("ad_id"))
+        convs, stale = await to_thread.run_sync(_campaign_conversations, ad_ids, since, until)
+        name = next((r.get("campaign_name") for r in meta_insights.get("data", []) if r.get("campaign_name")), "")
+        manual_sales = attributed_daily_sales(convs, dates=meta_days)
+        breakdown = build_campaign_breakdown(
+            campaign_id=campaign_id, campaign_name=name or campaign_id, budget_level=budget_level,
+            since=since, until=until, period_rows=period, daily_rows=daily,
+            conversations=convs, orders_stale=stale,
+        )
+    else:
+        manual_sales = _fill_days(await _fetch_paid_sales(since, until), meta_days)
     return {
         "meta_insights": meta_insights,
-        "manual_sales": await _fetch_paid_sales(since_d.isoformat(), until_d.isoformat()),
+        "manual_sales": manual_sales,
         "entities_payload": {"ad_entities": "[]", "summary": {"total_count": 0}},
+        "campaign_breakdown": breakdown,
     }
 
 

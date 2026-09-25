@@ -1,0 +1,471 @@
+{
+ "schema": 1,
+ "campaign": {
+  "id": "120247398115530317",
+  "name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+  "budget_level": "campaign"
+ },
+ "window": {
+  "since": "2026-09-11",
+  "until": "2026-09-25",
+  "timezone": "America/Bogota"
+ },
+ "orders_stale": true,
+ "ads": [
+  {
+   "ad_id": "120247421007140317",
+   "ad_name": "Liliana / Presentación / Video / Decoración / Solución / halloween",
+   "adset_id": "120247421007150317",
+   "adset_name": "LILIANA / abierta / Conversiones / Ubicaciones Advantage+/halloween",
+   "meta": {
+    "spend_cop": 40145,
+    "impressions": 3821,
+    "reach": 3066,
+    "link_clicks": 79,
+    "conversations": 19
+   },
+   "daily": [],
+   "chats": [
+    {
+     "date": "2026-09-16",
+     "headline": "Velas Aromáticas",
+     "state": "calificado",
+     "order": null
+    },
+    {
+     "date": "2026-09-16",
+     "headline": "Velas Aromáticas",
+     "state": "calificado",
+     "order": null
+    },
+    {
+     "date": "2026-09-17",
+     "headline": "Velas Aromáticas",
+     "state": "activo",
+     "order": null
+    },
+    {
+     "date": "2026-09-21",
+     "headline": "Velas Aromáticas",
+     "state": "no_reply",
+     "order": null
+    },
+    {
+     "date": "2026-09-21",
+     "headline": "Velas Aromáticas",
+     "state": "ganado",
+     "order": {
+      "status": "paid",
+      "value_cop": 52900
+     }
+    },
+    {
+     "date": "2026-09-21",
+     "headline": "Velas Aromáticas",
+     "state": "perdido",
+     "order": null
+    },
+    {
+     "date": "2026-09-22",
+     "headline": "Velas Aromáticas",
+     "state": "calificado",
+     "order": null
+    },
+    {
+     "date": "2026-09-22",
+     "headline": "Velas Aromáticas",
+     "state": "activo",
+     "order": null
+    },
+    {
+     "date": "2026-09-22",
+     "headline": "Velas Aromáticas",
+     "state": "activo",
+     "order": null
+    },
+    {
+     "date": "2026-09-23",
+     "headline": "Velas Aromáticas",
+     "state": "ganado",
+     "order": {
+      "status": "pending",
+      "value_cop": 45000
+     }
+    },
+    {
+     "date": "2026-09-24",
+     "headline": "Velas Aromáticas",
+     "state": "calificado",
+     "order": null
+    },
+    {
+     "date": "2026-09-24",
+     "headline": "Velas Aromáticas",
+     "state": "calificado",
+     "order": null
+    },
+    {
+     "date": "2026-09-24",
+     "headline": "Velas Aromáticas",
+     "state": "calificado",
+     "order": null
+    },
+    {
+     "date": "2026-09-24",
+     "headline": "Velas Aromáticas",
+     "state": "calificado",
+     "order": null
+    },
+    {
+     "date": "2026-09-25",
+     "headline": "Velas Aromáticas",
+     "state": "calificado",
+     "order": null
+    },
+    {
+     "date": "2026-09-25",
+     "headline": "Velas Aromáticas",
+     "state": "activo",
+     "order": null
+    },
+    {
+     "date": "2026-09-25",
+     "headline": "Velas Aromáticas",
+     "state": "calificado",
+     "order": null
+    }
+   ]
+  },
+  {
+   "ad_id": "120247421007160317",
+   "ad_name": "Liliana / Presentación / Imagen / Beneficios / Solución / Colección - Copia",
+   "adset_id": "120247421007150317",
+   "adset_name": "LILIANA / abierta / Conversiones / Ubicaciones Advantage+/halloween",
+   "meta": {
+    "spend_cop": 247,
+    "impressions": 67,
+    "reach": 66,
+    "link_clicks": 2,
+    "conversations": 0
+   },
+   "daily": [],
+   "chats": []
+  },
+  {
+   "ad_id": "120247421007170317",
+   "ad_name": "Liliana / Presentación / carrusel  / beneficios / Solución / Colección",
+   "adset_id": "120247421007150317",
+   "adset_name": "LILIANA / abierta / Conversiones / Ubicaciones Advantage+/halloween",
+   "meta": {
+    "spend_cop": 117,
+    "impressions": 45,
+    "reach": 39,
+    "link_clicks": 1,
+    "conversations": 0
+   },
+   "daily": [],
+   "chats": []
+  },
+  {
+   "ad_id": "120247398115620317",
+   "ad_name": "Liliana / Presentación / Video / Decoración / Solución / halloween",
+   "adset_id": "120247398115600317",
+   "adset_name": "LILIANA / Intereses / Conversiones / Ubicaciones Advantage+ /hallowen",
+   "meta": {
+    "spend_cop": 23357,
+    "impressions": 2232,
+    "reach": 1886,
+    "link_clicks": 51,
+    "conversations": 8
+   },
+   "daily": [],
+   "chats": [
+    {
+     "date": "2026-09-16",
+     "headline": "Velas Aromáticas",
+     "state": "calificado",
+     "order": null
+    },
+    {
+     "date": "2026-09-18",
+     "headline": "Velas Aromáticas",
+     "state": "ganado",
+     "order": {
+      "status": "paid",
+      "value_cop": 52900
+     }
+    },
+    {
+     "date": "2026-09-20",
+     "headline": "Velas Aromáticas",
+     "state": "perdido",
+     "order": null
+    },
+    {
+     "date": "2026-09-20",
+     "headline": "Velas Aromáticas",
+     "state": "no_reply",
+     "order": null
+    },
+    {
+     "date": "2026-09-22",
+     "headline": "Velas Aromáticas",
+     "state": "no_reply",
+     "order": null
+    },
+    {
+     "date": "2026-09-25",
+     "headline": "Velas Aromáticas",
+     "state": "calificado",
+     "order": null
+    }
+   ]
+  },
+  {
+   "ad_id": "120247398115610317",
+   "ad_name": "Liliana / Presentación / Imagen / Beneficios / Solución / Colección - Copia",
+   "adset_id": "120247398115600317",
+   "adset_name": "LILIANA / Intereses / Conversiones / Ubicaciones Advantage+ /hallowen",
+   "meta": {
+    "spend_cop": 283,
+    "impressions": 68,
+    "reach": 65,
+    "link_clicks": 2,
+    "conversations": 0
+   },
+   "daily": [],
+   "chats": []
+  },
+  {
+   "ad_id": "120247398115640317",
+   "ad_name": "Liliana / Presentación / carrusel  / beneficios / Solución / Colección",
+   "adset_id": "120247398115600317",
+   "adset_name": "LILIANA / Intereses / Conversiones / Ubicaciones Advantage+ /hallowen",
+   "meta": {
+    "spend_cop": 520,
+    "impressions": 39,
+    "reach": 35,
+    "link_clicks": 0,
+    "conversations": 0
+   },
+   "daily": [],
+   "chats": []
+  },
+  {
+   "ad_id": "120247421040590317",
+   "ad_name": "Liliana / Presentación / Video / Decoración / Solución / halloween",
+   "adset_id": "120247421040600317",
+   "adset_name": "LILIANA / similar / Conversiones / Ubicaciones Advantage+/halloween",
+   "meta": {
+    "spend_cop": 15969,
+    "impressions": 1663,
+    "reach": 1476,
+    "link_clicks": 31,
+    "conversations": 6
+   },
+   "daily": [],
+   "chats": [
+    {
+     "date": "2026-09-17",
+     "headline": "Velas Aromáticas",
+     "state": "calificado",
+     "order": null
+    },
+    {
+     "date": "2026-09-21",
+     "headline": "Velas Aromáticas",
+     "state": "activo",
+     "order": null
+    },
+    {
+     "date": "2026-09-21",
+     "headline": "Velas Aromáticas",
+     "state": "no_reply",
+     "order": null
+    },
+    {
+     "date": "2026-09-24",
+     "headline": "Velas Aromáticas",
+     "state": "calificado",
+     "order": null
+    }
+   ]
+  },
+  {
+   "ad_id": "120247421040610317",
+   "ad_name": "Liliana / Presentación / Imagen / Beneficios / Solución / Colección - Copia",
+   "adset_id": "120247421040600317",
+   "adset_name": "LILIANA / similar / Conversiones / Ubicaciones Advantage+/halloween",
+   "meta": {
+    "spend_cop": 665,
+    "impressions": 40,
+    "reach": 38,
+    "link_clicks": 0,
+    "conversations": 0
+   },
+   "daily": [],
+   "chats": []
+  },
+  {
+   "ad_id": "120247421040620317",
+   "ad_name": "Liliana / Presentación / carrusel  / beneficios / Solución / Colección",
+   "adset_id": "120247421040600317",
+   "adset_name": "LILIANA / similar / Conversiones / Ubicaciones Advantage+/halloween",
+   "meta": {
+    "spend_cop": 171,
+    "impressions": 18,
+    "reach": 15,
+    "link_clicks": 0,
+    "conversations": 0
+   },
+   "daily": [],
+   "chats": []
+  },
+  {
+   "ad_id": "120247418828490317",
+   "ad_name": "Liliana / Presentación / carrusel  / beneficios / Solución / Colección",
+   "adset_id": "120247418828480317",
+   "adset_name": "LILIANA / personalizada / Conversiones / Ubicaciones Advantage+/halloween",
+   "meta": {
+    "spend_cop": 55415,
+    "impressions": 4191,
+    "reach": 3065,
+    "link_clicks": 87,
+    "conversations": 17
+   },
+   "daily": [],
+   "chats": [
+    {
+     "date": "2026-09-16",
+     "headline": "Chatea con nosotros",
+     "state": "calificado",
+     "order": null
+    },
+    {
+     "date": "2026-09-16",
+     "headline": "Chatea con nosotros",
+     "state": "calificado",
+     "order": null
+    },
+    {
+     "date": "2026-09-17",
+     "headline": "Velas aromáticas",
+     "state": "ganado",
+     "order": {
+      "status": "paid",
+      "value_cop": 52900
+     }
+    },
+    {
+     "date": "2026-09-17",
+     "headline": "Chatea con nosotros",
+     "state": "calificado",
+     "order": null
+    },
+    {
+     "date": "2026-09-18",
+     "headline": "Chatea con nosotros",
+     "state": "no_reply",
+     "order": null
+    },
+    {
+     "date": "2026-09-18",
+     "headline": "Chatea con nosotros",
+     "state": "activo",
+     "order": null
+    },
+    {
+     "date": "2026-09-19",
+     "headline": "Velas aromáticas",
+     "state": "no_reply",
+     "order": null
+    },
+    {
+     "date": "2026-09-20",
+     "headline": "Chatea con nosotros",
+     "state": "no_reply",
+     "order": null
+    },
+    {
+     "date": "2026-09-20",
+     "headline": "Chatea con nosotros",
+     "state": "no_reply",
+     "order": null
+    },
+    {
+     "date": "2026-09-20",
+     "headline": "Velas aromáticas",
+     "state": "ganado",
+     "order": {
+      "status": "paid",
+      "value_cop": 52900
+     }
+    },
+    {
+     "date": "2026-09-21",
+     "headline": "Velas aromáticas",
+     "state": "perdido",
+     "order": null
+    },
+    {
+     "date": "2026-09-22",
+     "headline": "Velas aromáticas",
+     "state": "perdido",
+     "order": null
+    },
+    {
+     "date": "2026-09-22",
+     "headline": "Velas aromáticas",
+     "state": "ganado",
+     "order": {
+      "status": "unverified",
+      "value_cop": 61940
+     }
+    }
+   ]
+  },
+  {
+   "ad_id": "120247418828570317",
+   "ad_name": "Liliana / Presentación / Imagen / Beneficios / Solución / Colección - Copia",
+   "adset_id": "120247418828480317",
+   "adset_name": "LILIANA / personalizada / Conversiones / Ubicaciones Advantage+/halloween",
+   "meta": {
+    "spend_cop": 11557,
+    "impressions": 838,
+    "reach": 683,
+    "link_clicks": 22,
+    "conversations": 3
+   },
+   "daily": [],
+   "chats": [
+    {
+     "date": "2026-09-16",
+     "headline": "Velas aromáticas",
+     "state": "ganado",
+     "order": {
+      "status": "cancelled",
+      "value_cop": 49500
+     }
+    },
+    {
+     "date": "2026-09-20",
+     "headline": "Velas aromáticas",
+     "state": "activo",
+     "order": null
+    },
+    {
+     "date": "2026-09-20",
+     "headline": "Velas aromáticas",
+     "state": "no_reply",
+     "order": null
+    },
+    {
+     "date": "2026-09-21",
+     "headline": "Velas aromáticas",
+     "state": "no_reply",
+     "order": null
+    }
+   ]
+  }
+ ]
+}

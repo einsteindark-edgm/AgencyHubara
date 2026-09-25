@@ -1,0 +1,49 @@
+# Métricas de UNA entidad (campaña/segmento/anuncio/tarjeta) desde totales crudos: retorno, costo por venta, costo por chat, chat→venta, frecuencia, CTR, ticket; denominador 0 -> null, nunca un número inventado.
+# Tool de catálogo generada por `sdk.cli create tool`. Completá inputs/outputs + la
+# impl, y poné VERDE el golden de tests/tools/test_entity_economics.py (nace rojo por construcción).
+id: entity-economics
+version: 1.0.0
+description: "Métricas de UNA entidad (campaña/segmento/anuncio/tarjeta) desde totales crudos: retorno, costo por venta, costo por chat, chat→venta, frecuencia, CTR, ticket; denominador 0 -> null, nunca un número inventado."
+tags: [analysis, ads, ctwa, metrics, scorecard, pure]
+
+side_effect: pure
+idempotent: true
+approval_required: false
+credentials: []
+
+inputs:
+  payload:
+    type: object
+    required: true
+    description: "Totales crudos: {spend_cop, impressions, reach|null, link_clicks, conversations, chats, paid_sales, paid_revenue_cop} (ventas = solo las confirmadas)"
+outputs:
+  roas:
+    type: string
+    description: "ventas confirmadas / gasto (Decimal string) o null sin gasto"
+  cost_per_sale_cop:
+    type: string
+    description: "gasto / ventas confirmadas o null"
+  cost_per_chat_cop:
+    type: string
+    description: "gasto / chats que llegaron al WhatsApp o null"
+  chat_to_sale:
+    type: string
+    description: "ventas / chats o null"
+  frequency:
+    type: string
+    description: "impresiones / alcance o null (sin alcance no se estima)"
+  ctr:
+    type: string
+    description: "clics al enlace / impresiones o null"
+  click_to_chat:
+    type: string
+    description: "conversaciones Meta / clics al enlace o null"
+  avg_ticket_cop:
+    type: string
+    description: "ingreso / ventas o null"
+  ad_share_of_revenue:
+    type: string
+    description: "gasto / ingreso (cuánto de cada peso vendido se fue en anuncios) o null"
+
+# impl PURA (G-AGNOSTIC: no importa runtime). Adapters en tools/entity_economics/adapters/.
+impl: tools.entity_economics.impl:run

@@ -293,7 +293,11 @@ export function AdsSection() {
           <div className="flex min-h-0 shrink-0 overflow-y-auto border-r border-line">
             {/* El run queda etiquetado con la campaña activa — el historial
                 del inspector es por campaña. */}
-            <TriggerRun onRunStarted={setActiveRunId} campaignId={campaign.id} />
+            <TriggerRun
+              onRunStarted={setActiveRunId}
+              campaignId={campaign.id}
+              window={params}
+            />
           </div>
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <RunResult runId={activeRunId} decisionSlot={decision} />
