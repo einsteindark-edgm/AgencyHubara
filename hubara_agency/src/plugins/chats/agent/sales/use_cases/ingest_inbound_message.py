@@ -76,6 +76,9 @@ from src.plugins.chats.agent.sales.use_cases.campaign_reply import (
     quote_campaign_in_turn,
     unanswered_campaign_touch,
 )
+from src.plugins.chats.agent.sales.use_cases.closing_ack import (
+    is_ack_after_farewell,
+)
 from src.plugins.chats.agent.sales.use_cases.episode_memory import (
     quote_template_in_turn,
     request_clean_llm_history,
@@ -318,6 +321,13 @@ class IngestInboundMessage:
         # El episodio que se cerró cuando este mensaje abrió uno nuevo con el
         # historial del LLM cortado: su resumen encabeza el primer mensaje.
         previous_episode: dict[str, Any] | None = None
+        # Acuse de la despedida (run 4cb3a34f): "☺️👍" 37 s después de que
+        # Ventas cerró con RECHAZO abrió otro episodio y el bot saludó de cero
+        # ("bienvenido a Hubara… ¿en qué te puedo ayudar hoy?"). Si el
+        # cliente solo acusa recibo del cierre, el mensaje queda en el chat
+        # y no abre episodio ni despierta al agente (return tras persistirlo).
+        closing_ack = False
+        _campaign_touch: dict[str, Any] | None = None
         if metadata.get("active_route") != ROUTE_HUMANO:
             # Respuesta a campaña (bug 2026-09-22, runs 31c15a38/01a0caee):
             # la PRIMERA respuesta tras el envío es una intención nueva. Se
@@ -330,6 +340,11 @@ class IngestInboundMessage:
             _campaign_touch = unanswered_campaign_touch(
                 metadata, now_ms, quoted_message_id=(parsed.context or {}).get("id")
             )
+            # Un 👍 a la campaña es respuesta a la campaña, no acuse.
+            closing_ack = _campaign_touch is None and is_ack_after_farewell(
+                metadata, parsed, lambda: self._session_events(session_id)
+            )
+        if metadata.get("active_route") != ROUTE_HUMANO and not closing_ack:
             if _campaign_touch is not None:
                 close_episode(
                     metadata,
@@ -861,12 +876,8 @@ class IngestInboundMessage:
         # las plantillas (van solo al JSONL del dashboard). Se lee ANTES de
         # persistir este mensaje; la campaña ya trae su propia cita.
         unseen_template: str | None = None
-        _read_events = getattr(self._history_store, "read_events", None)
-        if campaign_reply_touch is None and callable(_read_events):
-            try:
-                unseen_template = unseen_template_text(_read_events(session_id))
-            except Exception:  # noqa: BLE001 — la cita es contexto, no bloquea
-                unseen_template = None
+        if campaign_reply_touch is None:
+            unseen_template = unseen_template_text(self._session_events(session_id))
 
         # --- 6. Persistir history (texto efectivo, NO el JSON raw) ---
         # `persisted_image_url` solo viene poblado desde el reentry de visión:
@@ -911,6 +922,17 @@ class IngestInboundMessage:
             # No hay message_id PERO limpiamos el flag arriba — persistimos
             # el pop para que no quede zombie en metadata.
             self._safe_write_metadata(session_id, metadata)
+
+        # Acuse de la despedida (ver 2c): ya quedó en el chat; el agente no
+        # tiene nada que contestar.
+        if closing_ack:
+            logger.info(
+                "closing_ack_absorbed",
+                session_id=session_id,
+                msg_type=parsed.msg_type,
+                text_preview=effective.text[:60],
+            )
+            return
 
         # --- 8. Analytics de interacciones (clicks) ---
         if effective.structured_payload:
@@ -1026,6 +1048,17 @@ class IngestInboundMessage:
     # =========================================================================
     # Helpers
     # =========================================================================
+
+    def _session_events(self, session_id: str) -> list[dict[str, Any]]:
+        """El JSONL de la sesión (lo que ve el dashboard). Vacío si el store
+        no lo expone o falla: es contexto, nunca bloquea el ingest."""
+        read_events = getattr(self._history_store, "read_events", None)
+        if not callable(read_events):
+            return []
+        try:
+            return list(read_events(session_id) or [])
+        except Exception:  # noqa: BLE001
+            return []
 
     async def _check_campaign_coupon(
         self, code: str, now_ms: int
