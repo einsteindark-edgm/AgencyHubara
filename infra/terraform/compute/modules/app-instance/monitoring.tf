@@ -32,7 +32,7 @@ variable "memory_alarm_threshold_mb" {
 }
 
 locals {
-  cw_namespace = "Hubara/App"
+  cw_namespace = "agencyhubara/app" # forge lo reemplaza por el prefijo del cliente
 
   # Nombre del proceso en CloudWatch → regex sobre la cmdline completa (procstat
   # `pattern`). Anclados con $ donde un nombre es prefijo de otro (sales vs
