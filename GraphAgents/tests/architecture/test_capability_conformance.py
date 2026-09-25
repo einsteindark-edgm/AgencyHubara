@@ -17,7 +17,7 @@ from sdk.tooltrace import replay_flow_with_trace
 ROOT = Path(__file__).resolve().parents[2]
 MANIFESTS = ROOT / "manifests"
 POD_NODES = {"ctwa-insights", "sales-ledger", "ctwa-campaign-funnel",
-             "blended-economics", "numbers-qa", "ctwa-report"}
+             "blended-economics", "ctwa-scorecard", "numbers-qa", "ctwa-report"}
 
 
 def _seed(case_id: str) -> dict:
@@ -40,7 +40,9 @@ def test_pod_replay_proves_every_node_invokes_its_declared_tools_in_order():
     loop (el trace real la repite); el manifest declara la COMPOSICIÓN única → distinct-in-order
     reconcilia ambas verdades. Si una capability llamara una tool NO declarada, rojo acá."""
     sup = load_manifest(MANIFESTS / "ads-analytics.taskgraph.yaml")
-    res = replay_flow_with_trace(sup, ROOT, _seed("dia-del-padre-flujo"))
+    # Halloween: el caso que ejercita TODOS los caminos (con drill-down → el scorecard y el QA
+    # invocan entity-economics; Día del padre va sin drill-down y esos caminos no corren).
+    res = replay_flow_with_trace(sup, ROOT, _seed("halloween-flujo"))
     declared = _tools_map(ROOT)
     assert set(res["node_traces"]) == POD_NODES
     for agent, entries in res["node_traces"].items():

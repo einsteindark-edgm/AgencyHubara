@@ -1,0 +1,26 @@
+# Agente de catálogo (archetype: analyzer) — el drill-down de UNA campaña CTWA:
+# campaña → segmento → anuncio → tarjeta, con una decisión por nivel (escalar / mantener /
+# vigilar / pausar / cambiar pieza / cambiar tarjeta / seguimiento). Sin LLM: las métricas
+# salen de `entity-economics` (la misma tool con que numbers-qa reconcilia) y las decisiones
+# de tablas de umbrales fijas (graphs/ctwa_scorecard.py). Nació del caso Halloween 2026-09-25.
+name: ctwa-scorecard
+description: Drill-down CTWA de una campaña — métricas y decisión por segmento, anuncio y tarjeta, solo con ventas confirmadas.
+archetype: analyzer
+certification: C2
+
+capability: graphs.ctwa_scorecard:build
+
+# ext (GraphAgents): el contrato I/O declarado (G-CONTRACT) — ver graphs/ctwa_scorecard.py
+# (breakdown puede venir null: análisis de cuenta completa → scorecard null).
+contract:
+  inputs:
+    breakdown: {type: object, required: false, description: "el drill-down de la campaña que deposita el central (campaign, window, ads[meta, daily, chats])"}
+  outputs:
+    scorecard: {type: object, description: "campaign/segments/ads/pieces/cards + findings priorizados + warnings + thresholds (null sin breakdown)"}
+
+exposes_as_tool: true
+
+tools:
+  - uses: entity-economics@1
+    with:
+      payload: $state.totals

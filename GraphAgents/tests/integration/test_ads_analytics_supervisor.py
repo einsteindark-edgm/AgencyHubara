@@ -30,6 +30,7 @@ def _seed() -> dict:
         "meta_insights": json.loads(META_FIX.read_text(encoding="utf-8")),
         "manual_sales": SALES,
         "entities_payload": json.loads(ENT_FIX.read_text(encoding="utf-8")),
+        "campaign_breakdown": None,  # cuenta completa: sin drill-down (scorecard null)
     }
 
 

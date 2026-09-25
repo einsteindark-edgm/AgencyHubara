@@ -1,0 +1,185 @@
+{
+ "account_currency": "COP",
+ "data": [
+  {
+   "date_start": "2026-09-16",
+   "date_stop": "2026-09-16",
+   "campaign_id": "120247398115530317",
+   "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+   "spend": "14798",
+   "inline_link_clicks": "14",
+   "actions": [
+    {
+     "action_type": "link_click",
+     "value": "14"
+    },
+    {
+     "action_type": "onsite_conversion.messaging_conversation_started_7d",
+     "value": "6"
+    }
+   ]
+  },
+  {
+   "date_start": "2026-09-17",
+   "date_stop": "2026-09-17",
+   "campaign_id": "120247398115530317",
+   "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+   "spend": "13296",
+   "inline_link_clicks": "20",
+   "actions": [
+    {
+     "action_type": "link_click",
+     "value": "20"
+    },
+    {
+     "action_type": "onsite_conversion.messaging_conversation_started_7d",
+     "value": "4"
+    }
+   ]
+  },
+  {
+   "date_start": "2026-09-18",
+   "date_stop": "2026-09-18",
+   "campaign_id": "120247398115530317",
+   "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+   "spend": "18805",
+   "inline_link_clicks": "15",
+   "actions": [
+    {
+     "action_type": "link_click",
+     "value": "15"
+    },
+    {
+     "action_type": "onsite_conversion.messaging_conversation_started_7d",
+     "value": "5"
+    }
+   ]
+  },
+  {
+   "date_start": "2026-09-19",
+   "date_stop": "2026-09-19",
+   "campaign_id": "120247398115530317",
+   "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+   "spend": "9571",
+   "inline_link_clicks": "9",
+   "actions": [
+    {
+     "action_type": "link_click",
+     "value": "9"
+    },
+    {
+     "action_type": "onsite_conversion.messaging_conversation_started_7d",
+     "value": "2"
+    }
+   ]
+  },
+  {
+   "date_start": "2026-09-20",
+   "date_stop": "2026-09-20",
+   "campaign_id": "120247398115530317",
+   "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+   "spend": "18599",
+   "inline_link_clicks": "20",
+   "actions": [
+    {
+     "action_type": "link_click",
+     "value": "20"
+    },
+    {
+     "action_type": "onsite_conversion.messaging_conversation_started_7d",
+     "value": "8"
+    }
+   ]
+  },
+  {
+   "date_start": "2026-09-21",
+   "date_stop": "2026-09-21",
+   "campaign_id": "120247398115530317",
+   "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+   "spend": "17707",
+   "inline_link_clicks": "21",
+   "actions": [
+    {
+     "action_type": "link_click",
+     "value": "21"
+    },
+    {
+     "action_type": "onsite_conversion.messaging_conversation_started_7d",
+     "value": "7"
+    }
+   ]
+  },
+  {
+   "date_start": "2026-09-22",
+   "date_stop": "2026-09-22",
+   "campaign_id": "120247398115530317",
+   "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+   "spend": "15846",
+   "inline_link_clicks": "18",
+   "actions": [
+    {
+     "action_type": "link_click",
+     "value": "18"
+    },
+    {
+     "action_type": "onsite_conversion.messaging_conversation_started_7d",
+     "value": "8"
+    }
+   ]
+  },
+  {
+   "date_start": "2026-09-23",
+   "date_stop": "2026-09-23",
+   "campaign_id": "120247398115530317",
+   "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+   "spend": "9616",
+   "inline_link_clicks": "7",
+   "actions": [
+    {
+     "action_type": "link_click",
+     "value": "7"
+    },
+    {
+     "action_type": "onsite_conversion.messaging_conversation_started_7d",
+     "value": "2"
+    }
+   ]
+  },
+  {
+   "date_start": "2026-09-24",
+   "date_stop": "2026-09-24",
+   "campaign_id": "120247398115530317",
+   "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+   "spend": "20465",
+   "inline_link_clicks": "22",
+   "actions": [
+    {
+     "action_type": "link_click",
+     "value": "22"
+    },
+    {
+     "action_type": "onsite_conversion.messaging_conversation_started_7d",
+     "value": "7"
+    }
+   ]
+  },
+  {
+   "date_start": "2026-09-25",
+   "date_stop": "2026-09-25",
+   "campaign_id": "120247398115530317",
+   "campaign_name": "Liliana / Promocional  / Interacción / CBO / Advantage+ / Haloween",
+   "spend": "9072",
+   "inline_link_clicks": "6",
+   "actions": [
+    {
+     "action_type": "link_click",
+     "value": "6"
+    },
+    {
+     "action_type": "onsite_conversion.messaging_conversation_started_7d",
+     "value": "4"
+    }
+   ]
+  }
+ ]
+}

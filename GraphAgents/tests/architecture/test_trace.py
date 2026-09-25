@@ -38,7 +38,7 @@ def test_trace_annotates_real_sequential_run_in_order():
     assert trace["strategy"] == "sequential"
     assert [s["agent"] for s in trace["steps"]] == [
         "ctwa-insights", "sales-ledger", "ctwa-campaign-funnel",
-        "blended-economics", "numbers-qa", "ctwa-report",
+        "blended-economics", "ctwa-scorecard", "numbers-qa", "ctwa-report",
     ]
     assert all(s["runtime"]["status"] == "done" for s in trace["steps"])
     assert all(s["runtime"]["retries"] == 0 for s in trace["steps"])

@@ -119,7 +119,31 @@ describe("analysisReport — el reporte proyectado del pod", () => {
       verdict: "ok",
       qaPassed: true,
       narrative: "El MER del periodo fue 2.1 — conviene escalar.",
+      headline: null,
     });
+  });
+
+  it("trae el veredicto en una frase (headline) cuando el pod analizó UNA campaña", async () => {
+    const { analysisReport } = await import("./model");
+    const rep = analysisReport({
+      markdown: "## Halloween",
+      verdict: "hold_budget",
+      headline: "No subas el presupuesto todavía.",
+      qa_passed: true,
+      _projected_from: "ctwa-report",
+    });
+    expect(rep?.headline).toBe("No subas el presupuesto todavía.");
+  });
+
+  it("verdictLabel traduce el código del veredicto a palabras (código desconocido → tal cual)", async () => {
+    const { verdictLabel } = await import("./model");
+    expect(verdictLabel("hold_budget")).toBe("Mantener presupuesto");
+    expect(verdictLabel("scale_budget")).toBe("Subir presupuesto");
+    expect(verdictLabel("fix_before_scaling")).toBe("Corregir antes de escalar");
+    expect(verdictLabel("reduce_budget")).toBe("Bajar presupuesto");
+    expect(verdictLabel("insufficient_data")).toBe("Datos insuficientes");
+    expect(verdictLabel("rotate_creative")).toBe("Cambiar creativos");
+    expect(verdictLabel("algo_nuevo")).toBe("algo_nuevo");
   });
 
   it("sin narrative (LLM degradado o record viejo) → narrative: null", async () => {

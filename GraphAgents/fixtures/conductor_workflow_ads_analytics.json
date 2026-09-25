@@ -70,8 +70,24 @@
       }
     },
     {
-      "referenceTaskName": "ads-analytics_numbers_qa_4",
-      "taskType": "ads-analytics_numbers_qa_4",
+      "referenceTaskName": "ads-analytics_ctwa_scorecard_4",
+      "taskType": "ads-analytics_ctwa_scorecard_4",
+      "status": "COMPLETED",
+      "retryCount": 0,
+      "startTime": 1781981336975,
+      "endTime": 1781981336985,
+      "taskId": "5c0e1a2b-0000-4000-8000-5c04ec4ad004",
+      "outputData": {
+        "state": {
+          "acc": {
+            "_trimmed": true
+          }
+        }
+      }
+    },
+    {
+      "referenceTaskName": "ads-analytics_numbers_qa_5",
+      "taskType": "ads-analytics_numbers_qa_5",
       "status": "COMPLETED",
       "retryCount": 0,
       "startTime": 1781981336987,
@@ -86,8 +102,8 @@
       }
     },
     {
-      "referenceTaskName": "ads-analytics_ctwa_report_5",
-      "taskType": "ads-analytics_ctwa_report_5",
+      "referenceTaskName": "ads-analytics_ctwa_report_6",
+      "taskType": "ads-analytics_ctwa_report_6",
       "status": "COMPLETED",
       "retryCount": 0,
       "startTime": 1781981337112,

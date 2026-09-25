@@ -44,3 +44,29 @@ export interface MetaInsightsParams {
   since?: string;
   until?: string;
 }
+
+/**
+ * Qué pedirle a `/api/ads/meta/analysis-input`: la campaña abierta + la ventana del
+ * header (preset `days` o rango `from`/`to`). Sin campaña = cuenta completa.
+ */
+export interface MetaAnalysisInputParams {
+  campaignId?: string | null;
+  /** `undefined` = sin ventana (14 días); `null` = preset "Total" (se acota a 90). */
+  days?: number | null;
+  from?: string | null;
+  to?: string | null;
+}
+
+/** Ruta del seed del análisis (caso Halloween 2026-09-25: se pedía siempre la cuenta
+ *  completa de 14 días, aunque el operador mirara una campaña y otro rango). */
+export function analysisInputPath(p: MetaAnalysisInputParams): string {
+  const q = new URLSearchParams();
+  if (p.campaignId) q.set("campaign_id", p.campaignId);
+  if (p.from && p.to) {
+    q.set("from", p.from);
+    q.set("to", p.to);
+  } else {
+    q.set("days", String(p.days === undefined ? 14 : (p.days ?? 90)));
+  }
+  return `/api/ads/meta/analysis-input?${q.toString()}`;
+}

@@ -104,3 +104,28 @@ describe("RunResult — reporte legible", () => {
     expect(getByText(/"acc"/)).toBeTruthy();
   });
 });
+
+
+describe("RunResult — el análisis de una campaña se EXPLICA (rediseño 2026-09-25)", () => {
+  it("el veredicto va en palabras, con el titular, y la narrativa con formato", () => {
+    mockRun.current = run({
+      result: {
+        markdown: "## Halloween\n\n**No subas el presupuesto todavía.** Cada $1 trajo $1,43.",
+        verdict: "hold_budget",
+        headline: "No subas el presupuesto todavía.",
+        qa_passed: true,
+        narrative:
+          "Con lo confirmado cada $1 trajo $1,43.\n\n**Lo más importante:**\n\n- Cambia la tarjeta «Chatea con nosotros».\n- Dale seguimiento a 14 chats abiertos.",
+        _projected_from: "ctwa-report",
+      },
+    });
+    const { getByText, queryByText, getAllByRole } = render(<RunResult runId="run-1" />);
+    // el código interno no se muestra; su etiqueta sí
+    expect(getByText("Mantener presupuesto")).toBeTruthy();
+    expect(queryByText("hold_budget")).toBeNull();
+    // la narrativa es Markdown: las viñetas son una lista de verdad
+    const items = getAllByRole("listitem").map((li) => li.textContent);
+    expect(items).toContain("Cambia la tarjeta «Chatea con nosotros».");
+    expect(queryByText(/- Cambia la tarjeta/)).toBeNull();
+  });
+});
