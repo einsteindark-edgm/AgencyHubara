@@ -128,3 +128,42 @@ async def test_prepatch_tag_closure_history_breaks_without_the_gate(
     assert consultations["n"] == ungated_from_consultation, (
         f"{site}: el gate se consultó {consultations['n']} veces"
     )
+
+
+# History SINTÉTICA con el clasificador PRENDIDO (capas ①②③ del laboratorio,
+# PR 14, `workflow.patched("perception-v1")`): turno en sombra + turno activo
+# con verificación y complemento. Una vez en producción, las sesiones en vuelo
+# traen esta forma; cambiar commands en esos caminos sin su propio gate las
+# rompería al redeployar (L-9). Generada con el código de `lab/integracion`
+# (9afa43b4), ANTES de que la verificación leyera todo lo que el cliente recibe
+# en el turno: ese cambio solo toca el payload de `verify_coverage` (L-22) y
+# este replay lo prueba. CONGELADA — no se regenera (procedencia en
+# `fixtures/generate_perception_v1_fixture.py`); se suman historias REALES
+# saneadas cuando el clasificador corra en sombra en producción (A-PM07) y se
+# borra junto con `workflow.deprecate_patch("perception-v1")`.
+PERCEPTION_V1_FIXTURE = Path(__file__).parent / "fixtures" / "history_sales_perception_v1.json"
+
+
+def _perception_history() -> WorkflowHistory:
+    return WorkflowHistory.from_json(
+        "test-sales-perception-v1", PERCEPTION_V1_FIXTURE.read_text(encoding="utf-8")
+    )
+
+
+async def test_a_session_with_the_classifier_on_still_replays() -> None:
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflow])
+    await replayer.replay_workflow(_perception_history())
+
+
+async def test_the_classifier_history_breaks_without_its_gate(monkeypatch) -> None:
+    """Control negativo: con `perception-v1` en False (código sin capas) el
+    turno no agenda la percepción y el replay choca con la history: la
+    fixture sí ejercita los commands del clasificador."""
+    from temporalio import workflow
+
+    real_patched = workflow.patched
+    monkeypatch.setattr(workflow, "patched", lambda patch_id: False if patch_id == "perception-v1" else real_patched(patch_id))
+
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflow])
+    with pytest.raises(workflow.NondeterminismError):
+        await replayer.replay_workflow(_perception_history())

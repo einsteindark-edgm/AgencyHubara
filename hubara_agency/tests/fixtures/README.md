@@ -14,6 +14,7 @@ history (R-DET / ADR-005).
 | `history_remarketing_session_v3.json` | `RemarketingSessionWorkflow` | `generate_fixtures.py` |
 | `history_sales_escalation_prepatch_v1.json` | `HubaraSalesSessionWorkflow` | history REAL de prod (run 5ed9af2d, 2026-09-18), saneada |
 | `history_sales_tag_closure_prepatch_v1.json` | `HubaraSalesSessionWorkflow` | sintética, generada con el código del commit 4052c29 (PRE `tag-ends-turn-v1`) |
+| `history_sales_perception_v1.json` | `HubaraSalesSessionWorkflow` | sintética, clasificador PRENDIDO (`perception-v1`), generada con el código de `lab/integracion` (9afa43b4) |
 
 **`history_sales_tag_closure_prepatch_v1.json` también está CONGELADA y NO se
 regenera** (el código que la produjo ya no existe: regenerarla hoy daría la
@@ -35,6 +36,24 @@ reproducible en `generate_tag_closure_prepatch_fixture.py` (requiere el código
 del commit 4052c29 y se NIEGA a correr si `workflow_helpers.py` ya trae el
 gate). Fixture y generador se borran junto con
 `workflow.deprecate_patch("tag-ends-turn-v1")`.
+
+**`history_sales_perception_v1.json` también está CONGELADA y NO se
+regenera.** Es una sesión con el clasificador de las capas ①②③ PRENDIDO
+(`workflow.patched("perception-v1")`, laboratorio PR 14): turno en `shadow`
+(percepción en paralelo, verificación después de enviar) y turno en `on`
+(plan, verificación antes de enviar que pide `complement`, turno de sistema del
+complemento) y el cierre por ghosting. Una vez que el clasificador corra en
+producción, las sesiones en vuelo traen esta forma: cambiar commands en esos
+caminos sin su propio gate las rompe al redeployar (L-9). Se generó con el
+código ANTERIOR a que la verificación leyera todo lo que el cliente recibe en
+el turno (A-PM06): replayea con el código nuevo porque ese cambio solo toca el
+payload de `verify_coverage` (L-22). Control negativo automatizado
+(`test_the_classifier_history_breaks_without_its_gate`: con `perception-v1` en
+False → `NondeterminismError`). Sesión sintética `wa_perception`, identidad del
+worker → `fixture-worker`; procedencia en `generate_perception_v1_fixture.py`.
+Cuando el clasificador corra unos días en sombra en producción se suman 5–10
+historias REALES con el marker, saneadas (A-PM07). Se borra junto con
+`workflow.deprecate_patch("perception-v1")`.
 
 **`history_sales_escalation_prepatch_v1.json` es distinta a las demás: está
 CONGELADA y NO se regenera.** Es la history real del incidente "Listo, la
