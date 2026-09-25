@@ -303,6 +303,12 @@ el contacto tenía abierta, esa fila no lo repite (pedido del operador,
 - THEN el panel "WhatsApp · envío de la campaña" muestra enviados → entregados → leídos → respondieron → ventas, el costo por respuesta y por venta y el ROAS aproximado (US$1 ≈ $4.000)
 - AND los mensajes sin precio todavía y los enviados antes del registro de entregas se avisan aparte, nunca como $0
 
+#### Scenario: Varias campañas al mismo cliente
+
+- GIVEN el cliente recibió Amor (lunes) y Halloween (jueves)
+- THEN envío, entrega, lectura, fallos y costo van a cada campaña por el id de su mensaje
+- AND su respuesta y su venta cuentan para UNA sola campaña, en Ads y en el inspector de Marketing: la que citó al responder o, sin cita, la última que no había respondido (nunca una prueba)
+
 #### Scenario: Envíos de prueba
 
 - GIVEN el operador hizo envíos de prueba y respondió

@@ -45,8 +45,8 @@ from src.plugins.ads.classification import (
 from src.sdk.connectorkit import OrderFactsSnapshot
 from src.sdk.connectorkit import (
     FilesystemAttributionStore,
+    attributed_campaign_touch,
     campaign_delivery,
-    matching_campaign_touch,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,9 +82,11 @@ SYNTHETIC_CAMPAIGN_IDS: frozenset[str] = frozenset(
 # post-touch y NO vino de un referral Meta se atribuye a esa campaña.
 CAMPAIGN_SOURCE_TYPE = "hubara_campaign"
 
-# El matcher (ventana de 7 días, last-touch) es del read model de atribución
-# de plataforma — lo comparten ads y marketing vía SDK.
-_matching_campaign_touch = matching_campaign_touch
+# La regla de atribución es del read model de plataforma — la comparten ads y
+# marketing vía SDK: la campaña que marcó el webhook al abrir el episodio (la
+# que citó el cliente, o la última sin responder; nunca una prueba) y, en
+# episodios viejos sin marca, el último envío real en ventana de 7 días.
+_attributed_campaign_touch = attributed_campaign_touch
 
 
 @dataclass(frozen=True)
@@ -1054,8 +1056,8 @@ def list_ads_campaigns(
             ep_started_ms = (
                 ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
             )
-            touch = _matching_campaign_touch(
-                metadata.get("campaign_touches"), ep_started_ms
+            touch = _attributed_campaign_touch(
+                ep, metadata.get("campaign_touches"), ep_started_ms
             )
             campaign_id = _episode_to_campaign_id(ep, origin, touch)
             if campaign_id is None:
@@ -1283,8 +1285,8 @@ def list_attributed_conversations(
             _ep_started = (
                 ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
             )
-            touch = _matching_campaign_touch(
-                metadata.get("campaign_touches"), _ep_started
+            touch = _attributed_campaign_touch(
+                ep, metadata.get("campaign_touches"), _ep_started
             )
             ep_campaign_id = _episode_to_campaign_id(ep, origin, touch)
             if source_ids is not None:
@@ -1512,8 +1514,8 @@ def list_daily_series(
             ep_started_ms = (
                 ep.get("started_at_ms") if ep is not None else origin.get("first_seen_ms")
             )
-            touch = _matching_campaign_touch(
-                metadata.get("campaign_touches"), ep_started_ms
+            touch = _attributed_campaign_touch(
+                ep, metadata.get("campaign_touches"), ep_started_ms
             )
             ep_bucket = _episode_to_campaign_id(ep, origin, touch)
             if source_ids is not None:
