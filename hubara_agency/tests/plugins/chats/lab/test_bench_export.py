@@ -4,7 +4,9 @@ Al pulsar "Nueva corrida" el worker `sales_eval` de producción arma el banco:
 las conversaciones desde el 2026-09-10 con su historial, trazas, metadata,
 historial del LLM, scorecards y el catálogo del día. Solo LEE el vault. Las
 exclusiones van con motivo: sesiones golden (#338), sembradas de prueba,
-números internos. Las fotos y los archivos auxiliares no viajan.
+números internos y conversaciones con un pedido marcado "prueba" en Órdenes
+(la marca la da OrderFacts, nunca el vault). Las fotos y los archivos
+auxiliares no viajan.
 
 El plan es puro (qué archivo va a qué clave); la subida es otra función que
 va archivo por archivo.
@@ -14,7 +16,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.plugins.chats.agent.sales_lab.launch.bench_export import plan_bench_export
+from src.plugins.chats.agent.sales_lab.launch.bench_export import exclude_test_orders, plan_bench_export
+from src.sdk.connectorkit import InMemoryOrderFacts, OrderFacts, OrderFactsSnapshot
 from src.sdk.labkit import FilesystemLabStore
 from src.plugins.chats.agent.sales_lab.launch.bench_export import upload_bench
 
@@ -25,13 +28,15 @@ SALES = "app-hubara-agency-src-plugins-chats-agent-sales-workspace"
 
 def _session(
     vault: Path, sid: str, *, started_ms: int, metadata_extra: dict | None = None,
-    msg_ts: str = "2026-09-15T10:00:00+00:00",
+    msg_ts: str = "2026-09-15T10:00:00+00:00", order_id: str | None = None,
 ) -> None:
     d = vault / sid
     (d / "sessions").mkdir(parents=True)
     (d / "evals").mkdir()
     (d / "media").mkdir()
     ep = {"episode_id": "ep_001", "started_at_ms": started_ms, "closed_at_ms": None}
+    if order_id:
+        ep["order_id"] = order_id
     (d / "metadata.json").write_text(json.dumps({"episodes": [ep], **(metadata_extra or {})}), encoding="utf-8")
     events = [
         {"role": "user", "content": "hola", "timestamp": msg_ts},
@@ -115,6 +120,83 @@ def test_exclusions_carry_their_reason(tmp_path: Path) -> None:
     keys = {f.key for f in plan.files}
     assert not any("wa_573007654321" in k for k in keys)  # antes del corte: ni la sesión ni su estado
     assert not any("2026-09-01" in k for k in keys)
+
+
+def test_internal_numbers_come_from_terraform_in_e164_and_its_empty_placeholder_excludes_no_one(tmp_path: Path) -> None:
+    vault = _vault(tmp_path)
+    kwargs = {"state_dir": None, "catalog_dir": None, "bench_id": "bench-x-123456", "since_ms": SINCE_MS, "now_ms": NOW_MS}
+
+    listed = plan_bench_export(vault, internal_numbers=["+573000000099"], **kwargs)
+    empty = plan_bench_export(vault, internal_numbers=["PLACEHOLDER_set_out_of_band"], **kwargs)
+
+    assert dict(listed.exclusions).get("wa_573000000099") == "numero_interno"
+    assert "numero_interno" not in dict(empty.exclusions).values()
+
+
+def _order(order_id: str, *, is_test: bool) -> OrderFacts:
+    return OrderFacts(order_id=order_id, display_id="31", total_cop=89000, currency_code="cop", pay_status="paid",
+                      stage="delivered", customer="Cliente", is_draft=False, is_test=is_test)
+
+
+def test_a_conversation_whose_order_is_marked_as_test_stays_out_of_the_bench(tmp_path: Path) -> None:
+    vault = _vault(tmp_path)
+    _session(vault, "wa_573002223344", started_ms=SINCE_MS + 86_400_000, order_id="order_01PRUEBA")
+    _session(vault, "wa_573003334455", started_ms=SINCE_MS + 86_400_000, order_id="order_01VENTA")
+    facts = OrderFactsSnapshot(facts={
+        "order_01PRUEBA": _order("order_01PRUEBA", is_test=True),
+        "order_01VENTA": _order("order_01VENTA", is_test=False),
+    })
+
+    plan = exclude_test_orders(_plan(vault), facts)
+
+    assert dict(plan.exclusions).get("wa_573002223344") == "pedido_de_prueba"
+    assert plan.sessions == ("wa_573001234567", "wa_573003334455")
+    assert not any("wa_573002223344" in f.key for f in plan.files)
+    assert plan.customer_turns == 2
+    assert plan.manifest()["notes"] == []
+
+
+async def test_when_order_facts_does_not_answer_the_conversation_stays_and_the_manifest_says_so(tmp_path: Path) -> None:
+    vault = _vault(tmp_path)
+    _session(vault, "wa_573002223344", started_ms=SINCE_MS + 86_400_000, order_id="order_01PRUEBA")
+    medusa_down = await InMemoryOrderFacts(available=False).get_facts({"order_01PRUEBA"})
+
+    plan = exclude_test_orders(_plan(vault), medusa_down)
+
+    assert plan.manifest().get("notes") == [
+        "1 conversación con pedido quedó en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"
+    ]
+    assert plan.sessions == ("wa_573001234567", "wa_573002223344")
+    assert "pedido_de_prueba" not in dict(plan.exclusions).values()
+
+
+def test_a_test_order_order_facts_already_knew_stays_out_even_if_medusa_did_not_refresh(tmp_path: Path) -> None:
+    vault = _vault(tmp_path)
+    _session(vault, "wa_573002223344", started_ms=SINCE_MS + 86_400_000, order_id="order_01PRUEBA")
+    last_known = OrderFactsSnapshot(facts={"order_01PRUEBA": _order("order_01PRUEBA", is_test=True)}, stale=True)
+
+    plan = exclude_test_orders(_plan(vault), last_known)
+
+    assert dict(plan.exclusions).get("wa_573002223344") == "pedido_de_prueba"
+    assert plan.manifest()["notes"] == []
+
+
+def test_with_several_conversations_the_note_is_an_upper_bound(tmp_path: Path) -> None:
+    # Medusa se cayó a mitad de la paginación: un pedido quedó al día y otro sin
+    # resolver. `stale` es de todo el snapshot (no dice cuál quedó viejo), así que
+    # la cuenta es una cota y la nota no puede afirmar un número exacto.
+    vault = _vault(tmp_path)
+    _session(vault, "wa_573002223344", started_ms=SINCE_MS + 86_400_000, order_id="order_01AA")
+    _session(vault, "wa_573003334455", started_ms=SINCE_MS + 86_400_000, order_id="order_01BB")
+    partial = OrderFactsSnapshot(
+        facts={"order_01AA": _order("order_01AA", is_test=False)}, unresolved=frozenset({"order_01BB"}), stale=True
+    )
+
+    plan = exclude_test_orders(_plan(vault), partial)
+
+    assert plan.manifest()["notes"] == [
+        "Hasta 2 conversaciones con pedido quedaron en el banco sin verificar si el pedido es de prueba (OrderFacts no respondió)"
+    ]
 
 
 def test_manifest_describes_the_bench(tmp_path: Path) -> None:

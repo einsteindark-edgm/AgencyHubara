@@ -15,6 +15,11 @@
 #     4.º argumento de send_message. Encender SOLO con el worker que lo acepta
 #     ya desplegado (un worker viejo falla la tarea del workflow).
 #   LAB_MAX_USD_PER_RUN / _MONTH   topes de gasto del botón "Nueva corrida" (§3.7).
+#   LAB_INTERNAL_NUMBERS           teléfonos del equipo (E.164, separados por coma):
+#     sus conversaciones no entran al banco (motivo `numero_interno`). Lo leen la
+#     API (estimado) y el worker sales_eval (exportador). Lista vacía = el
+#     placeholder de SSM (no admite valor vacío); el exportador compara solo
+#     dígitos, así que el placeholder no excluye a nadie.
 #
 # La llave (OPENROUTER_API_KEY) es secreta: vive en el módulo `secrets`.
 
@@ -27,17 +32,20 @@ variable "config" {
     signal_inbound_meta     = bool
     max_usd_per_run         = number
     max_usd_per_month       = number
+    internal_numbers        = list(string)
   })
 }
 
 locals {
-  prefix = "/hubara/${var.tenant}"
+  prefix      = "/hubara/${var.tenant}"
+  placeholder = "PLACEHOLDER_set_out_of_band"
   params = {
     SALES_PERCEPTION_MODE_CEILING = var.config.perception_mode_ceiling
     SALES_PERCEPTION_PROFILE      = var.config.perception_profile
     SALES_SIGNAL_INBOUND_META     = var.config.signal_inbound_meta ? "on" : "off"
     LAB_MAX_USD_PER_RUN           = tostring(var.config.max_usd_per_run)
     LAB_MAX_USD_PER_MONTH         = tostring(var.config.max_usd_per_month)
+    LAB_INTERNAL_NUMBERS          = length(var.config.internal_numbers) > 0 ? join(",", var.config.internal_numbers) : local.placeholder
   }
 }
 
