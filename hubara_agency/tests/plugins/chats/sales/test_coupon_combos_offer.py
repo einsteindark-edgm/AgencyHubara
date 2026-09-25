@@ -73,11 +73,10 @@ def test_turn_note_groups_the_coupon_combinations_by_product() -> None:
     note = build_coupon_note(_metadata()) or ""
 
     assert (
-        "Cubo Love ($21.000 → $18.900): Lila · Lavanda, Azul · Caballero de la noche, "
-        "Amarillo · Café, Rosado · Caballero de la noche"
+        "Cubo Love ($21.000 → $18.900): Lila · Lavanda (queda 1), Azul · Caballero de la "
+        "noche (queda 1), Amarillo · Café (queda 1), Rosado · Caballero de la noche (queda 1)"
     ) in note
-    assert "Cubo de corazón ($22.000 → $19.800): Rosado · Sándalo" in note
-    assert "según disponibilidad" in note
+    assert "Cubo de corazón ($22.000 → $19.800): Rosado · Sándalo (queda 1)" in note
     assert "precio normal" in note
 
 
@@ -254,3 +253,227 @@ async def test_set_order_slot_without_a_quota_coupon_says_nothing_about_coupons(
     out = json.loads(await tool.execute_with_context(ctx, producto="Cubo Love", aroma="Sándalo"))
 
     assert "cupón" not in out["summary"] and "descuento" not in out["summary"]
+
+
+# --- Cantidad contra lo que queda del cupo ------------------------------------
+#
+# Prueba en vivo 2026-09-24 (15:59 Bogotá): el cliente pidió 2 Cilindro Love
+# Azul · Lavanda, el cupo de esa combinación es 1, y a "¿Si tienes 2 de esa?"
+# el bot contestó "Sí, claro". La nota decía "esa combinación lleva el
+# descuento" sin mirar cuántas quedaban.
+
+
+def test_turn_note_says_how_many_carry_the_discount_when_the_order_wants_more() -> None:
+    note = build_coupon_note(
+        _metadata({"producto": "Cubo Love", "color": "Amarillo", "aroma": "Café", "cantidad": "2"})
+    ) or ""
+
+    assert "queda 1 con el descuento" in note
+    assert "1 a $18.900 y 1 a precio normal ($21.000)" in note
+    assert "lleva el descuento" not in note
+
+
+def test_turn_note_confirms_the_discount_when_there_are_enough_units() -> None:
+    note = build_coupon_note(
+        _metadata({"producto": "Cubo Love", "color": "Amarillo", "aroma": "Café", "cantidad": "1"})
+    ) or ""
+
+    assert "El pedido tiene 1 de Cubo Love Amarillo · Café: lleva el descuento" in note
+    assert "OJO" not in note
+
+
+def test_turn_note_lists_how_many_are_left_when_the_coupon_allows_it() -> None:
+    note = build_coupon_note(_metadata()) or ""
+
+    assert "Lila · Lavanda (queda 1)" in note
+
+
+def test_turn_note_hides_the_count_when_the_coupon_does_not_allow_it() -> None:
+    metadata = _metadata({"producto": "Cubo Love", "color": "Amarillo", "aroma": "Café", "cantidad": "2"})
+    metadata["episodes"][0]["applied_coupon"]["show_units_left"] = False
+
+    note = build_coupon_note(metadata) or ""
+
+    assert "(queda" not in note and "queda 1" not in note
+    assert "1 a $18.900 y 1 a precio normal ($21.000)" in note
+
+
+@pytest.mark.asyncio
+async def test_set_order_slot_warns_in_the_same_turn_when_the_quantity_exceeds_the_units(tmp_path) -> None:
+    from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
+
+    vault = tmp_path / "isolated_vault"
+    FilesystemMetadataStore(vault).write(
+        KEY, _metadata({"producto": "Cubo Love", "color": "Amarillo", "aroma": "Café"})
+    )
+    tool = SetOrderSlotTool(workspace=str(vault), vault_dir=vault)
+    ctx = ToolContext(session_key=KEY, channel="whatsapp", chat_id=KEY)
+
+    out = json.loads(await tool.execute_with_context(ctx, producto="Cubo Love", cantidad="2"))
+
+    assert "queda 1 con el descuento" in out["summary"]
+    assert "1 a precio normal ($21.000)" in out["summary"]
+
+
+@pytest.mark.asyncio
+async def test_picker_rows_say_how_many_are_left_when_the_coupon_allows_it(tmp_path) -> None:
+    tool, store = _picker(tmp_path, {"producto": "Cubo Love"})
+
+    _, text = await _show(tool, store, "scent", AROMAS)
+
+    # "(queda 1)" a secas se lee como existencia: es lo que queda CON descuento.
+    assert "Lila · Lavanda — $18.900 (queda 1 con descuento)" in text
+
+
+def test_turn_note_says_when_the_chosen_combination_sold_out() -> None:
+    metadata = _metadata({"producto": "Cubo Love", "color": "Lila", "aroma": "Lavanda", "cantidad": "1"})
+    applied = metadata["episodes"][0]["applied_coupon"]
+    applied["sold_out"] = [dict(applied["units"][0], units_left=0)]
+    applied["units"] = applied["units"][1:]
+
+    note = build_coupon_note(metadata) or ""
+
+    assert "de Cubo Love Lila · Lavanda ya no quedan unidades con el descuento" in note
+    assert "precio normal ($21.000)" in note
+    assert "Lila · Lavanda (queda" not in note
+
+
+def test_turn_note_when_every_unit_sold_out() -> None:
+    metadata = _metadata()
+    applied = metadata["episodes"][0]["applied_coupon"]
+    applied.update(units=[], exhausted=True)
+
+    note = build_coupon_note(metadata) or ""
+
+    assert "ya no quedan unidades con descuento" in note
+    assert "precio normal" in note
+    assert "Lila · Lavanda" not in note
+
+
+# --- El cupón entra solo cuando se habla de él ---------------------------------
+#
+# Pedido del operador (2026-09-24, tras la segunda prueba en vivo): el cupo se
+# consulta y se ofrece SOLO si la conversación toca el cupón. Si el cliente
+# cambia de tema, el bot atiende con el catálogo normal, que hoy no limita
+# colores, aromas ni unidades; si vuelve al cupón, vuelve toda su lógica. El
+# cupo solo decide cuántas unidades llevan descuento, nunca si se vende.
+
+from src.plugins.chats.agent.sales.use_cases.coupons import coupon_in_play  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "¿Y el cupón que me llegó?",
+        "tengo un código de descuento",
+        "amor2026",
+        "¿la promo sigue?",
+        "quiero el Cubo Love",
+        "me gustó el cubo",
+        "Cubos de corazón hay?",
+        "el lila con lavanda",
+    ],
+)
+def test_a_message_about_the_coupon_brings_it_into_play(text) -> None:
+    assert coupon_in_play(_metadata(), text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["¿Tienen portavelas?", "gracias", "¿hacen envíos a Cali?", "quiero 5 velas de lavanda"],
+)
+def test_a_message_about_something_else_leaves_the_coupon_out(text) -> None:
+    assert not coupon_in_play(_metadata(), text)
+
+
+def test_the_product_being_ordered_keeps_the_coupon_in_play() -> None:
+    metadata = _metadata({"producto": "Cubo Love", "color": "Lila"})
+
+    assert coupon_in_play(metadata, "¿y cuánto se demora?")
+
+
+def test_moving_on_to_another_product_takes_the_coupon_out() -> None:
+    metadata = _metadata({"producto": "Cubo Love", "color": "Lila", "aroma": "Lavanda"})
+    draft = metadata["episodes"][0]["order_draft"]
+    draft["items"].append({"producto": "Vela Buda"})
+    draft["current_item"] = "vela buda"
+
+    assert not coupon_in_play(metadata, "¿en qué colores viene?")
+
+
+def test_without_an_applied_coupon_nothing_is_in_play() -> None:
+    metadata = {"episodes": [{"episode_id": "ep_1", "closed_at_ms": None}]}
+
+    assert not coupon_in_play(metadata, "¿tienen algún cupón?")
+
+
+def test_turn_note_outside_the_coupon_talk_leaves_the_catalog_free() -> None:
+    note = build_coupon_note(_metadata(), in_play=False) or ""
+
+    assert "AMOR2026" in note
+    assert "Cubo Love" in note and "Cubo de corazón" in note
+    # Sin las combinaciones ni cuántas quedan: no empuja el cupón.
+    assert "Lila · Lavanda" not in note and "(queda" not in note
+    assert "catálogo normal" in note and "sin límite" in note
+
+
+def test_turn_note_about_the_coupon_says_the_quota_never_limits_the_sale() -> None:
+    note = build_coupon_note(_metadata()) or ""
+
+    assert "Lila · Lavanda (queda 1)" in note
+    assert "no limita la venta" in note and "sin límite" in note
+    # "según disponibilidad" se lee como existencia del producto.
+    assert "disponibilidad" not in note
+
+
+def test_combination_outside_the_coupon_is_sold_at_normal_price() -> None:
+    note = build_coupon_note(
+        _metadata({"producto": "Cubo Love", "aroma": "Sándalo", "color": "Amarillo", "cantidad": "5"})
+    ) or ""
+
+    assert "NO tiene el descuento" in note
+    assert "si la quiere igual, se vende a precio normal" in note
+
+
+@pytest.mark.asyncio
+async def test_set_order_slot_for_another_product_says_nothing_about_the_coupon(tmp_path) -> None:
+    from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
+
+    vault = tmp_path / "isolated_vault"
+    FilesystemMetadataStore(vault).write(
+        KEY, _metadata({"producto": "Cubo Love", "color": "Amarillo", "aroma": "Café", "cantidad": "2"})
+    )
+    tool = SetOrderSlotTool(workspace=str(vault), vault_dir=vault)
+    ctx = ToolContext(session_key=KEY, channel="whatsapp", chat_id=KEY)
+
+    out = json.loads(await tool.execute_with_context(
+        ctx, producto="Vela Buda", aroma="Sándalo", cantidad="3",
+    ))
+
+    assert "AMOR2026" not in out["summary"] and "cupón" not in out["summary"]
+
+
+@pytest.mark.asyncio
+async def test_set_order_slot_with_shipping_data_says_nothing_about_the_coupon(tmp_path) -> None:
+    from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
+
+    vault = tmp_path / "isolated_vault"
+    FilesystemMetadataStore(vault).write(
+        KEY, _metadata({"producto": "Cubo Love", "color": "Amarillo", "aroma": "Café", "cantidad": "2"})
+    )
+    tool = SetOrderSlotTool(workspace=str(vault), vault_dir=vault)
+    ctx = ToolContext(session_key=KEY, channel="whatsapp", chat_id=KEY)
+
+    out = json.loads(await tool.execute_with_context(ctx, ciudad="Medellín", barrio="Laureles"))
+
+    assert "AMOR2026" not in out["summary"]
+
+
+def test_turn_note_outside_the_coupon_talk_of_an_old_snapshot_without_units() -> None:
+    """Episodios de antes de #370: cupo marcado, sin `units` (solo elegibles)."""
+    metadata = _metadata()
+    del metadata["episodes"][0]["applied_coupon"]["units"]
+
+    note = build_coupon_note(metadata, in_play=False) or ""
+
+    assert "AMOR2026" in note and "catálogo normal" in note

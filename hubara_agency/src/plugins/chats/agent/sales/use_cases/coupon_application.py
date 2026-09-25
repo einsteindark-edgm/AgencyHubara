@@ -74,6 +74,8 @@ class CouponApplication:
     #: Cupo por unidad: las combinaciones que quedan (vacío = sin cupo).
     units: tuple[dict[str, Any], ...] = ()
     show_units_left: bool = True
+    #: Las del alcance ya vendidas (para decir "ya no quedan", no se ofrecen).
+    sold_out: tuple[dict[str, Any], ...] = ()
 
     @property
     def applied(self) -> bool:
@@ -123,6 +125,7 @@ async def resolve_coupon_application(
             eligible=tuple(as_eligible(offer.units)),
             units=tuple(offer.units),
             show_units_left=offer.show_units_left,
+            sold_out=tuple(offer.sold_out),
         )
     eligible = await eligible_products(catalog, promotion)
     return CouponApplication(promotion.code, None, promotion, eligible=tuple(eligible))
@@ -169,6 +172,8 @@ def store_coupon_application(
         eligible=list(application.eligible),
         quota=application.quota,
         units=list(application.units),
+        show_units_left=application.show_units_left,
+        sold_out=list(application.sold_out),
     )
 
 
