@@ -52,6 +52,7 @@ deployment.**
   |---|---|
   | `campaign_touch_for_message(touches, wa_message_id)` | El touch de ese mensaje de campaña, o None. |
   | `apply_campaign_delivery(touch, status=, at_ms=, error_code=, pricing=, cost_usd_micros=, rate_card_version=)` | Mutates `touch["delivery"]`: entregado/leído con la hora más temprana (leído implica entregado; nunca retrocede), fallido con el código de Meta, precio una sola vez. True si cambió algo. |
+  | `attributed_campaign_touch(episode, touches, at_ms)` | La campaña (touch real) a la que se atribuye una conversación: la que marcó el webhook al abrir el episodio (`opened_by_campaign`: la que citó el cliente o la última sin responder; una prueba → None); episodios viejos sin marca → el último envío real en ventana. La usan Ads y Marketing: una respuesta cuenta para UNA campaña. |
   | `campaign_delivery(touch) -> CampaignDelivery` | Lectura tolerante: `delivered`, `read`, `failed`, `priced`, `cost_usd_micros`, `has_message_id`. |
 - **Fake oficial**: `InMemoryAttributionStore` — misma semántica superset que
   el adapter real, verificado por la **contract suite**
