@@ -35,6 +35,7 @@ from src.platform.attribution import (
     CampaignDelivery as CampaignDelivery,
     InMemoryAttributionStore as InMemoryAttributionStore,
     apply_campaign_delivery as apply_campaign_delivery,
+    attributed_campaign_touch as attributed_campaign_touch,
     campaign_delivery as campaign_delivery,
     campaign_touch_for_message as campaign_touch_for_message,
     matching_campaign_touch as matching_campaign_touch,

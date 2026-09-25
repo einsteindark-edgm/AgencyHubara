@@ -101,3 +101,30 @@ def test_stats_cuentan_las_bajas_que_provoco_esta_campana() -> None:
     ]
     stats = campaign_stats({"id": "c1"}, sessions, order_facts=OrderFactsSnapshot())
     assert stats["opted_out"] == 2
+
+
+def test_two_campaigns_do_not_count_the_same_reply_or_sale_twice() -> None:
+    """Varias campañas (2026-09-25): una respuesta y su venta cuentan para UNA
+    campaña — la que citó el cliente o la última que no había respondido —,
+    igual que en Ads. Antes las dos campañas en ventana se la contaban."""
+    day = 24 * HOUR
+    amor = {"campaign_id": "amor", "campaign_name": "Amor", "sent_at_ms": T0, "wa_message_id": "wamid.A"}
+    halloween = {"campaign_id": "halloween", "campaign_name": "Halloween", "sent_at_ms": T0 + 3 * day,
+                 "wa_message_id": "wamid.H"}
+    after_both = T0 + 3 * day + HOUR
+    # Respondió sin citar: es de la última (Halloween).
+    plain = {"episode_id": "ep_1", "started_at_ms": after_both, "order_id": "OB-1", "order_total_cop": 44000}
+    # Respondió citando el mensaje de Amor: es de Amor.
+    quoted = {"episode_id": "ep_1", "started_at_ms": after_both, "order_id": "OB-2", "order_total_cop": 30000,
+              "opened_by_campaign": {"campaign_id": "amor", "sent_at_ms": T0, "wa_message_id": "wamid.A"}}
+    sessions = [
+        ("wa_1", {"campaign_touches": [amor, halloween], "last_inbound_at_ms": after_both, "episodes": [plain]}),
+        ("wa_2", {"campaign_touches": [amor, halloween], "last_inbound_at_ms": after_both, "episodes": [quoted]}),
+    ]
+    facts = OrderFactsSnapshot(facts={"OB-1": _fact("OB-1", 44000), "OB-2": _fact("OB-2", 30000)})
+
+    a = campaign_stats({"id": "amor"}, sessions, order_facts=facts)
+    h = campaign_stats({"id": "halloween"}, sessions, order_facts=facts)
+
+    assert (a["replied"], a["attributed_orders"], a["attributed_revenue_cop"]) == (1, 1, 30000)
+    assert (h["replied"], h["attributed_orders"], h["attributed_revenue_cop"]) == (1, 1, 44000)

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.sdk.connectorkit import CAMPAIGN_ATTRIBUTION_WINDOW_MS
+from src.sdk.connectorkit import CAMPAIGN_ATTRIBUTION_WINDOW_MS, campaign_touch_for_message
 
 from src.plugins.chats.agent.sales.use_cases.coupon_application import (
     COUPON_REASON_TEXT,
@@ -31,7 +31,7 @@ from src.plugins.chats.agent.sales.use_cases.coupon_application import (
 
 
 def unanswered_campaign_touch(
-    metadata: dict[str, Any], now_ms: int
+    metadata: dict[str, Any], now_ms: int, *, quoted_message_id: str | None = None
 ) -> dict[str, Any] | None:
     """El touch de campaña al que responde ESTE inbound, o None.
 
@@ -41,9 +41,26 @@ def unanswered_campaign_touch(
     `last_inbound_at_ms` con el inbound actual: el segundo mensaje ya ve la
     campaña respondida. Incluye los touches de prueba del operador (la
     prueba se comporta igual que el envío real).
+
+    `quoted_message_id` (`context.id` del inbound, 2026-09-25): si el cliente
+    CITA el mensaje de una campaña, la respuesta es de ESA campaña aunque
+    después le haya llegado otra — ese touch, si todavía no lo había
+    respondido y está en ventana; si ya lo había respondido o pasó la
+    ventana, None (sigue esa conversación; nunca se atribuye a otra campaña).
+    Citar otra cosa no cambia la regla.
     """
     last_inbound = metadata.get("last_inbound_at_ms")
     answered_until = last_inbound if isinstance(last_inbound, int) else None
+    quoted = quoted_campaign_touch(metadata, quoted_message_id)
+    if quoted is not None:
+        sent = quoted.get("sent_at_ms")
+        fresh = (
+            isinstance(sent, int)
+            and sent <= now_ms
+            and now_ms - sent <= CAMPAIGN_ATTRIBUTION_WINDOW_MS
+            and (answered_until is None or sent > answered_until)
+        )
+        return quoted if fresh else None
     best: dict[str, Any] | None = None
     for touch in metadata.get("campaign_touches") or []:
         if not isinstance(touch, dict) or not touch.get("campaign_id"):
@@ -60,13 +77,26 @@ def unanswered_campaign_touch(
     return best
 
 
+def quoted_campaign_touch(
+    metadata: dict[str, Any], quoted_message_id: str | None
+) -> dict[str, Any] | None:
+    """El touch de la campaña cuyo mensaje citó el cliente, o None (no citó
+    nada, citó otra cosa o el touch es de antes de guardar el id)."""
+    if not quoted_message_id:
+        return None
+    return campaign_touch_for_message(metadata.get("campaign_touches"), quoted_message_id)
+
+
 def campaign_label(touch: dict[str, Any]) -> str:
     name = touch.get("campaign_name")
     return name if isinstance(name, str) and name.strip() else "de marketing"
 
 
 #: Campos del touch que viajan al episodio (el remarketing arma el gancho con
-#: ellos). `test` no: el episodio es el mismo para prueba y envío real.
+#: ellos). El episodio es el mismo para prueba y envío real; `test` y el id del
+#: mensaje viajan para la atribución (2026-09-25): Ads y Marketing atribuyen
+#: la conversación a ESTA campaña (la que citó el cliente, o la última que no
+#: había respondido) y nunca a una prueba.
 _EPISODE_CAMPAIGN_FIELDS = (
     "campaign_id",
     "campaign_name",
@@ -74,6 +104,8 @@ _EPISODE_CAMPAIGN_FIELDS = (
     "message",
     "coupon_code",
     "product_handles",
+    "wa_message_id",
+    "test",
 )
 
 

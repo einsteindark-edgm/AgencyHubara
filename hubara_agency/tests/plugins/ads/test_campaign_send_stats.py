@@ -144,6 +144,53 @@ def test_two_campaigns_keep_their_numbers_apart(tmp_path: Path) -> None:
     assert (a.cost_usd_micros, h.cost_usd_micros) == (2 * 12500, 12500)
 
 
+def test_a_reply_quoting_an_older_campaign_is_counted_for_that_campaign(tmp_path: Path) -> None:
+    """El cliente respondió citando el mensaje de Amor aunque después le llegó
+    Halloween: el webhook marcó el episodio con Amor y Ads lo respeta
+    (2026-09-25)."""
+    from src.plugins.ads.aggregation import list_attributed_conversations
+
+    first, second = _T0, _T0 + 3 * _DAY_MS
+    amor = {"campaign_id": "mkt-amor", "campaign_name": "Amor y amistad", "sent_at_ms": first,
+            "wa_message_id": "wamid.A1", "delivery": _delivered()}
+    halloween = {"campaign_id": "mkt-halloween", "campaign_name": "Halloween", "sent_at_ms": second,
+                 "wa_message_id": "wamid.H1", "delivery": _delivered()}
+    _seed(tmp_path, "wa_573000000001", {"campaign_touches": [amor, halloween], "episodes": [{
+        "episode_id": "ep_004", "started_at_ms": second + 3_600_000, "closed_at_ms": None,
+        "referral_snapshot": {"channel": "direct"},
+        "opened_by_campaign": {"campaign_id": "mkt-amor", "campaign_name": "Amor y amistad",
+                               "sent_at_ms": first, "wa_message_id": "wamid.A1"},
+    }]})
+
+    rows = {c.id: c for c in list_ads_campaigns(tmp_path)}
+
+    assert (rows["mkt-amor"].started, rows["mkt-amor"].whatsapp_send.replied) == (1, 1)
+    assert (rows["mkt-halloween"].started, rows["mkt-halloween"].whatsapp_send.replied) == (0, 0)
+    assert [c.episode_id for c in list_attributed_conversations(tmp_path, "mkt-amor")] == ["ep_004"]
+
+
+def test_a_conversation_opened_by_a_test_send_is_not_attributed(tmp_path: Path) -> None:
+    """El operador probó Halloween en su número, que días antes había recibido
+    Amor de verdad: su respuesta era a la prueba — no cuenta para Amor."""
+    first, second = _T0, _T0 + 3 * _DAY_MS
+    amor = {"campaign_id": "mkt-amor", "campaign_name": "Amor y amistad", "sent_at_ms": first,
+            "wa_message_id": "wamid.A1", "delivery": _delivered()}
+    prueba = {"campaign_id": "mkt-halloween", "campaign_name": "Halloween", "sent_at_ms": second,
+              "wa_message_id": "wamid.T1", "test": True}
+    _seed(tmp_path, "wa_573000000001", {"campaign_touches": [amor, prueba], "episodes": [{
+        "episode_id": "ep_004", "started_at_ms": second + 3_600_000, "closed_at_ms": None,
+        "referral_snapshot": {"channel": "direct"},
+        "opened_by_campaign": {"campaign_id": "mkt-halloween", "sent_at_ms": second,
+                               "wa_message_id": "wamid.T1", "test": True},
+    }]})
+
+    rows = {c.id: c for c in list_ads_campaigns(tmp_path)}
+
+    assert (rows["mkt-amor"].started, rows["mkt-amor"].whatsapp_send.replied) == (0, 0)
+    assert "mkt-halloween" not in rows
+    assert rows["direct"].started == 1
+
+
 def test_a_meta_campaign_has_no_whatsapp_send_stats(tmp_path: Path) -> None:
     _seed(tmp_path, "wa_573000000001", {"episodes": [{
         "episode_id": "ep_001", "started_at_ms": _T0, "closed_at_ms": None,

@@ -67,6 +67,52 @@ def matching_campaign_touch(
     return best
 
 
+def _touch_that_opened(
+    opened: dict[str, Any], campaign_touches: list[Any] | None
+) -> dict[str, Any] | None:
+    """El touch que registró el episodio: por el id del mensaje si la marca lo
+    trae; si no (marcas de antes de 2026-09-25), por campaña + hora de envío."""
+    wamid = opened.get("wa_message_id")
+    for touch in campaign_touches or []:
+        if not isinstance(touch, dict):
+            continue
+        if wamid:
+            if touch.get("wa_message_id") == wamid:
+                return touch
+        elif (
+            touch.get("campaign_id") == opened.get("campaign_id")
+            and touch.get("sent_at_ms") == opened.get("sent_at_ms")
+        ):
+            return touch
+    return None
+
+
+def attributed_campaign_touch(
+    episode: dict[str, Any] | None,
+    campaign_touches: list[Any] | None,
+    at_ms: int | None,
+) -> dict[str, Any] | None:
+    """La campaña (touch REAL) a la que se atribuye un episodio, o None.
+
+    Si una respuesta a campaña abrió el episodio (`opened_by_campaign`, lo
+    escribe el webhook de chats: el mensaje de campaña que el cliente citó
+    o, sin cita, el último envío que no había respondido), es esa campaña: la
+    misma decisión que vio el bot. Si lo abrió un envío de PRUEBA → None, aunque
+    haya otro envío real en ventana (respondía a la prueba). Sin esa marca
+    (episodios viejos) → el último touch real en ventana
+    (`matching_campaign_touch`). Readers: ads y marketing (2026-09-25)."""
+    opened = episode.get("opened_by_campaign") if isinstance(episode, dict) else None
+    if not isinstance(opened, dict) or not opened.get("campaign_id"):
+        return matching_campaign_touch(campaign_touches, at_ms)
+    if opened.get("test"):
+        return None
+    touch = _touch_that_opened(opened, campaign_touches)
+    if touch is not None:
+        return None if touch.get("test") else touch
+    # El contacto guarda sus últimas campañas (tope): la marca alcanza.
+    return {k: opened[k] for k in ("campaign_id", "campaign_name", "sent_at_ms") if k in opened}
+
+
 # --- Lo que Meta dice de cada mensaje de campaña (2026-09-25) ---------------
 #
 # El touch es el registro POR DESTINATARIO de una campaña: además de la
