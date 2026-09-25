@@ -105,7 +105,11 @@ from src.plugins.chats.agent.sales.use_cases.coupon_application import (
     store_coupon_application,
 )
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer
-from src.plugins.chats.agent.sales.use_cases.coupons import build_coupon_note
+from src.plugins.chats.agent.sales.use_cases.coupons import (
+    applied_coupon,
+    build_coupon_note,
+    coupon_in_play,
+)
 from src.plugins.chats.agent.sales.use_cases.web_product_ref import (
     apply_web_product_capture,
     build_web_product_note,
@@ -655,18 +659,6 @@ class IngestInboundMessage:
                     campaign_reply_touch, coupon=application
                 )
 
-        # --- 2h. Cupo del cupón aplicado: cuánto queda AHORA ---
-        # Prueba en vivo 2026-09-24 (15:59 Bogotá): a "¿Si tienes 2 de esa?"
-        # el bot dijo "Sí, claro" con cupo 1 — no fue a mirar cuánto quedaba.
-        # Cada mensaje relee el cupo (vault) menos lo vendido (Medusa, lectura
-        # compartida unos segundos); la nota del turno, el selector y
-        # set_order_slot lo leen del episodio. Si no responde a tiempo queda
-        # lo último que se supo: la confirmación y el registro vuelven a mirar.
-        if not coupon_checked_now and metadata.get("active_route") != ROUTE_HUMANO:
-            reread = await self._reread_coupon_units(session_id, metadata, now_ms)
-            if reread is not None:
-                metadata = reread
-
         # --- 2d. HU-WA24H-001 Sprint 2: watchdog wiring ---
         # Después de persistir el timestamp, emitir los eventos que el
         # dispatcher manifest convertirá en (a) arranque del
@@ -911,6 +903,27 @@ class IngestInboundMessage:
                 wa_message_id=parsed.message_id,
             )
 
+        # --- 8.5. Cupón aplicado: ¿este mensaje habla de él? ---
+        # Prueba en vivo 2026-09-24 (15:59 Bogotá): a "¿Si tienes 2 de esa?"
+        # el bot dijo "Sí, claro" con cupo 1 — no fue a mirar cuánto quedaba.
+        # Si el mensaje toca el cupón (`coupon_in_play`: lo nombra, nombra un
+        # producto o una combinación suya, o el pedido va en un producto del
+        # cupón), se relee el cupo (vault) menos lo vendido (Medusa, lectura
+        # compartida unos segundos) y la nota, el selector y set_order_slot lo
+        # leen del episodio; si no responde a tiempo queda lo último que se
+        # supo (la confirmación y el registro vuelven a mirar). Si el cliente
+        # habla de otra cosa, el turno es del catálogo normal: no se lee el
+        # cupo y la nota lo recuerda en una línea (pedido del operador,
+        # 2026-09-24). Después del texto efectivo: un audio o una foto se
+        # deciden por lo que dicen, una sola vez.
+        coupon_talk = coupon_checked_now or coupon_in_play(metadata, effective.text)
+        if coupon_talk and not coupon_checked_now and metadata.get("active_route") != ROUTE_HUMANO:
+            reread = await self._reread_coupon_units(session_id, metadata, now_ms)
+            if reread is not None:
+                metadata = reread
+        elif not coupon_talk and applied_coupon(metadata) is not None:
+            logger.info("coupon_not_in_play", session_id=session_id)
+
         # --- 9. Resolver ruta + signal al workflow correspondiente ---
         # Breadcrumb determinista del pedido: si el episodio activo tiene un
         # order_draft proyectable (slots no vacios, episodio sin order_id), lo
@@ -945,7 +958,7 @@ class IngestInboundMessage:
         )
         # Cupón aplicado en el episodio: el LLM lo recuerda cada turno y sabe
         # que el monto lo calcula el sistema (no promete otro descuento).
-        coupon_note = build_coupon_note(metadata)
+        coupon_note = build_coupon_note(metadata, in_play=coupon_talk)
         # Respuesta a campaña: la nota solo viaja por la ruta Sales (el
         # remarketing no recibe plugin_context) — el turno va a Ventas.
         route_kwargs: dict[str, Any] = (

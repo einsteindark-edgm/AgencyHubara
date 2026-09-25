@@ -223,12 +223,14 @@ def _combo(unit: dict[str, Any]) -> str:
     return " · ".join(str(v) for v in (unit.get("color"), unit.get("aroma")) if v)
 
 
-def _left_text(unit: dict[str, Any], show_units_left: bool) -> str:
-    """" (queda 1)" / " (quedan 3)" — solo si el cupón deja decirlo (D3)."""
+def _left_text(unit: dict[str, Any], show_units_left: bool, *, suffix: str = "") -> str:
+    """" (queda 1)" / " (quedan 3)" — solo si el cupón deja decirlo (D3).
+    `suffix` (" con descuento"): lo que ve el cliente, que "(queda 1)" a secas
+    leería como existencia del producto."""
     left = unit.get("units_left")
     if not show_units_left or not isinstance(left, int):
         return ""
-    return f" (queda {left})" if left == 1 else f" (quedan {left})"
+    return f" (queda {left}{suffix})" if left == 1 else f" (quedan {left}{suffix})"
 
 
 def combos_by_product_text(
@@ -271,14 +273,15 @@ def _quantity_line(
     normal = format_cop(int(unit.get("price_cop") or 0))
     if isinstance(left, int) and left <= 0:
         return (
-            f"OJO: de {label} ya no quedan unidades con el descuento (se vendieron): va a precio "
-            f"normal ({normal}). Díselo al cliente antes de seguir y ofrécele las que sí lo tienen."
+            f"OJO: de {label} ya no quedan unidades con el descuento (se usó el cupo): se vende "
+            f"igual, a precio normal ({normal}). Díselo al cliente antes de seguir y, si prefiere "
+            "el descuento, ofrécele las que sí lo tienen."
         )
     if qty is None or not isinstance(left, int):
-        return f"El pedido tiene {label}: esa combinación lleva el descuento (según disponibilidad)."
+        return f"El pedido tiene {label}: esa combinación lleva el descuento (la confirmación lo verifica)."
     if qty <= left:
         verb = "lleva" if qty == 1 else f"las {qty} llevan"
-        return f"El pedido tiene {qty} de {label}: {verb} el descuento (según disponibilidad)."
+        return f"El pedido tiene {qty} de {label}: {verb} el descuento (la confirmación lo verifica)."
     count = f", queda {left} con el descuento" if show_units_left else ""
     return (
         f"OJO: el pedido tiene {qty} de {label}{count}: {left} a {discounted} y {qty - left} a "
@@ -331,8 +334,9 @@ def draft_vs_coupon_lines(
             )
         elif compatible_gone and not compatible:
             lines.append(
-                f"OJO: de {label} ya no quedan unidades con el descuento (se vendieron): va a "
-                f"precio normal ({normal}). Díselo al cliente y ofrécele las que sí lo tienen."
+                f"OJO: de {label} ya no quedan unidades con el descuento (se usó el cupo): se "
+                f"vende igual, a precio normal ({normal}). Díselo al cliente y, si prefiere el "
+                "descuento, ofrécele las que sí lo tienen."
             )
         elif compatible:
             missing = next(f for f in fields if f not in picked)
@@ -342,13 +346,15 @@ def draft_vs_coupon_lines(
         elif complete:
             lines.append(
                 f"OJO: el pedido tiene {label} y esa combinación NO tiene el descuento del "
-                f"cupón: va a precio normal ({normal}). Díselo al cliente antes de seguir y "
-                "ofrécele las que sí lo tienen."
+                f"cupón: va a precio normal ({normal}). Díselo al cliente antes de seguir; si la "
+                "quiere igual, se vende a precio normal (el cupón no limita la venta), y si "
+                "prefiere el descuento, ofrécele las del cupón."
             )
         else:
             lines.append(
                 f"OJO: {label} NO tiene el descuento del cupón (va a precio normal, {normal}): "
-                "díselo al cliente y ofrécele las combinaciones con descuento."
+                "díselo al cliente; si lo quiere igual, se vende a precio normal, y si prefiere "
+                "el descuento, ofrécele las combinaciones del cupón."
             )
     return lines
 
@@ -412,7 +418,8 @@ def picker_coupon_block(
         dict.fromkeys(
             (
                 str(u.get(field)) if chosen else _combo(u),
-                format_cop(int(u["discounted_price_cop"])) + _left_text(u, show),
+                format_cop(int(u["discounted_price_cop"]))
+                + _left_text(u, show, suffix=" con descuento"),
             )
             for u in rows
         )

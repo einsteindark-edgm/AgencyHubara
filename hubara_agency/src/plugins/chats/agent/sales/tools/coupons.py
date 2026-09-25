@@ -35,6 +35,7 @@ from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
     units_text,
 )
 from src.plugins.chats.agent.sales.use_cases.coupons import (
+    NO_LIMIT_TEXT,
     clear_applied_coupon,
     describe_promotion,
     discount_line_items,
@@ -325,7 +326,8 @@ class ApplyCouponTool(ToolBase):
         summary = (
             f"Cupón {promotion.code} aplicado: {describe_promotion(promotion)} SOLO en estas "
             f"unidades: {units_text(units)}. Otros colores, aromas o productos van a "
-            "precio normal. Para aplicarlo necesitas el color y el aroma de cada producto"
+            f"precio normal. {NO_LIMIT_TEXT} Para aplicarlo necesitas el color y el aroma "
+            "de cada producto"
         )
         if not application.show_units_left:
             summary += "; no le digas cuántas quedan"

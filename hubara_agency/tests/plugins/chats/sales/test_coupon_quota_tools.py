@@ -113,6 +113,8 @@ async def test_apply_coupon_lists_eligible_units_with_units_left(tmp_path: Path)
     ]
     assert "Cubo Love Rosado · Café" in out["summary"] and "quedan 3" in out["summary"]
     assert "SOLO" in out["summary"]
+    # "quedan 3" es del descuento, no del producto: el catálogo no tiene límite.
+    assert "no limita la venta" in out["summary"]
     snapshot = applied_coupon(md.read(KEY))
     assert snapshot is not None and snapshot["code"] == "AMOR26"
 
@@ -289,7 +291,10 @@ async def test_turn_note_of_a_quota_coupon_says_availability_can_change(tmp_path
     note = build_coupon_note(md.read(KEY)) or ""
 
     assert "Cubo Love ($21.000 → $18.900): Rosado · Café" in note
-    assert "según disponibilidad" in note
+    # Se agotan las unidades CON DESCUENTO, no el producto ("según
+    # disponibilidad" se leía como existencia — pedido del operador 2026-09-24).
+    assert "mientras queden unidades con descuento" in note
+    assert "la confirmación dice cuáles quedan" in note
 
 
 @pytest.mark.asyncio

@@ -775,6 +775,69 @@ async def test_no_reread_for_a_human_conversation_or_a_coupon_just_applied():
     assert just_applied.calls == 0
 
 
+# --- …pero solo mientras se habla del cupón ------------------------------------
+#
+# Pedido del operador (2026-09-24): el cupo se consulta SOLO si el mensaje toca
+# el cupón. Si el cliente cambia de tema, el turno es del catálogo normal (sin
+# límite de colores, aromas ni unidades); si vuelve al cupón, vuelve toda su
+# lógica con el cupo recién leído.
+
+
+def _both_left():
+    from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer
+
+    return QuotaOffer(
+        True, None, (_cilindro("Azul", "Lavanda", 1), _cilindro("Rosado", "Caballero de la noche", 1)), True
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_quota_is_read_only_while_the_conversation_is_about_the_coupon():
+    now = int(time.time() * 1000)
+    metadata = _episode_with_quota_coupon(now)
+    metadata["episodes"][-1].pop("order_draft")
+    store = _Store(metadata)
+    loader = _Loader()
+    units_now = _UnitsNow(_both_left())
+    use_case = _use_case_with_units(store, loader, units_now)
+
+    # Otro tema: catálogo normal, sin leer el cupo ni ofrecer sus combinaciones.
+    await use_case.execute(_message("¿Tienen portavelas?"))
+    assert units_now.calls == 0
+    off_topic = "\n".join(loader.calls[-1]["extra_context"])
+    assert "AMOR26" in off_topic and "sin límite" in off_topic
+    assert "Azul · Lavanda" not in off_topic
+
+    # Vuelve al cupón: lo relee y el bot tiene las combinaciones y cuántas quedan.
+    await use_case.execute(_message("¿Y el cupón que me llegó?"))
+    assert units_now.calls == 1
+    assert "Azul · Lavanda (queda 1)" in "\n".join(loader.calls[-1]["extra_context"])
+
+    await use_case.execute(_message("¿Hacen envíos a Cali?"))
+    assert units_now.calls == 1
+
+    # Nombra el producto del cupón: otra vez.
+    await use_case.execute(_message("Listo, quiero el cilindro azul con lavanda"))
+    assert units_now.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_no_quota_read_once_the_order_moved_on_to_another_product():
+    now = int(time.time() * 1000)
+    metadata = _episode_with_quota_coupon(now)
+    draft = metadata["episodes"][-1]["order_draft"]
+    draft["items"].append({"producto": "Portavelas Luna", "cantidad": "3"})
+    draft["current_item"] = "portavelas luna"
+    store = _Store(metadata)
+    loader = _Loader()
+    units_now = _UnitsNow(_both_left())
+
+    await _use_case_with_units(store, loader, units_now).execute(_message("¿En qué colores viene?"))
+
+    assert units_now.calls == 0
+    assert "Azul · Lavanda (queda" not in "\n".join(loader.calls[-1]["extra_context"])
+
+
 @pytest.mark.asyncio
 async def test_webhook_rereads_the_quota_through_the_same_shared_sales_read(monkeypatch):
     """El webhook real relee el cupo con los puertos del SDK, compartiendo la

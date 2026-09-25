@@ -68,9 +68,14 @@ from src.plugins.chats.shared.draft_items import (
 )
 
 
-def _coupon_lines(data: dict[str, Any]) -> list[str]:
-    """Qué dice el cupón con cupo del episodio de lo ya elegido (vacío sin
-    cupón con cupo): con descuento, a precio normal o en qué colores/aromas."""
+def _coupon_lines(data: dict[str, Any], producto: str | None) -> list[str]:
+    """Qué dice el cupón con cupo del episodio del producto que tocó esta
+    llamada: con descuento, a precio normal o en qué colores/aromas. Vacío sin
+    cupón con cupo o si la llamada no tocó un producto (envío, pago): con otro
+    producto o con los datos del envío el cupón no se mete en la charla
+    (pedido del operador, 2026-09-24)."""
+    if not producto:
+        return []
     from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
         draft_vs_coupon_lines,
     )
@@ -87,8 +92,13 @@ def _coupon_lines(data: dict[str, Any]) -> list[str]:
     if not units and not sold_out:
         return []
     show = bool(applied.get("show_units_left", True))
+    touched = [
+        item
+        for item in draft_items(episode.get("order_draft"))
+        if product_key(item.get("producto")) == product_key(producto)
+    ]
     lines = draft_vs_coupon_lines(
-        episode.get("order_draft"), units, show_units_left=show, sold_out=sold_out
+        {"items": touched}, units, show_units_left=show, sold_out=sold_out
     )
     return [f"Cupón {applied.get('code')}: {line}" for line in lines]
 
@@ -707,7 +717,7 @@ class SetOrderSlotTool(ToolBase):
         # Cupón con cupo: lo que dice de lo recién elegido, en ESTE turno (la
         # nota del turno se armó antes de la elección — conversación de
         # prueba del 2026-09-24, Sándalo · Amarillo fuera del cupo).
-        coupon_lines = _coupon_lines(data)
+        coupon_lines = _coupon_lines(data, provided.get("producto") if wants_item else None)
         if coupon_lines:
             envelope["coupon"] = coupon_lines
             envelope["summary"] += " " + " ".join(coupon_lines)

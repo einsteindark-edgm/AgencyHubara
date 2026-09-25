@@ -9,6 +9,7 @@ Medusa puede cambiar a mitad de chat sin que el pedido cambie de precio.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 
@@ -31,6 +32,8 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     ensure_active_episode,
     get_active_episode,
 )
+from src.plugins.chats.agent.sales.use_cases.order_draft import current_item
+from src.plugins.chats.shared.draft_items import draft_items, product_key
 
 
 @dataclass(frozen=True)
@@ -353,8 +356,101 @@ def format_cop(amount: int) -> str:
     return "$" + f"{int(amount):,}".replace(",", ".")
 
 
-def build_coupon_note(metadata: dict[str, Any]) -> str | None:
-    """Nota de contexto por turno: el LLM recuerda el cupón aplicado."""
+#: Con lo que el cliente habla de un cupón (texto normalizado, sin tildes).
+_COUPON_WORDS = re.compile(
+    r"\b(cupon(es)?|descuentos?|promos?|promocion(es)?|ofertas?|rebajas?|codigo)\b|\d+ ?%"
+)
+#: Palabras de un nombre de producto que no lo distinguen de los demás.
+_GENERIC_WORDS = frozenset({"vela", "velon", "love", "mini", "caja", "pack", "para"})
+#: El cupo nunca limita la venta (pedido del operador, 2026-09-24).
+NO_LIMIT_TEXT = (
+    "El cupo solo dice cuántas unidades llevan descuento, no limita la venta: cualquier "
+    "color, aroma o cantidad del catálogo se vende, a precio normal y sin límite."
+)
+
+
+def _mentions(said: str, phrase: str) -> bool:
+    """¿El texto normalizado nombra `phrase` como palabra completa (o su plural)?"""
+    return bool(phrase) and re.search(rf"\b{re.escape(phrase)}(?:s|es)?\b", said) is not None
+
+
+def _names_product(said: str, title: str) -> bool:
+    """"el cubo" nombra el Cubo Love; "velas" no nombra la Vela Buda."""
+    key = product_key(title)
+    words = [w for w in key.split() if len(w) >= 4 and w not in _GENERIC_WORDS]
+    return any(_mentions(said, w) for w in words) if words else _mentions(said, key)
+
+
+def _coupon_rows(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """Las combinaciones del cupo: las que quedan y las agotadas."""
+    return [u for key in ("units", "sold_out") for u in raw.get(key) or [] if isinstance(u, dict)]
+
+
+def _coupon_titles(raw: dict[str, Any]) -> list[str]:
+    """Los productos del cupón. Con cupo, los de sus filas (`eligible_products`
+    trae "Producto Color · Aroma", que nombraría el aroma suelto)."""
+    if raw.get("quota") or raw.get("units") or raw.get("sold_out"):
+        source = _coupon_rows(raw)
+    else:
+        source = [p for p in raw.get("eligible_products") or [] if isinstance(p, dict)]
+    titles = (str(p.get("title") or "").strip() for p in source)
+    return list(dict.fromkeys(t for t in titles if t))
+
+
+def coupon_in_play(metadata: dict[str, Any], text: str | None) -> bool:
+    """¿Este mensaje toca el cupón aplicado del episodio?
+
+    Sí si nombra el cupón (código, "cupón", "descuento", "promo", "10 %"), un
+    producto del cupón o una combinación color + aroma de su cupo, o si el
+    producto del que se está hablando en el pedido es del cupón. Un cupón de
+    todo el catálogo siempre está en juego. Si no, el turno es del catálogo
+    normal: el webhook no relee el cupo y la nota solo lo recuerda en una
+    línea (pedido del operador, 2026-09-24). Ante la duda dice que sí: eso
+    cuesta una lectura compartida y una nota más larga, nunca una venta."""
+    raw = applied_coupon(metadata)
+    if raw is None:
+        return False
+    try:
+        promotion = promotion_from_snapshot(raw["promotion"])
+    except (TypeError, KeyError):
+        return False
+    if promotion.target_type == "shipping_methods":
+        return False
+    if is_whole_catalog(promotion):
+        return True
+    said = product_key(text)
+    if _mentions(said, product_key(raw.get("code"))) or _COUPON_WORDS.search(said):
+        return True
+    titles = _coupon_titles(raw)
+    if any(_names_product(said, title) for title in titles):
+        return True
+    if any(
+        row.get("color") and row.get("aroma")
+        and _mentions(said, product_key(row["color"]))
+        and _mentions(said, product_key(row["aroma"]))
+        for row in _coupon_rows(raw)
+    ):
+        return True
+    draft = (get_active_episode(metadata) or {}).get("order_draft")
+    item = current_item(draft if isinstance(draft, dict) else None, draft_items(draft))
+    return item is not None and product_key(item.get("producto")) in {
+        product_key(title) for title in titles
+    }
+
+
+def _join_names(names: list[str]) -> str:
+    """"Cubo Love, Vela Buda y Cubo de corazón" ("" sin nombres)."""
+    if len(names) <= 1:
+        return "".join(names)
+    return f"{', '.join(names[:-1])} y {names[-1]}"
+
+
+def build_coupon_note(metadata: dict[str, Any], *, in_play: bool = True) -> str | None:
+    """Nota de contexto por turno: el LLM recuerda el cupón aplicado.
+
+    `in_play` (`coupon_in_play`): el mensaje habla del cupón. Si no, la nota
+    lo recuerda en una línea, sin combinaciones ni cuántas quedan, y le deja
+    el turno al catálogo normal."""
     raw = applied_coupon(metadata)
     if raw is None:
         return None
@@ -381,6 +477,16 @@ def build_coupon_note(metadata: dict[str, Any]) -> str | None:
         )
     elif is_whole_catalog(promotion):
         scope = "aplica a todo el catálogo."
+    elif not in_play and (units or eligible):
+        # El cliente habla de otra cosa: el cupón no se mete en la charla.
+        names = _join_names(_coupon_titles(raw)) or "algunos productos"
+        where = f"algunas combinaciones de {names}" if units else names
+        scope = (
+            f"vale solo en {where}. Si el cliente habla de otra cosa, atiéndelo con el "
+            "catálogo normal: todos los colores, aromas y cantidades, a precio normal y sin "
+            "límite; no le metas el cupón en la conversación. Si vuelve al cupón o a esos "
+            "productos, el sistema te recuerda qué lleva descuento."
+        )
     elif units:
         # Cupo por unidad (conversación de prueba del 2026-09-24): las
         # combinaciones por producto y qué dice el cupo de lo ya elegido.
@@ -388,12 +494,12 @@ def build_coupon_note(metadata: dict[str, Any]) -> str | None:
         show = bool(raw.get("show_units_left", True))
         scope = " ".join(
             [
-                "vale SOLO en estas combinaciones, según disponibilidad (la "
-                "confirmación dice cuáles quedan): "
-                f"{combos_by_product_text(units, show_units_left=show)}. Ofrécelas "
-                "primero; cualquier otro color o aroma va a precio normal: dilo antes "
-                "de tomar el pedido. Si pide más unidades de las que quedan con "
-                "descuento, las demás van a precio normal: dilo también.",
+                "vale SOLO en estas combinaciones mientras queden unidades con descuento "
+                "(la confirmación dice cuáles quedan): "
+                f"{combos_by_product_text(units, show_units_left=show)}. Si el cliente viene "
+                "por el cupón, ofrécelas primero; otra combinación va a precio normal: dilo "
+                "antes de tomar el pedido. Si pide más unidades de las que quedan con "
+                f"descuento, las demás van a precio normal: dilo también. {NO_LIMIT_TEXT}",
                 *draft_vs_coupon_lines(
                     episode.get("order_draft"), units, show_units_left=show, sold_out=sold_out
                 ),
@@ -401,14 +507,18 @@ def build_coupon_note(metadata: dict[str, Any]) -> str | None:
         )
     elif eligible:
         scope = (
-            f"aplica SOLO a: {eligible_products_text(eligible)}. Ofrece estos "
-            "productos; lo que se habló antes de otros productos va SIN "
-            "descuento — retómalo solo si el cliente lo pide, aclarándolo."
+            f"aplica SOLO a: {eligible_products_text(eligible)}. Si el cliente viene por el "
+            "cupón, ofrece estos productos; lo demás del catálogo se vende a precio normal, "
+            "sin límite. Lo que se habló antes de otros productos va SIN descuento — "
+            "retómalo solo si el cliente lo pide, aclarándolo."
         )
         if raw.get("quota"):
             # Cupo por unidad: esas combinaciones pueden agotarse después de
             # aplicado el cupón (premortem B3).
-            scope += " Esas combinaciones van según disponibilidad: la confirmación dice cuáles quedan."
+            scope += (
+                " Esas combinaciones valen mientras queden unidades con descuento: la "
+                "confirmación dice cuáles quedan."
+            )
     else:
         scope = (
             "aplica solo a algunos productos: confirma cuáles con "
@@ -423,11 +533,13 @@ def build_coupon_note(metadata: dict[str, Any]) -> str | None:
 
 
 __all__ = [
+    "NO_LIMIT_TEXT",
     "AppliedDiscount",
     "applied_coupon",
     "build_coupon_note",
     "clear_applied_coupon",
     "coupon_discount_for_items",
+    "coupon_in_play",
     "describe_promotion",
     "discount_line_items",
     "eligible_products",
