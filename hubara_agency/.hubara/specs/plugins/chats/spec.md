@@ -607,6 +607,27 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - WHEN el operador usa "Crear pedido"
 - THEN el sugerido muestra `discount_cop`/`coupon_code` y el registro descuenta lo mismo que descontaría el bot
 
+### Requirement: Estados de Meta de los mensajes de campaña
+
+El webhook de estados (`statuses[]`) MUST leer la hora del estado y el código
+de error de un `failed`, y si el id del mensaje es de un touch de campaña MUST
+anotar en ese touch entregado / leído / fallido y el precio (tarifa vigente
+cuando salió), aunque el contacto no tenga conversación abierta. Ese estado
+MUST NOT ir al registro de huérfanos. Si el mensaje también está en la
+conversación abierta, esa conversación MUST seguir materializando su costo
+(reengagement cuenta sus toques).
+
+#### Scenario: Plantilla de campaña a un contacto sin conversación abierta
+
+- GIVEN el touch `mkt-amor` del contacto guarda `wamid.CAMP1` y el contacto no tiene conversación abierta
+- WHEN llegan `delivered` y luego `read` con precio de marketing
+- THEN el touch queda `status: read` con las horas de entrega y lectura y `cost_usd_micros` de la tarjeta vigente, y nada va a `_orphan_delivery_statuses.jsonl`
+
+#### Scenario: Plantilla de campaña que falló
+
+- WHEN llega `failed` con `errors[0].code = 131049`
+- THEN el touch queda `status: failed` con ese código
+
 ### Requirement: Cupo por unidad de un cupón
 
 Un cupón con filas de cupo (Marketing → Cupones: producto + color + aroma +

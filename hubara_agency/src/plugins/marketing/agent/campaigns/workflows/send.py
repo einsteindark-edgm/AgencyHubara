@@ -84,7 +84,7 @@ class CampaignSendWorkflow:
                 ]
                 if cards:
                     send_args.append(cards)
-                await workflow.execute_activity(
+                outcome = await workflow.execute_activity(
                     "send_whatsapp_template_activity",
                     args=send_args,
                     start_to_close_timeout=_SEND_TIMEOUT,
@@ -108,9 +108,14 @@ class CampaignSendWorkflow:
                     failed.append(recipient.session_id)
                 continue
             sent += 1
+            # El id del mensaje va al touch: por él el webhook de estados anota
+            # entregado, leído y precio de ESTA campaña (Ads, 2026-09-25).
+            wa_message_id = (
+                outcome.get("wa_message_id") if isinstance(outcome, dict) else None
+            )
             await workflow.execute_activity(
                 stamp_campaign_touch_activity,
-                args=[recipient.session_id, campaign_id, campaign_name],
+                args=[recipient.session_id, campaign_id, campaign_name, wa_message_id],
                 start_to_close_timeout=_FAST,
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )

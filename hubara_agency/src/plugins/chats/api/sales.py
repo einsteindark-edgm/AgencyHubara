@@ -9,6 +9,8 @@ preservar el import path que usa `src/main.py`. Mover a
 """
 from __future__ import annotations
 
+import functools
+
 import hmac
 import json
 import re
@@ -232,7 +234,7 @@ def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
             _isolated,
             "delivery_status_ingest_failed",
             {"wa_message_id": status_update.wa_message_id, "status": status_update.status},
-            delivery_use_case.execute,
+            _status_execute(delivery_use_case, status_update),
             status_update.wa_message_id,
             status_update.status,
             status_update.pricing,
@@ -278,6 +280,17 @@ def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
         )
 
 
+def _status_execute(use_case: Any, status_update: Any) -> Callable[..., Awaitable[None]]:
+    """`execute` del use case con la hora y el código de error del estado:
+    entregado/leído/fallido de un mensaje de campaña quedan con su hora
+    (Ads, 2026-09-25). Sin hora de Meta, la de llegada."""
+    return functools.partial(
+        use_case.execute,
+        timestamp_ms=status_update.timestamp_ms or _now_ms(),
+        error_code=status_update.error_code,
+    )
+
+
 async def _isolated(
     event: str, log_fields: dict[str, Any], execute: Callable[..., Awaitable[None]], /, *args: Any
 ) -> None:
@@ -309,7 +322,7 @@ def _handle_standby(body: dict, background_tasks: BackgroundTasks) -> None:
             _isolated,
             "delivery_status_ingest_failed",
             {"wa_message_id": status_update.wa_message_id, "status": status_update.status},
-            build_ingest_delivery_status_use_case().execute,
+            _status_execute(build_ingest_delivery_status_use_case(), status_update),
             status_update.wa_message_id,
             status_update.status,
             status_update.pricing,

@@ -214,6 +214,19 @@ export function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
     capiPurchasesSent: b.capi_purchases_sent,
     capiFailed: b.capi_failed,
     capiSkipped: b.capi_skipped,
+    whatsappSend: b.whatsapp_send
+      ? {
+          sent: b.whatsapp_send.sent,
+          delivered: b.whatsapp_send.delivered,
+          read: b.whatsapp_send.read,
+          failed: b.whatsapp_send.failed,
+          replied: b.whatsapp_send.replied,
+          optedOut: b.whatsapp_send.opted_out,
+          costUsdMicros: b.whatsapp_send.cost_usd_micros,
+          costPending: b.whatsapp_send.cost_pending,
+          untracked: b.whatsapp_send.untracked,
+        }
+      : null,
   };
 }
 

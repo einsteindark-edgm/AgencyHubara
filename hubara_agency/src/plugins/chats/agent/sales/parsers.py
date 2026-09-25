@@ -389,6 +389,10 @@ class WhatsAppStatusUpdate:
     wa_message_id: str
     status: str  # "sent" | "delivered" | "read" | "failed"
     pricing: dict[str, Any] | None  # {billable, pricing_type, category} | None
+    #: Hora del estado según Meta (ms). None si Meta no la mandó.
+    timestamp_ms: int | None = None
+    #: `errors[0].code` de un `failed` (131049, 131026…).
+    error_code: int | None = None
 
 
 def parse_whatsapp_statuses(body: dict) -> list[WhatsAppStatusUpdate]:
@@ -447,7 +451,23 @@ def _parse_status(status: Any) -> WhatsAppStatusUpdate | None:
     # pricing puede ser dict o ausente; ambos son válidos
     if pricing is not None and not isinstance(pricing, dict):
         pricing = None
-    return WhatsAppStatusUpdate(wa_message_id=wa_message_id, status=status_kind, pricing=pricing)
+    # Hora del estado según Meta (epoch en segundos, como string) y el código
+    # del error de un `failed`: las métricas de entrega de una campaña los
+    # necesitan (Ads, 2026-09-25).
+    try:
+        timestamp_ms: int | None = int(str(status.get("timestamp"))) * 1000
+    except ValueError:
+        timestamp_ms = None
+    errors = status.get("errors")
+    first = errors[0] if isinstance(errors, list) and errors else None
+    code = first.get("code") if isinstance(first, dict) else None
+    return WhatsAppStatusUpdate(
+        wa_message_id=wa_message_id,
+        status=status_kind,
+        pricing=pricing,
+        timestamp_ms=timestamp_ms,
+        error_code=code if isinstance(code, int) and not isinstance(code, bool) else None,
+    )
 
 
 def _parse_referral(obj: Any) -> dict[str, Any] | None:
