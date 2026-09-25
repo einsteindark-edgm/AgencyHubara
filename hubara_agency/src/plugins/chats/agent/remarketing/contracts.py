@@ -5,7 +5,7 @@ Aplicacion de R-JSON: cualquier valor que cruce `workflow.execute_workflow` /
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -62,6 +62,15 @@ class RemarketingContext:
     #: Campaña que abrió el episodio activo (runs edbb0d8b / 8e73b7dc), ya
     #: redactada para el trigger. "" = el episodio no lo abrió una campaña.
     campaign_context: str = ""
+    #: Ficha REAL del catálogo (snapshot de Ventas) de los productos nombrados
+    #: en la charla + la lista de lo que existe. "" = catálogo no disponible.
+    #: Incidente 2026-09-25: sin esto el gancho inventó «el Cubo Love también
+    #: viene en vaso» (Cubo Love tiene una sola presentación).
+    catalog_facts: str = ""
+    #: Lo que el cliente pidió/mostró y NO existe en el catálogo («vaso»,
+    #: «dragón»): el trigger se lo prohíbe al LLM y la guarda de salida bloquea
+    #: el gancho que lo mencione igual. [] = nada detectado / sin catálogo.
+    unavailable_terms: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -76,3 +85,7 @@ class RemarketingTriggerInput:
     silence_minutes: int | None = None
     #: Ver `RemarketingContext.campaign_context`.
     campaign_context: str = ""
+    #: Ver `RemarketingContext.catalog_facts`.
+    catalog_facts: str = ""
+    #: Ver `RemarketingContext.unavailable_terms`.
+    unavailable_terms: list[str] = field(default_factory=list)
