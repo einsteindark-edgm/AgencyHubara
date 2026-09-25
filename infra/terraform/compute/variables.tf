@@ -39,6 +39,12 @@ variable "image_repo" {
   default     = "ghcr.io/einsteindark-edgm/agencyhubara"
 }
 
+variable "alarm_email" {
+  description = "Mail que recibe la alarma de memoria de las cajas de app (monitoring.tf). VACÍO = sin suscriptor. Va en un tfvars NO versionado o como TF_VAR_alarm_email (no commitear el mail)."
+  type        = string
+  default     = ""
+}
+
 # ── Tenants (cajas de app) ──────────────────────────────────────────────────
 # Hubara ~4GB → t3.medium ; Vincenzo ~8GB → t3.large (mapeo del doc §4).
 variable "tenants" {
