@@ -273,3 +273,76 @@ def test_round_trip_with_the_real_reaction_translation():
     effective = asyncio.run(translate_to_effective_text(msg))
     event = detect_chat_event(_user(effective.text))
     assert event == {"kind": "reaction", "emoji": "❤️", "author": "user"}
+
+
+# --- formulario de envío (Flow nfm_reply) ------------------------------------
+
+
+def test_shipping_form_becomes_a_structured_card():
+    event = detect_chat_event(
+        _user(
+            "[datos de envío recibidos] city=Bogotá ; neighborhood=Las Nieves; "
+            "address=Calle 1 #2-3 apto 4, edificio Prueba; phone=3001112233; "
+            "receiver_name=Ana Prueba; payment_method=transfer; "
+            "order_total_cop=45000; items_summary=1× Trilogía del Terror; "
+            "flow_token=shipping_wa_test_1"
+        )
+    )
+    assert event == {
+        "kind": "shipping_form",
+        "receiver_name": "Ana Prueba",
+        "phone": "3001112233",
+        "city": "Bogotá",
+        "neighborhood": "Las Nieves",
+        "address": "Calle 1 #2-3 apto 4, edificio Prueba",
+        "payment_method": "transfer",
+        "order_total_cop": 45000,
+        "items_summary": "1× Trilogía del Terror",
+        # flow_token es plomería interna: no se muestra al operador.
+        "extra": [],
+    }
+
+
+def test_shipping_form_keeps_unknown_fields_and_tolerates_gaps():
+    event = detect_chat_event(
+        _user("[datos de envío recibidos] city=Cali; notes=Portería 24h; order_total_cop=abc")
+    )
+    assert event["city"] == "Cali"
+    assert event["address"] is None
+    assert event["order_total_cop"] is None
+    assert event["extra"] == [{"key": "notes", "value": "Portería 24h"}]
+
+
+def test_empty_shipping_form_marker_still_is_a_card():
+    event = detect_chat_event(_user("[datos de envío recibidos]"))
+    assert event["kind"] == "shipping_form"
+    assert event["city"] is None and event["extra"] == []
+
+
+def test_round_trip_with_the_real_flow_translation():
+    msg = WhatsAppMessage(
+        message_id="wamid.3",
+        from_number="573001112233",
+        phone_number_id="pnid",
+        text=None,
+        media=None,
+        timestamp="2026-09-17T13:20:00Z",
+        msg_type="interactive",
+        interactive={
+            "type": "nfm_reply",
+            "name": "flow",
+            "response_json": {
+                "city": "Medellín",
+                "address": "Cra 1 # 2-3",
+                "order_total_cop": 90000,
+                "flow_token": "shipping_wa_test_2",
+            },
+        },
+    )
+    effective = asyncio.run(translate_to_effective_text(msg))
+    event = detect_chat_event(_user(effective.text))
+    assert event["kind"] == "shipping_form"
+    assert event["city"] == "Medellín"
+    assert event["address"] == "Cra 1 # 2-3"
+    assert event["order_total_cop"] == 90000
+    assert event["extra"] == []
