@@ -185,8 +185,14 @@ detalle hasta que llegue el registro del juez.
 
 Desde el 2026-09-28 (decisión del operador) los checks de juez SHALL
 calificarlos Claude Code con los mismos criterios, y Gemini SHALL NOT
-llamarse desde el scorecard (vuelve solo con `SCORECARD_JUDGE=litellm` en
-producción o `LAB_JUDGE=litellm` en la caja). El scorecard SHALL dejar el
+llamarse desde el scorecard (vuelve solo con `EVAL_LLM_JUDGE_ENABLED=true` y
+`SCORECARD_JUDGE=litellm` en producción, o `LAB_JUDGE=litellm` en la caja).
+Los caminos automáticos (cierre, barrido diario, recálculo del dashboard)
+SHALL encolar solo con `EVAL_LLM_JUDGE_ENABLED=true` (ver «Juez LLM apagado
+por defecto»); cuando el operador le pide a Claude Code calificar, el
+recálculo A PEDIDO (`judge_kind="claude"`: `rescore_scorecards.py
+--claude-judge`, `claude_judge.py aplicar`) SHALL encolar aunque el
+interruptor esté apagado (no gasta API). El scorecard SHALL dejar el
 prompt EXACTO de cada check de juez sin respuesta en una cola
 (`<vault>/_evals/judge_queue/` en producción, `runs/<corrida>/judge/` en el
 laboratorio) y el check SHALL quedar `desconocido` con la crítica
@@ -200,8 +206,8 @@ laboratorio.
 
 #### Scenario: Un episodio de producción espera a Claude Code
 
-- GIVEN un episodio que se cierra y un check de juez que aplica
-- WHEN corre el scorecard
+- GIVEN un episodio y un check de juez que aplica
+- WHEN el operador pide calificarlo y corre el recálculo a pedido (`judge_kind="claude"`), o cierra con `EVAL_LLM_JUDGE_ENABLED=true`
 - THEN el check queda `desconocido` con «pendiente: lo califica Claude Code» y su prompt queda en la cola, sin llamar a Gemini
 
 #### Scenario: Claude Code califica y se aplica
