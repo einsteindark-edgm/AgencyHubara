@@ -5,7 +5,7 @@ del laboratorio por `/api/chats/lab/runs/{corrida}/summary` y `/diff`.
     ahora en modo turno para las cuatro columnas, + pass^k;
   * `production`: lo que decía el scorecard de producción (modo episodio),
     como referencia;
-  * `diffs`: A0→A1 (fidelidad) y A1→B, A1→C, con intervalo;
+  * `diffs`: A0→A1 (fidelidad) y A1→B0, A1→B, con intervalo;
   * `fidelity`: A1 contra A0 en checks de código;
   * `arena`: métricas de los bots nuevos y acuerdo con los asuntos del juez.
 """
@@ -65,6 +65,24 @@ def test_diffs_fidelity_and_arena() -> None:
     assert arena_b["topics"]["turns"] == 1
     assert (arena_b["topics"]["precision"], arena_b["topics"]["recall"]) == (1.0, 0.5)
     assert "A1" not in s["arena"]  # el bot actual no tiene clasificador
+
+
+def test_b0_is_compared_against_a1_without_an_arena() -> None:
+    """Motor de decisiones F4: B0 (workflow V2 con reglas) tiene que dar lo
+    mismo que A1 — la comparación A1→B0 es la prueba de que el esqueleto nuevo
+    es fiel. No tiene clasificador: no entra a la arena."""
+    scores = {
+        "A1": [[_rec("A1", "FALLA", turns={1: {"EST-06": "falla"}})]],
+        "B0": [[_rec("B0", "FALLA", turns={1: {"EST-06": "falla"}})]],
+        "B": [[_rec("B", "PASA", turns={1: {"EST-06": "pasa"}})]],
+    }
+
+    s = build_summary(run_id="run-1", registry_version=4, previous={}, scores=scores, metrics={}, rows={},
+                      code_checks={"EST-06"})
+
+    assert set(s["diffs"]) == {"A1:B0", "A1:B"}
+    assert s["diffs"]["A1:B0"]["episode_pass"]["delta"] == 0.0
+    assert set(s["arena"]) == {"B"}
 
 
 def test_the_conversation_index_carries_the_verdict_of_each_arm() -> None:

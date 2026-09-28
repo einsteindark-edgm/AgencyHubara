@@ -7,8 +7,11 @@ sandbox lo fija para todo el caso (`DECISIONS_BOT`); la señal lleva el modo de
 las capas ①②③ y el perfil, exactamente como una conversación en canary de
 producción.
 
-  A1  el bot actual: la señal de hoy (3 argumentos, sin modo), todo en reglas
-  B   el bot nuevo con Jev
+  A1  el bot actual: workflow V1, la señal de hoy (3 argumentos, sin modo),
+      todo en reglas
+  B0  el workflow V2 con reglas y la señal de hoy: tiene que dar lo mismo que
+      A1 (prueba que el esqueleto nuevo es fiel)
+  B   el bot nuevo: workflow V2 con Jev
 
 A0 no se simula (es lo que pasó de verdad). El brazo C (OpenAI) se quitó el
 2026-09-28: 100 % Jev.

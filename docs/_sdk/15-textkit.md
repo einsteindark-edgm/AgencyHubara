@@ -27,6 +27,14 @@ TextKit es la fachada **libre de Temporal**: depende solo de
 | `keep_customer_safe_sentences` | filtro POR ORACIÓN: se caen solo las que rompen la persona o huelen a parte interno; devuelve `""` si no sobrevive ninguna |
 | `breaks_human_persona` | ¿el texto delata que no atiende una persona? ("humano", "bot", "IA", "automático"…) |
 | `looks_like_admin_leak` | ¿huele a reporte administrativo interno? |
+| `salvage_customer_text` | rescate por párrafo: quita los que huelen a parte interno (`""` si no queda nada) |
+| `strip_portavelas_notice` | quita las oraciones del aviso del portavelas (pedido que no lo incluye) |
+| `is_no_message_abstention` | ¿el texto es el centinela `NO_MESSAGE`? (protocolo de abstención, no lectura del texto) |
+
+Las reglas de egreso de hoy (fuga, rescate, portavelas) son también el
+respaldo `reglas` de las capacidades del motor de decisiones
+(`sales/decisions/egress.py`), que es un núcleo sin Temporal: por eso salen
+por este kit.
 
 Son **los mismos objetos** de `src.platform.llm_text_sanitizer`; los que
 `agentkit` también re-exporta son idénticos (workers y workflows siguen usando

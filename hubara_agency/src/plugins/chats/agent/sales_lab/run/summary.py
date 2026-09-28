@@ -11,7 +11,8 @@ Lo publica la caja en `runs/<corrida>/summary.json`; la API lo sirve por
   production       lo que decía el scorecard de producción (modo episodio),
                    como referencia (lo publicó el control, PR 8; un reintento
                    del resumen la conserva)
-  diffs            "A0:A1" (fidelidad) y "A1:B", "A1:C" (base = bot actual)
+  diffs            "A0:A1" (fidelidad) y "A1:B0", "A1:B" (base = bot actual;
+                   B0 = workflow V2 con reglas, tiene que dar lo mismo que A1)
   fidelity         A1 contra A0 en checks de código, turno por turno
   arena.<brazo>    bots nuevos: métricas de la corrida (PR 15) y acuerdo /
                    calibración contra los asuntos del juez (EST-08)
@@ -26,7 +27,7 @@ from typing import Any
 
 from src.plugins.chats.agent.sales_eval.scorecard import stats
 from src.plugins.chats.agent.sales_eval.scorecard.service import aggregate_checks
-from src.plugins.chats.agent.sales_lab.arms import ARM_PROFILES
+from src.plugins.chats.agent.sales_lab.arms import ARM_PROFILES, SIMULATED_ARMS
 from src.plugins.chats.agent.sales_lab.run.arena import judge_topic_codes, perceived_topics, topic_arena
 from src.plugins.chats.agent.sales_lab.run.compare import arm_row, diff_entry, fidelity, pass_k
 
@@ -87,8 +88,10 @@ def build_summary(
     diffs: dict[str, Any] = {}
     if CONTROL in scores and CURRENT in scores:
         diffs[f"{CONTROL}:{CURRENT}"] = diff_entry(CONTROL, CURRENT, scores[CONTROL], scores[CURRENT])
-    for cand in ARM_PROFILES:
-        if cand in scores and base in scores:
+    # Cada bot nuevo contra el actual: los de Jev (B) y el workflow V2 con
+    # reglas (B0, que tiene que dar lo mismo que A1: motor de decisiones F4).
+    for cand in SIMULATED_ARMS:
+        if cand != base and cand in scores and base in scores:
             diffs[f"{base}:{cand}"] = diff_entry(base, cand, scores[base], scores[cand])
     previous_arms = previous.get("arms") or {}
     # El control publicó `arms.A0` (producción); un resumen ya escrito la trae

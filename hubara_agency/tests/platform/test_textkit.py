@@ -30,6 +30,18 @@ def test_textkit_reexports_the_customer_text_guards() -> None:
     assert kit.customer_sentences is impl.customer_sentences
 
 
+def test_textkit_reexports_the_egress_rules_of_the_decisions_engine() -> None:
+    """Motor de decisiones (F4): las reglas de egreso de hoy (rescate,
+    portavelas y el centinela de abstención) son el respaldo `reglas` de sus
+    capacidades, en un núcleo sin Temporal: salen por acá, no por `agentkit`."""
+    import src.platform.llm_text_sanitizer as impl
+    import src.sdk.textkit as kit
+
+    assert getattr(kit, "salvage_customer_text", None) is impl.salvage_customer_text
+    assert getattr(kit, "strip_portavelas_notice", None) is impl.strip_portavelas_notice
+    assert getattr(kit, "is_no_message_abstention", None) is impl.is_no_message_abstention
+
+
 def test_textkit_only_depends_on_the_pure_sanitizer() -> None:
     """Su razón de ser: importable desde `tools/*.py`. Si un día importa otra
     cosa de platform (o Temporal), las tools vuelven a quedar sin camino."""

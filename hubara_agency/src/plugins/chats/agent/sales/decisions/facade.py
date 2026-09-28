@@ -19,11 +19,19 @@ from src.plugins.chats.agent.sales.decisions.activities import (
     verify_coverage_activity as verify_coverage_activity,
 )
 from src.plugins.chats.agent.sales.decisions.contracts import (
+    EgressInput as EgressInput,
+    EgressOutput as EgressOutput,
     PerceiveInput as PerceiveInput,
     PerceiveOutput as PerceiveOutput,
     TurnDecisions as TurnDecisions,
     VerifyInput as VerifyInput,
     VerifyOutput as VerifyOutput,
+)
+# Egreso del workflow V2 (F4): el workflow agenda la activity y aplica sus
+# veredictos; las reglas y las preguntas a Jev viven en `egress.py`.
+from src.plugins.chats.agent.sales.decisions.egress_activities import (
+    EGRESS_ACTIVITIES as EGRESS_ACTIVITIES,
+    decide_egress_activity as decide_egress_activity,
 )
 from src.plugins.chats.agent.sales.decisions.plan import PlanTopic, TurnPlan, uncovered_topics
 from src.sdk.agentkit import TurnPolicy

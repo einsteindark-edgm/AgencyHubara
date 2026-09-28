@@ -54,9 +54,10 @@ export type ArmMetrics = z.infer<typeof armMetricsSchema>;
 export type ArenaArm = z.infer<typeof arenaArmSchema>;
 export type RunReport = z.infer<typeof runReportSchema>;
 
-/** Brazo de una corrida: A0 = producción real; A1/B = simulados (100 % Jev
- * desde el 2026-09-28: el rival OpenAI, brazo C, se quitó). */
-export type Arm = "A0" | "A1" | "B";
+/** Brazo de una corrida: A0 = producción real; A1/B0/B = simulados (100 % Jev
+ * desde el 2026-09-28: el rival OpenAI, brazo C, se quitó). B0 = workflow V2
+ * con las reglas de hoy (tiene que dar lo mismo que A1); B = workflow V2 con Jev. */
+export type Arm = "A0" | "A1" | "B0" | "B";
 
 export interface LaunchInput {
   arms: string[];

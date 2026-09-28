@@ -112,8 +112,13 @@ agent:
       # encuentra la transition matchea, y arranca el target workflow por
       # nombre (string). Cross-worker imports están prohibidos por R-DIP #10
       # (ver `.importlinter` contracto `agents-independent`).
+      # Motor de decisiones F4: el V2 se registra al lado del V1 (congelado) y
+      # el registro de bots arranca uno u otro por nombre. El V1 va PRIMERO:
+      # `get_workflow_name` devuelve el índice 0 (lo que arranca quien no
+      # consulta el enrutador).
       workflow_classes:
         - HubaraSalesSessionWorkflow
+        - HubaraSalesSessionWorkflowV2
       emits:
         - SalesSessionCompletionEvent
         # HU-WA24H-001 Sprint 2: service-window lifecycle events.

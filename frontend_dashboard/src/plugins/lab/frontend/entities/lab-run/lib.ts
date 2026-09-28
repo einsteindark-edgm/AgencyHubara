@@ -2,10 +2,15 @@ import { ApiError } from "@/shared/sdk";
 
 import type { EpisodeVerdict } from "./model";
 
-/** Nombres de los bots de una corrida (plan §3.2, diseño §09). */
+/**
+ * Nombres de los bots de una corrida (plan §3.2, diseño §09). B0 es el
+ * workflow nuevo (V2) con las reglas de hoy: tiene que dar lo mismo que A1
+ * (motor de decisiones §08); B es el workflow nuevo con Jev.
+ */
 export const ARM_LABELS: Record<string, string> = {
   A0: "Producción",
   A1: "Actual simulado",
+  B0: "Nuevo sin Jev",
   B: "Nuevo + Jev",
 };
 

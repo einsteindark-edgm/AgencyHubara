@@ -54,3 +54,12 @@ def test_clean_query_drops_missing_values_and_validates_shapes() -> None:
     with pytest.raises(LabPathError):
         clean_query(bench="../bench")
     assert clean_query(arms="A1,B,C", reps=3, bench="new") == {"arms": "A1,B,C", "reps": 3, "bench": "new"}
+
+
+def test_b0_is_a_valid_arm_for_every_parameter() -> None:
+    """Motor de decisiones F4: B0 (workflow V2 con reglas) viaja a chats como
+    los demás brazos: al lanzar, al leer su traza y al compararlo con A1."""
+    assert clean_query(arm="B0", base="A1", cand="B0") == {"arm": "B0", "base": "A1", "cand": "B0"}
+    assert clean_query(arms="A1,B0,B") == {"arms": "A1,B0,B"}
+    with pytest.raises(LabPathError):
+        clean_query(arm="B00")

@@ -50,9 +50,13 @@ from src.sdk.runtime import WORKSPACE_VAULT_DIR, get_temporal_client
 
 router = APIRouter()
 
+#: Brazos que se pueden lanzar (registro de bots, diseño §08): A1 = el bot de
+#: hoy (workflow V1); B0 = workflow V2 con las reglas de hoy (tiene que dar lo
+#: mismo que A1); B = workflow V2 con Jev.
 ARMS: dict[str, str] = {
     "A1": "Bot actual (control)",
-    "B": "Bot nuevo + Jev (OpenRouter)",
+    "B0": "Bot nuevo sin Jev (workflow V2 con reglas)",
+    "B": "Bot nuevo + Jev (workflow V2, OpenRouter)",
 }
 _REPS = (1, 3)
 _BENCH_RE = re.compile(r"^bench-[a-z0-9-]{6,64}$")
@@ -95,7 +99,7 @@ def _store() -> LabStorePort:
 def _parse_arms(arms: list[str]) -> list[str]:
     wanted = [a.strip() for a in arms if a and a.strip()]
     if "A1" not in wanted or any(a not in ARMS for a in wanted) or len(set(wanted)) != len(wanted):
-        raise HTTPException(422, detail={"reason": "arms", "message": "Bots válidos: A1 (siempre), B y C."})
+        raise HTTPException(422, detail={"reason": "arms", "message": "Bots válidos: A1 (siempre), B0 y B."})
     return [a for a in ARMS if a in wanted]
 
 
@@ -280,7 +284,7 @@ def _sid(sid: str) -> str:
 
 def _arm(arm: str) -> str:
     if arm not in _READ_ARMS:
-        raise HTTPException(422, detail="Brazo inválido: A0, A1, B o C.")
+        raise HTTPException(422, detail="Brazo inválido: A0, A1, B0 o B.")
     return arm
 
 

@@ -8,6 +8,8 @@ describe("lib del laboratorio", () => {
   it("nombra cada bot como en el diseño", () => {
     expect(armLabel("A0")).toBe("Producción");
     expect(armLabel("A1")).toBe("Actual simulado");
+    // B0: el workflow nuevo (V2) con las reglas de hoy; tiene que dar lo mismo que A1.
+    expect(armLabel("B0")).toBe("Nuevo sin Jev");
     expect(armLabel("B")).toBe("Nuevo + Jev");
     // El rival OpenAI (brazo C) se quitó el 2026-09-28: 100 % Jev.
     expect(armLabel("C")).toBe("C");

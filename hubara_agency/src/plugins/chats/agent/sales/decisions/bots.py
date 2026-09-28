@@ -69,12 +69,14 @@ class Bot:
         return value if value in PROVIDERS else "reglas"
 
 
-#: Brazos del laboratorio (diseño §08): el bot de hoy (A1) y el bot nuevo con
-#: Jev (B). Con el workflow V2 (F4) se suman B0 (V2 con reglas, tiene que dar
-#: lo mismo que A1) y B pasa a V2.
+#: Brazos del laboratorio (diseño §08), por composición: A1 = V1 con reglas (el
+#: bot de hoy); B0 = V2 con reglas y sin capas (tiene que dar lo mismo que A1:
+#: prueba que el esqueleto nuevo es fiel); B = V2 con Jev en cada capacidad y
+#: las capas ①③. Así se separa el efecto del workflow del efecto de Jev.
 LAB_BOTS: dict[str, Bot] = {
     "A1": Bot(id="A1"),
-    "B": Bot(id="B", layers="on", default_provider="jev"),
+    "B0": Bot(id="B0", workflow=WORKFLOW_V2),
+    "B": Bot(id="B", workflow=WORKFLOW_V2, layers="on", default_provider="jev"),
 }
 
 

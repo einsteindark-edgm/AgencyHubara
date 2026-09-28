@@ -108,6 +108,15 @@ def test_diff_needs_both_arms(http) -> None:
     assert http.get(f"/api/chats/lab/runs/{RUN}/diff", params={"base": "A1", "cand": "B"}).status_code == 404
 
 
+def test_b0_is_a_readable_arm(http) -> None:
+    """Motor de decisiones F4: B0 (workflow V2 con reglas) se lee como los
+    demás brazos; sin resultados todavía es un 404, no un brazo inválido."""
+    resp = http.get(f"/api/chats/lab/runs/{RUN}/summary", params={"arm": "B0"})
+
+    assert resp.status_code == 404 and "todavía" in resp.json()["detail"]
+    assert http.get(f"/api/chats/lab/runs/{RUN}/diff", params={"base": "A1", "cand": "B0"}).status_code == 404
+
+
 @pytest.mark.parametrize(
     "path",
     [

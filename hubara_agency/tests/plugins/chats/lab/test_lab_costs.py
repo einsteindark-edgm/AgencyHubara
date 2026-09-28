@@ -43,7 +43,8 @@ def test_only_jev_has_a_classifier_cost() -> None:
     """Sin OpenAI (brazo C, quitado el 2026-09-28) el único clasificador es Jev."""
     from src.plugins.chats.agent.sales_lab.launch.costs import PERCEPTION_USD_PER_TURN
 
-    assert PERCEPTION_USD_PER_TURN == {"A1": 0.0, "B": 0.0002}
+    # B0 = workflow V2 con las reglas de hoy: no le pregunta nada a Jev.
+    assert PERCEPTION_USD_PER_TURN == {"A1": 0.0, "B0": 0.0, "B": 0.0002}
 
 
 def test_estimate_scales_with_turns_and_arms() -> None:

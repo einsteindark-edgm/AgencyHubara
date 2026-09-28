@@ -19,8 +19,10 @@ PROVIDER_PREFIX = "/api/chats/lab"
 
 _SID_RE = re.compile(r"^wa_[A-Za-z0-9_+]{3,40}$")
 _EPISODE_RE = re.compile(r"^ep_\d{1,6}$")
-_ARM_RE = re.compile(r"^(A0|A1|B|C)$")
-_ARMS_RE = re.compile(r"^(A0|A1|B|C)(,(A0|A1|B|C)){0,3}$")
+# B0 = workflow V2 con reglas (motor de decisiones F4); chats decide cuáles
+# brazos existen hoy, acá solo se valida la forma.
+_ARM_RE = re.compile(r"^(A0|A1|B0|B|C)$")
+_ARMS_RE = re.compile(r"^(A0|A1|B0|B|C)(,(A0|A1|B0|B|C)){0,4}$")
 _BENCH_RE = re.compile(r"^(new|bench-[a-z0-9-]{6,64})$")
 _TURN_KEY_RE = re.compile(r"^[A-Za-z0-9_:/+.-]{1,200}$")
 _REPS = (1, 3)

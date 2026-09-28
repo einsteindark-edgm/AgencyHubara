@@ -31,7 +31,9 @@ interface Props {
   lastBenchId: string | null;
 }
 
-const OPTIONAL_ARMS = ["B"] as const;
+// B0 (workflow nuevo con las reglas de hoy) va sin marcar: se prende para
+// probar que el esqueleto nuevo da lo mismo que A1 (motor de decisiones §08).
+const OPTIONAL_ARMS = ["B0", "B"] as const;
 const STEPS = ["Exportar banco", "Prender la caja", "Correr bots", "Evaluar", "Listo"];
 
 const PHASE_STEP: Record<string, number> = {

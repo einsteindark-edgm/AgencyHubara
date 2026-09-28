@@ -14,6 +14,13 @@ def test_the_current_bot_gets_the_signal_of_today() -> None:
     assert signal_meta("A1", {"text": "hola", "ts_ms": 5}) is None
 
 
+def test_b0_is_the_new_workflow_with_todays_signal() -> None:
+    """B0 = V2 con reglas y sin capas: la señal de hoy (lo único que cambia
+    con A1 es el workflow, que el sandbox arranca por el registro de bots)."""
+    assert signal_meta("B0", {"text": "hola", "ts_ms": 5}) is None
+    assert "B0" not in ARM_PROFILES
+
+
 @pytest.mark.parametrize(("arm", "profile"), [("B", "jev-v1")])
 def test_new_bots_get_mode_on_and_their_profile(arm: str, profile: str) -> None:
     meta = signal_meta(arm, {"text": "hola", "ts_ms": 1_790_000_000_000, "kind": "text", "wamid": "wamid.X"})
@@ -33,7 +40,7 @@ def test_a_message_without_time_still_carries_the_mode() -> None:
 
 
 def test_an_unknown_arm_is_refused() -> None:
-    assert SIMULATED_ARMS == ("A1", "B")
+    assert SIMULATED_ARMS == ("A1", "B0", "B")
     with pytest.raises(ValueError, match="Z"):
         signal_meta("Z", {"text": "hola"})
 

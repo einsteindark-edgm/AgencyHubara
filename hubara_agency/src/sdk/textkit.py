@@ -29,9 +29,16 @@ from __future__ import annotations
 # Alias idiom (regla 1 SDK): sin el `as x`, ruff --fix poda el re-export.
 from src.platform.llm_text_sanitizer import (
     breaks_human_persona as breaks_human_persona,
+    # Motor de decisiones (F5): las oraciones que juzga el filtro, para que
+    # el motor decida cuáles se caen (`keep_customer_safe_sentences(drop=…)`).
     customer_sentences as customer_sentences,
+    # Centinela de abstención (`NO_MESSAGE`): protocolo, no lectura del texto.
+    is_no_message_abstention as is_no_message_abstention,
     keep_customer_safe_sentences as keep_customer_safe_sentences,
     looks_like_admin_leak as looks_like_admin_leak,
     salvage_customer_text as salvage_customer_text,
     sanitize_llm_text as sanitize_llm_text,
+    # Motor de decisiones (F4): la regla de hoy del aviso del portavelas es el
+    # respaldo `reglas` de su capacidad de egreso, en un núcleo sin Temporal.
+    strip_portavelas_notice as strip_portavelas_notice,
 )

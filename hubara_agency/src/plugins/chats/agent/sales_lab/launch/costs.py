@@ -18,7 +18,8 @@ from src.sdk.labkit import LabStorePort
 
 AGENT_USD_PER_TURN = 7.09 / 404
 JUDGE_USD_PER_TURN = 30.0 / (9 * 404)
-PERCEPTION_USD_PER_TURN = {"A1": 0.0, "B": 0.0002}
+# B0 (workflow V2 con las reglas de hoy) no le pregunta nada a Jev.
+PERCEPTION_USD_PER_TURN = {"A1": 0.0, "B0": 0.0, "B": 0.0002}
 
 _BOGOTA = timezone(timedelta(hours=-5))
 

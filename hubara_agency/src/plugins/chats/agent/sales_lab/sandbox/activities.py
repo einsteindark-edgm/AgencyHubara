@@ -54,6 +54,9 @@ REAL_IN_SANDBOX = frozenset(
         "build_first_contact_greeting",
         "build_prompt",
         "compute_bogota_context",
+        # Egreso del workflow V2 (motor de decisiones F4): decide con el bot
+        # del brazo (B0 reglas, B Jev) y solo lee el vault del sandbox.
+        "decide_egress",
         "ensure_closing_escalation",
         "ensure_payment_pending_closure",
         "execute_tool",

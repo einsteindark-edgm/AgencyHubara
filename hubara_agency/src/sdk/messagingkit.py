@@ -54,14 +54,6 @@ from src.platform.whatsapp.reengagement_ladder import (
 )
 from src.platform.whatsapp import reengagement_index as _reengagement_index
 
-# Índice incremental de reactivación (Punto 2, escala): shortlist para el
-# snapshot builder + update en el ingest. Asignaciones (no import-as) para
-# que ruff no las pode como unused — son la superficie pública del kit.
-load_reengagement_index = _reengagement_index.load_index
-update_reengagement_index_entry = _reengagement_index.update_index_entry
-update_reengagement_index_entries = _reengagement_index.update_index_entries
-reengagement_shortlist = _reengagement_index.shortlist_session_ids
-
 # Opt-out de marketing: el detector determinista que cumple la promesa del
 # template de campañas ("respóndeme NO MÁS y te doy de baja"). Lo consulta el
 # ingest de chats en cada inbound de texto; la audiencia de campañas excluye
@@ -153,3 +145,25 @@ from src.platform.whatsapp.activities import (
 from src.platform.whatsapp.cost import (
     OutboundLogEntry as OutboundLogEntry,
 )
+
+# Los envíos del turno de ventas (motor de decisiones F4): el workflow V2 nace
+# importando solo el SDK (P-28). El texto al cliente, el "escribiendo…", el
+# evento de Meta del cierre (CAPI) y el flush del outbox de eventos del turno.
+# Se registran en el worker de ventas; el workflow solo los agenda.
+from src.platform.whatsapp.activities import (
+    send_typing_indicator_activity as send_typing_indicator_activity,
+    send_whatsapp_message_activity as send_whatsapp_message_activity,
+)
+from src.platform.whatsapp.capi_activity import (
+    flush_capi_outbox_activity as flush_capi_outbox_activity,
+    send_capi_event_activity as send_capi_event_activity,
+)
+
+# Índice incremental de reactivación (Punto 2, escala): shortlist para el
+# snapshot builder + update en el ingest. Asignaciones (no import-as) para
+# que ruff no las pode como unused — son la superficie pública del kit. Van al
+# final: una asignación entre imports hace que todos los de abajo violen E402.
+load_reengagement_index = _reengagement_index.load_index
+update_reengagement_index_entry = _reengagement_index.update_index_entry
+update_reengagement_index_entries = _reengagement_index.update_index_entries
+reengagement_shortlist = _reengagement_index.shortlist_session_ids

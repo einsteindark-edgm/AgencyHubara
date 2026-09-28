@@ -1,8 +1,10 @@
 """Un turno simulado del bot de ventas, en el sandbox (plan §3.3–§3.6, PR 11).
 
-Corre el MISMO `HubaraSalesSessionWorkflow` de producción, con el mismo
-`run_agent_turn`, la misma coalescencia de la ráfaga, las mismas guardas y el
-mismo manejo de episodios. Lo único distinto:
+Corre el MISMO workflow de ventas de producción que el bot del brazo dice
+(registro de bots: A1 el V1 `HubaraSalesSessionWorkflow`; B0 y B el V2
+`HubaraSalesSessionWorkflowV2`), con el mismo `run_agent_turn`, la misma
+coalescencia de la ráfaga, las mismas guardas y el mismo manejo de episodios.
+Lo único distinto:
 
   * el servidor de Temporal (el de la caja; en CI, el de pruebas del SDK);
   * el vault, el historial del LLM y el catálogo: los del sandbox del caso,
@@ -35,6 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.plugins.chats.agent.sales.decisions.bots import bot_for_arm
 from src.plugins.chats.agent.sales_lab.arms import signal_meta
 from src.plugins.chats.agent.sales_lab.sandbox.activities import SandboxCapture, sandbox_activities
 from src.plugins.chats.agent.sales_lab.sandbox.clock import frozen_clock
@@ -43,7 +46,6 @@ from src.plugins.chats.agent.sales_lab.sandbox.readings import apply_burst_readi
 
 PROD_SALES_WORKSPACE = "app-hubara-agency-src-plugins-chats-agent-sales-workspace"
 DEFAULT_TIMEOUT_S = 600.0
-SALES_WORKFLOW = "HubaraSalesSessionWorkflow"
 
 
 @contextmanager
@@ -177,12 +179,13 @@ async def run_case(
     with _pinned_bot(arm), installed_sandbox_ports(
         promotions_path=bench_dir / "promotions.json", catalog=get_catalog_client()
     ), frozen_clock(at_ms):
-        # El workflow y sus activities salen del WORKER de ventas (R-DIP #10: un
+        # Los workflows y sus activities salen del WORKER de ventas (R-DIP #10: un
         # agente no importa los contratos ni los workflows de otro); se arranca
-        # por nombre con la entrada como JSON, igual que el dispatcher.
+        # por nombre con la entrada como JSON, igual que el dispatcher: el del
+        # bot del brazo (A1 → V1; B0 y B → V2, motor de decisiones F4).
         import src.plugins.chats.workers.sales as sales_worker
 
-        workflow_cls = sales_worker.HubaraSalesSessionWorkflow
+        workflow_name = bot_for_arm(arm).workflow
 
         activities = sandbox_activities(
             sales_worker.SALES_ACTIVITIES,
@@ -216,16 +219,16 @@ async def run_case(
         async with Worker(
             client,
             task_queue=queue,
-            workflows=[workflow_cls],
+            workflows=list(sales_worker.SALES_WORKFLOWS),
             activities=activities,
             workflow_runner=sales_worker.otel_workflow_runner(),
         ):
             start = {"session_id": box.session_id, "turn_count": 0, "runtime_workspace_path": None}
             if case.get("trigger") == "handoff":
-                handle = await client.start_workflow(SALES_WORKFLOW, start, id=workflow_id, task_queue=queue)
+                handle = await client.start_workflow(workflow_name, start, id=workflow_id, task_queue=queue)
             else:
                 handle = await client.start_workflow(
-                    SALES_WORKFLOW,
+                    workflow_name,
                     start,
                     id=workflow_id,
                     task_queue=queue,

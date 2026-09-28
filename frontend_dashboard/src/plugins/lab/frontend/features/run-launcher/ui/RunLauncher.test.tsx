@@ -97,6 +97,17 @@ describe("RunLauncher", () => {
     expect(screen.queryByRole("checkbox", { name: /OpenAI/ })).not.toBeInTheDocument();
   });
 
+  it("ofrece B0 (el workflow nuevo con las reglas de hoy) sin marcar, y lo manda si se marca", async () => {
+    renderLauncher();
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
+    const b0 = screen.getByRole("checkbox", { name: /B0 · Nuevo sin Jev/ });
+    expect(b0).not.toBeChecked();
+
+    fireEvent.click(b0);
+
+    await waitFor(() => expect(estimateCalls().at(-1)).toContain("arms=A1%2CB0%2CB&reps=1&bench=new"));
+  });
+
   it("recalcula al cambiar bots, repeticiones y banco", async () => {
     renderLauncher();
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));

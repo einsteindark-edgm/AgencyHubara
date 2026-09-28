@@ -113,10 +113,21 @@ from src.plugins.chats.agent.sales.tools.ui_intents import (
 from src.plugins.chats.agent.sales.workflows.sales_session import (
     HubaraSalesSessionWorkflow,
 )
+from src.plugins.chats.agent.sales.workflows.sales_session_v2 import (
+    HubaraSalesSessionWorkflowV2,
+)
 from src.plugins.chats.agent.sales.decisions.routing import register_sales_workflow_router
 from src.plugins.chats.agent.sales.decisions.activities import (
     PERCEPTION_ACTIVITIES,
 )
+from src.plugins.chats.agent.sales.decisions.egress_activities import (
+    EGRESS_ACTIVITIES,
+)
+
+# Workflows del worker de ventas (motor de decisiones F4): el V1 congelado y el
+# V2 al lado; el registro de bots arranca uno u otro POR NOMBRE. Constante de
+# módulo para que el sandbox del laboratorio registre las mismas clases.
+SALES_WORKFLOWS = [HubaraSalesSessionWorkflow, HubaraSalesSessionWorkflowV2]
 
 # HU-002: analytics bus singleton — filesystem siempre, Meta CAPI si hay
 # token. El bus es global para todo el proceso del worker; las activities
@@ -492,6 +503,9 @@ SALES_ACTIVITIES = [
     # clasificador (`perceive_burst`, `verify_coverage`). Solo corren
     # con un modo activo en la señal; registrarlas no cambia nada (L-3).
     *PERCEPTION_ACTIVITIES,
+    # Motor de decisiones F4: el egreso del workflow V2 (`decide_egress`:
+    # destinatario, rescate, portavelas y saludo). El V1 no la llama.
+    *EGRESS_ACTIVITIES,
 ]
 
 
@@ -505,7 +519,7 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=task_queue,
-        workflows=[HubaraSalesSessionWorkflow],
+        workflows=SALES_WORKFLOWS,
         activities=SALES_ACTIVITIES,
         # OTel obs: el TracingInterceptor (en get_temporal_client) crea spans
         # dentro del workflow sandbox → necesita opentelemetry como passthrough

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -161,6 +162,19 @@ class TurnPolicy:
     max_extra_rounds: int = 1
 
 
+#: Gancho de egreso del caller (motor de decisiones, F4): `egress(texto_final,
+#: contexto)` → veredictos. Corre donde corría el rescate antes de grabar y lo
+#: REEMPLAZA: el historial del LLM guarda el texto que el egreso decidió enviar
+#: (`text`; "" = nada, salvo el centinela `NO_MESSAGE`, que se recuerda como
+#: siempre) y el turno devuelve `llm_text` como `final_content`
+#: (`rescued_before_record` = hubo rescate antes de grabar). El contexto trae
+#: `first_contact`, `tools_used`, `outbound_tool_texts`, `order_registered`,
+#: `portavelas_included` y `admin_turn`. Lo que devuelve viaja en
+#: `TurnResult.egress`. Lo pasa el workflow de ventas V2 (ejecuta la activity
+#: `decide_egress`); sin gancho, el turno de hoy.
+EgressHook = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
 @dataclass
 class InboxMsg:
     """DTO de un inbound en la bandeja durable con watermark (PR burst-inbox).
@@ -250,6 +264,10 @@ class TurnResult:
     # commands a la history (replay-safe sin patch). También viaja en el
     # resultado interrumpido (Checkpoint A): el intento abortado se ve.
     steps: list[dict[str, Any]] = field(default_factory=list)
+    # Motor de decisiones (F4): lo que devolvió el gancho `egress` del caller
+    # (los veredictos del egreso: qué texto sale, si se frenó, el saludo…).
+    # None sin gancho: el turno de siempre (V1, remarketing, ETA).
+    egress: dict[str, Any] | None = None
 
 
 # Tope del resultado de cada tool que viaja en `TurnResult.tool_events`: el
@@ -596,6 +614,53 @@ def _history_view(
     return view
 
 
+def _record_egress(
+    recorded: list[dict[str, Any]],
+    final_content: str,
+    verdicts: dict[str, Any],
+    *,
+    admin_turn: bool,
+    steps: list[dict[str, Any]],
+    discarded_narration: list[str],
+) -> tuple[list[dict[str, Any]], str, bool]:
+    """Aplica al historial los veredictos del gancho de egreso (`EgressHook`).
+
+    Devuelve `(lo que se graba, final_content del turno, hubo rescate antes de
+    grabar)`. El último mensaje del LLM (si es el texto final) se graba como
+    salió: con el texto que el egreso decidió enviar, o nada si no sale nada
+    (turno admin incluido). `NO_MESSAGE` se recuerda igual que siempre: es el
+    canal correcto de abstención. El rescate antes de grabar deja el mismo
+    rastro que el de la rama de siempre (narración descartada + guarda).
+    Puro: solo listas en memoria (no agrega comandos).
+    """
+    sent = verdicts.get("text")
+    sent = sent if isinstance(sent, str) else ""
+    llm_text = verdicts.get("llm_text")
+    llm_text = llm_text if isinstance(llm_text, str) else final_content
+    salvaged_leak = bool(verdicts.get("rescued_before_record")) and bool(final_content)
+    if salvaged_leak:
+        discarded_narration.append(final_content)
+        steps.append(
+            {"kind": "guard", "at_ms": _now_ms(), "name": "salvage_leak", "before": final_content, "after": llm_text}
+        )
+    if (
+        final_content
+        and recorded
+        and recorded[-1].get("role") == "assistant"
+        and not recorded[-1].get("tool_calls")
+        and recorded[-1].get("content") == final_content
+    ):
+        if admin_turn or (not sent and not is_no_message_abstention(final_content)):
+            workflow.logger.info(
+                "texto final no recordado en el historial del LLM (el egreso no "
+                f"lo envía; admin={admin_turn}): {final_content[:120]!r}"
+            )
+            recorded = recorded[:-1]
+        elif sent and sent != final_content:
+            recorded = [*recorded[:-1], {**recorded[-1], "content": sent}]
+    return recorded, llm_text, salvaged_leak
+
+
 async def run_agent_turn(
     session: SessionInput,
     msg: PendingMessage,
@@ -608,8 +673,13 @@ async def run_agent_turn(
     align_history_with_episode: bool = False,
     salvage_leaked_text: bool = False,
     turn_policy: TurnPolicy | None = None,
+    egress: EgressHook | None = None,
 ) -> TurnResult:
     """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
+
+    `egress` (motor de decisiones, F4): gancho del caller que decide el egreso
+    del texto final ANTES de grabarlo; ver `EgressHook`. Default None = el
+    turno de hoy (V1, remarketing y ETA no cambian ni un comando).
 
     `turn_policy` (plan del laboratorio, PR 14): capa ② del turno con
     clasificador; ver `TurnPolicy`. Default None = el turno de hoy.
@@ -700,6 +770,7 @@ async def run_agent_turn(
         admin_turn=admin_turn,
         salvage_leaked_text=salvage_leaked_text,
         turn_policy=turn_policy,
+        egress=egress,
     )
 
 
@@ -715,6 +786,7 @@ async def _run_agent_turn_impl(
     admin_turn: bool = False,
     salvage_leaked_text: bool = False,
     turn_policy: TurnPolicy | None = None,
+    egress: EgressHook | None = None,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -1445,63 +1517,94 @@ async def _run_agent_turn_impl(
     # de commands (L-9 versiona forma, no contenido); en replay la activity no
     # se re-ejecuta. Por eso `extended` va en su default: nada que versionar.
     recorded = _history_view(messages[initial_len:], delivered_replies)
-    # Rescate ANTES de grabar (run 28a8e407, 2026-09-23): el texto final traía
-    # un párrafo de razonamiento + la respuesta real. Antes el rescate vivía en
-    # el caller, DESPUÉS de este `record_turn`: el cliente recibía la respuesta
-    # pero el historial la perdía entera (olía a parte interno) y el LLM
-    # re-contestaba la misma pregunta a cada "Si". Ahora se decide UNA vez: lo
-    # que se graba es exactamente lo que el caller va a enviar. Opt-in
-    # (`salvage_leaked_text`): en remarketing un leak es abstención, no rescate.
-    # `extended=True` = el set v2 que usa el caller en workflows nuevos (el
-    # único lugar donde esta rama corre). `patched()` va ÚLTIMO: solo se
-    # consulta cuando hay algo que rescatar; histories previas replayean con
-    # el rescate en el caller (mismo envío).
-    salvaged_leak = False
-    if (
-        salvage_leaked_text
-        and not admin_turn
-        and final_content
-        and not is_no_message_abstention(final_content)
-        and looks_like_admin_leak(final_content, extended=True)
-        and workflow.patched("record-sent-text-v1")
-    ):
-        salvaged = salvage_customer_text(final_content, extended=True)
-        if salvaged:
-            workflow.logger.info(
-                "texto final rescatado antes de grabarlo (se cae el párrafo "
-                f"de razonamiento): {final_content[:120]!r}"
-            )
-            discarded_narration.append(final_content)
-            steps.append(
-                {"kind": "guard", "at_ms": _now_ms(), "name": "salvage_leak",
-                 "before": final_content, "after": salvaged}
-            )
-            if (
-                recorded
-                and recorded[-1].get("role") == "assistant"
-                and not recorded[-1].get("tool_calls")
-                and recorded[-1].get("content") == final_content
-            ):
-                recorded = [*recorded[:-1], {**recorded[-1], "content": salvaged}]
-            final_content = salvaged
-            salvaged_leak = True
-    never_reaches_customer = admin_turn or (
-        looks_like_admin_leak(final_content)
-        and not is_no_message_abstention(final_content)
-    )
-    if (
-        final_content
-        and never_reaches_customer
-        and recorded
-        and recorded[-1].get("role") == "assistant"
-        and not recorded[-1].get("tool_calls")
-        and recorded[-1].get("content") == final_content
-    ):
-        workflow.logger.info(
-            "texto final no recordado en el historial del LLM (nunca llega "
-            f"al cliente; admin={admin_turn}): {final_content[:120]!r}"
+    egress_result: dict[str, Any] | None = None
+    if egress is not None:
+        # Motor de decisiones (F4): el caller decide el egreso con su gancho,
+        # donde corría el rescate, y lo REEMPLAZA (el workflow de ventas V2 no
+        # tiene reglas de texto: le pregunta al motor). El historial guarda lo
+        # que el egreso decidió enviar. Sin comandos nuevos para quien no pasa
+        # gancho: V1, remarketing y ETA siguen por la rama de abajo.
+        egress_result = await egress(
+            final_content,
+            {
+                "first_contact": first_contact,
+                "tools_used": list(tools_used),
+                "outbound_tool_texts": list(outbound_tool_texts),
+                "order_registered": order_registered_decision is not None,
+                "portavelas_included": (
+                    order_registered_decision.portavelas_included
+                    if order_registered_decision is not None
+                    else None
+                ),
+                "admin_turn": admin_turn,
+            },
         )
-        recorded = recorded[:-1]
+        recorded, final_content, salvaged_leak = _record_egress(
+            recorded,
+            final_content,
+            egress_result,
+            admin_turn=admin_turn,
+            steps=steps,
+            discarded_narration=discarded_narration,
+        )
+    else:
+        # Rescate ANTES de grabar (run 28a8e407, 2026-09-23): el texto final
+        # traía un párrafo de razonamiento + la respuesta real. Antes el rescate
+        # vivía en el caller, DESPUÉS de este `record_turn`: el cliente recibía
+        # la respuesta pero el historial la perdía entera (olía a parte interno)
+        # y el LLM re-contestaba la misma pregunta a cada "Si". Ahora se decide
+        # UNA vez: lo que se graba es exactamente lo que el caller va a enviar.
+        # Opt-in (`salvage_leaked_text`): en remarketing un leak es abstención,
+        # no rescate. `extended=True` = el set v2 que usa el caller en
+        # workflows nuevos (el único lugar donde esta rama corre). `patched()`
+        # va ÚLTIMO: solo se consulta cuando hay algo que rescatar; histories
+        # previas replayean con el rescate en el caller (mismo envío).
+        salvaged_leak = False
+        if (
+            salvage_leaked_text
+            and not admin_turn
+            and final_content
+            and not is_no_message_abstention(final_content)
+            and looks_like_admin_leak(final_content, extended=True)
+            and workflow.patched("record-sent-text-v1")
+        ):
+            salvaged = salvage_customer_text(final_content, extended=True)
+            if salvaged:
+                workflow.logger.info(
+                    "texto final rescatado antes de grabarlo (se cae el párrafo "
+                    f"de razonamiento): {final_content[:120]!r}"
+                )
+                discarded_narration.append(final_content)
+                steps.append(
+                    {"kind": "guard", "at_ms": _now_ms(), "name": "salvage_leak",
+                     "before": final_content, "after": salvaged}
+                )
+                if (
+                    recorded
+                    and recorded[-1].get("role") == "assistant"
+                    and not recorded[-1].get("tool_calls")
+                    and recorded[-1].get("content") == final_content
+                ):
+                    recorded = [*recorded[:-1], {**recorded[-1], "content": salvaged}]
+                final_content = salvaged
+                salvaged_leak = True
+        never_reaches_customer = admin_turn or (
+            looks_like_admin_leak(final_content)
+            and not is_no_message_abstention(final_content)
+        )
+        if (
+            final_content
+            and never_reaches_customer
+            and recorded
+            and recorded[-1].get("role") == "assistant"
+            and not recorded[-1].get("tool_calls")
+            and recorded[-1].get("content") == final_content
+        ):
+            workflow.logger.info(
+                "texto final no recordado en el historial del LLM (nunca llega "
+                f"al cliente; admin={admin_turn}): {final_content[:120]!r}"
+            )
+            recorded = recorded[:-1]
     # Turno admin SIN ninguna tool call: no dejó ningún hecho que recordar, y
     # lo único que quedaría es el trigger de sistema SIN cerrar ("[SISTEMA]… NO
     # generes ninguna respuesta visible… SOLO llama la herramienta"). La sesión
@@ -1566,4 +1669,5 @@ async def _run_agent_turn_impl(
         discarded_narration=discarded_narration,
         salvaged_leak=salvaged_leak,
         steps=steps,
+        egress=egress_result,
     )

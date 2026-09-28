@@ -49,6 +49,19 @@ def test_the_lab_arm_picks_the_bot() -> None:
         bots.bot_for_arm("Z")
 
 
+def test_the_lab_arms_separate_the_new_workflow_from_jev() -> None:
+    """Diseño §08: A1 = V1 con reglas (el bot de hoy); B0 = V2 con reglas
+    (tiene que dar lo mismo que A1: prueba que el esqueleto nuevo es fiel);
+    B = V2 con Jev. Así se separa el efecto del workflow del efecto de Jev."""
+    a1, b0, b = (bots.bot_for_arm(arm) for arm in ("A1", "B0", "B"))
+
+    assert tuple(bots.LAB_BOTS) == ("A1", "B0", "B")
+    assert (a1.workflow, b0.workflow, b.workflow) == (bots.WORKFLOW_V1, bots.WORKFLOW_V2, bots.WORKFLOW_V2)
+    assert all(b0.provider(c) == "reglas" for c in ("compra", "retoma", "baja", "destinatario", "saludo"))
+    assert (b0.layers, b0.profile) == ("off", bots.DEFAULT_PROFILE)
+    assert (b.provider("destinatario"), b.provider("compra"), b.layers, b.profile) == ("jev", "jev", "on", "jev-v1")
+
+
 def test_the_sandbox_pins_the_bot_of_its_arm_for_the_whole_process(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("DECISIONS_BOT", "B")
 

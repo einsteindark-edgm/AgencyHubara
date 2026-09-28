@@ -130,6 +130,24 @@ def test_a_burst_arrives_as_one_turn_like_in_production(tmp_path: Path) -> None:
     assert "catálogo" in inbound and "envío a Bogotá" in inbound
 
 
+def test_b0_runs_the_new_workflow_and_answers_like_a1(tmp_path: Path) -> None:
+    """Motor de decisiones F4: el sandbox arranca el workflow del bot del brazo
+    (registro de bots). B0 = V2 con reglas tiene que dar lo mismo que A1; la
+    traza del V2 trae los veredictos del egreso (el V1 no los tiene)."""
+    (tmp_path / "a1").mkdir()
+    (tmp_path / "b0").mkdir()
+    a1 = _run_probe(tmp_path / "a1", _case(), arm="A1")
+    b0 = _run_probe(tmp_path / "b0", _case(), arm="B0")
+
+    a1_trace, b0_trace = a1["result"]["trace"], b0["result"]["trace"]
+    assert b0["result"]["error"] is None and b0["result"]["arm"] == "B0"
+    assert b0_trace["sent_texts"] == a1_trace["sent_texts"] == ["¡Claro! Te cuento del catálogo 😊"]
+    assert (b0_trace["guards"], b0_trace["suppressed_reason"]) == (a1_trace["guards"], a1_trace["suppressed_reason"])
+    assert "egress" not in a1_trace
+    assert b0_trace["egress"]["verdicts"] and all(v["by"] == "reglas" for v in b0_trace["egress"]["verdicts"])
+    assert set(b0["connects"]) <= _LOCAL and _writes_outside(b0) == []
+
+
 def test_the_new_bot_runs_its_layers_inside_the_sandbox(tmp_path: Path) -> None:
     """Brazo B (PR 15): el MISMO workflow con el modo `on` y el perfil de Jev
     en la señal. La percepción arma el plan con los dos asuntos de la ráfaga

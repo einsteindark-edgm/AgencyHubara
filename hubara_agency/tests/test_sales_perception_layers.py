@@ -38,7 +38,21 @@ from src.plugins.chats.agent.sales.decisions.plan import PlanTopic, TurnPlan
 from src.plugins.chats.agent.sales.decisions.policies.turno_v1 import checklist_note, coverage_rules, topic_rows
 from src.plugins.chats.agent.sales.decisions.questionnaire import load_questionnaire
 from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
+from tests.sales_workflow_versions import sales_workflow_versions
 from tests.test_sales_workflow_debounce import SALES_QUEUE, Tracker, _make_fake_activities
+
+#: Tests que NO corren contra el workflow V2 (motor de decisiones F4), con su
+#: motivo (ver `tests/sales_workflow_versions.py`).
+_NO_EXTRA_ROUND = (
+    "diferencia 3 a propósito: el V2 no tiene la ronda extra de la capa ② por palabras "
+    "(queda la verificación ③; ver test_v2_keeps_the_note_and_the_verification_but_never_the_extra_round)"
+)
+V2_EXCLUDED: dict[str, str] = {
+    "test_on_a_tool_cut_that_leaves_a_topic_gets_one_more_round": _NO_EXTRA_ROUND,
+    "test_on_the_extra_round_ignores_the_narration_the_customer_never_sees": _NO_EXTRA_ROUND,
+    "test_on_a_deferral_is_not_covered_until_the_customer_gets_a_text": _NO_EXTRA_ROUND,
+}
+_sales_workflow_version = sales_workflow_versions(__name__, V2_EXCLUDED)
 
 CATALOG_REPLY = "¡Claro! Te dejo nuestro catálogo 👇"
 BURST = ["vi que hacen velas con otros diseños, ¿me mandas el catálogo?", "y el envío a Bogotá cuánto sale?"]

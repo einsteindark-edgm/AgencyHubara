@@ -92,3 +92,53 @@ class VerifyOutput:
     # ── motor de decisiones (2026-09-28) ──
     # El turno de sistema del complemento, redactado por el motor.
     complement_note: str | None = None
+
+
+@dataclass(frozen=True)
+class EgressInput:
+    """Lo que el LLM escribió al cerrar el turno, antes de grabarlo y de
+    enviarlo (activity `decide_egress`, workflow V2). Solo datos que el turno
+    ya conoce: el texto, si es el primer contacto, las tools del turno y los
+    textos que salieron en sus params, si se registró un pedido y si incluye
+    portavelas (lo decide la tool contra el catálogo) y si el turno es
+    administrativo (ningún texto va al cliente)."""
+
+    session_id: str
+    final_text: str = ""
+    first_contact: bool = False
+    tools_used: list[str] = field(default_factory=list)
+    outbound_tool_texts: list[str] = field(default_factory=list)
+    order_registered: bool = False
+    portavelas_included: bool | None = None
+    admin_turn: bool = False
+
+
+@dataclass(frozen=True)
+class EgressOutput:
+    """Los veredictos del egreso (capacidades destinatario, rescate,
+    portavelas y saludo). El workflow V2 solo los aplica: no lee el texto.
+
+    * `text`: lo que sale al cliente ("" = nada).
+    * `blocked`: el destinatario frenó el texto y el rescate no dejó nada.
+    * `salvaged`: el rescate quitó párrafos que no eran para el cliente.
+    * `portavelas`: se quitó el aviso del portavelas de un pedido sin él.
+    * `greeting_needed`: hace falta la burbuja de bienvenida del primer contacto.
+    * `llm_text`: el texto tras el rescate previo a grabar (lo que el turno
+      devuelve y el LLM recuerda si no cambia después); `rescued_before_record`
+      dice si ese rescate actuó.
+    * `final_text`: el texto tras todas las reglas (el `llm_text` de la traza).
+    * `guards`: las guardas que actuaron, en orden: `{name, before, after}`.
+    * `verdicts`: la traza de cada capacidad consultada (`Verdict.to_trace`).
+    """
+
+    text: str = ""
+    blocked: bool = False
+    salvaged: bool = False
+    portavelas: bool = False
+    greeting_needed: bool = False
+    verdicts: list[dict] = field(default_factory=list)
+    llm_text: str = ""
+    final_text: str = ""
+    rescued_before_record: bool = False
+    guards: list[dict] = field(default_factory=list)
+    error: str | None = None

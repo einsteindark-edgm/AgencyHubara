@@ -39,9 +39,17 @@ from src.platform.plugin_manifest import get_task_queue
 from src.platform.llm_history_reset import ResetLLMHistoryInput
 from src.platform.observability.cost_attribution import RecordEpisodeLLMUsageInput
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
+from src.plugins.chats.agent.sales.decisions.egress_activities import decide_egress_activity
+from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
+from tests.sales_workflow_versions import sales_workflow_versions
 
 SALES_QUEUE = get_task_queue("chats", "sales")
-from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
+
+#: Tests que NO corren contra el workflow V2 (motor de decisiones F4), con su
+#: motivo: solo patches/replay/ramas legacy del V1 o diferencias a propósito
+#: del V2 (ver `tests/sales_workflow_versions.py`).
+V2_EXCLUDED: dict[str, str] = {}
+_sales_workflow_version = sales_workflow_versions(__name__, V2_EXCLUDED)
 
 
 # --- Fake activities con contadores ----------------------------------------
@@ -323,6 +331,10 @@ def _make_fake_activities(
         return None
 
     return [
+        # El egreso del workflow V2 (motor de decisiones F4) es la activity
+        # REAL: con el bot de hoy decide con las reglas del V1, así las suites
+        # del V1 corridas contra el V2 prueban B0 = A1. El V1 no la llama.
+        decide_egress_activity,
         fake_record_episode_llm_usage,
         fake_persist_turn_trace,
         fake_variant_guard,

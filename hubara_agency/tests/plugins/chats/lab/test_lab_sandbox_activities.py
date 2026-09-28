@@ -106,6 +106,17 @@ def test_the_classifier_layers_run_for_real_in_the_sandbox() -> None:
     assert {"perceive_burst", "verify_coverage"} <= REAL_IN_SANDBOX
 
 
+def test_the_egress_of_the_v2_workflow_runs_for_real_in_the_sandbox() -> None:
+    """El egreso del workflow V2 (motor de decisiones F4) decide con el bot del
+    brazo: B0 con las reglas de hoy, B con Jev (en CI, el proveedor falso).
+    Lee el vault del sandbox y no toca nada afuera."""
+    import src.plugins.chats.workers.sales as sales_worker
+
+    assert "decide_egress" in REAL_IN_SANDBOX
+    names = _names(sandbox_activities(sales_worker.SALES_ACTIVITIES, capture=SandboxCapture()))
+    assert "decide_egress" in names
+
+
 async def test_a_scheduled_complement_keeps_the_case_open_until_its_own_trace() -> None:
     """Con el bot nuevo, la verificación puede agendar UN complemento: es un
     segundo turno (de sistema) que forma parte de la respuesta del caso. La

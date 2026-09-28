@@ -17,6 +17,8 @@ derivar el estado del lead, y ejecutar el send por un template aprobado.
 | `send_whatsapp_template_activity` | activity de envío de template aprobado — para registrar en el worker del plugin |
 | `send_template_to_session` | la misma lógica pura (sin decorators Temporal) — testeable sin worker |
 | `detect_marketing_opt_out` | detector determinista de pedidos de baja ("NO MÁS"/"baja") con campaña reciente — lo consulta el ingest de chats; cumple la promesa de opt-out del template de campañas |
+| `send_whatsapp_message_activity`, `send_typing_indicator_activity` | el texto al cliente y el "escribiendo…" de un turno conversacional (el workflow de ventas V2 los agenda sin importar platform; se registran en el worker) |
+| `send_capi_event_activity`, `flush_capi_outbox_activity` | el evento de Meta (Lead / Purchase) del cierre del episodio y el flush del outbox de eventos del turno |
 
 **Cómo se usa (plugin `marketing`, campañas directas).** El worker registra
 `send_whatsapp_template_activity`; el workflow de envío la invoca por

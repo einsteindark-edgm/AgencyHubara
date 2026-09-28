@@ -96,7 +96,18 @@ def test_estimate_for_a_new_bench(env) -> None:
     assert data["estimate_usd"] > 0
     assert (data["run_cap_usd"], data["month_cap_usd"], data["month_left_usd"]) == (120.0, 300.0, 300.0)
     assert data["fits"] is True
-    assert [a["id"] for a in data["arms"]] == ["A1", "B"]
+    # Motor de decisiones F4: B0 (workflow V2 con reglas) separa el efecto del
+    # workflow nuevo del efecto de Jev (B = V2 con Jev).
+    assert [a["id"] for a in data["arms"]] == ["A1", "B0", "B"]
+    assert [a["selected"] for a in data["arms"]] == [True, False, True]
+
+
+def test_launch_with_the_new_workflow_without_jev(env) -> None:
+    resp = env["http"].post("/api/chats/lab/runs", json={"arms": ["B0", "A1", "B"], "reps": 1, "bench": "new"})
+
+    assert resp.status_code == 202, resp.text
+    [started] = env["client"].started
+    assert started["input"].arms == ["A1", "B0", "B"]
 
 
 def test_launch_starts_the_single_run_workflow(env) -> None:

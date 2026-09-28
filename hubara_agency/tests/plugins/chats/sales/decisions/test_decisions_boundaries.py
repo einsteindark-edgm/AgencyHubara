@@ -21,9 +21,10 @@ SALES = SRC / "plugins" / "chats" / "agent" / "sales"
 DECISIONS = SALES / "decisions"
 PKG = "src.plugins.chats.agent.sales.decisions"
 # Módulos del motor que PUEDEN importar Temporal: las activities (llevan
-# `@activity.defn`), la fachada del workflow (las reexporta) y el enrutador
-# del workflow que registran los workers (lee el vault con `src.sdk.runtime`).
-_TEMPORAL_OK = {"activities.py", "facade.py", "routing.py"}
+# `@activity.defn`: las del turno y la del egreso del workflow V2), la fachada
+# del workflow (las reexporta) y el enrutador del workflow que registran los
+# workers (lee el vault con `src.sdk.runtime`).
+_TEMPORAL_OK = {"activities.py", "egress_activities.py", "facade.py", "routing.py"}
 
 
 def _imports(path: Path) -> set[str]:
@@ -41,8 +42,10 @@ def _engine_modules() -> list[Path]:
     return sorted(p for p in DECISIONS.rglob("*.py") if "__pycache__" not in p.parts)
 
 
-def test_the_sales_workflow_sees_only_the_contract_and_the_facade() -> None:
-    engine_imports = {m for m in _imports(SALES / "workflows" / "sales_session.py") if m.startswith(PKG)}
+@pytest.mark.parametrize("workflow_file", ["sales_session.py", "sales_session_v2.py"])
+def test_the_sales_workflow_sees_only_the_contract_and_the_facade(workflow_file: str) -> None:
+    """V1 y V2 (F4): el workflow solo ve el contrato y la fachada del motor."""
+    engine_imports = {m for m in _imports(SALES / "workflows" / workflow_file) if m.startswith(PKG)}
 
     assert engine_imports <= {f"{PKG}.contracts", f"{PKG}.facade"}, engine_imports
 
