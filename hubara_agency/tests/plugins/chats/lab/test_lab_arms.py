@@ -41,3 +41,13 @@ def test_an_unknown_arm_is_refused() -> None:
 def test_the_openai_arm_no_longer_exists() -> None:
     with pytest.raises(ValueError, match="C"):
         signal_meta("C", {"text": "hola"})
+
+
+def test_jev_reads_the_raw_text_of_the_customer_like_in_production() -> None:
+    """En producción el clasificador lee `inbound_meta.text` (lo que escribió
+    el cliente) y el LLM el turno enriquecido. En el sandbox el mensaje de la
+    señal es el turno enriquecido; el crudo viaja en el meta."""
+    message = {"text": "[respondes a la campaña] quiero ese", "raw_text": "quiero ese", "wamid": "wamid.X"}
+
+    assert signal_meta("B", message)["text"] == "quiero ese"
+    assert "text" not in signal_meta("B", {"text": "hola"})

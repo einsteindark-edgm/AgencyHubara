@@ -43,4 +43,9 @@ def signal_meta(arm: str, message: dict[str, Any]) -> dict[str, Any] | None:
     wamid = message.get("wamid")
     if isinstance(wamid, str) and wamid:
         meta["wamid"] = wamid
+    # Lo que escribió el cliente, sin lo que agregó el ingest: es lo que lee
+    # el clasificador en producción (`inbound_meta.text`).
+    raw = message.get("raw_text")
+    if isinstance(raw, str) and raw.strip():
+        meta["text"] = raw
     return meta

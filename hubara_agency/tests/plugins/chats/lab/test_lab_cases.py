@@ -164,3 +164,31 @@ def test_turn_key_is_synthesized_for_v1_traces(tmp_path: Path) -> None:
 def test_cases_are_json_serializable(tmp_path: Path) -> None:
     for case in build_cases(_bench(tmp_path), sales_workspace=WS).cases:
         json.dumps(case.to_dict())
+
+
+def test_the_burst_keeps_the_raw_text_the_classifier_reads(tmp_path: Path) -> None:
+    """El ingest le agrega al turno la campaña citada o el episodio anterior,
+    pero el clasificador (Jev) lee el texto crudo del cliente. La traza nueva
+    lo guarda (`raw_text`); en las viejas sale del dashboard (el mensaje del
+    cliente, con el mismo wamid) cuando el turno lo trae envuelto. Así el
+    laboratorio le da a Jev lo mismo que producción."""
+    b = _bench(tmp_path)
+    s = b / "vault" / SID
+    events = [json.loads(line) for line in (s / "sessions" / f"{SID}.jsonl").read_text(encoding="utf-8").splitlines()]
+    events[2]["wamid"], events[3]["wamid"] = "wamid.A", "wamid.B"
+    (s / "sessions" / f"{SID}.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+    traces = [json.loads(line) for line in (s / "evals" / "turn_traces.jsonl").read_text(encoding="utf-8").splitlines()]
+    traces[1]["inbound"] = [
+        {"seq": 1, "wamid": "wamid.A", "ts_ms": T0 + 60_000, "kind": "text",
+         "text": "[respondes a la campaña] me mandas el catálogo", "raw_text": "me mandas el catálogo"},
+        {"seq": 2, "wamid": "wamid.B", "ts_ms": T0 + 67_000, "kind": "text",
+         "text": "[episodio anterior: compró un Cubo Love]\ny el envío a Bogotá"},
+    ]
+    (s / "evals" / "turn_traces.jsonl").write_text("\n".join(json.dumps(t) for t in traces) + "\n", encoding="utf-8")
+
+    case = _case(build_cases(b, sales_workspace=WS).cases, 2)
+
+    assert [m["text"] for m in case.burst] == [
+        "[respondes a la campaña] me mandas el catálogo", "[episodio anterior: compró un Cubo Love]\ny el envío a Bogotá",
+    ]
+    assert [m.get("raw_text") for m in case.burst] == ["me mandas el catálogo", "y el envío a Bogotá"]

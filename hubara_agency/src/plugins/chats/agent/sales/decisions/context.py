@@ -125,6 +125,18 @@ def _clip(text: str) -> str:
     return text if len(text) <= MAX_LINE_CHARS else "…" + text[-(MAX_LINE_CHARS - 1):].lstrip()
 
 
+#: Sufijos de los ids sintéticos de los reentries de visión y transcripción
+#: (los mismos del ingest): el historial guarda el id real.
+SYNTHETIC_WAMID_SUFFIXES = ("_transcribed", "_vision")
+
+
+def real_wamid(wamid: str) -> str:
+    """El id real de WhatsApp de un mensaje, sin el sufijo del reentry."""
+    for suffix in SYNTHETIC_WAMID_SUFFIXES:
+        wamid = wamid.removesuffix(suffix)
+    return wamid
+
+
 def _burst_start(events: Sequence[Mapping[str, Any]], burst_wamids: Collection[str], burst_size: int) -> int:
     """Índice donde empieza la ráfaga actual (los eventos de cliente del final)."""
     end = len(events)
@@ -143,7 +155,7 @@ def customer_window(
     events: Sequence[Mapping[str, Any]], *, burst_wamids: Collection[str], burst_size: int = 0
 ) -> Window:
     """Lo que el cliente vio antes de este turno (ver el docstring del módulo)."""
-    start = _burst_start(events, set(burst_wamids), burst_size)
+    start = _burst_start(events, {real_wamid(str(w)) for w in burst_wamids}, burst_size)
     burst = events[start:]
     quoted = None
     for event in burst:

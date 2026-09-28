@@ -184,15 +184,20 @@ def _inbound_trace(batch: list[PendingMessage]) -> list[dict[str, Any]]:
         if p.is_ghost_trigger or p.is_handoff:
             continue
         meta = p.inbound_meta or {}
-        out.append(
-            {
-                "seq": len(out) + 1,
-                "wamid": meta.get("wamid"),
-                "ts_ms": meta.get("ts_ms"),
-                "kind": meta.get("kind") or "text",
-                "text": p.message,
-            }
-        )
+        row = {
+            "seq": len(out) + 1,
+            "wamid": meta.get("wamid"),
+            "ts_ms": meta.get("ts_ms"),
+            "kind": meta.get("kind") or "text",
+            "text": p.message,
+        }
+        # El texto crudo del cliente (lo que lee el clasificador) cuando el
+        # ingest enriqueció el turno (campaña citada, episodio anterior): el
+        # laboratorio le da a Jev lo mismo que producción. Solo payload (L-22).
+        raw = meta.get("text")
+        if isinstance(raw, str) and raw.strip() and raw != p.message:
+            row["raw_text"] = raw
+        out.append(row)
     return out
 
 

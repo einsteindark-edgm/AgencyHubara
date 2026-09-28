@@ -69,6 +69,24 @@ async def test_burst_trace_lists_each_message_with_its_wamid_time_and_kind(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_the_trace_keeps_the_raw_text_when_the_ingest_enriched_the_turn(tmp_path: Path) -> None:
+    """El ingest le agrega al turno la campaña citada o el episodio anterior;
+    el clasificador lee el texto CRUDO del cliente (`inbound_meta.text`). La
+    traza guarda los dos cuando difieren: el laboratorio le da a Jev lo mismo
+    que producción (hallazgo del banco de referencia). Solo payload (L-22)."""
+    tracker = await _run(
+        tmp_path,
+        [["[respondes a la campaña «Día del amor»] quiero ese", None, None,
+          {"wamid": "wamid.A", "ts_ms": 1_000_000, "kind": "text", "text": "quiero ese"}]],
+    )
+
+    assert _customer(tracker)["inbound"] == [
+        {"seq": 1, "wamid": "wamid.A", "ts_ms": 1_000_000, "kind": "text",
+         "text": "[respondes a la campaña «Día del amor»] quiero ese", "raw_text": "quiero ese"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_three_argument_signal_still_works_and_lists_the_message_without_ids(tmp_path: Path) -> None:
     tracker = await _run(tmp_path, [["hola, ¿tienen de café?", None, None]])
 

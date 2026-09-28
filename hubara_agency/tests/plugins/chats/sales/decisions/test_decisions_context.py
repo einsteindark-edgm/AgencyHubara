@@ -120,6 +120,33 @@ def test_a_quoted_message_travels_with_the_turn() -> None:
     assert window.quoted == "Vela Cubo Love — $21.000"
 
 
+def test_a_photo_or_audio_reentry_is_cut_from_the_context_by_its_real_id() -> None:
+    """El reentry de visión o de transcripción llega con el id sintético
+    (`<wamid>_vision`, `<wamid>_transcribed`), pero el historial guarda el
+    real: sin quitar el sufijo, la foto quedaba en el CONTEXTO y en ESTE
+    TURNO a la vez, y la cita del cliente se perdía (hallazgo del banco de
+    referencia)."""
+    events = [
+        _bot("¿Cuál te gustó más?"),
+        _user("[foto del cliente]", "wamid.P", reply_to={"text": "Cubo Love en vaso ámbar"}),
+    ]
+
+    window = customer_window(events, burst_wamids={"wamid.P_vision"})
+
+    assert window.lines == ("[asesor] ¿Cuál te gustó más?",)
+    assert window.quoted == "Cubo Love en vaso ámbar"
+    assert customer_window([_bot("¿Te sirve?"), _user("[audio]", "wamid.A")], burst_wamids={"wamid.A_transcribed"}).lines == (
+        "[asesor] ¿Te sirve?",
+    )
+
+
+def test_the_synthetic_suffixes_are_the_ingest_ones() -> None:
+    from src.plugins.chats.agent.sales.decisions.context import SYNTHETIC_WAMID_SUFFIXES
+    from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import _SYNTHETIC_ID_SUFFIXES
+
+    assert SYNTHETIC_WAMID_SUFFIXES == _SYNTHETIC_ID_SUFFIXES
+
+
 def test_order_facts_show_the_items_and_only_given_or_missing_for_personal_data() -> None:
     metadata = {
         "episodes": [

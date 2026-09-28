@@ -159,6 +159,20 @@ def test_metadata_as_of_keeps_only_what_existed_when_the_turn_started() -> None:
         assert key not in meta, key
 
 
+def test_a_multi_item_draft_from_the_trace_keeps_its_items_as_items() -> None:
+    """La traza guarda el borrador con `draft_slots`, que mete los ítems de un
+    pedido de varios productos DENTRO de las casillas. El sandbox los devuelve
+    a `order_draft.items`, donde los leen la etapa, los hechos y las tools:
+    si no, el bot simulado veía un solo producto (hallazgo del banco de
+    referencia)."""
+    items = [{"producto": "Cubo Love", "aroma": "Lavanda"}, {"producto": "Duo Zodiacal", "diseno": "Aries"}]
+    case = _case(draft_before={"ciudad": "Bogotá", "items": items})
+
+    [episode] = metadata_as_of(_metadata(), case, sales_workspace_path=WS_PATH)["episodes"]
+
+    assert episode["order_draft"] == {"slots": {"ciudad": "Bogotá"}, "items": items}
+
+
 def test_metadata_as_of_keeps_a_draft_that_did_not_change_after_the_turn_started() -> None:
     meta = _metadata()
     meta["episodes"][0]["order_draft"]["updated_at_ms"] = T0 + 50_000

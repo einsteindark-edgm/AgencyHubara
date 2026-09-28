@@ -52,7 +52,9 @@ async def apply_burst_readings(
     provider = EngineReadings(Path(vault_dir))
     traces: list[list[dict[str, Any]]] = []
     for k, message in enumerate(messages, 1):
-        text = str(message.get("text") or "") or None
+        # Como el ingest: las lecturas leen lo que escribió el cliente, no el
+        # turno con lo que agregó el ingest (campaña citada, episodio anterior).
+        text = str(message.get("raw_text") or message.get("text") or "") or None
         ts = message.get("ts_ms")
         now_ms = int(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else int(at_ms)
         wamid = str(message.get("wamid") or f"lab.{k}")

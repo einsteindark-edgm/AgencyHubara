@@ -136,6 +136,27 @@ def _burst(events: list[dict[str, Any]], started_ms: int) -> tuple[list[dict[str
     return burst, prefix
 
 
+def _inbound_message(m: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Un mensaje de la ráfaga desde `inbound[]` de la traza. `text` es el
+    turno como lo recibió el workflow (con lo que agregó el ingest: la
+    campaña citada, el episodio anterior); `raw_text`, lo que escribió el
+    cliente, que es lo que lee el clasificador. La traza nueva lo guarda; en
+    las viejas sale del dashboard (mismo wamid) si el turno lo trae envuelto."""
+    text = str(m.get("text") or "")
+    out: dict[str, Any] = {"text": text, "ts_ms": _ms(m.get("ts_ms")), "wamid": m.get("wamid")}
+    raw = m.get("raw_text")
+    if not (isinstance(raw, str) and raw.strip()):
+        wamid = m.get("wamid")
+        dash = next(
+            (str(e.get("content") or "") for e in events if wamid and e.get("role") == "user" and e.get("wamid") == wamid),
+            "",
+        )
+        raw = dash if dash.strip() and dash != text and dash in text else None
+    if raw:
+        out["raw_text"] = raw
+    return out
+
+
 def _llm_prefix(lines: list[dict[str, Any]], started_ms: int) -> int:
     return sum(
         1
@@ -205,11 +226,7 @@ def build_cases(bench_dir: Path, *, sales_workspace: str) -> CaseSet:
             burst, dashboard_prefix = _burst(events, started)
             inbound = trace.get("inbound")
             if isinstance(inbound, list) and inbound:
-                burst = [
-                    {"text": str(m.get("text") or ""), "ts_ms": _ms(m.get("ts_ms")), "wamid": m.get("wamid")}
-                    for m in inbound
-                    if isinstance(m, dict)
-                ]
+                burst = [_inbound_message(m, events) for m in inbound if isinstance(m, dict)]
             llm_prefix = _llm_prefix(llm_lines, started)
             cases.append(
                 LabCase(

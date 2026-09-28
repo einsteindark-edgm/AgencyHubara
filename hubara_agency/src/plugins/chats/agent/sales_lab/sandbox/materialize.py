@@ -88,6 +88,18 @@ def _ms(value: Any) -> int | None:
     return None
 
 
+def draft_from_trace(draft: dict[str, Any]) -> dict[str, Any]:
+    """El `order_draft` que dejó una traza. La traza guarda `draft_slots`, que
+    mete los ítems de un pedido de varios productos DENTRO de las casillas:
+    vuelven a `order_draft.items`, donde los leen la etapa, los hechos y las
+    tools."""
+    slots = dict(draft)
+    items = slots.pop("items", None)
+    if isinstance(items, list):
+        return {"slots": slots, "items": [dict(i) for i in items if isinstance(i, dict)]}
+    return {"slots": slots}
+
+
 def _episode_as_of(ep: dict[str, Any], case: dict[str, Any], *, sales_workspace_path: str) -> dict[str, Any]:
     at = int(case["at_ms"])
     before = case.get("state_before") or {}
@@ -100,7 +112,7 @@ def _episode_as_of(ep: dict[str, Any], case: dict[str, Any], *, sales_workspace_
     if not (isinstance(updated, (int, float)) and updated <= at):
         out.pop("order_draft", None)
         if case.get("draft_before"):
-            out["order_draft"] = {"slots": dict(case["draft_before"])}
+            out["order_draft"] = draft_from_trace(case["draft_before"])
     for key in ("order_id", "closing_tag"):
         if before.get(key):
             out[key] = before[key]

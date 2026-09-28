@@ -210,20 +210,9 @@ def _profile(profile_id: str) -> tuple[EngineProfile, Questionnaire]:
 def _metadata_at_start(case: LabCase) -> dict[str, Any]:
     """La metadata del INICIO del turno, armada como la arma el sandbox
     (`metadata_as_of`: los episodios del momento y, si el borrador del banco
-    cambió después, el que dejó la traza anterior). `draft_slots` guarda los
-    ítems de un pedido con varios productos dentro de las casillas: acá
-    vuelven a `order_draft.items`, donde los leen la etapa y los hechos."""
-    metadata = metadata_as_of({}, case.to_dict(), sales_workspace_path="")
-    for episode in metadata.get("episodes") or []:
-        draft = episode.get("order_draft") if isinstance(episode, dict) else None
-        slots = draft.get("slots") if isinstance(draft, dict) else None
-        if isinstance(slots, dict) and isinstance(slots.get("items"), list) and "items" not in draft:
-            episode["order_draft"] = {
-                **draft,
-                "slots": {k: v for k, v in slots.items() if k != "items"},
-                "items": slots["items"],
-            }
-    return metadata
+    cambió después, el que dejó la traza anterior, con los ítems de un pedido
+    de varios productos en `order_draft.items`)."""
+    return metadata_as_of({}, case.to_dict(), sales_workspace_path="")
 
 
 def _speaker(event: Mapping[str, Any]) -> str | None:
