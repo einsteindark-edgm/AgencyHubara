@@ -85,7 +85,9 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 ### F5 · Texto del LLM con Jev
 - [x] persona (`capabilities/texto.py`), en las tools de cierre (`tags.py`) y de escalación (punto de extensión `customer_farewell` de la tool de plataforma): «¿Deja ver que quien atiende es un bot o una IA?» oración por oración, sobre las MISMAS oraciones del filtro de plataforma (`customer_sentences`, `keep_customer_safe_sentences(drop=…)`). Piso = autoidentificación y relevo a «una persona»/«un humano», siempre subconjunto de la regla de hoy. Jev puede dejar una frase de marca («Cada vela lleva un toque humano»).
 - [x] enumeración, en la activity del selector de variantes: «¿Qué le enumera el texto al cliente?» {aromas, colores, combinaciones de cupón, productos, nada}; las etiquetas las sigue sacando el código del catálogo; las combinaciones «Color · Aroma» nunca van al selector (piso).
-- [ ] monto (checkout) · selector (quick replies).
+- [x] monto, en el checkout: «¿La oración cotiza el precio de un producto?» solo en las oraciones donde las palabras de política aceptan un monto que el catálogo no explica (`policy_decided_sentences`); esas pierden el contexto de política. La cuenta sigue en código; Jev solo puede hacer el chequeo más estricto.
+- [x] selector, en los quick replies: «¿Estos botones le piden al cliente elegir un producto o una variante?»; el namespace del id (`product.`, `color.`…) es piso.
+- [x] Las tools entran al motor SOLO por `guards` (`safe_customer_text`, `product_quote_sentences`, `catalog_choice_buttons`); el vault les llega por la raíz de composición (`build_vault_dir`).
 - [ ] destinatario · rescate · saludo · portavelas: egress de V2; destinatario también en `send_reply`, el flush y el filtro de oraciones de las tools.
 - [ ] verdad de producto (remarketing).
 

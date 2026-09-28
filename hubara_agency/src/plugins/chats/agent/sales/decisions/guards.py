@@ -11,6 +11,7 @@ y Jev no se consulta.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,14 @@ from src.plugins.chats.agent.sales.decisions.capabilities import Verdict, decide
 from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
 
-__all__ = ["Verdict", "decide_for_session", "safe_customer_text", "session_redact_terms"]
+__all__ = [
+    "Verdict",
+    "catalog_choice_buttons",
+    "decide_for_session",
+    "product_quote_sentences",
+    "safe_customer_text",
+    "session_redact_terms",
+]
 
 
 async def decide_for_session(
@@ -82,3 +90,47 @@ async def safe_customer_text(raw: str | None, *, session_id: str, vault_dir: Pat
     )
     drop = set(persona.value) | {i for i, part in enumerate(parts) if looks_like_admin_leak(part)}
     return keep_customer_safe_sentences(raw, drop=drop)
+
+
+async def product_quote_sentences(sentences: Sequence[str], *, session_id: str, vault_dir: Path) -> frozenset[str]:
+    """De las oraciones donde las palabras de política aceptan un monto, las
+    que cotizan el precio de un producto (capacidad `monto`, F5): pierden el
+    contexto de política en `find_unexplained_amounts`. Con `reglas`,
+    ninguna (idéntico a hoy)."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import MONTO, OracionesPrecio
+
+    if not sentences:
+        return frozenset()
+    verdict = await decide_for_session(
+        MONTO,
+        OracionesPrecio(sentences=tuple(sentences)),
+        session_id=session_id,
+        vault_dir=vault_dir,
+        redact=session_redact_terms(session_id, vault_dir),
+    )
+    return frozenset(verdict.value)
+
+
+async def catalog_choice_buttons(
+    body: str,
+    titles: Sequence[str],
+    *,
+    rule_rejected: Sequence[str],
+    by_id: Sequence[str],
+    session_id: str,
+    vault_dir: Path,
+) -> tuple[str, ...]:
+    """Los botones de respuesta rápida que eligen del catálogo (capacidad
+    `selector`, F5): vacío = pasan. Con `reglas`, los que ya rechazó el
+    vocabulario del catálogo (idéntico a hoy); el namespace del id es piso."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import SELECTOR, Botones
+
+    verdict = await decide_for_session(
+        SELECTOR,
+        Botones(body=body, titles=tuple(titles), rule_rejected=tuple(rule_rejected), by_id=tuple(by_id)),
+        session_id=session_id,
+        vault_dir=vault_dir,
+        redact=session_redact_terms(session_id, vault_dir),
+    )
+    return tuple(verdict.value)
+

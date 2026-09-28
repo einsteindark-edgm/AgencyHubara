@@ -30,6 +30,7 @@ que cambia.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import os
@@ -78,6 +79,13 @@ def build_session_metadata_store() -> FilesystemMetadataStore:
     """Store de metadata de sesión del vault canónico, para tools que leen o
     escriben `metadata.json` sin importar platform (R-DIP #7)."""
     return FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+
+
+def build_vault_dir() -> Path:
+    """El vault canónico, para tools que le piden decisiones al motor de
+    decisiones (registro de bots, cola de desacuerdos) sin importar
+    platform."""
+    return Path(WORKSPACE_VAULT_DIR)
 
 
 def build_inbound_ledger() -> FilesystemInboundLedger:

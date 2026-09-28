@@ -18,6 +18,13 @@ a Jev, la política, el piso y la comparación.
   lista de variantes escrita por el selector. Las etiquetas del selector las
   sigue sacando el código del catálogo; las combinaciones «Color · Aroma» de
   un cupón nunca van al selector (piso).
+* monto — «¿La oración cotiza el precio de un producto?», en el checkout,
+  solo en las oraciones donde las palabras de política aceptan un monto que
+  el catálogo no explica. La cuenta sigue en código; Jev solo puede hacer el
+  chequeo más estricto.
+* selector — «¿Estos botones le piden al cliente elegir un producto o una
+  variante?», en la tool de quick replies. El namespace del id
+  (`product.`, `color.`…) es PISO.
 """
 from __future__ import annotations
 
@@ -211,4 +218,148 @@ class Enumeracion:
 
 ENUMERACION = Enumeracion()
 
-__all__ = ["ENUMERACION", "MAX_SENTENCES", "PERSONA", "Enumeracion", "Frases", "Persona", "TextoCatalogo"]
+
+@dataclass(frozen=True)
+class OracionesPrecio:
+    """Oraciones que el bot le escribió al cliente donde las palabras de
+    política («desde», «envío», «mínimo»…) son lo que acepta un monto
+    (`price_quotes.policy_decided_sentences`)."""
+
+    sentences: tuple[str, ...]
+
+
+class Monto:
+    """«¿La oración cotiza el precio de un producto?» (tool del checkout).
+    Valor: las oraciones que cotizan un producto; pierden el contexto de
+    política y sus montos se cruzan contra el catálogo. La regla de hoy no
+    marca ninguna (las palabras de política bastan): Jev solo puede hacer el
+    chequeo más estricto. La cuenta sigue en código."""
+
+    name = "monto"
+    timeout_s = 2.0
+    thresholds: Mapping[str, float] = {"yes": 0.85}
+
+    def rule(self, inp: OracionesPrecio) -> tuple[str, ...]:
+        return ()
+
+    def ask(self, inp: OracionesPrecio) -> tuple[str, list[TypedQuestion]] | None:
+        if not inp.sentences or len(inp.sentences) > MAX_SENTENCES:
+            return None
+        state = "Oraciones que la tienda le escribió a un cliente por WhatsApp:\n" + _numbered(inp.sentences)
+        return state, [
+            TypedQuestion(
+                id=f"monto.{i}",
+                kind="noul",
+                text=(
+                    f"¿La oración [{i}] le dice al cliente el precio de un producto (por unidad o por cantidad)? "
+                    "No cuenta si es un total con envío, un mínimo para el pago contra entrega, una tarifa de "
+                    "envío o lo que le falta para un mínimo."
+                ),
+                criteria=_YES_NO,
+            )
+            for i in range(1, len(inp.sentences) + 1)
+        ]
+
+    def decide(
+        self, inp: OracionesPrecio, result: Any, rule: tuple[str, ...], thresholds: Mapping[str, float]
+    ) -> tuple[str, ...] | None:
+        th = {**self.thresholds, **thresholds}
+        answered = False
+        quotes: list[str] = []
+        for i, sentence in enumerate(inp.sentences, 1):
+            p = _p(result, f"monto.{i}")
+            if p is None:
+                continue
+            answered = True
+            if p >= th["yes"]:
+                quotes.append(sentence)
+        return tuple(quotes) if answered else None
+
+    def floor(self, inp: OracionesPrecio, rule: tuple[str, ...], jev: tuple[str, ...]) -> tuple[str, ...]:
+        return jev
+
+    def same(self, a: Sequence[str], b: Sequence[str]) -> bool:
+        return set(a) == set(b)
+
+
+MONTO = Monto()
+
+
+@dataclass(frozen=True)
+class Botones:
+    """Un mensaje con botones de respuesta rápida, con lo que ya dijo la
+    regla de hoy (el vocabulario del catálogo) y los botones cuyo id delata
+    un selector (`product.`, `color.`…)."""
+
+    body: str
+    titles: tuple[str, ...]
+    rule_rejected: tuple[str, ...] = ()
+    by_id: tuple[str, ...] = ()
+
+
+class Selector:
+    """«¿Estos botones le piden al cliente elegir un producto o una
+    variante?» (tool de quick replies). Valor: los títulos rechazados (vacío
+    = pasan). El namespace del id es PISO; Jev atrapa lo que el vocabulario
+    no ve («El rosado») y deja pasar un sí/no que nombra una variante."""
+
+    name = "selector"
+    timeout_s = 2.0
+    thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
+
+    def rule(self, inp: Botones) -> tuple[str, ...]:
+        return tuple(inp.rule_rejected)
+
+    def ask(self, inp: Botones) -> tuple[str, list[TypedQuestion]] | None:
+        if not inp.titles:
+            return None
+        state = (
+            "Mensaje con botones que la tienda le va a enviar a un cliente por WhatsApp:\n"
+            f"{inp.body.strip()}\nBotones: " + " · ".join(f"[{t}]" for t in inp.titles)
+        )
+        return state, [
+            TypedQuestion(
+                id="selector.elige", kind="noul",
+                text=(
+                    "¿Estos botones le piden al cliente elegir un producto o una variante (aroma, color, diseño) "
+                    "entre varias opciones? No cuenta un sí/no ni seguir/cambiar."
+                ),
+                criteria=_YES_NO,
+            )
+        ]
+
+    def decide(self, inp: Botones, result: Any, rule: tuple[str, ...], thresholds: Mapping[str, float]) -> tuple[str, ...] | None:
+        th = {**self.thresholds, **thresholds}
+        p = _p(result, "selector.elige")
+        if p is None:
+            return None
+        if p >= th["yes"]:
+            return tuple(rule) if rule else tuple(inp.titles)
+        if p <= th["no"]:
+            return ()
+        return None
+
+    def floor(self, inp: Botones, rule: tuple[str, ...], jev: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys([*jev, *inp.by_id]))
+
+    def same(self, a: Sequence[str], b: Sequence[str]) -> bool:
+        return bool(a) == bool(b)
+
+
+SELECTOR = Selector()
+
+__all__ = [
+    "ENUMERACION",
+    "MAX_SENTENCES",
+    "MONTO",
+    "PERSONA",
+    "SELECTOR",
+    "Botones",
+    "Enumeracion",
+    "Frases",
+    "Monto",
+    "OracionesPrecio",
+    "Persona",
+    "Selector",
+    "TextoCatalogo",
+]

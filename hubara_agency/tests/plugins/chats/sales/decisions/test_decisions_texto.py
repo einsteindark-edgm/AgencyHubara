@@ -164,3 +164,51 @@ def test_coupon_combinations_never_become_a_picker() -> None:
 
     assert ENUMERACION.rule(inp) == ()
     assert ENUMERACION.floor(inp, ENUMERACION.rule(inp), jev) == ()
+
+
+# ── monto: «¿La oración cotiza el precio de un producto?» ──
+
+
+def test_monto_rule_keeps_every_policy_sentence() -> None:
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import MONTO, OracionesPrecio
+
+    assert MONTO.rule(OracionesPrecio(sentences=("Desde $45.000 tienes el Cubo Love 🤍.",))) == ()
+
+
+def test_monto_asks_one_question_per_candidate_sentence() -> None:
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import MONTO, OracionesPrecio
+
+    inp = OracionesPrecio(sentences=("Desde $45.000 tienes el Cubo Love 🤍.", "El envío a Bogotá cuesta $12.900."))
+    state, questions = MONTO.ask(inp)
+
+    assert [q.id for q in questions] == ["monto.1", "monto.2"]
+    assert "[2] El envío a Bogotá cuesta $12.900." in state
+    assert MONTO.ask(OracionesPrecio(sentences=())) is None
+
+
+def test_jev_marks_the_sentences_that_quote_a_product_price() -> None:
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import MONTO, OracionesPrecio
+
+    inp = OracionesPrecio(sentences=("Desde $45.000 tienes el Cubo Love 🤍.", "El envío a Bogotá cuesta $12.900."))
+    result = _result(_noul("monto.1", 0.94), _noul("monto.2", 0.03))
+
+    assert MONTO.decide(inp, result, MONTO.rule(inp), TH) == ("Desde $45.000 tienes el Cubo Love 🤍.",)
+    assert MONTO.decide(inp, _result(), MONTO.rule(inp), TH) is None
+
+
+# ── selector: «¿Estos botones le piden elegir un producto o una variante?» ──
+
+
+def test_selector_decides_on_the_whole_set_of_buttons_and_keeps_the_id_floor() -> None:
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import SELECTOR, Botones
+
+    inp = Botones(body="¿Cuál color prefieres?", titles=("El rosado", "El gris"))
+    state, [question] = SELECTOR.ask(inp)
+
+    assert question.id == "selector.elige" and "[El rosado] · [El gris]" in state
+    assert SELECTOR.rule(inp) == ()
+    assert SELECTOR.decide(inp, _result(_noul("selector.elige", 0.93)), (), TH) == ("El rosado", "El gris")
+    assert SELECTOR.decide(inp, _result(_noul("selector.elige", 0.05)), (), TH) == ()
+    assert SELECTOR.decide(inp, _result(_noul("selector.elige", 0.5)), (), TH) is None
+    by_id = Botones(body="¿Cuál?", titles=("Rosado",), rule_rejected=("Rosado",), by_id=("Rosado",))
+    assert SELECTOR.floor(by_id, ("Rosado",), ()) == ("Rosado",)

@@ -47,6 +47,7 @@ from loguru import logger
 from src.sdk.connectorkit import product_retailer_id
 from src.platform.catalog import CatalogPort, ProductNotFoundError, deslugify
 from src.platform.config import WORKSPACE_VAULT_DIR
+from src.plugins.chats.agent.sales.decisions.guards import catalog_choice_buttons
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp import limits as wa_limits
 from src.plugins.chats.agent.sales.config.shipping import (
@@ -1997,12 +1998,28 @@ class SendQuickRepliesTool(ToolBase):
         # lista para caber y el cliente pierde opciones. Se rechaza ANTES de
         # encolar; el LLM debe re-llamar present_products / present_variant_picker.
         rejected, kinds = await self._catalog_choices(normalized)
+        # Motor de decisiones (F5): si los botones eligen del catálogo lo
+        # decide la capacidad `selector` con el proveedor del bot de la
+        # conversación (la regla de hoy por defecto: idéntico a antes). El
+        # namespace del id es piso.
+        rejected = list(
+            await catalog_choice_buttons(
+                body,
+                [b["title"] for b in normalized],
+                rule_rejected=rejected,
+                by_id=[b["title"] for b in normalized if b["id"].casefold().startswith(self._CATALOG_ID_PREFIXES)],
+                session_id=ctx.session_key,
+                vault_dir=Path(WORKSPACE_VAULT_DIR),
+            )
+        )
         if rejected:
             product_like = kinds & {"product", "producto", "handle", "sku"}
             use = (
                 "present_products (con los handles de search_products)"
                 if product_like
                 else "present_variant_picker (aroma Y color = DOS llamadas)"
+                if kinds
+                else "present_products (productos) o present_variant_picker (aromas, colores)"
             )
             logger.warning(
                 "🔘 [TOOL send_quick_replies] rechazado como selector de "

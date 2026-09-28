@@ -160,3 +160,71 @@ async def test_binary_decisions_still_pass(ctx, vault):
     ])
     assert result["queued"] is True
     assert len(_intents(vault, ctx)) == 2
+
+
+# ── Motor de decisiones (F5, capacidad `selector`) ──
+#
+# «¿Estos botones le piden al cliente elegir un producto o una variante?»
+# Con `reglas` (así nace) decide el vocabulario del catálogo de hoy. Con Jev
+# se atrapan los botones que eligen con otras palabras («El rosado») y pasa
+# una decisión de sí/no que nombra una variante. El namespace del id es PISO.
+
+
+def _jev(monkeypatch, p: float):
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    fake = FakePerceptionAdapter({"selector.elige": TypedAnswer(id="selector.elige", kind="noul", p=p)})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+    return fake
+
+
+_OTHER_WORDS = [{"id": "opt.1", "title": "El rosado"}, {"id": "opt.2", "title": "El gris"}]
+
+
+@pytest.mark.asyncio
+async def test_by_default_buttons_in_other_words_pass_like_today(ctx, vault, monkeypatch):
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    tool = SendQuickRepliesTool(workspace=str(vault), catalog=_FakeCatalog())
+
+    assert (await _call(tool, ctx, "¿Cuál color prefieres?", _OTHER_WORDS))["queued"] is True
+
+
+@pytest.mark.asyncio
+async def test_with_jev_buttons_that_choose_a_variant_in_other_words_are_rejected(ctx, vault, monkeypatch):
+    fake = _jev(monkeypatch, 0.95)
+    tool = SendQuickRepliesTool(workspace=str(vault), catalog=_FakeCatalog())
+
+    result = await _call(tool, ctx, "¿Cuál color prefieres?", _OTHER_WORDS)
+
+    assert result["queued"] is False and result["error"] == "catalog_choice_not_allowed"
+    assert set(result["rejected_buttons"]) == {"El rosado", "El gris"}
+    assert fake.calls and _intents(vault, ctx) == []
+
+
+@pytest.mark.asyncio
+async def test_with_jev_a_yes_no_that_names_a_variant_passes(ctx, vault, monkeypatch):
+    _jev(monkeypatch, 0.04)
+    tool = SendQuickRepliesTool(workspace=str(vault), catalog=_FakeCatalog())
+
+    result = await _call(tool, ctx, "¿Te lo dejo en lavanda?", [
+        {"id": "order.keep", "title": "Lavanda"},
+        {"id": "order.no", "title": "No, gracias"},
+    ])
+
+    assert result["queued"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_id_namespace_is_a_floor_even_if_jev_allows(ctx, vault, monkeypatch):
+    _jev(monkeypatch, 0.02)
+    tool = SendQuickRepliesTool(workspace=str(vault), catalog=_FakeCatalog())
+
+    result = await _call(tool, ctx, "¿Cuál?", [
+        {"id": "color.rosado", "title": "Rosado"},
+        {"id": "color.gris", "title": "Gris"},
+    ])
+
+    assert result["queued"] is False

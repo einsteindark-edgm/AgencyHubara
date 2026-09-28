@@ -78,6 +78,7 @@ from src.plugins.chats.agent.sales.tools.catalog import (
 from src.plugins.chats.agent.sales.composition import (
     build_session_history_reader,
     build_session_metadata_store,
+    build_vault_dir,
 )
 from src.plugins.chats.agent.sales.tools.checkout import VerifyOrderForCheckoutTool
 from src.plugins.chats.agent.sales.tools.coupons import (
@@ -262,6 +263,9 @@ register_tool_extension(
         catalog=_catalog,
         metadata_store=build_session_metadata_store(),
         history_reader=build_session_history_reader(),
+        # Motor de decisiones (F5, capacidad `monto`): el vault del registro
+        # de bots y de la cola de desacuerdos.
+        vault_dir=build_vault_dir(),
     ),
 )
 
