@@ -10,7 +10,12 @@ export type {
   RunRecord,
   RunStatus,
 } from "./model";
-export { analysisReport, isAwaitingApproval, isTerminalStatus } from "./model";
+export {
+  analysisReport,
+  isAwaitingApproval,
+  isTerminalStatus,
+  verdictLabel,
+} from "./model";
 
 export { adAnalysisRunKeys } from "./keys";
 

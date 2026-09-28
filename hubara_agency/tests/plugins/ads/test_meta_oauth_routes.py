@@ -233,3 +233,88 @@ def test_analysis_input_degrada_a_sales_vacio_si_medusa_falla(monkeypatch) -> No
         "/api/ads/meta/analysis-input?days=14"
     ).json()
     assert body["manual_sales"] == {"sales": []}
+
+
+# ── analysis-input POR CAMPAÑA (caso Halloween 2026-09-25) ────────────────────────────
+
+def _insight_row(cid: str, day: str, spend: str = "10000") -> dict:
+    return {"date_start": day, "date_stop": day, "campaign_id": cid, "campaign_name": f"Campaña {cid}",
+            "spend": spend, "inline_link_clicks": "10",
+            "actions": [{"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "3"}]}
+
+
+def _halloween_ads() -> FakeMetaAds:
+    period = [{"ad_id": "AD_1", "ad_name": "Video", "adset_id": "S1", "adset_name": "L / abierta / x",
+               "campaign_id": "C1", "spend": "20000", "impressions": "900", "reach": "700",
+               "inline_link_clicks": "20", "actions": []}]
+    daily = [{"ad_id": "AD_1", "date_start": "2026-09-16", "spend": "10000", "impressions": "450",
+              "inline_link_clicks": "10", "actions": []}]
+    return FakeMetaAds(
+        accounts=[MetaAdAccount("act_1010393601284112", "Hubara", "COP", 1)],
+        raw_insights={"account_currency": "COP", "data": [
+            _insight_row("C1", "2026-09-16"), _insight_row("C1", "2026-09-17"),
+            _insight_row("C2", "2026-09-16", "99999"),  # otra campaña: NO entra al análisis de C1
+        ]},
+        campaign_ad_rows={"period": period, "daily": daily},
+        budget_levels={"C1": "campaign"},
+    )
+
+
+def _paid_conv(day_utc: str, ad_id: str = "AD_1"):
+    import datetime
+
+    from src.plugins.ads.aggregation import AdsAttributedConversation
+
+    ms = int(datetime.datetime.fromisoformat(day_utc).replace(tzinfo=datetime.timezone.utc).timestamp() * 1000)
+    return AdsAttributedConversation(
+        id="wa_x__ep_001", phone_number="x", episode_id="ep_001", started_at_ms=ms, last_msg_at_ms=None,
+        msgs_count=9, ad_headline="Velas", agent="ventas", state="ganado", value=52900,
+        source_id=ad_id, order_status="paid", order_value_cop=52900)
+
+
+def test_analysis_input_de_una_campana_solo_trae_esa_campana_y_sus_ventas(monkeypatch) -> None:
+    calls: list = []
+
+    def _fake_convs(ad_ids, since, until):
+        calls.append((ad_ids, since, until))
+        return [_paid_conv("2026-09-17T15:00:00")], False
+
+    monkeypatch.setattr(meta_oauth, "_campaign_conversations", _fake_convs)
+    body = _client(monkeypatch, store=_connected_store(), ads=_halloween_ads()).get(
+        "/api/ads/meta/analysis-input?campaign_id=C1&from=2026-09-11&to=2026-09-25"
+    ).json()
+
+    assert {r["campaign_id"] for r in body["meta_insights"]["data"]} == {"C1"}
+    # ventas ATRIBUIDAS a los chats de C1, con el día sin venta en cero (no se excluye):
+    assert body["manual_sales"] == {"sales": [
+        {"date": "2026-09-16", "total_orders": 0, "total_revenue": 0},
+        {"date": "2026-09-17", "total_orders": 1, "total_revenue": 52900},
+    ]}
+    assert calls == [(frozenset({"AD_1"}), "2026-09-11", "2026-09-25")]
+    b = body["campaign_breakdown"]
+    assert b["campaign"] == {"id": "C1", "name": "Campaña C1", "budget_level": "campaign"}
+    assert b["window"]["since"] == "2026-09-11" and b["window"]["until"] == "2026-09-25"
+    assert b["ads"][0]["ad_id"] == "AD_1"
+    assert b["ads"][0]["daily"][0]["date"] == "2026-09-16"
+    assert b["ads"][0]["chats"][0]["order"] == {"status": "paid", "value_cop": 52900}
+
+
+def test_analysis_input_de_cuenta_completa_no_trae_drill_down_y_rellena_dias(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    class _NoOrders:
+        async def list(self, *, limit=50, offset=0, include_drafts=True):
+            return SimpleNamespace(orders=[], count=0, offset=offset, limit=limit,
+                                   catalog_available=True, error_detail=None)
+
+    monkeypatch.setattr(meta_oauth, "_orders", lambda: _NoOrders())
+    ads = _halloween_ads()
+    body = _client(monkeypatch, store=_connected_store(), ads=ads).get(
+        "/api/ads/meta/analysis-input?from=2026-09-11&to=2026-09-25"
+    ).json()
+    assert body["campaign_breakdown"] is None
+    # días con gasto y sin ventas = 0 explícito (antes el pod los botaba del cálculo)
+    assert body["manual_sales"] == {"sales": [
+        {"date": "2026-09-16", "total_orders": 0, "total_revenue": 0},
+        {"date": "2026-09-17", "total_orders": 0, "total_revenue": 0},
+    ]}

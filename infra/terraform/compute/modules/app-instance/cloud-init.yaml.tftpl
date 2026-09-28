@@ -13,6 +13,15 @@ packages:
 mounts:
   - ["LABEL=hubara-vault", "/mnt/hubara-vault", "ext4", "defaults,nofail", "0", "2"]
 
+# Swap de 2 GB (incidente 2026-09-25): sin swap, al agotarse la RAM la caja se
+# congeló ~25 min (ni SSH ni SSM; el reboot suave no pudo apagarla). Con swap
+# se pone lenta en vez de colgarse. La caja viva lo tiene hecho a mano
+# (/swapfile + fstab); esto es para las cajas nuevas.
+swap:
+  filename: /swapfile
+  size: 2147483648
+  maxsize: 2147483648
+
 write_files:
   # Config NO-secreta que el deploy lee (los secretos vienen de SSM en el deploy).
   - path: /opt/hubara/box.env

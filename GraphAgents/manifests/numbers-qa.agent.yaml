@@ -1,7 +1,7 @@
 # Agente de catálogo (archetype: analyzer) — el gate NO-self-review. Recomputa las
 # métricas con la misma tool y reconcilia byte-for-byte + chequea bounds. No aplica fixes.
 name: numbers-qa
-description: Gate no-self-review — recomputa y reconcilia las métricas + bounds (drop-off/win-rate ∈ [0,1], MER ≥ 0).
+description: Gate no-self-review — recomputa y reconcilia las métricas + bounds (drop-off/win-rate ∈ [0,1], MER ≥ 0) y el drill-down del scorecard (entidades + jerarquía).
 archetype: analyzer
 certification: C2
 
@@ -13,6 +13,7 @@ contract:
   inputs:
     days: {type: array, required: false, description: "el blend por dia (de blended-economics)"}
     period: {type: object, required: false, description: "el agregado del periodo"}
+    scorecard: {type: object, required: false, description: "el drill-down de la campaña (ctwa-scorecard); null = cuenta completa"}
   outputs:
     passed: {type: boolean, description: "true si TODO reconcilia (no-self-review)"}
     violations: {type: array, description: "las violaciones encontradas (vacio si passed)"}
@@ -21,5 +22,8 @@ exposes_as_tool: true
 
 tools:
   - uses: blended-unit-economics@1
+    with:
+      payload: $state.totals
+  - uses: entity-economics@1
     with:
       payload: $state.totals

@@ -207,5 +207,7 @@
     "sales_only": []
   },
   "verdict": "rotate_creative",
-  "violations": []
+  "violations": [],
+  "campaign_breakdown": null,
+  "scorecard": null
 }

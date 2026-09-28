@@ -85,6 +85,11 @@ class MetaAdsPort(Protocol):
     def fetch_raw_insights(
         self, token: str, account_id: str, *, since: str, until: str, currency: str
     ) -> dict: ...
+    def fetch_campaign_ad_insights(
+        self, token: str, account_id: str, *, campaign_id: str, since: str, until: str,
+        daily: bool,
+    ) -> list[dict]: ...
+    def fetch_campaign_budget_level(self, token: str, campaign_id: str) -> str: ...
 
 
 class GraphMetaAds:
@@ -260,6 +265,56 @@ class GraphMetaAds:
         data = self._get(token, f"{account_id}/insights", params)
         return {"account_currency": currency, "data": data.get("data", [])}
 
+    def fetch_campaign_ad_insights(
+        self, token: str, account_id: str, *, campaign_id: str, since: str, until: str,
+        daily: bool,
+    ) -> list[dict]:
+        """Insights CRUDOS level=ad de UNA campaña — el drill-down del análisis con IA.
+        `daily=False` = una fila por anuncio del periodo (el alcance del periodo da la
+        frecuencia; el alcance diario no se suma). `daily=True` = una fila por anuncio y
+        día (la tendencia del desgaste). Clics AL ENLACE, no todos los clics. Sigue
+        `paging.next` (tope `_MAX_PAGES`)."""
+        params = {
+            "level": "ad",
+            "fields": (
+                "ad_id,ad_name,adset_id,adset_name,campaign_id,spend,impressions,reach,"
+                "inline_link_clicks,actions"
+            ),
+            "filtering": json.dumps(
+                [{"field": "campaign.id", "operator": "EQUAL", "value": campaign_id}]
+            ),
+            "time_range": json.dumps({"since": since, "until": until}),
+            "limit": "500",
+        }
+        if daily:
+            params["time_increment"] = "1"
+        data = self._get(token, f"{account_id}/insights", params)
+        rows = list(data.get("data", []))
+        pages = 1
+        next_url = (data.get("paging") or {}).get("next")
+        while next_url and pages < _MAX_PAGES:
+            data = self._get_url(token, next_url)
+            rows.extend(data.get("data", []))
+            pages += 1
+            next_url = (data.get("paging") or {}).get("next")
+        return rows
+
+    def fetch_campaign_budget_level(self, token: str, campaign_id: str) -> str:
+        """Dónde vive el presupuesto: "campaign" (CBO — Meta lo reparte entre
+        segmentos; no se sube un segmento) o "adset" (ABO). Meta caído → "unknown"
+        (el análisis no recomienda subir segmentos a ciegas)."""
+        try:
+            data = self._get(token, campaign_id, {"fields": "daily_budget,lifetime_budget"})
+        except Exception:  # noqa: BLE001 — degradar, no tumbar el análisis
+            return "unknown"
+        for key in ("daily_budget", "lifetime_budget"):
+            try:
+                if float(data.get(key) or 0) > 0:
+                    return "campaign"
+            except (TypeError, ValueError):
+                continue
+        return "adset"
+
 
 class FakeMetaAds:
     """Fake del `MetaAdsPort` con datos canned (tests + composición sin red)."""
@@ -273,6 +328,8 @@ class FakeMetaAds:
         adset_metrics: list[MetaAdsetMetrics] | None = None,
         ad_metrics: list[MetaAdMetrics] | None = None,
         creatives: dict[str, MetaAdCreative] | None = None,
+        campaign_ad_rows: dict[str, list[dict]] | None = None,
+        budget_levels: dict[str, str] | None = None,
     ) -> None:
         self._accounts = accounts or []
         self._metrics = metrics or []
@@ -282,6 +339,8 @@ class FakeMetaAds:
         self._ad_metrics = ad_metrics or []
         self._creatives = creatives or {}
         self.status_changes: list[tuple[str, str]] = []
+        self._campaign_ad_rows = campaign_ad_rows or {}
+        self._budget_levels = budget_levels or {}
 
     def list_ad_accounts(self, token: str) -> list[MetaAdAccount]:
         return list(self._accounts)
@@ -315,3 +374,12 @@ class FakeMetaAds:
         self, token: str, account_id: str, *, since: str, until: str, currency: str
     ) -> dict:
         return self._raw_insights
+
+    def fetch_campaign_ad_insights(
+        self, token: str, account_id: str, *, campaign_id: str, since: str, until: str,
+        daily: bool,
+    ) -> list[dict]:
+        return list(self._campaign_ad_rows.get("daily" if daily else "period", []))
+
+    def fetch_campaign_budget_level(self, token: str, campaign_id: str) -> str:
+        return self._budget_levels.get(campaign_id, "unknown")

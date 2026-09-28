@@ -36,7 +36,7 @@ def test_api_plan_returns_execution_order():
     assert payload["strategy"] == "sequential"
     assert [s["agent"] for s in payload["steps"]] == [
         "ctwa-insights", "sales-ledger", "ctwa-campaign-funnel",
-        "blended-economics", "numbers-qa", "ctwa-report",
+        "blended-economics", "ctwa-scorecard", "numbers-qa", "ctwa-report",
     ]
     assert payload["steps"][2]["inputs"]["insights_payload"] == "$state.meta_insights"
 
@@ -155,7 +155,7 @@ def test_api_cases_filtra_por_nodo():
     assert [c["id"] for c in payload["cases"]] == ["diagnose-scale"]
     # un supervisor (node agent:ads-analytics) ← el caso flow:ads-analytics (flow mapea a agent)
     status, payload = api_route("GET", "/api/cases", {"node": ["agent:ads-analytics"]}, None, ga_root=ROOT)
-    assert [c["id"] for c in payload["cases"]] == ["dia-del-padre-flujo"]
+    assert [c["id"] for c in payload["cases"]] == ["dia-del-padre-flujo", "halloween-flujo"]
 
 
 def test_api_replay_corre_un_caso_y_compara_el_golden():

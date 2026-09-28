@@ -1,0 +1,28 @@
+# CASO del FLUJO rediseñado (2026-09-25): la campaña Halloween analizada SOLA, con el drill-down.
+# El seed es lo que deposita el central con `?campaign_id=`: Graph /insights diario de ESA campaña,
+# las ventas CONFIRMADAS atribuidas a sus chats por día de inicio del chat (días sin venta en 0 —
+# nunca se excluyen), entities vacío y el `campaign_breakdown` (segmento → anuncio → chats con su
+# tarjeta y el estado del pedido; datos reales de prod sin teléfonos). El replay corre los 7
+# agentes; el golden es un snapshot PINEADO verificado contra test_ctwa_scorecard_golden y
+# test_ctwa_report_scorecard (veredicto no escalar, tarjeta «Chatea con nosotros», QA reconcilia).
+# Nota: /insights diario y el breakdown se tomaron con minutos de diferencia (gasto 147.775 vs 148.446).
+id: halloween-flujo
+title: flujo ads-analytics · Halloween (drill-down por campaña)
+target: flow:ads-analytics
+seed:
+  meta_insights: { $ref: fixtures/halloween_meta_insights.json }
+  manual_sales:
+    sales:
+      - { date: "2026-09-16", total_orders: 0, total_revenue: 0 }
+      - { date: "2026-09-17", total_orders: 1, total_revenue: 52900 }
+      - { date: "2026-09-18", total_orders: 1, total_revenue: 52900 }
+      - { date: "2026-09-19", total_orders: 0, total_revenue: 0 }
+      - { date: "2026-09-20", total_orders: 1, total_revenue: 52900 }
+      - { date: "2026-09-21", total_orders: 1, total_revenue: 52900 }
+      - { date: "2026-09-22", total_orders: 0, total_revenue: 0 }
+      - { date: "2026-09-23", total_orders: 0, total_revenue: 0 }
+      - { date: "2026-09-24", total_orders: 0, total_revenue: 0 }
+      - { date: "2026-09-25", total_orders: 0, total_revenue: 0 }
+  entities_payload: { ad_entities: "[]", summary: { total_count: 0 } }
+  campaign_breakdown: { $ref: fixtures/halloween_breakdown.json }
+golden: { $ref: fixtures/cases/halloween-flujo.golden.json }

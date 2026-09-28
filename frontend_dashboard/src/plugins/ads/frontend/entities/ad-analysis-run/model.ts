@@ -70,6 +70,25 @@ export interface AnalysisReport {
   qaPassed: boolean | null;
   /** La narrativa interpretativa del LLM — null si el nodo degradó o el record es viejo. */
   narrative: string | null;
+  /** El veredicto en una frase ("No subas el presupuesto todavía.") — solo cuando el
+   *  pod analizó UNA campaña con su drill-down; null en el análisis de cuenta completa. */
+  headline: string | null;
+}
+
+/** El código del veredicto en palabras (el chip del resultado). Desconocido → tal cual. */
+const VERDICT_LABELS: Record<string, string> = {
+  scale_budget: "Subir presupuesto",
+  hold_budget: "Mantener presupuesto",
+  fix_before_scaling: "Corregir antes de escalar",
+  reduce_budget: "Bajar presupuesto",
+  insufficient_data: "Datos insuficientes",
+  rotate_creative: "Cambiar creativos",
+  review_targeting_or_pricing: "Revisar audiencia o precio",
+  no_revenue_recorded: "Sin ventas registradas",
+};
+
+export function verdictLabel(verdict: string): string {
+  return VERDICT_LABELS[verdict] ?? verdict;
 }
 
 /**
@@ -88,6 +107,8 @@ export function analysisReport(result: unknown): AnalysisReport | null {
       typeof r.narrative === "string" && r.narrative.trim() !== ""
         ? r.narrative
         : null,
+    headline:
+      typeof r.headline === "string" && r.headline.trim() !== "" ? r.headline : null,
   };
 }
 

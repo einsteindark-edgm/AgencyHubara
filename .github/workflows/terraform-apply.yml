@@ -52,6 +52,9 @@ jobs:
       - name: Apply compute
         if: ${{ inputs.root == 'both' || inputs.root == 'compute' }}
         working-directory: infra/terraform/compute
+        env:
+          # Mail de la alarma de memoria (monitoring.tf). GH variable, no se commitea.
+          TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }}
         run: |
           terraform init -input=false \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \

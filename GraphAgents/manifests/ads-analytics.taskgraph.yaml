@@ -1,7 +1,7 @@
 # El task graph del pod de análisis CTWA. Los agentes NO se redefinen inline: se
 # REFERENCIAN del catálogo por `uses: agent://<id>@1` (G-BIND-AGENT). Estrategia
 # `sequential`: extraer (Meta + ventas) → embudo por-campaña (complementado) →
-# blendear unit-economics → QA reconcilia → reportar. El mismo `blended-economics` /
+# blendear unit-economics → drill-down de la campaña (scorecard) → QA reconcilia → reportar. El mismo `blended-economics` /
 # `ctwa-insights` / `ctwa-campaign-funnel` se reusa desde otros graphs.
 name: ads-analytics
 description: Pod de análisis CTWA — extrae (Meta + ventas), arma el embudo por-campaña complementado, blendea las unit-economics, QA no-self-review, reporta.
@@ -14,7 +14,8 @@ instructions: >-
 certification: C2
 
 # El wiring del task graph (G-WIRE): `inputs:` mapea el ESTADO acumulador → el input de
-# cada agente. El seed del supervisor es {meta_insights, manual_sales}; cada output se
+# cada agente. El seed del supervisor es {meta_insights, manual_sales, entities_payload,
+# campaign_breakdown}; cada output se
 # mergea al estado y alimenta a los de abajo. Esto cablea el DAG: 2 extractores → analyzer
 # → qa → reporter. Es la orquestación, declarada y certificada (no código imperativo).
 agents:
@@ -37,10 +38,17 @@ agents:
       currency: $state.currency
       insights: $state.insights
       sales: $state.sales
+  # El drill-down de UNA campaña (2026-09-25): segmento → anuncio → tarjeta con ventas
+  # CONFIRMADAS atribuidas. El central deposita `campaign_breakdown` (null = cuenta completa →
+  # scorecard null y el reporte cae al blend viejo).
+  - uses: agent://ctwa-scorecard@1
+    inputs:
+      breakdown: $state.campaign_breakdown
   - uses: agent://numbers-qa@1
     inputs:
       days: $state.days
       period: $state.period
+      scorecard: $state.scorecard
   - uses: agent://ctwa-report@1
     inputs:
       days: $state.days
@@ -48,3 +56,4 @@ agents:
       unmatched: $state.unmatched
       qa_passed: $state.passed
       campaigns: $state.campaigns
+      scorecard: $state.scorecard

@@ -30,6 +30,7 @@ INS = GA / "fixtures" / "meta_insights_campaigns.json"
 def _seed() -> dict:
     return {
         "entities_payload": json.loads(ENT.read_text(encoding="utf-8")),
+        "campaign_breakdown": None,
         "insights_payload": json.loads(INS.read_text(encoding="utf-8")),
     }
 
@@ -42,6 +43,7 @@ def _sup_seed() -> dict:
         "meta_insights": json.loads(INS.read_text(encoding="utf-8")),
         "manual_sales": _SUP_SALES,
         "entities_payload": json.loads(ENT.read_text(encoding="utf-8")),
+        "campaign_breakdown": None,
     }
 
 

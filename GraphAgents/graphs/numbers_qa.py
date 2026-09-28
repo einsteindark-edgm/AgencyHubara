@@ -32,6 +32,44 @@ def _audit(label: str, totals: dict, reported: dict, metrics) -> list:
     return out
 
 
+#: Totales del scorecard que se SUMAN hacia arriba (anuncios → segmento → campaña). El
+#: alcance no (personas repetidas entre anuncios).
+_SCORE_ADDITIVE = (
+    "spend_cop", "impressions", "link_clicks", "conversations", "chats",
+    "paid_sales", "paid_revenue_cop", "pending_sales", "pending_revenue_cop",
+    "unverified_sales", "unverified_revenue_cop", "cancelled_sales", "cancelled_revenue_cop",
+    "open_chats", "stale_open_chats",
+)
+_ECON_INPUT = ("spend_cop", "impressions", "reach", "link_clicks", "conversations",
+               "chats", "paid_sales", "paid_revenue_cop")
+
+
+def _audit_entity(label: str, entity: dict, economics) -> list:
+    """Recomputa las métricas de UNA entidad del scorecard con la MISMA tool y reconcilia."""
+    t = entity["totals"]
+    if economics(payload={k: t.get(k) for k in _ECON_INPUT}) != entity["metrics"]:
+        return [{"date": label, "issue": "métricas no reconcilian (¿número editado a mano?)"}]
+    return []
+
+
+def _audit_sum(label: str, parent: dict, children: list[dict]) -> list:
+    bad = [k for k in _SCORE_ADDITIVE if parent[k] != sum(c[k] for c in children)]
+    return [{"date": label, "issue": f"los totales de abajo no suman: {', '.join(bad)}"}] if bad else []
+
+
+def _audit_scorecard(sc: dict, economics) -> list:
+    """El drill-down: cada entidad reconcilia y la jerarquía cuadra."""
+    out: list = _audit_entity("campaña", sc["campaign"], economics)
+    for s in sc["segments"]:
+        out += _audit_entity(f"segmento {s['label']}", s, economics)
+        members = [a["totals"] for a in sc["ads"] if a["segment_id"] == s["id"]]
+        out += _audit_sum(f"segmento {s['label']}", s["totals"], members)
+    for a in sc["ads"]:
+        out += _audit_entity(f"anuncio {a['label']} ({a['segment_label']})", a, economics)
+    out += _audit_sum("campaña", sc["campaign"]["totals"], [s["totals"] for s in sc["segments"]])
+    return out
+
+
 def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) -> dict:
     tools = tools or {}
     metrics = tools["blended-unit-economics"]
@@ -41,6 +79,9 @@ def run(input: dict, *, ports: dict | None = None, tools: dict | None = None) ->
     period = input.get("period")
     if period:  # MF-2: el verdict de CABECERA sale del periodo → también se reconcilia.
         violations += _audit("TOTAL", {k: period[k] for k in _RAW}, period["metrics"], metrics)
+    scorecard = input.get("scorecard")
+    if scorecard:  # el drill-down por campaña (2026-09-25) también se reconcilia
+        violations += _audit_scorecard(scorecard, tools["entity-economics"])
     return {"passed": not violations, "violations": violations}
 
 
@@ -56,15 +97,18 @@ def build():
         raise RuntimeError("instalá deps: `uv sync` (langgraph).") from e
 
     from tools.blended_unit_economics.impl import run as metrics
+    from tools.entity_economics.impl import run as entity_economics
 
     class State(TypedDict, total=False):
         days: list          # blended-economics
         period: dict        # blended-economics (None si no hay días en común)
+        scorecard: dict     # ctwa-scorecard (None en análisis de cuenta completa)
         passed: bool        # ← run()
         violations: list    # ← run()
 
     def qa(state: State) -> dict:
-        return run(dict(state), tools={"blended-unit-economics": metrics})
+        return run(dict(state), tools={"blended-unit-economics": metrics,
+                                       "entity-economics": entity_economics})
 
     g = StateGraph(State)
     g.add_node("qa", qa)

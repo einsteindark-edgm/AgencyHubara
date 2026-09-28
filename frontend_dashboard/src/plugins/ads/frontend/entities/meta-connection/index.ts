@@ -1,4 +1,5 @@
 export type {
+  MetaAnalysisInputParams,
   MetaConnection,
   MetaInsights,
   MetaInsightsCampaign,
@@ -9,6 +10,7 @@ export {
   backendMetaStatusSchema,
 } from "./contracts";
 export { metaConnectionKeys } from "./keys";
+export { analysisInputPath } from "./model";
 export {
   useMetaAnalysisInput,
   useMetaConnection,

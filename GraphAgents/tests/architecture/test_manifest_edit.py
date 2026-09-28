@@ -189,7 +189,8 @@ def test_disconnect_miembro_remueve_solo_ese(ga):
     m = load_manifest(ga / "manifests" / "ads-analytics.taskgraph.yaml")
     ids = [a.ref_agent_id for a in m.agents]
     assert "numbers-qa" not in ids
-    assert ids == ["ctwa-insights", "sales-ledger", "ctwa-campaign-funnel", "blended-economics", "ctwa-report"]
+    assert ids == ["ctwa-insights", "sales-ledger", "ctwa-campaign-funnel", "blended-economics",
+                   "ctwa-scorecard", "ctwa-report"]
 
 
 def test_disconnect_ultimo_miembro_rollback(ga):

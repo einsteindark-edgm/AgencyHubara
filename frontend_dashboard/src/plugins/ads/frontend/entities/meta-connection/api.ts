@@ -16,7 +16,13 @@ import {
   backendMetaStatusSchema,
 } from "./contracts";
 import { metaConnectionKeys } from "./keys";
-import type { MetaConnection, MetaInsights, MetaInsightsParams } from "./model";
+import type {
+  MetaAnalysisInputParams,
+  MetaConnection,
+  MetaInsights,
+  MetaInsightsParams,
+} from "./model";
+import { analysisInputPath } from "./model";
 
 const DISCONNECTED: MetaConnection = {
   connected: false,
@@ -97,13 +103,15 @@ export function useMetaInsights(params: MetaInsightsParams, enabled = true) {
 /**
  * Trae el JSON de entrada REAL para el pod `ads-analytics` (datos de Graph en el
  * shape que el agente consume). Lo usa el form de "Analizar con IA" para pre-cargar
- * con tus campañas reales en vez del seed de ejemplo. `enabled` = solo si conectado.
+ * con tus datos reales en vez del seed de ejemplo. Con `campaignId` = SOLO esa
+ * campaña, con sus ventas atribuidas y el drill-down por anuncio; la ventana es la
+ * del header. `enabled` = solo si conectado.
  */
-export function useMetaAnalysisInput(enabled = true) {
+export function useMetaAnalysisInput(params: MetaAnalysisInputParams = {}, enabled = true) {
   return useQuery<unknown>({
-    queryKey: metaConnectionKeys.analysisInput(),
+    queryKey: metaConnectionKeys.analysisInput(params),
     queryFn: async ({ signal }) => {
-      const raw = await apiClient.get<unknown>("/api/ads/meta/analysis-input?days=14", { signal });
+      const raw = await apiClient.get<unknown>(analysisInputPath(params), { signal });
       return backendMetaAnalysisInputSchema.parse(raw);
     },
     staleTime: 30_000,

@@ -327,3 +327,62 @@ def test_fake_serves_ad_creative() -> None:
     )
     assert fake.fetch_ad_creative("tok", "AD_7").title == "t"
     assert fake.fetch_ad_creative("tok", "NOPE") is None
+
+
+# ── drill-down por campaña para el análisis con IA (caso Halloween 2026-09-25) ──────
+
+@respx.mock
+def test_graph_fetch_campaign_ad_insights_filtra_la_campana_y_pide_link_clicks() -> None:
+    """El análisis de UNA campaña necesita cada anuncio con su segmento, gasto, alcance
+    (frecuencia = impresiones/alcance) y clics AL ENLACE (no todos los clics)."""
+    rows = [{"ad_id": "AD_1", "ad_name": "Video", "adset_id": "S1", "adset_name": "Abierta",
+             "campaign_id": "C1", "spend": "40145", "impressions": "3821", "reach": "3066",
+             "inline_link_clicks": "79", "actions": []}]
+    route = respx.get(f"{_GRAPH}/act_1/insights").mock(
+        return_value=httpx.Response(200, json={"data": rows}))
+    got = GraphMetaAds().fetch_campaign_ad_insights(
+        "TOK", "act_1", campaign_id="C1", since="2026-09-11", until="2026-09-25", daily=False)
+    assert got == rows
+    params = dict(route.calls.last.request.url.params)
+    assert params["level"] == "ad"
+    for field in ("ad_id", "ad_name", "adset_id", "adset_name", "reach", "inline_link_clicks", "actions"):
+        assert field in params["fields"]
+    assert '"campaign.id"' in params["filtering"] and '"C1"' in params["filtering"]
+    assert "time_increment" not in params
+
+
+@respx.mock
+def test_graph_fetch_campaign_ad_insights_diario_y_paginado() -> None:
+    page1 = {"data": [{"ad_id": "AD_1", "date_start": "2026-09-16"}],
+             "paging": {"next": f"{_GRAPH}/act_1/insights?after=X"}}
+    page2 = {"data": [{"ad_id": "AD_1", "date_start": "2026-09-17"}]}
+    route = respx.get(f"{_GRAPH}/act_1/insights")
+    route.side_effect = [httpx.Response(200, json=page1), httpx.Response(200, json=page2)]
+    got = GraphMetaAds().fetch_campaign_ad_insights(
+        "TOK", "act_1", campaign_id="C1", since="2026-09-11", until="2026-09-25", daily=True)
+    assert [r["date_start"] for r in got] == ["2026-09-16", "2026-09-17"]
+    assert dict(route.calls[0].request.url.params)["time_increment"] == "1"
+
+
+@respx.mock
+def test_graph_budget_level_cbo_si_la_campana_tiene_presupuesto() -> None:
+    respx.get(f"{_GRAPH}/C1").mock(return_value=httpx.Response(200, json={"daily_budget": "50000"}))
+    respx.get(f"{_GRAPH}/C2").mock(return_value=httpx.Response(200, json={"daily_budget": "0"}))
+    assert GraphMetaAds().fetch_campaign_budget_level("TOK", "C1") == "campaign"
+    assert GraphMetaAds().fetch_campaign_budget_level("TOK", "C2") == "adset"
+
+
+@respx.mock
+def test_graph_budget_level_desconocido_si_meta_falla() -> None:
+    respx.get(f"{_GRAPH}/C1").mock(return_value=httpx.Response(500, json={}))
+    assert GraphMetaAds().fetch_campaign_budget_level("TOK", "C1") == "unknown"
+
+
+def test_fake_sirve_el_drill_down_por_campana() -> None:
+    fake = FakeMetaAds(campaign_ad_rows={"period": [{"ad_id": "A"}], "daily": [{"ad_id": "A", "date_start": "d"}]},
+                       budget_levels={"C1": "campaign"})
+    assert isinstance(fake, MetaAdsPort)
+    assert fake.fetch_campaign_ad_insights("T", "act", campaign_id="C1", since="s", until="u", daily=False) == [{"ad_id": "A"}]
+    assert fake.fetch_campaign_ad_insights("T", "act", campaign_id="C1", since="s", until="u", daily=True)[0]["date_start"] == "d"
+    assert fake.fetch_campaign_budget_level("T", "C1") == "campaign"
+    assert fake.fetch_campaign_budget_level("T", "C9") == "unknown"

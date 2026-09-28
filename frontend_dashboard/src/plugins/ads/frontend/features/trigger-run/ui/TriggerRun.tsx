@@ -28,16 +28,20 @@ interface Props {
   /** La campaña activa al abrir el modal — el run queda etiquetado con ella
    *  y el historial del inspector filtra por campaña. */
   campaignId?: string;
+  /** La ventana del header (preset o rango) — el análisis usa la MISMA que el tablero. */
+  window?: { days: number | null; from: string | null; to: string | null };
 }
 
-export function TriggerRun({ onRunStarted, campaignId }: Props) {
+export function TriggerRun({ onRunStarted, campaignId, window }: Props) {
   const { data: agents, isLoading, isError } = useAgents();
   const trigger = useTriggerRun();
 
   // Datos REALES de Meta para el análisis (solo si conectado y no expirado).
   const { data: conn } = useMetaConnection();
   const metaReady = Boolean(conn?.connected && !conn.expired);
-  const liveInput = useMetaAnalysisInput(metaReady);
+  // SOLO la campaña abierta y la ventana del header (caso Halloween 2026-09-25: se
+  // analizaba la cuenta completa de 14 días aunque el operador mirara otra cosa).
+  const liveInput = useMetaAnalysisInput({ campaignId, ...window }, metaReady);
   const live = metaReady ? liveInput.data : undefined;
 
   const form = useTriggerRunForm(agents, live);

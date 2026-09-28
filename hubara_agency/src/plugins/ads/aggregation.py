@@ -262,6 +262,20 @@ class AdsAttributedConversation:
     # estado es el del chat.
     state_reason: str | None = None
 
+    # Anuncio (source_id del referral) que trajo ESTE episodio — el drill-down
+    # por anuncio del análisis con IA (caso Halloween 2026-09-25).
+    source_id: str | None = None
+
+    # Estado del pedido del episodio (ver `_episode_order_status`):
+    # "paid" | "pending" | "cancelled" | "test" | "unverified" | None (sin pedido).
+    # Solo "paid" es venta confirmada; el análisis lleva el resto aparte.
+    order_status: str | None = None
+
+    # Monto del pedido del episodio sea cual sea su estado (Orders manda; si no
+    # responde, la copia del chat). `value` es solo el ingreso CONFIRMADO; esto
+    # permite decir "1 pendiente de $45.000" / "1 cancelado de $49.500".
+    order_value_cop: int | None = None
+
 
 @dataclass(frozen=True)
 class AdsDailySeriesPoint:
@@ -428,6 +442,73 @@ def _episode_order_cancelled(
         return False
     fact = order_facts.facts.get(oid)
     return fact is not None and fact.stage == "cancelled"
+
+
+#: Lo último que Meta sabe del pedido (badge CAPI) → estado, cuando Orders no
+#: responde por ese pedido. Purchase = pago confirmado por el operador.
+_CAPI_ORDER_STATUS = {
+    "OrderCanceled": "cancelled",
+    "Purchase": "paid",
+    "LeadSubmitted": "pending",
+}
+
+
+def _episode_order_id(
+    episode: dict[str, Any] | None, metadata: dict[str, Any]
+) -> str | None:
+    """`order_id` del episodio; `episode=None` = sesión legacy → su `registered_order`."""
+    if episode is not None:
+        oid = episode.get("order_id")
+    else:
+        reg = metadata.get("registered_order")
+        oid = reg.get("order_id") if isinstance(reg, dict) else None
+    return oid if isinstance(oid, str) and oid else None
+
+
+def _episode_order_value(
+    episode: dict[str, Any] | None,
+    metadata: dict[str, Any],
+    order_facts: OrderFactsSnapshot | None,
+    order_totals: dict[str, int],
+) -> int | None:
+    """Monto del pedido del episodio, en cualquier estado: el de Orders; si
+    Orders no lo conoce, la copia congelada del chat."""
+    oid = _episode_order_id(episode, metadata)
+    if oid is None:
+        return None
+    fact = order_facts.facts.get(oid) if order_facts is not None else None
+    if fact is not None:
+        return fact.total_cop
+    frozen = episode.get("order_total_cop") if episode is not None else None
+    if isinstance(frozen, (int, float)) and not isinstance(frozen, bool):
+        return int(frozen)
+    return order_totals.get(oid)
+
+
+def _episode_order_status(
+    episode: dict[str, Any] | None,
+    metadata: dict[str, Any],
+    order_facts: OrderFactsSnapshot | None,
+    capi_event: str | None,
+) -> str | None:
+    """Estado del pedido del episodio para el análisis: la etapa y el pago se
+    leen de `OrderFacts` (gotcha 13). Si Orders no pudo responder por ese
+    pedido (`unresolved`, o sin snapshot), manda lo último reportado a Meta;
+    sin eso, "unverified". Un id confirmado inexistente en Medusa = sin pedido.
+    """
+    oid = _episode_order_id(episode, metadata)
+    if oid is None:
+        return None
+    fact = order_facts.facts.get(oid) if order_facts is not None else None
+    if fact is not None:
+        if fact.stage == "cancelled":
+            return "cancelled"
+        if fact.is_test:
+            return "test"
+        return "paid" if fact.counts_as_revenue else "pending"
+    if order_facts is not None and oid not in order_facts.unresolved:
+        return None
+    return _CAPI_ORDER_STATUS.get(capi_event or "", "unverified")
 
 
 def _iter_episodes(
@@ -1365,6 +1446,13 @@ def list_attributed_conversations(
                         STATE_REASON_ORDER_CANCELLED
                         if _episode_order_cancelled(ep, metadata, order_facts)
                         else None
+                    ),
+                    source_id=ep_campaign_id,
+                    order_status=_episode_order_status(
+                        ep, metadata, order_facts, _capi_event
+                    ),
+                    order_value_cop=_episode_order_value(
+                        ep, metadata, order_facts, order_totals
                     ),
                 )
             )

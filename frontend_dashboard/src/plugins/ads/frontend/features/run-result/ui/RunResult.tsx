@@ -17,6 +17,7 @@ import {
   analysisReport,
   useAdAnalysisRunEvents,
   useRun,
+  verdictLabel,
 } from "@plugins/ads/frontend/entities/ad-analysis-run";
 
 import { statusMeta } from "../model/statusMeta";
@@ -150,8 +151,11 @@ function CompletedResult({ result }: { result: unknown }) {
           Resultado
         </span>
         {report?.verdict && (
-          <span className="rounded-full border border-line bg-canvas px-2 py-0.5 text-xs font-semibold text-fg-soft">
-            {report.verdict}
+          <span
+            className="rounded-full border border-line bg-canvas px-2 py-0.5 text-xs font-semibold text-fg-soft"
+            title={report.headline ?? undefined}
+          >
+            {verdictLabel(report.verdict)}
           </span>
         )}
         {report?.qaPassed != null && (
@@ -168,7 +172,10 @@ function CompletedResult({ result }: { result: unknown }) {
           <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-fg-mute">
             Lectura del análisis
           </span>
-          <p className="m-0 italic text-fg-soft">{report.narrative}</p>
+          {/* Markdown: la narrativa trae párrafo + "Lo más importante" en viñetas. */}
+          <div className="text-fg-soft">
+            <Markdown>{report.narrative}</Markdown>
+          </div>
         </div>
       )}
       {report ? (

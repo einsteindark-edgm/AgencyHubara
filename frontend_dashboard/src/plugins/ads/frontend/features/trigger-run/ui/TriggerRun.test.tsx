@@ -13,6 +13,7 @@ const mockAgents = vi.hoisted(() => ({ current: [] as object[] }));
 const mockMutate = vi.hoisted(() => vi.fn());
 const mockConn = vi.hoisted(() => ({ current: {} as object }));
 const mockLive = vi.hoisted(() => ({ current: {} as object }));
+const mockLiveArgs = vi.hoisted(() => ({ current: [] as unknown[] }));
 
 vi.mock("@plugins/ads/frontend/entities/ad-analysis-run", () => ({
   useAgents: () => ({ data: mockAgents.current, isLoading: false, isError: false }),
@@ -21,7 +22,10 @@ vi.mock("@plugins/ads/frontend/entities/ad-analysis-run", () => ({
 
 vi.mock("@plugins/ads/frontend/entities/meta-connection", () => ({
   useMetaConnection: () => mockConn.current,
-  useMetaAnalysisInput: () => mockLive.current,
+  useMetaAnalysisInput: (...args: unknown[]) => {
+    mockLiveArgs.current = args;
+    return mockLive.current;
+  },
 }));
 
 import { TriggerRun } from "./TriggerRun";
@@ -35,7 +39,12 @@ const AGENT = {
 
 const LIVE = { meta_insights: { data: [{ spend: "120000" }] } };
 
-function setup(opts: { connected: boolean; live?: unknown; campaignId?: string }) {
+function setup(opts: {
+  connected: boolean;
+  live?: unknown;
+  campaignId?: string;
+  window?: { days: number | null; from: string | null; to: string | null };
+}) {
   mockAgents.current = [AGENT];
   mockConn.current = {
     data: opts.connected
@@ -45,7 +54,7 @@ function setup(opts: { connected: boolean; live?: unknown; campaignId?: string }
   mockLive.current = { data: opts.live, isLoading: false };
   mockMutate.mockClear();
   return render(
-    <TriggerRun onRunStarted={() => {}} campaignId={opts.campaignId} />,
+    <TriggerRun onRunStarted={() => {}} campaignId={opts.campaignId} window={opts.window} />,
   );
 }
 
@@ -94,5 +103,24 @@ describe("TriggerRun — historial por campaña", () => {
       input: LIVE,
       campaignId: "AD_padre",
     });
+  });
+});
+
+
+describe("TriggerRun — el análisis es de la campaña abierta (caso Halloween 2026-09-25)", () => {
+  it("pide los datos reales de ESA campaña y de la ventana del header", () => {
+    setup({
+      connected: true,
+      live: LIVE,
+      campaignId: "C_halloween",
+      window: { days: null, from: "2026-09-11", to: "2026-09-25" },
+    });
+    expect(mockLiveArgs.current[0]).toEqual({
+      campaignId: "C_halloween",
+      days: null,
+      from: "2026-09-11",
+      to: "2026-09-25",
+    });
+    expect(mockLiveArgs.current[1]).toBe(true);
   });
 });

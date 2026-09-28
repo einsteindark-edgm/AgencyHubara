@@ -28,7 +28,7 @@ def _plan(name: str) -> dict:
     return execution_plan(m, ROOT)
 
 
-# --- sequential: el pod real, 6 pasos EN ORDEN con sus bindings -------------------------
+# --- sequential: el pod real, 7 pasos EN ORDEN con sus bindings -------------------------
 
 # Cada paso lleva además las `tools` que ese nodo COMPONE, en orden DECLARADO del manifest.
 # En un pod determinista (G-DET) ese orden de composición ES el orden en que el grafo las
@@ -49,18 +49,22 @@ EXPECTED_ADS_ANALYTICS = [
      "inputs": {"currency": "$state.currency", "insights": "$state.insights",
                 "sales": "$state.sales"}, "role": "step",
      "tools": ["merge-by-date", "blended-unit-economics", "diagnose"]},
-    {"order": 5, "agent": "numbers-qa", "archetype": "analyzer",
-     "inputs": {"days": "$state.days", "period": "$state.period"}, "role": "step",
-     "tools": ["blended-unit-economics"]},
-    {"order": 6, "agent": "ctwa-report", "archetype": "reporter",
+    {"order": 5, "agent": "ctwa-scorecard", "archetype": "analyzer",
+     "inputs": {"breakdown": "$state.campaign_breakdown"}, "role": "step",
+     "tools": ["entity-economics"]},
+    {"order": 6, "agent": "numbers-qa", "archetype": "analyzer",
+     "inputs": {"days": "$state.days", "period": "$state.period",
+                "scorecard": "$state.scorecard"}, "role": "step",
+     "tools": ["blended-unit-economics", "entity-economics"]},
+    {"order": 7, "agent": "ctwa-report", "archetype": "reporter",
      "inputs": {"days": "$state.days", "period": "$state.period",
                 "unmatched": "$state.unmatched", "qa_passed": "$state.passed",
-                "campaigns": "$state.campaigns"}, "role": "step",
+                "campaigns": "$state.campaigns", "scorecard": "$state.scorecard"}, "role": "step",
      "tools": []},
 ]
 
 
-def test_sequential_plan_is_the_six_steps_in_order():
+def test_sequential_plan_is_the_seven_steps_in_order():
     plan = _plan("ads-analytics.taskgraph.yaml")
     assert plan["agent"] == "ads-analytics"
     assert plan["strategy"] == "sequential"

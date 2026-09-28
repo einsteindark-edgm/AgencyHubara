@@ -145,6 +145,7 @@ def test_supervisor_compuesto_corre_en_agentspan():
         "meta_insights": json.loads((ROOT_PATH / "fixtures" / "meta_insights_campaigns.json").read_text(encoding="utf-8")),
         "manual_sales": {"sales": [{"date": "2026-06-15", "total_orders": 12, "total_revenue": 600000}]},
         "entities_payload": json.loads((ROOT_PATH / "fixtures" / "mcp_ad_entities.json").read_text(encoding="utf-8")),
+        "campaign_breakdown": None,
     }
 
     ex = AgentSpanRuntime().run(graph, {"acc": seed})

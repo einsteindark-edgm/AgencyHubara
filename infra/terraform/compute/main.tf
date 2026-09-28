@@ -45,6 +45,7 @@ module "app" {
   ssh_ingress_cidrs = var.ssh_ingress_cidrs
   image_repo        = var.image_repo
   use_local         = local.use_local
+  alarm_email       = var.alarm_email
 }
 
 # ── Caja de observabilidad (SigNoz, compartida) ─────────────────────────────

@@ -54,6 +54,10 @@ jobs:
 
       - name: Plan (${{ matrix.root }})
         working-directory: infra/terraform/${{ matrix.root }}
+        env:
+          # Igual que en terraform-apply: sin esto el plan mostraría la
+          # suscripción del mail de la alarma como "a borrar".
+          TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }}
         run: |
           set -o pipefail
           terraform plan -input=false -no-color | tee /tmp/plan.txt
