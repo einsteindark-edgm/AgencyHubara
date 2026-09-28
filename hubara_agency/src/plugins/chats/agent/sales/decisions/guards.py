@@ -19,7 +19,7 @@ from src.plugins.chats.agent.sales.decisions.capabilities import Verdict, decide
 from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
 
-__all__ = ["Verdict", "decide_for_session"]
+__all__ = ["Verdict", "decide_for_session", "safe_customer_text", "session_redact_terms"]
 
 
 async def decide_for_session(
@@ -42,3 +42,43 @@ async def decide_for_session(
         redact=redact,
         metrics=DecisionMetrics(Path(vault_dir)),
     )
+
+
+def session_redact_terms(session_id: str, vault_dir: Path) -> tuple[str, ...]:
+    """Lo que hay que tapar de ESTE cliente antes de que un texto salga hacia
+    Jev (las casillas personales del borrador). Ilegible = nada propio: el
+    adaptador igual tapa lo genérico (teléfonos, correos, direcciones)."""
+    from src.plugins.chats.agent.sales.decisions.context import redact_terms_from_slots
+    from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+    from src.plugins.chats.agent.sales.turn_trace import draft_slots
+    from src.plugins.chats.shared.funnel import active_episode
+
+    try:
+        slots = draft_slots(active_episode(FilesystemMetadataStore(Path(vault_dir)).read(session_id)))
+    except Exception:  # noqa: BLE001 — anonimizar nunca tumba la tool
+        return ()
+    return tuple(redact_terms_from_slots(slots))
+
+
+async def safe_customer_text(raw: str | None, *, session_id: str, vault_dir: Path) -> str:
+    """El texto para el cliente sin las oraciones que no debe leer (F5): las
+    que dejan ver que quien atiende es un bot (capacidad `persona`, con el
+    proveedor del bot de esta conversación) y las que huelen a reporte
+    interno (la regla de hoy, hasta que `destinatario` la reemplace). El corte
+    y la unión de oraciones son los de `keep_customer_safe_sentences`: con
+    `reglas` el resultado es idéntico al de hoy. "" = nada era seguro."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import PERSONA, Frases
+    from src.sdk.textkit import customer_sentences, keep_customer_safe_sentences, looks_like_admin_leak
+
+    parts = customer_sentences(raw)
+    if not parts:
+        return ""
+    persona = await decide_for_session(
+        PERSONA,
+        Frases(parts=tuple(parts)),
+        session_id=session_id,
+        vault_dir=vault_dir,
+        redact=session_redact_terms(session_id, vault_dir),
+    )
+    drop = set(persona.value) | {i for i, part in enumerate(parts) if looks_like_admin_leak(part)}
+    return keep_customer_safe_sentences(raw, drop=drop)

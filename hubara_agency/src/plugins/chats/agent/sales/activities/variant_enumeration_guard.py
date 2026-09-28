@@ -7,23 +7,31 @@ que la tool: formato curado con emojis) y devuelve True; el workflow suprime
 el texto plano y el flush entrega el picker. Sin enumeración, o con el
 catálogo caído, devuelve False y el turno sigue como siempre (nunca bloquea).
 
+Motor de decisiones (F5): si el texto es una lista para escoger lo decide la
+capacidad `enumeracion` (regla de hoy, Jev en sombra o Jev con la regla de
+respaldo, según el bot de la conversación).
+
 DEHA: R-STATELESS / R-JSON (in str×2, out bool) / R-DIP (catálogo por
 composition root, vault por `_append_intent`).
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from temporalio import activity
 
-from src.sdk.connectorkit import get_catalog_client, parse_variant_tags
+from src.plugins.chats.agent.sales.decisions.capabilities.texto import ENUMERACION, TextoCatalogo
+from src.plugins.chats.agent.sales.decisions.guards import decide_for_session, session_redact_terms
 from src.plugins.chats.agent.sales.tools.ui_intents import (
     _append_intent,
     build_variant_picker_intent,
 )
 from src.plugins.chats.agent.sales.variant_enumeration import (
     default_intro,
-    find_enumerated_variants,
     intro_before,
 )
+from src.sdk.connectorkit import get_catalog_client, parse_variant_tags
+from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
 
 async def _catalog_labels() -> tuple[list[str], list[str]]:
@@ -58,10 +66,20 @@ async def apply_variant_enumeration_guard_activity(session_id: str, final_text: 
             exc,
         )
         return False
-    hit = find_enumerated_variants(final_text, aromas=aromas, colors=colors)
-    if hit is None:
+    # Motor de decisiones (F5): qué enumera el texto lo decide la capacidad
+    # `enumeracion` con el proveedor del bot de la conversación (la regla de
+    # hoy por defecto: idéntico a antes). Las etiquetas salen del catálogo.
+    vault_dir = Path(WORKSPACE_VAULT_DIR)
+    verdict = await decide_for_session(
+        ENUMERACION,
+        TextoCatalogo(text=final_text, aromas=tuple(aromas), colors=tuple(colors)),
+        session_id=session_id,
+        vault_dir=vault_dir,
+        redact=session_redact_terms(session_id, vault_dir),
+    )
+    if not verdict.value:
         return False
-    variant_type, labels = hit
+    variant_type, labels = verdict.value[0], list(verdict.value[1])
     intro = intro_before(final_text, labels) or default_intro(variant_type)
     intent = build_variant_picker_intent(
         variant_type=variant_type, labels=labels, intro_text=intro, handle=None

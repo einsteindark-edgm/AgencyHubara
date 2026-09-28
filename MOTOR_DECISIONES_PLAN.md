@@ -83,7 +83,11 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [ ] `HubaraSalesSessionWorkflowV2` sin reglas de texto; aplica veredictos grabados; guarda que falla si importa un detector de texto; brazos A1/B0/B; B0 = A1.
 
 ### F5 · Texto del LLM con Jev
-- [ ] destinatario · persona · rescate · enumeración · saludo · portavelas · monto · selector · verdad de producto.
+- [x] persona (`capabilities/texto.py`), en las tools de cierre (`tags.py`) y de escalación (punto de extensión `customer_farewell` de la tool de plataforma): «¿Deja ver que quien atiende es un bot o una IA?» oración por oración, sobre las MISMAS oraciones del filtro de plataforma (`customer_sentences`, `keep_customer_safe_sentences(drop=…)`). Piso = autoidentificación y relevo a «una persona»/«un humano», siempre subconjunto de la regla de hoy. Jev puede dejar una frase de marca («Cada vela lleva un toque humano»).
+- [x] enumeración, en la activity del selector de variantes: «¿Qué le enumera el texto al cliente?» {aromas, colores, combinaciones de cupón, productos, nada}; las etiquetas las sigue sacando el código del catálogo; las combinaciones «Color · Aroma» nunca van al selector (piso).
+- [ ] monto (checkout) · selector (quick replies).
+- [ ] destinatario · rescate · saludo · portavelas: egress de V2; destinatario también en `send_reply`, el flush y el filtro de oraciones de las tools.
+- [ ] verdad de producto (remarketing).
 
 ### F6 · Tools, datos y etapas
 - [x] Perfil `jev-v3` = cuestionario `rafaga-v3` + política `turno-v3` (sobre v2). Las preguntas de etapa solo se hacen en su etapa (datos de envío, variantes, cierre, poscierre).

@@ -49,7 +49,8 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
 )
 from src.plugins.chats.shared.funnel import enqueue_capi_for_tag
 from src.plugins.chats.shared.purchase_signals import has_purchase_confirmation
-from src.sdk.textkit import keep_customer_safe_sentences, sanitize_llm_text
+from src.plugins.chats.agent.sales.decisions.guards import safe_customer_text
+from src.sdk.textkit import sanitize_llm_text
 
 # Sesión c4e3416f: `CONFIRMADO_SIN_DATOS` es para el caso donde el cliente
 # confirmó el pedido (apretó "Confirmar" en `present_order_confirmation`) pero
@@ -341,10 +342,13 @@ class ManageConversationTagTool(ToolBase):
             and degraded_from is None
             and customer_message.strip()
         ):
-            response["tag_closure"]["customer_message"] = (
-                keep_customer_safe_sentences(
-                    sanitize_llm_text(customer_message).text
-                )
+            # Motor de decisiones (F5): qué oraciones se caen lo decide la
+            # capacidad `persona` con el proveedor del bot de la conversación
+            # (la regla de hoy por defecto: idéntico a antes).
+            response["tag_closure"]["customer_message"] = await safe_customer_text(
+                sanitize_llm_text(customer_message).text,
+                session_id=ctx.session_key,
+                vault_dir=self._vault_dir,
             )
         if degraded_from is not None:
             response["degraded_from"] = degraded_from

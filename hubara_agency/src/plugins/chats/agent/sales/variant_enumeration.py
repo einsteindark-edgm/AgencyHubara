@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass
 
 MIN_ENUMERATED = 4
 
@@ -71,6 +72,27 @@ def _count_combinations(text_norm: str, *, aromas: list[str], colors: list[str])
     return len(re.findall(pattern, text_norm))
 
 
+@dataclass(frozen=True)
+class EnumerationCandidates:
+    """Lo que el código encuentra en el texto: los aromas y colores del
+    catálogo (en orden de aparición) y cuántas combinaciones "Color · Aroma"."""
+
+    scents: tuple[str, ...]
+    colors: tuple[str, ...]
+    combinations: int
+
+
+def enumeration_candidates(text: str | None, *, aromas: list[str], colors: list[str]) -> EnumerationCandidates:
+    if not text:
+        return EnumerationCandidates((), (), 0)
+    norm = _normalize(text)
+    return EnumerationCandidates(
+        scents=tuple(label for _pos, label in _find_labels(norm, aromas)),
+        colors=tuple(label for _pos, label in _find_labels(norm, colors)),
+        combinations=_count_combinations(norm, aromas=aromas, colors=colors),
+    )
+
+
 def find_enumerated_variants(
     text: str | None,
     *,
@@ -84,22 +106,18 @@ def find_enumerated_variants(
     Una lista de combinaciones "Color · Aroma" (las de un cupón con cupo) no
     es una enumeración suelta: el picker de un solo tipo la destrozaría
     (prueba en vivo 2026-09-24: se perdieron aromas, productos y precios)."""
-    if not text:
+    found = enumeration_candidates(text, aromas=aromas, colors=colors)
+    if found.combinations >= MIN_COMBINATIONS:
         return None
-    norm = _normalize(text)
-    if _count_combinations(norm, aromas=aromas, colors=colors) >= MIN_COMBINATIONS:
-        return None
-    scents = _find_labels(norm, aromas)
-    cols = _find_labels(norm, colors)
     # Un label presente en ambas listas (ej. "Café") cuenta para el tipo que
     # domina: se resuelve después de contar.
-    if len(cols) > len(scents):
-        winner, labels = "color", cols
+    if len(found.colors) > len(found.scents):
+        winner, labels = "color", found.colors
     else:
-        winner, labels = "scent", scents
+        winner, labels = "scent", found.scents
     if len(labels) < min_count:
         return None
-    return winner, [label for _pos, label in labels]
+    return winner, list(labels)
 
 
 def intro_before(text: str, labels: list[str]) -> str:
@@ -131,4 +149,12 @@ def default_intro(variant_type: str) -> str:
     return _DEFAULT_INTRO.get(variant_type, "Estas son las opciones")
 
 
-__all__ = ["MIN_ENUMERATED", "default_intro", "find_enumerated_variants", "intro_before"]
+__all__ = [
+    "MIN_COMBINATIONS",
+    "MIN_ENUMERATED",
+    "EnumerationCandidates",
+    "default_intro",
+    "enumeration_candidates",
+    "find_enumerated_variants",
+    "intro_before",
+]

@@ -215,6 +215,39 @@ async def test_sales_escalation_forwards_the_customer_farewell(ctx, tmp_path: Pa
     assert result["customer_message"] == farewell
 
 
+@pytest.mark.asyncio
+async def test_sales_escalation_lets_the_engine_decide_the_persona_of_the_farewell(
+    ctx, tmp_path: Path, monkeypatch
+) -> None:
+    """Motor de decisiones (F5): en la despedida del relevo, qué oración se
+    cae lo decide la capacidad `persona` con el proveedor del bot. Con Jev, la
+    frase de marca se queda y el relevo «un humano» se cae."""
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.platform.tools.escalation import EscalateToHumanTool
+    from src.plugins.chats.agent.sales.tools.escalation import guarded_escalation_tool
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    answers = {"persona.1": 0.03, "persona.2": 0.97, "persona.3": 0.01}
+    fake = FakePerceptionAdapter({q: TypedAnswer(id=q, kind="noul", p=p) for q, p in answers.items()})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+    SalesEscalateToHumanTool = guarded_escalation_tool(EscalateToHumanTool)
+    _seed(tmp_path, {"active_route": "ventas", "episodes": [_episode()]})
+    tool = SalesEscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+
+    result = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            reason_category="BULK_ORDER",
+            summary="pide ~100 unidades",
+            customer_message="Cada vela lleva un toque humano. Un humano te confirma el pedido. Gracias por elegirnos 🤍",
+        )
+    )
+
+    assert result["customer_message"] == "Cada vela lleva un toque humano. Gracias por elegirnos 🤍"
+
+
 # ---------------------------------------------------------------- remarketing handoff
 
 

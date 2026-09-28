@@ -27,6 +27,7 @@ def test_textkit_reexports_the_customer_text_guards() -> None:
     assert kit.keep_customer_safe_sentences is impl.keep_customer_safe_sentences
     assert kit.looks_like_admin_leak is impl.looks_like_admin_leak
     assert kit.breaks_human_persona is impl.breaks_human_persona
+    assert kit.customer_sentences is impl.customer_sentences
 
 
 def test_textkit_only_depends_on_the_pure_sanitizer() -> None:

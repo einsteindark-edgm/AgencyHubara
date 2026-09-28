@@ -50,3 +50,72 @@ async def test_a_tool_in_shadow_queues_the_disagreement(tmp_path: Path, monkeypa
 
     assert (verdict.value, verdict.by, verdict.jev) == (False, "reglas", True)
     assert [i["capability"] for i in DisagreementLog(tmp_path).pending()] == ["juguete"]
+
+
+# ── F5: el texto seguro para el cliente (tools de cierre y de escalación) ──
+
+BRAND_AND_RELAY = "Cada vela lleva un toque humano. Un humano te confirma el pago. Gracias por elegirnos 🤍"
+SAMPLES = [
+    BRAND_AND_RELAY,
+    "Listo, tu pedido quedó registrado 🤍.\nUn colega del equipo te escribe por aquí.",
+    "Hola 🤍\nTe cuento",
+    "",
+    "   ",
+    "Soy un asistente virtual. Te ayudo con gusto 🤍",
+    "Resumen para el equipo: el cliente pagó. Gracias por tu compra 🤍",
+]
+
+
+async def test_by_default_the_safe_text_is_todays(tmp_path: Path, monkeypatch) -> None:
+    from src.plugins.chats.agent.sales.decisions.guards import safe_customer_text
+    from src.sdk.textkit import keep_customer_safe_sentences
+
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+
+    for text in SAMPLES:
+        assert await safe_customer_text(text, session_id="wa_1", vault_dir=tmp_path) == keep_customer_safe_sentences(text)
+
+
+async def test_with_jev_a_brand_sentence_stays_and_the_relay_falls(tmp_path: Path, monkeypatch) -> None:
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.plugins.chats.agent.sales.decisions.guards import safe_customer_text
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    answers = {"persona.1": 0.03, "persona.2": 0.97, "persona.3": 0.01}
+    fake = FakePerceptionAdapter({q: TypedAnswer(id=q, kind="noul", p=p) for q, p in answers.items()})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+
+    out = await safe_customer_text(BRAND_AND_RELAY, session_id="wa_1", vault_dir=tmp_path)
+
+    assert out == "Cada vela lleva un toque humano. Gracias por elegirnos 🤍"
+
+
+async def test_what_goes_to_jev_hides_this_customers_data(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.plugins.chats.agent.sales.decisions.guards import safe_customer_text
+    from src.sdk import connectorkit
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    seen: list[tuple[str, tuple[str, ...]]] = []
+
+    class _Spy(FakePerceptionAdapter):
+        async def ask(self, state, questions, *, timeout_s, redact=()):
+            seen.append((state, tuple(redact)))
+            return await super().ask(state, questions, timeout_s=timeout_s, redact=redact)
+
+    spy = _Spy({})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: spy)
+    session = tmp_path / "wa_1"
+    session.mkdir()
+    episode = {"episode_id": "ep_1", "closed_at_ms": None,
+               "order_draft": {"slots": {"nombre_recibe": "Laura Gómez", "direccion": "Cra 7 # 12-30"}}}
+    (session / "metadata.json").write_text(json.dumps({"episodes": [episode]}), encoding="utf-8")
+
+    await safe_customer_text("Gracias Laura, te llega a Cra 7 # 12-30 🤍", session_id="wa_1", vault_dir=tmp_path)
+
+    [(_, redact)] = seen
+    assert {"Laura Gómez", "Laura", "Gómez", "Cra 7 # 12-30"} <= set(redact)

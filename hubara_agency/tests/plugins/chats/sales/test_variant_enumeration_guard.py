@@ -155,3 +155,26 @@ def test_one_combination_among_a_plain_list_still_counts_as_enumeration() -> Non
     text = "Lo tenemos en azul, morado, rosado, blanco y negro; el más pedido es Lila · Lavanda."
     hit = find_enumerated_variants(text, aromas=AROMAS, colors=COLORS)
     assert hit is not None and hit[0] == "color"
+
+
+@pytest.mark.asyncio
+async def test_with_jev_a_description_that_names_aromas_keeps_its_text(guard_env: Path, monkeypatch) -> None:
+    """Motor de decisiones (F5): con el bot B, Jev decide qué enumera el
+    texto. Si dice que describe un producto (no una lista para escoger), no se
+    encola el selector y el texto sale como lo escribió el LLM."""
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.plugins.chats.agent.sales.activities.variant_enumeration_guard import (
+        apply_variant_enumeration_guard_activity,
+    )
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    answer = TypedAnswer(id="enumeracion.que", kind="choice", choice="productos", probs=(("productos", 0.93),),
+                         confidence=0.93)
+    fake = FakePerceptionAdapter({"enumeracion.que": answer})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+
+    assert await apply_variant_enumeration_guard_activity("wa_test_enum", ENUMERATION) is False
+    assert _intents(guard_env) == []
+    assert fake.calls, "con el bot B, la enumeración se le pregunta a Jev"

@@ -601,22 +601,37 @@ def breaks_human_persona(raw: str | None) -> bool:
     return any(p.search(raw) for p in _PERSONA_BREAK_PATTERNS)
 
 
-def keep_customer_safe_sentences(raw: str | None) -> str:
+def customer_sentences(raw: str | None) -> list[str]:
+    """Las oraciones del texto para el cliente, tal como las juzga
+    `keep_customer_safe_sentences` (un solo corte: el motor de decisiones del
+    plugin decide sobre estas mismas oraciones). Puro, stdlib-only."""
+    if not raw or not raw.strip():
+        return []
+    return [p.strip() for p in _SENTENCE_SPLIT_RE.split(raw.strip()) if p and p.strip()]
+
+
+def keep_customer_safe_sentences(raw: str | None, *, drop: set[int] | frozenset[int] | None = None) -> str:
     """Quita SOLO las oraciones que rompen la persona o huelen a reporte interno.
 
     Reemplazar el texto entero por una palabra marcada botaba lo que SÍ servía
     (el aviso del portavelas en la despedida de cierre) y agrandaba el costo de
     un falso positivo ("toque humano", "mensaje automático"). Si nada se cae,
     devuelve el texto intacto (con sus saltos de línea). Puro, stdlib-only.
+
+    `drop` (índices de `customer_sentences`): las oraciones que decidió quitar
+    el motor de decisiones del plugin (la regla de hoy, o Jev con la regla de
+    respaldo). Sin `drop`, decide la regla de hoy.
     """
     if not raw or not raw.strip():
         return ""
     text = raw.strip()
-    parts = [p.strip() for p in _SENTENCE_SPLIT_RE.split(text) if p and p.strip()]
-    kept = [
-        p for p in parts
-        if not breaks_human_persona(p) and not looks_like_admin_leak(p)
-    ]
+    parts = customer_sentences(text)
+    if drop is None:
+        drop = {
+            i for i, p in enumerate(parts)
+            if breaks_human_persona(p) or looks_like_admin_leak(p)
+        }
+    kept = [p for i, p in enumerate(parts) if i not in drop]
     if len(kept) == len(parts):
         return text
     return " ".join(kept)

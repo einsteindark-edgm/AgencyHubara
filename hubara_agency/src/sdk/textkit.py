@@ -29,6 +29,7 @@ from __future__ import annotations
 # Alias idiom (regla 1 SDK): sin el `as x`, ruff --fix poda el re-export.
 from src.platform.llm_text_sanitizer import (
     breaks_human_persona as breaks_human_persona,
+    customer_sentences as customer_sentences,
     keep_customer_safe_sentences as keep_customer_safe_sentences,
     looks_like_admin_leak as looks_like_admin_leak,
     salvage_customer_text as salvage_customer_text,
