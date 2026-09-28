@@ -27,7 +27,23 @@ export type ChatEvent =
       caption: string | null;
       receipt: boolean;
     }
-  | { kind: "reaction"; emoji: string | null; author: "user" | "bot" };
+  | { kind: "reaction"; emoji: string | null; author: "user" | "bot" }
+  | ShippingFormEvent;
+
+/** Respuesta del formulario (Flow) de envío. null = el campo no llegó. */
+export interface ShippingFormEvent {
+  kind: "shipping_form";
+  receiver_name: string | null;
+  phone: string | null;
+  city: string | null;
+  neighborhood: string | null;
+  address: string | null;
+  payment_method: string | null;
+  order_total_cop: number | null;
+  items_summary: string | null;
+  /** Campos que el Flow agregó y el panel aún no conoce. */
+  extra: { key: string; value: string }[];
+}
 
 /** "human" = operador humano via dashboard handoff (no es el bot ni el cliente). */
 export type MessageSender = "user" | "agent" | "human";

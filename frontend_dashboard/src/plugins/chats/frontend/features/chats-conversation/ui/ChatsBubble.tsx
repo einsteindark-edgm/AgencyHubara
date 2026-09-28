@@ -4,7 +4,7 @@ import type {
   ChatQuote,
 } from "@plugins/chats/frontend/entities/chat";
 import { Icon } from "@/shared/ui";
-import { formatDayLabelEs } from "@/shared/lib";
+import { fmtMoney, formatDayLabelEs } from "@/shared/lib";
 
 interface Props {
   message: ChatMessageItem;
@@ -162,6 +162,81 @@ function VisionBlock({ text }: { text: string }) {
   );
 }
 
+const PAYMENT_LABEL: Record<string, string> = {
+  transfer: "Transferencia",
+  cash_on_delivery: "Contra entrega",
+};
+
+/** 3001112233 → "300 111 2233"; otro largo se deja como llegó. */
+function formatPhone(raw: string): string {
+  const d = raw.replace(/\D/g, "");
+  return d.length === 10 ? `${d.slice(0, 3)} ${d.slice(3, 6)} ${d.slice(6)}` : raw;
+}
+
+/** Lo que el cliente llenó en el formulario de envío, como una ficha: quién
+ *  recibe, dónde y qué se paga. El marker `k=v; k=v` era para el LLM. */
+function ShippingFormCard({
+  event: e,
+  time,
+}: {
+  event: Extract<ChatEvent, { kind: "shipping_form" }>;
+  time?: string;
+}) {
+  const place = [e.neighborhood, e.city].filter(Boolean).join(" · ");
+  const hasOrder = Boolean(e.items_summary || e.order_total_cop != null || e.payment_method);
+  return (
+    <Labeled side="in" label="Cliente · Datos de envío">
+      <div className="bubble b-in wa-ship" data-testid="shipping-form">
+        {(e.receiver_name || e.phone) && (
+          <div className="wa-ship-who">
+            <span className="wa-ship-ico"><Icon.user /></span>
+            <div className="wa-ship-col">
+              {e.receiver_name && <span className="wa-ship-name">{e.receiver_name}</span>}
+              {e.phone && (
+                <a className="wa-ship-phone" href={`tel:${e.phone.replace(/\D/g, "")}`}>
+                  {formatPhone(e.phone)}
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+        {(e.address || place) && (
+          <div className="wa-ship-row">
+            <span className="wa-ship-ico"><Icon.loc /></span>
+            <div className="wa-ship-col">
+              {e.address && <span className="wa-ship-addr">{e.address}</span>}
+              {place && <span className="wa-ship-place">{place}</span>}
+            </div>
+          </div>
+        )}
+        {e.extra.map((x) => (
+          <div className="wa-ship-row wa-ship-extra" key={x.key}>
+            <span className="wa-ship-key">{x.key.replace(/_/g, " ")}</span>
+            <span>{x.value}</span>
+          </div>
+        ))}
+        {hasOrder && (
+          <div className="wa-ship-order">
+            {e.items_summary && <span className="wa-ship-items">{e.items_summary}</span>}
+            <div className="wa-ship-pay">
+              {e.payment_method && (
+                <span className="wa-ship-method">
+                  <Icon.pay />
+                  {PAYMENT_LABEL[e.payment_method] ?? e.payment_method}
+                </span>
+              )}
+              {e.order_total_cop != null && (
+                <span className="wa-ship-total">{fmtMoney(e.order_total_cop)}</span>
+              )}
+            </div>
+          </div>
+        )}
+        <div className="meta">{time}</div>
+      </div>
+    </Labeled>
+  );
+}
+
 export function ChatsBubble({ message: m }: Props) {
   // La etiqueta del separador se computa ACÁ, en render, a partir del `dayIso`
   // que trae el adaptador (regla 5: derivados de reloj nunca en el mapper).
@@ -176,6 +251,8 @@ export function ChatsBubble({ message: m }: Props) {
     return <ReactionChip event={m.event} time={m.time} />;
   if (m.event?.kind === "bot_buttons")
     return <ButtonsMessage event={m.event} time={m.time} />;
+  if (m.event?.kind === "shipping_form")
+    return <ShippingFormCard event={m.event} time={m.time} />;
   if (m.kind === "system")
     return (
       <div className="system">
