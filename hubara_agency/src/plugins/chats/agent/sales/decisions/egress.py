@@ -315,6 +315,7 @@ async def decide_egress(
     profile_id: str,
     disagreements: Any = None,
     redact: Sequence[str] = (),
+    metrics: Any = None,
 ) -> EgressOutput:
     """Los veredictos del egreso para el texto final del turno (ver el módulo).
     Nunca lanza por Jev: si falla, tarda o duda, decide la regla de hoy."""
@@ -331,7 +332,7 @@ async def decide_egress(
             return judged[(capability.name, key)]
         verdict = await decide(
             capability, check, provider=provider(capability.name), profile_id=profile_id,
-            disagreements=disagreements, session_id=inp.session_id, redact=redact,
+            disagreements=disagreements, session_id=inp.session_id, redact=redact, metrics=metrics,
         )
         verdicts.append(verdict)
         if key is not None:

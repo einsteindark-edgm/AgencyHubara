@@ -80,7 +80,9 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [ ] mapeos (categoría, familia de color, ítem, zona de envío, producto nombrado).
 
 ### F4 · Workflow V2
-- [ ] `HubaraSalesSessionWorkflowV2` sin reglas de texto; aplica veredictos grabados; guarda que falla si importa un detector de texto; brazos A1/B0/B; B0 = A1.
+- [x] `HubaraSalesSessionWorkflowV2` (`workflows/sales_session_v2.py`) sin reglas de texto (guarda AST: falla si importa un detector de texto o usa `patched`); el egreso lo decide la activity `decide_egress` ANTES de `record_turn` (hook `egress=` de `run_agent_turn`; con `None`, V1/remarketing/ETA byte a byte); registrado junto a V1 (V1 primero en el manifiesto). Brazos A1 (V1, reglas) · B0 (V2, reglas: tiene que dar lo mismo que A1) · B (V2 con Jev). Paridad: las suites de V1 corren contra V2 (3 exclusiones escritas, todas por la diferencia 3), equivalencia de 112 combinaciones del egreso, corpus V1 contra V2 y sandbox B0 contra A1.
+- [x] Diferencias intencionales de V2: el panel muestra solo lo que salió; el texto se suprime por el selector solo si el selector salió de verdad; sin la ronda extra ② por palabras; el LLM recuerda el texto que salió.
+- [ ] Congelar historias reales de V2 antes de encenderlo (desde ahí, cada cambio de V2 lleva `workflow.patched`).
 
 ### F5 · Texto del LLM con Jev
 - [x] persona (`capabilities/texto.py`), en las tools de cierre (`tags.py`) y de escalación (punto de extensión `customer_farewell` de la tool de plataforma): «¿Deja ver que quien atiende es un bot o una IA?» oración por oración, sobre las MISMAS oraciones del filtro de plataforma (`customer_sentences`, `keep_customer_safe_sentences(drop=…)`). Piso = autoidentificación y relevo a «una persona»/«un humano», siempre subconjunto de la regla de hoy. Jev puede dejar una frase de marca («Cada vela lleva un toque humano»).
@@ -88,7 +90,8 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [x] monto, en el checkout: «¿La oración cotiza el precio de un producto?» solo en las oraciones donde las palabras de política aceptan un monto que el catálogo no explica (`policy_decided_sentences`); esas pierden el contexto de política. La cuenta sigue en código; Jev solo puede hacer el chequeo más estricto.
 - [x] selector, en los quick replies: «¿Estos botones le piden al cliente elegir un producto o una variante?»; el namespace del id (`product.`, `color.`…) es piso.
 - [x] Las tools entran al motor SOLO por `guards` (`safe_customer_text`, `product_quote_sentences`, `catalog_choice_buttons`); el vault les llega por la raíz de composición (`build_vault_dir`).
-- [ ] destinatario · rescate · saludo · portavelas: egress de V2; destinatario también en `send_reply`, el flush y el filtro de oraciones de las tools.
+- [x] destinatario · rescate · saludo · portavelas en el egreso de V2 (`decisions/egress.py`): cada una con la regla de V1 de respaldo, métricas para su vara y redacción de los datos del cliente.
+- [ ] destinatario también en `send_reply`, el flush y el filtro de oraciones de las tools.
 - [ ] verdad de producto (remarketing).
 
 ### F6 · Tools, datos y etapas

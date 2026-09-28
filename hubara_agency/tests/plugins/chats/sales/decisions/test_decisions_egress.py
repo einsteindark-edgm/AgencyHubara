@@ -473,3 +473,23 @@ async def test_the_activity_never_fails_it_falls_back_to_the_rules(vault: Path, 
 
     assert out.text == v1_egress(DELIBERATION)["text"]
     assert out.error and "registro de bots roto" in out.error
+
+
+async def test_each_decision_with_jev_is_measured_for_the_rollout_bar(_no_real_oracle, tmp_path: Path) -> None:
+    """La vara de encendido de cada capacidad (7 días en sombra, caídas,
+    p95, desacuerdos) se calcula de las métricas: el egreso también las
+    anota, una por decisión con Jev."""
+    from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
+
+    _no_real_oracle["fake"] = FakePerceptionAdapter({"egreso.destinatario": _choice("egreso.destinatario", "mensaje_al_cliente", 0.97)})
+    metrics = DecisionMetrics(tmp_path)
+
+    await _egress_with("sombra", _inp(COUPON_FALSE_POSITIVE), metrics=metrics)
+
+    assert metrics.rows("destinatario", since_ms=0), "sin métricas, la vara de la capacidad nunca se cumple"
+
+
+async def test_the_activity_hides_this_customers_data_through_the_public_guard(tmp_path: Path, monkeypatch) -> None:
+    from src.plugins.chats.agent.sales.decisions import egress_activities
+
+    assert "_redact_terms" not in egress_activities.__dict__ and not hasattr(egress_activities, "_redact")

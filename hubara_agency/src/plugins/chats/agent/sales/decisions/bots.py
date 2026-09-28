@@ -43,6 +43,8 @@ DEFAULT_PROFILE = "jev-v1"
 #: interruptor). Una capacidad nueva se suma aquí.
 CAPABILITIES: tuple[str, ...] = (
     "compra", "retoma", "baja", "persona", "enumeracion", "monto", "selector", "contactar", "afirmacion",
+    # Egreso del workflow V2 (F4/F5): solo actúan en conversaciones con V2.
+    "destinatario", "rescate", "portavelas", "saludo",
 )
 #: V2 no tiene sombra (no se corren dos workflows): apagado, canary o encendido.
 WORKFLOW_MODES: tuple[str, ...] = ("off", "canary", "on")

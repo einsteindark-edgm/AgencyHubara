@@ -44,6 +44,10 @@ const CAPABILITY_LABEL: Record<string, string> = {
   selector: "Selector",
   contactar: "Contactar",
   afirmacion: "Afirmación",
+  destinatario: "Destinatario",
+  rescate: "Rescate",
+  portavelas: "Portavelas",
+  saludo: "Saludo",
 };
 
 const CAPABILITY_HINT: Record<string, string> = {
@@ -56,6 +60,10 @@ const CAPABILITY_HINT: Record<string, string> = {
   selector: "¿los botones eligen producto o variante?",
   contactar: "¿sobra el mensaje proactivo de remarketing?",
   afirmacion: "¿afirma algo sin consultarlo? (solo se mide)",
+  destinatario: "¿el texto es para el cliente? (V2)",
+  rescate: "¿qué párrafos se salvan? (V2)",
+  portavelas: "¿promete portavelas que no van? (V2)",
+  saludo: "¿el turno ya saluda? (V2)",
 };
 
 const WORKFLOW_LABEL: Record<WorkflowMode, string> = {
