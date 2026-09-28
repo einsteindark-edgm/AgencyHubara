@@ -71,6 +71,8 @@ class RemarketingContext:
     #: «dragón»): el trigger se lo prohíbe al LLM y la guarda de salida bloquea
     #: el gancho que lo mencione igual. [] = nada detectado / sin catálogo.
     unavailable_terms: list[str] = field(default_factory=list)
+    skip_touch: bool = False
+    contact: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

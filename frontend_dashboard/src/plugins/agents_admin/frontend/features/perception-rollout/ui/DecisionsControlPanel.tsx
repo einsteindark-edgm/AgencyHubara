@@ -42,6 +42,7 @@ const CAPABILITY_LABEL: Record<string, string> = {
   enumeracion: "Enumeración",
   monto: "Monto",
   selector: "Selector",
+  contactar: "Contactar",
 };
 
 const CAPABILITY_HINT: Record<string, string> = {
@@ -52,6 +53,7 @@ const CAPABILITY_HINT: Record<string, string> = {
   enumeracion: "¿el texto lista variantes para el selector?",
   monto: "¿la oración cotiza el precio de un producto?",
   selector: "¿los botones eligen producto o variante?",
+  contactar: "¿sobra el mensaje proactivo de remarketing?",
 };
 
 const WORKFLOW_LABEL: Record<WorkflowMode, string> = {

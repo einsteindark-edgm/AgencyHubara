@@ -88,6 +88,9 @@ class RemarketingSessionWorkflow:
         # Lo que el cliente pidió y NO existe en el catálogo (contexto del
         # gancho) — la guarda de veracidad bloquea el gancho que lo mencione.
         self._unavailable_terms: list[str] = []
+        # Motor de decisiones (F8, capacidad `contactar`): el contexto grabado
+        # del gancho dice que el toque sobra → no se redacta nada.
+        self._contact_skip: bool = False
 
     @workflow.signal
     async def send_message(
@@ -172,6 +175,32 @@ class RemarketingSessionWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
 
+    async def _end_abstained(self, session_id: str) -> None:
+        """Cierre de un toque que sobra (abstención del LLM o decisión del
+        motor): nada que enviar ni persistir, el routing vuelve a ventas. Si
+        el cliente escribió durante el turno, sus mensajes van a Sales vía
+        handoff (mismo patrón que el drain post-transfer)."""
+        drained = [p.message for p in self._pending if p.message]
+        self._pending.clear()
+        workflow.logger.info(
+            "Remarketing abstuvo (NO_MESSAGE): toque suprimido; "
+            f"{len(drained)} pendiente(s) para handoff."
+        )
+        if drained:
+            await self._handoff_to_sales(
+                session_id=session_id,
+                summary=(
+                    "Usuario respondió: "
+                    + "\n".join(drained)[:500]
+                ),
+            )
+        else:
+            await workflow.execute_activity(
+                claim_conversation_routing,
+                args=[session_id, ROUTE_VENTAS],
+                start_to_close_timeout=timedelta(seconds=15),
+            )
+
     async def _build_trigger(
         self, session_id: str, motivo: str, memory_context: str, *, ladder: bool
     ) -> str:
@@ -182,6 +211,9 @@ class RemarketingSessionWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
         self._unavailable_terms = list(context.unavailable_terms)
+        # Solo payload del result grabado: historias viejas no traen el campo
+        # (False = el LLM decide, como siempre).
+        self._contact_skip = bool(getattr(context, "skip_touch", False))
         return await workflow.execute_activity(
             build_remarketing_trigger_v2_activity,
             RemarketingTriggerInput(
@@ -282,6 +314,7 @@ class RemarketingSessionWorkflow:
         if self._pending:
             # El cliente escribió mientras se armaba el toque: gana el
             # cliente, el toque sobra (no se encola ni consume peldaño).
+            self._contact_skip = False
             return
         self._proactive_trigger = PendingMessage(message=trigger, plugin_context=None)
         self._pending.append(self._proactive_trigger)
@@ -493,6 +526,8 @@ class RemarketingSessionWorkflow:
                     if customer:
                         batch = customer
                     self._proactive_trigger = None
+                if not is_proactive:
+                    self._contact_skip = False
                 msgs_to_process: list[PendingMessage] = [coalesce_pending(batch)]
             else:
                 is_proactive = False
@@ -505,6 +540,18 @@ class RemarketingSessionWorkflow:
                 self._processing = True
 
                 try:
+                    # Motor de decisiones (F8, capacidad `contactar`): Jev
+                    # dijo, antes de redactar, que el gancho sobra. Mismo
+                    # camino que una abstención (consume el peldaño, devuelve
+                    # el routing y termina) sin turno del LLM ni «escribiendo».
+                    if ladder and is_proactive and self._contact_skip:
+                        self._contact_skip = False
+                        workflow.logger.info("Remarketing: el motor decidió que el gancho sobra; no se redacta.")
+                        await self._record_touch(session_id, "abstained")
+                        self._touch_requested = False
+                        await self._end_abstained(session_id)
+                        return
+
                     # Typing indicator outbound (Fix 5, gated): mostrar
                     # "escribiendo..." al cliente. Best-effort.
                     if workflow.patched("typing-indicator-v1"):
@@ -710,29 +757,8 @@ class RemarketingSessionWorkflow:
                     if abstained and not self._force_shutdown:
                         # El toque sobra: no enviar, no persistir (nada que
                         # contamine el turno siguiente de Sales), devolver el
-                        # routing a ventas y terminar. Si el cliente escribió
-                        # durante el turno, sus mensajes van a Sales via
-                        # handoff (mismo patrón que el drain post-transfer).
-                        drained = [p.message for p in self._pending if p.message]
-                        self._pending.clear()
-                        workflow.logger.info(
-                            "Remarketing abstuvo (NO_MESSAGE): toque suprimido; "
-                            f"{len(drained)} pendiente(s) para handoff."
-                        )
-                        if drained:
-                            await self._handoff_to_sales(
-                                session_id=session_id,
-                                summary=(
-                                    "Usuario respondió: "
-                                    + "\n".join(drained)[:500]
-                                ),
-                            )
-                        else:
-                            await workflow.execute_activity(
-                                claim_conversation_routing,
-                                args=[session_id, ROUTE_VENTAS],
-                                start_to_close_timeout=timedelta(seconds=15),
-                            )
+                        # routing a ventas y terminar.
+                        await self._end_abstained(session_id)
                         return
 
                     if self._force_shutdown:

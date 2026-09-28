@@ -26,6 +26,7 @@ from src.plugins.chats.agent.remarketing.use_cases.context import (
     context_from_metadata,
     customer_text_for,
 )
+from src.plugins.chats.shared.agent_decisions import decide_contact
 from src.plugins.chats.shared.product_truth import (
     unavailable_terms,
 )
@@ -73,6 +74,17 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
     metadata = _read_json(session_dir / "metadata.json")
     events = _read_jsonl(session_dir / "sessions" / f"{session_id}.jsonl")
     context = context_from_metadata(metadata, events, now_ms=int(time.time() * 1000))
+    # Motor de decisiones (F8, capacidad `contactar`): ¿el gancho sobra? Se
+    # decide ANTES de redactar; con el bot de hoy (o sin el motor conectado)
+    # no hay decisión y el LLM decide como siempre.
+    skip, trace = await decide_contact(
+        session_id=session_id,
+        transcript=context.transcript,
+        touch_number=context.touch_number,
+        silence_minutes=context.silence_minutes,
+        vault_dir=Path(WORKSPACE_VAULT_DIR),
+    )
+    context = replace(context, skip_touch=skip, contact=trace)
     products = await _catalog_products()
     if not products:
         return context

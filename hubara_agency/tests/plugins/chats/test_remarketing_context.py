@@ -194,3 +194,52 @@ def test_trigger_without_campaign_is_unchanged() -> None:
     assert build_remarketing_trigger("m", **kwargs) == build_remarketing_trigger(
         "m", campaign_context="", **kwargs
     )
+
+
+# ── Motor de decisiones (F8, capacidad `contactar`) ──
+
+
+async def test_the_context_says_whether_the_touch_is_not_needed(_isolate_vault_dir, monkeypatch) -> None:
+    """Con el bot B, Jev lee la conversación antes de redactar: si el toque
+    sobra, el contexto lo dice (`skip_touch`) y el workflow no gasta el
+    turno del LLM. Con el bot de hoy, `skip_touch` es False (el LLM decide)."""
+    import json as _json
+
+    from temporalio.testing import ActivityEnvironment
+
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.plugins.chats.agent.remarketing.activities import context as ctx_mod
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    sid = "wa_573001234567"
+    session = _isolate_vault_dir / sid
+    (session / "sessions").mkdir(parents=True)
+    (session / "metadata.json").write_text(_json.dumps({"tag": "INTERESADO"}), encoding="utf-8")
+    lines = [{"role": "user", "content": "Ya les hice el pedido por la web, gracias"},
+             {"role": "assistant", "content": "¡Gracias a ti! 🤍"}]
+    (session / "sessions" / f"{sid}.jsonl").write_text("\n".join(_json.dumps(x) for x in lines), encoding="utf-8")
+
+    async def _no_catalog() -> list:
+        return []
+
+    monkeypatch.setattr(ctx_mod, "_catalog_products", _no_catalog)
+    # Sin el motor conectado (worker viejo), no hay decisión: el LLM decide.
+    from src.plugins.chats.shared import agent_decisions
+
+    monkeypatch.setattr(agent_decisions, "_contact_decider", None)  # se restaura al terminar
+    assert (await ActivityEnvironment().run(ctx_mod.read_remarketing_context_activity, sid)).skip_touch is False
+    # El worker de remarketing conecta el motor de decisiones al arrancar.
+    from src.plugins.chats.agent.sales.decisions.contact import register_contact_decision
+
+    register_contact_decision()
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    today = await ActivityEnvironment().run(ctx_mod.read_remarketing_context_activity, sid)
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    fake = FakePerceptionAdapter({"contactar.sobra": TypedAnswer(id="contactar.sobra", kind="noul", p=0.95)})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+    with_jev = await ActivityEnvironment().run(ctx_mod.read_remarketing_context_activity, sid)
+
+    assert today.skip_touch is False and today.contact == {}, "con reglas el contexto grabado es el de hoy"
+    assert with_jev.skip_touch is True and with_jev.contact.get("by") == "jev"

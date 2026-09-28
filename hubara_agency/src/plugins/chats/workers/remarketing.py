@@ -57,6 +57,7 @@ from src.plugins.chats.agent.remarketing.workflows.watchdog import (
 )
 from src.platform.tools.routing import TransferToSalesAgentTool
 from src.plugins.chats.agent.remarketing.tools import deferral_aware_transfer_tool
+from src.plugins.chats.agent.sales.decisions.contact import register_contact_decision
 from src.plugins.chats.agent.sales.decisions.routing import register_sales_workflow_router
 
 # NEW-5 cerrado: el worker de Remarketing tambien necesita la tool de
@@ -71,8 +72,10 @@ register_tool_extension(
 def register_decisions_routing() -> None:
     """Motor de decisiones F2/F7: cuando la plataforma arranca Ventas desde
     este worker (orquestación o activity de arranque), la versión del workflow
-    la decide el registro de bots por conversación."""
+    la decide el registro de bots por conversación. F8: el gancho pregunta al
+    motor si el toque sobra antes de redactar (capacidad `contactar`)."""
     register_sales_workflow_router()
+    register_contact_decision()
 
 
 register_decisions_routing()
