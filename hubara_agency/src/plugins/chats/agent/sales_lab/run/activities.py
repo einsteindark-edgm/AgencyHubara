@@ -20,6 +20,7 @@ from temporalio.exceptions import ApplicationError
 
 from src.plugins.chats.agent.sales_lab.arms import ARM_PROFILES
 from src.plugins.chats.agent.sales_lab.cases import build_cases
+from src.plugins.chats.agent.sales_eval.scorecard.claude_judge import ClaudeCodeJudge, JudgeQueue
 from src.plugins.chats.agent.sales_lab.launch.costs import AGENT_USD_PER_TURN, JUDGE_USD_PER_TURN
 from src.plugins.chats.agent.sales_lab.run.contracts import (
     ArmPublishInput,
@@ -27,6 +28,7 @@ from src.plugins.chats.agent.sales_lab.run.contracts import (
     CaseOutcome,
     EvaluateInput,
     EvaluateResult,
+    EvaluationPlan,
     ProgressUpdate,
     PublishResult,
     RunPlan,
@@ -122,6 +124,38 @@ async def prepare_run_activity(run_id: str) -> RunPlan:
         reps=int(order.get("reps") or 1),
         spend_limit_usd=float(order.get("spend_limit_usd") or 0.0),
         image=str(order.get("image") or ""),
+        judge_usd_per_turn=judge_usd_per_turn(),
+    )
+
+
+@activity.defn(name="lab_run_evaluation_plan")
+async def evaluation_plan_activity(plan: RunPlan) -> EvaluationPlan:
+    """Modo `evaluate`: lo que la corrida ya simuló (repeticiones con métricas
+    publicadas), los casos (se restauran de S3 si la caja no los tiene) y el
+    gasto que ya llevaba (el avance no lo pierde: cuenta para el tope del mes)."""
+    store = _store()
+    prefix = f"runs/{plan.run_id}"
+    local = _lab_root() / "runs" / plan.run_id / "cases.jsonl"
+    if not local.is_file():
+        raw = await asyncio.to_thread(store.get_bytes, f"{prefix}/cases.jsonl")
+        if raw is None:
+            raise ApplicationError(f"la corrida {plan.run_id} no tiene casos publicados", non_retryable=True)
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.write_bytes(raw)
+    reps: dict[str, int] = {}
+    for arm in plan.arms:
+        if arm == "A0":
+            continue
+        n = 0
+        while await asyncio.to_thread(store.get_bytes, f"{prefix}/metrics/{arm}/{n}.json") is not None:
+            n += 1
+        if n:
+            reps[arm] = n
+    progress = json.loads(await asyncio.to_thread(store.get_bytes, f"{prefix}/progress.json") or b"{}")
+    return EvaluationPlan(
+        cases=len(_cases(plan.run_id)),
+        reps_by_arm=reps,
+        spent_usd=float(progress.get("spent_usd") or 0.0) if isinstance(progress, dict) else 0.0,
     )
 
 
@@ -262,14 +296,71 @@ async def cancel_requested_activity(run_id: str) -> bool:
     return (_lab_root() / "runs" / run_id / "CANCEL").exists()
 
 
-def _judge():
-    """El juez del scorecard (el mismo alias de producción, por el LiteLLM de
-    la caja). `LAB_JUDGE=off` lo apaga (tests, o una corrida sin juez)."""
-    if (os.getenv("LAB_JUDGE") or "on").strip().lower() in {"off", "0", "false"}:
-        return None
-    from src.plugins.chats.agent.sales_eval.evals import composition
+# `LAB_JUDGE` (solo en la caja): el juez de la corrida. Por defecto Claude Code
+# (decisión del operador, 2026-09-28): califica fuera de la caja y no gasta API.
+# Estos valores vuelven al juez de pago (el alias Gemini del proxy); `off` = sin juez.
+PAID_JUDGE_VALUES = frozenset({"litellm", "gemini", "on"})
 
-    return composition.get_judge()
+
+def judge_usd_per_turn() -> float:
+    """Tarifa del juez por turno calificado: 0 con Claude Code o sin juez."""
+    return JUDGE_USD_PER_TURN if (os.getenv("LAB_JUDGE") or "").strip().lower() in PAID_JUDGE_VALUES else 0.0
+
+
+def _judge_dir(run_id: str) -> Path:
+    return _lab_root() / "runs" / run_id / "judge"
+
+
+def _judge(run_id: str = ""):
+    """El juez del scorecard en la caja. Por defecto Claude Code (decisión del
+    operador, 2026-09-28): los prompts quedan en la cola de la corrida
+    (`runs/<corrida>/judge/`) hasta que Claude Code los califica.
+    `LAB_JUDGE=off` lo apaga (tests, o una corrida sin juez);
+    `LAB_JUDGE=litellm` vuelve al alias de pago del proxy."""
+    choice = (os.getenv("LAB_JUDGE") or "").strip().lower()
+    if choice in {"off", "0", "false"}:
+        return None
+    if choice in PAID_JUDGE_VALUES:
+        from src.plugins.chats.agent.sales_eval.evals import composition
+
+        return composition.get_judge()
+    return ClaudeCodeJudge(JudgeQueue(_judge_dir(run_id)))
+
+
+_JUDGE_FILES = ("pending.jsonl", "answers.jsonl")
+
+
+def _pull_judge_queue(store: LabStorePort, run_id: str) -> None:
+    """La cola de S3 a la caja: las respuestas de Claude Code (las escribe él,
+    nunca la caja) y lo pendiente, si la caja no lo tiene (modo `evaluate`)."""
+    local = _judge_dir(run_id)
+    local.mkdir(parents=True, exist_ok=True)
+    for name in _JUDGE_FILES:
+        raw = store.get_bytes(f"runs/{run_id}/judge/{name}")
+        if raw is not None and (name == "answers.jsonl" or not (local / name).exists()):
+            (local / name).write_bytes(raw)
+
+
+def _push_pending(store: LabStorePort, run_id: str) -> None:
+    path = _judge_dir(run_id) / "pending.jsonl"
+    if path.exists():
+        store.put_bytes(f"runs/{run_id}/judge/pending.jsonl", path.read_bytes())
+
+
+def _judge_pending(store: LabStorePort, run_id: str) -> int:
+    def ids(name: str) -> set[str]:
+        raw = store.get_bytes(f"runs/{run_id}/judge/{name}") or b""
+        out = set()
+        for line in raw.decode("utf-8").splitlines():
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(item, dict) and isinstance(item.get("id"), str):
+                out.add(item["id"])
+        return out
+
+    return len(ids("pending.jsonl") - ids("answers.jsonl"))
 
 
 def _jsonl_rows(raw: bytes | None) -> list[dict]:
@@ -323,15 +414,21 @@ async def evaluate_arm_activity(inp: EvaluateInput) -> EvaluateResult:
             for sid in sids
         }
     ctx = await build_check_context(catalog=bench_catalog_client(bench_dir / "catalog"))
-    judge = _judge() if inp.judge else None
+    judge = _judge(inp.run_id) if inp.judge else None
+    claude = isinstance(judge, ClaudeCodeJudge)
+    if claude:
+        await asyncio.to_thread(_pull_judge_queue, store, inp.run_id)
     records = await score_arm(bench_dir, cases, arm=inp.arm, rep=inp.rep, rows=rows, ctx=ctx, judge=judge)
+    if claude:
+        await asyncio.to_thread(_push_pending, store, inp.run_id)
     await asyncio.to_thread(_put_by_session, store, f"{prefix}/scores/{inp.arm}/{inp.rep}", records)
     turns = sum(len(r.get("by_turn") or []) for r in records)
     return EvaluateResult(
         episodes=len(records),
         judge_errors=sum(int(r.get("judge_errors") or 0) for r in records),
         turns=turns,
-        judge_usd=round(JUDGE_USD_PER_TURN * turns, 6) if judge is not None else 0.0,
+        # Claude Code califica fuera de la caja: no gasta API.
+        judge_usd=round(JUDGE_USD_PER_TURN * turns, 6) if judge is not None and not claude else 0.0,
         next_offset=next_offset,
     )
 
@@ -365,6 +462,8 @@ def _summarize(store: LabStorePort, inp: SummarizeInput) -> SummarizeResult:
     summary = build_summary(run_id=inp.run_id, registry_version=REGISTRY_VERSION, previous=previous, scores=scores,
                             metrics=metrics, rows=rows, code_checks=code_checks, production_records=production,
                             arms_pending=list(inp.arms_pending))
+    pending = _judge_pending(store, inp.run_id)
+    summary["judge"] = {**(summary.get("judge") or {}), "pending": pending}
     store.put_bytes(f"{prefix}/summary.json", json.dumps(summary, ensure_ascii=False).encode())
     index = json.loads(store.get_bytes(f"{prefix}/conversations.json") or b"[]")
     store.put_bytes(f"{prefix}/conversations.json", json.dumps(with_verdicts(index, scores), ensure_ascii=False).encode())
@@ -375,7 +474,12 @@ def _summarize(store: LabStorePort, inp: SummarizeInput) -> SummarizeResult:
             f"fidelidad del simulador {fid['agreement'] * 100:.0f} % (vara 90 %): A1 no reproduce bien a A0, "
             "la comparación pierde valor"
         )
-    if summary["judge"]["errors"]:
+    if pending:
+        notes.append(
+            f"{pending} calificaciones del juez esperan a Claude Code: esos checks quedan desconocidos "
+            "hasta aplicarlas (corrida en modo solo evaluar)"
+        )
+    if summary["judge"].get("errors"):
         notes.append(f"{summary['judge']['errors']} llamadas al juez fallaron (esos checks quedan desconocidos)")
     return SummarizeResult(notes=notes)
 
@@ -390,6 +494,7 @@ async def summarize_activity(inp: SummarizeInput) -> SummarizeResult:
 
 LAB_RUN_ACTIVITIES = [
     prepare_run_activity,
+    evaluation_plan_activity,
     publish_control_activity,
     smoke_turn_activity,
     simulate_case_activity,

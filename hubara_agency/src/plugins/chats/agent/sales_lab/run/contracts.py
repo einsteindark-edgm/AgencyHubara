@@ -12,6 +12,9 @@ class LabRunInput:
     # Eventos de historia a partir de los cuales la corrida deja de simular y
     # califica lo que alcanzó: Temporal corta un workflow en 51.200 eventos.
     history_limit: int = 40_000
+    # `full` = simular y calificar; `evaluate` = solo calificar lo ya simulado
+    # (aplica las calificaciones de Claude Code sin volver a simular).
+    mode: str = "full"
 
 
 @dataclass(frozen=True)
@@ -22,6 +25,18 @@ class RunPlan:
     reps: int
     spend_limit_usd: float
     image: str = ""
+    # Tarifa del juez por turno calificado: 0 con Claude Code (no gasta API).
+    judge_usd_per_turn: float = 0.0
+
+
+@dataclass(frozen=True)
+class EvaluationPlan:
+    """Lo que una corrida ya simuló, para calificarla de nuevo sin simular
+    (modo `evaluate`): casos, repeticiones por bot y el gasto que ya llevaba."""
+
+    cases: int
+    reps_by_arm: dict[str, int]
+    spent_usd: float = 0.0
 
 
 @dataclass(frozen=True)

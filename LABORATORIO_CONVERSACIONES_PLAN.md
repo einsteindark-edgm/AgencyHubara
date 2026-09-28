@@ -769,6 +769,11 @@ Anotados al implementar (2026-09-23/24). El código vivo manda; esta lista expli
 
 ## 13. Referencias
 
+- **Juez (2026-09-28, decisión del operador):** el juez del scorecard es **Claude Code**, no Gemini, en producción y en la caja. Los checks de código no cambian. El prompt exacto de cada check de juez queda en una cola: `<vault>/_evals/judge_queue/` en producción, `runs/<corrida>/judge/` en la caja. Claude Code lo califica con los mismos criterios y su respuesta se aplica al recalcular.
+  - Producción: `scripts/claude_judge.py` en el worker `sales_eval`, por SSM.
+  - Laboratorio: `scripts/lab_judge.py` desde el equipo del operador, y `dispatch.sh <corrida> <imagen> evaluate` para calificar de nuevo sin simular.
+  - El juez ya no gasta API: el estimado de la corrida de decisión baja de ≈ US$95 a ≈ US$65.
+  - Gemini vuelve solo con `SCORECARD_JUDGE=litellm` / `LAB_JUDGE=litellm`.
 - Plan visual: https://claude.ai/artifact/4UNdDwmnQiFFEnPL9r9APe. Copia en el repo: `LABORATORIO_CONVERSACIONES_DISENO.html` (§11).
 - OpenRouter: modelo `typesafe/jev-1.13` (https://openrouter.ai/typesafe/jev-1.13), API de decisiones y preferencias de proveedor (https://openrouter.ai/docs/guides/routing/provider-selection).
 - Contrato de plugins: `PLUGIN_CONTRACT.md` §5.2 (evals). Arquitectura viva: `ARCHITECTURE_FINAL_fable.md` (lecciones L-1, L-3, L-9, L-10, L-21, L-22 y L-23).

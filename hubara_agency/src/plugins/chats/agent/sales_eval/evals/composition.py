@@ -22,6 +22,27 @@ def get_judge() -> Any:
     return build_judge()
 
 
+def get_scorecard_judge(unit: str) -> Any:
+    """Juez de los checks de juez del scorecard para UNA unidad (`<sesión>/<episodio>`).
+
+    Claude Code califica (decisión del operador, 2026-09-28): los prompts
+    quedan en `<vault>/_evals/judge_queue/` hasta que Claude Code responde
+    (ver `scorecard/claude_judge.py` y `scripts/claude_judge.py`). Gemini
+    (el alias de `get_judge`) solo vuelve con `SCORECARD_JUDGE=litellm`.
+    """
+    import os
+
+    from src.plugins.chats.agent.sales_eval.scorecard.claude_judge import (
+        ClaudeCodeJudge,
+        JudgeQueue,
+        queue_dir,
+    )
+
+    if (os.getenv("SCORECARD_JUDGE") or "").strip().lower() in {"litellm", "gemini"}:
+        return get_judge()
+    return ClaudeCodeJudge(JudgeQueue(queue_dir(get_vault_dir())), unit=unit)
+
+
 @lru_cache(maxsize=1)
 def get_vault_dir() -> Path:
     """Directorio del vault (donde viven `wa_*/sessions/*.jsonl`)."""

@@ -18,22 +18,35 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from typing import Any
 
 from src.plugins.chats.agent.sales_lab.guard import check_lab_env, prepare_lab_env
 
 
-async def _run(run_id: str) -> dict:
+def run_input_from_env(env) -> tuple[Any, str]:
+    """La orden de `dispatch.sh`: `LAB_RUN_ID` y, para solo calificar lo ya
+    simulado con las respuestas de Claude Code, `LAB_RUN_MODE=evaluate`."""
+    from src.plugins.chats.agent.sales_lab.run.contracts import LabRunInput
+
+    run_id = str(env.get("LAB_RUN_ID") or "")
+    if (env.get("LAB_RUN_MODE") or "").strip() == "evaluate":
+        return LabRunInput(run_id=run_id, mode="evaluate"), f"lab-eval-{run_id}"
+    return LabRunInput(run_id=run_id), f"lab-run-{run_id}"
+
+
+async def _run(env) -> dict:
     from temporalio.worker import Worker
 
     from src.plugins.chats.agent.sales_lab.run.activities import LAB_RUN_ACTIVITIES
-    from src.plugins.chats.agent.sales_lab.run.contracts import LAB_TASK_QUEUE, LabRunInput
+    from src.plugins.chats.agent.sales_lab.run.contracts import LAB_TASK_QUEUE
     from src.plugins.chats.agent.sales_lab.run.workflow import LabRunWorkflow
     from src.sdk.runtime import get_temporal_client
 
+    run_input, workflow_id = run_input_from_env(env)
     client = await get_temporal_client()
     async with Worker(client, task_queue=LAB_TASK_QUEUE, workflows=[LabRunWorkflow], activities=LAB_RUN_ACTIVITIES):
         return await client.execute_workflow(
-            LabRunWorkflow.run, LabRunInput(run_id=run_id), id=f"lab-run-{run_id}", task_queue=LAB_TASK_QUEUE
+            LabRunWorkflow.run, run_input, id=workflow_id, task_queue=LAB_TASK_QUEUE
         )
 
 
@@ -50,7 +63,7 @@ def main() -> None:
     if not run_id:
         print("sales_lab: falta LAB_RUN_ID", file=sys.stderr)
         sys.exit(2)
-    result = asyncio.run(_run(run_id))
+    result = asyncio.run(_run(os.environ))
     print(f"sales_lab: corrida {run_id} terminó en {result.get('phase')}")
 
 

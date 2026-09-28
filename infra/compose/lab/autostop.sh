@@ -1,7 +1,7 @@
 #!/bin/bash
 # Autoapagado de la caja del laboratorio (timer de systemd cada 5 min). La caja
 # se apaga sola tras IDLE_MIN minutos SIN trabajo. "Sin trabajo" = ningún
-# contenedor lab-run-* vivo Y CPU < 10 %: una corrida pasa casi todo el tiempo
+# contenedor lab-run-* ni lab-eval-* vivo Y CPU < 10 %: una corrida pasa casi todo el tiempo
 # esperando a los LLM con la CPU baja, así que la CPU sola la apagaría a mitad
 # de camino.
 #
@@ -21,8 +21,11 @@ mkdir -p "$LAB_STATE"
 NEED=$(( IDLE_MIN / 5 )); [ "$NEED" -lt 1 ] && NEED=1
 
 alive=""
-for name in $(timeout 20 docker ps --filter name=lab-run- --format '{{.Names}}' 2>/dev/null || true); do
-  marker="$LAB_ROOT/runs/${name#lab-run-}/dispatched"
+for name in $(timeout 20 docker ps --filter name=lab-run- --filter name=lab-eval- --format '{{.Names}}' 2>/dev/null || true); do
+  case "$name" in
+    lab-eval-*) marker="$LAB_ROOT/runs/${name#lab-eval-}/evaluate.dispatched" ;;  # solo evaluar (Claude Code juez)
+    *) marker="$LAB_ROOT/runs/${name#lab-run-}/dispatched" ;;
+  esac
   if [ -f "$marker" ] && [ -n "$(find "$marker" -mmin +$(( MAX_H * 60 )) 2>/dev/null)" ]; then
     logger "lab autostop: $name lleva más de $MAX_H h -> docker stop"
     timeout 60 docker stop -t 30 "$name" >/dev/null 2>&1 || true

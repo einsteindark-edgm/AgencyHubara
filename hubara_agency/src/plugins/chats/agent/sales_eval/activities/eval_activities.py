@@ -382,7 +382,9 @@ async def score_episode_scorecard_activity(
         previous = store.find_latest(cards_dir, session_id, episode_id)
         judge_results = []
         if with_judge and traj.turns and _scorecard_judge_enabled():
-            judge_results = await run_judge_checks(traj, ctx, composition.get_judge())
+            judge_results = await run_judge_checks(
+                traj, ctx, composition.get_scorecard_judge(f"{session_id}/{episode_id}")
+            )
         record = store.append_scorecard(
             cards_dir,
             service.score_trajectory(traj, ctx, judge_results=judge_results, calibrated=calibrated),

@@ -125,6 +125,18 @@ def test_dispatch_sends_the_order_and_returns_the_box_answer(aws) -> None:
     assert cmd["Parameters"]["commands"] == ["/opt/lab/dispatch.sh 'run-20260923-a1b2' 'ghcr.io/o/agencyhubara:abc'"]
 
 
+def test_evaluate_orders_an_evaluate_only_run_of_the_same_image(aws) -> None:
+    """Claude Code juez: aplicar sus calificaciones a una corrida ya simulada."""
+    aws["ssm"] = _FakeSSM(stdout="…\ndispatched_evaluate\n")
+
+    answer = Boto3LabLauncher(region="us-east-1").evaluate("run-20260923-a1b2", "ghcr.io/o/agencyhubara:abc")
+
+    assert answer == "dispatched_evaluate"
+    assert aws["ssm"].sent[-1]["Parameters"]["commands"] == [
+        "/opt/lab/dispatch.sh 'run-20260923-a1b2' 'ghcr.io/o/agencyhubara:abc' evaluate"
+    ]
+
+
 def test_cancel_sends_the_cancel_script(aws) -> None:
     aws["ssm"] = _FakeSSM(stdout="cancel_requested\n")
 

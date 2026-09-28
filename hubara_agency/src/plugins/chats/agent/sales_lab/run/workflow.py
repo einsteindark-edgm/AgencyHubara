@@ -37,6 +37,7 @@ with workflow.unsafe.imports_passed_through():
         CaseOutcome,
         EvaluateInput,
         EvaluateResult,
+        EvaluationPlan,
         LabRunInput,
         ProgressUpdate,
         PublishResult,
@@ -109,6 +110,8 @@ class LabRunWorkflow:
             if await workflow.execute_activity("lab_run_cancel_requested", inp.run_id, result_type=bool, **_QUICK):
                 await progress(ProgressUpdate(run_id=inp.run_id, phase="cancelled"))
                 return {"phase": "cancelled"}
+            if inp.mode == "evaluate":
+                return await self._evaluate_only(inp.run_id, plan, progress)
             await progress(ProgressUpdate(run_id=inp.run_id, phase="running"))
             published = await workflow.execute_activity(
                 "lab_run_publish_control",
@@ -149,6 +152,24 @@ class LabRunWorkflow:
             await progress(ProgressUpdate(run_id=inp.run_id, phase="failed", error=error, spent_usd=round(self._spent, 6)))
             return {"phase": "failed", "error": error}
 
+
+    async def _evaluate_only(self, run_id, plan, progress) -> dict:
+        """Modo `evaluate`: califica de nuevo lo que la corrida ya simuló (las
+        respuestas de Claude Code a la cola del juez) sin volver a simular.
+        Arranca del gasto que la corrida ya llevaba."""
+        ep = await workflow.execute_activity(
+            "lab_run_evaluation_plan",
+            plan,
+            result_type=EvaluationPlan,
+            start_to_close_timeout=timedelta(minutes=10),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
+        self._spent = ep.spent_usd
+        self._simulated = dict(ep.reps_by_arm)
+        arms = [a for a in plan.arms if a in ep.reps_by_arm]
+        outcome = {"cases": ep.cases, "turns_done": ep.cases * sum(ep.reps_by_arm.values()),
+                   "turns_total": ep.cases * sum(ep.reps_by_arm.values()), "stopped": False, "notes": []}
+        return await self._evaluate(run_id, plan, arms, outcome, progress)
 
     async def _simulate(self, run_id, plan, arms, cases, notes, progress) -> dict:
         """Corre los brazos simulados: cada caso × repetición en su sandbox, de
@@ -217,7 +238,7 @@ class LabRunWorkflow:
         todos los bots, para que se comparen con la misma vara."""
         notes = list(outcome["notes"])
         reps_of = {CONTROL: 1, **{a: self._simulated.get(a, 0) for a in arms}}
-        judge_usd = JUDGE_TURN_USD * (outcome["cases"] + outcome["turns_done"])
+        judge_usd = plan.judge_usd_per_turn * (outcome["cases"] + outcome["turns_done"])
         judge = not outcome["stopped"] and (
             plan.spend_limit_usd <= 0 or self._spent + judge_usd <= plan.spend_limit_usd
         )

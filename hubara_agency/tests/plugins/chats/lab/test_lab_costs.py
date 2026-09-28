@@ -14,6 +14,7 @@ import json
 import pytest
 
 from src.plugins.chats.agent.sales_lab.launch.costs import (
+    JUDGE_USD_PER_TURN,
     check_caps,
     estimate_run_usd,
     month_spent_usd,
@@ -23,20 +24,26 @@ from src.sdk.labkit import FilesystemLabStore
 SEP_23 = 1_790_208_000_000  # 2026-09-24T00:00Z ≈ 23-sep 19:00 Bogotá
 
 
+# Las cifras de abajo son con el juez de pago (Gemini, `LAB_JUDGE=litellm` en
+# la caja). Con Claude Code (el juez por defecto desde 2026-09-28) el juez no
+# gasta API: `test_lab_claude_judge.py`.
+PAID = {"judge_usd_per_turn": JUDGE_USD_PER_TURN}
+
+
 def test_decision_run_costs_about_97_dollars() -> None:
-    assert estimate_run_usd(["A1", "B", "C"], reps=3, turns=400) == pytest.approx(97, abs=5)
+    assert estimate_run_usd(["A1", "B", "C"], reps=3, turns=400, **PAID) == pytest.approx(97, abs=5)
 
 
 def test_quick_run_costs_about_24_dollars() -> None:
-    assert estimate_run_usd(["A1", "C"], reps=1, turns=400) == pytest.approx(24, abs=2)
+    assert estimate_run_usd(["A1", "C"], reps=1, turns=400, **PAID) == pytest.approx(24, abs=2)
 
 
 def test_estimate_scales_with_turns_and_arms() -> None:
     """Los bots y las repeticiones escalan; la pasada del juez sobre A0 es una sola."""
-    one = estimate_run_usd(["A1"], reps=1, turns=100, control=False)
+    one = estimate_run_usd(["A1"], reps=1, turns=100, control=False, **PAID)
 
-    assert estimate_run_usd(["A1"], reps=1, turns=200, control=False) == pytest.approx(2 * one)
-    assert estimate_run_usd(["A1", "B"], reps=3, turns=100, control=False) > 6 * one * 0.99
+    assert estimate_run_usd(["A1"], reps=1, turns=200, control=False, **PAID) == pytest.approx(2 * one)
+    assert estimate_run_usd(["A1", "B"], reps=3, turns=100, control=False, **PAID) > 6 * one * 0.99
 
 
 def _progress(store, run_id: str, started_ms: int, spent: float) -> None:

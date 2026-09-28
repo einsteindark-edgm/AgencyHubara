@@ -29,6 +29,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import replace
 from typing import Any, Protocol
 
+from src.plugins.chats.agent.sales_eval.scorecard.claude_judge import PENDING_CRITIQUE, JudgePending
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext, CheckResult
 from src.plugins.chats.agent.sales_eval.scorecard.registry import CHECKS, SPECS_BY_ID
 from src.plugins.chats.agent.sales_eval.scorecard.trajectory import (
@@ -542,6 +543,8 @@ async def _judge_one(
     for _ in range(max(1, samples)):
         try:
             raw = await _generate(judge, prompt, sleep)
+        except JudgePending:
+            return CheckResult(check_id, "desconocido", critique=PENDING_CRITIQUE, source="judge")
         except Exception as exc:  # noqa: BLE001 — el juez caído no tumba el scorecard
             return CheckResult(
                 check_id, "desconocido", critique=f"{JUDGE_ERROR_PREFIX}: {exc!r}"[:200], source="judge"
@@ -770,6 +773,8 @@ async def _ask_focus(
     for _ in range(max(1, samples)):
         try:
             raw = await _generate(judge, prompt, sleep)
+        except JudgePending:
+            return _focus_unknown(check_id, turns, PENDING_CRITIQUE)
         except Exception as exc:  # noqa: BLE001 — el juez caído no tumba el scorecard
             return _focus_unknown(check_id, turns, f"{JUDGE_ERROR_PREFIX}: {exc!r}"[:200])
         by_turn = parse_focus_output(check_id, raw, turns)

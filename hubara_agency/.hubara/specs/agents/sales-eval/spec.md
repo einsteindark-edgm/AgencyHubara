@@ -164,6 +164,41 @@ juez. La respuesta del recálculo SHALL decir si el juez quedó encolado
 (`judge_queued`, `judge_error`) y el dashboard SHALL mostrarlo y sondear el
 detalle hasta que llegue el registro del juez.
 
+### Requirement: Claude Code es el juez del scorecard
+
+Desde el 2026-09-28 (decisión del operador) los checks de juez SHALL
+calificarlos Claude Code con los mismos criterios, y Gemini SHALL NOT
+llamarse desde el scorecard (vuelve solo con `SCORECARD_JUDGE=litellm` en
+producción o `LAB_JUDGE=litellm` en la caja). El scorecard SHALL dejar el
+prompt EXACTO de cada check de juez sin respuesta en una cola
+(`<vault>/_evals/judge_queue/` en producción, `runs/<corrida>/judge/` en el
+laboratorio) y el check SHALL quedar `desconocido` con la crítica
+«pendiente: lo califica Claude Code», sin contar como error del juez. Una
+respuesta de Claude Code SHALL validarse con los parsers del juez antes de
+entrar (en modo turno, debe calificar todas las candidatas) y SHALL aplicarse
+solo al prompt con la misma huella: si la conversación o el catálogo cambian,
+el check vuelve a la cola. Los checks de código no cambian. El juez de Claude
+Code no gasta API: no entra al estimado ni a la reserva del tope del
+laboratorio.
+
+#### Scenario: Un episodio de producción espera a Claude Code
+
+- GIVEN un episodio que se cierra y un check de juez que aplica
+- WHEN corre el scorecard
+- THEN el check queda `desconocido` con «pendiente: lo califica Claude Code» y su prompt queda en la cola, sin llamar a Gemini
+
+#### Scenario: Claude Code califica y se aplica
+
+- GIVEN Claude Code respondió todos los prompts de un episodio con veredictos legibles
+- WHEN se recalcula ese episodio (`scripts/claude_judge.py aplicar`)
+- THEN cada check de juez toma el veredicto, el turno, la evidencia y la crítica de Claude Code
+
+#### Scenario: Una corrida del laboratorio se califica sin volver a simular
+
+- GIVEN una corrida terminada con prompts del juez pendientes y Claude Code ya respondió en `runs/<corrida>/judge/answers.jsonl`
+- WHEN se ordena a la caja solo evaluar (`dispatch.sh <corrida> <imagen> evaluate`)
+- THEN la caja califica de nuevo sin simular, conserva el gasto que la corrida llevaba y el resumen dice cuántas calificaciones siguen pendientes
+
 ## Out of scope
 
 - La eval legada por métricas DeepEval (convive durante la transición, plan §3.7).

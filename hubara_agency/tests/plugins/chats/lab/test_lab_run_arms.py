@@ -230,9 +230,9 @@ async def test_a_run_stopped_by_the_spend_cap_is_scored_without_the_judge(box, s
     seen: list[bool] = []
     real = run_acts._judge
 
-    def spy():
+    def spy(*args):
         seen.append(True)
-        return real()
+        return real(*args)
 
     monkeypatch.setattr(run_acts, "_judge", spy)
     monkeypatch.setenv("LAB_JUDGE", "on")

@@ -126,7 +126,8 @@ async def test_the_box_reports_progress_after_every_evaluation_chunk(box, sims, 
 async def test_the_judge_spend_counts_toward_the_run(box, sims, monkeypatch) -> None:  # noqa: F811
     _order(box, arms=["A1"], reps=1)
     judge = _Judge()
-    monkeypatch.setattr(run_acts, "_judge", lambda: judge)
+    monkeypatch.setenv("LAB_JUDGE", "litellm")  # el juez de pago; Claude Code no gasta API
+    monkeypatch.setattr(run_acts, "_judge", lambda *_: judge)
 
     await _run(box)
 
@@ -140,7 +141,8 @@ async def test_the_judge_spend_counts_toward_the_run(box, sims, monkeypatch) -> 
 async def test_a_judge_that_does_not_fit_in_the_cap_is_skipped_for_every_bot(box, sims, monkeypatch) -> None:  # noqa: F811
     _order(box, arms=["A1"], reps=1, spend_limit_usd=0.05)  # simular (0,03) cabe; el juez (0,033) no
     judge = _Judge()
-    monkeypatch.setattr(run_acts, "_judge", lambda: judge)
+    monkeypatch.setenv("LAB_JUDGE", "litellm")  # el juez de pago; Claude Code no gasta API
+    monkeypatch.setattr(run_acts, "_judge", lambda *_: judge)
 
     result = await _run(box)
 
@@ -160,10 +162,11 @@ def test_the_workflow_charges_the_judge_rate_the_launcher_estimates() -> None:
 def test_the_estimate_counts_the_judge_pass_over_the_real_control() -> None:
     """La caja re-mide A0 con el juez antes de comparar: una pasada más del
     juez sobre el banco que el estimado no contaba."""
-    with_control = estimate_run_usd(["A1"], reps=1, turns=1000)
+    paid = {"judge_usd_per_turn": JUDGE_USD_PER_TURN}  # el juez de pago; Claude Code no gasta API
+    with_control = estimate_run_usd(["A1"], reps=1, turns=1000, **paid)
     one_pass = round(1000 * JUDGE_USD_PER_TURN, 2)
 
-    assert with_control == pytest.approx(estimate_run_usd(["A1"], reps=1, turns=1000, control=False) + one_pass, abs=0.02)
+    assert with_control == pytest.approx(estimate_run_usd(["A1"], reps=1, turns=1000, control=False, **paid) + one_pass, abs=0.02)
 
 
 # ── C-H5: bots que el tope no alcanzó a simular ────────────────────────────

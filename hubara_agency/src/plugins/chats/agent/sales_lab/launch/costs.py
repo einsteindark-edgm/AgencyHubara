@@ -24,10 +24,16 @@ PERCEPTION_USD_PER_TURN = {"A1": 0.0, "B": 0.0002, "C": 0.0006}
 _BOGOTA = timezone(timedelta(hours=-5))
 
 
-def estimate_run_usd(arms: list[str], *, reps: int, turns: int, control: bool = True) -> float:
-    per_turn = sum(AGENT_USD_PER_TURN + JUDGE_USD_PER_TURN + PERCEPTION_USD_PER_TURN.get(a, 0.0) for a in arms) * reps
+def estimate_run_usd(
+    arms: list[str], *, reps: int, turns: int, control: bool = True, judge_usd_per_turn: float = 0.0
+) -> float:
+    """El juez es Claude Code (decisión del operador, 2026-09-28): califica fuera
+    de la caja y no gasta API, así que por defecto no suma. Con el juez de pago
+    (`LAB_JUDGE=litellm` en la caja) se pasa `JUDGE_USD_PER_TURN`."""
+    judge = judge_usd_per_turn
+    per_turn = sum(AGENT_USD_PER_TURN + judge + PERCEPTION_USD_PER_TURN.get(a, 0.0) for a in arms) * reps
     if control and arms:
-        per_turn += JUDGE_USD_PER_TURN  # la pasada del juez sobre A0
+        per_turn += judge  # la pasada del juez sobre A0
     return round(per_turn * max(0, turns), 2)
 
 

@@ -60,6 +60,20 @@ class Boto3LabLauncher(Boto3Launcher):
         )
         return _last_line(stdout)
 
+    def evaluate(self, run_id: str, image: str) -> str:
+        """Orden de solo evaluar (Claude Code juez): la caja califica de nuevo la
+        corrida ya simulada con las respuestas de la cola, sin simular."""
+        if not RUN_ID_RE.fullmatch(run_id):
+            raise ValueError(f"id de corrida inválido: {run_id!r}")
+        if not IMAGE_RE.fullmatch(image):
+            raise ValueError(f"imagen inválida: {image!r}")
+        ec2, ssm = self._clients()
+        stdout = self._send(
+            ssm, self._instance_id(ec2),
+            f"/opt/lab/dispatch.sh {_shell_quote(run_id)} {_shell_quote(image)} evaluate",
+        )
+        return _last_line(stdout)
+
     def cancel(self, run_id: str) -> str:
         if not RUN_ID_RE.fullmatch(run_id):
             raise ValueError(f"id de corrida inválido: {run_id!r}")

@@ -51,7 +51,14 @@ exit 0
 _FAKE_DOCKER = """#!/bin/bash
 echo "docker $*" >> "$CALLS"
 case "$1" in
-  ps) cat "$RUNNING" 2>/dev/null ;;
+  ps)  # como docker: `--filter name=X` (varios = cualquiera) deja los nombres que contienen X
+    names=(); prev=""
+    for a in "$@"; do [ "$prev" = "--filter" ] && [[ "$a" == name=* ]] && names+=("${a#name=}"); prev="$a"; done
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      if [ ${#names[@]} -eq 0 ]; then echo "$line"; continue; fi
+      for n in "${names[@]}"; do [[ "$line" == *"$n"* ]] && { echo "$line"; break; }; done
+    done < "$RUNNING" 2>/dev/null ;;
   login) cat > "$LOGIN_STDIN" ;;
   container)
     if [ "$2" = inspect ]; then
@@ -352,3 +359,46 @@ def test_autostop_keeps_a_young_run_even_with_an_old_box(box: dict) -> None:
     _run(box, "autostop.sh")
 
     assert not [c for c in _calls(box) if c.startswith("docker stop") or "stop-instances" in c]
+
+
+# ── Claude Code juez (2026-09-28): solo evaluar ─────────────────────────────
+# Claude Code califica la cola del juez fuera de la caja; una corrida en modo
+# `evaluate` aplica esas calificaciones sin volver a simular. Llega por la misma
+# orden con un tercer argumento.
+
+
+def test_dispatch_evaluate_starts_an_evaluation_runner_after_the_run_finished(box: dict) -> None:
+    _run(box, "dispatch.sh", RUN, IMAGE)
+    box["containers"].write_text(f"lab-run-{RUN} exited 0\n")
+
+    out = _run(box, "dispatch.sh", RUN, IMAGE, "evaluate")
+
+    assert out.returncode == 0, out.stderr
+    assert _answer(out) == "dispatched_evaluate"
+    evals = [c for c in _compose_runs(box) if f"--name lab-eval-{RUN}" in c]
+    assert len(evals) == 1 and "LAB_RUN_MODE=evaluate" in evals[0]
+    assert (box["root"] / "runs" / RUN / "evaluate.dispatched").exists()
+
+
+def test_dispatch_evaluate_waits_while_any_runner_is_alive(box: dict) -> None:
+    box["running"].write_text("lab-run-run-20260923-zz\n")
+
+    out = _run(box, "dispatch.sh", RUN, IMAGE, "evaluate")
+
+    assert _answer(out) == "busy"
+    assert not [c for c in _calls(box) if c.startswith("docker compose")]
+
+
+def test_a_new_run_waits_while_an_evaluation_is_alive(box: dict) -> None:
+    box["running"].write_text(f"lab-eval-{RUN}\n")
+
+    assert _answer(_run(box, "dispatch.sh", "run-20260924-b2", IMAGE)) == "busy"
+
+
+def test_autostop_never_stops_the_box_while_an_evaluation_is_alive(box: dict) -> None:
+    box["running"].write_text(f"lab-eval-{RUN}\n")
+
+    for _ in range(5):
+        assert _run(box, "autostop.sh").returncode == 0
+
+    assert not [c for c in _calls(box) if "stop-instances" in c]

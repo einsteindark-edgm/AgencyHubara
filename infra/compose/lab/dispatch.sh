@@ -2,10 +2,16 @@
 # Orden de la API de producción a la caja del laboratorio (LABORATORIO_CONVERSACIONES_PLAN.md §3.7).
 # Llega por SSM SendCommand (AWS-RunShellScript), no por red:
 #
-#   /opt/lab/dispatch.sh <RUN_ID> <IMAGEN_GHCR>
+#   /opt/lab/dispatch.sh <RUN_ID> <IMAGEN_GHCR> [evaluate]
+#
+# `evaluate` (Claude Code juez, 2026-09-28): califica de nuevo una corrida ya
+# simulada con las respuestas de Claude Code a la cola del juez, sin simular.
+# Se puede repetir (Claude Code califica por tandas): no deja el marcador de la
+# corrida, solo `evaluate.dispatched` (lo mira el autoapagado).
 #
 # Imprime en la última línea:
 #   dispatched          arrancó el runner de la corrida
+#   dispatched_evaluate arrancó el runner que solo evalúa
 #   already_dispatched  la orden se repitió (reintento de la activity) y el
 #                       runner sigue vivo o ya terminó bien: no arranca otro
 #   lost                la corrida se ordenó pero su runner ya no existe o murió
@@ -21,15 +27,18 @@ LAB_HOME="${LAB_HOME:-/opt/lab}"
 LAB_ROOT="${LAB_ROOT:-/lab}"
 RUN_ID="${1:-}"
 IMAGE="${2:-}"
+MODE="${3:-full}"
 CONFIG_IN_IMAGE=/app/exoclaw-temporal/litellm_config.yaml
 
 [[ "$RUN_ID" =~ ^[a-z0-9][a-z0-9-]{5,63}$ ]] || { echo "invalid_run_id" >&2; exit 2; }
+[[ "$MODE" == full || "$MODE" == evaluate ]] || { echo "invalid_mode" >&2; exit 2; }
 [[ "$IMAGE" =~ ^ghcr\.io/[a-z0-9._-]+/[a-z0-9._-]+(:[A-Za-z0-9._-]+)?(@sha256:[a-f0-9]{64})?$ ]] || { echo "invalid_image" >&2; exit 2; }
 
 # shellcheck disable=SC1091
 source "$LAB_HOME/box.env"   # AWS_REGION, LAB_BUCKET, GHCR_OWNER
 RUN_DIR="$LAB_ROOT/runs/$RUN_ID"
 NAME="lab-run-$RUN_ID"
+[ "$MODE" = evaluate ] && NAME="lab-eval-$RUN_ID"
 mkdir -p "$LAB_ROOT/runs" "$LAB_ROOT/bench"
 
 # Una orden a la vez. Un reintento de la activity mientras la primera orden
@@ -38,7 +47,7 @@ mkdir -p "$LAB_ROOT/runs" "$LAB_ROOT/bench"
 exec 9>"$LAB_ROOT/runs/.dispatch.lock"
 flock -w 240 9 || { echo "dispatch_lock_timeout: otra orden sigue en curso" >&2; exit 75; }
 
-if [ -f "$RUN_DIR/dispatched" ]; then
+if [ "$MODE" = full ] && [ -f "$RUN_DIR/dispatched" ]; then
   state="$(timeout 20 docker container inspect -f '{{.State.Status}} {{.State.ExitCode}}' "$NAME" 2>/dev/null || true)"
   case "$state" in
     "running "*|"exited 0") echo "already_dispatched" ;;
@@ -47,8 +56,9 @@ if [ -f "$RUN_DIR/dispatched" ]; then
   exit 0
 fi
 
-running="$(timeout 20 docker ps --filter name=lab-run- --format '{{.Names}}' 2>/dev/null || true)"
-if [[ $'\n'"$running"$'\n' == *$'\n'"$NAME"$'\n'* ]]; then
+# Una corrida o una evaluación a la vez: comparten el Temporal y el LiteLLM de la caja.
+running="$(timeout 20 docker ps --filter name=lab-run- --filter name=lab-eval- --format '{{.Names}}' 2>/dev/null || true)"
+if [ "$MODE" = full ] && [[ $'\n'"$running"$'\n' == *$'\n'"$NAME"$'\n'* ]]; then
   # El runner de ESTA corrida ya arrancó pero la orden anterior murió antes de
   # dejar el marcador: es la misma corrida, no otra.
   date -u +%FT%TZ > "$RUN_DIR/dispatched"
@@ -111,6 +121,14 @@ fi
 rm -f "$config"
 
 "${COMPOSE[@]}" up -d --wait --wait-timeout 180 temporal litellm
+if [ "$MODE" = evaluate ]; then
+  # La evaluación anterior de esta corrida ya terminó (si no, sería `busy`).
+  timeout 20 docker rm -f "$NAME" >/dev/null 2>&1 || true
+  "${COMPOSE[@]}" run -d --name "$NAME" -e "LAB_RUN_ID=$RUN_ID" -e "LAB_RUN_MODE=evaluate" sales_lab
+  date -u +%FT%TZ > "$RUN_DIR/evaluate.dispatched"
+  echo "dispatched_evaluate"
+  exit 0
+fi
 "${COMPOSE[@]}" run -d --name "$NAME" -e "LAB_RUN_ID=$RUN_ID" sales_lab
 
 date -u +%FT%TZ > "$RUN_DIR/dispatched"

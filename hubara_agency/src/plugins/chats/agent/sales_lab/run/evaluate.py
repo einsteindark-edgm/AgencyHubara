@@ -139,7 +139,9 @@ async def score_arm(
         episodes_at = {int(c["turn"]): at for c in ep_cases if (at := episode_at(c)) is not None}
         judge_results: dict[int, list] = {}
         if judge is not None and candidates:
-            judge_results = await run_judge_checks_focus(real, candidates, ctx, judge, episodes_at=episodes_at)
+            # La cola de Claude Code rotula cada prompt con su unidad (bot/rep/conversación).
+            unit_judge = judge.for_unit(f"{arm}/{rep}/{sid}/{episode_id}") if hasattr(judge, "for_unit") else judge
+            judge_results = await run_judge_checks_focus(real, candidates, ctx, unit_judge, episodes_at=episodes_at)
         judged = [r for results in judge_results.values() for r in results]
         errors = sum(1 for r in judged if is_judge_error(r))
         record = service.score_turns(real, candidates, ctx, episodes_at=episodes_at, judge_results=judge_results)
