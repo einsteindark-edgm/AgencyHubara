@@ -88,3 +88,64 @@ run "agregar_numeros_no_pisa_los_defaults_del_laboratorio" {
     error_message = "Un bloque lab con solo internal_numbers conserva los demás defaults."
   }
 }
+
+# Motor de decisiones (MOTOR_DECISIONES_PLAN.md, F2 y F7): el techo de las
+# capacidades (reglas → sombra → Jev) y el de la versión del workflow de
+# ventas (V2). El control del dashboard nunca los supera; nacen apagados.
+run "los_techos_del_motor_de_decisiones_nacen_apagados" {
+  command = plan
+  variables {
+    tenants = {
+      t = {
+        api_url       = "https://x.example"
+        callback_urls = ["https://x.example/callback"]
+        logout_urls   = ["https://x.example/"]
+      }
+    }
+  }
+  assert {
+    condition     = module.lab_config["t"].params["SALES_CAPABILITIES_CEILING"] == "off" && module.lab_config["t"].params["SALES_WORKFLOW_V2_CEILING"] == "off"
+    error_message = "Sin bloque lab, los dos techos del motor de decisiones quedan en off."
+  }
+}
+
+run "los_techos_del_motor_viajan_a_ssm" {
+  command = plan
+  module { source = "./modules/lab-config" }
+  variables {
+    tenant = "t1"
+    config = {
+      perception_mode_ceiling = "off"
+      perception_profile      = "jev-v1"
+      signal_inbound_meta     = false
+      max_usd_per_run         = 120
+      max_usd_per_month       = 300
+      internal_numbers        = []
+      capabilities_ceiling    = "shadow"
+      workflow_v2_ceiling     = "canary"
+    }
+  }
+  assert {
+    condition     = aws_ssm_parameter.lab["SALES_CAPABILITIES_CEILING"].value == "shadow" && aws_ssm_parameter.lab["SALES_CAPABILITIES_CEILING"].name == "/hubara/t1/SALES_CAPABILITIES_CEILING"
+    error_message = "SALES_CAPABILITIES_CEILING va en /hubara/<tenant>/ con el valor del tenant."
+  }
+  assert {
+    condition     = aws_ssm_parameter.lab["SALES_WORKFLOW_V2_CEILING"].value == "canary"
+    error_message = "SALES_WORKFLOW_V2_CEILING lleva el valor del tenant."
+  }
+}
+
+run "un_techo_del_motor_raro_no_pasa_el_plan" {
+  command = plan
+  variables {
+    tenants = {
+      t = {
+        api_url       = "https://x.example"
+        callback_urls = ["https://x.example/callback"]
+        logout_urls   = ["https://x.example/"]
+        lab           = { workflow_v2_ceiling = "shadow" }
+      }
+    }
+  }
+  expect_failures = [var.tenants]
+}

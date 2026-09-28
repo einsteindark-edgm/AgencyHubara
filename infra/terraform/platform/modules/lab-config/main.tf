@@ -14,6 +14,12 @@
 #   SALES_SIGNAL_INBOUND_META      on | off. La API manda los ids del mensaje como
 #     4.º argumento de send_message. Encender SOLO con el worker que lo acepta
 #     ya desplegado (un worker viejo falla la tarea del workflow).
+#   SALES_CAPABILITIES_CEILING     off | shadow | canary | on. TECHO de las capacidades
+#     del motor de decisiones (MOTOR_DECISIONES_PLAN.md): cada una va de reglas
+#     (off) a sombra y a Jev (canary/on) desde el panel «Motor de decisiones»,
+#     nunca por encima de esto. Bajar nunca se bloquea.
+#   SALES_WORKFLOW_V2_CEILING      off | canary | on. TECHO del workflow de ventas V2
+#     (canary = números de prueba y porcentaje del control; on = todos).
 #   LAB_MAX_USD_PER_RUN / _MONTH   topes de gasto del botón "Nueva corrida" (§3.7).
 #   LAB_INTERNAL_NUMBERS           teléfonos del equipo (E.164, separados por coma):
 #     sus conversaciones no entran al banco (motivo `numero_interno`). Lo leen la
@@ -33,6 +39,8 @@ variable "config" {
     max_usd_per_run         = number
     max_usd_per_month       = number
     internal_numbers        = list(string)
+    capabilities_ceiling    = optional(string, "off")
+    workflow_v2_ceiling     = optional(string, "off")
   })
 }
 
@@ -46,6 +54,8 @@ locals {
     LAB_MAX_USD_PER_RUN           = tostring(var.config.max_usd_per_run)
     LAB_MAX_USD_PER_MONTH         = tostring(var.config.max_usd_per_month)
     LAB_INTERNAL_NUMBERS          = length(var.config.internal_numbers) > 0 ? join(",", var.config.internal_numbers) : local.placeholder
+    SALES_CAPABILITIES_CEILING    = var.config.capabilities_ceiling
+    SALES_WORKFLOW_V2_CEILING     = var.config.workflow_v2_ceiling
   }
 }
 
@@ -60,3 +70,5 @@ resource "aws_ssm_parameter" "lab" {
 }
 
 output "param_names" { value = [for p in aws_ssm_parameter.lab : p.name] }
+# Los valores (config no secreta) para los tests del plan.
+output "params" { value = local.params }

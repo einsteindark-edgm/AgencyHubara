@@ -71,6 +71,8 @@ variable "tenants" {
       max_usd_per_run         = optional(number, 120)      # tope de gasto de una corrida del laboratorio
       max_usd_per_month       = optional(number, 300)      # tope mensual del laboratorio
       internal_numbers        = optional(list(string), []) # teléfonos del equipo, E.164 (+573001234567): sus conversaciones no entran al banco; [] = ninguno
+      capabilities_ceiling    = optional(string, "off")    # techo de las capacidades del motor de decisiones: off | shadow | canary | on
+      workflow_v2_ceiling     = optional(string, "off")    # techo del workflow de ventas V2: off | canary | on
     }), {})
   }))
 
@@ -89,6 +91,16 @@ variable "tenants" {
   validation {
     condition     = alltrue([for t in values(var.tenants) : contains(["off", "shadow", "canary", "on"], t.lab.perception_mode_ceiling)])
     error_message = "tenants.*.lab.perception_mode_ceiling: off | shadow | canary | on."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : contains(["off", "shadow", "canary", "on"], t.lab.capabilities_ceiling)])
+    error_message = "tenants.*.lab.capabilities_ceiling: off | shadow | canary | on."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : contains(["off", "canary", "on"], t.lab.workflow_v2_ceiling)])
+    error_message = "tenants.*.lab.workflow_v2_ceiling: off | canary | on (V2 no tiene sombra)."
   }
 
   validation {
