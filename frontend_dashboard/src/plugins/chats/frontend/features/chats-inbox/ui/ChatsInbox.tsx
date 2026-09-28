@@ -227,9 +227,12 @@ function Row({ chat, selected, onSelect }: RowProps) {
   // Pospuesto con la fecha ya pasada: la fila entera en rojo + aviso — el
   // humano tiene que retomar esta conversación (pedido del operador).
   const overdue = Boolean(chat.postponed?.overdue);
+  // El cliente escribió y nadie le ha contestado: hora y nombre resaltados,
+  // como un chat con mensajes nuevos en WhatsApp.
+  const waiting = chat.unread > 0;
   return (
     <div
-      className={"row" + (selected ? " sel" : "") + (overdue ? " row-overdue" : "")}
+      className={"row" + (selected ? " sel" : "") + (overdue ? " row-overdue" : "") + (waiting ? " row-unread" : "")}
       onClick={() => onSelect(chat.id)}
     >
       <Avatar initials={chat.short} color={chat.color} presence={chat.presence} />
@@ -253,7 +256,15 @@ function Row({ chat, selected, onSelect }: RowProps) {
           <span className={"tag " + chat.tagClass}>{chat.tag.replace(/_/g, " ")}</span>
           {chat.order && <OrderChip order={chat.order} />}
           {chat.postponed && <PostponedChip postponed={chat.postponed} />}
-          {chat.unread > 0 && <span className="badge-unread">{chat.unread}</span>}
+          {waiting && (
+            <span
+              className="badge-unread"
+              aria-label={`${chat.unread} mensaje${chat.unread !== 1 ? "s" : ""} sin responder`}
+              title={`${chat.unread} mensaje${chat.unread !== 1 ? "s" : ""} sin responder`}
+            >
+              {chat.unread}
+            </span>
+          )}
         </div>
       </div>
     </div>

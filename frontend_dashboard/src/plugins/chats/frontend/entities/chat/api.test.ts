@@ -79,6 +79,18 @@ describe("lastInboundMs (sonido de mensaje nuevo)", () => {
   });
 });
 
+describe("unread (mensajes del cliente en espera de respuesta)", () => {
+  it("el badge cuenta los mensajes sin responder que manda el backend", async () => {
+    const data = await runInbox([makeSession({ unanswered_count: 3 })]);
+    expect(data?.[0]?.unread).toBe(3);
+  });
+
+  it("backend viejo sin el campo → 0 (sin badge)", async () => {
+    const data = await runInbox([makeSession()]);
+    expect(data?.[0]?.unread).toBe(0);
+  });
+});
+
 describe("normalizeTag via useChatInbox (regression: venta=Frío bug)", () => {
   it("COMPRA_EXITOSA del backend → CLIENTE en inbox (no FRÍO)", async () => {
     const data = await runInbox([

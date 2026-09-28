@@ -509,6 +509,9 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
   padding: 0 5px; display: inline-flex; align-items: center; justify-content: center;
 }
 .row.sel .badge-unread { background: rgba(255,255,255,0.25); }
+.row.row-unread .name { font-weight: 700; }
+.row.row-unread .time { color: var(--accent); font-weight: 600; }
+.row.row-unread.sel .time { color: #fff; }
 
 /* Human assignment banner */
 .human-banner {
