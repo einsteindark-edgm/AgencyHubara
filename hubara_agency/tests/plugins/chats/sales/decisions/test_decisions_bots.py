@@ -24,7 +24,7 @@ from src.plugins.chats.agent.sales.decisions.rollout import RolloutState
 from src.plugins.chats.agent.sales.decisions.rollout_store import write_state
 
 TEST = "wa_573001234567"
-OTHER = "wa_573009999999"
+OTHER = "wa_573009876543"
 
 
 @pytest.fixture(autouse=True)
