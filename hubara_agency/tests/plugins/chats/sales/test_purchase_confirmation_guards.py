@@ -32,6 +32,16 @@ NOW = 1_789_406_554_683
 KEY = "wa_test_guards"
 
 
+@pytest.fixture(autouse=True)
+def _ingest_clock_at_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El ingest corre con el reloj de los episodios del test (NOW, 14-sep):
+    con el reloj real, a los 14 días el episodio vence y el ingest abre otro
+    sin el borrador (bomba de tiempo que estalló el 28-sep)."""
+    import src.plugins.chats.agent.sales.use_cases.ingest_inbound_message as ingest
+
+    monkeypatch.setattr(ingest, "_now_ms", lambda: NOW + 1_000)
+
+
 @pytest.fixture
 def ctx() -> ToolContext:
     return ToolContext(session_key=KEY, channel="whatsapp", chat_id=KEY)

@@ -1370,6 +1370,8 @@ def test_campaign_uses_coupon_percent_and_inclusive_end_date(
     promo = _promo_dto("AMOR26", value=15, ends_at_ms=1_790_571_600_000)  # 2026-09-28T05:00Z
     monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
     monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([promo]))
+    # Se envía antes de que el cupón venza (el reloj real ya pasó el 27).
+    monkeypatch.setattr(api_mod, "_now_ms", lambda: 1_790_571_600_000 - 3 * 86_400_000)
     campaign_id = _campaign_with_coupon(client, "AMOR26")
     client.put(
         f"/api/marketing/campaigns/{campaign_id}",
@@ -1398,6 +1400,8 @@ def test_test_send_announces_the_coupon_terms_not_what_the_operator_typed(
     promo = _promo_dto("AMOR26", value=15, ends_at_ms=1_790_571_600_000)  # hasta 27-sep
     monkeypatch.setattr(api_mod, "send_template_to_session", _fake_send)
     monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([promo]))
+    # La prueba se manda antes de que el cupón venza (el reloj real ya pasó el 27).
+    monkeypatch.setattr(api_mod, "_now_ms", lambda: 1_790_571_600_000 - 3 * 86_400_000)
     campaign_id = _campaign_with_coupon(client, "AMOR26")
     client.put(f"/api/marketing/campaigns/{campaign_id}", json={"valid_until": "cuando quieras"})
 
