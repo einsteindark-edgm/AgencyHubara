@@ -66,13 +66,20 @@ async def decide_for_session(
 ) -> Verdict:
     """La decisión de la capacidad para ESTA conversación (ver el módulo).
     Sin vault (una tool armada sin él) no hay control del despliegue ni cola
-    de desacuerdos: decide el bot fijado del laboratorio o la regla de hoy."""
+    de desacuerdos: decide el bot fijado del laboratorio o la regla de hoy.
+
+    Lo que sale hacia Jev va con los datos personales del borrador de ESTA
+    conversación tapados aunque la tool no los pase (se leen solo si de
+    verdad se le pregunta a Jev: con `reglas` no hay I/O extra)."""
     vault = Path(vault_dir) if vault_dir is not None else None
     bot = bot_for_session(session_id, vault_dir=vault)
+    provider = bot.provider(capability.name)
+    if not redact and vault is not None and provider != "reglas":
+        redact = session_redact_terms(session_id, vault)
     return await decide(
         capability,
         inp,
-        provider=bot.provider(capability.name),
+        provider=provider,
         profile_id=bot.profile,
         disagreements=DisagreementLog(vault) if vault is not None else None,
         session_id=session_id,
@@ -115,7 +122,6 @@ async def safe_customer_text(raw: str | None, *, session_id: str, vault_dir: Pat
         Frases(parts=tuple(parts)),
         session_id=session_id,
         vault_dir=vault_dir,
-        redact=session_redact_terms(session_id, vault_dir),
     )
     drop = set(persona.value) | {i for i, part in enumerate(parts) if looks_like_admin_leak(part)}
     return keep_customer_safe_sentences(raw, drop=drop)
@@ -135,7 +141,6 @@ async def product_quote_sentences(sentences: Sequence[str], *, session_id: str, 
         OracionesPrecio(sentences=tuple(sentences)),
         session_id=session_id,
         vault_dir=vault_dir,
-        redact=session_redact_terms(session_id, vault_dir),
     )
     return frozenset(verdict.value)
 
@@ -159,7 +164,6 @@ async def catalog_choice_buttons(
         Botones(body=body, titles=tuple(titles), rule_rejected=tuple(rule_rejected), by_id=tuple(by_id)),
         session_id=session_id,
         vault_dir=vault_dir,
-        redact=session_redact_terms(session_id, vault_dir),
     )
     return tuple(verdict.value)
 

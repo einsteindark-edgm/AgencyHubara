@@ -119,3 +119,30 @@ async def test_what_goes_to_jev_hides_this_customers_data(tmp_path: Path, monkey
 
     [(_, redact)] = seen
     assert {"Laura Gómez", "Laura", "Gómez", "Cra 7 # 12-30"} <= set(redact)
+
+
+async def test_every_decision_that_goes_to_jev_hides_the_customers_data_by_default(tmp_path: Path, monkeypatch) -> None:
+    """Toda capacidad que sale hacia Jev tapa los datos personales del
+    borrador de ESA conversación aunque la tool no los pase (las del F3
+    mandan líneas de la conversación)."""
+    import json
+
+    from src.sdk import connectorkit
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    seen: list[tuple[str, ...]] = []
+
+    class _Spy(_Port):
+        async def ask(self, state, questions, *, timeout_s, redact=()):
+            seen.append(tuple(redact))
+            return await super().ask(state, questions, timeout_s=timeout_s, redact=redact)
+
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: _Spy(0.95))
+    session = tmp_path / "wa_1"
+    session.mkdir()
+    episode = {"episode_id": "ep_1", "closed_at_ms": None, "order_draft": {"slots": {"nombre_recibe": "Laura Gómez"}}}
+    (session / "metadata.json").write_text(json.dumps({"episodes": [episode]}), encoding="utf-8")
+
+    await decide_for_session(Unsubscribe(), Ask("Laura dice que no le escriban"), session_id="wa_1", vault_dir=tmp_path)
+
+    assert seen and {"Laura Gómez", "Laura", "Gómez"} <= set(seen[0])

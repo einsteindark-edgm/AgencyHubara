@@ -28,7 +28,7 @@ async def _unconsulted_claims(session_id: str, payload: dict) -> dict:
     from pathlib import Path
 
     from src.plugins.chats.agent.sales.decisions.capabilities.texto import AFIRMACION, Afirmacion
-    from src.plugins.chats.agent.sales.decisions.guards import decide_for_session, session_redact_terms
+    from src.plugins.chats.agent.sales.decisions.guards import decide_for_session
     from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
     text = "\n\n".join(t for t in payload.get("sent_texts") or [] if isinstance(t, str) and t.strip())
@@ -43,7 +43,6 @@ async def _unconsulted_claims(session_id: str, payload: dict) -> dict:
         Afirmacion(text=text, tools_used=used),
         session_id=session_id,
         vault_dir=vault_dir,
-        redact=session_redact_terms(session_id, vault_dir),
     )
     return verdict.to_trace() if verdict.provider != "reglas" else {}
 

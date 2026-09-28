@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.capabilities.agente import CONTACTAR, Contacto
-from src.plugins.chats.agent.sales.decisions.guards import decide_for_session, session_redact_terms
+from src.plugins.chats.agent.sales.decisions.guards import decide_for_session
 
 
 async def decide_contact(
@@ -29,7 +29,6 @@ async def decide_contact(
         Contacto(transcript=transcript, touch_number=touch_number, silence_minutes=silence_minutes),
         session_id=session_id,
         vault_dir=vault_dir,
-        redact=session_redact_terms(session_id, vault_dir),
     )
     # Con `reglas` el motor no decidió nada: el contexto grabado queda
     # idéntico al de hoy (sin traza).
