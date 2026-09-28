@@ -16,6 +16,7 @@ import structlog
 from temporalio import activity
 
 from src.plugins.chats.agent.sales.decisions import engine
+from src.plugins.chats.agent.sales.decisions.context import TurnContext, customer_window, order_facts
 from src.plugins.chats.agent.sales.decisions.contracts import (
     CONTRACT_VERSION,
     PerceiveInput,
@@ -60,10 +61,31 @@ def _redact_terms(session_id: str) -> list[str]:
     return sorted(terms)
 
 
+def _turn_context(session_id: str, messages: list[dict]) -> TurnContext | None:
+    """F1: lo que el cliente vio antes del turno (historial del vault, sin esta
+    ráfaga) y los hechos del pedido. Sin vault legible, sin contexto: Jev lee
+    solo la ráfaga, como en v1."""
+    from src.plugins.chats.agent.sales.composition import build_session_history_reader
+    from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+    from src.plugins.chats.agent.sales.use_cases.funnel_stage import resolve_funnel_stage
+    from src.sdk.runtime import WORKSPACE_VAULT_DIR
+
+    try:
+        events = build_session_history_reader()(session_id)
+        metadata = FilesystemMetadataStore(Path(WORKSPACE_VAULT_DIR)).read(session_id)
+    except Exception as exc:  # noqa: BLE001 — el contexto ayuda, nunca tumba el turno
+        logger.warning("decisions.context_unavailable", error=repr(exc)[:200])
+        return None
+    wamids = {str(m["wamid"]) for m in messages if m.get("wamid")}
+    window = customer_window(events, burst_wamids=wamids, burst_size=0 if wamids else len(messages))
+    return TurnContext(window=window, facts=order_facts(metadata, stage=resolve_funnel_stage(metadata)))
+
+
 @activity.defn(name="perceive_burst")
 async def perceive_burst_activity(inp: PerceiveInput) -> TurnDecisions:
     try:
-        return await engine.perceive(inp, redact=_redact_terms(inp.session_id))
+        context = _turn_context(inp.session_id, list(inp.messages)) if engine.needs_context(inp.profile) else None
+        return await engine.perceive(inp, redact=_redact_terms(inp.session_id), context=context)
     except Exception as exc:  # noqa: BLE001 — fail-open: el turno sale como hoy
         return TurnDecisions(ok=False, profile=inp.profile, error=f"unexpected: {exc!r}"[:300], contract=CONTRACT_VERSION)
 

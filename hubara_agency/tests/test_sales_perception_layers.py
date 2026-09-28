@@ -308,6 +308,47 @@ async def test_on_the_verification_counts_only_the_cards_the_customer_gets(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_on_each_message_travels_with_its_wamid_to_cut_the_context(tmp_path: Path) -> None:
+    """F1: el motor saca la ráfaga del historial por su `wamid` (solo payload
+    de la activity: sin comando nuevo, L-22)."""
+    classifier = Classifier()
+    llm = LLM([_tool("send_reply", text=CATALOG_REPLY)])
+    meta = {"perception_mode": "on", "perception_profile": "jev-v1", "wamid": "wamid.A"}
+    await _run(tmp_path, meta=meta, llm=llm, classifier=classifier)
+
+    assert classifier.perceived and all(m.get("wamid") == "wamid.A" for m in classifier.perceived[0].messages)
+
+
+@pytest.mark.asyncio
+async def test_the_trace_keeps_what_the_engine_read_its_shadow_and_whether_it_could_act(tmp_path: Path) -> None:
+    """F1: la lectura del hilo, la sombra doble y la calibración quedan en el
+    paso `perception` de la traza (solo payload): el laboratorio y el panel
+    «Bot nuevo» las leen de ahí."""
+    classifier = Classifier()
+    base = classifier.decisions
+
+    def with_engine_fields(profile: str) -> TurnDecisions:
+        import dataclasses
+
+        return dataclasses.replace(
+            base(profile),
+            reading={"bot_asked": "confirmar_dato_envio", "purchase": "no"},
+            shadow={"profile": "jev-v2", "ok": True},
+            acting={"allowed": True},
+        )
+
+    classifier.decisions = with_engine_fields
+    llm = LLM([_tool("send_reply", text=CATALOG_REPLY)])
+    tracker = await _run(tmp_path, meta={"perception_mode": "on", "perception_profile": "jev-v1"}, llm=llm, classifier=classifier)
+
+    step = next(s for s in _customer_trace(tracker)["steps"] if s["kind"] == "perception")
+    assert step["reading"] == {"bot_asked": "confirmar_dato_envio", "purchase": "no"}
+    assert step["shadow"] == {"profile": "jev-v2", "ok": True}
+    assert step["acting"] == {"allowed": True}
+    assert step["versions"]["questions"] == "rafaga-v1"
+
+
+@pytest.mark.asyncio
 async def test_on_a_clear_gap_after_the_reply_becomes_one_complement_bubble(tmp_path: Path) -> None:
     classifier = Classifier(decision="complement", missing=["envio"])
     llm = LLM([_tool("send_reply", text=CATALOG_REPLY), _tool("send_reply", text="El envío a Bogotá cuesta $X")])

@@ -37,7 +37,9 @@ def test_get_reports_state_ceiling_checks_and_metrics(client: TestClient) -> Non
     assert (body["ceiling"], body["profile"]) == ("on", "jev-v1")
     assert body["can"]["shadow"] == []
     assert "shadow_days" in body["can"]["canary"]
-    assert body["metrics"] == {"days": 0, "turns": 0, "fallback_rate": None, "p95_ms": None}
+    assert body["metrics"] == {
+        "days": 0, "turns": 0, "fallback_rate": None, "p95_ms": None, "model_changed": 0, "served_model": None,
+    }
     assert {c["code"] for c in body["readiness"]["canary"]} >= {"signal_meta_on", "shadow_days", "shadow_p95"}
 
 

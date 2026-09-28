@@ -124,29 +124,58 @@ class Questionnaire:
 
     # ── state ────────────────────────────────────────────────────────────────
 
+    @property
+    def uses_context(self) -> bool:
+        """¿El `state` lleva el contexto del turno (lo que el cliente vio y los
+        hechos del pedido)? Solo entonces la activity lo lee del vault."""
+        return bool((self.raw.get("state") or {}).get("sections"))
+
+    def _messages(self, messages: Sequence[dict[str, Any]]) -> list[str]:
+        s = self.raw.get("state") or {}
+        first = messages[0].get("ts_ms") if messages else None
+        return [
+            str(s["message"]).format(k=k, offset=_offset(m.get("ts_ms"), first), text=str(m.get("text") or "").strip())
+            for k, m in enumerate(messages, 1)
+        ]
+
     def burst_state(
         self,
         messages: Sequence[dict[str, Any]],
         *,
         pending: Sequence[str] = (),
         last_bot_text: str | None = None,
+        context: Any = None,
     ) -> str:
-        """El `state` de la ráfaga: los mensajes del cliente con su hora
-        relativa, los asuntos pendientes y el último mensaje del asesor."""
+        """El `state` de la ráfaga.
+
+        Sin `state.sections` (v1): los mensajes del cliente con su hora
+        relativa, los asuntos pendientes y el último mensaje del asesor.
+        Con secciones (v2): CONTEXTO (lo que el cliente vio, que no es de este
+        turno), HECHOS DEL PEDIDO y ESTE TURNO, separados."""
         s = self.raw.get("state") or {}
-        first = messages[0].get("ts_ms") if messages else None
-        lines = [str(s["header"])]
-        for k, m in enumerate(messages, 1):
-            lines.append(
-                str(s["message"]).format(k=k, offset=_offset(m.get("ts_ms"), first), text=str(m.get("text") or "").strip())
-            )
+        sections = s.get("sections")
+        if not sections:
+            lines = [str(s["header"]), *self._messages(messages)]
+            if pending:
+                lines.append(str(s["pending"]).format(pending=", ".join(pending)))
+            if last_bot_text:
+                limit = int(s.get("last_bot_max_chars") or 400)
+                text = last_bot_text.strip()
+                text = text[:limit] if s.get("last_bot_keep", "start") == "start" else text[-limit:]
+                lines.append(str(s["last_bot"]).format(text=text))
+            return "\n".join(lines)
+        window = getattr(context, "window", None)
+        facts = tuple(getattr(context, "facts", ()) or ())
+        lines = []
+        if window is not None and window.lines:
+            lines += [str(sections["context"]), *window.lines]
+        if facts:
+            lines += [str(sections["facts"]), *facts]
+        lines += [str(sections["turn"]), *self._messages(messages)]
+        if window is not None and window.quoted:
+            lines.append(str(sections["quoted"]).format(text=window.quoted))
         if pending:
             lines.append(str(s["pending"]).format(pending=", ".join(pending)))
-        if last_bot_text:
-            limit = int(s.get("last_bot_max_chars") or 400)
-            text = last_bot_text.strip()
-            text = text[:limit] if s.get("last_bot_keep", "start") == "start" else text[-limit:]
-            lines.append(str(s["last_bot"]).format(text=text))
         return "\n".join(lines)
 
     def reply_state(self, messages: Sequence[dict[str, Any]], reply_text: str, components: Sequence[str]) -> str:

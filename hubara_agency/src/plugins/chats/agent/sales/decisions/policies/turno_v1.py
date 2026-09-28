@@ -19,6 +19,7 @@ from typing import Any
 from src.plugins.chats.agent.sales.decisions.plan import (
     CoverageDecision,
     PlanTopic,
+    TurnOutcome,
     TurnPlan,
     answer_of,
 )
@@ -109,6 +110,24 @@ def coverage_rules(plan: TurnPlan) -> dict[str, dict[str, Any]]:
         tools, words, any_text = _COVERAGE.get(t.topic, (frozenset(), (), False))
         rules[t.topic] = {"tools": sorted(tools), "words": list(words), "any_text": any_text}
     return rules
+
+
+def decide_turn(
+    result: Any,
+    *,
+    questionnaire: Any,
+    context: Any = None,
+    n_messages: int,
+    thresholds: dict[str, float] | None = None,
+) -> TurnOutcome:
+    """① Todo lo que el turno recibe del motor. v1 no usa contexto."""
+    plan = plan_from_answers(result, topics=questionnaire.topic_ids, n_messages=n_messages, thresholds=thresholds)
+    return TurnOutcome(
+        plan=plan,
+        topics=topic_rows(plan, questionnaire),
+        note=checklist_note(plan, questionnaire),
+        coverage=coverage_rules(plan),
+    )
 
 
 def coverage_decision(plan: TurnPlan, result: Any, *, thresholds: dict[str, float] | None = None) -> CoverageDecision:

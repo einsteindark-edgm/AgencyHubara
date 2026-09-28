@@ -52,13 +52,14 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - Verificación: replay de 59 historias reales de producción (bajadas el 28-sep) sin divergir; fixture congelada `perception-v1` re-juega; batería completa.
 
 ### F1 · Contexto
-- [ ] Ventana de lo que vio el cliente desde el historial del vault (últimos 8 eventos o ~1.800 caracteres; ráfaga actual fuera por `wamid`; mensaje largo del bot cortado por el principio).
-- [ ] Hechos del pedido (etapa, ítems, ciudad; dirección/teléfono/quien recibe solo «dado»/«falta»), anonimizados.
-- [ ] `wamid` por mensaje en la entrada (solo payload, L-22).
-- [ ] Cuestionario `rafaga-v2`: asuntos limitados a «este turno», `thread.bot_asked` (7 opciones), `thread.answers_bot`, `thread.answer`; se omite si el código ya sabe qué se preguntó (tarjeta de confirmación o formulario).
-- [ ] Política `turno-v2`: nota con la lectura del «sí» + evidencia de compra.
-- [ ] Sombra doble dentro de la misma activity (perfil activo + perfil en sombra, en paralelo, tope propio).
-- [ ] Calibración atada al snapshot de Jev: si cambia, lo que actúa baja a sombra (traza + panel).
+- [x] Ventana de lo que vio el cliente desde el historial del vault (`decisions/context.py`: últimos 8 eventos o ~1.800 caracteres; ráfaga actual fuera por `wamid`; mensaje largo del bot cortado por el principio; tarjetas, botones y mensajes del equipo incluidos; cita del cliente).
+- [x] Hechos del pedido (etapa, ítems, ciudad; dirección/teléfono/quien recibe/pago solo «dado»/«falta»; compra confirmada sí/no), anonimizados por el oráculo.
+- [x] `wamid` por mensaje en la entrada de `perceive_burst` (solo payload, L-22) y en la señal del laboratorio (el sandbox corta igual que producción).
+- [x] Cuestionario `rafaga-v2`: CONTEXTO / HECHOS DEL PEDIDO / ESTE TURNO separados; asuntos limitados a «este turno»; `thread.bot_asked` (7 opciones), `thread.answers_bot`, `thread.answer`; `bot_asked` no se pregunta si el código ya lo sabe (tarjeta de confirmación o formulario); sin la pregunta de etapa.
+- [x] Política `turno-v2`: nota `[LECTURA DEL TURNO]` con la lectura del hilo + la lista de asuntos; evidencia de compra `reading.purchase` = `si` (pregunta de compra a la vista y sí ≥ 0,85) / `no` (≤ 0,20 de que se preguntó por la compra) / `duda`. Perfil `jev-v2` con umbrales por costo del error.
+- [x] Sombra doble dentro de la misma activity (`shadow` en el perfil; en paralelo, tope propio de 1,5 s; solo traza).
+- [x] Calibración atada al snapshot de Jev (`calibrated_model`): si Jev sirve con otra versión, sin nota ni reglas (`acting.allowed=false`), la verificación no pide complemento, y el control «Bot nuevo» no deja subir a canary/encendido (`same_model`).
+- [x] La traza del turno guarda `versions`, `reading`, `shadow` y `acting` del motor.
 - [ ] Banco de referencia: selección de ~150 turnos difíciles, CLI de etiquetas para Claude Code, métricas por pregunta (precisión, cobertura, calibración).
 - [ ] Sonda diaria: 20 ráfagas sintéticas con respuesta conocida.
 

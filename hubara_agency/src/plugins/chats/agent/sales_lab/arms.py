@@ -18,7 +18,9 @@ SIMULATED_ARMS: tuple[str, ...] = ("A1", *ARM_PROFILES)
 
 def signal_meta(arm: str, message: dict[str, Any]) -> dict[str, Any] | None:
     """El 4.º argumento de `send_message` para un mensaje de la ráfaga.
-    None = la señal de hoy. El wamid real no viaja: el sandbox no lo usa."""
+    None = la señal de hoy. El `wamid` del mensaje real viaja: el motor saca
+    la ráfaga del historial con él (F1); en el sandbox el historial viene
+    cortado al inicio del turno, así el contexto queda igual que en producción."""
     if arm not in SIMULATED_ARMS:
         raise ValueError(f"brazo desconocido: {arm!r} (se simulan {', '.join(SIMULATED_ARMS)})")
     profile = ARM_PROFILES.get(arm)
@@ -30,4 +32,7 @@ def signal_meta(arm: str, message: dict[str, Any]) -> dict[str, Any] | None:
         meta["ts_ms"] = ts_ms
     kind = message.get("kind")
     meta["kind"] = kind if isinstance(kind, str) and kind else "text"
+    wamid = message.get("wamid")
+    if isinstance(wamid, str) and wamid:
+        meta["wamid"] = wamid
     return meta

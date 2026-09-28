@@ -9,7 +9,9 @@ Patrón de `src/plugins/mba/domain/rollout_policy.py`: hechos → chequeos.
   pasar el techo y la llave del clasificador (`OPENROUTER_API_KEY`).
 * Canary y encendido exigen la vara de la sombra (§8.3): 7 días o más, menos
   del 1 % de caídas a "turno como hoy" y p95 de la percepción < 1,5 s, con al
-  menos 150 turnos medidos (menos no alcanza para medir el 1 %).
+  menos 150 turnos medidos (menos no alcanza para medir el 1 %), y la misma
+  versión de Jev con la que se calibró (motor de decisiones §02: si en la
+  sombra aparecen turnos servidos por otra versión, hay que recalibrar).
 
 Por conversación (`effective_mode`): en canary actúan los números de prueba
 y un porcentaje estable de conversaciones (hash del id); las demás siguen en
@@ -52,6 +54,8 @@ class RolloutFacts:
     shadow_turns: int
     shadow_fallback_rate: float | None
     shadow_p95_ms: int | None
+    # Turnos de la sombra que Jev sirvió con otra versión que la calibrada.
+    shadow_model_changed: int = 0
 
 
 @dataclass(frozen=True)
@@ -79,6 +83,8 @@ def readiness(target: str, facts: RolloutFacts) -> tuple[Check, ...]:
                   "caídas en sombra: " + (f"{fallback:.1%}" if fallback is not None else "sin datos") + " (menos de 1 %)"),
             Check("shadow_p95", p95 is not None and p95 < SHADOW_MAX_P95_MS,
                   f"p95 de la percepción: {p95 if p95 is not None else 'sin datos'} ms (menos de {SHADOW_MAX_P95_MS})"),
+            Check("same_model", facts.shadow_model_changed == 0,
+                  f"misma versión de Jev que la calibrada: {facts.shadow_model_changed} turnos con otra versión"),
         ]
     return tuple(checks)
 

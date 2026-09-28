@@ -32,6 +32,19 @@ class TurnPlan:
 
 
 @dataclass(frozen=True)
+class TurnOutcome:
+    """Lo que una política decide antes del turno (`decide_turn`): el plan, los
+    asuntos con su etiqueta, la nota para el LLM, las reglas de la capa ② y la
+    lectura del hilo (qué preguntó el asesor, qué responde el cliente)."""
+
+    plan: TurnPlan
+    topics: list[dict[str, Any]] = field(default_factory=list)
+    note: str | None = None
+    coverage: dict[str, dict[str, Any]] = field(default_factory=dict)
+    reading: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class CoverageDecision:
     decision: str  # send | complement | pending
     missing: tuple[str, ...] = ()

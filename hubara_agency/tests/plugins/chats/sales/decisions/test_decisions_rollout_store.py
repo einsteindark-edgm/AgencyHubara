@@ -38,11 +38,13 @@ PROFILE = "jev-v1"
 
 
 def _trace(sid_dir: Path, *, at: int, mode: str, fallback: str | None, dur: int,
-           latency: int | None = None, profile: str = PROFILE) -> None:
+           latency: int | None = None, profile: str = PROFILE, acting: dict | None = None) -> None:
     sid_dir.mkdir(parents=True, exist_ok=True)
     step = {"kind": "perception", "profile": profile, "fallback": fallback, "dur_ms": dur}
     if latency is not None:
         step["latency_ms"] = latency
+    if acting is not None:
+        step["acting"] = acting
     line = {"turn_started_ms": at, "mode": mode, "steps": [step, {"kind": "llm"}]}
     with (sid_dir / "turn_traces.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps(line) + "\n")
@@ -106,3 +108,16 @@ def test_no_shadow_yet(tmp_path: Path) -> None:
     m = shadow_metrics(tmp_path, now_ms=NOW, profile=PROFILE)
 
     assert (m.days, m.turns, m.fallback_rate, m.p95_ms) == (0, 0, None, None)
+
+
+def test_turns_served_by_another_jev_version_are_counted(tmp_path: Path) -> None:
+    s = tmp_path / "wa_573001234567" / "evals"
+    changed = {"allowed": False, "reason": "model_changed", "calibrated": "typesafe/jev-1.13-20260917",
+               "served": "typesafe/jev-1.14-20261001"}
+    _trace(s, at=NOW - DAY, mode="shadow", fallback=None, dur=400, acting=changed)
+    _trace(s, at=NOW - DAY, mode="shadow", fallback=None, dur=400, acting={"allowed": True})
+
+    m = shadow_metrics(tmp_path, now_ms=NOW, profile=PROFILE)
+
+    assert m.turns == 2 and m.model_changed == 1 and m.served_model == "typesafe/jev-1.14-20261001"
+

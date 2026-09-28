@@ -1,15 +1,24 @@
 """Núcleo del motor de decisiones: perfil → cuestionario → Jev → política.
 
 Sin Temporal y sin I/O propio (salvo la llamada a Jev por el puerto del SDK):
-lo que necesita del vault se lo pasa quien lo llama (las activities, y en F6
-las guardas de las tools). Así el mismo núcleo sirve a activities y tools, y
-el laboratorio lo corre igual.
+lo que necesita del vault (qué tapar, el contexto del turno) se lo pasa quien
+lo llama (las activities y, en F6, las guardas de las tools). Así el mismo
+núcleo sirve a activities y tools, y el laboratorio lo corre igual.
+
+* Sombra doble: si el perfil nombra un perfil en `shadow`, los dos le
+  preguntan a Jev EN PARALELO dentro de la misma llamada; lo de la sombra solo
+  va a la traza y tiene su propio tiempo máximo (`SHADOW_TIMEOUT_S`) para no
+  demorar el turno.
+* Calibración: si el perfil fija `calibrated_model` y Jev responde con otra
+  versión, lo que actúa baja a sombra: sin nota ni reglas, con el motivo en
+  `acting`. Se lee en la traza y en el panel «Bot nuevo».
 
 NUNCA lanza: un perfil desconocido, Jev caído, tarde o con otra forma dan un
 resultado vacío (`ok=False`) con el motivo, y el consumidor sigue como hoy.
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from typing import Any
 
@@ -22,7 +31,7 @@ from src.plugins.chats.agent.sales.decisions.contracts import (
     VerifyInput,
     VerifyOutput,
 )
-from src.plugins.chats.agent.sales.decisions.plan import PlanTopic, TurnPlan
+from src.plugins.chats.agent.sales.decisions.plan import PlanTopic, TurnOutcome, TurnPlan
 from src.plugins.chats.agent.sales.decisions.policies import get_policy
 from src.plugins.chats.agent.sales.decisions.profiles import EngineProfile, get_engine_profile
 from src.plugins.chats.agent.sales.decisions.questionnaire import Questionnaire, load_questionnaire
@@ -30,6 +39,8 @@ from src.plugins.chats.agent.sales.decisions.questionnaire import Questionnaire,
 logger = structlog.get_logger()
 
 ERROR_UNKNOWN_PROFILE = "unknown_profile"
+#: Tiempo máximo de la sombra: corre en paralelo y no puede demorar el turno.
+SHADOW_TIMEOUT_S = 1.5
 
 
 def _resolve(profile_id: str) -> tuple[EngineProfile, Questionnaire, Any] | None:
@@ -41,6 +52,20 @@ def _resolve(profile_id: str) -> tuple[EngineProfile, Questionnaire, Any] | None
     except KeyError as exc:  # perfil mal armado: el turno sale como hoy
         logger.warning("decisions.bad_profile", profile=profile_id, error=str(exc))
         return None
+
+
+def needs_context(profile_id: str) -> bool:
+    """¿El perfil (o su sombra) lee el contexto del turno? Solo entonces la
+    activity lo arma leyendo el vault."""
+    ids = [profile_id]
+    profile = get_engine_profile(profile_id)
+    if profile is not None and profile.shadow:
+        ids.append(profile.shadow)
+    for pid in ids:
+        resolved = _resolve(pid)
+        if resolved is not None and resolved[1].uses_context:
+            return True
+    return False
 
 
 def _oracle(profile: EngineProfile) -> tuple[Any, float]:
@@ -67,39 +92,114 @@ def _versions(profile: EngineProfile, model: str) -> dict[str, str]:
     return {"profile": profile.id, "questions": profile.questions, "policy": profile.policy, "model": model}
 
 
-async def perceive(inp: PerceiveInput, *, redact: Sequence[str] = ()) -> TurnDecisions:
-    """① Antes del turno: los asuntos de la ráfaga, la nota y las reglas de ②."""
+async def _ask(
+    resolved: tuple[EngineProfile, Questionnaire, Any],
+    inp: PerceiveInput,
+    *,
+    redact: Sequence[str],
+    context: Any,
+    timeout_s: float | None = None,
+) -> Any:
+    profile, questionnaire, _ = resolved
+    port, oracle_timeout = _oracle(profile)
+    facts = context.when_facts() if context is not None and questionnaire.uses_context else {}
+    state = questionnaire.burst_state(
+        inp.messages,
+        pending=inp.pending,
+        last_bot_text=inp.last_bot_text,
+        context=context if questionnaire.uses_context else None,
+    )
+    questions = questionnaire.burst_questions(inp.messages, facts=facts)
+    return await port.ask(state, questions, timeout_s=timeout_s or oracle_timeout, redact=redact)
+
+
+def _outcome(resolved: tuple[EngineProfile, Questionnaire, Any], result: Any, inp: PerceiveInput, context: Any) -> TurnOutcome:
+    profile, questionnaire, policy = resolved
+    return policy.decide_turn(
+        result,
+        questionnaire=questionnaire,
+        context=context if questionnaire.uses_context else None,
+        n_messages=len(inp.messages),
+        thresholds=profile.thresholds,
+    )
+
+
+def _acting(profile: EngineProfile, served_model: str) -> dict[str, Any]:
+    if profile.calibrated_model and served_model and served_model != profile.calibrated_model:
+        return {"allowed": False, "reason": "model_changed", "calibrated": profile.calibrated_model, "served": served_model}
+    return {"allowed": True}
+
+
+async def _shadow(
+    shadow_id: str, inp: PerceiveInput, *, redact: Sequence[str], context: Any
+) -> dict[str, Any]:
+    resolved = _resolve(shadow_id)
+    if resolved is None:
+        return {"profile": shadow_id, "ok": False, "error": ERROR_UNKNOWN_PROFILE}
+    try:
+        result = await asyncio.wait_for(
+            _ask(resolved, inp, redact=redact, context=context, timeout_s=SHADOW_TIMEOUT_S), timeout=SHADOW_TIMEOUT_S + 0.25
+        )
+    except TimeoutError:
+        return {"profile": shadow_id, "ok": False, "error": "timeout"}
+    except Exception as exc:  # noqa: BLE001 — la sombra nunca tumba el turno
+        return {"profile": shadow_id, "ok": False, "error": f"unexpected: {exc!r}"[:200]}
+    if not result.ok:
+        return {"profile": shadow_id, "ok": False, "error": result.error or "error", "model": result.model}
+    outcome = _outcome(resolved, result, inp, context)
+    return {
+        "profile": shadow_id,
+        "ok": True,
+        "versions": _versions(resolved[0], result.model),
+        "topics": outcome.topics,
+        "reading": outcome.reading,
+        "note": outcome.note,
+        "latency_ms": result.latency_ms,
+        "cost_usd": result.cost_usd,
+    }
+
+
+async def perceive(inp: PerceiveInput, *, redact: Sequence[str] = (), context: Any = None) -> TurnDecisions:
+    """① Antes del turno: los asuntos de la ráfaga, la nota, las reglas de ② y
+    la lectura del hilo (con el perfil en sombra al lado, si hay)."""
     resolved = _resolve(inp.profile)
     if resolved is None:
         return TurnDecisions(ok=False, profile=inp.profile, error=ERROR_UNKNOWN_PROFILE, contract=CONTRACT_VERSION)
-    profile, questionnaire, policy = resolved
+    profile = resolved[0]
+    shadow_task = (
+        asyncio.ensure_future(_shadow(profile.shadow, inp, redact=redact, context=context)) if profile.shadow else None
+    )
     try:
-        port, timeout_s = _oracle(profile)
-        state = questionnaire.burst_state(inp.messages, pending=inp.pending, last_bot_text=inp.last_bot_text)
-        result = await port.ask(state, questionnaire.burst_questions(inp.messages), timeout_s=timeout_s, redact=redact)
+        result = await _ask(resolved, inp, redact=redact, context=context)
     except Exception as exc:  # noqa: BLE001 — fail-open: el turno sale como hoy
+        if shadow_task is not None:
+            shadow_task.cancel()
         return TurnDecisions(
             ok=False, profile=inp.profile, error=f"unexpected: {exc!r}"[:300], contract=CONTRACT_VERSION,
             versions=_versions(profile, ""),
         )
-    plan = policy.plan_from_answers(
-        result, topics=questionnaire.topic_ids, n_messages=len(inp.messages), thresholds=profile.thresholds
-    )
-    picked = {f"topic.{t.topic}" for t in plan.topics}
+    shadow = await shadow_task if shadow_task is not None else {}
+    outcome = _outcome(resolved, result, inp, context)
+    acting = _acting(profile, result.model) if result.ok else {}
+    allowed = acting.get("allowed", True)
+    picked = {f"topic.{t.topic}" for t in outcome.plan.topics}
     return TurnDecisions(
-        ok=plan.ok,
+        ok=outcome.plan.ok,
         profile=inp.profile,
         model=result.model,
-        topics=policy.topic_rows(plan, questionnaire),
-        stage=plan.stage,
+        topics=outcome.topics,
+        stage=outcome.plan.stage,
         answers=_answers_for_trace(result, picked=picked),
         error=result.error,
         latency_ms=result.latency_ms,
         cost_usd=result.cost_usd,
         contract=CONTRACT_VERSION,
         versions=_versions(profile, result.model),
-        note=policy.checklist_note(plan, questionnaire),
-        coverage=policy.coverage_rules(plan),
+        note=outcome.note if allowed else None,
+        coverage=outcome.coverage if allowed else {},
+        reading=outcome.reading,
+        shadow=shadow,
+        acting=acting,
     )
 
 
@@ -130,6 +230,9 @@ async def verify(inp: VerifyInput, *, redact: Sequence[str] = ()) -> VerifyOutpu
     except Exception as exc:  # noqa: BLE001 — fail-open
         return VerifyOutput(ok=False, decision="send", error=f"unexpected: {exc!r}"[:300])
     decision = policy.coverage_decision(plan, result, thresholds=profile.thresholds)
+    if result.ok and not _acting(profile, result.model).get("allowed", True):
+        # Otra versión de Jev que la calibrada: se mide, pero no actúa.
+        decision = type(decision)(decision="send", covered=decision.covered)
     covered_th = profile.thresholds.get("covered", 0.70)
     covered = {f"cover.{k}" for k, p in decision.covered.items() if p >= covered_th}
     return VerifyOutput(

@@ -51,6 +51,13 @@ class TurnDecisions:
     note: str | None = None
     # Capa ②: {asunto: {"tools": [...], "words": [...], "any_text": bool}}.
     coverage: dict = field(default_factory=dict)
+    # F1 · lectura del hilo: {bot_asked, bot_asked_by, answers_bot, answer, purchase…}.
+    reading: dict = field(default_factory=dict)
+    # F1 · sombra doble: lo que decidió el perfil en sombra (solo traza).
+    shadow: dict = field(default_factory=dict)
+    # F1 · calibración: {"allowed": bool, "reason"…}. Si Jev respondió con otra
+    # versión que la calibrada, lo que actúa baja a sombra (sin nota ni reglas).
+    acting: dict = field(default_factory=dict)
 
 
 #: Nombre histórico de la salida de la capa ① (laboratorio y tests).

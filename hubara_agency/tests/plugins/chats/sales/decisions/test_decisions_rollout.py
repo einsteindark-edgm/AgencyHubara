@@ -98,3 +98,13 @@ def test_canary_needs_enough_shadow_turns() -> None:
     un mínimo de turnos medidos en la sombra."""
     assert "shadow_turns" in can_set_mode("canary", _facts(shadow_turns=40))
     assert can_set_mode("canary", _facts(shadow_turns=400)) == ()
+
+
+def test_acting_needs_the_same_jev_version_it_was_calibrated_with() -> None:
+    """Diseño v2 §02: la calibración queda atada a la versión exacta de Jev.
+    Si en la sombra aparecieron turnos servidos por otra versión, no se sube
+    a canary ni a encendido hasta recalibrar."""
+    assert can_set_mode("canary", _facts(shadow_model_changed=3)) == ("same_model",)
+    assert can_set_mode("shadow", _facts(current="off", shadow_model_changed=3)) == ()
+    assert can_set_mode("on", _facts(shadow_model_changed=0)) == ()
+

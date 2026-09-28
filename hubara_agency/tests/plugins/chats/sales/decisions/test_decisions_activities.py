@@ -196,3 +196,33 @@ async def test_verify_never_sends_this_customers_names_even_in_the_reply(recordi
 
     [sent] = recording_port.sent
     assert "Carolina" not in sent and "Chapinero" not in sent
+
+
+async def test_with_jev_v2_the_activity_reads_what_the_customer_saw_from_the_vault(recording_port, _isolate_vault_dir) -> None:
+    """F1: el contexto lo arma la activity leyendo el historial del vault (el
+    mismo JSONL del dashboard) sin los mensajes de esta ráfaga, más los hechos
+    del pedido. Sin datos personales: el nombre y el barrio se tapan igual."""
+    import json
+
+    history = _isolate_vault_dir / SID / "sessions" / f"{SID}.jsonl"
+    history.parent.mkdir(parents=True, exist_ok=True)
+    events = [
+        {"role": "user", "content": "Quiero el Duo Zodiacal", "wamid": "w0"},
+        {"role": "assistant", "content": "¡Listo Carolina! ¿Te lo enviamos a la misma dirección?"},
+        {"role": "user", "content": "es para Carolina, que vive en Chapinero Alto", "wamid": "w1"},
+        {"role": "user", "content": "¿cuánto sale el envío?", "wamid": "w2"},
+    ]
+    history.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n", encoding="utf-8")
+    burst = [{**m, "wamid": w} for m, w in zip(PERSONAL, ("w1", "w2"))]
+
+    out = await ActivityEnvironment().run(perceive_burst_activity, PerceiveInput(session_id=SID, profile="jev-v2", messages=burst))
+
+    [sent] = recording_port.sent
+    context, _, turn = sent.partition("ESTE TURNO")
+    assert "¿Te lo enviamos a la misma dirección?" in context and "Quiero el Duo Zodiacal" in context
+    assert "Chapinero" not in context and "cuánto sale el envío" in turn  # la ráfaga solo va en ESTE TURNO
+    assert "HECHOS DEL PEDIDO" in context and "Etapa:" in context
+    for secret in ("Carolina", "Chapinero"):
+        assert secret not in sent
+    assert out.versions["questions"] == "rafaga-v2"
+

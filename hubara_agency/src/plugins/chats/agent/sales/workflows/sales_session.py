@@ -275,7 +275,9 @@ def _burst_messages(batch: list[PendingMessage]) -> list[dict[str, Any]]:
         meta = p.inbound_meta or {}
         text = meta.get("text") or p.message
         if (text or "").strip():
-            out.append({"text": text, "ts_ms": meta.get("ts_ms")})
+            # `wamid`: el motor saca la ráfaga del historial con él (F1).
+            # Solo payload de la activity: sin comando nuevo (L-22).
+            out.append({"text": text, "ts_ms": meta.get("ts_ms"), "wamid": meta.get("wamid")})
     return out
 
 
@@ -295,6 +297,12 @@ def _perception_step(out: PerceiveOutput, started_ms: int, *, mode: str) -> dict
         "fallback": None if out.ok else (out.error or "error"),
         "answers": list(out.answers),
         "cost_usd": out.cost_usd,
+        # Motor de decisiones (F1): con qué se decidió, la lectura del hilo, lo
+        # del perfil en sombra y si pudo actuar (calibración). Solo payload.
+        "versions": dict(out.versions),
+        "reading": dict(out.reading),
+        "shadow": dict(out.shadow),
+        "acting": dict(out.acting),
     }
 
 

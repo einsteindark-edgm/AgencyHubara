@@ -18,7 +18,13 @@ def test_the_current_bot_gets_the_signal_of_today() -> None:
 def test_new_bots_get_mode_on_and_their_profile(arm: str, profile: str) -> None:
     meta = signal_meta(arm, {"text": "hola", "ts_ms": 1_790_000_000_000, "kind": "text", "wamid": "wamid.X"})
 
-    assert meta == {"perception_mode": "on", "perception_profile": profile, "ts_ms": 1_790_000_000_000, "kind": "text"}
+    assert meta == {
+        "perception_mode": "on", "perception_profile": profile, "ts_ms": 1_790_000_000_000, "kind": "text",
+        # El motor saca la ráfaga del historial por su wamid (F1): en el sandbox
+        # el historial viene cortado al inicio del turno, así queda igual que
+        # en producción.
+        "wamid": "wamid.X",
+    }
     assert ARM_PROFILES[arm] == profile
 
 

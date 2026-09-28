@@ -92,6 +92,7 @@ def _facts(state: RolloutState) -> tuple[RolloutFacts, dict[str, Any]]:
         shadow_turns=metrics.turns,
         shadow_fallback_rate=metrics.fallback_rate,
         shadow_p95_ms=metrics.p95_ms,
+        shadow_model_changed=metrics.model_changed,
     )
     return facts, asdict(metrics)
 

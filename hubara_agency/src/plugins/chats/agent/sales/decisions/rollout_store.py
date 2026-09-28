@@ -67,6 +67,10 @@ class ShadowMetrics:
     turns: int
     fallback_rate: float | None
     p95_ms: int | None
+    # Turnos que Jev sirvió con otra versión que la calibrada (motor, F1) y la
+    # última versión servida que se vio.
+    model_changed: int = 0
+    served_model: str | None = None
 
 
 def _p95(values: list[int]) -> int | None:
@@ -89,6 +93,8 @@ def shadow_metrics(vault_dir: Path, *, now_ms: int, profile: str, window_days: i
     days: set[int] = set()
     turns = 0
     fallbacks = 0
+    model_changed = 0
+    served_model: str | None = None
     durations: list[int] = []
     root = Path(vault_dir)
     for sdir in sorted(root.glob("wa_*")):
@@ -118,6 +124,10 @@ def shadow_metrics(vault_dir: Path, *, now_ms: int, profile: str, window_days: i
             days.add(int(at) // _DAY_MS)
             if step.get("fallback"):
                 fallbacks += 1
+            acting = step.get("acting") if isinstance(step.get("acting"), dict) else {}
+            if acting.get("allowed") is False and acting.get("reason") == "model_changed":
+                model_changed += 1
+                served_model = str(acting.get("served") or "") or served_model
             duration = _duration(step)
             if duration is not None:
                 durations.append(duration)
@@ -126,4 +136,6 @@ def shadow_metrics(vault_dir: Path, *, now_ms: int, profile: str, window_days: i
         turns=turns,
         fallback_rate=(fallbacks / turns) if turns else None,
         p95_ms=_p95(durations),
+        model_changed=model_changed,
+        served_model=served_model,
     )
