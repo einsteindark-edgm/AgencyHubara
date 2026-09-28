@@ -42,7 +42,14 @@ DEFAULT_PROFILE = "jev-v1"
 #: Las capacidades que el control del dashboard conoce (cada una con su
 #: interruptor). Una capacidad nueva se suma aquí.
 CAPABILITIES: tuple[str, ...] = (
-    "compra", "retoma", "baja", "persona", "enumeracion", "monto", "selector", "contactar", "afirmacion",
+    # Lecturas del cliente (F3).
+    "compra", "retoma", "baja", "cupon", "fuera_de_catalogo", "cantidad",
+    # Mapeos a listas cerradas dentro de las tools (F3).
+    "categoria", "familia_de_color", "item_del_pedido", "zona_de_envio",
+    # Texto del LLM en tools y activities (F5) y respaldo en sombra (F6).
+    "persona", "enumeracion", "monto", "selector", "afirmacion",
+    # Decisiones del agente (F8).
+    "contactar",
     # Egreso del workflow V2 (F4/F5): solo actúan en conversaciones con V2.
     "destinatario", "rescate", "portavelas", "saludo",
 )

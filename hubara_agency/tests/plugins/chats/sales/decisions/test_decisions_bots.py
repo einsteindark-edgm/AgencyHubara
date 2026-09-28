@@ -111,3 +111,32 @@ def test_an_unknown_capability_mode_is_ignored(tmp_path: Path, monkeypatch) -> N
     bots.write_capability_modes(tmp_path, {"baja": "turbo"})
 
     assert bots.bot_for_session(OTHER, vault_dir=tmp_path).provider("baja") == "reglas"
+
+
+def test_every_capability_of_the_engine_has_a_switch_in_the_control() -> None:
+    """Una capacidad que el control no conoce nunca se podría subir a sombra
+    ni a Jev desde el dashboard (ni bajar). Guarda: las del motor = las del
+    control."""
+    import ast
+    from pathlib import Path as _Path
+
+    root = _Path(bots.__file__).parent
+    names: set[str] = set()
+    for path in [*root.joinpath("capabilities").glob("*.py"), root / "egress.py"]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        constants = {
+            t.id: n.value.value
+            for n in ast.walk(tree) if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+            for t in n.targets if isinstance(t, ast.Name)
+        }
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                for item in node.body:
+                    if isinstance(item, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "name" for t in item.targets):
+                        value = item.value
+                        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                            names.add(value.value)
+                        elif isinstance(value, ast.Name) and value.id in constants:
+                            names.add(constants[value.id])
+
+    assert names and names <= set(bots.CAPABILITIES), sorted(names - set(bots.CAPABILITIES))
