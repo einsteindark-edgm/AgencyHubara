@@ -160,6 +160,13 @@ class TurnPolicy:
 
     extra_round_note: Callable[[list[str], str], str | None]
     max_extra_rounds: int = 1
+    #: Segunda puerta (motor de decisiones, F6): el LLM va a cerrar el turno
+    #: con un texto, sin tools pendientes y SIN haberle mostrado nada al
+    #: cliente todavía. `final_round_note(tools_usadas, borrador)` → nota si
+    #: falta una tool que el contrato del turno pedía: en vez de enviar el
+    #: borrador hay UNA ronda más con esa nota (el borrador no se graba). La
+    #: arma el caller desde el resultado GRABADO del motor. None = sin puerta.
+    final_round_note: Callable[[list[str], str], str | None] | None = None
 
 
 #: Gancho de egreso del caller (motor de decisiones, F4): `egress(texto_final,
@@ -1413,6 +1420,31 @@ async def _run_agent_turn_impl(
                     },
                 )
             final_content = sanitized.text
+            # Segunda puerta (F6, solo con `turn_policy.final_round_note`): el
+            # turno cierra con texto sin la tool que pedía el contrato y el
+            # cliente todavía no vio nada → UNA ronda más con la nota. El
+            # borrador no entra a `messages`: no se graba ni se recuerda.
+            contract_note = (
+                turn_policy.final_round_note(list(tools_used), final_content)
+                if turn_policy is not None
+                and turn_policy.final_round_note is not None
+                and extra_rounds < turn_policy.max_extra_rounds
+                and final_content
+                and not admin_turn
+                and not _text_shown(tool_events, delivered_replies)
+                else None
+            )
+            if contract_note:
+                extra_rounds += 1
+                llm_step["text_fate"] = "discarded_contract"
+                llm_step["text"] = final_content
+                steps.append(
+                    {"kind": "guard", "at_ms": _now_ms(), "name": "contract_extra_round",
+                     "before": final_content, "after": contract_note, "tools": list(tools_used)}
+                )
+                messages = [*messages, {"role": "system", "content": contract_note}]
+                final_content = ""
+                continue
             llm_step["text_fate"] = "final"
             llm_step["text"] = final_content
             if sanitized.changed:

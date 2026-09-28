@@ -79,6 +79,7 @@ with workflow.unsafe.imports_passed_through():
         VerifyInput,
         VerifyOutput,
         complement_note_of,
+        contract_policy_of,
         decide_egress_activity,
         delivered_components,
         perceive_burst_activity,
@@ -457,6 +458,9 @@ class HubaraSalesSessionWorkflowV2:
                         admin_turn=admin_no_send,
                         align_history_with_episode=True,
                         egress=egress,
+                        # Segunda puerta (F6): solo con el contrato de tools
+                        # GRABADO por el motor; sin él, el turno de hoy.
+                        turn_policy=contract_policy_of(decided),
                     )
                     trace_steps.extend(result.steps or [])
                     if result.interrupted:

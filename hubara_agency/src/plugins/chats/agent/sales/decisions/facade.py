@@ -80,6 +80,35 @@ def turn_policy_of(decisions: TurnDecisions) -> TurnPolicy | None:
     return TurnPolicy(extra_round_note=extra_round_note)
 
 
+def _no_extra_round(_tools_used: list[str], _shown: str) -> None:
+    return None
+
+
+def contract_policy_of(decisions: TurnDecisions | None) -> TurnPolicy | None:
+    """Segunda puerta del turno (F6, workflow V2): si el LLM va a cerrar con
+    texto sin la tool que el contrato GRABADO pedía (`tools.required`) y el
+    cliente todavía no vio nada, UNA ronda más con la nota de las que faltan.
+    Sin contrato grabado (perfiles sin tools, resultados viejos), None: el
+    turno de hoy. Sin la ronda ② por palabras (diferencia 3 del V2)."""
+    tools = getattr(decisions, "tools", None) if decisions is not None else None
+    required = tools.get("required") if isinstance(tools, Mapping) else None
+    rows = [r for r in required or [] if isinstance(r, Mapping) and r.get("any_of")]
+    if not rows:
+        return None
+
+    def final_round_note(tools_used: list[str], _draft: str) -> str | None:
+        missing = [r for r in rows if not set(r.get("any_of") or []) & set(tools_used)]
+        if not missing:
+            return None
+        nudges = " ".join(str(r.get("nudge") or f"usa {' o '.join(r.get('any_of') or [])}.") for r in missing)
+        return (
+            "[CONTRATO DEL TURNO] Antes de responder: " + nudges
+            + " No le escribas al cliente hasta tener el dato de la herramienta."
+        )
+
+    return TurnPolicy(extra_round_note=_no_extra_round, final_round_note=final_round_note)
+
+
 def complement_note_of(decisions_topics: Sequence[dict], verify_out: VerifyOutput) -> str:
     """③ El turno de sistema del complemento: el que redactó el motor; si no
     viajó (resultado anterior al motor), uno con las etiquetas grabadas."""

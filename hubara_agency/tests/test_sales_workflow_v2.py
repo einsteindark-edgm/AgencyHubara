@@ -565,3 +565,46 @@ async def test_v2_keeps_the_note_and_the_verification_but_never_the_extra_round(
     # La nota ① y la verificación ③ siguen en el V2.
     assert "[PLAN DEL TURNO]" in " ".join(v2.build_prompt_calls[0].plugin_context or [])
     assert classifier.verified and _customer_trace(v2)["mode"] == "on"
+
+
+async def test_v2_names_the_missing_required_tool_before_closing_with_text(tmp_path: Path) -> None:
+    """Segunda puerta (F6): el motor grabó que el envío pide
+    `send_shipping_rates`; el LLM iba a cerrar con un texto sin usarla y sin
+    haber mostrado nada → UNA ronda más con la nota. El cliente no recibe el
+    borrador; recibe lo que salió de la tool."""
+    import dataclasses
+
+    from tests.test_sales_perception_layers import LLM, Classifier, _tool
+
+    classifier = Classifier()
+    base = classifier.decisions
+
+    def with_contract(profile: str):
+        return dataclasses.replace(
+            base(profile),
+            tools={"required": [{"topic": "envio", "any_of": ["send_shipping_rates"],
+                                 "nudge": "Para el costo del envío usa send_shipping_rates."}]},
+        )
+
+    classifier.decisions = with_contract
+    draft = "El envío a Bogotá te sale en $9.000 🤍"
+    llm = LLM([_final(draft), _tool("send_shipping_rates")])
+    tracker = await _run(
+        HubaraSalesSessionWorkflowV2,
+        tmp_path,
+        responses=[],
+        tool_results={"send_shipping_rates": json.dumps({"queued": True})},
+        customer_text="¿y el envío a Bogotá cuánto sale?",
+        meta={"perception_mode": "on", "perception_profile": "jev-v1", "ts_ms": 1_000},
+        replace=[llm.activity()],
+        extra=classifier.activities(),
+    )
+
+    steps = _customer_trace(tracker)["steps"]
+    assert any(s.get("name") == "contract_extra_round" for s in steps)
+    assert draft not in _sent(tracker)
+    assert any(m.get("content", "").startswith("[CONTRATO DEL TURNO]") for m in llm.inputs[1] if m.get("role") == "system")
+
+
+def _final(text: str) -> LLMResponseData:
+    return LLMResponseData(content=text, finish_reason="stop", has_tool_calls=False, tool_calls=[])
