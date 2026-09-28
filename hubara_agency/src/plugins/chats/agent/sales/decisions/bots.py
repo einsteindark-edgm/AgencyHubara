@@ -44,8 +44,9 @@ DEFAULT_PROFILE = "jev-v1"
 CAPABILITIES: tuple[str, ...] = (
     # Lecturas del cliente (F3).
     "compra", "retoma", "baja", "cupon", "fuera_de_catalogo", "cantidad",
-    # Mapeos a listas cerradas dentro de las tools (F3).
-    "categoria", "familia_de_color", "item_del_pedido", "zona_de_envio",
+    # Mapeos a listas cerradas dentro de las tools (F3) y la revisión de los
+    # datos de envío de `set_order_slot` (F6).
+    "categoria", "familia_de_color", "item_del_pedido", "zona_de_envio", "datos",
     # Texto del LLM en tools y activities (F5) y respaldo en sombra (F6).
     "persona", "enumeracion", "monto", "selector", "afirmacion",
     # Decisiones del agente (F8).

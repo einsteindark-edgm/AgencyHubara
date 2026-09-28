@@ -60,6 +60,7 @@ from src.plugins.chats.agent.sales.decisions.guards import (
     FamiliaDeColor,
     ItemDelPedido,
     decide_for_session,
+    unconfirmed_order_data,
 )
 from src.plugins.chats.agent.sales.use_cases.order_draft import (
     current_item,
@@ -790,6 +791,17 @@ class SetOrderSlotTool(ToolBase):
                     provided, target_item or {}, variant_colors
                 )
 
+        # Motor de decisiones (F6, capacidad `datos`): un dato de envío o de
+        # pago que el cliente NO dio (Jev con certeza alta) no se guarda; el
+        # LLM se lo pide. Con `reglas` (así nace) se guarda todo, como hoy.
+        for slot in await unconfirmed_order_data(
+            provided,
+            lambda: self._events(ctx.session_key),
+            session_id=ctx.session_key,
+            vault_dir=self._vault_dir,
+        ):
+            rejected.append({"field": slot, "given": provided.pop(slot), "reason": "not_given_by_customer"})
+
         # El ítem destino viaja explícito al store (sin esto el dato iría al
         # último producto tocado). Si no queda NINGÚN dato real, no se escribe.
         injected = False
@@ -868,7 +880,12 @@ class SetOrderSlotTool(ToolBase):
             envelope["rejected"] = rejected
             parts = []
             for r in rejected:
-                if r.get("reason") == "color_family_ambiguous":
+                if r.get("reason") == "not_given_by_customer":
+                    parts.append(
+                        f"no encuentro que el cliente haya dado {r['field']} "
+                        f"{r['given']!r}: pídeselo en vez de suponerlo"
+                    )
+                elif r.get("reason") == "color_family_ambiguous":
                     parts.append(
                         f"el color {r['given']!r} cae en la gama de "
                         f"{' / '.join(r['families'])} y este producto tiene "

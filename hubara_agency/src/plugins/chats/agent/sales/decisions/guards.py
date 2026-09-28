@@ -16,7 +16,7 @@ y los mapeos a listas cerradas de las tools (categoría, familia de color,
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +53,7 @@ __all__ = [
     "product_quote_sentences",
     "safe_customer_text",
     "session_redact_terms",
+    "unconfirmed_order_data",
 ]
 
 
@@ -162,6 +163,36 @@ async def catalog_choice_buttons(
     verdict = await decide_for_session(
         SELECTOR,
         Botones(body=body, titles=tuple(titles), rule_rejected=tuple(rule_rejected), by_id=tuple(by_id)),
+        session_id=session_id,
+        vault_dir=vault_dir,
+    )
+    return tuple(verdict.value)
+
+
+async def unconfirmed_order_data(
+    values: Mapping[str, Any],
+    events: Callable[[], Sequence[Mapping[str, Any]]],
+    *,
+    session_id: str,
+    vault_dir: Path | None,
+) -> tuple[str, ...]:
+    """Los datos de envío o de pago que el cliente NO dio (capacidad `datos`,
+    F6): no se guardan. Con `reglas` (así nace), ninguno, y ni siquiera se
+    lee el historial (`events` es perezoso)."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.datos import CHECKED_SLOTS, DATOS, DatosDelPedido
+
+    pairs = tuple(
+        (slot, value) for slot, value in values.items()
+        if slot in CHECKED_SLOTS and isinstance(value, str) and value.strip()
+    )
+    if not pairs:
+        return ()
+    vault = Path(vault_dir) if vault_dir is not None else None
+    if bot_for_session(session_id, vault_dir=vault).provider(DATOS.name) == "reglas":
+        return ()
+    verdict = await decide_for_session(
+        DATOS,
+        DatosDelPedido(values=pairs, events=tuple(events())),
         session_id=session_id,
         vault_dir=vault_dir,
     )
