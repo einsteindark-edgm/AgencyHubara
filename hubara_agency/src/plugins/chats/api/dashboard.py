@@ -512,50 +512,39 @@ def _last_inbound_ms(history_file: Path) -> int | None:
     return value
 
 
-# ── Mensajes del cliente EN ESPERA de respuesta (contador tipo WhatsApp) ──
+# ── Total de mensajes del CLIENTE (contador "no vistos" del dashboard) ──
 #
-# Cuántos `role: "user"` quedaron después de la última respuesta que el
-# cliente VIO: texto del bot/operador o un envío no-textual (ui_component). Un
-# turno del bot con tool_calls no es respuesta (su texto no se envía). Mismo
-# cache por (mtime, size) que `_last_inbound_ms`.
-_unanswered_cache: dict[Path, tuple[float, int, int]] = {}
+# El dashboard recuerda cuántos había cuando el operador abrió el chat y pinta
+# la diferencia, como WhatsApp. Mismo cache por (mtime, size) que
+# `_last_inbound_ms`: el listado se recalcula en cada tick del sampler.
+_inbound_count_cache: dict[Path, tuple[float, int, int]] = {}
 
 
-def _is_reply(event: dict) -> bool:
-    if event.get("role") != "assistant" or event.get("tool_calls"):
-        return False
-    return bool(event.get("content")) or event.get("kind") == "ui_component"
-
-
-def _scan_unanswered_count(history_file: Path) -> int:
+def _scan_inbound_count(history_file: Path) -> int:
     count = 0
-    lines = history_file.read_bytes().split(b"\n")
-    for raw in reversed(lines):
-        if not raw.strip():
-            continue
-        try:
-            event = json.loads(raw)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            continue
-        if not isinstance(event, dict):
-            continue
-        if event.get("role") == "user":
-            count += 1
-        elif _is_reply(event):
-            break
+    with history_file.open("rb") as f:
+        for raw in f:
+            if b'"user"' not in raw:  # pre-filtro barato
+                continue
+            try:
+                event = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if isinstance(event, dict) and event.get("role") == "user":
+                count += 1
     return count
 
 
-def _unanswered_count(history_file: Path) -> int:
+def _inbound_count(history_file: Path) -> int:
     try:
         st = history_file.stat()
-        cached = _unanswered_cache.get(history_file)
+        cached = _inbound_count_cache.get(history_file)
         if cached is not None and cached[:2] == (st.st_mtime, st.st_size):
             return cached[2]
-        value = _scan_unanswered_count(history_file)
+        value = _scan_inbound_count(history_file)
     except OSError:
         return 0
-    _unanswered_cache[history_file] = (st.st_mtime, st.st_size, value)
+    _inbound_count_cache[history_file] = (st.st_mtime, st.st_size, value)
     return value
 
 
@@ -609,12 +598,12 @@ async def list_dashboard_sessions():
             # Buscamos el timestamp de la ultima conversacion
             last_updated = 0
             last_inbound_ms = None
-            unanswered_count = 0
+            inbound_count = 0
             history_file = session_path / "sessions" / f"{entry}.jsonl"
             if history_file.exists():
                 last_updated = history_file.stat().st_mtime
                 last_inbound_ms = _last_inbound_ms(history_file)
-                unanswered_count = _unanswered_count(history_file)
+                inbound_count = _inbound_count(history_file)
             else:
                 last_updated = session_path.stat().st_mtime
 
@@ -629,7 +618,7 @@ async def list_dashboard_sessions():
                 "order_ref": order_ref,
                 "last_updated_timestamp": last_updated,
                 "last_inbound_ms": last_inbound_ms,
-                "unanswered_count": unanswered_count,
+                "inbound_count": inbound_count,
                 "origin": origin,
                 "postponed": postponed,
             })

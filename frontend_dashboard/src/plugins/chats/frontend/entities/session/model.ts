@@ -56,8 +56,8 @@ export interface ChatSession {
   last_updated_timestamp: number;
   /** Epoch ms del último mensaje del cliente, o null si nunca escribió. */
   last_inbound_ms: number | null;
-  /** Mensajes del cliente sin responder (ver contracts). Opcional: backend viejo. */
-  unanswered_count?: number;
+  /** Total de mensajes del cliente (ver contracts). Opcional: backend viejo. */
+  inbound_count?: number;
   origin: SessionOrigin | null;
   /** Pospuesto con fecha de retoma, o null. Opcional: backend sin desplegar. */
   postponed?: SessionPostponed | null;
