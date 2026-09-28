@@ -42,6 +42,9 @@ class TurnOutcome:
     note: str | None = None
     coverage: dict[str, dict[str, Any]] = field(default_factory=dict)
     reading: dict[str, Any] = field(default_factory=dict)
+    # F6: tools requeridas (contrato asunto → tool) y guía de la etapa.
+    tools: dict[str, Any] = field(default_factory=dict)
+    guide: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

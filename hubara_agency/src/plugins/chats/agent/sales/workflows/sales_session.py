@@ -303,6 +303,10 @@ def _perception_step(out: PerceiveOutput, started_ms: int, *, mode: str) -> dict
         "reading": dict(out.reading),
         "shadow": dict(out.shadow),
         "acting": dict(out.acting),
+        # F6: las tools que pide el contrato y la guía de la etapa (el
+        # laboratorio mide el cumplimiento contra los pasos `tool`).
+        "tools": dict(out.tools),
+        "guide": dict(out.guide),
     }
 
 

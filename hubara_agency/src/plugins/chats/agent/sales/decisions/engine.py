@@ -200,6 +200,8 @@ async def perceive(inp: PerceiveInput, *, redact: Sequence[str] = (), context: A
         reading=outcome.reading,
         shadow=shadow,
         acting=acting,
+        tools=outcome.tools if allowed else {},
+        guide=outcome.guide,
     )
 
 

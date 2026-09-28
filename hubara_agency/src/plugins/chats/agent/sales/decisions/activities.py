@@ -16,7 +16,13 @@ import structlog
 from temporalio import activity
 
 from src.plugins.chats.agent.sales.decisions import engine
-from src.plugins.chats.agent.sales.decisions.context import TurnContext, customer_window, order_facts
+from src.plugins.chats.agent.sales.decisions.context import (
+    TurnContext,
+    customer_window,
+    missing_for_stage,
+    order_facts,
+    stagnant_turns,
+)
 from src.plugins.chats.agent.sales.decisions.contracts import (
     CONTRACT_VERSION,
     PerceiveInput,
@@ -67,7 +73,9 @@ def _turn_context(session_id: str, messages: list[dict]) -> TurnContext | None:
     solo la ráfaga, como en v1."""
     from src.plugins.chats.agent.sales.composition import build_session_history_reader
     from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+    from src.plugins.chats.agent.sales.turn_trace import draft_slots
     from src.plugins.chats.agent.sales.use_cases.funnel_stage import resolve_funnel_stage
+    from src.plugins.chats.shared.funnel import active_episode
     from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
     try:
@@ -78,7 +86,30 @@ def _turn_context(session_id: str, messages: list[dict]) -> TurnContext | None:
         return None
     wamids = {str(m["wamid"]) for m in messages if m.get("wamid")}
     window = customer_window(events, burst_wamids=wamids, burst_size=0 if wamids else len(messages))
-    return TurnContext(window=window, facts=order_facts(metadata, stage=resolve_funnel_stage(metadata)))
+    stage = resolve_funnel_stage(metadata)
+    episode = active_episode(metadata)
+    episode_id = str((episode or {}).get("episode_id") or "")
+    return TurnContext(
+        window=window,
+        facts=order_facts(metadata, stage=stage),
+        stage=stage,
+        missing=missing_for_stage(metadata, stage),
+        stagnant=stagnant_turns(_episode_traces(session_id, episode_id), episode_id=episode_id, draft=draft_slots(episode)),
+    )
+
+
+def _episode_traces(session_id: str, episode_id: str) -> list[dict]:
+    """Las trazas de turno del episodio (etapa y borrador de cada turno), para
+    medir el estancamiento. Ilegibles = ninguna."""
+    from src.plugins.chats.shared.turn_traces import traces_for_episode
+    from src.sdk.runtime import WORKSPACE_VAULT_DIR
+
+    if not episode_id:
+        return []
+    try:
+        return traces_for_episode(Path(WORKSPACE_VAULT_DIR), session_id, episode_id)
+    except OSError:
+        return []
 
 
 @activity.defn(name="perceive_burst")

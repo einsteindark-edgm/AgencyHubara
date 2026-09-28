@@ -349,6 +349,32 @@ async def test_the_trace_keeps_what_the_engine_read_its_shadow_and_whether_it_co
 
 
 @pytest.mark.asyncio
+async def test_the_trace_keeps_the_required_tools_and_the_stage_guide(tmp_path: Path) -> None:
+    """F6: las tools que el contrato pide y la guía de la etapa quedan en el
+    paso `perception` de la traza (solo payload, L-22): el laboratorio mide
+    con eso el cumplimiento del contrato contra los pasos `tool` del turno."""
+    classifier = Classifier()
+    base = classifier.decisions
+
+    def with_contract(profile: str) -> TurnDecisions:
+        import dataclasses
+
+        return dataclasses.replace(
+            base(profile),
+            tools={"required": [{"topic": "envio", "any_of": ["send_shipping_rates"], "nudge": "Usa send_shipping_rates."}]},
+            guide={"stage": "etapa_datos_envio", "missing": ["telefono"], "stagnant": 0},
+        )
+
+    classifier.decisions = with_contract
+    llm = LLM([_tool("send_reply", text=CATALOG_REPLY)])
+    tracker = await _run(tmp_path, meta={"perception_mode": "on", "perception_profile": "jev-v1"}, llm=llm, classifier=classifier)
+
+    step = next(s for s in _customer_trace(tracker)["steps"] if s["kind"] == "perception")
+    assert step["tools"]["required"][0]["any_of"] == ["send_shipping_rates"]
+    assert step["guide"] == {"stage": "etapa_datos_envio", "missing": ["telefono"], "stagnant": 0}
+
+
+@pytest.mark.asyncio
 async def test_on_a_clear_gap_after_the_reply_becomes_one_complement_bubble(tmp_path: Path) -> None:
     classifier = Classifier(decision="complement", missing=["envio"])
     llm = LLM([_tool("send_reply", text=CATALOG_REPLY), _tool("send_reply", text="El envío a Bogotá cuesta $X")])

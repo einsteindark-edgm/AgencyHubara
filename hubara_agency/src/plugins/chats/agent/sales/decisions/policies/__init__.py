@@ -5,9 +5,13 @@ from __future__ import annotations
 
 from types import ModuleType
 
-from src.plugins.chats.agent.sales.decisions.policies import turno_v1, turno_v2
+from src.plugins.chats.agent.sales.decisions.policies import turno_v1, turno_v2, turno_v3
 
-_POLICIES: dict[str, ModuleType] = {turno_v1.POLICY_ID: turno_v1, turno_v2.POLICY_ID: turno_v2}
+_POLICIES: dict[str, ModuleType] = {
+    turno_v1.POLICY_ID: turno_v1,
+    turno_v2.POLICY_ID: turno_v2,
+    turno_v3.POLICY_ID: turno_v3,
+}
 
 
 def get_policy(policy_id: str) -> ModuleType:

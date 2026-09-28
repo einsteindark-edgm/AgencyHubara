@@ -71,10 +71,19 @@ class TurnContext:
 
     window: Window = Window()
     facts: tuple[str, ...] = ()
+    # F6 · etapas: la etapa que calcula el código, lo que falta en ella y
+    # cuántos turnos seguidos lleva sin un dato nuevo.
+    stage: str | None = None
+    missing: tuple[str, ...] = ()
+    stagnant: int = 0
 
     def when_facts(self) -> dict[str, Any]:
         """Los hechos con que se filtran las preguntas (`when` del cuestionario)."""
-        return {"has_context": bool(self.window.lines), "bot_asked_known": self.window.bot_asked_known}
+        return {
+            "has_context": bool(self.window.lines),
+            "bot_asked_known": self.window.bot_asked_known,
+            "stage": self.stage,
+        }
 
 
 def _speaker(event: Mapping[str, Any]) -> str | None:
@@ -158,3 +167,48 @@ def order_facts(metadata: Mapping[str, Any], *, stage: str) -> tuple[str, ...]:
     )
     facts.append("Compra confirmada: " + ("sí" if isinstance(draft.get("confirmed_at_ms"), int) else "no"))
     return tuple(facts)
+
+
+#: Datos de envío que exige la etapa (los mismos que `resolve_funnel_stage`).
+SHIPPING_SLOTS: tuple[str, ...] = ("ciudad", "direccion", "telefono", "nombre_recibe", "metodo_pago")
+_VARIANT_FIELDS: tuple[str, ...] = ("aroma", "color", "cantidad")
+
+
+def missing_for_stage(metadata: Mapping[str, Any], stage: str) -> tuple[str, ...]:
+    """Lo que falta para salir de la etapa, según el borrador (F6)."""
+    episode = active_episode(dict(metadata))
+    draft = (episode or {}).get("order_draft")
+    slots = draft.get("slots") if isinstance(draft, dict) and isinstance(draft.get("slots"), dict) else {}
+    if stage == "etapa_datos_envio":
+        return tuple(k for k in SHIPPING_SLOTS if not str(slots.get(k) or "").strip())
+    if stage == "etapa_variantes":
+        items = draft_items(draft) if isinstance(draft, dict) else []
+        out: list[str] = []
+        for k, item in enumerate(items, 1):
+            for field in _VARIANT_FIELDS:
+                if not str(item.get(field) or "").strip():
+                    out.append(field if len(items) == 1 else f"{field} (ítem {k})")
+        return tuple(out)
+    return ()
+
+
+def stagnant_turns(
+    traces: Sequence[Mapping[str, Any]], *, episode_id: str, draft: Mapping[str, Any] | None = None
+) -> int:
+    """Turnos seguidos al final, del episodio, en la misma etapa y sin un dato
+    nuevo en el borrador (la traza guarda la etapa y el borrador de cada
+    turno). Con `draft` (el borrador de ahora), un dato que llegó después del
+    último turno corta la cuenta."""
+    own = [t for t in traces if t.get("episode_id") == episode_id and t.get("trigger", "customer") in ("customer", "handoff")]
+    if not own:
+        return 0
+    last = own[-1]
+    if draft is not None and dict(draft) != (last.get("draft") or {}):
+        return 0
+    count = 0
+    for trace in reversed(own):
+        if trace.get("stage_out") != last.get("stage_out") or trace.get("draft") != last.get("draft"):
+            break
+        count += 1
+    return count
+

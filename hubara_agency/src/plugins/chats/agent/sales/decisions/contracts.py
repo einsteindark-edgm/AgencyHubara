@@ -58,6 +58,11 @@ class TurnDecisions:
     # F1 · calibración: {"allowed": bool, "reason"…}. Si Jev respondió con otra
     # versión que la calibrada, lo que actúa baja a sombra (sin nota ni reglas).
     acting: dict = field(default_factory=dict)
+    # F6 · contrato de herramientas: {"required": [{topic, any_of, nudge, fields?}]}.
+    # Lo aplican la segunda puerta del turno y la auditoría antes de enviar.
+    tools: dict = field(default_factory=dict)
+    # F6 · guía de la etapa: {stage, given_now, missing, going_back, stagnant, next}.
+    guide: dict = field(default_factory=dict)
 
 
 #: Nombre histórico de la salida de la capa ① (laboratorio y tests).

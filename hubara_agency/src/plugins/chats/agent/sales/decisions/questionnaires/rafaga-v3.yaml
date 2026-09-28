@@ -1,0 +1,156 @@
+# Cuestionario de la ráfaga, versión 3 (diseño v2 §04 y §05, fase F6): el de
+# v2 (el «Si» con contexto) más el contrato de herramientas y las etapas.
+#   * asunto nuevo `promocion` (promociones, descuentos o cupones);
+#   * `precio.en_contexto`: si el precio ya está en lo que el cliente vio, no
+#     hace falta una tool para darlo;
+#   * `queja.pedido_hecho`: un reclamo sobre un pedido ya hecho va a un humano;
+#   * preguntas por ETAPA (solo las de la etapa que calcula el código): qué
+#     datos da en este turno, si quiere devolverse, si confirma el resumen,
+#     si pregunta por su pedido o manda un comprobante.
+# Los ids de v1/v2 no cambian (el banco de referencia califica por id).
+id: rafaga-v3
+
+topics:
+  - {id: catalogo, label: "catálogo", hint: "pide ver el catálogo, los diseños o los modelos"}
+  - {id: precio, label: "precio", hint: "pregunta cuánto vale o cuánto cuesta algo"}
+  - {id: envio, label: "envío", hint: "pregunta por el envío o el domicilio (costo o cobertura)"}
+  - {id: tiempos, label: "tiempos de entrega", hint: "pregunta cuánto tarda en llegar o cuándo está listo"}
+  - {id: pagos, label: "medios de pago", hint: "pregunta cómo pagar o por un medio de pago"}
+  - {id: medidas, label: "medidas", hint: "pregunta por el tamaño o las medidas"}
+  - {id: variante, label: "colores o variantes", hint: "pregunta por colores o variantes"}
+  - {id: aroma, label: "aromas", hint: "pregunta por los aromas"}
+  - {id: personalizacion, label: "personalización", hint: "pide personalizar (nombre, dedicatoria, diseño propio)"}
+  - {id: disponibilidad, label: "disponibilidad", hint: "pregunta si hay disponible o en stock"}
+  - {id: estado_pedido, label: "estado del pedido", hint: "pregunta por un pedido que ya hizo"}
+  - {id: datos_envio, label: "datos de envío", hint: "entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)"}
+  - {id: confirma_compra, label: "confirmación de compra", hint: "confirma que quiere comprar"}
+  - {id: aplaza, label: "aplazamiento", hint: "aplaza la compra (luego, otro día, voy en camino)"}
+  - {id: queja, label: "queja", hint: "se queja o reporta un problema"}
+  - {id: foto, label: "la foto", hint: "pregunta por una foto que envió o citó"}
+  - {id: saludo, label: "saludo", hint: "saluda"}
+  - {id: promocion, label: "promociones o cupones", hint: "pregunta por promociones, descuentos o un cupón"}
+
+questions:
+  - each_topic:
+      id: "topic.{topic}"
+      kind: noul
+      text: "¿En los mensajes de ESTE TURNO el cliente {hint}?"
+      criteria:
+        "true": "sí, lo plantea en un mensaje de este turno"
+        "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+  - id: thread.bot_asked
+    kind: choice
+    when: {has_context: true, bot_asked_known: null}
+    text: "¿Qué le preguntó el asesor al cliente en su ÚLTIMO mensaje del CONTEXTO?"
+    criteria:
+      confirmar_compra: "si confirma la compra o el pedido"
+      confirmar_dato_envio: "si confirma un dato de envío (dirección, ciudad, teléfono, quien recibe o pago)"
+      elegir_variante: "que elija una variante (color, aroma, diseño o cantidad)"
+      ver_opciones: "si quiere ver opciones (catálogo, aromas, colores o fotos)"
+      otra_si_no: "otra pregunta de sí o no"
+      pregunta_abierta: "una pregunta abierta"
+      nada: "no le preguntó nada"
+  - id: thread.answers_bot
+    kind: noul
+    when: {has_context: true}
+    text: "¿En ESTE TURNO el cliente responde la última pregunta del asesor?"
+    criteria: {"true": "sí, la responde", "false": "no, habla de otra cosa"}
+  - id: thread.answer
+    kind: choice
+    when: {has_context: true}
+    text: "¿Qué responde el cliente en ESTE TURNO a la última pregunta del asesor?"
+    criteria:
+      si: "sí"
+      "no": "no"
+      otra: "otra cosa (elige algo, pregunta o no la responde)"
+  - id: precio.en_contexto
+    kind: noul
+    when: {has_context: true}
+    text: "¿El precio de lo que el cliente pregunta ya aparece en lo que vio antes (CONTEXTO)?"
+    criteria: {"true": "sí, ya lo vio", "false": "no aparece"}
+  - id: queja.pedido_hecho
+    kind: noul
+    text: "¿En ESTE TURNO el cliente reclama por un pedido que ya hizo?"
+    criteria: {"true": "sí, reclama por un pedido hecho", "false": "no"}
+  - id: variantes.elige
+    kind: noul
+    when: {stage: etapa_variantes}
+    text: "¿En ESTE TURNO el cliente elige aroma, color, diseño o cantidad?"
+    criteria: {"true": "sí, elige", "false": "no"}
+  - id: etapa.cambia_producto
+    kind: noul
+    when: {stage: [etapa_variantes, etapa_datos_envio, etapa_cierre]}
+    text: "¿En ESTE TURNO el cliente quiere ver otros productos o cambiar el que eligió?"
+    criteria: {"true": "sí, quiere cambiar o ver otros", "false": "no"}
+  - id: datos.ciudad
+    kind: noul
+    when: {stage: etapa_datos_envio}
+    text: "¿En ESTE TURNO el cliente da la ciudad de envío?"
+    criteria: {"true": "sí", "false": "no"}
+  - id: datos.direccion
+    kind: noul
+    when: {stage: etapa_datos_envio}
+    text: "¿En ESTE TURNO el cliente da la dirección de envío?"
+    criteria: {"true": "sí", "false": "no"}
+  - id: datos.telefono
+    kind: noul
+    when: {stage: etapa_datos_envio}
+    text: "¿En ESTE TURNO el cliente da un teléfono de contacto?"
+    criteria: {"true": "sí", "false": "no"}
+  - id: datos.nombre_recibe
+    kind: noul
+    when: {stage: etapa_datos_envio}
+    text: "¿En ESTE TURNO el cliente dice quién recibe el pedido?"
+    criteria: {"true": "sí", "false": "no"}
+  - id: datos.metodo_pago
+    kind: noul
+    when: {stage: etapa_datos_envio}
+    text: "¿En ESTE TURNO el cliente dice cómo va a pagar?"
+    criteria: {"true": "sí", "false": "no"}
+  - id: cierre.confirma_resumen
+    kind: noul
+    when: {stage: etapa_cierre}
+    text: "¿En ESTE TURNO el cliente confirma el resumen del pedido?"
+    criteria: {"true": "sí, lo confirma", "false": "no"}
+  - id: cierre.pide_cambio
+    kind: noul
+    when: {stage: etapa_cierre}
+    text: "¿En ESTE TURNO el cliente pide cambiar algo del pedido?"
+    criteria: {"true": "sí", "false": "no"}
+  - id: postcierre.pregunta_pedido
+    kind: noul
+    when: {stage: etapa_postcierre}
+    text: "¿En ESTE TURNO el cliente pregunta por su pedido (estado, envío, entrega)?"
+    criteria: {"true": "sí", "false": "no"}
+  - id: postcierre.comprobante
+    kind: noul
+    when: {stage: etapa_postcierre}
+    text: "¿En ESTE TURNO el cliente manda o menciona un comprobante de pago?"
+    criteria: {"true": "sí", "false": "no"}
+  - each_message:
+      id: "msg.{k}.topic"
+      kind: choice
+      text: "¿Cuál es el asunto principal del mensaje [{k}] de este turno?"
+      criteria: {from_topics: label, extra: {ninguno: "ningún asunto de la lista"}}
+
+verify:
+  id: "cover.{topic}"
+  kind: noul
+  text: "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «{label}»{where}"
+  where_msg: " que el cliente planteó en el mensaje [{msg}]?"
+  where_none: " que planteó el cliente?"
+  criteria: {"true": "sí, lo atiende", "false": "no lo atiende"}
+
+state:
+  sections:
+    context: "CONTEXTO — lo que el cliente vio antes de este turno (no es de este turno)"
+    facts: "HECHOS DEL PEDIDO"
+    turn: "ESTE TURNO — mensajes del cliente"
+    quoted: "(el cliente cita este mensaje: «{text}»)"
+  message: "[{k}] ({offset}) {text}"
+  pending: "Asuntos que quedaron sin responder en turnos anteriores: {pending}"
+
+reply_state:
+  header: "Respuesta del asesor:"
+  empty: "(sin texto)"
+  components: "Tarjetas y componentes que también recibe el cliente: {components}"

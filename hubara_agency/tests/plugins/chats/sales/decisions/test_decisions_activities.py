@@ -226,3 +226,49 @@ async def test_with_jev_v2_the_activity_reads_what_the_customer_saw_from_the_vau
         assert secret not in sent
     assert out.versions["questions"] == "rafaga-v2"
 
+
+
+async def test_with_jev_v3_the_activity_passes_the_stage_what_is_missing_and_the_stagnation(
+    monkeypatch, _isolate_vault_dir
+) -> None:
+    """F6: la activity le da a la política la etapa que calcula el código, lo
+    que falta en ella (borrador) y cuántos turnos lleva sin un dato nuevo (las
+    trazas de la sesión); las preguntas de etapa solo se hacen en esa etapa."""
+    import json
+
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.sdk import connectorkit
+
+    from src.sdk.connectorkit import TypedAnswer
+
+    given = {"datos.direccion": 0.93, "datos.ciudad": 0.04, "datos.telefono": 0.03, "datos.nombre_recibe": 0.02,
+             "datos.metodo_pago": 0.02}
+    fake = FakePerceptionAdapter({qid: TypedAnswer(id=qid, kind="noul", p=p) for qid, p in given.items()})
+
+    def _port(_oracle: str) -> FakePerceptionAdapter:
+        return fake
+
+    _port.cache_clear = lambda: None
+    monkeypatch.setattr(connectorkit, "get_perception_port", _port)
+    session = _isolate_vault_dir / SID
+    (session / "evals").mkdir(parents=True)
+    slots = {"producto": "Cubo", "aroma": "lavanda", "color": "rojo", "cantidad": 1, "ciudad": "Medellín"}
+    episode = {"episode_id": "ep_1", "closed_at_ms": None, "order_draft": {"slots": slots}}
+    (session / "metadata.json").write_text(json.dumps({"episodes": [episode]}), encoding="utf-8")
+    trace = {"episode_id": "ep_1", "stage_out": "datos_envio", "draft": slots, "trigger": "customer"}
+    (session / "evals" / "turn_traces.jsonl").write_text("\n".join(json.dumps(trace) for _ in range(3)) + "\n", encoding="utf-8")
+
+    out = await ActivityEnvironment().run(
+        perceive_burst_activity, PerceiveInput(session_id=SID, profile="jev-v3", messages=[{"text": "Cra 7 # 12-30", "ts_ms": 1}])
+    )
+
+    [(_, questions)] = fake.calls
+    assert "datos.direccion" in questions and "cierre.confirma_resumen" not in questions
+    assert out.guide["stage"] == "etapa_datos_envio" and out.guide["stagnant"] == 3
+    # Faltaban dirección, teléfono, quien recibe y pago (la ciudad ya está en
+    # el borrador); la dirección llega en este turno y hay que guardarla.
+    assert out.guide["given_now"] == ["direccion"]
+    assert out.guide["missing"] == ["telefono", "nombre_recibe", "metodo_pago"]
+    [slot] = [r for r in out.tools["required"] if r["topic"] == "datos_envio"]
+    assert slot["any_of"] == ["set_order_slot"] and slot["fields"] == ["direccion"]
+    assert "3 turnos" in out.note

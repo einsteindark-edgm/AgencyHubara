@@ -70,6 +70,7 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [x] Proveedor de lecturas en `IngestInboundMessage` (`readings=`; por defecto `EngineReadings`), que escribe los mismos campos con UNA función (`apply_readings`) que usan el ingest y el sandbox. Las tres reglas quedaron partidas en leer/escribir sin cambiar lo que hacen (`classify_inbound_purchase_signal`/`apply_inbound_purchase_signal`, `parse_reengagement_deferral`+`is_courtesy_text`/`apply_reengagement_deferral`, `has_recent_marketing_context`+`is_opt_out_text`).
 - [x] El sandbox corre las lecturas del ingest con el bot del brazo, fijado para todo el caso; los brazos salen del registro de bots.
 - [x] Marco de capacidades (`capabilities/__init__.py`: `decide()` con reglas / sombra / jev, respaldo, pisos, calibración) + cola de desacuerdos (`disagreements.py`) + CLI para Claude Code en producción (`scripts/decisions_queue.py`) + guardia para las tools (`guards.py`, sin Temporal).
+- [x] Métricas por capacidad (`capability_rollout.py`): cada decisión con Jev suma caídas, latencia, versión servida y desacuerdos; la vara de encendido de cada capacidad (7 días en sombra, caídas < 1 %, p95 < 1,5 s, misma versión de Jev, desacuerdos calificados con Jev ganando) se calcula de ahí.
 
 ### F3 · Lecturas del cliente con Jev
 - [x] compra (`capabilities/lecturas.py`): «¿Qué hace el cliente con la compra?» con lo que preguntó el asesor a la vista; confirma solo con la pregunta de compra visible (≥ 0,85) y retira un «sí» que respondía otra cosa (≤ 0,20). Carrito y botón los lee el código.
@@ -85,7 +86,13 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [ ] destinatario · persona · rescate · enumeración · saludo · portavelas · monto · selector · verdad de producto.
 
 ### F6 · Tools, datos y etapas
-- [ ] Contrato asunto → tool, segunda puerta (ronda extra que nombra la tool), auditoría antes de enviar, montos en cada turno, revisión de cada dato de `set_order_slot`, «sí» con contexto actuando, guía de etapas, retroceso y estancamiento.
+- [x] Perfil `jev-v3` = cuestionario `rafaga-v3` + política `turno-v3` (sobre v2). Las preguntas de etapa solo se hacen en su etapa (datos de envío, variantes, cierre, poscierre).
+- [x] Contrato asunto → tool escrito en código; las tools requeridas viajan GRABADAS en `TurnDecisions.tools.required` con su nota. Excepciones: precio ya visto (sin tool), colores/aromas (selector solo en variantes; antes, la ficha), queja (humano solo si es de un pedido hecho), datos dados en el turno (`set_order_slot` con esos campos).
+- [x] Guía de etapas: la etapa la calcula el código; la activity le pasa a la política lo que falta (borrador) y los turnos estancados (trazas del episodio; un dato nuevo corta la cuenta). Nota `[ETAPA]` con lo que dio, lo que falta y el siguiente paso; retroceso (`quitar=true`); refuerzo a los 3 turnos sin dato nuevo.
+- [x] La traza guarda `tools` y `guide` del motor (el laboratorio mide el cumplimiento del contrato contra los pasos `tool`).
+- [ ] Segunda puerta en `run_agent_turn` (ronda extra que nombra la tool que falta), solo con reglas grabadas.
+- [ ] Auditoría antes de enviar (requeridas vs usadas; montos en cada turno) y pregunta de respaldo de Jev en sombra.
+- [ ] Revisión de cada dato de `set_order_slot` (capacidad «datos»: bloquea solo con p ≤ 0,15, tope 2 s).
 
 ### F7 · V2 en producción (código de enrutamiento; el encendido es del operador)
 - [ ] Despliegue gradual por versión de workflow (números de prueba → porcentaje → todos), vuelta atrás por registro.
@@ -100,3 +107,4 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 
 ## 5. Bitácora
 - 2026-09-28: juez = Claude Code subido (`0b7edd25`), main al día, 4 tests con fecha fija arreglados.
+- 2026-09-28: F0 (`b9c43cbf`), F1 (`6ae85402`), F2 + lecturas de F3 (`5f7b7ffb`), métricas por capacidad (`5c0afbaf`), F6 motor (contrato de tools + guía de etapas). Replay de 59 historias reales de producción verde en cada paso.
