@@ -1,9 +1,10 @@
 """Control del encendido del bot nuevo (plan del laboratorio PR 16): contrato
 `perception-rollout@v1` de chats, que el panel de Agents consume por cast.
 
-GET devuelve el estado, el techo de Terraform, los chequeos de cada modo y
-las métricas de la sombra. PUT mueve el modo DENTRO del techo: apagar y bajar
-siempre pasan; subir sin cumplir los chequeos da 422 con los que fallan.
+GET devuelve el estado, el techo de Terraform, los chequeos de cada modo,
+las métricas de la sombra y el resumen de la sonda diaria de Jev. PUT mueve
+el modo DENTRO del techo: apagar y bajar siempre pasan; subir sin cumplir los
+chequeos da 422 con los que fallan.
 """
 from __future__ import annotations
 
@@ -14,13 +15,25 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.plugins.chats.agent.sales.decisions import probe
 from src.plugins.chats.api import perception as api
+
+NOW_MS = 1_790_200_000_000
+HOUR_MS = 3_600_000
+SERVED = "typesafe/jev-1.13-20260917"
+
+
+def _probe_report(status: str = "ok", *, hours_ago: int = 2) -> dict:
+    return {
+        "at_ms": NOW_MS - hours_ago * HOUR_MS, "status": status, "models": [SERVED], "cases": 20,
+        "ok_rate": 1.0, "pass_rate": 0.95, "p95_ms": 900, "shape_errors": [], "failures": [],
+    }
 
 
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setattr(api, "_vault_dir", lambda: tmp_path)
-    monkeypatch.setattr(api, "_now_ms", lambda: 1_790_200_000_000)
+    monkeypatch.setattr(api, "_now_ms", lambda: NOW_MS)
     monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", "on")
     monkeypatch.setenv("SALES_PERCEPTION_PROFILE", "jev-v1")
     monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
@@ -151,6 +164,7 @@ def test_a_slow_raise_never_overwrites_a_turn_off_that_arrived_meanwhile(client:
     from src.plugins.chats.agent.sales.decisions.rollout_store import ShadowMetrics, write_state
 
     client.put("/api/chats/perception/rollout", json={"mode": "shadow"})
+    probe.write_report(tmp_path, _probe_report())
 
     def metrics_while_someone_turns_off(*_a, **_k):
         write_state(tmp_path, RolloutState(mode="off", updated_by="otra persona"))
@@ -162,3 +176,38 @@ def test_a_slow_raise_never_overwrites_a_turn_off_that_arrived_meanwhile(client:
     assert res.status_code == 409
     saved = json.loads((tmp_path / "_rollout" / "perception.json").read_text(encoding="utf-8"))
     assert saved["mode"] == "off"
+
+
+def test_get_reports_the_latest_probe_and_feeds_the_check(client: TestClient, tmp_path: Path) -> None:
+    """La sonda diaria de Jev: el panel ve su resumen y el chequeo `probe_ok`
+    de canary y encendido se alimenta de ella."""
+    probe.write_report(tmp_path, _probe_report())
+
+    body = client.get("/api/chats/perception/rollout").json()
+
+    assert body.get("probe") == {"status": "ok", "at_ms": NOW_MS - 2 * HOUR_MS, "pass_rate": 0.95, "models": [SERVED]}
+    by_code = {c["code"]: c for c in body["readiness"]["canary"]}
+    assert "probe_ok" in by_code and by_code["probe_ok"]["ok"] is True
+    assert "probe_ok" not in body["can"]["canary"] and "probe_ok" not in body["can"]["on"]
+
+
+def test_without_a_probe_canary_and_on_stay_closed(client: TestClient) -> None:
+    body = client.get("/api/chats/perception/rollout").json()
+
+    assert body.get("probe") == {"status": "sin_datos", "at_ms": None, "pass_rate": None, "models": []}
+    assert "probe_ok" in body["can"]["canary"] and "probe_ok" in body["can"]["on"]
+    assert "probe_ok" not in body["can"]["shadow"]
+
+
+@pytest.mark.parametrize("report", [_probe_report("degraded"), _probe_report(hours_ago=49)], ids=["degraded", "vieja"])
+def test_raising_with_a_bad_or_old_probe_is_422(client: TestClient, tmp_path: Path, monkeypatch, report) -> None:
+    from src.plugins.chats.agent.sales.decisions.rollout_store import ShadowMetrics
+
+    client.put("/api/chats/perception/rollout", json={"mode": "shadow"})
+    monkeypatch.setattr(api, "shadow_metrics", lambda *_a, **_k: ShadowMetrics(days=8, turns=400, fallback_rate=0.0, p95_ms=500))
+    probe.write_report(tmp_path, report)
+
+    res = client.put("/api/chats/perception/rollout", json={"mode": "canary", "canary_percent": 10})
+
+    assert res.status_code == 422
+    assert res.json()["detail"]["failing"] == ["probe_ok"]

@@ -7,7 +7,9 @@ dashboard mueve el modo DENTRO del techo:
   * subir exige que el modo llegue al worker (`SALES_SIGNAL_INBOUND_META`),
     no pasar el techo y tener la llave del clasificador;
   * canary y encendido exigen la vara de la sombra: 7 días o más, menos del
-    1 % de caídas a "turno como hoy" y p95 de la percepción < 1,5 s.
+    1 % de caídas a "turno como hoy" y p95 de la percepción < 1,5 s;
+  * y la sonda diaria de Jev en `ok` y de 48 h o menos (motor de decisiones:
+    si la API alpha cambió de forma o Jev responde distinto, no se sube).
 
 Por conversación: en canary actúan los números de prueba y un porcentaje
 estable de conversaciones (por hash); las demás siguen en sombra.
@@ -23,6 +25,7 @@ from src.plugins.chats.agent.sales.decisions.rollout import (
 )
 
 TEST = "wa_573001234567"
+HOUR_MS = 3_600_000
 
 
 def _facts(**over) -> RolloutFacts:
@@ -35,6 +38,8 @@ def _facts(**over) -> RolloutFacts:
         shadow_turns=400,
         shadow_fallback_rate=0.004,
         shadow_p95_ms=900,
+        probe_status="ok",
+        probe_age_ms=5 * HOUR_MS,
     )
     base.update(over)
     return RolloutFacts(**base)
@@ -108,3 +113,39 @@ def test_acting_needs_the_same_jev_version_it_was_calibrated_with() -> None:
     assert can_set_mode("shadow", _facts(current="off", shadow_model_changed=3)) == ()
     assert can_set_mode("on", _facts(shadow_model_changed=0)) == ()
 
+
+
+def test_canary_and_on_need_a_fresh_ok_probe() -> None:
+    """La sonda diaria de Jev es una red de seguridad del motor: si la última
+    no está `ok` (la API cambió de forma, Jev responde distinto o no hay
+    llave) o tiene más de 48 h (el Schedule dejó de correr), no se sube a
+    canary ni a encendido. Sombra no la necesita: no actúa."""
+    assert can_set_mode("canary", _facts(probe_status="degraded")) == ("probe_ok",)
+    assert can_set_mode("on", _facts(probe_status="down")) == ("probe_ok",)
+    assert can_set_mode("on", _facts(probe_status="sin_llave")) == ("probe_ok",)
+    assert can_set_mode("canary", _facts(probe_age_ms=49 * HOUR_MS)) == ("probe_ok",)
+    assert can_set_mode("canary", _facts(probe_age_ms=48 * HOUR_MS)) == ()
+    assert can_set_mode("shadow", _facts(current="off", probe_status="down")) == ()
+
+
+def test_a_probe_that_never_ran_does_not_let_you_raise() -> None:
+    """Sin sonda (los constructores de antes no la traen) canary y encendido
+    fallan cerrado, como la vara de la sombra sin datos."""
+    facts = RolloutFacts(
+        ceiling="on", current="shadow", signal_meta_enabled=True, api_key_present=True,
+        shadow_days=8, shadow_turns=400, shadow_fallback_rate=0.004, shadow_p95_ms=900,
+    )
+
+    assert can_set_mode("canary", facts) == ("probe_ok",)
+    assert can_set_mode("canary", _facts(probe_status=None, probe_age_ms=None)) == ("probe_ok",)
+
+
+def test_readiness_explains_the_probe() -> None:
+    by_code = {c.code: c for c in readiness("on", _facts(probe_status="degraded", probe_age_ms=3 * HOUR_MS))}
+
+    assert "probe_ok" in by_code
+    assert by_code["probe_ok"].ok is False
+    assert "degraded" in by_code["probe_ok"].detail and "3 h" in by_code["probe_ok"].detail
+    missing = {c.code: c for c in readiness("canary", _facts(probe_status=None, probe_age_ms=None))}
+    assert "sin datos" in missing["probe_ok"].detail
+    assert "probe_ok" not in {c.code for c in readiness("shadow", _facts())}

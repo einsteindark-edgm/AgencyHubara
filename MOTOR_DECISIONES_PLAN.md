@@ -61,7 +61,7 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [x] Calibración atada al snapshot de Jev (`calibrated_model`): si Jev sirve con otra versión, sin nota ni reglas (`acting.allowed=false`), la verificación no pide complemento, y el control «Bot nuevo» no deja subir a canary/encendido (`same_model`).
 - [x] La traza del turno guarda `versions`, `reading`, `shadow` y `acting` del motor.
 - [ ] Banco de referencia: selección de ~150 turnos difíciles, CLI de etiquetas para Claude Code, métricas por pregunta (precisión, cobertura, calibración).
-- [ ] Sonda diaria: 20 ráfagas sintéticas con respuesta conocida.
+- [x] Sonda diaria: 20 ráfagas sintéticas con respuesta conocida (`decisions/probe.py`, las mismas preguntas del turno vía `engine.burst_request`; Schedule `decisions-probe-schedule` 07:00 Bogotá en `sales_eval`; reporte en `<vault>/_decisions/probe/`). El control «Bot nuevo» exige la última sonda `ok` y de 48 h o menos para subir a canary o encendido. Pendiente: casos de `jev-v3` cuando ese perfil vaya a actuar.
 
 ### F2 · Enchufes — sin cambio de comportamiento ✅
 - [x] Registro de bots (`decisions/bots.py`): versión del workflow + proveedor por capacidad (`reglas`/`sombra`/`jev`) + perfil de Jev + modo de las capas ①②③. `bot_for_arm()` (laboratorio; el sandbox lo fija con `DECISIONS_BOT`) y `bot_for_session()` (producción: `_rollout/decisions.json` por capacidad y por versión del workflow, con los números de prueba y el porcentaje del control «Bot nuevo», dentro de los techos de Terraform `SALES_CAPABILITIES_CEILING` y `SALES_WORKFLOW_V2_CEILING`, `off` por defecto). Control ilegible = el bot de hoy.

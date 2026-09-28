@@ -92,6 +92,20 @@ def _versions(profile: EngineProfile, model: str) -> dict[str, str]:
     return {"profile": profile.id, "questions": profile.questions, "policy": profile.policy, "model": model}
 
 
+def burst_request(questionnaire: Questionnaire, inp: PerceiveInput, context: Any = None) -> tuple[str, list[Any]]:
+    """El `state` y las preguntas de la ráfaga, tal como se le mandan a Jev.
+    Lo usan el turno (`_ask`) y la sonda diaria (`probe.py`): los dos le
+    preguntan exactamente lo mismo."""
+    facts = context.when_facts() if context is not None and questionnaire.uses_context else {}
+    state = questionnaire.burst_state(
+        inp.messages,
+        pending=inp.pending,
+        last_bot_text=inp.last_bot_text,
+        context=context if questionnaire.uses_context else None,
+    )
+    return state, questionnaire.burst_questions(inp.messages, facts=facts)
+
+
 async def _ask(
     resolved: tuple[EngineProfile, Questionnaire, Any],
     inp: PerceiveInput,
@@ -102,14 +116,7 @@ async def _ask(
 ) -> Any:
     profile, questionnaire, _ = resolved
     port, oracle_timeout = _oracle(profile)
-    facts = context.when_facts() if context is not None and questionnaire.uses_context else {}
-    state = questionnaire.burst_state(
-        inp.messages,
-        pending=inp.pending,
-        last_bot_text=inp.last_bot_text,
-        context=context if questionnaire.uses_context else None,
-    )
-    questions = questionnaire.burst_questions(inp.messages, facts=facts)
+    state, questions = burst_request(questionnaire, inp, context)
     return await port.ask(state, questions, timeout_s=timeout_s or oracle_timeout, redact=redact)
 
 

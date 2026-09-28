@@ -1,7 +1,8 @@
 """Contrato `perception-rollout@v1` (plan del laboratorio PR 16): el encendido
 del bot nuevo (capas con clasificador) por etapas.
 
-  GET /api/chats/perception/rollout   estado, techo, chequeos por modo y métricas de la sombra
+  GET /api/chats/perception/rollout   estado, techo, chequeos por modo, métricas de la sombra
+                                      y el resumen de la sonda diaria de Jev (`probe`)
   PUT /api/chats/perception/rollout   {mode, canary_percent?, test_numbers?}
 
 El panel de la sección Agents (`agents_admin`) lo consume por cast. El techo
@@ -26,6 +27,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Body, HTTPException, Request
 
+from src.plugins.chats.agent.sales.decisions.probe import read_latest as read_latest_probe
 from src.plugins.chats.agent.sales.decisions.rollout import (
     MODES,
     RolloutFacts,
@@ -81,8 +83,23 @@ def _metrics() -> ShadowMetrics:
         return ShadowMetrics(days=0, turns=0, fallback_rate=None, p95_ms=None)
 
 
-def _facts(state: RolloutState) -> tuple[RolloutFacts, dict[str, Any]]:
+def _probe() -> dict[str, Any]:
+    """El resumen de la última sonda diaria de Jev (`decisions/probe.py`);
+    `sin_datos` si todavía no corrió."""
+    report = read_latest_probe(_vault_dir()) or {}
+    at_ms = report.get("at_ms")
+    pass_rate = report.get("pass_rate")
+    return {
+        "status": str(report.get("status") or "sin_datos"),
+        "at_ms": at_ms if isinstance(at_ms, int) and not isinstance(at_ms, bool) else None,
+        "pass_rate": pass_rate if isinstance(pass_rate, (int, float)) and not isinstance(pass_rate, bool) else None,
+        "models": [str(m) for m in report.get("models") or [] if isinstance(m, str)],
+    }
+
+
+def _facts(state: RolloutState) -> tuple[RolloutFacts, dict[str, Any], dict[str, Any]]:
     metrics = _metrics()
+    probe = _probe()
     facts = RolloutFacts(
         ceiling=_ceiling(),
         current=state.mode if state.mode in MODES else "off",
@@ -93,17 +110,20 @@ def _facts(state: RolloutState) -> tuple[RolloutFacts, dict[str, Any]]:
         shadow_fallback_rate=metrics.fallback_rate,
         shadow_p95_ms=metrics.p95_ms,
         shadow_model_changed=metrics.model_changed,
+        probe_status=probe["status"] if probe["at_ms"] is not None else None,
+        probe_age_ms=_now_ms() - probe["at_ms"] if probe["at_ms"] is not None else None,
     )
-    return facts, asdict(metrics)
+    return facts, asdict(metrics), probe
 
 
 def _payload(state: RolloutState) -> dict[str, Any]:
-    facts, metrics = _facts(state)
+    facts, metrics, probe = _facts(state)
     return {
         "state": {**asdict(state), "test_numbers": list(state.test_numbers)},
         "ceiling": facts.ceiling,
         "profile": _profile(),
         "metrics": metrics,
+        "probe": probe,
         "readiness": {t: [asdict(c) for c in readiness(t, facts)] for t in _TARGETS},
         "can": {t: list(can_set_mode(t, facts)) for t in _TARGETS},
     }
@@ -155,7 +175,7 @@ def put_rollout(request: Request, body: dict[str, Any] = Body(default_factory=di
     ):
         raise HTTPException(422, detail={"reason": "invalid_test_numbers", "message": "Números de prueba como wa_57…"})
     if raising:
-        facts, _ = _facts(current)
+        facts, _, _ = _facts(current)
         failing = can_set_mode(mode, facts)
         if failing:
             raise HTTPException(

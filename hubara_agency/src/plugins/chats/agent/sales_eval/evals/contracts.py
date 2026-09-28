@@ -171,3 +171,26 @@ class ScoreEpisodeInput:
     session_id: str
     episode_id: str
     with_judge: bool = True
+
+
+@dataclass(frozen=True)
+class DecisionsProbeSummary:
+    """Resumen de la sonda diaria de Jev (output de `run_decisions_probe` y de
+    `DecisionsProbeWorkflow`).
+
+    Solo escalares (R-JSON). El reporte completo (qué caso falló, qué pregunta
+    y qué respondió Jev) queda en `<vault>/_decisions/probe/<día>.json` y
+    `latest.json` (ver `sales/decisions/probe.py`).
+    """
+
+    status: str = "sin_datos"
+    """ok · degraded · down · sin_llave (sin llave de OpenRouter no se llamó)."""
+    at_ms: int = 0
+    cases: int = 0
+    ok_rate: float | None = None
+    pass_rate: float | None = None
+    p95_ms: int | None = None
+    models: str = ""
+    """Snapshots de Jev que respondieron, separados por coma."""
+    shape_errors: int = 0
+    failures: int = 0

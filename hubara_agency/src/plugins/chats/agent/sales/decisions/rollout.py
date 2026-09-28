@@ -9,9 +9,12 @@ Patrón de `src/plugins/mba/domain/rollout_policy.py`: hechos → chequeos.
   pasar el techo y la llave del clasificador (`OPENROUTER_API_KEY`).
 * Canary y encendido exigen la vara de la sombra (§8.3): 7 días o más, menos
   del 1 % de caídas a "turno como hoy" y p95 de la percepción < 1,5 s, con al
-  menos 150 turnos medidos (menos no alcanza para medir el 1 %), y la misma
+  menos 150 turnos medidos (menos no alcanza para medir el 1 %), la misma
   versión de Jev con la que se calibró (motor de decisiones §02: si en la
-  sombra aparecen turnos servidos por otra versión, hay que recalibrar).
+  sombra aparecen turnos servidos por otra versión, hay que recalibrar) y la
+  sonda diaria de Jev (`probe.py`) en `ok` y de 48 h o menos: si la API alpha
+  cambió de forma, Jev responde distinto o el Schedule dejó de correr, no se
+  sube. Sin sonda falla cerrado, como la vara de la sombra sin datos.
 
 Por conversación (`effective_mode`): en canary actúan los números de prueba
 y un porcentaje estable de conversaciones (hash del id); las demás siguen en
@@ -27,6 +30,9 @@ SHADOW_MIN_DAYS = 7
 SHADOW_MIN_TURNS = 150
 SHADOW_MAX_FALLBACK_RATE = 0.01
 SHADOW_MAX_P95_MS = 1500
+PROBE_OK = "ok"
+PROBE_MAX_AGE_H = 48
+_HOUR_MS = 3_600_000
 
 
 def _rank(mode: str) -> int:
@@ -56,6 +62,10 @@ class RolloutFacts:
     shadow_p95_ms: int | None
     # Turnos de la sombra que Jev sirvió con otra versión que la calibrada.
     shadow_model_changed: int = 0
+    # Sonda diaria de Jev: el estado de la última (`ok`, `degraded`, `down`,
+    # `sin_llave`) y cuánto hace que corrió. None = no hay sonda.
+    probe_status: str | None = None
+    probe_age_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -85,8 +95,22 @@ def readiness(target: str, facts: RolloutFacts) -> tuple[Check, ...]:
                   f"p95 de la percepción: {p95 if p95 is not None else 'sin datos'} ms (menos de {SHADOW_MAX_P95_MS})"),
             Check("same_model", facts.shadow_model_changed == 0,
                   f"misma versión de Jev que la calibrada: {facts.shadow_model_changed} turnos con otra versión"),
+            _probe_check(facts),
         ]
     return tuple(checks)
+
+
+def _probe_check(facts: RolloutFacts) -> Check:
+    age = facts.probe_age_ms
+    fresh = age is not None and 0 <= age <= PROBE_MAX_AGE_H * _HOUR_MS
+    seen = facts.probe_status or "sin datos"
+    if age is not None:
+        seen += f", hace {max(0, age) // _HOUR_MS} h"
+    return Check(
+        "probe_ok",
+        facts.probe_status == PROBE_OK and fresh,
+        f"sonda diaria de Jev: {seen} (debe estar ok y tener {PROBE_MAX_AGE_H} h o menos)",
+    )
 
 
 def can_set_mode(target: str, facts: RolloutFacts) -> tuple[str, ...]:
