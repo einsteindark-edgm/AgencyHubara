@@ -28,7 +28,7 @@ def _seed(vault: Path) -> None:
 
 def _patch(monkeypatch, vault: Path, alerts_seen: list) -> None:
     monkeypatch.setattr(composition, "get_vault_dir", lambda: vault)
-    monkeypatch.setenv("SCORECARD_JUDGE_ENABLED", "false")
+    monkeypatch.setenv("EVAL_LLM_JUDGE_ENABLED", "false")
 
     async def ctx(catalog=None):
         return CATALOG_CTX

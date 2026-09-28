@@ -250,7 +250,7 @@ function adaptSession(s: ChatSession): ChatInboxItem {
     tagClass,
     color: hashColor(s.session_id),
     presence: "online",
-    unread: 0,
+    unread: s.unanswered_count ?? 0,
     pinned: false,
     human,
     handoffReason: human ? s.motivo : undefined,

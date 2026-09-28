@@ -116,7 +116,7 @@ async def _apply(units: list[str]) -> None:
     from scripts.rescore_scorecards import rescore_units
 
     pairs = [tuple(u.split("/", 1)) for u in units if "/" in u]
-    await rescore_units(pairs, with_judge=True)
+    await rescore_units(pairs, with_judge=True, judge_kind="claude")
 
 
 def main(argv: list[str] | None = None) -> int:

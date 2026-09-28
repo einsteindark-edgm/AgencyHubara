@@ -117,7 +117,7 @@ async def test_in_turn_mode_my_answer_gives_one_verdict_per_candidate(tmp_path: 
 async def test_production_scorecard_never_calls_gemini_and_queues_the_episode(tmp_path: Path, monkeypatch) -> None:
     _seed(tmp_path)
     _patch(monkeypatch, tmp_path, [])
-    monkeypatch.setenv("SCORECARD_JUDGE_ENABLED", "true")
+    monkeypatch.setenv("EVAL_LLM_JUDGE_ENABLED", "true")
     monkeypatch.delenv("SCORECARD_JUDGE", raising=False)
 
     def gemini():
@@ -137,7 +137,7 @@ async def test_production_scorecard_never_calls_gemini_and_queues_the_episode(tm
 async def test_gemini_comes_back_only_if_asked_explicitly(tmp_path: Path, monkeypatch, value: str) -> None:
     _seed(tmp_path)
     _patch(monkeypatch, tmp_path, [])
-    monkeypatch.setenv("SCORECARD_JUDGE_ENABLED", "true")
+    monkeypatch.setenv("EVAL_LLM_JUDGE_ENABLED", "true")
     monkeypatch.setenv("SCORECARD_JUDGE", value)
     fake = FakeJudge()
     monkeypatch.setattr(composition, "get_judge", lambda: fake)
@@ -146,3 +146,27 @@ async def test_gemini_comes_back_only_if_asked_explicitly(tmp_path: Path, monkey
 
     assert fake.prompts
     assert cj.JudgeQueue(cj.queue_dir(tmp_path)).pending() == []
+
+
+async def test_on_request_claude_code_judges_even_with_the_llm_judge_switch_off(tmp_path: Path, monkeypatch) -> None:
+    """El juez con IA de pago está apagado por defecto (`EVAL_LLM_JUDGE_ENABLED`,
+    #383): los caminos automáticos no llaman a ningún juez. Cuando el operador
+    le pide a Claude Code calificar, el recálculo a pedido (`judge_kind="claude"`)
+    deja los prompts en la cola de Claude Code, sin costo de API y sin Gemini."""
+    _seed(tmp_path)
+    _patch(monkeypatch, tmp_path, [])
+    monkeypatch.delenv("EVAL_LLM_JUDGE_ENABLED", raising=False)
+
+    def gemini():
+        raise AssertionError("Gemini está apagado: el recálculo a pedido no debe construirlo")
+
+    monkeypatch.setattr(composition, "get_judge", gemini)
+
+    automatic = await ActivityEnvironment().run(ea.score_episode_scorecard_activity, SESSION, "ep_007", True)
+    assert cj.JudgeQueue(cj.queue_dir(tmp_path)).pending() == [], "sin el interruptor, lo automático no encola"
+    assert automatic.judge is False
+
+    await ActivityEnvironment().run(ea.score_episode_scorecard_activity, SESSION, "ep_007", True, "claude")
+
+    assert {i["unit"] for i in cj.JudgeQueue(cj.queue_dir(tmp_path)).pending()} == {UNIT}
+

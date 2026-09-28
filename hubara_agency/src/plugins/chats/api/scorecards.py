@@ -33,6 +33,10 @@ from src.plugins.chats.agent.sales_eval.evals.composition import (
     get_eval_history_dir,
     get_vault_dir,
 )
+from src.plugins.chats.agent.sales_eval.evals.judge import (
+    LLM_JUDGE_DISABLED_MSG,
+    llm_judge_enabled,
+)
 from src.plugins.chats.agent.sales_eval.scorecard import (
     calibration,
     catalog_context,
@@ -236,7 +240,12 @@ async def rescore(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str
         ),
     )
     detail = _detail(traj, record, stored=True)
-    if body.get("judge"):
+    if body.get("judge") and not llm_judge_enabled():
+        # El dashboard muestra `judge_error` y no se queda sondeando un juez
+        # que nunca va a correr.
+        detail["judge_queued"] = False
+        detail["judge_error"] = LLM_JUDGE_DISABLED_MSG
+    elif body.get("judge"):
         try:
             detail["judge_workflow_id"] = await _start_judge_workflow(session_id, episode_id)
             detail["judge_queued"] = True

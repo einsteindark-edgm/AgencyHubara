@@ -156,3 +156,71 @@ describe("reacciones", () => {
     expect(screen.getByText(/El bot reaccionó/)).toBeTruthy();
   });
 });
+
+describe("datos de envío del formulario", () => {
+  const form: ChatMessageItem = {
+    kind: "in",
+    time: "15:02",
+    text: "[datos de envío recibidos] city=Bogotá; flow_token=shipping_wa_test_1",
+    event: {
+      kind: "shipping_form",
+      receiver_name: "Ana Prueba",
+      phone: "3001112233",
+      city: "Bogotá",
+      neighborhood: "Las Nieves",
+      address: "Calle 1 #2-3 apto 4",
+      payment_method: "transfer",
+      order_total_cop: 45000,
+      items_summary: "1× Trilogía del Terror",
+      extra: [{ key: "notes", value: "Portería 24h" }],
+    },
+  };
+
+  it("se lee como tarjeta, no como el marker k=v", () => {
+    render(<ChatsBubble message={form} />);
+    expect(screen.queryByText(/datos de envío recibidos\]/)).toBeNull();
+    expect(screen.queryByText(/flow_token/)).toBeNull();
+    expect(screen.getByText("Cliente · Datos de envío")).toBeTruthy();
+  });
+
+  it("muestra quién recibe, dónde y qué se paga", () => {
+    render(<ChatsBubble message={form} />);
+    expect(screen.getByText("Ana Prueba")).toBeTruthy();
+    expect(screen.getByText("Calle 1 #2-3 apto 4")).toBeTruthy();
+    expect(screen.getByText("Las Nieves · Bogotá")).toBeTruthy();
+    expect(screen.getByText("1× Trilogía del Terror")).toBeTruthy();
+    expect(screen.getByText("$ 45.000")).toBeTruthy();
+    expect(screen.getByText("Transferencia")).toBeTruthy();
+    expect(screen.getByText("Portería 24h")).toBeTruthy();
+  });
+
+  it("el teléfono se puede llamar", () => {
+    render(<ChatsBubble message={form} />);
+    const tel = screen.getByRole("link", { name: /300 111 2233/ });
+    expect(tel.getAttribute("href")).toBe("tel:3001112233");
+  });
+
+  it("un campo que no llegó no se inventa", () => {
+    render(
+      <ChatsBubble
+        message={{
+          ...form,
+          event: {
+            ...form.event!,
+            kind: "shipping_form",
+            receiver_name: null,
+            phone: null,
+            neighborhood: null,
+            payment_method: null,
+            order_total_cop: null,
+            items_summary: null,
+            extra: [],
+          } as ChatMessageItem["event"],
+        }}
+      />,
+    );
+    expect(screen.getByText("Bogotá")).toBeTruthy();
+    expect(screen.queryByText("Transferencia")).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+});

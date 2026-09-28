@@ -27,7 +27,7 @@ export type { DateRange };
 
 export type InboxFilter =
   | "Humano" | "Todas" | "Interesado" | "Pendiente" | "Cliente" | "Remarketing" | "Frío"
-  | "Sin respuesta" | "Pospuestos";
+  | "Sin respuesta" | "Pospuestos" | "Sin responder";
 
 export interface InboxSection {
   key: "pinned" | "waiting" | "postponed" | "today" | "earlier" | "results";
@@ -106,6 +106,8 @@ export function useInboxFilters(chats: ChatInboxItem[], options: Options = {}) {
     return [
       { key: "Humano",      count: humanCount,          color: "var(--color-danger)",        priority: true },
       { key: "Todas",       count: inScope.length,      color: "var(--fg-soft)" },
+      // El cliente escribió y nadie (bot ni operador) le ha contestado.
+      { key: "Sin responder", count: inScope.filter((c) => c.unread > 0).length, color: "var(--accent)" },
       { key: "Interesado",  count: byTag("Interesado"), color: "var(--color-info)" },
       { key: "Pendiente",   count: byTag("Pendiente"),  color: "var(--color-warn)" },
       { key: "Cliente",     count: byTag("Cliente"),    color: "var(--color-ok)" },
@@ -130,6 +132,7 @@ export function useInboxFilters(chats: ChatInboxItem[], options: Options = {}) {
     if (activeFilter === "Humano") return inScope.filter((c) => c.human);
     if (activeFilter === "Todas") return inScope;
     if (activeFilter === "Pospuestos") return inScope.filter((c) => c.postponed);
+    if (activeFilter === "Sin responder") return inScope.filter((c) => c.unread > 0);
     return inScope.filter((c) => TAG_TO_FILTER[c.tag] === activeFilter);
   }, [inScope, activeFilter]);
 
@@ -142,6 +145,13 @@ export function useInboxFilters(chats: ChatInboxItem[], options: Options = {}) {
         (a, b) => (a.postponed?.untilMs ?? 0) - (b.postponed?.untilMs ?? 0),
       );
       if (queue.length > 0) out.push({ key: "postponed", title: "Por retomar", items: queue });
+      return out;
+    }
+    // Sin responder también es una COLA: el que lleva más tiempo esperando va
+    // primero (el último movimiento de estos chats ES el mensaje del cliente).
+    if (activeFilter === "Sin responder") {
+      const queue = [...filtered].sort((a, b) => a.timestamp - b.timestamp);
+      if (queue.length > 0) out.push({ key: "waiting", title: "Esperando respuesta", items: queue });
       return out;
     }
     const pinned = filtered.filter((c) => c.pinned).sort(byRecency);

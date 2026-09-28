@@ -52,6 +52,19 @@ export const chatEventSchema = z.discriminatedUnion("kind", [
     emoji: z.string().nullable(),
     author: z.enum(["user", "bot"]),
   }),
+  z.object({
+    /** Formulario de envío (Flow) — cada campo null si no llegó. */
+    kind: z.literal("shipping_form"),
+    receiver_name: z.string().nullable(),
+    phone: z.string().nullable(),
+    city: z.string().nullable(),
+    neighborhood: z.string().nullable(),
+    address: z.string().nullable(),
+    payment_method: z.string().nullable(),
+    order_total_cop: z.number().nullable(),
+    items_summary: z.string().nullable(),
+    extra: z.array(z.object({ key: z.string(), value: z.string() })),
+  }),
 ]);
 
 export const chatMessageSchema = z.object({

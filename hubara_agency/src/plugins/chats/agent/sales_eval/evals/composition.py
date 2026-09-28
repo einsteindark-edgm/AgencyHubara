@@ -43,6 +43,18 @@ def get_scorecard_judge(unit: str) -> Any:
     return ClaudeCodeJudge(JudgeQueue(queue_dir(get_vault_dir())), unit=unit)
 
 
+def get_claude_code_judge(unit: str) -> Any:
+    """La cola del juez Claude Code para UNA unidad (el recálculo a pedido de
+    `scripts/claude_judge.py` y `rescore_scorecards.py --claude-judge`)."""
+    from src.plugins.chats.agent.sales_eval.scorecard.claude_judge import (
+        ClaudeCodeJudge,
+        JudgeQueue,
+        queue_dir,
+    )
+
+    return ClaudeCodeJudge(JudgeQueue(queue_dir(get_vault_dir())), unit=unit)
+
+
 @lru_cache(maxsize=1)
 def get_vault_dir() -> Path:
     """Directorio del vault (donde viven `wa_*/sessions/*.jsonl`)."""

@@ -171,6 +171,9 @@ class ScoreEpisodeInput:
     session_id: str
     episode_id: str
     with_judge: bool = True
+    #: "claude" = recálculo A PEDIDO que califica Claude Code (encola los
+    #: prompts del juez aunque `EVAL_LLM_JUDGE_ENABLED` esté apagado).
+    judge_kind: str = ""
 
 
 @dataclass(frozen=True)
