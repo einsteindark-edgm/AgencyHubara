@@ -22,6 +22,7 @@ Sin I/O: quien llama (la activity) lee el vault y pasa los eventos.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -47,6 +48,14 @@ STAGE_LABELS: dict[str, str] = {
     "etapa_cierre": "cierre",
     "etapa_postcierre": "postcierre",
 }
+
+# Datos de envío del borrador que Jev no necesita (decisión 2 del plan del
+# laboratorio). Los nombres se tapan también palabra por palabra: el cliente o
+# el asesor repiten solo el nombre ("Listo Carolina"). El barrio y la
+# dirección, completos: partirlos taparía palabras del producto ("alto").
+_PERSONAL_SLOTS = ("nombre_recibe", "direccion", "barrio", "telefono")
+_NAME_SLOTS = ("nombre_recibe",)
+_NAME_TOKEN_RE = re.compile(r"[^\W\d_]{3,}")
 
 # Datos personales: solo si están o faltan (en este orden, con su género).
 _PERSONAL = (
@@ -84,6 +93,21 @@ class TurnContext:
             "bot_asked_known": self.window.bot_asked_known,
             "stage": self.stage,
         }
+
+
+def redact_terms_from_slots(slots: Mapping[str, Any]) -> list[str]:
+    """Lo que hay que tapar de ESTE cliente antes de que el turno salga hacia
+    Jev, desde las casillas del borrador (lo usan la activity y el banco de
+    referencia del laboratorio)."""
+    terms: set[str] = set()
+    for key in _PERSONAL_SLOTS:
+        value = slots.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        terms.add(value.strip())
+        if key in _NAME_SLOTS:
+            terms.update(_NAME_TOKEN_RE.findall(value))
+    return sorted(terms)
 
 
 def _speaker(event: Mapping[str, Any]) -> str | None:

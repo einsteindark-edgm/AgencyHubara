@@ -16,7 +16,7 @@ separada de los mensajes de este turno:
 """
 from __future__ import annotations
 
-from src.plugins.chats.agent.sales.decisions.context import customer_window, order_facts
+from src.plugins.chats.agent.sales.decisions.context import customer_window, order_facts, redact_terms_from_slots
 
 
 def _user(text: str, wamid: str | None = None, **extra) -> dict:
@@ -149,3 +149,25 @@ def test_order_facts_show_the_items_and_only_given_or_missing_for_personal_data(
 
 def test_without_a_draft_the_facts_are_only_the_stage() -> None:
     assert order_facts({}, stage="etapa_descubrimiento") == ("Etapa: descubrimiento",)
+
+
+def test_what_is_hidden_from_jev_comes_from_the_personal_slots_of_the_draft() -> None:
+    """Lo que se tapa de ESTE cliente antes de que el turno salga hacia Jev
+    (lo usan la activity y el banco de referencia): las casillas personales
+    completas y el nombre de quien recibe también palabra por palabra (el
+    asesor lo repite solo: «Listo Carolina»). La ciudad y el producto no se
+    tapan: Jev los necesita para entender el asunto."""
+    slots = {
+        "nombre_recibe": "Carolina Pérez",
+        "direccion": "Cra 7 # 12-34",
+        "barrio": "Chapinero Alto",
+        "telefono": "3001234567",
+        "ciudad": "Bogotá",
+        "producto": "Duo Zodiacal",
+    }
+
+    assert redact_terms_from_slots(slots) == sorted(
+        {"Carolina Pérez", "Carolina", "Pérez", "Cra 7 # 12-34", "Chapinero Alto", "3001234567"}
+    )
+    assert redact_terms_from_slots({"nombre_recibe": "  ", "direccion": None}) == []
+    assert redact_terms_from_slots({}) == []

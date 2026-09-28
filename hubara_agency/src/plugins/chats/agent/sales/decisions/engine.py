@@ -93,9 +93,10 @@ def _versions(profile: EngineProfile, model: str) -> dict[str, str]:
 
 
 def burst_request(questionnaire: Questionnaire, inp: PerceiveInput, context: Any = None) -> tuple[str, list[Any]]:
-    """El `state` y las preguntas de la ráfaga, tal como se le mandan a Jev.
-    Lo usan el turno (`_ask`) y la sonda diaria (`probe.py`): los dos le
-    preguntan exactamente lo mismo."""
+    """El `state` y las preguntas de la ráfaga, tal como se le mandan a Jev
+    (sin anonimizar: eso lo hace el adaptador con `redact`). Lo usan el turno
+    (`_ask`), la sonda diaria (`probe.py`) y el banco de referencia del
+    laboratorio: los tres le preguntan exactamente lo mismo."""
     facts = context.when_facts() if context is not None and questionnaire.uses_context else {}
     state = questionnaire.burst_state(
         inp.messages,
