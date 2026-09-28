@@ -16,6 +16,7 @@ from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_session
 from src.plugins.chats.agent.sales.decisions.capabilities import Verdict, decide
+from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
 
 __all__ = ["Verdict", "decide_for_session"]
@@ -39,4 +40,5 @@ async def decide_for_session(
         disagreements=DisagreementLog(Path(vault_dir)),
         session_id=session_id,
         redact=redact,
+        metrics=DecisionMetrics(Path(vault_dir)),
     )

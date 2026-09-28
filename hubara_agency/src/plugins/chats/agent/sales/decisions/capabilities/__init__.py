@@ -115,6 +115,7 @@ async def decide(
     disagreements: Any = None,
     session_id: str | None = None,
     redact: Sequence[str] = (),
+    metrics: Any = None,
 ) -> Verdict:
     """La decisión de la capacidad con el proveedor del bot. Nunca lanza por
     Jev; la regla sí puede lanzar (igual que hoy)."""
@@ -139,6 +140,11 @@ async def decide(
         capability=name, provider=provider, rule=rule, jev=jev, agree=agree, model=str(result.model or ""),
         latency_ms=int(getattr(result, "latency_ms", 0) or 0), answers=_answers(result),
     )
+    if metrics is not None:
+        try:
+            metrics.record(capability=name, provider=provider, ok=bool(result.ok), latency_ms=base["latency_ms"], agree=agree)
+        except Exception as exc:  # noqa: BLE001 — medir nunca frena la decisión
+            logger.warning("decisions.metric_not_recorded", capability=name, error=repr(exc)[:200])
     if jev is not None and not agree and disagreements is not None:
         try:
             disagreements.record(

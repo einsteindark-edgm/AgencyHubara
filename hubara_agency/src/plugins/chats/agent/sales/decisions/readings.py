@@ -26,6 +26,7 @@ import structlog
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_session
 from src.plugins.chats.agent.sales.decisions.capabilities import BY_RULE, Verdict, decide
 from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Baja, Compra, Retoma
+from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
 
 logger = structlog.get_logger()
@@ -78,11 +79,12 @@ class EngineReadings:
 
         bot = bot_for_session(inbound.session_id, vault_dir=self._vault)
         log = DisagreementLog(self._vault)
+        metrics = DecisionMetrics(self._vault)
 
         def run(capability: Any):
             return decide(
                 capability, inbound, provider=bot.provider(capability.name), profile_id=bot.profile,
-                disagreements=log, session_id=inbound.session_id, redact=self._redact,
+                disagreements=log, session_id=inbound.session_id, redact=self._redact, metrics=metrics,
             )
 
         baja = Baja()

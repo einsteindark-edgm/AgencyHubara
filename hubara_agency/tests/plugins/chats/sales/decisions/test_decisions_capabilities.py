@@ -190,3 +190,18 @@ def test_claude_code_labels_a_disagreement_and_the_log_counts_who_won(tmp_path: 
     assert log.score("juguete") == {"labeled": 2, "jev": 1, "rule": 1, "neither": 0}
     with pytest.raises(KeyError):
         log.label("no-existe", True)
+
+
+async def test_every_decision_that_asks_jev_is_measured(port, tmp_path: Path) -> None:
+    """La vara de cada capacidad (días, volumen, caídas, p95) sale de lo que el
+    motor midió: una línea por decisión en sombra o en jev; con reglas, nada."""
+    from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
+
+    metrics = DecisionMetrics(tmp_path)
+    await caps.decide(Unsubscribe(), Ask("hola"), provider="reglas", profile_id="jev-v1", metrics=metrics)
+    await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="sombra", profile_id="jev-v1", metrics=metrics)
+    port["port"] = _Port(None, error="timeout")
+    await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1", metrics=metrics)
+
+    rows = metrics.rows("juguete", since_ms=0)
+    assert [(r["provider"], r["ok"], r["agree"]) for r in rows] == [("sombra", True, False), ("jev", False, None)]
