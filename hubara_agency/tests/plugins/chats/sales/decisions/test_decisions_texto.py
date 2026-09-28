@@ -212,3 +212,19 @@ def test_selector_decides_on_the_whole_set_of_buttons_and_keeps_the_id_floor() -
     assert SELECTOR.decide(inp, _result(_noul("selector.elige", 0.5)), (), TH) is None
     by_id = Botones(body="¿Cuál?", titles=("Rosado",), rule_rejected=("Rosado",), by_id=("Rosado",))
     assert SELECTOR.floor(by_id, ("Rosado",), ()) == ("Rosado",)
+
+
+# ── afirmación: pregunta de respaldo, en sombra ──
+
+
+def test_afirmacion_is_only_asked_with_what_the_turn_consulted_in_view() -> None:
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import AFIRMACION, Afirmacion
+
+    inp = Afirmacion(text="¡Sí hay stock! Te llega mañana 🤍", tools_used=("send_reply",))
+    state, [question] = AFIRMACION.ask(inp)
+
+    assert question.id == "afirmacion.sin_consultar"
+    assert "¡Sí hay stock! Te llega mañana 🤍" in state and "send_reply" in state
+    assert AFIRMACION.rule(inp) is False
+    assert AFIRMACION.decide(inp, _result(_noul("afirmacion.sin_consultar", 0.91)), False, TH) is True
+    assert AFIRMACION.ask(Afirmacion(text="", tools_used=())) is None

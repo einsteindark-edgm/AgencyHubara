@@ -97,7 +97,7 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [x] Guía de etapas: la etapa la calcula el código; la activity le pasa a la política lo que falta (borrador) y los turnos estancados (trazas del episodio; un dato nuevo corta la cuenta). Nota `[ETAPA]` con lo que dio, lo que falta y el siguiente paso; retroceso (`quitar=true`); refuerzo a los 3 turnos sin dato nuevo.
 - [x] La traza guarda `tools` y `guide` del motor (el laboratorio mide el cumplimiento del contrato contra los pasos `tool`).
 - [ ] Segunda puerta en `run_agent_turn` (ronda extra que nombra la tool que falta), solo con reglas grabadas.
-- [ ] Auditoría antes de enviar (requeridas vs usadas; montos en cada turno) y pregunta de respaldo de Jev en sombra.
+- [x] Auditoría del turno: las tools que pedía el contrato contra las usadas quedan en la traza (`contract`: required, missing, ok) = métrica «cumplimiento del contrato». La pregunta de respaldo sobre afirmaciones sin consultar (capacidad `afirmacion`: stock, entrega, estado del pedido) la hace la activity de la traza después de enviar y arranca en sombra (nunca actúa). Los montos por turno ya los mide el check del scorecard con `find_unexplained_amounts`.
 - [ ] Revisión de cada dato de `set_order_slot` (capacidad «datos»: bloquea solo con p ≤ 0,15, tope 2 s).
 
 ### F7 · V2 en producción (código de enrutamiento; el encendido es del operador)

@@ -15,6 +15,7 @@ import json
 import re
 from typing import Any
 
+from src.plugins.chats.agent.sales.decisions.audit import contract_compliance
 from src.plugins.chats.shared.draft_items import draft_items
 
 _ARG_MAX = 160
@@ -399,7 +400,11 @@ def enrich_turn_trace(
 
     since_ms = int(payload.get("turn_started_ms") or recorded_at_ms)
     draft = (episode or {}).get("order_draft")
+    # Motor de decisiones (F6): las tools que pedía el contrato contra las
+    # usadas («cumplimiento del contrato»). Solo si el turno traía contrato.
+    contract = contract_compliance(payload.get("steps") or [])
     return {
+        **({"contract": contract} if contract is not None else {}),
         "v": TRACE_VERSION,
         "session_id": session_id,
         "episode_id": episode_id,

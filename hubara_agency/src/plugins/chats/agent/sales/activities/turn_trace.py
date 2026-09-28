@@ -21,6 +21,33 @@ from src.plugins.chats.agent.sales.turn_trace import enrich_turn_trace
 from src.plugins.chats.shared import turn_traces
 
 
+async def _unconsulted_claims(session_id: str, payload: dict) -> dict:
+    """Motor de decisiones (F6): la pregunta de respaldo sobre afirmaciones
+    sin consultar, en SOMBRA (nunca actúa). Con el bot de hoy no se pregunta
+    nada: devuelve {}."""
+    from pathlib import Path
+
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import AFIRMACION, Afirmacion
+    from src.plugins.chats.agent.sales.decisions.guards import decide_for_session, session_redact_terms
+    from src.sdk.runtime import WORKSPACE_VAULT_DIR
+
+    text = "\n\n".join(t for t in payload.get("sent_texts") or [] if isinstance(t, str) and t.strip())
+    if not text:
+        return {}
+    used = tuple(
+        str(s.get("name")) for s in payload.get("steps") or [] if isinstance(s, dict) and s.get("kind") == "tool"
+    ) or tuple(str(t.get("name")) for t in payload.get("tools") or [] if isinstance(t, dict) and t.get("name"))
+    vault_dir = Path(WORKSPACE_VAULT_DIR)
+    verdict = await decide_for_session(
+        AFIRMACION,
+        Afirmacion(text=text, tools_used=used),
+        session_id=session_id,
+        vault_dir=vault_dir,
+        redact=session_redact_terms(session_id, vault_dir),
+    )
+    return verdict.to_trace() if verdict.provider != "reglas" else {}
+
+
 @activity.defn(name="persist_turn_trace")
 async def persist_turn_trace_activity(session_id: str, payload_json: str) -> bool:
     from src.sdk.runtime import WORKSPACE_VAULT_DIR, FilesystemMetadataStore
@@ -38,6 +65,9 @@ async def persist_turn_trace_activity(session_id: str, payload_json: str) -> boo
             session_id=session_id,
             recorded_at_ms=int(time.time() * 1000),
         )
+        claims = await _unconsulted_claims(session_id, payload)
+        if claims:
+            record["claims"] = claims
         turn_traces.append_trace(WORKSPACE_VAULT_DIR, session_id, record)
     except Exception as exc:  # noqa: BLE001 — la traza nunca bloquea el turno
         activity.logger.warning(

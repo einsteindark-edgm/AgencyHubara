@@ -43,6 +43,7 @@ const CAPABILITY_LABEL: Record<string, string> = {
   monto: "Monto",
   selector: "Selector",
   contactar: "Contactar",
+  afirmacion: "Afirmación",
 };
 
 const CAPABILITY_HINT: Record<string, string> = {
@@ -54,6 +55,7 @@ const CAPABILITY_HINT: Record<string, string> = {
   monto: "¿la oración cotiza el precio de un producto?",
   selector: "¿los botones eligen producto o variante?",
   contactar: "¿sobra el mensaje proactivo de remarketing?",
+  afirmacion: "¿afirma algo sin consultarlo? (solo se mide)",
 };
 
 const WORKFLOW_LABEL: Record<WorkflowMode, string> = {

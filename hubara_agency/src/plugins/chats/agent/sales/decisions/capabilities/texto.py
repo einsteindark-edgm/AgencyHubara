@@ -25,6 +25,9 @@ a Jev, la política, el piso y la comparación.
 * selector — «¿Estos botones le piden al cliente elegir un producto o una
   variante?», en la tool de quick replies. El namespace del id
   (`product.`, `color.`…) es PISO.
+* afirmación — pregunta de respaldo en SOMBRA (F6): «¿afirma algo que solo
+  se sabe consultando, sin haber consultado?». La hace la activity de la
+  traza después de enviar; nunca actúa.
 """
 from __future__ import annotations
 
@@ -348,12 +351,79 @@ class Selector:
 
 SELECTOR = Selector()
 
+
+@dataclass(frozen=True)
+class Afirmacion:
+    """Lo que el turno le envió al cliente y las tools que consultó."""
+
+    text: str
+    tools_used: tuple[str, ...] = ()
+
+
+class AfirmacionSinConsultar:
+    """Pregunta de respaldo (F6): «¿El texto le afirma algo que solo se sabe
+    consultando, sin haber consultado?» (stock, disponibilidad, entrega,
+    estado del pedido). Arranca en SOMBRA: su valor nunca actúa (lo pregunta
+    la activity de la traza, después de enviar); la regla de hoy no marca
+    nada, así que cada «sí» de Jev va a la cola que califica Claude Code."""
+
+    name = "afirmacion"
+    timeout_s = 2.0
+    thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
+
+    def rule(self, inp: Afirmacion) -> bool:
+        return False  # hoy nada lo revisa
+
+    def ask(self, inp: Afirmacion) -> tuple[str, list[TypedQuestion]] | None:
+        if not inp.text.strip():
+            return None
+        consulted = ", ".join(inp.tools_used) if inp.tools_used else "ninguna"
+        state = (
+            "Mensaje que la tienda le envió a un cliente por WhatsApp:\n"
+            f"{inp.text.strip()}\n\n"
+            f"Herramientas que consultó antes de escribirlo: {consulted}."
+        )
+        return state, [
+            TypedQuestion(
+                id="afirmacion.sin_consultar",
+                kind="noul",
+                text=(
+                    "¿El mensaje le afirma al cliente algo que solo se sabe consultando (hay stock o está "
+                    "disponible, cuándo llega, en qué va su pedido) sin haber usado la herramienta que lo consulta?"
+                ),
+                criteria=_YES_NO,
+            )
+        ]
+
+    def decide(self, inp: Afirmacion, result: Any, rule: bool, thresholds: Mapping[str, float]) -> bool | None:
+        th = {**self.thresholds, **thresholds}
+        p = _p(result, "afirmacion.sin_consultar")
+        if p is None:
+            return None
+        if p >= th["yes"]:
+            return True
+        if p <= th["no"]:
+            return False
+        return None
+
+    def floor(self, inp: Afirmacion, rule: bool, jev: bool) -> bool:
+        return bool(jev)
+
+    def same(self, a: bool, b: bool) -> bool:
+        return bool(a) == bool(b)
+
+
+AFIRMACION = AfirmacionSinConsultar()
+
 __all__ = [
+    "AFIRMACION",
     "ENUMERACION",
     "MAX_SENTENCES",
     "MONTO",
     "PERSONA",
     "SELECTOR",
+    "Afirmacion",
+    "AfirmacionSinConsultar",
     "Botones",
     "Enumeracion",
     "Frases",

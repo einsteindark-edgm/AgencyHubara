@@ -42,7 +42,7 @@ DEFAULT_PROFILE = "jev-v1"
 #: Las capacidades que el control del dashboard conoce (cada una con su
 #: interruptor). Una capacidad nueva se suma aquí.
 CAPABILITIES: tuple[str, ...] = (
-    "compra", "retoma", "baja", "persona", "enumeracion", "monto", "selector", "contactar",
+    "compra", "retoma", "baja", "persona", "enumeracion", "monto", "selector", "contactar", "afirmacion",
 )
 #: V2 no tiene sombra (no se corren dos workflows): apagado, canary o encendido.
 WORKFLOW_MODES: tuple[str, ...] = ("off", "canary", "on")
