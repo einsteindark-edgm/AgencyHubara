@@ -44,3 +44,26 @@ async def put_rollout(request: Request, body: dict[str, Any] = Body(default_fact
     return await castkit.forward(
         request, "PUT", _PATH, base_url=_provider_base(), timeout=_TIMEOUT_S, cast_label=_CAST_LABEL, body=body
     )
+
+
+# Motor de decisiones (F7): el interruptor de cada capacidad y la versión del
+# workflow de ventas, en el mismo contrato de chats.
+_CAPABILITIES_PATH = "/api/chats/perception/capabilities"
+_WORKFLOW_PATH = "/api/chats/perception/workflow"
+
+
+@router.put("/perception/capabilities")
+async def put_capability(request: Request, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    return await castkit.forward(
+        request, "PUT", _CAPABILITIES_PATH, base_url=_provider_base(), timeout=_TIMEOUT_S, cast_label=_CAST_LABEL,
+        body=body,
+    )
+
+
+@router.put("/perception/workflow")
+async def put_workflow(request: Request, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    return await castkit.forward(
+        request, "PUT", _WORKFLOW_PATH, base_url=_provider_base(), timeout=_TIMEOUT_S, cast_label=_CAST_LABEL,
+        body=body,
+    )
+

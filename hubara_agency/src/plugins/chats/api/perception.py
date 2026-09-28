@@ -1,9 +1,12 @@
 """Contrato `perception-rollout@v1` (plan del laboratorio PR 16): el encendido
 del bot nuevo (capas con clasificador) por etapas.
 
-  GET /api/chats/perception/rollout   estado, techo, chequeos por modo, métricas de la sombra
-                                      y el resumen de la sonda diaria de Jev (`probe`)
-  PUT /api/chats/perception/rollout   {mode, canary_percent?, test_numbers?}
+  GET /api/chats/perception/rollout       estado, techo, chequeos por modo, métricas de la sombra,
+                                          el resumen de la sonda diaria de Jev (`probe`) y, del
+                                          motor de decisiones (F7), `capabilities` y `workflow_v2`
+  PUT /api/chats/perception/rollout       {mode, canary_percent?, test_numbers?}
+  PUT /api/chats/perception/capabilities  {capability, mode}   una capacidad del motor
+  PUT /api/chats/perception/workflow      {mode}               la versión del workflow (off/canary/on)
 
 El panel de la sección Agents (`agents_admin`) lo consume por cast. El techo
 lo fija Terraform (`SALES_PERCEPTION_MODE_CEILING`); este control mueve el
@@ -27,6 +30,15 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Body, HTTPException, Request
 
+from src.plugins.chats.agent.sales.decisions import bots
+from src.plugins.chats.agent.sales.decisions.capability_rollout import (
+    CapabilityFacts,
+    can_set_capability,
+    can_set_workflow,
+    capability_facts,
+    workflow_readiness,
+)
+from src.plugins.chats.agent.sales.decisions.capability_rollout import readiness as capability_readiness
 from src.plugins.chats.agent.sales.decisions.probe import read_latest as read_latest_probe
 from src.plugins.chats.agent.sales.decisions.rollout import (
     MODES,
@@ -49,6 +61,7 @@ router = APIRouter()
 
 _SID_RE = re.compile(r"wa_\d{8,15}")
 _TARGETS = ("shadow", "canary", "on")
+_WORKFLOW_TARGETS = ("canary", "on")
 
 
 def _vault_dir() -> Path:
@@ -116,6 +129,45 @@ def _facts(state: RolloutState) -> tuple[RolloutFacts, dict[str, Any], dict[str,
     return facts, asdict(metrics), probe
 
 
+def _capability_facts(capability: str, mode: str, ceiling: str) -> CapabilityFacts:
+    try:
+        return capability_facts(capability, vault_dir=_vault_dir(), now_ms=_now_ms(), ceiling=ceiling, current=mode)
+    except Exception as exc:  # noqa: BLE001 — sin métricas cuenta como cero: nadie sube por error
+        logger.warning("decisions.capability_facts_failed", capability=capability, error=repr(exc)[:200])
+        return CapabilityFacts(ceiling, mode, 0, 0, None, None, 0, 0, 0)
+
+
+def _capabilities() -> dict[str, Any]:
+    """Motor de decisiones (F7): cada capacidad con su modo, el techo de
+    Terraform y su vara por modo."""
+    ceiling = bots.capabilities_ceiling()
+    out: dict[str, Any] = {}
+    for capability, mode in bots.capability_modes(_vault_dir()).items():
+        facts = _capability_facts(capability, mode, ceiling)
+        out[capability] = {
+            "mode": mode,
+            "ceiling": ceiling,
+            "facts": asdict(facts),
+            "readiness": {t: [asdict(c) for c in capability_readiness(t, facts)] for t in _TARGETS},
+            "can": {t: list(can_set_capability(t, facts)) for t in _TARGETS},
+        }
+    return out
+
+
+def _workflow() -> dict[str, Any]:
+    """Motor de decisiones (F7): la versión del workflow de ventas (V2 por
+    números de prueba y porcentaje antes de todos)."""
+    mode, ceiling = bots.workflow_mode(_vault_dir()), bots.workflow_ceiling()
+    return {
+        "mode": mode,
+        "ceiling": ceiling,
+        "readiness": {
+            t: [asdict(c) for c in workflow_readiness(t, ceiling=ceiling, current=mode)] for t in _WORKFLOW_TARGETS
+        },
+        "can": {t: list(can_set_workflow(t, ceiling=ceiling, current=mode)) for t in _WORKFLOW_TARGETS},
+    }
+
+
 def _payload(state: RolloutState) -> dict[str, Any]:
     facts, metrics, probe = _facts(state)
     return {
@@ -126,6 +178,8 @@ def _payload(state: RolloutState) -> dict[str, Any]:
         "probe": probe,
         "readiness": {t: [asdict(c) for c in readiness(t, facts)] for t in _TARGETS},
         "can": {t: list(can_set_mode(t, facts)) for t in _TARGETS},
+        "capabilities": _capabilities(),
+        "workflow_v2": _workflow(),
     }
 
 
@@ -211,3 +265,68 @@ def put_rollout(request: Request, body: dict[str, Any] = Body(default_factory=di
         by=actor,
     )
     return _payload(state)
+
+
+@router.put("/perception/capabilities")
+def put_capability(request: Request, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """Mueve UNA capacidad del motor de decisiones (F7) dentro del techo:
+    `off`=reglas, `shadow`=sombra, `canary`/`on`=Jev. Bajar siempre pasa;
+    subir exige su vara."""
+    capability = str(body.get("capability") or "")
+    mode = str(body.get("mode") or "")
+    if capability not in bots.CAPABILITIES:
+        raise HTTPException(
+            422, detail={"reason": "unknown_capability", "message": "Capacidades: " + ", ".join(bots.CAPABILITIES) + "."}
+        )
+    if mode not in MODES:
+        raise HTTPException(422, detail={"reason": "invalid_mode", "message": "Modos: off, shadow, canary u on."})
+    current = bots.capability_modes(_vault_dir())[capability]
+    if _rank(mode) > _rank(current):
+        facts = _capability_facts(capability, current, bots.capabilities_ceiling())
+        failing = can_set_capability(mode, facts)
+        if failing:
+            raise HTTPException(
+                422,
+                detail={
+                    "reason": "not_ready",
+                    "failing": list(failing),
+                    "readiness": [asdict(c) for c in capability_readiness(mode, facts)],
+                },
+            )
+        if bots.capability_modes(_vault_dir())[capability] != current:
+            raise HTTPException(
+                409,
+                detail={"reason": "changed", "message": "El estado cambió mientras se revisaba; vuelve a intentarlo."},
+            )
+    actor = _actor(request)
+    bots.write_capability_modes(_vault_dir(), {capability: mode})
+    logger.info("decisions.capability_changed", capability=capability, previous=current, mode=mode, by=actor)
+    return _payload(read_state(_vault_dir()))
+
+
+@router.put("/perception/workflow")
+def put_workflow(request: Request, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """Mueve la versión del workflow de ventas (F7): V2 en `canary` actúa en
+    los números de prueba y el porcentaje del control; `on`, en todos. Bajar
+    siempre pasa (vuelta atrás: el siguiente mensaje arranca V1)."""
+    mode = str(body.get("mode") or "")
+    if mode not in bots.WORKFLOW_MODES:
+        raise HTTPException(422, detail={"reason": "invalid_mode", "message": "Modos del workflow: off, canary u on."})
+    current = bots.workflow_mode(_vault_dir())
+    failing = can_set_workflow(mode, ceiling=bots.workflow_ceiling(), current=current)
+    if failing:
+        raise HTTPException(
+            422,
+            detail={
+                "reason": "not_ready",
+                "failing": list(failing),
+                "readiness": [
+                    asdict(c) for c in workflow_readiness(mode, ceiling=bots.workflow_ceiling(), current=current)
+                ],
+            },
+        )
+    actor = _actor(request)
+    bots.write_workflow_mode(_vault_dir(), mode)
+    logger.info("decisions.workflow_changed", previous=current, mode=mode, by=actor)
+    return _payload(read_state(_vault_dir()))
+

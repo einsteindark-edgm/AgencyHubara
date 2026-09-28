@@ -14,6 +14,26 @@ export const rolloutCheckSchema = z.object({
   detail: z.string().catch("").default(""),
 });
 
+/** Motor de decisiones (F7): el interruptor de una capacidad. */
+export const capabilityControlSchema = z.object({
+  mode: perceptionModeSchema,
+  ceiling: perceptionModeSchema,
+  readiness: z.record(z.string(), z.array(rolloutCheckSchema)).catch({}).default({}),
+  can: z.record(z.string(), z.array(z.string())).catch({}).default({}),
+});
+
+export const workflowModeSchema = z.enum(["off", "canary", "on"]).catch("off");
+
+/** Motor de decisiones (F7): la versión del workflow de ventas (V2 por canary). */
+export const workflowControlSchema = z.object({
+  mode: workflowModeSchema,
+  ceiling: perceptionModeSchema,
+  readiness: z.record(z.string(), z.array(rolloutCheckSchema)).catch({}).default({}),
+  can: z.record(z.string(), z.array(z.string())).catch({}).default({}),
+});
+
+const WORKFLOW_OFF = { mode: "off" as const, ceiling: "off" as const, readiness: {}, can: {} };
+
 export const rolloutSchema = z.object({
   state: z
     .object({
@@ -36,4 +56,7 @@ export const rolloutSchema = z.object({
     .catch({ days: 0, turns: 0, fallback_rate: null, p95_ms: null }),
   readiness: z.record(z.string(), z.array(rolloutCheckSchema)).catch({}).default({}),
   can: z.record(z.string(), z.array(z.string())).catch({}).default({}),
+  // Motor de decisiones (F7). Una API vieja no los trae: todo en reglas y V1.
+  capabilities: z.record(z.string(), capabilityControlSchema).catch({}).default({}),
+  workflow_v2: workflowControlSchema.catch(WORKFLOW_OFF).default(WORKFLOW_OFF),
 });

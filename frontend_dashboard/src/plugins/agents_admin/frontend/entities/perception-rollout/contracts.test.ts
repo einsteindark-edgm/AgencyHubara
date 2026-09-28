@@ -26,3 +26,28 @@ describe("rolloutSchema", () => {
     expect(r.readiness.on[0].ok).toBe(true);
   });
 });
+
+describe("rolloutSchema — motor de decisiones (F7)", () => {
+  it("lee el interruptor de cada capacidad y la versión del workflow", () => {
+    const r = rolloutSchema.parse({
+      state: { mode: "off" },
+      ceiling: "on",
+      capabilities: {
+        baja: { mode: "shadow", ceiling: "on", readiness: { canary: [{ code: "shadow_days", ok: false, detail: "2 días" }] },
+                can: { canary: ["shadow_days"] } },
+      },
+      workflow_v2: { mode: "canary", ceiling: "on", readiness: {}, can: { on: [] } },
+    });
+
+    expect(r.capabilities.baja.mode).toBe("shadow");
+    expect(r.capabilities.baja.can.canary).toEqual(["shadow_days"]);
+    expect(r.workflow_v2.mode).toBe("canary");
+  });
+
+  it("sin los campos nuevos (API vieja) degrada a todo en reglas y V1", () => {
+    const r = rolloutSchema.parse({ state: { mode: "off" }, ceiling: "off" });
+
+    expect(r.capabilities).toEqual({});
+    expect(r.workflow_v2.mode).toBe("off");
+  });
+});

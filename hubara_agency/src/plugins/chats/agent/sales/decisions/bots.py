@@ -39,6 +39,11 @@ WORKFLOW_V1 = "HubaraSalesSessionWorkflow"
 WORKFLOW_V2 = "HubaraSalesSessionWorkflowV2"
 PROVIDERS: tuple[str, ...] = ("reglas", "sombra", "jev")
 DEFAULT_PROFILE = "jev-v1"
+#: Las capacidades que el control del dashboard conoce (cada una con su
+#: interruptor). Una capacidad nueva se suma aquí.
+CAPABILITIES: tuple[str, ...] = ("compra", "retoma", "baja", "persona", "enumeracion", "monto", "selector")
+#: V2 no tiene sombra (no se corren dos workflows): apagado, canary o encendido.
+WORKFLOW_MODES: tuple[str, ...] = ("off", "canary", "on")
 
 # Modo del despliegue (off/shadow/canary/on) → proveedor de la capacidad. En
 # canary, `effective_mode` ya dejó `canary` solo para los números de prueba y
@@ -115,6 +120,29 @@ def write_workflow_mode(vault_dir: Path, mode: str) -> None:
 def _ceiling(name: str) -> str:
     value = (os.getenv(name) or "off").strip().lower()
     return value if value in MODES else "off"
+
+
+def capabilities_ceiling() -> str:
+    """Techo de Terraform de las capacidades (`SALES_CAPABILITIES_CEILING`)."""
+    return _ceiling("SALES_CAPABILITIES_CEILING")
+
+
+def workflow_ceiling() -> str:
+    """Techo de Terraform del workflow V2 (`SALES_WORKFLOW_V2_CEILING`)."""
+    return _ceiling("SALES_WORKFLOW_V2_CEILING")
+
+
+def capability_modes(vault_dir: Path) -> dict[str, str]:
+    """El modo guardado de cada capacidad conocida (sin guardar = `off`)."""
+    data = read_decisions_state(Path(vault_dir))
+    stored = data.get("capabilities") if isinstance(data.get("capabilities"), dict) else {}
+    return {cap: stored.get(cap) if stored.get(cap) in MODES else "off" for cap in CAPABILITIES}
+
+
+def workflow_mode(vault_dir: Path) -> str:
+    """El modo guardado del workflow V2 (sin guardar o raro = `off`)."""
+    mode = read_decisions_state(Path(vault_dir)).get("workflow_v2")
+    return mode if mode in WORKFLOW_MODES else "off"
 
 
 def _effective(mode: Any, base: RolloutState, *, ceiling: str, session_id: str) -> str:

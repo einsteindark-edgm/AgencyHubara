@@ -101,7 +101,9 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [ ] Revisión de cada dato de `set_order_slot` (capacidad «datos»: bloquea solo con p ≤ 0,15, tope 2 s).
 
 ### F7 · V2 en producción (código de enrutamiento; el encendido es del operador)
-- [ ] Despliegue gradual por versión de workflow (números de prueba → porcentaje → todos), vuelta atrás por registro.
+- [x] Control por capacidad y por versión del workflow en el MISMO contrato `perception-rollout@v1` (solo crece): el GET trae `capabilities` (modo, techo, vara por modo) y `workflow_v2`; `PUT /perception/capabilities {capability, mode}` y `PUT /perception/workflow {mode}` (cast de Agents incluido). Subir exige la vara de la capacidad (`capability_rollout`); V2 va a canary antes de todos; todo dentro de los techos de Terraform; bajar siempre pasa.
+- [x] Panel «Motor de decisiones» en Agents (ventas): cada capacidad Reglas → Sombra → Canary → Jev, con lo que falta para subir; «Workflow de ventas» V1 / V2 en canary / V2 para todos / Volver a V1; canary y encendido con confirmación en dos pasos.
+- [ ] Encender (operador): `SALES_CAPABILITIES_CEILING` y `SALES_WORKFLOW_V2_CEILING` por Terraform; primero sombra, después números de prueba.
 
 ### F8 · Decisiones del agente y asuntos nuevos
 - [ ] Remarketing decide antes de redactar · cierre por abandono · Order Sentinel · asuntos nuevos del cuestionario.

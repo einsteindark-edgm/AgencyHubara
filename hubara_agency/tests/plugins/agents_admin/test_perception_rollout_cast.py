@@ -68,3 +68,21 @@ def test_a_timeout_is_504_outcome_unknown(monkeypatch) -> None:
     res = client.put("/api/agents/perception/rollout", json={"mode": "off"})
 
     assert res.status_code == 504 and "PUEDE haberse aplicado" in res.json()["detail"]
+
+
+def test_the_engine_controls_forward_to_their_chats_endpoints(monkeypatch) -> None:
+    """Motor de decisiones (F7): el interruptor de cada capacidad y la versión
+    del workflow viajan por el mismo cast."""
+    capture: dict[str, Any] = {}
+    client = _client(monkeypatch, result=httpx.Response(200, json={"capabilities": {}}), capture=capture)
+
+    res = client.put("/api/agents/perception/capabilities", json={"capability": "baja", "mode": "shadow"})
+
+    assert res.status_code == 200
+    assert capture["url"] == "http://chats.internal:8000/api/chats/perception/capabilities"
+    assert capture["json"] == {"capability": "baja", "mode": "shadow"}
+
+    client.put("/api/agents/perception/workflow", json={"mode": "canary"})
+
+    assert capture["url"] == "http://chats.internal:8000/api/chats/perception/workflow"
+    assert capture["json"] == {"mode": "canary"}

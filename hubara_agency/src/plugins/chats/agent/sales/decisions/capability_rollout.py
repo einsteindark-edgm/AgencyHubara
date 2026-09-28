@@ -67,8 +67,12 @@ class DecisionMetrics:
             f.write(json.dumps(row) + "\n")
 
     def rows(self, capability: str, *, since_ms: int) -> list[dict[str, Any]]:
+        # Solo los días de la ventana (el nombre del archivo es el día UTC).
+        first_day = datetime.fromtimestamp(max(0, since_ms) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
         out: list[dict[str, Any]] = []
         for path in sorted(self._dir.glob("*.jsonl")):
+            if path.stem < first_day:
+                continue
             try:
                 lines = path.read_text(encoding="utf-8").splitlines()
             except OSError:
@@ -151,3 +155,27 @@ def can_set_capability(target: str, facts: CapabilityFacts) -> tuple[str, ...]:
     if _rank(target) <= _rank(facts.current):
         return ()
     return tuple(c.code for c in readiness(target, facts) if not c.ok)
+
+
+def workflow_readiness(target: str, *, ceiling: str, current: str) -> tuple[Check, ...]:
+    """La vara del workflow V2: dentro del techo de Terraform y por etapas
+    (canary, con los números de prueba y el porcentaje del control, antes de
+    todos). Que V2 con reglas dé lo mismo que V1 (B0 = A1) se prueba en el
+    laboratorio y en el replay antes de subir."""
+    checks = [Check("within_ceiling", _rank(target) <= _rank(ceiling), f"techo de Terraform: {ceiling}")]
+    if target == "on":
+        checks.append(Check("staged", current in ("canary", "on"), "primero canary (números de prueba y porcentaje), después todos"))
+    return tuple(checks)
+
+
+def can_set_workflow(target: str, *, ceiling: str, current: str) -> tuple[str, ...]:
+    """Códigos de los chequeos que fallan; vacío = se puede. Bajar siempre se
+    puede (vuelta atrás)."""
+    from src.plugins.chats.agent.sales.decisions.bots import WORKFLOW_MODES
+
+    if target not in WORKFLOW_MODES:
+        return ("invalid_mode",)
+    if _rank(target) <= _rank(current):
+        return ()
+    return tuple(c.code for c in workflow_readiness(target, ceiling=ceiling, current=current) if not c.ok)
+
