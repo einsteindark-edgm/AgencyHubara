@@ -14,7 +14,7 @@ estable de conversaciones (por hash); las demás siguen en sombra.
 """
 from __future__ import annotations
 
-from src.plugins.chats.agent.sales.perception.rollout import (
+from src.plugins.chats.agent.sales.decisions.rollout import (
     RolloutFacts,
     RolloutState,
     can_set_mode,

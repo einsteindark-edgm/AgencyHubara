@@ -53,7 +53,6 @@ router = APIRouter()
 ARMS: dict[str, str] = {
     "A1": "Bot actual (control)",
     "B": "Bot nuevo + Jev (OpenRouter)",
-    "C": "Bot nuevo + OpenAI (OpenRouter)",
 }
 _REPS = (1, 3)
 _BENCH_RE = re.compile(r"^bench-[a-z0-9-]{6,64}$")

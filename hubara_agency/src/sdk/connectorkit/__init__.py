@@ -166,8 +166,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_coupon_sales_reader": "src.platform.promotions.composition",
     "get_quota_lock": "src.platform.promotions.composition",
     "get_web_cart_reader": "src.platform.carts.composition",
-    # Percepción (plan del laboratorio §4.2): preguntas tipadas a un
-    # clasificador (Jev u OpenAI por OpenRouter), con fake y nulo oficiales.
+    # Percepción (plan del laboratorio §4.2): el oráculo del motor de
+    # decisiones — preguntas tipadas a Jev por OpenRouter, con fake y nulo
+    # oficiales. `oracle_timeout_s`: el tiempo máximo del perfil del oráculo.
     "PerceptionPort": "src.platform.perception.ports",
     "PerceptionResult": "src.platform.perception.ports",
     "TypedAnswer": "src.platform.perception.ports",
@@ -176,6 +177,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "NullPerceptionAdapter": "src.platform.perception.adapters.null",
     "anonymize_text": "src.platform.perception.anonymize",
     "get_perception_port": "src.platform.perception.composition",
+    "oracle_timeout_s": "src.platform.perception.composition",
 }
 
 

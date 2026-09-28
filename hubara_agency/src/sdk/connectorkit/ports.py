@@ -195,6 +195,7 @@ from src.platform.perception.anonymize import (
 )
 from src.platform.perception.composition import (
     get_perception_port as get_perception_port,
+    oracle_timeout_s as oracle_timeout_s,
 )
 from src.platform.perception.ports import (
     PerceptionPort as PerceptionPort,

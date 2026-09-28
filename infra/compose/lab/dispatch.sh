@@ -93,7 +93,9 @@ _write_env() {  # destino, contenido: escribe 0600 y reemplaza de una vez
   mv "$tmp" "$1"
 }
 keys="$(grep -v '^GHCR_PULL_TOKEN=' "$params" || true)"
-_write_env "$LAB_HOME/litellm.env" "$keys"
+# El proxy LiteLLM no llama a OpenRouter (Jev va directo a la Decisions API
+# desde el worker; el rival OpenAI se quitó el 2026-09-28): su llave no entra.
+_write_env "$LAB_HOME/litellm.env" "$(printf '%s\n' "$keys" | grep -v '^OPENROUTER_API_KEY=' || true)"
 _write_env "$LAB_HOME/sales_lab.env" "$keys
 LAB_BUCKET=$LAB_BUCKET"
 _write_env "$LAB_HOME/compose.env" "HUBARA_IMAGE=$IMAGE"

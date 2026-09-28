@@ -28,12 +28,15 @@ from temporalio.worker import Worker
 
 from exoclaw_temporal.config import ExecuteToolInput, LLMChatInput, LLMResponseData, ToolCallData
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
-from src.plugins.chats.agent.sales.perception.contracts import (
+from src.plugins.chats.agent.sales.decisions.contracts import (
     PerceiveInput,
-    PerceiveOutput,
+    TurnDecisions,
     VerifyInput,
     VerifyOutput,
 )
+from src.plugins.chats.agent.sales.decisions.plan import PlanTopic, TurnPlan
+from src.plugins.chats.agent.sales.decisions.policies.turno_v1 import checklist_note, coverage_rules, topic_rows
+from src.plugins.chats.agent.sales.decisions.questionnaire import load_questionnaire
 from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
 from tests.test_sales_workflow_debounce import SALES_QUEUE, Tracker, _make_fake_activities
 
@@ -48,24 +51,36 @@ def _tool(name: str, **args) -> LLMResponseData:
 
 
 class Classifier:
+    """El motor, falso: responde lo que el motor real grabaría para esos asuntos
+    (la nota y las reglas de ② las arma la política `turno-v1` de verdad)."""
+
     def __init__(self, *, perceive_ok: bool = True, decision: str = "send", missing: list[str] | None = None,
-                 latency_ms: int = 0) -> None:
+                 latency_ms: int = 0, topics: list[dict] | None = None) -> None:
         self.perceive_ok = perceive_ok
         self.latency_ms = latency_ms
         self.decision = decision
         self.missing = missing or []
+        self.topics = TOPICS if topics is None else topics
         self.perceived: list[PerceiveInput] = []
         self.verified: list[VerifyInput] = []
 
+    def decisions(self, profile: str) -> TurnDecisions:
+        rafaga = load_questionnaire("rafaga-v1")
+        plan = TurnPlan(ok=True, topics=tuple(PlanTopic(t["topic"], t.get("msg"), t.get("p")) for t in self.topics))
+        return TurnDecisions(
+            ok=True, profile=profile, model="typesafe/jev-1.13", topics=topic_rows(plan, rafaga),
+            stage="descubrimiento", answers=[{"q": "topic.catalogo", "type": "noul", "p": 0.96, "picked": True}],
+            latency_ms=self.latency_ms, contract=1, note=checklist_note(plan, rafaga), coverage=coverage_rules(plan),
+            versions={"profile": profile, "questions": "rafaga-v1", "policy": "turno-v1", "model": "typesafe/jev-1.13"},
+        )
+
     def activities(self) -> list:
         @activity.defn(name="perceive_burst")
-        async def perceive(inp: PerceiveInput) -> PerceiveOutput:
+        async def perceive(inp: PerceiveInput) -> TurnDecisions:
             self.perceived.append(inp)
             if not self.perceive_ok:
-                return PerceiveOutput(ok=False, profile=inp.profile, error="timeout")
-            return PerceiveOutput(ok=True, profile=inp.profile, model="typesafe/jev-1.13", topics=TOPICS,
-                                  stage="descubrimiento", answers=[{"q": "topic.catalogo", "type": "noul", "p": 0.96, "picked": True}],
-                                  latency_ms=self.latency_ms)
+                return TurnDecisions(ok=False, profile=inp.profile, error="timeout")
+            return self.decisions(inp.profile)
 
         @activity.defn(name="verify_coverage")
         async def verify(inp: VerifyInput) -> VerifyOutput:
@@ -238,6 +253,58 @@ async def test_on_a_tool_cut_that_leaves_a_topic_gets_one_more_round(tmp_path: P
     assert ("wa_layers", CATALOG_REPLY) in tracker.send_whatsapp_calls
     trace = _customer_trace(tracker)
     assert any(s["kind"] == "guard" and s["name"] == "turn_policy_extra_round" for s in trace["steps"])
+
+
+@pytest.mark.asyncio
+async def test_on_the_extra_round_ignores_the_narration_the_customer_never_sees(tmp_path: Path) -> None:
+    """Bug de #372 (sección 9 del diseño): la capa ② juzgaba el `content` que
+    acompaña a la tool, que el default-deny descarta. «Te comparto el catálogo»
+    junto a `send_shipping_rates` daba el catálogo por atendido y el cliente
+    nunca lo recibía."""
+    classifier = Classifier()
+    narration = LLMResponseData(
+        content="Te comparto el catálogo y las tarifas", finish_reason="tool_calls", has_tool_calls=True,
+        tool_calls=[ToolCallData(id="id-rates", name="send_shipping_rates", arguments={})],
+    )
+    llm = LLM([narration, _tool("send_reply", text=CATALOG_REPLY)])
+    tracker = await _run(tmp_path, meta={"perception_mode": "on", "perception_profile": "jev-v1"}, llm=llm, classifier=classifier,
+                         tool_results={"send_shipping_rates": json.dumps({"queued": True})})
+
+    assert "[SISTEMA] Antes de terminar el turno" in json.dumps(llm.inputs[1], ensure_ascii=False)
+    assert any(s["kind"] == "guard" and s["name"] == "turn_policy_extra_round" for s in _customer_trace(tracker)["steps"])
+
+
+@pytest.mark.asyncio
+async def test_on_a_deferral_is_not_covered_until_the_customer_gets_a_text(tmp_path: Path) -> None:
+    """Bug de #372: `aplaza` quedaba siempre cubierto (palabra vacía)."""
+    classifier = Classifier(topics=[{"topic": "aplaza", "msg": 1, "p": 0.9}])
+    llm = LLM([_tool("send_shipping_rates"), _tool("send_reply", text="¡Listo! Aquí estamos cuando quieras.")])
+    tracker = await _run(tmp_path, meta={"perception_mode": "on", "perception_profile": "jev-v1"}, llm=llm, classifier=classifier,
+                         tool_results={"send_shipping_rates": json.dumps({"queued": True})})
+
+    assert "aplazamiento" in json.dumps(llm.inputs[1], ensure_ascii=False)
+    assert ("wa_layers", "¡Listo! Aquí estamos cuando quieras.") in tracker.send_whatsapp_calls
+
+
+@pytest.mark.asyncio
+async def test_on_the_verification_counts_only_the_cards_the_customer_gets(tmp_path: Path) -> None:
+    """Bug de #372: ③ contaba como tarjetas `send_reply` (su texto ya es la
+    respuesta) y las tools que se negaron (`queued: false`)."""
+    classifier = Classifier()
+    batch = LLMResponseData(
+        content="", finish_reason="tool_calls", has_tool_calls=True,
+        tool_calls=[
+            ToolCallData(id="id-a", name="present_products", arguments={"handles": ["x"]}),
+            ToolCallData(id="id-b", name="present_product_gallery", arguments={"handle": "y"}),
+            ToolCallData(id="id-c", name="send_reply", arguments={"text": CATALOG_REPLY}),
+        ],
+    )
+    llm = LLM([batch])
+    await _run(tmp_path, meta={"perception_mode": "on", "perception_profile": "jev-v1"}, llm=llm, classifier=classifier,
+               tool_results={"present_products": json.dumps({"queued": False, "error": "sin stock"}),
+                             "present_product_gallery": json.dumps({"queued": True})})
+
+    assert classifier.verified and classifier.verified[0].components == ["present_product_gallery"]
 
 
 @pytest.mark.asyncio

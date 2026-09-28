@@ -32,7 +32,7 @@ interface Props {
   onClose: () => void;
 }
 
-const CLASSIFIER_LABEL: Record<string, string> = { B: "Jev", C: "OpenAI" };
+const CLASSIFIER_LABEL: Record<string, string> = { B: "Jev" };
 const TITLE_ID = "lab-turn-trace-title";
 
 function turnResults(results: EvalResult[], turn: number): EvalResult[] {

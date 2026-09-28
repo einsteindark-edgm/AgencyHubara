@@ -35,23 +35,20 @@ with workflow.unsafe.imports_passed_through():
         coalesce_pending,
         run_agent_turn,
     )
-    from src.plugins.chats.agent.sales.perception.activities import (
-        perceive_burst_activity,
-        verify_coverage_activity,
-    )
-    from src.plugins.chats.agent.sales.perception.contracts import (
+    # Motor de decisiones (diseño v2): el workflow solo importa su fachada y
+    # aplica lo que el motor dejó grabado (nota, reglas de ②, complemento).
+    from src.plugins.chats.agent.sales.decisions.facade import (
         PerceiveInput,
         PerceiveOutput,
+        TurnDecisions,
         VerifyInput,
         VerifyOutput,
-    )
-    from src.plugins.chats.agent.sales.perception.plan import (
-        PlanTopic,
-        TurnPlan,
-        checklist_note,
-        complement_message,
-        pending_round_note,
-        uncovered_topics,
+        complement_note_of,
+        delivered_components,
+        perceive_burst_activity,
+        plan_of,
+        turn_policy_of,
+        verify_coverage_activity,
     )
     from src.platform.session_history.activities import (
         persist_assistant_message_activity,
@@ -326,26 +323,6 @@ def _verify_step(out: VerifyOutput, started_ms: int, *, applied: bool) -> dict[s
         # laboratorio para esperar ese segundo turno sin adivinar).
         "complement_scheduled": False,
     }
-
-
-def _plan_of(out: PerceiveOutput) -> TurnPlan:
-    return TurnPlan(
-        ok=out.ok,
-        topics=tuple(PlanTopic(str(t.get("topic")), t.get("msg"), t.get("p")) for t in out.topics if t.get("topic")),
-        stage=out.stage,
-    )
-
-
-def _turn_policy(plan: TurnPlan) -> TurnPolicy | None:
-    """Capa ②: una ronda más si el corte por tool deja un asunto del plan."""
-    if not plan.topics:
-        return None
-
-    def extra_round_note(tools_used: list[str], text: str) -> str | None:
-        missing = uncovered_topics(plan, tools_used=tools_used, text=text)
-        return pending_round_note(missing) if missing else None
-
-    return TurnPolicy(extra_round_note=extra_round_note)
 
 
 @workflow.defn(name="HubaraSalesSessionWorkflow")
@@ -746,7 +723,9 @@ class HubaraSalesSessionWorkflow:
                     layers = turn_mode in _LAYER_MODES and workflow.patched("perception-v1")
                     if not layers:
                         turn_mode = "off"
-                    plan: TurnPlan | None = None
+                    # Lo que el motor decidió antes del turno (activo): la
+                    # nota, las reglas de ② y los asuntos con su etiqueta.
+                    decided: TurnDecisions | None = None
                     shadow_handle = None
                     shadow_started_ms = 0
                     if layers and turn_mode == "shadow":
@@ -780,22 +759,23 @@ class HubaraSalesSessionWorkflow:
                                     )
                                 )
                                 trace_steps.append(_perception_step(perceived, perceived_ms, mode=turn_mode))
-                                plan = _plan_of(perceived)
-                                note = checklist_note(plan)
+                                decided = perceived
+                                note = perceived.note
                                 if note:
                                     trace_steps.append(
                                         {
                                             "kind": "plan",
                                             "at_ms": _now_ms(),
                                             "checklist": [
-                                                {"topic": t.topic, "msg": t.msg, "p": t.p} for t in plan.topics
+                                                {"topic": t.topic, "msg": t.msg, "p": t.p}
+                                                for t in plan_of(perceived).topics
                                             ],
                                         }
                                     )
                                     msg = dataclasses.replace(
                                         msg, plugin_context=[*(msg.plugin_context or []), note]
                                     )
-                                    policy = _turn_policy(plan)
+                                    policy = turn_policy_of(perceived)
                         if (
                             raw_batch is not None
                             and restarts < _MAX_TURN_RESTARTS
@@ -1453,8 +1433,8 @@ class HubaraSalesSessionWorkflow:
                     if (
                         layers
                         and turn_mode in _ACTING_MODES
-                        and plan is not None
-                        and plan.topics
+                        and decided is not None
+                        and decided.topics
                         and not self._force_shutdown
                         and not admin_no_send
                     ):
@@ -1473,9 +1453,11 @@ class HubaraSalesSessionWorkflow:
                                 session_id=session.session_id,
                                 profile=self._perception_profile,
                                 messages=_burst_messages(raw_batch or []),
-                                topics=[{"topic": t.topic, "msg": t.msg, "p": t.p} for t in plan.topics],
+                                topics=list(decided.topics),
                                 reply_text=verify_reply,
-                                components=[t for t in result.tools_used if t.startswith(("present_", "send_", "request_"))],
+                                # Solo las tarjetas que el cliente recibe (ni
+                                # `send_reply` ni las tools que se negaron).
+                                components=delivered_components(result.tool_events),
                             )
                         )
                         trace_steps.append(_verify_step(verify_out, verified_ms, applied=True))
@@ -1592,7 +1574,7 @@ class HubaraSalesSessionWorkflow:
                                 ok=False, profile=self._perception_profile, error=f"activity: {type(exc).__name__}"
                             )
                         trace_steps.append(_perception_step(shadow_out, shadow_started_ms, mode="shadow"))
-                        shadow_plan = _plan_of(shadow_out)
+                        shadow_plan = plan_of(shadow_out)
                         if shadow_plan.topics:
                             trace_steps.append(
                                 {
@@ -1610,11 +1592,9 @@ class HubaraSalesSessionWorkflow:
                                     session_id=session.session_id,
                                     profile=self._perception_profile,
                                     messages=_burst_messages(raw_batch or []),
-                                    topics=[{"topic": t.topic, "msg": t.msg, "p": t.p} for t in shadow_plan.topics],
+                                    topics=list(shadow_out.topics),
                                     reply_text=_reply_as_sent(trace_sent_texts, None),
-                                    components=[
-                                        t for t in result.tools_used if t.startswith(("present_", "send_", "request_"))
-                                    ],
+                                    components=delivered_components(result.tool_events),
                                 )
                             )
                             trace_steps.append(_verify_step(shadow_verify, shadow_verified_ms, applied=False))
@@ -1622,13 +1602,13 @@ class HubaraSalesSessionWorkflow:
                         if (
                             verify_out.decision == "complement"
                             and verify_out.missing
-                            and plan is not None
+                            and decided is not None
                             and not self._pending
                             and not self._force_shutdown
                         ):
                             self._pending.append(
                                 PendingMessage(
-                                    message=complement_message(plan, verify_out.missing),
+                                    message=complement_note_of(decided.topics, verify_out),
                                     is_complement_trigger=True,
                                 )
                             )

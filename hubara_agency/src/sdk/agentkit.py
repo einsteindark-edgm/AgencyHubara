@@ -61,6 +61,9 @@ from src.platform.workflow_helpers import (
     PRESENTATIONAL_TOOLS as PRESENTATIONAL_TOOLS,
     TURN_ENDING_TOOLS as TURN_ENDING_TOOLS,
     PendingMessage as PendingMessage,
+    # Capa ② del turno con el motor de decisiones: el motor de ventas arma la
+    # política con las reglas que su activity grabó (`decisions/facade.py`).
+    TurnPolicy as TurnPolicy,
     TurnResult as TurnResult,
     coalesce_pending as coalesce_pending,
     run_agent_turn as run_agent_turn,

@@ -65,33 +65,3 @@ DECISIONS_OK: dict = {
     },
     "usage": {"input_tokens": 480, "output_tokens": 70, "cost": 0.00002},
 }
-
-
-def _lp(token: str, logprob: float, top: dict[str, float]) -> dict:
-    return {
-        "token": token,
-        "logprob": logprob,
-        "top_logprobs": [{"token": t, "logprob": v} for t, v in top.items()],
-    }
-
-
-# Respuesta "S\nB\n1": sí al catálogo, la opción B (variantes), nivel 1.
-LOGPROBS_OK: dict = {
-    "model": "openai/gpt-4o-mini-2024-07-18",
-    "choices": [
-        {
-            "message": {"role": "assistant", "content": "S\nB\n1"},
-            "finish_reason": "stop",
-            "logprobs": {
-                "content": [
-                    _lp("S", -0.07, {"S": -0.07, "N": -2.7, "Si": -6.0}),
-                    _lp("\n", -0.001, {"\n": -0.001}),
-                    _lp("B", -0.16, {"B": -0.16, "A": -2.3, "C": -3.0, "D": -9.0}),
-                    _lp("\n", -0.001, {"\n": -0.001}),
-                    _lp("1", -0.5, {"1": -0.5, "2": -1.2, "0": -2.3}),
-                ]
-            },
-        }
-    ],
-    "usage": {"prompt_tokens": 520, "completion_tokens": 5},
-}

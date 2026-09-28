@@ -7,8 +7,8 @@ from __future__ import annotations
 import pytest
 from temporalio.testing import ActivityEnvironment
 
-from src.plugins.chats.agent.sales.perception.activities import perceive_burst_activity, verify_coverage_activity
-from src.plugins.chats.agent.sales.perception.contracts import PerceiveInput, VerifyInput
+from src.plugins.chats.agent.sales.decisions.activities import perceive_burst_activity, verify_coverage_activity
+from src.plugins.chats.agent.sales.decisions.contracts import PerceiveInput, VerifyInput
 
 SID = "wa_573001234567"
 MESSAGES = [
@@ -38,6 +38,34 @@ async def test_perceive_returns_the_plan_and_the_answers_for_the_trace() -> None
     assert not any(a["q"] == "topic.queja" and a["picked"] for a in out.answers)
 
 
+async def test_perceive_records_what_the_workflow_applies() -> None:
+    """Motor de decisiones (diseño v2 §03): la nota del turno y las reglas de
+    la capa ② las arma la activity y viajan grabadas en su resultado; el
+    workflow solo las aplica. Cambiar una regla afecta solo a los turnos
+    nuevos: el replay de una conversación en vuelo lee lo grabado."""
+    out = await ActivityEnvironment().run(
+        perceive_burst_activity, PerceiveInput(session_id=SID, profile="jev-v1", messages=MESSAGES)
+    )
+
+    assert out.contract == 1
+    assert out.versions == {"profile": "jev-v1", "questions": "rafaga-v1", "policy": "turno-v1", "model": "fake"}
+    assert out.note is not None and out.note.startswith("[PLAN DEL TURNO]") and "catálogo (mensaje 1)" in out.note
+    assert set(out.coverage) == {"catalogo", "envio"}
+    assert "send_shipping_rates" in out.coverage["envio"]["tools"]
+    assert [t["label"] for t in out.topics] == ["catálogo (mensaje 1)", "envío"]
+
+
+async def test_an_unknown_profile_is_a_turn_as_today() -> None:
+    """El perfil del rival OpenAI ya no existe: sin cuestionario ni política,
+    el turno sale como hoy (sin nota ni reglas)."""
+    out = await ActivityEnvironment().run(
+        perceive_burst_activity, PerceiveInput(session_id=SID, profile="openai-lp-v1", messages=MESSAGES)
+    )
+
+    assert not out.ok and out.error == "unknown_profile"
+    assert (out.note, out.coverage, out.topics) == (None, {}, [])
+
+
 async def test_perceive_fails_open(monkeypatch) -> None:
     monkeypatch.setenv("PERCEPTION_PROVIDER", "off")
     from src.sdk import connectorkit
@@ -62,6 +90,32 @@ async def test_verify_decides_on_the_reply_that_is_about_to_go_out() -> None:
 
     assert covered.ok and covered.decision == "send" and covered.missing == []
     assert [a["q"] for a in covered.answers] == ["cover.catalogo", "cover.envio"]
+
+
+async def test_verify_drafts_the_complement_note(monkeypatch) -> None:
+    """③ El texto del turno de sistema del complemento lo redacta el motor
+    (viaja grabado): el workflow solo lo encola."""
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    fake = FakePerceptionAdapter({"cover.catalogo": TypedAnswer(id="cover.catalogo", kind="noul", p=0.05)})
+
+    def _port(_oracle: str) -> FakePerceptionAdapter:
+        return fake
+
+    _port.cache_clear = lambda: None
+    monkeypatch.setattr(connectorkit, "get_perception_port", _port)
+    topics = [{"topic": "catalogo", "msg": 1, "p": 0.9, "label": "catálogo (mensaje 1)"}]
+
+    out = await ActivityEnvironment().run(
+        verify_coverage_activity,
+        VerifyInput(session_id=SID, profile="jev-v1", messages=MESSAGES, topics=topics, reply_text="Hola", components=[]),
+    )
+
+    assert out.decision == "complement" and out.missing == ["catalogo"]
+    assert out.complement_note is not None and out.complement_note.startswith("[SISTEMA] Complemento del turno")
+    assert "catálogo (mensaje 1)" in out.complement_note
 
 
 async def test_verify_fails_open(monkeypatch) -> None:

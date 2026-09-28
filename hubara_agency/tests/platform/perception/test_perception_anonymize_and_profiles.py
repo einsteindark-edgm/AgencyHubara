@@ -14,7 +14,6 @@ import pytest
 
 from src.platform.perception import composition
 from src.platform.perception.adapters.fake import FakePerceptionAdapter
-from src.platform.perception.adapters.litellm import LiteLLMLogprobsAdapter
 from src.platform.perception.adapters.null import NullPerceptionAdapter
 from src.platform.perception.adapters.openrouter_decisions import OpenRouterDecisionsAdapter
 from src.platform.perception.anonymize import anonymize_text
@@ -87,22 +86,29 @@ def test_anonymize_redacts_given_names_as_whole_words_case_insensitive() -> None
     assert "Cubo Love" in out
 
 
-def test_profiles_pin_fixed_model_ids() -> None:
+def test_oracle_profiles_pin_fixed_model_ids() -> None:
+    """Perfiles del ORÁCULO: proveedor, modelo fijo, tiempo máximo y
+    anonimización. Cuestionarios, políticas y umbrales son del motor
+    (`sales/decisions/profiles.yaml`), no de la plataforma."""
     profiles = load_profiles()
 
-    assert profiles["jev-v1"].provider == "openrouter_decisions"
-    assert profiles["jev-v1"].model == "typesafe/jev-1.13"
-    assert profiles["openai-lp-v1"].provider == "litellm"
-    assert profiles["openai-lp-v1"].model == "litellm_proxy/openrouter-perception"
+    assert profiles["jev-1.13"].provider == "openrouter_decisions"
+    assert profiles["jev-1.13"].model == "typesafe/jev-1.13"
     for p in profiles.values():
         assert "latest" not in p.model.lower(), f"{p.id}: id móvil (L-23)"
         assert p.timeout_s <= 5
-        assert set(p.thresholds) == {"detect", "confidence", "covered"}
+
+
+def test_only_jev_answers_no_openai_rival() -> None:
+    """Decisión del operador (2026-09-28): 100 % Jev. El único proveedor
+    externo es la Decisions API de OpenRouter."""
+    assert {p.provider for p in load_profiles().values()} <= {"openrouter_decisions", "fake", "null"}
+    assert "openai-lp-v1" not in load_profiles()
 
 
 def test_every_profile_that_leaves_the_box_anonymizes() -> None:
     for p in load_profiles().values():
-        if p.provider in {"openrouter_decisions", "litellm"}:
+        if p.provider == "openrouter_decisions":
             assert p.anonymize, p.id
 
 
@@ -117,11 +123,11 @@ def test_composition_builds_the_adapter_of_each_profile(monkeypatch) -> None:
     monkeypatch.delenv("PERCEPTION_PROVIDER", raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
 
-    jev = composition.get_perception_port("jev-v1")
-    openai = composition.get_perception_port("openai-lp-v1")
+    jev = composition.get_perception_port("jev-1.13")
 
     assert isinstance(jev, OpenRouterDecisionsAdapter) and jev.model == "typesafe/jev-1.13"
-    assert isinstance(openai, LiteLLMLogprobsAdapter)
+    # El perfil del rival OpenAI ya no existe: sin adaptador (fail-open).
+    assert isinstance(composition.get_perception_port("openai-lp-v1"), NullPerceptionAdapter)
 
 
 def test_unknown_profile_is_the_null_adapter(monkeypatch) -> None:
@@ -134,7 +140,7 @@ def test_unknown_profile_is_the_null_adapter(monkeypatch) -> None:
 def test_env_override_for_tests_and_the_kill_switch(monkeypatch, env: str, cls: type) -> None:
     monkeypatch.setenv("PERCEPTION_PROVIDER", env)
 
-    assert isinstance(composition.get_perception_port("jev-v1"), cls)
+    assert isinstance(composition.get_perception_port("jev-1.13"), cls)
 
 
 def test_sdk_exposes_the_port_lazily() -> None:
@@ -151,6 +157,6 @@ def test_ssm_placeholder_key_counts_as_no_key(monkeypatch) -> None:
     monkeypatch.delenv("PERCEPTION_PROVIDER", raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "PLACEHOLDER_set_out_of_band")
 
-    port = composition.get_perception_port("jev-v1")
+    port = composition.get_perception_port("jev-1.13")
 
     assert isinstance(port, OpenRouterDecisionsAdapter) and not port.has_api_key

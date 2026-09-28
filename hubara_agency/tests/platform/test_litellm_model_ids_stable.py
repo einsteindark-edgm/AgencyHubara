@@ -70,7 +70,6 @@ _PLATFORM_CONFIG = _REPO / "hubara_agency" / "src" / "platform" / "config.py"
 
 _LIFECYCLE_GOOGLE = "https://ai.google.dev/gemini-api/docs/deprecations"
 _LIFECYCLE_DEEPSEEK = "https://api-docs.deepseek.com/quick_start/pricing"
-_LIFECYCLE_OPENAI = "https://developers.openai.com/api/docs/deprecations"
 
 # Marcadores de vida corta. Se comparan por TOKEN (no substring, para no marcar
 # "expert"/"export") y toleran dígitos pegados: `exp1206`, `rc1`, `preview2`.
@@ -103,11 +102,6 @@ class UpstreamReview:
 # mover `reviewed_on` + `review_by` (máximo 120 días). Si ya tiene fecha, no se
 # renueva: se migra el alias.
 REVIEWED_UPSTREAM_IDS: dict[str, UpstreamReview] = {
-    # Brazo C del laboratorio (alias `openrouter-perception`): snapshot con fecha,
-    # sin apagado publicado (solo sus variantes de audio/realtime/transcribe).
-    "openrouter/openai/gpt-4o-mini-2024-07-18": UpstreamReview(
-        reviewed_on=dt.date(2026, 9, 23), source=_LIFECYCLE_OPENAI
-    ),
     "deepseek/deepseek-flash": UpstreamReview(
         reviewed_on=dt.date(2026, 9, 18), source=_LIFECYCLE_DEEPSEEK
     ),
@@ -519,37 +513,14 @@ def test_gemini_backup_is_priced_at_the_official_list_price() -> None:
     }
 
 
-def test_perception_alias_pins_the_dated_openai_snapshot_with_strict_routing() -> None:
-    """Brazo C del laboratorio (plan §1.3): OpenAI con logprobs por OpenRouter.
-
-    Snapshot con fecha (no el alias móvil `gpt-4o-mini`). Preferencias de
-    proveedor fijas en el alias: solo OpenAI (el único que sirve logprobs de
-    este modelo), sin fallback a otro proveedor, `require_parameters` (si
-    OpenAI dejara de dar logprobs, OpenRouter RECHAZA en vez de ignorar el
-    parámetro sin avisar) y sin retención de datos para entrenar. El alias no
-    le contesta a clientes: no entra a la cadena de failover del router."""
+def test_no_openai_perception_alias_left() -> None:
+    """El rival OpenAI del laboratorio (alias `openrouter-perception`, brazo C)
+    se quitó el 2026-09-28: 100 % Jev, que entra por la Decisions API y no
+    pasa por el proxy. Ni el alias ni su precio vuelven sin decisión."""
     config = _proxy_config(_COMPOSE)
-    entry = next(e for e in config["model_list"] if e["model_name"] == "openrouter-perception")
-    params = entry["litellm_params"]
 
-    assert params["model"] == "openrouter/openai/gpt-4o-mini-2024-07-18"
-    assert params["api_key"] == "os.environ/OPENROUTER_API_KEY"
-    assert params["extra_body"]["provider"] == {
-        "order": ["openai"],
-        "allow_fallbacks": False,
-        "require_parameters": True,
-        "data_collection": "deny",
-    }
-    assert "openrouter-perception" not in _customer_facing_aliases(config)
-
-
-def test_perception_alias_is_priced_at_the_openai_list_price() -> None:
-    """USD por 1000 tokens. gpt-4o-mini: $0.15 in / $0.60 out por 1M
-    (openrouter.ai/openai/gpt-4o-mini-2024-07-18, revisado 2026-09-23)."""
-    assert _pricing_chat_table()["openrouter-perception"] == {
-        "promptPrice": 0.00015,
-        "completionPrice": 0.0006,
-    }
+    assert "openrouter-perception" not in {e["model_name"] for e in config["model_list"]}
+    assert "openrouter-perception" not in _pricing_chat_table()
 
 
 # ── el chequeo mismo (un guard que nunca se vio fallar no protege nada) ────────

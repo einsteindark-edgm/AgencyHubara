@@ -147,11 +147,14 @@ class TurnPolicy:
     """Capa ② del turno con clasificador (plan del laboratorio §3.2, PR 14).
 
     En el corte por tool que deja la conversación esperando al cliente (L-11),
-    `extra_round_note(tools_usadas, texto)` decide si falta atender algo del
-    plan del turno: si devuelve una nota, en lugar de cortar hay UNA ronda más
-    de `llm_chat` con esa nota como mensaje de sistema. Regla determinista del
-    caller (sin llamadas nuevas). `None` (el default de `run_agent_turn`) es el
-    turno de hoy: remarketing, ETA y las histories viejas no se enteran.
+    `extra_round_note(tools_usadas, texto_visto)` decide si falta atender algo
+    del plan del turno: si devuelve una nota, en lugar de cortar hay UNA ronda
+    más de `llm_chat` con esa nota como mensaje de sistema. `texto_visto` es lo
+    que el CLIENTE ve del turno (lo que validó `send_reply` y los textos de las
+    tools que salieron), nunca la narración que acompaña a la tool: esa la
+    descarta el default-deny (bug corregido el 2026-09-28). Regla determinista
+    del caller (sin llamadas nuevas). `None` (el default de `run_agent_turn`)
+    es el turno de hoy: remarketing, ETA y las histories viejas no se enteran.
     """
 
     extra_round_note: Callable[[list[str], str], str | None]
@@ -334,6 +337,24 @@ def _ends_turn(tool_names: list[str], *, version: int = 1) -> bool:
     """¿Este batch de tool calls deja la conversación esperando al cliente?"""
     ending = TURN_ENDING_TOOLS_V2 if version >= 2 else TURN_ENDING_TOOLS
     return any(name in ending for name in tool_names)
+
+
+def _text_shown(tool_events: list[dict[str, Any]], delivered_replies: dict[str, str]) -> str:
+    """Lo que el cliente VE del turno hasta ahora (capa ② con `TurnPolicy`):
+    lo que validó `send_reply` y los textos (`intro_text`, `body`…) de las
+    tools que le tocan y NO se negaron. La narración que acompaña a una tool
+    no cuenta: el default-deny la descarta. Lista en memoria: replay-safe."""
+    texts = [t for t in delivered_replies.values() if t]
+    for event in tool_events:
+        name = str(event.get("name") or "")
+        if name == "send_reply" or not name.startswith(_OUTBOUND_TOOL_PREFIXES):
+            continue
+        payload = _try_parse_decision_payload(event.get("result") or "")
+        if _rejected_by_tool(payload) or (payload is not None and payload.get("error")):
+            continue
+        args = event.get("args") if isinstance(event.get("args"), dict) else {}
+        texts.extend(v for v in args.values() if isinstance(v, str) and v.strip())
+    return "\n".join(texts)
 
 
 def _rejected_by_tool(payload: dict[str, Any] | None) -> bool:
@@ -1164,7 +1185,9 @@ async def _run_agent_turn_impl(
                     # `turn_policy` (el workflow de ventas lo pasa detrás de su
                     # propio `workflow.patched("perception-v1")`).
                     extra_note = (
-                        turn_policy.extra_round_note(list(tools_used), response.content or "")
+                        turn_policy.extra_round_note(
+                            list(tools_used), _text_shown(tool_events, delivered_replies)
+                        )
                         if turn_policy is not None and extra_rounds < turn_policy.max_extra_rounds
                         else None
                     )

@@ -839,7 +839,7 @@ laboratorio de conversaciones, §4.1.
 
 ### Requirement: Capas del turno con clasificador detrás del modo (laboratorio, PR 14)
 
-El turno de ventas SHALL poder usar un clasificador (Jev u OpenAI por OpenRouter) en tres capas, SOLO cuando la señal del cliente trae un modo activo (`inbound_meta.perception_mode` = `shadow`, `canary` u `on`), acotado por el techo de Terraform `SALES_PERCEPTION_MODE_CEILING` (default `off`). Sin modo o con `off`, el turno MUST ser el de hoy: no se consulta `workflow.patched("perception-v1")` ni se agenda ninguna activity nueva. El clasificador MUST fallar abierto: un error o timeout deja el turno como hoy.
+El turno de ventas SHALL poder usar el motor de decisiones con Jev (Decisions API de OpenRouter; 100 % Jev desde el 2026-09-28, sin rival OpenAI) en tres capas, SOLO cuando la señal del cliente trae un modo activo (`inbound_meta.perception_mode` = `shadow`, `canary` u `on`), acotado por el techo de Terraform `SALES_PERCEPTION_MODE_CEILING` (default `off`). Sin modo o con `off`, el turno MUST ser el de hoy: no se consulta `workflow.patched("perception-v1")` ni se agenda ninguna activity nueva. El clasificador MUST fallar abierto: un error o timeout deja el turno como hoy.
 
 #### Scenario: Modo apagado — el turno de hoy
 
@@ -870,6 +870,21 @@ El turno de ventas SHALL poder usar un clasificador (Jev u OpenAI por OpenRouter
 - WHEN la verificación corre antes de enviar el texto final
 - THEN juzga el saludo y el texto final juntos, tal como los recibe el cliente (lo ya enviado en el turno + el texto final si sale, después de las guardas); un texto que una guarda retiene no cuenta como respuesta
 - AND en `shadow` juzga exactamente el mismo texto, leído de lo enviado: la vara es la misma en los dos modos
+
+#### Scenario: Las reglas del turno viajan grabadas (motor de decisiones)
+
+- GIVEN modo `on` y el motor detecta asuntos
+- WHEN el workflow aplica la capa ①②③
+- THEN la nota del turno, las reglas de la ronda extra (qué tool o qué texto atiende cada asunto) y el texto del complemento salen del resultado GRABADO de las activities del motor (`perceive_burst`, `verify_coverage`); el workflow no conoce preguntas, umbrales ni cuestionarios
+- AND cambiar una regla del motor solo afecta a los turnos nuevos: una conversación en vuelo re-juega con lo que quedó grabado
+
+#### Scenario: La ronda extra juzga lo que el cliente ve
+
+- GIVEN modo `on` y el LLM corta el turno con una tool que espera al cliente, con narración junto a la tool ("Te comparto el catálogo")
+- WHEN la capa ② decide si falta un asunto
+- THEN juzga solo lo que el cliente ve (lo validado por `send_reply` y los textos de las tools que no se negaron), nunca la narración que el default-deny descarta
+- AND un aplazamiento del cliente queda atendido solo con un texto que le llegue
+- AND la verificación ③ cuenta como tarjetas solo las tools que le llegan al cliente (sin `send_reply` ni las que respondieron `queued: false`)
 
 #### Scenario: Clasificador caído
 

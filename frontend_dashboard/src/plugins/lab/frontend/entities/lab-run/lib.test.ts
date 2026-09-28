@@ -9,7 +9,8 @@ describe("lib del laboratorio", () => {
     expect(armLabel("A0")).toBe("Producción");
     expect(armLabel("A1")).toBe("Actual simulado");
     expect(armLabel("B")).toBe("Nuevo + Jev");
-    expect(armLabel("C")).toBe("Nuevo + OpenAI");
+    // El rival OpenAI (brazo C) se quitó el 2026-09-28: 100 % Jev.
+    expect(armLabel("C")).toBe("C");
     expect(armLabel("Z")).toBe("Z");
   });
 

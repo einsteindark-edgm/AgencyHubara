@@ -2,8 +2,7 @@
 
 Tarifas por turno y por pasada de un bot sobre el banco, medidas en
 producción el 2026-09-23: el agente gastó US$7,09 en ~404 turnos; el juez de
-una corrida de decisión, ~US$30 en 9 pasadas; el clasificador suma ~US$0,0002
-(Jev) o ~US$0,0006 (OpenAI) por turno. Antes de comparar, la caja re-mide el
+una corrida de decisión, ~US$30 en 9 pasadas; Jev suma ~US$0,0002 por turno. Antes de comparar, la caja re-mide el
 control real (A0) con el mismo juez: una pasada más sobre el banco. El gasto
 real lo reporta la caja en `runs/<corrida>/progress.json` y la caja corta si
 llega al tope.
@@ -19,7 +18,7 @@ from src.sdk.labkit import LabStorePort
 
 AGENT_USD_PER_TURN = 7.09 / 404
 JUDGE_USD_PER_TURN = 30.0 / (9 * 404)
-PERCEPTION_USD_PER_TURN = {"A1": 0.0, "B": 0.0002, "C": 0.0006}
+PERCEPTION_USD_PER_TURN = {"A1": 0.0, "B": 0.0002}
 
 _BOGOTA = timezone(timedelta(hours=-5))
 

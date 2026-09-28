@@ -1,0 +1,47 @@
+"""Perfiles del motor de decisiones (diseño v2 §03).
+
+Un perfil del MOTOR junta lo que cambia seguido: cuestionario, política,
+umbrales, el perfil que corre en sombra y el snapshot de Jev con el que se
+calibró. El ORÁCULO (proveedor, modelo fijo, tiempo máximo, anonimización)
+vive en la plataforma (`platform/perception/profiles.yaml`) y casi nunca
+cambia. El id del perfil del motor (`jev-v1`) es el que viaja en la señal y en
+Terraform (`tenants.*.lab.perception_profile`).
+"""
+from __future__ import annotations
+
+import pytest
+
+from src.platform.perception.profiles import load_profiles as load_oracle_profiles
+from src.plugins.chats.agent.sales.decisions.policies import get_policy
+from src.plugins.chats.agent.sales.decisions.profiles import get_engine_profile, load_engine_profiles
+from src.plugins.chats.agent.sales.decisions.questionnaire import load_questionnaire
+
+
+def test_jev_v1_is_the_classifier_of_today() -> None:
+    profile = get_engine_profile("jev-v1")
+
+    assert profile is not None
+    assert (profile.oracle, profile.questions, profile.policy) == ("jev-1.13", "rafaga-v1", "turno-v1")
+    assert profile.thresholds == {"detect": 0.70, "confidence": 0.60, "covered": 0.70}
+
+
+def test_every_engine_profile_resolves_its_oracle_questionnaire_and_policy() -> None:
+    profiles = load_engine_profiles()
+    oracles = load_oracle_profiles()
+
+    assert profiles
+    for profile in profiles.values():
+        assert profile.oracle in oracles, profile.id
+        assert load_questionnaire(profile.questions).id == profile.questions
+        assert get_policy(profile.policy) is not None, profile.id
+        if profile.shadow is not None:
+            assert profile.shadow in profiles and profile.shadow != profile.id, profile.id
+
+
+def test_the_openai_rival_profile_is_gone() -> None:
+    assert get_engine_profile("openai-lp-v1") is None
+
+
+def test_an_unknown_policy_is_an_error() -> None:
+    with pytest.raises(KeyError, match="turno-v0"):
+        get_policy("turno-v0")

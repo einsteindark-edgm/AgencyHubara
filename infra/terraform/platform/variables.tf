@@ -172,11 +172,11 @@ variable "secret_keys" {
     "META_APP_SECRET",
     "META_OAUTH_REDIRECT_URI",
     "META_OAUTH_SCOPES",
-    # Clasificadores del laboratorio de conversaciones (Jev y OpenAI, los dos por
-    # OpenRouter; LABORATORIO_CONVERSACIONES_PLAN.md §1.3). Lo leen el puerto de
-    # percepción (Jev, Decisions API) y el alias `openrouter-perception` del proxy
-    # LiteLLM (OpenAI). El operador crea la llave con límite de crédito y la carga
-    # fuera de banda; con el placeholder el puerto no llama a nadie (fail-open).
+    # Jev, el oráculo del motor de decisiones (MOTOR_DECISIONES_PLAN.md; 100 %
+    # Jev desde el 2026-09-28, sin el rival OpenAI). Lo lee el puerto de
+    # percepción, que llama directo a la Decisions API de OpenRouter (no pasa por
+    # el proxy LiteLLM). El operador crea la llave con límite de crédito y la
+    # carga fuera de banda; con el placeholder el puerto no llama a nadie.
     "OPENROUTER_API_KEY",
   ]
 }

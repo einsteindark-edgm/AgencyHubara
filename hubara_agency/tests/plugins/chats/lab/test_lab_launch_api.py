@@ -90,13 +90,13 @@ def env(tmp_path: Path, monkeypatch) -> dict:
 
 
 def test_estimate_for_a_new_bench(env) -> None:
-    data = env["http"].get("/api/chats/lab/estimate", params={"arms": "A1,B,C", "reps": 3, "bench": "new"}).json()
+    data = env["http"].get("/api/chats/lab/estimate", params={"arms": "A1,B", "reps": 3, "bench": "new"}).json()
 
     assert data["turns"] == 1
     assert data["estimate_usd"] > 0
     assert (data["run_cap_usd"], data["month_cap_usd"], data["month_left_usd"]) == (120.0, 300.0, 300.0)
     assert data["fits"] is True
-    assert [a["id"] for a in data["arms"]] == ["A1", "B", "C"]
+    assert [a["id"] for a in data["arms"]] == ["A1", "B"]
 
 
 def test_launch_starts_the_single_run_workflow(env) -> None:
@@ -129,7 +129,7 @@ def test_second_launch_is_a_409_with_the_active_run(env) -> None:
 def test_launch_that_does_not_fit_the_month_is_a_422(env) -> None:
     env["store"].put_bytes("runs/run-old/progress.json", json.dumps({"started_at_ms": NOW_MS - 1000, "spent_usd": 299.9}).encode())
 
-    resp = env["http"].post("/api/chats/lab/runs", json={"arms": ["A1", "B", "C"], "reps": 3, "bench": "new"})
+    resp = env["http"].post("/api/chats/lab/runs", json={"arms": ["A1", "B"], "reps": 3, "bench": "new"})
 
     assert resp.status_code == 422
     assert resp.json()["detail"]["reason"] == "month_cap"
@@ -141,6 +141,7 @@ def test_launch_that_does_not_fit_the_month_is_a_422(env) -> None:
     [
         {"arms": ["B"], "reps": 1, "bench": "new"},  # sin el control A1
         {"arms": ["A1", "Z"], "reps": 1, "bench": "new"},
+        {"arms": ["A1", "C"], "reps": 1, "bench": "new"},  # OpenAI se quitó (2026-09-28)
         {"arms": ["A1"], "reps": 2, "bench": "new"},
         {"arms": ["A1"], "reps": 1, "bench": "../x"},
     ],

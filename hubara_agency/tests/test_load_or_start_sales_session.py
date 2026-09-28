@@ -685,7 +685,7 @@ async def test_the_perception_mode_travels_with_the_inbound_ids(monkeypatch, tmp
     de Terraform (`SALES_PERCEPTION_MODE_CEILING`), con el perfil activo."""
     monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
     monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", "on")
-    monkeypatch.setenv("SALES_PERCEPTION_PROFILE", "openai-lp-v1")
+    monkeypatch.setenv("SALES_PERCEPTION_PROFILE", "jev-v2")
     _rollout(tmp_path, monkeypatch, mode="shadow")
     client = FakeClient()
     use_case = _make_use_case(FakeMetadataStore(initial={}), client)
@@ -693,7 +693,7 @@ async def test_the_perception_mode_travels_with_the_inbound_ids(monkeypatch, tmp
     await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
 
     meta = client.start_calls[0]["start_signal_args"][3]
-    assert meta == {**_META, "perception_mode": "shadow", "perception_profile": "openai-lp-v1"}
+    assert meta == {**_META, "perception_mode": "shadow", "perception_profile": "jev-v2"}
 
 
 @pytest.mark.asyncio

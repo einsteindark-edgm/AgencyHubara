@@ -115,7 +115,7 @@ from src.plugins.chats.agent.sales.tools.ui_intents import (
 from src.plugins.chats.agent.sales.workflows.sales_session import (
     HubaraSalesSessionWorkflow,
 )
-from src.plugins.chats.agent.sales.perception.activities import (
+from src.plugins.chats.agent.sales.decisions.activities import (
     PERCEPTION_ACTIVITIES,
 )
 

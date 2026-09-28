@@ -2,18 +2,17 @@
 
   A1  el bot actual: la señal de hoy (3 argumentos, sin modo)
   B   el bot nuevo con Jev (perfil `jev-v1`)
-  C   el bot nuevo con OpenAI (perfil `openai-lp-v1`)
 
-Los bots nuevos reciben el modo `on` y su perfil en el 4.º argumento de la
-señal (`inbound_meta`), exactamente como una conversación en canary de
-producción: el mismo workflow, las mismas capas. A0 no se simula (es lo que
-pasó de verdad).
+El bot nuevo recibe el modo `on` y su perfil en el 4.º argumento de la señal
+(`inbound_meta`), exactamente como una conversación en canary de producción:
+el mismo workflow, las mismas capas. A0 no se simula (es lo que pasó de
+verdad). El brazo C (OpenAI) se quitó el 2026-09-28: 100 % Jev.
 """
 from __future__ import annotations
 
 from typing import Any
 
-ARM_PROFILES: dict[str, str] = {"B": "jev-v1", "C": "openai-lp-v1"}
+ARM_PROFILES: dict[str, str] = {"B": "jev-v1"}
 SIMULATED_ARMS: tuple[str, ...] = ("A1", *ARM_PROFILES)
 
 

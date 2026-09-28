@@ -145,13 +145,13 @@ describe("RunSummary", () => {
   it("un bot que la corrida no alcanzó a simular queda pendiente, no como falla", async () => {
     fetchMock.mockImplementation((url: string) => {
       const u = String(url);
-      if (u.endsWith(`/runs/${RUN}/report`)) return json({ ...REPORT, arms_pending: ["C"] });
+      if (u.endsWith(`/runs/${RUN}/report`)) return json({ ...REPORT, arms_pending: ["Z"] });
       if (u.includes(`/runs/${RUN}/summary?arm=A1`)) return json(summary(20));
       return json({ detail: "no" }, 404);
     });
     renderTab();
 
-    expect(await screen.findByText(/Nuevo \+ OpenAI: la corrida no alcanzó a simularlo/)).toBeInTheDocument();
+    expect(await screen.findByText(/Z: la corrida no alcanzó a simularlo/)).toBeInTheDocument();
   });
 
   it("el Pareto del laboratorio habla de la corrida, no de días", async () => {

@@ -6,7 +6,7 @@ la traza del turno simulado en `turns/A1/<rep>/<sesión>.jsonl` (misma sesión,
 episodio, turno y `turn_key` que el turno real, para que el hilo del
 laboratorio la encuentre) y la salida en el hilo (`outputs.A1`). El gasto
 real de cada caso se suma y la corrida corta al llegar al tope. Los bots
-nuevos (B = Jev, C = OpenAI, PR 15) corren igual, con su brazo en el caso;
+nuevos (B = Jev, PR 15) corren igual, con su brazo en el caso;
 cada brazo publica sus métricas (`metrics/<brazo>/<rep>.json`) y el
 complemento viaja con su caso.
 """

@@ -7,7 +7,6 @@ export const ARM_LABELS: Record<string, string> = {
   A0: "Producción",
   A1: "Actual simulado",
   B: "Nuevo + Jev",
-  C: "Nuevo + OpenAI",
 };
 
 export function armLabel(arm: string): string {

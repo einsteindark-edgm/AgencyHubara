@@ -226,7 +226,10 @@ def test_lab_keys_come_only_from_the_lab_path_and_each_service_gets_its_own(box:
     litellm = (box["home"] / "litellm.env").read_text()
     worker = (box["home"] / "sales_lab.env").read_text()
     compose = (box["home"] / "compose.env").read_text()
-    assert "DEEPSEEK_API_KEY=sk-deepseek" in litellm and "OPENROUTER_API_KEY=sk-or-lab" in litellm
+    assert "DEEPSEEK_API_KEY=sk-deepseek" in litellm
+    # Sin el rival OpenAI (2026-09-28) el proxy no llama a OpenRouter: la llave
+    # solo la tiene el worker (Jev va directo a la Decisions API).
+    assert "OPENROUTER_API_KEY" not in litellm
     assert "LAB_BUCKET" not in litellm and "HUBARA_IMAGE" not in litellm
     assert "OPENROUTER_API_KEY=sk-or-lab" in worker  # Jev va directo a OpenRouter
     assert "LAB_BUCKET=agencyhubara-lab-000000000000" in worker

@@ -766,6 +766,7 @@ Anotados al implementar (2026-09-23/24). El código vivo manda; esta lista expli
 - **PR 15:** la verificación deja en la traza `cost_usd` y `complement_scheduled` (solo payload, sin patch), para que el laboratorio espere el complemento sin adivinar con tiempos. El acuerdo con el juez lleva sus asuntos (texto libre) a los 17 códigos por palabras clave, así que es aproximado y sirve para comparar B contra C. No hay preguntas en inglés en la arena.
 - **PR 16:** el control vive en el inspector de ventas de Agents (panel "Bot nuevo"), compuesto desde la página, porque una feature no importa otra. La vara está en el servidor (422) y el panel solo la muestra.
 - **PR 19:** no se implementa todavía: toca a las 2 semanas al 100 % y después del drenaje (`deprecate_patch`).
+- **Motor de decisiones (2026-09-28, decisión del operador):** 100 % Jev. Se quitó el rival OpenAI: el adaptador `litellm`, el perfil `openai-lp-v1`, el brazo C (backend, API, costos y dashboard), el alias `openrouter-perception` del proxy y su precio, y la llave de OpenRouter del proxy de la caja. Sin rival, la vara es el banco de referencia que califica Claude Code, A1 contra el bot nuevo en el scorecard y cada versión de Jev contra la anterior. Las capas ①②③ pasaron a ser el motor de decisiones (`sales/decisions/`): cuestionario como datos, política versionada y perfiles del motor separados del oráculo. Todo lo que sigue se planifica y registra en `MOTOR_DECISIONES_PLAN.md`.
 
 ## 13. Referencias
 

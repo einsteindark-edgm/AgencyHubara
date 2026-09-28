@@ -1,0 +1,97 @@
+# Motor de decisiones con Jev — plan de ejecución
+
+> Diseño aprobado por el operador el 2026-09-28 («sí a todo»): `MOTOR_DECISIONES_DISENO.html`
+> (copia del documento del diseño v2, secciones 00–12). **Revisarlo antes de implementar cada fase.**
+> Este archivo es el plan técnico: qué entra en cada fase, dónde vive, cómo se prueba y en qué quedó.
+
+## 0. Decisiones del operador (2026-09-28)
+
+| # | Pregunta | Decisión |
+|---|---|---|
+| 1 | ¿F0 va dentro de #372? | Sí. Todo el motor va en `lab/todo` (#372). |
+| 2 | ¿Workflow V2 (tipo nuevo, V1 congelado)? | Sí. |
+| 3 | ¿Jev puede frenar (dato no dicho, «sí» que no era de compra)? | Sí, solo con certeza alta y después de la sombra. |
+| 4 | ¿Claude Code califica el banco de referencia y los desacuerdos? | Sí. |
+| 5 | Baja de marketing | Esperar a que la capacidad «baja» pase la sombra; después, piso solo con frases inequívocas y Jev decide los casos dudosos. La frase explícita nunca se puede quitar. |
+
+Quitar OpenAI (brazo C) ya estaba decidido: 100 % Jev.
+
+## 1. Reglas que no se negocian
+
+1. **Jev percibe, el código decide, el LLM redacta.** Jev contesta preguntas cerradas; nunca escoge una tool ni una etapa.
+2. **Si Jev falla o tarda, decide la regla de hoy**, que queda como respaldo dentro del motor (`reglas`).
+3. **Nada actúa sin laboratorio y sin sombra en producción.** Cada capacidad tiene su interruptor: `reglas` → `sombra` → `jev`. Todo nace en `reglas`.
+4. **Un arreglo nuevo de alucinación entra como capacidad del motor**, nunca como otro regex en un worker.
+5. **Replay:** las reglas viven en activities y viajan grabadas en su resultado; el workflow solo aplica. El contrato solo crece con campos opcionales (Temporal ignora campos desconocidos y rellena los que faltan con su valor por defecto: verificado en `temporalio/converter/_payload_converter.py`).
+
+## 2. Dónde vive cada cosa
+
+| Pieza | Ruta |
+|---|---|
+| Oráculo (adaptador de Jev, falso, nulo, anonimización) | `hubara_agency/src/platform/perception/` |
+| Motor: contratos, fachada, cuestionarios, políticas, perfiles, capacidades, activities | `hubara_agency/src/plugins/chats/agent/sales/decisions/` |
+| Registro de bots (V1/V2, proveedor por capacidad, perfil) | `sales/decisions/bots.py` |
+| Workflow V2 | `sales/workflows/sales_session_v2.py` |
+| Cola de desacuerdos y etiquetas (producción) | `<vault>/_decisions/` |
+| Banco de referencia (etiquetas de Claude Code) | S3 del laboratorio, `bench/labels/` |
+| CLI de Claude Code | `hubara_agency/scripts/decisions_queue.py`, `scripts/lab_bench_labels.py` |
+
+## 3. Fases
+
+Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería completa, replay de historias reales, forge, commit.
+
+### F0 · Solo Jev + base del motor — sin cambio de comportamiento ✅
+- [x] Quitar OpenAI: adaptador `litellm`, rama en `composition.py`, perfil `openai-lp-v1`, brazo C (backend, API, costos, dashboard), alias `openrouter-perception` y su precio, la llave de OpenRouter del proxy de la caja, docs (07-connectorkit), spec de ventas y plan del laboratorio (§12).
+- [x] `sales/perception/` → `sales/decisions/` (mismos nombres de activity: `perceive_burst`, `verify_coverage`).
+- [x] Contrato `TurnDecisions` (superconjunto de `PerceiveOutput`, campos nuevos con valor por defecto: `contract`, `versions`, `note`, `coverage`; `VerifyOutput.complement_note`) + `facade.py` (lo único que importa el workflow).
+- [x] La nota, las reglas de la capa ② y el texto del complemento viajan grabados en el resultado de las activities; el workflow no conoce preguntas ni umbrales.
+- [x] Corregidos mis bugs de #372: ② juzgaba la narración descartada (ahora juzga lo que el cliente ve: `workflow_helpers._text_shown`); «aplaza» quedaba siempre cubierto (ahora pide un texto); ③ contaba `send_reply` y tools rechazadas como tarjetas (`facade.delivered_components`).
+- [x] Perfiles del motor (`decisions/profiles.yaml`: oráculo, cuestionario, política, umbrales, sombra, snapshot calibrado) separados del oráculo (`platform/perception/profiles.yaml`: `jev-1.13`).
+- [x] Cuestionario `rafaga-v1` como datos (`questionnaires/rafaga-v1.yaml`), idéntico al código anterior (lista congelada en `tests/fixtures/decisions/rafaga_v1_frozen.json`).
+- [x] Fronteras por test (`test_decisions_boundaries.py`): el workflow importa solo `contracts`+`facade`; las tools solo `guards`; el motor no importa workflows y su núcleo no importa Temporal.
+- Verificación: replay de 59 historias reales de producción (bajadas el 28-sep) sin divergir; fixture congelada `perception-v1` re-juega; batería completa.
+
+### F1 · Contexto
+- [ ] Ventana de lo que vio el cliente desde el historial del vault (últimos 8 eventos o ~1.800 caracteres; ráfaga actual fuera por `wamid`; mensaje largo del bot cortado por el principio).
+- [ ] Hechos del pedido (etapa, ítems, ciudad; dirección/teléfono/quien recibe solo «dado»/«falta»), anonimizados.
+- [ ] `wamid` por mensaje en la entrada (solo payload, L-22).
+- [ ] Cuestionario `rafaga-v2`: asuntos limitados a «este turno», `thread.bot_asked` (7 opciones), `thread.answers_bot`, `thread.answer`; se omite si el código ya sabe qué se preguntó (tarjeta de confirmación o formulario).
+- [ ] Política `turno-v2`: nota con la lectura del «sí» + evidencia de compra.
+- [ ] Sombra doble dentro de la misma activity (perfil activo + perfil en sombra, en paralelo, tope propio).
+- [ ] Calibración atada al snapshot de Jev: si cambia, lo que actúa baja a sombra (traza + panel).
+- [ ] Banco de referencia: selección de ~150 turnos difíciles, CLI de etiquetas para Claude Code, métricas por pregunta (precisión, cobertura, calibración).
+- [ ] Sonda diaria: 20 ráfagas sintéticas con respuesta conocida.
+
+### F2 · Enchufes — sin cambio de comportamiento
+- [ ] Registro de bots + `bot_for_session()` + `bot_for_arm()`.
+- [ ] Arranque unificado: `LoadOrStartSalesSession` y el dispatcher de plataforma (hook de resolución de nombre de workflow).
+- [ ] Tabla de sustituciones declaradas en el worker (la guarda L-3 deja de aceptar solo `build_prompt`).
+- [ ] Proveedor de lecturas en `IngestInboundMessage` (escribe los mismos campos).
+- [ ] El sandbox corre las lecturas del ingest con el proveedor del brazo.
+- [ ] Marco de capacidades (`decide()`: reglas / sombra / jev, respaldo, pisos, cola de desacuerdos, métricas) y cada regla envuelta como proveedor `reglas`.
+
+### F3 · Lecturas del cliente con Jev
+- [ ] compra · retoma · baja (piso legal) · cupón · fuera de catálogo · cantidad · mapeos (categoría, familia de color, ítem, zona de envío, producto nombrado).
+
+### F4 · Workflow V2
+- [ ] `HubaraSalesSessionWorkflowV2` sin reglas de texto; aplica veredictos grabados; guarda que falla si importa un detector de texto; brazos A1/B0/B; B0 = A1.
+
+### F5 · Texto del LLM con Jev
+- [ ] destinatario · persona · rescate · enumeración · saludo · portavelas · monto · selector · verdad de producto.
+
+### F6 · Tools, datos y etapas
+- [ ] Contrato asunto → tool, segunda puerta (ronda extra que nombra la tool), auditoría antes de enviar, montos en cada turno, revisión de cada dato de `set_order_slot`, «sí» con contexto actuando, guía de etapas, retroceso y estancamiento.
+
+### F7 · V2 en producción (código de enrutamiento; el encendido es del operador)
+- [ ] Despliegue gradual por versión de workflow (números de prueba → porcentaje → todos), vuelta atrás por registro.
+
+### F8 · Decisiones del agente y asuntos nuevos
+- [ ] Remarketing decide antes de redactar · cierre por abandono · Order Sentinel · asuntos nuevos del cuestionario.
+
+## 4. Vara para encender cada capacidad
+- Laboratorio: el bot nuevo igual o mejor que A1 en el scorecard, sin checks que empeoren (los checks que usan detectores de producción los califica el juez).
+- Banco de referencia: cada pregunta que actúa con precisión ≥ 0,95 y ≥ 30 positivos; Jev gana en los desacuerdos.
+- Producción: 7 días en sombra, caídas < 1 %, p95 < 1,5 s, misma versión de Jev con la que se calibró.
+
+## 5. Bitácora
+- 2026-09-28: juez = Claude Code subido (`0b7edd25`), main al día, 4 tests con fecha fija arreglados.

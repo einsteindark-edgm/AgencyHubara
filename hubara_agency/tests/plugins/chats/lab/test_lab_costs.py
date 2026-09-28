@@ -2,8 +2,9 @@
 
 Números del plan: el agente gastó US$7,09 en los 91 episodios reales (~404
 turnos) y el juez ~US$30 en una corrida de decisión. Corrida de decisión
-(A1, B y C × 3) ≈ US$97; corrida rápida (A1 y un bot nuevo × 1) ≈ US$24,
-contando la pasada del juez sobre el control real (A0).
+(A1 y B × 3) ≈ US$65; corrida rápida (A1 y B × 1) ≈ US$24, contando la
+pasada del juez de pago sobre el control real (A0). Sin OpenAI desde el
+2026-09-28: el único clasificador es Jev.
 La API no deja lanzar lo que no cabe en el tope por corrida ni en lo que
 queda del mes.
 """
@@ -30,12 +31,19 @@ SEP_23 = 1_790_208_000_000  # 2026-09-24T00:00Z ≈ 23-sep 19:00 Bogotá
 PAID = {"judge_usd_per_turn": JUDGE_USD_PER_TURN}
 
 
-def test_decision_run_costs_about_97_dollars() -> None:
-    assert estimate_run_usd(["A1", "B", "C"], reps=3, turns=400, **PAID) == pytest.approx(97, abs=5)
+def test_decision_run_costs_about_65_dollars() -> None:
+    assert estimate_run_usd(["A1", "B"], reps=3, turns=400, **PAID) == pytest.approx(65, abs=4)
 
 
 def test_quick_run_costs_about_24_dollars() -> None:
-    assert estimate_run_usd(["A1", "C"], reps=1, turns=400, **PAID) == pytest.approx(24, abs=2)
+    assert estimate_run_usd(["A1", "B"], reps=1, turns=400, **PAID) == pytest.approx(24, abs=2)
+
+
+def test_only_jev_has_a_classifier_cost() -> None:
+    """Sin OpenAI (brazo C, quitado el 2026-09-28) el único clasificador es Jev."""
+    from src.plugins.chats.agent.sales_lab.launch.costs import PERCEPTION_USD_PER_TURN
+
+    assert PERCEPTION_USD_PER_TURN == {"A1": 0.0, "B": 0.0002}
 
 
 def test_estimate_scales_with_turns_and_arms() -> None:

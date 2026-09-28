@@ -27,7 +27,6 @@ ERROR_DISABLED = "disabled"
 ERROR_TIMEOUT = "timeout"
 ERROR_NO_API_KEY = "no_api_key"
 ERROR_BAD_SHAPE = "bad_shape"
-ERROR_NO_LOGPROBS = "no_logprobs"
 ERROR_PROVIDER = "provider_error"
 
 

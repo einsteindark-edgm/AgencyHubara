@@ -189,7 +189,7 @@ def test_the_worker_prices_llm_turns_with_the_production_table() -> None:
 
 
 def test_a_decision_run_fits_in_the_default_run_limit() -> None:
-    """Una corrida de decisión (A1, B y C × 3 repeticiones ≈ 3.600 turnos con
+    """Una corrida de decisión (tres bots × 3 repeticiones ≈ 3.600 turnos con
     4 casos a la vez, más el juez de 10 pasadas) pasa de 12 h: el tope por
     defecto la cortaba a mitad, con el gasto hecho. 20 h + 1 h de respaldo
     siguen dentro de las 24 h que el lanzador espera a la caja."""

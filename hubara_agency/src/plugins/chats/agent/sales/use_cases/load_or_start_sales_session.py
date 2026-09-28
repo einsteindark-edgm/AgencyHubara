@@ -91,8 +91,8 @@ def _perception_meta(session_id: str) -> dict[str, str]:
     recibió, así que sin esto un chat en curso seguiría en canary/on después
     de apagar o de bajar el techo, hasta que su sesión termine. Un estado
     ilegible (editado a mano) cuenta como `off`: el mensaje viaja igual."""
-    from src.plugins.chats.agent.sales.perception.rollout import effective_mode
-    from src.plugins.chats.agent.sales.perception.rollout_store import read_state
+    from src.plugins.chats.agent.sales.decisions.rollout import effective_mode
+    from src.plugins.chats.agent.sales.decisions.rollout_store import read_state
 
     ceiling = (os.getenv("SALES_PERCEPTION_MODE_CEILING") or "off").strip().lower()
     try:

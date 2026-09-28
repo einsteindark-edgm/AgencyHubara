@@ -31,7 +31,7 @@ interface Props {
   lastBenchId: string | null;
 }
 
-const OPTIONAL_ARMS = ["B", "C"] as const;
+const OPTIONAL_ARMS = ["B"] as const;
 const STEPS = ["Exportar banco", "Prender la caja", "Correr bots", "Evaluar", "Listo"];
 
 const PHASE_STEP: Record<string, number> = {
@@ -130,7 +130,7 @@ function Seg({ label, options, value, onChange }: { label: string; options: Arra
 }
 
 function LaunchForm({ lastBenchId, onClose }: { lastBenchId: string | null; onClose: () => void }) {
-  const [picked, setPicked] = useState<Record<string, boolean>>({ B: true, C: true });
+  const [picked, setPicked] = useState<Record<string, boolean>>({ B: true });
   const [reps, setReps] = useState(1);
   const [bench, setBench] = useState<"new" | "reuse">("new");
   const arms = ["A1", ...OPTIONAL_ARMS.filter((a) => picked[a])];

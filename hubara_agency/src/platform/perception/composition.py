@@ -1,15 +1,14 @@
-"""Composición del puerto de percepción: un adaptador por perfil.
+"""Composición del puerto de percepción: un adaptador por perfil del oráculo.
 
 `get_perception_port(perfil)` construye el adaptador que el perfil de
-`profiles.yaml` declara (`openrouter_decisions` para Jev, `litellm` para
-OpenAI con logprobs). `PERCEPTION_PROVIDER` fuerza uno para todo el proceso:
+`profiles.yaml` declara (`openrouter_decisions` = Jev). `PERCEPTION_PROVIDER`
+fuerza uno para todo el proceso:
 
   fake          # adaptador falso (tests, humo del laboratorio)
   off / null    # interruptor: la percepción no corre (fail-open)
 
 Un perfil desconocido da el adaptador nulo: el turno sigue como hoy.
-Llaves: `OPENROUTER_API_KEY` (Jev) y la del proxy LiteLLM (OpenAI, cuyo alias
-`openrouter-perception` usa la misma llave de OpenRouter en el proxy).
+Llave: `OPENROUTER_API_KEY`.
 """
 from __future__ import annotations
 
@@ -19,7 +18,6 @@ from functools import lru_cache
 import structlog
 
 from src.platform.perception.adapters.fake import FakePerceptionAdapter
-from src.platform.perception.adapters.litellm import LiteLLMLogprobsAdapter
 from src.platform.perception.adapters.null import NullPerceptionAdapter
 from src.platform.perception.adapters.openrouter_decisions import OpenRouterDecisionsAdapter
 from src.platform.perception.ports import PerceptionPort
@@ -41,8 +39,12 @@ def get_perception_port(profile_id: str) -> PerceptionPort:
         return NullPerceptionAdapter()
     if profile.provider == "openrouter_decisions":
         return OpenRouterDecisionsAdapter.from_profile(profile)
-    if profile.provider == "litellm":
-        return LiteLLMLogprobsAdapter.from_profile(profile)
     if profile.provider == "fake":
         return FakePerceptionAdapter()
     return NullPerceptionAdapter()
+
+
+def oracle_timeout_s(profile_id: str, default: float = 3.0) -> float:
+    """El tiempo máximo del perfil del oráculo (el motor lo usa para cortar)."""
+    profile = load_profiles().get(profile_id)
+    return float(profile.timeout_s) if profile is not None else default

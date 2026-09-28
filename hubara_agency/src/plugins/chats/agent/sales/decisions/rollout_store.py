@@ -21,7 +21,7 @@ import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from src.plugins.chats.agent.sales.perception.rollout import RolloutState
+from src.plugins.chats.agent.sales.decisions.rollout import RolloutState
 
 _DAY_MS = 86_400_000
 _LAYER_MODES = ("shadow", "canary", "on")

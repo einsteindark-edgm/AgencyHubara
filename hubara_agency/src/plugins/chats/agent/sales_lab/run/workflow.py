@@ -50,10 +50,10 @@ with workflow.unsafe.imports_passed_through():
     from src.plugins.chats.agent.sales_lab.arms import SIMULATED_ARMS
 
 _QUICK = {"start_to_close_timeout": timedelta(minutes=2), "retry_policy": RetryPolicy(maximum_attempts=3)}
-#: Brazos que el simulador sabe correr: el bot actual (A1) y los bots nuevos
-#: con Jev (B) y con OpenAI (C). Un brazo desconocido se informa, no se corre.
+#: Brazos que el simulador sabe correr: el bot actual (A1) y el bot nuevo con
+#: Jev (B). Un brazo desconocido se informa, no se corre.
 RUNNABLE_ARMS = SIMULATED_ARMS
-ARMS_PENDING_NOTE = "{arms}: el simulador no conoce ese bot (corre A1, B y C)"
+ARMS_PENDING_NOTE = "{arms}: el simulador no conoce ese bot (corre A1 y B)"
 SPEND_CAP_NOTE = "la corrida se detuvo al llegar al tope de gasto"
 NO_JUDGE_NOTE = "calificada sin juez (solo checks de código): el gasto ya estaba en el tope"
 NO_JUDGE_FIT_NOTE = "calificada sin juez (solo checks de código): el juez (≈US${usd:.2f}) no cabía en lo que quedaba del tope"

@@ -1,0 +1,27 @@
+# Perfiles del MOTOR de decisiones (diseño v2 §03). Un perfil junta lo que
+# cambia seguido: cuestionario, política, umbrales, el perfil que corre en
+# sombra doble y el snapshot de Jev con el que se calibró. El ORÁCULO
+# (proveedor, modelo fijo, tiempo máximo, anonimización) es de la plataforma:
+# `src/platform/perception/profiles.yaml`.
+#
+# El id del perfil viaja en la señal y en Terraform
+# (`tenants.*.lab.perception_profile`). Versionados: otro cuestionario, otra
+# política u otros umbrales = un perfil NUEVO (jev-v2…), para que el
+# laboratorio y la traza digan con qué se midió.
+#
+#   oracle            perfil del oráculo (platform/perception/profiles.yaml)
+#   questions         cuestionario (decisions/questionnaires/<id>.yaml)
+#   policy            política (decisions/policies/)
+#   thresholds        umbrales de la política
+#   shadow            perfil que corre en sombra dentro de la misma activity
+#                     (solo va a la traza); null = sin sombra
+#   calibrated_model  snapshot de Jev con el que se calibró; si Jev responde
+#                     con otro, lo que actúa baja a sombra. null = sin calibrar
+
+jev-v1:
+  oracle: jev-1.13
+  questions: rafaga-v1
+  policy: turno-v1
+  thresholds: {detect: 0.70, confidence: 0.60, covered: 0.70}
+  shadow: null
+  calibrated_model: null

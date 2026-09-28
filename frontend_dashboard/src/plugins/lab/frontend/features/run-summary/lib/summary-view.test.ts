@@ -22,7 +22,7 @@ describe("textos del Resumen", () => {
     const unsure = { delta: 0.05, low: -0.03, high: 0.12, conclusive: false, sessions: 80 };
 
     expect(conclusion("A1", "B", up)).toEqual({ tone: "ok", text: "Nuevo + Jev pasa 12 pp más episodios que Actual simulado" });
-    expect(conclusion("A1", "C", down)).toEqual({ tone: "bad", text: "Nuevo + OpenAI pasa 8 pp menos episodios que Actual simulado" });
+    expect(conclusion("A1", "B", down)).toEqual({ tone: "bad", text: "Nuevo + Jev pasa 8 pp menos episodios que Actual simulado" });
     expect(conclusion("A1", "B", unsure)).toEqual({ tone: "neutral", text: "Aún no concluyente: el intervalo cruza el cero" });
   });
 

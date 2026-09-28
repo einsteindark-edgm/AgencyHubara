@@ -19,11 +19,10 @@ import httpx
 import pytest
 
 from src.platform.perception.adapters.fake import FakePerceptionAdapter
-from src.platform.perception.adapters.litellm import LiteLLMLogprobsAdapter
 from src.platform.perception.adapters.null import NullPerceptionAdapter
 from src.platform.perception.adapters.openrouter_decisions import OpenRouterDecisionsAdapter
 from src.platform.perception.ports import PerceptionResult
-from tests.platform.perception.recorded import DECISIONS_OK, LOGPROBS_OK, QUESTIONS
+from tests.platform.perception.recorded import DECISIONS_OK, QUESTIONS
 
 STATE = "[1] (10:02:05) me mandas el catálogo\n[2] (+7 s) y el envío a Bogotá cuánto sale"
 
@@ -46,21 +45,9 @@ def _json_handler(payload: dict, status: int = 200, sink: list | None = None):
     return handler
 
 
-def _logprobs(response: dict | Exception, sink: list | None = None, **kw) -> LiteLLMLogprobsAdapter:
-    async def completion(**kwargs):
-        if sink is not None:
-            sink.append(kwargs)
-        if isinstance(response, Exception):
-            raise response
-        return response
-
-    return LiteLLMLogprobsAdapter(model="litellm_proxy/openrouter-perception", completion=completion, **kw)
-
-
 ADAPTERS = {
     "fake": lambda: FakePerceptionAdapter(),
     "openrouter_decisions": lambda: _decisions(_json_handler(DECISIONS_OK)),
-    "litellm": lambda: _logprobs(LOGPROBS_OK),
 }
 
 
@@ -200,77 +187,3 @@ async def test_decisions_anonymizes_the_state_when_the_profile_asks() -> None:
     sent_state = json.loads(sent[0].content)["state"]
     for secret in ("Carolina", "3001234567", "caro@example.com", "45 # 12-30"):
         assert secret not in sent_state
-
-
-# ── OpenAI por OpenRouter: logprobs vía LiteLLM ─────────────────────────────
-
-
-async def test_logprobs_request_asks_for_logprobs_and_one_code_per_answer() -> None:
-    sent: list[dict] = []
-
-    await _logprobs(LOGPROBS_OK, sink=sent, params={"logprobs": True, "top_logprobs": 20, "temperature": 0}).ask(
-        STATE, QUESTIONS, timeout_s=3
-    )
-
-    [call] = sent
-    assert call["model"] == "litellm_proxy/openrouter-perception"
-    assert (call["logprobs"], call["top_logprobs"], call["temperature"]) == (True, 20, 0)
-    prompt = "\n".join(m["content"] for m in call["messages"])
-    assert "S = sí" in prompt and "N = no" in prompt
-    assert "A = descubrimiento" in prompt and "C = confirmacion" in prompt
-    assert "0 = Sin fecha" in prompt and "2 = Hoy mismo" in prompt
-    assert STATE in prompt
-
-
-async def test_logprobs_are_renormalized_over_the_allowed_codes() -> None:
-    result = await _logprobs(LOGPROBS_OK).ask(STATE, QUESTIONS, timeout_s=3)
-
-    by_id = {a.id: a for a in result.answers}
-    p_yes = math.exp(-0.07) / (math.exp(-0.07) + math.exp(-2.7))  # "Si" no es un código permitido
-    assert math.isclose(by_id["topic.catalogo"].p, p_yes, rel_tol=1e-6)
-    stage = dict(by_id["stage"].probs)
-    assert by_id["stage"].choice == "variantes" and stage["variantes"] > 0.8
-    assert math.isclose(sum(stage.values()), 1.0, abs_tol=1e-9)
-    levels = [math.exp(-2.3), math.exp(-0.5), math.exp(-1.2)]
-    expected = sum(i * v for i, v in enumerate(levels)) / sum(levels)
-    assert math.isclose(by_id["urgencia"].score, expected, rel_tol=1e-6)
-
-
-async def test_logprobs_missing_fails_open_instead_of_trusting_the_text() -> None:
-    """Sin logprobs (proveedor que no los da) la confianza sería inventada."""
-    no_lp = {**LOGPROBS_OK, "choices": [{**LOGPROBS_OK["choices"][0], "logprobs": None}]}
-
-    result = await _logprobs(no_lp).ask(STATE, QUESTIONS, timeout_s=3)
-
-    assert (result.ok, result.error) == (False, "no_logprobs")
-
-
-async def test_logprobs_code_outside_the_allowed_set_fails_open() -> None:
-    bad = json.loads(json.dumps(LOGPROBS_OK))
-    bad["choices"][0]["logprobs"]["content"][2]["token"] = "Z"
-
-    result = await _logprobs(bad).ask(STATE, QUESTIONS, timeout_s=3)
-
-    assert (result.ok, result.error) == (False, "bad_shape")
-
-
-@pytest.mark.parametrize(
-    ("exc", "error"),
-    [(asyncio.TimeoutError(), "timeout"), (RuntimeError("litellm.APIError: 502"), "provider_error")],
-)
-async def test_logprobs_provider_failure_fails_open(exc: Exception, error: str) -> None:
-    result = await _logprobs(exc).ask(STATE, QUESTIONS, timeout_s=3)
-
-    assert (result.ok, result.error) == (False, error)
-
-
-async def test_logprobs_calibration_by_temperature_is_applied_per_question() -> None:
-    """Temperature scaling (§1.3): T > 1 aplana una probabilidad sobreconfiada."""
-    plain = await _logprobs(LOGPROBS_OK).ask(STATE, QUESTIONS, timeout_s=3)
-    calibrated = await _logprobs(LOGPROBS_OK, calibration={"topic.catalogo": {"temperature": 2.0}}).ask(
-        STATE, QUESTIONS, timeout_s=3
-    )
-
-    p_plain = next(a.p for a in plain.answers if a.id == "topic.catalogo")
-    p_cal = next(a.p for a in calibrated.answers if a.id == "topic.catalogo")
-    assert 0.5 < p_cal < p_plain

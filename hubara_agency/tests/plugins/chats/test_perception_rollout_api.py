@@ -145,8 +145,8 @@ def test_test_numbers_must_match_whole(client: TestClient) -> None:
 def test_a_slow_raise_never_overwrites_a_turn_off_that_arrived_meanwhile(client: TestClient, tmp_path: Path, monkeypatch) -> None:
     """Subir calcula las métricas de la sombra (lento); si en ese tiempo otro
     operador apagó, la subida no pisa el apagado: 409 y el estado queda off."""
-    from src.plugins.chats.agent.sales.perception.rollout import RolloutState
-    from src.plugins.chats.agent.sales.perception.rollout_store import ShadowMetrics, write_state
+    from src.plugins.chats.agent.sales.decisions.rollout import RolloutState
+    from src.plugins.chats.agent.sales.decisions.rollout_store import ShadowMetrics, write_state
 
     client.put("/api/chats/perception/rollout", json={"mode": "shadow"})
 

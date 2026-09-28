@@ -26,14 +26,14 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from src.plugins.chats.agent.sales.perception.rollout import (
+from src.plugins.chats.agent.sales.decisions.rollout import (
     MODES,
     RolloutFacts,
     RolloutState,
     can_set_mode,
     readiness,
 )
-from src.plugins.chats.agent.sales.perception.rollout_store import (
+from src.plugins.chats.agent.sales.decisions.rollout_store import (
     ShadowMetrics,
     read_state,
     shadow_metrics,

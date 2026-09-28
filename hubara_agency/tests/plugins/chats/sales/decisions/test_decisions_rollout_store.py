@@ -7,8 +7,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.plugins.chats.agent.sales.perception.rollout import RolloutState
-from src.plugins.chats.agent.sales.perception.rollout_store import (
+from src.plugins.chats.agent.sales.decisions.rollout import RolloutState
+from src.plugins.chats.agent.sales.decisions.rollout_store import (
     read_state,
     shadow_metrics,
     write_state,
@@ -68,11 +68,11 @@ def test_shadow_metrics_come_from_the_turn_traces(tmp_path: Path) -> None:
 
 def test_the_evidence_is_recent_real_and_from_the_current_profile(tmp_path: Path) -> None:
     """La vara se mide con lo que va a actuar: el perfil vigente (si Terraform
-    cambia de Jev a OpenAI, la sombra empieza de cero), las últimas dos
+    cambia de `jev-v1` a `jev-v2`, la sombra empieza de cero), las últimas dos
     semanas (lo viejo se olvida) y sin las sesiones de la suite golden."""
     s = tmp_path / "wa_573001234567" / "evals"
     _trace(s, at=NOW - 20 * DAY, mode="shadow", fallback="timeout", dur=9000)  # fuera de la ventana
-    _trace(s, at=NOW - DAY, mode="shadow", fallback="timeout", dur=9000, profile="openai-lp-v1")  # otro perfil
+    _trace(s, at=NOW - DAY, mode="shadow", fallback="timeout", dur=9000, profile="jev-v2")  # otro perfil
     _trace(tmp_path / "wa_golden_x" / "evals", at=NOW - DAY, mode="shadow", fallback="timeout", dur=9000)
     _trace(s, at=NOW - DAY, mode="shadow", fallback=None, dur=400)
 

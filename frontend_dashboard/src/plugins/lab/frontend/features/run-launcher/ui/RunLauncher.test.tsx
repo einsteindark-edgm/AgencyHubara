@@ -91,18 +91,20 @@ describe("RunLauncher", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
 
     expect(screen.getByRole("checkbox", { name: /A1 · Actual simulado/ })).toBeDisabled();
-    expect(await screen.findByText(/≈ US\$31,5 estimado · 309 turnos del banco/)).toBeInTheDocument();
-    expect(estimateCalls().at(-1)).toContain("arms=A1%2CB%2CC&reps=1&bench=new");
+    expect(await screen.findByText(/≈ US\$21 estimado · 309 turnos del banco/)).toBeInTheDocument();
+    expect(estimateCalls().at(-1)).toContain("arms=A1%2CB&reps=1&bench=new");
+    // Sin el rival OpenAI (2026-09-28): el único bot nuevo es Jev.
+    expect(screen.queryByRole("checkbox", { name: /OpenAI/ })).not.toBeInTheDocument();
   });
 
   it("recalcula al cambiar bots, repeticiones y banco", async () => {
     renderLauncher();
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /C · Nuevo \+ OpenAI/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /B · Nuevo \+ Jev/ }));
     fireEvent.click(screen.getByRole("button", { name: "3 · decisión" }));
     fireEvent.click(screen.getByRole("button", { name: /Reusar el último/ }));
 
-    await waitFor(() => expect(estimateCalls().at(-1)).toContain("arms=A1%2CB&reps=3&bench=bench-run-20260920-0900-cd34"));
+    await waitFor(() => expect(estimateCalls().at(-1)).toContain("arms=A1&reps=3&bench=bench-run-20260920-0900-cd34"));
   });
 
   it("si pasa un tope, dice cuál y no deja lanzar", async () => {
@@ -117,12 +119,12 @@ describe("RunLauncher", () => {
   it("lanzar manda lo marcado", async () => {
     renderLauncher();
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
-    await screen.findByText(/≈ US\$31,5/);
+    await screen.findByText(/≈ US\$21/);
     fireEvent.click(screen.getByRole("button", { name: "Lanzar corrida" }));
 
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([u, init]) => String(u).endsWith("/api/lab/runs") && init?.method === "POST");
-      expect(post && JSON.parse(post[1].body)).toEqual({ arms: ["A1", "B", "C"], reps: 1, bench: "new" });
+      expect(post && JSON.parse(post[1].body)).toEqual({ arms: ["A1", "B"], reps: 1, bench: "new" });
     });
   });
 
@@ -130,7 +132,7 @@ describe("RunLauncher", () => {
     launchResponse = { status: 409, body: { detail: { message: "Ya hay una corrida en curso." } } };
     renderLauncher();
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
-    await screen.findByText(/≈ US\$31,5/);
+    await screen.findByText(/≈ US\$21/);
     fireEvent.click(screen.getByRole("button", { name: "Lanzar corrida" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Ya hay una corrida en curso.");
@@ -140,7 +142,7 @@ describe("RunLauncher", () => {
     launchResponse = { status: 504, body: { detail: "El provider no respondió a tiempo: la operación PUEDE haberse aplicado." } };
     renderLauncher();
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
-    await screen.findByText(/≈ US\$31,5/);
+    await screen.findByText(/≈ US\$21/);
     fireEvent.click(screen.getByRole("button", { name: "Lanzar corrida" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("No sé si la corrida arrancó");
