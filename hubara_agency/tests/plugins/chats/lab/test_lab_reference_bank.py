@@ -336,17 +336,19 @@ class _RecordingPort:
         return await self.fake.ask(state, questions, timeout_s=timeout_s, redact=redact)
 
 
+@pytest.mark.parametrize("profile_id", ["jev-v2", "jev-v3"])
 async def test_the_item_state_is_exactly_what_the_engine_sends_jev_in_production(
-    tmp_path: Path, _isolate_vault_dir: Path, monkeypatch
+    tmp_path: Path, _isolate_vault_dir: Path, monkeypatch, profile_id: str
 ) -> None:
     """En producción la activity lee el vault: el historial ya trae la ráfaga
     (con la cita) y la metadata es la del inicio del turno. El ítem del banco
-    tiene que ser, carácter por carácter, lo que Jev recibió."""
+    tiene que ser, carácter por carácter, lo que Jev recibió (con `jev-v3`,
+    también las preguntas de la etapa que calcula el código)."""
     from src.sdk import connectorkit
 
     bench = _write_bench(tmp_path)
     case = _turn(bench, 3)
-    item = build_item(case, EVENTS, profile_id="jev-v2")
+    item = build_item(case, EVENTS, profile_id=profile_id)
 
     vault = _isolate_vault_dir / SID
     (vault / "sessions").mkdir(parents=True)
@@ -360,7 +362,7 @@ async def test_the_item_state_is_exactly_what_the_engine_sends_jev_in_production
     burst = [{"text": "Si", "ts_ms": T0 + 120_000, "wamid": "wamid.c3"}]
 
     await ActivityEnvironment().run(
-        perceive_burst_activity, PerceiveInput(session_id=SID, profile="jev-v2", messages=burst)
+        perceive_burst_activity, PerceiveInput(session_id=SID, profile=profile_id, messages=burst)
     )
 
     assert port.sent == [item["state"]]
@@ -673,7 +675,7 @@ async def test_when_jev_fails_the_reason_is_kept(monkeypatch) -> None:
     assert [(r["ok"], r["error"], r["answers"]) for r in rows] == [(False, "timeout", {})]
 
 
-@pytest.mark.parametrize("profile_id", ["jev-v1", "jev-v2"])
+@pytest.mark.parametrize("profile_id", ["jev-v1", "jev-v2", "jev-v3"])
 def test_every_item_is_json(tmp_path: Path, profile_id: str) -> None:
     bench = _write_bench(tmp_path)
     for case in build_cases(bench, sales_workspace=WS).cases:

@@ -30,6 +30,7 @@ from src.plugins.chats.agent.sales.decisions import engine
 from src.plugins.chats.agent.sales.decisions.context import (
     TurnContext,
     customer_window,
+    missing_for_stage,
     order_facts,
     redact_terms_from_slots,
 )
@@ -289,7 +290,15 @@ def build_item(case: LabCase, events: Sequence[Mapping[str, Any]], *, profile_id
     if questionnaire.uses_context:
         burst_events = [e for _, e in pairs if e is not None]
         window = customer_window([*before, *burst_events], burst_wamids=(), burst_size=len(burst_events))
-        context = TurnContext(window=window, facts=order_facts(metadata, stage=resolve_funnel_stage(metadata)))
+        stage = resolve_funnel_stage(metadata)
+        # Sin `stagnant`: solo lo lee la política (la guía de etapas), nunca
+        # llega a Jev; la etapa sí (filtra las preguntas de etapa).
+        context = TurnContext(
+            window=window,
+            facts=order_facts(metadata, stage=stage),
+            stage=stage,
+            missing=missing_for_stage(metadata, stage),
+        )
     state, questions = engine.burst_request(
         questionnaire, PerceiveInput(session_id=case.session_id, profile=profile_id, messages=messages), context=context
     )
