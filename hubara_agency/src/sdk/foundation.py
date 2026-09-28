@@ -54,3 +54,9 @@ from src.platform.routing import (
     conversation_routes as conversation_routes,
     resolve_route_workflow_id as resolve_route_workflow_id,
 )
+# Versión del workflow por conversación (motor de decisiones, F2/F7): el plugin
+# registra su enrutador y la plataforma lo consulta al arrancar por nombre.
+from src.platform.workflow_routing import (
+    register_workflow_router as register_workflow_router,
+    route_workflow as route_workflow,
+)

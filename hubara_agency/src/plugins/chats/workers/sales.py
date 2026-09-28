@@ -39,9 +39,6 @@ from src.platform.temporal.dispatcher import (
     write_pending_handoff_activity,
 )
 
-from exoclaw_temporal.activities.conversation import (
-    build_prompt as generic_build_prompt,
-)
 
 from src.platform.tool_extensions import register_tool_extension
 from src.platform.tools.escalation import EscalateToHumanTool
@@ -115,6 +112,7 @@ from src.plugins.chats.agent.sales.tools.ui_intents import (
 from src.plugins.chats.agent.sales.workflows.sales_session import (
     HubaraSalesSessionWorkflow,
 )
+from src.plugins.chats.agent.sales.decisions.routing import register_sales_workflow_router
 from src.plugins.chats.agent.sales.decisions.activities import (
     PERCEPTION_ACTIVITIES,
 )
@@ -399,25 +397,41 @@ register_tool_extension(
 )
 
 
+def register_decisions_routing() -> None:
+    """Motor de decisiones F2/F7: cuando la plataforma arranca Ventas desde
+    este worker (orquestación o activity de arranque), la versión del workflow
+    la decide el registro de bots por conversación."""
+    register_sales_workflow_router()
+
+
+register_decisions_routing()
+
+
 # Activities del worker de ventas. Constante de módulo (no inline en `main`)
 # para que el sandbox del laboratorio (sales_lab/sandbox) arme SU lista desde
 # esta: las mismas activities, con fakes solo donde hay efectos. Una activity
 # nueva acá que el sandbox no clasifique hace fallar la corrida (y su test).
+# Sustituciones DECLARADAS del turno compartido (motor de decisiones F2,
+# enchufe 2): nombre de activity → override con el MISMO nombre y el mismo
+# contrato, así el workflow no cambia (cero implicaciones de replay) y el
+# laboratorio sustituye por el mismo mecanismo. Hoy: `build_prompt` → el
+# guion por etapa `sales_build_prompt` (dieta de prompt). Registrar las dos
+# rompería el Worker (nombre duplicado): la tabla reemplaza una por una.
+# `test_conversational_activities_parity` valida cada entrada.
+ACTIVITY_SUBSTITUTIONS = {
+    "build_prompt": sales_build_prompt,
+}
+
+
 SALES_ACTIVITIES = [
     # Set conversacional compartido — TODO worker que corra
     # run_agent_turn lo spread-ea desde workflow_helpers (fuente
-    # única, L-3). Nunca listar esas activities a mano.
-    # EXCEPCIÓN Sales (dieta de prompt): `build_prompt` se reemplaza
-    # por el override por-etapa `sales_build_prompt` — MISMO nombre
-    # de activity, mismo contrato → el workflow no cambia (cero
-    # replay implications). Registrar ambas rompería el Worker
-    # (nombre duplicado), por eso se filtra la genérica.
+    # única, L-3). Nunca listar esas activities a mano; un override
+    # entra por `ACTIVITY_SUBSTITUTIONS`.
     *(
-        a
+        ACTIVITY_SUBSTITUTIONS.get(a.__temporal_activity_definition.name, a)
         for a in CONVERSATIONAL_TURN_ACTIVITIES
-        if a is not generic_build_prompt
     ),
-    sales_build_prompt,
     send_whatsapp_message_activity,
     send_typing_indicator_activity,
     persist_assistant_message_activity,

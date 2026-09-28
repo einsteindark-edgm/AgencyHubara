@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -37,10 +39,26 @@ from src.plugins.chats.agent.sales_lab.arms import signal_meta
 from src.plugins.chats.agent.sales_lab.sandbox.activities import SandboxCapture, sandbox_activities
 from src.plugins.chats.agent.sales_lab.sandbox.clock import frozen_clock
 from src.plugins.chats.agent.sales_lab.sandbox.materialize import materialize_case, scrub_text
+from src.plugins.chats.agent.sales_lab.sandbox.readings import apply_burst_readings
 
 PROD_SALES_WORKSPACE = "app-hubara-agency-src-plugins-chats-agent-sales-workspace"
 DEFAULT_TIMEOUT_S = 600.0
 SALES_WORKFLOW = "HubaraSalesSessionWorkflow"
+
+
+@contextmanager
+def _pinned_bot(arm: str):
+    """El bot del brazo para todo lo que corre en este proceso (lecturas,
+    activities y tools: `bot_for_session` lee `DECISIONS_BOT`)."""
+    previous = os.environ.get("DECISIONS_BOT")
+    os.environ["DECISIONS_BOT"] = arm
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("DECISIONS_BOT", None)
+        else:
+            os.environ["DECISIONS_BOT"] = previous
 
 
 def workspace_slug(path: str) -> str:
@@ -154,7 +172,11 @@ async def run_case(
         "arm": arm,
         "error": None,
     }
-    with installed_sandbox_ports(promotions_path=bench_dir / "promotions.json", catalog=get_catalog_client()), frozen_clock(at_ms):
+    # El bot del brazo vale para TODO el caso: las lecturas del ingest, las
+    # activities y las tools consultan el registro de bots (`DECISIONS_BOT`).
+    with _pinned_bot(arm), installed_sandbox_ports(
+        promotions_path=bench_dir / "promotions.json", catalog=get_catalog_client()
+    ), frozen_clock(at_ms):
         # El workflow y sus activities salen del WORKER de ventas (R-DIP #10: un
         # agente no importa los contratos ni los workflows de otro); se arranca
         # por nombre con la entrada como JSON, igual que el dispatcher.
@@ -174,10 +196,16 @@ async def run_case(
                 if isinstance(r, dict)
             ],
         )
-        context = turn_context(metadata, at_ms=at_ms)
         messages = [m for m in case.get("burst") or [] if isinstance(m, dict) and str(m.get("text") or "").strip()]
         if not messages:
             messages = [{"text": str((case.get("real") or {}).get("inbound_text") or "")}]
+        # Las lecturas del ingest (motor de decisiones F2), con el bot del
+        # brazo: lo que en producción el ingest escribe antes del turno.
+        result["readings"] = await apply_burst_readings(
+            metadata, messages, session_id=box.session_id, vault_dir=box.vault_dir, at_ms=at_ms
+        )
+        metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
+        context = turn_context(metadata, at_ms=at_ms)
 
         def _args(message: dict[str, Any]) -> list[Any]:
             meta = signal_meta(arm, message)

@@ -21,8 +21,9 @@ SALES = SRC / "plugins" / "chats" / "agent" / "sales"
 DECISIONS = SALES / "decisions"
 PKG = "src.plugins.chats.agent.sales.decisions"
 # Módulos del motor que PUEDEN importar Temporal: las activities (llevan
-# `@activity.defn`) y la fachada del workflow (las reexporta).
-_TEMPORAL_OK = {"activities.py", "facade.py"}
+# `@activity.defn`), la fachada del workflow (las reexporta) y el enrutador
+# del workflow que registran los workers (lee el vault con `src.sdk.runtime`).
+_TEMPORAL_OK = {"activities.py", "facade.py", "routing.py"}
 
 
 def _imports(path: Path) -> set[str]:

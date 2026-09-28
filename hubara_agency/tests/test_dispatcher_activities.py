@@ -144,3 +144,31 @@ async def test_schedule_remarketing_uses_start_delay(monkeypatch: pytest.MonkeyP
     kwargs = fake_client.start_calls[0]["kwargs"]
     assert kwargs.get("start_delay") == timedelta(seconds=30)
     assert kwargs.get("id") == "remarketing-wa_5494444444444"
+
+
+async def test_start_or_signal_sales_starts_the_version_the_plugin_routes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Motor de decisiones F2/F7: si Ventas no corre, arranca la versión del
+    workflow que el plugin decide para ESA conversación (registro de bots)."""
+    from src.platform.workflow_routing import clear_workflow_routers, register_workflow_router
+
+    fake_client = _FakeClient(_FakeHandle(describe_raises=True))
+
+    async def fake_get_client() -> _FakeClient:
+        return fake_client
+
+    monkeypatch.setattr("src.platform.temporal.dispatcher.get_temporal_client", fake_get_client)
+    monkeypatch.setattr("src.platform.temporal.dispatcher.WORKSPACE_VAULT_DIR", tmp_path)
+    clear_workflow_routers()
+    register_workflow_router("chats", "sales", lambda sid: "HubaraSalesSessionWorkflowV2")
+    try:
+        from src.platform.temporal.dispatcher import start_or_signal_sales_workflow_activity
+
+        decision = TransferDecision(session_id="wa_573001234567", target_route="ventas", summary="volvió")
+        await ActivityEnvironment().run(start_or_signal_sales_workflow_activity, decision)
+    finally:
+        clear_workflow_routers()
+
+    [call] = fake_client.start_calls
+    assert call["args"][0] == "HubaraSalesSessionWorkflowV2"

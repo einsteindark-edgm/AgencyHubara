@@ -71,6 +71,8 @@ from src.platform.whatsapp.marketing_opt_out import (
     OPT_OUT_SOURCE_TEXT as OPT_OUT_SOURCE_TEXT,
     MarketingOptOut as MarketingOptOut,
     detect_marketing_opt_out as detect_marketing_opt_out,
+    has_recent_marketing_context as has_recent_marketing_context,
+    is_opt_out_text as is_opt_out_text,
     is_meta_opt_out_failure as is_meta_opt_out_failure,
     mark_marketing_opt_out as mark_marketing_opt_out,
     marketing_opt_out_info as marketing_opt_out_info,
@@ -82,7 +84,13 @@ from src.platform.whatsapp.marketing_opt_out import (
 # proactivamente hasta esa fecha.
 from src.platform.whatsapp.reengagement_deferral import (
     DEFERRAL_KEY as DEFERRAL_KEY,
+    DEFERRAL_KIND_OPEN as DEFERRAL_KIND_OPEN,
+    OPEN_DEFERRAL_MS as OPEN_DEFERRAL_MS,
+    ReengagementDeferral as ReengagementDeferral,
+    apply_reengagement_deferral as apply_reengagement_deferral,
     appointment_pending as appointment_pending,
+    is_courtesy_text as is_courtesy_text,
+    parse_reengagement_deferral as parse_reengagement_deferral,
     fresh_resume_label as fresh_resume_label,
     postponed_view as postponed_view,
     clear_postponement as clear_postponement,

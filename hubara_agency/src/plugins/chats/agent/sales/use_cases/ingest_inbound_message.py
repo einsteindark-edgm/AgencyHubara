@@ -24,7 +24,7 @@ isinstance check).
 """
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, Protocol, TYPE_CHECKING
 
 import structlog
 
@@ -53,12 +53,8 @@ from src.plugins.chats.agent.sales.translate import (
 )
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.sdk.messagingkit import (
-    OPT_OUT_SOURCE_TEXT,
-    detect_marketing_opt_out,
-    mark_marketing_opt_out,
     fresh_resume_label,
     opt_out_campaign_id,
-    register_reengagement_deferral,
     resolve_local_timezone,
     update_reengagement_index_entry,
 )
@@ -97,8 +93,9 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 )
 from src.plugins.chats.shared.purchase_signals import (
     build_deferral_note,
-    register_inbound_purchase_signals,
 )
+from src.plugins.chats.agent.sales.decisions.readings import Inbound, apply_readings
+from src.plugins.chats.agent.sales.use_cases.funnel_stage import resolve_funnel_stage
 from src.plugins.chats.agent.sales.use_cases.order_draft import (
     build_order_draft_note,
     get_projectable_draft,
@@ -149,6 +146,16 @@ if TYPE_CHECKING:
 #: DI-friendly factory for the Temporal client. Async so the composition
 #: root can wire `get_temporal_client` directly without wrapping.
 TemporalClientFactory = Callable[[], Awaitable["Client"]]
+
+
+class InboundReadingsProvider(Protocol):
+    """Las lecturas del cliente (motor de decisiones, `decisions/readings.py`)."""
+
+    async def read(self, inbound: Inbound) -> Any: ...
+
+
+#: `execute(..., customer_text=_FROM_MESSAGE)`: el texto del cliente es el del mensaje.
+_FROM_MESSAGE: Any = object()
 
 #: `(código, now_ms) → CouponApplication`: valida el cupón de la campaña
 #: contra Medusa y su cupo (`resolve_coupon_application`), sin escribir.
@@ -209,8 +216,14 @@ class IngestInboundMessage:
         catalog: CatalogPort | None = None,
         campaign_coupon: CampaignCouponApplier | None = None,
         coupon_units_now: CouponUnitsReader | None = None,
+        readings: InboundReadingsProvider | None = None,
     ) -> None:
         self._history_store = history_store
+        # Motor de decisiones (enchufe 1): las lecturas del cliente (compra,
+        # retoma, baja) las da el proveedor; el ingest escribe los MISMOS
+        # campos de hoy. Sin proveedor, el del motor con el registro de bots
+        # (`reglas` por defecto: el resultado es el de siempre).
+        self._readings = readings
         # Cupón de la campaña: se valida y aplica solo cuando el cliente
         # responde (sin esto el bot lo aplica con `apply_coupon`).
         self._campaign_coupon = campaign_coupon
@@ -236,6 +249,7 @@ class IngestInboundMessage:
         parsed: WhatsAppMessage,
         *,
         persisted_image_url: str | None = None,
+        customer_text: Any = _FROM_MESSAGE,
     ) -> None:
         """Procesa un inbound parseado.
 
@@ -244,6 +258,12 @@ class IngestInboundMessage:
         sintético, pasa acá la URL de la imagen ya persistida en el media store
         para que el evento del cliente en el JSONL la lleve y el dashboard la
         renderice. Los inbounds normales (texto del webhook) lo dejan en None.
+
+        ``customer_text``: lo que ESCRIBIÓ el cliente, para las lecturas
+        (compra, retoma, baja). Por defecto, el texto del mensaje. El reentry
+        de visión pasa solo el texto que el cliente puso en la foto (o None):
+        la descripción la escribió la visión y no se lee como si fuera del
+        cliente (bug: un comprobante pausaba la reactivación una semana).
         """
         session_id = f"{WHATSAPP_SESSION_PREFIX}{parsed.from_number}"
 
@@ -419,61 +439,61 @@ class IngestInboundMessage:
         # disparar un utility template legítimo.
         metadata["last_inbound_at_ms"] = now_ms
         metadata["service_window_expires_at_ms"] = compute_service_window_expiry(now_ms)
-        # Señal determinista del cliente sobre la compra (2026-09-14): un
-        # "después" bloquea el cierre en este turno; un "sí" con producto en
-        # el draft registra la confirmación que exigen request_shipping_details
-        # / CONFIRMADO_SIN_DATOS / ORDER_PENDING_SHIPPING_DETAILS.
-        inbound_signal = register_inbound_purchase_signals(
+        # Lecturas del cliente (motor de decisiones, enchufe 1): compra,
+        # retoma y baja las da el proveedor, con el metadata de ANTES de este
+        # mensaje y lo que el cliente vio; acá solo se escriben, igual que hoy.
+        tz = resolve_local_timezone(session_id)
+        readings = await self._read_inbound(
+            Inbound(
+                session_id=session_id,
+                text=parsed.text if customer_text is _FROM_MESSAGE else customer_text,
+                now_ms=now_ms,
+                message_id=parsed.message_id,
+                interactive=parsed.interactive,
+                order=parsed.order,
+                metadata=metadata,
+                events=self._session_events(session_id),
+                stage=resolve_funnel_stage(metadata),
+                tz=tz,
+            )
+        )
+        # Se escriben los MISMOS campos de siempre (una sola función, la misma
+        # que usa el sandbox del laboratorio):
+        # * señal de compra (2026-09-14): un "después" bloquea el cierre en
+        #   este turno; un "sí" con producto en el draft registra la
+        #   confirmación que exigen request_shipping_details /
+        #   CONFIRMADO_SIN_DATOS / ORDER_PENDING_SHIPPING_DETAILS;
+        # * aplazamiento con fecha ("les escribo la otra semana"): hasta esa
+        #   fecha remarketing y el watchdog no le escriben (runs 337efe8c /
+        #   ee3cec91: 4 toques en 24h → "No más"); una cortesía no la levanta;
+        # * baja de marketing (campañas directas): el template promete
+        #   "respóndeme NO MÁS y te doy de baja". La frase explícita es piso:
+        #   con el motor en `jev`, Jev solo agrega bajas. Sticky: solo la
+        #   revierte el operador. Queda registrado cuándo, por qué vía y qué
+        #   campaña la provocó: la que citó (2026-09-25) o la del touch
+        #   reciente. Una prueba citada no carga la baja.
+        _quoted = quoted_campaign_touch(metadata, (parsed.context or {}).get("id"))
+        written = apply_readings(
             metadata,
-            parsed.text,
+            readings,
+            text=parsed.text,
             now_ms=now_ms,
             message_id=parsed.message_id,
-            interactive=parsed.interactive,
-            order=parsed.order,
+            tz=tz,
+            opt_out_campaign_id=(
+                _quoted["campaign_id"]
+                if _quoted is not None and not _quoted.get("test")
+                else opt_out_campaign_id(metadata, now_ms)
+            ),
         )
-        if inbound_signal is not None:
+        if written.signal is not None:
             logger.info(
                 "inbound_purchase_signal",
                 session_id=session_id,
-                kind=inbound_signal,
+                kind=written.signal,
                 text_preview=(parsed.text or "")[:60],
             )
-
-        # Aplazamiento con fecha ("les escribo la otra semana"): hasta esa
-        # fecha el remarketing y el watchdog no le escriben (incidente runs
-        # 337efe8c / ee3cec91: 4 toques en 24h tras el aplazamiento → "No
-        # más"). Una cortesía no la levanta; retomar la charla sí.
-        register_reengagement_deferral(
-            metadata,
-            parsed.text,
-            now_ms=now_ms,
-            tz=resolve_local_timezone(session_id),
-        )
-
-        # Opt-out de marketing (plugin marketing, campañas directas): el
-        # template aprobado promete "respóndeme NO MÁS y te doy de baja" —
-        # este es el punto que la CUMPLE. Determinista (sin LLM): un pedido
-        # de baja no puede depender de interpretación. Sticky: solo lo
-        # revierte el operador editando el metadata.
-        if (
-            not metadata.get("marketing_opt_out")
-            and parsed.text
-            and detect_marketing_opt_out(parsed.text, metadata, now_ms)
-        ):
-            # Queda registrado cuándo, por qué vía y qué campaña lo provocó:
-            # la que citó (2026-09-25) o la del touch reciente — métrica de
-            # bajas por campaña. Una prueba citada no carga la baja.
-            _quoted = quoted_campaign_touch(metadata, (parsed.context or {}).get("id"))
-            mark_marketing_opt_out(
-                metadata,
-                now_ms=now_ms,
-                source=OPT_OUT_SOURCE_TEXT,
-                campaign_id=(
-                    _quoted["campaign_id"]
-                    if _quoted is not None and not _quoted.get("test")
-                    else opt_out_campaign_id(metadata, now_ms)
-                ),
-            )
+        if written.opted_out:
             # Pidió la baja: no se le sigue conversando la campaña.
             campaign_reply_note = None
             campaign_reply_touch = None
@@ -481,7 +501,7 @@ class IngestInboundMessage:
                 "marketing_opt_out_detected",
                 session_id=session_id,
                 campaign_id=metadata.get("marketing_opt_out_campaign_id"),
-                text_preview=parsed.text[:60],
+                text_preview=(parsed.text or "")[:60],
             )
 
         # HU-WA24H-001 F1.3: ventana extendida 72h CTWA. Solo se setea la
@@ -1063,6 +1083,15 @@ class IngestInboundMessage:
     # =========================================================================
     # Helpers
     # =========================================================================
+
+    async def _read_inbound(self, inbound: Inbound) -> Any:
+        """Las lecturas del cliente con el proveedor inyectado o el del motor."""
+        provider = self._readings
+        if provider is None:
+            from src.plugins.chats.agent.sales.decisions.readings import EngineReadings
+
+            provider = EngineReadings(WORKSPACE_VAULT_DIR)
+        return await provider.read(inbound)
 
     def _session_events(self, session_id: str) -> list[dict[str, Any]]:
         """El JSONL de la sesión (lo que ve el dashboard). Vacío si el store
@@ -1765,6 +1794,8 @@ class IngestInboundMessage:
             await self.execute(
                 self._synthetic_text_message(parsed, placeholder),
                 persisted_image_url=persisted_image_url,
+                # Las lecturas solo leen lo que escribió el cliente en la foto.
+                customer_text=caption or None,
             )
             return
 
@@ -1814,6 +1845,9 @@ class IngestInboundMessage:
         await self.execute(
             self._synthetic_text_message(parsed, synthetic_text),
             persisted_image_url=persisted_image_url,
+            # La descripción la escribió la visión: las lecturas del cliente
+            # (compra, retoma, baja) solo leen lo que él puso en la foto.
+            customer_text=caption or None,
         )
 
     async def _persist_inbound_document(

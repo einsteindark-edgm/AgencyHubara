@@ -53,7 +53,10 @@ def _normalize(text: str) -> str:
     return " ".join(stripped.split())
 
 
-def _is_opt_out_text(text: str) -> bool:
+def is_opt_out_text(text: str) -> bool:
+    """¿El texto pide la baja? Las frases de hoy (la regla de la capacidad
+    «baja» del motor de decisiones y su piso: la frase explícita siempre
+    cuenta)."""
     normalized = _normalize(text)
     if not normalized:
         return False
@@ -67,22 +70,31 @@ def _is_opt_out_text(text: str) -> bool:
     return False
 
 
+#: Nombre anterior (lo usan tests y scripts de revisión).
+_is_opt_out_text = is_opt_out_text
+
+
+def has_recent_marketing_context(metadata: dict[str, Any], now_ms: int) -> bool:
+    """¿Le llegó hace poco algo que promete la baja? Una campaña (touch dentro
+    de la ventana de atribución de 7 días) o una plantilla de la escalera de
+    reactivación. Fuera de ese contexto, "no más" es conversación normal."""
+    return (
+        matching_campaign_touch(metadata.get("campaign_touches"), now_ms) is not None
+        or _recent_ladder_template(metadata, now_ms)
+    )
+
+
 def detect_marketing_opt_out(
     text: str | None, metadata: dict[str, Any], now_ms: int
 ) -> bool:
-    """True si este inbound es un pedido de baja de promociones.
-
-    Requiere una campaña reciente (touch dentro de la ventana de atribución
-    de 7 días): fuera de ese contexto, "no más" es conversación normal.
-    """
+    """True si este inbound es un pedido de baja de promociones: contexto de
+    marketing reciente (`has_recent_marketing_context`) y la frase
+    (`is_opt_out_text`)."""
     if not text:
         return False
-    if (
-        matching_campaign_touch(metadata.get("campaign_touches"), now_ms) is None
-        and not _recent_ladder_template(metadata, now_ms)
-    ):
+    if not has_recent_marketing_context(metadata, now_ms):
         return False
-    return _is_opt_out_text(text)
+    return is_opt_out_text(text)
 
 
 #: Misma ventana que la atribución de campañas: una plantilla de hace más de

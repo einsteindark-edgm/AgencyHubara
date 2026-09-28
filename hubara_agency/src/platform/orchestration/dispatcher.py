@@ -371,6 +371,13 @@ async def _execute_action(
 ) -> str:
     """Execute one ``action`` and return a short outcome label."""
     via = action.via
+    # Versión del workflow por conversación (motor de decisiones F2/F7): el
+    # plugin dueño del target la decide; sin enrutador, la del manifiesto.
+    from src.platform.workflow_routing import route_workflow
+
+    target_workflow = route_workflow(
+        action.target_plugin, action.target_worker, action.target_workflow, session_id=_session_of(target_input)
+    )
 
     if via == "signal":
         signal_name = action.signal_name
@@ -420,7 +427,7 @@ async def _execute_action(
                 f"(workflow={action.target_workflow}, id={workflow_id})"
             )
         await client.start_workflow(
-            action.target_workflow,
+            target_workflow,
             target_input,
             id=workflow_id,
             task_queue=task_queue,
@@ -431,7 +438,7 @@ async def _execute_action(
             "orchestration.dispatch_event: signaled_with_start",
             workflow_id=workflow_id,
             signal_name=signal_name,
-            target_workflow=action.target_workflow,
+            target_workflow=target_workflow,
         )
         return "signaled_with_start"
 
@@ -451,7 +458,7 @@ async def _execute_action(
 
     try:
         await client.start_workflow(
-            action.target_workflow,
+            target_workflow,
             target_input,
             id=workflow_id,
             task_queue=task_queue,
@@ -460,7 +467,7 @@ async def _execute_action(
         log.info(
             "orchestration.dispatch_event: started",
             workflow_id=workflow_id,
-            target_workflow=action.target_workflow,
+            target_workflow=target_workflow,
             task_queue=task_queue,
             start_delay_seconds=int(start_delay.total_seconds()),
         )
@@ -473,6 +480,12 @@ async def _execute_action(
             workflow_id=workflow_id,
         )
         return "raced_already_started"
+
+
+def _session_of(target_input: Any) -> str | None:
+    """La conversación del arranque (para el enrutador del plugin)."""
+    value = target_input.get("session_id") if isinstance(target_input, dict) else getattr(target_input, "session_id", None)
+    return value if isinstance(value, str) and value else None
 
 
 def _is_not_found(exc: RPCError) -> bool:

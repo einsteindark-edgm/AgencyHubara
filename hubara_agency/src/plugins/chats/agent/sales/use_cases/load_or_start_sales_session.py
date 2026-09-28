@@ -59,7 +59,6 @@ from src.platform.routing import resolve_route_workflow_id
 from src.plugins.chats.agent.sales.context import build_bogota_context_string
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
-from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
 
 logger = structlog.get_logger()
 
@@ -81,29 +80,32 @@ def _vault_dir() -> Path:
     return Path(WORKSPACE_VAULT_DIR)
 
 
-def _perception_meta(session_id: str) -> dict[str, str]:
+def _bot(session_id: str):
+    """El bot de ESTA conversación (registro de bots, motor de decisiones F2):
+    versión del workflow, modo de las capas y perfil de Jev. Un control
+    ilegible es el bot de hoy: nunca frena el mensaje del cliente."""
+    from src.plugins.chats.agent.sales.decisions.bots import Bot, bot_for_session
+
+    try:
+        return bot_for_session(session_id, vault_dir=_vault_dir())
+    except Exception as exc:  # noqa: BLE001 — el control nunca frena el mensaje del cliente
+        logger.warning("decisions.bot_unreadable", error=repr(exc)[:200])
+        return Bot(id="produccion")
+
+
+def _perception_meta(bot) -> dict[str, str]:
     """Modo y perfil de las capas con clasificador para ESTA conversación
     (plan del laboratorio, PR 14 y 16): el del control del dashboard
     (`<vault>/_rollout/perception.json`), nunca por encima del techo de
-    Terraform `SALES_PERCEPTION_MODE_CEILING` (default `off`).
+    Terraform `SALES_PERCEPTION_MODE_CEILING` (default `off`); lo resuelve el
+    registro de bots.
 
     `off` viaja EXPLÍCITO: el workflow se queda con el último modo que
     recibió, así que sin esto un chat en curso seguiría en canary/on después
-    de apagar o de bajar el techo, hasta que su sesión termine. Un estado
-    ilegible (editado a mano) cuenta como `off`: el mensaje viaja igual."""
-    from src.plugins.chats.agent.sales.decisions.rollout import effective_mode
-    from src.plugins.chats.agent.sales.decisions.rollout_store import read_state
-
-    ceiling = (os.getenv("SALES_PERCEPTION_MODE_CEILING") or "off").strip().lower()
-    try:
-        mode = effective_mode(read_state(_vault_dir()), ceiling=ceiling, session_id=session_id)
-    except Exception as exc:  # noqa: BLE001 — el control nunca frena el mensaje del cliente
-        logger.warning("perception.rollout_state_unreadable", error=repr(exc)[:200])
-        mode = "off"
-    if mode not in _PERCEPTION_MODES:
+    de apagar o de bajar el techo, hasta que su sesión termine."""
+    if bot.layers not in _PERCEPTION_MODES:
         return {"perception_mode": "off"}
-    profile = (os.getenv("SALES_PERCEPTION_PROFILE") or "").strip() or _DEFAULT_PERCEPTION_PROFILE
-    return {"perception_mode": mode, "perception_profile": profile}
+    return {"perception_mode": bot.layers, "perception_profile": bot.profile or _DEFAULT_PERCEPTION_PROFILE}
 
 
 class LoadOrStartSalesSession:
@@ -117,7 +119,8 @@ class LoadOrStartSalesSession:
       `RemarketingSessionWorkflow` lee identidad / tono / catalogo desde su
       workspace canonico via `ContextBuilder`. Si esta muerto, fallback a Sales.
     * Caso contrario (default `ventas`): reusar `session-{session_id}` o
-      `start_workflow(HubaraSalesSessionWorkflow.run, SalesSessionInput(...))`.
+      arrancar por nombre la versión del workflow de ventas que el registro de
+      bots decide para la conversación (`start_workflow(<nombre>, SalesSessionInput(...))`).
       Se signala con `plugin_context=None` — el tercer arg ya no carga
       identidad/catalogo (vienen del workspace canonico de cada agente).
       Sobrevive en la signature como hueco para datos volatiles del turno
@@ -331,9 +334,6 @@ class LoadOrStartSalesSession:
         if plugin_route_handle is None and active_route != ROUTE_REMARKETING:
             workflow_id = f"session-{session_id}"
             logger.info("Routing webhook to Sales Agent", workflow_id=workflow_id)
-            # Sales workflow class import is intra-agent (sales/use_cases →
-            # sales/workflows), so we keep `HubaraSalesSessionWorkflow.run` as
-            # a typed reference — that's NOT a R-DIP #10 issue (same agent).
             # PR-B: el plugin_context legacy (shared_brain/*.md) deja de viajar
             # por el signal del path Sales. La identidad/tono/catalogo ahora
             # viven en `workspace/{IDENTITY,SOUL,USER,TOOLS,AGENTS}.md` y
@@ -375,12 +375,19 @@ class LoadOrStartSalesSession:
             # existe, arranca uno nuevo (re-engagement) — el id_reuse_policy
             # default permite el duplicado terminal. Precedente en repo:
             # `eta_session` + `orchestration/dispatcher.py` ya usan signal_with_start.
+            # La versión del workflow (V1 hoy; V2 cuando su control y el techo
+            # de Terraform lo prenden) la decide el registro de bots POR
+            # conversación; se arranca por nombre. Una conversación viva no
+            # cambia de versión: signal-with-start le entrega el mensaje al
+            # workflow que ya corre con este id, sea cual sea su tipo.
+            bot = _bot(session_id)
             logger.info(
-                "signal_with_start HubaraSalesSessionWorkflow",
+                "signal_with_start sales",
                 workflow_id=workflow_id,
+                workflow=bot.workflow,
             )
             await client.start_workflow(
-                HubaraSalesSessionWorkflow.run,
+                bot.workflow,
                 SalesSessionInput(
                     session_id=session_id,
                     runtime_workspace_path=runtime_path,
@@ -392,7 +399,7 @@ class LoadOrStartSalesSession:
                     message,
                     None,
                     plugin_context,
-                    *([{**inbound_meta, **_perception_meta(session_id)}] if inbound_meta and _inbound_meta_enabled() else []),
+                    *([{**inbound_meta, **_perception_meta(bot)}] if inbound_meta and _inbound_meta_enabled() else []),
                 ],
                 id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             )

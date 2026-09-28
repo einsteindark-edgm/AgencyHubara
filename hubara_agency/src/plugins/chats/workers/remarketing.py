@@ -57,6 +57,7 @@ from src.plugins.chats.agent.remarketing.workflows.watchdog import (
 )
 from src.platform.tools.routing import TransferToSalesAgentTool
 from src.plugins.chats.agent.remarketing.tools import deferral_aware_transfer_tool
+from src.plugins.chats.agent.sales.decisions.routing import register_sales_workflow_router
 
 # NEW-5 cerrado: el worker de Remarketing tambien necesita la tool de
 # transferencia (es la unica forma de que el agente vuelva a Ventas).
@@ -65,6 +66,16 @@ register_tool_extension(
     "sales.transfer_to_sales_agent",
     lambda workspace: deferral_aware_transfer_tool(TransferToSalesAgentTool)(workspace=str(workspace)),
 )
+
+
+def register_decisions_routing() -> None:
+    """Motor de decisiones F2/F7: cuando la plataforma arranca Ventas desde
+    este worker (orquestación o activity de arranque), la versión del workflow
+    la decide el registro de bots por conversación."""
+    register_sales_workflow_router()
+
+
+register_decisions_routing()
 
 
 async def main() -> None:

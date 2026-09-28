@@ -1,19 +1,27 @@
-"""Brazos simulados del laboratorio (plan §3.1 y PR 15). PURO.
+"""Brazos simulados del laboratorio (plan §3.1 y PR 15; motor de decisiones
+§08). PURO.
 
-  A1  el bot actual: la señal de hoy (3 argumentos, sin modo)
-  B   el bot nuevo con Jev (perfil `jev-v1`)
+Cada brazo es un bot del registro de bots (`sales/decisions/bots.py`): la
+versión del workflow, el proveedor de cada capacidad y el perfil de Jev. El
+sandbox lo fija para todo el caso (`DECISIONS_BOT`); la señal lleva el modo de
+las capas ①②③ y el perfil, exactamente como una conversación en canary de
+producción.
 
-El bot nuevo recibe el modo `on` y su perfil en el 4.º argumento de la señal
-(`inbound_meta`), exactamente como una conversación en canary de producción:
-el mismo workflow, las mismas capas. A0 no se simula (es lo que pasó de
-verdad). El brazo C (OpenAI) se quitó el 2026-09-28: 100 % Jev.
+  A1  el bot actual: la señal de hoy (3 argumentos, sin modo), todo en reglas
+  B   el bot nuevo con Jev
+
+A0 no se simula (es lo que pasó de verdad). El brazo C (OpenAI) se quitó el
+2026-09-28: 100 % Jev.
 """
 from __future__ import annotations
 
 from typing import Any
 
-ARM_PROFILES: dict[str, str] = {"B": "jev-v1"}
-SIMULATED_ARMS: tuple[str, ...] = ("A1", *ARM_PROFILES)
+from src.plugins.chats.agent.sales.decisions.bots import LAB_BOTS, bot_for_arm
+
+SIMULATED_ARMS: tuple[str, ...] = tuple(LAB_BOTS)
+#: Perfil de Jev de cada brazo con capas (lo lee la API del laboratorio).
+ARM_PROFILES: dict[str, str] = {arm: bot.profile for arm, bot in LAB_BOTS.items() if bot.layers != "off"}
 
 
 def signal_meta(arm: str, message: dict[str, Any]) -> dict[str, Any] | None:
@@ -23,10 +31,10 @@ def signal_meta(arm: str, message: dict[str, Any]) -> dict[str, Any] | None:
     cortado al inicio del turno, así el contexto queda igual que en producción."""
     if arm not in SIMULATED_ARMS:
         raise ValueError(f"brazo desconocido: {arm!r} (se simulan {', '.join(SIMULATED_ARMS)})")
-    profile = ARM_PROFILES.get(arm)
-    if profile is None:
+    bot = bot_for_arm(arm)
+    if bot.layers == "off":
         return None
-    meta: dict[str, Any] = {"perception_mode": "on", "perception_profile": profile}
+    meta: dict[str, Any] = {"perception_mode": bot.layers, "perception_profile": bot.profile}
     ts_ms = message.get("ts_ms")
     if isinstance(ts_ms, int) and not isinstance(ts_ms, bool):
         meta["ts_ms"] = ts_ms

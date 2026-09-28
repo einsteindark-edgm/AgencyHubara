@@ -63,16 +63,20 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [ ] Banco de referencia: selección de ~150 turnos difíciles, CLI de etiquetas para Claude Code, métricas por pregunta (precisión, cobertura, calibración).
 - [ ] Sonda diaria: 20 ráfagas sintéticas con respuesta conocida.
 
-### F2 · Enchufes — sin cambio de comportamiento
-- [ ] Registro de bots + `bot_for_session()` + `bot_for_arm()`.
-- [ ] Arranque unificado: `LoadOrStartSalesSession` y el dispatcher de plataforma (hook de resolución de nombre de workflow).
-- [ ] Tabla de sustituciones declaradas en el worker (la guarda L-3 deja de aceptar solo `build_prompt`).
-- [ ] Proveedor de lecturas en `IngestInboundMessage` (escribe los mismos campos).
-- [ ] El sandbox corre las lecturas del ingest con el proveedor del brazo.
-- [ ] Marco de capacidades (`decide()`: reglas / sombra / jev, respaldo, pisos, cola de desacuerdos, métricas) y cada regla envuelta como proveedor `reglas`.
+### F2 · Enchufes — sin cambio de comportamiento ✅
+- [x] Registro de bots (`decisions/bots.py`): versión del workflow + proveedor por capacidad (`reglas`/`sombra`/`jev`) + perfil de Jev + modo de las capas ①②③. `bot_for_arm()` (laboratorio; el sandbox lo fija con `DECISIONS_BOT`) y `bot_for_session()` (producción: `_rollout/decisions.json` por capacidad y por versión del workflow, con los números de prueba y el porcentaje del control «Bot nuevo», dentro de los techos de Terraform `SALES_CAPABILITIES_CEILING` y `SALES_WORKFLOW_V2_CEILING`, `off` por defecto). Control ilegible = el bot de hoy.
+- [x] Arranque unificado: `LoadOrStartSalesSession` arranca por NOMBRE la versión que dice el registro; la plataforma consulta un enrutador que el plugin registra (`platform/workflow_routing.py`, expuesto en `sdk.foundation`) en el dispatcher de orquestación y en `start_or_signal_sales_workflow_activity`; lo registran los workers de ventas y remarketing.
+- [x] Tabla de sustituciones declaradas en el worker (`ACTIVITY_SUBSTITUTIONS`); la guarda L-3 valida cada entrada (mismo nombre, reemplazo uno a uno, sin duplicados).
+- [x] Proveedor de lecturas en `IngestInboundMessage` (`readings=`; por defecto `EngineReadings`), que escribe los mismos campos con UNA función (`apply_readings`) que usan el ingest y el sandbox. Las tres reglas quedaron partidas en leer/escribir sin cambiar lo que hacen (`classify_inbound_purchase_signal`/`apply_inbound_purchase_signal`, `parse_reengagement_deferral`+`is_courtesy_text`/`apply_reengagement_deferral`, `has_recent_marketing_context`+`is_opt_out_text`).
+- [x] El sandbox corre las lecturas del ingest con el bot del brazo, fijado para todo el caso; los brazos salen del registro de bots.
+- [x] Marco de capacidades (`capabilities/__init__.py`: `decide()` con reglas / sombra / jev, respaldo, pisos, calibración) + cola de desacuerdos (`disagreements.py`) + CLI para Claude Code en producción (`scripts/decisions_queue.py`) + guardia para las tools (`guards.py`, sin Temporal).
 
 ### F3 · Lecturas del cliente con Jev
-- [ ] compra · retoma · baja (piso legal) · cupón · fuera de catálogo · cantidad · mapeos (categoría, familia de color, ítem, zona de envío, producto nombrado).
+- [x] compra (`capabilities/lecturas.py`): «¿Qué hace el cliente con la compra?» con lo que preguntó el asesor a la vista; confirma solo con la pregunta de compra visible (≥ 0,85) y retira un «sí» que respondía otra cosa (≤ 0,20). Carrito y botón los lee el código.
+- [x] retoma: Jev decide SI hay aplazamiento (veta lo que la regla leyó o agrega un «yo les escribo» sin fecha); la fecha la calcula el código. Lo que escribe la visión ya no pasa por las lecturas (bug del comprobante que pausaba una semana): el reentry de visión le pasa a las lecturas solo el texto que el cliente puso en la foto.
+- [x] baja: solo con promoción reciente (condición de hoy); la frase explícita es PISO; Jev solo agrega.
+- [ ] cupón · fuera de catálogo · cantidad.
+- [ ] mapeos (categoría, familia de color, ítem, zona de envío, producto nombrado).
 
 ### F4 · Workflow V2
 - [ ] `HubaraSalesSessionWorkflowV2` sin reglas de texto; aplica veredictos grabados; guarda que falla si importa un detector de texto; brazos A1/B0/B; B0 = A1.

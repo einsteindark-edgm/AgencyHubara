@@ -37,11 +37,9 @@ from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
-# ADR-2026-05-20: the use_case dispatches by signal-name string ("send_message")
-# now, no class references. We keep the imports of HubaraSalesSessionWorkflow
-# only because the test still asserts that the *start_workflow* call references
-# `HubaraSalesSessionWorkflow.run` (intra-agent ref, OK). RemarketingSessionWorkflow
-# is no longer needed (cross-agent — replaced by string dispatch + manifest).
+# ADR-2026-05-20: the use_case dispatches by signal-name string ("send_message").
+# Motor de decisiones F2: el workflow de ventas también arranca por NOMBRE, el
+# que decide el registro de bots para la conversación (V1 por defecto).
 
 
 # --- Fakes -----------------------------------------------------------------
@@ -769,3 +767,23 @@ async def test_without_an_active_mode_the_mode_travels_as_off(monkeypatch, tmp_p
     await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
 
     assert client.start_calls[0]["start_signal_args"][3] == {**_META, "perception_mode": "off"}
+
+
+@pytest.mark.asyncio
+async def test_the_sales_workflow_version_comes_from_the_bot_registry(monkeypatch, tmp_path):
+    """Motor de decisiones F2: el arranque del workflow de ventas lo decide el
+    registro de bots por conversación (V1 por defecto; V2 cuando su control y
+    el techo de Terraform lo prenden). Se arranca por NOMBRE."""
+    from src.plugins.chats.agent.sales.decisions import bots
+
+    _rollout(tmp_path, monkeypatch, mode="off")
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None)
+    assert client.start_calls[0]["workflow"] == bots.WORKFLOW_V1
+
+    monkeypatch.setenv("SALES_WORKFLOW_V2_CEILING", "on")
+    bots.write_workflow_mode(tmp_path, "on")
+    client2 = FakeClient()
+    await _make_use_case(FakeMetadataStore(initial={}), client2).execute(session_id="wa_43", message="hola", phone_number_id=None)
+    assert client2.start_calls[0]["workflow"] == bots.WORKFLOW_V2
