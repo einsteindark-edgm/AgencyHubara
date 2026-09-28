@@ -10,14 +10,25 @@ nombrar el término sí. Qué hacer con la nota lo dice SOUL.md.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from src.plugins.chats.shared.product_truth import unavailable_terms
 
 
 def build_catalog_gap_note(customer_text: str, products: list[Any]) -> str | None:
-    """(mensaje del cliente, productos del catálogo) → nota del turno o None."""
-    terms = unavailable_terms(customer_text, products)
+    """(mensaje del cliente, productos del catálogo) → nota del turno o None.
+
+    La lectura (`unavailable_terms`) y la nota (`catalog_gap_note`) van por
+    separado: el motor de decisiones (capacidad `fuera_de_catalogo`) puede
+    quitar candidatos falsos entre las dos; esta función es la de siempre."""
+    return catalog_gap_note(unavailable_terms(customer_text, products))
+
+
+def catalog_gap_note(terms: Sequence[str]) -> str | None:
+    """La nota del turno con los términos que NO existen en el catálogo; None
+    sin términos. Los términos los propone `unavailable_terms` y el motor de
+    decisiones solo puede quitar alguno, nunca inventarlo."""
     if not terms:
         return None
     named = ", ".join(f"«{term}»" for term in terms)
@@ -32,4 +43,4 @@ def build_catalog_gap_note(customer_text: str, products: list[Any]) -> str | Non
     )
 
 
-__all__ = ["build_catalog_gap_note"]
+__all__ = ["build_catalog_gap_note", "catalog_gap_note"]

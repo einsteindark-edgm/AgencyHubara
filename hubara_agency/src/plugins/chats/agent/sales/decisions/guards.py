@@ -8,6 +8,11 @@ registro de bots dice para esa conversación (`reglas`, `sombra` o `jev`),
 anota los desacuerdos para que los califique Claude Code y devuelve un
 `Verdict`. Con `reglas` (así nace todo) el resultado es el de la regla de hoy
 y Jev no se consulta.
+
+También reexporta las capacidades que piden los consumidores de fuera del
+motor (fase F3): la cantidad de una respuesta compuesta (activity del prompt)
+y los mapeos a listas cerradas de las tools (categoría, familia de color,
+ítem del pedido y zona de envío).
 """
 from __future__ import annotations
 
@@ -17,11 +22,32 @@ from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_session
 from src.plugins.chats.agent.sales.decisions.capabilities import Verdict, decide
+from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import Cantidad, RespuestaDeCantidad
+from src.plugins.chats.agent.sales.decisions.capabilities.mapeos import (
+    Categoria,
+    CategoriaPedida,
+    CiudadDeEnvio,
+    ColorPedido,
+    DatoDelItem,
+    FamiliaDeColor,
+    ItemDelPedido,
+    ZonaDeEnvio,
+)
 from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
 
 __all__ = [
+    "Cantidad",
+    "Categoria",
+    "CategoriaPedida",
+    "CiudadDeEnvio",
+    "ColorPedido",
+    "DatoDelItem",
+    "FamiliaDeColor",
+    "ItemDelPedido",
+    "RespuestaDeCantidad",
     "Verdict",
+    "ZonaDeEnvio",
     "catalog_choice_buttons",
     "decide_for_session",
     "product_quote_sentences",
@@ -35,20 +61,23 @@ async def decide_for_session(
     inp: Any,
     *,
     session_id: str,
-    vault_dir: Path,
+    vault_dir: Path | None,
     redact: tuple[str, ...] = (),
 ) -> Verdict:
-    """La decisión de la capacidad para ESTA conversación (ver el módulo)."""
-    bot = bot_for_session(session_id, vault_dir=Path(vault_dir))
+    """La decisión de la capacidad para ESTA conversación (ver el módulo).
+    Sin vault (una tool armada sin él) no hay control del despliegue ni cola
+    de desacuerdos: decide el bot fijado del laboratorio o la regla de hoy."""
+    vault = Path(vault_dir) if vault_dir is not None else None
+    bot = bot_for_session(session_id, vault_dir=vault)
     return await decide(
         capability,
         inp,
         provider=bot.provider(capability.name),
         profile_id=bot.profile,
-        disagreements=DisagreementLog(Path(vault_dir)),
+        disagreements=DisagreementLog(vault) if vault is not None else None,
         session_id=session_id,
         redact=redact,
-        metrics=DecisionMetrics(Path(vault_dir)),
+        metrics=DecisionMetrics(vault) if vault is not None else None,
     )
 
 

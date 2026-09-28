@@ -12,6 +12,11 @@ el resultado es el de hoy y Jev no se consulta. Las tres corren en paralelo y
 cada una tiene un tiempo máximo corto (1,5 s): el workflow igual espera 1,5 s
 de silencio antes del turno. El laboratorio usa este mismo proveedor, con el
 bot del brazo.
+
+Lecturas sueltas (fase F3): el cupón (`read_coupon_talk`) y lo que no existe
+en el catálogo (`read_catalog_gap`) no escriben campos del metadata ni leen el
+texto crudo: el ingest las pide más adelante, con el texto efectivo (un audio
+o una foto ya leídos), y usa el valor para una relectura o una nota.
 """
 from __future__ import annotations
 
@@ -26,8 +31,15 @@ import structlog
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_session
 from src.plugins.chats.agent.sales.decisions.capabilities import BY_RULE, Verdict, decide
 from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Baja, Compra, Retoma
+from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import (
+    Cupon,
+    CuponEnJuego,
+    FueraDeCatalogo,
+    PedidoDelCliente,
+)
 from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
+from src.plugins.chats.agent.sales.decisions.guards import decide_for_session
 
 logger = structlog.get_logger()
 
@@ -136,6 +148,42 @@ def apply_readings(
         mark_marketing_opt_out(metadata, now_ms=now_ms, source=OPT_OUT_SOURCE_TEXT, campaign_id=opt_out_campaign_id)
         opted_out = True
     return Written(signal=signal, opted_out=opted_out)
+
+
+async def read_coupon_talk(
+    vault_dir: Path,
+    *,
+    session_id: str,
+    metadata: Mapping[str, Any],
+    text: str | None,
+    events: Sequence[Mapping[str, Any]] = (),
+    redact: Sequence[str] = (),
+) -> Verdict:
+    """¿Este mensaje habla del cupón aplicado? (capacidad `cupon`; regla de
+    hoy: `coupon_in_play`). No escribe campos del metadata: el ingest decide
+    con el valor si relee el cupo y qué nota arma. `events`: lo que el
+    cliente vio ANTES de este mensaje."""
+    return await decide_for_session(
+        Cupon(), CuponEnJuego(metadata=metadata, text=text, events=tuple(events)),
+        session_id=session_id, vault_dir=Path(vault_dir), redact=tuple(redact),
+    )
+
+
+async def read_catalog_gap(
+    vault_dir: Path,
+    *,
+    session_id: str,
+    text: str,
+    products: Sequence[Any],
+    redact: Sequence[str] = (),
+) -> Verdict:
+    """Lo que el cliente pide o muestra y no existe en el catálogo (capacidad
+    `fuera_de_catalogo`; regla de hoy: `unavailable_terms`). El valor son los
+    términos que quedan: la nota la arma el ingest con el código de hoy."""
+    return await decide_for_session(
+        FueraDeCatalogo(), PedidoDelCliente(text=text, products=tuple(products)),
+        session_id=session_id, vault_dir=Path(vault_dir), redact=tuple(redact),
+    )
 
 
 def _rule_verdict_off(capability: Any, inbound: Inbound) -> Verdict:

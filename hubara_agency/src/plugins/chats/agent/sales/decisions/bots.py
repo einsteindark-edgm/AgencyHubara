@@ -158,11 +158,15 @@ def _effective(mode: Any, base: RolloutState, *, ceiling: str, session_id: str) 
     return effective_mode(state, ceiling=ceiling, session_id=session_id)
 
 
-def bot_for_session(session_id: str, *, vault_dir: Path) -> Bot:
-    """El bot de ESTA conversación (ver el docstring del módulo)."""
+def bot_for_session(session_id: str, *, vault_dir: Path | None) -> Bot:
+    """El bot de ESTA conversación (ver el docstring del módulo). Sin vault
+    (una tool armada sin él) no hay control del despliegue: el bot fijado del
+    laboratorio o el de hoy."""
     pinned = (os.getenv("DECISIONS_BOT") or "").strip()
     if pinned:
         return bot_for_arm(pinned)
+    if vault_dir is None:
+        return Bot(id="hoy")
     try:
         base = read_state(Path(vault_dir))
     except Exception:  # noqa: BLE001 — el control nunca frena el mensaje

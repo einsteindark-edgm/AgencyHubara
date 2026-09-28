@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -49,12 +49,18 @@ from src.platform.catalog import (
     parse_variant_colors,
     parse_variant_tags,
     primary_colors,
-    resolve_color_family,
     split_multi_label,
     values_for_color,
 )
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.state import FilesystemMetadataStore
+from src.plugins.chats.agent.sales.decisions.guards import (
+    ColorPedido,
+    DatoDelItem,
+    FamiliaDeColor,
+    ItemDelPedido,
+    decide_for_session,
+)
 from src.plugins.chats.agent.sales.use_cases.order_draft import (
     current_item,
     get_active_draft,
@@ -66,6 +72,11 @@ from src.plugins.chats.shared.draft_items import (
     draft_items,
     product_key,
 )
+
+
+#: `(color pedido, colores del producto, producto) → familia de color` (el JSON
+#: de la capacidad `familia_de_color`): la regla de hoy o la que decide el motor.
+_FamilyResolver = Callable[[str, list[str], Any], Awaitable[dict[str, Any]]]
 
 
 def _coupon_lines(data: dict[str, Any], producto: str | None) -> list[str]:
@@ -216,6 +227,7 @@ class SetOrderSlotTool(ToolBase):
         vault_dir: str | Path | None = None,
         catalog: CatalogPort | None = None,
         color_families: ColorFamilies | None = None,
+        history_reader: Callable[[str], list[dict[str, Any]]] | None = None,
     ) -> None:
         # Mismo patron que `RegisterOrderTool`: el `workspace` es el runtime
         # workspace canonico compartido (no se usa para metadata). `vault_dir`
@@ -233,6 +245,10 @@ class SetOrderSlotTool(ToolBase):
         self._store = FilesystemMetadataStore(self._vault_dir)
         self._catalog = catalog
         self._color_families = color_families
+        # `session_key -> eventos del historial` (DI del worker): lo último de
+        # la conversación, para que el motor sepa a qué producto del pedido se
+        # refiere el cliente. None = sin contexto (el motor pregunta igual).
+        self._history_reader = history_reader
 
     def _families(self) -> ColorFamilies:
         if self._color_families is not None:
@@ -257,13 +273,19 @@ class SetOrderSlotTool(ToolBase):
             return None
         return list(result.results)
 
-    def _check_values(
-        self, product: Any, provided: dict[str, Any], to_check: list[str]
+    async def _check_values(
+        self,
+        product: Any,
+        provided: dict[str, Any],
+        to_check: list[str],
+        *,
+        family: _FamilyResolver,
     ) -> tuple[dict[str, str], list[dict[str, Any]], dict[str, Any] | None]:
         """Valida aroma/color/diseño contra UN producto, sin escribir nada.
 
         Devuelve `(canónicos, rechazos, familia_de_color)`: los valores que
-        existen (con el casing real del catálogo) y los que no.
+        existen (con el casing real del catálogo) y los que no. `family`
+        resuelve la familia de un color que no está tal cual en el catálogo.
         """
         attrs = parse_variant_tags(product.tags)
         # Mapeo signo→color declarado por el operador (metadata "colores").
@@ -289,17 +311,19 @@ class SetOrderSlotTool(ToolBase):
             if kind == "color" and variant_colors:
                 # Paleta REAL = aliases de las variantes. Match tolerante a
                 # género/número; lo persistido es el alias canónico.
-                canonical, rejection, family_info = self._validate_color(
+                canonical, rejection, family_info = await self._validate_color(
                     provided[kind],
                     primary_colors(variant_colors),
                     lambda t: matching_color_alias(variant_colors, t),
+                    lambda token, valid: family(token, valid, product),
                 )
             elif kind == "color" and valid_by_kind["color"]:
                 colors = valid_by_kind["color"]
-                canonical, rejection, family_info = self._validate_color(
+                canonical, rejection, family_info = await self._validate_color(
                     provided[kind],
                     colors,
                     lambda t, _c=colors: match_option(t, _c),
+                    lambda token, valid: family(token, valid, product),
                 )
             else:
                 canonical, rejection = self._validate_choice(
@@ -312,6 +336,90 @@ class SetOrderSlotTool(ToolBase):
             if family_info is not None:
                 color_family = family_info
         return canonical_values, rejected, color_family
+
+    def _color_input(self, token: str, valid: list[str], product: Any) -> ColorPedido:
+        return ColorPedido(
+            color=token,
+            colores=tuple(valid),
+            familias=self._families(),
+            producto=str(getattr(product, "title", "") or ""),
+        )
+
+    async def _family_by_rule(
+        self, token: str, valid: list[str], product: Any
+    ) -> dict[str, Any]:
+        """La familia de color con la regla de hoy (la tabla del tenant), sin
+        preguntarle a nadie: con ella se ve qué productos del pedido aceptan un
+        valor antes de elegir a cuál ítem va."""
+        return FamiliaDeColor().rule(self._color_input(token, valid, product))
+
+    def _family_by_engine(self, session_key: str) -> _FamilyResolver:
+        """La familia de color que decide el motor de decisiones para esta
+        conversación (capacidad `familia_de_color`; regla de hoy: la tabla)."""
+
+        async def resolve(token: str, valid: list[str], product: Any) -> dict[str, Any]:
+            verdict = await decide_for_session(
+                FamiliaDeColor(),
+                self._color_input(token, valid, product),
+                session_id=session_key,
+                vault_dir=self._vault_dir,
+            )
+            return verdict.value
+
+        return resolve
+
+    def _events(self, session_key: str) -> list[dict[str, Any]]:
+        """Lo último de la conversación; vacío sin lector o si falla (es
+        contexto del motor: nunca bloquea la tool)."""
+        if self._history_reader is None:
+            return []
+        try:
+            return list(self._history_reader(session_key) or [])
+        except Exception:  # noqa: BLE001
+            return []
+
+    async def _item_for_values(
+        self,
+        session_key: str,
+        provided: dict[str, Any],
+        to_check: list[str],
+        items_now: list[dict[str, Any]],
+        current: dict[str, Any],
+        catalog_products: list[Any],
+    ) -> tuple[dict[str, Any], Any]:
+        """`(ítem, producto)` al que van aroma/color/diseño que llegan SIN
+        producto en un pedido de varios. Lo decide el motor (capacidad
+        `item_del_pedido`) con lo que el catálogo acepta de cada producto (la
+        regla de hoy, sin Jev) y lo último de la conversación."""
+        products = [_find_product(catalog_products, item.get("producto")) for item in items_now]
+        actual = next((k for k, item in enumerate(items_now) if item is current), None)
+        if actual is None:
+            return current, _find_product(catalog_products, current.get("producto"))
+        accepts: list[bool | None] = []
+        for candidate in products:
+            if candidate is None:
+                accepts.append(None)
+                continue
+            _, rejected, _ = await self._check_values(
+                candidate, provided, to_check, family=self._family_by_rule
+            )
+            accepts.append(not rejected)
+        verdict = await decide_for_session(
+            ItemDelPedido(),
+            DatoDelItem(
+                valores={kind: str(provided[kind]) for kind in to_check},
+                items=tuple(str(item.get("producto") or "") for item in items_now),
+                actual=actual,
+                aceptan=tuple(accepts),
+                events=tuple(self._events(session_key)),
+            ),
+            session_id=session_key,
+            vault_dir=self._vault_dir,
+        )
+        k = (verdict.value or {}).get("item")
+        if not isinstance(k, int) or not 0 <= k < len(items_now) or products[k] is None:
+            k = actual
+        return items_now[k], products[k]
 
     async def _remove(
         self, ctx: ToolContext, data: dict[str, Any], producto: str, now_ms: int
@@ -377,18 +485,20 @@ class SetOrderSlotTool(ToolBase):
             }
         return ", ".join(canonical), None
 
-    def _validate_color(
+    async def _validate_color(
         self,
         raw_value: str,
         valid: list[str],
         matcher: Callable[[str], str | None],
+        family: Callable[[str, list[str]], Awaitable[dict[str, Any]]],
     ) -> tuple[str | None, dict[str, Any] | None, dict[str, Any] | None]:
         """Valida el color con TOLERANCIA DE GAMA (requisito 2026-09-08).
 
         Por token: primero el matcheo exacto del catálogo (`matcher`: tags o
-        aliases de `variant_colors`); si falla, la familia de color de la
-        config del tenant ("azul clarito"/"celeste" → "Azul"). Devuelve
-        `(canonico, rechazo, color_family)`:
+        aliases de `variant_colors`); si falla, la familia de color (`family`:
+        la config del tenant de regla de hoy, "azul clarito"/"celeste" →
+        "Azul", decidida por el motor de decisiones — capacidad
+        `familia_de_color`). Devuelve `(canonico, rechazo, color_family)`:
           * resuelto → canónico del catálogo + `color_family` con el tono
             pedido (el envelope lo usa para que el bot confirme sin negar);
           * gama con varios colores del catálogo o dos familias en el mismo
@@ -397,36 +507,35 @@ class SetOrderSlotTool(ToolBase):
           * familia que el producto no maneja → `color_family_not_offered`;
           * palabra desconocida → rechazo legacy con `invalid`/`available`.
         """
-        families = self._families()
         tokens = split_multi_label(raw_value) or [raw_value]
         canonical: list[str] = []
         invalid: list[str] = []
-        resolved_by_family: list[Any] = []
+        resolved_by_family: list[dict[str, Any]] = []
         for token in tokens:
             matched = matcher(token)
             if matched is not None:
                 if matched not in canonical:
                     canonical.append(matched)
                 continue
-            res = resolve_color_family(token, valid, families)
-            if res is None:
+            res = await family(token, valid)
+            if res.get("estado") is None:
                 invalid.append(token.strip())
                 continue
-            if res.status == "resolved":
-                if res.canonical not in canonical:
-                    canonical.append(res.canonical)
+            if res["estado"] == "resolved":
+                if res["color"] not in canonical:
+                    canonical.append(res["color"])
                 resolved_by_family.append(res)
                 continue
             rejection: dict[str, Any] = {
                 "field": "color",
                 "given": raw_value,
-                "reason": f"color_family_{res.status}",
-                "families": list(res.families),
-                "candidates": list(res.candidates),
+                "reason": f"color_family_{res['estado']}",
+                "families": list(res["familias"]),
+                "candidates": list(res["candidatas"]),
                 "available": valid,
             }
-            if res.status == "not_offered":
-                rejection["family"] = res.families[0]
+            if res["estado"] == "not_offered":
+                rejection["family"] = res["familias"][0]
             return None, rejection, None
         if invalid:
             return None, {
@@ -441,9 +550,9 @@ class SetOrderSlotTool(ToolBase):
                 "requested": raw_value,
                 "captured": ", ".join(canonical),
                 "family": ", ".join(
-                    dict.fromkeys(f for r in resolved_by_family for f in r.families)
+                    dict.fromkeys(f for r in resolved_by_family for f in r["familias"])
                 ),
-                "shade_requested": any(r.shade_requested for r in resolved_by_family),
+                "shade_requested": any(r["tono"] for r in resolved_by_family),
             }
         return ", ".join(canonical), None, family_info
 
@@ -622,21 +731,23 @@ class SetOrderSlotTool(ToolBase):
                 )
 
         if to_check and product is not None:
-            checked = self._check_values(product, provided, to_check)
-            if checked[1] and not provided.get("producto") and len(items_now) > 1:
-                # El valor no es de este producto: ¿es de otro del pedido?
-                for other in items_now:
-                    if other is target_item:
-                        continue
-                    other_product = _find_product(
-                        catalog_products or [], other.get("producto")
-                    )
-                    if other_product is None:
-                        continue
-                    alt = self._check_values(other_product, provided, to_check)
-                    if not alt[1]:
-                        target_item, product, checked = other, other_product, alt
-                        break
+            if not provided.get("producto") and len(items_now) > 1 and target_item is not None:
+                # El dato llega sin producto en un pedido de varios: ¿a cuál
+                # ítem va? Lo decide el motor (capacidad `item_del_pedido`).
+                # La regla de hoy: al ítem en curso, salvo que su producto lo
+                # rechace y otro lo acepte (2026-09-22: «Escorpio» se validaba
+                # contra la Trilogía).
+                target_item, product = await self._item_for_values(
+                    ctx.session_key,
+                    provided,
+                    to_check,
+                    items_now,
+                    target_item,
+                    catalog_products or [],
+                )
+            checked = await self._check_values(
+                product, provided, to_check, family=self._family_by_engine(ctx.session_key)
+            )
             canonical_values, product_rejected, family_info = checked
             multi = len(
                 {product_key(i.get("producto")) for i in items_now}

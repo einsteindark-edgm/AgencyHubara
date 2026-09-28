@@ -6,11 +6,15 @@ productos cuyo `handle` aparezca en el ultimo `tool_result`.
 
 ADR-001 alignment: estas tools son inertes respecto a Temporal — solo
 leen del CatalogPort. NO escriben metadata, NO emiten decisions.
+
+La categoría pedida la decide el motor de decisiones (capacidad `categoria`,
+por su guardia): con `reglas` es el resolver de hoy; en `sombra` el motor deja
+sus desacuerdos en la cola del vault (`_decisions/`), nunca en la sesión.
 """
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +32,12 @@ from src.platform.catalog import (
     parse_variant_colors,
     parse_variant_tags,
 )
+from src.plugins.chats.agent.sales.decisions.guards import (
+    Categoria,
+    CategoriaPedida,
+    decide_for_session,
+)
+from src.sdk.catalogkit import CategoryResolution
 from src.sdk.mediakit import derive_image_label, fold_for_match
 
 
@@ -83,10 +93,17 @@ class SearchProductsTool(ToolBase):
     }
 
     def __init__(
-        self, workspace: str | Path, catalog: CatalogPort
+        self,
+        workspace: str | Path,
+        catalog: CatalogPort,
+        vault_dir: str | Path | None = None,
     ) -> None:
         self._workspace = Path(workspace)
         self._catalog = catalog
+        # Vault de las sesiones: el motor de decisiones lee ahí el control del
+        # despliegue y deja la cola de desacuerdos (capacidad `categoria`).
+        # Sin vault decide la regla de hoy (o el bot fijado del laboratorio).
+        self._vault_dir = Path(vault_dir) if vault_dir is not None else None
 
     async def execute_with_context(
         self, ctx: ToolContext, q: str, limit: int = 10,
@@ -103,6 +120,8 @@ class SearchProductsTool(ToolBase):
             result: SearchResult = await self._catalog.search(
                 q=q, limit=limit, **extra
             )
+            if category is not None:
+                result = await self._decided_category(ctx, q, limit, category, result)
         except CatalogUnavailableError as e:
             logger.error(
                 "🔍 [TOOL search_products] catalog_unavailable: {}", e
@@ -138,6 +157,49 @@ class SearchProductsTool(ToolBase):
         if result.category is not None:
             envelope["category"] = await self._category_block(result)
         return json.dumps(envelope, ensure_ascii=False)
+
+    async def _decided_category(
+        self, ctx: ToolContext, q: str, limit: int, category: str, result: SearchResult
+    ) -> SearchResult:
+        """La categoría pedida la decide el motor de decisiones (capacidad
+        `categoria`, con el resolver de hoy de regla). El catálogo ya filtró
+        con esa regla: si el motor decide la misma categoría, la búsqueda
+        queda como está; si decide otra de la lista cerrada, se busca en esa;
+        si decide que no es ninguna, no hay resultados y el bloque ofrece las
+        que existen. Sin categorías cargadas queda el texto de hoy."""
+        applied = result.category
+        if applied is None or applied.confidence == "no_categories":
+            return result
+        try:
+            known = list(await self._catalog.list_categories())
+        except Exception:  # noqa: BLE001 — sin la lista cerrada queda la búsqueda de hoy
+            return result
+        verdict = await decide_for_session(
+            Categoria(),
+            CategoriaPedida(query=category, categories=tuple(known)),
+            session_id=ctx.session_key,
+            vault_dir=self._vault_dir,
+        )
+        slug = (verdict.value or {}).get("categoria")
+        if slug == (applied.matched.slug if applied.matched else None):
+            return result
+        if slug is None:
+            return replace(
+                result, count=0, truncated=False, results=[],
+                category=CategoryResolution(query=category),
+            )
+        again = await self._catalog.search(q=q, limit=limit, category=slug)
+        chosen = again.category.matched if again.category is not None else None
+        if chosen is None or chosen.slug != slug:
+            return result
+        logger.info(
+            "🔍 [TOOL search_products] categoría del motor session={} {!r} → {} (por {})",
+            ctx.session_key, category, slug, verdict.by,
+        )
+        return replace(
+            again,
+            category=CategoryResolution(query=category, matched=chosen, confidence="motor"),
+        )
 
     async def _category_block(self, result: SearchResult) -> dict[str, Any]:
         """Qué categoría se resolvió — y si no, cuáles existen.

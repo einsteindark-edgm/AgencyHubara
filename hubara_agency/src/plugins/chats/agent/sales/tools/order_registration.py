@@ -80,7 +80,12 @@ from src.plugins.chats.agent.sales.config.shipping import (
     CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
     SHIPPING_COP_PARAM_DESCRIPTION,
     SHIPPING_RATE_RULE,
-    is_published_shipping_rate,
+    is_published_rate_for_zone,
+)
+from src.plugins.chats.agent.sales.decisions.guards import (
+    CiudadDeEnvio,
+    ZonaDeEnvio,
+    decide_for_session,
 )
 from src.plugins.chats.agent.sales.pricing import (
     accepted_prices,
@@ -660,7 +665,16 @@ class RegisterOrderTool(ToolBase):
         # pago como "sin costo" (L-19). Va ANTES de SEC-07: con envío 0 y el
         # total sumado con la tarifa, SEC-07 diría "total esperado = subtotal"
         # y el modelo gastaría un reintento quitando el envío del total.
-        if not is_published_shipping_rate(int(shipping_cop), order_shipping.city):
+        # La zona de la ciudad la decide el motor de decisiones (capacidad
+        # `zona_de_envio`; regla de hoy: Bogotá si la ciudad lo dice; si no,
+        # valen las dos tarifas).
+        zone = await decide_for_session(
+            ZonaDeEnvio(),
+            CiudadDeEnvio(ciudad=order_shipping.city),
+            session_id=ctx.session_key,
+            vault_dir=self._vault_dir,
+        )
+        if not is_published_rate_for_zone(int(shipping_cop), (zone.value or {}).get("zona")):
             logger.warning(
                 "🧾 [TOOL register_order] SHIPPING_MISMATCH session={} city={} shipping_cop={}",
                 ctx.session_key,

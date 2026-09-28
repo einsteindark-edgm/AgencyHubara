@@ -203,9 +203,13 @@ register_tool_extension(
     ),
 )
 
+# Motor de decisiones (F3): la categoría pedida es una capacidad; el vault
+# trae su control del despliegue y su cola de desacuerdos.
 register_tool_extension(
     "sales.search_products",
-    lambda workspace: SearchProductsTool(workspace=str(workspace), catalog=_catalog),
+    lambda workspace: SearchProductsTool(
+        workspace=str(workspace), catalog=_catalog, vault_dir=build_vault_dir()
+    ),
 )
 register_tool_extension(
     "sales.get_product_by_handle",
@@ -312,9 +316,15 @@ register_tool_extension(
 # sigue siendo la fuente de verdad de la orden. `catalog`: valida aroma/color
 # contra la lista cerrada del producto (caso ep_010: "Melocotón" no existe y
 # entró al draft → a la orden real).
+# Motor de decisiones (F3): a cuál producto del pedido va un dato sin
+# producto lo decide una capacidad que lee lo último de la conversación.
 register_tool_extension(
     "sales.set_order_slot",
-    lambda workspace: SetOrderSlotTool(workspace=str(workspace), catalog=_catalog),
+    lambda workspace: SetOrderSlotTool(
+        workspace=str(workspace),
+        catalog=_catalog,
+        history_reader=build_session_history_reader(),
+    ),
 )
 
 # HU-002: decision tools de UI rica. Emiten "intents" a

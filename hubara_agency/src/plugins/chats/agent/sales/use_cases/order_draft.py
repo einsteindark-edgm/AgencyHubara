@@ -44,6 +44,7 @@ tocan filesystem ni Temporal (el caller persiste con `FilesystemMetadataStore`).
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
@@ -175,6 +176,20 @@ def current_item(
         (i for i in items if product_key(i.get("producto")) == current),
         items[-1],
     )
+
+
+def item_for_values(current: int, accepts: Sequence[bool | None]) -> int:
+    """A cuál ítem del pedido van aroma/color/diseño que llegan SIN producto
+    (la regla de hoy de `set_order_slot`, capacidad `item_del_pedido`).
+
+    `accepts[k]`: True si el producto del ítem `k` acepta todos los valores,
+    False si rechaza alguno, None si no se puede validar (fuera del
+    catálogo). Va al ítem en curso, salvo que su producto los rechace y otro
+    ítem los acepte todos: el primero, en orden (2026-09-22: «Escorpio» se
+    validaba contra la Trilogía y el Duo Zodiacal nunca entró)."""
+    if accepts[current] is not False or len(accepts) < 2:
+        return current
+    return next((k for k, ok in enumerate(accepts) if k != current and ok is True), current)
 
 
 def _apply_to_item(

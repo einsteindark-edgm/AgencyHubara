@@ -56,7 +56,12 @@ from src.plugins.chats.agent.sales.config.shipping import (
     SHIPPING_RATE_NATIONAL_COP,
     SHIPPING_RATE_RULE,
     cash_on_delivery_available,
-    is_published_shipping_rate,
+    is_published_rate_for_zone,
+)
+from src.plugins.chats.agent.sales.decisions.guards import (
+    CiudadDeEnvio,
+    ZonaDeEnvio,
+    decide_for_session,
 )
 from src.plugins.chats.agent.sales.pricing import (
     accepted_prices,
@@ -1120,9 +1125,15 @@ class PresentOrderConfirmationTool(ToolBase):
         # operador 2026-09-23: sin descuentos ni envío gratis). Con la ciudad
         # del borrador, la misma regla que `register_order` (Bogotá solo la
         # suya): el cliente no confirma un total que el registro rechazaría.
-        if not is_published_shipping_rate(
-            int(shipping_cop), draft_city if isinstance(draft_city, str) else None
-        ):
+        # La zona de la ciudad la decide el motor de decisiones (capacidad
+        # `zona_de_envio`; regla de hoy: Bogotá si la ciudad lo dice).
+        zone = await decide_for_session(
+            ZonaDeEnvio(),
+            CiudadDeEnvio(ciudad=draft_city if isinstance(draft_city, str) else None),
+            session_id=ctx.session_key,
+            vault_dir=WORKSPACE_VAULT_DIR,
+        )
+        if not is_published_rate_for_zone(int(shipping_cop), (zone.value or {}).get("zona")):
             logger.warning(
                 "🚨 [TOOL present_order_confirmation] shipping_mismatch session={} shipping_cop={}",
                 ctx.session_key, shipping_cop,

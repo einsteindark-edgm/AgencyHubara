@@ -84,7 +84,7 @@ def build_session_metadata_store() -> FilesystemMetadataStore:
 def build_vault_dir() -> Path:
     """El vault canónico, para tools que le piden decisiones al motor de
     decisiones (registro de bots, cola de desacuerdos) sin importar
-    platform."""
+    platform (R-DIP #7). Se lee al llamar: los tests lo aíslan."""
     return Path(WORKSPACE_VAULT_DIR)
 
 

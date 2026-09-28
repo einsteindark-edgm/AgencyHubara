@@ -94,7 +94,12 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 from src.plugins.chats.shared.purchase_signals import (
     build_deferral_note,
 )
-from src.plugins.chats.agent.sales.decisions.readings import Inbound, apply_readings
+from src.plugins.chats.agent.sales.decisions.readings import (
+    Inbound,
+    apply_readings,
+    read_catalog_gap,
+    read_coupon_talk,
+)
 from src.plugins.chats.agent.sales.use_cases.funnel_stage import resolve_funnel_stage
 from src.plugins.chats.agent.sales.use_cases.order_draft import (
     build_order_draft_note,
@@ -105,12 +110,11 @@ from src.plugins.chats.agent.sales.use_cases.coupon_application import (
     CouponApplication,
     store_coupon_application,
 )
-from src.plugins.chats.agent.sales.use_cases.catalog_gap import build_catalog_gap_note
+from src.plugins.chats.agent.sales.use_cases.catalog_gap import catalog_gap_note
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
     build_coupon_note,
-    coupon_in_play,
 )
 from src.plugins.chats.agent.sales.use_cases.web_product_ref import (
     apply_web_product_capture,
@@ -443,6 +447,10 @@ class IngestInboundMessage:
         # retoma y baja las da el proveedor, con el metadata de ANTES de este
         # mensaje y lo que el cliente vio; acá solo se escriben, igual que hoy.
         tz = resolve_local_timezone(session_id)
+        # Lo que el cliente vio ANTES de este mensaje: contexto de las
+        # lecturas y, más abajo, del cupón (cuando este mensaje ya quedó en el
+        # historial).
+        events_before = self._session_events(session_id)
         readings = await self._read_inbound(
             Inbound(
                 session_id=session_id,
@@ -452,7 +460,7 @@ class IngestInboundMessage:
                 interactive=parsed.interactive,
                 order=parsed.order,
                 metadata=metadata,
-                events=self._session_events(session_id),
+                events=events_before,
                 stage=resolve_funnel_stage(metadata),
                 tz=tz,
             )
@@ -984,8 +992,11 @@ class IngestInboundMessage:
         # habla de otra cosa, el turno es del catálogo normal: no se lee el
         # cupo y la nota lo recuerda en una línea (pedido del operador,
         # 2026-09-24). Después del texto efectivo: un audio o una foto se
-        # deciden por lo que dicen, una sola vez.
-        coupon_talk = coupon_checked_now or coupon_in_play(metadata, effective.text)
+        # deciden por lo que dicen, una sola vez. Lo decide el motor de
+        # decisiones (capacidad `cupon`, con `coupon_in_play` de regla de hoy).
+        coupon_talk = coupon_checked_now or await self._coupon_talk(
+            session_id, metadata, effective.text, events_before
+        )
         if coupon_talk and not coupon_checked_now and metadata.get("active_route") != ROUTE_HUMANO:
             reread = await self._reread_coupon_units(session_id, metadata, now_ms)
             if reread is not None:
@@ -1031,8 +1042,8 @@ class IngestInboundMessage:
         # Lo que el cliente pidió o mostró (la foto reentra como texto) y no
         # existe en el catálogo (incidente 2026-09-23: «¿y en vaso?» + foto de
         # una vela de dragón, y Ventas solo reenvió el catálogo).
-        catalog_gap_note = (
-            await self._catalog_gap_note(effective.text)
+        gap_note = (
+            await self._catalog_gap_note(session_id, effective.text)
             if metadata.get("active_route") != ROUTE_HUMANO
             else None
         )
@@ -1073,7 +1084,7 @@ class IngestInboundMessage:
                     order_draft_note,
                     coupon_note,
                     photo_citation_note,
-                    catalog_gap_note,
+                    gap_note,
                 )
                 if note
             ]
@@ -1092,6 +1103,25 @@ class IngestInboundMessage:
 
             provider = EngineReadings(WORKSPACE_VAULT_DIR)
         return await provider.read(inbound)
+
+    async def _coupon_talk(
+        self,
+        session_id: str,
+        metadata: dict[str, Any],
+        text: str | None,
+        events: list[dict[str, Any]],
+    ) -> bool:
+        """¿Este mensaje habla del cupón aplicado? Lo decide el motor con el
+        bot de la conversación (capacidad `cupon`; regla de hoy:
+        `coupon_in_play`). `events`: lo que el cliente vio antes."""
+        verdict = await read_coupon_talk(
+            WORKSPACE_VAULT_DIR,
+            session_id=session_id,
+            metadata=metadata,
+            text=text,
+            events=events,
+        )
+        return bool(verdict.value)
 
     def _session_events(self, session_id: str) -> list[dict[str, Any]]:
         """El JSONL de la sesión (lo que ve el dashboard). Vacío si el store
@@ -1196,9 +1226,12 @@ class IngestInboundMessage:
         )
         return updated
 
-    async def _catalog_gap_note(self, text: str) -> str | None:
+    async def _catalog_gap_note(self, session_id: str, text: str) -> str | None:
         """Nota de lo que no existe en el catálogo; None sin catálogo o si
-        falla (un aviso de más no justifica demorar ni tumbar el turno)."""
+        falla (un aviso de más no justifica demorar ni tumbar el turno). Los
+        términos los decide el motor (capacidad `fuera_de_catalogo`: la regla
+        de hoy los propone y Jev solo puede quitar alguno); la nota es la de
+        siempre con los que quedan."""
         import asyncio
 
         if self._catalog is None or not text:
@@ -1211,7 +1244,13 @@ class IngestInboundMessage:
         except Exception as exc:  # noqa: BLE001 — degrade, never break the ingest
             logger.warning("catalog_gap_check_failed", reason=type(exc).__name__)
             return None
-        return build_catalog_gap_note(text, list(result.results))
+        verdict = await read_catalog_gap(
+            WORKSPACE_VAULT_DIR,
+            session_id=session_id,
+            text=text,
+            products=list(result.results),
+        )
+        return catalog_gap_note(verdict.value)
 
     async def _resolve_product_ref(self, sku: str) -> tuple[Any, str | None]:
         """Resolves a `ref: HUB-…` SKU against the catalog WITHOUT mutating
