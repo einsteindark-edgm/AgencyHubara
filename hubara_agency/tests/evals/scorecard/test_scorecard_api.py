@@ -95,6 +95,7 @@ def test_rescore_with_judge_queues_the_workflow(client: TestClient, monkeypatch)
         return "scorecard-wf-1"
 
     monkeypatch.setattr(api, "_start_judge_workflow", fake_start)
+    monkeypatch.setenv("EVAL_LLM_JUDGE_ENABLED", "true")
 
     detail = client.post("/api/chats/evals/scorecard/rescore",
                          json={"session_id": SESSION, "episode_id": "ep_007", "judge": True}).json()
