@@ -62,6 +62,7 @@ def _client(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> TestClient:
     [
         ("GET", "/api/lab/estimate?arms=A1,B&reps=3&bench=new", "/api/chats/lab/estimate", {"arms": "A1,B", "reps": 3, "bench": "new"}),
         ("GET", "/api/lab/runs", "/api/chats/lab/runs", None),
+        ("GET", "/api/lab/checks", "/api/chats/lab/checks", None),
         ("GET", "/api/lab/runs/active", "/api/chats/lab/runs/active", None),
         ("GET", f"/api/lab/runs/{RUN}/bench", f"/api/chats/lab/runs/{RUN}/bench", None),
         ("GET", f"/api/lab/runs/{RUN}/conversations", f"/api/chats/lab/runs/{RUN}/conversations", None),

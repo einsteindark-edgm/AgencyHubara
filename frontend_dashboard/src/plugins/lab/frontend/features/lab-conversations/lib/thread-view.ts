@@ -15,18 +15,32 @@
  * render, que es quien mira el reloj).
  */
 
-import { BOGOTA_TZ, bogotaDayIsoFromMs } from "@/shared/lib";
+import { BOGOTA_TZ, bogotaDayIsoFromMs, describeTool } from "@/shared/lib";
 import type { LabThread, ThreadMessage, ThreadTurn } from "@plugins/lab/frontend/entities/lab-run";
 
 export type ThreadItem =
   | { type: "day"; key: string; day: string }
-  | { type: "msg"; key: string; dir: "in" | "out" | "comp" | "system"; text: string; time: string; hasImage: boolean }
+  | { type: "msg"; key: string; dir: "in" | "out" | "comp" | "system"; text: string; time: string; hasImage: boolean; byHuman?: boolean }
   | { type: "burst"; key: string; turn: ThreadTurn; messages: Array<{ text: string; time: string }>; spanS: number }
   | { type: "chip"; key: string; turn: ThreadTurn; tone: "warn" | "neutral"; sub: string }
   | { type: "note"; key: string; text: string };
 
+/** Lo que respondió un bot en un turno: sus burbujas y, si no hay, por qué. */
+export type ReplyItem = { dir: "out" | "comp" | "system" | "note"; text: string; hasImage: boolean; byHuman?: boolean };
+
 export const PRODUCTION_ARM = "A0";
 const NOT_RUN = "Este bot todavía no respondió este turno.";
+
+/** Por qué un turno simulado no envió nada (`suppressed_reason` de la traza). */
+const SUPPRESSED: Record<string, string> = {
+  tag_closure: "cerró la conversación con una etiqueta",
+  no_message: "decidió no escribir",
+  admin_turn: "era un turno interno del equipo",
+  admin_text_guard: "el texto parecía una nota interna y se bloqueó",
+  variant_picker: "el selector de opciones es el mensaje",
+  variant_enumeration_guard: "la lista de opciones se cambió por un selector",
+  shutdown: "la conversación se estaba cerrando",
+};
 
 const TIME_FMT = new Intl.DateTimeFormat("es-CO", { timeZone: BOGOTA_TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 
@@ -67,8 +81,8 @@ export function buildThreadView(thread: LabThread, arm: string): ThreadItem[] {
   return arm === PRODUCTION_ARM ? productionView(thread) : simulatedView(thread, arm);
 }
 
-function productionView(thread: LabThread): ThreadItem[] {
-  const turns = sortedTurns(thread);
+/** A qué turno del banco pertenece cada mensaje del cliente (por wamid o por su hora exacta). */
+function turnFinder(turns: ThreadTurn[]): (m: ThreadMessage) => ThreadTurn | undefined {
   const byWamid = new Map<string, ThreadTurn>();
   const byTs = new Map<number, ThreadTurn>();
   for (const turn of turns) {
@@ -77,12 +91,17 @@ function productionView(thread: LabThread): ThreadItem[] {
       if (m.ts_ms !== null) byTs.set(m.ts_ms, turn);
     }
   }
-  const turnOf = (m: ThreadMessage): ThreadTurn | undefined => {
+  return (m) => {
     if (m.role !== "user") return undefined;
     if (m.wamid && byWamid.has(m.wamid)) return byWamid.get(m.wamid);
     const ms = msOf(m);
     return ms !== null ? byTs.get(ms) : undefined;
   };
+}
+
+function productionView(thread: LabThread): ThreadItem[] {
+  const turns = sortedTurns(thread);
+  const turnOf = turnFinder(turns);
 
   const items: ThreadItem[] = [];
   let day = "";
@@ -123,10 +142,71 @@ function productionView(thread: LabThread): ThreadItem[] {
       open = turn;
       return;
     }
-    items.push({ type: "msg", key: `m-${idx}`, dir: dirOf(m), text: m.content, time: hhmm(ms), hasImage: m.has_image });
+    items.push({ type: "msg", key: `m-${idx}`, dir: dirOf(m), text: m.content, time: hhmm(ms), hasImage: m.has_image, byHuman: m.sender === "human" });
   });
   if (open) items.push(chip(open, PRODUCTION_ARM, chipKey(open as ThreadTurn)));
   return items;
+}
+
+/** Producción: los mensajes reales que siguieron a la ráfaga del turno, hasta que el cliente vuelve a escribir. */
+function productionReplies(thread: LabThread, turn: ThreadTurn): ReplyItem[] {
+  const turnOf = turnFinder(thread.turns);
+  const replies: ReplyItem[] = [];
+  let open = false;
+  let seen = false;
+  let wroteAgain = false;
+  for (const m of thread.messages) {
+    if (m.role === "user") {
+      const mine = turnOf(m)?.turn_key === turn.turn_key;
+      if (seen && !mine && replies.length === 0) wroteAgain = true;
+      seen = seen || mine;
+      open = mine;
+      continue;
+    }
+    if (open) {
+      const dir = dirOf(m);
+      replies.push({ dir: dir === "in" ? "out" : dir, text: m.content, hasImage: m.has_image, byHuman: m.sender === "human" });
+    }
+  }
+  if (replies.length === 0) {
+    return [
+      {
+        dir: "note",
+        text: wroteAgain
+          ? "El cliente volvió a escribir antes de que el bot respondiera: la respuesta salió con el turno siguiente."
+          : "El bot no respondió este turno.",
+        hasImage: false,
+      },
+    ];
+  }
+  return replies;
+}
+
+/** Un bot simulado: sus textos, lo que mandó aparte (tarjetas, botones, formularios) y lo que le rechazaron. */
+function simulatedReplies(turn: ThreadTurn, arm: string): ReplyItem[] {
+  const out = turn.outputs[arm];
+  if (!out) return [{ dir: "note", text: NOT_RUN, hasImage: false }];
+  const replies: ReplyItem[] = out.sent_texts.map((text) => ({ dir: "out" as const, text, hasImage: false }));
+  for (const call of out.tools) {
+    const tool = describeTool(call);
+    if (!tool.component || !tool.shown) continue;
+    const what = tool.detail ? `${tool.shown} · ${tool.detail}` : tool.shown;
+    replies.push(
+      tool.failed
+        ? { dir: "note", text: `No salió: ${what} (${tool.result.replace(/^rechazada: /, "")}).`, hasImage: false }
+        : { dir: "comp", text: `🧩 ${what}`, hasImage: false },
+    );
+  }
+  if (!replies.some((r) => r.dir !== "note")) {
+    const why = out.suppressed_reason ? `: ${SUPPRESSED[out.suppressed_reason] ?? out.suppressed_reason}` : "";
+    replies.unshift({ dir: "note", text: `El bot no envió nada${why}.`, hasImage: false });
+  }
+  return replies;
+}
+
+/** Lo que respondió un bot en un turno (producción: lo real; simulado: lo de ese bot). */
+export function turnReplies(thread: LabThread, turn: ThreadTurn, arm: string): ReplyItem[] {
+  return arm === PRODUCTION_ARM ? productionReplies(thread, turn) : simulatedReplies(turn, arm);
 }
 
 function simulatedView(thread: LabThread, arm: string): ThreadItem[] {
@@ -144,16 +224,15 @@ function simulatedView(thread: LabThread, arm: string): ThreadItem[] {
       const m = turn.burst[0];
       items.push({ type: "msg", key: `in-${turn.turn_key}`, dir: "in", text: m?.text ?? "", time: hhmm(m?.ts_ms ?? null), hasImage: false });
     }
-    const out = turn.outputs[arm];
-    if (!out) {
-      items.push({ type: "note", key: `note-${turn.turn_key}`, text: NOT_RUN });
-    } else if (out.sent_texts.length === 0) {
-      const why = out.suppressed_reason ? ` (${out.suppressed_reason})` : "";
-      items.push({ type: "note", key: `note-${turn.turn_key}`, text: `El bot no envió nada${why}.` });
-    } else {
-      out.sent_texts.forEach((text, k) => items.push({ type: "msg", key: `out-${turn.turn_key}-${k}`, dir: "out", text, time: "", hasImage: false }));
-    }
+    simulatedReplies(turn, arm).forEach((r, k) =>
+      items.push(
+        r.dir === "note"
+          ? { type: "note", key: `note-${turn.turn_key}-${k}`, text: r.text }
+          : { type: "msg", key: `out-${turn.turn_key}-${k}`, dir: r.dir, text: r.text, time: "", hasImage: r.hasImage },
+      ),
+    );
     items.push(chip(turn, arm, `chip-${turn.turn_key}`));
   }
   return items;
 }
+

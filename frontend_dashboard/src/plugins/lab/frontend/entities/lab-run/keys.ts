@@ -5,6 +5,7 @@ export const labKeys = {
   all: ["lab"] as const,
   runs: () => [...labKeys.all, "runs"] as const,
   active: () => [...labKeys.all, "active"] as const,
+  checks: () => [...labKeys.all, "checks"] as const,
   estimate: (input: LaunchInput) => [...labKeys.all, "estimate", input.arms.join(","), input.reps, input.bench] as const,
   run: (run: string) => [...labKeys.all, "run", run] as const,
   bench: (run: string) => [...labKeys.run(run), "bench"] as const,

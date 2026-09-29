@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import threadFixture from "@plugins/lab/frontend/entities/lab-run/fixtures/thread.json";
 import { threadSchema, type LabThread } from "@plugins/lab/frontend/entities/lab-run";
 
-import { buildThreadView } from "./thread-view";
+import { buildThreadView, turnReplies } from "./thread-view";
 
 /**
  * Hilo de una conversación del banco, como lo muestra la sección
@@ -75,7 +75,7 @@ describe("buildThreadView", () => {
       ...thread,
       turns: thread.turns.map((t) => ({
         ...t,
-        outputs: { ...t.outputs, B: { sent_texts: [`respuesta B al turno ${t.turn}`], discarded_narration: [], guards: [], suppressed_reason: null, llm_text: null } },
+        outputs: { ...t.outputs, B: { sent_texts: [`respuesta B al turno ${t.turn}`], tools: [], discarded_narration: [], guards: [], suppressed_reason: null, llm_text: null } },
       })),
     };
 
@@ -93,9 +93,84 @@ describe("buildThreadView", () => {
   it("un turno simulado que no envió nada lo explica", () => {
     const silent: LabThread = {
       ...thread,
-      turns: [{ ...thread.turns[0], outputs: { B: { sent_texts: [], discarded_narration: [], guards: [], suppressed_reason: "tag_closure", llm_text: null } } }],
+      turns: [{ ...thread.turns[0], outputs: { B: { sent_texts: [], tools: [], discarded_narration: [], guards: [], suppressed_reason: "tag_closure", llm_text: null } } }],
     };
 
-    expect(brief(buildThreadView(silent, "B"))).toContain("note El bot no envió nada (tag_closure).");
+    expect(brief(buildThreadView(silent, "B"))).toContain("note El bot no envió nada: cerró la conversación con una etiqueta.");
+  });
+
+  it("un bot simulado muestra también lo que mandó aparte del texto y lo que le rechazaron", () => {
+    // Como llega del API: el contrato completa lo que falta (error, notas).
+    const withTools: LabThread = threadSchema.parse({
+      ...thread,
+      turns: [
+        {
+          ...thread.turns[0],
+          outputs: {
+            B: {
+              sent_texts: ["Mira esta"],
+              discarded_narration: [],
+              guards: [],
+              suppressed_reason: null,
+              llm_text: null,
+              tools: [
+                { name: "search_products", ok: true, args: { q: "jesús" }, notes: ["count:0"] },
+                { name: "present_product_detail", ok: true, args: { handle: "sagrado-rostro" } },
+                { name: "send_cta_url", ok: false, error: "url_not_whitelisted", args: { button_text: "Ver catálogo" } },
+              ],
+            },
+          },
+        },
+      ],
+    });
+
+    expect(brief(buildThreadView(withTools, "B"))).toEqual([
+      "day 2026-09-23",
+      "in Buenas tardes",
+      "out Mira esta",
+      "comp 🧩 Tarjeta del producto · sagrado-rostro",
+      "note No salió: Botón con enlace · Ver catálogo (el enlace no está permitido).",
+      "chip t1 neutral",
+    ]);
+  });
+});
+
+describe("turnReplies (lo que respondió cada bot en un turno)", () => {
+  const brief = (items: ReturnType<typeof turnReplies>) => items.map((it) => `${it.dir} ${it.text}`);
+
+  it("producción: los mensajes reales que siguieron a la ráfaga del turno", () => {
+    expect(brief(turnReplies(thread, thread.turns[0], "A0"))).toEqual(["out ¡Buenas tardes! Te damos la bienvenida a Hubara 🤍"]);
+    expect(brief(turnReplies(thread, thread.turns[1], "A0"))).toEqual(["comp 📦 Tarifas de envío\nBogotá: $X.XXX · 2 a 3 días hábiles"]);
+  });
+
+  it("un bot simulado: lo que ESE bot respondió, o por qué no hay nada", () => {
+    expect(brief(turnReplies(thread, thread.turns[1], "B"))).toEqual(["note Este bot todavía no respondió este turno."]);
+  });
+
+  it("producción sin respuesta propia: el cliente volvió a escribir antes y la respuesta salió con el turno siguiente", () => {
+    const [first, second] = thread.turns;
+    const quick: LabThread = {
+      ...thread,
+      messages: [
+        { role: "user", content: "Buenas tardes", timestamp: "2026-09-23T15:40:00+00:00", sender: null, kind: null, component_kind: null, wamid: first.burst[0].wamid, has_image: false },
+        ...second.burst.map((m) => ({ role: "user", content: m.text, timestamp: null, sender: null, kind: null, component_kind: null, wamid: m.wamid, has_image: false })),
+        { role: "assistant", content: "Te respondo las dos cosas", timestamp: null, sender: null, kind: null, component_kind: null, wamid: null, has_image: false },
+      ],
+    };
+
+    expect(brief(turnReplies(quick, first, "A0"))).toEqual([
+      "note El cliente volvió a escribir antes de que el bot respondiera: la respuesta salió con el turno siguiente.",
+    ]);
+  });
+
+  it("lo que escribió una persona del equipo queda marcado", () => {
+    const withHuman: LabThread = {
+      ...thread,
+      messages: thread.messages.map((m, k) => (k === 1 ? { ...m, sender: "human" } : m)),
+    };
+
+    expect(turnReplies(withHuman, thread.turns[0], "A0")[0]).toMatchObject({ dir: "out", byHuman: true });
+    const item = buildThreadView(withHuman, "A0").find((it) => it.type === "msg" && it.dir === "out");
+    expect(item).toMatchObject({ byHuman: true });
   });
 });

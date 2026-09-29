@@ -21,9 +21,9 @@ describe("TraceStepDetail", () => {
   it("encabezado: tipo, número y título, carriles, tiempo y duración", () => {
     show([{ i: 1, at_ms: 2450, dur_ms: 300, kind: "tool", name: "search_products", ok: true }], 0);
 
-    expect(screen.getByText("Tool")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "1. search_products" })).toBeInTheDocument();
-    expect(screen.getByText("Workflow → Tools · +2,5 s · duró 0,3 s")).toBeInTheDocument();
+    expect(screen.getByText("Herramienta")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "1. Buscar en el catálogo" })).toBeInTheDocument();
+    expect(screen.getByText("Bot → Herramientas · +2,5 s · duró 0,3 s")).toBeInTheDocument();
   });
 
   it("la ráfaga muestra cada mensaje del cliente en su renglón", () => {
@@ -40,25 +40,34 @@ describe("TraceStepDetail", () => {
     ];
     show(steps, 1);
 
-    expect(screen.getByText("send_shipping_rates")).toBeInTheDocument();
-    expect(screen.getByText("Descartado: venía junto a una tool (default-deny)")).toBeInTheDocument();
+    expect(screen.getByText("Enviar las tarifas de envío")).toBeInTheDocument();
+    expect(screen.getByText("No se envió: venía junto a una herramienta")).toBeInTheDocument();
     expect(screen.getByText("¡Claro! te comparto el catálogo")).toBeInTheDocument();
     expect(screen.getByText("5.200 → 80")).toBeInTheDocument();
   });
 
-  it("una tool rechazada muestra el motivo, los argumentos y el extracto", () => {
+  it("una tool rechazada dice por qué en palabras; los datos técnicos quedan plegados", () => {
     show([{ i: 1, at_ms: 0, kind: "tool", name: "request_shipping_details", ok: false, error: "customer_deferred", args: { city: "Bogotá" }, excerpt: "el cliente pidió esperar" }], 1);
 
-    expect(screen.getByText("customer_deferred")).toBeInTheDocument();
-    expect(screen.getByText(/"city": "Bogotá"/)).toBeInTheDocument();
-    expect(screen.getByText("el cliente pidió esperar")).toBeInTheDocument();
+    expect(screen.getByText("rechazada: el cliente aplazó")).toBeVisible();
+    expect(screen.getByText(/"city": "Bogotá"/)).not.toBeVisible();
+    expect(screen.getByText("el cliente pidió esperar")).not.toBeVisible();
+    expect(screen.getByText("Datos técnicos")).toBeVisible();
+  });
+
+  it("la búsqueda dice qué buscó y qué encontró", () => {
+    show([{ i: 1, at_ms: 0, kind: "tool", name: "search_products", ok: true, args: { q: "jesús", limit: 10 }, notes: ["count:0"] }], 1);
+
+    expect(screen.getByRole("heading", { name: "2. Resultado: no encontró nada" })).toBeInTheDocument();
+    expect(screen.getByText("Buscar en el catálogo · «jesús»")).toBeVisible();
   });
 
   it("una guarda muestra el texto antes y después", () => {
     show([{ i: 1, at_ms: 0, kind: "guard", name: "variant_enumeration_guard", before: "Tenemos 11 aromas", after: "" }], 0);
 
+    expect(screen.getByText("cambió una lista de opciones por un selector")).toBeInTheDocument();
     expect(screen.getByText("Tenemos 11 aromas")).toBeInTheDocument();
-    expect(screen.getByText("(vacío: la guarda se llevó el texto)")).toBeInTheDocument();
+    expect(screen.getByText("(vacío: la protección se llevó el texto)")).toBeInTheDocument();
   });
 
   it("la percepción muestra cada respuesta con su probabilidad, el umbral y lo elegido", () => {

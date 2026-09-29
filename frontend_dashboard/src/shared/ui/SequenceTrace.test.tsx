@@ -33,13 +33,13 @@ describe("SequenceTrace", () => {
 
     const rows = within(diagram).getAllByRole("button");
     expect(rows).toHaveLength(layout.rows.length);
-    expect(rows[0]).toHaveAccessibleName("Paso 1: Ráfaga · 2 mensajes");
-    expect(rows[2]).toHaveAccessibleName("Paso 3: Pide send_shipping_rates");
+    expect(rows[0]).toHaveAccessibleName("Paso 1: El cliente escribió 2 mensajes seguidos");
+    expect(rows[2]).toHaveAccessibleName("Paso 3: Pide enviar las tarifas de envío");
   });
 
   it("avisa que el clasificador no se usó en este turno", () => {
     setup();
-    expect(screen.getByText("Clasificador · sin uso")).toBeInTheDocument();
+    expect(screen.getByText("Jev · sin uso")).toBeInTheDocument();
   });
 
   it("clic en una fila la selecciona", () => {
@@ -80,7 +80,7 @@ describe("SequenceTrace", () => {
 
     const items = within(list).getAllByRole("button");
     expect(items[2]).toHaveAttribute("aria-current", "true");
-    expect(items[2]).toHaveTextContent("LLM → Workflow");
+    expect(items[2]).toHaveTextContent("Modelo de IA → Bot");
     fireEvent.click(items[5]);
     expect(onSelect).toHaveBeenCalledWith(5);
   });

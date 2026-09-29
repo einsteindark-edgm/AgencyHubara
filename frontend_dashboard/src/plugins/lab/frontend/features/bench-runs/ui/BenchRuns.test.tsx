@@ -68,7 +68,8 @@ describe("BenchRuns", () => {
   it("agrupa las exclusiones por motivo, sin mostrar teléfonos completos", async () => {
     renderTab();
 
-    const table = await screen.findByRole("table", { name: "Exclusiones del banco" });
+    // Primer render del archivo: con toda la batería en paralelo, 1 s no siempre alcanza.
+    const table = await screen.findByRole("table", { name: "Exclusiones del banco" }, { timeout: 5000 });
     expect(within(table).getByRole("row", { name: /Turno del sistema.*2/ })).toBeInTheDocument();
     expect(within(table).getByRole("row", { name: /Conversación sin metadata.*1/ })).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("573001234567");

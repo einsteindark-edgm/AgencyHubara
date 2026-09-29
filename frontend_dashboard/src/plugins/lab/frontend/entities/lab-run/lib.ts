@@ -1,18 +1,27 @@
 import { ApiError } from "@/shared/sdk";
 
 import { engineDecisionsSchema } from "./contracts";
-import type { EngineDecision, EpisodeVerdict } from "./model";
+import type { CheckCatalog, CheckLevel, EngineDecision, EpisodeVerdict, EvalResult } from "./model";
 
 /**
- * Nombres de los bots de una corrida (plan §3.2, diseño §09). B0 es el
- * workflow nuevo (V2) con las reglas de hoy: tiene que dar lo mismo que A1
- * (motor de decisiones §08); B es el workflow nuevo con Jev.
+ * Nombres de los bots de una corrida (plan §3.2), en palabras del operador
+ * (revisión 2026-09-29). B0 es el workflow nuevo (V2) con las reglas de hoy:
+ * tiene que dar lo mismo que A1 (motor de decisiones §08); B es el workflow
+ * nuevo con Jev.
  */
 export const ARM_LABELS: Record<string, string> = {
   A0: "Producción",
-  A1: "Actual simulado",
-  B0: "Nuevo sin Jev",
-  B: "Nuevo + Jev",
+  A1: "Bot actual simulado",
+  B0: "Bot nuevo sin Jev",
+  B: "Bot nuevo con Jev",
+};
+
+/** Qué es cada bot, en una frase (ayuda del selector). */
+export const ARM_HELP: Record<string, string> = {
+  A0: "Lo que respondió el bot de verdad.",
+  A1: "El mismo código de producción, repetido aquí como control.",
+  B0: "El bot nuevo con las reglas de hoy, sin Jev.",
+  B: "El bot nuevo, con Jev decidiendo.",
 };
 
 export function armLabel(arm: string): string {
@@ -121,4 +130,96 @@ export function formatDecisionValue(value: unknown): string {
   if (Array.isArray(value)) return value.length ? value.map((v) => formatDecisionValue(v)).join(", ") : "—";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+// ── Checks por su nombre ─────────────────────────────────────────────────────
+
+const LEVEL_NAME: Record<CheckLevel, string> = { critico: "crítico", mayor: "mayor", menor: "menor" };
+
+/** Qué hace cada nivel con el veredicto (misma regla que `scorecard/verdict.py`). */
+export const LEVEL_HELP: Record<CheckLevel, string> = {
+  critico: "Si falla, la conversación reprueba.",
+  mayor: "Si falla, la conversación queda en alerta.",
+  menor: "No cambia el resultado; sirve para priorizar.",
+};
+
+export function levelLabel(level: CheckLevel): string {
+  return LEVEL_NAME[level];
+}
+
+/** Un check listo para mostrar: su nombre, lo que se esperaba y por qué falló. */
+export interface CheckView {
+  id: string;
+  name: string;
+  /** El nivel que contó para el veredicto. */
+  level: CheckLevel;
+  /** Por qué el nivel no es el del registro (un crítico de juez sin calibrar cuenta como mayor). */
+  levelNote: string | null;
+  /** Lo que se esperaba (la regla del registro). */
+  rule: string;
+  /** Por qué falló (o pasó): la crítica del juez o la evidencia del check de código. */
+  reason: string | null;
+  /** Lo que dijo el bot, citado por el juez. */
+  quote: string | null;
+  byJudge: boolean;
+}
+
+function cleanText(value: string | null | undefined): string | null {
+  const text = (value ?? "").trim();
+  return text === "" ? null : text;
+}
+
+/** La evidencia de un check de código empieza con «turno N: »; en la vista del turno sobra. */
+function withoutTurn(text: string): string {
+  const rest = text.replace(/^turno \d+:\s*/i, "");
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
+function specOf(catalog: CheckCatalog | undefined, id: string) {
+  return catalog?.checks.find((c) => c.id === id);
+}
+
+export function checkView(catalog: CheckCatalog | undefined, result: EvalResult): CheckView {
+  const spec = specOf(catalog, result.check_id);
+  const level = result.level ?? spec?.level ?? "menor";
+  let levelNote: string | null = null;
+  if (spec && spec.level !== level) {
+    levelNote =
+      spec.kind === "judge" && spec.level === "critico"
+        ? `Es ${LEVEL_NAME.critico}, pero cuenta como ${LEVEL_NAME[level]} mientras el juez no esté calibrado.`
+        : `Es ${LEVEL_NAME[spec.level]}, pero en esta corrida contó como ${LEVEL_NAME[level]}.`;
+  }
+  const critique = cleanText(result.critique);
+  const evidence = cleanText(result.evidence);
+  return {
+    id: result.check_id,
+    name: spec?.name || result.check_id,
+    level,
+    levelNote,
+    rule: spec?.rule ?? "",
+    reason: critique ?? (evidence ? withoutTurn(evidence) : null),
+    quote: critique && evidence ? evidence : null,
+    byJudge: result.source === "judge" || (!result.source && spec?.kind === "judge"),
+  };
+}
+
+/** «Fallan 2 de 3 checks», «Falla 1 de 3 checks» o «Cumple los 3 checks». */
+export function checksHeadline(failing: number, decided: number): string {
+  if (decided === 0) return "Ningún check se pudo decidir";
+  if (failing === 0) return decided === 1 ? "Cumple el único check" : `Cumple los ${decided} checks`;
+  return `${failing === 1 ? "Falla" : "Fallan"} ${failing} de ${decided} checks`;
+}
+
+/**
+ * El resultado de un turno con la regla del scorecard: un crítico que falla
+ * reprueba (FALLA), un mayor deja en alerta (ALERTA), los menores no cambian
+ * nada (PASA). Sin checks decididos (todos sin señal o sin aplicar): SIN_DATOS.
+ */
+export function turnVerdict(catalog: CheckCatalog | undefined, results: EvalResult[]): EpisodeVerdict {
+  const decided = results.filter((r) => r.verdict === "pasa" || r.verdict === "falla");
+  if (decided.length === 0) return "SIN_DATOS";
+  const levels = decided.filter((r) => r.verdict === "falla").map((r) => r.level ?? specOf(catalog, r.check_id)?.level ?? "menor");
+  if (levels.includes("critico")) return "FALLA";
+  if (levels.includes("mayor")) return "ALERTA";
+  return "PASA";
 }

@@ -185,3 +185,22 @@ def test_a_run_that_stopped_reporting_is_marked_stale(http, monkeypatch) -> None
 
     assert runs["run-20260923-live"]["stale"] is True
     assert runs[RUN]["stale"] is False and runs["run-20260922-dead"]["stale"] is False
+
+
+def test_the_check_registry_so_the_lab_shows_names_instead_of_codes(http) -> None:
+    """El operador no entiende «DES-04 · falla»: el laboratorio muestra cada
+    check por su nombre, su nivel y lo que se esperaba (la regla). Las
+    evaluaciones de una corrida solo traen el código; el registro viaja por
+    el mismo contrato `lab@v1`."""
+    from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION
+
+    res = http.get("/api/chats/lab/checks")
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    des04 = next(c for c in body["checks"] if c["id"] == "DES-04")
+    assert des04["name"] == "Clasificó bien la intención del cliente"
+    assert des04["level"] == "mayor"
+    assert des04["rule"].startswith("Lo que el bot mostró o recomendó responde")
+    assert des04["family_label"] == "Descubrimiento"
+    assert body["registry_version"] == REGISTRY_VERSION

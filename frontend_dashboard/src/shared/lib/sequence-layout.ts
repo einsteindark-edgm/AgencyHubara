@@ -7,15 +7,20 @@
  * x = 58, 173, 288, 403 y 518 sobre un ancho de 610; primer paso en y = 70 y
  * 44 px entre pasos.
  *
- * Carriles: Cliente · Workflow · clasificador (Jev u OpenAI) · LLM · Tools.
- *  - `inbound`: Cliente → Workflow.
- *  - `perception` y `verify`: Workflow → clasificador y de vuelta.
- *  - `llm`: Workflow → LLM ("ronda N") y LLM → Workflow (lo que pidió).
- *  - `tool`: Workflow → Tools y de vuelta: las tools las ejecuta el WORKFLOW
- *    (`execute_tool` de exoclaw) después de que el LLM las pide.
- *  - `plan`, `guard`, `cut`, `restart`: una caja dentro del Workflow.
- *  - `outbound`: Workflow → Cliente.
+ * Carriles, en palabras del operador (revisión 2026-09-29): Cliente · Bot
+ * (el workflow) · Jev (el clasificador) · Modelo de IA (el LLM) ·
+ * Herramientas (las tools).
+ *  - `inbound`: Cliente → Bot.
+ *  - `perception` y `verify`: Bot → Jev y de vuelta.
+ *  - `llm`: Bot → Modelo ("ronda N") y Modelo → Bot (lo que pidió).
+ *  - `tool`: Bot → Herramientas y de vuelta: las tools las ejecuta el BOT
+ *    (`execute_tool` de exoclaw) después de que el modelo las pide.
+ *  - `plan`, `guard`, `cut`, `restart`: una caja dentro del Bot.
+ *  - `outbound`: Bot → Cliente.
+ * Las tools se nombran por lo que hacen (`sales-tools.ts`), nunca por su código.
  */
+
+import { describeTool, toolActionPhrase } from "./sales-tools";
 
 export type TraceStep = {
   i?: number;
@@ -83,11 +88,28 @@ const TOOLS = 4;
 
 const CUT_LABELS: Record<string, string> = {
   awaits_customer: "espera al cliente",
-  escalation: "escalación",
-  send_reply: "send_reply",
-  tag_closure: "cierre de tag",
-  checkpoint_a: "corrientazo (A)",
-  checkpoint_b: "corrientazo (B)",
+  escalation: "pasa a una persona",
+  send_reply: "respuesta entregada",
+  tag_closure: "cierra la conversación",
+  checkpoint_a: "el cliente escribió mientras pensaba",
+  checkpoint_b: "el cliente escribió antes del envío",
+};
+
+/** Lo que hizo cada guarda con el texto del modelo. */
+export const GUARD_LABELS: Record<string, string> = {
+  variant_enumeration_guard: "cambió una lista de opciones por un selector",
+  apply_variant_enumeration_guard: "cambió una lista de opciones por un selector",
+  portavelas_notice_guard: "quitó el aviso de portavelas",
+  admin_text_guard: "bloqueó un texto interno",
+  admin_text_salvaged: "rescató el texto para el cliente",
+  variant_picker_text: "el selector de opciones reemplazó el texto",
+};
+
+/** Lo que decidió Jev al revisar si la respuesta cubre cada asunto. */
+const VERIFY_DECISIONS: Record<string, string> = {
+  send: "enviar",
+  complement: "enviar y completar después",
+  pending: "pendiente",
 };
 
 type Draft = Omit<SeqRow, "index" | "y" | "dashed">;
@@ -132,61 +154,75 @@ function rowsFor(step: TraceStep, stepIndex: number): Draft[] {
   switch (step.kind) {
     case "inbound": {
       const n = count(step.messages);
-      const label = n > 1 ? `ráfaga: ${n} mensajes` : "1 mensaje";
-      return [{ ...base, from: CLIENT, to: WORKFLOW, status: "info", short: label, title: n > 1 ? `Ráfaga · ${n} mensajes` : "Mensaje del cliente", kind: "Entrada", t: time }];
+      const short = n > 1 ? `${n} mensajes seguidos` : "1 mensaje";
+      const title = n > 1 ? `El cliente escribió ${n} mensajes seguidos` : "Mensaje del cliente";
+      return [{ ...base, from: CLIENT, to: WORKFLOW, status: "info", short, title, kind: "Cliente", t: time }];
     }
     case "perception":
     case "verify": {
       const verify = step.kind === "verify";
-      const kind = verify ? "Clasificador · verificación" : "Clasificador · percepción";
+      const kind = verify ? "Jev · revisión" : "Jev · lectura";
       const n = count(step.answers);
+      const decision = String(step.decision ?? "—");
+      const decided = `decisión: ${VERIFY_DECISIONS[decision] ?? decision}`;
       return [
-        { ...base, dur: duration(step), from: WORKFLOW, to: CLASSIFIER, status: "classifier", short: verify ? "¿cubre cada asunto?" : `percepción · ${n} respuestas`, title: verify ? "Verificación" : "Percepción", kind, t: time },
-        { ...base, from: CLASSIFIER, to: WORKFLOW, status: "classifier", short: verify ? `decisión: ${String(step.decision ?? "—")}` : "respuestas", title: verify ? "Decisión" : "Respuestas", kind, t: back },
+        {
+          ...base,
+          dur: duration(step),
+          from: WORKFLOW,
+          to: CLASSIFIER,
+          status: "classifier",
+          short: verify ? "¿respondió cada asunto?" : `lee el mensaje · ${n} ${n === 1 ? "pregunta" : "preguntas"}`,
+          title: verify ? "Jev revisa si la respuesta cubre cada asunto" : "Jev lee el mensaje",
+          kind,
+          t: time,
+        },
+        { ...base, from: CLASSIFIER, to: WORKFLOW, status: "classifier", short: verify ? decided : "responde", title: verify ? decided.charAt(0).toUpperCase() + decided.slice(1) : "Respuestas de Jev", kind, t: back },
       ];
     }
     case "plan":
-      return [{ ...base, from: WORKFLOW, to: WORKFLOW, status: "neutral", short: `plan: ${count(step.checklist)} asuntos`, title: `Plan: ${count(step.checklist)} asuntos`, kind: "Plan · código", t: time }];
+      return [{ ...base, from: WORKFLOW, to: WORKFLOW, status: "neutral", short: `plan: ${count(step.checklist)} asuntos`, title: `Plan: ${count(step.checklist)} asuntos por responder`, kind: "Plan", t: time }];
     case "llm": {
       const round = typeof step.round === "number" ? step.round : 1;
-      const tools = names(step.tool_calls);
+      const asked = names(step.tool_calls);
       const withText = textDiscarded(step) || step.text_fate === "pre_tool_message";
-      const asked = tools.length
-        ? `pide ${tools[0]}${tools.length > 1 ? ` +${tools.length - 1}` : ""}${withText ? " + texto" : ""}`
-        : "texto";
+      const short = asked.length
+        ? `pide ${toolActionPhrase(asked[0])}${asked.length > 1 ? ` +${asked.length - 1}` : ""}${withText ? " + texto" : ""}`
+        : "escribe el texto final";
+      const title = asked.length ? `Pide ${asked.map(toolActionPhrase).join(", ")}` : "Escribe el texto final";
       return [
-        { ...base, dur: duration(step), from: WORKFLOW, to: LLM, status: "info", short: `ronda ${round}`, title: `Ronda ${round}`, kind: "LLM", t: time },
-        { ...base, from: LLM, to: WORKFLOW, status: textDiscarded(step) ? "warn" : "info", short: asked, title: tools.length ? `Pide ${tools.join(", ")}` : "Texto final", kind: "LLM", t: back },
+        { ...base, dur: duration(step), from: WORKFLOW, to: LLM, status: "info", short: `ronda ${round}`, title: `Ronda ${round} del modelo`, kind: "Modelo de IA", t: time },
+        { ...base, from: LLM, to: WORKFLOW, status: textDiscarded(step) ? "warn" : "info", short, title, kind: "Modelo de IA", t: back },
       ];
     }
     case "tool": {
-      const name = typeof step.name === "string" ? step.name : "tool";
-      const failed = step.ok === false;
-      const error = typeof step.error === "string" ? step.error : "error";
+      const tool = describeTool({ name: typeof step.name === "string" ? step.name : "tool", args: step.args, ok: step.ok as boolean | null, error: step.error as string | null, notes: step.notes });
+      const label = tool.detail ? `${tool.action} · ${tool.detail}` : tool.action;
       return [
-        { ...base, dur: duration(step), from: WORKFLOW, to: TOOLS, status: "tool", short: name, title: name, kind: "Tool", t: time },
-        { ...base, from: TOOLS, to: WORKFLOW, status: failed ? "bad" : "tool", short: failed ? `rechazada: ${error}` : "resultado", title: failed ? `Rechazada: ${error}` : "Resultado", kind: "Tool", t: back },
+        { ...base, dur: duration(step), from: WORKFLOW, to: TOOLS, status: "tool", short: label, title: label, kind: "Herramienta", t: time },
+        { ...base, from: TOOLS, to: WORKFLOW, status: tool.failed ? "bad" : "tool", short: tool.result, title: `Resultado: ${tool.result}`, kind: "Herramienta", t: back },
       ];
     }
     case "guard": {
       const name = typeof step.name === "string" ? step.name : "guarda";
+      const label = GUARD_LABELS[name] ?? name;
       const removed = typeof step.before === "string" && step.before !== "" && step.after === "";
-      return [{ ...base, from: WORKFLOW, to: WORKFLOW, status: removed ? "bad" : "warn", short: name, title: name, kind: "Guarda", t: time }];
+      return [{ ...base, from: WORKFLOW, to: WORKFLOW, status: removed ? "bad" : "warn", short: label, title: `Protección: ${label}`, kind: "Protección", t: time }];
     }
     case "cut": {
       const reason = typeof step.reason === "string" ? step.reason : "";
-      const label = CUT_LABELS[reason] ?? reason ?? "corte";
-      return [{ ...base, from: WORKFLOW, to: WORKFLOW, status: "neutral", short: label, title: `Corte: ${label}`, kind: "Corte del turno", t: time }];
+      const label = CUT_LABELS[reason] ?? (reason || "fin del turno");
+      return [{ ...base, from: WORKFLOW, to: WORKFLOW, status: "neutral", short: label, title: `Fin del turno: ${label}`, kind: "Fin del turno", t: time }];
     }
     case "restart": {
       const attempt = typeof step.attempt === "number" ? step.attempt : 1;
       const drained = typeof step.drained === "number" ? step.drained : 0;
-      const label = `reinicio ${attempt} · +${drained} mensaje${drained === 1 ? "" : "s"}`;
-      return [{ ...base, from: WORKFLOW, to: WORKFLOW, status: "warn", short: label, title: `Reinicio ${attempt}`, kind: "Reinicio", t: time }];
+      const label = `vuelve a empezar · +${drained} mensaje${drained === 1 ? "" : "s"}`;
+      return [{ ...base, from: WORKFLOW, to: WORKFLOW, status: "warn", short: label, title: `Vuelve a empezar (${attempt})`, kind: "Reinicio", t: time }];
     }
     case "outbound": {
       const n = count(step.bubbles);
-      return [{ ...base, from: WORKFLOW, to: CLIENT, status: outboundStatus(step), short: `${n} ${n === 1 ? "envío" : "envíos"}`, title: `Envío · ${n}`, kind: "Envío", t: time }];
+      return [{ ...base, from: WORKFLOW, to: CLIENT, status: outboundStatus(step), short: `envía ${n} ${n === 1 ? "mensaje" : "mensajes"}`, title: `Envía ${n} ${n === 1 ? "mensaje" : "mensajes"} al cliente`, kind: "Envío", t: time }];
     }
     default:
       return [{ ...base, from: WORKFLOW, to: WORKFLOW, status: "neutral", short: step.kind, title: step.kind, kind: step.kind, t: time }];
@@ -202,7 +238,7 @@ export function layoutSequence(steps: TraceStep[], opts: { classifierLabel?: str
     dashed: d.to < d.from && d.to !== CLIENT,
   }));
   return {
-    lanes: ["Cliente", "Workflow", opts.classifierLabel ?? "Clasificador", "LLM", "Tools"],
+    lanes: ["Cliente", "Bot", opts.classifierLabel ?? "Jev", "Modelo de IA", "Herramientas"],
     lanesX: LANE_X,
     rows,
     width: SEQ_WIDTH,

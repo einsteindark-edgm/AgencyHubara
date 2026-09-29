@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "@/shared/sdk";
 
@@ -6,6 +6,7 @@ import {
   activeRunSchema,
   benchReportSchema,
   cancelResultSchema,
+  checkCatalogSchema,
   conversationsSchema,
   estimateSchema,
   evaluationsSchema,
@@ -33,6 +34,10 @@ function convBase(run: string, sid: string): string {
 
 async function fetchRuns(signal?: AbortSignal) {
   return runsSchema.parse(await apiClient.get<unknown>(`${BASE}/runs`, { signal }));
+}
+
+async function fetchChecks(signal?: AbortSignal) {
+  return checkCatalogSchema.parse(await apiClient.get<unknown>(`${BASE}/checks`, { signal }));
 }
 
 async function fetchActive(signal?: AbortSignal) {
@@ -81,6 +86,19 @@ export function useLabRuns() {
     queryKey: labKeys.runs(),
     queryFn: ({ signal }) => fetchRuns(signal),
     staleTime: 30_000,
+  });
+}
+
+/**
+ * Registro de checks del scorecard: nombre, nivel y regla de cada código (la
+ * pantalla nunca muestra un código solo). Cambia solo con un deploy.
+ */
+export function useCheckCatalog() {
+  return useQuery({
+    queryKey: labKeys.checks(),
+    queryFn: ({ signal }) => fetchChecks(signal),
+    staleTime: 60 * 60_000,
+    retry: 1,
   });
 }
 
@@ -157,6 +175,23 @@ export function useRunEvaluations(run: string | null, sid: string | null, arm: s
     enabled: run !== null && sid !== null,
     staleTime: 5 * 60_000,
   });
+}
+
+/**
+ * Las evaluaciones de varios bots de la misma conversación (modo Comparar y
+ * el panel «Por bot»): una consulta por bot, con la MISMA key que
+ * `useRunEvaluations` (la caché se comparte con el modal del turno).
+ */
+export function useRunEvaluationsByArm(run: string | null, sid: string | null, arms: string[], rep = 0) {
+  const queries = useQueries({
+    queries: arms.map((arm) => ({
+      queryKey: labKeys.evaluations(run ?? "", sid ?? "", arm, rep),
+      queryFn: ({ signal }: { signal: AbortSignal }) => fetchEvaluations(run as string, sid as string, arm, rep, signal),
+      enabled: run !== null && sid !== null,
+      staleTime: 5 * 60_000,
+    })),
+  });
+  return Object.fromEntries(arms.map((arm, i) => [arm, queries[i]]));
 }
 
 /** "Lanzar corrida": prende la caja del laboratorio (cuesta plata). */

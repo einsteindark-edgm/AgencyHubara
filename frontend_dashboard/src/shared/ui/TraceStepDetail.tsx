@@ -8,7 +8,7 @@
 
 import type { ReactNode } from "react";
 
-import { STEP_COLOR, type SeqRow, type TraceStep } from "@/shared/lib";
+import { describeTool, GUARD_LABELS, STEP_COLOR, type SeqRow, type TraceStep } from "@/shared/lib";
 
 interface Props {
   step: TraceStep;
@@ -19,18 +19,37 @@ interface Props {
 const TEXT_FATE: Record<string, string> = {
   none: "Sin texto",
   final: "Texto final",
-  pre_tool_message: "Enviado antes de la tool",
-  discarded_default_deny: "Descartado: venía junto a una tool (default-deny)",
-  discarded_internal_tools: "Descartado: venía junto a una tool interna",
+  pre_tool_message: "Se envió antes de la herramienta",
+  discarded_default_deny: "No se envió: venía junto a una herramienta",
+  discarded_internal_tools: "No se envió: venía junto a una herramienta interna",
 };
 
 const CUT_REASON: Record<string, string> = {
-  awaits_customer: "La tool espera la respuesta del cliente: el turno termina acá.",
-  escalation: "Escalación a un humano: el turno termina acá.",
-  send_reply: "send_reply entregó la respuesta: el turno termina acá.",
-  tag_closure: "La tool cerró la conversación con un tag.",
-  checkpoint_a: "Corrientazo A: el cliente escribió mientras el LLM pensaba; el turno se reinicia con el mensaje nuevo.",
-  checkpoint_b: "Corrientazo B: el cliente escribió antes del envío; el turno se reinicia con el mensaje nuevo.",
+  awaits_customer: "El bot quedó esperando la respuesta del cliente.",
+  escalation: "El bot pasó la conversación a una persona.",
+  send_reply: "La respuesta salió: el turno termina aquí.",
+  tag_closure: "El bot cerró la conversación con una etiqueta.",
+  checkpoint_a: "El cliente escribió mientras el modelo pensaba: el turno vuelve a empezar con el mensaje nuevo.",
+  checkpoint_b: "El cliente escribió antes del envío: el turno vuelve a empezar con el mensaje nuevo.",
+};
+
+/** Qué tipo de burbuja salió. */
+const BUBBLE_KIND: Record<string, string> = {
+  text: "texto",
+  products_list: "lista de productos",
+  product: "producto",
+  product_detail: "producto",
+  image: "foto",
+  interactive: "botones",
+  buttons: "botones",
+  flow: "formulario",
+  reaction: "reacción",
+};
+
+const VERIFY_DECISION: Record<string, string> = {
+  send: "enviar",
+  complement: "enviar y completar después",
+  pending: "pendiente",
 };
 
 function str(value: unknown): string | null {
@@ -186,13 +205,12 @@ function Llm({ step, back }: { step: TraceStep; back: boolean }) {
   const text = str(step.text);
   return (
     <>
-      <Sec title="Llamada">
+      <Sec title="Llamada al modelo">
         <Kv
           rows={[
             ["Ronda", num(step.round)?.toString()],
             ["Modelo", str(step.model)],
             ["Tokens (entrada → salida)", tokensIn !== null || tokensOut !== null ? `${tokensIn !== null ? int(tokensIn) : "—"} → ${tokensOut !== null ? int(tokensOut) : "—"}` : null],
-            ["Fin", back ? str(step.finish) : null],
           ]}
         />
       </Sec>
@@ -200,15 +218,15 @@ function Llm({ step, back }: { step: TraceStep; back: boolean }) {
         <Sec title="Pidió">
           <div className="flex flex-wrap gap-1.5">
             {tools.map((t, k) => (
-              <code key={k} className="rounded bg-cyan-soft px-1.5 py-0.5 font-mono text-[11.5px] text-cyan">
-                {t}
-              </code>
+              <span key={k} title={t} className="rounded bg-cyan-soft px-1.5 py-0.5 text-[11.5px] text-cyan">
+                {describeTool({ name: t }).action}
+              </span>
             ))}
           </div>
         </Sec>
       ) : null}
       {back && fate && fate !== "none" ? (
-        <Sec title="Texto del LLM">
+        <Sec title="Texto del modelo">
           <div className={"mb-1.5 text-[12px] " + (fate.startsWith("discarded") ? "text-warn" : "text-fg-soft")}>{TEXT_FATE[fate] ?? fate}</div>
           {text ? <Box>{text}</Box> : null}
         </Sec>
@@ -220,37 +238,43 @@ function Llm({ step, back }: { step: TraceStep; back: boolean }) {
 function Tool({ step, back }: { step: TraceStep; back: boolean }) {
   const args = step.args;
   const notes = list(step.notes).filter((n): n is string => typeof n === "string");
-  const ok = step.ok;
+  const tool = describeTool({ name: str(step.name) ?? "tool", args, ok: step.ok as boolean | null, error: str(step.error), notes });
+  const hasArgs = args && typeof args === "object" && Object.keys(args).length > 0;
   return (
     <>
-      <Sec title="Ejecución">
+      <Sec title="Qué hizo">
         <Kv
           rows={[
-            ["Nombre", str(step.name)],
-            ["Resultado", ok === true ? "ok" : ok === false ? "rechazada" : null],
-            ["Motivo", ok === false ? str(step.error) : null],
+            ["Acción", tool.detail ? `${tool.action} · ${tool.detail}` : tool.action],
+            ["Resultado", back ? tool.result : null],
           ]}
         />
       </Sec>
-      {args && typeof args === "object" && Object.keys(args).length > 0 ? (
-        <Sec title="Argumentos">
-          <Box code>{JSON.stringify(args, null, 2)}</Box>
+      <details className="mt-3.5 text-[12.5px]">
+        <summary className="cursor-pointer select-none text-[10.5px] font-semibold uppercase tracking-[0.08em] text-fg-faint">Datos técnicos</summary>
+        <Sec title="Nombre interno">
+          <Box code>{str(step.name) ?? "—"}</Box>
         </Sec>
-      ) : null}
-      {back && notes.length > 0 ? (
-        <Sec title="Notas">
-          <ul className="m-0 grid list-disc gap-1 pl-4 text-[12.5px] text-fg-soft">
-            {notes.map((n, k) => (
-              <li key={k}>{n}</li>
-            ))}
-          </ul>
-        </Sec>
-      ) : null}
-      {back && str(step.excerpt) ? (
-        <Sec title="Extracto del resultado">
-          <Box code>{String(step.excerpt)}</Box>
-        </Sec>
-      ) : null}
+        {hasArgs ? (
+          <Sec title="Argumentos">
+            <Box code>{JSON.stringify(args, null, 2)}</Box>
+          </Sec>
+        ) : null}
+        {back && notes.length > 0 ? (
+          <Sec title="Notas">
+            <ul className="m-0 grid list-disc gap-1 pl-4 text-[12.5px] text-fg-soft">
+              {notes.map((n, k) => (
+                <li key={k}>{n}</li>
+              ))}
+            </ul>
+          </Sec>
+        ) : null}
+        {back && str(step.excerpt) ? (
+          <Sec title="Extracto del resultado">
+            <Box code>{String(step.excerpt)}</Box>
+          </Sec>
+        ) : null}
+      </details>
     </>
   );
 }
@@ -262,13 +286,13 @@ function Guard({ step }: { step: TraceStep }) {
   const tools = list(step.tools).filter((a): a is string => typeof a === "string");
   return (
     <>
-      <Sec title="Guarda">
+      <Sec title="Protección">
         <Kv
           rows={[
-            ["Nombre", str(step.name)],
+            ["Qué hizo", str(step.name) ? (GUARD_LABELS[String(step.name)] ?? String(step.name)) : null],
             ["Motivo", str(step.reason)],
             ["Acciones", actions.length ? actions.join(", ") : null],
-            ["Tools", tools.length ? tools.join(", ") : null],
+            ["Herramientas", tools.length ? tools.map((n) => describeTool({ name: n }).action).join(", ") : null],
           ]}
         />
       </Sec>
@@ -279,7 +303,7 @@ function Guard({ step }: { step: TraceStep }) {
       ) : null}
       {after !== null ? (
         <Sec title="Después">
-          <Box>{after === "" ? (before ? "(vacío: la guarda se llevó el texto)" : "(vacío)") : after}</Box>
+          <Box>{after === "" ? (before ? "(vacío: la protección se llevó el texto)" : "(vacío)") : after}</Box>
         </Sec>
       ) : null}
     </>
@@ -293,8 +317,8 @@ function Cut({ step }: { step: TraceStep }) {
     <>
       <Sec title="Por qué terminó el turno">{reason ? (CUT_REASON[reason] ?? reason) : "Sin motivo registrado."}</Sec>
       {tools.length ? (
-        <Sec title="Tools del lote">
-          <Box code>{tools.join(", ")}</Box>
+        <Sec title="Herramientas pedidas">
+          <Box>{tools.map((n) => describeTool({ name: n }).action).join(", ")}</Box>
         </Sec>
       ) : null}
       {str(step.text) ? (
@@ -312,20 +336,20 @@ function Classifier({ step }: { step: TraceStep }) {
   const cost = num(step.cost_usd);
   return (
     <>
-      <Sec title="Clasificador">
+      <Sec title="Jev">
         <Kv
           rows={[
             ["Modelo", str(step.model)],
-            ["Perfil", str(step.profile)],
-            ["Decisión", str(step.decision)],
-            ["Umbral", threshold !== null ? prob(threshold) : null],
+            ["Versión del motor", str(step.profile)],
+            ["Decisión", str(step.decision) ? (VERIFY_DECISION[String(step.decision)] ?? String(step.decision)) : null],
+            ["Umbral de confianza", threshold !== null ? prob(threshold) : null],
             ["Costo", cost !== null ? usd(cost) : null],
             ["Error", str(step.error)],
           ]}
         />
       </Sec>
       {answers.length > 0 ? (
-        <Sec title="Respuestas">
+        <Sec title="Preguntas y respuestas">
           <table className="w-full border-collapse text-[12px]">
             <tbody>
               {answers.map((a, k) => {
@@ -378,9 +402,8 @@ function Outbound({ step }: { step: TraceStep }) {
           return (
             <div key={k} className="grid gap-1">
               <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
-                <span className="text-fg-muted">{str(b.kind) ?? "mensaje"}</span>
+                <span className="text-fg-muted">{str(b.kind) ? (BUBBLE_KIND[String(b.kind)] ?? String(b.kind)) : "mensaje"}</span>
                 <span className={tone}>{label}</span>
-                {str(b.wamid) ? <code className="truncate font-mono text-[10.5px] text-fg-faint">{String(b.wamid)}</code> : null}
               </div>
               {str(b.text) ? <Box>{String(b.text)}</Box> : null}
             </div>

@@ -1,6 +1,7 @@
 export {
   useActiveRun,
   useCancelRun,
+  useCheckCatalog,
   useLabEstimate,
   useLabRuns,
   useLaunchRun,
@@ -8,6 +9,7 @@ export {
   useRunConversations,
   useRunDiff,
   useRunEvaluations,
+  useRunEvaluationsByArm,
   useRunReport,
   useRunSummary,
   useRunThread,
@@ -24,6 +26,9 @@ export type {
   ArmSummary,
   BenchReport,
   BurstMessage,
+  CheckCatalog,
+  CheckLevel,
+  CheckSpec,
   CheckVerdict,
   ConversationRow,
   Conversations,
@@ -47,10 +52,13 @@ export type {
   TurnTrace,
 } from "./model";
 export {
+  ARM_HELP,
   ARM_LABELS,
   apiErrorDetail,
   armLabel,
   capabilityLabel,
+  checksHeadline,
+  checkView,
   customerLabel,
   decidedByLabel,
   decisionStageLabel,
@@ -58,6 +66,10 @@ export {
   formatDecisionValue,
   formatUsd,
   jevFailed,
+  LEVEL_HELP,
+  levelLabel,
+  turnVerdict,
   worstVerdict,
+  type CheckView,
 } from "./lib";
 export { Chip, VerdictBadge, type ChipTone } from "./ui/Chips";

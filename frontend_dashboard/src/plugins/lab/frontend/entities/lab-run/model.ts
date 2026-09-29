@@ -12,6 +12,8 @@ import type {
   activeStatusSchema,
   benchReportSchema,
   burstMessageSchema,
+  checkCatalogSchema,
+  checkSpecSchema,
   checkVerdictSchema,
   conversationRowSchema,
   conversationsSchema,
@@ -31,6 +33,9 @@ import type {
 
 export type EpisodeVerdict = z.infer<typeof episodeVerdictSchema>;
 export type CheckVerdict = z.infer<typeof checkVerdictSchema>;
+export type CheckSpec = z.infer<typeof checkSpecSchema>;
+export type CheckCatalog = z.infer<typeof checkCatalogSchema>;
+export type CheckLevel = CheckSpec["level"];
 export type LabRun = z.infer<typeof runSchema>;
 export type LabRuns = z.infer<typeof runsSchema>;
 export type LabEstimate = z.infer<typeof estimateSchema>;

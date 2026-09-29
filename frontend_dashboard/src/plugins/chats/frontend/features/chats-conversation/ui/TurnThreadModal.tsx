@@ -40,7 +40,7 @@ export function TurnThreadModal({ sid, turnKey, onClose }: Props) {
   }, []);
 
   const steps = useMemo(() => (thread.data?.steps ?? []) as TraceStep[], [thread.data]);
-  const layout = useMemo(() => layoutSequence(steps, { classifierLabel: "Clasificador" }), [steps]);
+  const layout = useMemo(() => layoutSequence(steps), [steps]);
   const row = layout.rows[Math.min(selected, Math.max(layout.rows.length - 1, 0))];
 
   const trace = thread.data?.trace ?? {};

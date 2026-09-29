@@ -10,6 +10,7 @@ export * from "./search";
 export * from "./shipping-cost";
 export * from "./tracking-url";
 export * from "./sequence-layout";
+export * from "./sales-tools";
 export * from "./quality-view";
 export * from "./trajectory-strip";
 export {

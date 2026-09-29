@@ -21,6 +21,10 @@ Lecturas (PR 8), SOLO desde `runs/<corrida>/` del S3 del laboratorio:
   GET  /lab/runs/{run}/report     fidelidad, arena, producción y comparaciones (PR 13)
 El `turn_key` va como query (lleva `/`, que no viaja en un segmento de ruta).
 
+Registro de checks (revisión 2026-09-29): las evaluaciones solo traen el
+código del check; la pantalla lo muestra por su nombre, su nivel y su regla.
+  GET  /lab/checks
+
 Candados: A1 (el control) siempre va; repeticiones 1 o 3; una corrida a la
 vez (workflow `lab-launch` con conflicto FAIL → 409); topes por corrida y por
 mes desde Terraform (`LAB_MAX_USD_PER_RUN` / `LAB_MAX_USD_PER_MONTH`) → 422.
@@ -42,6 +46,7 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from src.plugins.chats.agent.sales_lab.launch.bench_export import plan_bench_export
 from src.plugins.chats.agent.sales_lab.launch.contracts import LabLaunchInput
 from src.plugins.chats.agent.sales_lab.launch.costs import check_caps, estimate_run_usd, month_spent_usd
+from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION, specs_payload
 from src.plugins.chats.agent.sales_eval.workflows.lab_launch import LAB_LAUNCH_WORKFLOW_ID
 from src.plugins.chats.shared.turn_view import trace_view
 from src.sdk import get_task_queue
@@ -324,6 +329,13 @@ def _stale(progress: dict[str, Any]) -> bool:
     if progress.get("phase") in _TERMINAL or not isinstance(updated, int):
         return False
     return _now_ms() - updated > _STALE_AFTER_MS
+
+
+@router.get("/lab/checks")
+def lab_checks() -> dict[str, Any]:
+    """El registro de checks del scorecard: nombre, nivel, regla y a qué aplica
+    cada código. La pantalla nunca muestra un código solo."""
+    return {"registry_version": REGISTRY_VERSION, "checks": specs_payload()}
 
 
 @router.get("/lab/runs")

@@ -90,7 +90,7 @@ describe("RunLauncher", () => {
     renderLauncher();
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
 
-    expect(screen.getByRole("checkbox", { name: /A1 · Actual simulado/ })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /A1 · Bot actual simulado/ })).toBeDisabled();
     expect(await screen.findByText(/≈ US\$21 estimado · 309 turnos del banco/)).toBeInTheDocument();
     expect(estimateCalls().at(-1)).toContain("arms=A1%2CB&reps=1&bench=new");
     // Sin el rival OpenAI (2026-09-28): el único bot nuevo es Jev.
@@ -100,7 +100,7 @@ describe("RunLauncher", () => {
   it("ofrece B0 (el workflow nuevo con las reglas de hoy) sin marcar, y lo manda si se marca", async () => {
     renderLauncher();
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
-    const b0 = screen.getByRole("checkbox", { name: /B0 · Nuevo sin Jev/ });
+    const b0 = screen.getByRole("checkbox", { name: /B0 · Bot nuevo sin Jev/ });
     expect(b0).not.toBeChecked();
 
     fireEvent.click(b0);
@@ -111,7 +111,7 @@ describe("RunLauncher", () => {
   it("recalcula al cambiar bots, repeticiones y banco", async () => {
     renderLauncher();
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /B · Nuevo \+ Jev/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /B · Bot nuevo con Jev/ }));
     fireEvent.click(screen.getByRole("button", { name: "3 · decisión" }));
     fireEvent.click(screen.getByRole("button", { name: /Reusar el último/ }));
 

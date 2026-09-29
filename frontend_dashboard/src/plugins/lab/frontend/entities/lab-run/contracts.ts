@@ -40,6 +40,9 @@ export const checkVerdictSchema = z
   .enum(["pasa", "falla", "no_aplica", "desconocido", "sin_senal"])
   .catch("desconocido");
 
+/** Nivel de un check: `critico` reprueba el episodio, `mayor` lo deja en alerta, `menor` no cambia el veredicto. */
+export const levelSchema = z.enum(["critico", "mayor", "menor"]).catch("menor");
+
 // ── Corridas ────────────────────────────────────────────────────────────────
 
 export const runSchema = z.object({
@@ -164,9 +167,19 @@ export const burstMessageSchema = z.object({
   wamid: nullableString,
 });
 
+/** Una tool que corrió en el turno (nombre, argumentos, si la rechazaron y sus notas). */
+export const toolCallSchema = z.object({
+  name: z.string(),
+  ok: z.boolean().nullable().catch(null).default(null),
+  error: nullableString,
+  args: z.unknown().optional(),
+  notes: z.array(z.string()).catch([]).default([]),
+});
+
 export const armOutputSchema = z
   .object({
     sent_texts: z.array(z.string()).catch([]).default([]),
+    tools: tolerantArray(toolCallSchema),
     discarded_narration: z.array(z.string()).catch([]).default([]),
     guards: z.array(z.string()).catch([]).default([]),
     suppressed_reason: nullableString,
@@ -262,6 +275,8 @@ export const topicCoverageSchema = z.object({
 export const evalResultSchema = z.object({
   check_id: z.string(),
   verdict: checkVerdictSchema,
+  /** El nivel que CONTÓ para el veredicto (un crítico de juez sin calibrar cuenta como mayor). */
+  level: levelSchema.optional().catch(undefined),
   turn: nullableNumber,
   evidence: nullableString,
   critique: nullableString,
@@ -291,8 +306,6 @@ const count = z.number().catch(0).default(0);
 const verdictCountsSchema = z
   .object({ FALLA: count, ALERTA: count, PASA: count, SIN_DATOS: count })
   .catch({ FALLA: 0, ALERTA: 0, PASA: 0, SIN_DATOS: 0 });
-
-const levelSchema = z.enum(["critico", "mayor", "menor"]).catch("menor");
 
 export const passKSchema = z.object({ k: count, episodes: count, rate });
 
@@ -420,4 +433,22 @@ export const runReportSchema = z.object({
     .catch(null)
     .default(null),
   diffs: z.array(z.string()).catch([]).default([]),
+});
+
+// ── Registro de checks (nombre, nivel y regla de cada código) ───────────────
+
+/** Un check del registro del scorecard (`sales_eval/scorecard/registry.py`). */
+export const checkSpecSchema = z.object({
+  id: z.string(),
+  name: z.string().catch("").default(""),
+  level: levelSchema.default("menor"),
+  kind: z.string().catch("code").default("code"),
+  applies: z.string().catch("").default(""),
+  rule: z.string().catch("").default(""),
+  family_label: z.string().catch("").default(""),
+});
+
+export const checkCatalogSchema = z.object({
+  registry_version: nullableNumber,
+  checks: tolerantArray(checkSpecSchema),
 });

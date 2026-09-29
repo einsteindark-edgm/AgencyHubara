@@ -108,7 +108,7 @@ describe("RunSummary", () => {
 
     expect(await screen.findByText("Qué arreglar primero")).toBeInTheDocument();
     expect(screen.getByText(/pasan en las 3 repeticiones: 20 %/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: "Nuevo + Jev" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Bot nuevo con Jev" }));
 
     await waitFor(() => expect(urls().some((u) => u.includes("summary?arm=B"))).toBe(true));
     expect(await screen.findByText(/pasan en las 3 repeticiones: 26 %/)).toBeInTheDocument();
@@ -128,7 +128,7 @@ describe("RunSummary", () => {
     renderTab();
 
     const arena = await screen.findByRole("region", { name: "Arena de clasificadores" });
-    const row = within(arena).getByRole("row", { name: /Nuevo \+ Jev/ });
+    const row = within(arena).getByRole("row", { name: /Bot nuevo con Jev/ });
     expect(row).toHaveTextContent("jev-v1");
     expect(row).toHaveTextContent("480 ms");
     expect(row).toHaveTextContent("0,4 %");
@@ -139,7 +139,7 @@ describe("RunSummary", () => {
     renderTab();
 
     const arena = await screen.findByRole("region", { name: "Arena de clasificadores" });
-    expect(within(arena).getByRole("row", { name: /Nuevo \+ Jev/ })).toHaveTextContent("US$0,019");
+    expect(within(arena).getByRole("row", { name: /Bot nuevo con Jev/ })).toHaveTextContent("US$0,019");
   });
 
   it("un bot que la corrida no alcanzó a simular queda pendiente, no como falla", async () => {

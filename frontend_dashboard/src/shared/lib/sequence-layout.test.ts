@@ -10,9 +10,10 @@ import { LANE_X, SEQ_DY, SEQ_WIDTH, SEQ_Y0, layoutSequence, type TraceStep } fro
  * geometría del diseño aprobado (carriles en x = 58, 173, 288, 403 y 518 sobre
  * 610; primer paso en y = 70; 44 px entre pasos).
  *
- * Carriles: Cliente · Workflow · clasificador · LLM · Tools. Las tools las
- * ejecuta el WORKFLOW (execute_tool de exoclaw) después de que el LLM las pide:
- * LLM → Workflow ("pide X"), Workflow → Tools y Tools → Workflow.
+ * Carriles, en palabras del operador (revisión 2026-09-29): Cliente · Bot ·
+ * Jev · Modelo de IA · Herramientas. Las herramientas las ejecuta el BOT (el
+ * workflow, execute_tool de exoclaw) después de que el modelo las pide:
+ * Modelo → Bot ("pide X"), Bot → Herramientas y de vuelta.
  */
 
 const newBotTurn: TraceStep[] = [
@@ -41,8 +42,26 @@ describe("layoutSequence", () => {
       [1, 0], // envío
     ]);
     expect(rows.every((r, idx) => r.index === idx)).toBe(true);
-    expect(rows[5].short).toBe("pide search_products");
-    expect(rows[6].short).toBe("search_products");
+    expect(rows[5].short).toBe("pide buscar en el catálogo");
+    expect(rows[6].short).toBe("Buscar en el catálogo");
+  });
+
+  it("los carriles y cada paso hablan en palabras del operador", () => {
+    const layout = layoutSequence([
+      ...newBotTurn.slice(0, 4),
+      { i: 4, at_ms: 2450, dur_ms: 300, kind: "tool", name: "search_products", ok: true, args: { q: "jesús" }, notes: ["count:0"] },
+      ...newBotTurn.slice(5),
+    ]);
+    const { rows } = layout;
+
+    expect(layout.lanes).toEqual(["Cliente", "Bot", "Jev", "Modelo de IA", "Herramientas"]);
+    expect(rows[0].short).toBe("2 mensajes seguidos");
+    expect([rows[1].short, rows[2].short]).toEqual(["lee el mensaje · 1 pregunta", "responde"]);
+    expect(rows[3].short).toBe("plan: 2 asuntos");
+    expect(rows[6]).toMatchObject({ short: "Buscar en el catálogo · «jesús»", title: "Buscar en el catálogo · «jesús»", kind: "Herramienta" });
+    expect(rows[7]).toMatchObject({ short: "no encontró nada", title: "Resultado: no encontró nada" });
+    expect([rows[10].short, rows[11].short]).toEqual(["¿respondió cada asunto?", "decisión: enviar"]);
+    expect(rows[12].short).toBe("envía 2 mensajes");
   });
 
   it("cada fila recuerda de qué paso de la traza sale (para el detalle)", () => {
@@ -104,9 +123,9 @@ describe("layoutSequence", () => {
     ]);
 
     expect(rows[1].status).toBe("warn");
-    expect(rows[1].short).toBe("pide send_shipping_rates + texto");
-    expect(rows[2]).toMatchObject({ from: 1, to: 1, status: "bad", short: "variant_enumeration_guard" });
-    expect(rows[4]).toMatchObject({ from: 4, to: 1, status: "bad", short: "rechazada: customer_deferred" });
+    expect(rows[1].short).toBe("pide enviar las tarifas de envío + texto");
+    expect(rows[2]).toMatchObject({ from: 1, to: 1, status: "bad", short: "cambió una lista de opciones por un selector" });
+    expect(rows[4]).toMatchObject({ from: 4, to: 1, status: "bad", short: "rechazada: el cliente aplazó" });
   });
 
   it("los cortes y reinicios del turno quedan dentro del workflow", () => {
@@ -117,8 +136,8 @@ describe("layoutSequence", () => {
     ]);
 
     expect(rows.map((r) => [r.from, r.to, r.short])).toEqual([
-      [1, 1, "corrientazo (A)"],
-      [1, 1, "reinicio 1 · +1 mensaje"],
+      [1, 1, "el cliente escribió mientras pensaba"],
+      [1, 1, "vuelve a empezar · +1 mensaje"],
       [1, 1, "espera al cliente"],
     ]);
   });

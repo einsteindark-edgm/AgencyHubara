@@ -2,26 +2,29 @@ import { describe, expect, it } from "vitest";
 
 import { ApiError } from "@/shared/api";
 
+import { checkCatalogSchema, evalResultSchema } from "./contracts";
 import {
   apiErrorDetail,
   armLabel,
   capabilityLabel,
+  checkView,
   customerLabel,
   decidedByLabel,
   decisionStageLabel,
   engineDecisionsOf,
   formatDecisionValue,
   formatUsd,
+  turnVerdict,
   worstVerdict,
 } from "./lib";
 
 describe("lib del laboratorio", () => {
-  it("nombra cada bot como en el diseño", () => {
+  it("nombra cada bot en palabras del operador", () => {
     expect(armLabel("A0")).toBe("Producción");
-    expect(armLabel("A1")).toBe("Actual simulado");
+    expect(armLabel("A1")).toBe("Bot actual simulado");
     // B0: el workflow nuevo (V2) con las reglas de hoy; tiene que dar lo mismo que A1.
-    expect(armLabel("B0")).toBe("Nuevo sin Jev");
-    expect(armLabel("B")).toBe("Nuevo + Jev");
+    expect(armLabel("B0")).toBe("Bot nuevo sin Jev");
+    expect(armLabel("B")).toBe("Bot nuevo con Jev");
     // El rival OpenAI (brazo C) se quitó el 2026-09-28: 100 % Jev.
     expect(armLabel("C")).toBe("C");
     expect(armLabel("Z")).toBe("Z");
@@ -103,5 +106,66 @@ describe("decisiones del motor en un turno (bot nuevo)", () => {
     expect(formatDecisionValue(null)).toBe("—");
     expect(formatDecisionValue("")).toBe("—");
     expect(formatDecisionValue({ fecha: "2026-10-05" })).toBe('{"fecha":"2026-10-05"}');
+  });
+});
+
+describe("checks por su nombre (el operador no entiende «DES-04 · falla»)", () => {
+  const catalog = checkCatalogSchema.parse({
+    registry_version: 4,
+    checks: [
+      { id: "DES-06", name: "Sin datos de catálogo inventados", level: "critico", kind: "judge", applies: "El bot afirmó productos.", rule: "Todo lo afirmado existe en el catálogo real vigente." },
+      { id: "EST-06", name: "Sin narración descartada", level: "menor", kind: "code", applies: "Siempre.", rule: "Ningún texto del LLM se descarta." },
+      { id: "APE-01", name: "Saludo por hora y marca en el primer contacto", level: "mayor", kind: "code", applies: "Primer contacto.", rule: "Abre con saludo por hora." },
+    ],
+  });
+  const result = (raw: Record<string, unknown>) => evalResultSchema.parse(raw);
+
+  it("muestra el nombre, lo que se esperaba y por qué falló", () => {
+    const view = checkView(catalog, result({ check_id: "DES-06", verdict: "falla", turn: 11, source: "judge", level: "mayor",
+      evidence: "La figura femenina con la vasija no la manejamos.", critique: "Falso: la Luz Serena sí está en el catálogo." }));
+
+    expect(view.name).toBe("Sin datos de catálogo inventados");
+    expect(view.rule).toBe("Todo lo afirmado existe en el catálogo real vigente.");
+    expect(view.reason).toBe("Falso: la Luz Serena sí está en el catálogo.");
+    expect(view.quote).toBe("La figura femenina con la vasija no la manejamos.");
+    expect(view.byJudge).toBe(true);
+  });
+
+  it("el nivel es el que contó para el veredicto y se explica si el juez lo bajó", () => {
+    // Un check de juez crítico sin calibrar cuenta como mayor (scorecard/verdict.py).
+    const judged = checkView(catalog, result({ check_id: "DES-06", verdict: "falla", turn: 3, level: "mayor" }));
+    expect(judged.level).toBe("mayor");
+    expect(judged.levelNote).toBe("Es crítico, pero cuenta como mayor mientras el juez no esté calibrado.");
+
+    const plain = checkView(catalog, result({ check_id: "EST-06", verdict: "falla", turn: 1 }));
+    expect(plain.level).toBe("menor");
+    expect(plain.levelNote).toBeNull();
+  });
+
+  it("la evidencia de un check de código no repite el turno", () => {
+    const view = checkView(catalog, result({ check_id: "APE-01", verdict: "falla", turn: 1, source: "code",
+      evidence: "turno 1: primer texto sin saludo por hora ni marca Hubara «Tenemos 4 piezas»" }));
+
+    expect(view.reason).toBe("Primer texto sin saludo por hora ni marca Hubara «Tenemos 4 piezas»");
+    expect(view.quote).toBeNull();
+    expect(view.byJudge).toBe(false);
+  });
+
+  it("un código que el registro no conoce se muestra tal cual, sin romper la vista", () => {
+    const view = checkView(catalog, result({ check_id: "ZZZ-99", verdict: "falla", turn: 2 }));
+    expect(view.name).toBe("ZZZ-99");
+    expect(view.rule).toBe("");
+    expect(checkView(undefined, result({ check_id: "EST-06", verdict: "pasa", turn: 2 })).name).toBe("EST-06");
+  });
+
+  it("el resultado de un turno sigue la regla del scorecard: crítico falla, mayor alerta", () => {
+    const rows = (raw: Array<Record<string, unknown>>) => raw.map(result);
+
+    expect(turnVerdict(catalog, rows([{ check_id: "EST-06", verdict: "falla", turn: 1 }, { check_id: "APE-01", verdict: "pasa", turn: 1 }]))).toBe("PASA");
+    expect(turnVerdict(catalog, rows([{ check_id: "APE-01", verdict: "falla", turn: 1 }]))).toBe("ALERTA");
+    expect(turnVerdict(catalog, rows([{ check_id: "DES-06", verdict: "falla", turn: 1, level: "critico" }]))).toBe("FALLA");
+    // El registro dice crítico, pero el resultado guardado contó como mayor.
+    expect(turnVerdict(catalog, rows([{ check_id: "DES-06", verdict: "falla", turn: 1, level: "mayor" }]))).toBe("ALERTA");
+    expect(turnVerdict(catalog, rows([{ check_id: "APE-01", verdict: "sin_senal", turn: 1 }]))).toBe("SIN_DATOS");
   });
 });

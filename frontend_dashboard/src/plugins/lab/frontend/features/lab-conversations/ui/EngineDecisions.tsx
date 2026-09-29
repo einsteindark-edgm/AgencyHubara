@@ -42,7 +42,7 @@ function summaryOf(decisions: EngineDecision[]): string {
 export function EngineDecisions({ decisions }: { decisions: EngineDecision[] }) {
   if (decisions.length === 0) return null;
   return (
-    <section aria-label="Decisiones del motor" className="max-h-[32vh] overflow-auto border-t border-line bg-titlebar px-4 py-2.5 text-[12.5px]">
+    <section aria-label="Decisiones de Jev" className="px-4 py-2.5 text-[12.5px]">
       <details open>
         <summary className="cursor-pointer select-none">
           <span className="mr-2 text-[10px] font-semibold uppercase leading-none tracking-[0.08em] text-fg-faint">Motor de decisiones</span>

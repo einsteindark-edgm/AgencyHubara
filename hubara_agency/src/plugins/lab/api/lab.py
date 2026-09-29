@@ -101,6 +101,14 @@ async def cancel(request: Request) -> dict[str, Any]:
     return await _forward(request, "POST", f"{PROVIDER_PREFIX}/runs/active/cancel")
 
 
+# ── Registro de checks (nombre, nivel y regla de cada código) ────────────────
+
+
+@router.get("/checks")
+async def checks(request: Request) -> dict[str, Any]:
+    return await _forward(request, "GET", f"{PROVIDER_PREFIX}/checks")
+
+
 # ── Lecturas de una corrida ─────────────────────────────────────────────────
 
 
