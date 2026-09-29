@@ -106,14 +106,51 @@ def test_the_classifier_layers_run_for_real_in_the_sandbox() -> None:
     assert {"perceive_burst", "verify_coverage"} <= REAL_IN_SANDBOX
 
 
+_EGRESS_IN_THE_BOX = """
+import tempfile
+from pathlib import Path
+
+from src.plugins.chats.agent.sales_lab.sandbox.activities import SandboxCapture, sandbox_activities
+from src.sdk.labkit import installed_sandbox_ports
+
+with tempfile.TemporaryDirectory() as tmp, installed_sandbox_ports(
+    promotions_path=Path(tmp) / "promotions.json", catalog=object()
+):
+    import src.plugins.chats.workers.sales as sales_worker
+
+    acts = sandbox_activities(sales_worker.SALES_ACTIVITIES, capture=SandboxCapture())
+print(sorted(a.__temporal_activity_definition.name for a in acts))
+"""
+
+
 def test_the_egress_of_the_v2_workflow_runs_for_real_in_the_sandbox() -> None:
     """El egreso del workflow V2 (motor de decisiones F4) decide con el bot del
     brazo: B0 con las reglas de hoy, B con Jev (en CI, el proveedor falso).
-    Lee el vault del sandbox y no toca nada afuera."""
-    import src.plugins.chats.workers.sales as sales_worker
+    Lee el vault del sandbox y no toca nada afuera.
+
+    Como en la caja: un proceso aparte, SIN Medusa, con los puertos del
+    sandbox instalados ANTES de importar el worker de ventas (el worker arma
+    sus puertos al importarse). Importarlo acá, en el proceso de pytest, pedía
+    Medusa: el paso del laboratorio en CI corre sin sus variables a propósito."""
+    import ast
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
 
     assert "decide_egress" in REAL_IN_SANDBOX
-    names = _names(sandbox_activities(sales_worker.SALES_ACTIVITIES, capture=SandboxCapture()))
+    env = {k: v for k, v in os.environ.items() if not k.startswith("MEDUSA_")}
+    env["OTEL_SDK_DISABLED"] = "true"
+    proc = subprocess.run(
+        [sys.executable, "-c", _EGRESS_IN_THE_BOX],
+        cwd=Path(__file__).resolve().parents[4],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    names = ast.literal_eval(proc.stdout.strip().splitlines()[-1])
     assert "decide_egress" in names
 
 
