@@ -22,12 +22,10 @@ from typing import Any
 from exoclaw.agent.tools import ToolBase, ToolContext
 from loguru import logger
 
+from src.plugins.chats.agent.sales.decisions.guards import customer_reply_text
+
 # textkit, no agentkit: una tool no puede arrastrar temporalio (R-DIP, ADR-001).
-from src.sdk.textkit import (
-    looks_like_admin_leak,
-    salvage_customer_text,
-    sanitize_llm_text,
-)
+from src.sdk.textkit import sanitize_llm_text
 
 _REJECTED_MESSAGE = (
     "No se envió nada: el texto estaba vacío o era nota interna (hablar del "
@@ -61,15 +59,21 @@ class SendReplyTool(ToolBase):
         "required": ["text"],
     }
 
-    def __init__(self, workspace: str | Path) -> None:
+    def __init__(self, workspace: str | Path, vault_dir: str | Path | None = None) -> None:
         self._workspace = Path(workspace)
+        # Vault del motor de decisiones (registro de bots, cola de
+        # desacuerdos). Sin él: el bot fijado del laboratorio o la regla de hoy.
+        self._vault_dir = Path(vault_dir) if vault_dir is not None else None
 
     async def execute_with_context(
         self, ctx: ToolContext, text: str = "", **_: Any
     ) -> str:
-        cleaned = sanitize_llm_text(text or "").text
-        if cleaned and looks_like_admin_leak(cleaned, extended=True):
-            cleaned = salvage_customer_text(cleaned, extended=True)
+        # Motor de decisiones (F5): si el texto no es para el cliente lo
+        # deciden `destinatario` y `rescate` con el proveedor del bot de la
+        # conversación (la regla de hoy por defecto: idéntico a antes).
+        cleaned = await customer_reply_text(
+            sanitize_llm_text(text or "").text, session_id=ctx.session_key, vault_dir=self._vault_dir
+        )
         if not cleaned:
             logger.warning(
                 "💬 [TOOL send_reply] rechazado (vacío o nota interna) session={} text={!r}",

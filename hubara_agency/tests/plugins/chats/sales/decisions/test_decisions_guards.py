@@ -117,8 +117,10 @@ async def test_what_goes_to_jev_hides_this_customers_data(tmp_path: Path, monkey
 
     await safe_customer_text("Gracias Laura, te llega a Cra 7 # 12-30 🤍", session_id="wa_1", vault_dir=tmp_path)
 
-    [(_, redact)] = seen
-    assert {"Laura Gómez", "Laura", "Gómez", "Cra 7 # 12-30"} <= set(redact)
+    # Persona y destinatario preguntan por las mismas oraciones: las dos tapan.
+    assert len(seen) == 2
+    for _, redact in seen:
+        assert {"Laura Gómez", "Laura", "Gómez", "Cra 7 # 12-30"} <= set(redact)
 
 
 async def test_every_decision_that_goes_to_jev_hides_the_customers_data_by_default(tmp_path: Path, monkeypatch) -> None:

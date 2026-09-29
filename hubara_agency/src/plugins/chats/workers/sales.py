@@ -157,7 +157,9 @@ register_tool_extension(
 # y devuelve `reply.text`; `run_agent_turn` lo envía y termina el turno.
 register_tool_extension(
     "sales.send_reply",
-    lambda workspace: SendReplyTool(workspace=str(workspace)),
+    # Motor de decisiones (F5, `destinatario` y `rescate`): el vault del
+    # registro de bots y de la cola de desacuerdos.
+    lambda workspace: SendReplyTool(workspace=str(workspace), vault_dir=build_vault_dir()),
 )
 
 # HU-04: tools de catalogo. Leen del snapshot mantenido por catalog_sync (HU-03)

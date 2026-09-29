@@ -91,13 +91,18 @@ _INTENT_TEXT_NEUTRAL: dict[str, str | None] = {
 }
 
 
-def _sanitize_intent_client_text(
-    kind: str, params: dict[str, Any]
+async def _sanitize_intent_client_text(
+    kind: str, params: dict[str, Any], *, session_id: str | None = None
 ) -> dict[str, Any]:
     """Limpia los params de texto de un intent y neutraliza olor a admin.
 
     Import tardío del sanitizer (mismo patrón que el resto del módulo: no
     tocar imports pesados en module load del worker).
+
+    Motor de decisiones (F5): con `session_id`, si un texto NO es para el
+    cliente lo decide la capacidad `destinatario` con el proveedor del bot de
+    la conversación (la regla de hoy por defecto: idéntico a antes). Sin
+    `session_id`, la regla de hoy.
     """
     from src.sdk.agentkit import looks_like_admin_leak, sanitize_llm_text
 
@@ -107,7 +112,14 @@ def _sanitize_intent_client_text(
         if not isinstance(value, str) or not value.strip():
             continue
         cleaned = sanitize_llm_text(value).text or value
-        if looks_like_admin_leak(cleaned):
+        if session_id:
+            from src.platform.config import WORKSPACE_VAULT_DIR
+            from src.plugins.chats.agent.sales.decisions.guards import is_internal_text
+
+            internal = await is_internal_text(cleaned, session_id=session_id, vault_dir=Path(WORKSPACE_VAULT_DIR))
+        else:
+            internal = looks_like_admin_leak(cleaned)
+        if internal:
             activity.logger.warning(
                 "flush_ui_intents.admin_text_neutralized",
                 extra={
@@ -445,6 +457,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
                 to_number=to_number,
                 last_inbound_message_id=last_inbound_msg_id,
                 media_log=media_log,
+                session_id=session_id,
             )
         except Exception as e:  # noqa: BLE001
             activity.logger.warning(
@@ -567,6 +580,7 @@ async def _dispatch_intent(
     to_number: str,
     last_inbound_message_id: str | None,
     media_log: list[dict[str, Any]] | None = None,
+    session_id: str | None = None,
 ):
     """Mapea `kind` a la función `send_*` correspondiente.
 
@@ -585,7 +599,7 @@ async def _dispatch_intent(
     """
     # Choke point de texto LLM en intents (run 1c9ef231): limpiar/neutralizar
     # ANTES de cualquier rama — todos los kinds leen de `params`.
-    params = _sanitize_intent_client_text(kind or "", params)
+    params = await _sanitize_intent_client_text(kind or "", params, session_id=session_id)
     if kind == "product_detail":
         link = params.get("image_url")
         if not link:

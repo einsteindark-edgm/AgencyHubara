@@ -49,7 +49,9 @@ __all__ = [
     "Verdict",
     "ZonaDeEnvio",
     "catalog_choice_buttons",
+    "customer_reply_text",
     "decide_for_session",
+    "is_internal_text",
     "product_quote_sentences",
     "safe_customer_text",
     "session_redact_terms",
@@ -112,19 +114,23 @@ async def safe_customer_text(raw: str | None, *, session_id: str, vault_dir: Pat
     interno (la regla de hoy, hasta que `destinatario` la reemplace). El corte
     y la unión de oraciones son los de `keep_customer_safe_sentences`: con
     `reglas` el resultado es idéntico al de hoy. "" = nada era seguro."""
+    import asyncio
+
     from src.plugins.chats.agent.sales.decisions.capabilities.texto import PERSONA, Frases
-    from src.sdk.textkit import customer_sentences, keep_customer_safe_sentences, looks_like_admin_leak
+    from src.plugins.chats.agent.sales.decisions.egress import DestinatarioPorOracion, OracionesCheck
+    from src.sdk.textkit import customer_sentences, keep_customer_safe_sentences
 
     parts = customer_sentences(raw)
     if not parts:
         return ""
-    persona = await decide_for_session(
-        PERSONA,
-        Frases(parts=tuple(parts)),
-        session_id=session_id,
-        vault_dir=vault_dir,
+    # Las dos preguntas sobre las mismas oraciones, en paralelo.
+    persona, destinatario = await asyncio.gather(
+        decide_for_session(PERSONA, Frases(parts=tuple(parts)), session_id=session_id, vault_dir=vault_dir),
+        decide_for_session(
+            DestinatarioPorOracion(), OracionesCheck(parts=tuple(parts)), session_id=session_id, vault_dir=vault_dir
+        ),
     )
-    drop = set(persona.value) | {i for i, part in enumerate(parts) if looks_like_admin_leak(part)}
+    drop = set(persona.value) | set(destinatario.value)
     return keep_customer_safe_sentences(raw, drop=drop)
 
 
@@ -197,4 +203,32 @@ async def unconfirmed_order_data(
         vault_dir=vault_dir,
     )
     return tuple(verdict.value)
+
+
+async def customer_reply_text(text: str, *, session_id: str, vault_dir: Path | None) -> str:
+    """Lo que sale al cliente de un `send_reply` (capacidades `destinatario` y
+    `rescate`, F5; las mismas del egreso de V2): si el texto no es para el
+    cliente, se rescatan los párrafos que sí; "" = nada. Con `reglas`,
+    idéntico a hoy (`looks_like_admin_leak` extendido + `salvage_customer_text`)."""
+    from src.plugins.chats.agent.sales.decisions.egress import Destinatario, Rescate, TextCheck
+
+    if not text:
+        return ""
+    leak = await decide_for_session(Destinatario(), TextCheck(text), session_id=session_id, vault_dir=vault_dir)
+    if not leak.value:
+        return text
+    rescued = await decide_for_session(Rescate(), TextCheck(text), session_id=session_id, vault_dir=vault_dir)
+    return str(rescued.value or "")
+
+
+async def is_internal_text(text: str, *, session_id: str, vault_dir: Path | None) -> bool:
+    """¿El texto de un intent (intro, cuerpo, pie de foto) NO es para el
+    cliente? (capacidad `destinatario`, F5; regla de hoy del flush: el set
+    básico de `looks_like_admin_leak`)."""
+    from src.plugins.chats.agent.sales.decisions.egress import Destinatario, TextCheck
+
+    verdict = await decide_for_session(
+        Destinatario(), TextCheck(text, extended=False), session_id=session_id, vault_dir=vault_dir
+    )
+    return bool(verdict.value)
 

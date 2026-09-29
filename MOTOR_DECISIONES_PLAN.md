@@ -94,7 +94,7 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [x] selector, en los quick replies: «¿Estos botones le piden al cliente elegir un producto o una variante?»; el namespace del id (`product.`, `color.`…) es piso.
 - [x] Las tools entran al motor SOLO por `guards` (`safe_customer_text`, `product_quote_sentences`, `catalog_choice_buttons`); el vault les llega por la raíz de composición (`build_vault_dir`).
 - [x] destinatario · rescate · saludo · portavelas en el egreso de V2 (`decisions/egress.py`): cada una con la regla de V1 de respaldo, métricas para su vara y redacción de los datos del cliente.
-- [ ] destinatario también en `send_reply`, el flush y el filtro de oraciones de las tools.
+- [x] destinatario también en las tools, con las MISMAS capacidades del egreso: `send_reply` (destinatario extendido + rescate por párrafo), el flush de los intents (destinatario básico; `_sanitize_intent_client_text` recibe la sesión) y el filtro de oraciones de cierre y escalación (destinatario por oración, en paralelo con persona). Caso: «Usa el código VELAS_10 al pagar» deja de rechazarse con Jev.
 - [ ] verdad de producto (remarketing).
 
 ### F6 · Tools, datos y etapas

@@ -105,9 +105,19 @@ def _numbered(parts: Sequence[str]) -> str:
 
 @dataclass(frozen=True)
 class TextCheck:
-    """Un texto que el LLM escribió para el cliente."""
+    """Un texto que el LLM escribió para el cliente. `extended`: con qué set
+    de patrones decide la regla de hoy (el egreso y `send_reply` usan el
+    extendido; el flush de los intents, el básico)."""
 
     text: str
+    extended: bool = True
+
+
+@dataclass(frozen=True)
+class OracionesCheck:
+    """Las oraciones de un texto para el cliente (`customer_sentences`)."""
+
+    parts: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -135,7 +145,7 @@ class Destinatario:
     thresholds: Mapping[str, float] = {"choice": 0.80}
 
     def rule(self, inp: TextCheck) -> bool:
-        return looks_like_admin_leak(inp.text, extended=True)
+        return looks_like_admin_leak(inp.text, extended=inp.extended)
 
     def ask(self, inp: TextCheck) -> tuple[str, list[TypedQuestion]] | None:
         if not inp.text.strip():
@@ -155,6 +165,54 @@ class Destinatario:
 
     def same(self, a: bool, b: bool) -> bool:
         return bool(a) == bool(b)
+
+
+class DestinatarioPorOracion:
+    """El mismo «¿qué es?», oración por oración, para el filtro de oraciones
+    de las tools de cierre y de escalación (misma capacidad: mismo
+    interruptor). Valor: los índices de las oraciones que NO son para el
+    cliente. Regla: `looks_like_admin_leak` básico por oración (el de
+    `keep_customer_safe_sentences`). Si Jev duda de una oración, decide la
+    regla para esa oración."""
+
+    name = DESTINATARIO
+    timeout_s = 1.5
+    thresholds: Mapping[str, float] = {"choice": 0.80}
+
+    def rule(self, inp: OracionesCheck) -> tuple[int, ...]:
+        return tuple(i for i, part in enumerate(inp.parts) if looks_like_admin_leak(part))
+
+    def ask(self, inp: OracionesCheck) -> tuple[str, list[TypedQuestion]] | None:
+        if not inp.parts or len(inp.parts) > _MAX_PARTS:
+            return None
+        state = "Texto que el asesor de ventas escribió para el cliente, oración por oración:\n" + _numbered(inp.parts)
+        return state, [
+            TypedQuestion(id=f"egreso.oracion.{i}", kind="choice", text=f"¿Qué es la oración [{i}]?", criteria=dict(_WHAT_IS_IT))
+            for i in range(1, len(inp.parts) + 1)
+        ]
+
+    def decide(
+        self, inp: OracionesCheck, result: Any, rule: tuple[int, ...], thresholds: Mapping[str, float]
+    ) -> tuple[int, ...] | None:
+        th = {**self.thresholds, **thresholds}
+        drop: list[int] = []
+        answered = False
+        for i in range(len(inp.parts)):
+            choice, p = _choice(result, f"egreso.oracion.{i + 1}")
+            if choice is not None:
+                answered = True
+            if choice is not None and p >= th["choice"]:
+                if choice != _FOR_CUSTOMER:
+                    drop.append(i)
+            elif i in rule:
+                drop.append(i)
+        return tuple(drop) if answered else None
+
+    def floor(self, inp: OracionesCheck, rule: tuple[int, ...], jev: tuple[int, ...]) -> tuple[int, ...]:
+        return tuple(jev)
+
+    def same(self, a: Sequence[int], b: Sequence[int]) -> bool:
+        return tuple(sorted(a)) == tuple(sorted(b))
 
 
 class Rescate:
