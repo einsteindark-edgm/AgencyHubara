@@ -23,6 +23,7 @@ import {
   turnVerdict,
   useCheckCatalog,
   useRunConversations,
+  useRunEvaluations,
   useRunEvaluationsByArm,
   useRunThread,
   VerdictBadge,
@@ -37,7 +38,7 @@ import {
   type ThreadTurn,
 } from "@plugins/lab/frontend/entities/lab-run";
 
-import { buildThreadView, PRODUCTION_ARM, turnReplies, type ThreadItem } from "../lib/thread-view";
+import { buildThreadView, PRODUCTION_ARM, turnReplies, type ThreadItem, type TurnVerdictOf } from "../lib/thread-view";
 import { CheckResults } from "./CheckResults";
 import { TurnTraceModal } from "./TurnTraceModal";
 
@@ -51,6 +52,14 @@ type View = "bot" | "compare";
 
 const EYEBROW = "text-[10px] font-semibold uppercase leading-none tracking-[0.08em] text-fg-faint";
 const COMPARE_HELP = "Cada turno del cliente con lo que respondió cada bot y cómo le fue.";
+
+/** El punto del botón de cada turno, del color de su resultado (el mismo del modal). */
+const VERDICT_DOT: Record<EpisodeVerdict, string> = {
+  PASA: "bg-ok",
+  ALERTA: "bg-warn",
+  FALLA: "bg-danger",
+  SIN_DATOS: "bg-neutral",
+};
 
 /** Qué quiere decir cada resultado (misma regla que el scorecard). */
 const VERDICT_HELP: Array<[EpisodeVerdict, string]> = [
@@ -191,7 +200,19 @@ export function LabConversations({ run, initialSid = null }: Props) {
 
 function Thread({ run, sid, arm, onOpenTurn }: { run: string; sid: string; arm: string; onOpenTurn: (turn: ThreadTurn) => void }) {
   const thread = useRunThread(run, sid);
-  const items = useMemo(() => (thread.data ? buildThreadView(thread.data, arm) : []), [thread.data, arm]);
+  const evals = useRunEvaluations(run, sid, arm);
+  const catalog = useCheckCatalog();
+  // El resultado de cada turno sale de la MISMA evaluación y la MISMA regla
+  // que el encabezado del modal (antes el botón se pintaba por la narración
+  // descartada y no coincidía con lo que decía el modal).
+  const verdictOf = useMemo<TurnVerdictOf>(
+    () => (turn) => {
+      const results = resultsOf(evals.data, turn.episode_id).filter((r) => r.turn === turn.turn);
+      return results.length > 0 ? turnVerdict(catalog.data, results) : null;
+    },
+    [evals.data, catalog.data],
+  );
+  const items = useMemo(() => (thread.data ? buildThreadView(thread.data, arm, verdictOf) : []), [thread.data, arm, verdictOf]);
 
   if (thread.isPending) return <p className="flex-1 bg-canvas p-4 text-[12.5px] text-fg-muted">Cargando el hilo…</p>;
   if (thread.isError) return <p className="flex-1 bg-canvas p-4 text-[12.5px] text-fg-muted">No se pudo leer el hilo de esta conversación.</p>;
@@ -199,7 +220,7 @@ function Thread({ run, sid, arm, onOpenTurn }: { run: string; sid: string; arm: 
   return (
     <div className="flex flex-1 flex-col gap-1.5 overflow-y-auto bg-canvas px-4 py-3.5">
       {items.map((it) => (
-        <ThreadRow key={it.key} item={it} onOpenTurn={onOpenTurn} />
+        <ThreadRow key={it.key} item={it} evaluating={evals.isPending} onOpenTurn={onOpenTurn} />
       ))}
     </div>
   );
@@ -224,7 +245,7 @@ function Bubble({ dir, text, time, hasImage, byHuman }: { dir: "in" | "out" | "c
   );
 }
 
-function ThreadRow({ item, onOpenTurn }: { item: ThreadItem; onOpenTurn: (turn: ThreadTurn) => void }) {
+function ThreadRow({ item, evaluating, onOpenTurn }: { item: ThreadItem; evaluating: boolean; onOpenTurn: (turn: ThreadTurn) => void }) {
   switch (item.type) {
     case "day":
       return <div className="self-center px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-fg-faint">{formatDayLabelEs(item.day)}</div>;
@@ -262,8 +283,16 @@ function ThreadRow({ item, onOpenTurn }: { item: ThreadItem; onOpenTurn: (turn: 
           onClick={() => onOpenTurn(item.turn)}
           className="inline-flex items-center gap-2 self-end rounded-full border border-line-strong bg-white/[0.06] px-3 py-[7px] text-xs font-medium leading-none text-fg hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
-          <i aria-hidden="true" className={"inline-block h-2 w-2 rounded-full " + (item.tone === "warn" ? "bg-warn" : "bg-neutral")} />
+          <i aria-hidden="true" className={"inline-block h-2 w-2 rounded-full " + VERDICT_DOT[item.verdict ?? "SIN_DATOS"]} />
           Ver hilo del turno <small className="text-[11.5px] text-fg-muted">{item.sub}</small>
+          {item.verdict ? (
+            <VerdictBadge verdict={item.verdict} />
+          ) : evaluating ? (
+            // Mientras carga no se sabe: «sin evaluar» sería falso.
+            <small aria-label="Cargando la evaluación" className="text-[11px] text-fg-faint">…</small>
+          ) : (
+            <small className="text-[11px] text-fg-faint">sin evaluar</small>
+          )}
         </button>
       );
   }

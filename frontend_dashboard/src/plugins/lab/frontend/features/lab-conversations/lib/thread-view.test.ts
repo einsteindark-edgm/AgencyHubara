@@ -28,7 +28,7 @@ function brief(items: ReturnType<typeof buildThreadView>) {
       case "burst":
         return `burst t${it.turn.turn} x${it.messages.length}`;
       case "chip":
-        return `chip t${it.turn.turn} ${it.tone}`;
+        return `chip t${it.turn.turn} ${it.verdict ?? "sin evaluar"}`;
       case "note":
         return `note ${it.text}`;
     }
@@ -43,12 +43,25 @@ describe("buildThreadView", () => {
       "day 2026-09-23",
       "in Buenas tardes",
       "out ¡Buenas tardes! Te damos la bienvenida a Hubara 🤍",
-      "chip t1 neutral",
+      "chip t1 sin evaluar",
       "burst t2 x2",
       "comp 📦 Tarifas de envío\nBogotá: $X.XXX · 2 a 3 días hábiles",
-      "chip t2 warn",
+      "chip t2 sin evaluar",
       "in [foto]",
     ]);
+  });
+
+  it("el botón de cada turno lleva el resultado de la evaluación de ese turno, no la narración descartada", () => {
+    // Caso real (conversación ···6543, producción): el turno 1 solo falló un
+    // check menor (texto descartado junto a una tool) → PASA, y se pintaba en
+    // ámbar; el turno 2 falló dos checks mayores → ALERTA, y se pintaba gris.
+    const verdicts: Record<number, "PASA" | "ALERTA"> = { 1: "PASA", 2: "ALERTA" };
+    const verdictOf = (turn: { turn: number }) => verdicts[turn.turn] ?? null;
+
+    const chips = brief(buildThreadView(thread, "A0", verdictOf)).filter((s) => s.startsWith("chip"));
+
+    expect(chips).toEqual(["chip t1 PASA", "chip t2 ALERTA"]);
+    expect(brief(buildThreadView(thread, "B", verdictOf)).filter((s) => s.startsWith("chip"))).toEqual(["chip t1 PASA", "chip t2 ALERTA"]);
   });
 
   it("la ráfaga dice cuántos segundos duró y la hora de cada mensaje (Bogotá)", () => {
@@ -63,10 +76,10 @@ describe("buildThreadView", () => {
       "day 2026-09-23",
       "in Buenas tardes",
       "note Este bot todavía no respondió este turno.",
-      "chip t1 neutral",
+      "chip t1 sin evaluar",
       "burst t2 x2",
       "note Este bot todavía no respondió este turno.",
-      "chip t2 neutral",
+      "chip t2 sin evaluar",
     ]);
   });
 
@@ -83,10 +96,10 @@ describe("buildThreadView", () => {
       "day 2026-09-23",
       "in Buenas tardes",
       "out respuesta B al turno 1",
-      "chip t1 neutral",
+      "chip t1 sin evaluar",
       "burst t2 x2",
       "out respuesta B al turno 2",
-      "chip t2 neutral",
+      "chip t2 sin evaluar",
     ]);
   });
 
@@ -130,7 +143,7 @@ describe("buildThreadView", () => {
       "out Mira esta",
       "comp 🧩 Tarjeta del producto · sagrado-rostro",
       "note No salió: Botón con enlace · Ver catálogo (el enlace no está permitido).",
-      "chip t1 neutral",
+      "chip t1 sin evaluar",
     ]);
   });
 });

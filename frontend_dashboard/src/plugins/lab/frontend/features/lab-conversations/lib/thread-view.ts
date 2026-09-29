@@ -11,19 +11,29 @@
  *   bot respondió (`outputs[brazo].sent_texts`); si todavía no corrió, una
  *   nota.
  *
+ * El botón de cada turno lleva el resultado de la evaluación de ESE turno con
+ * ese bot (`verdictOf`, el mismo que muestra el modal); sin evaluación, «sin
+ * evaluar». Antes se pintaba de ámbar si el bot había descartado un texto,
+ * y el color no coincidía con lo que decía el modal (revisión 2026-09-29).
+ *
  * Función pura: el día sale como ISO (la etiqueta "Hoy"/"Ayer" se calcula en
  * render, que es quien mira el reloj).
  */
 
 import { BOGOTA_TZ, bogotaDayIsoFromMs, describeTool } from "@/shared/lib";
-import type { LabThread, ThreadMessage, ThreadTurn } from "@plugins/lab/frontend/entities/lab-run";
+import type { EpisodeVerdict, LabThread, ThreadMessage, ThreadTurn } from "@plugins/lab/frontend/entities/lab-run";
 
 export type ThreadItem =
   | { type: "day"; key: string; day: string }
   | { type: "msg"; key: string; dir: "in" | "out" | "comp" | "system"; text: string; time: string; hasImage: boolean; byHuman?: boolean }
   | { type: "burst"; key: string; turn: ThreadTurn; messages: Array<{ text: string; time: string }>; spanS: number }
-  | { type: "chip"; key: string; turn: ThreadTurn; tone: "warn" | "neutral"; sub: string }
+  | { type: "chip"; key: string; turn: ThreadTurn; verdict: EpisodeVerdict | null; sub: string }
   | { type: "note"; key: string; text: string };
+
+/** El resultado de un turno con el bot del hilo (`null` si todavía no tiene evaluación). */
+export type TurnVerdictOf = (turn: ThreadTurn) => EpisodeVerdict | null;
+
+const NOT_EVALUATED: TurnVerdictOf = () => null;
 
 /** Lo que respondió un bot en un turno: sus burbujas y, si no hay, por qué. */
 export type ReplyItem = { dir: "out" | "comp" | "system" | "note"; text: string; hasImage: boolean; byHuman?: boolean };
@@ -60,11 +70,9 @@ function dirOf(message: ThreadMessage): "in" | "out" | "comp" | "system" {
   return message.kind === "component" ? "comp" : "out";
 }
 
-function chip(turn: ThreadTurn, arm: string, key: string): ThreadItem {
-  const out = turn.outputs[arm];
-  const warn = !!out && (out.discarded_narration.length > 0 || !!out.suppressed_reason);
+function chip(turn: ThreadTurn, key: string, verdictOf: TurnVerdictOf): ThreadItem {
   const n = turn.burst.length;
-  return { type: "chip", key, turn, tone: warn ? "warn" : "neutral", sub: `turno ${turn.turn} · ${n} ${n === 1 ? "mensaje" : "mensajes"}` };
+  return { type: "chip", key, turn, verdict: verdictOf(turn), sub: `turno ${turn.turn} · ${n} ${n === 1 ? "mensaje" : "mensajes"}` };
 }
 
 function burstItem(turn: ThreadTurn, key: string): ThreadItem {
@@ -77,8 +85,8 @@ function sortedTurns(thread: LabThread): ThreadTurn[] {
   return [...thread.turns].sort((a, b) => (a.at_ms ?? 0) - (b.at_ms ?? 0));
 }
 
-export function buildThreadView(thread: LabThread, arm: string): ThreadItem[] {
-  return arm === PRODUCTION_ARM ? productionView(thread) : simulatedView(thread, arm);
+export function buildThreadView(thread: LabThread, arm: string, verdictOf: TurnVerdictOf = NOT_EVALUATED): ThreadItem[] {
+  return arm === PRODUCTION_ARM ? productionView(thread, verdictOf) : simulatedView(thread, arm, verdictOf);
 }
 
 /** A qué turno del banco pertenece cada mensaje del cliente (por wamid o por su hora exacta). */
@@ -99,7 +107,7 @@ function turnFinder(turns: ThreadTurn[]): (m: ThreadMessage) => ThreadTurn | und
   };
 }
 
-function productionView(thread: LabThread): ThreadItem[] {
+function productionView(thread: LabThread, verdictOf: TurnVerdictOf): ThreadItem[] {
   const turns = sortedTurns(thread);
   const turnOf = turnFinder(turns);
 
@@ -121,7 +129,7 @@ function productionView(thread: LabThread): ThreadItem[] {
     const turn = turnOf(m);
     if (m.role === "user" && open) {
       if (turn !== open) {
-        items.push(chip(open, PRODUCTION_ARM, chipKey(open)));
+        items.push(chip(open, chipKey(open), verdictOf));
         open = null;
       }
     }
@@ -144,7 +152,7 @@ function productionView(thread: LabThread): ThreadItem[] {
     }
     items.push({ type: "msg", key: `m-${idx}`, dir: dirOf(m), text: m.content, time: hhmm(ms), hasImage: m.has_image, byHuman: m.sender === "human" });
   });
-  if (open) items.push(chip(open, PRODUCTION_ARM, chipKey(open as ThreadTurn)));
+  if (open) items.push(chip(open, chipKey(open as ThreadTurn), verdictOf));
   return items;
 }
 
@@ -209,7 +217,7 @@ export function turnReplies(thread: LabThread, turn: ThreadTurn, arm: string): R
   return arm === PRODUCTION_ARM ? productionReplies(thread, turn) : simulatedReplies(turn, arm);
 }
 
-function simulatedView(thread: LabThread, arm: string): ThreadItem[] {
+function simulatedView(thread: LabThread, arm: string, verdictOf: TurnVerdictOf): ThreadItem[] {
   const items: ThreadItem[] = [];
   let day = "";
   for (const turn of sortedTurns(thread)) {
@@ -231,7 +239,7 @@ function simulatedView(thread: LabThread, arm: string): ThreadItem[] {
           : { type: "msg", key: `out-${turn.turn_key}-${k}`, dir: r.dir, text: r.text, time: "", hasImage: r.hasImage },
       ),
     );
-    items.push(chip(turn, arm, `chip-${turn.turn_key}`));
+    items.push(chip(turn, `chip-${turn.turn_key}`, verdictOf));
   }
   return items;
 }

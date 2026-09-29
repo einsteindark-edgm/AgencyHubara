@@ -170,6 +170,48 @@ describe("LabConversations", () => {
     expect(within(dialog).getByRole("button", { name: "Bot actual simulado" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("el botón «Ver hilo del turno» dice el mismo resultado que el modal de ese turno", async () => {
+    // Caso real (···6543, producción): el turno 1 solo falló un check menor
+    // (PASA) y se pintaba en ámbar; el turno 2 falló uno mayor (ALERTA) y se
+    // pintaba gris. El color y la etiqueta salen de la evaluación del turno.
+    const base = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((url: string) => {
+      const u = String(url);
+      if (u.includes(`/conversations/${SID}/evaluations`) && u.includes("arm=A0")) {
+        return json({ arm: "A0", rep: 0, episodes: [{ session_id: SID, episode_id: "ep_1", verdict: "ALERTA", results: [
+          { check_id: "EST-06", verdict: "falla", level: "menor", turn: 1, evidence: "turno 1: narración descartada" },
+          { check_id: "APE-01", verdict: "pasa", turn: 1 },
+          { check_id: "DES-04", verdict: "falla", level: "mayor", turn: 2, source: "judge", critique: "Ofreció otro diseño." },
+        ] }] });
+      }
+      return base!(url);
+    });
+    renderTab();
+    await screen.findByText("Buenas tardes");
+
+    const chips = screen.getAllByRole("button", { name: /^Ver hilo del turno/ });
+    expect(await within(chips[0]).findByText("PASA")).toBeInTheDocument();
+    expect(await within(chips[1]).findByText("ALERTA")).toBeInTheDocument();
+
+    fireEvent.click(chips[1]);
+    const dialog = await screen.findByRole("dialog", { name: "Hilo del turno 2" });
+    const verdict = await within(dialog).findByRole("group", { name: "Resultado de este bot en el turno" });
+    expect(within(verdict).getByText("ALERTA")).toBeInTheDocument();
+  });
+
+  it("mientras carga la evaluación, el botón no dice «sin evaluar» (todavía no se sabe)", async () => {
+    const base = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((url: string) =>
+      String(url).includes(`/conversations/${SID}/evaluations`) ? new Promise<Response>(() => {}) : base!(url),
+    );
+    renderTab();
+    await screen.findByText("Buenas tardes");
+
+    const chips = screen.getAllByRole("button", { name: /^Ver hilo del turno/ });
+    expect(within(chips[0]).queryByText("sin evaluar")).toBeNull();
+    expect(within(chips[0]).getByLabelText("Cargando la evaluación")).toBeInTheDocument();
+  });
+
   it("el botón del turno abre el modal del hilo de ese turno", async () => {
     renderTab();
     await screen.findByText("Buenas tardes");
