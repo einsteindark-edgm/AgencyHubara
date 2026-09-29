@@ -27,7 +27,10 @@ Diferencias con el V1, a propósito (cada una con su test en
      verificación ③ por la fachada del motor);
   4. el egreso (destinatario, rescate, portavelas, saludo) lo decide el motor;
      con `reglas` el resultado es el del V1, y el historial del LLM guarda el
-     texto que salió.
+     texto que salió (también el de `send_reply`);
+  5. el envío no vuelve a juzgar el texto (3.er argumento `True` de
+     `send_whatsapp_message_activity`): lo decidió el motor. El detector del
+     envío tiraba en silencio textos que Jev aprobó.
 
 Ramas del V1 que no pasan (solo existían para re-jugar historias viejas): el
 turno de a un mensaje sin debounce, las notas de ráfaga v1 y previas, el
@@ -609,9 +612,11 @@ class HubaraSalesSessionWorkflowV2:
                         retry_policy=RetryPolicy(maximum_attempts=3),
                     )
                     _note_guard(trace_steps, trace_guards, "first_contact_greeting", before="", after=greeting)
+                    # 3.er argumento `True`: lo decidió el motor (el saludo
+                    # aprobado que pidió `greeting_needed`); ver `text_out`.
                     greeting_delivered = await workflow.execute_activity(
                         send_whatsapp_message_activity,
-                        args=[session.session_id, greeting],
+                        args=[session.session_id, greeting, True],
                         start_to_close_timeout=timedelta(seconds=90),
                         retry_policy=RetryPolicy(maximum_attempts=2),
                     )
@@ -708,9 +713,15 @@ class HubaraSalesSessionWorkflowV2:
                     and not leak_blocked
                 ):
                     if not suppress_text_for_picker:
+                        # 3.er argumento `True` (`decided_by_engine`): el
+                        # texto lo decidió el motor en el egreso; el envío no
+                        # lo vuelve a juzgar con el detector de hoy (el caso
+                        # «Usa el código VELAS_10 al pagar» que Jev aprobó
+                        # moría ahí mientras el panel y el LLM lo daban por
+                        # enviado). Payload: V2 no tiene historias vivas.
                         final_delivered = await workflow.execute_activity(
                             send_whatsapp_message_activity,
-                            args=[session.session_id, text_out],
+                            args=[session.session_id, text_out, True],
                             start_to_close_timeout=timedelta(seconds=90),
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )

@@ -173,7 +173,8 @@ class TurnPolicy:
 #: contexto)` → veredictos. Corre donde corría el rescate antes de grabar y lo
 #: REEMPLAZA: el historial del LLM guarda el texto que el egreso decidió enviar
 #: (`text`; "" = nada, salvo el centinela `NO_MESSAGE`, que se recuerda como
-#: siempre) y el turno devuelve `llm_text` como `final_content`
+#: siempre), también cuando salió por `send_reply` (`_replies_as_sent`), y el
+#: turno devuelve `llm_text` como `final_content`
 #: (`rescued_before_record` = hubo rescate antes de grabar). El contexto trae
 #: `first_contact`, `tools_used`, `outbound_tool_texts`, `order_registered`,
 #: `portavelas_included` y `admin_turn`. Lo que devuelve viaja en
@@ -621,6 +622,71 @@ def _history_view(
     return view
 
 
+def _reply_result_as_sent(content: Any, text: str) -> Any:
+    """El resultado grabado de un `send_reply` con `reply.text` = lo que salió
+    (el resto del envelope queda igual). Sin la forma esperada, tal cual."""
+    payload = _try_parse_decision_payload(content)
+    if payload is None or not isinstance(payload.get("reply"), dict):
+        return content
+    return json.dumps({**payload, "reply": {**payload["reply"], "text": text}}, ensure_ascii=False)
+
+
+def _replies_as_sent(
+    recorded: list[dict[str, Any]],
+    delivered_replies: dict[str, str],
+    sent_reply_ids: list[str],
+    sent: str,
+    final_content: str,
+) -> list[dict[str, Any]]:
+    """Cada `send_reply` del historial, como le llegó al cliente (egreso, F4).
+
+    `_history_view` ya muestra cada `send_reply` que la tool validó con su
+    texto. Quedan solo los que forman el texto final del turno
+    (`sent_reply_ids`); si el egreso cambió ese texto, el primero lleva el
+    que salió (sale como UN mensaje) y los demás se quitan; si lo frenó, se
+    quitan todos. Los validados que no salieron (turno admin, o la escalación
+    del mismo paso cortó en su lugar) se quitan con su resultado: el LLM no
+    recuerda haber dicho lo que el cliente nunca leyó. Un mensaje del
+    asistente que se queda sin llamadas ni texto se va entero. Puro.
+    """
+    drop = {call_id for call_id in delivered_replies if call_id not in sent_reply_ids}
+    keep: str | None = None
+    if sent_reply_ids and sent != final_content:
+        keep = sent_reply_ids[0] if sent else None
+        drop.update(call_id for call_id in sent_reply_ids if call_id != keep)
+    if not drop and keep is None:
+        return recorded
+    view: list[dict[str, Any]] = []
+    for message in recorded:
+        if message.get("role") == "tool":
+            call_id = message.get("tool_call_id")
+            if call_id in drop:
+                continue
+            if call_id == keep:
+                message = {**message, "content": _reply_result_as_sent(message.get("content"), sent)}
+        elif message.get("role") == "assistant" and message.get("tool_calls"):
+            calls = []
+            for call in message["tool_calls"]:
+                if call.get("id") in drop:
+                    continue
+                if call.get("id") == keep:
+                    call = {
+                        **call,
+                        "function": {
+                            **(call.get("function") or {}),
+                            "arguments": json.dumps({"text": sent}, ensure_ascii=False),
+                        },
+                    }
+                calls.append(call)
+            if not calls and not message.get("content"):
+                continue
+            message = {**message, "tool_calls": calls} if calls else {
+                k: v for k, v in message.items() if k != "tool_calls"
+            }
+        view.append(message)
+    return view
+
+
 def _record_egress(
     recorded: list[dict[str, Any]],
     final_content: str,
@@ -629,6 +695,8 @@ def _record_egress(
     admin_turn: bool,
     steps: list[dict[str, Any]],
     discarded_narration: list[str],
+    delivered_replies: dict[str, str] | None = None,
+    sent_reply_ids: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], str, bool]:
     """Aplica al historial los veredictos del gancho de egreso (`EgressHook`).
 
@@ -638,7 +706,11 @@ def _record_egress(
     (turno admin incluido). `NO_MESSAGE` se recuerda igual que siempre: es el
     canal correcto de abstención. El rescate antes de grabar deja el mismo
     rastro que el de la rama de siempre (narración descartada + guarda).
-    Puro: solo listas en memoria (no agrega comandos).
+
+    Lo mismo con `send_reply` (el canal normal del texto): `sent_reply_ids`
+    son las llamadas cuyo texto ES el texto final del turno (el corte por
+    `send_reply`); `delivered_replies`, todas las que la tool validó. Ver
+    `_replies_as_sent`. Puro: solo listas en memoria (no agrega comandos).
     """
     sent = verdicts.get("text")
     sent = sent if isinstance(sent, str) else ""
@@ -665,6 +737,14 @@ def _record_egress(
             recorded = recorded[:-1]
         elif sent and sent != final_content:
             recorded = [*recorded[:-1], {**recorded[-1], "content": sent}]
+    if delivered_replies:
+        view = _replies_as_sent(recorded, delivered_replies, list(sent_reply_ids or []), sent, final_content)
+        if view is not recorded:
+            workflow.logger.info(
+                "send_reply del historial del LLM ajustado a lo que salió "
+                f"(egreso; admin={admin_turn}, texto_que_sale={bool(sent)})"
+            )
+        recorded = view
     return recorded, llm_text, salvaged_leak
 
 
@@ -867,6 +947,10 @@ async def _run_agent_turn_impl(
     # `send_reply` que SÍ salieron: tool_call_id → texto enviado (el
     # historial guarda eso, no el borrador que mandó el modelo).
     delivered_replies: dict[str, str] = {}
+    # Las llamadas a `send_reply` cuyo texto ES el texto final del turno (el
+    # corte por `send_reply`). Solo lo lee el gancho de egreso (V2): lista en
+    # memoria, sin comandos (replay-safe sin patch).
+    sent_reply_ids: list[str] = []
     # Traza v2: pasos del turno en orden (ver `TurnResult.steps`).
     steps: list[dict[str, Any]] = []
     # L-11 (run b730c006): corte de turno en tools que esperan al cliente +
@@ -1205,6 +1289,9 @@ async def _run_agent_turn_impl(
             if batch_reply_texts and not admin_turn:
                 if not batch_tool_failed:
                     final_content = "\n\n".join(batch_reply_texts)
+                    sent_reply_ids = [
+                        tc.id for tc in response.tool_calls if tc.id in delivered_replies
+                    ]
                     workflow.logger.info(
                         f"turno terminado por send_reply ({batch_tool_names})"
                     )
@@ -1578,6 +1665,8 @@ async def _run_agent_turn_impl(
             admin_turn=admin_turn,
             steps=steps,
             discarded_narration=discarded_narration,
+            delivered_replies=delivered_replies,
+            sent_reply_ids=sent_reply_ids,
         )
     else:
         # Rescate ANTES de grabar (run 28a8e407, 2026-09-23): el texto final

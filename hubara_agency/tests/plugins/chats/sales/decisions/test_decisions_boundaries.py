@@ -27,14 +27,32 @@ PKG = "src.plugins.chats.agent.sales.decisions"
 _TEMPORAL_OK = {"activities.py", "egress_activities.py", "facade.py", "routing.py"}
 
 
-def _imports(path: Path) -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+def _is_src_module(module: str) -> bool:
+    base = SRC.parent.joinpath(*module.split("."))
+    return base.with_suffix(".py").exists() or (base / "__init__.py").exists()
+
+
+def _imports(path: Path, source: str | None = None) -> set[str]:
+    """Los módulos que importa `path` (`source`: otro contenido para ese
+    mismo archivo, para los controles negativos). Resuelve los imports
+    relativos contra el paquete del archivo, y `from paquete import módulo`
+    cuenta como el submódulo: ninguno de los dos se salta la frontera."""
+    text = path.read_text(encoding="utf-8") if source is None else source
+    tree = ast.parse(text, filename=str(path))
+    package = path.relative_to(SRC.parent).with_suffix("").parts
+    package = package if path.name == "__init__.py" else package[:-1]
     found: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             found.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            found.add(node.module)
+        elif isinstance(node, ast.ImportFrom):
+            base = list(package[: len(package) - node.level + 1]) if node.level else []
+            module = ".".join([*base, node.module] if node.module else base)
+            if not module:
+                continue
+            for alias in node.names:
+                submodule = f"{module}.{alias.name}"
+                found.add(submodule if module.startswith("src.") and _is_src_module(submodule) else module)
     return found
 
 
@@ -48,6 +66,23 @@ def test_the_sales_workflow_sees_only_the_contract_and_the_facade(workflow_file:
     engine_imports = {m for m in _imports(SALES / "workflows" / workflow_file) if m.startswith(PKG)}
 
     assert engine_imports <= {f"{PKG}.contracts", f"{PKG}.facade"}, engine_imports
+
+
+@pytest.mark.parametrize(
+    "line, reached",
+    [
+        ("from ..decisions.egress import Destinatario\n", f"{PKG}.egress"),
+        ("from ..decisions import egress\n", f"{PKG}.egress"),
+        ("from .. import decisions\n", PKG),
+        ("from src.plugins.chats.agent.sales.decisions import capabilities\n", f"{PKG}.capabilities"),
+    ],
+)
+def test_the_boundary_sees_relative_and_submodule_imports(line: str, reached: str) -> None:
+    """Control negativo de la frontera: el V2 no puede alcanzar el motor con
+    un import relativo ni importando un submódulo por su nombre."""
+    found = _imports(SALES / "workflows" / "sales_session_v2.py", source=line)
+
+    assert reached in found, found
 
 
 def test_tools_only_reach_the_engine_through_its_guards() -> None:

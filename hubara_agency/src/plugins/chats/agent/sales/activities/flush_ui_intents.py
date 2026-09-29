@@ -447,6 +447,12 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
         # falle a medias — cada foto que SÍ llegó es citable.
         media_log: list[dict[str, Any]] = []
         try:
+            # Motor de decisiones (`destinatario`, F5): los textos del LLM se
+            # deciden UNA vez, acá. Lo que sale y lo que muestra el panel
+            # (el marker de abajo) son los mismos params: si el motor cambió
+            # un texto por el neutro, el operador ve el neutro que leyó el
+            # cliente, no el texto rechazado.
+            params = await _sanitize_intent_client_text(kind or "", params, session_id=session_id)
             result = await _dispatch_intent(
                 wa_client=wa_client,
                 wa_dtos=wa_dtos,
@@ -458,6 +464,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
                 last_inbound_message_id=last_inbound_msg_id,
                 media_log=media_log,
                 session_id=session_id,
+                client_text_decided=True,
             )
         except Exception as e:  # noqa: BLE001
             activity.logger.warning(
@@ -581,8 +588,13 @@ async def _dispatch_intent(
     last_inbound_message_id: str | None,
     media_log: list[dict[str, Any]] | None = None,
     session_id: str | None = None,
+    client_text_decided: bool = False,
 ):
     """Mapea `kind` a la función `send_*` correspondiente.
+
+    `client_text_decided`: el caller ya pasó los textos del LLM por
+    `_sanitize_intent_client_text` (el flush lo hace para que el marker del
+    panel muestre lo mismo que salió); no se le vuelve a preguntar al motor.
 
     `fallback`: hints opcionales del tool al dispatcher (ej.
     `prefer_native_product_list: bool` para `products_list`). Vacío si la
@@ -599,7 +611,8 @@ async def _dispatch_intent(
     """
     # Choke point de texto LLM en intents (run 1c9ef231): limpiar/neutralizar
     # ANTES de cualquier rama — todos los kinds leen de `params`.
-    params = await _sanitize_intent_client_text(kind or "", params, session_id=session_id)
+    if not client_text_decided:
+        params = await _sanitize_intent_client_text(kind or "", params, session_id=session_id)
     if kind == "product_detail":
         link = params.get("image_url")
         if not link:
