@@ -192,3 +192,62 @@ def test_the_burst_keeps_the_raw_text_the_classifier_reads(tmp_path: Path) -> No
         "[respondes a la campaña] me mandas el catálogo", "[episodio anterior: compró un Cubo Love]\ny el envío a Bogotá",
     ]
     assert [m.get("raw_text") for m in case.burst] == ["me mandas el catálogo", "y el envío a Bogotá"]
+
+
+PHOTO = '[el cliente envió una foto: una vela con la frase «nos vemos mañana»] con el texto: "¿la tienen en rojo?"'
+BUTTON = "[el cliente tocó el botón: ✅ Confirmar]"
+CART = "[el cliente armó un carrito con: 2× HUB-CUBO-01, 1× HUB-BUDA-02]"
+
+
+def _with_burst(tmp_path: Path, contents: list[str], *, inbound: list[dict] | None = None) -> Path:
+    """El banco con la ráfaga del turno 2 cambiada (y, con `inbound`, traza v2)."""
+    b = _bench(tmp_path)
+    s = b / "vault" / SID
+    events = [json.loads(line) for line in (s / "sessions" / f"{SID}.jsonl").read_text(encoding="utf-8").splitlines()]
+    burst_events = [{"role": "user", "content": c, "timestamp": _iso(T0 + 60_000 + k * 1_000)} for k, c in enumerate(contents)]
+    events = [*events[:2], *burst_events, *events[4:]]
+    (s / "sessions" / f"{SID}.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+    if inbound is not None:
+        traces = [json.loads(line) for line in (s / "evals" / "turn_traces.jsonl").read_text(encoding="utf-8").splitlines()]
+        traces[1]["inbound"] = inbound
+        (s / "evals" / "turn_traces.jsonl").write_text("\n".join(json.dumps(t) for t in traces) + "\n", encoding="utf-8")
+    return b
+
+
+EXPECTED_FIELDS = [
+    {"kind": "text", "caption": "¿la tienen en rojo?"},
+    {"kind": "interactive", "interactive": {"type": "button_reply", "id": "", "title": "✅ Confirmar"}},
+    {"kind": "order", "order": {"product_items": [{"product_retailer_id": "HUB-CUBO-01", "quantity": 2},
+                                                   {"product_retailer_id": "HUB-BUDA-02", "quantity": 1}]}},
+]
+
+
+def _fields(message: dict) -> dict:
+    return {k: message[k] for k in ("kind", "caption", "interactive", "order") if k in message}
+
+
+def test_the_burst_carries_what_the_webhook_brought_besides_the_text(tmp_path: Path) -> None:
+    """Las lecturas del ingest leen lo que el cliente ESCRIBIÓ: en una foto,
+    solo el texto que puso en ella; un botón o un carrito los lee el código.
+    La traza v2 guarda el tipo del mensaje (`kind`: la foto reentra como
+    `text`); el resto sale del texto efectivo que armó el ingest."""
+    inbound = [
+        {"seq": 1, "wamid": "wamid.P_vision", "ts_ms": T0 + 60_000, "kind": "text", "text": PHOTO},
+        {"seq": 2, "wamid": "wamid.K", "ts_ms": T0 + 61_000, "kind": "interactive", "text": BUTTON},
+        {"seq": 3, "wamid": "wamid.O", "ts_ms": T0 + 62_000, "kind": "order", "text": CART},
+    ]
+    b = _with_burst(tmp_path, [PHOTO, BUTTON, CART], inbound=inbound)
+
+    case = _case(build_cases(b, sales_workspace=WS).cases, 2)
+
+    assert [_fields(m) for m in case.burst] == EXPECTED_FIELDS
+    assert [m["text"] for m in case.burst] == [PHOTO, BUTTON, CART]  # el LLM sigue viendo el texto efectivo
+
+
+def test_old_traces_infer_the_kind_from_the_text_the_ingest_wrote(tmp_path: Path) -> None:
+    """Traza v1 (ráfaga desde el dashboard): el tipo sale del texto efectivo."""
+    b = _with_burst(tmp_path, [PHOTO, BUTTON, CART])
+
+    case = _case(build_cases(b, sales_workspace=WS).cases, 2)
+
+    assert [_fields(m) for m in case.burst] == EXPECTED_FIELDS

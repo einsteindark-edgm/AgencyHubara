@@ -34,6 +34,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.plugins.chats.agent.sales_lab.cases import without_referral_banner
+
 #: La ruta de la persona del equipo (`active_route`): con ella el ingest no
 #: arma la nota de fuera de catálogo.
 _HUMAN_ROUTE = "humano"
@@ -77,6 +79,40 @@ def _history(vault_dir: Path, session_id: str) -> list[dict[str, Any]]:
         if isinstance(row, dict):
             events.append(row)
     return events
+
+
+#: Tipos de mensaje con texto del cliente (`parsed.text`): el texto y el botón
+#: de una plantilla. Los botones y listas de nuestros mensajes, un carrito,
+#: una ubicación o un adjunto no traen texto: el código lee su `interactive`
+#: / `order`.
+_TYPED_KINDS = frozenset({"text", "button"})
+
+
+def customer_text(message: dict[str, Any]) -> str | None:
+    """Lo que leen las lecturas del ingest: lo que ESCRIBIÓ el cliente, sin lo
+    que agregó el ingest (campaña citada, episodio anterior, banner del
+    anuncio). En una foto, solo el texto que puso en ella (`caption`): la
+    descripción la escribió la visión."""
+    if "caption" in message:
+        caption = message.get("caption")
+        return caption if isinstance(caption, str) and caption.strip() else None
+    if str(message.get("kind") or "text") not in _TYPED_KINDS:
+        return None
+    return without_referral_banner(str(message.get("raw_text") or message.get("text") or "")) or None
+
+
+def message_text(message: dict[str, Any]) -> str | None:
+    """El texto del mensaje que el ingest le pasa a `apply_readings`
+    (`parsed.text`): el de `customer_text`, salvo en una foto, donde es el
+    texto que reentró con la descripción."""
+    if "caption" in message:
+        return str(message.get("raw_text") or message.get("text") or "") or None
+    return customer_text(message)
+
+
+def _payload(message: dict[str, Any], key: str) -> dict[str, Any] | None:
+    value = message.get(key)
+    return value if isinstance(value, dict) else None
 
 
 def _write_metadata(vault_dir: Path, session_id: str, metadata: dict[str, Any]) -> None:
@@ -146,20 +182,18 @@ async def ingest_burst(
         # Lo que el cliente vio ANTES de este mensaje (el ingest lo lee del
         # historial antes de guardar el mensaje).
         events = _history(vault_dir, session_id)
-        # Como el ingest: las lecturas leen lo que escribió el cliente, no el
-        # turno con lo que agregó el ingest (campaña citada, episodio anterior).
-        text = str(message.get("raw_text") or message.get("text") or "") or None
         ts = message.get("ts_ms")
         now_ms = int(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else int(at_ms)
         wamid = str(message.get("wamid") or f"lab.{k}")
         readings = await provider.read(
             Inbound(
-                session_id=session_id, text=text, now_ms=now_ms, message_id=wamid, metadata=metadata,
-                events=events, stage=resolve_funnel_stage(metadata), tz=tz,
+                session_id=session_id, text=customer_text(message), now_ms=now_ms, message_id=wamid,
+                interactive=_payload(message, "interactive"), order=_payload(message, "order"),
+                metadata=metadata, events=events, stage=resolve_funnel_stage(metadata), tz=tz,
             )
         )
         apply_readings(
-            metadata, readings, text=text, now_ms=now_ms, message_id=wamid, tz=tz,
+            metadata, readings, text=message_text(message), now_ms=now_ms, message_id=wamid, tz=tz,
             opt_out_campaign_id=opt_out_campaign_id(metadata, now_ms),
         )
         record = records[k - 1] if records is not None and k <= len(records) else burst_record(message, at_ms=at_ms)

@@ -24,10 +24,16 @@ Reglas:
     MISMO episodio; el tag, la ruta y la escalación (de la sesión), de la
     última traza anterior de cualquier episodio. `draft` y `state` son los de
     la traza del turno: el estado al TERMINAR (lo que evalúa el scorecard).
+  * cada mensaje de la ráfaga lleva lo que el webhook traía además del texto
+    efectivo (`ingest_fields`): el tipo (`kind`, el de la traza v2), el texto
+    que el cliente puso en una foto (`caption`) y el botón o el carrito
+    (`interactive`, `order`). Las lecturas del ingest leen eso, no la
+    descripción de la foto ni el marcador del botón.
 """
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -115,6 +121,83 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
     return out
 
 
+# ── Lo que el webhook traía además del texto efectivo ────────────────────────
+# El texto efectivo lo arma el ingest (`sales/translate.py` y el reentry de
+# visión de `ingest_inbound_message.py`) con marcas fijas; con ellas se sabe
+# qué leyeron las lecturas en producción (`parsed.text`, `interactive`,
+# `order`; en una foto, solo el texto que el cliente puso en ella).
+
+#: Banner que el ingest antepone al primer mensaje que llega de un anuncio.
+_REFERRAL_BANNER = "[el cliente vino desde "
+#: Reentry de visión: foto, comprobante o foto que no se pudo ver.
+_PHOTO_PREFIXES = (
+    "[el cliente envió una foto: ",
+    "[el cliente envió un comprobante de pago: ",
+    "[el cliente envió una imagen que no pude ver bien]",
+)
+_CAPTION_MARK = '] con el texto: "'
+_BUTTON_RE = re.compile(r"\[el cliente tocó el botón: (.*)\]", re.DOTALL)
+_LIST_RE = re.compile(r"\[el cliente seleccionó: (.*)\]", re.DOTALL)
+_CART_RE = re.compile(r'\[el cliente armó un carrito con: (.*?)\](?: "(.*)")?', re.DOTALL)
+#: Mensajes sin texto del cliente (`parsed.text` es None), por su tipo.
+_NO_TEXT_PREFIXES = (
+    ("[datos de envío recibidos]", "interactive"),
+    ("[el cliente envió una interacción no soportada: ", "interactive"),
+    ("[el cliente compartió su ubicación", "location"),
+    ("[el cliente envió un documento PDF", "document"),
+    ("[el cliente reaccionó con ", "reaction"),
+    ("[el cliente quitó su reacción]", "reaction"),
+    ("[el cliente compartió un contacto: ", "contacts"),
+)
+_MEDIA_RE = re.compile(r"\[el cliente envió un (\w+)\]")
+
+
+def without_referral_banner(text: str) -> str:
+    """El texto efectivo sin el banner del anuncio (el cliente no lo escribió)."""
+    if text.startswith(_REFERRAL_BANNER):
+        end = text.find("]\n")
+        if end != -1:
+            return text[end + 2:]
+    return text
+
+
+def _cart_items(summary: str) -> list[dict[str, Any]]:
+    items = []
+    for part in summary.split(", "):
+        qty, sep, retailer_id = part.partition("× ")
+        if sep and qty.strip().isdigit():
+            items.append({"product_retailer_id": retailer_id, "quantity": int(qty)})
+    return items
+
+
+def ingest_fields(text: str, kind: str | None = None) -> dict[str, Any]:
+    """Lo que el webhook traía además de `text` (el texto efectivo): el tipo
+    (`kind`: el de la traza si lo trae; si no, el que dice el texto), y según
+    el caso el texto de la foto (`caption`: None si no puso nada), el botón
+    (`interactive`) o el carrito (`order`). La foto reentra como `text`, igual
+    que en la traza de producción."""
+    body = without_referral_banner(text)
+    if body.startswith(_PHOTO_PREFIXES):
+        at = body.find(_CAPTION_MARK)
+        caption = body[at + len(_CAPTION_MARK):-1] if at != -1 and body.endswith('"') else None
+        return {"kind": kind or "text", "caption": caption or None}
+    if match := _BUTTON_RE.fullmatch(body):
+        return {"kind": "interactive", "interactive": {"type": "button_reply", "id": "", "title": match.group(1)}}
+    if match := _LIST_RE.fullmatch(body):
+        return {"kind": "interactive", "interactive": {"type": "list_reply", "id": "", "title": match.group(1)}}
+    if match := _CART_RE.fullmatch(body):
+        order: dict[str, Any] = {"product_items": _cart_items(match.group(1))}
+        if match.group(2):
+            order["text"] = match.group(2)
+        return {"kind": "order", "order": order}
+    for prefix, inferred in _NO_TEXT_PREFIXES:
+        if body.startswith(prefix):
+            return {"kind": inferred}
+    if match := _MEDIA_RE.fullmatch(body):
+        return {"kind": match.group(1)}
+    return {"kind": kind or "text"}
+
+
 def _burst(events: list[dict[str, Any]], started_ms: int) -> tuple[list[dict[str, Any]], int]:
     """(mensajes de la ráfaga, cantidad de eventos del dashboard antes de ella)."""
     timed = [(e, _ms(e.get("timestamp"))) for e in events]
@@ -131,7 +214,8 @@ def _burst(events: list[dict[str, Any]], started_ms: int) -> tuple[list[dict[str
             continue
         if first_index is None:
             first_index = i
-        burst.append({"text": str(e.get("content") or ""), "ts_ms": ts, "wamid": e.get("wamid")})
+        content = str(e.get("content") or "")
+        burst.append({"text": content, "ts_ms": ts, "wamid": e.get("wamid"), **ingest_fields(content)})
     prefix = first_index if first_index is not None else sum(1 for _, ts in timed if ts is not None and ts <= started_ms)
     return burst, prefix
 
@@ -154,6 +238,8 @@ def _inbound_message(m: dict[str, Any], events: list[dict[str, Any]]) -> dict[st
         raw = dash if dash.strip() and dash != text and dash in text else None
     if raw:
         out["raw_text"] = raw
+    kind = m.get("kind")
+    out.update(ingest_fields(raw or text, kind if isinstance(kind, str) and kind else None))
     return out
 
 

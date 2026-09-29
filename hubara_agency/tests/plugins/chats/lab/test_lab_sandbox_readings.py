@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tests.plugins.chats.lab.test_lab_sandbox_leaks import _run_probe
 from tests.plugins.chats.lab.test_lab_sandbox_materialize import T0, _case
 
@@ -44,3 +46,95 @@ async def test_the_readings_read_what_the_customer_wrote_not_what_the_ingest_add
 
     assert control != metadata, "el texto envuelto sí registra un aplazamiento (control del test)"
     assert not any("deferral" in key for key in metadata), metadata
+
+
+# ── Lo que leen las lecturas (auditoría del brazo B, punto 3): en producción
+# `Inbound.text` es lo que ESCRIBIÓ el cliente (`parsed.text`; en una foto,
+# solo el texto que puso en ella) y el botón o el carrito viajan aparte
+# (`interactive` / `order`) para que los lea el código. El LLM sigue viendo el
+# texto efectivo (la descripción de la foto): eso no cambia.
+
+SID_R = "wa_573001234567"
+
+
+def _metadata_with_product() -> dict:
+    return {"episodes": [{"episode_id": "ep_1", "started_at_ms": T0, "closed_at_ms": None,
+                          "order_draft": {"slots": {"producto": "Cubo Love"}}}]}
+
+
+async def _read(tmp_path: Path, message: dict) -> tuple[dict, list[dict]]:
+    from src.plugins.chats.agent.sales_lab.sandbox.readings import apply_burst_readings
+
+    metadata = _metadata_with_product()
+    [verdicts] = await apply_burst_readings(metadata, [message], session_id=SID_R, vault_dir=tmp_path, at_ms=T0 + 60_000)
+    return metadata, verdicts
+
+
+@pytest.fixture
+def current_bot(monkeypatch):
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+
+
+@pytest.fixture
+def new_bot(monkeypatch):
+    from src.sdk.connectorkit import get_perception_port
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    monkeypatch.setenv("PERCEPTION_PROVIDER", "fake")
+    get_perception_port.cache_clear()
+    yield
+    get_perception_port.cache_clear()
+
+
+async def test_a_photo_is_read_only_by_what_the_customer_typed_in_it(tmp_path: Path, current_bot) -> None:
+    """La descripción la escribió la visión: un «mañana» en la foto no es un
+    aplazamiento del cliente (bug: un comprobante pausaba la reactivación)."""
+    photo = {"text": "[el cliente envió una foto: una vela con la frase «nos vemos mañana»]", "kind": "text",
+             "caption": None, "ts_ms": T0 + 60_000, "wamid": "wamid.P_vision"}
+
+    metadata, _ = await _read(tmp_path, photo)
+
+    assert "reengagement_deferral" not in metadata, metadata
+
+
+async def test_the_caption_of_a_photo_is_what_the_readings_read(tmp_path: Path, current_bot) -> None:
+    photo = {"text": '[el cliente envió una foto: una vela roja] con el texto: "luego te escribo"', "kind": "text",
+             "caption": "luego te escribo", "ts_ms": T0 + 60_000, "wamid": "wamid.P_vision"}
+
+    metadata, _ = await _read(tmp_path, photo)
+
+    assert metadata["last_inbound_signal"]["kind"] == "deferral", metadata
+
+
+async def test_the_confirm_button_is_read_by_the_code_not_asked_to_jev(tmp_path: Path, new_bot) -> None:
+    button = {"text": "[el cliente tocó el botón: ✅ Confirmar]", "kind": "interactive",
+              "interactive": {"type": "button_reply", "id": "", "title": "✅ Confirmar"},
+              "ts_ms": T0 + 60_000, "wamid": "wamid.K"}
+
+    metadata, verdicts = await _read(tmp_path, button)
+
+    draft = metadata["episodes"][0]["order_draft"]
+    assert draft.get("confirmed_by") == "button", draft
+    compra = next(v for v in verdicts if v["capability"] == "compra")
+    assert compra["reason"] == "no_question" and compra["jev"] is None, compra
+
+
+async def test_a_cart_confirms_the_purchase_like_production(tmp_path: Path, current_bot) -> None:
+    cart = {"text": "[el cliente armó un carrito con: 2× HUB-CUBO-01]", "kind": "order",
+            "order": {"product_items": [{"product_retailer_id": "HUB-CUBO-01", "quantity": 2}]},
+            "ts_ms": T0 + 60_000, "wamid": "wamid.O"}
+
+    metadata, _ = await _read(tmp_path, cart)
+
+    assert metadata["episodes"][0]["order_draft"].get("confirmed_by") == "cart", metadata
+
+
+async def test_the_ad_banner_is_not_what_the_customer_wrote(tmp_path: Path, current_bot) -> None:
+    """El ingest le antepone al primer mensaje que llega de un anuncio un
+    banner con el título del anuncio; las lecturas leen solo el mensaje."""
+    first = {"text": "[el cliente vino desde un anuncio de Facebook/Instagram, titulado 'Llévala mañana']\nhola",
+             "kind": "text", "ts_ms": T0 + 60_000, "wamid": "wamid.A"}
+
+    metadata, _ = await _read(tmp_path, first)
+
+    assert "reengagement_deferral" not in metadata and "last_inbound_signal" not in metadata, metadata
