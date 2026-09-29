@@ -37,6 +37,7 @@ from src.plugins.chats.agent.sales_lab.run.contracts import (
     SummarizeInput,
     SummarizeResult,
 )
+from src.plugins.chats.agent.sales_lab.run.arena import jev_fallback_notes
 from src.plugins.chats.agent.sales_lab.run.evaluate import evaluation_chunk, score_arm
 from src.plugins.chats.agent.sales_lab.run.publish import publish_arm, publish_control
 from src.plugins.chats.agent.sales_lab.run.summary import build_summary, with_verdicts
@@ -474,6 +475,10 @@ def _summarize(store: LabStorePort, inp: SummarizeInput) -> SummarizeResult:
             f"fidelidad del simulador {fid['agreement'] * 100:.0f} % (vara 90 %): A1 no reproduce bien a A0, "
             "la comparación pierde valor"
         )
+    # Jev caído en silencio (sin llave, tardanza, error): lo que decidió la
+    # regla no puede pasar por Jev.
+    for arm, arm_metrics in metrics.items():
+        notes.extend(jev_fallback_notes(arm, arm_metrics))
     if pending:
         notes.append(
             f"{pending} calificaciones del juez esperan a Claude Code: esos checks quedan desconocidos "

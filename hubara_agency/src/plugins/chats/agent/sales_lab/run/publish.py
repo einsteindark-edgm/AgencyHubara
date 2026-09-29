@@ -240,6 +240,12 @@ def publish_arm(
         replay = result.get("tool_replay")
         if isinstance(replay, dict) and (replay.get("replayed") or replay.get("unrecorded")):
             real["tool_replay"] = {k: [str(n) for n in replay.get(k) or []] for k in ("replayed", "unrecorded")}
+        # Qué decidió cada capacidad del motor en el caso (ingest y turno: Jev,
+        # la regla, el piso o el respaldo, y por qué) y los desacuerdos regla ↔
+        # Jev; ya compactos y anonimizados por el sandbox.
+        for key in ("decisions", "disagreements"):
+            if isinstance(result.get(key), list) and result[key]:
+                real[key] = result[key]
         output = {k: real[k] for k in _OUTPUT_FIELDS if k in real}
         complement = result.get("complement_trace")
         if isinstance(complement, dict):

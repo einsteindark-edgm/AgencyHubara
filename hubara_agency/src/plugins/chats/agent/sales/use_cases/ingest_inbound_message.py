@@ -140,6 +140,8 @@ from src.plugins.chats.shared.contracts.events import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from temporalio.client import Client
 
     from src.sdk.connectorkit import (
@@ -207,6 +209,36 @@ def _inbound_meta(parsed: WhatsAppMessage) -> dict[str, Any]:
         "ts_ms": int(ts) * 1000 if ts.isdigit() else None,
         "kind": parsed.msg_type or "text",
     }
+
+
+async def catalog_gap_note_for(
+    catalog: CatalogPort | None, *, vault_dir: Path, session_id: str, text: str | None
+) -> str | None:
+    """Nota de lo que no existe en el catálogo; None sin catálogo o si falla
+    (un aviso de más no justifica demorar ni tumbar el turno). Los términos
+    los decide el motor (capacidad `fuera_de_catalogo`: la regla de hoy los
+    propone y Jev solo puede quitar alguno); la nota es la de siempre con los
+    que quedan. La usan el ingest y el sandbox del laboratorio: los dos arman
+    exactamente la misma nota."""
+    import asyncio
+
+    if catalog is None or not text:
+        return None
+    try:
+        result = await asyncio.wait_for(
+            catalog.search("", limit=_CATALOG_GAP_LIMIT),
+            timeout=_CATALOG_GAP_TIMEOUT_S,
+        )
+    except Exception as exc:  # noqa: BLE001 — degrade, never break the ingest
+        logger.warning("catalog_gap_check_failed", reason=type(exc).__name__)
+        return None
+    verdict = await read_catalog_gap(
+        vault_dir,
+        session_id=session_id,
+        text=text,
+        products=list(result.results),
+    )
+    return catalog_gap_note(verdict.value)
 
 
 class IngestInboundMessage:
@@ -1032,7 +1064,7 @@ class IngestInboundMessage:
         # enviamos (context.id ∈ outbound_media_index), le decimos al LLM
         # exactamente cuál — "esta me gusta" deja de ser ambiguo (caso
         # wa_573125671604: pedido registrado con el diseño equivocado).
-        photo_citation_note = _build_photo_citation_note(
+        photo_citation_note = build_photo_citation_note(
             parsed.context, metadata
         )
         # HU web-cart: nota de lead caliente — se proyecta cada turno
@@ -1292,30 +1324,13 @@ class IngestInboundMessage:
         return updated
 
     async def _catalog_gap_note(self, session_id: str, text: str) -> str | None:
-        """Nota de lo que no existe en el catálogo; None sin catálogo o si
-        falla (un aviso de más no justifica demorar ni tumbar el turno). Los
-        términos los decide el motor (capacidad `fuera_de_catalogo`: la regla
-        de hoy los propone y Jev solo puede quitar alguno); la nota es la de
-        siempre con los que quedan."""
-        import asyncio
-
-        if self._catalog is None or not text:
-            return None
-        try:
-            result = await asyncio.wait_for(
-                self._catalog.search("", limit=_CATALOG_GAP_LIMIT),
-                timeout=_CATALOG_GAP_TIMEOUT_S,
-            )
-        except Exception as exc:  # noqa: BLE001 — degrade, never break the ingest
-            logger.warning("catalog_gap_check_failed", reason=type(exc).__name__)
-            return None
-        verdict = await read_catalog_gap(
-            WORKSPACE_VAULT_DIR,
+        """Nota de lo que no existe en el catálogo (`catalog_gap_note_for`)."""
+        return await catalog_gap_note_for(
+            self._catalog,
+            vault_dir=WORKSPACE_VAULT_DIR,
             session_id=session_id,
             text=text,
-            products=list(result.results),
         )
-        return catalog_gap_note(verdict.value)
 
     async def _resolve_product_ref(self, sku: str) -> tuple[Any, str | None]:
         """Resolves a `ref: HUB-…` SKU against the catalog WITHOUT mutating
@@ -2261,7 +2276,7 @@ def _build_reply_kwargs(
     return kwargs
 
 
-def _build_photo_citation_note(
+def build_photo_citation_note(
     context: dict[str, Any] | None, metadata: dict[str, Any]
 ) -> str | None:
     """Nota de cita de foto para `plugin_context`.

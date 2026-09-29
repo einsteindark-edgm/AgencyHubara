@@ -6,7 +6,13 @@ que devuelve el sandbox):
   * percepción: turnos medidos, caídas a "turno como hoy" (`fallback`) y
     latencia p50/p95;
   * verificación: decisiones (send / complement / pending) y p95;
-  * tasa de complemento y de ronda extra (`turn_policy_extra_round`);
+  * tasa de complemento y de ronda extra (la capa ② del V1,
+    `turn_policy_extra_round`, y la segunda puerta del V2,
+    `contract_extra_round`);
+  * decisiones de las capacidades del motor en los casos (`decisions`): quién
+    decidió y cuántas cayeron a la regla porque Jev falló (tardanza, sin
+    llave, error), con el motivo; `jev_fallback_notes` lo dice en las notas
+    de la corrida para que una caída silenciosa no pase por Jev;
   * costo por turno = LLM + clasificador (percepción + verificación).
 
 `topic_agreement` y `calibration` comparan contra los asuntos que el juez
@@ -30,6 +36,16 @@ from typing import Any
 
 _CLASSIFIER_STEPS = ("perception", "verify")
 _BINS = 10
+#: Guardas que le dan al LLM una ronda más: la capa ② del V1 y la segunda
+#: puerta del contrato de herramientas del V2 (`workflow_helpers`).
+_EXTRA_ROUND_GUARDS = ("turn_policy_extra_round", "contract_extra_round")
+#: Proveedores con los que la capacidad le pregunta a Jev.
+_JEV_PROVIDERS = frozenset({"jev", "sombra"})
+#: Cuando decide la regla sin que Jev haya fallado: Jev dudó, o no había nada
+#: que preguntarle. Cualquier otro motivo del respaldo (tardanza, sin llave,
+#: error del proveedor, forma rara, perfil desconocido, otro modelo) es una
+#: caída de Jev.
+_NOT_A_JEV_FAILURE = frozenset({"duda", "no_question"})
 
 
 def _quantile(values: list[int], q: float) -> int | None:
@@ -64,15 +80,43 @@ def _llm_cost(result: dict[str, Any]) -> float:
     return _num(llm if llm is not None else result.get("cost_usd"))
 
 
+def _extra_rounds(trace: dict[str, Any] | None) -> set[str]:
+    """Las rondas extra del LLM en el turno: la de la capa ② del V1 y la
+    segunda puerta del contrato de herramientas del V2."""
+    return {
+        str(s.get("name")) for s in _steps(trace) if s.get("kind") == "guard" and s.get("name") in _EXTRA_ROUND_GUARDS
+    }
+
+
+def _decision_metrics(results: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Las decisiones de capacidades del motor en los casos del brazo
+    (`result["decisions"]`, ver `sandbox/decisions.py`): quién decidió y
+    cuántas cayeron a la regla porque Jev falló. None sin decisiones
+    publicadas (casos de antes de que el sandbox las juntara)."""
+    rows = [d for r in results for d in r.get("decisions") or [] if isinstance(d, dict)]
+    if not rows:
+        return None
+    asked = [d for d in rows if d.get("provider") in _JEV_PROVIDERS and d.get("reason") != "no_question"]
+    failed = [d for d in rows if d.get("by") == "respaldo" and d.get("reason") not in _NOT_A_JEV_FAILURE]
+    return {
+        "total": len(rows),
+        "by": dict(Counter(str(d.get("by")) for d in rows)),
+        "asked_jev": len(asked),
+        "jev_failed": len(failed),
+        "jev_failed_rate": len(failed) / len(asked) if asked else None,
+        "jev_failed_by_reason": dict(Counter(str(d.get("reason") or "error") for d in failed)),
+        "jev_failed_by_capability": dict(Counter(str(d.get("capability")) for d in failed)),
+    }
+
+
 def arena_metrics(results: Iterable[dict[str, Any]]) -> dict[str, Any]:
     results = list(results)
     turns = [r for r in results if not r.get("error") and isinstance(r.get("trace"), dict)]
     n = len(turns)
     perception = [s for r in turns for s in _steps(r["trace"]) if s.get("kind") == "perception"]
     verify = [s for r in turns for s in _steps(r["trace"]) if s.get("kind") == "verify"]
-    extra = sum(
-        1 for r in turns if any(s.get("kind") == "guard" and s.get("name") == "turn_policy_extra_round" for s in _steps(r["trace"]))
-    )
+    rounds = [_extra_rounds(r["trace"]) for r in turns]
+    extra = sum(1 for names in rounds if names)
     complements = sum(1 for r in turns if isinstance(r.get("complement_trace"), dict))
     classifier = sum(_classifier_cost(r) for r in turns)
     llm = sum(_llm_cost(r) for r in turns)
@@ -85,6 +129,7 @@ def arena_metrics(results: Iterable[dict[str, Any]]) -> dict[str, Any]:
         "errors": len(results) - n,
         "perception": {
             "turns": len(perception),
+            "fallbacks": sum(1 for s in perception if s.get("fallback")),
             "fallback_rate": sum(1 for s in perception if s.get("fallback")) / len(perception),
             "p50_ms": _quantile(_ms(perception), 0.50),
             "p95_ms": _quantile(_ms(perception), 0.95),
@@ -100,9 +145,38 @@ def arena_metrics(results: Iterable[dict[str, Any]]) -> dict[str, Any]:
         else None,
         "complement_rate": complements / n if n else None,
         "extra_round_rate": extra / n if n else None,
+        # Turnos con cada ronda extra (un turno puede tener las dos).
+        "extra_rounds": {name: sum(1 for names in rounds if name in names) for name in _EXTRA_ROUND_GUARDS},
+        "decisions": _decision_metrics(results),
         "cost_per_turn_usd": (llm + classifier) / n if n else None,
         "perception_cost_per_turn_usd": classifier / n if n else None,
     }
+
+
+def jev_fallback_notes(arm: str, metrics: list[dict[str, Any]]) -> list[str]:
+    """Las notas de la corrida cuando Jev cayó en silencio en un brazo (sus
+    métricas por repetición): las decisiones de capacidades que decidió la
+    regla porque Jev falló y los turnos cuya percepción cayó a «turno como
+    hoy». Sin caídas, ninguna."""
+    notes: list[str] = []
+    decisions = [m.get("decisions") for m in metrics if isinstance(m.get("decisions"), dict)]
+    failed = sum(int(d.get("jev_failed") or 0) for d in decisions)
+    if failed:
+        asked = sum(int(d.get("asked_jev") or 0) for d in decisions)
+        reasons: Counter[str] = Counter()
+        for d in decisions:
+            reasons.update(d.get("jev_failed_by_reason") or {})
+        detail = ", ".join(f"{reason} {n}" for reason, n in reasons.most_common())
+        notes.append(
+            f"{arm}: {failed} de {asked} decisiones del motor cayeron a la regla porque Jev falló ({detail}): "
+            "cuentan como la regla, no como Jev"
+        )
+    perception = [m.get("perception") for m in metrics if isinstance(m.get("perception"), dict)]
+    fallbacks = sum(int(p.get("fallbacks") or 0) for p in perception)
+    if fallbacks:
+        turns = sum(int(p.get("turns") or 0) for p in perception)
+        notes.append(f"{arm}: la percepción de Jev cayó a «turno como hoy» en {fallbacks} de {turns} turnos")
+    return notes
 
 
 def topic_agreement(predicted: set[str], judged: set[str]) -> dict[str, float]:

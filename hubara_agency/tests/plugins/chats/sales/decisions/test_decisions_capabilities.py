@@ -172,6 +172,25 @@ async def test_the_verdict_travels_as_json(port) -> None:
     assert trace["capability"] == "juguete" and trace["by"] == "jev" and trace["model"] == "typesafe/jev-1.13-20260917"
 
 
+async def test_the_lab_can_watch_every_decision_of_its_process(port) -> None:
+    """El sandbox del laboratorio publica con cada turno qué capacidad decidió
+    qué y quién (Jev, la regla, el piso o el respaldo): mira las decisiones de
+    su proceso mientras corre el caso. Fuera de ese bloque nadie mira; un
+    observador que falla nunca frena la decisión."""
+    seen: list = []
+
+    def broken(_verdict) -> None:
+        raise RuntimeError("observador roto")
+
+    with caps.watching_verdicts(seen.append), caps.watching_verdicts(broken):
+        by_rule = await caps.decide(Unsubscribe(), Ask("gracias"), provider="reglas", profile_id="jev-v1")
+        by_jev = await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1")
+    await caps.decide(Unsubscribe(), Ask("hola"), provider="reglas", profile_id="jev-v1")
+
+    assert seen == [by_rule, by_jev]
+    assert (by_rule.by, by_jev.by) == ("reglas", "jev")
+
+
 async def test_an_unknown_profile_is_the_rule(port) -> None:
     verdict = await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="no-existe")
 

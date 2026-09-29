@@ -18,12 +18,13 @@ El proceso tiene que traer el entorno del caso ya preparado
 entrypoint de la caja (`sandbox/entrypoint.py`) hace eso.
 
 Lo que el turno recibe: los mensajes de la ráfaga real, uno por señal (la
-coalescencia arma el turno como en producción; los bots nuevos B y C llevan
-el modo `on` y su perfil en el 4.º argumento, como un canary), y el contexto que el ingest
-agrega y que sale de la metadata (hora de Bogotá, borrador del pedido,
-carrito web, producto web, aplazamiento, cupón). No se reconstruyen las
-notas del ingest que dependen del mensaje entrante (respuesta a campaña,
-frontera de episodio, cita de foto): el reporte de fidelidad lo mide.
+coalescencia arma el turno como en producción; el bot nuevo B lleva el modo
+`on` y su perfil en el 4.º argumento, como un canary), cada uno con el
+contexto que el ingest le arma (hora de Bogotá, borrador del pedido, carrito
+web, producto web, aplazamiento, cupón, foto citada y fuera de catálogo)
+después de pasar por el ingest del sandbox (`sandbox/readings.py`). No se
+reconstruyen las notas de la respuesta a una campaña ni de la frontera de
+episodio: el reporte de fidelidad lo mide.
 """
 from __future__ import annotations
 
@@ -33,16 +34,17 @@ import os
 import re
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_arm
+from src.plugins.chats.agent.sales.decisions.capabilities import watching_verdicts
 from src.plugins.chats.agent.sales_lab.arms import signal_meta
 from src.plugins.chats.agent.sales_lab.sandbox.activities import SandboxCapture, sandbox_activities
 from src.plugins.chats.agent.sales_lab.sandbox.clock import frozen_clock
+from src.plugins.chats.agent.sales_lab.sandbox.decisions import CaseDecisions, case_disagreements, case_redact_terms
 from src.plugins.chats.agent.sales_lab.sandbox.materialize import materialize_case, scrub_text
-from src.plugins.chats.agent.sales_lab.sandbox.readings import apply_burst_readings
+from src.plugins.chats.agent.sales_lab.sandbox.readings import ingest_burst
 
 PROD_SALES_WORKSPACE = "app-hubara-agency-src-plugins-chats-agent-sales-workspace"
 DEFAULT_TIMEOUT_S = 600.0
@@ -67,28 +69,6 @@ def workspace_slug(path: str) -> str:
     """El slug del historial del LLM, como lo calcula exoclaw
     (`_state_workspace_for`): el path absoluto del workspace de código."""
     return re.sub(r"[^A-Za-z0-9]+", "-", str(Path(path).resolve())).strip("-")
-
-
-def turn_context(metadata: dict[str, Any], *, at_ms: int) -> list[str]:
-    """El `plugin_context` que el ingest habría armado desde la metadata."""
-    from src.plugins.chats.agent.sales.context import build_bogota_context_string
-    from src.plugins.chats.agent.sales.use_cases.coupons import build_coupon_note
-    from src.plugins.chats.agent.sales.use_cases.order_draft import build_order_draft_note, get_projectable_draft
-    from src.plugins.chats.agent.sales.use_cases.web_cart import build_web_cart_note
-    from src.plugins.chats.agent.sales.use_cases.web_product_ref import build_web_product_note
-    from src.plugins.chats.shared.purchase_signals import build_deferral_note
-    from src.sdk.messagingkit import fresh_resume_label
-
-    draft = get_projectable_draft(metadata)
-    notes = [
-        build_deferral_note(metadata, resume_label=fresh_resume_label(metadata)),
-        build_web_cart_note(metadata),
-        build_web_product_note(metadata),
-        build_order_draft_note(draft) if draft else None,
-        build_coupon_note(metadata),
-    ]
-    bogota = build_bogota_context_string(now=datetime.fromtimestamp(at_ms / 1000, tz=timezone.utc))
-    return [bogota, *(n for n in notes if n)]
 
 
 def llm_cost_usd(metadata: dict[str, Any]) -> float:
@@ -174,11 +154,14 @@ async def run_case(
         "arm": arm,
         "error": None,
     }
+    # Cada decisión del motor en el caso (ingest y turno), con su etapa: el
+    # rastro que deja en `_decisions/` se borra con el sandbox.
+    decisions = CaseDecisions(capture)
     # El bot del brazo vale para TODO el caso: las lecturas del ingest, las
     # activities y las tools consultan el registro de bots (`DECISIONS_BOT`).
     with _pinned_bot(arm), installed_sandbox_ports(
         promotions_path=bench_dir / "promotions.json", catalog=get_catalog_client()
-    ), frozen_clock(at_ms):
+    ), frozen_clock(at_ms), watching_verdicts(decisions):
         # Los workflows y sus activities salen del WORKER de ventas (R-DIP #10: un
         # agente no importa los contratos ni los workflows de otro); se arranca
         # por nombre con la entrada como JSON, igual que el dispatcher: el del
@@ -199,18 +182,32 @@ async def run_case(
                 if isinstance(r, dict)
             ],
         )
-        messages = [m for m in case.get("burst") or [] if isinstance(m, dict) and str(m.get("text") or "").strip()]
-        if not messages:
-            messages = [{"text": str((case.get("real") or {}).get("inbound_text") or "")}]
-        # Las lecturas del ingest (motor de decisiones F2), con el bot del
-        # brazo: lo que en producción el ingest escribe antes del turno.
-        result["readings"] = await apply_burst_readings(
-            metadata, messages, session_id=box.session_id, vault_dir=box.vault_dir, at_ms=at_ms
+        # Cada mensaje de la ráfaga con su evento del dashboard (el que
+        # escribió el ingest de producción: `materialize.burst_records`).
+        pairs = [
+            (m, r)
+            for m, r in zip(case.get("burst") or [], box.burst_records)
+            if isinstance(m, dict) and str(m.get("text") or "").strip()
+        ]
+        messages = [m for m, _ in pairs]
+        records: list[dict[str, Any]] | None = [r for _, r in pairs]
+        if not messages and case.get("trigger") != "handoff":
+            messages, records = [{"text": str((case.get("real") or {}).get("inbound_text") or "")}], None
+        # El ingest de cada mensaje (`sandbox/readings.py`), con el bot del
+        # brazo: las lecturas, el mensaje en el historial del dashboard y el
+        # `plugin_context` de su señal (cupón y fuera de catálogo decididos por
+        # el motor), lo que en producción pasa antes del turno. En un turno de
+        # handoff el resumen de remarketing NO es un mensaje del cliente: solo
+        # pasan por el ingest los mensajes que el cliente mandó antes.
+        ingested = await ingest_burst(
+            metadata, messages, session_id=box.session_id, vault_dir=box.vault_dir, at_ms=at_ms, records=records,
+            catalog=get_catalog_client(), on_message=decisions.ingest_message,
         )
-        metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
-        context = turn_context(metadata, at_ms=at_ms)
+        result["readings"] = [m.readings for m in ingested]
+        contexts = [m.context for m in ingested]
+        decisions.turn()
 
-        def _args(message: dict[str, Any]) -> list[Any]:
+        def _args(message: dict[str, Any], context: list[str]) -> list[Any]:
             meta = signal_meta(arm, message)
             base: list[Any] = [str(message.get("text") or ""), None, context]
             return base if meta is None else [*base, meta]
@@ -225,18 +222,21 @@ async def run_case(
         ):
             start = {"session_id": box.session_id, "turn_count": 0, "runtime_workspace_path": None}
             if case.get("trigger") == "handoff":
+                signaled: list[list[str]] = []
                 handle = await client.start_workflow(workflow_name, start, id=workflow_id, task_queue=queue)
             else:
+                # Cada mensaje con SU contexto, como las señales del ingest.
+                signaled = contexts
                 handle = await client.start_workflow(
                     workflow_name,
                     start,
                     id=workflow_id,
                     task_queue=queue,
                     start_signal="send_message",
-                    start_signal_args=_args(messages[0]),
+                    start_signal_args=_args(messages[0], contexts[0]),
                 )
-                for message in messages[1:]:
-                    await handle.signal("send_message", args=_args(message))
+                for message, context in zip(messages[1:], contexts[1:]):
+                    await handle.signal("send_message", args=_args(message, context))
             try:
                 await asyncio.wait_for(capture.turn_done.wait(), timeout=timeout_s)
             except TimeoutError:
@@ -261,6 +261,14 @@ async def run_case(
     result["perception_cost_usd"] = classifier
     result["cost_usd"] = round(llm + classifier, 8)
     result["effects"] = capture.effects
-    result["plugin_context"] = context
+    # Lo que el turno recibió de las señales, sin repetir (la coalescencia del
+    # workflow junta los contextos de la ráfaga igual).
+    result["plugin_context"] = list(dict.fromkeys(note for context in signaled for note in context))
     result["tool_replay"] = capture.tool_replay
+    # Qué decidió cada capacidad (Jev, la regla, el piso o el respaldo, y por
+    # qué) y la cola de desacuerdos del sandbox, antes de que el proceso del
+    # caso lo borre; con lo personal del cliente tapado, como en la cola.
+    redact = case_redact_terms(metadata, after)
+    result["decisions"] = decisions.published(redact=redact)
+    result["disagreements"] = case_disagreements(box.vault_dir, redact=redact)
     return result

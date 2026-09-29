@@ -169,6 +169,55 @@ async def test_a_complement_travels_with_its_case(box, sims) -> None:  # noqa: F
     assert SIM not in raw
 
 
+DECISIONS = [
+    {"stage": "ingest", "message": 1, "capability": "compra", "by": "jev", "provider": "jev", "value": [None, "text"]},
+    {"stage": "turno", "capability": "datos", "by": "respaldo", "provider": "jev", "value": [], "reason": "timeout"},
+]
+DISAGREEMENTS = [{"capability": "cupon", "rule": True, "jev": False, "state": "ESTE MENSAJE DEL CLIENTE\n[1] hola"}]
+
+
+@pytest.mark.asyncio
+async def test_the_engine_decisions_are_published_with_each_turn(box, sims) -> None:  # noqa: F811
+    """Qué capacidad decidió qué en el turno (Jev, la regla o el respaldo) y
+    los desacuerdos del caso salen con la traza del turno simulado."""
+    def with_decisions(result: dict, arm: str) -> dict:
+        if arm == "B" and result.get("trace"):
+            result["decisions"], result["disagreements"] = DECISIONS, DISAGREEMENTS
+        return result
+
+    sims["decorate"] = with_decisions
+    await _run(box)
+
+    raw = box["store"].get_bytes(f"runs/{RUN}/turns/B/0/{SID}.jsonl").decode()
+    rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    assert [r["decisions"] for r in rows] == [DECISIONS, DECISIONS]
+    assert rows[0]["disagreements"] == DISAGREEMENTS
+    a1 = box["store"].get_bytes(f"runs/{RUN}/turns/A1/0/{SID}.jsonl").decode()
+    assert "decisions" not in json.loads(a1.splitlines()[0])  # el fake de A1 no trae decisiones
+
+
+@pytest.mark.asyncio
+async def test_a_silent_jev_fallback_is_a_metric_and_a_run_note(box, sims) -> None:  # noqa: F811
+    """Si Jev falla (sin llave, tardanza, error) cada capacidad cae a la regla
+    en silencio: la corrida lo cuenta por brazo y lo dice en sus notas, para
+    que un B que en realidad corrió con reglas no pase por Jev."""
+    def no_key(result: dict, arm: str) -> dict:
+        if arm == "B" and result.get("trace"):
+            result["decisions"] = [
+                {"stage": "turno", "capability": "datos", "by": "respaldo", "provider": "jev", "reason": "no_api_key"}
+            ]
+        return result
+
+    sims["decorate"] = no_key
+    await _run(box)
+
+    metrics = json.loads(box["store"].get_bytes(f"runs/{RUN}/metrics/B/0.json"))
+    assert (metrics["decisions"]["jev_failed"], metrics["decisions"]["jev_failed_by_reason"]) == (2, {"no_api_key": 2})
+    progress = json.loads(box["store"].get_bytes(f"runs/{RUN}/progress.json"))
+    assert "B: 2 de 2 decisiones del motor cayeron a la regla porque Jev falló (no_api_key 2): " \
+           "cuentan como la regla, no como Jev" in progress["notes"], progress["notes"]
+
+
 @pytest.mark.asyncio
 async def test_a_failed_case_is_counted_and_the_run_goes_on(box, sims, monkeypatch) -> None:  # noqa: F811
     from src.plugins.chats.agent.sales_lab.run import activities as run_acts
