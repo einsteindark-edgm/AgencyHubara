@@ -30,6 +30,11 @@ fuente (`case.draft_before` / `case.state_before`, ver `cases.py`):
     anterior (`check_order_status` lo lee: si no, el bot simulado veía un
     pedido "entregado" que al momento del turno iba en camino);
   * `phone_number_id` ficticio: el envío simulado nunca apunta al negocio.
+
+La ráfaga del turno NO va en el historial del dashboard que se escribe acá:
+en producción el ingest la guarda mensaje por mensaje, después de las
+lecturas de cada uno. `burst_records` trae cada mensaje como lo escribió el
+ingest y el sandbox los agrega en ese mismo orden (`sandbox/readings.py`).
 """
 from __future__ import annotations
 
@@ -41,6 +46,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from src.plugins.chats.agent.sales.decisions.context import real_wamid
 
 _DROP_KEYS = (
     "pending_ui_intents",
@@ -64,6 +71,9 @@ class SandboxPaths:
     vault_dir: Path
     state_dir: Path
     catalog_dir: Path
+    # Un evento del dashboard por mensaje de `case["burst"]` (mismo orden),
+    # con el número ficticio: lo que el sandbox agrega antes del turno.
+    burst_records: tuple[dict[str, Any], ...] = ()
 
 
 def sim_session_id(session_id: str) -> str:
@@ -239,6 +249,56 @@ def _llm_lines(lines: list[dict[str, Any]], case: dict[str, Any]) -> list[dict[s
     return [head, *messages]
 
 
+def _iso(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
+
+
+def burst_record(message: dict[str, Any], *, at_ms: int) -> dict[str, Any]:
+    """El evento del dashboard de un mensaje de la ráfaga con la forma que
+    escribe el ingest (`append_user_event`): el texto efectivo (lo que el
+    cliente escribió, o el audio o la foto ya leídos; sin la campaña citada
+    ni el episodio anterior que el ingest le agrega al turno), la hora y el
+    wamid real (sin el sufijo de los reentries). Solo cuando el banco no lo
+    tiene (`burst_records`)."""
+    wamid = real_wamid(str(message["wamid"])) if message.get("wamid") else None
+    ts = message.get("ts_ms")
+    at = int(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else int(at_ms)
+    record: dict[str, Any] = {
+        "role": "user",
+        "content": str(message.get("raw_text") or message.get("text") or ""),
+        "timestamp": _iso(at),
+    }
+    if wamid:
+        record["wamid"] = wamid
+    return record
+
+
+def _same_message(event: dict[str, Any], record: dict[str, Any]) -> bool:
+    theirs, ours = event.get("wamid"), record.get("wamid")
+    if theirs and ours:
+        return theirs == ours
+    return str(event.get("content") or "") == record["content"]
+
+
+def burst_records(events: list[dict[str, Any]], case: dict[str, Any]) -> list[dict[str, Any]]:
+    """Un evento del dashboard por mensaje de `case["burst"]`, en su orden: el
+    que escribió el ingest de producción (con la cita, la foto o el documento
+    que traía), buscado después del prefijo por wamid o, sin wamid, por el
+    texto; si el banco no lo tiene, uno con la misma forma (`burst_record`)."""
+    tail = [e for e in events[int(case.get("dashboard_prefix") or 0):] if e.get("role") == "user"]
+    used: set[int] = set()
+    out: list[dict[str, Any]] = []
+    for message in case.get("burst") or []:
+        own = burst_record(message if isinstance(message, dict) else {}, at_ms=int(case["at_ms"]))
+        found = next((i for i, e in enumerate(tail) if i not in used and _same_message(e, own)), None)
+        if found is None:
+            out.append(own)
+            continue
+        used.add(found)
+        out.append(dict(tail[found]))
+    return out
+
+
 def scrub_text(text: str, real_sid: str, sim_sid: str) -> str:
     """El número real → el ficticio del sandbox (también sus últimos 10 dígitos)."""
     real, sim = real_sid.removeprefix("wa_"), sim_sid.removeprefix("wa_")
@@ -275,18 +335,19 @@ def materialize_case(
     sim = sim_session_id(real)
     at = int(case["at_ms"])
     src = bench_dir / "vault" / real
+    events = _jsonl(src / "sessions" / f"{real}.jsonl")
     paths = SandboxPaths(
         session_id=sim,
         root=dest,
         vault_dir=dest / "vault",
         state_dir=dest / "agent_state",
         catalog_dir=dest / "catalog",
+        burst_records=tuple(json.loads(scrub_text(json.dumps(r, ensure_ascii=False), real, sim)) for r in burst_records(events, case)),
     )
     metadata = json.loads((src / "metadata.json").read_text(encoding="utf-8"))
     box = paths.vault_dir / sim
     _write_json(box / "metadata.json", metadata_as_of(metadata, case, sales_workspace_path=sales_workspace_path), real, sim)
-    events = _jsonl(src / "sessions" / f"{real}.jsonl")[: int(case.get("dashboard_prefix") or 0)]
-    _write_jsonl(box / "sessions" / f"{sim}.jsonl", events, real, sim)
+    _write_jsonl(box / "sessions" / f"{sim}.jsonl", events[: int(case.get("dashboard_prefix") or 0)], real, sim)
     traces = [t for t in _jsonl(src / "evals" / "turn_traces.jsonl") if (_ms(t.get("turn_started_ms")) or 0) < at]
     _write_jsonl(box / "evals" / "turn_traces.jsonl", traces, real, sim)
     llm = _jsonl(bench_dir / "agent_state" / bench_workspace / "sessions" / f"{real}.jsonl")

@@ -28,8 +28,22 @@ _LOCAL = {"127.0.0.1", "localhost", "::1"}
 _FORBIDDEN_ENV = ("WHATSAPP_", "MEDUSA_", "META_", "TEMPORAL_API_KEY", "TEMPORAL_ADDRESS", "COGNITO_", "PAYMENT_")
 
 
-def _run_probe(tmp_path: Path, case: dict, *, arm: str = "A1", all_tools: bool = False, tool: str = "") -> dict:
+def _run_probe(
+    tmp_path: Path,
+    case: dict,
+    *,
+    arm: str = "A1",
+    all_tools: bool = False,
+    tool: str = "",
+    tool_args: dict | None = None,
+    events: list[dict] | None = None,
+) -> dict:
+    """`events`: el historial del dashboard del banco (por defecto, el de
+    `_bench`); `tool` + `tool_args`: la tool que el LLM falso llama primero."""
     bench = _bench(tmp_path)
+    if events is not None:
+        history = bench / "vault" / SID / "sessions" / f"{SID}.jsonl"
+        history.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events), encoding="utf-8")
     (bench / "promotions.json").write_text("[]", encoding="utf-8")
     sandbox = tmp_path / "lab" / "runs" / "run-test" / "A1" / "0" / "case-1"
     case_path = tmp_path / "case.json"
@@ -44,6 +58,7 @@ def _run_probe(tmp_path: Path, case: dict, *, arm: str = "A1", all_tools: bool =
         env["PROBE_ALL_TOOLS"] = "1"
     if tool:
         env["PROBE_TOOL"] = tool
+        env["PROBE_TOOL_ARGS"] = json.dumps(tool_args or {})
     proc = subprocess.run(
         [sys.executable, str(_PROBE), str(case_path), str(bench), str(sandbox), str(report_path), arm],
         cwd=_HUBARA, env=env, capture_output=True, text=True, timeout=300,

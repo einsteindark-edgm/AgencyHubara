@@ -61,6 +61,7 @@ async def main() -> dict:
     calls = {"n": 0}
     all_tools = os.environ.get("PROBE_ALL_TOOLS") == "1"
     one_tool = os.environ.get("PROBE_TOOL") or ""
+    one_tool_args = json.loads(os.environ.get("PROBE_TOOL_ARGS") or "{}")
 
     @activity.defn(name="llm_chat")
     async def fake_llm(input: LLMChatInput) -> LLMResponseData:
@@ -73,7 +74,7 @@ async def main() -> dict:
                 content="",
                 finish_reason="tool_calls",
                 has_tool_calls=True,
-                tool_calls=[ToolCallData(id="t1", name=one_tool, arguments={})],
+                tool_calls=[ToolCallData(id="t1", name=one_tool, arguments=one_tool_args)],
             )
         if calls["n"] == 1 and all_tools:
             # TODAS las tools que el turno le ofrece al LLM, con argumentos
@@ -102,6 +103,12 @@ async def main() -> dict:
         result = await run_case(case, bench_dir=BENCH, sandbox_dir=SANDBOX, client=env.client, llm_chat=fake_llm, timeout_s=120,
                               arm=ARM)
     result["llm_calls"] = calls["n"]
+    # Lo que el Jev falso recibió (con `PERCEPTION_PROVIDER=fake`): el estado
+    # de cada pregunta, para ver qué contexto le llegó.
+    from src.sdk.connectorkit import get_perception_port
+
+    port = get_perception_port("jev-1.13")
+    result["perception_states"] = [state for state, _ in getattr(port, "calls", [])]
     return result
 
 

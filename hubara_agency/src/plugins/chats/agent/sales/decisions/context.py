@@ -9,8 +9,8 @@ los mensajes de ESTE turno:
   mensajes del equipo. Sin los mensajes de esta ráfaga (por `wamid`; sin ids,
   los últimos `burst_size` del cliente). Hasta 8 eventos y ~1.800
   caracteres; un mensaje largo se corta por el PRINCIPIO (la pregunta del bot
-  suele ir al final). En producción el historial ya trae la ráfaga y en el
-  sandbox del laboratorio no: con esta regla los dos quedan iguales.
+  suele ir al final). El historial ya trae la ráfaga (el ingest la guarda
+  antes del turno, y el sandbox del laboratorio igual): de ella sale la cita.
 * `order_facts`: la etapa que calcula el código, los ítems (producto, color,
   aroma, cantidad) y la ciudad. Dirección, teléfono, quien recibe y pago solo
   como «dado»/«falta»: nunca el dato.

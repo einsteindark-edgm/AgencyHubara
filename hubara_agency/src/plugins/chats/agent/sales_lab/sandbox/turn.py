@@ -199,13 +199,24 @@ async def run_case(
                 if isinstance(r, dict)
             ],
         )
-        messages = [m for m in case.get("burst") or [] if isinstance(m, dict) and str(m.get("text") or "").strip()]
-        if not messages:
-            messages = [{"text": str((case.get("real") or {}).get("inbound_text") or "")}]
+        # Cada mensaje de la ráfaga con su evento del dashboard (el que
+        # escribió el ingest de producción: `materialize.burst_records`).
+        pairs = [
+            (m, r)
+            for m, r in zip(case.get("burst") or [], box.burst_records)
+            if isinstance(m, dict) and str(m.get("text") or "").strip()
+        ]
+        messages = [m for m, _ in pairs]
+        records: list[dict[str, Any]] | None = [r for _, r in pairs]
+        if not messages and case.get("trigger") != "handoff":
+            messages, records = [{"text": str((case.get("real") or {}).get("inbound_text") or "")}], None
         # Las lecturas del ingest (motor de decisiones F2), con el bot del
-        # brazo: lo que en producción el ingest escribe antes del turno.
+        # brazo, y cada mensaje en el historial del dashboard: lo que en
+        # producción el ingest escribe antes del turno. En un turno de handoff
+        # el resumen de remarketing NO es un mensaje del cliente: solo pasan
+        # por el ingest los mensajes que el cliente mandó antes.
         result["readings"] = await apply_burst_readings(
-            metadata, messages, session_id=box.session_id, vault_dir=box.vault_dir, at_ms=at_ms
+            metadata, messages, session_id=box.session_id, vault_dir=box.vault_dir, at_ms=at_ms, records=records
         )
         metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
         context = turn_context(metadata, at_ms=at_ms)

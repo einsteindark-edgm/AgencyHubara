@@ -246,6 +246,34 @@ def test_the_llm_history_goes_under_the_local_workspace_slug(tmp_path: Path) -> 
     assert not (box.state_dir / WS).exists()
 
 
+def test_the_burst_records_are_the_ones_the_ingest_wrote(tmp_path: Path) -> None:
+    """La ráfaga no va en el historial cortado: el sandbox la agrega antes
+    del turno, mensaje por mensaje, con el evento que escribió el ingest de
+    producción. Una traza vieja (sin wamid) lo encuentra por el texto; un
+    mensaje que el banco no tiene sale con la misma forma; el número real
+    nunca pasa."""
+    bench = _bench(tmp_path)
+    history = bench / "vault" / SID / "sessions" / f"{SID}.jsonl"
+    events = _jsonl(history)
+    # Hora del ingest (no la de WhatsApp) y la foto que traía: solo el banco las sabe.
+    events[2].update(content="mi número es 3001234567", timestamp=_iso(T0 + 60_500), image_url="media/foto.jpg")
+    history.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+    burst = [
+        {"text": "mi número es 3001234567", "ts_ms": T0 + 60_000, "wamid": None},
+        {"text": "[campaña citada]\nhola otra vez", "raw_text": "hola otra vez", "ts_ms": T0 + 62_000, "wamid": "wamid.X_vision"},
+    ]
+
+    box = materialize_case(bench, _case(burst=burst), tmp_path / "sandbox", bench_workspace=WS, sales_workspace=WS,
+                           sales_workspace_path=WS_PATH)
+
+    sim_digits = box.session_id.removeprefix("wa_")[-10:]
+    assert box.burst_records == (
+        {"role": "user", "content": f"mi número es {sim_digits}", "timestamp": _iso(T0 + 60_500), "image_url": "media/foto.jpg"},
+        {"role": "user", "content": "hola otra vez", "timestamp": _iso(T0 + 62_000), "wamid": "wamid.X"},
+    )
+    assert len(_jsonl(box.vault_dir / box.session_id / "sessions" / f"{box.session_id}.jsonl")) == 2  # solo el prefijo
+
+
 def test_a_later_turn_never_reapplies_the_reset_even_with_another_workspace_path() -> None:
     meta = metadata_as_of(_metadata(), _case(), sales_workspace_path="/ci/sales/workspace")
 

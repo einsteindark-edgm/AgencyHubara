@@ -30,8 +30,8 @@ ARM_PROFILES: dict[str, str] = {arm: bot.profile for arm, bot in LAB_BOTS.items(
 def signal_meta(arm: str, message: dict[str, Any]) -> dict[str, Any] | None:
     """El 4.º argumento de `send_message` para un mensaje de la ráfaga.
     None = la señal de hoy. El `wamid` del mensaje real viaja: el motor saca
-    la ráfaga del historial con él (F1); en el sandbox el historial viene
-    cortado al inicio del turno, así el contexto queda igual que en producción."""
+    la ráfaga del historial con él (F1); el sandbox, como el ingest, ya dejó
+    la ráfaga en el historial antes del turno (`sandbox/readings.py`)."""
     if arm not in SIMULATED_ARMS:
         raise ValueError(f"brazo desconocido: {arm!r} (se simulan {', '.join(SIMULATED_ARMS)})")
     bot = bot_for_arm(arm)
