@@ -748,6 +748,18 @@ Cada paso de la maqueta es lo que la traza v2 (§4.1) tiene que poder dar. Por e
 - **El avance** se consulta cada 60 s, no cada 10 s: la política de datos en tiempo real del dashboard solo permite un intervalo fijo de 60 s o más sin ADR. Lanzar y cancelar refrescan al instante.
 - **Pestaña Resumen:** llega con los bots simulados (PR 13); en el PR 9 van Conversaciones y Banco y corridas.
 
+### 11.5 Revisión de la UI en palabras del operador (2026-09-29)
+
+El operador no entendía «Checks del turno: APE-01 · pasa, EST-06 · falla…», los carriles Workflow/LLM/Tools, los nombres de las tools, los valores del motor en JSON ni la jerga estadística del Resumen. Pidió arreglar la UI antes que cualquier otra cosa. Lo que cambió respecto de §11.1–§11.3 (el código vivo manda):
+
+- **Checks por nombre.** El registro viaja por `lab@v1` (`GET /api/chats/lab/checks`). Lo que falló va primero, con el porqué del juez o la evidencia del check, lo que dijo el bot y lo que se esperaba; lo cumplido queda plegado. El código queda como referencia pequeña. Un crítico de juez sin calibrar dice que «cuenta como mayor».
+- **Modal en tres pestañas.** *Resultado* (abre primero): lo que escribió el cliente, lo que respondió ese bot, cómo le fue y los asuntos. *Paso a paso*: el diagrama de §11.1. *Decisiones de Jev*: solo con el bot nuevo. El veredicto del turno va en la cabecera.
+- **Carriles y pasos en palabras** (compartido con Chats): Cliente · Bot · Jev · Modelo de IA · Herramientas. Cada tool dice qué hizo y qué encontró (`sales-tools.ts`), por ejemplo «Buscar en el catálogo · «jesús»» → «no encontró nada». Los datos técnicos quedan plegados.
+- **Decisiones de Jev en frases** (`decision-language.ts`), agrupadas por cuándo se tomaron, con quién decidió y la respuesta de Jev a cada pregunta.
+- **Conversaciones: modo Comparar.** Cada turno con lo que respondió cada bot lado a lado, su resultado y lo que falló. A la derecha: «Por bot» (con qué significa cada resultado) y «Qué falló» (cada fallo abre su turno). El hilo simulado muestra también las tarjetas, botones y formularios; los mensajes de una persona del equipo quedan marcados.
+- **Resumen**, en este orden: ¿el bot nuevo es mejor? (en palabras, con el detalle estadístico plegado y los turnos que cambiaron); cómo le fue a cada bot; en qué se diferencian (cada check por nombre, con cada bot); si se puede confiar en la corrida; y Jev en esta corrida. Las gráficas de Calidad LLM quedan plegadas y sin la tendencia semanal.
+- **Nombres de los bots:** Producción, Bot actual simulado, Bot nuevo con Jev. El lanzador y el banco no muestran códigos.
+
 ## 12. Desvíos durante la implementación
 
 Anotados al implementar (2026-09-23/24). El código vivo manda; esta lista explica por qué difiere de lo escrito arriba.
