@@ -9,6 +9,10 @@ V2 + Jev de producción:
    capacidades que leen el historial (`datos`, `item_del_pedido`, la ventana
    de contexto de jev-v3 con la cita del cliente) le preguntaban a Jev SIN el
    mensaje que el cliente acababa de mandar, y B bloqueaba datos por error.
+2. Las notas del cupón y de lo que no existe en el catálogo: producción las
+   decide en el ingest, mensaje por mensaje, con el motor y el bot de la
+   conversación (`read_coupon_talk`, `read_catalog_gap`); el sandbox ponía el
+   cupón siempre «en juego» y nunca armaba la nota de fuera de catálogo.
 """
 from __future__ import annotations
 
@@ -47,6 +51,61 @@ def _address_case() -> dict:
 
 def _jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+# ── 2 · Cupón y fuera de catálogo ────────────────────────────────────────────
+
+CATALOG = [{"id": "prod_cubo", "handle": "cubo-love", "title": "Cubo Love", "description": "Vela aromática con forma de cubo"}]
+_PROMOTION = {"id": "promo_1", "code": "AMOR26", "discount_type": "percentage", "value": 10, "currency_code": "cop",
+              "target_type": "items", "allocation": "each", "product_ids": ["prod_buda"], "status": "active"}
+# El cupón ya aplicado al empezar el turno, solo para la Vela Buda (el
+# borrador va en el Cubo Love: el pedido no está en un producto del cupón).
+COUPON = {"code": "AMOR26", "promotion": _PROMOTION, "applied_at_ms": T0 + 30_000,
+          "eligible_products": [{"title": "Vela Buda", "price_cop": 40_000, "discounted_price_cop": 36_000}]}
+COUPON_NOT_IN_PLAY = "atiéndelo con el catálogo normal"
+GAP_NOTE = "Lo que el cliente pidió o mostró y NO existe en el catálogo: «vaso»"
+
+
+def _coupon_case(*texts: str) -> dict:
+    burst = [{"text": t, "ts_ms": T0 + 60_000 + k * 1_000, "wamid": f"wamid.C{k}"} for k, t in enumerate(texts)]
+    return _case(
+        burst=burst,
+        real={"inbound_text": "\n".join(texts), "sent_texts": ["Claro"]},
+        episodes_at=[{"episode_id": "ep_001", "started_at_ms": T0, "closed_at_ms": None, "applied_coupon": COUPON}],
+    )
+
+
+@pytest.fixture(scope="module")
+def current_bot_notes(tmp_path_factory) -> dict:
+    """A1 (reglas): el cliente pregunta por algo que no existe y después por el
+    envío; ninguno de los dos mensajes habla del cupón."""
+    case = _coupon_case("¿la tienen en vaso?", "¿hacen envíos a Medellín?")
+    return _run_probe(tmp_path_factory.mktemp("a1"), case, catalog=CATALOG)["result"]
+
+
+def test_the_rule_names_what_the_catalog_does_not_have(current_bot_notes: dict) -> None:
+    assert current_bot_notes["error"] is None, current_bot_notes
+    assert any(GAP_NOTE in note for note in current_bot_notes["plugin_context"]), current_bot_notes["plugin_context"]
+
+
+def test_a_message_that_does_not_talk_about_the_coupon_gets_the_short_note(current_bot_notes: dict) -> None:
+    """Regla de hoy (`coupon_in_play`): ni el cupón ni sus productos → la nota
+    lo recuerda en una línea y deja el turno al catálogo normal."""
+    coupon_notes = [n for n in current_bot_notes["plugin_context"] if "CUPÓN APLICADO: AMOR26" in n]
+
+    assert coupon_notes and all(COUPON_NOT_IN_PLAY in n for n in coupon_notes), coupon_notes
+
+
+def test_the_new_bot_asks_jev_whether_the_message_talks_about_the_coupon(tmp_path: Path) -> None:
+    """B decide con Jev (el falso dice «no» si la pregunta no aparece en lo
+    que ve), aunque la regla diga que el mensaje nombra el cupón."""
+    case = _coupon_case("¿el cupón sirve para la Vela Buda?")
+
+    result = _run_probe(tmp_path, case, arm="B", catalog=CATALOG)["result"]
+
+    assert result["error"] is None, result
+    coupon_notes = [n for n in result["plugin_context"] if "CUPÓN APLICADO: AMOR26" in n]
+    assert coupon_notes and all(COUPON_NOT_IN_PLAY in n for n in coupon_notes), coupon_notes
 
 
 @pytest.fixture(scope="module")

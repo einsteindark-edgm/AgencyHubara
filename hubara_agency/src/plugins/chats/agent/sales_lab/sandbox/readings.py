@@ -1,25 +1,52 @@
-"""Las lecturas del ingest dentro del sandbox (motor de decisiones F2).
+"""El ingest de la ráfaga dentro del sandbox (motor de decisiones F2 y F3).
 
 El sandbox arranca el workflow directo (no pasa por el webhook), así que el
-paso de lecturas del ingest no corría: el aplazamiento nunca se registraba,
-el check CON-02 no se juzgaba en los brazos simulados y la confirmación de
-compra llegaba con estado inconsistente. Acá cada mensaje de la ráfaga pasa
-por el MISMO proveedor de lecturas (`EngineReadings`, con el bot del brazo) y
-la MISMA escritura (`apply_readings`) que en producción, en orden, sobre el
-metadata del sandbox.
+paso del ingest no corría: el aplazamiento nunca se registraba, el check
+CON-02 no se juzgaba en los brazos simulados y la confirmación de compra
+llegaba con estado inconsistente. Acá cada mensaje de la ráfaga pasa, en
+orden y con el bot del brazo (A1/B0 → reglas, B → Jev), por lo MISMO que en
+producción (`ingest_inbound_message.py`):
 
-Como el ingest, cada mensaje queda en el historial del dashboard DESPUÉS de
-sus lecturas (que leen lo que el cliente vio antes de él) y antes del turno:
-las capacidades que leen el historial durante el turno (`datos`,
-`item_del_pedido`, el contexto de Jev con la cita del cliente) ven la ráfaga
-igual que en producción.
+1. las lecturas (`EngineReadings`) con lo que el cliente vio ANTES de él, y
+   su escritura (`apply_readings`) en el metadata del sandbox;
+2. el mensaje queda en el historial del dashboard (el evento que escribió el
+   ingest de producción, `materialize.burst_records`): las capacidades que
+   leen el historial durante el turno (`datos`, `item_del_pedido`, el
+   contexto de Jev con la cita del cliente) ven la ráfaga como en producción;
+3. las lecturas sueltas del motor: si el mensaje habla del cupón aplicado
+   (`read_coupon_talk`) y lo que pide que no existe en el catálogo
+   (`catalog_gap_note_for`, la misma función del ingest);
+4. el `plugin_context` de SU señal: la hora de Bogotá y las notas que arma el
+   ingest desde el metadata de ese momento (`turn_context`). La coalescencia
+   del workflow las junta, como en producción.
+
+No se reconstruyen las notas que dependen de cómo llegó el mensaje
+(respuesta a campaña, frontera de episodio, cita de foto) ni la relectura del
+cupo del cupón en Medusa (el sandbox no tiene Medusa: queda lo último que se
+supo, como cuando Medusa no responde a tiempo).
 """
 from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+#: La ruta de la persona del equipo (`active_route`): con ella el ingest no
+#: arma la nota de fuera de catálogo.
+_HUMAN_ROUTE = "humano"
+
+
+@dataclass(frozen=True)
+class IngestedMessage:
+    """Lo que el ingest dejó de UN mensaje de la ráfaga."""
+
+    # La traza de sus lecturas (compra, retoma, baja).
+    readings: list[dict[str, Any]]
+    # El `plugin_context` de su señal: la hora de Bogotá y las notas del ingest.
+    context: list[str]
 
 
 def _history_path(vault_dir: Path, session_id: str) -> Path:
@@ -52,7 +79,41 @@ def _history(vault_dir: Path, session_id: str) -> list[dict[str, Any]]:
     return events
 
 
-async def apply_burst_readings(
+def _write_metadata(vault_dir: Path, session_id: str, metadata: dict[str, Any]) -> None:
+    path = Path(vault_dir) / session_id / "metadata.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
+
+
+def turn_context(
+    metadata: dict[str, Any], *, at_ms: int, coupon_in_play: bool = True, gap_note: str | None = None
+) -> list[str]:
+    """El `plugin_context` de la señal de un mensaje, como lo arma el ingest
+    desde el metadata de ese momento: la hora de Bogotá y las notas, en el
+    orden de producción. `coupon_in_play`: si el mensaje habla del cupón
+    aplicado; `gap_note`: la nota de lo que no existe en el catálogo."""
+    from src.plugins.chats.agent.sales.context import build_bogota_context_string
+    from src.plugins.chats.agent.sales.use_cases.coupons import build_coupon_note
+    from src.plugins.chats.agent.sales.use_cases.order_draft import build_order_draft_note, get_projectable_draft
+    from src.plugins.chats.agent.sales.use_cases.web_cart import build_web_cart_note
+    from src.plugins.chats.agent.sales.use_cases.web_product_ref import build_web_product_note
+    from src.plugins.chats.shared.purchase_signals import build_deferral_note
+    from src.sdk.messagingkit import fresh_resume_label
+
+    draft = get_projectable_draft(metadata)
+    notes = [
+        build_deferral_note(metadata, resume_label=fresh_resume_label(metadata)),
+        build_web_cart_note(metadata),
+        build_web_product_note(metadata),
+        build_order_draft_note(draft) if draft else None,
+        build_coupon_note(metadata, in_play=coupon_in_play),
+        gap_note,
+    ]
+    bogota = build_bogota_context_string(now=datetime.fromtimestamp(at_ms / 1000, tz=timezone.utc))
+    return [bogota, *(n for n in notes if n)]
+
+
+async def ingest_burst(
     metadata: dict[str, Any],
     messages: Sequence[dict[str, Any]],
     *,
@@ -60,20 +121,27 @@ async def apply_burst_readings(
     vault_dir: Path,
     at_ms: int,
     records: Sequence[dict[str, Any]] | None = None,
-) -> list[list[dict[str, Any]]]:
-    """Corre las lecturas de cada mensaje, las escribe en `metadata`
-    (mutación) y deja el mensaje en el historial del dashboard. `records`:
-    el evento del dashboard de cada mensaje, como lo escribió el ingest de
-    producción (`materialize.burst_records`); sin él, uno con la misma forma.
-    Devuelve la traza de las capacidades por mensaje."""
-    from src.plugins.chats.agent.sales.decisions.readings import EngineReadings, Inbound, apply_readings
+    catalog: Any = None,
+) -> list[IngestedMessage]:
+    """Pasa cada mensaje por el ingest (ver el módulo): escribe el metadata
+    (mutación y archivo) y el historial del sandbox. `records`: el evento del
+    dashboard de cada mensaje (`materialize.burst_records`); sin él, uno con
+    la misma forma. `catalog`: el del sandbox (sin catálogo, no hay nota de
+    fuera de catálogo, como en producción)."""
+    from src.plugins.chats.agent.sales.decisions.readings import (
+        EngineReadings,
+        Inbound,
+        apply_readings,
+        read_coupon_talk,
+    )
     from src.plugins.chats.agent.sales.use_cases.funnel_stage import resolve_funnel_stage
+    from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import catalog_gap_note_for
     from src.plugins.chats.agent.sales_lab.sandbox.materialize import burst_record
     from src.sdk.messagingkit import opt_out_campaign_id, resolve_local_timezone
 
     tz = resolve_local_timezone(session_id)
     provider = EngineReadings(Path(vault_dir))
-    traces: list[list[dict[str, Any]]] = []
+    out: list[IngestedMessage] = []
     for k, message in enumerate(messages, 1):
         # Lo que el cliente vio ANTES de este mensaje (el ingest lo lee del
         # historial antes de guardar el mensaje).
@@ -98,5 +166,39 @@ async def apply_burst_readings(
         append_history_event(vault_dir, session_id, record)
         # Como el ingest: la señal vale para el ÚLTIMO mensaje del cliente.
         metadata["last_inbound_message_id"] = wamid
-        traces.append(list(readings.verdicts))
-    return traces
+        _write_metadata(vault_dir, session_id, metadata)
+        # Las lecturas sueltas, con el texto efectivo (una foto ya leída) y lo
+        # que el cliente vio antes de este mensaje.
+        effective = str(message.get("raw_text") or message.get("text") or "")
+        coupon = await read_coupon_talk(
+            Path(vault_dir), session_id=session_id, metadata=metadata, text=effective, events=events
+        )
+        gap = (
+            await catalog_gap_note_for(catalog, vault_dir=Path(vault_dir), session_id=session_id, text=effective)
+            if metadata.get("active_route") != _HUMAN_ROUTE
+            else None
+        )
+        out.append(
+            IngestedMessage(
+                readings=list(readings.verdicts),
+                context=turn_context(metadata, at_ms=at_ms, coupon_in_play=bool(coupon.value), gap_note=gap),
+            )
+        )
+    return out
+
+
+async def apply_burst_readings(
+    metadata: dict[str, Any],
+    messages: Sequence[dict[str, Any]],
+    *,
+    session_id: str,
+    vault_dir: Path,
+    at_ms: int,
+    records: Sequence[dict[str, Any]] | None = None,
+) -> list[list[dict[str, Any]]]:
+    """`ingest_burst` sin catálogo; devuelve solo la traza de las lecturas de
+    cada mensaje."""
+    ingested = await ingest_burst(
+        metadata, messages, session_id=session_id, vault_dir=vault_dir, at_ms=at_ms, records=records
+    )
+    return [m.readings for m in ingested]

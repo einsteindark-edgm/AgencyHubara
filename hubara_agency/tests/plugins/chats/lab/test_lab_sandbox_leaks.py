@@ -37,13 +37,17 @@ def _run_probe(
     tool: str = "",
     tool_args: dict | None = None,
     events: list[dict] | None = None,
+    catalog: list[dict] | None = None,
 ) -> dict:
     """`events`: el historial del dashboard del banco (por defecto, el de
-    `_bench`); `tool` + `tool_args`: la tool que el LLM falso llama primero."""
+    `_bench`); `catalog`: los productos del snapshot del banco (por defecto,
+    ninguno); `tool` + `tool_args`: la tool que el LLM falso llama primero."""
     bench = _bench(tmp_path)
     if events is not None:
         history = bench / "vault" / SID / "sessions" / f"{SID}.jsonl"
         history.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events), encoding="utf-8")
+    if catalog is not None:
+        (bench / "catalog" / "snapshot.json").write_text(json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
     (bench / "promotions.json").write_text("[]", encoding="utf-8")
     sandbox = tmp_path / "lab" / "runs" / "run-test" / "A1" / "0" / "case-1"
     case_path = tmp_path / "case.json"
