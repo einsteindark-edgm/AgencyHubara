@@ -57,3 +57,17 @@ def test_every_lab_setting_that_production_reads_is_declared_in_terraform() -> N
         f"el laboratorio lee {sorted(missing)} del entorno y Terraform no lo declara: "
         "agregarlo por tenant en infra/terraform/platform/modules/lab-config (tenants.<t>.lab)"
     )
+
+
+def test_production_and_the_lab_run_the_same_engine_profile() -> None:
+    """El perfil que Terraform le da a producción por defecto
+    (`tenants.<t>.lab.perception_profile` → `SALES_PERCEPTION_PROFILE`) es el
+    del bot nuevo que mide el laboratorio (brazo B). Si divergen, el
+    laboratorio aprueba un bot y producción enciende otro."""
+    from src.plugins.chats.agent.sales.decisions.bots import DEFAULT_PROFILE, bot_for_arm
+
+    variables = (_TERRAFORM / "platform" / "variables.tf").read_text(encoding="utf-8")
+    match = re.search(r'perception_profile\s*=\s*optional\(string,\s*"([^"]+)"\)', variables)
+
+    assert match, "variables.tf ya no declara el default de perception_profile"
+    assert match.group(1) == DEFAULT_PROFILE == bot_for_arm("B").profile

@@ -163,10 +163,15 @@ def test_the_new_bot_runs_its_layers_inside_the_sandbox(tmp_path: Path) -> None:
     trace = result["trace"]
     assert trace["mode"] == "on"
     perception = next(s for s in trace["steps"] if s["kind"] == "perception")
-    assert perception["profile"] == "jev-v1" and perception.get("fallback") is None  # None no se persiste
+    assert perception["profile"] == "jev-v3" and perception.get("fallback") is None  # None no se persiste
     plan = next(s for s in trace["steps"] if s["kind"] == "plan")
     assert {"catalogo", "envio"} <= {c["topic"] for c in plan["checklist"]}
-    assert any(s["kind"] == "verify" for s in trace["steps"])
-    assert result["complement_trace"] is None
+    verify = next(s for s in trace["steps"] if s["kind"] == "verify")
+    # jev-v3 (el bot nuevo completo) verifica la cobertura por asunto (capa ③):
+    # con el falso, la respuesta «Te cuento del catálogo» no cubre lo que marcó
+    # la guía de etapas y el complemento corre como turno de sistema, también
+    # dentro de la caja.
+    assert verify["complement_scheduled"] is True
+    assert result["complement_trace"]["trigger"] == "complement"
     assert result["cost_usd"] == result["llm_cost_usd"] + result["perception_cost_usd"]
     assert set(report["connects"]) <= _LOCAL, report["connects"]

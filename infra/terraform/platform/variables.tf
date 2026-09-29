@@ -66,7 +66,7 @@ variable "tenants" {
     # materializa como SSM String en /hubara/<tenant>/<VAR> (modules/lab-config).
     lab = optional(object({
       perception_mode_ceiling = optional(string, "off")    # techo del modo: off | shadow | canary | on
-      perception_profile      = optional(string, "jev-v1") # perfil de src/platform/perception/profiles.yaml
+      perception_profile      = optional(string, "jev-v3") # perfil del motor (sales/decisions/profiles.yaml): el mismo del brazo B del laboratorio
       signal_inbound_meta     = optional(bool, false)      # 4.º argumento de send_message (se enciende tras desplegar el worker)
       max_usd_per_run         = optional(number, 120)      # tope de gasto de una corrida del laboratorio
       max_usd_per_month       = optional(number, 300)      # tope mensual del laboratorio
@@ -111,7 +111,7 @@ variable "tenants" {
 
   validation {
     condition     = alltrue([for t in values(var.tenants) : can(regex("^[a-z0-9][a-z0-9-]*$", t.lab.perception_profile))])
-    error_message = "tenants.*.lab.perception_profile: id de perfil (minúsculas, dígitos y guiones), p.ej. jev-v1."
+    error_message = "tenants.*.lab.perception_profile: id de perfil (minúsculas, dígitos y guiones), p.ej. jev-v3."
   }
 
   validation {

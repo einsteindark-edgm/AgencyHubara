@@ -38,7 +38,10 @@ from src.plugins.chats.agent.sales.decisions.rollout_store import read_state
 WORKFLOW_V1 = "HubaraSalesSessionWorkflow"
 WORKFLOW_V2 = "HubaraSalesSessionWorkflowV2"
 PROVIDERS: tuple[str, ...] = ("reglas", "sombra", "jev")
-DEFAULT_PROFILE = "jev-v1"
+#: El perfil del bot nuevo: el laboratorio (brazo B) y producción (sin
+#: `SALES_PERCEPTION_PROFILE`) corren el MISMO. jev-v3 = motor completo: lectura
+#: del hilo, contrato de herramientas y guía de etapas (F1–F6).
+DEFAULT_PROFILE = "jev-v3"
 #: Las capacidades que el control del dashboard conoce (cada una con su
 #: interruptor). Una capacidad nueva se suma aquí.
 CAPABILITIES: tuple[str, ...] = (
