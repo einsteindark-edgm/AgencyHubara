@@ -101,6 +101,9 @@ def test_oracle_profiles_pin_fixed_model_ids() -> None:
         # para no dejar al cliente esperando de más.
         assert p.timeout_s <= 15
     assert profiles["jev-1.13"].timeout_s == 10
+    # Sin respuesta a los 2 s, un reenvío; a los 5 s, otro (una de cada diez
+    # llamadas se cuelga: el reenvío la salva, esperar más no).
+    assert profiles["jev-1.13"].resend_after_s == (2.0, 5.0)
 
 
 def test_only_jev_answers_no_openai_rival() -> None:

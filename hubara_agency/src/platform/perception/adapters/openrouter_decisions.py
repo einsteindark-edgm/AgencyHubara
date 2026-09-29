@@ -10,6 +10,12 @@ Modelo FIJO (`typesafe/jev-1.13`, L-23). La respuesta dice qué snapshot la
 sirvió (`typesafe/jev-1.13-20260917`): eso queda en `PerceptionResult.model`.
 Fail-open: timeout, error HTTP (402 sin crédito, 429, 5xx) o una respuesta con
 otra forma (la API está en alpha) devuelven `ok=False` sin lanzar.
+
+Reenvío de una petición colgada (laboratorio, 2026-09-29): ~1 de cada 10
+llamadas se colgaba más de 10 s mientras el resto respondía en medio segundo.
+Si no hay respuesta a los `resend_after_s` del perfil (2 s y 5 s), sale un
+reenvío y gana la primera respuesta válida; las demás se cancelan. Todo dentro
+de la MISMA espera (`timeout_s`).
 """
 from __future__ import annotations
 
@@ -67,8 +73,10 @@ class OpenRouterDecisionsAdapter:
         provider_prefs: Mapping[str, Any] | None = None,
         anonymize: bool = False,
         transport: httpx.AsyncBaseTransport | None = None,
+        resend_after_s: Sequence[float] = (),
     ) -> None:
         self.model = model
+        self._resend_after_s = tuple(float(s) for s in resend_after_s)
         self._api_key = _real_key(api_key)
         self._url = base_url.rstrip("/") + DECISIONS_PATH
         self._provider_prefs = dict(provider_prefs or {})
@@ -87,6 +95,7 @@ class OpenRouterDecisionsAdapter:
             base_url=os.getenv("OPENROUTER_BASE_URL") or DEFAULT_BASE_URL,
             provider_prefs=profile.provider_prefs,
             anonymize=profile.anonymize,
+            resend_after_s=getattr(profile, "resend_after_s", ()),
         )
 
     async def ask(
@@ -98,10 +107,6 @@ class OpenRouterDecisionsAdapter:
         redact: Sequence[str] = (),
     ) -> PerceptionResult:
         started = time.monotonic()
-
-        def elapsed() -> int:
-            return int((time.monotonic() - started) * 1000)
-
         if not self._api_key:
             return failed(ERROR_NO_API_KEY, provider=self.name, model=self.model)
         keys = [f"q{i}" for i in range(len(questions))]
@@ -112,6 +117,77 @@ class OpenRouterDecisionsAdapter:
         }
         if self._provider_prefs:
             body["provider"] = self._provider_prefs
+        resends = [s for s in self._resend_after_s if 0 < s < timeout_s]
+        if not resends:
+            return await self._post(body, keys, questions, timeout_s=timeout_s, started=started)
+        return await self._with_resends(body, keys, questions, timeout_s=timeout_s, resends=resends, started=started)
+
+    async def _with_resends(
+        self,
+        body: dict[str, Any],
+        keys: list[str],
+        questions: Sequence[TypedQuestion],
+        *,
+        timeout_s: float,
+        resends: list[float],
+        started: float,
+    ) -> PerceptionResult:
+        """La primera respuesta válida entre la original y sus reenvíos, dentro
+        de `timeout_s`. Una falla (que no sea el tiempo) sin otro intento en
+        vuelo se devuelve de una: la reintenta quien pregunta si es pasajera."""
+        deadline = started + timeout_s
+        attempts: list[asyncio.Task[PerceptionResult]] = []
+
+        def launch() -> None:
+            remaining = max(deadline - time.monotonic(), 0.01)
+            attempts.append(asyncio.create_task(self._post(body, keys, questions, timeout_s=remaining, started=started)))
+
+        launch()
+        pending_resends = list(resends)
+        last: PerceptionResult | None = None
+        try:
+            while True:
+                now = time.monotonic()
+                in_flight = {a for a in attempts if not a.done()}
+                next_at = started + pending_resends[0] if pending_resends else deadline
+                if not in_flight and last is not None and not last.ok:
+                    return last
+                if in_flight:
+                    done, _ = await asyncio.wait(
+                        in_flight, timeout=max(min(next_at, deadline) - now, 0), return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for attempt in done:
+                        result = attempt.result()
+                        if result.ok:
+                            if len(attempts) > 1:
+                                logger.info("perception.decisions.resend_won", attempts=len(attempts))
+                            return result
+                        last = result
+                    if done:
+                        continue
+                if time.monotonic() >= deadline:
+                    return failed(ERROR_TIMEOUT, provider=self.name, model=self.model, latency_ms=int(timeout_s * 1000))
+                if pending_resends and time.monotonic() >= started + pending_resends[0]:
+                    pending_resends.pop(0)
+                    logger.info("perception.decisions.resend", attempt=len(attempts) + 1)
+                    launch()
+        finally:
+            for attempt in attempts:
+                if not attempt.done():
+                    attempt.cancel()
+
+    async def _post(
+        self,
+        body: dict[str, Any],
+        keys: list[str],
+        questions: Sequence[TypedQuestion],
+        *,
+        timeout_s: float,
+        started: float,
+    ) -> PerceptionResult:
+        def elapsed() -> int:
+            return int((time.monotonic() - started) * 1000)
+
         try:
             async with httpx.AsyncClient(transport=self._transport, timeout=timeout_s) as client:
                 response = await asyncio.wait_for(

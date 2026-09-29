@@ -9,10 +9,17 @@
 # `timeout_s` es LA espera de Jev: la del turno y la de cada capacidad del motor
 # (revisión 2026-09-29). Con 1,5 s por capacidad, en el laboratorio el 11,6 %
 # de las preguntas caía a la regla por tiempo (p99 de lo que sí llegó: 3,1 s).
+#
+# `resend_after_s`: sin respuesta a los 2 s, un reenvío; a los 5 s, otro. Esperar
+# más no basta: algunas llamadas se cuelgan y no responden nunca (corrida
+# caso-fotos-0929-r3, ya con 10 s: 21 de 279 preguntas cayeron por tiempo). Con
+# 60 llamadas reales, las 7 que no respondían a los 3 s se salvaron con un
+# reenvío en ~0,5 s. Gana la primera respuesta válida.
 
 jev-1.13:
   provider: openrouter_decisions              # POST https://openrouter.ai/api/alpha/decisions
   model: typesafe/jev-1.13
   timeout_s: 10
+  resend_after_s: [2, 5]
   anonymize: true
   provider_prefs: {data_collection: deny}

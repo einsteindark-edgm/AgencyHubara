@@ -151,6 +151,59 @@ async def test_decisions_slow_provider_is_cut_at_the_profile_timeout() -> None:
     assert (result.ok, result.error) == (False, "timeout")
 
 
+# ── Reenvío de una petición colgada (laboratorio 2026-09-29) ─────────────────
+# ~1 de cada 10 llamadas a Jev se colgaba más de 10 s mientras el resto
+# respondía en medio segundo (corrida caso-fotos-0929-r3: 27 de 282). Con 60
+# llamadas reales, las 7 que no habían respondido a los 3 s se salvaron con un
+# reenvío (respondió en ~0,5 s; la original seguía colgada).
+
+
+def _hung_first(sink: list):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        sink.append(request)
+        if len(sink) == 1:
+            await asyncio.sleep(5)  # la original se cuelga
+        return httpx.Response(200, json=DECISIONS_OK)
+
+    return handler
+
+
+async def test_decisions_a_hung_request_is_resent_and_the_first_answer_wins() -> None:
+    import time
+
+    sink: list = []
+    adapter = _decisions(_hung_first(sink), resend_after_s=(0.05,))
+
+    started = time.monotonic()
+    result = await adapter.ask(STATE, QUESTIONS, timeout_s=2)
+
+    assert result.ok and result.model == DECISIONS_OK["model"]
+    assert len(sink) == 2
+    assert time.monotonic() - started < 1.0, "no esperó a la original colgada"
+
+
+async def test_decisions_every_attempt_hung_is_cut_at_the_total_wait() -> None:
+    sink: list = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        sink.append(request)
+        await asyncio.sleep(5)
+        return httpx.Response(200, json=DECISIONS_OK)
+
+    result = await _decisions(handler, resend_after_s=(0.05, 0.1)).ask(STATE, QUESTIONS, timeout_s=0.3)
+
+    assert (result.ok, result.error) == (False, "timeout")
+    assert len(sink) == 3
+
+
+async def test_decisions_a_quick_answer_is_never_resent() -> None:
+    sink: list = []
+
+    result = await _decisions(_json_handler(DECISIONS_OK, sink=sink), resend_after_s=(0.05,)).ask(STATE, QUESTIONS, timeout_s=2)
+
+    assert result.ok and len(sink) == 1
+
+
 @pytest.mark.parametrize(
     "broken",
     [

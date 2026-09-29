@@ -18,6 +18,7 @@ class PerceptionProfile:
     model: str
     timeout_s: float = 3.0
     anonymize: bool = True
+    resend_after_s: tuple[float, ...] = ()
     provider_prefs: dict[str, Any] = field(default_factory=dict)
 
 
@@ -28,6 +29,7 @@ def _profile(profile_id: str, raw: dict[str, Any]) -> PerceptionProfile:
         model=str(raw["model"]),
         timeout_s=float(raw.get("timeout_s") or 3.0),
         anonymize=bool(raw.get("anonymize", True)),
+        resend_after_s=tuple(float(s) for s in (raw.get("resend_after_s") or ())),
         provider_prefs=dict(raw.get("provider_prefs") or {}),
     )
 
