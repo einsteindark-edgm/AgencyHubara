@@ -197,6 +197,28 @@ async def test_the_engine_decisions_are_published_with_each_turn(box, sims) -> N
 
 
 @pytest.mark.asyncio
+async def test_a_silent_jev_fallback_is_a_metric_and_a_run_note(box, sims) -> None:  # noqa: F811
+    """Si Jev falla (sin llave, tardanza, error) cada capacidad cae a la regla
+    en silencio: la corrida lo cuenta por brazo y lo dice en sus notas, para
+    que un B que en realidad corrió con reglas no pase por Jev."""
+    def no_key(result: dict, arm: str) -> dict:
+        if arm == "B" and result.get("trace"):
+            result["decisions"] = [
+                {"stage": "turno", "capability": "datos", "by": "respaldo", "provider": "jev", "reason": "no_api_key"}
+            ]
+        return result
+
+    sims["decorate"] = no_key
+    await _run(box)
+
+    metrics = json.loads(box["store"].get_bytes(f"runs/{RUN}/metrics/B/0.json"))
+    assert (metrics["decisions"]["jev_failed"], metrics["decisions"]["jev_failed_by_reason"]) == (2, {"no_api_key": 2})
+    progress = json.loads(box["store"].get_bytes(f"runs/{RUN}/progress.json"))
+    assert "B: 2 de 2 decisiones del motor cayeron a la regla porque Jev falló (no_api_key 2): " \
+           "cuentan como la regla, no como Jev" in progress["notes"], progress["notes"]
+
+
+@pytest.mark.asyncio
 async def test_a_failed_case_is_counted_and_the_run_goes_on(box, sims, monkeypatch) -> None:  # noqa: F811
     from src.plugins.chats.agent.sales_lab.run import activities as run_acts
 

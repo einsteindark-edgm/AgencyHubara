@@ -48,6 +48,65 @@ def test_arena_metrics_of_a_new_bot_arm() -> None:
     assert m["perception_cost_per_turn_usd"] == pytest.approx((4 * 0.0001 + 3 * 0.0001) / 4)
 
 
+def test_the_second_gate_of_workflow_v2_counts_as_an_extra_round() -> None:
+    """V1 marca la ronda extra de la capa ② (`turn_policy_extra_round`); V2
+    marca la segunda puerta del contrato de herramientas
+    (`contract_extra_round`). Las dos son una ronda más del LLM."""
+    v2 = {"error": None, "llm_cost_usd": 0.01,
+          "trace": {"mode": "on", "steps": [{"kind": "guard", "name": "contract_extra_round"}]}}
+
+    m = arena_metrics([v2, _result(extra=True), _result()])
+
+    assert m["extra_round_rate"] == pytest.approx(2 / 3)
+    assert m["extra_rounds"] == {"turn_policy_extra_round": 1, "contract_extra_round": 1}
+
+
+# Las decisiones del motor que publica cada caso (sandbox/decisions.py).
+DECISIONS = [
+    {"stage": "ingest", "message": 1, "capability": "compra", "by": "jev", "provider": "jev"},
+    {"stage": "turno", "capability": "datos", "by": "respaldo", "provider": "jev", "reason": "timeout"},
+    {"stage": "turno", "capability": "destinatario", "by": "respaldo", "provider": "jev", "reason": "no_api_key"},
+    {"stage": "turno", "capability": "saludo", "by": "respaldo", "provider": "jev", "reason": "no_question"},
+    {"stage": "turno", "capability": "cupon", "by": "respaldo", "provider": "jev", "reason": "duda"},
+    {"stage": "turno", "capability": "baja", "by": "piso", "provider": "jev"},
+]
+
+
+def test_decisions_that_fell_back_to_the_rule_because_jev_failed_are_counted() -> None:
+    """Una capacidad que cae a la regla porque Jev falló (error, tardanza, sin
+    llave) no puede pasar por Jev: se cuenta aparte, con el motivo. Que Jev
+    dude o que no haya nada que preguntarle no es una caída."""
+    results = [{**_result(), "decisions": DECISIONS}, {**_result(), "decisions": DECISIONS[:1]}, _result()]
+
+    m = arena_metrics(results)
+
+    assert m["decisions"] == {
+        "total": 7,
+        "by": {"jev": 2, "respaldo": 4, "piso": 1},
+        "asked_jev": 6,
+        "jev_failed": 2,
+        "jev_failed_rate": pytest.approx(2 / 6),
+        "jev_failed_by_reason": {"timeout": 1, "no_api_key": 1},
+        "jev_failed_by_capability": {"datos": 1, "destinatario": 1},
+    }
+    assert arena_metrics([_result()])["decisions"] is None  # sin decisiones publicadas (casos viejos)
+
+
+def test_a_run_note_says_when_jev_silently_fell_back() -> None:
+    from src.plugins.chats.agent.sales_lab.run.arena import jev_fallback_notes
+
+    b = arena_metrics([{**_result(fallback="timeout"), "decisions": DECISIONS}, _result()])
+    a1 = arena_metrics([{**_result(), "decisions": [{"stage": "turno", "capability": "datos", "by": "reglas",
+                                                     "provider": "reglas"}]}])
+
+    assert jev_fallback_notes("B", [b]) == [
+        "B: 2 de 5 decisiones del motor cayeron a la regla porque Jev falló (timeout 1, no_api_key 1): "
+        "cuentan como la regla, no como Jev",
+        "B: la percepción de Jev cayó a «turno como hoy» en 1 de 2 turnos",
+    ]
+    assert jev_fallback_notes("A1", [a1]) == []
+
+
 def test_the_current_bot_has_cost_but_no_classifier() -> None:
     m = arena_metrics([{"error": None, "llm_cost_usd": 0.02, "trace": {"mode": "off", "steps": []}}])
 
