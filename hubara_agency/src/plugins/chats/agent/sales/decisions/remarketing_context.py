@@ -6,7 +6,9 @@
 * producto nombrado: qué ficha ve el gancho (Jev suma el producto que el
   cliente nombró con otras palabras; los exactos se quedan);
 * fuera de catálogo: lo que el cliente pidió y no existe (Jev solo QUITA
-  candidatos falsos; nunca inventa uno).
+  candidatos falsos; nunca inventa uno);
+* el motivo que el watchdog manda como variable de una plantilla: si no es un
+  texto para el cliente, va el genérico (`register_label_decision`).
 
 El proveedor de cada una sale del registro de bots de la conversación. Con
 `reglas` (así nace), las reglas de hoy. Sin Temporal.
@@ -47,3 +49,21 @@ def register_catalog_context_decision() -> None:
     from src.plugins.chats.shared.agent_decisions import register_catalog_context_decider
 
     register_catalog_context_decider(decide_catalog_context)
+
+
+async def decide_template_label(*, session_id: str, text: str, vault_dir: Path) -> bool:
+    """¿El motivo que va como variable de una plantilla NO es para el cliente?
+    (capacidad `destinatario`, variante de plantilla: hoy no se revisa)."""
+    from src.plugins.chats.agent.sales.decisions.egress import DestinatarioDePlantilla, TextCheck
+
+    verdict = await decide_for_session(
+        DestinatarioDePlantilla(), TextCheck(text), session_id=session_id, vault_dir=vault_dir
+    )
+    return bool(verdict.value)
+
+
+def register_label_decision() -> None:
+    from src.plugins.chats.shared.agent_decisions import register_label_decider
+
+    register_label_decider(decide_template_label)
+

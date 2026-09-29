@@ -103,3 +103,28 @@ async def decide_catalog_context(
         logger.warning("decisions.catalog_context_failed", error=repr(exc)[:200])
         return named, terms
 
+
+#: `(session_id, text, vault_dir) -> ¿el texto NO es para el cliente?`.
+LabelDecider = Callable[..., Awaitable[bool]]
+
+_label_decider: LabelDecider | None = None
+
+
+def register_label_decider(decider: LabelDecider) -> None:
+    """Lo llama el worker de remarketing al arrancar (familia C: el motivo
+    que viaja como variable de una plantilla del watchdog)."""
+    global _label_decider
+    _label_decider = decider
+
+
+async def label_is_internal(*, session_id: str, text: str, vault_dir: Path) -> bool:
+    """¿El texto que va como variable de una plantilla NO es para el cliente?
+    Sin decisor conectado, o si falla, False: como hoy (no se revisa)."""
+    if _label_decider is None:
+        return False
+    try:
+        return bool(await _label_decider(session_id=session_id, text=text, vault_dir=vault_dir))
+    except Exception as exc:  # noqa: BLE001 — el motor nunca tumba el watchdog
+        logger.warning("decisions.label_failed", error=repr(exc)[:200])
+        return False
+

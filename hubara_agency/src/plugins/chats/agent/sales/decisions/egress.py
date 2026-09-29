@@ -167,6 +167,15 @@ class Destinatario:
         return bool(a) == bool(b)
 
 
+class DestinatarioDePlantilla(Destinatario):
+    """El mismo «¿qué es este texto?» para un texto del LLM que viaja como
+    variable de una plantilla (el `motivo` en el watchdog de remarketing).
+    Hoy no se revisa nada: la regla dice «es para el cliente» (False)."""
+
+    def rule(self, inp: TextCheck) -> bool:
+        return False
+
+
 class DestinatarioPorOracion:
     """El mismo «¿qué es?», oración por oración, para el filtro de oraciones
     de las tools de cierre y de escalación (misma capacidad: mismo
