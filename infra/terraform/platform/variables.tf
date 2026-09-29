@@ -73,6 +73,7 @@ variable "tenants" {
       internal_numbers        = optional(list(string), []) # teléfonos del equipo, E.164 (+573001234567): sus conversaciones no entran al banco; [] = ninguno
       capabilities_ceiling    = optional(string, "off")    # techo de las capacidades del motor de decisiones: off | shadow | canary | on
       workflow_v2_ceiling     = optional(string, "off")    # techo del workflow de ventas V2: off | canary | on
+      order_sentinel_reader   = optional(string, "off")    # lector de Jev del Order Sentinel: off | shadow | on
     }), {})
   }))
 
@@ -101,6 +102,11 @@ variable "tenants" {
   validation {
     condition     = alltrue([for t in values(var.tenants) : contains(["off", "canary", "on"], t.lab.workflow_v2_ceiling)])
     error_message = "tenants.*.lab.workflow_v2_ceiling: off | canary | on (V2 no tiene sombra)."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : contains(["off", "shadow", "on"], t.lab.order_sentinel_reader)])
+    error_message = "tenants.*.lab.order_sentinel_reader: off | shadow | on (el Order Sentinel es un lote diario: no tiene canary)."
   }
 
   validation {

@@ -8,6 +8,10 @@
 # intents (cero tools outward — G-DUR sin sujeto); hubara la ejecuta re-validando
 # contra el DAG real del API de orders con notify_customer=false (el humano ya
 # avisó por chat — la cascada ETA duplicaría el mensaje).
+# Lector de Jev (motor de decisiones de hubara, F8): con payload.reader en
+# sombra|jev, cada conversación trae la lectura de Jev que depositó hubara (misma
+# forma que el veredicto del LLM); en sombra actúa el LLM, en jev actúa Jev cuando
+# tiene veredicto; las guardas son las mismas y `shadow` compara ambos.
 # Referenciable por agent://order-sentinel@1.
 name: order-sentinel
 description: Analiza conversaciones en tag HUMANO con orden vinculada y emite intents de cambio de estado del pedido (confirm_payment / transition forward-only) clasificados por LLM bajo guardrails deterministas.
@@ -21,9 +25,9 @@ capability: graphs.order_sentinel:build
 # graphs/order_sentinel.py + su golden).
 contract:
   inputs:
-    payload: {type: object, required: true, description: "snapshot que deposita hubara: {schema_version, now_ms, conversations: [{session_id, order_id, current_stage, payment_confirmed, messages: [{who: customer|human_operator|bot, text, at_ms, has_media}]}]}"}
+    payload: {type: object, required: true, description: "snapshot que deposita hubara: {schema_version, now_ms, reader?: sombra|jev, conversations: [{session_id, order_id, current_stage, payment_confirmed, messages: [{who: customer|human_operator|bot, text, at_ms, has_media}], reading?: {verdict: {action, to_stage?, evidence, confidence}|null, model, error, answers}}]}"}
   outputs:
-    result: {type: object, description: "{schema_version, snapshot_now_ms, dispatch: [order_stage_intent], suppressed: [{session_id, order_id, reason}], llm_errors: [{session_id, error}]}"}
+    result: {type: object, description: "{schema_version, snapshot_now_ms, dispatch: [order_stage_intent], suppressed: [{session_id, order_id, reason}], llm_errors: [{session_id, error}]}; con lector: + reader, by (llm|jev) en cada intent/suppressed y shadow: [{session_id, order_id, llm, jev, agree}]"}
 
 exposes_as_tool: false
 

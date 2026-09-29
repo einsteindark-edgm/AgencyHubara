@@ -6,6 +6,10 @@ GraphAgents → poll hasta terminal → execute intents contra la API de orders
 da un Temporal Schedule (1x/día — una sola prendida de la caja); el workflow
 es one-shot (no loop eterno).
 
+Con el lector de Jev (motor de decisiones F8) el result trae `shadow` y los
+desacuerdos LLM ↔ Jev van a la cola de Claude Code (una activity más, SOLO
+si el result grabado los trae).
+
 R-DET: cero I/O acá — todo side-effect es activity; el poll loop usa
 `workflow.sleep` (durable). Run failed → NO se ejecutan intents ni se
 escriben watermarks: el próximo ciclo re-analiza (idempotente — la
@@ -17,6 +21,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 
 with workflow.unsafe.imports_passed_through():
     from src.plugins.order_sentinel.agent.cycle.activities import (
@@ -24,6 +29,7 @@ with workflow.unsafe.imports_passed_through():
         dispatch_order_sentinel_activity,
         execute_order_intents_activity,
         poll_order_sentinel_activity,
+        record_order_sentinel_shadow_activity,
     )
 
     # OJO L-0: este import lo PODÓ ruff --fix una vez (el hook corrió entre el
@@ -139,7 +145,7 @@ class OrderSentinelCycleWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
 
-        return {
+        cycle = {
             "applied": int(summary.get("applied", 0)),
             "skipped": int(summary.get("skipped", 0)),
             "failed": int(summary.get("failed", 0)),
@@ -148,3 +154,32 @@ class OrderSentinelCycleWorkflow:
             "run_status": "completed",
             "execution_id": execution_id,
         }
+        # Motor de decisiones F8: con el lector de Jev (sombra/jev) el agente
+        # devuelve `shadow` y los DESACUERDOS van a la cola que califica Claude
+        # Code. Sin lector el result no trae `reader` y nada de esto corre: la
+        # rama depende del resultado GRABADO del poll (replay de hoy intacto).
+        # Registrar es observabilidad: si falla, el ciclo igual termina.
+        if result.get("reader"):
+            shadow = [row for row in result.get("shadow") or [] if isinstance(row, dict)]
+            disagreements = 0
+            if any(not row.get("agree") for row in shadow):
+                try:
+                    recorded = await workflow.execute_activity(
+                        record_order_sentinel_shadow_activity,
+                        args=[shadow, snapshot.get("conversations") or []],
+                        start_to_close_timeout=timedelta(seconds=60),
+                        retry_policy=RetryPolicy(maximum_attempts=3),
+                    )
+                    disagreements = int(recorded.get("disagreements", 0))
+                except ActivityError as e:
+                    workflow.logger.warning(
+                        "OrderSentinelCycle: no pude registrar los desacuerdos "
+                        "del lector de Jev (%s) — el ciclo sigue.",
+                        e,
+                    )
+            cycle.update(
+                reader=result.get("reader"),
+                shadow_compared=len(shadow),
+                shadow_disagreements=disagreements,
+            )
+        return cycle

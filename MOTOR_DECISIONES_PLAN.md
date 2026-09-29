@@ -32,7 +32,8 @@ Quitar OpenAI (brazo C) ya estaba decidido: 100 % Jev.
 | Motor: contratos, fachada, cuestionarios, políticas, perfiles, capacidades, activities | `hubara_agency/src/plugins/chats/agent/sales/decisions/` |
 | Registro de bots (V1/V2, proveedor por capacidad, perfil) | `sales/decisions/bots.py` |
 | Workflow V2 | `sales/workflows/sales_session_v2.py` |
-| Cola de desacuerdos y etiquetas (producción) | `<vault>/_decisions/` |
+| Cola de desacuerdos y métricas por decisión (UNA para todo el sistema: ventas y el Order Sentinel) | `hubara_agency/src/platform/perception/{disagreements,metrics}.py` (vía `src.sdk.connectorkit`); datos en `<vault>/_decisions/` |
+| Lector de Jev del Order Sentinel | `hubara_agency/src/plugins/order_sentinel/agent/cycle/use_cases/readings.py` + `GraphAgents/graphs/order_sentinel.py` (`_plan`) |
 | Banco de referencia (etiquetas de Claude Code) | S3 del laboratorio, `bench/labels/` |
 | CLI de Claude Code | `hubara_agency/scripts/decisions_queue.py`, `scripts/lab_bench_labels.py` |
 
@@ -60,7 +61,7 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [x] Sombra doble dentro de la misma activity (`shadow` en el perfil; en paralelo, tope propio de 1,5 s; solo traza).
 - [x] Calibración atada al snapshot de Jev (`calibrated_model`): si Jev sirve con otra versión, sin nota ni reglas (`acting.allowed=false`), la verificación no pide complemento, y el control «Bot nuevo» no deja subir a canary/encendido (`same_model`).
 - [x] La traza del turno guarda `versions`, `reading`, `shadow` y `acting` del motor.
-- [ ] Banco de referencia: selección de ~150 turnos difíciles, CLI de etiquetas para Claude Code, métricas por pregunta (precisión, cobertura, calibración).
+- [x] Banco de referencia (`sales_lab/reference_bank.py`, `95ec4726` + `d6028e28`): sorteo determinista de ~150 turnos difíciles con cuotas por categoría, el MISMO state y las mismas preguntas que recibe Jev (test carácter por carácter), CLI de etiquetas para Claude Code (`scripts/lab_bench_labels.py`) y métricas por pregunta (precisión, cobertura, calibración; puede actuar con precisión ≥ 0,95 y ≥ 30 positivos). Pendiente del operador: correr `preparar` + etiquetar sobre un banco real.
 - [x] Sonda diaria: 20 ráfagas sintéticas con respuesta conocida (`decisions/probe.py`, las mismas preguntas del turno vía `engine.burst_request`; Schedule `decisions-probe-schedule` 07:00 Bogotá en `sales_eval`; reporte en `<vault>/_decisions/probe/`). El control «Bot nuevo» exige la última sonda `ok` y de 48 h o menos para subir a canary o encendido. Pendiente: casos de `jev-v3` cuando ese perfil vaya a actuar.
 
 ### F2 · Enchufes — sin cambio de comportamiento ✅
@@ -116,7 +117,10 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 ### F8 · Decisiones del agente y asuntos nuevos
 - [x] contactar (remarketing): «¿Sobra un mensaje proactivo ahora?» lo pregunta la activity que lee el contexto del gancho, ANTES de redactar (`skip_touch` en el resultado grabado). Si sobra, el workflow toma el camino de la abstención (consume el peldaño, devuelve el routing, termina) sin turno del LLM ni «escribiendo». Remarketing no importa el motor (contrato `agents-independent`): el worker le conecta el decisor por el enchufe `chats/shared/agent_decisions`. Nace en `reglas` = decide el LLM como hoy. Replay de 89 historias reales de remarketing: 89/89.
 - [x] cierre por abandono (workflow V2): el aviso de ghosting recibe la sesión; la capacidad `cierre` decide la etiqueta {confirmado sin datos, interesado, rechazo, compra exitosa} y el aviso le dice al LLM cuál usar (solo ejecuta las tools: la mecánica del cierre queda igual). Invariantes del código: pedido registrado = COMPRA_EXITOSA; CONFIRMADO_SIN_DATOS sin confirmación = INTERESADO. V1 llama la activity sin sesión: el aviso de hoy.
-- [ ] Order Sentinel (GraphAgents) · asuntos nuevos del cuestionario.
+- [x] Order Sentinel · estado del pedido (capacidad `estado_pedido`). Jev percibe en hubara (la activity del snapshot; el agente de GraphAgents sigue sin pegar red) y el código decide en el nodo puro `_plan` de GraphAgents con las MISMAS guardas para las dos fuentes. Dos preguntas: choice «¿qué cambió que el sistema todavía no sabe?» {nada, preparación, listo, en camino, entregado, pago} y, solo si Jev está seguro (≥ 0,85) de que algo cambió, un sí/no por cada mensaje NUEVO desde el watermark que podría probarlo (equipo o cliente; el pago, solo el equipo; a lo sumo 16). El veredicto de Jev tiene la forma del veredicto del LLM, con la cita textual. El LLM se sigue llamando siempre (es la regla de hoy): `shadow` = actúa el LLM y se compara lo que cada uno haría despachar; `on` = actúa Jev cuando tiene veredicto, si duda el LLM. Los desacuerdos van a la cola única (la cola y las métricas pasaron a la plataforma, `src.sdk.connectorkit`) por una activity que el workflow agenda SOLO si el result grabado trae desacuerdos (replay de las 30 historias reales del ciclo: 30/30). Interruptor `ORDER_SENTINEL_READER` (off | shadow | on) en Terraform (`lab-config`), nace `off`. Dato real que fijó la evidencia en lo nuevo: el único despacho de 30 días tenía su prueba 12 candidatos atrás del final de la ventana.
+- [x] Asuntos nuevos del cuestionario: `promocion` («promoción · cupón», el único asunto nuevo del diseño) ya está en `rafaga-v3` (perfil `jev-v3`); queja y estado del pedido existen desde v1. Los asuntos sin tool (tiempos, pagos, personalización, aplazamiento, saludo) se siguen revisando por texto con la verificación ③.
+- [ ] Encender el lector del Order Sentinel (operador): `tenants.<t>.lab.order_sentinel_reader = "shadow"` en `tenants.auto.tfvars` + apply + re-render del `.env` en la caja; 7 ciclos en sombra y los desacuerdos calificados antes de `on`.
+- [ ] «¿Hay un mensaje que responder tras un relevo?» (inventario §06 del diseño, `workflow_helpers.py`: hoy el LLM decide con el prompt y `NO_MESSAGE`): el diseño no le asignó capacidad en §07 ni en F8; queda para la próxima fase.
 
 ## 4. Vara para encender cada capacidad
 - Laboratorio: el bot nuevo igual o mejor que A1 en el scorecard, sin checks que empeoren (los checks que usan detectores de producción los califica el juez).
@@ -126,3 +130,4 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 ## 5. Bitácora
 - 2026-09-28: juez = Claude Code subido (`0b7edd25`), main al día, 4 tests con fecha fija arreglados.
 - 2026-09-28: F0 (`b9c43cbf`), F1 (`6ae85402`), F2 + lecturas de F3 (`5f7b7ffb`), métricas por capacidad (`5c0afbaf`), F6 motor (contrato de tools + guía de etapas). Replay de 59 historias reales de producción verde en cada paso.
+- 2026-09-28: F5 destinatario en las tools, F6 revisión de datos, F8 cierre por abandono, producto nombrado en remarketing, etiqueta del watchdog y F8 Order Sentinel. Replay de historias reales: ventas 59/59, remarketing 89/89, ETA 15/15, Order Sentinel 30/30.

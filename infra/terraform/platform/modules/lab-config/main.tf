@@ -20,6 +20,11 @@
 #     nunca por encima de esto. Bajar nunca se bloquea.
 #   SALES_WORKFLOW_V2_CEILING      off | canary | on. TECHO del workflow de ventas V2
 #     (canary = números de prueba y porcentaje del control; on = todos).
+#   ORDER_SENTINEL_READER          off | shadow | on. El lector de Jev del Order Sentinel
+#     (motor de decisiones F8): off = decide el LLM como hoy; shadow = Jev lee el
+#     estado del pedido, actúa el LLM y los desacuerdos van a la cola que califica
+#     Claude Code; on = actúa el veredicto de Jev cuando lo hay (si duda, el LLM).
+#     Es el interruptor mismo (lote diario, sin panel): se cambia solo acá.
 #   LAB_MAX_USD_PER_RUN / _MONTH   topes de gasto del botón "Nueva corrida" (§3.7).
 #   LAB_INTERNAL_NUMBERS           teléfonos del equipo (E.164, separados por coma):
 #     sus conversaciones no entran al banco (motivo `numero_interno`). Lo leen la
@@ -41,6 +46,7 @@ variable "config" {
     internal_numbers        = list(string)
     capabilities_ceiling    = optional(string, "off")
     workflow_v2_ceiling     = optional(string, "off")
+    order_sentinel_reader   = optional(string, "off")
   })
 }
 
@@ -56,6 +62,7 @@ locals {
     LAB_INTERNAL_NUMBERS          = length(var.config.internal_numbers) > 0 ? join(",", var.config.internal_numbers) : local.placeholder
     SALES_CAPABILITIES_CEILING    = var.config.capabilities_ceiling
     SALES_WORKFLOW_V2_CEILING     = var.config.workflow_v2_ceiling
+    ORDER_SENTINEL_READER         = var.config.order_sentinel_reader
   }
 }
 

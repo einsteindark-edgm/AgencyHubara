@@ -12,6 +12,7 @@ from src.plugins.order_sentinel.agent.cycle.activities import (
     dispatch_order_sentinel_activity,
     execute_order_intents_activity,
     poll_order_sentinel_activity,
+    record_order_sentinel_shadow_activity,
 )
 from src.plugins.order_sentinel.agent.cycle.workflows.cycle import (
     OrderSentinelCycleWorkflow,
@@ -37,6 +38,7 @@ async def main() -> None:
             dispatch_order_sentinel_activity,
             poll_order_sentinel_activity,
             execute_order_intents_activity,
+            record_order_sentinel_shadow_activity,
         ],
     )
 

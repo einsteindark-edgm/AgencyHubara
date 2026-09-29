@@ -149,3 +149,59 @@ run "un_techo_del_motor_raro_no_pasa_el_plan" {
   }
   expect_failures = [var.tenants]
 }
+
+# Motor de decisiones F8: el lector de Jev del Order Sentinel (off = decide el
+# LLM como hoy · shadow = Jev lee y se compara · on = actúa el veredicto de Jev
+# cuando lo hay). Nace apagado.
+run "el_lector_del_order_sentinel_nace_apagado" {
+  command = plan
+  variables {
+    tenants = {
+      t = {
+        api_url       = "https://x.example"
+        callback_urls = ["https://x.example/callback"]
+        logout_urls   = ["https://x.example/"]
+      }
+    }
+  }
+  assert {
+    condition     = module.lab_config["t"].params["ORDER_SENTINEL_READER"] == "off"
+    error_message = "Sin bloque lab, el lector del Order Sentinel queda en off."
+  }
+}
+
+run "el_lector_del_order_sentinel_viaja_a_ssm" {
+  command = plan
+  module { source = "./modules/lab-config" }
+  variables {
+    tenant = "t1"
+    config = {
+      perception_mode_ceiling = "off"
+      perception_profile      = "jev-v1"
+      signal_inbound_meta     = false
+      max_usd_per_run         = 120
+      max_usd_per_month       = 300
+      internal_numbers        = []
+      order_sentinel_reader   = "shadow"
+    }
+  }
+  assert {
+    condition     = aws_ssm_parameter.lab["ORDER_SENTINEL_READER"].value == "shadow" && aws_ssm_parameter.lab["ORDER_SENTINEL_READER"].name == "/hubara/t1/ORDER_SENTINEL_READER"
+    error_message = "ORDER_SENTINEL_READER va en /hubara/<tenant>/ con el valor del tenant."
+  }
+}
+
+run "un_lector_del_order_sentinel_raro_no_pasa_el_plan" {
+  command = plan
+  variables {
+    tenants = {
+      t = {
+        api_url       = "https://x.example"
+        callback_urls = ["https://x.example/callback"]
+        logout_urls   = ["https://x.example/"]
+        lab           = { order_sentinel_reader = "canary" }
+      }
+    }
+  }
+  expect_failures = [var.tenants]
+}
