@@ -36,8 +36,13 @@ from src.platform.llm_text_sanitizer import (
     is_no_message_abstention as is_no_message_abstention,
     keep_customer_safe_sentences as keep_customer_safe_sentences,
     looks_like_admin_leak as looks_like_admin_leak,
+    # Motor de decisiones: el paso del preámbulo del modelo (el texto que lee
+    # y su regla de hoy) es el respaldo `reglas` de la capacidad `preambulo`;
+    # `sanitize_llm_text(raw, without_preamble=…)` aplica lo que decidió.
+    preamble_stage as preamble_stage,
     salvage_customer_text as salvage_customer_text,
     sanitize_llm_text as sanitize_llm_text,
+    strip_model_preamble as strip_model_preamble,
     # Motor de decisiones (F4): la regla de hoy del aviso del portavelas es el
     # respaldo `reglas` de su capacidad de egreso, en un núcleo sin Temporal.
     strip_portavelas_notice as strip_portavelas_notice,

@@ -177,7 +177,10 @@ class TurnPolicy:
 #: turno devuelve `llm_text` como `final_content`
 #: (`rescued_before_record` = hubo rescate antes de grabar). El contexto trae
 #: `first_contact`, `tools_used`, `outbound_tool_texts`, `order_registered`,
-#: `portavelas_included` y `admin_turn`. Lo que devuelve viaja en
+#: `portavelas_included`, `admin_turn` y `raw_text` (lo que el LLM escribió
+#: antes del saneador, si el texto salió de él: el egreso decide la muletilla
+#: de presentación; si su saneado difiere del de la regla, lo informa en
+#: `sanitizer` y la traza lo muestra). Lo que devuelve viaja en
 #: `TurnResult.egress`. Lo pasa el workflow de ventas V2 (ejecuta la activity
 #: `decide_egress`); sin gancho, el turno de hoy.
 EgressHook = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -687,6 +690,33 @@ def _replies_as_sent(
     return view
 
 
+def _note_egress_sanitizer(steps: list[dict[str, Any]], report: Any) -> None:
+    """La guarda `sanitizer` de la traza con lo que DECIDIÓ el egreso cuando
+    su saneado difiere del de la regla de hoy (el motor decidió otra
+    muletilla): se corrige el paso del turno o, si no lo había, se agrega.
+    Sin acciones, el paso se quita (no hubo saneado). Puro: listas en memoria."""
+    if not isinstance(report, dict) or not report:
+        return
+    actions = [str(a) for a in report.get("actions") or []]
+    before = report.get("before")
+    step = next(
+        (
+            s for s in reversed(steps)
+            if s.get("kind") == "guard" and s.get("name") == "sanitizer" and s.get("before") == before
+        ),
+        None,
+    )
+    if step is not None and not actions:
+        steps.remove(step)
+    elif step is not None:
+        step.update(after=report.get("after"), actions=actions)
+    elif actions:
+        steps.append(
+            {"kind": "guard", "at_ms": _now_ms(), "name": "sanitizer", "before": before,
+             "after": report.get("after"), "actions": actions}
+        )
+
+
 def _record_egress(
     recorded: list[dict[str, Any]],
     final_content: str,
@@ -716,6 +746,7 @@ def _record_egress(
     sent = sent if isinstance(sent, str) else ""
     llm_text = verdicts.get("llm_text")
     llm_text = llm_text if isinstance(llm_text, str) else final_content
+    _note_egress_sanitizer(steps, verdicts.get("sanitizer"))
     salvaged_leak = bool(verdicts.get("rescued_before_record")) and bool(final_content)
     if salvaged_leak:
         discarded_narration.append(final_content)
@@ -935,6 +966,10 @@ async def _run_agent_turn_impl(
 
     iteration = 0
     final_content: str | None = None
+    # Motor de decisiones (preámbulo): lo que el LLM escribió ANTES del
+    # saneador cuando `final_content` sale de él (texto final o despedida del
+    # relevo). Solo lo lee el gancho de egreso: sin gancho no se usa.
+    final_raw: str | None = None
     tools_used: list[str] = []
     extra_rounds = 0
     # Bug saludo descartado (run ddd0d472): textos client-facing emitidos JUNTO
@@ -1263,6 +1298,7 @@ async def _run_agent_turn_impl(
                 "escalation-ends-turn-v1"
             ):
                 final_content = sanitize_llm_text(escalation_farewell).text
+                final_raw = escalation_farewell
                 steps.append(
                     {"kind": "cut", "at_ms": _now_ms(), "reason": "escalation", "text": final_content}
                 )
@@ -1507,6 +1543,7 @@ async def _run_agent_turn_impl(
                     },
                 )
             final_content = sanitized.text
+            final_raw = raw_content
             # Segunda puerta (F6, solo con `turn_policy.final_round_note`): el
             # turno cierra con texto sin la tool que pedía el contrato y el
             # cliente todavía no vio nada → UNA ronda más con la nota. El
@@ -1531,6 +1568,7 @@ async def _run_agent_turn_impl(
                 )
                 messages = [*messages, {"role": "system", "content": contract_note}]
                 final_content = ""
+                final_raw = None
                 continue
             llm_step["text_fate"] = "final"
             llm_step["text"] = final_content
@@ -1567,6 +1605,7 @@ async def _run_agent_turn_impl(
                         },
                     )
                     final_content = "¡Perdón! Justo se me cortó un segundito. ¿Me repites lo que necesitabas?"
+                    final_raw = None  # la línea no la escribió el LLM
                     steps.append(
                         {"kind": "guard", "at_ms": _now_ms(), "name": "fallback_line", "before": "", "after": final_content}
                     )
@@ -1595,6 +1634,7 @@ async def _run_agent_turn_impl(
                     {"kind": "cut", "at_ms": _now_ms(), "reason": "checkpoint_b", "text": final_content}
                 )
                 final_content = ""
+                final_raw = None
                 break
 
             msg_dict: dict[str, Any] = {"role": "assistant", "content": final_content}
@@ -1656,6 +1696,11 @@ async def _run_agent_turn_impl(
                     else None
                 ),
                 "admin_turn": admin_turn,
+                # Lo que el LLM escribió antes del saneador (None si el texto
+                # no salió de él: una tool ya lo validó, o no lo escribió el
+                # LLM). El egreso decide ahí la muletilla de presentación
+                # (motor de decisiones, capacidad `preambulo`).
+                "raw_text": final_raw,
             },
         )
         recorded, final_content, salvaged_leak = _record_egress(

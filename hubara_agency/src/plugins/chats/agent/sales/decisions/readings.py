@@ -17,6 +17,10 @@ Lecturas sueltas (fase F3): el cupón (`read_coupon_talk`) y lo que no existe
 en el catálogo (`read_catalog_gap`) no escriben campos del metadata ni leen el
 texto crudo: el ingest las pide más adelante, con el texto efectivo (un audio
 o una foto ya leídos), y usa el valor para una relectura o una nota.
+
+El acuse tras la despedida (`EngineReadings.read_ack`, capacidad `acuse`)
+tampoco escribe campos: decide si el mensaje despierta al agente, así que el
+ingest lo pide ANTES del ciclo de episodios, con el mismo proveedor.
 """
 from __future__ import annotations
 
@@ -30,7 +34,7 @@ import structlog
 
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_session
 from src.plugins.chats.agent.sales.decisions.capabilities import BY_RULE, Verdict, decide
-from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Baja, Compra, Retoma
+from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Acuse, Baja, Compra, Retoma
 from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import (
     Cupon,
     CuponEnJuego,
@@ -114,6 +118,36 @@ class EngineReadings:
             opt_out=bool(baja_v.value),
             verdicts=tuple(v.to_trace() for v in (compra_v, retoma_v, baja_v)),
         )
+
+    async def read_ack(self, inbound: Inbound) -> Verdict:
+        """¿El mensaje solo le acusa recibo a la despedida del agente?
+        (capacidad `acuse`; regla de hoy: `is_closing_ack`). El ingest la pide
+        ANTES del ciclo de episodios y solo cuando lo estructural ya lo
+        permite (el agente se despidió y el mensaje es texto). Lo que sale
+        hacia Jev tapa los datos del borrador del episodio que se despidió
+        (`session_redact_terms` solo mira el episodio abierto)."""
+        bot = bot_for_session(inbound.session_id, vault_dir=self._vault)
+        capability = Acuse()
+        provider = bot.provider(capability.name)
+        redact = self._redact
+        if provider != "reglas":
+            redact = tuple(dict.fromkeys([*redact, *_last_episode_redact_terms(inbound.metadata)]))
+        return await decide(
+            capability, inbound, provider=provider, profile_id=bot.profile,
+            disagreements=DisagreementLog(self._vault), session_id=inbound.session_id, redact=redact,
+            metrics=DecisionMetrics(self._vault),
+        )
+
+
+def _last_episode_redact_terms(metadata: Mapping[str, Any]) -> tuple[str, ...]:
+    """Los datos personales del borrador del ÚLTIMO episodio, abierto o no."""
+    from src.plugins.chats.agent.sales.decisions.context import redact_terms_from_slots
+
+    episodes = metadata.get("episodes") if isinstance(metadata, Mapping) else None
+    last = episodes[-1] if isinstance(episodes, list) and episodes and isinstance(episodes[-1], Mapping) else {}
+    draft = last.get("order_draft")
+    slots = draft.get("slots") if isinstance(draft, Mapping) else None
+    return tuple(redact_terms_from_slots(slots if isinstance(slots, Mapping) else {}))
 
 
 @dataclass(frozen=True)

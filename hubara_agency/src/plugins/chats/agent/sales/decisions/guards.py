@@ -13,6 +13,10 @@ También reexporta las capacidades que piden los consumidores de fuera del
 motor (fase F3): la cantidad de una respuesta compuesta (activity del prompt)
 y los mapeos a listas cerradas de las tools (categoría, familia de color,
 ítem del pedido y zona de envío).
+
+El texto del LLM que una tool recibe para el cliente pasa primero por
+`clean_llm_text`: el saneador de la plataforma con la muletilla del modelo
+decidida por el motor (capacidad `preambulo`).
 """
 from __future__ import annotations
 
@@ -49,6 +53,7 @@ __all__ = [
     "Verdict",
     "ZonaDeEnvio",
     "catalog_choice_buttons",
+    "clean_llm_text",
     "customer_reply_text",
     "decide_for_session",
     "is_internal_text",
@@ -219,6 +224,22 @@ async def customer_reply_text(text: str, *, session_id: str, vault_dir: Path | N
         return text
     rescued = await decide_for_session(Rescate(), TextCheck(text), session_id=session_id, vault_dir=vault_dir)
     return str(rescued.value or "")
+
+
+async def clean_llm_text(raw: str | None, *, session_id: str, vault_dir: Path | None) -> str:
+    """El texto del LLM limpio por el saneador de la plataforma (escapes,
+    comillas, duplicados, rayas), con la muletilla de presentación del modelo
+    («Aquí tienes:») decidida por el motor: capacidad `preambulo`, con el
+    proveedor del bot de esta conversación. Con `reglas` (así nace),
+    idéntico a `sanitize_llm_text(raw).text`."""
+    from src.plugins.chats.agent.sales.decisions.egress import Preambulo, PreambuloCheck, text_without_preamble
+    from src.sdk.textkit import preamble_stage, sanitize_llm_text
+
+    stage = preamble_stage(raw)
+    if not stage:
+        return sanitize_llm_text(raw or "").text
+    verdict = await decide_for_session(Preambulo(), PreambuloCheck(stage), session_id=session_id, vault_dir=vault_dir)
+    return sanitize_llm_text(raw or "", without_preamble=text_without_preamble(stage, str(verdict.value or ""))).text
 
 
 async def is_internal_text(text: str, *, session_id: str, vault_dir: Path | None) -> bool:

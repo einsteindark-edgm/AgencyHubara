@@ -1024,8 +1024,10 @@ async def test_v2_with_rules_the_engine_rejects_the_coupon_code_and_nothing_clai
     assert (whatsapp, _persisted(tracker), _said(tracker)) == ([], [], [])
     trace = _customer_trace(tracker)
     assert trace["suppressed_reason"] == "admin_text_guard"
-    decided = trace["egress"]["verdicts"][0]
-    assert (decided["capability"], decided["by"], decided["value"]) == ("destinatario", "reglas", True)
+    # El egreso decide varias capacidades (primero la muletilla del modelo):
+    # el rechazo es el de `destinatario`, con la regla.
+    decided = next(v for v in trace["egress"]["verdicts"] if v["capability"] == "destinatario")
+    assert (decided["by"], decided["value"]) == ("reglas", True)
 
 
 # `send_reply` es el canal normal del texto: el historial guarda su llamada y

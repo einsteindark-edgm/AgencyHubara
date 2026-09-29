@@ -356,3 +356,85 @@ def test_literal_escape_normalization_idempotent():
     once = sanitize_llm_text("Colombia.\\n\\n¿Qué te gustaría ver?").text
     twice = sanitize_llm_text(once).text
     assert once == twice
+
+
+# =============================================================================
+# Preámbulo del modelo decidido afuera (motor de decisiones: capacidad
+# `preambulo`). El paso 2 (meta-prefijo) es el único que LEE el texto: el
+# motor del plugin decide sobre el texto que ese paso ve (`preamble_stage`) y
+# le pasa al saneador lo que queda (`without_preamble`); los pasos mecánicos
+# (comillas, duplicados, rayas) corren igual, en su orden.
+# =============================================================================
+
+from src.platform.llm_text_sanitizer import preamble_stage, strip_model_preamble  # noqa: E402
+
+_PREAMBLE_CORPUS = [
+    "",
+    "   ",
+    "¡Hola! Te muestro tres opciones 🤍",
+    "Aquí tienes:\n¡Hola! ¿Qué aroma te gusta?",
+    "Aquí tienes todas nuestras velas. Míralas 🤍",
+    "Here's my attempt:",
+    "Mi respuesta es que sí, la tenemos",
+    'Here\'s my response: "Mensaje al cliente."',
+    "Okay,\n\n¡Hola! Quedó pendiente tu pedido",
+    "  Sure!\\n¡Hola de nuevo! 🌿  ",
+    'Here\'s my attempt:\n\n"¡Hola de nuevo! 🌿 Quedó pendiente lo de la *Plegaria de Luz* — ¿la dejamos lista? 🤍"'
+    "¡Hola de nuevo! 🌿 Quedó pendiente lo de la *Plegaria de Luz* — ¿la dejamos lista? 🤍",
+    "Final answer: Claro, la Cubo Love cuesta $45.000 — envío incluido",
+]
+
+
+def test_the_preamble_stage_is_what_the_meta_prefix_step_reads():
+    assert preamble_stage("  Aquí tienes:\\n¡Hola!  ") == "Aquí tienes:\n¡Hola!"
+    assert preamble_stage("") == "" and preamble_stage(None) == ""
+
+
+def test_todays_preamble_rule_is_the_meta_prefix_step():
+    assert strip_model_preamble("Aquí tienes:\n¡Hola!") == "¡Hola!"
+    assert strip_model_preamble("Aquí tienes todas nuestras velas") == "Aquí tienes todas nuestras velas"
+    assert strip_model_preamble("Here's my attempt:") == "Here's my attempt:"  # nunca deja vacío
+    assert strip_model_preamble("Mi respuesta es que sí") == "Mi respuesta es que sí"  # ni corta a mitad
+
+
+def test_strong_only_keeps_just_the_prefixes_that_never_open_a_real_sentence():
+    assert strip_model_preamble("Here's my attempt:\n\n¡Hola!", strong_only=True) == "¡Hola!"
+    assert strip_model_preamble("Aquí tienes:\n¡Hola!", strong_only=True) == "Aquí tienes:\n¡Hola!"
+
+
+def test_a_preamble_decided_outside_is_cut_at_the_same_step():
+    """Una muletilla que la regla no conoce: el motor la corta y las comillas
+    envolventes se quitan DESPUÉS, como con la regla."""
+    raw = 'Claro, aquí va el mensaje:\n\n"¡Hola! La Cubo Love cuesta $45.000 🤍"'
+    stage = preamble_stage(raw)
+
+    result = sanitize_llm_text(raw, without_preamble=stage[stage.index('"'):])
+
+    assert result.text == "¡Hola! La Cubo Love cuesta $45.000 🤍"
+    assert result.actions == ("meta_prefix_stripped", "wrapping_quotes_stripped")
+    assert sanitize_llm_text(raw).text == raw  # la regla de hoy no la conoce
+
+
+def test_the_decision_outside_can_keep_what_the_rule_would_cut():
+    raw = "Aquí tienes:\n¡Hola! ¿Qué aroma te gusta?"
+
+    assert sanitize_llm_text(raw, without_preamble=preamble_stage(raw)).text == raw
+    assert sanitize_llm_text(raw).text == "¡Hola! ¿Qué aroma te gusta?"
+
+
+@pytest.mark.parametrize("bad", ["otro texto", "", "   "])
+def test_a_decision_that_is_not_a_cut_of_the_text_leaves_it_to_the_rule(bad: str):
+    assert sanitize_llm_text("Aquí tienes:\n¡Hola!", without_preamble=bad).text == "¡Hola!"
+
+
+def test_a_decision_outside_never_cuts_mid_sentence():
+    raw = "Aquí tienes: todas nuestras velas."
+
+    assert sanitize_llm_text(raw, without_preamble="todas nuestras velas.").text == raw
+
+
+@pytest.mark.parametrize("raw", _PREAMBLE_CORPUS)
+def test_with_the_rules_cut_passed_in_the_result_is_todays(raw: str):
+    kept = strip_model_preamble(preamble_stage(raw))
+
+    assert sanitize_llm_text(raw, without_preamble=kept) == sanitize_llm_text(raw)

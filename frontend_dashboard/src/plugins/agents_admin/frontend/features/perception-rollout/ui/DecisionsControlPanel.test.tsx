@@ -100,6 +100,24 @@ describe("DecisionsControlPanel", () => {
     expect(within(screen.getByRole("group", { name: "Workflow de ventas" })).getByText("Ahora: V1")).toBeInTheDocument();
   });
 
+  it("nombra el acuse tras la despedida con su pregunta", async () => {
+    state = payload({ acuse: "off" });
+    renderPanel();
+
+    const acuse = await screen.findByRole("group", { name: "Acuse tras la despedida" });
+    expect(within(acuse).getByText("¿el cliente solo agradece o se despide, sin pedir nada?")).toBeInTheDocument();
+    expect(within(acuse).getByText("Ahora: Reglas")).toBeInTheDocument();
+  });
+
+  it("nombra el preámbulo del modelo con su pregunta", async () => {
+    state = payload({ preambulo: "shadow" });
+    renderPanel();
+
+    const preambulo = await screen.findByRole("group", { name: "Preámbulo del modelo" });
+    expect(within(preambulo).getByText("¿la oración es una muletilla del modelo («Aquí tienes:»)?")).toBeInTheDocument();
+    expect(within(preambulo).getByText("Ahora: Sombra")).toBeInTheDocument();
+  });
+
   it("pasa una capacidad a sombra sin confirmar", async () => {
     renderPanel();
     const baja = await screen.findByRole("group", { name: "Baja" });

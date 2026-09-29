@@ -1,6 +1,6 @@
 """Capacidades de lectura del cliente en el ingest (diseño v2 §07, familia A):
-compra, retoma y baja. Cada una con la regla de hoy de respaldo; ver el
-marco en `capabilities/__init__.py`.
+compra, retoma, baja y acuse. Cada una con la regla de hoy de respaldo; ver
+el marco en `capabilities/__init__.py`.
 
 Entrada común: `Inbound` (`decisions/readings.py`). Si el texto lo escribió la
 visión (la descripción de una foto), no es del cliente: ninguna lectura de
@@ -257,6 +257,72 @@ class Baja:
 
     def floor(self, inp: Any, rule: bool, jev: bool) -> bool:
         return bool(rule) or bool(jev)
+
+    def same(self, a: bool, b: bool) -> bool:
+        return bool(a) == bool(b)
+
+
+class Acuse:
+    """«¿Es solo un acuse o una cortesía a la despedida?» (run 4cb3a34f,
+    #379). El agente ya se despidió y cerró el episodio; un acuse («☺️👍»,
+    «gracias», «igualmente») queda en el chat y no despierta al agente. Lo
+    estructural lo decide el código antes de preguntar (episodio cerrado, una
+    reacción o un sticker, una plantilla posterior): esta capacidad solo lee
+    el TEXTO, con lo que el cliente vio antes a la vista.
+
+    Sesgo a la seguridad (tragarse una pregunta real es peor que un saludo de
+    más): absorbe solo con p ≥ `absorb`; si Jev duda, despierta al bot. Piso:
+    un mensaje con signo de pregunta nunca se absorbe. Sin contexto (no se
+    ve la despedida) o con un texto que no escribió el cliente, decide la
+    regla de hoy (`is_closing_ack`). Valor: bool (True = no despierta)."""
+
+    name = "acuse"
+    timeout_s = 1.5
+    thresholds: Mapping[str, float] = {"absorb": 0.90}
+
+    def rule(self, inp: Any) -> bool:
+        # La regla de hoy lee el texto del mensaje tal como llega (una
+        # descripción de la visión nunca calza con sus palabras de cortesía).
+        from src.plugins.chats.agent.sales.use_cases.closing_ack import is_closing_ack
+
+        return is_closing_ack(getattr(inp, "text", None))
+
+    def ask(self, inp: Any) -> tuple[str, list[TypedQuestion]] | None:
+        text = _customer_text(inp)
+        if text is None:
+            return None
+        window = customer_window(list(getattr(inp, "events", ()) or ()), burst_wamids=set(), burst_size=0)
+        if not window.lines:
+            return None  # sin la despedida a la vista no se sabe a qué responde
+        # Encabezado neutro: el episodio pudo cerrarse por inactividad, sin
+        # despedida; si la despedida no está a la vista, Jev dice que no.
+        state = "\n".join([
+            "CONTEXTO — lo que el cliente vio antes de este mensaje (esa conversación ya se había cerrado)",
+            *window.lines,
+            "MENSAJE DEL CLIENTE",
+            f"[1] {text.strip()}",
+        ])
+        return state, [
+            TypedQuestion(
+                id="acuse.solo_cortesia", kind="noul",
+                text=(
+                    "¿Este mensaje del cliente es solo un acuse de recibo o una cortesía a la despedida del asesor "
+                    "(gracias, ok, un emoji, una bendición), sin preguntar, pedir, responder ni contar nada nuevo?"
+                ),
+                criteria=_YES_NO,
+            )
+        ]
+
+    def decide(self, inp: Any, result: Any, rule: bool, thresholds: Mapping[str, float]) -> bool | None:
+        th = {**self.thresholds, **thresholds}
+        p = _p(result, "acuse.solo_cortesia")
+        if p is None:
+            return None  # sin respuesta: decide la regla
+        return p >= th["absorb"]  # con duda, despierta al bot
+
+    def floor(self, inp: Any, rule: bool, jev: bool) -> bool:
+        text = str(getattr(inp, "text", None) or "")
+        return bool(jev) and "?" not in text and "¿" not in text
 
     def same(self, a: bool, b: bool) -> bool:
         return bool(a) == bool(b)
