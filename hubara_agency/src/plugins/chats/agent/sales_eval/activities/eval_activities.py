@@ -43,6 +43,7 @@ from src.plugins.chats.agent.sales_eval.evals.contracts import (
     GoldenSuiteResult,
     ScorecardSummary,
 )
+from src.plugins.chats.agent.sales_eval.evals.judge import llm_judge_enabled
 from src.plugins.chats.agent.sales_eval.evals.select import select_eval_units
 
 # hubara_agency/ (raíz del paquete): activities/ -> sales_eval -> agent -> chats ->
@@ -91,6 +92,13 @@ async def evaluate_sales_conversation_activity(
     vault_dir = composition.get_vault_dir()
     session_id, episode_id = reconstruct.parse_eval_unit_id(unit_id)
     wa_number = reconstruct.whatsapp_number_from_session(session_id)
+    # Sin juez esta eval no tiene qué medir: sus métricas son del juez salvo 2
+    # de estilo, y un promedio de solo esas cambiaría el significado del histórico.
+    if not llm_judge_enabled():
+        return ConversationEvalResult(
+            session_id=session_id, episode_id=episode_id, whatsapp_number=wa_number,
+            skipped=True, error="llm_judge_disabled",
+        )
 
     events, _episode = reconstruct.read_episode_events(vault_dir, session_id, episode_id)
     turns = reconstruct.to_evaluable_turns(events, redact=window.redact_pii)
@@ -269,7 +277,8 @@ async def run_golden_suite_activity(inp: GoldenEvalInput) -> GoldenSuiteResult:
         cmd += ["--category", inp.category]
     if inp.repeat and inp.repeat > 1:
         cmd += ["--repeat", str(inp.repeat)]
-    if inp.no_judge:
+    no_judge = inp.no_judge or not llm_judge_enabled()
+    if no_judge:
         cmd += ["--no-judge"]
 
     activity.logger.info("golden suite -> %s", " ".join(cmd))
@@ -300,16 +309,13 @@ async def run_golden_suite_activity(inp: GoldenEvalInput) -> GoldenSuiteResult:
     )
     return GoldenSuiteResult(
         scenarios=scenarios, behaviors_ok=ok, errored=errored,
-        judge=not inp.no_judge, duration_s=dur,
+        judge=not no_judge, duration_s=dur,
     )
 
 
 # --------------------------------------------------------------------------- #
 # HU-SC-1 — Scorecard por etapa (reemplaza al promedio holístico como titular).
 # --------------------------------------------------------------------------- #
-
-def _scorecard_judge_enabled() -> bool:
-    return os.getenv("SCORECARD_JUDGE_ENABLED", "true").strip().lower() not in ("0", "false", "no")
 
 
 def _already_alerted(previous: dict | None, record: dict) -> bool:
@@ -381,7 +387,7 @@ async def score_episode_scorecard_activity(
         )
         previous = store.find_latest(cards_dir, session_id, episode_id)
         judge_results = []
-        if with_judge and traj.turns and _scorecard_judge_enabled():
+        if with_judge and traj.turns and llm_judge_enabled():
             judge_results = await run_judge_checks(traj, ctx, composition.get_judge())
         record = store.append_scorecard(
             cards_dir,

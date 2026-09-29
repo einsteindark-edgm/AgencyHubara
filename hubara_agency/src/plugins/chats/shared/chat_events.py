@@ -7,7 +7,8 @@ tal cual, y el operador tenía que decodificar a mano qué fue un botón, qué
 escribió la persona y qué describió la IA.
 
 Este módulo le devuelve la forma al mensaje: proyecta el marker a un evento
-tipado (`bot_buttons`, `button_tap`, `customer_photo`, `reaction`) que el
+tipado (`bot_buttons`, `button_tap`, `customer_photo`, `reaction`,
+`shipping_form`) que el
 frontend pinta como lo que fue. `None` = no hay nada que proyectar y el
 mensaje se sigue pintando como hoy.
 
@@ -42,6 +43,21 @@ _RECEIPT_RE = re.compile(
     r"\[el cliente envió un comprobante de pago: (?P<vision>[^\]]*)\]"
 )
 _BLIND_PHOTO_RE = re.compile(r"\[el cliente envió una imagen que no pude ver bien\]")
+# Flow de envío: `[datos de envío recibidos] city=…; address=…` (k=v; k=v).
+_SHIPPING_MARKER = "[datos de envío recibidos]"
+_SHIPPING_SPLIT_RE = re.compile(r"\s*;\s*(?=\w+=)")
+_SHIPPING_FIELDS = (
+    "receiver_name",
+    "phone",
+    "city",
+    "neighborhood",
+    "address",
+    "payment_method",
+    "order_total_cop",
+    "items_summary",
+)
+# Plomería del Flow: no le dice nada al operador.
+_SHIPPING_HIDDEN = frozenset({"flow_token"})
 # El caption del cliente viaja pegado DESPUÉS del marker, entre comillas.
 _CAPTION_RE = re.compile(r'con el texto: "(?P<caption>.*)"\s*\Z', re.S)
 
@@ -106,6 +122,10 @@ def _bot_buttons(content: str) -> dict[str, Any] | None:
 
 
 def _customer_event(content: str) -> dict[str, Any] | None:
+    shipping = _shipping_form(content)
+    if shipping:
+        return shipping
+
     tap = _BUTTON_TAP_RE.search(content)
     if tap:
         return {"kind": "button_tap", "title": tap.group("title").strip()}
@@ -141,6 +161,34 @@ def _customer_photo(content: str) -> dict[str, Any] | None:
         "caption": caption or None,
         "receipt": bool(receipt),
     }
+
+
+def _shipping_form(content: str) -> dict[str, Any] | None:
+    start = content.find(_SHIPPING_MARKER)
+    if start < 0:
+        return None
+    raw = content[start + len(_SHIPPING_MARKER) :].strip()
+
+    values: dict[str, str] = {}
+    extra: list[dict[str, str]] = []
+    # "(sin datos)" = el Flow llegó vacío: sin pares, la tarjeta dice "—".
+    for part in _SHIPPING_SPLIT_RE.split(raw) if "=" in raw else []:
+        key, sep, value = part.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or not key or not value or key in _SHIPPING_HIDDEN:
+            continue
+        if key in _SHIPPING_FIELDS:
+            values[key] = value
+        else:
+            extra.append({"key": key, "value": value})
+
+    event: dict[str, Any] = {"kind": "shipping_form"}
+    for field in _SHIPPING_FIELDS:
+        event[field] = values.get(field)
+    total = values.get("order_total_cop")
+    event["order_total_cop"] = int(total) if total and total.isdigit() else None
+    event["extra"] = extra
+    return event
 
 
 def annotate_touched_buttons(messages: list[dict[str, Any]]) -> None:

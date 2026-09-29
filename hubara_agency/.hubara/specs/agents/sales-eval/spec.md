@@ -47,6 +47,23 @@ sin releer meses de scorecards en cada cierre de episodio.
 - WHEN las dos muestras del juez difieren (pasa y falla)
 - THEN el resultado es `desconocido` y el check entra a la cola de etiquetado
 
+### Requirement: Juez LLM apagado por defecto
+
+Desde 2026-09-28 (decisión del operador por costo), ningún camino del eval
+SHALL llamar al juez LLM salvo con `EVAL_LLM_JUDGE_ENABLED=true`. Sin la
+variable, el scorecard SHALL correr solo sus checks de código (`judge=false`),
+la eval legada SHALL devolver `skipped` con `error="llm_judge_disabled"` sin
+leer el episodio, la suite de goldens SHALL correr con `--no-judge` y el
+recálculo del dashboard con juez SHALL responder `judge_queued=false` con el
+motivo en `judge_error`, sin encolar el workflow.
+
+#### Scenario: Episodio cerrado con el juez apagado
+
+- GIVEN `EVAL_LLM_JUDGE_ENABLED` sin definir
+- WHEN cierra un episodio
+- THEN se guarda un scorecard con checks de código y `judge=false`
+- AND no se hace ninguna llamada al juez
+
 ### Requirement: Evaluación al cierre del episodio
 
 Al cerrar un episodio, `EvaluateEpisodeWorkflow` SHALL esperar la traza del
