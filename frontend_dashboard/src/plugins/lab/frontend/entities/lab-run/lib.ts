@@ -1,6 +1,7 @@
 import { ApiError } from "@/shared/sdk";
 
-import type { EpisodeVerdict } from "./model";
+import { engineDecisionsSchema } from "./contracts";
+import type { EngineDecision, EpisodeVerdict } from "./model";
 
 /**
  * Nombres de los bots de una corrida (plan §3.2, diseño §09). B0 es el
@@ -49,4 +50,75 @@ export function apiErrorDetail(error: unknown): { status: number | null; message
     return { status: error.status, message: (detail as { message: string }).message };
   }
   return { status: error.status, message: null };
+}
+
+// ── Decisiones del motor en un turno (bot nuevo) ─────────────────────────────
+
+/** Las decisiones del motor de la traza de un turno; las que no tienen forma se descartan. */
+export function engineDecisionsOf(trace: Record<string, unknown>): EngineDecision[] {
+  return engineDecisionsSchema.parse(trace.decisions);
+}
+
+/** Mismos nombres que el panel «Motor de decisiones» de Agents. */
+const CAPABILITY_LABELS: Record<string, string> = {
+  compra: "Compra",
+  retoma: "Retoma",
+  baja: "Baja",
+  acuse: "Acuse tras la despedida",
+  cupon: "Cupón",
+  fuera_de_catalogo: "Fuera de catálogo",
+  cantidad: "Cantidad",
+  categoria: "Categoría",
+  familia_de_color: "Familia de color",
+  item_del_pedido: "Ítem del pedido",
+  zona_de_envio: "Zona de envío",
+  datos: "Datos de envío",
+  producto_nombrado: "Producto nombrado",
+  persona: "Persona",
+  enumeracion: "Enumeración",
+  monto: "Monto",
+  selector: "Selector",
+  contactar: "Contactar",
+  cierre: "Cierre por abandono",
+  afirmacion: "Afirmación",
+  preambulo: "Preámbulo del modelo",
+  destinatario: "Destinatario",
+  rescate: "Rescate",
+  portavelas: "Portavelas",
+  saludo: "Saludo",
+};
+
+export function capabilityLabel(id: string): string {
+  return CAPABILITY_LABELS[id] ?? id;
+}
+
+/** Quién decidió: Jev, la regla, o la regla porque Jev falló o dudó (y por qué). */
+export function decidedByLabel(d: Pick<EngineDecision, "by" | "provider" | "reason">): string {
+  if (d.by === "jev") return "Jev";
+  if (d.by === "piso") return "Piso de la regla";
+  if (d.by === "respaldo") {
+    if (d.reason === "duda") return "Regla (Jev dudó)";
+    if (d.reason === "no_question") return "Regla (nada que preguntar)";
+    return `Regla (Jev falló: ${d.reason || "error"})`;
+  }
+  return d.provider === "sombra" ? "Regla (Jev en sombra)" : "Regla";
+}
+
+/** Jev falló (error, timeout, sin llave, otro modelo): la regla decidió por él. */
+export function jevFailed(d: Pick<EngineDecision, "by" | "reason">): boolean {
+  return d.by === "respaldo" && d.reason !== "duda" && d.reason !== "no_question";
+}
+
+export function decisionStageLabel(d: Pick<EngineDecision, "stage" | "message">): string {
+  if (d.stage === "ingest") return d.message !== undefined ? `Lectura del mensaje ${d.message}` : "Lectura de la ráfaga";
+  if (d.stage === "complemento") return "Complemento";
+  return "Turno";
+}
+
+export function formatDecisionValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "sí" : "no";
+  if (Array.isArray(value)) return value.length ? value.map((v) => formatDecisionValue(v)).join(", ") : "—";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }

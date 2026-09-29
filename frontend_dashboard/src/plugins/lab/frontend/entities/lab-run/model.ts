@@ -2,6 +2,7 @@ import type { z } from "zod";
 
 import type {
   arenaArmSchema,
+  engineDecisionSchema,
   armMetricsSchema,
   armSummarySchema,
   intervalSchema,
@@ -43,6 +44,7 @@ export type BurstMessage = z.infer<typeof burstMessageSchema>;
 export type ThreadTurn = z.infer<typeof threadTurnSchema>;
 export type LabThread = z.infer<typeof threadSchema>;
 export type TurnTrace = z.infer<typeof turnTraceSchema>;
+export type EngineDecision = z.infer<typeof engineDecisionSchema>;
 export type TopicCoverage = z.infer<typeof topicCoverageSchema>;
 export type EvalResult = z.infer<typeof evalResultSchema>;
 export type EpisodeEvaluation = z.infer<typeof episodeEvaluationSchema>;

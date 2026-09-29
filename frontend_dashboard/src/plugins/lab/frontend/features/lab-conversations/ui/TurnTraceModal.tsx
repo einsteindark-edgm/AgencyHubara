@@ -5,7 +5,9 @@
  * detalle del paso seleccionado (derecha); abajo, el resultado del turno.
  *
  * Los pasos vienen del contrato `lab@v1` (traza v2, o la v1 sintetizada sin
- * tiempos). Los asuntos y checks, de las evaluaciones del bot elegido.
+ * tiempos). Los asuntos y checks, de las evaluaciones del bot elegido. Con el
+ * bot nuevo, abajo, las decisiones del motor del turno (quién decidió cada
+ * capacidad: Jev o la regla, y por qué).
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -16,11 +18,14 @@ import {
   apiErrorDetail,
   armLabel,
   Chip,
+  engineDecisionsOf,
   useRunEvaluations,
   useTurnTrace,
   type EvalResult,
   type ThreadTurn,
 } from "@plugins/lab/frontend/entities/lab-run";
+
+import { EngineDecisions } from "./EngineDecisions";
 
 interface Props {
   run: string;
@@ -52,6 +57,7 @@ export function TurnTraceModal({ run, sid, turn, arms, initialArm, onClose }: Pr
   const evals = useRunEvaluations(run, sid, arm);
 
   const steps = useMemo(() => (trace.data?.steps ?? []) as TraceStep[], [trace.data]);
+  const decisions = useMemo(() => (trace.data ? engineDecisionsOf(trace.data.trace) : []), [trace.data]);
   const layout = useMemo(() => layoutSequence(steps, { classifierLabel: CLASSIFIER_LABEL[arm] }), [steps, arm]);
   const row = layout.rows[Math.min(selected, Math.max(layout.rows.length - 1, 0))];
 
@@ -146,6 +152,8 @@ export function TurnTraceModal({ run, sid, turn, arms, initialArm, onClose }: Pr
           {trace.isSuccess && row ? <TraceStepDetail step={steps[row.stepIndex]} row={row} lanes={layout.lanes} /> : null}
         </div>
       </div>
+
+      {trace.isSuccess ? <EngineDecisions decisions={decisions} /> : null}
 
       <div className="flex flex-wrap items-center gap-2 border-t border-line bg-titlebar px-4 py-2.5 text-[12.5px]">
         {trace.data?.fidelity === "v1" ? (

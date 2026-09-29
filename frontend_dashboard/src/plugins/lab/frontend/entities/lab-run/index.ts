@@ -27,6 +27,7 @@ export type {
   CheckVerdict,
   ConversationRow,
   Conversations,
+  EngineDecision,
   EpisodeEvaluation,
   EpisodeVerdict,
   EvalResult,
@@ -45,5 +46,18 @@ export type {
   TurnRef,
   TurnTrace,
 } from "./model";
-export { ARM_LABELS, apiErrorDetail, armLabel, customerLabel, formatUsd, worstVerdict } from "./lib";
+export {
+  ARM_LABELS,
+  apiErrorDetail,
+  armLabel,
+  capabilityLabel,
+  customerLabel,
+  decidedByLabel,
+  decisionStageLabel,
+  engineDecisionsOf,
+  formatDecisionValue,
+  formatUsd,
+  jevFailed,
+  worstVerdict,
+} from "./lib";
 export { Chip, VerdictBadge, type ChipTone } from "./ui/Chips";

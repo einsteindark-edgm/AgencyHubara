@@ -127,6 +127,40 @@ describe("TurnTraceModal", () => {
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("arm=B"))).toBe(true);
   });
 
+  it("con el bot nuevo muestra qué decidió el motor: quién (Jev o la regla), qué y por qué", async () => {
+    const traceB = {
+      ...traceA0,
+      arm: "B",
+      trace: {
+        decisions: [
+          { stage: "ingest", message: 1, capability: "compra", by: "jev", provider: "jev", value: "no", rule: "si",
+            answers: [{ q: "compra.que_hace", choice: "pregunta", confidence: 0.91 }] },
+          { stage: "turno", capability: "datos", by: "respaldo", provider: "jev", value: true, reason: "timeout" },
+        ],
+      },
+    };
+    fetchMock.mockImplementation((url: string) => {
+      const u = String(url);
+      if (u.includes("/turns/trace")) return json(u.includes("arm=B") ? traceB : traceA0);
+      if (u.includes("/evaluations")) return json(evaluations);
+      return json({}, 404);
+    });
+    renderModal();
+    // En producción (A0) la traza no trae decisiones del motor: no hay sección.
+    await screen.findByRole("group", { name: "Secuencia de pasos del turno" });
+    expect(screen.queryByRole("region", { name: "Decisiones del motor" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Nuevo + Jev" }));
+
+    const section = await screen.findByRole("region", { name: "Decisiones del motor" });
+    expect(within(section).getByText("2 decisiones · 1 de Jev · 1 cayó a la regla porque Jev falló")).toBeInTheDocument();
+    const rows = within(section).getAllByRole("row").slice(1);
+    expect(rows.map((r) => within(r).getAllByRole("cell").map((c) => c.textContent))).toEqual([
+      ["Lectura del mensaje 1", "Compra", "Jev", "no", "si", "pregunta · 0,91"],
+      ["Turno", "Datos de envío", "Regla (Jev falló: timeout)", "sí", "", ""],
+    ]);
+  });
+
   it("el botón de cerrar y Escape cierran", async () => {
     const onClose = renderModal();
 

@@ -219,6 +219,35 @@ export const turnTraceSchema = z.object({
   steps: z.array(traceStepSchema).catch([]).default([]),
 });
 
+/**
+ * Una decisión del motor en el turno simulado (`trace.decisions`, la publica
+ * el sandbox del bot nuevo): qué capacidad decidió, en qué etapa (la lectura
+ * de un mensaje de la ráfaga, el turno o el complemento), quién (`jev`,
+ * `reglas`, `piso` = la regla fija corrigió a Jev, `respaldo` = decidió la
+ * regla porque Jev falló o dudó, con `reason`) y qué dijeron la regla y Jev.
+ */
+export const engineDecisionSchema = z.object({
+  stage: z.string().catch("turno").default("turno"),
+  message: z.number().optional().catch(undefined),
+  capability: z.string(),
+  by: z.string().catch("").default(""),
+  provider: z.string().catch("").default(""),
+  value: z.unknown().optional(),
+  rule: z.unknown().optional(),
+  jev: z.unknown().optional(),
+  reason: z.string().optional().catch(undefined),
+  answers: tolerantArray(
+    z.object({
+      q: z.string().optional().catch(undefined),
+      p: z.number().optional().catch(undefined),
+      choice: z.string().optional().catch(undefined),
+      confidence: z.number().optional().catch(undefined),
+    }),
+  ),
+});
+
+export const engineDecisionsSchema = tolerantArray(engineDecisionSchema);
+
 // ── Evaluaciones ────────────────────────────────────────────────────────────
 
 /** Asunto de una ráfaga y si recibió respuesta (EST-08 v2, registro 3+). */
