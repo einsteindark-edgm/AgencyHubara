@@ -81,12 +81,15 @@ describe("decisiones del motor en un turno (bot nuevo)", () => {
 
   it("dice quién decidió y, si fue la regla con Jev encendido, por qué", () => {
     expect(decidedByLabel({ by: "jev", provider: "jev" })).toBe("Jev");
-    expect(decidedByLabel({ by: "piso", provider: "jev" })).toBe("Piso de la regla");
-    expect(decidedByLabel({ by: "reglas", provider: "reglas" })).toBe("Regla");
-    expect(decidedByLabel({ by: "reglas", provider: "sombra" })).toBe("Regla (Jev en sombra)");
-    expect(decidedByLabel({ by: "respaldo", provider: "jev", reason: "duda" })).toBe("Regla (Jev dudó)");
-    expect(decidedByLabel({ by: "respaldo", provider: "jev", reason: "no_question" })).toBe("Regla (nada que preguntar)");
-    expect(decidedByLabel({ by: "respaldo", provider: "jev", reason: "timeout" })).toBe("Regla (Jev falló: timeout)");
+    expect(decidedByLabel({ by: "piso", provider: "jev" })).toBe("La regla corrigió a Jev");
+    expect(decidedByLabel({ by: "reglas", provider: "reglas" })).toBe("La regla");
+    expect(decidedByLabel({ by: "reglas", provider: "sombra" })).toBe("La regla (Jev en sombra)");
+    expect(decidedByLabel({ by: "respaldo", provider: "jev", reason: "duda" })).toBe("La regla (Jev dudó)");
+    expect(decidedByLabel({ by: "respaldo", provider: "jev", reason: "no_question" })).toBe("La regla (nada que preguntarle a Jev)");
+    expect(decidedByLabel({ by: "respaldo", provider: "jev", reason: "timeout" })).toBe("La regla (Jev no respondió a tiempo)");
+    expect(decidedByLabel({ by: "respaldo", provider: "jev", reason: "no_api_key" })).toBe("La regla (falta la llave de Jev)");
+    expect(decidedByLabel({ by: "respaldo", provider: "jev", reason: "http_402" })).toBe("La regla (Jev sin saldo)");
+    expect(decidedByLabel({ by: "respaldo", provider: "jev", reason: "bad_shape" })).toBe("La regla (Jev falló: bad_shape)");
   });
 
   it("nombra la capacidad como el panel del motor y la etapa del turno", () => {
@@ -94,9 +97,9 @@ describe("decisiones del motor en un turno (bot nuevo)", () => {
     expect(capabilityLabel("acuse")).toBe("Acuse tras la despedida");
     expect(capabilityLabel("preambulo")).toBe("Preámbulo del modelo");
     expect(capabilityLabel("una_nueva")).toBe("una_nueva");
-    expect(decisionStageLabel({ stage: "ingest", message: 2 })).toBe("Lectura del mensaje 2");
-    expect(decisionStageLabel({ stage: "turno" })).toBe("Turno");
-    expect(decisionStageLabel({ stage: "complemento" })).toBe("Complemento");
+    expect(decisionStageLabel({ stage: "ingest", message: 2 })).toBe("Al leer el mensaje 2");
+    expect(decisionStageLabel({ stage: "turno" })).toBe("Durante el turno");
+    expect(decisionStageLabel({ stage: "complemento" })).toBe("En el mensaje de complemento");
   });
 
   it("muestra el valor decidido de forma legible", () => {

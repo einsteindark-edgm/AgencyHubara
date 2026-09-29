@@ -101,16 +101,29 @@ export function capabilityLabel(id: string): string {
   return CAPABILITY_LABELS[id] ?? id;
 }
 
+/** Por qué decidió la regla aunque Jev estaba encendido (`reason` del respaldo). */
+const FALLBACK_REASONS: Record<string, string> = {
+  duda: "Jev dudó",
+  no_question: "nada que preguntarle a Jev",
+  timeout: "Jev no respondió a tiempo",
+  no_api_key: "falta la llave de Jev",
+  http_402: "Jev sin saldo",
+  http_429: "Jev saturado",
+  disabled: "Jev apagado",
+  model_changed: "Jev cambió de modelo",
+  unknown_profile: "perfil de Jev desconocido",
+  sin_contexto: "no hubo promoción reciente",
+};
+
 /** Quién decidió: Jev, la regla, o la regla porque Jev falló o dudó (y por qué). */
 export function decidedByLabel(d: Pick<EngineDecision, "by" | "provider" | "reason">): string {
   if (d.by === "jev") return "Jev";
-  if (d.by === "piso") return "Piso de la regla";
+  if (d.by === "piso") return "La regla corrigió a Jev";
   if (d.by === "respaldo") {
-    if (d.reason === "duda") return "Regla (Jev dudó)";
-    if (d.reason === "no_question") return "Regla (nada que preguntar)";
-    return `Regla (Jev falló: ${d.reason || "error"})`;
+    const why = d.reason ? FALLBACK_REASONS[d.reason] : undefined;
+    return why ? `La regla (${why})` : `La regla (Jev falló: ${d.reason || "error"})`;
   }
-  return d.provider === "sombra" ? "Regla (Jev en sombra)" : "Regla";
+  return d.provider === "sombra" ? "La regla (Jev en sombra)" : "La regla";
 }
 
 /** Jev falló (error, timeout, sin llave, otro modelo): la regla decidió por él. */
@@ -119,9 +132,9 @@ export function jevFailed(d: Pick<EngineDecision, "by" | "reason">): boolean {
 }
 
 export function decisionStageLabel(d: Pick<EngineDecision, "stage" | "message">): string {
-  if (d.stage === "ingest") return d.message !== undefined ? `Lectura del mensaje ${d.message}` : "Lectura de la ráfaga";
-  if (d.stage === "complemento") return "Complemento";
-  return "Turno";
+  if (d.stage === "ingest") return d.message !== undefined ? `Al leer el mensaje ${d.message}` : "Al leer los mensajes";
+  if (d.stage === "complemento") return "En el mensaje de complemento";
+  return "Durante el turno";
 }
 
 export function formatDecisionValue(value: unknown): string {

@@ -204,7 +204,15 @@ describe("TurnTraceModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Bot nuevo con Jev" }));
     fireEvent.click(await screen.findByRole("tab", { name: "Decisiones de Jev" }));
 
-    expect(await screen.findByRole("region", { name: "Decisiones de Jev" })).toBeInTheDocument();
+    const section = await screen.findByRole("region", { name: "Decisiones de Jev" });
+    expect(within(section).getByText("Jev decidió 1 de 2 · 1 cayó a la regla porque Jev falló")).toBeInTheDocument();
+    const read = within(section).getByRole("list", { name: "Al leer el mensaje 1" });
+    expect(within(read).getByText("No hay señal de compra")).toBeInTheDocument();
+    expect(within(read).getByText("Jev")).toBeInTheDocument();
+    expect(within(read).getByText("¿Qué hace el cliente con su mensaje? pregunta (91 %)")).toBeInTheDocument();
+    const turnList = within(section).getByRole("list", { name: "Durante el turno" });
+    expect(within(turnList).getByText("No hacía falta agregar la bienvenida")).toBeInTheDocument();
+    expect(within(turnList).getByText("La regla (Jev no respondió a tiempo)")).toBeInTheDocument();
   });
 
   it("el botón de cerrar y Escape cierran", async () => {

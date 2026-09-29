@@ -72,4 +72,5 @@ export {
   worstVerdict,
   type CheckView,
 } from "./lib";
+export { decisionSentence, jevAnswers, type DecisionTone } from "./decision-language";
 export { Chip, VerdictBadge, type ChipTone } from "./ui/Chips";

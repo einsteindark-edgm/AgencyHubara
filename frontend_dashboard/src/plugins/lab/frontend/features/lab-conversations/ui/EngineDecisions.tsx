@@ -1,80 +1,93 @@
 /**
- * Decisiones del motor en un turno del bot nuevo (motor de decisiones con Jev):
- * cada capacidad que decidió en la ráfaga (lecturas del ingest), en el turno
- * (tools y egreso) o en el complemento, quién decidió (Jev, la regla, el piso
- * de la regla o la regla porque Jev falló o dudó) y qué dijeron la regla y Jev.
- * Así se ve, turno por turno, si el bot nuevo corrió con Jev o cayó a las reglas.
+ * Decisiones del motor en un turno del bot nuevo (motor de decisiones con
+ * Jev), en frases (revisión 2026-09-29). Agrupadas por cuándo se tomaron (al
+ * leer cada mensaje del cliente, durante el turno o en el mensaje de
+ * complemento): qué revisó, qué decidió («Le avisa al modelo que no vendemos:
+ * «jesús»»), quién (Jev, o la regla y por qué), qué decía la regla si no
+ * coincidió y qué respondió Jev a cada pregunta. Así se ve, turno por turno,
+ * si el bot nuevo corrió con Jev o cayó a las reglas.
  */
 
 import {
   capabilityLabel,
   Chip,
   decidedByLabel,
+  decisionSentence,
   decisionStageLabel,
-  formatDecisionValue,
+  jevAnswers,
   jevFailed,
   type EngineDecision,
 } from "@plugins/lab/frontend/entities/lab-run";
 
-const NUMBER = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 });
-
-function answerLabel(d: EngineDecision): string {
-  return d.answers
-    .slice(0, 3)
-    .map((a) => (a.choice !== undefined ? `${a.choice}${a.confidence !== undefined ? ` · ${NUMBER.format(a.confidence)}` : ""}` : a.p !== undefined ? `p ${NUMBER.format(a.p)}` : ""))
-    .filter(Boolean)
-    .join("; ");
-}
+const TONE_TEXT = { neutral: "text-fg", warn: "text-warn", bad: "text-danger" } as const;
 
 function summaryOf(decisions: EngineDecision[]): string {
   const n = decisions.length;
   const byJev = decisions.filter((d) => d.by === "jev").length;
   const failed = decisions.filter(jevFailed).length;
+  const doubted = decisions.filter((d) => d.by === "respaldo" && d.reason === "duda").length;
   return [
-    `${n} ${n === 1 ? "decisión" : "decisiones"}`,
-    `${byJev} de Jev`,
+    `Jev decidió ${byJev} de ${n}`,
     failed > 0 ? `${failed} ${failed === 1 ? "cayó" : "cayeron"} a la regla porque Jev falló` : null,
+    doubted > 0 ? `en ${doubted} Jev dudó y decidió la regla` : null,
   ]
     .filter(Boolean)
     .join(" · ");
 }
 
+function groups(decisions: EngineDecision[]): Array<[string, EngineDecision[]]> {
+  const out = new Map<string, EngineDecision[]>();
+  for (const d of decisions) {
+    const label = decisionStageLabel(d);
+    out.set(label, [...(out.get(label) ?? []), d]);
+  }
+  return [...out.entries()];
+}
+
 export function EngineDecisions({ decisions }: { decisions: EngineDecision[] }) {
   if (decisions.length === 0) return null;
   return (
-    <section aria-label="Decisiones de Jev" className="px-4 py-2.5 text-[12.5px]">
-      <details open>
-        <summary className="cursor-pointer select-none">
-          <span className="mr-2 text-[10px] font-semibold uppercase leading-none tracking-[0.08em] text-fg-faint">Motor de decisiones</span>
-          <span>{summaryOf(decisions)}</span>
-        </summary>
-        <table className="mt-2 w-full border-collapse text-left tabular-nums">
-          <thead>
-            <tr className="text-[10px] uppercase tracking-[0.06em] text-fg-faint">
-              <th className="py-1 pr-3 font-semibold">Etapa</th>
-              <th className="py-1 pr-3 font-semibold">Capacidad</th>
-              <th className="py-1 pr-3 font-semibold">Decidió</th>
-              <th className="py-1 pr-3 font-semibold">Resultado</th>
-              <th className="py-1 pr-3 font-semibold">La regla decía</th>
-              <th className="py-1 font-semibold">Jev</th>
-            </tr>
-          </thead>
-          <tbody>
-            {decisions.map((d, k) => (
-              <tr key={k} className="border-t border-line align-top">
-                <td className="py-1 pr-3 text-fg-muted">{decisionStageLabel(d)}</td>
-                <td className="py-1 pr-3">{capabilityLabel(d.capability)}</td>
-                <td className="py-1 pr-3">
-                  <Chip tone={d.by === "jev" ? "ok" : jevFailed(d) ? "warn" : "neutral"}>{decidedByLabel(d)}</Chip>
-                </td>
-                <td className="py-1 pr-3">{formatDecisionValue(d.value)}</td>
-                <td className="py-1 pr-3 text-fg-muted">{d.rule !== undefined ? formatDecisionValue(d.rule) : ""}</td>
-                <td className="py-1 text-fg-muted">{answerLabel(d)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </details>
+    <section aria-label="Decisiones de Jev" className="grid gap-3 px-4 py-3 text-[12.5px]">
+      <div>
+        <p className="m-0 font-semibold text-fg">{summaryOf(decisions)}</p>
+        <p className="m-0 mt-0.5 text-[11.5px] text-fg-muted">
+          Cada cosa que el bot nuevo revisa la decide Jev; si Jev duda, no responde a tiempo o no hay nada que preguntarle, decide la regla de hoy.
+        </p>
+      </div>
+      {groups(decisions).map(([stage, items]) => (
+        <div key={stage} className="grid gap-1.5">
+          <h4 className="m-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-fg-faint">{stage}</h4>
+          <ul aria-label={stage} className="m-0 grid list-none gap-1.5 p-0">
+            {items.map((d, k) => {
+              const sentence = decisionSentence(d);
+              const answers = jevAnswers(d);
+              const quiet = d.by === "respaldo" && d.reason === "no_question";
+              return (
+                <li key={k} className={"grid gap-0.5 rounded-lg border border-line px-3 py-2 " + (quiet ? "opacity-70" : "bg-white/[0.02]")}>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="min-w-[132px] text-[11.5px] text-fg-muted">{capabilityLabel(d.capability)}</span>
+                    <span className={"font-medium " + TONE_TEXT[sentence.tone]}>{sentence.text}</span>
+                    <span className="ml-auto">
+                      <Chip tone={d.by === "jev" ? "ok" : jevFailed(d) ? "warn" : "neutral"}>{decidedByLabel(d)}</Chip>
+                    </span>
+                  </div>
+                  {d.rule !== undefined ? (
+                    <p className="m-0 text-[11.5px] text-fg-muted">
+                      <span className="text-fg-faint">La regla decía: </span>
+                      <span>{decisionSentence({ ...d, value: d.rule }).text}</span>
+                    </p>
+                  ) : null}
+                  {answers.map((a, j) => (
+                    <p key={j} className="m-0 text-[11.5px] text-fg-muted">
+                      {a}
+                    </p>
+                  ))}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
     </section>
   );
 }
