@@ -64,7 +64,7 @@ def test_the_disagreements_of_the_case_are_collected_before_the_sandbox_goes(tmp
 
     DisagreementLog(tmp_path).record(
         capability="cupon", state=f"ESTE MENSAJE DEL CLIENTE\n[1] {DATA}", rule=True, jev=False, model="m",
-        answers=[{"q": "cupon.habla", "p": 0.1}], session_id="wa_570123456789", redact=("Carolina Pérez",),
+        answers=[{"q": "cupon.habla", "p": 0.1}], session_id="wa_573001234567", redact=("Carolina Pérez",),
     )
 
     [row] = case_disagreements(tmp_path, redact=["Carolina Pérez"])
