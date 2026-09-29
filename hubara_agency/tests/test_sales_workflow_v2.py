@@ -994,6 +994,21 @@ async def test_v2_delivers_a_send_reply_the_engine_approved_with_jev(
     assert jev_decides_the_recipient.calls
 
 
+async def test_v1_is_unchanged_even_with_jev_it_still_filters_the_coupon_code(
+    tmp_path: Path, whatsapp: list[str], jev_decides_the_recipient: FakePerceptionAdapter
+) -> None:
+    """V1 no pasa por el egreso del motor: con el mismo control encendido, su
+    guarda y el detector del envío siguen decidiendo como hoy."""
+    tracker = await _run(
+        HubaraSalesSessionWorkflow, tmp_path,
+        responses=[_final_resp(COUPON)],
+        replace=[send_whatsapp_message_activity],
+    )
+
+    assert (whatsapp, _persisted(tracker)) == ([], [])
+    assert not jev_decides_the_recipient.calls
+
+
 async def test_v2_with_rules_the_engine_rejects_the_coupon_code_and_nothing_claims_it_went_out(
     tmp_path: Path, whatsapp: list[str]
 ) -> None:
