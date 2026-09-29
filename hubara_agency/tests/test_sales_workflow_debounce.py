@@ -67,6 +67,8 @@ class Tracker:
         self.record_turn_calls: int = 0
         self.record_turn_new_messages: list[list[dict]] = []
         self.ghosting_calls: int = 0
+        # Con qué sesión llamó el workflow al aviso de ghosting ("" = V1).
+        self.ghosting_sessions: list[str] = []
         # Auditoría CAPI 2026-09-08: sesiones cuyo outbox flusheó el workflow.
         self.capi_flush_calls: list[str] = []
         self.start_sales_calls: int = 0
@@ -248,8 +250,9 @@ def _make_fake_activities(
         tracker.persist_calls.append((session_id, message))
 
     @activity.defn(name="decide_ghosting_action")
-    async def fake_ghosting() -> str:
+    async def fake_ghosting(session_id: str = "") -> str:
         tracker.ghosting_calls += 1
+        tracker.ghosting_sessions.append(session_id)
         # Hook por número de ciclo ghost (1-based): permite signalear el
         # workflow MIENTRAS corre esta activity — el mensaje queda en
         # `_pending` ANTES de que el workflow appendée el trigger (orden

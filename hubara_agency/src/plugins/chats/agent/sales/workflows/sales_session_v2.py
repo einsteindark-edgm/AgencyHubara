@@ -318,8 +318,11 @@ class HubaraSalesSessionWorkflowV2:
                     workflow.logger.info(
                         f"Ghosting detectado para sesión {session.session_id}. Inyectando trigger de auto-etiquetado."
                     )
+                    # Cierre por abandono (F8): con la sesión, el motor puede
+                    # decidir la etiqueta y el aviso le dice al LLM cuál usar.
                     ghost_trigger = await workflow.execute_activity(
                         decide_ghosting_action,
+                        session.session_id,
                         start_to_close_timeout=timedelta(seconds=10),
                         retry_policy=RetryPolicy(maximum_attempts=2),
                     )

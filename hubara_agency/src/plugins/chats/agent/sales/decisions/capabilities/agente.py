@@ -9,6 +9,10 @@ una pregunta cerrada decide ANTES de gastar el turno del LLM.
   gancho). Si sobra, no se redacta nada: desaparecen las fugas por
   deliberación del turno de remarketing. Si no sobra, o si Jev duda, el LLM
   sigue pudiendo abstenerse con NO_MESSAGE como hoy.
+* cierre — la etiqueta del cierre por ghosting (confirmado sin datos,
+  interesado, rechazo, compra exitosa). Con Jev, el aviso de ghosting le dice
+  al LLM cuál usar (la mecánica del cierre queda igual); el código pone los
+  invariantes del pedido.
 """
 from __future__ import annotations
 
@@ -95,4 +99,85 @@ class Contactar:
 
 CONTACTAR = Contactar()
 
-__all__ = ["CONTACTAR", "Contactar", "Contacto"]
+
+@dataclass(frozen=True)
+class Abandono:
+    """La conversación que el cliente dejó (lo último al final) y lo que el
+    código ya sabe del pedido."""
+
+    transcript: str
+    purchase_confirmed: bool = False
+    order_registered: bool = False
+
+
+def _choice(result: Any, qid: str) -> tuple[str | None, float]:
+    answer = answer_of(result, qid)
+    choice = getattr(answer, "choice", None)
+    if not choice:
+        return None, 0.0
+    probs = dict(getattr(answer, "probs", ()) or ())
+    p = probs.get(choice, getattr(answer, "confidence", None))
+    return choice, float(p) if isinstance(p, (int, float)) else 0.0
+
+
+class CierrePorAbandono:
+    """La etiqueta del cierre por ghosting (F8). Hoy la elige el LLM con el
+    aviso de ghosting (regla = "": decide el LLM). Con Jev, la lectura de la
+    conversación la decide y el aviso le dice al LLM cuál usar. Valor: la
+    etiqueta en mayúsculas, o "" (decide el LLM). Invariantes del código:
+    pedido registrado = COMPRA_EXITOSA; CONFIRMADO_SIN_DATOS sin confirmación
+    de compra = INTERESADO (la misma degradación de la tool); COMPRA_EXITOSA
+    sin pedido registrado no existe (decide el LLM)."""
+
+    name = "cierre"
+    timeout_s = 2.0
+    thresholds: Mapping[str, float] = {"choice": 0.85}
+    _OPTIONS: Mapping[str, str] = {
+        "confirmado_sin_datos": "confirmó la compra pero no terminó de dar los datos de envío",
+        "interesado": "mostró interés y quedó pensándolo, o no está claro",
+        "rechazo": "dijo que no, o pedía algo que no vendemos y se fue, o solo resolvió una duda y se despidió",
+        "compra_exitosa": "compró y el pedido quedó registrado",
+    }
+
+    def rule(self, inp: Abandono) -> str:
+        return ""  # hoy decide el LLM
+
+    def ask(self, inp: Abandono) -> tuple[str, list[TypedQuestion]] | None:
+        if not inp.transcript.strip():
+            return None
+        state = (
+            "Conversación de una tienda con un cliente por WhatsApp; el cliente dejó de responder "
+            "(lo último al final):\n"
+            f"{inp.transcript.strip()}\n\n"
+            f"Lo que ya sabe la tienda: el cliente confirmó la compra: {'sí' if inp.purchase_confirmed else 'no'}; "
+            f"pedido registrado: {'sí' if inp.order_registered else 'no'}."
+        )
+        return state, [
+            TypedQuestion(
+                id="cierre.etiqueta", kind="choice", text="¿Cómo quedó la conversación?", criteria=dict(self._OPTIONS)
+            )
+        ]
+
+    def decide(self, inp: Abandono, result: Any, rule: str, thresholds: Mapping[str, float]) -> str | None:
+        th = {**self.thresholds, **thresholds}
+        choice, p = _choice(result, "cierre.etiqueta")
+        if choice not in self._OPTIONS or p < th["choice"]:
+            return None
+        return str(choice).upper()
+
+    def floor(self, inp: Abandono, rule: str, jev: str) -> str:
+        if inp.order_registered:
+            return "COMPRA_EXITOSA"
+        if jev == "COMPRA_EXITOSA":
+            return ""
+        if jev == "CONFIRMADO_SIN_DATOS" and not inp.purchase_confirmed:
+            return "INTERESADO"
+        return jev
+
+    def same(self, a: str, b: str) -> bool:
+        return (a or "") == (b or "")
+
+
+CIERRE = CierrePorAbandono()
+
+__all__ = ["CIERRE", "CONTACTAR", "Abandono", "CierrePorAbandono", "Contactar", "Contacto"]

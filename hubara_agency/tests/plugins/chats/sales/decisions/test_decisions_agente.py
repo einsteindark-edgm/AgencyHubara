@@ -44,3 +44,45 @@ def test_jev_says_the_touch_is_not_needed_or_leaves_it_to_the_llm() -> None:
     assert CONTACTAR.decide(inp, _result(_noul("contactar.sobra", 0.93)), False, {}) is True
     assert CONTACTAR.decide(inp, _result(_noul("contactar.sobra", 0.04)), False, {}) is False
     assert CONTACTAR.decide(inp, _result(_noul("contactar.sobra", 0.5)), False, {}) is None
+
+
+# ── cierre por abandono (F8): la etiqueta del ghosting ──
+#
+# Hoy la decide el LLM con el aviso de ghosting (4 etiquetas; una regla
+# degrada después). Con Jev, la lectura de la conversación la decide y el
+# aviso le dice al LLM cuál usar (el LLM solo ejecuta la tool: la mecánica
+# del cierre queda igual). El código pone los invariantes: pedido registrado
+# = COMPRA_EXITOSA; CONFIRMADO_SIN_DATOS sin confirmación = INTERESADO.
+
+from src.plugins.chats.agent.sales.decisions.capabilities.agente import CIERRE, Abandono  # noqa: E402
+
+
+def _tag(choice: str, p: float) -> TypedAnswer:
+    return TypedAnswer(id="cierre.etiqueta", kind="choice", choice=choice, probs=((choice, p),), confidence=p)
+
+
+def test_today_the_llm_picks_the_closing_tag() -> None:
+    assert CIERRE.rule(Abandono(transcript=TRANSCRIPT)) == ""
+
+
+def test_jev_reads_how_the_abandoned_conversation_ended() -> None:
+    state, [question] = CIERRE.ask(Abandono(transcript=TRANSCRIPT, purchase_confirmed=False, order_registered=False))
+    inp = Abandono(transcript=TRANSCRIPT)
+
+    assert question.kind == "choice" and set(question.options) == {
+        "confirmado_sin_datos", "interesado", "rechazo", "compra_exitosa",
+    }
+    assert TRANSCRIPT in state and "confirmó la compra: no" in state
+    assert CIERRE.decide(inp, _result(_tag("rechazo", 0.93)), "", {}) == "RECHAZO"
+    assert CIERRE.decide(inp, _result(_tag("rechazo", 0.6)), "", {}) is None
+
+
+def test_the_code_keeps_the_invariants_of_the_closing_tag() -> None:
+    registered = Abandono(transcript=TRANSCRIPT, order_registered=True)
+    unconfirmed = Abandono(transcript=TRANSCRIPT, purchase_confirmed=False)
+    confirmed = Abandono(transcript=TRANSCRIPT, purchase_confirmed=True)
+
+    assert CIERRE.floor(registered, "", "INTERESADO") == "COMPRA_EXITOSA"
+    assert CIERRE.floor(unconfirmed, "", "CONFIRMADO_SIN_DATOS") == "INTERESADO"
+    assert CIERRE.floor(confirmed, "", "CONFIRMADO_SIN_DATOS") == "CONFIRMADO_SIN_DATOS"
+    assert CIERRE.floor(unconfirmed, "", "COMPRA_EXITOSA") == "", "sin pedido registrado no hay compra exitosa"

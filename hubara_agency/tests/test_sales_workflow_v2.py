@@ -608,3 +608,15 @@ async def test_v2_names_the_missing_required_tool_before_closing_with_text(tmp_p
 
 def _final(text: str) -> LLMResponseData:
     return LLMResponseData(content=text, finish_reason="stop", has_tool_calls=False, tool_calls=[])
+
+
+async def test_v2_asks_the_engine_how_to_close_an_abandoned_conversation(tmp_path: Path) -> None:
+    """Cierre por abandono (F8): el V2 le pasa la sesión al aviso de ghosting
+    (el motor decide la etiqueta); el V1 lo llama sin sesión (el aviso de hoy)."""
+    responses = [_final("¡Hola! ¿En qué te ayudo? 🤍")]
+    v2 = await _run(HubaraSalesSessionWorkflowV2, tmp_path, responses=list(responses))
+    v1 = await _run(HubaraSalesSessionWorkflow, tmp_path, responses=list(responses))
+
+    assert v2.ghosting_sessions == ["wa_v2"]
+    assert v1.ghosting_sessions == [""]
+

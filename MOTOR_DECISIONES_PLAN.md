@@ -113,7 +113,8 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 
 ### F8 · Decisiones del agente y asuntos nuevos
 - [x] contactar (remarketing): «¿Sobra un mensaje proactivo ahora?» lo pregunta la activity que lee el contexto del gancho, ANTES de redactar (`skip_touch` en el resultado grabado). Si sobra, el workflow toma el camino de la abstención (consume el peldaño, devuelve el routing, termina) sin turno del LLM ni «escribiendo». Remarketing no importa el motor (contrato `agents-independent`): el worker le conecta el decisor por el enchufe `chats/shared/agent_decisions`. Nace en `reglas` = decide el LLM como hoy. Replay de 89 historias reales de remarketing: 89/89.
-- [ ] cierre por abandono · Order Sentinel · asuntos nuevos del cuestionario.
+- [x] cierre por abandono (workflow V2): el aviso de ghosting recibe la sesión; la capacidad `cierre` decide la etiqueta {confirmado sin datos, interesado, rechazo, compra exitosa} y el aviso le dice al LLM cuál usar (solo ejecuta las tools: la mecánica del cierre queda igual). Invariantes del código: pedido registrado = COMPRA_EXITOSA; CONFIRMADO_SIN_DATOS sin confirmación = INTERESADO. V1 llama la activity sin sesión: el aviso de hoy.
+- [ ] Order Sentinel (GraphAgents) · asuntos nuevos del cuestionario.
 
 ## 4. Vara para encender cada capacidad
 - Laboratorio: el bot nuevo igual o mejor que A1 en el scorecard, sin checks que empeoren (los checks que usan detectores de producción los califica el juez).

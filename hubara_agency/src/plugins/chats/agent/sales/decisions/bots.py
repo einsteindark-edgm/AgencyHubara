@@ -50,7 +50,7 @@ CAPABILITIES: tuple[str, ...] = (
     # Texto del LLM en tools y activities (F5) y respaldo en sombra (F6).
     "persona", "enumeracion", "monto", "selector", "afirmacion",
     # Decisiones del agente (F8).
-    "contactar",
+    "contactar", "cierre",
     # Egreso del workflow V2 (F4/F5): solo actúan en conversaciones con V2.
     "destinatario", "rescate", "portavelas", "saludo",
 )
