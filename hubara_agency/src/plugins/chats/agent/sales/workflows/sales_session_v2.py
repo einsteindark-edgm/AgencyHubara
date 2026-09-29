@@ -161,6 +161,8 @@ class HubaraSalesSessionWorkflowV2:
         self._perception_mode: str = "off"
         self._perception_profile: str = _DEFAULT_PERCEPTION_PROFILE
         self._pending_topics: list[str] = []
+        # El turno en curso trae un traspaso de remarketing (sin saludo).
+        self._turn_has_handoff: bool = False
 
     @workflow.signal
     async def send_message(
@@ -238,7 +240,9 @@ class HubaraSalesSessionWorkflowV2:
         inp = EgressInput(
             session_id=session_id,
             final_text=final_text,
-            first_contact=bool(context.get("first_contact")),
+            # Un traspaso de remarketing no es un primer contacto para el
+            # saludo: el cliente ya conversó (el `msg` coalesceado no lo dice).
+            first_contact=bool(context.get("first_contact")) and not self._turn_has_handoff,
             tools_used=[str(t) for t in context.get("tools_used") or []],
             outbound_tool_texts=[str(t) for t in context.get("outbound_tool_texts") or []],
             order_registered=bool(context.get("order_registered")),
@@ -381,6 +385,9 @@ class HubaraSalesSessionWorkflowV2:
                 self._force_shutdown = False
                 turn_is_admin = False
             admin_no_send = turn_is_admin
+            # ¿El turno trae un traspaso de remarketing? (el coalesce lo pasa a
+            # `plugin_context`: se mira la ráfaga cruda).
+            self._turn_has_handoff = any(p.is_handoff for p in raw_batch)
 
             self._processing = True
             try:

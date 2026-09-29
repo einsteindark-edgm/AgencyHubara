@@ -421,9 +421,12 @@ async def test_two_signals_coalesce_into_single_turn(tmp_path: Path) -> None:
     #
     # En el path coalesce: 1 turno user (envia WhatsApp) + 1 turno ghost
     # (NO envia WhatsApp porque _force_shutdown=True bloquea el send_whatsapp).
-    assert len(tracker.send_whatsapp_calls) == 1, (
+    # Primer contacto: la Burbuja 1 del guion va antes de la respuesta
+    # (2026-09-29, también en turnos de texto); el coalesce se mide sin ella.
+    replies = [m for (_s, m) in tracker.send_whatsapp_calls if m != FIRST_CONTACT_GREETING]
+    assert len(replies) == 1, (
         f"Coalesce roto: deberia haber 1 sola respuesta del bot, "
-        f"hubo {len(tracker.send_whatsapp_calls)}: {tracker.send_whatsapp_calls}"
+        f"hubo {len(replies)}: {tracker.send_whatsapp_calls}"
     )
 
     # build_prompt recibio AMBOS mensajes concatenados en una sola llamada
@@ -2223,6 +2226,39 @@ async def test_first_contact_greeting_not_duplicated_when_intro_text_greets(
     assert tracker.first_contact_greeting_calls == 0
 
 
+@pytest.mark.asyncio
+async def test_first_contact_text_turn_greets_before_the_text(
+    tmp_path: Path,
+) -> None:
+    """Caso del laboratorio (CTWA de Halloween, 2026-09-28): el LLM saludó
+    JUNTO a `search_products` (el default-deny lo descartó) y cerró el turno
+    con un TEXTO sin saludo. La regla vieja solo saludaba si el turno salía
+    por una tool que le escribe al cliente → el cliente recibió la lista sin
+    bienvenida. Contrato: la Burbuja 1 del guion va ANTES del texto."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    halloween = "Tenemos 4 piezas de la colección de Halloween, todas con aroma a frutos rojos."
+
+    await _run_ctwa_first_message(
+        tracker,
+        workspace,
+        responses=[_greeting_then_search_resp(), _final_resp(halloween)],
+    )
+
+    sent = [m for (_s, m) in tracker.send_whatsapp_calls]
+    assert FIRST_CONTACT_GREETING in sent, (
+        f"El primer contacto de texto salió sin saludo: sends={sent} "
+        f"timeline={tracker.timeline}"
+    )
+    assert halloween in sent, f"El texto del turno no salió: {sent}"
+    assert sent.index(FIRST_CONTACT_GREETING) < sent.index(halloween), (
+        f"El saludo no precede al texto: {sent}"
+    )
+    assert sent.count(FIRST_CONTACT_GREETING) == 1
+    assert tracker.first_contact_greeting_calls == 1
+
+
 # =============================================================================
 # Guarda de enumeración de variantes (run 9bd495be, 2026-09-14)
 # =============================================================================
@@ -3434,7 +3470,8 @@ async def test_the_llm_remembers_exactly_the_salvaged_answer_it_sent(
             await handle.result()
 
     sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
-    assert sent == [answer], sent
+    # Primer contacto sin saludo en el texto: la Burbuja 1 va antes (2026-09-29).
+    assert sent == [FIRST_CONTACT_GREETING, answer], sent
     customer_turn = tracker.record_turn_new_messages[0]
     remembered = [
         m.get("content") for m in customer_turn if m.get("role") == "assistant"

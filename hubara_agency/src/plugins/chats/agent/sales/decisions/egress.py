@@ -21,12 +21,13 @@ pregunta cerrada a Jev (`sombra` / `jev`), sobre el marco de
   saludo        «¿alguno de estos mensajes ya saluda?». Regla:
                 `should_send_first_contact_greeting` con las entradas del V1.
 
-`decide_egress` las compone en el MISMO orden que el V1: (0) el preámbulo, si
-el turno trae lo que escribió el LLM antes del saneador (`raw_text`: el V1
-sanea con la regla dentro de `run_agent_turn`), (1) rescate antes de grabar
-(el V1 lo hace dentro de `run_agent_turn`), (2) saludo con ese texto,
-(3) portavelas, (4) destinatario y rescate sobre lo que quedó. Con `reglas` el
-resultado es idéntico al del V1 (tests de equivalencia). Lo que no es texto
+`decide_egress` las compone en el orden del V1: (0) el preámbulo, si el turno
+trae lo que escribió el LLM antes del saneador (`raw_text`: el V1 sanea con la
+regla dentro de `run_agent_turn`), (1) rescate antes de grabar (el V1 lo hace
+dentro de `run_agent_turn`), (3) portavelas, (4) destinatario y rescate sobre
+lo que quedó y (5) el saludo con lo que DE VERDAD sale (un texto frenado no
+cuenta; el V1 lo decidía antes de frenarlo). Con `reglas` el resultado es
+idéntico al del V1 salvo ese caso (tests de equivalencia). Lo que no es texto
 del LLM no se le pregunta a Jev: el centinela `NO_MESSAGE` (protocolo) y el
 texto de un turno administrativo (nunca sale) los decide la regla, y el mismo
 texto se juzga una sola vez.
@@ -44,7 +45,7 @@ from typing import Any
 from src.plugins.chats.agent.sales.decisions.capabilities import BY_JEV, Verdict, decide
 from src.plugins.chats.agent.sales.decisions.contracts import EgressInput, EgressOutput
 from src.plugins.chats.agent.sales.decisions.plan import answer_of
-from src.plugins.chats.agent.sales.first_contact_greeting import should_send_first_contact_greeting
+from src.plugins.chats.agent.sales.first_contact_greeting import greeting_applies, should_send_first_contact_greeting
 from src.sdk.connectorkit import TypedQuestion
 from src.sdk.textkit import (
     is_no_message_abstention,
@@ -446,8 +447,10 @@ class Portavelas:
 
 class Saludo:
     """¿Hace falta la burbuja de bienvenida? Solo en el primer contacto y si el
-    turno salió por una tool que le toca al cliente (eso lo sabe el código);
-    Jev contesta si alguno de los textos que el cliente recibe ya saluda."""
+    turno le manda algo al cliente — una tool que le escribe o un texto (eso
+    lo sabe el código); Jev contesta si alguno de los textos que el cliente
+    recibe ya saluda. Los turnos de texto cuentan desde el 2026-09-29 (caso de
+    Halloween del laboratorio: saludaba DESPUÉS, en el complemento)."""
 
     name = SALUDO
     timeout_s = 1.5
@@ -459,10 +462,10 @@ class Saludo:
         )
 
     def ask(self, inp: GreetingCheck) -> tuple[str, list[TypedQuestion]] | None:
-        # Sin textos, la regla ya contesta la parte estructural (primer
-        # contacto y tool que le toca al cliente): con eso se sabe si aplica.
-        applies = should_send_first_contact_greeting(
-            first_contact=inp.first_contact, tools_used=list(inp.tools_used), client_texts=[]
+        # La parte estructural (primer contacto y el turno le manda algo al
+        # cliente) la sabe el código; Jev solo dice si algo ya saluda.
+        applies = greeting_applies(
+            first_contact=inp.first_contact, tools_used=list(inp.tools_used), client_texts=list(inp.client_texts)
         )
         texts = [t.strip() for t in inp.client_texts if t and t.strip()]
         if not applies or not texts or len(texts) > _MAX_PARTS:
@@ -552,15 +555,6 @@ async def decide_egress(
                 if by == BY_JEV:
                     # Jev ya dijo que cada párrafo que quedó es para el cliente.
                     judged[(DESTINATARIO, rescued)] = (False, BY_JEV)
-    # 2 · Saludo, con los textos que el cliente recibe en el turno.
-    greeting_needed, _ = await run(
-        Saludo(),
-        GreetingCheck(
-            first_contact=bool(inp.first_contact),
-            tools_used=tuple(inp.tools_used or ()),
-            client_texts=(*(inp.outbound_tool_texts or ()), llm_text),
-        ),
-    )
     guards: list[dict[str, str]] = []
     # 3 · Portavelas: solo en el pedido registrado sin portavelas.
     final_text = llm_text
@@ -580,6 +574,17 @@ async def decide_egress(
             final_text, salvaged_after = rescued, True
         else:
             blocked = True
+    # 5 · Saludo, con lo que el cliente DE VERDAD recibe en el turno (un texto
+    # frenado no cuenta: sin nada que salga no hay bienvenida suelta).
+    goes_out = "" if (inp.admin_turn or blocked) else final_text
+    greeting_needed, _ = await run(
+        Saludo(),
+        GreetingCheck(
+            first_contact=bool(inp.first_contact),
+            tools_used=tuple(inp.tools_used or ()),
+            client_texts=(*(inp.outbound_tool_texts or ()), goes_out),
+        ),
+    )
     return EgressOutput(
         text="" if (inp.admin_turn or blocked) else final_text,
         blocked=blocked,

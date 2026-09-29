@@ -104,6 +104,20 @@ def v1_egress(
     }
 
 
+def v2_greeting_difference(expected: dict, context: dict) -> dict:
+    """Diferencia DOCUMENTADA con el V1 (2026-09-29): el egreso decide el
+    saludo con lo que DE VERDAD sale. Si el texto se frena (texto interno o el
+    centinela) y el turno no manda nada más, el bot nuevo no manda una
+    bienvenida suelta; el V1 la decide antes de frenar el texto (su guarda de
+    texto administrativo corre después, con sus propios `workflow.patched`)."""
+    sends_other = bool(context.get("outbound_tool_texts")) or any(
+        str(t).startswith(("present_", "send_", "request_")) for t in context.get("tools_used", ())
+    )
+    if expected["text"] == "" and not sends_other:
+        return {**expected, "greeting_needed": False}
+    return expected
+
+
 def _inp(text: str, **kw) -> EgressInput:
     return EgressInput(
         session_id=SID,
@@ -190,7 +204,7 @@ def _no_real_oracle(monkeypatch):
 @pytest.mark.parametrize("text", CORPUS, ids=lambda t: (t[:24] or "vacío").replace(" ", "_"))
 async def test_with_rules_the_egress_is_exactly_what_v1_decides(text: str, context: dict, _no_real_oracle) -> None:
     out = await egress.decide_egress(_inp(text, **context), provider_of=_rules, profile_id="jev-v1")
-    expected = v1_egress(text, **context)
+    expected = v2_greeting_difference(v1_egress(text, **context), context)
 
     got = {k: getattr(out, k) for k in expected}
     assert got == expected
@@ -364,8 +378,23 @@ async def test_jev_sees_a_greeting_the_regex_misses(_no_real_oracle) -> None:
     ) is True  # la regla de hoy mandaba otra bienvenida
 
 
-async def test_no_outbound_tool_means_no_question_about_the_greeting(_no_real_oracle) -> None:
+async def test_a_text_turn_on_first_contact_asks_jev_about_the_greeting(_no_real_oracle) -> None:
+    """Caso del laboratorio (Halloween, 2026-09-28): el turno salió como texto
+    tras `search_products` y nada saludaba; el bot nuevo lo notó recién en la
+    verificación y saludó DESPUÉS, en el complemento. Ahora el egreso pide la
+    bienvenida antes del texto."""
+    _no_real_oracle["fake"] = FakePerceptionAdapter({"egreso.saludo": _noul("egreso.saludo", 0.04)})
+
     out = await _egress_with("jev", _inp(NO_GREETING, first_contact=True, tools_used=("search_products",)))
+
+    assert out.greeting_needed is True
+    assert any("egreso.saludo" in ids for _s, ids in _no_real_oracle["fake"].calls)
+    saludo = next(v for v in out.verdicts if v["capability"] == "saludo")
+    assert (saludo["by"], saludo["value"]) == ("jev", True)
+
+
+async def test_a_turn_that_sends_nothing_never_asks_about_the_greeting(_no_real_oracle) -> None:
+    out = await _egress_with("jev", _inp("", first_contact=True, tools_used=("search_products",)))
 
     assert out.greeting_needed is False
     assert not any("egreso.saludo" in ids for _s, ids in _no_real_oracle["fake"].calls)
@@ -528,7 +557,7 @@ async def test_with_rules_the_raw_text_gives_exactly_what_v1_decides(raw: str, c
     today = sanitize_llm_text(raw).text
 
     out = await egress.decide_egress(_inp(today, raw_text=raw, **context), provider_of=_rules, profile_id="jev-v1")
-    expected = v1_egress(today, **context)
+    expected = v2_greeting_difference(v1_egress(today, **context), context)
 
     assert {k: getattr(out, k) for k in expected} == expected
     assert out.sanitizer == {}  # el mismo saneado que el turno: nada que corregir en la traza

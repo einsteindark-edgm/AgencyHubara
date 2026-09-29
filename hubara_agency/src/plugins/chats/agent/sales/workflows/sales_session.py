@@ -684,6 +684,13 @@ class HubaraSalesSessionWorkflow:
             admin_no_send = turn_is_admin and workflow.patched(
                 "admin-turn-no-send-v1"
             )
+            # ¿El turno trae un traspaso de remarketing? El coalesce lo pasa a
+            # `plugin_context` y el `msg` sale con `is_handoff=False`: se mira
+            # la ráfaga cruda (el saludo de primer contacto no va en un
+            # traspaso: el cliente ya conversó con remarketing).
+            turn_has_handoff = any(
+                p.is_handoff for p in (raw_batch or msgs_to_process)
+            )
 
             for msg in msgs_to_process:
                 self._processing = True
@@ -1192,9 +1199,19 @@ class HubaraSalesSessionWorkflow:
                     # workflow.patched(): histories en vuelo pre-deploy no
                     # tienen estos sends; tras el drain (idle 1min en Sales),
                     # eliminar el if + `deprecate_patch("first-contact-greeting-v1")`.
+                    # TURNOS DE TEXTO (caso del laboratorio, 2026-09-28, CTWA
+                    # de Halloween): el LLM saludó junto a `search_products`
+                    # (descartado) y cerró con un TEXTO sin saludo; la regla
+                    # vieja solo miraba tools outbound. `text_turns` lo cubre;
+                    # las histories en vuelo siguen con la regla vieja
+                    # (`first-contact-greeting-text-turns`).
+                    greeting_text_turns = workflow.patched(
+                        "first-contact-greeting-text-turns"
+                    )
                     if (
                         result.first_contact
                         and not msg.is_handoff
+                        and not (greeting_text_turns and turn_has_handoff)
                         and not self._force_shutdown
                         and not abstained
                         and not admin_no_send
@@ -1207,6 +1224,7 @@ class HubaraSalesSessionWorkflow:
                                 *result.outbound_tool_texts,
                                 result.final_content or "",
                             ],
+                            text_turns=greeting_text_turns,
                         )
                     ):
                         greeting = await workflow.execute_activity(
@@ -1215,9 +1233,9 @@ class HubaraSalesSessionWorkflow:
                             retry_policy=RetryPolicy(maximum_attempts=3),
                         )
                         workflow.logger.info(
-                            "first-contact-greeting: el turno salió por tool "
+                            "first-contact-greeting: el primer contacto salía "
                             f"sin saludo (tools={result.tools_used}); enviando "
-                            "la burbuja de apertura antes del menú."
+                            "la burbuja de apertura antes que todo lo demás."
                         )
                         _note_guard(
                             trace_steps, trace_guards, "first_contact_greeting",
