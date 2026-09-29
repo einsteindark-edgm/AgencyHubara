@@ -945,6 +945,35 @@ El modo de cada conversación SHALL salir del estado `<vault>/_rollout/perceptio
 - WHEN mientras tanto otro operador pulsa Apagar
 - THEN el apagado se escribe de inmediato y la subida responde 409 `changed` sin tocar el estado
 
+### Requirement: El bot nuevo no tiene reglas de texto fuera del motor (revisión 2026-09-29)
+
+En una conversación del workflow V2 (`HubaraSalesSessionWorkflowV2`), toda lectura semántica del texto del cliente o del LLM SHALL decidirse en el motor de decisiones: una capacidad con su pregunta a Jev, su política y la regla de hoy como respaldo DENTRO del motor. Ninguna regla de texto MUST volver a juzgar después lo que el motor decidió. V1, remarketing y ETA MUST seguir byte a byte como hoy. El laboratorio (brazo B) y el perfil por defecto de producción MUST correr el MISMO perfil del bot nuevo (`jev-v3`).
+
+#### Scenario: El envío respeta lo que decidió el motor
+
+- GIVEN una conversación V2 con `destinatario` en Jev y un texto «Usa el código VELAS_10 al pagar» que el egreso aprobó
+- WHEN el workflow lo envía
+- THEN `send_whatsapp_message_activity` recibe el 3.er argumento `decided_by_engine=True`, no vuelve a pasar el detector de fugas y el texto sale; el panel y el historial del LLM guardan lo que salió
+- AND en V1 (dos argumentos) el mismo texto sigue frenado en el envío
+
+#### Scenario: El acuse tras la despedida lo decide el motor (capacidad `acuse`)
+
+- GIVEN un episodio cerrado y el cliente escribe una cortesía larga que la regla no conoce
+- WHEN el ingest lee el mensaje con el bot de la sesión en Jev
+- THEN solo se absorbe (no abre episodio ni despierta al bot) si Jev está seguro (p ≥ 0,90); con duda, error o un «?» en el mensaje, el bot despierta
+
+#### Scenario: La muletilla del modelo la decide el motor (capacidad `preambulo`)
+
+- GIVEN el LLM empieza su respuesta con una frase de presentación («Aquí tienes:»)
+- WHEN el egreso de V2 (o la tool) decide el texto con el bot en Jev
+- THEN Jev decide oración por oración (corta con p ≥ 0,85, deja con p ≤ 0,15); si duda, decide la regla de hoy; nunca deja el texto vacío
+
+#### Scenario: El laboratorio mide el bot nuevo completo
+
+- GIVEN una corrida con el brazo B
+- WHEN el sandbox corre cada turno real
+- THEN usa `jev-v3`, deja la ráfaga en el historial antes del turno, decide cupón y fuera de catálogo con el motor, le da a las lecturas solo lo que escribió el cliente (el texto de la foto, el botón, el carrito) y publica con cada turno las decisiones del motor y las caídas de Jev a la regla
+
 ## Out of scope
 
 - Detalle del prompt engineering / SOUL.md / USER.md — viven en `hubara_vault/_templates/sales/`

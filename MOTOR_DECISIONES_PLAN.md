@@ -80,6 +80,7 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [x] cupón · fuera de catálogo · cantidad (`capabilities/lecturas_pedido.py`): cupón y fuera de catálogo en el ingest (`read_coupon_talk`, `read_catalog_gap`); la cantidad en la activity del prompt. Fuera de catálogo: Jev solo puede QUITAR términos (el piso es la lista de la regla).
 - [x] mapeos (`capabilities/mapeos.py`), choice sobre la lista cerrada más «ambiguo»/«ninguno», valor validado contra la lista: categoría (`search_products`), familia de color e ítem del pedido (`set_order_slot`), zona de envío (`present_order_confirmation`, `register_order`).
 - [x] producto nombrado (remarketing: qué ficha ve el gancho; Jev SUMA el producto nombrado con otras palabras, los exactos se quedan) y fuera de catálogo en el contexto de remarketing (la misma capacidad del ingest: Jev solo quita), por el enchufe `decide_catalog_context` de `chats/shared/agent_decisions` que conecta el worker de remarketing.
+- [x] acuse (2026-09-29): «¿Este mensaje es solo un acuse o una cortesía a la despedida, sin pedir ni contar nada nuevo?» en el ingest (enchufe de lecturas, `EngineReadings.read_ack`); absorbe solo con p ≥ 0,90, un «?» nunca se absorbe y con duda el bot despierta; `is_closing_ack` queda de respaldo. Llegó de main (#379) después del inventario: regla 4.
 - [ ] verdad de producto (remarketing): hoy la decide el workflow de remarketing (`invented_product_claim`); por el diseño, lo que decide un workflow pasa al motor solo en un workflow nuevo (un V2 de remarketing).
 - [ ] ANTES de encender `zona_de_envio`: la API (`shipping_rate_for_city`) cobra la nacional a toda ciudad que no sea Bogotá; la tool acepta las dos tarifas fuera de Bogotá. Con Jev, Chía pagaría la de Bogotá en el bot y la nacional en la API. Decisión del operador: cuál es la correcta.
 - [ ] El laboratorio no ejercita cupón ni fuera de catálogo (`sandbox/turn.py::turn_context` arma la nota del cupón como en juego y nunca la de fuera de catálogo); los veredictos de F3 van a la cola y a los logs, no a la traza del turno.
@@ -98,6 +99,8 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [x] «Resumen interno en una plantilla»: el `motivo` (prosa del LLM al etiquetar) que el watchdog de remarketing manda como variable de plantilla pasa por `destinatario` (variante de plantilla: hoy no se revisa); si no es para el cliente, va el genérico. Enchufe `label_is_internal` de `chats/shared`.
 - [x] destinatario · rescate · saludo · portavelas en el egreso de V2 (`decisions/egress.py`): cada una con la regla de V1 de respaldo, métricas para su vara y redacción de los datos del cliente.
 - [x] destinatario también en las tools, con las MISMAS capacidades del egreso: `send_reply` (destinatario extendido + rescate por párrafo), el flush de los intents (destinatario básico; `_sanitize_intent_client_text` recibe la sesión) y el filtro de oraciones de cierre y escalación (destinatario por oración, en paralelo con persona). Caso: «Usa el código VELAS_10 al pagar» deja de rechazarse con Jev.
+- [x] preámbulo (2026-09-29): la muletilla de presentación del modelo («Aquí tienes:»), pieza de la familia C que el inventario no había asignado. Hasta 3 oraciones iniciales, nunca la última; corta con p ≥ 0,85; la regla es el paso 2 del saneador. En V2 la decide el egreso (paso 0, `EgressInput.raw_text`); en las tools, `guards.clean_llm_text`.
+- [x] envío (2026-09-29): el sitio «envío» del detector de fugas (diseño §07, `destinatario`: «reemplaza el detector de fugas en sus 8 sitios») no se había migrado: tiraba en silencio textos que Jev aprobó. V2 manda `decided_by_engine=True` (3.er argumento de `send_whatsapp_message_activity`); V1, remarketing y ETA siguen con el detector. La guarda de V2 se amplió (10 detectores más, imports relativos, `egress=` obligatorio, helpers del V1 recorridos).
 - [ ] verdad de producto (remarketing): ver F3 (requiere un V2 de remarketing).
 
 ### F6 · Tools, datos y etapas
@@ -131,3 +134,19 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - 2026-09-28: juez = Claude Code subido (`0b7edd25`), main al día, 4 tests con fecha fija arreglados.
 - 2026-09-28: F0 (`b9c43cbf`), F1 (`6ae85402`), F2 + lecturas de F3 (`5f7b7ffb`), métricas por capacidad (`5c0afbaf`), F6 motor (contrato de tools + guía de etapas). Replay de 59 historias reales de producción verde en cada paso.
 - 2026-09-28: F5 destinatario en las tools, F6 revisión de datos, F8 cierre por abandono, producto nombrado en remarketing, etiqueta del watchdog y F8 Order Sentinel. Replay de historias reales: ventas 59/59, remarketing 89/89, ETA 15/15, Order Sentinel 30/30.
+- 2026-09-29: revisión tras simular el caso real de las fotos (ver §6).
+
+## 6. Revisión del 2026-09-29
+
+Pedido del operador: simular el caso real en código de producción y en el bot nuevo del laboratorio, y revisar que el bot nuevo no tenga reglas quemadas y esté inyectado en los workers. Hallazgos y arreglos (rama `lab/todo`):
+- **El laboratorio no medía el bot nuevo.** El brazo B corría `jev-v1` (motor de F0). Ahora `jev-v3`, el mismo perfil por defecto de producción (Terraform incluido, con guarda). El sandbox además: deja la ráfaga en el historial antes del turno (sin eso `datos` e `item_del_pedido` le preguntaban a Jev sin el dato recién dado), decide cupón y fuera de catálogo con el motor, les da a las lecturas solo lo que escribió el cliente (texto de la foto, botón, carrito), publica con cada turno las decisiones del motor y la cola de desacuerdos, y cuenta las caídas de Jev a la regla y la segunda puerta de V2 (`contract_extra_round`). El modal del hilo muestra esas decisiones.
+- **Reglas quemadas que quedaban en V2:** el filtro del envío, el acuse tras la despedida y el preámbulo del modelo. Resueltas arriba (F3 y F5).
+- **Pendiente:**
+  - «¿Hay que responder tras un relevo?» (sin capacidad, lo decide el LLM por prompt).
+  - Verdad de producto en remarketing (requiere un V2 de remarketing).
+  - Los textos de `cta_url` (`body_text`, `button_text`) salen sin ningún chequeo en V1 y V2; cubrirlos cambia lo que ve un cliente de V1: decide el operador.
+  - `calibrated_model: null` en los tres perfiles: la guarda de calibración no actúa hasta calibrar con el banco de referencia.
+  - Historias reales de V2 congeladas y casos de `jev-v3` en la sonda diaria.
+  - PDF = comprobante y comprobante leído por la visión quedan como invariantes: Jev no ve archivos ni imágenes.
+  - Partición léxica «rojo y azul»: el diseño la dejó en código, pero el caso «una lila y otra azul» registró 2× lila (ver la foto → producto y los pedidos multi-variante como propuestas aparte).
+  - En el laboratorio local, 2 de 6 turnos de B cayeron a la regla por el tope de 3 s de Jev (latencia medida aparte: p50 0,55 s, máx. 1,06 s): vigilar la tasa de caídas en cada corrida.
