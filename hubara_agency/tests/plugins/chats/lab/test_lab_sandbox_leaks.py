@@ -182,7 +182,7 @@ def test_the_new_bot_runs_its_layers_inside_the_sandbox(tmp_path: Path) -> None:
     trace = result["trace"]
     assert trace["mode"] == "on"
     perception = next(s for s in trace["steps"] if s["kind"] == "perception")
-    assert perception["profile"] == "jev-v3" and perception.get("fallback") is None  # None no se persiste
+    assert perception["profile"] == "jev-v4" and perception.get("fallback") is None  # None no se persiste
     plan = next(s for s in trace["steps"] if s["kind"] == "plan")
     assert {"catalogo", "envio"} <= {c["topic"] for c in plan["checklist"]}
     verify = next(s for s in trace["steps"] if s["kind"] == "verify")

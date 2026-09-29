@@ -63,3 +63,23 @@ def test_the_topic_labels_come_from_the_questionnaire() -> None:
 def test_an_unknown_questionnaire_is_an_error_at_load_time() -> None:
     with pytest.raises(KeyError, match="rafaga-v0"):
         load_questionnaire("rafaga-v0")
+
+
+def test_rafaga_v4_asks_about_types_and_collections_of_candles() -> None:
+    """Con Jev real (experimento del 2026-09-29, mensajes del laboratorio con
+    el anuncio adelante), estas descripciones llevan «catálogo» de 0,11–0,32
+    a 0,97 y «disponibilidad» de 0,31 a 0,94, sin temas falsos en los
+    controles («Hola», «ok gracias», «¿Qué tamaño son?», «¿cuánto vale…?»)."""
+    v3, v4 = load_questionnaire("rafaga-v3"), load_questionnaire("rafaga-v4")
+    hints = {t: h for t, _l, h in v4.topics}
+
+    assert "tipo, estilo o colección de velas" in hints["catalogo"]
+    assert "si tienen o venden algo" in hints["disponibilidad"]
+    # Mismos ids y mismo resto (el banco de referencia califica por id): solo
+    # cambian esas dos descripciones.
+    assert [t for t, _l, _h in v4.topics] == [t for t, _l, _h in v3.topics]
+    assert {k: v for k, v in v4.raw.items() if k not in ("id", "topics")} == {
+        k: v for k, v in v3.raw.items() if k not in ("id", "topics")
+    }
+    changed = {t for (t, _l, h), (_t3, _l3, h3) in zip(v4.topics, v3.topics) if h != h3}
+    assert changed == {"catalogo", "disponibilidad"}

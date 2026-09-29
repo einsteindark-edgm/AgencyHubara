@@ -60,3 +60,20 @@ jev-v3:
   shadow: null
   calibrated_model: null
 
+# Revisión 2026-09-29: jev-v3 con el cuestionario rafaga-v4 (catálogo y
+# disponibilidad más amplios: el pedido de un tipo o colección de velas entra al
+# plan). Misma política y mismos umbrales que jev-v3.
+jev-v4:
+  oracle: jev-1.13
+  questions: rafaga-v4
+  policy: turno-v3
+  thresholds:
+    detect: 0.70
+    confidence: 0.60
+    covered: 0.70
+    answers: 0.70
+    purchase_confirm: 0.85
+    purchase_retract: 0.20
+    given: 0.85
+  shadow: null
+  calibrated_model: null

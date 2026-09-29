@@ -38,7 +38,7 @@ def test_by_default_every_conversation_gets_todays_bot(tmp_path: Path) -> None:
 
     assert bot.workflow == bots.WORKFLOW_V1
     assert bot.provider("baja") == "reglas" and bot.provider("compra") == "reglas"
-    assert bot.profile == "jev-v3"
+    assert bot.profile == "jev-v4"
 
 
 def test_the_lab_arm_picks_the_bot() -> None:
@@ -59,7 +59,7 @@ def test_the_lab_arms_separate_the_new_workflow_from_jev() -> None:
     assert (a1.workflow, b0.workflow, b.workflow) == (bots.WORKFLOW_V1, bots.WORKFLOW_V2, bots.WORKFLOW_V2)
     assert all(b0.provider(c) == "reglas" for c in ("compra", "retoma", "baja", "destinatario", "saludo"))
     assert (b0.layers, b0.profile) == ("off", bots.DEFAULT_PROFILE)
-    assert (b.provider("destinatario"), b.provider("compra"), b.layers, b.profile) == ("jev", "jev", "on", "jev-v3")
+    assert (b.provider("destinatario"), b.provider("compra"), b.layers, b.profile) == ("jev", "jev", "on", "jev-v4")
 
 
 def test_the_sandbox_pins_the_bot_of_its_arm_for_the_whole_process(tmp_path: Path, monkeypatch) -> None:

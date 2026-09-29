@@ -61,7 +61,7 @@ def test_diffs_fidelity_and_arena() -> None:
     assert s["diffs"]["A1:B"]["episode_pass"]["delta"] == 1.0
     assert s["fidelity"]["agreement"] == 1.0 and s["fidelity"]["ok"] is True
     arena_b = s["arena"]["B"]
-    assert arena_b["profile"] == "jev-v3" and arena_b["metrics"] == [{"arm": "B", "rep": 0, "turns": 1}]
+    assert arena_b["profile"] == "jev-v4" and arena_b["metrics"] == [{"arm": "B", "rep": 0, "turns": 1}]
     assert arena_b["topics"]["turns"] == 1
     assert (arena_b["topics"]["precision"], arena_b["topics"]["recall"]) == (1.0, 0.5)
     assert "A1" not in s["arena"]  # el bot actual no tiene clasificador

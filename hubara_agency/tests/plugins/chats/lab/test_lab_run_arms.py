@@ -140,7 +140,7 @@ async def test_each_arm_publishes_its_metrics(box, sims) -> None:  # noqa: F811
     await _run(box)
 
     b = json.loads(box["store"].get_bytes(f"runs/{RUN}/metrics/B/0.json"))
-    assert (b["arm"], b["rep"], b["profile"], b["turns"]) == ("B", 0, "jev-v3", 2)
+    assert (b["arm"], b["rep"], b["profile"], b["turns"]) == ("B", 0, "jev-v4", 2)
     assert b["perception"]["p95_ms"] == 300
     a1 = json.loads(box["store"].get_bytes(f"runs/{RUN}/metrics/A1/0.json"))
     assert a1["profile"] is None and a1["perception"] is None

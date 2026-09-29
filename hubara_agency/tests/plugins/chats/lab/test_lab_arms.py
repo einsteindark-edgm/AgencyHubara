@@ -21,7 +21,7 @@ def test_b0_is_the_new_workflow_with_todays_signal() -> None:
     assert "B0" not in ARM_PROFILES
 
 
-@pytest.mark.parametrize(("arm", "profile"), [("B", "jev-v3")])
+@pytest.mark.parametrize(("arm", "profile"), [("B", "jev-v4")])
 def test_new_bots_get_mode_on_and_their_profile(arm: str, profile: str) -> None:
     meta = signal_meta(arm, {"text": "hola", "ts_ms": 1_790_000_000_000, "kind": "text", "wamid": "wamid.X"})
 
@@ -36,16 +36,16 @@ def test_new_bots_get_mode_on_and_their_profile(arm: str, profile: str) -> None:
 
 
 def test_a_message_without_time_still_carries_the_mode() -> None:
-    assert signal_meta("B", {"text": "hola"}) == {"perception_mode": "on", "perception_profile": "jev-v3", "kind": "text"}
+    assert signal_meta("B", {"text": "hola"}) == {"perception_mode": "on", "perception_profile": "jev-v4", "kind": "text"}
 
 
 def test_the_new_bot_runs_the_complete_engine_profile() -> None:
-    """B es el bot nuevo completo: jev-v3 (contrato de herramientas, guía de
+    """B es el bot nuevo completo: jev-v4 (contrato de herramientas, guía de
     etapas, lectura del hilo). Con jev-v1 el laboratorio medía el motor de F0,
     no el bot que se enciende en producción (el mismo perfil por defecto)."""
     from src.plugins.chats.agent.sales.decisions.bots import DEFAULT_PROFILE, bot_for_arm
 
-    assert bot_for_arm("B").profile == "jev-v3" == DEFAULT_PROFILE
+    assert bot_for_arm("B").profile == "jev-v4" == DEFAULT_PROFILE
 
 
 def test_an_unknown_arm_is_refused() -> None:

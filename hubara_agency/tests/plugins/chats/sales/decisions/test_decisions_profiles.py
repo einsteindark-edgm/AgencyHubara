@@ -45,3 +45,17 @@ def test_the_openai_rival_profile_is_gone() -> None:
 def test_an_unknown_policy_is_an_error() -> None:
     with pytest.raises(KeyError, match="turno-v0"):
         get_policy("turno-v0")
+
+
+def test_jev_v4_is_jev_v3_with_broader_topics() -> None:
+    """Caso del laboratorio (2026-09-28): «¿tienen religiosas?» y «más
+    información sobre la colección de Halloween» (con el anuncio adelante) le
+    dieron a «catálogo» 0,11–0,32 con `rafaga-v3`: el plan del turno quedó
+    solo con «saludo» y nada obligaba a mostrar el catálogo. `jev-v4` cambia
+    SOLO el cuestionario (mismas política y umbrales): así el laboratorio
+    compara v3 contra v4 sabiendo qué se movió."""
+    v3, v4 = get_engine_profile("jev-v3"), get_engine_profile("jev-v4")
+
+    assert v4 is not None and v3 is not None
+    assert (v4.oracle, v4.questions, v4.policy) == ("jev-1.13", "rafaga-v4", "turno-v3")
+    assert (v4.thresholds, v4.shadow, v4.calibrated_model) == (v3.thresholds, v3.shadow, v3.calibrated_model)
