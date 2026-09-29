@@ -129,6 +129,43 @@ async def test_a_cart_confirms_the_purchase_like_production(tmp_path: Path, curr
     assert metadata["episodes"][0]["order_draft"].get("confirmed_by") == "cart", metadata
 
 
+async def test_a_dated_deferral_is_confirmed_with_its_date_like_in_production(tmp_path: Path, current_bot) -> None:
+    """El ingest estampa la hora de cada mensaje (`last_inbound_at_ms`) antes
+    de las lecturas: así la nota del aplazamiento le pide al bot confirmar el
+    día que dio el cliente («te escribimos el lunes…»), como en producción."""
+    from src.plugins.chats.agent.sales_lab.sandbox.readings import ingest_burst
+
+    metadata = _metadata_with_product()
+    message = {"text": "les escribo el lunes", "kind": "text", "ts_ms": T0 + 60_000, "wamid": "wamid.L"}
+
+    [ingested] = await ingest_burst(metadata, [message], session_id=SID_R, vault_dir=tmp_path, at_ms=T0 + 61_000)
+
+    note = next(n for n in ingested.context if "EL CLIENTE APLAZÓ" in n)
+    assert "Confírmale que le escribimos el lunes" in note, note
+    assert metadata["last_inbound_at_ms"] == T0 + 60_000
+
+
+async def test_a_quoted_bot_photo_gets_the_citation_note_like_in_production(tmp_path: Path, current_bot) -> None:
+    """«Esta me gusta» citando una foto que mandó el bot: el ingest le dice al
+    LLM cuál foto es (`outbound_media_index`). La cita viene en el evento del
+    dashboard que escribió el ingest (`reply_to`)."""
+    from src.plugins.chats.agent.sales_lab.sandbox.readings import ingest_burst
+
+    metadata = _metadata_with_product() | {
+        "outbound_media_index": {"wamid.BOT1": {"title": "Vela Buda", "handle": "vela-buda", "label": "Buda dorado"}}
+    }
+    message = {"text": "esta me gusta", "kind": "text", "ts_ms": T0 + 60_000, "wamid": "wamid.Q"}
+    record = {"role": "user", "content": "esta me gusta", "timestamp": "2026-09-15T14:21:00+00:00", "wamid": "wamid.Q",
+              "reply_to": {"id": "wamid.BOT1", "author": "agent", "text": "Vela Buda"}}
+
+    [ingested] = await ingest_burst(
+        metadata, [message], session_id=SID_R, vault_dir=tmp_path, at_ms=T0 + 61_000, records=[record]
+    )
+
+    assert any("citando) a una foto" in n and "«Vela Buda», diseño «Buda dorado»" in n for n in ingested.context), \
+        ingested.context
+
+
 async def test_the_ad_banner_is_not_what_the_customer_wrote(tmp_path: Path, current_bot) -> None:
     """El ingest le antepone al primer mensaje que llega de un anuncio un
     banner con el título del anuncio; las lecturas leen solo el mensaje."""

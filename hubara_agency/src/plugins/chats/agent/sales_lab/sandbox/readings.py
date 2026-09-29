@@ -7,8 +7,10 @@ llegaba con estado inconsistente. Acá cada mensaje de la ráfaga pasa, en
 orden y con el bot del brazo (A1/B0 → reglas, B → Jev), por lo MISMO que en
 producción (`ingest_inbound_message.py`):
 
-1. las lecturas (`EngineReadings`) con lo que el cliente vio ANTES de él, y
-   su escritura (`apply_readings`) en el metadata del sandbox;
+1. la hora del último mensaje del cliente, y las lecturas (`EngineReadings`)
+   con lo que el cliente vio ANTES de él (lo que ESCRIBIÓ: el texto de la
+   foto, sin el banner del anuncio; el botón y el carrito aparte), y su
+   escritura (`apply_readings`) en el metadata del sandbox;
 2. el mensaje queda en el historial del dashboard (el evento que escribió el
    ingest de producción, `materialize.burst_records`): las capacidades que
    leen el historial durante el turno (`datos`, `item_del_pedido`, el
@@ -17,13 +19,13 @@ producción (`ingest_inbound_message.py`):
    (`read_coupon_talk`) y lo que pide que no existe en el catálogo
    (`catalog_gap_note_for`, la misma función del ingest);
 4. el `plugin_context` de SU señal: la hora de Bogotá y las notas que arma el
-   ingest desde el metadata de ese momento (`turn_context`). La coalescencia
-   del workflow las junta, como en producción.
+   ingest desde el metadata de ese momento (`turn_context`), con la foto del
+   bot que citó el cliente (`build_photo_citation_note`). La coalescencia del
+   workflow las junta, como en producción.
 
-No se reconstruyen las notas que dependen de cómo llegó el mensaje
-(respuesta a campaña, frontera de episodio, cita de foto) ni la relectura del
-cupo del cupón en Medusa (el sandbox no tiene Medusa: queda lo último que se
-supo, como cuando Medusa no responde a tiempo).
+No se reconstruyen las notas de la respuesta a una campaña y de la frontera
+de episodio ni la relectura del cupo del cupón en Medusa (el sandbox no tiene
+Medusa: queda lo último que se supo, como cuando Medusa no responde a tiempo).
 """
 from __future__ import annotations
 
@@ -122,12 +124,18 @@ def _write_metadata(vault_dir: Path, session_id: str, metadata: dict[str, Any]) 
 
 
 def turn_context(
-    metadata: dict[str, Any], *, at_ms: int, coupon_in_play: bool = True, gap_note: str | None = None
+    metadata: dict[str, Any],
+    *,
+    at_ms: int,
+    coupon_in_play: bool = True,
+    photo_note: str | None = None,
+    gap_note: str | None = None,
 ) -> list[str]:
     """El `plugin_context` de la señal de un mensaje, como lo arma el ingest
     desde el metadata de ese momento: la hora de Bogotá y las notas, en el
     orden de producción. `coupon_in_play`: si el mensaje habla del cupón
-    aplicado; `gap_note`: la nota de lo que no existe en el catálogo."""
+    aplicado; `photo_note`: la foto del bot que citó; `gap_note`: la nota de
+    lo que no existe en el catálogo."""
     from src.plugins.chats.agent.sales.context import build_bogota_context_string
     from src.plugins.chats.agent.sales.use_cases.coupons import build_coupon_note
     from src.plugins.chats.agent.sales.use_cases.order_draft import build_order_draft_note, get_projectable_draft
@@ -143,6 +151,7 @@ def turn_context(
         build_web_product_note(metadata),
         build_order_draft_note(draft) if draft else None,
         build_coupon_note(metadata, in_play=coupon_in_play),
+        photo_note,
         gap_note,
     ]
     bogota = build_bogota_context_string(now=datetime.fromtimestamp(at_ms / 1000, tz=timezone.utc))
@@ -173,9 +182,12 @@ async def ingest_burst(
         read_coupon_talk,
     )
     from src.plugins.chats.agent.sales.use_cases.funnel_stage import resolve_funnel_stage
-    from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import catalog_gap_note_for
+    from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
+        build_photo_citation_note,
+        catalog_gap_note_for,
+    )
     from src.plugins.chats.agent.sales_lab.sandbox.materialize import burst_record
-    from src.sdk.messagingkit import opt_out_campaign_id, resolve_local_timezone
+    from src.sdk.messagingkit import compute_service_window_expiry, opt_out_campaign_id, resolve_local_timezone
 
     tz = resolve_local_timezone(session_id)
     provider = EngineReadings(Path(vault_dir))
@@ -189,6 +201,11 @@ async def ingest_burst(
         ts = message.get("ts_ms")
         now_ms = int(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else int(at_ms)
         wamid = str(message.get("wamid") or f"lab.{k}")
+        # Como el ingest, antes de las lecturas: el último mensaje del cliente
+        # y la ventana de servicio que reabre (la nota del aplazamiento
+        # confirma la fecha solo si la dio ESTE mensaje: `fresh_resume_label`).
+        metadata["last_inbound_at_ms"] = now_ms
+        metadata["service_window_expires_at_ms"] = compute_service_window_expiry(now_ms)
         readings = await provider.read(
             Inbound(
                 session_id=session_id, text=customer_text(message), now_ms=now_ms, message_id=wamid,
@@ -216,10 +233,16 @@ async def ingest_burst(
             if metadata.get("active_route") != _HUMAN_ROUTE
             else None
         )
+        # La foto del bot que citó el cliente (la cita va en su evento del
+        # dashboard: `reply_to`, como el `context` del webhook).
+        quoted = record.get("reply_to") if isinstance(record.get("reply_to"), dict) else None
+        photo = build_photo_citation_note({"id": quoted.get("id")} if quoted else None, metadata)
         out.append(
             IngestedMessage(
                 readings=list(readings.verdicts),
-                context=turn_context(metadata, at_ms=at_ms, coupon_in_play=bool(coupon.value), gap_note=gap),
+                context=turn_context(
+                    metadata, at_ms=at_ms, coupon_in_play=bool(coupon.value), photo_note=photo, gap_note=gap
+                ),
             )
         )
     return out

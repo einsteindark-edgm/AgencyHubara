@@ -21,10 +21,10 @@ Lo que el turno recibe: los mensajes de la ráfaga real, uno por señal (la
 coalescencia arma el turno como en producción; el bot nuevo B lleva el modo
 `on` y su perfil en el 4.º argumento, como un canary), cada uno con el
 contexto que el ingest le arma (hora de Bogotá, borrador del pedido, carrito
-web, producto web, aplazamiento, cupón y fuera de catálogo) después de pasar
-por el ingest del sandbox (`sandbox/readings.py`). No se reconstruyen las
-notas del ingest que dependen de cómo llegó el mensaje (respuesta a campaña,
-frontera de episodio, cita de foto): el reporte de fidelidad lo mide.
+web, producto web, aplazamiento, cupón, foto citada y fuera de catálogo)
+después de pasar por el ingest del sandbox (`sandbox/readings.py`). No se
+reconstruyen las notas de la respuesta a una campaña ni de la frontera de
+episodio: el reporte de fidelidad lo mide.
 """
 from __future__ import annotations
 

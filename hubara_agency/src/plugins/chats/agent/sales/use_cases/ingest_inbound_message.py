@@ -1054,7 +1054,7 @@ class IngestInboundMessage:
         # enviamos (context.id ∈ outbound_media_index), le decimos al LLM
         # exactamente cuál — "esta me gusta" deja de ser ambiguo (caso
         # wa_573125671604: pedido registrado con el diseño equivocado).
-        photo_citation_note = _build_photo_citation_note(
+        photo_citation_note = build_photo_citation_note(
             parsed.context, metadata
         )
         # HU web-cart: nota de lead caliente — se proyecta cada turno
@@ -2211,7 +2211,7 @@ def _build_reply_kwargs(
     return kwargs
 
 
-def _build_photo_citation_note(
+def build_photo_citation_note(
     context: dict[str, Any] | None, metadata: dict[str, Any]
 ) -> str | None:
     """Nota de cita de foto para `plugin_context`.
