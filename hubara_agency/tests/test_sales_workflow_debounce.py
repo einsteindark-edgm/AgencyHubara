@@ -62,6 +62,8 @@ class Tracker:
         self.build_prompt_calls: list[BuildPromptInput] = []
         self.llm_calls: int = 0
         self.send_whatsapp_calls: list[tuple[str, str]] = []
+        # Por envío: si el workflow dijo que el texto lo decidió el motor (V2).
+        self.send_decided_by_engine: list[bool] = []
         self.typing_calls: list[str] = []
         self.persist_calls: list[tuple[str, str]] = []
         self.record_turn_calls: int = 0
@@ -235,9 +237,14 @@ def _make_fake_activities(
 
     # Traza v2: el envío devuelve las burbujas entregadas con su wamid. Con
     # `send_returns_none` se simula la forma vieja (histories previas: None).
+    # `decided_by_engine` (3.er argumento opcional): lo pasa el V2 (el texto
+    # ya lo decidió el motor); el V1 envía con dos. Queda en el tracker.
     @activity.defn(name="send_whatsapp_message_activity")
-    async def fake_send_whatsapp(session_id: str, message: str) -> list[dict] | None:
+    async def fake_send_whatsapp(
+        session_id: str, message: str, decided_by_engine: bool = False
+    ) -> list[dict] | None:
         tracker.send_whatsapp_calls.append((session_id, message))
+        tracker.send_decided_by_engine.append(decided_by_engine)
         tracker.timeline.append(f"send:{message}")
         if send_returns_none:
             return None

@@ -569,18 +569,29 @@ async def send_document_to_session(
 @activity.defn(name="send_whatsapp_message_activity")
 @with_heartbeat(every=10)
 async def send_whatsapp_message_activity(
-    session_id: str, message: str
+    session_id: str, message: str, decided_by_engine: bool = False
 ) -> list[dict[str, str]] | None:
     """Envía el texto del agente y devuelve las burbujas entregadas
     (`[{wamid, text}]`, traza v2). La anotación admite `None` A PROPÓSITO:
     Temporal decodifica el resultado grabado con este tipo, y las histories
-    anteriores a la traza v2 grabaron `None` (replay, L-22)."""
+    anteriores a la traza v2 grabaron `None` (replay, L-22).
+
+    `decided_by_engine` (3.er argumento, opcional: los que llaman con dos
+    argumentos siguen igual, byte a byte): el workflow de ventas V2 lo pasa en
+    True porque ese texto ya lo decidió el motor de decisiones (capacidad
+    `destinatario` en el egreso, con Jev o con la regla de respaldo). Acá no se
+    vuelve a juzgar: el detector de hoy tomaba por token interno textos que el
+    motor aprobó («Usa el código VELAS_10 al pagar») y los descartaba en
+    silencio, mientras el panel y el historial del LLM los daban por enviados.
+    V1, remarketing y ETA no pasan por el motor: para ellos el tripwire de
+    abajo sigue siendo la última línea."""
     # Tripwire B9 (premortem run 5f43bcd0): este es el ÚNICO camino por el
     # que texto generado por LLM llega a WhatsApp desde workflows. Si todos
     # los guards del workflow fallan (confluencia de flags nueva, workflow
     # futuro sin guards), el texto administrativo muere acá. El path humano
     # (dashboard → send_message_to_session directo) no pasa por esta activity.
-    if looks_like_admin_leak(message):
+    # Un workflow que no dice que decidió el motor (el default) pasa por él.
+    if not decided_by_engine and looks_like_admin_leak(message):
         log.error(
             "admin_text_blocked_at_choke_point",
             session_id=session_id,
