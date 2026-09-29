@@ -8,9 +8,10 @@ tool de plataforma (que el worker, composition root, ya importa — P-28: el
 plugin no importa `src.platform`) y rechaza esa razón cuando no hay
 confirmación de compra registrada; el resto de razones pasa intacto.
 
-Motor de decisiones (F5): la despedida la filtra `safe_customer_text` (la
-capacidad `persona` con el proveedor del bot de la conversación), sobre el
-punto de extensión `customer_farewell` de la tool de plataforma.
+Motor de decisiones (F5): la despedida la limpia `clean_llm_text` (la
+muletilla del modelo, capacidad `preambulo`) y la filtra `safe_customer_text`
+(la capacidad `persona`), con el proveedor del bot de la conversación, sobre
+el punto de extensión `customer_farewell` de la tool de plataforma.
 """
 from __future__ import annotations
 
@@ -19,9 +20,8 @@ from typing import Any
 
 from exoclaw.agent.tools import ToolContext
 
-from src.plugins.chats.agent.sales.decisions.guards import safe_customer_text
+from src.plugins.chats.agent.sales.decisions.guards import clean_llm_text, safe_customer_text
 from src.plugins.chats.shared.purchase_signals import has_purchase_confirmation
-from src.sdk.textkit import sanitize_llm_text
 
 GUARDED_REASON = "ORDER_PENDING_SHIPPING_DETAILS"
 
@@ -60,11 +60,12 @@ def guarded_escalation_tool(base: type) -> type:
             )
 
         async def customer_farewell(self, ctx: ToolContext, reason_category: str, customer_message: str) -> str:
-            # Motor de decisiones (F5): qué oraciones de la despedida se caen
-            # lo decide la capacidad `persona` con el proveedor del bot de la
-            # conversación (la regla de hoy por defecto: idéntico a antes).
+            # Motor de decisiones (F5): la muletilla del modelo al principio la
+            # decide `preambulo` y qué oraciones de la despedida se caen,
+            # `persona`, con el proveedor del bot de la conversación (la regla
+            # de hoy por defecto: idéntico a antes).
             safe = await safe_customer_text(
-                sanitize_llm_text(customer_message or "").text,
+                await clean_llm_text(customer_message or "", session_id=ctx.session_key, vault_dir=self._vault_dir),
                 session_id=ctx.session_key,
                 vault_dir=self._vault_dir,
             )

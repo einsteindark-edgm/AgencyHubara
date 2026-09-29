@@ -99,10 +99,11 @@ async def _sanitize_intent_client_text(
     Import tardío del sanitizer (mismo patrón que el resto del módulo: no
     tocar imports pesados en module load del worker).
 
-    Motor de decisiones (F5): con `session_id`, si un texto NO es para el
-    cliente lo decide la capacidad `destinatario` con el proveedor del bot de
-    la conversación (la regla de hoy por defecto: idéntico a antes). Sin
-    `session_id`, la regla de hoy.
+    Motor de decisiones (F5): con `session_id`, la muletilla del modelo al
+    principio la decide la capacidad `preambulo` y si un texto NO es para el
+    cliente, `destinatario`, con el proveedor del bot de la conversación (la
+    regla de hoy por defecto: idéntico a antes). Sin `session_id`, la regla
+    de hoy.
     """
     from src.sdk.agentkit import looks_like_admin_leak, sanitize_llm_text
 
@@ -111,13 +112,15 @@ async def _sanitize_intent_client_text(
         value = out.get(key)
         if not isinstance(value, str) or not value.strip():
             continue
-        cleaned = sanitize_llm_text(value).text or value
         if session_id:
             from src.platform.config import WORKSPACE_VAULT_DIR
-            from src.plugins.chats.agent.sales.decisions.guards import is_internal_text
+            from src.plugins.chats.agent.sales.decisions.guards import clean_llm_text, is_internal_text
 
-            internal = await is_internal_text(cleaned, session_id=session_id, vault_dir=Path(WORKSPACE_VAULT_DIR))
+            vault = Path(WORKSPACE_VAULT_DIR)
+            cleaned = await clean_llm_text(value, session_id=session_id, vault_dir=vault) or value
+            internal = await is_internal_text(cleaned, session_id=session_id, vault_dir=vault)
         else:
+            cleaned = sanitize_llm_text(value).text or value
             internal = looks_like_admin_leak(cleaned)
         if internal:
             activity.logger.warning(

@@ -1,10 +1,14 @@
 """Egreso del turno de ventas: lo que el LLM escribió, antes de grabarlo en su
 historial y de que salga al cliente (diseño v2 §07 familia C, §08; F4/F5).
 
-Cuatro capacidades, cada una con la regla de hoy como respaldo (`reglas`) y su
+Cinco capacidades, cada una con la regla de hoy como respaldo (`reglas`) y su
 pregunta cerrada a Jev (`sombra` / `jev`), sobre el marco de
 `capabilities/__init__.py` (referencia: `capabilities/lecturas.py`):
 
+  preambulo     por oración al principio: «¿es una muletilla de presentación
+                del modelo, sin contenido para el cliente?» («Aquí tienes:»).
+                Regla: el meta-prefijo del saneador (`strip_model_preamble`).
+                También la piden las tools (`guards.clean_llm_text`).
   destinatario  «¿Qué es este texto?»: mensaje al cliente, razonamiento,
                 reporte interno, acuse al sistema o deliberación. Regla:
                 `looks_like_admin_leak` con el set extendido.
@@ -17,8 +21,10 @@ pregunta cerrada a Jev (`sombra` / `jev`), sobre el marco de
   saludo        «¿alguno de estos mensajes ya saluda?». Regla:
                 `should_send_first_contact_greeting` con las entradas del V1.
 
-`decide_egress` las compone en el MISMO orden que el V1: (1) rescate antes de
-grabar (el V1 lo hace dentro de `run_agent_turn`), (2) saludo con ese texto,
+`decide_egress` las compone en el MISMO orden que el V1: (0) el preámbulo, si
+el turno trae lo que escribió el LLM antes del saneador (`raw_text`: el V1
+sanea con la regla dentro de `run_agent_turn`), (1) rescate antes de grabar
+(el V1 lo hace dentro de `run_agent_turn`), (2) saludo con ese texto,
 (3) portavelas, (4) destinatario y rescate sobre lo que quedó. Con `reglas` el
 resultado es idéntico al del V1 (tests de equivalencia). Lo que no es texto
 del LLM no se le pregunta a Jev: el centinela `NO_MESSAGE` (protocolo) y el
@@ -43,7 +49,10 @@ from src.sdk.connectorkit import TypedQuestion
 from src.sdk.textkit import (
     is_no_message_abstention,
     looks_like_admin_leak,
+    preamble_stage,
     salvage_customer_text,
+    sanitize_llm_text,
+    strip_model_preamble,
     strip_portavelas_notice,
 )
 
@@ -57,7 +66,8 @@ DESTINATARIO = "destinatario"
 RESCATE = "rescate"
 PORTAVELAS = "portavelas"
 SALUDO = "saludo"
-EGRESS_CAPABILITIES: tuple[str, ...] = (DESTINATARIO, RESCATE, PORTAVELAS, SALUDO)
+PREAMBULO = "preambulo"
+EGRESS_CAPABILITIES: tuple[str, ...] = (PREAMBULO, DESTINATARIO, RESCATE, PORTAVELAS, SALUDO)
 
 _YES_NO = {"true": "sí", "false": "no"}
 _FOR_CUSTOMER = "mensaje_al_cliente"
@@ -132,6 +142,118 @@ class GreetingCheck:
     first_contact: bool
     tools_used: tuple[str, ...] = ()
     client_texts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PreambuloCheck:
+    """El texto que el LLM escribió para el cliente tal como lo lee el paso
+    del meta-prefijo del saneador de la plataforma (`preamble_stage`)."""
+
+    text: str
+
+
+# Corte mecánico para la muletilla del modelo (no lee el sentido): fin de
+# línea, o dos puntos o fin de oración seguidos de espacio («Aquí tienes: ¡Hola!»).
+_PREAMBLE_SPLIT_RE = re.compile(r"\n+|(?<=[:.!?…])[ \t]+")
+# Solo al principio del texto: más adentro ya no es presentación.
+_MAX_PREAMBLE_SENTENCES = 3
+
+
+def _leading_sentences(text: str) -> list[tuple[int, str]]:
+    """`(inicio, oración)` de cada oración de `text`, en orden."""
+    out: list[tuple[int, str]] = []
+    start = 0
+    for match in _PREAMBLE_SPLIT_RE.finditer(text):
+        if text[start:match.start()].strip():
+            out.append((start, text[start:match.start()].strip()))
+        start = match.end()
+    if text[start:].strip():
+        out.append((start, text[start:].strip()))
+    return out
+
+
+def _preamble_of(text: str, kept: str) -> str:
+    """La muletilla que se cae cuando de `text` queda `kept` ("" = ninguna)."""
+    return "" if kept == text else text[: len(text) - len(kept)].rstrip()
+
+
+def text_without_preamble(text: str, preamble: str) -> str:
+    """Lo que queda de `text` (el de `preamble_stage`) sin la muletilla que
+    decidió la capacidad `preambulo` (su valor): lo que el saneador recibe en
+    `without_preamble`."""
+    if preamble and text.startswith(preamble):
+        return text[len(preamble):].lstrip()
+    return text
+
+
+class Preambulo:
+    """«¿Esta oración es una muletilla de presentación del modelo, sin
+    contenido para el cliente?», para las primeras oraciones del texto (nunca
+    la última: el texto nunca queda vacío). Es el único paso del saneador de
+    la plataforma que LEE el texto; los demás (comillas, duplicados, rayas)
+    siguen mecánicos y corren después, en su orden.
+
+    Valor: la muletilla que se cae al principio ("" = ninguna); en la cola de
+    desacuerdos va eso, no el mensaje. Regla: el meta-prefijo de hoy
+    (`strip_model_preamble`). Jev corta lo que la regla no conoce («Claro,
+    aquí va el mensaje para el cliente:») y deja una línea que sí le habla al
+    cliente; corta solo con p ≥ `yes` y deja con p ≤ `no` (si duda, la regla).
+    Nunca corta a mitad de frase. Piso: los prefijos que casi nunca abren una
+    oración legítima («Here's my attempt:», «Final answer:») siempre se van."""
+
+    name = PREAMBULO
+    timeout_s = 1.5
+    thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
+
+    def rule(self, inp: PreambuloCheck) -> str:
+        return _preamble_of(inp.text, strip_model_preamble(inp.text))
+
+    def ask(self, inp: PreambuloCheck) -> tuple[str, list[TypedQuestion]] | None:
+        parts = _leading_sentences(inp.text)
+        if len(parts) < 2:
+            return None  # una sola oración nunca es solo muletilla
+        shown = parts[: _MAX_PREAMBLE_SENTENCES + 2]
+        state = (
+            "Texto que el asesor de ventas escribió para enviarle al cliente por WhatsApp, oración por oración:\n"
+            + _numbered([part for _start, part in shown])
+            + ("\n[…]" if len(parts) > len(shown) else "")
+        )
+        return state, [
+            TypedQuestion(
+                id=f"preambulo.{i}", kind="noul",
+                text=(
+                    f"¿La oración [{i}] es una muletilla de presentación del modelo (como «Aquí tienes:», "
+                    "«Claro, aquí va mi respuesta:» o «Here's my attempt:»), sin contenido para el cliente?"
+                ),
+                criteria=_YES_NO,
+            )
+            for i in range(1, min(_MAX_PREAMBLE_SENTENCES, len(parts) - 1) + 1)
+        ]
+
+    def decide(self, inp: PreambuloCheck, result: Any, rule: str, thresholds: Mapping[str, float]) -> str | None:
+        th = {**self.thresholds, **thresholds}
+        parts = _leading_sentences(inp.text)
+        cut = 0
+        for i in range(1, min(_MAX_PREAMBLE_SENTENCES, len(parts) - 1) + 1):
+            p = _p(result, f"preambulo.{i}")
+            if p is None or th["no"] < p < th["yes"]:
+                return None  # sin respuesta o con duda: decide la regla
+            if p <= th["no"]:
+                break
+            cut = i
+        if cut == 0:
+            return ""
+        kept = inp.text[parts[cut][0]:].lstrip()
+        if not kept or kept[0].islower():
+            return None  # cortaría a mitad de frase: decide la regla
+        return _preamble_of(inp.text, kept)
+
+    def floor(self, inp: PreambuloCheck, rule: str, jev: str) -> str:
+        strong = _preamble_of(inp.text, strip_model_preamble(inp.text, strong_only=True))
+        return strong if len(strong) > len(jev or "") else jev
+
+    def same(self, a: str, b: str) -> bool:
+        return (a or "") == (b or "")
 
 
 class Destinatario:
@@ -406,6 +528,18 @@ async def decide_egress(
             judged[(capability.name, key)] = (verdict.value, verdict.by)
         return verdict.value, verdict.by
 
+    # 0 · Preámbulo del modelo: el turno saneó con la regla de hoy; si trae
+    # lo que escribió el LLM, el saneado se repite con la muletilla que decide
+    # el motor (con `reglas`, el mismo texto). Si difiere, va en `sanitizer`
+    # para que la traza del turno lo muestre.
+    sanitizer: dict[str, Any] = {}
+    stage = preamble_stage(inp.raw_text) if inp.raw_text is not None else ""
+    if stage:
+        preamble, _ = await run(Preambulo(), PreambuloCheck(stage))
+        engine = sanitize_llm_text(inp.raw_text or "", without_preamble=text_without_preamble(stage, str(preamble or "")))
+        if engine.text != text:
+            sanitizer = {"before": inp.raw_text, "after": engine.text, "actions": list(engine.actions)}
+            text = engine.text
     destinatario, rescate = Destinatario(), Rescate()
     # 1 · Rescate antes de grabar: el LLM recuerda lo que de verdad sale.
     llm_text, rescued_before_record = text, False
@@ -457,4 +591,5 @@ async def decide_egress(
         final_text=final_text,
         rescued_before_record=rescued_before_record,
         guards=guards,
+        sanitizer=sanitizer,
     )

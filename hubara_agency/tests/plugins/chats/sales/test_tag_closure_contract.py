@@ -233,7 +233,8 @@ async def test_with_jev_the_persona_of_each_sentence_is_decided_by_the_engine(
     from src.sdk.connectorkit import TypedAnswer
 
     monkeypatch.setenv("DECISIONS_BOT", "B")
-    answers = {"persona.1": 0.03, "persona.2": 0.97, "persona.3": 0.01}
+    # Con el bot B también se pregunta por la muletilla del modelo: no hay.
+    answers = {"persona.1": 0.03, "persona.2": 0.97, "persona.3": 0.01, "preambulo.1": 0.02, "preambulo.2": 0.02}
     fake = FakePerceptionAdapter({q: TypedAnswer(id=q, kind="noul", p=p) for q, p in answers.items()})
     monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
     _seed(tmp_path, {"episodes": [_active_episode()]})

@@ -23,6 +23,7 @@ from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from exoclaw_temporal.config import (
     BuildPromptInput,
+    ExecuteToolInput,
     LLMChatInput,
     LLMConfig,
     LLMResponseData,
@@ -42,6 +43,9 @@ class _State:
 
     def __init__(self) -> None:
         self.llm_text = ""
+        # Respuestas del LLM en orden (con tools); vacío = `llm_text` sin tools.
+        self.responses: list[LLMResponseData] = []
+        self.tool_results: dict[str, str] = {}
         self.egress_out: dict[str, Any] | None = None
         self.egress_calls: list[tuple[str, dict]] = []
         self.recorded: list[list[dict]] = []
@@ -57,7 +61,14 @@ async def _build_prompt(inp: BuildPromptInput) -> list[dict]:
 
 @activity.defn(name="llm_chat")
 async def _llm_chat(inp: LLMChatInput) -> LLMResponseData:
+    if STATE.responses:
+        return STATE.responses.pop(0)
     return LLMResponseData(content=STATE.llm_text, finish_reason="stop", has_tool_calls=False, tool_calls=[])
+
+
+@activity.defn(name="execute_tool")
+async def _execute_tool(inp: ExecuteToolInput) -> str:
+    return STATE.tool_results.get(inp.name, "{}")
 
 
 @activity.defn(name="record_turn")
@@ -103,19 +114,32 @@ class _EgressProbeWorkflow:
             "salvaged_leak": result.salvaged_leak,
             "discarded": list(result.discarded_narration),
             "guards": [s.get("name") for s in result.steps if s.get("kind") == "guard"],
+            "sanitizer": [
+                {k: s.get(k) for k in ("before", "after", "actions")}
+                for s in result.steps if s.get("kind") == "guard" and s.get("name") == "sanitizer"
+            ],
         }
 
 
-async def _turn(mode: str = "v2", *, llm_text: str, egress_out: dict | None = None) -> dict:
+async def _turn(
+    mode: str = "v2",
+    *,
+    llm_text: str = "",
+    egress_out: dict | None = None,
+    responses: list[LLMResponseData] | None = None,
+    tool_results: dict[str, str] | None = None,
+) -> dict:
     STATE.__init__()
     STATE.llm_text = llm_text
     STATE.egress_out = egress_out
+    STATE.responses = list(responses or [])
+    STATE.tool_results = dict(tool_results or {})
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
             env.client,
             task_queue=QUEUE,
             workflows=[_EgressProbeWorkflow],
-            activities=[_build_prompt, _llm_chat, _record_turn, _probe_egress],
+            activities=[_build_prompt, _llm_chat, _execute_tool, _record_turn, _probe_egress],
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
             return await env.client.execute_workflow(
@@ -141,6 +165,9 @@ async def test_the_hook_decides_what_the_llm_remembers_and_travels_in_the_result
         "order_registered": False,
         "portavelas_included": None,
         "admin_turn": False,
+        # Lo que escribió el LLM antes del saneador: el egreso decide la
+        # muletilla de presentación (capacidad `preambulo`).
+        "raw_text": LEAK,
     }
     assert result["egress"] == out
     assert result["final_content"] == ANSWER
@@ -204,3 +231,86 @@ async def test_without_the_hook_the_turn_is_todays() -> None:
     assert result["egress"] is None
     assert result["final_content"] == ANSWER and result["salvaged_leak"] is True
     assert _remembered(STATE.recorded[0]) == [ANSWER]
+
+
+# ── La muletilla del modelo (capacidad `preambulo`) la decide el egreso ─────
+#
+# El saneador de la plataforma es mecánico salvo un paso: el meta-prefijo
+# («Aquí tienes:»). Con gancho, el egreso recibe lo que el LLM escribió ANTES
+# del saneador (`raw_text`) y decide ese paso con el motor; el turno solo
+# aplica lo que el egreso decidió. Sin gancho, la regla de hoy (ver arriba).
+
+PREAMBLE = "Aquí tienes:\n¡Hola! ¿Qué aroma te gusta?"
+HELLO = "¡Hola! ¿Qué aroma te gusta?"
+
+
+def _calls(*calls: tuple[str, dict]) -> LLMResponseData:
+    from exoclaw_temporal.config import ToolCallData
+
+    return LLMResponseData(
+        content="",
+        finish_reason="tool_calls",
+        has_tool_calls=True,
+        tool_calls=[ToolCallData(id=f"c{i}", name=name, arguments=args) for i, (name, args) in enumerate(calls, 1)],
+    )
+
+
+async def test_the_hook_gets_what_the_llm_wrote_before_the_sanitizer() -> None:
+    await _turn(llm_text=PREAMBLE, egress_out={"text": HELLO, "llm_text": HELLO})
+
+    [(text, ctx)] = STATE.egress_calls
+    assert (text, ctx["raw_text"]) == (HELLO, PREAMBLE)  # el texto de hoy y lo que escribió el LLM
+
+
+async def test_the_llm_remembers_the_preamble_the_egress_decided_to_keep() -> None:
+    """Jev dijo que «Aquí tienes:» le habla al cliente: sale entero, el LLM
+    lo recuerda entero y la traza no muestra un saneado que no pasó."""
+    sanitizer = {"before": PREAMBLE, "after": PREAMBLE, "actions": []}
+
+    result = await _turn(
+        llm_text=PREAMBLE, egress_out={"text": PREAMBLE, "llm_text": PREAMBLE, "sanitizer": sanitizer}
+    )
+
+    assert _remembered(STATE.recorded[0]) == [PREAMBLE]
+    assert result["final_content"] == PREAMBLE
+    assert result["sanitizer"] == []
+
+
+async def test_the_trace_shows_the_preamble_the_egress_cut() -> None:
+    unknown = "Claro, aquí va el mensaje para el cliente:\n\n¡Hola! La Cubo Love cuesta $45.000 🤍"
+    answer = "¡Hola! La Cubo Love cuesta $45.000 🤍"
+    sanitizer = {"before": unknown, "after": answer, "actions": ["meta_prefix_stripped"]}
+
+    result = await _turn(llm_text=unknown, egress_out={"text": answer, "llm_text": answer, "sanitizer": sanitizer})
+
+    assert _remembered(STATE.recorded[0]) == [answer]
+    assert result["sanitizer"] == [sanitizer]
+
+
+async def test_the_handoff_farewell_goes_to_the_egress_before_the_sanitizer() -> None:
+    farewell = "Aquí va:\nUn colega del equipo te responde en este mismo chat 🤍"
+    envelope = (
+        '{"escalation_decision": {"session_id": "wa_egress", "reason_category": "BULK_ORDER", "summary": "s"}, '
+        '"customer_message": "Aquí va:\\nUn colega del equipo te responde en este mismo chat 🤍"}'
+    )
+
+    await _turn(
+        responses=[_calls(("escalate_to_human", {"reason_category": "BULK_ORDER"}))],
+        tool_results={"escalate_to_human": envelope},
+        egress_out={"text": "x", "llm_text": "x"},
+    )
+
+    [(text, ctx)] = STATE.egress_calls
+    assert (text, ctx["raw_text"]) == ("Un colega del equipo te responde en este mismo chat 🤍", farewell)
+
+
+async def test_a_text_a_tool_already_validated_is_not_sanitized_again() -> None:
+    """`send_reply` ya limpió su texto con el motor: el egreso no lo relee."""
+    await _turn(
+        responses=[_calls(("send_reply", {"text": HELLO}))],
+        tool_results={"send_reply": '{"reply": {"text": "¡Hola! ¿Qué aroma te gusta?"}}'},
+        egress_out={"text": HELLO, "llm_text": HELLO},
+    )
+
+    [(text, ctx)] = STATE.egress_calls
+    assert text == HELLO and ctx.get("raw_text") is None

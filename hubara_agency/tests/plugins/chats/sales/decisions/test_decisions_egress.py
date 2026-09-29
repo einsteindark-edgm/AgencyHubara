@@ -114,6 +114,7 @@ def _inp(text: str, **kw) -> EgressInput:
         order_registered=kw.get("order_registered", False),
         portavelas_included=kw.get("portavelas_included"),
         admin_turn=kw.get("admin_turn", False),
+        raw_text=kw.get("raw_text"),
     )
 
 
@@ -205,8 +206,9 @@ def test_the_approved_farewell_is_the_one_v1_sends() -> None:
     assert egress.ORDER_REGISTERED_FALLBACK_FAREWELL == _ORDER_REGISTERED_FALLBACK_FAREWELL
 
 
-def test_the_egress_capabilities_are_the_four_of_the_design() -> None:
-    assert set(egress.EGRESS_CAPABILITIES) == {"destinatario", "rescate", "portavelas", "saludo"}
+def test_the_egress_capabilities_are_the_ones_of_the_design() -> None:
+    """Las cuatro del F4 y el preámbulo del modelo (familia C del inventario)."""
+    assert set(egress.EGRESS_CAPABILITIES) == {"preambulo", "destinatario", "rescate", "portavelas", "saludo"}
 
 
 async def test_the_output_travels_as_json() -> None:
@@ -493,3 +495,87 @@ async def test_the_activity_hides_this_customers_data_through_the_public_guard(t
     from src.plugins.chats.agent.sales.decisions import egress_activities
 
     assert "_redact_terms" not in egress_activities.__dict__ and not hasattr(egress_activities, "_redact")
+
+
+# ── Preámbulo del modelo (capacidad `preambulo`): el egreso lo decide ────────
+#
+# El turno compartido le pasa al egreso lo que el LLM escribió ANTES del
+# saneador (`raw_text`); el egreso sanea de nuevo con la muletilla decidida por
+# el motor y sigue con ese texto. Con `reglas`, el mismo saneado de hoy: el
+# resultado es EXACTAMENTE el del V1 (que sanea con la regla dentro del turno).
+
+from src.sdk.textkit import sanitize_llm_text  # noqa: E402
+
+UNKNOWN_PREAMBLE = "Claro, aquí va el mensaje para el cliente:\n\n¡Hola! La Cubo Love cuesta $45.000 🤍"
+PREAMBLE_ANSWER = "¡Hola! La Cubo Love cuesta $45.000 🤍"
+PLAN_FOR_THE_CUSTOMER = "Voy a:\n1. Separarte la Cubo Love\n2. Enviártela mañana 🤍"
+RAW_CORPUS = [
+    "",
+    PLAIN,
+    "Aquí tienes:\n¡Hola! ¿Qué aroma te gusta?",
+    f"Here's my attempt:\n\n{DELIBERATION}",
+    "Okay,\n\nLa conversación quedó etiquetada como `INTERESADO` en el sistema.",
+    f'Here\'s my response: "{PORTAVELAS_FAREWELL}"',
+    UNKNOWN_PREAMBLE,
+    PLAN_FOR_THE_CUSTOMER,
+    "  Sure!\\nNO_MESSAGE  ",
+]
+
+
+@pytest.mark.parametrize("context", CONTEXTS, ids=lambda c: ",".join(f"{k}" for k in c) or "normal")
+@pytest.mark.parametrize("raw", RAW_CORPUS, ids=lambda t: (t[:24] or "vacío").replace(" ", "_"))
+async def test_with_rules_the_raw_text_gives_exactly_what_v1_decides(raw: str, context: dict, _no_real_oracle) -> None:
+    today = sanitize_llm_text(raw).text
+
+    out = await egress.decide_egress(_inp(today, raw_text=raw, **context), provider_of=_rules, profile_id="jev-v1")
+    expected = v1_egress(today, **context)
+
+    assert {k: getattr(out, k) for k in expected} == expected
+    assert out.sanitizer == {}  # el mismo saneado que el turno: nada que corregir en la traza
+    assert all(v["by"] == "reglas" for v in out.verdicts)
+    assert _no_real_oracle["fake"].calls == []
+
+
+async def test_jev_cuts_a_preamble_the_rule_does_not_know(_no_real_oracle) -> None:
+    _no_real_oracle["fake"] = FakePerceptionAdapter({
+        "preambulo.1": _noul("preambulo.1", 0.95),
+        "preambulo.2": _noul("preambulo.2", 0.03),
+        "egreso.destinatario": _choice("egreso.destinatario", "mensaje_al_cliente", 0.97),
+    })
+
+    out = await _egress_with("jev", _inp(sanitize_llm_text(UNKNOWN_PREAMBLE).text, raw_text=UNKNOWN_PREAMBLE))
+
+    assert (out.text, out.llm_text, out.final_text) == (PREAMBLE_ANSWER,) * 3
+    assert out.sanitizer == {"before": UNKNOWN_PREAMBLE, "after": PREAMBLE_ANSWER, "actions": ["meta_prefix_stripped"]}
+    [verdict] = [v for v in out.verdicts if v["capability"] == "preambulo"]
+    assert (verdict["by"], verdict["rule"], verdict["value"]) == ("jev", "", "Claro, aquí va el mensaje para el cliente:")
+
+
+async def test_jev_keeps_a_line_for_the_customer_the_rule_cuts(_no_real_oracle) -> None:
+    _no_real_oracle["fake"] = FakePerceptionAdapter({
+        "preambulo.1": _noul("preambulo.1", 0.04),
+        "egreso.destinatario": _choice("egreso.destinatario", "mensaje_al_cliente", 0.97),
+    })
+    today = sanitize_llm_text(PLAN_FOR_THE_CUSTOMER).text
+
+    out = await _egress_with("jev", _inp(today, raw_text=PLAN_FOR_THE_CUSTOMER))
+
+    assert today != PLAN_FOR_THE_CUSTOMER  # la regla le quitaba el «Voy a:»
+    assert out.text == PLAN_FOR_THE_CUSTOMER
+    assert out.sanitizer == {"before": PLAN_FOR_THE_CUSTOMER, "after": PLAN_FOR_THE_CUSTOMER, "actions": []}
+
+
+async def test_without_the_raw_text_the_preamble_is_not_decided(_no_real_oracle) -> None:
+    """Un texto que no salió del saneador (una tool ya lo validó) no se relee."""
+    _no_real_oracle["fake"] = FakePerceptionAdapter({"preambulo.1": _noul("preambulo.1", 0.95)})
+
+    out = await _egress_with("jev", _inp(UNKNOWN_PREAMBLE))
+
+    assert not any("preambulo.1" in ids for _s, ids in _no_real_oracle["fake"].calls)
+    assert "preambulo" not in {v["capability"] for v in out.verdicts}
+
+
+async def test_the_preamble_of_an_admin_turn_never_goes_to_jev(_no_real_oracle) -> None:
+    out = await _egress_with("jev", _inp(sanitize_llm_text(UNKNOWN_PREAMBLE).text, raw_text=UNKNOWN_PREAMBLE, admin_turn=True))
+
+    assert _no_real_oracle["fake"].calls == [] and out.text == ""

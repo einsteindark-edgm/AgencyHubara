@@ -111,6 +111,11 @@ class EgressInput:
     order_registered: bool = False
     portavelas_included: bool | None = None
     admin_turn: bool = False
+    # Lo que el LLM escribió ANTES del saneador de la plataforma, si
+    # `final_text` salió de él (None: una tool ya validó el texto, o no lo
+    # escribió el LLM). Con él, el egreso decide la muletilla de presentación
+    # del modelo (capacidad `preambulo`) y vuelve a sanear.
+    raw_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -129,6 +134,9 @@ class EgressOutput:
     * `final_text`: el texto tras todas las reglas (el `llm_text` de la traza).
     * `guards`: las guardas que actuaron, en orden: `{name, before, after}`.
     * `verdicts`: la traza de cada capacidad consultada (`Verdict.to_trace`).
+    * `sanitizer`: `{before, after, actions}` del saneado con la muletilla que
+      decidió el motor, SOLO si difiere del que hizo el turno con la regla de
+      hoy (vacío = el mismo): el turno corrige con eso su paso de la traza.
     """
 
     text: str = ""
@@ -142,3 +150,4 @@ class EgressOutput:
     rescued_before_record: bool = False
     guards: list[dict] = field(default_factory=list)
     error: str | None = None
+    sanitizer: dict = field(default_factory=dict)

@@ -229,7 +229,8 @@ async def test_sales_escalation_lets_the_engine_decide_the_persona_of_the_farewe
     from src.sdk.connectorkit import TypedAnswer
 
     monkeypatch.setenv("DECISIONS_BOT", "B")
-    answers = {"persona.1": 0.03, "persona.2": 0.97, "persona.3": 0.01}
+    # Con el bot B también se pregunta por la muletilla del modelo: no hay.
+    answers = {"persona.1": 0.03, "persona.2": 0.97, "persona.3": 0.01, "preambulo.1": 0.02, "preambulo.2": 0.02}
     fake = FakePerceptionAdapter({q: TypedAnswer(id=q, kind="noul", p=p) for q, p in answers.items()})
     monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
     SalesEscalateToHumanTool = guarded_escalation_tool(EscalateToHumanTool)

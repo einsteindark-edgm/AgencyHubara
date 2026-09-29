@@ -25,9 +25,9 @@ Diferencias con el V1, a propósito (cada una con su test en
      SALIÓ (no rechazado): un selector rechazado dejaba al cliente sin nada;
   3. sin la ronda extra de la capa ② por palabras (quedan la nota ① y la
      verificación ③ por la fachada del motor);
-  4. el egreso (destinatario, rescate, portavelas, saludo) lo decide el motor;
-     con `reglas` el resultado es el del V1, y el historial del LLM guarda el
-     texto que salió.
+  4. el egreso (preámbulo del modelo, destinatario, rescate, portavelas,
+     saludo) lo decide el motor; con `reglas` el resultado es el del V1, y el
+     historial del LLM guarda el texto que salió.
 
 Ramas del V1 que no pasan (solo existían para re-jugar historias viejas): el
 turno de a un mensaje sin debounce, las notas de ráfaga v1 y previas, el
@@ -231,6 +231,7 @@ class HubaraSalesSessionWorkflowV2:
         la activity no responde, el texto no sale (sin reglas acá no hay con
         qué decidir) y la traza lo dice (`egress_error`)."""
         portavelas = context.get("portavelas_included")
+        raw_text = context.get("raw_text")
         inp = EgressInput(
             session_id=session_id,
             final_text=final_text,
@@ -240,6 +241,9 @@ class HubaraSalesSessionWorkflowV2:
             order_registered=bool(context.get("order_registered")),
             portavelas_included=portavelas if isinstance(portavelas, bool) else None,
             admin_turn=bool(context.get("admin_turn")),
+            # Lo que el LLM escribió antes del saneador: el motor decide ahí
+            # la muletilla de presentación (capacidad `preambulo`).
+            raw_text=raw_text if isinstance(raw_text, str) else None,
         )
         try:
             out = await workflow.execute_activity(decide_egress_activity, inp, **_EGRESS_OPTIONS)

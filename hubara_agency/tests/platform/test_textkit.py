@@ -42,6 +42,17 @@ def test_textkit_reexports_the_egress_rules_of_the_decisions_engine() -> None:
     assert getattr(kit, "is_no_message_abstention", None) is impl.is_no_message_abstention
 
 
+def test_textkit_reexports_the_preamble_step_of_the_decisions_engine() -> None:
+    """Motor de decisiones: la regla de hoy del preámbulo del modelo (el paso
+    2 del saneador) es el respaldo `reglas` de la capacidad `preambulo`; el
+    motor decide sobre el texto que ve ese paso."""
+    import src.platform.llm_text_sanitizer as impl
+    import src.sdk.textkit as kit
+
+    assert getattr(kit, "preamble_stage", None) is impl.preamble_stage
+    assert getattr(kit, "strip_model_preamble", None) is impl.strip_model_preamble
+
+
 def test_textkit_only_depends_on_the_pure_sanitizer() -> None:
     """Su razón de ser: importable desde `tools/*.py`. Si un día importa otra
     cosa de platform (o Temporal), las tools vuelven a quedar sin camino."""

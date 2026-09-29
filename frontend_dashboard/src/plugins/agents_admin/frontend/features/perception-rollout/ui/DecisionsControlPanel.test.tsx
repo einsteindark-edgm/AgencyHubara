@@ -109,6 +109,15 @@ describe("DecisionsControlPanel", () => {
     expect(within(acuse).getByText("Ahora: Reglas")).toBeInTheDocument();
   });
 
+  it("nombra el preámbulo del modelo con su pregunta", async () => {
+    state = payload({ preambulo: "shadow" });
+    renderPanel();
+
+    const preambulo = await screen.findByRole("group", { name: "Preámbulo del modelo" });
+    expect(within(preambulo).getByText("¿la oración es una muletilla del modelo («Aquí tienes:»)?")).toBeInTheDocument();
+    expect(within(preambulo).getByText("Ahora: Sombra")).toBeInTheDocument();
+  });
+
   it("pasa una capacidad a sombra sin confirmar", async () => {
     renderPanel();
     const baja = await screen.findByRole("group", { name: "Baja" });

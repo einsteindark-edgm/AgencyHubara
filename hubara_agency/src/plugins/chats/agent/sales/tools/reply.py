@@ -22,10 +22,7 @@ from typing import Any
 from exoclaw.agent.tools import ToolBase, ToolContext
 from loguru import logger
 
-from src.plugins.chats.agent.sales.decisions.guards import customer_reply_text
-
-# textkit, no agentkit: una tool no puede arrastrar temporalio (R-DIP, ADR-001).
-from src.sdk.textkit import sanitize_llm_text
+from src.plugins.chats.agent.sales.decisions.guards import clean_llm_text, customer_reply_text
 
 _REJECTED_MESSAGE = (
     "No se envió nada: el texto estaba vacío o era nota interna (hablar del "
@@ -68,11 +65,14 @@ class SendReplyTool(ToolBase):
     async def execute_with_context(
         self, ctx: ToolContext, text: str = "", **_: Any
     ) -> str:
-        # Motor de decisiones (F5): si el texto no es para el cliente lo
-        # deciden `destinatario` y `rescate` con el proveedor del bot de la
+        # Motor de decisiones (F5): la muletilla del modelo al principio la
+        # decide `preambulo`; si el texto no es para el cliente lo deciden
+        # `destinatario` y `rescate`, con el proveedor del bot de la
         # conversación (la regla de hoy por defecto: idéntico a antes).
         cleaned = await customer_reply_text(
-            sanitize_llm_text(text or "").text, session_id=ctx.session_key, vault_dir=self._vault_dir
+            await clean_llm_text(text or "", session_id=ctx.session_key, vault_dir=self._vault_dir),
+            session_id=ctx.session_key,
+            vault_dir=self._vault_dir,
         )
         if not cleaned:
             logger.warning(
