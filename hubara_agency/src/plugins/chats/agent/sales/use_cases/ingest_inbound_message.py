@@ -73,7 +73,8 @@ from src.plugins.chats.agent.sales.use_cases.campaign_reply import (
     unanswered_campaign_touch,
 )
 from src.plugins.chats.agent.sales.use_cases.closing_ack import (
-    is_ack_after_farewell,
+    ACK_TEXT,
+    ack_shape,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_memory import (
     quote_template_in_turn,
@@ -153,9 +154,13 @@ TemporalClientFactory = Callable[[], Awaitable["Client"]]
 
 
 class InboundReadingsProvider(Protocol):
-    """Las lecturas del cliente (motor de decisiones, `decisions/readings.py`)."""
+    """Las lecturas del cliente (motor de decisiones, `decisions/readings.py`):
+    compra, retoma y baja (`read`) y el acuse tras la despedida (`read_ack`,
+    que se pide antes del ciclo de episodios)."""
 
     async def read(self, inbound: Inbound) -> Any: ...
+
+    async def read_ack(self, inbound: Inbound) -> Any: ...
 
 
 #: `execute(..., customer_text=_FROM_MESSAGE)`: el texto del cliente es el del mensaje.
@@ -360,6 +365,7 @@ class IngestInboundMessage:
         # ("bienvenido a Hubara… ¿en qué te puedo ayudar hoy?"). Si el
         # cliente solo acusa recibo del cierre, el mensaje queda en el chat
         # y no abre episodio ni despierta al agente (return tras persistirlo).
+        # Lo que dice el texto lo lee el motor (capacidad `acuse`).
         closing_ack = False
         _campaign_touch: dict[str, Any] | None = None
         if metadata.get("active_route") != ROUTE_HUMANO:
@@ -375,8 +381,12 @@ class IngestInboundMessage:
                 metadata, now_ms, quoted_message_id=(parsed.context or {}).get("id")
             )
             # Un 👍 a la campaña es respuesta a la campaña, no acuse.
-            closing_ack = _campaign_touch is None and is_ack_after_farewell(
-                metadata, parsed, lambda: self._session_events(session_id)
+            closing_ack = _campaign_touch is None and await self._is_closing_ack(
+                session_id,
+                metadata,
+                parsed,
+                now_ms=now_ms,
+                synthetic=customer_text is not _FROM_MESSAGE,
             )
         if metadata.get("active_route") != ROUTE_HUMANO and not closing_ack:
             if _campaign_touch is not None:
@@ -1103,6 +1113,61 @@ class IngestInboundMessage:
 
             provider = EngineReadings(WORKSPACE_VAULT_DIR)
         return await provider.read(inbound)
+
+    async def _is_closing_ack(
+        self,
+        session_id: str,
+        metadata: dict[str, Any],
+        parsed: WhatsAppMessage,
+        *,
+        now_ms: int,
+        synthetic: bool,
+    ) -> bool:
+        """¿El cliente solo le acusa recibo a la despedida del agente?
+
+        Lo estructural lo decide el código (`ack_shape`: el agente se
+        despidió; una reacción o un sticker son acuse por sí solos; foto,
+        audio o botones nunca). Un texto lo lee el motor de decisiones con el
+        MISMO proveedor de lecturas (capacidad `acuse`; con `reglas`, la
+        regla de hoy `is_closing_ack`). Nunca es acuse si lo último que le
+        mandamos es una plantilla posterior a la despedida: la contesta. El
+        historial es el de ANTES de persistir este mensaje.
+        """
+        shape = ack_shape(metadata, parsed)
+        if shape is None:
+            return False
+        events = self._session_events(session_id)
+        if shape == ACK_TEXT:
+            verdict = await self._read_ack(
+                Inbound(
+                    session_id=session_id,
+                    text=parsed.text,
+                    now_ms=now_ms,
+                    message_id=parsed.message_id,
+                    metadata=metadata,
+                    events=events,
+                    synthetic=synthetic,
+                )
+            )
+            if not verdict.value:
+                return False
+            logger.info(
+                "closing_ack_read",
+                session_id=session_id,
+                by=verdict.by,
+                provider=verdict.provider,
+            )
+        return unseen_template_text(events) is None
+
+    async def _read_ack(self, inbound: Inbound) -> Any:
+        """El acuse con el proveedor inyectado o el del motor. Un proveedor
+        sin `read_ack` (anterior a la capacidad) deja el acuse al del motor."""
+        read_ack = getattr(self._readings, "read_ack", None)
+        if read_ack is None:
+            from src.plugins.chats.agent.sales.decisions.readings import EngineReadings
+
+            read_ack = EngineReadings(WORKSPACE_VAULT_DIR).read_ack
+        return await read_ack(inbound)
 
     async def _coupon_talk(
         self,
