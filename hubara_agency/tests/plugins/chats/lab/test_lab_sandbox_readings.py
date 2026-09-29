@@ -175,3 +175,49 @@ async def test_the_ad_banner_is_not_what_the_customer_wrote(tmp_path: Path, curr
     metadata, _ = await _read(tmp_path, first)
 
     assert "reengagement_deferral" not in metadata and "last_inbound_signal" not in metadata, metadata
+
+
+async def test_what_happened_between_the_burst_and_the_turn_goes_in_its_place(
+    tmp_path: Path, current_bot, monkeypatch
+) -> None:
+    """Ráfaga partida: el cliente escribió «y el envío a Bogotá» mientras el bot
+    contestaba el turno anterior (su respuesta salió DESPUÉS del mensaje y
+    ANTES de este turno), y una persona del equipo había escrito antes. Cada
+    mensaje se lee con lo que había cuando llegó y el turno arranca con el
+    historial en el orden de producción (`dashboard_between` del caso)."""
+    import json as _json
+
+    from src.plugins.chats.agent.sales.decisions import readings as engine_readings
+    from src.plugins.chats.agent.sales_lab.sandbox.readings import append_history_event, ingest_burst
+
+    def _event(role: str, content: str, at: int, **extra) -> dict:
+        from datetime import datetime, timezone
+
+        return {"role": role, "content": content, "timestamp": datetime.fromtimestamp(at / 1000, tz=timezone.utc).isoformat(), **extra}
+
+    for event in (_event("user", "hola", T0 + 1_000), _event("user", "me mandas el catálogo", T0 + 60_000)):
+        append_history_event(tmp_path, SID_R, event)
+    team = _event("assistant", "Hola, te escribe Ana del equipo", T0 + 65_000, sender="human")
+    reply = _event("assistant", "Claro, te comparto el catálogo", T0 + 75_000)
+    seen: list[list[str]] = []
+    original = engine_readings.EngineReadings.read
+
+    async def spy(self, inp):
+        seen.append([str(e.get("content")) for e in inp.events])
+        return await original(self, inp)
+
+    monkeypatch.setattr(engine_readings.EngineReadings, "read", spy)
+    message = {"text": "y el envío a Bogotá", "kind": "text", "ts_ms": T0 + 70_000, "wamid": "wamid.E"}
+
+    await ingest_burst(
+        _metadata_with_product(), [message], session_id=SID_R, vault_dir=tmp_path, at_ms=T0 + 80_000,
+        between=[team, reply],
+    )
+
+    assert seen == [["hola", "me mandas el catálogo", "Hola, te escribe Ana del equipo"]]
+    history = tmp_path / SID_R / "sessions" / f"{SID_R}.jsonl"
+    contents = [_json.loads(line)["content"] for line in history.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert contents == [
+        "hola", "me mandas el catálogo", "Hola, te escribe Ana del equipo", "y el envío a Bogotá",
+        "Claro, te comparto el catálogo",
+    ]

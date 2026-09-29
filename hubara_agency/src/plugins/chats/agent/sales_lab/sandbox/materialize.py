@@ -74,6 +74,9 @@ class SandboxPaths:
     # Un evento del dashboard por mensaje de `case["burst"]` (mismo orden),
     # con el número ficticio: lo que el sandbox agrega antes del turno.
     burst_records: tuple[dict[str, Any], ...] = ()
+    # `dashboard_between` del caso (con el número ficticio): el ingest del
+    # sandbox los intercala por hora con la ráfaga.
+    between_records: tuple[dict[str, Any], ...] = ()
 
 
 def sim_session_id(session_id: str) -> str:
@@ -343,6 +346,11 @@ def materialize_case(
         state_dir=dest / "agent_state",
         catalog_dir=dest / "catalog",
         burst_records=tuple(json.loads(scrub_text(json.dumps(r, ensure_ascii=False), real, sim)) for r in burst_records(events, case)),
+        between_records=tuple(
+            json.loads(scrub_text(json.dumps(e, ensure_ascii=False), real, sim))
+            for e in case.get("dashboard_between") or []
+            if isinstance(e, dict)
+        ),
     )
     metadata = json.loads((src / "metadata.json").read_text(encoding="utf-8"))
     box = paths.vault_dir / sim

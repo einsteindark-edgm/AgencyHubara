@@ -201,7 +201,7 @@ async def run_case(
         # pasan por el ingest los mensajes que el cliente mandó antes.
         ingested = await ingest_burst(
             metadata, messages, session_id=box.session_id, vault_dir=box.vault_dir, at_ms=at_ms, records=records,
-            catalog=get_catalog_client(), on_message=decisions.ingest_message,
+            catalog=get_catalog_client(), on_message=decisions.ingest_message, between=box.between_records,
         )
         result["readings"] = [m.readings for m in ingested]
         contexts = [m.context for m in ingested]

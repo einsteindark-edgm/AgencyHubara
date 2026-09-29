@@ -11,10 +11,17 @@ Lee un banco ya bajado a disco (`<bench>/vault/<sid>/…`,
 Reglas:
   * caso = traza con `trigger` customer o handoff y `turn_started_ms` desde el
     corte del banco. El ghosting es un turno del sistema: exclusión con motivo.
-  * ráfaga = los mensajes del cliente desde la última respuesta (del bot o de
-    una persona del equipo) hasta el inicio del turno. Si la traza trae
-    `inbound[]` (traza v2) se usan sus wamid.
-  * prefijo del dashboard = eventos ANTES del primer mensaje de la ráfaga;
+  * ráfaga = los mensajes del cliente que respondió el turno según su traza:
+    los wamid de `inbound[]` (traza v2) o las líneas de `inbound_text` (v1),
+    en orden y sin los que ya fueron de un turno anterior. Así un mensaje que
+    llegó MIENTRAS el bot contestaba (ráfaga partida en dos turnos) va en la
+    ráfaga del turno siguiente, y uno que el turno en curso absorbió va en la
+    suya. Si la traza no alcanza, los mensajes desde la última respuesta (del
+    bot o de una persona del equipo) hasta el inicio del turno.
+  * prefijo del dashboard = eventos ANTES del primer mensaje de la ráfaga; los
+    que quedan entre ese mensaje y el inicio del turno sin ser de la ráfaga (la
+    respuesta del turno anterior en una ráfaga partida) van en
+    `dashboard_between`, y el sandbox los pone en su lugar por la hora;
     prefijo del LLM = mensajes grabados ANTES del inicio del turno (la línea
     de metadatos de exoclaw no cuenta).
   * episodios del momento = los que ya habían empezado; uno que cerró después
@@ -34,14 +41,17 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.plugins.chats.agent.sales.decisions.context import real_wamid
 from src.plugins.chats.agent.sales_lab.recorded_tools import recorded_tool_results
 
 _CASE_TRIGGERS = frozenset({"customer", "handoff"})
+_NO_LIMIT = 2**62
 _CLOSING_FIELDS = ("closed_at_ms", "closing_tag", "closing_motivo")
 _REAL_FIELDS = (
     "inbound_text",
@@ -80,6 +90,10 @@ class LabCase:
     # Lo que devolvieron en el turno real las tools que leen el pedido en vivo
     # (`recorded_tools.REPLAYED_TOOLS`): el sandbox se lo da al bot simulado.
     recorded_tools: list[dict[str, Any]] = field(default_factory=list)
+    # Eventos del dashboard entre el primer mensaje de la ráfaga y el inicio
+    # del turno que no son de la ráfaga (la respuesta del turno anterior en una
+    # ráfaga partida, un mensaje del equipo): el sandbox los intercala por hora.
+    dashboard_between: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -198,26 +212,75 @@ def ingest_fields(text: str, kind: str | None = None) -> dict[str, Any]:
     return {"kind": kind or "text"}
 
 
-def _burst(events: list[dict[str, Any]], started_ms: int) -> tuple[list[dict[str, Any]], int]:
-    """(mensajes de la ráfaga, cantidad de eventos del dashboard antes de ella)."""
+def _burst_message(event: dict[str, Any]) -> dict[str, Any]:
+    content = str(event.get("content") or "")
+    return {"text": content, "ts_ms": _ms(event.get("timestamp")), "wamid": event.get("wamid"), **ingest_fields(content)}
+
+
+def _burst(events: list[dict[str, Any]], started_ms: int) -> tuple[list[int], int]:
+    """Respaldo por hora: (índices de la ráfaga, eventos del dashboard antes de
+    ella) = los mensajes del cliente desde la última respuesta hasta el inicio."""
     timed = [(e, _ms(e.get("timestamp"))) for e in events]
     last_reply = max(
         (ts for e, ts in timed if ts is not None and ts <= started_ms and e.get("role") == "assistant"),
         default=None,
     )
-    burst: list[dict[str, Any]] = []
-    first_index: int | None = None
+    indices: list[int] = []
     for i, (e, ts) in enumerate(timed):
         if ts is None or ts > started_ms or e.get("role") != "user":
             continue
         if last_reply is not None and ts <= last_reply:
             continue
-        if first_index is None:
-            first_index = i
-        content = str(e.get("content") or "")
-        burst.append({"text": content, "ts_ms": ts, "wamid": e.get("wamid"), **ingest_fields(content)})
-    prefix = first_index if first_index is not None else sum(1 for _, ts in timed if ts is not None and ts <= started_ms)
-    return burst, prefix
+        indices.append(i)
+    prefix = indices[0] if indices else sum(1 for _, ts in timed if ts is not None and ts <= started_ms)
+    return indices, prefix
+
+
+def _lines(text: Any) -> list[str]:
+    return [" ".join(line.split()) for line in str(text or "").splitlines() if line.strip()]
+
+
+def _indices_by_text(events: list[dict[str, Any]], consumed: set[int], text: Any, until_ms: int) -> list[int] | None:
+    """Los mensajes del cliente cuyas líneas forman el texto que respondió el
+    turno (`inbound_text` de la traza v1), en el orden del dashboard: el turno
+    puede traerlos en otro (una foto entra cuando la visión termina). Saltea
+    los que no son de él (un acuse absorbido, uno de un turno anterior). None
+    si no alcanza."""
+    want = Counter(_lines(text))
+    if not want:
+        return None
+    picked: list[int] = []
+    for i, event in enumerate(events):
+        if not +want:
+            break
+        if i in consumed or event.get("role") != "user":
+            continue
+        ts = _ms(event.get("timestamp"))
+        if ts is not None and ts > until_ms:
+            break
+        got = Counter(_lines(event.get("content")))
+        if got and all(want[line] >= n for line, n in got.items()):
+            picked.append(i)
+            want -= got
+    return picked if not +want else None
+
+
+def _indices_by_wamid(events: list[dict[str, Any]], consumed: set[int], inbound: list[Any]) -> list[int] | None:
+    """Los mensajes del cliente de `inbound[]` (traza v2), por su wamid real."""
+    wamids = {real_wamid(str(m["wamid"])) for m in inbound if isinstance(m, dict) and m.get("wamid")}
+    picked = [
+        i for i, e in enumerate(events)
+        if i not in consumed and e.get("role") == "user" and e.get("wamid") and real_wamid(str(e["wamid"])) in wamids
+    ]
+    return picked or None
+
+
+def _between(events: list[dict[str, Any]], prefix: int, burst: set[int], started_ms: int) -> list[dict[str, Any]]:
+    return [
+        dict(e)
+        for i, e in enumerate(events)
+        if i >= prefix and i not in burst and (_ms(e.get("timestamp")) or 0) <= started_ms
+    ]
 
 
 def _inbound_message(m: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -295,6 +358,7 @@ def build_cases(bench_dir: Path, *, sales_workspace: str) -> CaseSet:
             key=lambda t: (_ms(t.get("turn_started_ms")) or 0, int(t.get("turn") or 0)),
         )
         previous: list[dict[str, Any]] = []
+        consumed: set[int] = set()
         for trace in traces:
             prev_any = previous[-1] if previous else None
             prev_same = next((t for t in reversed(previous) if t.get("episode_id") == trace.get("episode_id")), None)
@@ -309,10 +373,26 @@ def build_cases(bench_dir: Path, *, sales_workspace: str) -> CaseSet:
             if trigger not in _CASE_TRIGGERS:
                 exclusions.append((case_id, "turno_del_sistema"))
                 continue
-            burst, dashboard_prefix = _burst(events, started)
             inbound = trace.get("inbound")
-            if isinstance(inbound, list) and inbound:
-                burst = [_inbound_message(m, events) for m in inbound if isinstance(m, dict)]
+            v2 = isinstance(inbound, list) and bool(inbound)
+            # Hasta que el turno terminó (lo que absorbió); sin la marca, sin tope:
+            # el texto de la traza y los ya consumidos acotan igual.
+            until = _ms(trace.get("recorded_at_ms")) or _NO_LIMIT
+            indices = (_indices_by_wamid(events, consumed, inbound) if v2 else None) or _indices_by_text(
+                events, consumed, trace.get("inbound_text"), until
+            )
+            if indices:
+                dashboard_prefix = indices[0]
+            else:
+                indices, dashboard_prefix = _burst(events, started)
+                indices = [i for i in indices if i not in consumed]
+            consumed.update(indices)
+            burst = (
+                [_inbound_message(m, events) for m in inbound if isinstance(m, dict)]
+                if v2
+                else [_burst_message(events[i]) for i in indices]
+            )
+            between = _between(events, dashboard_prefix, set(indices), started)
             llm_prefix = _llm_prefix(llm_lines, started)
             cases.append(
                 LabCase(
@@ -335,6 +415,7 @@ def build_cases(bench_dir: Path, *, sales_workspace: str) -> CaseSet:
                     state_before=_state_before(prev_any, prev_same),
                     first_in_episode=prev_same is None,
                     recorded_tools=recorded_tool_results(llm_lines, llm_prefix),
+                    dashboard_between=between,
                 )
             )
     return CaseSet(cases=tuple(cases), exclusions=tuple(exclusions))

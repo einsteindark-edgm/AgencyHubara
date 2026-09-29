@@ -251,3 +251,81 @@ def test_old_traces_infer_the_kind_from_the_text_the_ingest_wrote(tmp_path: Path
     case = _case(build_cases(b, sales_workspace=WS).cases, 2)
 
     assert [_fields(m) for m in case.burst] == EXPECTED_FIELDS
+
+
+def _v1_bench(tmp_path: Path, events: list[dict], traces: list[dict]) -> Path:
+    """El banco con otro historial y otras trazas v1 (sin `inbound[]`)."""
+    b = _bench(tmp_path)
+    s = b / "vault" / SID
+    (s / "sessions" / f"{SID}.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+    (s / "evals" / "turn_traces.jsonl").write_text("\n".join(json.dumps(t) for t in traces) + "\n", encoding="utf-8")
+    return b
+
+
+def _v1_trace(turn: int, started: int, inbound_text: str) -> dict:
+    return {"turn": turn, "episode_id": "ep_001", "trigger": "customer", "turn_started_ms": started,
+            "inbound_text": inbound_text, "sent_texts": ["ok"], "tools": [], "guards": []}
+
+
+HOLA = {"role": "user", "content": "hola", "timestamp": _iso(T0 + 1_000)}
+BIENVENIDA = {"role": "assistant", "content": "¡Buenas tardes! Bienvenido", "timestamp": _iso(T0 + 9_000)}
+CATALOGO = {"role": "user", "content": "me mandas el catálogo", "timestamp": _iso(T0 + 60_000)}
+# Llega MIENTRAS el bot contesta el turno 2 (antes de su respuesta): el
+# workflow lo responde en un turno 3 aparte (ráfaga partida en dos turnos).
+ENVIO = {"role": "user", "content": "y el envío a Bogotá", "timestamp": _iso(T0 + 70_000)}
+RESPUESTA_T2 = {"role": "assistant", "content": "Claro, te comparto el catálogo", "timestamp": _iso(T0 + 75_000)}
+
+
+def test_a_message_sent_while_the_bot_answered_is_the_burst_of_the_next_turn(tmp_path: Path) -> None:
+    """Traza v1 de una ráfaga partida: el turno 3 responde un mensaje que llegó
+    ANTES de la respuesta del turno 2. El caso lo trae igual (lo dice la
+    traza real, `inbound_text`); antes quedaba sin ráfaga y el bot simulado
+    respondía un mensaje vacío."""
+    b = _v1_bench(
+        tmp_path,
+        [HOLA, BIENVENIDA, CATALOGO, ENVIO, RESPUESTA_T2],
+        [_v1_trace(1, T0 + 3_000, "hola"), _v1_trace(2, T0 + 62_000, "me mandas el catálogo"),
+         _v1_trace(3, T0 + 80_000, "y el envío a Bogotá")],
+    )
+
+    cases = build_cases(b, sales_workspace=WS).cases
+
+    assert [m["text"] for m in _case(cases, 2).burst] == ["me mandas el catálogo"]
+    third = _case(cases, 3)
+    assert [m["text"] for m in third.burst] == ["y el envío a Bogotá"]
+    assert third.dashboard_prefix == 3  # hola, bienvenida y el catálogo: lo que había cuando llegó el mensaje
+    # La respuesta del turno 2 salió DESPUÉS del mensaje y ANTES del turno 3:
+    # el sandbox la pone en el historial en su lugar.
+    assert [e["content"] for e in third.dashboard_between] == ["Claro, te comparto el catálogo"]
+
+
+def test_a_message_the_running_turn_absorbed_is_part_of_its_burst(tmp_path: Path) -> None:
+    """Traza v1 de un turno que absorbió un mensaje llegado después de
+    empezar (la traza real lo trae en `inbound_text`): va en SU ráfaga y no
+    en la del turno siguiente."""
+    b = _v1_bench(
+        tmp_path,
+        [HOLA, BIENVENIDA, CATALOGO, ENVIO, RESPUESTA_T2],
+        [_v1_trace(1, T0 + 3_000, "hola"), _v1_trace(2, T0 + 62_000, "me mandas el catálogo\ny el envío a Bogotá")],
+    )
+
+    case = _case(build_cases(b, sales_workspace=WS).cases, 2)
+
+    assert [m["text"] for m in case.burst] == ["me mandas el catálogo", "y el envío a Bogotá"]
+    assert case.dashboard_between == []
+
+
+def test_photos_that_reentered_after_the_vision_are_in_the_burst_in_any_order(tmp_path: Path) -> None:
+    """Las fotos entran al turno cuando la visión termina (el dashboard las
+    guarda ya con el turno en marcha) y en la traza v1 van en otro orden que
+    en el dashboard. La ráfaga las trae todas, en el orden del dashboard."""
+    foto_a = {"role": "user", "content": "[el cliente envió una foto: vela lila]", "timestamp": _iso(T0 + 60_000)}
+    texto = {"role": "user", "content": "me gustan esas?", "timestamp": _iso(T0 + 60_800)}
+    foto_b = {"role": "user", "content": "[el cliente envió una foto: vela azul]", "timestamp": _iso(T0 + 61_500)}
+    segundo = {**_v1_trace(2, T0 + 60_200, f"{foto_a['content']}\n{foto_b['content']}\n{texto['content']}"),
+               "recorded_at_ms": T0 + 70_000}
+    b = _v1_bench(tmp_path, [HOLA, BIENVENIDA, foto_a, texto, foto_b], [_v1_trace(1, T0 + 3_000, "hola"), segundo])
+
+    case = _case(build_cases(b, sales_workspace=WS).cases, 2)
+
+    assert [m["text"] for m in case.burst] == [foto_a["content"], texto["content"], foto_b["content"]]

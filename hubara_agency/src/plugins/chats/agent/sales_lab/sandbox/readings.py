@@ -66,6 +66,21 @@ def append_history_event(vault_dir: Path, session_id: str, event: dict[str, Any]
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
+def _event_ms(event: dict[str, Any]) -> int | None:
+    from datetime import datetime, timezone
+
+    value = event.get("timestamp")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(value)
+    if isinstance(value, str) and value:
+        try:
+            dt = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return int((dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp() * 1000)
+    return None
+
+
 def _history(vault_dir: Path, session_id: str) -> list[dict[str, Any]]:
     path = _history_path(vault_dir, session_id)
     try:
@@ -168,13 +183,20 @@ async def ingest_burst(
     records: Sequence[dict[str, Any]] | None = None,
     catalog: Any = None,
     on_message: Callable[[int], None] | None = None,
+    between: Sequence[dict[str, Any]] = (),
 ) -> list[IngestedMessage]:
     """Pasa cada mensaje por el ingest (ver el módulo): escribe el metadata
     (mutación y archivo) y el historial del sandbox. `records`: el evento del
     dashboard de cada mensaje (`materialize.burst_records`); sin él, uno con
     la misma forma. `catalog`: el del sandbox (sin catálogo, no hay nota de
     fuera de catálogo, como en producción). `on_message(k)`: avisa antes de
-    cada mensaje (el caso anota de cuál salen las decisiones)."""
+    cada mensaje (el caso anota de cuál salen las decisiones). `between`: los
+    eventos del dashboard que pasaron entre el primer mensaje de la ráfaga y
+    el inicio del turno sin ser de ella (`dashboard_between` del caso: la
+    respuesta del turno anterior en una ráfaga partida, un mensaje del
+    equipo); cada uno entra en su lugar por la hora, así cada mensaje se lee
+    con lo que había cuando llegó y el turno arranca con el historial de
+    producción."""
     from src.plugins.chats.agent.sales.decisions.readings import (
         EngineReadings,
         Inbound,
@@ -192,14 +214,17 @@ async def ingest_burst(
     tz = resolve_local_timezone(session_id)
     provider = EngineReadings(Path(vault_dir))
     out: list[IngestedMessage] = []
+    pending = sorted((dict(e) for e in between), key=lambda e: _event_ms(e) or 0)
     for k, message in enumerate(messages, 1):
         if on_message is not None:
             on_message(k)
+        ts = message.get("ts_ms")
+        now_ms = int(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else int(at_ms)
+        while pending and (_event_ms(pending[0]) or 0) < now_ms:
+            append_history_event(vault_dir, session_id, pending.pop(0))
         # Lo que el cliente vio ANTES de este mensaje (el ingest lo lee del
         # historial antes de guardar el mensaje).
         events = _history(vault_dir, session_id)
-        ts = message.get("ts_ms")
-        now_ms = int(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else int(at_ms)
         wamid = str(message.get("wamid") or f"lab.{k}")
         # Como el ingest, antes de las lecturas: el último mensaje del cliente
         # y la ventana de servicio que reabre (la nota del aplazamiento
@@ -245,6 +270,8 @@ async def ingest_burst(
                 ),
             )
         )
+    for event in pending:
+        append_history_event(vault_dir, session_id, event)
     return out
 
 
