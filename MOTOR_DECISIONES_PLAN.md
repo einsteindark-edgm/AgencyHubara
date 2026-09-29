@@ -78,7 +78,8 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [x] baja: solo con promoción reciente (condición de hoy); la frase explícita es PISO; Jev solo agrega.
 - [x] cupón · fuera de catálogo · cantidad (`capabilities/lecturas_pedido.py`): cupón y fuera de catálogo en el ingest (`read_coupon_talk`, `read_catalog_gap`); la cantidad en la activity del prompt. Fuera de catálogo: Jev solo puede QUITAR términos (el piso es la lista de la regla).
 - [x] mapeos (`capabilities/mapeos.py`), choice sobre la lista cerrada más «ambiguo»/«ninguno», valor validado contra la lista: categoría (`search_products`), familia de color e ítem del pedido (`set_order_slot`), zona de envío (`present_order_confirmation`, `register_order`).
-- [ ] producto nombrado (remarketing) y fuera de catálogo en el contexto de remarketing: por el enchufe de `chats/shared` (como `contactar`).
+- [x] producto nombrado (remarketing: qué ficha ve el gancho; Jev SUMA el producto nombrado con otras palabras, los exactos se quedan) y fuera de catálogo en el contexto de remarketing (la misma capacidad del ingest: Jev solo quita), por el enchufe `decide_catalog_context` de `chats/shared/agent_decisions` que conecta el worker de remarketing.
+- [ ] verdad de producto (remarketing): hoy la decide el workflow de remarketing (`invented_product_claim`); por el diseño, lo que decide un workflow pasa al motor solo en un workflow nuevo (un V2 de remarketing).
 - [ ] ANTES de encender `zona_de_envio`: la API (`shipping_rate_for_city`) cobra la nacional a toda ciudad que no sea Bogotá; la tool acepta las dos tarifas fuera de Bogotá. Con Jev, Chía pagaría la de Bogotá en el bot y la nacional en la API. Decisión del operador: cuál es la correcta.
 - [ ] El laboratorio no ejercita cupón ni fuera de catálogo (`sandbox/turn.py::turn_context` arma la nota del cupón como en juego y nunca la de fuera de catálogo); los veredictos de F3 van a la cola y a los logs, no a la traza del turno.
 
@@ -95,7 +96,7 @@ Cada fase: TDD (rojo por comportamiento, nunca por ImportError), batería comple
 - [x] Las tools entran al motor SOLO por `guards` (`safe_customer_text`, `product_quote_sentences`, `catalog_choice_buttons`); el vault les llega por la raíz de composición (`build_vault_dir`).
 - [x] destinatario · rescate · saludo · portavelas en el egreso de V2 (`decisions/egress.py`): cada una con la regla de V1 de respaldo, métricas para su vara y redacción de los datos del cliente.
 - [x] destinatario también en las tools, con las MISMAS capacidades del egreso: `send_reply` (destinatario extendido + rescate por párrafo), el flush de los intents (destinatario básico; `_sanitize_intent_client_text` recibe la sesión) y el filtro de oraciones de cierre y escalación (destinatario por oración, en paralelo con persona). Caso: «Usa el código VELAS_10 al pagar» deja de rechazarse con Jev.
-- [ ] verdad de producto (remarketing).
+- [ ] verdad de producto (remarketing): ver F3 (requiere un V2 de remarketing).
 
 ### F6 · Tools, datos y etapas
 - [x] Perfil `jev-v3` = cuestionario `rafaga-v3` + política `turno-v3` (sobre v2). Las preguntas de etapa solo se hacen en su etapa (datos de envío, variantes, cierre, poscierre).

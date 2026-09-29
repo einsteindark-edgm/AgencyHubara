@@ -58,6 +58,7 @@ from src.plugins.chats.agent.remarketing.workflows.watchdog import (
 from src.platform.tools.routing import TransferToSalesAgentTool
 from src.plugins.chats.agent.remarketing.tools import deferral_aware_transfer_tool
 from src.plugins.chats.agent.sales.decisions.contact import register_contact_decision
+from src.plugins.chats.agent.sales.decisions.remarketing_context import register_catalog_context_decision
 from src.plugins.chats.agent.sales.decisions.routing import register_sales_workflow_router
 
 # NEW-5 cerrado: el worker de Remarketing tambien necesita la tool de
@@ -76,6 +77,8 @@ def register_decisions_routing() -> None:
     motor si el toque sobra antes de redactar (capacidad `contactar`)."""
     register_sales_workflow_router()
     register_contact_decision()
+    # F3: producto nombrado y fuera de catálogo en el contexto del gancho.
+    register_catalog_context_decision()
 
 
 register_decisions_routing()

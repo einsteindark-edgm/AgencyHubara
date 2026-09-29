@@ -7,9 +7,10 @@ sigue validando el código contra el catálogo; «ambiguo» o poca certeza dejan
 la regla de hoy. La tool le pide la decisión al motor con
 `guards.decide_for_session` y no sabe quién contestó. Tiempo máximo: 2 s.
 
-El producto nombrado del remarketing NO está acá: el remarketing no puede
-importar nada de ventas (contrato `agents-independent`) y el motor vive en
-ventas.
+El producto nombrado del remarketing (qué ficha ve el gancho) también está
+acá; el remarketing no importa ventas (contrato `agents-independent`): se lo
+conecta su worker por el enchufe de `chats/shared/agent_decisions`
+(`decisions/remarketing_context.py`).
 """
 from __future__ import annotations
 
@@ -319,3 +320,69 @@ class ZonaDeEnvio:
 
     def same(self, a: dict[str, str | None], b: dict[str, str | None]) -> bool:
         return (a or {}).get("zona") == (b or {}).get("zona")
+
+
+# --- producto nombrado (remarketing) --------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProductosDeLaCharla:
+    """La charla del gancho (motivo + transcript), los títulos del catálogo y
+    los que la regla ya encontró tal cual."""
+
+    text: str
+    titles: tuple[str, ...]
+    named: tuple[str, ...] = ()
+
+
+class ProductoNombrado:
+    """«¿De qué producto del catálogo habla la charla?» (qué ficha ve el gancho
+    de remarketing). Regla: los títulos que la charla nombra tal cual. Jev
+    SUMA el que el cliente nombró con otras palabras («la de los
+    corazoncitos»); los exactos se quedan (piso). Valor: los títulos."""
+
+    name = "producto_nombrado"
+    timeout_s = 2.0
+    thresholds: Mapping[str, float] = {"choice": 0.85}
+
+    def rule(self, inp: ProductosDeLaCharla) -> tuple[str, ...]:
+        return tuple(inp.named)
+
+    def ask(self, inp: ProductosDeLaCharla) -> tuple[str, list[TypedQuestion]] | None:
+        if not inp.text.strip() or not inp.titles:
+            return None
+        keys = option_keys(inp.titles)
+        state = (
+            "Conversación de una tienda con un cliente (lo último al final):\n"
+            f"{inp.text.strip()}\n\nProductos del catálogo: " + ", ".join(inp.titles) + "."
+        )
+        return state, [
+            TypedQuestion(
+                id="producto.nombrado", kind="choice", text="¿De qué producto del catálogo habla el cliente?",
+                criteria=closed_criteria(
+                    keys, ambiguous="habla de varios o no se sabe cuál", none="no habla de ningún producto del catálogo",
+                ),
+            )
+        ]
+
+    def decide(
+        self, inp: ProductosDeLaCharla, result: Any, rule: tuple[str, ...], thresholds: Mapping[str, float]
+    ) -> tuple[str, ...] | None:
+        th = {**self.thresholds, **thresholds}
+        choice, p = choice_of(result, "producto.nombrado")
+        if choice is None or p < th["choice"] or choice == AMBIGUO:
+            return None
+        if choice == NINGUNO:
+            return ()
+        title = option_keys(inp.titles).get(choice)
+        return (title,) if title is not None else None
+
+    def floor(self, inp: ProductosDeLaCharla, rule: tuple[str, ...], jev: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys([*rule, *jev]))
+
+    def same(self, a: Sequence[str], b: Sequence[str]) -> bool:
+        return set(a or ()) == set(b or ())
+
+
+PRODUCTO_NOMBRADO = ProductoNombrado()
+

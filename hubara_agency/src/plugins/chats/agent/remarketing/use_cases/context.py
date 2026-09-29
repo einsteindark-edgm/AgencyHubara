@@ -19,6 +19,7 @@ Acá se digiere lo que el gancho necesita:
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Sequence
 from typing import Any
 
 from src.plugins.chats.agent.remarketing.contracts import RemarketingContext
@@ -166,7 +167,14 @@ def _ficha(product: Any) -> str:
     return " | ".join(parts)
 
 
-def catalog_facts_for(products: list[Any], *, mentioned: str) -> str:
+def named_products(products: list[Any], *, mentioned: str) -> list[Any]:
+    """Los productos del catálogo que la charla nombra tal cual (sin tildes ni
+    mayúsculas): la regla de hoy de «producto nombrado»."""
+    text = _fold(mentioned)
+    return [p for p in products if _fold(p.title) and _fold(p.title) in text]
+
+
+def catalog_facts_for(products: list[Any], *, mentioned: str, named: Sequence[str] | None = None) -> str:
     """(productos del snapshot, texto de la charla) → ficha para el gancho.
 
     Incidente 2026-09-25: el cliente preguntó por velas «en vaso» y mandó la
@@ -178,16 +186,21 @@ def catalog_facts_for(products: list[Any], *, mentioned: str) -> str:
     """
     if not products:
         return ""
-    text = _fold(mentioned)
-    named = [p for p in products if _fold(p.title) and _fold(p.title) in text]
+    # `named` (títulos): los que decidió el motor de decisiones (F3, «producto
+    # nombrado»); sin él, los que la charla nombra tal cual.
+    shown = (
+        [p for p in products if p.title in set(named)]
+        if named is not None
+        else named_products(products, mentioned=mentioned)
+    )
     lines = [
         f"Productos que existen ({len(products)}): "
         + ", ".join(p.title for p in products)
         + ". Cualquier otro producto, forma, envase o presentación NO existe."
     ]
-    if named:
+    if shown:
         lines.append("Ficha de los productos de esta charla:")
-        lines.extend(_ficha(p) for p in named)
+        lines.extend(_ficha(p) for p in shown)
     return "\n".join(lines)
 
 

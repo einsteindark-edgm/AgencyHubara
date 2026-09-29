@@ -385,3 +385,25 @@ async def test_without_vault_the_lab_bot_pinned_for_the_case_still_decides(oracl
 
 def test_the_mappings_answer_within_the_tool_budget() -> None:
     assert Categoria.timeout_s == FamiliaDeColor.timeout_s == ItemDelPedido.timeout_s == ZonaDeEnvio.timeout_s == 2.0
+
+
+# ── producto nombrado (remarketing): qué ficha ve el gancho ──
+
+
+def test_producto_nombrado_adds_the_product_named_in_other_words_and_keeps_the_exact_ones() -> None:
+    from src.plugins.chats.agent.sales.decisions.capabilities.mapeos import PRODUCTO_NOMBRADO, ProductosDeLaCharla
+    from src.sdk.connectorkit import PerceptionResult, TypedAnswer
+
+    inp = ProductosDeLaCharla(text="el Cubo Love y la de los corazoncitos", titles=("Cubo Love", "Cubo de corazón", "Velón Koala"),
+                              named=("Cubo Love",))
+    state, [question] = PRODUCTO_NOMBRADO.ask(inp)
+    pick = TypedAnswer(id="producto.nombrado", kind="choice", choice="cubo_de_corazon", probs=(("cubo_de_corazon", 0.92),),
+                       confidence=0.92)
+    result = PerceptionResult(ok=True, answers=(pick,), provider="fake", model="typesafe/jev-1.13-x")
+
+    assert set(question.options) == {"cubo_love", "cubo_de_corazon", "velon_koala", "ambiguo", "ninguno"}
+    assert "Cubo de corazón" in state
+    assert PRODUCTO_NOMBRADO.rule(inp) == ("Cubo Love",)
+    jev = PRODUCTO_NOMBRADO.decide(inp, result, PRODUCTO_NOMBRADO.rule(inp), {})
+    assert jev == ("Cubo de corazón",)
+    assert set(PRODUCTO_NOMBRADO.floor(inp, PRODUCTO_NOMBRADO.rule(inp), jev)) == {"Cubo Love", "Cubo de corazón"}

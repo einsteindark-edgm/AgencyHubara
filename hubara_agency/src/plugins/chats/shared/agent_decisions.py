@@ -11,7 +11,7 @@ Sin Temporal y sin I/O propio.
 """
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -59,3 +59,47 @@ async def decide_contact(
     except Exception as exc:  # noqa: BLE001 — el motor nunca tumba el gancho
         logger.warning("decisions.contact_failed", error=repr(exc)[:200])
         return False, {"error": repr(exc)[:200]}
+
+
+#: `(session_id, text, customer_text, products, named, terms, vault_dir) ->
+#: (títulos nombrados, términos fuera de catálogo)`.
+CatalogContextDecider = Callable[..., Awaitable[tuple[list[str], list[str]]]]
+
+_catalog_context_decider: CatalogContextDecider | None = None
+
+
+def register_catalog_context_decider(decider: CatalogContextDecider) -> None:
+    """Lo llama el worker de remarketing al arrancar (F3: producto nombrado y
+    fuera de catálogo en el contexto del gancho)."""
+    global _catalog_context_decider
+    _catalog_context_decider = decider
+
+
+async def decide_catalog_context(
+    *,
+    session_id: str,
+    text: str,
+    customer_text: str,
+    products: Sequence[Any],
+    named: list[str],
+    terms: list[str],
+    vault_dir: Path,
+) -> tuple[list[str], list[str]]:
+    """(títulos que ve el gancho, términos que no existen). Sin decisor
+    conectado, o si falla, las reglas de hoy (`named`, `terms`)."""
+    if _catalog_context_decider is None:
+        return named, terms
+    try:
+        return await _catalog_context_decider(
+            session_id=session_id,
+            text=text,
+            customer_text=customer_text,
+            products=products,
+            named=named,
+            terms=terms,
+            vault_dir=vault_dir,
+        )
+    except Exception as exc:  # noqa: BLE001 — el motor nunca tumba el gancho
+        logger.warning("decisions.catalog_context_failed", error=repr(exc)[:200])
+        return named, terms
+

@@ -25,8 +25,9 @@ from src.plugins.chats.agent.remarketing.use_cases.context import (
     catalog_facts_for,
     context_from_metadata,
     customer_text_for,
+    named_products,
 )
-from src.plugins.chats.shared.agent_decisions import decide_contact
+from src.plugins.chats.shared.agent_decisions import decide_catalog_context, decide_contact
 from src.plugins.chats.shared.product_truth import (
     unavailable_terms,
 )
@@ -89,10 +90,23 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
     if not products:
         return context
     mentioned = f"{context.tag_motivo}\n{context.transcript}"
+    customer_text = customer_text_for(metadata, events)
+    # Motor de decisiones (F3): qué ficha ve el gancho («producto nombrado») y
+    # qué pidió el cliente que no existe («fuera de catálogo»). Con el bot de
+    # hoy (o sin el motor conectado), las reglas de siempre.
+    named, terms = await decide_catalog_context(
+        session_id=session_id,
+        text=mentioned,
+        customer_text=customer_text,
+        products=products,
+        named=[p.title for p in named_products(products, mentioned=mentioned)],
+        terms=unavailable_terms(customer_text, products),
+        vault_dir=Path(WORKSPACE_VAULT_DIR),
+    )
     return replace(
         context,
-        catalog_facts=catalog_facts_for(products, mentioned=mentioned),
-        unavailable_terms=unavailable_terms(customer_text_for(metadata, events), products),
+        catalog_facts=catalog_facts_for(products, mentioned=mentioned, named=named),
+        unavailable_terms=terms,
     )
 
 
