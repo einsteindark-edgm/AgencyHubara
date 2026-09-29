@@ -21,7 +21,8 @@ Sin Temporal: lo usan activities, el ingest y (vía `guards`) las tools.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -81,6 +82,31 @@ class Verdict:
         }
 
 
+#: Quienes miran las decisiones de este proceso (el sandbox del laboratorio,
+#: que las publica con su turno). En producción nadie mira: `decide` es el de
+#: siempre.
+_WATCHERS: list[Callable[[Verdict], None]] = []
+
+
+@contextmanager
+def watching_verdicts(watcher: Callable[[Verdict], None]) -> Iterator[None]:
+    """Mientras dure el bloque, `watcher` ve cada decisión de este proceso
+    (`decide`: ingest, tools y activities), en el orden en que se tomaron."""
+    _WATCHERS.append(watcher)
+    try:
+        yield
+    finally:
+        _WATCHERS.remove(watcher)
+
+
+def _tell_watchers(verdict: Verdict) -> None:
+    for watcher in tuple(_WATCHERS):
+        try:
+            watcher(verdict)
+        except Exception as exc:  # noqa: BLE001 — mirar nunca frena la decisión
+            logger.warning("decisions.watcher_failed", capability=verdict.capability, error=repr(exc)[:200])
+
+
 def _answers(result: Any) -> tuple[dict[str, Any], ...]:
     return tuple(
         {"q": a.id, "type": a.kind, "p": a.p, "choice": a.choice, "confidence": a.confidence}
@@ -119,6 +145,26 @@ async def decide(
 ) -> Verdict:
     """La decisión de la capacidad con el proveedor del bot. Nunca lanza por
     Jev; la regla sí puede lanzar (igual que hoy)."""
+    verdict = await _decide(
+        capability, inp, provider=provider, profile_id=profile_id, disagreements=disagreements,
+        session_id=session_id, redact=redact, metrics=metrics,
+    )
+    if _WATCHERS:
+        _tell_watchers(verdict)
+    return verdict
+
+
+async def _decide(
+    capability: Any,
+    inp: Any,
+    *,
+    provider: str,
+    profile_id: str,
+    disagreements: Any,
+    session_id: str | None,
+    redact: Sequence[str],
+    metrics: Any,
+) -> Verdict:
     from src.plugins.chats.agent.sales.decisions.profiles import get_engine_profile
 
     name = str(capability.name)

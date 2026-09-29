@@ -28,7 +28,7 @@ supo, como cuando Medusa no responde a tiempo).
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -158,12 +158,14 @@ async def ingest_burst(
     at_ms: int,
     records: Sequence[dict[str, Any]] | None = None,
     catalog: Any = None,
+    on_message: Callable[[int], None] | None = None,
 ) -> list[IngestedMessage]:
     """Pasa cada mensaje por el ingest (ver el módulo): escribe el metadata
     (mutación y archivo) y el historial del sandbox. `records`: el evento del
     dashboard de cada mensaje (`materialize.burst_records`); sin él, uno con
     la misma forma. `catalog`: el del sandbox (sin catálogo, no hay nota de
-    fuera de catálogo, como en producción)."""
+    fuera de catálogo, como en producción). `on_message(k)`: avisa antes de
+    cada mensaje (el caso anota de cuál salen las decisiones)."""
     from src.plugins.chats.agent.sales.decisions.readings import (
         EngineReadings,
         Inbound,
@@ -179,6 +181,8 @@ async def ingest_burst(
     provider = EngineReadings(Path(vault_dir))
     out: list[IngestedMessage] = []
     for k, message in enumerate(messages, 1):
+        if on_message is not None:
+            on_message(k)
         # Lo que el cliente vio ANTES de este mensaje (el ingest lo lee del
         # historial antes de guardar el mensaje).
         events = _history(vault_dir, session_id)

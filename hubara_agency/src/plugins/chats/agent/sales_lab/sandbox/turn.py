@@ -38,9 +38,11 @@ from pathlib import Path
 from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_arm
+from src.plugins.chats.agent.sales.decisions.capabilities import watching_verdicts
 from src.plugins.chats.agent.sales_lab.arms import signal_meta
 from src.plugins.chats.agent.sales_lab.sandbox.activities import SandboxCapture, sandbox_activities
 from src.plugins.chats.agent.sales_lab.sandbox.clock import frozen_clock
+from src.plugins.chats.agent.sales_lab.sandbox.decisions import CaseDecisions, case_disagreements, case_redact_terms
 from src.plugins.chats.agent.sales_lab.sandbox.materialize import materialize_case, scrub_text
 from src.plugins.chats.agent.sales_lab.sandbox.readings import ingest_burst
 
@@ -152,11 +154,14 @@ async def run_case(
         "arm": arm,
         "error": None,
     }
+    # Cada decisión del motor en el caso (ingest y turno), con su etapa: el
+    # rastro que deja en `_decisions/` se borra con el sandbox.
+    decisions = CaseDecisions(capture)
     # El bot del brazo vale para TODO el caso: las lecturas del ingest, las
     # activities y las tools consultan el registro de bots (`DECISIONS_BOT`).
     with _pinned_bot(arm), installed_sandbox_ports(
         promotions_path=bench_dir / "promotions.json", catalog=get_catalog_client()
-    ), frozen_clock(at_ms):
+    ), frozen_clock(at_ms), watching_verdicts(decisions):
         # Los workflows y sus activities salen del WORKER de ventas (R-DIP #10: un
         # agente no importa los contratos ni los workflows de otro); se arranca
         # por nombre con la entrada como JSON, igual que el dispatcher: el del
@@ -196,10 +201,11 @@ async def run_case(
         # pasan por el ingest los mensajes que el cliente mandó antes.
         ingested = await ingest_burst(
             metadata, messages, session_id=box.session_id, vault_dir=box.vault_dir, at_ms=at_ms, records=records,
-            catalog=get_catalog_client(),
+            catalog=get_catalog_client(), on_message=decisions.ingest_message,
         )
         result["readings"] = [m.readings for m in ingested]
         contexts = [m.context for m in ingested]
+        decisions.turn()
 
         def _args(message: dict[str, Any], context: list[str]) -> list[Any]:
             meta = signal_meta(arm, message)
@@ -259,4 +265,10 @@ async def run_case(
     # workflow junta los contextos de la ráfaga igual).
     result["plugin_context"] = list(dict.fromkeys(note for context in signaled for note in context))
     result["tool_replay"] = capture.tool_replay
+    # Qué decidió cada capacidad (Jev, la regla, el piso o el respaldo, y por
+    # qué) y la cola de desacuerdos del sandbox, antes de que el proceso del
+    # caso lo borre; con lo personal del cliente tapado, como en la cola.
+    redact = case_redact_terms(metadata, after)
+    result["decisions"] = decisions.published(redact=redact)
+    result["disagreements"] = case_disagreements(box.vault_dir, redact=redact)
     return result

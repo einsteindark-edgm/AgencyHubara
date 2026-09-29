@@ -160,12 +160,18 @@ def test_a_message_that_does_not_talk_about_the_coupon_gets_the_short_note(curre
     assert coupon_notes and all(COUPON_NOT_IN_PLAY in n for n in coupon_notes), coupon_notes
 
 
-def test_the_new_bot_asks_jev_whether_the_message_talks_about_the_coupon(tmp_path: Path) -> None:
+@pytest.fixture(scope="module")
+def new_bot_coupon(tmp_path_factory) -> dict:
+    """B con un mensaje que nombra el cupón: la regla dice que habla de él y
+    Jev (el falso) dice que no."""
+    case = _coupon_case("¿el cupón sirve para la Vela Buda?")
+    return _run_probe(tmp_path_factory.mktemp("b-cupon"), case, arm="B", catalog=CATALOG)["result"]
+
+
+def test_the_new_bot_asks_jev_whether_the_message_talks_about_the_coupon(new_bot_coupon: dict) -> None:
     """B decide con Jev (el falso dice «no» si la pregunta no aparece en lo
     que ve), aunque la regla diga que el mensaje nombra el cupón."""
-    case = _coupon_case("¿el cupón sirve para la Vela Buda?")
-
-    result = _run_probe(tmp_path, case, arm="B", catalog=CATALOG)["result"]
+    result = new_bot_coupon
 
     assert result["error"] is None, result
     coupon_notes = [n for n in result["plugin_context"] if "CUPÓN APLICADO: AMOR26" in n]
@@ -189,3 +195,27 @@ def test_a_photo_reaches_the_llm_described_but_the_readings_only_read_its_captio
     assert photo in result["trace"]["inbound_text"]
     [verdicts] = result["readings"]
     assert all(v["reason"] == "no_question" and v["jev"] is None for v in verdicts if v["capability"] != "baja"), verdicts
+
+
+# ── 4 · Las decisiones del motor viajan con el caso ──────────────────────────
+
+
+def test_every_decision_of_the_new_bot_travels_with_its_case(new_bot_turn: dict) -> None:
+    """Lo que el motor decidió en el ingest (por mensaje) y en el turno sale
+    del sandbox con el caso, antes de que se borre."""
+    decisions = new_bot_turn["result"]["decisions"]
+
+    ingest = [d for d in decisions if d["stage"] == "ingest"]
+    assert {"compra", "retoma", "cupon"} <= {d["capability"] for d in ingest}, ingest
+    assert all(d["message"] == 1 and d["provider"] == "jev" for d in ingest), ingest
+    [datos] = [d for d in decisions if d["capability"] == "datos"]
+    assert (datos["stage"], datos["by"], datos["value"]) == ("turno", "jev", [])
+
+
+def test_the_disagreements_of_the_case_travel_with_it(new_bot_coupon: dict) -> None:
+    [cupon] = [d for d in new_bot_coupon["disagreements"] if d["capability"] == "cupon"]
+
+    assert (cupon["rule"], cupon["jev"]) == (True, False)
+    assert "¿el cupón sirve para la Vela Buda?" in cupon["state"]
+    decision = next(d for d in new_bot_coupon["decisions"] if d["capability"] == "cupon")
+    assert (decision["by"], decision["value"], decision["rule"]) == ("jev", False, True)
