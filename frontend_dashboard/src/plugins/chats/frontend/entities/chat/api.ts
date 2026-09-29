@@ -250,7 +250,9 @@ function adaptSession(s: ChatSession): ChatInboxItem {
     tagClass,
     color: hashColor(s.session_id),
     presence: "online",
-    unread: s.unanswered_count ?? 0,
+    inboundCount: s.inbound_count ?? 0,
+    // Lo resuelve la bandeja (qué abrió ESTE operador): la entity no lo sabe.
+    unread: 0,
     pinned: false,
     human,
     handoffReason: human ? s.motivo : undefined,

@@ -32,6 +32,7 @@ function makeItem(overrides: Partial<ChatInboxItem> = {}): ChatInboxItem {
     tagClass: "t-int",
     color: "purple",
     presence: "online",
+    inboundCount: 0,
     unread: 0,
     // Asignado al humano: el filtro por defecto de la bandeja es "Humano".
     human: true,

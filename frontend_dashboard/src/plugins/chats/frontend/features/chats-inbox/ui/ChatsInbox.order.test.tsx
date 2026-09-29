@@ -37,6 +37,7 @@ function makeItem(overrides: Partial<ChatInboxItem> = {}): ChatInboxItem {
     tagClass: "t-human",
     color: "purple",
     presence: "online",
+    inboundCount: 0,
     unread: 0,
     human: true,
     order: null,
