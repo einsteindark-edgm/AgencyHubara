@@ -103,6 +103,9 @@ export const GUARD_LABELS: Record<string, string> = {
   admin_text_guard: "bloqueó un texto interno",
   admin_text_salvaged: "rescató el texto para el cliente",
   variant_picker_text: "el selector de opciones reemplazó el texto",
+  first_contact_greeting: "agregó la bienvenida del primer contacto",
+  self_transfer_noop: "no mandó el texto de una autotransferencia",
+  safety_net_closing_escalation: "escaló a una persona al cerrar (red de seguridad)",
 };
 
 /** Lo que decidió Jev al revisar si la respuesta cubre cada asunto. */

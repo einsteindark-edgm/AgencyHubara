@@ -180,6 +180,8 @@ export const armOutputSchema = z
   .object({
     sent_texts: z.array(z.string()).catch([]).default([]),
     tools: tolerantArray(toolCallSchema),
+    /** Lo que mandó el bot nuevo DESPUÉS, en el mensaje de complemento (Jev notó un asunto sin cubrir). */
+    complement_texts: z.array(z.string()).catch([]).default([]),
     discarded_narration: z.array(z.string()).catch([]).default([]),
     guards: z.array(z.string()).catch([]).default([]),
     suppressed_reason: nullableString,

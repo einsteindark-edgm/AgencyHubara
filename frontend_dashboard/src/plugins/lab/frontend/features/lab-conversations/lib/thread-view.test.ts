@@ -88,7 +88,7 @@ describe("buildThreadView", () => {
       ...thread,
       turns: thread.turns.map((t) => ({
         ...t,
-        outputs: { ...t.outputs, B: { sent_texts: [`respuesta B al turno ${t.turn}`], tools: [], discarded_narration: [], guards: [], suppressed_reason: null, llm_text: null } },
+        outputs: { ...t.outputs, B: { sent_texts: [`respuesta B al turno ${t.turn}`], tools: [], complement_texts: [], discarded_narration: [], guards: [], suppressed_reason: null, llm_text: null } },
       })),
     };
 
@@ -106,7 +106,7 @@ describe("buildThreadView", () => {
   it("un turno simulado que no envió nada lo explica", () => {
     const silent: LabThread = {
       ...thread,
-      turns: [{ ...thread.turns[0], outputs: { B: { sent_texts: [], tools: [], discarded_narration: [], guards: [], suppressed_reason: "tag_closure", llm_text: null } } }],
+      turns: [{ ...thread.turns[0], outputs: { B: { sent_texts: [], tools: [], complement_texts: [], discarded_narration: [], guards: [], suppressed_reason: "tag_closure", llm_text: null } } }],
     };
 
     expect(brief(buildThreadView(silent, "B"))).toContain("note El bot no envió nada: cerró la conversación con una etiqueta.");
@@ -141,7 +141,7 @@ describe("buildThreadView", () => {
       "day 2026-09-23",
       "in Buenas tardes",
       "out Mira esta",
-      "comp 🧩 Tarjeta del producto · sagrado-rostro",
+      "comp 🧩 Tarjeta del producto · Sagrado rostro",
       "note No salió: Botón con enlace · Ver catálogo (el enlace no está permitido).",
       "chip t1 sin evaluar",
     ]);
@@ -158,6 +158,43 @@ describe("turnReplies (lo que respondió cada bot en un turno)", () => {
 
   it("un bot simulado: lo que ESE bot respondió, o por qué no hay nada", () => {
     expect(brief(turnReplies(thread, thread.turns[1], "B"))).toEqual(["note Este bot todavía no respondió este turno."]);
+  });
+
+  it("un bot simulado: lo que presentó dice cuáles productos y con qué texto", () => {
+    const withList: LabThread = threadSchema.parse({
+      ...thread,
+      turns: [{
+        ...thread.turns[0],
+        outputs: { B: { sent_texts: ["¡Buenos días! Bienvenido a *Hubara*"], tools: [
+          { name: "present_products", ok: true, notes: ["count:4"],
+            args: { handles: '["calabaza", "momia", "fantasma", "trilogia-del-terror"]', intro_text: "Esta es la colección de Halloween 🎃" } },
+        ] } },
+      }],
+    });
+
+    expect(brief(turnReplies(withList, withList.turns[0], "B"))).toEqual([
+      "out ¡Buenos días! Bienvenido a *Hubara*",
+      "comp 🧩 Lista de productos · Calabaza, Momia, Fantasma +1\n«Esta es la colección de Halloween 🎃»",
+    ]);
+  });
+
+  it("el mensaje de complemento del bot nuevo se ve después, marcado", () => {
+    const withComplement: LabThread = threadSchema.parse({
+      ...thread,
+      turns: [{
+        ...thread.turns[0],
+        outputs: { B: { sent_texts: ["Tenemos 4 piezas de la colección de Halloween"], tools: [],
+          complement_texts: ["Buenas noches 🤍 Bienvenido a *Hubara*"] } },
+      }],
+    });
+
+    const replies = turnReplies(withComplement, withComplement.turns[0], "B");
+    expect(brief(replies)).toEqual([
+      "out Tenemos 4 piezas de la colección de Halloween",
+      "note Después mandó un mensaje de complemento (Jev notó que faltaba algo):",
+      "out Buenas noches 🤍 Bienvenido a *Hubara*",
+    ]);
+    expect(replies[2]).toMatchObject({ complement: true });
   });
 
   it("producción sin respuesta propia: el cliente volvió a escribir antes y la respuesta salió con el turno siguiente", () => {

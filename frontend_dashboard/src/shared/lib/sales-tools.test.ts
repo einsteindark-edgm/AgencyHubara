@@ -28,7 +28,7 @@ describe("describeTool", () => {
     expect(describeTool({ name: "present_product_detail", args: { handle: "sagrado-rostro" }, ok: true })).toMatchObject({
       action: "Mostrar un producto",
       shown: "Tarjeta del producto",
-      detail: "sagrado-rostro",
+      detail: "Sagrado rostro",
       component: true,
     });
     expect(describeTool({ name: "present_products", args: { handles: '["a", "b"]' }, ok: true, notes: ["count:8"] })).toMatchObject({
@@ -38,6 +38,17 @@ describe("describeTool", () => {
     });
     // El texto de send_reply ya viaja como burbuja: no es un componente aparte.
     expect(describeTool({ name: "send_reply", args: { text: "Hola" }, ok: true }).component).toBe(false);
+  });
+
+  it("la lista de productos dice cuáles mostró (el operador no veía que eran las religiosas)", () => {
+    const shown = describeTool({
+      name: "present_products",
+      args: { handles: '["sagrado-rostro", "sacrificio-de-amor", "plegaria-de-luz", "luz-serena", "angel"]' },
+      ok: true,
+      notes: ["count:5"],
+    });
+    expect(shown.detail).toBe("Sagrado rostro, Sacrificio de amor, Plegaria de luz +2");
+    expect(describeTool({ name: "present_products", args: { handles: ["calabaza", "momia"] }, ok: true }).detail).toBe("Calabaza, Momia");
   });
 
   it("anotar en el pedido dice qué anotó", () => {

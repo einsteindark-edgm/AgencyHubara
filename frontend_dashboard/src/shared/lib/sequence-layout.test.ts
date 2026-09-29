@@ -128,6 +128,15 @@ describe("layoutSequence", () => {
     expect(rows[4]).toMatchObject({ from: 4, to: 1, status: "bad", short: "rechazada: el cliente aplazó" });
   });
 
+  it("la bienvenida del primer contacto y otras protecciones se nombran en palabras", () => {
+    const { rows } = layoutSequence([
+      { i: 0, at_ms: 0, kind: "guard", name: "first_contact_greeting", before: "", after: "¡Buenas noches! Bienvenido" },
+      { i: 1, at_ms: 1, kind: "guard", name: "self_transfer_noop", before: "El control ha sido transferido", after: "" },
+    ]);
+
+    expect(rows.map((r) => r.short)).toEqual(["agregó la bienvenida del primer contacto", "no mandó el texto de una autotransferencia"]);
+  });
+
   it("los cortes y reinicios del turno quedan dentro del workflow", () => {
     const { rows } = layoutSequence([
       { i: 0, at_ms: 0, kind: "cut", reason: "checkpoint_a" },

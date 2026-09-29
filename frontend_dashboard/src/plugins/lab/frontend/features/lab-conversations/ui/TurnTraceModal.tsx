@@ -197,10 +197,12 @@ export function TurnTraceModal({ run, sid, turn, arms, initialArm, onClose }: Pr
                       className={
                         "m-0 max-w-[82%] self-end whitespace-pre-line break-words rounded-[14px] px-3 py-2 text-[13.5px] leading-[1.42] " +
                         (r.dir === "comp" ? "border border-info/40 bg-info-soft text-white" : "rounded-br-[5px] bg-bubble-in text-white") +
-                        (r.byHuman ? " ring-2 ring-warn/60" : "")
+                        (r.byHuman ? " ring-2 ring-warn/60" : "") +
+                        (r.complement ? " border border-dashed border-white/50" : "")
                       }
                     >
                       {r.byHuman ? <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.06em] text-white/80">Persona del equipo</span> : null}
+                      {r.complement ? <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.06em] text-white/80">Mensaje de complemento</span> : null}
                       {r.text || (r.hasImage ? "📷 Foto" : "")}
                     </p>
                   ),

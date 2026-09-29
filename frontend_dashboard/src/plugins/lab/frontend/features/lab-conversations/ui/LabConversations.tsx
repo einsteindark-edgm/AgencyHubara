@@ -228,8 +228,24 @@ function Thread({ run, sid, arm, onOpenTurn }: { run: string; sid: string; arm: 
 
 /** Etiqueta de un mensaje que escribió una persona del equipo (no el bot). */
 const TEAM_LABEL = "Persona del equipo";
+/** Etiqueta del mensaje que el bot nuevo mandó después para cubrir lo que faltó. */
+const COMPLEMENT_LABEL = "Mensaje de complemento";
 
-function Bubble({ dir, text, time, hasImage, byHuman }: { dir: "in" | "out" | "comp"; text: string; time: string; hasImage?: boolean; byHuman?: boolean }) {
+function Bubble({
+  dir,
+  text,
+  time,
+  hasImage,
+  byHuman,
+  complement,
+}: {
+  dir: "in" | "out" | "comp";
+  text: string;
+  time: string;
+  hasImage?: boolean;
+  byHuman?: boolean;
+  complement?: boolean;
+}) {
   const cls =
     dir === "in"
       ? "self-start rounded-bl-[5px] bg-bubble-out text-fg"
@@ -237,8 +253,16 @@ function Bubble({ dir, text, time, hasImage, byHuman }: { dir: "in" | "out" | "c
         ? "self-end border border-info/40 bg-info-soft text-white"
         : "self-end rounded-br-[5px] bg-bubble-in text-white";
   return (
-    <div className={"max-w-[82%] whitespace-pre-line break-words rounded-[14px] px-3 py-2 text-[13.5px] leading-[1.42] " + cls + (byHuman ? " ring-2 ring-warn/60" : "")}>
+    <div
+      className={
+        "max-w-[82%] whitespace-pre-line break-words rounded-[14px] px-3 py-2 text-[13.5px] leading-[1.42] " +
+        cls +
+        (byHuman ? " ring-2 ring-warn/60" : "") +
+        (complement ? " border border-dashed border-white/50" : "")
+      }
+    >
       {byHuman ? <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-white/80">{TEAM_LABEL}</div> : null}
+      {complement ? <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-white/80">{COMPLEMENT_LABEL}</div> : null}
       {text || (hasImage ? "📷 Foto" : "")}
       {time ? <div className={"mt-[3px] text-right text-[10px] tabular-nums " + (dir === "in" ? "text-fg-faint" : "text-white/75")}>{time}</div> : null}
     </div>
@@ -251,7 +275,7 @@ function ThreadRow({ item, evaluating, onOpenTurn }: { item: ThreadItem; evaluat
       return <div className="self-center px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-fg-faint">{formatDayLabelEs(item.day)}</div>;
     case "msg":
       if (item.dir === "system") return <div className="self-center text-[11.5px] text-fg-muted">{item.text}</div>;
-      return <Bubble dir={item.dir} text={item.text} time={item.time} hasImage={item.hasImage} byHuman={item.byHuman} />;
+      return <Bubble dir={item.dir} text={item.text} time={item.time} hasImage={item.hasImage} byHuman={item.byHuman} complement={item.complement} />;
     case "note":
       return <div className="self-end text-[11.5px] italic text-fg-muted">{item.text}</div>;
     case "burst":
@@ -376,10 +400,12 @@ function CompareCell({
               className={
                 "m-0 whitespace-pre-line break-words rounded-[12px] px-2.5 py-1.5 text-[12.5px] leading-[1.4] " +
                 (r.dir === "comp" ? "border border-info/40 bg-info-soft text-white" : "bg-bubble-in text-white") +
-                (r.byHuman ? " ring-2 ring-warn/60" : "")
+                (r.byHuman ? " ring-2 ring-warn/60" : "") +
+                (r.complement ? " border border-dashed border-white/50" : "")
               }
             >
               {r.byHuman ? <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.06em] text-white/80">{TEAM_LABEL}</span> : null}
+              {r.complement ? <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.06em] text-white/80">{COMPLEMENT_LABEL}</span> : null}
               {r.text || (r.hasImage ? "📷 Foto" : "")}
             </p>
           ),

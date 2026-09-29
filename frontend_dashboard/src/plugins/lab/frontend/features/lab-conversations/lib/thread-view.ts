@@ -25,7 +25,7 @@ import type { EpisodeVerdict, LabThread, ThreadMessage, ThreadTurn } from "@plug
 
 export type ThreadItem =
   | { type: "day"; key: string; day: string }
-  | { type: "msg"; key: string; dir: "in" | "out" | "comp" | "system"; text: string; time: string; hasImage: boolean; byHuman?: boolean }
+  | { type: "msg"; key: string; dir: "in" | "out" | "comp" | "system"; text: string; time: string; hasImage: boolean; byHuman?: boolean; complement?: boolean }
   | { type: "burst"; key: string; turn: ThreadTurn; messages: Array<{ text: string; time: string }>; spanS: number }
   | { type: "chip"; key: string; turn: ThreadTurn; verdict: EpisodeVerdict | null; sub: string }
   | { type: "note"; key: string; text: string };
@@ -36,7 +36,17 @@ export type TurnVerdictOf = (turn: ThreadTurn) => EpisodeVerdict | null;
 const NOT_EVALUATED: TurnVerdictOf = () => null;
 
 /** Lo que respondió un bot en un turno: sus burbujas y, si no hay, por qué. */
-export type ReplyItem = { dir: "out" | "comp" | "system" | "note"; text: string; hasImage: boolean; byHuman?: boolean };
+export type ReplyItem = { dir: "out" | "comp" | "system" | "note"; text: string; hasImage: boolean; byHuman?: boolean; complement?: boolean };
+
+/** El texto que acompañó a un componente (intro de la lista, cuerpo de los botones). */
+function componentIntro(args: unknown): string | null {
+  const a = args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
+  for (const key of ["intro_text", "body_text", "body"]) {
+    const v = a[key];
+    if (typeof v === "string" && v.trim() !== "") return v.trim();
+  }
+  return null;
+}
 
 export const PRODUCTION_ARM = "A0";
 const NOT_RUN = "Este bot todavía no respondió este turno.";
@@ -199,15 +209,20 @@ function simulatedReplies(turn: ThreadTurn, arm: string): ReplyItem[] {
     const tool = describeTool(call);
     if (!tool.component || !tool.shown) continue;
     const what = tool.detail ? `${tool.shown} · ${tool.detail}` : tool.shown;
+    const intro = componentIntro(call.args);
     replies.push(
       tool.failed
         ? { dir: "note", text: `No salió: ${what} (${tool.result.replace(/^rechazada: /, "")}).`, hasImage: false }
-        : { dir: "comp", text: `🧩 ${what}`, hasImage: false },
+        : { dir: "comp", text: `🧩 ${what}${intro ? `\n«${intro}»` : ""}`, hasImage: false },
     );
   }
   if (!replies.some((r) => r.dir !== "note")) {
     const why = out.suppressed_reason ? `: ${SUPPRESSED[out.suppressed_reason] ?? out.suppressed_reason}` : "";
     replies.unshift({ dir: "note", text: `El bot no envió nada${why}.`, hasImage: false });
+  }
+  if (out.complement_texts.length > 0) {
+    replies.push({ dir: "note", text: "Después mandó un mensaje de complemento (Jev notó que faltaba algo):", hasImage: false });
+    out.complement_texts.forEach((text) => replies.push({ dir: "out", text, hasImage: false, complement: true }));
   }
   return replies;
 }
@@ -236,7 +251,7 @@ function simulatedView(thread: LabThread, arm: string, verdictOf: TurnVerdictOf)
       items.push(
         r.dir === "note"
           ? { type: "note", key: `note-${turn.turn_key}-${k}`, text: r.text }
-          : { type: "msg", key: `out-${turn.turn_key}-${k}`, dir: r.dir, text: r.text, time: "", hasImage: r.hasImage },
+          : { type: "msg", key: `out-${turn.turn_key}-${k}`, dir: r.dir, text: r.text, time: "", hasImage: r.hasImage, complement: r.complement },
       ),
     );
     items.push(chip(turn, `chip-${turn.turn_key}`, verdictOf));

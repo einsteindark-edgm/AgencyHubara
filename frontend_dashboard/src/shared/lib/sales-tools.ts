@@ -46,7 +46,32 @@ function text(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
 
-const HANDLE = (args: Args) => text(args.handle);
+/** El handle del catálogo en palabras: «sagrado-rostro» → «Sagrado rostro». */
+export function productName(handle: string): string {
+  const words = handle.trim().replace(/[-_]+/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+const HANDLE = (args: Args) => {
+  const handle = text(args.handle);
+  return handle ? productName(handle) : null;
+};
+
+/** Los productos de `handles` (lista o JSON de lista): los tres primeros y cuántos más. */
+function handles(args: Args): string | null {
+  let raw: unknown = args.handles;
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = [];
+    }
+  }
+  const names = Array.isArray(raw) ? raw.filter((h): h is string => typeof h === "string" && h.trim() !== "").map(productName) : [];
+  if (names.length === 0) return null;
+  const more = names.length - 3;
+  return names.slice(0, 3).join(", ") + (more > 0 ? ` +${more}` : "");
+}
 
 /** Los valores anotados en el pedido: «producto: Velón Gorrión · color: lila». */
 function slots(args: Args): string | null {
@@ -72,7 +97,7 @@ const TOOLS: Record<string, ToolSpec> = {
   present_order_confirmation: { action: "Mostrar el resumen del pedido", shown: "Resumen del pedido" },
   present_product_detail: { action: "Mostrar un producto", shown: "Tarjeta del producto", detail: HANDLE },
   present_product_gallery: { action: "Mostrar una galería de fotos", shown: "Galería de fotos", detail: HANDLE },
-  present_products: { action: "Mostrar productos", shown: "Lista de productos", counts: ["producto", "productos"] },
+  present_products: { action: "Mostrar productos", shown: "Lista de productos", detail: handles, counts: ["producto", "productos"] },
   present_variant_picker: { action: "Mostrar opciones para elegir", shown: "Selector de opciones", detail: HANDLE, counts: ["opción", "opciones"] },
   react_to_message: { action: "Reaccionar al mensaje", shown: "Reacción", detail: (a) => text(a.emoji) },
   register_order: { action: "Registrar el pedido" },
