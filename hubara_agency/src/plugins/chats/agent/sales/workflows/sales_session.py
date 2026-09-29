@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
 
@@ -44,6 +45,7 @@ with workflow.unsafe.imports_passed_through():
         VerifyInput,
         VerifyOutput,
         complement_note_of,
+        delivered_card_texts,
         delivered_components,
         perceive_burst_activity,
         plan_of,
@@ -317,13 +319,15 @@ def _perception_step(out: PerceiveOutput, started_ms: int, *, mode: str) -> dict
     }
 
 
-def _reply_as_sent(already_sent: list[str], outgoing: str | None) -> str:
+def _reply_as_sent(already_sent: list[str], outgoing: str | None, cards: Sequence[str] = ()) -> str:
     """Lo que el cliente recibe en el turno, para la verificación (②/③): las
     burbujas que ya salieron (saludo de primer contacto, textos previos a las
-    tools) y el texto final si va a salir, ya pasado por las guardas. La misma
-    vara en sombra (lo lee de lo enviado) y en activo (antes de enviarlo).
-    Solo arma el payload de `verify_coverage`: no agrega commands (L-22)."""
-    return "\n\n".join(t for t in [*already_sent, outgoing or ""] if t)
+    tools), el texto final si va a salir, ya pasado por las guardas, y lo que
+    lee con las tarjetas, que salen después del texto (caso 4567: el saludo iba
+    en el texto de la lista). La misma vara en sombra (lo lee de lo enviado) y
+    en activo (antes de enviarlo). Solo arma el payload de `verify_coverage`:
+    no agrega commands (L-22)."""
+    return "\n\n".join(t for t in [*already_sent, outgoing or "", *cards] if t)
 
 
 def _verify_step(out: VerifyOutput, started_ms: int, *, applied: bool) -> dict[str, Any]:
@@ -1477,12 +1481,14 @@ class HubaraSalesSessionWorkflow:
                     ):
                         # Lo que el cliente recibe en el turno: lo ya enviado
                         # (saludo de primer contacto, textos previos) + el texto
-                        # final si sale (una guarda que lo retiene lo saca).
+                        # final si sale (una guarda que lo retiene lo saca) +
+                        # lo que lee con las tarjetas.
                         verify_reply = _reply_as_sent(
                             trace_sent_texts,
                             None
                             if (leak_blocked or suppress_text_for_picker or abstained)
                             else result.final_content,
+                            delivered_card_texts(result.tool_events),
                         )
                         verified_ms = _now_ms()
                         verify_out = await self._verify(
@@ -1630,7 +1636,9 @@ class HubaraSalesSessionWorkflow:
                                     profile=self._perception_profile,
                                     messages=_burst_messages(raw_batch or []),
                                     topics=list(shadow_out.topics),
-                                    reply_text=_reply_as_sent(trace_sent_texts, None),
+                                    reply_text=_reply_as_sent(
+                                        trace_sent_texts, None, delivered_card_texts(result.tool_events)
+                                    ),
                                     components=delivered_components(result.tool_events),
                                 )
                             )

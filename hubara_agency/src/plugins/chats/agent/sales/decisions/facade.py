@@ -13,6 +13,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from src.plugins.chats.agent.sales.card_texts import card_texts
 from src.plugins.chats.agent.sales.decisions.activities import (
     PERCEPTION_ACTIVITIES as PERCEPTION_ACTIVITIES,
     perceive_burst_activity as perceive_burst_activity,
@@ -147,4 +148,19 @@ def delivered_components(tool_events: Sequence[Mapping[str, Any]]) -> list[str]:
         if _refused(event.get("result")):
             continue
         out.append(name)
+    return out
+
+
+def delivered_card_texts(tool_events: Sequence[Mapping[str, Any]]) -> list[str]:
+    """③ Lo que el cliente LEE con las tarjetas del turno (el texto de la
+    lista, el de los botones…), de las que no se negaron y en su orden. Caso
+    4567 del laboratorio: el saludo iba en el texto de la lista y la
+    verificación, que no lo veía, pidió un complemento con otro saludo."""
+    out: list[str] = []
+    for event in tool_events:
+        name = str(event.get("name") or "")
+        if name in _NOT_CARDS or _refused(event.get("result")):
+            continue
+        args = event.get("args")
+        out.extend(card_texts(name, args if isinstance(args, Mapping) else {}))
     return out

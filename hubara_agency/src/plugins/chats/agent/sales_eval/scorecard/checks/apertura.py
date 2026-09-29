@@ -10,7 +10,7 @@ from src.plugins.chats.agent.sales_eval.evals.script_rubric import (
 )
 from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
-    all_sent_texts,
+    all_read_texts,
     failed,
     in_focus,
     is_legacy,
@@ -43,9 +43,11 @@ def _first_contact_gate(check_id: str, traj: Trajectory) -> CheckResult | None:
     return None
 
 
-def _first_sent(traj: Trajectory) -> tuple[Turn, str] | None:
-    """Primer texto del episodio (con el prefijo en modo turno)."""
-    return next(iter(all_sent_texts(traj)), None)
+def _first_read(traj: Trajectory) -> tuple[Turn, str] | None:
+    """Primer texto que LEYÓ el cliente en el episodio (con el prefijo en modo
+    turno): un texto suelto o, si su turno no tuvo, el de la primera tarjeta
+    (caso 4567: el saludo con la marca iba en el texto de la lista)."""
+    return next(iter(all_read_texts(traj)), None)
 
 
 _FIRST_TEXT_LATER = "el primer texto del episodio no salió hasta el turno foco"
@@ -56,7 +58,7 @@ _FIRST_TEXT_BEFORE = "el primer texto salió antes del turno foco"
 def check_greeting_first_contact(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if (gate := _first_contact_gate("APE-01", traj)) is not None:
         return gate
-    first = _first_sent(traj)
+    first = _first_read(traj)
     if first is None:
         if in_focus(traj):
             return no_signal("APE-01", _FIRST_TEXT_LATER)
@@ -80,7 +82,7 @@ def check_greeting_first_contact(traj: Trajectory, ctx: CheckContext) -> CheckRe
 def check_no_forbidden_opener(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if (gate := _first_contact_gate("APE-02", traj)) is not None:
         return gate
-    first = _first_sent(traj)
+    first = _first_read(traj)
     if first is None:
         if in_focus(traj):
             return no_signal("APE-02", _FIRST_TEXT_LATER)

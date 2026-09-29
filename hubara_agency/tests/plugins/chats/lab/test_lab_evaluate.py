@@ -42,6 +42,20 @@ def test_a_complement_is_part_of_the_reply_of_its_turn() -> None:
     assert [t.name for t in turn.tools] == ["send_catalog", "send_shipping_rates"]
 
 
+def test_the_complement_is_read_after_the_cards_of_its_turn() -> None:
+    """Caso 4567 (caso-fotos-0929-r3, turno 1 del bot nuevo): el turno fue
+    solo la lista, con el saludo en su texto, y después salió el complemento.
+    Lo primero que leyó el cliente es la lista, no el complemento."""
+    intro = "Buenos días, bienvenido a *Hubara*. Esta es nuestra colección de Halloween:"
+    row = {"turn": 1, "trigger": "customer", "sent_texts": [],
+           "tools": [{"name": "present_products", "ok": True, "args": {"intro_text": intro}}],
+           "complement": {"sent_texts": ["Buenas tardes 🤍"], "tools": [{"name": "send_reply", "ok": True}]}}
+
+    turn = candidate_turn(row)
+
+    assert turn.read_texts == (intro, "Buenas tardes 🤍")
+
+
 @pytest.mark.asyncio
 async def test_a_simulated_arm_gets_one_turn_mode_record_per_episode(tmp_path: Path) -> None:
     bench, cases = _cases(tmp_path)

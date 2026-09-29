@@ -269,6 +269,7 @@ def check_design_before_aroma(traj: Trajectory, ctx: CheckContext) -> CheckResul
 # Run ebbc203d (2026-09-16): "tiene un valor de *$45.000 COP*" con el set a
 # $49.500 (el 45.000 venía del anuncio). Misma mecánica que
 # `verify_order_for_checkout` (price_quotes.find_unexplained_amounts).
+from src.plugins.chats.agent.sales.card_texts import card_texts  # noqa: E402
 from src.plugins.chats.agent.sales.config.shipping import (  # noqa: E402
     CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
     SHIPPING_RATE_BOGOTA_COP,
@@ -281,27 +282,17 @@ from src.plugins.chats.agent.sales.price_quotes import (  # noqa: E402
 from src.plugins.chats.agent.sales.pricing import format_cop  # noqa: E402
 
 _POLICY_AMOUNTS = (CASH_ON_DELIVERY_MIN_PRODUCTS_COP, SHIPPING_RATE_BOGOTA_COP, SHIPPING_RATE_NATIONAL_COP)
-_TEXT_TOOL_ARGS = {
-    "send_quick_replies": ("body",),
-    "present_products": ("intro_text",),
-    "present_product_detail": ("caption", "intro_text"),
-    "present_variant_picker": ("intro_text",),
-}
 
 
 def _bot_texts(traj: Trajectory) -> list[tuple[Turn, str]]:
-    """Todo lo que el bot le escribió al cliente: texto final + cuerpos de
-    los componentes que redacta el LLM (botones, intro de listas)."""
+    """Todo lo que el bot le escribió al cliente: texto final + el texto de
+    las tarjetas que redacta el LLM (`card_texts`: lista, botones, ficha…)."""
     out: list[tuple[Turn, str]] = []
     for t in traj.turns:
         if not judged(traj, t):
             continue
         out.extend((t, x) for x in t.sent_texts)
-        for tc in t.tools:
-            for key in _TEXT_TOOL_ARGS.get(tc.name, ()):
-                value = tc.args.get(key)
-                if isinstance(value, str) and value.strip():
-                    out.append((t, value))
+        out.extend((t, x) for tc in t.tools for x in card_texts(tc.name, tc.args))
     return out
 
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
+from src.plugins.chats.agent.sales.card_texts import card_texts
 from src.plugins.chats.shared.purchase_signals import (
     detect_deferral,
     detect_purchase_affirmation,
@@ -93,6 +94,9 @@ class Turn:
     # Los mensajes de la ráfaga con su hora (traza v2). Vacío en trazas v1 y
     # en episodios legados: ahí solo está `inbound_text`, unido por saltos de línea.
     inbound: tuple[InboundMsg, ...] = ()
+    # El orden de `read_texts` cuando el turno junta dos envíos (el turno y su
+    # complemento). `None`: un solo envío, se arma de los textos y las tarjetas.
+    read_order: tuple[str, ...] | None = None
 
     # ── helpers de lectura para los checks ────────────────────────────────
     def tool(self, name: str) -> ToolCall | None:
@@ -106,6 +110,17 @@ class Turn:
 
     def tool_attempted(self, name: str) -> bool:
         return any(t.name == name for t in self.tools)
+
+    @property
+    def read_texts(self) -> tuple[str, ...]:
+        """Lo que el cliente LEYÓ en el turno, en el orden en que le llegó: los
+        textos y, después, el texto de las tarjetas que salieron (el flush va
+        después del texto). Con complemento, lo suyo va al final (caso 4567:
+        el saludo iba en el texto de la lista, antes del complemento)."""
+        if self.read_order is not None:
+            return self.read_order
+        cards = (x for t in self.tools if t.ok is not False for x in card_texts(t.name, t.args))
+        return (*self.sent_texts, *cards)
 
     @property
     def is_customer(self) -> bool:
@@ -275,6 +290,7 @@ def _with_complement(turn: Turn, complement: Turn) -> Turn:
     return replace(
         turn,
         sent_texts=(*turn.sent_texts, *complement.sent_texts),
+        read_order=(*turn.read_texts, *complement.read_texts),
         discarded_narration=(*turn.discarded_narration, *complement.discarded_narration),
         tools=(*turn.tools, *complement.tools),
         intents=(*turn.intents, *complement.intents),

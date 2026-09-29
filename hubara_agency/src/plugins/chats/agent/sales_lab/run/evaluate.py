@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -63,15 +64,20 @@ def evaluation_chunk(
 
 
 def candidate_turn(row: Mapping[str, Any]) -> Turn:
-    """El turno simulado, con su complemento (si hubo) como parte de la respuesta."""
+    """El turno simulado, con su complemento (si hubo) como parte de la
+    respuesta. El complemento sale después de las tarjetas del turno: lo que
+    el cliente leyó va en ese orden (caso 4567, el saludo en la lista)."""
     merged = dict(row)
     complement = row.get("complement")
+    read_order: tuple[str, ...] | None = None
     if isinstance(complement, Mapping):
         for field in _MERGED_LISTS:
             merged[field] = [*(row.get(field) or []), *(complement.get(field) or [])]
         if complement.get("llm_text"):
             merged["llm_text"] = "\n\n".join(t for t in (row.get("llm_text"), complement.get("llm_text")) if t)
-    return turn_from_trace(merged, default_turn=int(row.get("turn") or 1))
+        read_order = (*turn_from_trace(dict(row)).read_texts, *turn_from_trace(dict(complement)).read_texts)
+    turn = turn_from_trace(merged, default_turn=int(row.get("turn") or 1))
+    return turn if read_order is None else replace(turn, read_order=read_order)
 
 
 def _metadata(bench_dir: Path, sid: str) -> dict[str, Any]:

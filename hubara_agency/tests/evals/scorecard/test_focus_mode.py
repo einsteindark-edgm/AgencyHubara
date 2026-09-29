@@ -34,7 +34,7 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks import CODE_CHECKS
 from src.plugins.chats.agent.sales_eval.scorecard.checks._evidence import CONFIRMED_TAGS, tag_turn
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     SIN_SENAL,
-    all_sent_texts,
+    all_read_texts,
     judged,
     judged_turns,
     sent_texts,
@@ -294,12 +294,12 @@ def test_turn_from_trace_is_the_same_turn_build_trajectory_builds() -> None:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
-def test_sent_texts_only_yield_the_focus_turn_and_all_sent_texts_the_prefix() -> None:
+def test_sent_texts_only_yield_the_focus_turn_and_all_read_texts_the_prefix() -> None:
     real = _closed_with_order()
     f = focus_trajectory(real, real.turns[2])
 
     assert [(t.turn, x) for t, x in sent_texts(f)] == [(3, "Con gusto")]
-    assert [t.turn for t, _ in all_sent_texts(f)] == [1, 3]
+    assert [t.turn for t, _ in all_read_texts(f)] == [1, 3]
     assert [t.turn for t in judged_turns(f)] == [3]
     assert judged(real, real.turns[0]) and not judged(f, f.turns[0])
     assert [t.turn for t, _ in sent_texts(real)] == [1, 3]

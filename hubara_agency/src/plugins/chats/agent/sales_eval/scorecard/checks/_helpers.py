@@ -52,10 +52,12 @@ def sent_texts(traj: Trajectory) -> Iterator[tuple[Turn, str]]:
             yield t, text
 
 
-def all_sent_texts(traj: Trajectory) -> Iterator[tuple[Turn, str]]:
-    """Todos los textos, prefijo incluido (p. ej. "el primer texto del episodio")."""
+def all_read_texts(traj: Trajectory) -> Iterator[tuple[Turn, str]]:
+    """Todo lo que leyó el cliente, prefijo incluido y en el orden en que le
+    llegó (p. ej. "el primer texto del episodio"): los textos y el texto de
+    las tarjetas (`Turn.read_texts`)."""
     for t in traj.turns:
-        for text in t.sent_texts:
+        for text in t.read_texts:
             yield t, text
 
 

@@ -84,6 +84,7 @@ with workflow.unsafe.imports_passed_through():
         complement_note_of,
         contract_policy_of,
         decide_egress_activity,
+        delivered_card_texts,
         delivered_components,
         perceive_burst_activity,
         plan_of,
@@ -706,6 +707,7 @@ class HubaraSalesSessionWorkflowV2:
                     verify_reply = _reply_as_sent(
                         trace_sent_texts,
                         None if (leak_blocked or suppress_text_for_picker or abstained) else text_out,
+                        delivered_card_texts(result.tool_events),
                     )
                     verified_ms = _now_ms()
                     verify_out = await self._verify(
@@ -807,7 +809,9 @@ class HubaraSalesSessionWorkflowV2:
                                 profile=self._perception_profile,
                                 messages=_burst_messages(raw_batch),
                                 topics=list(shadow_out.topics),
-                                reply_text=_reply_as_sent(trace_sent_texts, None),
+                                reply_text=_reply_as_sent(
+                                    trace_sent_texts, None, delivered_card_texts(result.tool_events)
+                                ),
                                 components=delivered_components(result.tool_events),
                             )
                         )

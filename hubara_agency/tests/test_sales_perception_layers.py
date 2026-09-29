@@ -505,6 +505,38 @@ async def test_on_and_shadow_verify_the_same_text_for_the_same_turn(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_the_verification_reads_the_text_the_customer_reads_with_the_cards(tmp_path: Path) -> None:
+    """Caso 4567 del laboratorio (caso-fotos-0929-r3, turno 1 del bot nuevo):
+    el saludo con la marca iba en el texto de la lista, lo único que el
+    cliente lee con el menú. La verificación veía «(sin texto)», pidió un
+    complemento por el saludo y salió «Buenas tardes 🤍» después del «Buenos
+    días» de la lista. Una tarjeta que se negó no se lee. (En activo el V1
+    puede sumar la ronda extra de la capa ②: los dos modos no reciben lo
+    mismo, pero los dos leen la lista.)"""
+    intro = "Buenos días, bienvenido a *Hubara* 🤍\n\nEsta es nuestra colección de Halloween:"
+    batch = LLMResponseData(
+        content="", finish_reason="tool_calls", has_tool_calls=True,
+        tool_calls=[
+            ToolCallData(id="id-a", name="present_products",
+                         arguments={"handles": ["calabaza"], "intro_text": intro, "group_by": "categories"}),
+            ToolCallData(id="id-b", name="send_quick_replies",
+                         arguments={"body": "¿Te muestro otra colección?", "buttons": ["Sí"]}),
+        ],
+    )
+    for mode in ("shadow", "on"):
+        (tmp_path / mode).mkdir()
+        classifier = Classifier()
+        await _run(tmp_path / mode, meta={"perception_mode": mode, "perception_profile": "jev-v1"},
+                   llm=LLM([batch]), classifier=classifier,
+                   tool_results={"present_products": json.dumps({"queued": True}),
+                                 "send_quick_replies": json.dumps({"queued": False, "error": "sin botones"})})
+        reply = classifier.verified[0].reply_text
+
+        assert reply.endswith(intro), (mode, reply)
+        assert "otra colección" not in reply and "categories" not in reply, (mode, reply)
+
+
+@pytest.mark.asyncio
 async def test_on_a_text_the_guards_hold_back_is_not_verified_as_sent(tmp_path: Path) -> None:
     """Si una guarda retiene el texto final (texto administrativo), la
     verificación no lo cuenta como respuesta: juzga solo lo que sí sale."""

@@ -325,6 +325,18 @@ def test_des10_quick_replies_body_is_audited_too() -> None:
     assert _run("DES-10", t, _PRICES_CTX).verdict == "falla"
 
 
+def test_des10_product_detail_text_is_audited_too() -> None:
+    """El texto de la ficha va en `caption_suffix`: DES-10 buscaba `caption`
+    e `intro_text`, que la tool nunca tuvo."""
+    card = tool("present_product_detail", handle="trilogia-del-terror", caption_suffix="Hoy en $45.000")
+    assert _run("DES-10", traj(T(1, tools=[card])), _PRICES_CTX).verdict == "falla"
+
+
+def test_des10_link_button_text_is_audited_too() -> None:
+    card = tool("send_cta_url", url="https://tienda.test/p", button_text="Comprar", body_text="Llévala por $45.000")
+    assert _run("DES-10", traj(T(1, tools=[card])), _PRICES_CTX).verdict == "falla"
+
+
 def test_des10_catalog_price_and_policy_amounts_pass() -> None:
     t = traj(T(1, sent=["El set vale $49.500. El contra entrega aplica desde $45.000 en productos; el envío mínimo nacional es $16.940."]))
     assert _run("DES-10", t, _PRICES_CTX).verdict == "pasa"
