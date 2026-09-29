@@ -291,6 +291,8 @@ nativa de Jev:
 | `openrouter_decisions` | Jev (`typesafe/jev-1.13`) por la Decisions API de OpenRouter (`POST /api/alpha/decisions`, alpha); no pasa por LiteLLM. Llave `OPENROUTER_API_KEY`. La respuesta dice qué snapshot la sirvió (`PerceptionResult.model`) |
 | `FakePerceptionAdapter` / `NullPerceptionAdapter` | dobles oficiales; contract suite en `tests/platform/perception/test_perception_contract.py` (respuestas grabadas de Jev) |
 | `anonymize_text(text, redact=())` | quita teléfonos, correos, direcciones y los nombres de `redact`; los perfiles que salen de la caja la aplican siempre |
+| `DisagreementLog(vault)` | la cola de desacuerdos regla ↔ Jev (`<vault>/_decisions/disagreements.jsonl` + `labels.jsonl`), UNA para todo el sistema: la llenan el motor de ventas y el Order Sentinel; Claude Code la califica con `scripts/decisions_queue.py`. El estado se guarda anonimizado |
+| `DecisionMetrics(vault)` | una línea por decisión de una capacidad en sombra o en jev (`_decisions/metrics/<día>.jsonl`: ok, latencia, acuerdo): de acá sale la vara de producción (días en sombra, caídas < 1 %, p95) |
 
 Los cuestionarios (p. ej. `rafaga-v1`) son dominio de cada agente y viven en
 su plugin como datos, no en platform: el perfil del motor nombra el

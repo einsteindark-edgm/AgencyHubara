@@ -197,6 +197,12 @@ from src.platform.perception.composition import (
     get_perception_port as get_perception_port,
     oracle_timeout_s as oracle_timeout_s,
 )
+from src.platform.perception.disagreements import (
+    DisagreementLog as DisagreementLog,
+)
+from src.platform.perception.metrics import (
+    DecisionMetrics as DecisionMetrics,
+)
 from src.platform.perception.ports import (
     PerceptionPort as PerceptionPort,
     PerceptionResult as PerceptionResult,

@@ -3,7 +3,8 @@
 Mientras una capacidad del motor de decisiones corre en `sombra` (o en `jev`,
 para seguir midiendo), cada vez que la regla de hoy y Jev no coinciden queda
 un registro en `<vault>/_decisions/disagreements.jsonl` (el `state` ya
-anonimizado). Claude Code los califica (decisión del operador, 2026-09-28):
+anonimizado). La cola es una sola: también la llena el Order Sentinel
+(capacidad `estado_pedido`, lo que el LLM y Jev harían despachar). Claude Code los califica (decisión del operador, 2026-09-28):
 la etiqueta es el valor correcto de la capacidad, con la MISMA forma que
 `rule` y `jev`. La vara para que una capacidad actúe incluye que Jev gane en
 los desacuerdos (`puntaje`).
@@ -32,7 +33,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog  # noqa: E402
+from src.sdk.connectorkit import DisagreementLog  # noqa: E402
 
 
 def summary(log: DisagreementLog) -> dict[str, Any]:

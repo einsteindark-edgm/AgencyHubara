@@ -14,22 +14,19 @@ semanas:
   la regla (la precisión en el banco de referencia se mide en el
   laboratorio).
 
-`DecisionMetrics` guarda una línea por decisión de una capacidad en sombra o
-en jev (`<vault>/_decisions/metrics/<AAAA-MM-DD>.jsonl`; `_*`: los
-recorredores de sesiones lo ignoran). Sin Temporal.
+`DecisionMetrics` (plataforma, `src.sdk.connectorkit`: una sola medición
+para ventas y el Order Sentinel) guarda una línea por decisión de una
+capacidad en sombra o en jev (`<vault>/_decisions/metrics/<AAAA-MM-DD>.jsonl`;
+`_*`: los recorredores de sesiones lo ignoran). Sin Temporal.
 """
 from __future__ import annotations
 
-import json
 import math
-import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
-from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
 from src.plugins.chats.agent.sales.decisions.rollout import MODES, Check
+from src.sdk.connectorkit import DecisionMetrics, DisagreementLog
 
 WINDOW_DAYS = 14
 MIN_DAYS = 7
@@ -42,50 +39,6 @@ _DAY_MS = 86_400_000
 
 def _rank(mode: str) -> int:
     return MODES.index(mode) if mode in MODES else 0
-
-
-class DecisionMetrics:
-    def __init__(self, vault_dir: Path) -> None:
-        self._dir = Path(vault_dir) / "_decisions" / "metrics"
-
-    def record(
-        self,
-        *,
-        capability: str,
-        provider: str,
-        ok: bool,
-        latency_ms: int,
-        agree: bool | None,
-        at_ms: int | None = None,
-    ) -> None:
-        at = int(at_ms if at_ms is not None else time.time() * 1000)
-        day = datetime.fromtimestamp(at / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-        path = self._dir / f"{day}.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        row = {"at_ms": at, "capability": capability, "provider": provider, "ok": ok, "latency_ms": latency_ms, "agree": agree}
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row) + "\n")
-
-    def rows(self, capability: str, *, since_ms: int) -> list[dict[str, Any]]:
-        # Solo los días de la ventana (el nombre del archivo es el día UTC).
-        first_day = datetime.fromtimestamp(max(0, since_ms) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-        out: list[dict[str, Any]] = []
-        for path in sorted(self._dir.glob("*.jsonl")):
-            if path.stem < first_day:
-                continue
-            try:
-                lines = path.read_text(encoding="utf-8").splitlines()
-            except OSError:
-                continue
-            for line in lines:
-                try:
-                    row = json.loads(line)
-                except ValueError:
-                    continue
-                at = row.get("at_ms") if isinstance(row, dict) else None
-                if row.get("capability") == capability and isinstance(at, int) and at >= since_ms:
-                    out.append(row)
-        return out
 
 
 @dataclass(frozen=True)
