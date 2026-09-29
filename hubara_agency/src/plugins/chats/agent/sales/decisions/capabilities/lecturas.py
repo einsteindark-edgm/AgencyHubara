@@ -281,7 +281,8 @@ class Acuse:
     thresholds: Mapping[str, float] = {"absorb": 0.90}
 
     def rule(self, inp: Any) -> bool:
-        # La regla lee el texto del mensaje tal como hoy (`is_ack_after_farewell`).
+        # La regla de hoy lee el texto del mensaje tal como llega (una
+        # descripción de la visión nunca calza con sus palabras de cortesía).
         from src.plugins.chats.agent.sales.use_cases.closing_ack import is_closing_ack
 
         return is_closing_ack(getattr(inp, "text", None))
