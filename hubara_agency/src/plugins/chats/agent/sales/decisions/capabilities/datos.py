@@ -66,7 +66,6 @@ class Datos:
     """«¿El cliente dio este dato?» (ver el módulo)."""
 
     name = "datos"
-    timeout_s = 2.0
     thresholds: Mapping[str, float] = {"no": 0.15}
 
     def rule(self, inp: DatosDelPedido) -> tuple[str, ...]:

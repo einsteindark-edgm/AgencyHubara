@@ -68,7 +68,6 @@ class Compra:
     """
 
     name = "compra"
-    timeout_s = 1.5
     thresholds: Mapping[str, float] = {"choice": 0.70, "confirm": 0.85, "purchase_question": 0.85, "retract": 0.20}
 
     _OPTIONS = {
@@ -149,7 +148,6 @@ class Retoma:
     Valor: `{"deferral": {"kind", "until_ms"} | None, "courtesy": bool}`."""
 
     name = "retoma"
-    timeout_s = 1.5
     thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
 
     def rule(self, inp: Any) -> dict[str, Any]:
@@ -223,7 +221,6 @@ class Baja:
     es una decisión legal del operador (tras la sombra)."""
 
     name = "baja"
-    timeout_s = 1.5
     thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
 
     def rule(self, inp: Any) -> bool:
@@ -277,7 +274,6 @@ class Acuse:
     regla de hoy (`is_closing_ack`). Valor: bool (True = no despierta)."""
 
     name = "acuse"
-    timeout_s = 1.5
     thresholds: Mapping[str, float] = {"absorb": 0.90}
 
     def rule(self, inp: Any) -> bool:

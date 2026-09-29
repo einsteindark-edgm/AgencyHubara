@@ -76,7 +76,6 @@ class Persona:
     Valor: los índices de las oraciones que se caen."""
 
     name = "persona"
-    timeout_s = 2.0
     thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
 
     def rule(self, inp: Frases) -> tuple[int, ...]:
@@ -161,7 +160,6 @@ class Enumeracion:
     selector (piso)."""
 
     name = "enumeracion"
-    timeout_s = 2.0
     thresholds: Mapping[str, float] = {"confidence": 0.85}
     _OPTIONS: Mapping[str, str] = {
         "aromas": "una lista de aromas para que el cliente escoja uno",
@@ -239,7 +237,6 @@ class Monto:
     chequeo más estricto. La cuenta sigue en código."""
 
     name = "monto"
-    timeout_s = 2.0
     thresholds: Mapping[str, float] = {"yes": 0.85}
 
     def rule(self, inp: OracionesPrecio) -> tuple[str, ...]:
@@ -307,7 +304,6 @@ class Selector:
     no ve («El rosado») y deja pasar un sí/no que nombra una variante."""
 
     name = "selector"
-    timeout_s = 2.0
     thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
 
     def rule(self, inp: Botones) -> tuple[str, ...]:
@@ -368,7 +364,6 @@ class AfirmacionSinConsultar:
     nada, así que cada «sí» de Jev va a la cola que califica Claude Code."""
 
     name = "afirmacion"
-    timeout_s = 2.0
     thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
 
     def rule(self, inp: Afirmacion) -> bool:

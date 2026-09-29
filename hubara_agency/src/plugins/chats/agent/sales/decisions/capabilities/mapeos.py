@@ -54,7 +54,6 @@ class Categoria:
     `{"categoria": slug | None}`."""
 
     name = "categoria"
-    timeout_s = 2.0
     thresholds: Mapping[str, float] = {"choice": 0.80}
 
     def rule(self, inp: CategoriaPedida) -> dict[str, str | None]:
@@ -139,7 +138,6 @@ class FamiliaDeColor:
     `{"estado", "color", "familias", "candidatas", "tono"}`."""
 
     name = "familia_de_color"
-    timeout_s = 2.0
     thresholds: Mapping[str, float] = {"choice": 0.80}
 
     def rule(self, inp: ColorPedido) -> dict[str, Any]:
@@ -213,7 +211,6 @@ class ItemDelPedido:
     Jev solo elige entre ellos. Valor: `{"item": índice, "producto": nombre}`."""
 
     name = "item_del_pedido"
-    timeout_s = 2.0
     thresholds: Mapping[str, float] = {"choice": 0.80}
 
     def rule(self, inp: DatoDelItem) -> dict[str, Any]:
@@ -278,7 +275,6 @@ class ZonaDeEnvio:
     código (`is_published_rate_for_zone`). Valor: `{"zona": ... | None}`."""
 
     name = "zona_de_envio"
-    timeout_s = 2.0
     thresholds: Mapping[str, float] = {"choice": 0.85}
 
     def rule(self, inp: CiudadDeEnvio) -> dict[str, str | None]:
@@ -342,7 +338,6 @@ class ProductoNombrado:
     corazoncitos»); los exactos se quedan (piso). Valor: los títulos."""
 
     name = "producto_nombrado"
-    timeout_s = 2.0
     thresholds: Mapping[str, float] = {"choice": 0.85}
 
     def rule(self, inp: ProductosDeLaCharla) -> tuple[str, ...]:

@@ -203,7 +203,6 @@ class Preambulo:
     oración legítima («Here's my attempt:», «Final answer:») siempre se van."""
 
     name = PREAMBULO
-    timeout_s = 1.5
     thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
 
     def rule(self, inp: PreambuloCheck) -> str:
@@ -264,7 +263,6 @@ class Destinatario:
     un reporte que la regla no ve."""
 
     name = DESTINATARIO
-    timeout_s = 1.5
     thresholds: Mapping[str, float] = {"choice": 0.80}
 
     def rule(self, inp: TextCheck) -> bool:
@@ -308,7 +306,6 @@ class DestinatarioPorOracion:
     regla para esa oración."""
 
     name = DESTINATARIO
-    timeout_s = 1.5
     thresholds: Mapping[str, float] = {"choice": 0.80}
 
     def rule(self, inp: OracionesCheck) -> tuple[int, ...]:
@@ -353,7 +350,6 @@ class Rescate:
     alguno, decide la regla."""
 
     name = RESCATE
-    timeout_s = 1.5
     thresholds: Mapping[str, float] = {"choice": 0.80}
 
     def rule(self, inp: TextCheck) -> str:
@@ -395,7 +391,6 @@ class Portavelas:
     porque dice «portavela»)."""
 
     name = PORTAVELAS
-    timeout_s = 1.5
     thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
 
     @staticmethod
@@ -453,7 +448,6 @@ class Saludo:
     Halloween del laboratorio: saludaba DESPUÉS, en el complemento)."""
 
     name = SALUDO
-    timeout_s = 1.5
     thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
 
     def rule(self, inp: GreetingCheck) -> bool:

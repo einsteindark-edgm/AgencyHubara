@@ -96,7 +96,11 @@ def test_oracle_profiles_pin_fixed_model_ids() -> None:
     assert profiles["jev-1.13"].model == "typesafe/jev-1.13"
     for p in profiles.values():
         assert "latest" not in p.model.lower(), f"{p.id}: id móvil (L-23)"
-        assert p.timeout_s <= 5
+        # La espera de Jev es 10 s (decisión del operador 2026-09-29: «es
+        # indispensable que siempre funcione con Jev»); tope de cordura 15 s
+        # para no dejar al cliente esperando de más.
+        assert p.timeout_s <= 15
+    assert profiles["jev-1.13"].timeout_s == 10
 
 
 def test_only_jev_answers_no_openai_rival() -> None:

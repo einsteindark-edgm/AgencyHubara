@@ -409,7 +409,9 @@ async def test_quantity_in_shadow_keeps_the_rule_and_queues_the_disagreement(tmp
     assert (item["capability"], item["rule"], item["jev"]) == ("cantidad", {"cantidad": None}, {"cantidad": 2})
 
 
-def test_the_ingest_readings_answer_within_the_ingest_budget() -> None:
-    """Tiempos máximos: 1,5 s en el ingest y en el prompt (el workflow igual
-    espera 1,5 s de silencio antes del turno)."""
-    assert Cupon.timeout_s == FueraDeCatalogo.timeout_s == Cantidad.timeout_s == 1.5
+def test_the_ingest_readings_wait_for_jev_like_every_capability() -> None:
+    """Decisión del operador (2026-09-29): «es indispensable que siempre
+    funcione con Jev». Antes el ingest cortaba a 1,5 s; ahora ninguna
+    capacidad trae un tope propio: la espera es la del perfil del oráculo
+    (el ingest corre después de responderle a Meta, en segundo plano)."""
+    assert not any(hasattr(c, "timeout_s") for c in (Cupon, FueraDeCatalogo, Cantidad))

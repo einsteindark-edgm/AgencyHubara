@@ -37,8 +37,8 @@ BY_FALLBACK = "respaldo"
 
 
 class Capability(Protocol):
+    # La espera de Jev es la del perfil del oráculo, igual para toda capacidad.
     name: str
-    timeout_s: float
 
     def rule(self, inp: Any) -> Any: ...
 
@@ -118,10 +118,14 @@ def _thresholds(capability: Any) -> dict[str, float]:
     return dict(getattr(capability, "thresholds", {}) or {})
 
 
-async def _ask_oracle(profile: Any, state: str, questions: Sequence[Any], *, timeout_s: float, redact: Sequence[str]) -> Any:
-    from src.sdk.connectorkit import PerceptionResult, get_perception_port, oracle_timeout_s
+#: Fallas pasajeras del proveedor: una segunda vuelta y decide Jev. Un
+#: `timeout` no se reintenta (esperar otra vez toda la espera demoraría el turno).
+_TRANSIENT = frozenset({"provider_error", "http_429", "http_500", "http_502", "http_503", "http_504"})
 
-    timeout = min(float(timeout_s), oracle_timeout_s(profile.oracle))
+
+async def _ask_once(profile: Any, state: str, questions: Sequence[Any], *, timeout: float, redact: Sequence[str]) -> Any:
+    from src.sdk.connectorkit import PerceptionResult, get_perception_port
+
     try:
         port = get_perception_port(profile.oracle)
         return await asyncio.wait_for(port.ask(state, questions, timeout_s=timeout, redact=redact), timeout=timeout + 0.25)
@@ -130,6 +134,20 @@ async def _ask_oracle(profile: Any, state: str, questions: Sequence[Any], *, tim
     except Exception as exc:  # noqa: BLE001 — Jev nunca tumba al consumidor
         logger.warning("decisions.capability_oracle_error", error=repr(exc)[:200])
         return PerceptionResult(ok=False, error="unexpected", provider="motor", model="")
+
+
+async def _ask_oracle(profile: Any, state: str, questions: Sequence[Any], *, redact: Sequence[str]) -> Any:
+    """La pregunta a Jev con LA espera del perfil del oráculo (revisión
+    2026-09-29: antes cada capacidad cortaba a 1,5 o 2 s) y una segunda vuelta
+    si la falla es pasajera."""
+    from src.sdk.connectorkit import oracle_timeout_s
+
+    timeout = float(oracle_timeout_s(profile.oracle))
+    result = await _ask_once(profile, state, questions, timeout=timeout, redact=redact)
+    if not result.ok and result.error in _TRANSIENT:
+        logger.info("decisions.capability_oracle_retry", error=result.error)
+        result = await _ask_once(profile, state, questions, timeout=timeout, redact=redact)
+    return result
 
 
 async def decide(
@@ -179,7 +197,7 @@ async def _decide(
     if asked is None:
         return Verdict(capability=name, value=rule, by=fallback_by, provider=provider, rule=rule, reason="no_question")
     state, questions = asked
-    result = await _ask_oracle(profile, state, questions, timeout_s=float(capability.timeout_s), redact=redact)
+    result = await _ask_oracle(profile, state, questions, redact=redact)
     jev = capability.decide(inp, result, rule, _thresholds(capability)) if result.ok else None
     agree = None if jev is None else bool(capability.same(rule, jev))
     base = dict(

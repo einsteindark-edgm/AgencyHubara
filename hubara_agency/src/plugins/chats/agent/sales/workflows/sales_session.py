@@ -254,8 +254,10 @@ _PERCEPTION_MODES = ("off", "shadow", "canary", "on")
 _LAYER_MODES = ("shadow", "canary", "on")
 _ACTING_MODES = ("canary", "on")
 _DEFAULT_PERCEPTION_PROFILE = "jev-v1"
+# Una pregunta a Jev con su espera (10 s, perfil del oráculo) y su reintento
+# de falla pasajera: la activity no se vence antes que Jev (revisión 2026-09-29).
 _PERCEPTION_OPTIONS: dict[str, Any] = {
-    "start_to_close_timeout": timedelta(seconds=10),
+    "start_to_close_timeout": timedelta(seconds=30),
     "retry_policy": RetryPolicy(maximum_attempts=1),
 }
 

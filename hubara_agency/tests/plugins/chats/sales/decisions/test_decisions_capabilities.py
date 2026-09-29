@@ -38,7 +38,6 @@ class Unsubscribe:
     """Capacidad de juguete: ¿el cliente pide no recibir más mensajes?"""
 
     name = "juguete"
-    timeout_s = 0.5
 
     def rule(self, inp: Ask) -> bool:
         return "no más" in inp.text
@@ -71,9 +70,15 @@ class _Port:
         answers = {} if p is None else {"baja": TypedAnswer(id="baja", kind="noul", p=p)}
         self.fake = FakePerceptionAdapter(answers, error=error)
         self.model, self.delay_s, self.calls = model, delay_s, 0
+        self.timeouts: list[float] = []
+        # Fallas que devuelve antes de contestar (una por llamada).
+        self.errors: list[str] = []
 
     async def ask(self, state, questions, *, timeout_s, redact=()):
         self.calls += 1
+        self.timeouts.append(timeout_s)
+        if self.errors:
+            return PerceptionResult(ok=False, error=self.errors.pop(0), provider="fake", model=self.model)
         if self.delay_s:
             try:
                 await asyncio.wait_for(asyncio.sleep(self.delay_s), timeout=timeout_s)
@@ -139,11 +144,19 @@ async def test_jev_decides_with_the_floor_on_top(port) -> None:
     assert (new.value, new.by) == (True, "jev")
 
 
+@pytest.fixture
+def short_wait(monkeypatch):
+    """La espera de Jev, corta para el test (en producción: la del perfil)."""
+    from src.sdk import connectorkit
+
+    monkeypatch.setattr(connectorkit, "oracle_timeout_s", lambda _oracle, default=3.0: 0.2)
+
+
 @pytest.mark.parametrize(
     ("oracle", "reason"),
     [(_Port(None, error="http_503"), "http_503"), (_Port(0.5), "duda"), (_Port(0.95, delay_s=5), "timeout")],
 )
-async def test_jev_falls_back_to_the_rule_when_it_fails_doubts_or_is_late(port, oracle, reason: str) -> None:
+async def test_jev_falls_back_to_the_rule_when_it_fails_doubts_or_is_late(port, short_wait, oracle, reason: str) -> None:
     port["port"] = oracle
 
     verdict = await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1")
@@ -224,3 +237,56 @@ async def test_every_decision_that_asks_jev_is_measured(port, tmp_path: Path) ->
 
     rows = metrics.rows("juguete", since_ms=0)
     assert [(r["provider"], r["ok"], r["agree"]) for r in rows] == [("sombra", True, False), ("jev", False, None)]
+
+
+# ── La espera de Jev (revisión 2026-09-29: «es indispensable que siempre
+# funcione con Jev, es lo que estamos probando») ─────────────────────────────
+
+
+async def test_jev_gets_the_whole_wait_of_its_profile(port) -> None:
+    """Antes cada capacidad cortaba a Jev a 1,5 o 2 s y en el laboratorio el
+    11,6 % de las preguntas caía a la regla por tiempo. La espera es UNA: la
+    del perfil del oráculo (10 s), para toda capacidad."""
+    from src.sdk.connectorkit import oracle_timeout_s
+
+    await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1")
+
+    assert port["port"].timeouts == [oracle_timeout_s("jev-1.13")]
+    assert oracle_timeout_s("jev-1.13") == 10.0
+
+
+async def test_a_passing_provider_failure_is_retried_once(port) -> None:
+    """Un 429, un 5xx o un error de red son pasajeros: una segunda vuelta y
+    decide Jev, no la regla."""
+    port["port"] = _Port(0.95)
+    port["port"].errors = ["http_429"]
+
+    verdict = await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1")
+
+    assert (verdict.value, verdict.by) == (True, "jev")
+    assert port["port"].calls == 2
+
+
+async def test_a_timeout_is_not_retried(port, short_wait) -> None:
+    """Esperar otra vez toda la espera demoraría el turno: tras el tiempo
+    máximo decide la regla (y la traza dice `timeout`)."""
+    port["port"] = _Port(0.95, delay_s=5)
+
+    verdict = await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1")
+
+    assert (verdict.by, verdict.reason) == ("respaldo", "timeout")
+    assert port["port"].calls == 1
+
+
+def test_the_activities_that_ask_jev_leave_room_for_its_whole_wait() -> None:
+    """La percepción y la verificación hacen UNA pregunta; el egreso hasta
+    siete en serie (preámbulo, destinatario, rescate, saludo, portavelas y el
+    destinatario y rescate de lo que quedó). Con la espera nueva, las
+    activities no pueden vencerse antes que Jev."""
+    from src.plugins.chats.agent.sales.workflows.sales_session import _PERCEPTION_OPTIONS
+    from src.plugins.chats.agent.sales.workflows.sales_session_v2 import _EGRESS_OPTIONS
+    from src.sdk.connectorkit import oracle_timeout_s
+
+    wait = oracle_timeout_s("jev-1.13")
+    assert _PERCEPTION_OPTIONS["start_to_close_timeout"].total_seconds() >= 2 * wait
+    assert _EGRESS_OPTIONS["start_to_close_timeout"].total_seconds() >= 7 * wait

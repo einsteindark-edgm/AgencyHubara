@@ -47,7 +47,6 @@ class Contactar:
     el toque sobra (no se redacta nada)."""
 
     name = "contactar"
-    timeout_s = 2.0
     thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
 
     def rule(self, inp: Contacto) -> bool:
@@ -130,7 +129,6 @@ class CierrePorAbandono:
     sin pedido registrado no existe (decide el LLM)."""
 
     name = "cierre"
-    timeout_s = 2.0
     thresholds: Mapping[str, float] = {"choice": 0.85}
     _OPTIONS: Mapping[str, str] = {
         "confirmado_sin_datos": "confirmó la compra pero no terminó de dar los datos de envío",

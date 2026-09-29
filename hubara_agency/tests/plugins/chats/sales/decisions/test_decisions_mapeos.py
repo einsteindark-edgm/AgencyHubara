@@ -383,8 +383,9 @@ async def test_without_vault_the_lab_bot_pinned_for_the_case_still_decides(oracl
     assert (verdict.value, verdict.by) == ({"zona": "bogota"}, "jev")
 
 
-def test_the_mappings_answer_within_the_tool_budget() -> None:
-    assert Categoria.timeout_s == FamiliaDeColor.timeout_s == ItemDelPedido.timeout_s == ZonaDeEnvio.timeout_s == 2.0
+def test_the_mappings_wait_for_jev_like_every_capability() -> None:
+    """Sin tope propio (antes 2 s): la espera es la del perfil del oráculo."""
+    assert not any(hasattr(c, "timeout_s") for c in (Categoria, FamiliaDeColor, ItemDelPedido, ZonaDeEnvio))
 
 
 # ── producto nombrado (remarketing): qué ficha ve el gancho ──

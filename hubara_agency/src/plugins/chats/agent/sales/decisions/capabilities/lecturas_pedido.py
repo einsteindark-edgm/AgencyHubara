@@ -53,7 +53,6 @@ class Cupon:
     el beneficio?» sí lo es. Valor: bool."""
 
     name = "cupon"
-    timeout_s = 1.5
     thresholds: Mapping[str, float] = {"yes": 0.70, "no": 0.15}
 
     def rule(self, inp: CuponEnJuego) -> bool:
@@ -121,7 +120,6 @@ class FueraDeCatalogo:
     con los que quedan. Valor: la lista de términos."""
 
     name = "fuera_de_catalogo"
-    timeout_s = 1.5
     thresholds: Mapping[str, float] = {"no": 0.15}
 
     @staticmethod
@@ -189,7 +187,6 @@ class Cantidad:
     compuertas (`apply_reply_quantity`). Valor: `{"cantidad": int | None}`."""
 
     name = "cantidad"
-    timeout_s = 1.5
     thresholds: Mapping[str, float] = {"asked": 0.85, "not_asked": 0.15, "quantity": 0.85, "none": 0.70}
     MAX = 20
 

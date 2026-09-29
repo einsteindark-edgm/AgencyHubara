@@ -140,8 +140,11 @@ with workflow.unsafe.imports_passed_through():
 
 # El egreso le puede preguntar a Jev hasta cuatro cosas (cada una con su tope
 # de 1,5 s y la regla de respaldo): margen amplio, y dos intentos.
+# El egreso hace hasta siete preguntas a Jev en serie (preámbulo, destinatario,
+# rescate, saludo, portavelas y el destinatario y rescate de lo que quedó), cada
+# una con la espera del oráculo (10 s): la activity no se vence antes.
 _EGRESS_OPTIONS: dict[str, Any] = {
-    "start_to_close_timeout": timedelta(seconds=20),
+    "start_to_close_timeout": timedelta(seconds=90),
     "retry_policy": RetryPolicy(maximum_attempts=2),
 }
 _VARIANT_PICKER = "present_variant_picker"

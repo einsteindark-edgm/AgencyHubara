@@ -5,10 +5,14 @@
 #
 # Ids de modelo FIJOS (L-23): nunca "latest", que cambia de versión sin avisar.
 # 100 % Jev desde el 2026-09-28: el rival OpenAI (`openai-lp-v1`) se quitó.
+#
+# `timeout_s` es LA espera de Jev: la del turno y la de cada capacidad del motor
+# (revisión 2026-09-29). Con 1,5 s por capacidad, en el laboratorio el 11,6 %
+# de las preguntas caía a la regla por tiempo (p99 de lo que sí llegó: 3,1 s).
 
 jev-1.13:
   provider: openrouter_decisions              # POST https://openrouter.ai/api/alpha/decisions
   model: typesafe/jev-1.13
-  timeout_s: 3
+  timeout_s: 10
   anonymize: true
   provider_prefs: {data_collection: deny}
