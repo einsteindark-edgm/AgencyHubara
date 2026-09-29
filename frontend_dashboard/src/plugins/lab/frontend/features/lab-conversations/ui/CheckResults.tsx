@@ -7,30 +7,9 @@
  * pequeña (para hablar de un check con el equipo).
  */
 
-import {
-  checkView,
-  LEVEL_HELP,
-  levelLabel,
-  type CheckCatalog,
-  type CheckLevel,
-  type EvalResult,
-} from "@plugins/lab/frontend/entities/lab-run";
+import { checkView, LevelPill, type CheckCatalog, type CheckLevel, type EvalResult } from "@plugins/lab/frontend/entities/lab-run";
 
 const LEVEL_RANK: Record<CheckLevel, number> = { critico: 0, mayor: 1, menor: 2 };
-
-const LEVEL_TONE: Record<CheckLevel, string> = {
-  critico: "bg-danger-soft text-danger",
-  mayor: "bg-warn-soft text-warn",
-  menor: "bg-neutral-soft text-fg-muted",
-};
-
-export function LevelPill({ level }: { level: CheckLevel }) {
-  return (
-    <span title={LEVEL_HELP[level]} className={"whitespace-nowrap rounded-full px-1.5 py-[3px] text-[10px] font-semibold leading-none " + LEVEL_TONE[level]}>
-      {levelLabel(level)}
-    </span>
-  );
-}
 
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;

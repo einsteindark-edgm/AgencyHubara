@@ -11,6 +11,7 @@ export {
   useRunEvaluations,
   useRunEvaluationsByArm,
   useRunReport,
+  useRunSummaries,
   useRunSummary,
   useRunThread,
   useTurnTrace,
@@ -73,4 +74,4 @@ export {
   type CheckView,
 } from "./lib";
 export { decisionSentence, jevAnswers, type DecisionTone } from "./decision-language";
-export { Chip, VerdictBadge, type ChipTone } from "./ui/Chips";
+export { Chip, LevelPill, VerdictBadge, type ChipTone } from "./ui/Chips";

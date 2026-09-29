@@ -34,7 +34,13 @@ interface Props {
 // B0 (workflow nuevo con las reglas de hoy) va sin marcar: se prende para
 // probar que el esqueleto nuevo da lo mismo que A1 (motor de decisiones §08).
 const OPTIONAL_ARMS = ["B0", "B"] as const;
-const STEPS = ["Exportar banco", "Prender la caja", "Correr bots", "Evaluar", "Listo"];
+const STEPS = ["Juntar las conversaciones", "Prender el servidor del laboratorio", "Correr los bots", "Calificar", "Listo"];
+
+/** Cada bot que se puede lanzar, en palabras (sin códigos). */
+const ARM_OPTION: Record<string, string> = {
+  B0: "Bot nuevo sin Jev (prueba: tiene que dar lo mismo que el actual)",
+  B: "Bot nuevo con Jev",
+};
 
 const PHASE_STEP: Record<string, number> = {
   queued: 0,
@@ -148,7 +154,7 @@ function LaunchForm({ lastBenchId, onClose }: { lastBenchId: string | null; onCl
     <>
       <Row label="Bots">
         <label className="inline-flex cursor-not-allowed items-center gap-1.5 text-fg-faint">
-          <input type="checkbox" checked disabled className="accent-accent" /> A1 · {armLabel("A1")} (control)
+          <input type="checkbox" checked disabled className="accent-accent" /> {`${armLabel("A1")} (siempre va: es el control)`}
         </label>
         {OPTIONAL_ARMS.map((a) => (
           <label key={a} className="inline-flex cursor-pointer items-center gap-1.5">
@@ -158,7 +164,7 @@ function LaunchForm({ lastBenchId, onClose }: { lastBenchId: string | null; onCl
               onChange={(e) => setPicked((p) => ({ ...p, [a]: e.target.checked }))}
               className="accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             />
-            {a} · {armLabel(a)}
+            {ARM_OPTION[a] ?? armLabel(a)}
           </label>
         ))}
       </Row>
@@ -168,22 +174,29 @@ function LaunchForm({ lastBenchId, onClose }: { lastBenchId: string | null; onCl
           value={String(reps)}
           onChange={(v) => setReps(Number(v))}
           options={[
-            { value: "1", text: "1 · rápida" },
-            { value: "3", text: "3 · decisión" },
+            { value: "1", text: "1 vez (rápida)" },
+            { value: "3", text: "3 veces (para decidir)" },
           ]}
         />
       </Row>
-      <Row label="Banco">
+      <Row label="Conversaciones">
         <Seg
-          label="Banco"
+          label="Conversaciones"
           value={bench}
           onChange={(v) => setBench(v as "new" | "reuse")}
           options={[
-            { value: "new", text: "Exportar ahora" },
-            { value: "reuse", text: lastBenchId ? `Reusar el último (${lastBenchId})` : "Reusar el último (no hay)", disabled: !lastBenchId },
+            { value: "new", text: "Las reales de hoy" },
+            {
+              value: "reuse",
+              text: lastBenchId ? `Repetir las de la última corrida (${lastBenchId})` : "Repetir las de la última corrida (no hay)",
+              disabled: !lastBenchId,
+            },
           ]}
         />
       </Row>
+      <p className="m-0 text-[11.5px] text-fg-muted">
+        Cada bot responde cada turno real de esas conversaciones, sin escribirle a ningún cliente. Con 3 veces se ve si responde igual cada vez.
+      </p>
       <Row label="Costo">
         <span className="tabular-nums text-fg">
           {estimate.isPending ? "Calculando…" : null}

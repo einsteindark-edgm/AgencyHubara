@@ -21,9 +21,19 @@ describe("textos del Resumen", () => {
     const down = { delta: -0.08, low: -0.15, high: -0.01, conclusive: true, sessions: 80 };
     const unsure = { delta: 0.05, low: -0.03, high: 0.12, conclusive: false, sessions: 80 };
 
-    expect(conclusion("A1", "B", up)).toEqual({ tone: "ok", text: "Bot nuevo con Jev pasa 12 pp más episodios que Bot actual simulado" });
-    expect(conclusion("A1", "B", down)).toEqual({ tone: "bad", text: "Bot nuevo con Jev pasa 8 pp menos episodios que Bot actual simulado" });
-    expect(conclusion("A1", "B", unsure)).toEqual({ tone: "neutral", text: "Aún no concluyente: el intervalo cruza el cero" });
+    expect(conclusion("A1", "B", up)).toEqual({
+      tone: "ok",
+      text: "Con el bot nuevo con Jev pasan 12 de cada 100 conversaciones más que con el bot actual simulado.",
+    });
+    expect(conclusion("A1", "B", down)).toEqual({
+      tone: "bad",
+      text: "Con el bot nuevo con Jev pasan 8 de cada 100 conversaciones menos que con el bot actual simulado.",
+    });
+    expect(conclusion("A1", "B", unsure)).toEqual({
+      tone: "neutral",
+      text: "Todavía no se puede saber: con estas conversaciones la diferencia puede ser casualidad.",
+    });
+    expect(conclusion("A0", "A1", up).text).toBe("Con el bot actual simulado pasan 12 de cada 100 conversaciones más que con producción.");
   });
 
   it("con pocas conversaciones en común no hay conclusión aunque el intervalo no cruce el cero", () => {
@@ -31,7 +41,7 @@ describe("textos del Resumen", () => {
 
     expect(conclusion("A1", "B", few)).toEqual({
       tone: "neutral",
-      text: "Aún no concluyente: 9 conversaciones en común son pocas (hacen falta 15)",
+      text: "Todavía no se puede saber: 9 conversaciones en común son pocas (hacen falta al menos 15).",
     });
   });
 

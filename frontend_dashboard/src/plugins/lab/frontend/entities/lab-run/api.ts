@@ -231,6 +231,20 @@ export function useRunSummary(run: string | null, arm: string) {
   });
 }
 
+/** Los resúmenes de varios bots (la tabla «Resultado por bot»): misma key que `useRunSummary`. */
+export function useRunSummaries(run: string | null, arms: string[]) {
+  const queries = useQueries({
+    queries: arms.map((arm) => ({
+      queryKey: labKeys.summary(run ?? "", arm),
+      queryFn: ({ signal }: { signal: AbortSignal }) => fetchSummary(run as string, arm, signal),
+      enabled: Boolean(run),
+      staleTime: 60_000,
+      retry: false,
+    })),
+  });
+  return Object.fromEntries(arms.map((arm, i) => [arm, queries[i]]));
+}
+
 /** Diferencia pareada entre dos brazos, con intervalo y turnos que cambiaron. */
 export function useRunDiff(run: string | null, base: string, cand: string) {
   return useQuery({

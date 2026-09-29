@@ -14,10 +14,10 @@ interface Props {
 
 const REASON_LABEL: Record<string, string> = {
   turno_del_sistema: "Turno del sistema (no lo escribió el cliente)",
-  sin_metadata: "Conversación sin metadata",
-  golden: "Sesión del golden suite",
-  sesion_de_prueba: "Sesión de prueba",
-  numero_interno: "Número interno",
+  sin_metadata: "Conversación sin los datos de la sesión",
+  golden: "Conversación de las pruebas automáticas",
+  sesion_de_prueba: "Conversación de prueba",
+  numero_interno: "Número del equipo",
 };
 
 const PHASE_LABEL: Record<string, string> = {
@@ -34,7 +34,7 @@ const TABLE = "mt-3 w-full border-collapse overflow-hidden rounded-[10px] border
 
 function phaseText(run: LabRun): string {
   const label = run.phase ? (PHASE_LABEL[run.phase] ?? run.phase) : "Sin estado";
-  if (run.stale) return `${label} · sin reportes de la caja desde ${when(run.updated_at_ms)}`;
+  if (run.stale) return `${label} · sin noticias del servidor del laboratorio desde ${when(run.updated_at_ms)}`;
   return run.phase === "failed" && run.error ? `${label}: ${run.error}` : label;
 }
 
@@ -63,7 +63,7 @@ export function BenchRuns({ runs, selectedRun, onSelectRun }: Props) {
           <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-2.5">
             <Tile value={bench.data.counts.sessions} label="conversaciones" />
             <Tile value={bench.data.counts.cases} label="turnos del cliente en el banco" />
-            <Tile value={bench.data.counts.excluded_turns} label="excluidos, con su motivo" />
+            <Tile value={bench.data.counts.excluded_turns} label="turnos excluidos (el motivo, abajo)" />
           </div>
           {byReason.size > 0 ? (
             <div className="overflow-x-auto">
@@ -133,7 +133,8 @@ export function BenchRuns({ runs, selectedRun, onSelectRun }: Props) {
         </table>
       </div>
       <p className="mt-2.5 text-[11.5px] text-fg-muted">
-        Cada turno excluido tiene su motivo. Las conversaciones de prueba, del golden suite y de números internos no entran al banco.
+        El banco son las conversaciones reales que se le dan a cada bot: cada turno del cliente se simula con lo que pasó antes en la
+        conversación real. Las conversaciones de prueba, de las pruebas automáticas y de números del equipo no entran.
       </p>
     </div>
   );

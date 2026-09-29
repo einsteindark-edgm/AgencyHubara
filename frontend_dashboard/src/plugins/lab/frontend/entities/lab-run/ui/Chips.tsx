@@ -5,7 +5,8 @@
 
 import type { ReactNode } from "react";
 
-import type { EpisodeVerdict } from "../model";
+import { LEVEL_HELP, levelLabel } from "../lib";
+import type { CheckLevel, EpisodeVerdict } from "../model";
 
 export type ChipTone = "ok" | "bad" | "warn" | "classifier" | "neutral";
 
@@ -37,6 +38,21 @@ export function VerdictBadge({ verdict, prefix }: { verdict: EpisodeVerdict; pre
   return (
     <span className={"whitespace-nowrap rounded-full px-1.5 py-[3px] text-[9.5px] font-semibold leading-none tracking-[0.02em] " + VERDICT_TONE[verdict]}>
       {prefix ? `${prefix} ${text}` : text}
+    </span>
+  );
+}
+
+const LEVEL_TONE: Record<CheckLevel, string> = {
+  critico: "bg-danger-soft text-danger",
+  mayor: "bg-warn-soft text-warn",
+  menor: "bg-neutral-soft text-fg-muted",
+};
+
+/** El nivel de un check (crítico, mayor, menor); el título dice qué hace con el veredicto. */
+export function LevelPill({ level }: { level: CheckLevel }) {
+  return (
+    <span title={LEVEL_HELP[level]} className={"whitespace-nowrap rounded-full px-1.5 py-[3px] text-[10px] font-semibold leading-none " + LEVEL_TONE[level]}>
+      {levelLabel(level)}
     </span>
   );
 }

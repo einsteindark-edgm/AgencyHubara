@@ -90,7 +90,9 @@ describe("RunLauncher", () => {
     renderLauncher();
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
 
-    expect(screen.getByRole("checkbox", { name: /A1 · Bot actual simulado/ })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Bot actual simulado (siempre va: es el control)" })).toBeDisabled();
+    // Sin códigos de bot a la vista (el operador no entiende «A1 ·» ni «B0 ·»).
+    expect(screen.queryByText(/\b(A1|B0|B) ·/)).toBeNull();
     expect(await screen.findByText(/≈ US\$21 estimado · 309 turnos del banco/)).toBeInTheDocument();
     expect(estimateCalls().at(-1)).toContain("arms=A1%2CB&reps=1&bench=new");
     // Sin el rival OpenAI (2026-09-28): el único bot nuevo es Jev.
@@ -100,7 +102,7 @@ describe("RunLauncher", () => {
   it("ofrece B0 (el workflow nuevo con las reglas de hoy) sin marcar, y lo manda si se marca", async () => {
     renderLauncher();
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
-    const b0 = screen.getByRole("checkbox", { name: /B0 · Bot nuevo sin Jev/ });
+    const b0 = screen.getByRole("checkbox", { name: "Bot nuevo sin Jev (prueba: tiene que dar lo mismo que el actual)" });
     expect(b0).not.toBeChecked();
 
     fireEvent.click(b0);
@@ -111,9 +113,9 @@ describe("RunLauncher", () => {
   it("recalcula al cambiar bots, repeticiones y banco", async () => {
     renderLauncher();
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /B · Bot nuevo con Jev/ }));
-    fireEvent.click(screen.getByRole("button", { name: "3 · decisión" }));
-    fireEvent.click(screen.getByRole("button", { name: /Reusar el último/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Bot nuevo con Jev" }));
+    fireEvent.click(screen.getByRole("button", { name: "3 veces (para decidir)" }));
+    fireEvent.click(screen.getByRole("button", { name: /Repetir las de la última corrida/ }));
 
     await waitFor(() => expect(estimateCalls().at(-1)).toContain("arms=A1&reps=3&bench=bench-run-20260920-0900-cd34"));
   });
@@ -121,7 +123,7 @@ describe("RunLauncher", () => {
   it("si pasa un tope, dice cuál y no deja lanzar", async () => {
     renderLauncher();
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
-    fireEvent.click(screen.getByRole("button", { name: "3 · decisión" }));
+    fireEvent.click(screen.getByRole("button", { name: "3 veces (para decidir)" }));
 
     expect(await screen.findByText("Pasa el tope por corrida (US$120).")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Lanzar corrida" })).toBeDisabled();
@@ -165,7 +167,7 @@ describe("RunLauncher", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Corrida en curso/ }));
     expect(screen.getByText("103 de 309 turnos · US$4,1 gastados de ≈ US$12")).toBeInTheDocument();
-    expect(screen.getByText("Correr bots")).toHaveAttribute("aria-current", "step");
+    expect(screen.getByText("Correr los bots")).toHaveAttribute("aria-current", "step");
 
     fireEvent.click(screen.getByRole("button", { name: "Cancelar corrida" }));
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/cancel"))).toBe(false);

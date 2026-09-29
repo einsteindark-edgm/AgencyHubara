@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { LabRun } from "@plugins/lab/frontend/entities/lab-run";
@@ -7,16 +7,19 @@ import type { LabRun } from "@plugins/lab/frontend/entities/lab-run";
 import { RunSummary } from "./RunSummary";
 
 /**
- * Pestaña Resumen del laboratorio (plan §5 y §11, PR 13): las MISMAS
- * gráficas de Calidad LLM por bot, la comparación contra el bot actual con
- * su intervalo, la fidelidad del simulador y la arena de los bots nuevos.
+ * Pestaña Resumen del laboratorio (plan §5 y §11; revisión 2026-09-29: el
+ * operador no entendía «IC 95 %», «pp», «Holm», «F1», «Brier» ni «vara»).
+ * Responde, en este orden: ¿el bot nuevo es mejor?, cómo le fue a cada bot,
+ * en qué se diferencian (cada check por nombre), qué turnos cambiaron, si se
+ * puede confiar en la corrida y cómo anduvo Jev. Las gráficas de Calidad LLM
+ * quedan plegadas; el detalle estadístico, también.
  */
 
 const RUN = "run-20260924-0930-ab12";
 const SID = "wa_573001234567";
 
 const run: LabRun = {
-  run_id: RUN, bench_id: "bench-x", arms: ["A0", "A1", "B"], reps: 3, registry_version: 4, counts: {}, phase: "done",
+  run_id: RUN, bench_id: "bench-x", arms: ["A0", "A1", "B"], reps: 1, registry_version: 4, counts: {}, phase: "done",
   turns_done: null, turns_total: null, spent_usd: null, error: null, notes: [], started_at_ms: null, updated_at_ms: null,
 };
 
@@ -28,7 +31,7 @@ const REPORT = {
   validation: { episodes: 91, prod_registry_versions: [3], agreement: 0.97, verdict_agreement: 0.81 },
   arena: {
     B: {
-      profile: "jev-v1",
+      profile: "jev-v3",
       metrics: [{ rep: 0, turns: 300, errors: 1, perception: { turns: 300, fallback_rate: 0.004, p50_ms: 260, p95_ms: 480 },
         verify: null, complement_rate: 0.05, extra_round_rate: 0.02, cost_per_turn_usd: 0.019, perception_cost_per_turn_usd: 0.0002 }],
       topics: { turns: 120, precision: 0.9, recall: 0.8, f1: 0.85, calibration: { n: 400, brier: 0.08, ece: 0.04 } },
@@ -38,21 +41,35 @@ const REPORT = {
   diffs: ["A0:A1", "A1:B"],
 };
 
-function summary(pasa: number, passK = 0.2) {
+function week(applicable: number, passed: number) {
+  return [{ week: "2026-09-28", applicable, passed, rate: applicable ? passed / applicable : null }];
+}
+
+function summary(pasa: number, fails: { invented: number; greeting: number }) {
   return {
-    reps: 3, mode: "turn", episodes: 91, verdicts: { FALLA: 9, ALERTA: 91 - 9 - pasa, PASA: pasa, SIN_DATOS: 0 },
-    pareto: [{ check_id: "EST-06", name: "Mecánica de la etapa", level: "mayor", failures: 12 }],
-    trend: [], funnel: [{ stage: "cierre", FALLA: 3, ALERTA: 4, PASA: 5, SIN_DATOS: 0 }],
-    pass_k: { k: 3, episodes: 91, rate: passK },
+    reps: 1, mode: "turn", episodes: 3, verdicts: { FALLA: 0, ALERTA: 3 - pasa, PASA: pasa, SIN_DATOS: 0 },
+    pareto: [{ check_id: "DES-06", name: "Sin datos de catálogo inventados", level: "critico", failures: fails.invented }],
+    trend: [
+      { check_id: "DES-06", name: "Sin datos de catálogo inventados", level: "critico", weeks: week(3, 3 - fails.invented) },
+      { check_id: "APE-01", name: "Saludo por hora y marca en el primer contacto", level: "mayor", weeks: week(3, 3 - fails.greeting) },
+      { check_id: "EST-01", name: "Un check que nadie falló", level: "menor", weeks: week(3, 3) },
+    ],
+    funnel: [{ stage: "cierre", FALLA: 0, ALERTA: 3 - pasa, PASA: pasa, SIN_DATOS: 0 }],
+    pass_k: { k: 1, episodes: 3, rate: pasa / 3 },
   };
 }
 
 const DIFF = {
   base: "A1", cand: "B",
   episode_pass: { delta: 0.05, low: -0.03, high: 0.12, conclusive: false, sessions: 80 },
-  pass_k: { base: { k: 3, episodes: 91, rate: 0.2 }, cand: { k: 3, episodes: 91, rate: 0.26 } },
+  pass_k: null,
   checks: [{ check_id: "EST-08", delta: 0.2, low: 0.1, high: 0.3, conclusive: true, sessions: 40 }],
   changed_turns: [{ session_id: SID, episode_id: "ep_1", turn: 2, base: "FALLA", cand: "PASA", checks: ["EST-08"] }],
+};
+
+const CATALOG = {
+  registry_version: 4,
+  checks: [{ id: "EST-08", name: "Responde lo que el cliente preguntó", level: "mayor", kind: "judge", rule: "…" }],
 };
 
 const fetchMock = vi.fn();
@@ -61,20 +78,22 @@ function json(body: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
 }
 
-function urls(): string[] {
-  return fetchMock.mock.calls.map(([u]) => String(u));
+function routes(diff = DIFF) {
+  fetchMock.mockImplementation((url: string) => {
+    const u = String(url);
+    if (u.endsWith(`/runs/${RUN}/report`)) return json(REPORT);
+    if (u.endsWith("/api/lab/checks")) return json(CATALOG);
+    if (u.includes(`/runs/${RUN}/summary?arm=A0`)) return json(summary(0, { invented: 3, greeting: 1 }));
+    if (u.includes(`/runs/${RUN}/summary?arm=A1`)) return json(summary(1, { invented: 3, greeting: 0 }));
+    if (u.includes(`/runs/${RUN}/summary?arm=B`)) return json(summary(2, { invented: 2, greeting: 1 }));
+    if (u.includes(`/runs/${RUN}/diff?base=A1&cand=B`)) return json(diff);
+    return json({ detail: "no" }, 404);
+  });
 }
 
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
-  fetchMock.mockImplementation((url: string) => {
-    const u = String(url);
-    if (u.endsWith(`/runs/${RUN}/report`)) return json(REPORT);
-    if (u.includes(`/runs/${RUN}/summary?arm=A1`)) return json(summary(20));
-    if (u.includes(`/runs/${RUN}/summary?arm=B`)) return json(summary(26, 0.26));
-    if (u.includes(`/runs/${RUN}/diff?base=A1&cand=B`)) return json(DIFF);
-    return json({ detail: "no" }, 404);
-  });
+  routes();
 });
 
 afterEach(() => {
@@ -93,93 +112,97 @@ function renderTab(onOpenConversations = vi.fn()) {
 }
 
 describe("RunSummary", () => {
-  it("dice si se puede confiar en la comparación: fidelidad, validación y juez", async () => {
+  it("arriba responde si el bot nuevo es mejor, en palabras; el detalle estadístico queda plegado", async () => {
     renderTab();
 
-    const health = await screen.findByRole("region", { name: "Confianza de la corrida" });
-    expect(health).toHaveTextContent("Fidelidad del simulador 94 %");
-    expect(health).toHaveTextContent("vara 90 %");
-    expect(health).toHaveTextContent("91 episodios");
-    expect(health).toHaveTextContent("con juez");
+    const answer = await screen.findByRole("region", { name: "¿El bot nuevo es mejor?" });
+    expect(
+      await within(answer).findByText("Todavía no se puede saber: con estas conversaciones la diferencia puede ser casualidad."),
+    ).toBeInTheDocument();
+    expect(within(answer).getByText("Detalle estadístico")).toBeVisible();
+    expect(within(answer).getByText(/Diferencia en conversaciones que pasan.*IC 95 %/)).not.toBeVisible();
   });
 
-  it("muestra las gráficas de Calidad LLM del bot actual y cambia de bot", async () => {
+  it("con pocas conversaciones en común dice cuántas hacen falta", async () => {
+    routes({ ...DIFF, episode_pass: { delta: 0.33, low: 0, high: 0.66, conclusive: false, sessions: 3 } });
     renderTab();
 
-    expect(await screen.findByText("Qué arreglar primero")).toBeInTheDocument();
-    expect(screen.getByText(/pasan en las 3 repeticiones: 20 %/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: "Bot nuevo con Jev" }));
-
-    await waitFor(() => expect(urls().some((u) => u.includes("summary?arm=B"))).toBe(true));
-    expect(await screen.findByText(/pasan en las 3 repeticiones: 26 %/)).toBeInTheDocument();
+    const answer = await screen.findByRole("region", { name: "¿El bot nuevo es mejor?" });
+    expect(
+      await within(answer).findByText("Todavía no se puede saber: 3 conversaciones en común son pocas (hacen falta al menos 15)."),
+    ).toBeInTheDocument();
   });
 
-  it("la comparación no declara ganador si el intervalo cruza el cero", async () => {
+  it("dice cómo le fue a cada bot: cuántas conversaciones pasan, quedan en alerta o fallan", async () => {
     renderTab();
 
-    const cmp = await screen.findByRole("region", { name: "Comparación" });
-    expect(await within(cmp).findByText("Aún no concluyente: el intervalo cruza el cero")).toBeInTheDocument();
-    expect(cmp).toHaveTextContent("IC 95 %: −3 a +12 pp · 80 conversaciones");
-    expect(within(cmp).getByRole("row", { name: /EST-08/ })).toHaveTextContent("+20 pp");
-    expect(within(cmp).getByText("Cliente ···4567")).toBeInTheDocument();
+    const table = await screen.findByRole("table", { name: "Resultado por bot" });
+    const fresh = await within(table).findByRole("row", { name: /Bot nuevo con Jev/ });
+    expect(within(fresh).getAllByRole("cell").map((c) => c.textContent)).toEqual(["3", "2", "1", "0", "0"]);
+    expect(within(table).getByRole("row", { name: /Producción/ })).toBeInTheDocument();
   });
 
-  it("la arena muestra latencia, caídas, costo y acuerdo con el juez de cada bot nuevo", async () => {
+  it("en qué se diferencian: cada check por su nombre con cuántas veces falló con cada bot", async () => {
     renderTab();
 
-    const arena = await screen.findByRole("region", { name: "Arena de clasificadores" });
-    const row = within(arena).getByRole("row", { name: /Bot nuevo con Jev/ });
-    expect(row).toHaveTextContent("jev-v1");
-    expect(row).toHaveTextContent("480 ms");
-    expect(row).toHaveTextContent("0,4 %");
-    expect(row).toHaveTextContent("85 %");
+    const table = await screen.findByRole("table", { name: "En qué se diferencian los bots" });
+    const invented = await within(table).findByRole("row", { name: /Sin datos de catálogo inventados/ });
+    expect(within(invented).getAllByRole("cell").map((c) => c.textContent)).toEqual(["3 de 3", "3 de 3", "2 de 3"]);
+    const greeting = within(table).getByRole("row", { name: /Saludo por hora y marca/ });
+    expect(within(greeting).getAllByRole("cell").map((c) => c.textContent)).toEqual(["1 de 3", "0 de 3", "1 de 3"]);
+    expect(within(table).queryByText("Un check que nadie falló")).toBeNull();
+    expect(within(table).queryByText("DES-06")).toBeNull();
   });
 
-  it("la arena muestra el costo por turno con 4 decimales", async () => {
+  it("los turnos que cambiaron dicen qué pasó en palabras y abren la conversación", async () => {
+    const open = renderTab();
+
+    const changed = await screen.findByRole("list", { name: "Turnos que cambiaron" });
+    const item = await within(changed).findByRole("listitem");
+    expect(item).toHaveTextContent("Cliente ···4567 · turno 2");
+    expect(item).toHaveTextContent("Bot actual simulado: FALLA → Bot nuevo con Jev: PASA");
+    expect(await within(item).findByText("Responde lo que el cliente preguntó")).toBeInTheDocument();
+    fireEvent.click(within(item).getByRole("button", { name: "Ver conversación" }));
+    expect(open).toHaveBeenCalledWith(SID);
+  });
+
+  it("dice si se puede confiar en la corrida, en palabras", async () => {
     renderTab();
 
-    const arena = await screen.findByRole("region", { name: "Arena de clasificadores" });
-    expect(within(arena).getByRole("row", { name: /Bot nuevo con Jev/ })).toHaveTextContent("US$0,019");
+    const trust = await screen.findByRole("region", { name: "¿Se puede confiar en esta corrida?" });
+    expect(trust).toHaveTextContent("El simulador reproduce bien a producción: coincide en 94 % de los checks (mínimo exigido: 90 %).");
+    expect(trust).toHaveTextContent("Calificada con reglas automáticas y con el juez.");
+    expect(trust).not.toHaveTextContent("vara");
+  });
+
+  it("cuenta cómo anduvo Jev, en palabras", async () => {
+    renderTab();
+
+    const jev = await screen.findByRole("region", { name: "Jev en esta corrida" });
+    expect(jev).toHaveTextContent("jev-v3");
+    expect(jev).toHaveTextContent("El 95 % de las respuestas de Jev llegó en menos de 0,5 s");
+    expect(jev).toHaveTextContent("0,4 %");
+    expect(jev).toHaveTextContent("US$0,019");
+    expect(jev).toHaveTextContent("85 %");
+    expect(jev).not.toHaveTextContent("Brier");
+  });
+
+  it("las gráficas de Calidad LLM quedan plegadas y sin la tendencia semanal (una corrida no tiene semanas)", async () => {
+    renderTab();
+
+    expect(await screen.findByText("Gráficas de Calidad LLM (por bot)")).toBeVisible();
+    expect(screen.queryByText("Cumplimiento por check, semana a semana")).toBeNull();
   });
 
   it("un bot que la corrida no alcanzó a simular queda pendiente, no como falla", async () => {
     fetchMock.mockImplementation((url: string) => {
       const u = String(url);
       if (u.endsWith(`/runs/${RUN}/report`)) return json({ ...REPORT, arms_pending: ["Z"] });
-      if (u.includes(`/runs/${RUN}/summary?arm=A1`)) return json(summary(20));
       return json({ detail: "no" }, 404);
     });
     renderTab();
 
     expect(await screen.findByText(/Z: la corrida no alcanzó a simularlo/)).toBeInTheDocument();
-  });
-
-  it("el Pareto del laboratorio habla de la corrida, no de días", async () => {
-    fetchMock.mockImplementation((url: string) => {
-      const u = String(url);
-      if (u.endsWith(`/runs/${RUN}/report`)) return json(REPORT);
-      if (u.includes(`/runs/${RUN}/summary?arm=A1`)) return json({ ...summary(20), pareto: [] });
-      return json({ detail: "no" }, 404);
-    });
-    renderTab();
-
-    expect(await screen.findByText("Ningún check falló en esta corrida.")).toBeInTheDocument();
-  });
-
-  it("la tabla de checks dice qué hace falta para ser concluyente", async () => {
-    renderTab();
-
-    const cmp = await screen.findByRole("region", { name: "Comparación" });
-    expect(await within(cmp).findByText(/al menos 15 conversaciones/)).toBeInTheDocument();
-    expect(within(cmp).getByText(/comparaciones múltiples \(Holm\)/)).toBeInTheDocument();
-  });
-
-  it("elegir un veredicto lleva a las conversaciones", async () => {
-    const open = renderTab();
-
-    const tile = await screen.findByRole("button", { name: /Falla/ });
-    fireEvent.click(tile);
-    expect(open).toHaveBeenCalled();
   });
 
   it("una corrida sin resumen lo dice", async () => {

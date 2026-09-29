@@ -36,6 +36,8 @@ export default function LabPage() {
   const list = runs.data?.runs ?? [];
   const [picked, setPicked] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("conv");
+  // La conversación que pidió abrir el Resumen («Ver conversación»).
+  const [conversation, setConversation] = useState<string | null>(null);
   // Por defecto, la última corrida TERMINADA (la más nueva puede estar corriendo
   // o haber fallado sin publicar nada).
   const run = list.find((r) => r.run_id === picked) ?? list.find((r) => r.phase === "done") ?? list[0] ?? null;
@@ -100,10 +102,17 @@ export default function LabPage() {
         {runs.isSuccess && !run ? <p className="p-4 text-[12.5px] text-fg-muted">Todavía no hay corridas. Usa Nueva corrida para lanzar la primera.</p> : null}
         {run && tab === "resumen" ? (
           <div className="p-4">
-            <RunSummary key={run.run_id} run={run} onOpenConversations={() => setTab("conv")} />
+            <RunSummary
+              key={run.run_id}
+              run={run}
+              onOpenConversations={(sid) => {
+                setConversation(sid ?? null);
+                setTab("conv");
+              }}
+            />
           </div>
         ) : null}
-        {run && tab === "conv" ? <LabConversations key={run.run_id} run={run} /> : null}
+        {run && tab === "conv" ? <LabConversations key={`${run.run_id}:${conversation ?? ""}`} run={run} initialSid={conversation} /> : null}
         {run && tab === "banco" ? <BenchRuns runs={list} selectedRun={run.run_id} onSelectRun={setPicked} /> : null}
       </div>
     </section>

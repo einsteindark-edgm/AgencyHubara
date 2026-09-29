@@ -19,6 +19,7 @@ import {
   armLabel,
   checkView,
   customerLabel,
+  LevelPill,
   turnVerdict,
   useCheckCatalog,
   useRunConversations,
@@ -37,11 +38,13 @@ import {
 } from "@plugins/lab/frontend/entities/lab-run";
 
 import { buildThreadView, PRODUCTION_ARM, turnReplies, type ThreadItem } from "../lib/thread-view";
-import { CheckResults, LevelPill } from "./CheckResults";
+import { CheckResults } from "./CheckResults";
 import { TurnTraceModal } from "./TurnTraceModal";
 
 interface Props {
   run: LabRun;
+  /** La conversación que se abre primero (la que pidió el Resumen). */
+  initialSid?: string | null;
 }
 
 type View = "bot" | "compare";
@@ -72,10 +75,10 @@ function resultsOf(data: Evaluations | undefined, episodeId?: string): EvalResul
   return episodes.filter((e) => episodeId === undefined || e.episode_id === episodeId).flatMap((e) => e.results);
 }
 
-export function LabConversations({ run }: Props) {
+export function LabConversations({ run, initialSid = null }: Props) {
   const conversations = useRunConversations(run.run_id);
   const rows = conversations.data?.conversations ?? [];
-  const [picked, setPicked] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(initialSid);
   const sid = picked ?? rows[0]?.session_id ?? null;
   const [arm, setArm] = useState(PRODUCTION_ARM);
   const [view, setView] = useState<View>("bot");

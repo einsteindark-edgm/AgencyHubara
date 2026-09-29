@@ -44,7 +44,7 @@ describe("BenchRuns: estados raros", () => {
     fetchMock.mockImplementation(() => json({ detail: "no" }, 404));
     renderIt([run({ stale: true })]);
 
-    expect(await screen.findByText(/sin reportes de la caja/i)).toBeInTheDocument();
+    expect(await screen.findByText(/sin noticias del servidor del laboratorio/i)).toBeInTheDocument();
   });
 
   it("un error del servidor no se muestra como 'todavía no publicó'", async () => {

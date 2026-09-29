@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import LabPage from "./LabPage";
@@ -86,5 +86,34 @@ describe("LabPage", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "Resumen" }));
     expect(screen.getByRole("tab", { name: "Resumen" })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByText(/resumen/i, { selector: "p" })).toBeInTheDocument();
+  });
+
+  it("«Ver conversación» en el Resumen abre esa conversación en Conversaciones", async () => {
+    const SID = "wa_573007654321";
+    runsResponse = { status: 200, body: { runs: [{ run_id: RUN, bench_id: "bench-x", arms: ["A0", "A1", "B"], reps: 1, phase: "done" }] } };
+    const base = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((url: string) => {
+      const u = String(url);
+      if (u.endsWith(`/runs/${RUN}/report`)) return json({ run_id: RUN, mode: "turn", arms: ["A0", "A1", "B"], arena: {}, diffs: ["A1:B"] });
+      if (u.includes(`/runs/${RUN}/diff?base=A1&cand=B`)) {
+        return json({ base: "A1", cand: "B", episode_pass: { delta: 0, low: 0, high: 0, conclusive: false, sessions: 2 },
+          checks: [], changed_turns: [{ session_id: SID, episode_id: "ep_1", turn: 3, base: "PASA", cand: "ALERTA", checks: [] }] });
+      }
+      if (u.endsWith(`/runs/${RUN}/conversations`)) {
+        return json({ conversations: [
+          { session_id: "wa_573001234567", turns: 2, episodes: ["ep_1"], verdicts: {} },
+          { session_id: SID, turns: 4, episodes: ["ep_1"], verdicts: {} },
+        ] });
+      }
+      return base!(url);
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("tab", { name: "Resumen" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Ver conversación" }));
+
+    expect(screen.getByRole("tab", { name: "Conversaciones" })).toHaveAttribute("aria-selected", "true");
+    const list = await screen.findByRole("list", { name: "Conversaciones del banco" });
+    expect(await within(list).findByRole("button", { current: true })).toHaveTextContent("Cliente ···4321");
   });
 });
