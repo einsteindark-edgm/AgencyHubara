@@ -561,6 +561,56 @@ def _inbound_count(history_file: Path) -> int:
     return value
 
 
+# ── Nombre y vista previa (bandeja de la app nativa y del dashboard) ──────
+#
+# `customer_name` = nombre de perfil de WhatsApp que guarda el ingest; `last_message_preview` = lo último
+# con texto del historial, recortado. Campos opcionales: sin perfil la app cae al número. La vista previa
+# lee solo la cola del JSONL, con el mismo cache por (mtime, size) que los otros contadores.
+_PREVIEW_MAX = 80
+_PREVIEW_TAIL_BYTES = 16_384
+_preview_cache: dict[Path, tuple[float, int, str | None]] = {}
+
+
+def _customer_name(data: dict) -> str | None:
+    profile = data.get("profile")
+    name = profile.get("name") if isinstance(profile, dict) else None
+    return (name.strip() or None) if isinstance(name, str) else None
+
+
+def _scan_last_message_preview(history_file: Path) -> str | None:
+    with history_file.open("rb") as f:
+        size = f.seek(0, os.SEEK_END)
+        f.seek(max(0, size - _PREVIEW_TAIL_BYTES))
+        lines = f.read().splitlines()
+    if size > _PREVIEW_TAIL_BYTES:
+        lines = lines[1:]  # la primera línea de la cola puede venir cortada
+    for raw in reversed(lines):
+        try:
+            event = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if not isinstance(event, dict) or event.get("role") not in ("user", "assistant"):
+            continue
+        text = event.get("content")
+        if isinstance(text, str) and text.strip():
+            clean = " ".join(text.split())
+            return clean if len(clean) <= _PREVIEW_MAX else clean[: _PREVIEW_MAX - 1].rstrip() + "…"
+    return None
+
+
+def _last_message_preview(history_file: Path) -> str | None:
+    try:
+        st = history_file.stat()
+        cached = _preview_cache.get(history_file)
+        if cached is not None and cached[:2] == (st.st_mtime, st.st_size):
+            return cached[2]
+        value = _scan_last_message_preview(history_file)
+    except OSError:
+        return None
+    _preview_cache[history_file] = (st.st_mtime, st.st_size, value)
+    return value
+
+
 @router.get("/sessions")
 async def list_dashboard_sessions():
     """
@@ -589,6 +639,7 @@ async def list_dashboard_sessions():
             order_ref = None
             origin = None
             postponed = None
+            customer_name = None
 
             if metadata_file.exists():
                 try:
@@ -605,6 +656,7 @@ async def list_dashboard_sessions():
                     # Filtro "Pospuestos": dijo cuándo retoma y aún no quedó
                     # SIN_RESPUESTA (la regla vive en messagingkit).
                     postponed = postponed_view(data, int(time.time() * 1000))
+                    customer_name = _customer_name(data)
                 except json.JSONDecodeError:
                     pass
             
@@ -612,11 +664,13 @@ async def list_dashboard_sessions():
             last_updated = 0
             last_inbound_ms = None
             inbound_count = 0
+            last_message_preview = None
             history_file = session_path / "sessions" / f"{entry}.jsonl"
             if history_file.exists():
                 last_updated = history_file.stat().st_mtime
                 last_inbound_ms = _last_inbound_ms(history_file)
                 inbound_count = _inbound_count(history_file)
+                last_message_preview = _last_message_preview(history_file)
             else:
                 last_updated = session_path.stat().st_mtime
 
@@ -634,6 +688,8 @@ async def list_dashboard_sessions():
                 "inbound_count": inbound_count,
                 "origin": origin,
                 "postponed": postponed,
+                "customer_name": customer_name,
+                "last_message_preview": last_message_preview,
             })
 
     # Estado real de los pedidos del inbox, en UNA lectura: los que esperan
