@@ -83,6 +83,9 @@ async def test_each_customer_message_gets_its_own_check(tmp_path: Path, ctx: Too
         (False, DENIAL),  # sin fotos verificadas no hay nada que recordar
         (True, "Sí, las cuatro son nuestras 🤍"),  # no niega nada
         (True, "El jengibre no está entre los aromas de la Luz Serena."),  # una variante, no un producto
+        # r9 4567 t21: un cupón no es un producto (falsa alarma que costó una ronda).
+        (True, "Anotado, Lavanda 🤍\n\nSobre el cupón HALLOWEEN50: no existe, no lo tenemos vigente."),
+        (True, "Ese color no lo manejamos, pero sí el lila."),
     ],
 )
 async def test_what_does_not_deny_a_verified_photo_goes_as_is(
@@ -90,4 +93,40 @@ async def test_what_does_not_deny_a_verified_photo_goes_as_is(
 ) -> None:
     tool = _tool(tmp_path, _metadata(verified=verified))
 
-    assert (await _send(tool, ctx, text))["reply"] == {"text": text}
+    assert (await _send(tool, ctx, text)).get("reply") == {"text": text}
+
+
+# ── Prometer revisar después (r9, 4567 t13, bot nuevo) ─────────────────────
+# Sin negar ya nada, el bot contestó «Déjame revisar bien las cuatro que me
+# enviaste… Dame un momento y te confirmo» y el turno terminó: después no
+# puede escribirle (AGENTS.md ya lo prohibía; nadie lo hacía cumplir).
+
+PROMISE = (
+    "Entiendo. Déjame revisar bien las cuatro que me enviaste, porque puede que sí las tengamos con otro "
+    "nombre.\n\nDame un momento y te confirmo."
+)
+
+
+async def test_a_promise_to_check_later_is_held_once(tmp_path: Path, ctx: ToolContext) -> None:
+    tool = _tool(tmp_path, _metadata(verified=False))
+
+    first = await _send(tool, ctx, PROMISE)
+    again = await _send(tool, ctx, PROMISE)
+
+    assert "reply" not in first and first["error"] == "promise_later"
+    assert "AHORA" in first["message"]
+    assert again["reply"] == {"text": PROMISE}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Te confirmo que sí la tenemos 🤍",
+        "Ya te muestro las opciones de aroma.",
+        "¿Me confirmas la dirección?",
+    ],
+)
+async def test_what_is_not_a_promise_goes_as_is(tmp_path: Path, ctx: ToolContext, text: str) -> None:
+    tool = _tool(tmp_path, _metadata(verified=False))
+
+    assert (await _send(tool, ctx, text)).get("reply") == {"text": text}

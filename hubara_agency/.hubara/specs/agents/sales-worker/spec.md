@@ -820,7 +820,9 @@ lo repitió). Por eso `send_reply` SHALL retener UNA vez por mensaje del
 cliente una respuesta que diga que no tenemos un producto («no la tenemos»,
 «la única que manejamos», «no están en el catálogo») cuando el episodio tiene
 fotos verificadas, y devolverle al modelo la lista de lo verificado; el
-segundo intento MUST salir (si habla de otro producto, lo reenvía igual).
+segundo intento MUST salir (si habla de otro producto, lo reenvía igual). Una
+oración sobre un cupón, un código, un descuento, un color, un aroma, el envío
+o el pago no niega un producto.
 
 #### Scenario: «No están todas» (laboratorio caso-fotos-0930-r7, 4567 t13)
 
@@ -828,6 +830,20 @@ segundo intento MUST salir (si habla de otro producto, lo reenvía igual).
 - WHEN el cliente escribe «me gustaría esas, pero no están todas»
 - THEN el turno lleva la nota con las cuatro y la orden de no negarlas
 - AND si el bot igual responde «la única que manejamos es el Velón Gorrión», `send_reply` la retiene con la lista de lo verificado y el bot la corrige
+
+### Requirement: No promete revisar y responder después (2026-09-30)
+
+El bot no puede volver a escribir por su cuenta (AGENTS.md). `send_reply` SHALL
+retener UNA vez por mensaje del cliente una respuesta que prometa revisar o
+confirmar después («dame un momento y te confirmo», «déjame revisar», «voy a
+consultar», «ahora vuelvo») y pedirle al modelo que lo revise AHORA con las
+herramientas; el segundo intento MUST salir. «Te confirmo que sí la tenemos» o
+«ya te muestro las opciones» no son promesas.
+
+#### Scenario: «Dame un momento y te confirmo» (laboratorio caso-fotos-0930-r9, 4567 t13)
+
+- WHEN el bot responde «Déjame revisar bien las cuatro que me enviaste… Dame un momento y te confirmo»
+- THEN no sale y el modelo revisa con las herramientas y responde en el mismo turno
 
 ### Requirement: El mensaje que sigue a una foto espera a la foto (2026-09-30)
 

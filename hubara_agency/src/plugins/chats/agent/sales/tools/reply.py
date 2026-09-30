@@ -25,7 +25,9 @@ from loguru import logger
 from src.plugins.chats.agent.sales.decisions.guards import clean_llm_text, customer_reply_text
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.use_cases.photo_product import (
+    PROMISE_MESSAGE,
     denies_availability,
+    promises_to_follow_up,
     verified_denial_message,
     verified_photo_products,
 )
@@ -37,9 +39,11 @@ _REJECTED_MESSAGE = (
 )
 
 
-#: El mensaje del cliente en que `send_reply` ya retuvo una negación: el
-#: segundo intento sale (UNA retención por mensaje, nunca un bucle).
+#: El mensaje del cliente en que `send_reply` ya retuvo una negación (o una
+#: promesa de revisar después): el segundo intento sale (UNA retención por
+#: mensaje, nunca un bucle).
 _VERIFIED_CHECK_KEY = "verified_photos_denial_checked"
+_PROMISE_CHECK_KEY = "promise_later_checked"
 
 
 class SendReplyTool(ToolBase):
@@ -73,6 +77,44 @@ class SendReplyTool(ToolBase):
         # desacuerdos). Sin él: el bot fijado del laboratorio o la regla de hoy.
         self._vault_dir = Path(vault_dir) if vault_dir is not None else None
 
+    def _hold_once(self, session_key: str, key: str, error: str, message: str) -> str | None:
+        """Retiene el texto si todavía no se retuvo uno por `key` en este
+        mensaje del cliente (`last_inbound_message_id`) y lo anota. Sin vault,
+        sin mensaje del cliente o si no se puede anotar: el texto sale."""
+        if self._vault_dir is None:
+            return None
+        store = FilesystemMetadataStore(self._vault_dir)
+        try:
+            metadata = store.read(session_key) or {}
+        except Exception:  # noqa: BLE001 — sin metadata legible: el texto sale
+            return None
+        inbound = metadata.get("last_inbound_message_id")
+        if not inbound or metadata.get(key) == inbound:
+            return None
+
+        def _mark(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            if not fresh:
+                return None
+            fresh[key] = inbound
+            return fresh
+
+        try:
+            if store.update(session_key, _mark) is None:
+                return None
+        except Exception:  # noqa: BLE001 — sin la marca podría repetirse: el texto sale
+            return None
+        logger.info("💬 [TOOL send_reply] retenido ({}) session={}", error, session_key)
+        return json.dumps({"sent": False, "error": error, "message": message}, ensure_ascii=False)
+
+    def _held_for_promise(self, session_key: str, text: str) -> str | None:
+        """Laboratorio caso-fotos-0930-r9, 4567 t13 (bot nuevo): «Déjame
+        revisar bien las cuatro… Dame un momento y te confirmo», y el turno
+        terminó. El bot no puede volver a escribir (AGENTS.md lo prohíbe; nadie
+        lo hacía cumplir): se retiene UNA vez para que revise ahora."""
+        if not promises_to_follow_up(text):
+            return None
+        return self._hold_once(session_key, _PROMISE_CHECK_KEY, "promise_later", PROMISE_MESSAGE)
+
     def _held_for_verified_photos(self, session_key: str, text: str) -> str | None:
         """Laboratorio caso-fotos-0930-r8, 4567 t13 (los dos bots): con las
         fotos del cliente ya verificadas como productos nuestros, el bot
@@ -84,36 +126,15 @@ class SendReplyTool(ToolBase):
         el texto sale como siempre."""
         if self._vault_dir is None or not denies_availability(text):
             return None
-        store = FilesystemMetadataStore(self._vault_dir)
         try:
-            metadata = store.read(session_key) or {}
+            metadata = FilesystemMetadataStore(self._vault_dir).read(session_key) or {}
         except Exception:  # noqa: BLE001 — sin metadata legible: el texto sale
             return None
         products = verified_photo_products(metadata)
-        inbound = metadata.get("last_inbound_message_id")
-        if not products or not inbound or metadata.get(_VERIFIED_CHECK_KEY) == inbound:
+        if not products:
             return None
-
-        def _mark(fresh: dict[str, Any]) -> dict[str, Any] | None:
-            if not fresh:
-                return None
-            fresh[_VERIFIED_CHECK_KEY] = inbound
-            return fresh
-
-        try:
-            marked = store.update(session_key, _mark)
-        except Exception:  # noqa: BLE001 — sin la marca podría repetirse: el texto sale
-            return None
-        if marked is None:
-            return None
-        logger.info(
-            "💬 [TOOL send_reply] retenido: niega un producto con fotos verificadas session={} text={!r}",
-            session_key,
-            text[:120],
-        )
-        return json.dumps(
-            {"sent": False, "error": "verified_photos", "message": verified_denial_message(products)},
-            ensure_ascii=False,
+        return self._hold_once(
+            session_key, _VERIFIED_CHECK_KEY, "verified_photos", verified_denial_message(products)
         )
 
     async def execute_with_context(
@@ -138,7 +159,9 @@ class SendReplyTool(ToolBase):
                 {"sent": False, "error": "internal_text", "message": _REJECTED_MESSAGE},
                 ensure_ascii=False,
             )
-        held = self._held_for_verified_photos(ctx.session_key, cleaned)
+        held = self._held_for_verified_photos(ctx.session_key, cleaned) or self._held_for_promise(
+            ctx.session_key, cleaned
+        )
         if held is not None:
             return held
         return json.dumps(

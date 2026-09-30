@@ -426,9 +426,51 @@ _DENIAL_RE = re.compile(
 )
 
 
+#: Una oración que habla de esto no niega un PRODUCTO (r9 4567 t21: «el cupón
+#: HALLOWEEN50 no existe, no lo tenemos vigente»; «ese color no lo manejamos»).
+_NOT_A_PRODUCT_RE = re.compile(
+    r"\b(?:cupon|cupones|codigo|codigos|descuento|descuentos|promocion|promociones|promo|aroma|aromas"
+    r"|color|colores|envio|envios|pago|pagos|tarifa|tarifas)\b"
+)
+_SENTENCE_RE = re.compile(r"[^.!?\n]+")
+
+
 def denies_availability(text: str | None) -> bool:
-    """¿El texto le dice al cliente que no tenemos un producto?"""
-    return bool(_DENIAL_RE.search(_norm(text)))
+    """¿El texto le dice al cliente que no tenemos un producto? Oración por
+    oración: la que habla de un cupón, un color, un aroma, el envío o el pago
+    no cuenta."""
+    for sentence in _SENTENCE_RE.findall(text or ""):
+        norm = _norm(sentence)
+        if _DENIAL_RE.search(norm) and not _NOT_A_PRODUCT_RE.search(norm):
+            return True
+    return False
+
+
+#: Prometer revisar y responder después (AGENTS.md: el bot no tiene cómo
+#: volver a escribir). Texto normalizado.
+_PROMISE_RE = re.compile(
+    r"\b(?:dame|deme|dame solo|regalame) un (?:momento|momentico|segundo|segundito|minuto|minutico)\b"
+    r"|\b(?:dejame|permiteme|dejeme|permitame) (?:revisar|verificar|consultar|confirmar|mirar|preguntar|averiguar"
+    r"|chequear|ver y te)\b"
+    r"|\b(?:ya|ahora|enseguida|en un rato|en un momento|mas tarde|luego) te (?:confirmo|aviso|cuento|digo|escribo)\b"
+    r"|\bte (?:confirmo|aviso|cuento|escribo) en un (?:rato|momento|ratico|momentico)\b"
+    r"|\b(?:voy a|vamos a) (?:revisar|verificar|consultar|averiguar|preguntar)\b"
+    r"|\blo (?:consulto|reviso|verifico|averiguo) y te\b"
+    r"|\bahora vuelvo\b"
+)
+
+
+def promises_to_follow_up(text: str | None) -> bool:
+    """¿El texto le promete al cliente revisar y responder después?"""
+    return bool(_PROMISE_RE.search(_norm(text)))
+
+
+PROMISE_MESSAGE = (
+    "No se envió: le prometes revisar y responderle después, pero después no puedes escribirle: tu turno "
+    "termina con este mensaje. Revísalo AHORA con las herramientas (search_products, get_product_by_handle o "
+    "la que corresponda) y respóndele con el dato en este mismo turno. Si ya no hay nada que revisar, vuelve "
+    "a llamar send_reply con el mismo texto."
+)
 
 
 def verified_denial_message(products: Sequence[dict[str, str]]) -> str:
@@ -445,8 +487,10 @@ def verified_denial_message(products: Sequence[dict[str, str]]) -> str:
 
 __all__ = [
     "IMAGE_BUDGET_S",
+    "PROMISE_MESSAGE",
     "build_photo_facts_note",
     "denies_availability",
+    "promises_to_follow_up",
     "verified_denial_message",
     "verified_photo_products",
     "HOW_CODE",
