@@ -62,6 +62,19 @@ def test_shipping_needs_the_rates_tool() -> None:
     assert "send_shipping_rates" in required["nudge"]
 
 
+def test_sizes_are_answered_by_the_search_too() -> None:
+    """`search_products` ya trae las medidas de cada producto (`medidas`): el
+    contrato no puede exigir otra consulta para lo mismo. Con la segunda puerta
+    también en `send_reply` (caso 6543, 2026-09-29), exigirla forzaba una
+    ronda de más en los turnos que ya habían buscado (4567 t4, 4329 t3 en r4)."""
+    turn = POLICY.decide_turn(_result(_noul("topic.medidas", 0.93)), questionnaire=RAFAGA,
+                              context=_ctx("etapa_descubrimiento"), n_messages=1, thresholds=TH)
+
+    [required] = turn.tools["required"]
+    assert required["topic"] == "medidas"
+    assert {"search_products", "get_product_by_handle", "present_product_detail"} <= set(required["any_of"])
+
+
 def test_a_price_already_on_screen_needs_no_tool() -> None:
     seen = POLICY.decide_turn(_result(_noul("topic.precio", 0.9), _noul("precio.en_contexto", 0.95)), questionnaire=RAFAGA,
                               context=_ctx("etapa_variantes"), n_messages=1, thresholds=TH)

@@ -49,8 +49,9 @@ _CONTRACT: dict[str, tuple[tuple[str, ...], str]] = {
     "precio": (("search_products", "get_product_by_handle", "present_product_detail", "present_products"),
                "El precio sale del catálogo: consúltalo con search_products o get_product_by_handle antes de darlo."),
     "envio": (("send_shipping_rates",), "Para el costo del envío usa send_shipping_rates."),
-    "medidas": (("present_product_detail", "get_product_by_handle"),
-                "Las medidas salen de la ficha: usa present_product_detail o get_product_by_handle."),
+    # `search_products` ya trae las medidas de cada producto (2026-09-29).
+    "medidas": (("present_product_detail", "get_product_by_handle", "search_products"),
+                "Las medidas salen del catálogo: consúltalas con search_products o get_product_by_handle."),
     "disponibilidad": (("search_products", "get_product_by_handle"),
                        "La disponibilidad sale del catálogo: consúltala con search_products o get_product_by_handle."),
     "estado_pedido": (("check_order_status",), "Para el estado del pedido usa check_order_status."),

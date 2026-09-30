@@ -87,8 +87,9 @@ def _no_extra_round(_tools_used: list[str], _shown: str) -> None:
 
 def contract_policy_of(decisions: TurnDecisions | None) -> TurnPolicy | None:
     """Segunda puerta del turno (F6, workflow V2): si el LLM va a cerrar con
-    texto sin la tool que el contrato GRABADO pedía (`tools.required`) y el
-    cliente todavía no vio nada, UNA ronda más con la nota de las que faltan.
+    texto (suelto o por `send_reply`) sin la tool que el contrato GRABADO pedía
+    (`tools.required`) y el cliente todavía no vio nada, UNA ronda más con la
+    nota de las que faltan.
     Sin contrato grabado (perfiles sin tools, resultados viejos), None: el
     turno de hoy. Sin la ronda ② por palabras (diferencia 3 del V2)."""
     tools = getattr(decisions, "tools", None) if decisions is not None else None

@@ -161,11 +161,12 @@ class TurnPolicy:
     extra_round_note: Callable[[list[str], str], str | None]
     max_extra_rounds: int = 1
     #: Segunda puerta (motor de decisiones, F6): el LLM va a cerrar el turno
-    #: con un texto, sin tools pendientes y SIN haberle mostrado nada al
-    #: cliente todavía. `final_round_note(tools_usadas, borrador)` → nota si
-    #: falta una tool que el contrato del turno pedía: en vez de enviar el
-    #: borrador hay UNA ronda más con esa nota (el borrador no se graba). La
-    #: arma el caller desde el resultado GRABADO del motor. None = sin puerta.
+    #: con un texto (suelto o por `send_reply`), sin tools pendientes y SIN
+    #: haberle mostrado nada al cliente todavía. `final_round_note(tools_usadas,
+    #: borrador)` → nota si falta una tool que el contrato del turno pedía: en
+    #: vez de enviar el borrador hay UNA ronda más con esa nota (el borrador no
+    #: se graba). La arma el caller desde el resultado GRABADO del motor. None =
+    #: sin puerta.
     final_round_note: Callable[[list[str], str], str | None] | None = None
 
 
@@ -384,6 +385,60 @@ def _text_shown(tool_events: list[dict[str, Any]], delivered_replies: dict[str, 
         args = event.get("args") if isinstance(event.get("args"), dict) else {}
         texts.extend(v for v in args.values() if isinstance(v, str) and v.strip())
     return "\n".join(texts)
+
+
+def _contract_note(
+    turn_policy: TurnPolicy | None,
+    tools_used: list[str],
+    draft: str,
+    *,
+    extra_rounds: int,
+    shown: str,
+) -> str | None:
+    """Segunda puerta (F6): la nota del contrato si el turno va a cerrar con
+    `draft` (texto suelto o `send_reply`) sin la tool que el contrato pedía y
+    el cliente todavía no vio nada (`shown` vacío). Una vez por turno
+    (`max_extra_rounds`). Sin `final_round_note`, None: el turno de hoy. Puro."""
+    if (
+        turn_policy is None
+        or turn_policy.final_round_note is None
+        or extra_rounds >= turn_policy.max_extra_rounds
+        or not draft
+        or shown
+    ):
+        return None
+    return turn_policy.final_round_note(list(tools_used), draft)
+
+
+def _forget_outbound_texts(outbound_tool_texts: list[str], args: Any) -> None:
+    """Quita de `outbound_tool_texts` los textos de una tool que al final no
+    salió (un `send_reply` retenido): esa lista es «lo que le llegó al
+    cliente» (de ahí sale, por ejemplo, si ya se le saludó)."""
+    if not isinstance(args, dict):
+        return
+    for value in args.values():
+        if isinstance(value, str) and value in outbound_tool_texts:
+            outbound_tool_texts.remove(value)
+
+
+def _without_calls(recorded: list[dict[str, Any]], call_ids: list[str]) -> list[dict[str, Any]]:
+    """El historial sin esas tool calls ni sus resultados: el LLM no recuerda
+    haber dicho lo que el cliente nunca leyó. Un mensaje del asistente que se
+    queda sin llamadas ni texto se va entero. Puro."""
+    view: list[dict[str, Any]] = []
+    for message in recorded:
+        if message.get("role") == "tool" and message.get("tool_call_id") in call_ids:
+            continue
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            calls = [call for call in message["tool_calls"] if call.get("id") not in call_ids]
+            if len(calls) != len(message["tool_calls"]):
+                if not calls and not message.get("content"):
+                    continue
+                message = {**message, "tool_calls": calls} if calls else {
+                    k: v for k, v in message.items() if k != "tool_calls"
+                }
+        view.append(message)
+    return view
 
 
 def _rejected_by_tool(payload: dict[str, Any] | None) -> bool:
@@ -986,6 +1041,9 @@ async def _run_agent_turn_impl(
     # corte por `send_reply`). Solo lo lee el gancho de egreso (V2): lista en
     # memoria, sin comandos (replay-safe sin patch).
     sent_reply_ids: list[str] = []
+    # `send_reply` que la segunda puerta retuvo (no salieron): el historial del
+    # LLM no los recuerda. Lista en memoria, sin comandos.
+    withheld_reply_ids: list[str] = []
     # Traza v2: pasos del turno en orden (ver `TurnResult.steps`).
     steps: list[dict[str, Any]] = []
     # L-11 (run b730c006): corte de turno en tools que esperan al cliente +
@@ -1324,10 +1382,52 @@ async def _run_agent_turn_impl(
             # nuevo. Tool nueva: ninguna history deployada la usó → sin patch.
             if batch_reply_texts and not admin_turn:
                 if not batch_tool_failed:
-                    final_content = "\n\n".join(batch_reply_texts)
-                    sent_reply_ids = [
+                    batch_reply_ids = [
                         tc.id for tc in response.tool_calls if tc.id in delivered_replies
                     ]
+                    reply_text = "\n\n".join(batch_reply_texts)
+                    # Segunda puerta (F6) también cuando el turno cierra con
+                    # `send_reply` (caso 6543, caso-fotos-0929-r4: el plan
+                    # pedía consultar el catálogo y el modelo respondió de una
+                    # «no la manejamos»; en r4, 12 de 43 turnos del bot nuevo
+                    # cerraron así). La respuesta todavía no salió: se retiene,
+                    # el modelo lo sabe y hay UNA ronda más con la nota. Solo
+                    # con `final_round_note` (V2): V1, remarketing y ETA no
+                    # cambian ni un comando. No actúa si el batch ya le dejó
+                    # algo al cliente (una tarjeta que lo espera, aunque no
+                    # lleve texto: formulario, tarifas) o cerró por etiqueta.
+                    contract_note = (
+                        _contract_note(
+                            turn_policy,
+                            tools_used,
+                            reply_text,
+                            extra_rounds=extra_rounds,
+                            shown=_text_shown(
+                                tool_events,
+                                {k: v for k, v in delivered_replies.items() if k not in batch_reply_ids},
+                            ),
+                        )
+                        if not batch_awaits_customer and not batch_tag_ends_turn
+                        else None
+                    )
+                    if contract_note:
+                        extra_rounds += 1
+                        steps.append(
+                            {"kind": "guard", "at_ms": _now_ms(), "name": "contract_extra_round",
+                             "before": reply_text, "after": contract_note, "tools": list(tools_used)}
+                        )
+                        for tc in response.tool_calls:
+                            if tc.id in batch_reply_ids:
+                                delivered_replies.pop(tc.id, None)
+                                withheld_reply_ids.append(tc.id)
+                                _forget_outbound_texts(outbound_tool_texts, tc.arguments)
+                        messages = [
+                            *messages,
+                            {"role": "system", "content": f"Tu send_reply NO se envió. {contract_note}"},
+                        ]
+                        continue
+                    final_content = reply_text
+                    sent_reply_ids = batch_reply_ids
                     workflow.logger.info(
                         f"turno terminado por send_reply ({batch_tool_names})"
                     )
@@ -1549,13 +1649,14 @@ async def _run_agent_turn_impl(
             # cliente todavía no vio nada → UNA ronda más con la nota. El
             # borrador no entra a `messages`: no se graba ni se recuerda.
             contract_note = (
-                turn_policy.final_round_note(list(tools_used), final_content)
-                if turn_policy is not None
-                and turn_policy.final_round_note is not None
-                and extra_rounds < turn_policy.max_extra_rounds
-                and final_content
-                and not admin_turn
-                and not _text_shown(tool_events, delivered_replies)
+                _contract_note(
+                    turn_policy,
+                    tools_used,
+                    final_content,
+                    extra_rounds=extra_rounds,
+                    shown=_text_shown(tool_events, delivered_replies),
+                )
+                if not admin_turn
                 else None
             )
             if contract_note:
@@ -1676,6 +1777,8 @@ async def _run_agent_turn_impl(
     # de commands (L-9 versiona forma, no contenido); en replay la activity no
     # se re-ejecuta. Por eso `extended` va en su default: nada que versionar.
     recorded = _history_view(messages[initial_len:], delivered_replies)
+    if withheld_reply_ids:
+        recorded = _without_calls(recorded, withheld_reply_ids)
     egress_result: dict[str, Any] | None = None
     if egress is not None:
         # Motor de decisiones (F4): el caller decide el egreso con su gancho,
