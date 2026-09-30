@@ -851,13 +851,40 @@ Mientras la visión lee una foto del cliente (1,5 a ~4,5 s), cualquier otro
 mensaje suyo SHALL esperar a que la foto entre al bot antes de pasar al
 workflow, con tope de 10 s: así la foto y el «¿tienes esta?» van en la misma
 ráfaga y en orden. Las fotos no se esperan entre sí y otro cliente no espera.
-Pendiente: el texto que llega ANTES que la foto (la ráfaga se cierra sin ella).
 
 #### Scenario: Foto y enseguida «¿tienes esta?»
 
 - GIVEN el cliente manda una foto y 1 s después «¿tienes esta?»
 - WHEN la visión tarda 3 s
 - THEN el workflow recibe primero la foto y después el texto, en la misma ráfaga
+
+### Requirement: La ráfaga espera la foto que se está leyendo (texto antes de la foto, 2026-09-30)
+
+Cuando el texto llega ANTES que la foto, el texto ya está en el workflow. El
+ingest SHALL avisarle al workflow de ventas (señal `photo_reading(wamid)`) que
+empezó a leer una foto del cliente y, después de que la foto entró como mensaje,
+que terminó (`done=True`). Solo a la ruta de ventas y sin arrancar nada: sin
+workflow vivo, la foto entra como hoy. El workflow (V1 y V2):
+- SHALL esperar la foto cuando la ráfaga iba a cerrar con una foto leyéndose
+  (tope 15 s; una foto que no llega se da por perdida y no se vuelve a esperar);
+- SHALL tratar la foto que empieza a leerse mientras el modelo piensa como algo
+  nuevo del cliente: si el turno todavía no le mostró nada, vuelve a empezar y
+  espera la foto (una sola respuesta que ve las dos cosas). La traza marca el
+  reinicio con `photo: true`.
+Las histories sin la señal re-juegan igual (patch `burst-waits-for-photo-v1`,
+consultado solo cuando hay una foto leyéndose).
+
+#### Scenario: «¿tienes esta en azul?» y la foto 1 s después
+
+- GIVEN el cliente escribe «¿tienes esta en azul?» y enseguida manda una foto
+- WHEN la visión tarda 6 s (más que el silencio de 1,5 s de la ráfaga)
+- THEN el bot responde UNA vez, con el texto y la foto en el mismo turno
+
+#### Scenario: La foto empieza a leerse mientras el modelo piensa
+
+- GIVEN la ráfaga ya cerró con el texto y el modelo está en su primera ronda
+- WHEN el ingest avisa que está leyendo una foto del cliente
+- THEN la respuesta sin la foto no sale, el turno espera la foto y responde con las dos cosas
 
 ### Requirement: El carrito llega con los nombres del catálogo (2026-09-30)
 
@@ -894,6 +921,60 @@ el cliente.
 
 - WHEN el LLM responde «Jengibre no está entre los aromas de la Luz Serena. Los que maneja son: <11 aromas>. ¿Alguno de esos te llama la atención?»
 - THEN el cliente recibe «Jengibre no está entre los aromas de la Luz Serena. Los que maneja son:», el selector y «¿Alguno de esos te llama la atención?»
+
+### Requirement: La lista de opciones vuelve al modelo antes de salir (2026-09-30)
+
+La protección de arriba decide DESPUÉS del turno. Antes, `send_reply` SHALL
+preguntarle al motor si el texto es una lista de aromas o colores para escoger
+(capacidad `enumeracion`: la regla en el bot actual, Jev en el nuevo, con las
+etiquetas del catálogo) y, si lo es, devolverlo UNA vez por mensaje del cliente
+(`option_list`) con lo que tiene que hacer: `present_variant_picker` con el
+tipo, las opciones, el handle del producto y en `intro_text` lo que iba a decir
+antes de la lista. El segundo intento MUST salir (la protección sigue como red).
+Sin catálogo, sin vault o con cualquier falla, el texto sale como siempre. Las
+tools llegan al motor por su fachada (`decisions/guards.option_list`).
+
+El contrato del turno (`turno-v3`) SHALL aceptar `present_variant_picker` para
+el asunto «variante» en cualquier etapa (antes pedía la ficha fuera de la etapa
+de variantes): el selector trae las opciones del catálogo.
+
+#### Scenario: «mejor la de los pajaritos / en lila» (laboratorio caso-fotos-0930-r10, 4567 t20)
+
+- GIVEN el bot anotó el Velón Gorrión en lila
+- WHEN responde con `send_reply` «¿Qué aroma quieres? Maneja Caballero de la noche, Limoncillo, …»
+- THEN el texto no sale y el modelo manda `present_variant_picker` con los aromas del Velón Gorrión
+- AND la protección no tiene que actuar (r11: los dos bots, t19 y t20)
+
+#### Scenario: Una lista que no es para escoger
+
+- WHEN el bot escribe «Ese color no lo manejamos, pero sí el lila» o nombra dos opciones
+- THEN el texto sale como está
+
+### Requirement: «Enviar mensaje a la empresa» dice de qué producto le escriben (2026-09-30)
+
+Cuando el cliente escribe desde la ficha de un producto del catálogo de
+WhatsApp, Meta manda el producto en `context.referred_product` (el SKU de la
+variante, o su id si no tiene SKU). El ingest SHALL leer solo un código de
+catálogo válido, resolverlo contra el catálogo como el carrito (nombre y
+variante; SKU, id de la variante o del producto) y guardarlo en el mismo estado
+del botón de la web (`web_product_ref`, por episodio, `origin:
+catalogo_whatsapp`). Mientras el episodio no tenga pedido, el turno SHALL llevar
+la nota `[PRODUCTO DE LA FICHA DEL CATÁLOGO…]` con el producto; un producto que
+el catálogo no tiene MUST NOT llegar al prompt. Una conversación en manos de una
+persona no se toca. El dashboard SHALL mostrar la cita con el producto
+(«Ficha del catálogo · Luz Serena»).
+
+El texto del catálogo (lista nativa de productos, primera página) SHALL decir
+cómo se usan los dos botones de la ficha, que no se pueden cambiar: «Añadir a la
+solicitud de pedido» para pedirla y «Enviar mensaje a la empresa» para preguntar
+por ella.
+
+#### Scenario: «Hola, ¿la tienen disponible?» desde la ficha de la Luz Serena
+
+- GIVEN el cliente toca «Enviar mensaje a la empresa» en la ficha de la Luz Serena
+- WHEN el ingest recibe el texto con `referred_product.product_retailer_id = HUB-SERENA`
+- THEN el bot recibe la nota de que escribió desde la ficha de la Luz Serena (handle `luz-serena`)
+- AND el operador ve en Chats la cita «Ficha del catálogo · Luz Serena»
 
 ### Requirement: El formulario de envío extiende el ghosting
 
@@ -974,6 +1055,13 @@ laboratorio de conversaciones, §4.1.
 - THEN la traza trae `inbound[]` con el `wamid`, la hora (`ts_ms`) y el tipo de cada mensaje, en orden
 - AND una señal de 3 argumentos (history anterior o variable apagada) sigue funcionando, con `wamid` y `ts_ms` en null
 - AND un 4.º argumento con otra forma se ignora: nunca se descarta el mensaje del cliente
+
+#### Scenario: Lo que recibe el modelo en cada ronda (2026-09-30)
+
+- WHEN el turno llama al modelo dos veces
+- THEN el paso de la primera ronda guarda `sent` con el tamaño de cada parte de las instrucciones, las notas del turno, el historial por rol y el mensaje del cliente como lo lee el modelo (el `Chat ID` enmascarado)
+- AND el de la segunda guarda solo lo nuevo: los resultados de las herramientas y las notas del bot
+- AND los textos van acotados (notas 6000, mensaje 4000, cada resultado 1500) y el paso de cada tool guarda sus argumentos hasta 600 caracteres (el resumen v1 sigue en 160)
 
 #### Scenario: History anterior a la traza v2
 

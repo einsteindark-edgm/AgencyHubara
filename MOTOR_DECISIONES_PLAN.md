@@ -263,3 +263,41 @@ El operador pidió los pasos 1 y 3 de la investigación de §6.3; el 2 («Enviar
 **Pendiente:**
 - El texto que llega ANTES que la foto (la ráfaga se cierra sin la foto): pide un cambio en el workflow (que el cierre de la ráfaga espere una foto en lectura).
 - «Enviar mensaje a la empresa» (`referred_product`), la línea en el mensaje del catálogo y el deploy (alias del proxy + Pillow).
+
+### 6.6 La lista de opciones, el paso a paso, el texto antes de la foto y «Enviar mensaje a la empresa» (2026-09-30, noche)
+
+**Qué quedó:**
+- **t20 (la protección obligó a usar el selector).** El operador preguntó cómo lo resuelve el motor en vez de la protección. La decisión «¿es una lista para escoger?» ya existía: la capacidad `enumeracion`, con la regla en el bot actual y Jev en el nuevo. El problema es que se tomaba DESPUÉS del turno.
+  - Ahora `send_reply` la toma ANTES de enviar. Si es una lista, le devuelve el texto al modelo una vez por mensaje del cliente con lo que tiene que hacer: `present_variant_picker` con el producto y lo que iba a decir. La protección queda como red.
+  - El contrato del turno aceptaba solo la ficha para «variante» fuera de la etapa de variantes. En t20 eso llevó al modelo a mostrar la tarjeta en el diseño equivocado. Ahora el selector también cumple el contrato.
+- **Paso a paso.**
+  - Cada ronda guarda lo que recibió el modelo. En la primera van las instrucciones por parte, el historial, las notas del turno y el mensaje del cliente como lo lee el modelo. En las siguientes, solo lo nuevo.
+  - Lo que el modelo pidió dice con qué y qué pasó después en esa ronda.
+  - La flecha a las herramientas nombra la que se ejecutó.
+  - Las trazas anteriores reconstruyen lo que se puede.
+- **Texto antes de la foto.** El ingest le avisa al workflow que está leyendo una foto, y cuándo terminó. La ráfaga la espera (tope de 15 s). Si la foto aparece mientras el modelo piensa y todavía no salió nada, el turno vuelve a empezar con ella.
+- **«Enviar mensaje a la empresa».**
+  - Meta manda el producto de la ficha (`referred_product`); se resuelve como el carrito.
+  - El bot recibe la nota del producto durante el episodio.
+  - Chats muestra la cita «Ficha del catálogo · <producto>».
+  - El texto del catálogo nativo explica los dos botones de la ficha.
+
+**Medido** (r11, `caso-fotos-0930`, US$1,08):
+
+| 4567 | r10 | r11 |
+|---|---|---|
+| t19, los dos bots | escribe la lista → la protección pone el selector | escribe la lista → `send_reply` se la devuelve → manda el selector él mismo |
+| t20, los dos bots | escribe la lista → la protección (el bot nuevo antes mostró la tarjeta en azul) | anota el producto y manda el selector de una |
+
+- **VAR-01b en 4567:** desapareció en t19 y t20, en los dos bots.
+- **Resto de fallas en 4567:**
+  - bot actual: EST-06 t1, DES-08 t19 y CIE-05 t24;
+  - bot nuevo: EST-06 t1 y DES-08 t19.
+  - En r11 el bot nuevo no dijo «Gracias por tu compra»; varía entre corridas.
+- **Nuevo VAR-01b en 4329 t10, bot nuevo.** El modelo cerró con texto suelto, sin `send_reply`, y ese camino no pasa por las revisiones de `send_reply`.
+  - En r10 y r11, 7 u 8 de 43 turnos por bot terminan así.
+
+**Pendiente:**
+- Que el texto final suelto pase por las mismas revisiones que `send_reply`: lista, lo verificado de las fotos y promesa de revisar después.
+- «Gracias por tu compra» como revisión mecánica.
+- Deploy: alias del proxy y Pillow.
