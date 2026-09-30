@@ -34,6 +34,22 @@ scenarios:
       - screen_has: "Chats"
       - screen_lacks: "Ocultar"
 
+  - id: S01b_no_leidos
+    title: No leídos, como WhatsApp (#384)
+    # Primera carga = todo visto; luego Laura escribe y su chat marca 1 hasta que el operador lo abre.
+    setup: [reset, clear_app, launch, {wait: 8},
+            {inject: 'reply wa_000000000101 "Me confirmas el precio del duo porfa"'}, {wait: 6}]
+    goal: |
+      En la bandeja «Chats»:
+      1. Di qué conversaciones muestran un contador de mensajes sin leer (un número en un círculo a la
+         derecha de la fila) y cuánto marca cada uno.
+      2. Toca el filtro «No leídos» y di qué conversaciones quedan en la lista.
+      3. Abre la conversación 000000000101, espera unos 2 segundos y vuelve atrás con el botón Atrás del teléfono.
+      4. Di si el contador de 000000000101 desapareció.
+      Reporta los cuatro puntos.
+    checks:
+      - screen_lacks: "sin leer"
+
   - id: S02_tomar_y_enviar_aromas
     title: Tomar la conversación y enviar la burbuja «Enviar aromas»
     setup: *fresh

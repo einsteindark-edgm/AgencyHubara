@@ -18,7 +18,7 @@ fun Conversation.toEntity(windowExpiresAtMs: Long? = null) = ConversationEntity(
     route = route.name,
     lastUpdatedMs = lastUpdatedMs,
     lastInboundMs = lastInboundMs,
-    unansweredCount = unansweredCount,
+    inboundCount = inboundCount,
     orderId = orderRef?.orderId?.raw,
     orderDisplayId = orderRef?.displayId,
     orderPayment = orderRef?.payment?.name,
@@ -43,7 +43,7 @@ fun ConversationEntity.toDomain(): Conversation? = SessionId.parse(sessionId)?.l
         route = runCatching { Route.valueOf(route) }.getOrDefault(Route.BOT),
         lastUpdatedMs = lastUpdatedMs,
         lastInboundMs = lastInboundMs,
-        unansweredCount = unansweredCount,
+        inboundCount = inboundCount,
         orderRef = orderRef(),
     )
 }

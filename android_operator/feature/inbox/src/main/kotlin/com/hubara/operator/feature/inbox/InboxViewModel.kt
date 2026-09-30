@@ -3,9 +3,11 @@ package com.hubara.operator.feature.inbox
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hubara.operator.core.data.repo.ConversationRepository
+import com.hubara.operator.core.data.repo.SeenRepository
 import com.hubara.operator.core.model.Conversation
 import com.hubara.operator.core.model.OrderRef
 import com.hubara.operator.core.model.Route
+import com.hubara.operator.core.model.SeenCounts
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.collections.immutable.ImmutableList
@@ -15,17 +17,25 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-enum class InboxFilter(val label: String) {
-    TODOS("Todos"), SIN_RESPONDER("Sin responder"), HUMANO("Humano"), CON_PEDIDO("Con pedido");
+/** Una fila de la bandeja: la conversación y cuántos mensajes del cliente no ha visto el operador. */
+data class InboxRow(val conversation: Conversation, val unseen: Int)
 
-    fun apply(list: List<Conversation>): List<Conversation> = when (this) {
-        TODOS -> list
-        SIN_RESPONDER -> list.filter { it.unansweredCount > 0 }
-        HUMANO -> list.filter { it.route == Route.HUMAN }
-        CON_PEDIDO -> list.filter { it.orderRef != null }
+fun inboxRows(conversations: List<Conversation>, seen: SeenCounts): List<InboxRow> =
+    conversations.map { InboxRow(it, seen.unseen(it)) }
+
+/** Los mismos filtros que la bandeja del dashboard web («No leídos» desde #384). */
+enum class InboxFilter(val label: String) {
+    TODOS("Todos"), NO_LEIDOS("No leídos"), HUMANO("Humano"), CON_PEDIDO("Con pedido");
+
+    fun apply(rows: List<InboxRow>): List<InboxRow> = when (this) {
+        TODOS -> rows
+        NO_LEIDOS -> rows.filter { it.unseen > 0 }
+        HUMANO -> rows.filter { it.conversation.route == Route.HUMAN }
+        CON_PEDIDO -> rows.filter { it.conversation.orderRef != null }
     }
 }
 
@@ -67,20 +77,30 @@ private val TAG_LABELS = mapOf(
 
 data class InboxUiState(
     val filter: InboxFilter = InboxFilter.TODOS,
-    val conversations: ImmutableList<Conversation> = persistentListOf(),
+    val rows: ImmutableList<InboxRow> = persistentListOf(),
     val offline: Boolean = false,
 )
 
 @HiltViewModel
-class InboxViewModel @Inject constructor(private val repo: ConversationRepository) : ViewModel() {
+class InboxViewModel @Inject constructor(
+    private val repo: ConversationRepository,
+    private val seen: SeenRepository,
+) : ViewModel() {
     private val filter = MutableStateFlow(InboxFilter.TODOS)
     private val offline = MutableStateFlow(false)
 
-    val state: StateFlow<InboxUiState> = combine(repo.observeInbox(), filter, offline) { list, f, off ->
-        InboxUiState(f, f.apply(list).toImmutableList(), off)
+    val state: StateFlow<InboxUiState> = combine(repo.observeInbox(), filter, offline, seen.counts) { list, f, off, s ->
+        InboxUiState(f, f.apply(inboxRows(list, s)).toImmutableList(), off)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), InboxUiState())
 
-    init { refresh() }
+    init {
+        refresh()
+        // Línea base con la primera bandeja: lo que ya había cuenta como visto (como el dashboard web).
+        viewModelScope.launch {
+            val first = repo.observeInbox().first { it.isNotEmpty() }
+            seen.update { it.withBaseline(first) }
+        }
+    }
 
     fun setFilter(f: InboxFilter) { filter.value = f }
 

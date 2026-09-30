@@ -24,14 +24,14 @@ class MappersTest {
             """{"sessions":[{"session_id":"wa_test_laura","phone_number":"570000000000","tag":"INTERESADO",
             "motivo":"","active_agent_route":"humano","phone_number_id":null,"pending_payment_order_id":null,
             "order_ref":{"order_id":"order_01HX","display_id":"38","payment":"confirmed","count":2},
-            "last_updated_timestamp":1727640000.5,"last_inbound_ms":1727639999000,"unanswered_count":3,
+            "last_updated_timestamp":1727640000.5,"last_inbound_ms":1727639999000,"inbound_count":3,
             "origin":null,"postponed":null,"campo_nuevo":"se ignora"}]}""",
         )
         val c = dto.sessions.single().toDomain()!!
         assertThat(c.sessionId.raw).isEqualTo("wa_test_laura")
         assertThat(c.route).isEqualTo(Route.HUMAN)
         assertThat(c.lastUpdatedMs).isEqualTo(1727640000500L)
-        assertThat(c.unansweredCount).isEqualTo(3)
+        assertThat(c.inboundCount).isEqualTo(3)
         assertThat(c.orderRef!!.displayId).isEqualTo("38")
         assertThat(c.orderRef!!.payment).isEqualTo(PaymentState.CONFIRMED)
         assertThat(c.orderRef!!.count).isEqualTo(2)

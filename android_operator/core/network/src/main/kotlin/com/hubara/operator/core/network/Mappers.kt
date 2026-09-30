@@ -64,7 +64,7 @@ fun ChatSessionDto.toDomain(): Conversation? = SessionId.parse(sessionId)?.let {
         route = Route.fromBackend(activeAgentRoute),
         lastUpdatedMs = (lastUpdatedTimestamp * 1000).toLong(),
         lastInboundMs = lastInboundMs,
-        unansweredCount = unansweredCount.coerceAtLeast(0),
+        inboundCount = inboundCount.coerceAtLeast(0),
         orderRef = orderRef?.toDomain(),
     )
 }

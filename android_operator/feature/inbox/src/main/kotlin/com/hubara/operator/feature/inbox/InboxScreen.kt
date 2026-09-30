@@ -26,6 +26,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hubara.operator.core.model.Conversation
@@ -48,8 +50,8 @@ fun InboxScreen(vm: InboxViewModel, onOpen: (Conversation) -> Unit) {
             }
             // El padding inferior del Scaffold va en contentPadding: la lista se desliza detrás de la barra.
             LazyColumn(contentPadding = PaddingValues(bottom = inner.calculateBottomPadding())) {
-                items(ui.conversations, key = { it.sessionId.raw }) { c ->
-                    ConversationRow(c, onClick = { onOpen(c) })
+                items(ui.rows, key = { it.conversation.sessionId.raw }) { row ->
+                    ConversationRow(row.conversation, row.unseen, onClick = { onOpen(row.conversation) })
                     HorizontalDivider()
                 }
             }
@@ -58,7 +60,7 @@ fun InboxScreen(vm: InboxViewModel, onOpen: (Conversation) -> Unit) {
 }
 
 @Composable
-private fun ConversationRow(c: Conversation, onClick: () -> Unit) {
+private fun ConversationRow(c: Conversation, unseen: Int, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -69,6 +71,10 @@ private fun ConversationRow(c: Conversation, onClick: () -> Unit) {
             Text(conversationSubtitle(c.route, c.tag, c.orderRef), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (c.unansweredCount > 0) Badge { Text(c.unansweredCount.toString()) }
+        if (unseen > 0) {
+            Badge(Modifier.semantics { contentDescription = if (unseen == 1) "1 mensaje sin leer" else "$unseen mensajes sin leer" }) {
+                Text(unseen.toString())
+            }
+        }
     }
 }

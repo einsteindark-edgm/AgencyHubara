@@ -61,7 +61,7 @@ object FakeBackend {
                 paths += request.method + " " + path
                 return when {
                     path == "/api/dashboard/sessions" -> json("""{"sessions":[{"session_id":"$SESSION","phone_number":"570000000000",
-                        "tag":"INTERESADO","active_agent_route":"$route","last_updated_timestamp":1727640000,"unanswered_count":1}]}""")
+                        "tag":"INTERESADO","active_agent_route":"$route","last_updated_timestamp":1727640000,"inbound_count":1}]}""")
                     path == "/api/dashboard/sessions/$SESSION" -> json("""{"session_id":"$SESSION","phone_number":"570000000000",
                         "tag":"INTERESADO","active_agent_route":"$route","service_window_expires_at_ms":4102444800000,
                         "messages":[{"ui_type":"user_message","role":"user","content":"¿y qué aromas tienen? quiero 2","timestamp":"2026-09-29T15:00:00+00:00"}]}""")

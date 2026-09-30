@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.WindowInsetsRulers
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hubara.operator.core.model.OrderId
 import com.hubara.operator.core.model.OrderRef
@@ -45,6 +46,12 @@ fun ChatScreen(
     onOpenPalette: () -> Unit,
     onReactivate: () -> Unit,
 ) {
+    // Leído mientras está en pantalla; con la app en segundo plano, no.
+    LifecycleResumeEffect(vm) {
+        vm.onVisible(true)
+        onPauseOrDispose { vm.onVisible(false) }
+    }
+
     val ui by vm.state.collectAsStateWithLifecycle()
     Scaffold(
         topBar = {

@@ -66,6 +66,10 @@ cd android_operator && ./gradlew :app:assembleRelease                           
 13. **Nada que cambie cada segundo en la semántica**: la cuenta de «Deshacer» se ve pero va con
     `clearAndSetSemantics {}`, y la región viva es solo «Enviando «…»». Si no, TalkBack la repite cada segundo
     y uiautomator/Artemis nunca ven la pantalla quieta («could not get idle state»).
+14. **No leídos como el dashboard web (#384)**: el backend manda `inbound_count` (TOTAL de mensajes del cliente) y la
+    app recuerda cuántos había al abrir cada chat (`SeenCounts` + `SeenRepository`, DataStore). La primera bandeja
+    cuenta todo como visto; con el chat en pantalla lo que llega queda leído. Room v2 renombró la columna
+    (AutoMigration con `@RenameColumn`): cambios de esquema siempre con versión nueva y migración.
 
 ## Endpoints
 

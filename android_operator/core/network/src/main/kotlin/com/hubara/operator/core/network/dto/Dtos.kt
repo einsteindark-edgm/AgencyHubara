@@ -28,7 +28,8 @@ data class ChatSessionDto(
     /** mtime del historial, en SEGUNDOS (float). */
     @SerialName("last_updated_timestamp") val lastUpdatedTimestamp: Double = 0.0,
     @SerialName("last_inbound_ms") val lastInboundMs: Long? = null,
-    @SerialName("unanswered_count") val unansweredCount: Int = 0,
+    /** Total de mensajes del cliente (#384); los no leídos los calcula la app con lo que ya vio. */
+    @SerialName("inbound_count") val inboundCount: Int = 0,
 )
 
 @Serializable

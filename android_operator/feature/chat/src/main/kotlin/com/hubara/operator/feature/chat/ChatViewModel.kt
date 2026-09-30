@@ -9,6 +9,7 @@ import com.hubara.operator.core.data.Clock
 import com.hubara.operator.core.data.outbox.OutboxRepository
 import com.hubara.operator.core.data.repo.ChatRepository
 import com.hubara.operator.core.data.repo.PendingAction
+import com.hubara.operator.core.data.repo.SeenRepository
 import com.hubara.operator.core.data.repo.SuggestionRepository
 import com.hubara.operator.core.data.sync.SyncEngine
 import com.hubara.operator.core.model.Message
@@ -25,6 +26,7 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -58,6 +60,7 @@ class ChatViewModel @AssistedInject constructor(
     private val sync: SyncEngine,
     private val clock: Clock,
     private val config: ApiConfig,
+    private val seen: SeenRepository,
 ) : ViewModel() {
     val sessionId: SessionId = requireNotNull(SessionId.parse(sessionRaw)) { "sesión inválida" }
 
@@ -96,6 +99,14 @@ class ChatViewModel @AssistedInject constructor(
                 .collect { chats.saveDraft(sessionId, it, clock.nowMs()) }
         }
         refresh()
+    }
+
+    private var seenJob: Job? = null
+
+    /** Con el chat a la vista, lo que escribe el cliente queda leído (el contador de la bandeja no sube). */
+    fun onVisible(visible: Boolean) {
+        seenJob?.cancel()
+        seenJob = if (visible) viewModelScope.launch { seen.keepSeen(sessionId) } else null
     }
 
     fun refresh() {

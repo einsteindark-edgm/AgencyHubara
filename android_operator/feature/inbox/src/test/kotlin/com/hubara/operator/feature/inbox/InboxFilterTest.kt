@@ -6,22 +6,29 @@ import com.hubara.operator.core.model.OrderId
 import com.hubara.operator.core.model.OrderRef
 import com.hubara.operator.core.model.PaymentState
 import com.hubara.operator.core.model.Route
+import com.hubara.operator.core.model.SeenCounts
 import com.hubara.operator.core.model.SessionId
 import org.junit.Test
 
 class InboxFilterTest {
-    private fun c(id: String, route: Route = Route.BOT, unanswered: Int = 0, order: Boolean = false) = Conversation(
-        SessionId.parse(id)!!, "", "", route, 0, null, unanswered,
+    private fun c(id: String, route: Route = Route.BOT, inbound: Int = 0, order: Boolean = false) = Conversation(
+        SessionId.parse(id)!!, "", "", route, 0, null, inbound,
         if (order) OrderRef(OrderId.parse("o1")!!, "1", PaymentState.PENDING, 1) else null,
     )
 
-    private val all = listOf(c("wa_a"), c("wa_b", unanswered = 2), c("wa_c", route = Route.HUMAN), c("wa_d", order = true))
+    private fun ids(rows: List<InboxRow>) = rows.map { it.conversation.sessionId.raw }
 
     @Test fun filtros() {
-        assertThat(InboxFilter.TODOS.apply(all)).hasSize(4)
-        assertThat(InboxFilter.SIN_RESPONDER.apply(all).map { it.sessionId.raw }).containsExactly("wa_b")
-        assertThat(InboxFilter.HUMANO.apply(all).map { it.sessionId.raw }).containsExactly("wa_c")
-        assertThat(InboxFilter.CON_PEDIDO.apply(all).map { it.sessionId.raw }).containsExactly("wa_d")
+        val all = listOf(c("wa_a", inbound = 4), c("wa_b", inbound = 2), c("wa_c", route = Route.HUMAN), c("wa_d", order = true))
+        // wa_b escribió 2 mensajes desde que el operador lo abrió; wa_a ya estaba visto.
+        val seen = SeenCounts(baseline = true, seen = mapOf("wa_a" to 4, "wa_c" to 0, "wa_d" to 0))
+        val rows = inboxRows(all, seen)
+        assertThat(InboxFilter.TODOS.apply(rows)).hasSize(4)
+        assertThat(ids(InboxFilter.NO_LEIDOS.apply(rows))).containsExactly("wa_b")
+        assertThat(rows.first { it.conversation.sessionId.raw == "wa_b" }.unseen).isEqualTo(2)
+        assertThat(ids(InboxFilter.HUMANO.apply(rows))).containsExactly("wa_c")
+        assertThat(ids(InboxFilter.CON_PEDIDO.apply(rows))).containsExactly("wa_d")
+        assertThat(InboxFilter.NO_LEIDOS.label).isEqualTo("No leídos")
     }
 
     // Mismo vocabulario que la bandeja del dashboard web: nada de códigos del backend a la vista.

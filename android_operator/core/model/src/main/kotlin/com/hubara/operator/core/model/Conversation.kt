@@ -26,7 +26,7 @@ data class Conversation(
     val route: Route,
     val lastUpdatedMs: Long,
     val lastInboundMs: Long?,
-    val unansweredCount: Int,
+    val inboundCount: Int,
     val orderRef: OrderRef?,
 )
 

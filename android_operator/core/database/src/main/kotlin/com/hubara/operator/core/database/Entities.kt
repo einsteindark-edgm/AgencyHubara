@@ -13,7 +13,7 @@ data class ConversationEntity(
     val route: String,
     val lastUpdatedMs: Long,
     val lastInboundMs: Long?,
-    val unansweredCount: Int,
+    val inboundCount: Int,
     val orderId: String?,
     val orderDisplayId: String?,
     val orderPayment: String?,

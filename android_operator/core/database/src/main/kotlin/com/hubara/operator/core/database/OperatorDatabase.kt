@@ -1,9 +1,12 @@
 package com.hubara.operator.core.database
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Database
+import androidx.room.RenameColumn
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.AutoMigrationSpec
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -16,10 +19,15 @@ import javax.inject.Singleton
         ConversationEntity::class, MessageEntity::class, OutboxEntity::class, DraftEntity::class,
         SuggestionSetEntity::class, FireEntity::class, HiddenFireEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
+    autoMigrations = [AutoMigration(from = 1, to = 2, spec = OperatorDatabase.InboundCount::class)],
 )
 abstract class OperatorDatabase : RoomDatabase() {
+    /** v2: la bandeja guarda el TOTAL de mensajes del cliente (#384); los no leídos se calculan en la app. */
+    @RenameColumn(tableName = "conversations", fromColumnName = "unansweredCount", toColumnName = "inboundCount")
+    class InboundCount : AutoMigrationSpec
+
     abstract fun conversations(): ConversationDao
     abstract fun messages(): MessageDao
     abstract fun outbox(): OutboxDao
