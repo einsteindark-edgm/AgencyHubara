@@ -23,12 +23,23 @@ from exoclaw.agent.tools import ToolBase, ToolContext
 from loguru import logger
 
 from src.plugins.chats.agent.sales.decisions.guards import clean_llm_text, customer_reply_text
+from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+from src.plugins.chats.agent.sales.use_cases.photo_product import (
+    denies_availability,
+    verified_denial_message,
+    verified_photo_products,
+)
 
 _REJECTED_MESSAGE = (
     "No se envió nada: el texto estaba vacío o era nota interna (hablar del "
     "cliente en tercera persona, narrar lo que haces). Escribe SOLO lo que el "
     "cliente debe leer, hablándole a él, y vuelve a llamar send_reply."
 )
+
+
+#: El mensaje del cliente en que `send_reply` ya retuvo una negación: el
+#: segundo intento sale (UNA retención por mensaje, nunca un bucle).
+_VERIFIED_CHECK_KEY = "verified_photos_denial_checked"
 
 
 class SendReplyTool(ToolBase):
@@ -62,6 +73,49 @@ class SendReplyTool(ToolBase):
         # desacuerdos). Sin él: el bot fijado del laboratorio o la regla de hoy.
         self._vault_dir = Path(vault_dir) if vault_dir is not None else None
 
+    def _held_for_verified_photos(self, session_key: str, text: str) -> str | None:
+        """Laboratorio caso-fotos-0930-r8, 4567 t13 (los dos bots): con las
+        fotos del cliente ya verificadas como productos nuestros, el bot
+        contestó «la única que manejamos es el Velón Gorrión». Si la respuesta
+        dice que no tenemos un producto y el episodio tiene fotos verificadas,
+        se retiene UNA vez por mensaje del cliente con lo verificado; el
+        segundo intento sale (si habla de otro producto, lo reenvía igual).
+        Sin vault, sin fotos verificadas o si no se puede anotar la retención,
+        el texto sale como siempre."""
+        if self._vault_dir is None or not denies_availability(text):
+            return None
+        store = FilesystemMetadataStore(self._vault_dir)
+        try:
+            metadata = store.read(session_key) or {}
+        except Exception:  # noqa: BLE001 — sin metadata legible: el texto sale
+            return None
+        products = verified_photo_products(metadata)
+        inbound = metadata.get("last_inbound_message_id")
+        if not products or not inbound or metadata.get(_VERIFIED_CHECK_KEY) == inbound:
+            return None
+
+        def _mark(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            if not fresh:
+                return None
+            fresh[_VERIFIED_CHECK_KEY] = inbound
+            return fresh
+
+        try:
+            marked = store.update(session_key, _mark)
+        except Exception:  # noqa: BLE001 — sin la marca podría repetirse: el texto sale
+            return None
+        if marked is None:
+            return None
+        logger.info(
+            "💬 [TOOL send_reply] retenido: niega un producto con fotos verificadas session={} text={!r}",
+            session_key,
+            text[:120],
+        )
+        return json.dumps(
+            {"sent": False, "error": "verified_photos", "message": verified_denial_message(products)},
+            ensure_ascii=False,
+        )
+
     async def execute_with_context(
         self, ctx: ToolContext, text: str = "", **_: Any
     ) -> str:
@@ -84,6 +138,9 @@ class SendReplyTool(ToolBase):
                 {"sent": False, "error": "internal_text", "message": _REJECTED_MESSAGE},
                 ensure_ascii=False,
             )
+        held = self._held_for_verified_photos(ctx.session_key, cleaned)
+        if held is not None:
+            return held
         return json.dumps(
             {
                 "reply": {"text": cleaned},

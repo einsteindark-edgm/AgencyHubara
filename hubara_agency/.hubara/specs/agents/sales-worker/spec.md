@@ -815,11 +815,19 @@ MUST NOT decir que no los tenemos, corrige con amabilidad si antes se dijo lo
 contrario y, si el cliente dice que falta alguno, revisa lo que ya le mostró.
 Las fotos no reconocidas no entran (no son un hecho).
 
+La nota sola perdió contra el historial (r8: el bot ya lo había negado antes y
+lo repitió). Por eso `send_reply` SHALL retener UNA vez por mensaje del
+cliente una respuesta que diga que no tenemos un producto («no la tenemos»,
+«la única que manejamos», «no están en el catálogo») cuando el episodio tiene
+fotos verificadas, y devolverle al modelo la lista de lo verificado; el
+segundo intento MUST salir (si habla de otro producto, lo reenvía igual).
+
 #### Scenario: «No están todas» (laboratorio caso-fotos-0930-r7, 4567 t13)
 
 - GIVEN las cuatro fotos del cliente se reconocieron como Velón Gorrión, Luz de Belén, Luz Serena y Sacrificio de Amor
 - WHEN el cliente escribe «me gustaría esas, pero no están todas»
 - THEN el turno lleva la nota con las cuatro y la orden de no negarlas
+- AND si el bot igual responde «la única que manejamos es el Velón Gorrión», `send_reply` la retiene con la lista de lo verificado y el bot la corrige
 
 ### Requirement: El mensaje que sigue a una foto espera a la foto (2026-09-30)
 

@@ -369,6 +369,26 @@ def _short(description: Any) -> str:
     return text if len(text) <= _NOTE_DESCRIPTION_CHARS else text[:_NOTE_DESCRIPTION_CHARS] + "…"
 
 
+def verified_photo_products(metadata: dict[str, Any]) -> list[dict[str, str]]:
+    """Las fotos del cliente del episodio activo que el sistema reconoció como
+    productos nuestros: ``[{"title", "handle", "description"}]`` (las últimas)."""
+    from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
+
+    episode = get_active_episode(metadata) if isinstance(metadata, dict) else None
+    if episode is None or not episode.get("episode_id"):
+        return []
+    out: list[dict[str, str]] = []
+    for entry in metadata.get("recent_image_descriptions") or []:
+        if not isinstance(entry, dict) or entry.get("episode_id") != episode["episode_id"]:
+            continue
+        product = entry.get("product")
+        if not isinstance(product, dict) or not product.get("title") or not product.get("handle"):
+            continue
+        out.append({"title": str(product["title"]), "handle": str(product["handle"]),
+                    "description": _short(entry.get("description"))})
+    return out[-_FACTS_MAX:]
+
+
 def build_photo_facts_note(metadata: dict[str, Any]) -> str | None:
     """La nota de los turnos que siguen a la foto: las fotos del cliente que
     el sistema ya reconoció como productos nuestros en el episodio activo.
@@ -378,35 +398,57 @@ def build_photo_facts_note(metadata: dict[str, Any]) -> str | None:
     tenía una. La nota de la foto iba solo en su turno; esta va en cada turno
     siguiente del episodio, con lo verificado. None si no hay fotos
     reconocidas en el episodio activo."""
-    from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
-
-    episode = get_active_episode(metadata) if isinstance(metadata, dict) else None
-    if episode is None or not episode.get("episode_id"):
-        return None
-    rows: list[str] = []
-    for entry in metadata.get("recent_image_descriptions") or []:
-        if not isinstance(entry, dict) or entry.get("episode_id") != episode["episode_id"]:
-            continue
-        product = entry.get("product")
-        if not isinstance(product, dict) or not product.get("title") or not product.get("handle"):
-            continue
-        rows.append(f"- la foto «{_short(entry.get('description'))}»: es «{product['title']}» (handle {product['handle']})")
+    rows = [
+        f"- la foto «{p['description']}»: es «{p['title']}» (handle {p['handle']})"
+        for p in verified_photo_products(metadata)
+    ]
     if not rows:
         return None
     return (
         _FACTS_HEADER
         + "En esta conversación el cliente mandó fotos que el sistema comparó con el catálogo. Son de productos "
         "nuestros:\n"
-        + "\n".join(rows[-_FACTS_MAX:])
+        + "\n".join(rows)
         + "\nEs un hecho verificado: no digas que no los tenemos. Si antes en la conversación se dijo lo "
         "contrario, corrígelo con amabilidad. Si el cliente dice que falta alguno o que no es así, revisa lo que ya "
         "le mostraste y respóndele con lo verificado."
     )
 
 
+#: Lo que el bot escribe para decirle al cliente que NO tenemos un producto
+#: (texto ya normalizado: minúsculas, sin tildes ni signos). Una variante que
+#: no existe («el jengibre no está entre los aromas») no cuenta.
+_DENIAL_RE = re.compile(
+    r"\bno (?:la|lo|las|los) (?:tenemos|manejamos|vendemos|hacemos|tengo|manejo)\b"
+    r"|\bno (?:tenemos|manejamos|vendemos) (?:esa|ese|esas|esos|eso)\b"
+    r"|\bno (?:esta|estan|aparece|aparecen) en (?:el|nuestro) catalogo\b"
+    r"|\b(?:la|el|las|los) unic(?:a|o|as|os) que (?:tenemos|manejamos)\b"
+)
+
+
+def denies_availability(text: str | None) -> bool:
+    """¿El texto le dice al cliente que no tenemos un producto?"""
+    return bool(_DENIAL_RE.search(_norm(text)))
+
+
+def verified_denial_message(products: Sequence[dict[str, str]]) -> str:
+    """Lo que `send_reply` le devuelve al modelo cuando retiene una negación
+    con fotos ya verificadas en el episodio."""
+    named = ", ".join(f"«{p['title']}» (handle {p['handle']})" for p in products)
+    return (
+        "No se envió: tu respuesta dice que no tenemos un producto, y en esta conversación el sistema ya "
+        f"verificó que las fotos del cliente son de productos nuestros: {named}. Si tu respuesta niega alguno "
+        "de ellos, corrígela: sí los tenemos (si antes se dijo otra cosa, discúlpate y acláralo). Si hablas de "
+        "otro producto, vuelve a llamar send_reply con el mismo texto."
+    )
+
+
 __all__ = [
     "IMAGE_BUDGET_S",
     "build_photo_facts_note",
+    "denies_availability",
+    "verified_denial_message",
+    "verified_photo_products",
     "HOW_CODE",
     "HOW_IMAGE",
     "HOW_LINK",
