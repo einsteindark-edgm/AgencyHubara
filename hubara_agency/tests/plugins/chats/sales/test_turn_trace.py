@@ -323,6 +323,35 @@ def test_payload_v2_bounds_texts_and_step_count() -> None:
     assert all(len(s.get("before", "")) <= tt.TEXT_MAX for s in payload["steps"])
 
 
+def test_what_the_model_received_keeps_its_own_bounds() -> None:
+    """El «Paso a paso» muestra lo que recibió el modelo (2026-09-30): las
+    notas del turno y el mensaje del cliente pasan de 600 caracteres a
+    menudo. `llm_round_input` ya los acota; la traza no los recorta otra vez
+    a `TEXT_MAX`."""
+    notes = "[NOTA] " + "n" * 3000
+    step = {"kind": "llm", "at_ms": _T0, "round": 1,
+            "sent": {"notes": notes, "new": [{"role": "user", "text": "u" * 2000}]}}
+
+    [llm] = _payload(steps=[step])["steps"]
+
+    assert llm["sent"]["notes"] == notes
+    assert len(llm["sent"]["new"][0]["text"]) == 2000
+
+
+def test_a_tool_step_keeps_the_text_the_model_asked_to_send() -> None:
+    """«Pidió: responder al cliente» no decía qué: el detalle del paso muestra
+    el texto de `send_reply`, que casi siempre pasa de los 160 caracteres del
+    resumen v1 (ese sigue igual para el scorecard)."""
+    text = "Listo, el Velón Gorrión en lila 🌿\n\n" + "¿Qué aroma quieres? " * 12
+    events = [{"name": "send_reply", "args": {"text": text}, "result": json.dumps({"reply": {"text": text}})}]
+    steps = [{"kind": "tool", "at_ms": _T0, "name": "send_reply", "call_id": "c1", "event": 0}]
+
+    payload = _payload(tool_events=events, steps=steps)
+
+    assert payload["steps"][0]["args"]["text"] == text
+    assert len(payload["tools"][0]["args"]["text"]) <= 160
+
+
 def test_payload_v2_keeps_the_v1_guards_field_sorted() -> None:
     payload = _payload(guards=["b_guard", "a_guard", "b_guard"], steps=_steps())
 

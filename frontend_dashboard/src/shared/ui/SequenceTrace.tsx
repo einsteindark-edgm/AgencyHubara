@@ -145,6 +145,7 @@ export function SequenceTrace({ layout, selected, onSelect, idPrefix = "seq" }: 
                 {r.title}
                 <small className="block text-[11.5px] font-normal text-fg-muted">
                   {lanes[r.from]} → {lanes[r.to]}
+                  {r.code ? <code className="ml-1.5 font-mono text-[11px] text-cyan">{r.code}</code> : null}
                 </small>
               </span>
               <time className="text-[11px] tabular-nums text-fg-faint">{r.t}</time>
@@ -203,7 +204,9 @@ function Arrow({
   const dir = row.to > row.from ? 1 : -1;
   const x1 = lanesX[row.from] + dir * 4;
   const x2 = lanesX[row.to] - dir * 6;
-  const tw = row.short.length * 5.8 + 10;
+  // El nombre de la herramienta va en letra de código (un poco más ancha).
+  const code = row.code && row.short.startsWith(row.code) ? row.code : null;
+  const tw = row.short.length * 5.8 + (code ? code.length * 0.6 : 0) + 10;
   const lx = dir > 0 ? x1 + 28 : x1 - 28 - tw;
   const bx = x1 + dir * 16;
   return (
@@ -219,7 +222,14 @@ function Arrow({
       />
       <rect x={lx} y={row.y - 21} width={tw} height={15} rx={3} style={{ fill: "var(--color-canvas)" }} />
       <text x={lx + 5} y={row.y - 10} style={{ fill: on ? "var(--color-fg)" : "var(--color-fg-soft)", font: `${on ? 600 : 500} 10.5px var(--font-sans)` }}>
-        {row.short}
+        {code ? (
+          <>
+            <tspan style={{ font: `${on ? 600 : 500} 10px var(--font-mono)`, fill: "var(--color-cyan)" }}>{code}</tspan>
+            {row.short.slice(code.length)}
+          </>
+        ) : (
+          row.short
+        )}
       </text>
       <Badge x={bx} y={row.y} color={color} ring={on ? "#fff" : "var(--color-canvas)"} n={n} />
     </>

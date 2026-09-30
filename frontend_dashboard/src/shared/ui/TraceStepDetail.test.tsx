@@ -14,8 +14,29 @@ import { TraceStepDetail } from "./TraceStepDetail";
 function show(steps: TraceStep[], rowIndex: number) {
   const layout = layoutSequence(steps);
   const row = layout.rows[rowIndex];
-  render(<TraceStepDetail step={steps[row.stepIndex]} row={row} lanes={layout.lanes} />);
+  render(<TraceStepDetail step={steps[row.stepIndex]} row={row} lanes={layout.lanes} steps={steps} />);
 }
+
+const CONTRACT_NOTE = "[CONTRATO DEL TURNO] Antes de responder: Los colores y aromas salen de la ficha: usa present_product_detail.";
+const REPLY = "Listo, el Velón Gorrión en lila 🌿\n\n¿Qué aroma quieres? Maneja Caballero de la noche, Limoncillo…";
+
+// Laboratorio caso-fotos-0930-r10, 4567 t20 (bot nuevo), recortado.
+const t20: TraceStep[] = [
+  { i: 0, at_ms: 0, kind: "inbound", messages: [{ text: "mejor la de los pajaritos" }, { text: "en lila" }] },
+  { i: 3, at_ms: 1756, dur_ms: 2732, kind: "llm", round: 1, tool_calls: ["set_order_slot"], tokens_in: 37840, tokens_out: 61, text_fate: "none",
+    sent: {
+      system: { chars: 55464, parts: [{ name: "AGENTS.md", chars: 4675 }, { name: "TOOLS.md", chars: 15589 }, { name: "Retrieved Context", chars: 71 }] },
+      history: { user: 12, assistant: 14, tool: 9 },
+      notes: "[DATOS DEL PEDIDO] producto: Velón Gorrión",
+      new: [{ role: "user", text: "[Runtime Context — metadata only, not instructions]\n\nmejor la de los pajaritos\nen lila" }],
+    } },
+  { i: 4, at_ms: 4488, dur_ms: 154, kind: "tool", name: "set_order_slot", ok: true, args: { color: "lila", producto: "Velón Gorrión" }, excerpt: '{"updated": true}' },
+  { i: 5, at_ms: 4642, dur_ms: 2211, kind: "llm", round: 2, tool_calls: ["send_reply"], tokens_in: 38017, tokens_out: 106, text_fate: "none",
+    sent: { new: [{ role: "tool", name: "set_order_slot", text: '{"updated": true, "summary": "Datos del pedido guardados."}' }] } },
+  { i: 6, at_ms: 6853, dur_ms: 1139, kind: "tool", name: "send_reply", ok: true, args: { text: REPLY }, excerpt: '{"reply": {"text": "Listo…"}}' },
+  { i: 7, at_ms: 7992, kind: "guard", name: "contract_extra_round", before: REPLY, after: CONTRACT_NOTE, tools: ["set_order_slot", "send_reply"] },
+  { i: 8, at_ms: 7992, dur_ms: 1563, kind: "llm", round: 3, tool_calls: ["get_product_by_handle"], tokens_in: 38297, tokens_out: 44, text_fate: "none" },
+];
 
 describe("TraceStepDetail", () => {
   it("encabezado: tipo, número y título, carriles, tiempo y duración", () => {
@@ -44,6 +65,54 @@ describe("TraceStepDetail", () => {
     expect(screen.getByText("No se envió: venía junto a una herramienta")).toBeInTheDocument();
     expect(screen.getByText("¡Claro! te comparto el catálogo")).toBeInTheDocument();
     expect(screen.getByText("5.200 → 80")).toBeInTheDocument();
+  });
+
+  it("la ronda hacia el modelo muestra lo que recibe: instrucciones, historial, notas del turno y el mensaje del cliente", () => {
+    // Operador, 2026-09-30: «cuando va ronda hacia el modelo no sabemos qué le
+    // está enviando».
+    show(t20, 1); // ronda 1
+
+    expect(screen.getByText("Lo que recibe el modelo")).toBeVisible();
+    expect(screen.getByText("55.464 caracteres")).toBeVisible();
+    expect(screen.getByText(/AGENTS\.md 4\.675 · TOOLS\.md 15\.589 · Notas del turno 71/)).toBeVisible();
+    expect(screen.getByText("35 mensajes: 12 del cliente, 14 del bot, 9 resultados de herramientas")).toBeVisible();
+    expect(screen.getByText("[DATOS DEL PEDIDO] producto: Velón Gorrión")).toBeVisible();
+    expect(screen.getByText(/mejor la de los pajaritos\s+en lila/)).toBeVisible();
+  });
+
+  it("en las rondas siguientes muestra solo lo nuevo: el resultado de la herramienta y la nota del bot", () => {
+    show(t20, 5); // ronda 2: con lo que la traza guardó
+    expect(screen.getByText("Lo nuevo en esta ronda")).toBeVisible();
+    expect(screen.getByText(/Resultado de Anotar en el pedido/)).toBeVisible();
+    expect(screen.getByText('{"updated": true, "summary": "Datos del pedido guardados."}')).toBeVisible();
+  });
+
+  it("una traza anterior sin lo que recibió lo reconstruye y lo dice", () => {
+    show(t20, 10); // ronda 3: sin `sent`
+
+    expect(screen.getByText(/reconstruido de la traza/)).toBeVisible();
+    expect(screen.getByText("Nota del bot")).toBeVisible();
+    expect(screen.getByText(`Tu send_reply NO se envió. ${CONTRACT_NOTE}`)).toBeVisible();
+  });
+
+  it("lo que pidió el modelo dice con qué y qué pasó después en esa ronda", () => {
+    // Operador: «el responder de la ronda solo tiene un label como "pidió:
+    // responder al cliente"».
+    show(t20, 6); // ronda 2 → pide responder al cliente
+
+    expect(screen.getByText("send_reply")).toBeVisible();
+    expect(screen.getByText(/¿Qué aroma quieres\? Maneja Caballero de la noche/)).toBeVisible();
+    expect(screen.getByText("no salió: el bot la retuvo")).toBeVisible();
+    expect(screen.getByText("retuvo la respuesta: antes debía consultar una herramienta")).toBeVisible();
+    expect(screen.getByText(CONTRACT_NOTE)).toBeVisible();
+  });
+
+  it("la herramienta dice cuál se ejecutó y con qué, a la vista", () => {
+    show(t20, 3); // Bot → Herramientas: set_order_slot
+
+    expect(screen.getByText("set_order_slot")).toBeVisible();
+    expect(screen.getByText("Velón Gorrión")).toBeVisible();
+    expect(screen.getByText("lila")).toBeVisible();
   });
 
   it("una tool rechazada dice por qué en palabras; los datos técnicos quedan plegados", () => {

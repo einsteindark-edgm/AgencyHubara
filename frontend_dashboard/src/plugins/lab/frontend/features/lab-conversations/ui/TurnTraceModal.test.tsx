@@ -174,6 +174,23 @@ describe("TurnTraceModal", () => {
     expect(screen.getByText("No se envió: venía junto a una herramienta")).toBeInTheDocument();
   });
 
+  it("Paso a paso: la ronda dice qué recibe el modelo y lo que pidió dice qué herramienta corrió", async () => {
+    // Operador, 2026-09-30: en la ronda «no sabemos qué le está enviando»;
+    // en lo que pidió, «cuál fue la herramienta que ejecutó».
+    renderModal();
+    fireEvent.click(screen.getByRole("tab", { name: "Paso a paso" }));
+    const seq = await screen.findByRole("group", { name: "Secuencia de pasos del turno" });
+
+    fireEvent.click(within(seq).getByRole("button", { name: "Paso 2: Ronda 1 del modelo" }));
+    expect(screen.getByText("Lo que recibe el modelo")).toBeInTheDocument();
+    // El texto sale renglón por renglón; la búsqueda compara con los espacios juntos.
+    expect(screen.getByText(turn.burst.map((m) => m.text).join(" "))).toBeInTheDocument();
+
+    fireEvent.click(within(seq).getByRole("button", { name: "Paso 3: Pide enviar las tarifas de envío" }));
+    const panel = screen.getByRole("heading", { level: 4, name: "3. Pide enviar las tarifas de envío" }).parentElement as HTMLElement;
+    expect(within(panel).getByText("send_shipping_rates")).toBeInTheDocument();
+  });
+
   it("cambiar de bot pide la traza de ese bot y dice si no la hay", async () => {
     renderModal();
     fireEvent.click(screen.getByRole("button", { name: "Bot nuevo con Jev" }));

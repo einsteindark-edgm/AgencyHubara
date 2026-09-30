@@ -57,6 +57,19 @@ describe("SequenceTrace", () => {
     expect(Number(badge.getAttribute("cx")) + Number(badge.getAttribute("r"))).toBeLessThanOrEqual(left);
   });
 
+  it("la flecha a las herramientas nombra la que se ejecutó, en letra de código", () => {
+    // Operador, 2026-09-30: «cuando va a herramientas, cuál fue la herramienta
+    // que ejecutó». La lista del celular también lo dice.
+    const { container } = render(<SequenceTrace layout={layoutSequence(steps)} selected={0} onSelect={vi.fn()} />);
+    const row = container.querySelector('[data-step="3"]') as SVGGElement;
+    const code = row.querySelector("tspan");
+
+    expect(code?.textContent).toBe("send_shipping_rates");
+    expect(code?.getAttribute("style") ?? "").toContain("var(--font-mono)");
+    const list = screen.getByRole("list", { name: "Pasos del turno", hidden: true });
+    expect(within(list).getAllByRole("button", { hidden: true })[3]).toHaveTextContent("send_shipping_rates");
+  });
+
   it("avisa que el clasificador no se usó en este turno", () => {
     setup();
     expect(screen.getByText("Jev · sin uso")).toBeInTheDocument();

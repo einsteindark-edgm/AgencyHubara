@@ -67,6 +67,21 @@ describe("describeTool", () => {
     expect(describeTool({ name: "request_shipping_details", ok: false, error: "motivo_raro" }).result).toBe("rechazada: motivo_raro");
   });
 
+  it("una respuesta que send_reply devolvió al modelo dice que no salió y por qué", () => {
+    // Laboratorio 2026-09-30: las retenciones de send_reply (una por mensaje
+    // del cliente) salían como «rechazada: verified_photos».
+    const reasons = ["verified_photos", "promise_later", "option_list", "internal_text"].map(
+      (error) => describeTool({ name: "send_reply", args: { text: "…" }, ok: false, error }).result,
+    );
+
+    expect(reasons).toEqual([
+      "no salió: negaba un producto que las fotos ya confirmaron",
+      "no salió: prometía revisar y responder después",
+      "no salió: escribió la lista de opciones como texto",
+      "no salió: era una nota interna, no para el cliente",
+    ]);
+  });
+
   it("una herramienta que no conoce se muestra con su nombre", () => {
     expect(describeTool({ name: "tool_nueva", ok: true })).toEqual({
       action: "tool_nueva",

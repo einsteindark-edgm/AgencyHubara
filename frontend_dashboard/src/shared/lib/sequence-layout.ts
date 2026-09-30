@@ -17,7 +17,9 @@
  *    (`execute_tool` de exoclaw) después de que el modelo las pide.
  *  - `plan`, `guard`, `cut`, `restart`: una caja dentro del Bot.
  *  - `outbound`: Bot → Cliente.
- * Las tools se nombran por lo que hacen (`sales-tools.ts`), nunca por su código.
+ * Las tools se nombran por lo que hacen (`sales-tools.ts`). La flecha hacia
+ * las herramientas dice cuál se ejecutó (operador, 2026-09-30): lo que pidió el
+ * modelo ya va en palabras en la fila anterior.
  */
 
 import { describeTool, toolActionPhrase } from "./sales-tools";
@@ -42,6 +44,8 @@ export type SeqRow = {
   status: StepStatus;
   /** Etiqueta corta sobre la flecha. */
   short: string;
+  /** Nombre de la herramienta que se ejecutó (la etiqueta empieza con él). */
+  code?: string;
   /** Título del detalle ("N. título"). */
   title: string;
   /** Tipo del paso, en el color del paso. */
@@ -202,10 +206,12 @@ function rowsFor(step: TraceStep, stepIndex: number): Draft[] {
       ];
     }
     case "tool": {
-      const tool = describeTool({ name: typeof step.name === "string" ? step.name : "tool", args: step.args, ok: step.ok as boolean | null, error: step.error as string | null, notes: step.notes });
-      const label = tool.detail ? `${tool.action} · ${tool.detail}` : tool.action;
+      const name = typeof step.name === "string" ? step.name : "tool";
+      const tool = describeTool({ name, args: step.args, ok: step.ok as boolean | null, error: step.error as string | null, notes: step.notes });
+      const title = tool.detail ? `${tool.action} · ${tool.detail}` : tool.action;
+      const short = tool.detail ? `${name} · ${tool.detail}` : name;
       return [
-        { ...base, dur: duration(step), from: WORKFLOW, to: TOOLS, status: "tool", short: label, title: label, kind: "Herramienta", t: time },
+        { ...base, dur: duration(step), from: WORKFLOW, to: TOOLS, status: "tool", short, code: name, title, kind: "Herramienta", t: time },
         { ...base, from: TOOLS, to: WORKFLOW, status: tool.failed ? "bad" : "tool", short: tool.result, title: `Resultado: ${tool.result}`, kind: "Herramienta", t: back },
       ];
     }

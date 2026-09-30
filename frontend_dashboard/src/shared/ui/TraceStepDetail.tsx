@@ -4,16 +4,33 @@
  * color, "N. título", carriles, tiempo y duración; después, las secciones de
  * cada tipo con lo que la traza trae de verdad (nada inventado: un campo que
  * falta no se muestra).
+ *
+ * Pedido del operador (2026-09-30, laboratorio 4567 t20): la ronda hacia el
+ * modelo dice qué recibe; lo que el modelo pidió dice con qué y qué pasó
+ * después en esa ronda; la herramienta dice cuál se ejecutó. Para eso el
+ * detalle recibe la traza entera (`steps`).
  */
 
 import type { ReactNode } from "react";
 
-import { describeTool, GUARD_LABELS, STEP_COLOR, type SeqRow, type TraceStep } from "@/shared/lib";
+import {
+  describeTool,
+  GUARD_LABELS,
+  modelRound,
+  productName,
+  roundInput,
+  STEP_COLOR,
+  type RoundInputItem,
+  type SeqRow,
+  type TraceStep,
+} from "@/shared/lib";
 
 interface Props {
   step: TraceStep;
   row: SeqRow;
   lanes: string[];
+  /** La traza entera: la ronda del modelo se lee con sus pasos vecinos. */
+  steps?: TraceStep[];
 }
 
 const TEXT_FATE: Record<string, string> = {
@@ -44,6 +61,38 @@ const BUBBLE_KIND: Record<string, string> = {
   buttons: "botones",
   flow: "formulario",
   reaction: "reacción",
+};
+
+/** Las partes de las instrucciones del bot, en palabras (las demás, por su archivo). */
+const PART_NAMES: Record<string, string> = {
+  "Agente de Hubara": "Presentación",
+  "Retrieved Context": "Notas del turno",
+  "Active Skills": "Guía de la etapa",
+  Skills: "Lista de guías",
+  Memory: "Memoria",
+};
+
+/** Protecciones que le dejan una nota al modelo para otra ronda. */
+const NOTE_GUARDS = new Set(["contract_extra_round", "turn_policy_extra_round"]);
+
+/** Argumentos de texto largo: van en su caja. */
+const TEXT_ARGS = new Set(["text", "intro_text", "body", "customer_message", "caption", "closing_text"]);
+
+/** Los argumentos más comunes, en palabras (los demás, por su nombre). */
+const ARG_NAMES: Record<string, string> = {
+  handle: "producto",
+  handles: "productos",
+  q: "búsqueda",
+  category: "categoría",
+  design: "diseño",
+  variant_type: "tipo",
+  options: "opciones",
+  button_text: "botón",
+  url: "enlace",
+  tag: "etiqueta",
+  code: "código",
+  skill_name: "guía",
+  limit: "máximo",
 };
 
 const VERIFY_DECISION: Record<string, string> = {
@@ -80,7 +129,7 @@ function usd(n: number): string {
   return `US$${n.toFixed(4).replace(".", ",")}`;
 }
 
-export function TraceStepDetail({ step, row, lanes }: Props) {
+export function TraceStepDetail({ step, row, lanes, steps }: Props) {
   const color = STEP_COLOR[row.status];
   const back = row.to < row.from && row.from !== 0;
   const meta = [`${lanes[row.from]} → ${lanes[row.to]}`, row.t, row.dur ? `duró ${row.dur}` : ""].filter(Boolean).join(" · ");
@@ -93,17 +142,17 @@ export function TraceStepDetail({ step, row, lanes }: Props) {
         {row.index + 1}. {row.title}
       </h4>
       <div className="mb-3 text-xs tabular-nums text-fg-muted">{meta}</div>
-      <Sections step={step} back={back} />
+      <Sections step={step} back={back} steps={steps ?? [step]} index={steps ? row.stepIndex : 0} />
     </div>
   );
 }
 
-function Sections({ step, back }: { step: TraceStep; back: boolean }) {
+function Sections({ step, back, steps, index }: { step: TraceStep; back: boolean; steps: TraceStep[]; index: number }) {
   switch (step.kind) {
     case "inbound":
       return <Inbound step={step} />;
     case "llm":
-      return <Llm step={step} back={back} />;
+      return <Llm step={step} back={back} steps={steps} index={index} />;
     case "tool":
       return <Tool step={step} back={back} />;
     case "guard":
@@ -197,10 +246,9 @@ function Inbound({ step }: { step: TraceStep }) {
   );
 }
 
-function Llm({ step, back }: { step: TraceStep; back: boolean }) {
+function Llm({ step, back, steps, index }: { step: TraceStep; back: boolean; steps: TraceStep[]; index: number }) {
   const tokensIn = num(step.tokens_in);
   const tokensOut = num(step.tokens_out);
-  const tools = list(step.tool_calls).filter((t): t is string => typeof t === "string");
   const fate = str(step.text_fate);
   const text = str(step.text);
   return (
@@ -214,17 +262,7 @@ function Llm({ step, back }: { step: TraceStep; back: boolean }) {
           ]}
         />
       </Sec>
-      {back && tools.length > 0 ? (
-        <Sec title="Pidió">
-          <div className="flex flex-wrap gap-1.5">
-            {tools.map((t, k) => (
-              <span key={k} title={t} className="rounded bg-cyan-soft px-1.5 py-0.5 text-[11.5px] text-cyan">
-                {describeTool({ name: t }).action}
-              </span>
-            ))}
-          </div>
-        </Sec>
-      ) : null}
+      {back ? <Requested steps={steps} index={index} /> : <RoundInput steps={steps} index={index} />}
       {back && fate && fate !== "none" ? (
         <Sec title="Texto del modelo">
           <div className={"mb-1.5 text-[12px] " + (fate.startsWith("discarded") ? "text-warn" : "text-fg-soft")}>{TEXT_FATE[fate] ?? fate}</div>
@@ -235,26 +273,240 @@ function Llm({ step, back }: { step: TraceStep; back: boolean }) {
   );
 }
 
+function historyPhrase(history: Record<string, number>): string {
+  const total = Object.values(history).reduce((a, b) => a + b, 0);
+  if (total === 0) return "sin mensajes anteriores";
+  const plural = (n: number, one: string, many: string) => `${int(n)} ${n === 1 ? one : many}`;
+  const parts = [
+    history.user ? `${int(history.user)} del cliente` : null,
+    history.assistant ? `${int(history.assistant)} del bot` : null,
+    history.tool ? plural(history.tool, "resultado de herramientas", "resultados de herramientas") : null,
+    history.system ? plural(history.system, "nota del sistema", "notas del sistema") : null,
+  ].filter(Boolean);
+  return `${plural(total, "mensaje", "mensajes")}: ${parts.join(", ")}`;
+}
+
+function InputItem({ item, exact }: { item: RoundInputItem; exact: boolean }) {
+  const label =
+    item.kind === "customer"
+      ? exact
+        ? "Mensaje del cliente, como lo lee el modelo"
+        : "Mensaje del cliente"
+      : item.kind === "tool"
+        ? `Resultado de ${describeTool({ name: item.name ?? "" }).action}`
+        : "Nota del bot";
+  return (
+    <div className="grid gap-1">
+      <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-fg-muted">
+        <span>{label}</span>
+        {item.kind === "tool" && item.name ? <code className="font-mono text-[11px] text-cyan">{item.name}</code> : null}
+      </div>
+      {item.text ? <Box code={item.kind === "tool"}>{item.text}</Box> : <div className="text-[12px] italic text-fg-muted">(vacío)</div>}
+    </div>
+  );
+}
+
+/** Qué le manda el bot al modelo en esta ronda. */
+function RoundInput({ steps, index }: { steps: TraceStep[]; index: number }) {
+  const input = roundInput(steps, index);
+  const rebuilt = input.exact ? null : (
+    <div className="mb-2 text-[12px] text-fg-muted">Esta traza no guardó lo que recibió el modelo: reconstruido de la traza.</div>
+  );
+  if (input.first) {
+    const parts = (input.system?.parts ?? []).map((p) => `${PART_NAMES[p.name] ?? p.name} ${int(p.chars)}`).join(" · ");
+    return (
+      <>
+        <Sec title="Lo que recibe el modelo">
+          {input.exact ? (
+            <>
+              <Kv
+                rows={[
+                  ["Instrucciones", `${int(input.system?.chars ?? 0)} caracteres`],
+                  ["Historial", historyPhrase(input.history ?? {})],
+                ]}
+              />
+              {parts ? <p className="m-0 mt-1.5 text-[11.5px] leading-relaxed text-fg-muted">{parts}</p> : null}
+            </>
+          ) : (
+            <>
+              {rebuilt}
+              <div className="text-[12.5px] text-fg-soft">Las instrucciones del bot, el historial de la conversación y el mensaje del cliente.</div>
+            </>
+          )}
+        </Sec>
+        {input.notes ? (
+          <Sec title="Notas del turno (van con las instrucciones)">
+            <Box>{input.notes}</Box>
+          </Sec>
+        ) : null}
+        {input.items.length > 0 ? (
+          <div className="mt-3.5 grid gap-2.5">
+            {input.items.map((it, k) => (
+              <InputItem key={k} item={it} exact={input.exact} />
+            ))}
+          </div>
+        ) : null}
+      </>
+    );
+  }
+  return (
+    <Sec title="Lo nuevo en esta ronda">
+      {rebuilt}
+      <div className="grid gap-2.5">
+        {input.items.length === 0 ? (
+          <div className="text-[12.5px] text-fg-soft">Nada nuevo desde la ronda anterior.</div>
+        ) : (
+          input.items.map((it, k) => <InputItem key={k} item={it} exact={input.exact} />)
+        )}
+      </div>
+      <div className="mt-2 text-[12px] text-fg-muted">Además recibe todo lo de las rondas anteriores: las instrucciones, el historial, el mensaje del cliente y lo que ya pidió.</div>
+    </Sec>
+  );
+}
+
+function argValue(key: string, value: unknown): string {
+  if ((key === "handle" || key === "handles") && typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed.filter((h): h is string => typeof h === "string").map(productName).join(", ");
+    } catch {
+      return productName(value);
+    }
+  }
+  if (Array.isArray(value) && value.every((v) => typeof v === "string")) return value.map((v) => (key === "handles" ? productName(v) : v)).join(", ");
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
+}
+
+/** Los argumentos de una herramienta a la vista: los textos en su caja. */
+function Args({ args }: { args: unknown }) {
+  const entries = Object.entries(obj(args)).filter(([, v]) => v !== null && v !== undefined && v !== "");
+  if (entries.length === 0) return null;
+  const texts = entries.filter(([k, v]) => TEXT_ARGS.has(k) && typeof v === "string");
+  const rest = entries.filter(([k, v]) => !(TEXT_ARGS.has(k) && typeof v === "string"));
+  return (
+    <div className="grid gap-1.5">
+      {texts.map(([k, v]) => (
+        <Box key={k}>{String(v)}</Box>
+      ))}
+      {rest.length > 0 ? <Kv rows={rest.map(([k, v]) => [ARG_NAMES[k] ?? k, argValue(k, v)])} /> : null}
+    </div>
+  );
+}
+
+/** Lo que pidió el modelo, cada pedido con su ejecución, y lo que pasó después en la ronda. */
+function Requested({ steps, index }: { steps: TraceStep[]; index: number }) {
+  const round = modelRound(steps, index);
+  const held = round.after.some((s) => s.kind === "guard" && (s.name === "contract_extra_round" || s.name === "send_reply_retry"));
+  const answered = round.after.some((s) => s.kind === "cut" && s.reason === "send_reply");
+  return (
+    <>
+      {round.calls.length > 0 ? (
+        <Sec title="Pidió">
+          <div className="grid gap-3">
+            {round.calls.map((call, k) => {
+              const s = call.step;
+              const tool = describeTool({ name: call.name, args: s?.args, ok: (s?.ok ?? null) as boolean | null, error: str(s?.error), notes: s?.notes });
+              const outcome = !s
+                ? null
+                : call.name === "send_reply" && !tool.failed
+                  ? held
+                    ? "no salió: el bot la retuvo"
+                    : answered
+                      ? "salió: es la respuesta del turno"
+                      : tool.result
+                  : tool.result;
+              return (
+                <div key={k} className="grid gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="rounded bg-cyan-soft px-1.5 py-0.5 text-[11.5px] text-cyan">{tool.action}</span>
+                    <code className="font-mono text-[11px] text-fg-muted">{call.name}</code>
+                  </div>
+                  <Args args={s?.args} />
+                  {outcome ? <div className={"text-[12px] " + (tool.failed || (held && call.name === "send_reply") ? "text-warn" : "text-fg-soft")}>{outcome}</div> : null}
+                </div>
+              );
+            })}
+          </div>
+        </Sec>
+      ) : null}
+      {round.after.length > 0 ? (
+        <Sec title="Después, en esta ronda">
+          <div className="grid gap-2.5">
+            {round.after.map((s, k) => (
+              <AfterStep key={k} step={s} />
+            ))}
+          </div>
+        </Sec>
+      ) : null}
+    </>
+  );
+}
+
+function AfterStep({ step }: { step: TraceStep }) {
+  if (step.kind === "guard") {
+    const name = str(step.name) ?? "";
+    const note = NOTE_GUARDS.has(name) ? str(step.after) : null;
+    const shown = name === "variant_enumeration_guard" ? str(step.after) : null;
+    return (
+      <div className="grid gap-1">
+        <div className="text-[12.5px] text-warn">{GUARD_LABELS[name] ?? name}</div>
+        {note ? (
+          <>
+            <div className="text-[11.5px] text-fg-muted">Le dijo al modelo:</div>
+            <Box>{note}</Box>
+          </>
+        ) : null}
+        {shown ? (
+          <>
+            <div className="text-[11.5px] text-fg-muted">Lo que recibió el cliente:</div>
+            <Box>{shown}</Box>
+          </>
+        ) : null}
+      </div>
+    );
+  }
+  if (step.kind === "cut") {
+    const reason = str(step.reason);
+    return <div className="text-[12.5px] text-fg-soft">{reason ? (CUT_REASON[reason] ?? reason) : "Fin del turno."}</div>;
+  }
+  return <div className="text-[12.5px] text-fg-soft">{`Vuelve a empezar con ${num(step.drained) ?? 0} mensaje(s) nuevo(s).`}</div>;
+}
+
 function Tool({ step, back }: { step: TraceStep; back: boolean }) {
   const args = step.args;
   const notes = list(step.notes).filter((n): n is string => typeof n === "string");
-  const tool = describeTool({ name: str(step.name) ?? "tool", args, ok: step.ok as boolean | null, error: str(step.error), notes });
+  const name = str(step.name) ?? "tool";
+  const tool = describeTool({ name, args, ok: step.ok as boolean | null, error: str(step.error), notes });
   const hasArgs = args && typeof args === "object" && Object.keys(args).length > 0;
   return (
     <>
-      <Sec title="Qué hizo">
-        <Kv
-          rows={[
-            ["Acción", tool.detail ? `${tool.action} · ${tool.detail}` : tool.action],
-            ["Resultado", back ? tool.result : null],
-          ]}
-        />
-      </Sec>
+      {back ? (
+        <Sec title="Qué hizo">
+          <Kv
+            rows={[
+              ["Acción", tool.detail ? `${tool.action} · ${tool.detail}` : tool.action],
+              ["Resultado", tool.result],
+            ]}
+          />
+        </Sec>
+      ) : (
+        <>
+          <Sec title="Herramienta que se ejecutó">
+            <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
+              <code className="rounded bg-cyan-soft px-1.5 py-0.5 font-mono text-[11.5px] text-cyan">{name}</code>
+              <span className="text-fg-soft">{tool.action}</span>
+            </div>
+          </Sec>
+          {hasArgs ? (
+            <Sec title="Con qué">
+              <Args args={args} />
+            </Sec>
+          ) : null}
+        </>
+      )}
       <details className="mt-3.5 text-[12.5px]">
         <summary className="cursor-pointer select-none text-[10.5px] font-semibold uppercase tracking-[0.08em] text-fg-faint">Datos técnicos</summary>
-        <Sec title="Nombre interno">
-          <Box code>{str(step.name) ?? "—"}</Box>
-        </Sec>
         {hasArgs ? (
           <Sec title="Argumentos">
             <Box code>{JSON.stringify(args, null, 2)}</Box>

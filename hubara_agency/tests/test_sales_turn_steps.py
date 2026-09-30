@@ -132,6 +132,31 @@ async def test_steps_follow_the_turn_llm_tool_llm_and_the_bubble_that_went_out(t
 
 
 @pytest.mark.asyncio
+async def test_each_round_keeps_what_the_model_received(tmp_path: Path) -> None:
+    """Pedido del operador (2026-09-30, laboratorio 4567 t20): en «ronda N»
+    hacia el modelo «no sabemos qué le está enviando». La primera ronda guarda
+    lo fijo resumido (instrucciones, historial) y el mensaje del cliente como
+    lo lee el modelo; la segunda, solo lo nuevo: el resultado de la búsqueda."""
+    tracker = Tracker()
+    result = json.dumps({"query": "café", "count": 3, "results": []})
+
+    await _run(
+        tracker,
+        tmp_path,
+        messages=["¿tienen de café?"],
+        llm_responses=_search_then_answer(),
+        tool_results={"search_products": result},
+    )
+
+    first, _tool, second, _outbound = _customer_trace(tracker)["steps"]
+    sent = first.get("sent") or {}
+    assert sent.get("system", {}).get("chars") == len("fake-system")
+    assert sent.get("history") == {"user": 1, "assistant": 1}
+    assert [(m["role"], "¿tienen de café?" in m["text"]) for m in sent.get("new", [])] == [("user", True)]
+    assert (second.get("sent") or {}).get("new") == [{"role": "tool", "name": "search_products", "text": result}]
+
+
+@pytest.mark.asyncio
 async def test_guards_keep_the_order_in_which_they_acted(tmp_path: Path) -> None:
     """La guarda de variantes actúa ANTES que la de texto administrativo. En v1
     el campo `guards` las ordena alfabéticamente y el orden se pierde; `steps`

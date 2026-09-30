@@ -256,7 +256,7 @@ export function TurnTraceModal({ run, sid, turn, arms, initialArm, onClose }: Pr
                 {trace.isSuccess && layout.rows.length > 0 ? <SequenceTrace layout={layout} selected={row?.index ?? 0} onSelect={setSelected} idPrefix="lab-seq" /> : null}
               </div>
               <div aria-live="polite" className="bg-inspector px-[18px] py-4 min-[760px]:overflow-auto">
-                {trace.isSuccess && row ? <TraceStepDetail step={steps[row.stepIndex]} row={row} lanes={layout.lanes} /> : null}
+                {trace.isSuccess && row ? <TraceStepDetail step={steps[row.stepIndex]} row={row} lanes={layout.lanes} steps={steps} /> : null}
               </div>
             </div>
           </div>

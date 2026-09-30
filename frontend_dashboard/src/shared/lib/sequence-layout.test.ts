@@ -43,7 +43,10 @@ describe("layoutSequence", () => {
     ]);
     expect(rows.every((r, idx) => r.index === idx)).toBe(true);
     expect(rows[5].short).toBe("pide buscar en el catálogo");
-    expect(rows[6].short).toBe("Buscar en el catálogo");
+    // La flecha a las herramientas nombra la que se ejecutó (operador,
+    // 2026-09-30: «cuál fue la herramienta que ejecutó»); lo que pidió el
+    // modelo va en palabras en la fila anterior.
+    expect(rows[6]).toMatchObject({ short: "search_products", code: "search_products", title: "Buscar en el catálogo" });
   });
 
   it("los carriles y cada paso hablan en palabras del operador", () => {
@@ -58,7 +61,7 @@ describe("layoutSequence", () => {
     expect(rows[0].short).toBe("2 mensajes seguidos");
     expect([rows[1].short, rows[2].short]).toEqual(["lee el mensaje · 1 pregunta", "responde"]);
     expect(rows[3].short).toBe("plan: 2 asuntos");
-    expect(rows[6]).toMatchObject({ short: "Buscar en el catálogo · «jesús»", title: "Buscar en el catálogo · «jesús»", kind: "Herramienta" });
+    expect(rows[6]).toMatchObject({ short: "search_products · «jesús»", title: "Buscar en el catálogo · «jesús»", kind: "Herramienta" });
     expect(rows[7]).toMatchObject({ short: "no encontró nada", title: "Resultado: no encontró nada" });
     expect([rows[10].short, rows[11].short]).toEqual(["¿respondió cada asunto?", "decisión: enviar"]);
     expect(rows[12].short).toBe("envía 2 mensajes");

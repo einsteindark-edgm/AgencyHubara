@@ -96,7 +96,7 @@ export function TurnThreadModal({ sid, turnKey, onClose }: Props) {
           ) : null}
         </div>
         <div aria-live="polite" className="bg-inspector px-[18px] py-4 min-[760px]:overflow-auto">
-          {thread.isSuccess && row ? <TraceStepDetail step={steps[row.stepIndex]} row={row} lanes={layout.lanes} /> : null}
+          {thread.isSuccess && row ? <TraceStepDetail step={steps[row.stepIndex]} row={row} lanes={layout.lanes} steps={steps} /> : null}
         </div>
       </div>
 

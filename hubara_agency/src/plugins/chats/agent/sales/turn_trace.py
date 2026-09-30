@@ -62,7 +62,7 @@ def _parse(result: str | None) -> dict[str, Any] | None:
 
 
 def summarize_tool_event(
-    name: str, args: dict[str, Any] | None, result: str | None
+    name: str, args: dict[str, Any] | None, result: str | None, *, arg_max: int = _ARG_MAX
 ) -> dict[str, Any]:
     """Resumen compacto de una tool ejecutada: ok / rechazo + motivo + notas.
 
@@ -108,7 +108,7 @@ def summarize_tool_event(
         if isinstance(payload.get("count"), int):
             notes.append(f"count:{payload['count']}")
     compact_args = {
-        str(k): _short(v) for k, v in (args or {}).items() if v not in (None, "", [])
+        str(k): _short(v, arg_max) for k, v in (args or {}).items() if v not in (None, "", [])
     }
     return {
         "name": name,
@@ -184,6 +184,9 @@ def project_stage(episode: dict[str, Any] | None) -> str:
 # `source` y `mode`. Extiende v1 sin quitar campos: el scorecard no cambia.
 TRACE_VERSION = 2
 TEXT_MAX = 600
+#: Lo que recibió el modelo en cada ronda (`sent`, 2026-09-30): ya viene
+#: acotado por `llm_round_input` (notas 6000, mensaje 4000, resultados 1500).
+SENT_MAX = 6000
 STEPS_MAX = 60
 _MAX_TOOLS = 24
 
@@ -213,13 +216,13 @@ def context_note_names(plugin_context: list[str] | None) -> list[str]:
     return names
 
 
-def _bound_value(value: Any) -> Any:
+def _bound_value(value: Any, limit: int = TEXT_MAX) -> Any:
     if isinstance(value, str):
-        return _bound(value)
+        return _bound(value, limit)
     if isinstance(value, list):
-        return [_bound_value(v) for v in value[:_MAX_TOOLS]]
+        return [_bound_value(v, limit) for v in value[:_MAX_TOOLS]]
     if isinstance(value, dict):
-        return {str(k): _bound_value(v) for k, v in value.items()}
+        return {str(k): _bound_value(v, limit) for k, v in value.items()}
     return value
 
 
@@ -247,7 +250,11 @@ def _normalize_steps(
                 }
             )
             break
-        step = {k: _bound_value(v) for k, v in raw.items() if k not in ("at_ms", "event") and v is not None}
+        step = {
+            k: _bound_value(v, SENT_MAX if k == "sent" else TEXT_MAX)
+            for k, v in raw.items()
+            if k not in ("at_ms", "event") and v is not None
+        }
         at = raw.get("at_ms")
         step = {
             "i": len(out) + 1,
@@ -308,6 +315,18 @@ def build_turn_payload(
         )
         for e in tool_events[:_MAX_TOOLS]
     ]
+    # El paso de cada tool lleva sus argumentos más largos que el resumen v1:
+    # el «Paso a paso» muestra el texto que el modelo pidió enviar
+    # (`send_reply`), que casi siempre pasa de 160 caracteres.
+    step_tools = [
+        summarize_tool_event(
+            str(e.get("name") or ""),
+            e.get("args") if isinstance(e.get("args"), dict) else None,
+            e.get("result") if isinstance(e.get("result"), str) else None,
+            arg_max=TEXT_MAX,
+        )
+        for e in tool_events[:_MAX_TOOLS]
+    ]
     return {
         "trigger": trigger if trigger in TRIGGERS else "customer",
         "inbound_text": _bound(inbound_text),
@@ -325,7 +344,7 @@ def build_turn_payload(
         "context_notes": list(context_notes or []),
         # Mensajes de la ráfaga con su wamid, hora y tipo (PR 3).
         "inbound": [_bound_value(m) for m in (inbound or [])[:_MAX_TOOLS] if isinstance(m, dict)],
-        "steps": _normalize_steps(steps or [], turn_started_ms=int(turn_started_ms), tools=tools),
+        "steps": _normalize_steps(steps or [], turn_started_ms=int(turn_started_ms), tools=step_tools),
     }
 
 

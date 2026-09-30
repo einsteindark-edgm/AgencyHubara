@@ -61,6 +61,7 @@ with workflow.unsafe.imports_passed_through():
         get_active_episode_id_activity,
         record_episode_llm_usage_activity,
     )
+    from src.platform.llm_round_input import round_input
     from src.platform.llm_history_reset import (
         ResetLLMHistoryInput,
         reset_llm_history_for_episode_activity,
@@ -1078,10 +1079,16 @@ async def _run_agent_turn_impl(
     # tool-loop; se persiste al episodio tras el loop (record_episode_llm_usage).
     turn_prompt_tokens = 0
     turn_completion_tokens = 0
+    # Hasta dónde llegaba `messages` en la ronda anterior (0 = primera).
+    sent_until = 0
 
     while iteration < session.llm.max_iterations:
         iteration += 1
 
+        # Lo que recibe el modelo en esta ronda (el «Paso a paso» lo muestra):
+        # lista en memoria, sin comandos (replay-safe sin patch).
+        round_sent = round_input(messages, since=sent_until, chat_id=session.chat_id)
+        sent_until = len(messages)
         llm_started_ms = _now_ms()
         response = await workflow.execute_activity(
             llm_chat,
@@ -1111,6 +1118,7 @@ async def _run_agent_turn_impl(
             "tokens_in": int((response.usage or {}).get("prompt_tokens", 0) or 0) or None,
             "tokens_out": int((response.usage or {}).get("completion_tokens", 0) or 0) or None,
             "text_fate": "none",
+            "sent": round_sent,
         }
         steps.append(llm_step)
 

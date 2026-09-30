@@ -134,6 +134,11 @@ const REJECTIONS: Record<string, string> = {
   missing_items: "faltan los productos",
   min_subtotal: "no alcanza el mínimo de compra",
   timeout: "se demoró demasiado",
+  // Lo que `send_reply` le devuelve al modelo una vez por mensaje del cliente.
+  verified_photos: "negaba un producto que las fotos ya confirmaron",
+  promise_later: "prometía revisar y responder después",
+  option_list: "escribió la lista de opciones como texto",
+  internal_text: "era una nota interna, no para el cliente",
 };
 
 /** La acción en minúscula, para frases como «pide buscar en el catálogo». */
@@ -158,7 +163,8 @@ export function describeTool(call: ToolCall): ToolDescription {
   let result = "listo";
   if (failed) {
     const code = text(call.error) ?? "error";
-    result = `rechazada: ${REJECTIONS[code] ?? code}`;
+    // La respuesta no se «rechaza»: vuelve al modelo para que la corrija.
+    result = `${call.name === "send_reply" ? "no salió" : "rechazada"}: ${REJECTIONS[code] ?? code}`;
   } else {
     const n = count(call.notes);
     if (spec?.counts && n !== null) {
