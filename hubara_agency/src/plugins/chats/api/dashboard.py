@@ -294,6 +294,10 @@ def _session_signature(meta_file: Path) -> tuple[str, str]:
         # escritura puede cortar un codepoint UTF-8 multibyte (los metadata
         # traen emojis en motivo/nombres — premortem 2026-06-11).
         return ("", "")
+    return _signatures_of(data)
+
+
+def _signatures_of(data: dict) -> tuple[str, str]:
     orders_sig = json.dumps(
         [data.get("registered_order"), data.get("failed_order_registrations")],
         sort_keys=True,
@@ -301,6 +305,13 @@ def _session_signature(meta_file: Path) -> tuple[str, str]:
     )
     eta_sig = json.dumps(data.get("eta_tracking"), sort_keys=True, default=str)
     return (orders_sig, eta_sig)
+
+
+#: Firmas de una sesión sin pedidos ni ETA: con esto se compara una sesión que no existía en la muestra
+#: anterior (o que ya no existe). Comparar contra `None` hacía que CADA conversación nueva publicara
+#: `orders.changed` y `eta.changed`, ensuciaba todas las órdenes cacheadas y la siguiente lectura de
+#: incendios o del tablero relistaba Medusa entero.
+_NO_ORDERS_SIG, _NO_ETA_SIG = _signatures_of({})
 
 
 def _sample_vault_state(
@@ -366,9 +377,11 @@ def _diff_to_events(
         if p == c:
             continue
         changed_ids.append(sid)
-        if (p or {}).get("orders_sig") != (c or {}).get("orders_sig"):
+        absent = {"orders_sig": _NO_ORDERS_SIG, "eta_sig": _NO_ETA_SIG}
+        p, c = p or absent, c or absent
+        if p["orders_sig"] != c["orders_sig"]:
             orders_changed = True
-        if (p or {}).get("eta_sig") != (c or {}).get("eta_sig"):
+        if p["eta_sig"] != c["eta_sig"]:
             eta_changed = True
     return (sorted(changed_ids), orders_changed, eta_changed)
 
