@@ -11,6 +11,8 @@ Monorepo con backend Python (Temporal + DEHA hexagonal architecture) + frontend 
 
 - `hubara_agency/` — backend Python. Workflows Temporal + Honest Agents. Detalle en `hubara_agency/CLAUDE.md`.
 - `frontend_dashboard/` — frontend React/TS dashboard. FSD strict. Detalle en `frontend_dashboard/CLAUDE.md`.
+- `android_operator/` — **App Operador nativa** (Kotlin + Compose, solo Android). Detalle en `android_operator/CLAUDE.md`;
+  su QA en emulador (backend real de la rama + datos sintéticos) en `android_operator/e2e/`.
 - `exoclaw-temporal/` — librería base (DEHA reference). Plugin del pipeline; rara vez se modifica.
 - `agent_coordination/` — utilidades cross-worker.
 - `vscode-hubara/` — **Acktos Studio**, la extensión de VS Code que visualiza y opera ambos sistemas (grafos, tests, ejecuciones). Su README lista los backends exactos que necesita. (Reemplazó a los viewers web `system_explorer/` y `GraphAgents/viewer/index.html`, eliminados 2026-07-08.)
@@ -47,6 +49,17 @@ Monorepo con backend Python (Temporal + DEHA hexagonal architecture) + frontend 
 
 12. **Verificación visual: revisá `docker ps` ANTES de abrir el navegador.** El stack ya está desplegado en Docker — ahí están los puertos REALES. NO levantes un `vite`/backend a mano (se choca y perdés tiempo, me pasó 2 veces). Reales: **frontend `local-hubara-frontend` → http://localhost:5174** (Vite con HMR sobre bind-mount del source — editar `frontend_dashboard/src` se refleja en vivo, sin rebuild), **API `local-hubara-api` → :8000**, **Temporal UI → :8233**, Temporal gRPC → :7233. El `:5174` HMR-ea el checkout **`main`** (no un worktree); para previsualizar cambios de worktree, trabajá en main o re-apuntá el bind-mount (reinicia un servicio del stack vivo → pedí OK). Backend (`.py`) sí necesita rebuild (`cd hubara_agency && docker compose -f docker-compose.local.yml up -d --build <svc>`); frontend no. **Nunca uses :5173** (ahí squattea el Vite de Archon en IPv6 → split IPv4/::1 → previsualizás la app equivocada). Detalle en `frontend_dashboard/CLAUDE.md` §"Verificación visual".
 13. **Datos de un pedido = `OrderFacts`, nunca copias del vault.** Total, pago, etapa, cliente y moneda se leen con `src.sdk.connectorkit.get_order_facts_port()` — el mismo store que alimenta la vista Orders. El vault solo guarda el vínculo conversación→`order_id`. Caso: pedido #31 — total editado en Medusa, Ads mostraba el viejo (`episode.order_total_cop` congelado). Lectores pendientes de migrar y receta en `docs/_sdk/07-connectorkit.md` §OrderFacts; guarda en `tests/plugins/test_order_facts_readers_guard.py`.
+
+14. **La app móvil se prueba en un emulador, no solo con tests.** El emulador encontró 14 fallas que los tests de
+    Android no veían (422 en «Devolver al bot», incendios que se reemplazaban, ficha a medio abrir…) y #384 dejó la
+    app en cero desde el backend. Flujo para todo desarrollo que toque la app o lo que ella consume (chats, orders):
+    (1) **explorar con Artemis en local** — `android_operator/e2e/run_suite.py --driver artemis`: Gemini maneja la app
+    desde un objetivo en español y encuentra lo que nadie guionizó (gasta tokens: a mano, nunca en CI);
+    (2) lo nuevo o lo que Artemis encontró se vuelve **escenario con guion** en `android_operator/e2e/scenarios.yaml`
+    (`resumen` + `script` + `checks`); (3) `android_operator/e2e/qa.sh` lo corre en local; (4) en el PR, la compuerta
+    **QA emulador** (`.github/workflows/qa-emulador.yml`, runners de GitHub, sin secretos) corre todos los escenarios y
+    deja un comentario con una captura y qué probó cada uno. Es check requerido de `main`. Nunca un runner en la Mac:
+    el repo es público y ahí están las credenciales de prod. Receta: `android_operator/e2e/README.md`.
 
 ## Hooks activos (`.claude/settings.json`)
 

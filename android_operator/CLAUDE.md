@@ -19,6 +19,18 @@ cd android_operator && ./gradlew :app:assembleRelease                           
   `hubara.cognitoClientId` vacío = modo dev sin login (el backend local tampoco exige token).
 - HTTP en claro solo en debug y solo hacia `10.0.2.2`/`localhost` (`src/debug/res/xml`).
 
+## Cómo se desarrolla una feature (el ciclo que ya nos salvó 14 veces)
+
+1. **TDD** en el módulo: el test rojo por aserción primero (JVM/Robolectric).
+2. **Explorar con Artemis en local**: `python3 e2e/run_suite.py --driver artemis --only <id>` con un `goal` en
+   español. Gemini recorre la app como el operador y encuentra lo que los tests no ven. Gasta tokens y tarda
+   4–5 s por paso: es para explorar, no para decidir. Instalado en `~/tools/artemis` (`e2e/README.md`, «Una vez»).
+3. **Guionizar**: el flujo nuevo o lo que Artemis encontró queda como escenario en `e2e/scenarios.yaml` con
+   `resumen` (qué prueba, en español llano), `script` (pasos por adb), `checks` y, si ayuda, un `shot`.
+4. **`e2e/qa.sh`** corre la compuerta en local: emulador, backend real de la rama con datos sintéticos, guiones.
+5. **PR**: el check requerido **QA emulador** corre todos los escenarios en GitHub y deja en el PR un comentario con
+   una captura y qué probó cada uno. Si falla, el comentario dice qué chequeo.
+
 ## Mapa
 
 | Módulo | Qué tiene |

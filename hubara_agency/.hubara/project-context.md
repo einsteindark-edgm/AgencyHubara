@@ -12,6 +12,7 @@
 - **Repo root:** `/Users/edgm/Documents/Projects/AgencyHubara` (cwd del operador cuando corre `archon run`).
 - **Backend Python:** `hubara_agency/src/`
 - **Frontend TS:** `frontend_dashboard/src/`
+- **App Operador (Android, Kotlin + Compose):** `android_operator/` — QA en emulador en `android_operator/e2e/`
 - **Manifests de plugins:** `frontend_dashboard/src/plugins/<id>/plugin.yaml`
   (asimetría: el manifest vive en el lado frontend; ambos loaders leen de ahí).
 - **Plugins Python:** `hubara_agency/src/plugins/<id>/`
@@ -57,6 +58,17 @@ agregalo (el planner debería haber incluido — sé defensivo).
 | Type check (composite) | `cd frontend_dashboard && npx tsc -b` |
 | Build | `cd frontend_dashboard && npm run build` |
 | Playwright E2E | `cd frontend_dashboard && npx playwright test` |
+
+### §2.2b App Operador Android (desde repo root)
+
+| Acción | Comando |
+|---|---|
+| Tests locales (JVM + Robolectric) | `cd android_operator && ./gradlew testDebugUnitTest :core:model:test` (con `JAVA_HOME` del JBR de Android Studio) |
+| QA en emulador (la compuerta del PR) | `android_operator/e2e/qa.sh` (o `--only <escenario>`) |
+| Explorar con Artemis (a mano, gasta tokens) | `python3 android_operator/e2e/run_suite.py --driver artemis --out /tmp/e2e` |
+
+Todo cambio de la app o del backend que ella consume entra con su escenario en `android_operator/e2e/scenarios.yaml`;
+el check requerido «QA emulador — App Operador» lo corre en cada PR y comenta capturas (ver `android_operator/e2e/README.md`).
 
 ### §2.3 Combined gates (para PR)
 
