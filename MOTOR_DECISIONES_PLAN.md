@@ -182,3 +182,10 @@ El turno 2 del 6543 en r4 (bot nuevo): el cliente mandó una captura de nuestro 
 - **Nunca negar un producto por una foto:** si la identificación es probable, se pregunta «¿es esta?» mostrando la ficha.
 - El laboratorio no vuelve a llamar a la visión: para medir el cambio hay que llevar las fotos al banco.
 - Artefactos: scratchpad de la sesión fbec0352, `photo_research/`.
+
+**Resultado en el laboratorio (r5 y r6, 2026-09-29, noche):**
+- **Foto del 6543:** los dos bots ya no niegan sin buscar; buscan y muestran el más parecido. El producto sigue siendo el equivocado (Sagrado Rostro en vez de Sacrificio de Amor): eso lo resuelve la identificación de fotos, no la nota.
+- **Turnos con varias fotos:** muestran candidatos en vez de negar. Siguen negando la «figura femenina con vasija» (Luz Serena): la búsqueda por frases enteras no la encuentra.
+- **La puerta en `send_reply`** bajó los turnos que salen sin cumplir el contrato de 14 a 6–7 de 43. Casos buenos: medidas y estado del pedido consultados en vez de dichos de memoria.
+- **Una regresión, ya corregida:** «¿cuánto se demora el envío?» salía solo con la tarjeta de tarifas. `jev-v5` = `jev-v4` con `rafaga-v5`, que suma la pregunta `envio.costo`. La tarjeta se exige solo si preguntan el costo. En r6 el cliente recibe «A Medellín llega en 2 a 3 días hábiles…».
+- **r6, bot nuevo:** 2 PASA y 1 ALERTA, con menos fallas que r4. Jev con 0 caídas por tiempo gracias a los reenvíos [1,5, 3, 5, 7,5].
