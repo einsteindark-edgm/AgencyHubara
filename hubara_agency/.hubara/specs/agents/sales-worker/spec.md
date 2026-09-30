@@ -805,16 +805,71 @@ completa en segundo plano.
 - WHEN se busca el producto
 - THEN no se reconoce ninguno (ni por el enlace ni por la imagen) y la foto entra como hoy
 
+### Requirement: Lo verificado de las fotos vale el resto del episodio (2026-09-30)
+
+La foto reconocida SHALL quedar en `recent_image_descriptions` con su episodio y
+el producto (handle, cómo se supo y nombre). Cada mensaje del cliente que NO es
+una foto SHALL llevar la nota `[FOTOS DEL CLIENTE YA RECONOCIDAS, metadata…]`
+con las fotos reconocidas del episodio activo: es un hecho verificado, el bot
+MUST NOT decir que no los tenemos, corrige con amabilidad si antes se dijo lo
+contrario y, si el cliente dice que falta alguno, revisa lo que ya le mostró.
+Las fotos no reconocidas no entran (no son un hecho).
+
+#### Scenario: «No están todas» (laboratorio caso-fotos-0930-r7, 4567 t13)
+
+- GIVEN las cuatro fotos del cliente se reconocieron como Velón Gorrión, Luz de Belén, Luz Serena y Sacrificio de Amor
+- WHEN el cliente escribe «me gustaría esas, pero no están todas»
+- THEN el turno lleva la nota con las cuatro y la orden de no negarlas
+
+### Requirement: El mensaje que sigue a una foto espera a la foto (2026-09-30)
+
+Mientras la visión lee una foto del cliente (1,5 a ~4,5 s), cualquier otro
+mensaje suyo SHALL esperar a que la foto entre al bot antes de pasar al
+workflow, con tope de 10 s: así la foto y el «¿tienes esta?» van en la misma
+ráfaga y en orden. Las fotos no se esperan entre sí y otro cliente no espera.
+Pendiente: el texto que llega ANTES que la foto (la ráfaga se cierra sin ella).
+
+#### Scenario: Foto y enseguida «¿tienes esta?»
+
+- GIVEN el cliente manda una foto y 1 s después «¿tienes esta?»
+- WHEN la visión tarda 3 s
+- THEN el workflow recibe primero la foto y después el texto, en la misma ráfaga
+
+### Requirement: El carrito llega con los nombres del catálogo (2026-09-30)
+
+Cada ítem del carrito de WhatsApp (`product_retailer_id`: SKU o id de variante)
+SHALL resolverse contra el catálogo: `2× Trilogía del Terror a $95.900 c/u
+(HUB-TRILOGIA)`, con la variante si el producto tiene variantes reales y el
+precio del catálogo (nunca el `item_price` de Meta). El turno SHALL llevar la
+nota `[CARRITO DEL CLIENTE…]` con el handle de cada producto. Un ítem que el
+catálogo no tiene sale `(no está en el catálogo)`; sin catálogo, el carrito
+sale con sus códigos como antes.
+
+#### Scenario: Carrito con una variante
+
+- GIVEN el carrito trae `1× variant_leo` del Duo Zodiacal
+- WHEN llega al ingest
+- THEN el bot y el operador leen `1× Duo Zodiacal · Leo a $49.500 c/u (variant_leo)`
+
 ### Requirement: Variantes siempre en formato picker
 
 Si el texto final del turno enumera 4 o más aromas o colores del catálogo y el
 turno no emitió `present_variant_picker`, el workflow SHALL encolar el picker
-(mismo intent que la tool) y suprimir el texto plano (run 9bd495be).
+(mismo intent que la tool) y suprimir el texto plano (run 9bd495be). La guarda
+solo cambia el FORMATO de la lista (2026-09-30): lo que el bot escribió antes
+de la lista SHALL encabezar el selector y lo que escribió después SHALL
+cerrarlo (en vez de la línea por defecto). La traza guarda el texto que recibió
+el cliente.
 
 #### Scenario: Lista de 11 aromas en texto
 
 - WHEN el LLM responde "Tenemos 11 aromas disponibles: Caballero de la noche, …" sin picker
 - THEN el cliente recibe el picker curado con los 11 aromas y no la lista plana
+
+#### Scenario: La respuesta va antes de la lista (laboratorio 4567 t19)
+
+- WHEN el LLM responde «Jengibre no está entre los aromas de la Luz Serena. Los que maneja son: <11 aromas>. ¿Alguno de esos te llama la atención?»
+- THEN el cliente recibe «Jengibre no está entre los aromas de la Luz Serena. Los que maneja son:», el selector y «¿Alguno de esos te llama la atención?»
 
 ### Requirement: El formulario de envío extiende el ghosting
 

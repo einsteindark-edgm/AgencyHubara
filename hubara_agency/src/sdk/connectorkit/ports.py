@@ -44,7 +44,9 @@ from src.platform.catalog.composition import (
     get_checkout_verification_port as get_checkout_verification_port,
 )
 from src.platform.catalog.identity import (
+    has_real_variants as has_real_variants,
     product_retailer_id as product_retailer_id,
+    variant_retailer_id as variant_retailer_id,
 )
 from src.platform.catalog.errors import (
     CatalogUnavailableError as CatalogUnavailableError,

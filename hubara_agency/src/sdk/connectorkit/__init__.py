@@ -63,6 +63,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "deslugify": "src.platform.catalog.categories",
     # Identidad estable (2026-09-14): retailer_id de Meta = SKU, no id de Medusa.
     "product_retailer_id": "src.platform.catalog.identity",
+    # El carrito de WhatsApp (2026-09-30): cada ítem llega con el retailer_id
+    # de una variante; el bot lo resuelve a nombre, variante y precio.
+    "variant_retailer_id": "src.platform.catalog.identity",
+    "has_real_variants": "src.platform.catalog.identity",
     "CustomerScoringPort": "src.platform.customer_scoring.port",
     "ImageVisionPort": "src.platform.vision.port",
     # Visión de fotos del cliente (2026-09-30): el texto que se lee en la foto,

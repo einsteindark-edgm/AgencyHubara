@@ -17,7 +17,7 @@ Tabla de traducción:
 | `interactive.nfm_reply` (Flow) | `[datos de envío recibidos] ciudad=...; barrio=...` |
 | `location`         | `[el cliente compartió su ubicación] lat=X lng=Y (ciudad)`  |
 | `audio`            | `<texto transcrito>` (post-transcripción, ver A.5)          |
-| `order` (cart submit) | `[el cliente armó un carrito con: 2× cruz-de-vida, 1× ...]` |
+| `order` (cart submit) | `[el cliente armó un carrito con: 2× Cruz de Vida a $43.000 c/u (HUB-CRUZ); ...]` |
 | `image/video/document/sticker` | `[el cliente envió un <tipo>]`                  |
 | `reaction`         | `[el cliente reaccionó con <emoji>]`                        |
 | `contacts`         | `[el cliente compartió un contacto: <nombre>]`              |
@@ -40,7 +40,10 @@ from src.plugins.chats.agent.sales.parsers import WhatsAppMessage
 from src.plugins.chats.agent.sales.price_quotes import PRICE_MASK, mask_prices
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from src.platform.catalog import CatalogPort
+    from src.plugins.chats.agent.sales.cart_lines import CartLine
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,7 @@ async def translate_to_effective_text(
     *,
     catalog: "CatalogPort | None" = None,
     referral_already_seen: bool = False,
+    cart_lines: "Mapping[str, CartLine | None] | None" = None,
 ) -> EffectiveText:
     """Traduce un `WhatsAppMessage` a texto natural LLM-ready.
 
@@ -98,6 +102,8 @@ async def translate_to_effective_text(
         es None, los list_reply caen a "el cliente seleccionó: <id>".
       referral_already_seen: True si la sesión ya registró el ctwa_clid
         de este inbound (el banner se inyecta una sola vez).
+      cart_lines: los ítems del carrito ya resueltos contra el catálogo
+        (`cart_lines.lines_from_products`); None = sin catálogo.
 
     Returns:
       `EffectiveText` con el texto natural y metadata para el ingest.
@@ -236,13 +242,12 @@ async def translate_to_effective_text(
 
     # --- Order (cart submit via product browsing en WA) ---
     if msg.order:
+        from src.plugins.chats.agent.sales.cart_lines import cart_summary
+
         items = msg.order.get("product_items") or []
-        item_summaries = []
-        for it in items:
-            pid = it.get("product_retailer_id", "?")
-            qty = it.get("quantity", 1)
-            item_summaries.append(f"{qty}× {pid}")
-        summary = ", ".join(item_summaries) or "(carrito vacío)"
+        # Con el catálogo (el ingest lo leyó): nombre, variante y precio de
+        # cada ítem; sin él, los códigos como siempre.
+        summary = cart_summary(items, cart_lines)
         order_text_note = msg.order.get("text") or ""
         text = f"[el cliente armó un carrito con: {summary}]"
         if order_text_note:

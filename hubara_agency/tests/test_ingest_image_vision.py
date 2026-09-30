@@ -542,8 +542,35 @@ async def test_a_photo_of_our_product_enters_naming_it_and_the_turn_carries_the_
     notes = [n for n in call.extra_context or [] if n.startswith("[FOTO DEL CLIENTE")]
     assert len(notes) == 1 and "«Sacrificio de Amor» (handle sacrificio-de-amor)" in notes[0]
     recent = metadata.store["wa_5491111111111"]["recent_image_descriptions"][-1]
-    assert recent["product"] == {"handle": "sacrificio-de-amor", "how": "nombre"}
+    assert recent["product"] == {"handle": "sacrificio-de-amor", "how": "nombre", "title": "Sacrificio de Amor"}
     assert identifier.refreshes == 1
+
+
+@pytest.mark.asyncio
+async def test_the_turns_after_the_photo_still_know_it_is_ours(monkeypatch):
+    """Laboratorio caso-fotos-0930-r7, 4567 t13: ya reconocida la foto, el
+    cliente dice «no están todas» y el bot negó lo verificado. Cada turno
+    siguiente lleva la nota de las fotos reconocidas en el episodio (la de la
+    foto misma ya lleva la suya)."""
+    from src.plugins.chats.agent.sales.use_cases.photo_product import PhotoProduct
+
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    identifier = _Identifier(PhotoProduct("sacrificio-de-amor", "Sacrificio de Amor", "nombre", "Sacrificio de Amor"))
+    loader, metadata, use_case = _identified_use_case(identifier)
+    text = WhatsAppMessage(
+        message_id="wamid.TXT", from_number="5491111111111", phone_number_id="PID",
+        text="me gustaría esas, pero no están todas", media=None, timestamp="1714312350", msg_type="text",
+    )
+
+    await use_case.execute(_make_image("product_1"))
+    await use_case.execute(text)  # espera a que la foto entre
+
+    photo_call, text_call = loader.calls
+    facts = [n for n in text_call.extra_context or [] if n.startswith("[FOTOS DEL CLIENTE YA RECONOCIDAS")]
+    assert len(facts) == 1 and "es «Sacrificio de Amor» (handle sacrificio-de-amor)" in facts[0]
+    assert not [n for n in photo_call.extra_context or [] if n.startswith("[FOTOS DEL CLIENTE YA RECONOCIDAS")]
+    stored = metadata.store["wa_5491111111111"]
+    assert stored["recent_image_descriptions"][-1]["episode_id"] == stored["episodes"][-1]["episode_id"]
 
 
 @pytest.mark.asyncio

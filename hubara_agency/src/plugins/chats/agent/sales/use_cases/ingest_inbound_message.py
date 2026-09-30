@@ -46,6 +46,7 @@ from src.platform.orchestration import (
     envelope_for,
 )
 from src.platform.state import FilesystemMetadataStore
+from src.plugins.chats.agent.sales.cart_lines import CartLine, build_cart_note, lines_from_products
 from src.plugins.chats.agent.sales.parsers import WhatsAppMessage
 from src.plugins.chats.agent.sales.translate import (
     EffectiveText,
@@ -114,10 +115,12 @@ from src.plugins.chats.agent.sales.use_cases.coupon_application import (
 from src.plugins.chats.agent.sales.use_cases.catalog_gap import catalog_gap_note
 from src.plugins.chats.agent.sales.use_cases.photo_product import (
     PhotoIdentification,
+    build_photo_facts_note,
     build_photo_product_note,
     photo_reentry_text,
 )
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer
+from src.plugins.chats.agent.sales.use_cases.photo_reads import PhotoReads
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
     build_coupon_note,
@@ -184,6 +187,9 @@ CouponUnitsReader = Callable[[dict[str, Any]], Awaitable[QuotaOffer]]
 # HU web-cart: timeout de la hidratación inline (patrón L-2 — el webhook no
 # puede demorar el primer turno; cualquier fallo degrada en silencio).
 _WEB_CART_HYDRATION_TIMEOUT_S = 3.0
+#: Tope de la espera de un mensaje del cliente por su foto (visión ~1,5 s,
+#: hasta ~4,5 s comparando con el catálogo; el paso de imagen tiene tope de 6 s).
+PHOTO_WAIT_MAX_S = 10.0
 
 #: Validar el cupón de la campaña (promociones de Medusa + vendidas del cupo)
 #: antes del primer turno. Si no alcanza, el bot lo aplica con `apply_coupon`.
@@ -272,9 +278,14 @@ class IngestInboundMessage:
         coupon_units_now: CouponUnitsReader | None = None,
         readings: InboundReadingsProvider | None = None,
         photo_identifier: PhotoIdentifierPort | None = None,
+        photo_wait_s: float = PHOTO_WAIT_MAX_S,
     ) -> None:
         self._history_store = history_store
         self._photo_identifier = photo_identifier
+        # Las fotos de cada cliente que se están leyendo: sus mensajes esperan
+        # a que la foto entre al bot (ráfaga partida, 2026-09-30).
+        self._photo_reads = PhotoReads()
+        self._photo_wait_s = photo_wait_s
         # Motor de decisiones (enchufe 1): las lecturas del cliente (compra,
         # retoma, baja) las da el proveedor; el ingest escribe los MISMOS
         # campos de hoy. Sin proveedor, el del motor con el registro de bots
@@ -307,6 +318,7 @@ class IngestInboundMessage:
         persisted_image_url: str | None = None,
         customer_text: Any = _FROM_MESSAGE,
         photo_note: str | None = None,
+        from_photo: bool = False,
     ) -> None:
         """Procesa un inbound parseado.
 
@@ -325,8 +337,22 @@ class IngestInboundMessage:
         ``photo_note``: otro canal interno del reentry de visión: la nota del
         turno cuando la foto se reconoció como un producto nuestro
         (``photo_product.build_photo_product_note``).
+
+        ``from_photo``: el mensaje ES la foto que reentra (no espera a nada).
+        Cualquier otro mensaje del cliente que llega mientras se lee una foto
+        suya espera a que la foto entre al bot (con tope ``photo_wait_s``):
+        así la foto y el «¿tienes esta?» van en la misma ráfaga y en orden.
+        Las fotos no se esperan entre sí.
         """
         session_id = f"{WHATSAPP_SESSION_PREFIX}{parsed.from_number}"
+        if not from_photo and not _is_photo(parsed) and self._photo_reads.reading(session_id):
+            waited_s = await self._photo_reads.wait(session_id, max_s=self._photo_wait_s)
+            logger.info(
+                "inbound_waited_for_photo",
+                session=session_id,
+                waited_ms=int(waited_s * 1000),
+                gave_up=self._photo_reads.reading(session_id),
+            )
 
         # --- 1. Read metadata UNA vez al principio (atribución + typing) ---
         try:
@@ -808,10 +834,15 @@ class IngestInboundMessage:
         # `catalog=None` por ahora — list_reply usa el title raw del cliente.
         # Wire del catalog port queda como follow-up cuando se exponga via
         # composition.
+        # El carrito de WhatsApp llega con códigos: se leen en el catálogo
+        # para que el bot (y el operador en Chats) vean nombre, variante y
+        # precio (2026-09-30).
+        cart_lines = await self._cart_lines(parsed)
         effective: EffectiveText = await translate_to_effective_text(
             parsed,
             catalog=None,
             referral_already_seen=referral_already_seen,
+            cart_lines=cart_lines,
         )
 
         # --- 4. Audio inbound: defer a la transcripción ---
@@ -881,8 +912,9 @@ class IngestInboundMessage:
                 "mime_type": effective.image_mime_type,
             }
             self._safe_write_metadata(session_id, metadata)
+            self._photo_reads.begin(session_id)
             _spawn_safe(
-                self._describe_image_and_reenter(parsed),
+                self._read_photo(parsed, session_id),
                 label="vision.describe_and_reenter",
                 session_id=session_id,
             )
@@ -1109,6 +1141,16 @@ class IngestInboundMessage:
             if metadata.get("active_route") != ROUTE_HUMANO
             else None
         )
+        # Las fotos del cliente ya reconocidas como productos nuestros en el
+        # episodio: cada turno siguiente las recuerda (laboratorio 4567 t13:
+        # «no están todas» y el bot negó lo verificado). La foto que reentra
+        # ya lleva su propia nota.
+        photo_facts_note = None if from_photo else build_photo_facts_note(metadata)
+        # El carrito: el handle de cada producto, para seguir la venta.
+        cart_note = build_cart_note(
+            (parsed.order or {}).get("product_items") or [] if isinstance(parsed.order, dict) else [],
+            cart_lines,
+        )
         # Respuesta a campaña: la nota solo viaja por la ruta Sales (el
         # remarketing no recibe plugin_context) — el turno va a Ventas.
         route_kwargs: dict[str, Any] = (
@@ -1145,8 +1187,10 @@ class IngestInboundMessage:
                     web_product_note,
                     order_draft_note,
                     coupon_note,
+                    photo_facts_note,
                     photo_note,
                     photo_citation_note,
+                    cart_note,
                     gap_note,
                 )
                 if note
@@ -1352,6 +1396,26 @@ class IngestInboundMessage:
             session_id=session_id,
             text=text,
         )
+
+    async def _cart_lines(self, parsed: WhatsAppMessage) -> dict[str, CartLine | None] | None:
+        """Los ítems del carrito leídos en el catálogo, o None (sin carrito,
+        sin catálogo o si no responde a tiempo: el carrito sale con sus
+        códigos, como antes)."""
+        import asyncio
+
+        order = parsed.order if isinstance(parsed.order, dict) else None
+        items = (order or {}).get("product_items") or []
+        if not items or self._catalog is None:
+            return None
+        try:
+            result = await asyncio.wait_for(
+                self._catalog.search("", limit=_CATALOG_GAP_LIMIT),
+                timeout=_WEB_CART_HYDRATION_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade, never break the ingest
+            logger.warning("cart_names_unavailable", reason=type(exc).__name__)
+            return None
+        return lines_from_products(items, list(result.results))
 
     async def _resolve_product_ref(self, sku: str) -> tuple[Any, str | None]:
         """Resolves a `ref: HUB-…` SKU against the catalog WITHOUT mutating
@@ -1821,6 +1885,14 @@ class IngestInboundMessage:
         )
         await self.execute(synthetic)
 
+    async def _read_photo(self, parsed: WhatsAppMessage, session_id: str) -> None:
+        """Lee la foto y la hace entrar al bot; al terminar (o fallar) suelta
+        los mensajes del cliente que esperaban por ella."""
+        try:
+            await self._describe_image_and_reenter(parsed)
+        finally:
+            self._photo_reads.end(session_id)
+
     async def _describe_image_and_reenter(self, parsed: WhatsAppMessage) -> None:
         """Describe la imagen (Gemini visión) y re-ejecuta el ingest con un
         mensaje text sintético. Background task — el webhook ya devolvió 200.
@@ -1888,8 +1960,13 @@ class IngestInboundMessage:
                 "provider": result.provider,
                 "cost_usd_estimate": result.cost_usd_estimate,
             }
+            # El episodio de la foto y, si se reconoció, el producto: los turnos
+            # siguientes del episodio lo recuerdan (`build_photo_facts_note`).
+            active = get_active_episode(metadata)
+            if active and active.get("episode_id"):
+                described["episode_id"] = active["episode_id"]
             if product is not None:
-                described["product"] = {"handle": product.handle, "how": product.how}
+                described["product"] = {"handle": product.handle, "how": product.how, "title": product.title}
             recent.append(described)
             metadata["recent_image_descriptions"] = recent[-20:]
         else:
@@ -1946,6 +2023,7 @@ class IngestInboundMessage:
                 persisted_image_url=persisted_image_url,
                 # Las lecturas solo leen lo que escribió el cliente en la foto.
                 customer_text=caption or None,
+                from_photo=True,
             )
             return
 
@@ -2005,6 +2083,7 @@ class IngestInboundMessage:
                 if product is not None
                 else None
             ),
+            from_photo=True,
         )
 
     async def _identify_photo(
@@ -2494,6 +2573,12 @@ def _classify_origin_channel(
     # Defensivo: clid presente pero source_type missing/unknown — default a "ad"
     # (es el caso más común y mantiene compatibilidad con el HU-002).
     return "ad"
+
+
+def _is_photo(parsed: WhatsAppMessage) -> bool:
+    """¿El mensaje es una foto que va a la visión? (las fotos no se esperan entre sí)"""
+    media = parsed.media or {}
+    return media.get("type") == "image" and isinstance(media.get("id"), str)
 
 
 def _spawn_safe(coro, *, label: str, session_id: str | None) -> None:

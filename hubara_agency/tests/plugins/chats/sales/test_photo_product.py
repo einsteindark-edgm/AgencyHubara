@@ -345,3 +345,49 @@ def test_the_real_webhook_identifies_photos(monkeypatch) -> None:  # noqa: ANN00
     assert isinstance(identifier, PhotoIdentifier)
     assert identifier._index is get_catalog_photo_index()
     assert identifier._embedder is not None and identifier._matcher is not None
+
+
+# ── Lo verificado sigue valiendo en los turnos siguientes ──────────────────
+# Laboratorio caso-fotos-0930-r7, 4567 t13: el bot ya había reconocido las
+# cuatro fotos como nuestras; el cliente dijo «me gustaría esas, pero no están
+# todas» y el bot contestó que de las cuatro solo tenía el Velón Gorrión. La
+# identificación solo iba en la nota del turno de la foto: en los turnos
+# siguientes el bot podía negar lo que el sistema ya había verificado.
+
+
+def _facts_metadata() -> dict:
+    return {
+        "episodes": [{"episode_id": "ep_001", "closed_at_ms": 1}, {"episode_id": "ep_002"}],
+        "recent_image_descriptions": [
+            {"media_id": "m0", "description": "vela de un ángel", "episode_id": "ep_001",
+             "product": {"handle": "angel", "how": "nombre", "title": "Ángel"}},
+            {"media_id": "m1", "description": "dos velas lila y azul con pájaros en una rama", "episode_id": "ep_002",
+             "product": {"handle": "velon-gorrion", "how": "imagen", "title": "Velón Gorrión"}},
+            {"media_id": "m2", "description": "una vela de dragón", "episode_id": "ep_002"},
+            {"media_id": "m3", "description": "figura femenina con una vasija", "episode_id": "ep_002",
+             "product": {"handle": "luz-serena", "how": "nombre", "title": "Luz Serena"}},
+        ],
+    }
+
+
+def test_the_rest_of_the_conversation_knows_which_photos_are_ours() -> None:
+    from src.plugins.chats.agent.sales.use_cases.photo_product import build_photo_facts_note
+
+    note = build_photo_facts_note(_facts_metadata())
+
+    assert note is not None and note.startswith("[FOTOS DEL CLIENTE YA RECONOCIDAS")
+    assert "«dos velas lila y azul con pájaros en una rama»: es «Velón Gorrión» (handle velon-gorrion)" in note
+    assert "«figura femenina con una vasija»: es «Luz Serena» (handle luz-serena)" in note
+    assert "Ángel" not in note  # otro episodio
+    assert "dragón" not in note  # no se reconoció: no es un hecho
+    assert "no digas que no los tenemos" in note
+
+
+def test_without_photos_identified_in_this_conversation_there_is_no_note() -> None:
+    from src.plugins.chats.agent.sales.use_cases.photo_product import build_photo_facts_note
+
+    metadata = _facts_metadata()
+    metadata["episodes"].append({"episode_id": "ep_003"})
+
+    assert build_photo_facts_note(metadata) is None
+    assert build_photo_facts_note({}) is None
