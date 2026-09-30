@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from src.plugins.chats.agent.sales_eval.evals.script_rubric import (
     DASH_RE,
@@ -117,3 +118,70 @@ def check_no_discarded_narration(traj: Trajectory, ctx: CheckContext) -> CheckRe
                 "EST-06", turn.turn, f"turno {turn.turn}: narración descartada {quote(turn.discarded_narration[0])}"
             )
     return passed("EST-06")
+
+
+# ── EST-09 · cortesía sin empujón de venta (operador, 2026-09-30) ─────────
+# El evaluador lee el mensaje con reglas propias (no con la lectura del bot que
+# juzga): gracias, elogios o un saludo, sin preguntas de verdad ni pedidos.
+_COURTESY_RE = re.compile(
+    r"\b(gracias|agradezco|agradecid[ao]s?|geniales?|hermos[ao]s?|lind[ao]s?|bell[ao]s?|precios[ao]s?|"
+    r"me encant\w*|nos encant\w*|perfect[ao]s?|excelentes?|chever\w*|qu[eé] bien|qu[eé] bueno|"
+    r"bendicion(es)?|felicidades|s[uú]per)\b|[🙏❤😍🥰💪👍🤍💕😊]",
+    re.IGNORECASE,
+)
+_REQUEST_RE = re.compile(
+    r"\b(quiero|quisiera|necesito|me (mandas|env[ií]as|regalas)|cu[aá]nto|precios?|vale|cuesta|env[ií]os?|"
+    r"domicilio|cu[aá]ndo|d[oó]nde|c[oó]mo (pago|hago)|cat[aá]logo|tienen|hay|otr[ao]s?|puedo|pueden|podr[ií]an)\b",
+    re.IGNORECASE,
+)
+_GREETING_QUESTION_RE = re.compile(r"¿?\s*(c[oó]mo (est[aá]n|est[aá]s|vas|van)|qu[eé] tal)\s*\?", re.IGNORECASE)
+_BRACKET_LINE_RE = re.compile(r"^\s*\[[^\]]*\]\s*$")
+_HANDOFF_REPLY = "Usuario respondió:"
+_SALES_PUSH_RE = re.compile(
+    r"(en qu[eé] (m[aá]s )?(te|le|les) (puedo|podemos) ayudar"
+    r"|(te|le) (puedo )?ayud(o|ar|amos)? con algo m[aá]s"
+    r"|algo m[aá]s en (lo )?que (te|le) (pueda|podamos) ayudar"
+    r"|(quieres|te gustar[ií]a|deseas) (ver|conocer|mirar) (el cat[aá]logo|m[aá]s|otr[oa]s|nuestr)"
+    r"|buscas algo (m[aá]s|en especial|en particular)"
+    r"|qu[eé] (te gustar[ií]a|necesitas|est[aá]s buscando|buscas)\b)",
+    re.IGNORECASE,
+)
+_CATALOG_INTENTS = frozenset({"quick_replies", "products_list", "product_gallery", "categories"})
+
+
+def _customer_words(turn: Any) -> str | None:
+    """Lo que escribió el cliente en el turno, sin las notas del ingest; en un
+    traspaso desde remarketing, lo que respondió al gancho."""
+    if turn.trigger == "handoff":
+        text = turn.inbound_text.strip()
+        return text[len(_HANDOFF_REPLY):].strip() if text.startswith(_HANDOFF_REPLY) else None
+    if turn.trigger != "customer":
+        return None
+    if turn.inbound:
+        return " ".join(str(m.text or "") for m in turn.inbound).strip()
+    lines = [line for line in turn.inbound_text.splitlines() if not _BRACKET_LINE_RE.match(line)]
+    return " ".join(lines).strip()
+
+
+def _is_courtesy(text: str) -> bool:
+    body = _GREETING_QUESTION_RE.sub(" ", text)
+    return (
+        bool(_COURTESY_RE.search(body))
+        and not _REQUEST_RE.search(body)
+        and "?" not in body
+        and len(body.split()) <= 30
+    )
+
+
+@code_check("EST-09")
+def check_courtesy_without_sales_push(traj: Trajectory, ctx: CheckContext) -> CheckResult:
+    courtesy = [t for t in judged_turns(traj) if (words := _customer_words(t)) and _is_courtesy(words)]
+    if not courtesy:
+        return not_judged("EST-09", traj, "el cliente no respondió solo con una cortesía")
+    for turn in courtesy:
+        for text in turn.sent_texts:
+            if m := _SALES_PUSH_RE.search(text):
+                return failed("EST-09", turn.turn, f"turno {turn.turn}: «{m.group(0)}» a una cortesía {quote(text)}")
+        if offered := sorted(set(turn.intents) & _CATALOG_INTENTS):
+            return failed("EST-09", turn.turn, f"turno {turn.turn}: ofreció {', '.join(offered)} a una cortesía")
+    return passed("EST-09")

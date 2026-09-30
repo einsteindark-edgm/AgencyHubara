@@ -28,10 +28,34 @@ def test_contactar_rule_leaves_it_to_the_llm() -> None:
 
 
 def test_contactar_asks_with_the_conversation_and_the_touch_in_view() -> None:
-    state, [question] = CONTACTAR.ask(Contacto(transcript=TRANSCRIPT, touch_number=2, silence_minutes=125))
+    state, [question, _ended] = CONTACTAR.ask(Contacto(transcript=TRANSCRIPT, touch_number=2, silence_minutes=125))
 
     assert question.id == "contactar.sobra" and question.kind == "noul"
     assert TRANSCRIPT in state and "toque 2" in state and "125 minutos" in state
+
+
+def test_contactar_names_a_conversation_that_already_ended() -> None:
+    """El operador (2026-09-30): remarketing no reconoce que la conversación
+    terminó (el cliente ya recibió su pedido y solo agradeció)."""
+    _state, [question, _ended] = CONTACTAR.ask(Contacto(transcript=TRANSCRIPT, touch_number=1, silence_minutes=240))
+
+    assert "recibió su pedido" in question.text and "solo agradeció" in question.text
+
+
+def test_contactar_also_asks_whether_the_conversation_ended() -> None:
+    """Con Jev real (casos emulados, 2026-09-30), «¿sobra un mensaje
+    proactivo?» dudaba donde la conversación ya terminó (0,74 a 0,84); «¿la
+    conversación ya terminó?» separa: 0,91 tras la entrega y el gracias, 0,05
+    con una venta abierta. Cualquiera de las dos, segura, salta el gancho."""
+    inp = Contacto(transcript=TRANSCRIPT, touch_number=1, silence_minutes=240)
+
+    _state, questions = CONTACTAR.ask(inp)
+
+    assert [q.id for q in questions] == ["contactar.sobra", "contactar.terminada"]
+    ended = _result(_noul("contactar.sobra", 0.74), _noul("contactar.terminada", 0.91))
+    open_sale = _result(_noul("contactar.sobra", 0.2), _noul("contactar.terminada", 0.05))
+    assert CONTACTAR.decide(inp, ended, False, {}) is True
+    assert CONTACTAR.decide(inp, open_sale, False, {}) is None
 
 
 def test_without_a_conversation_there_is_nothing_to_judge() -> None:

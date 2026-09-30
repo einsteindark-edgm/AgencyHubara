@@ -121,3 +121,56 @@ async def test_the_vision_description_is_not_read_as_the_customer(_isolate_vault
                          customer_text=None)
 
     assert [i.text for i in provider.seen] == ["listo, ya pagué", None]
+
+
+# --- la cortesía en el episodio nuevo (caso de producción del 2026-09-29) ----
+
+READY = "Hola, tu pedido #47 ya está listo. Te compartimos la foto para que lo veas. ¿Nos confirmas para coordinar la entrega?"
+
+
+class _Capture:
+    def __init__(self) -> None:
+        self.extra_context: list[list[str]] = []
+
+    async def execute(self, session_id: str, message: str, phone_number_id: str | None,
+                      extra_context: list[str] | None = None, **kw: Any) -> None:
+        self.extra_context.append(list(extra_context or []))
+
+
+class _CourtesyProvider(_Provider):
+    """Lee la cortesía; el acuse de la despedida no absorbe nada."""
+
+    async def read_ack(self, inbound: Inbound) -> Any:
+        from src.plugins.chats.agent.sales.decisions.capabilities import Verdict
+
+        return Verdict(capability="acuse", value=False, by="reglas", provider="reglas", rule=False)
+
+
+def _after_purchase() -> _Store:
+    now = int(time.time() * 1000)
+    closed = {"episode_id": "ep_001", "started_at_ms": now - 5 * 86_400_000, "closed_at_ms": now - 4 * 86_400_000,
+              "closing_tag": "COMPRA_EXITOSA", "order_id": "order_TEST"}
+    return _Store({SID: {"episodes": [closed], "tag": "COMPRA_EXITOSA", "active_route": "ventas"}})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("courtesy", "says", "never"), [
+    (True, "solo agradece", "pregunta en qué puedes ayudar"),
+    (False, "pregunta en qué puedes ayudar", "solo agradece"),
+])
+async def test_the_new_episode_note_follows_the_courtesy(_isolate_vault_dir, courtesy: bool, says: str, never: str) -> None:
+    """El ETA avisó «pedido listo» y el cliente solo agradeció: el episodio
+    nuevo no le pide al LLM «pregunta en qué puedes ayudar hoy» (el bot
+    contestó «Cuéntame, ¿en qué te puedo ayudar hoy?»). Sin cortesía (con
+    `reglas`, siempre), la nota de hoy."""
+    loader = _Capture()
+    provider = _CourtesyProvider(
+        Readings(purchase=(None, "text"), deferral=None, courtesy=False, opt_out=False, courtesy_only=courtesy)
+    )
+    ingest = IngestInboundMessage(history_store=_History([{"role": "assistant", "content": READY}]), load_session=loader,
+                                  metadata_store=_after_purchase(), readings=provider)  # type: ignore[arg-type]
+
+    await ingest.execute(_msg("Hola cómo están? Son geniales. Muchas gracias"))
+
+    [note] = [n for n in loader.extra_context[-1] if "episodio NUEVO" in n]
+    assert says in note and never not in note

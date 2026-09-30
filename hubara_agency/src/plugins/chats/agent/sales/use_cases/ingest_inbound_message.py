@@ -447,6 +447,7 @@ class IngestInboundMessage:
         # saltamos es la rotación de episodios + el reset del tag. Al volver al
         # bot (return-to-bot pone active_route=ventas) se reanuda el ciclo.
         episode_boundary_note: str | None = None
+        _prev_closed_episode: dict[str, Any] | None = None
         campaign_reply_note: str | None = None
         campaign_reply_touch: dict[str, Any] | None = None
         # El episodio que se cerró cuando este mensaje abrió uno nuevo con el
@@ -596,6 +597,10 @@ class IngestInboundMessage:
                 else opt_out_campaign_id(metadata, now_ms)
             ),
         )
+        # El cliente solo agradece o saluda (capacidad `cortesia`): el episodio
+        # nuevo no abre venta (caso del 2026-09-29, «pedido listo»).
+        if episode_boundary_note is not None and _prev_closed_episode is not None and readings.courtesy_only:
+            episode_boundary_note = _build_episode_boundary_note(_prev_closed_episode, courtesy=True)
         if written.signal is not None:
             logger.info(
                 "inbound_purchase_signal",
@@ -2459,7 +2464,7 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _build_episode_boundary_note(prev_episode: dict[str, Any]) -> str:
+def _build_episode_boundary_note(prev_episode: dict[str, Any], *, courtesy: bool = False) -> str:
     """Nota de frontera de episodio para `plugin_context` en re-engagement.
 
     Cuando el cliente vuelve tras un episodio CERRADO, el `memory_window` del
@@ -2469,6 +2474,12 @@ def _build_episode_boundary_note(prev_episode: dict[str, Any]) -> str:
     3b3fbaee: re-emitía EpisodeClosedEvent y crasheaba el dispatch). La nota le
     dice explícitamente que arranque una conversación nueva. NO toca el
     historial (eso requeriría modificar la base lib). Tuteo colombiano (REGLA #1).
+
+    `courtesy` (capacidad `cortesia`): el cliente solo agradece o saluda. Caso
+    del 2026-09-29: el ETA avisó «tu pedido ya está listo», el cliente
+    contestó «Son geniales. Muchas gracias» y, con «pregunta en qué puedes
+    ayudar hoy», el bot abrió venta. Con cortesía la nota pide una respuesta
+    breve y cálida, sin abrir venta.
     """
     closing_tag = prev_episode.get("closing_tag") or ""
     order_id = prev_episode.get("order_id")
@@ -2487,6 +2498,15 @@ def _build_episode_boundary_note(prev_episode: dict[str, Any]) -> str:
         )
     else:
         prev_clause = "ya se cerró y no tiene nada pendiente de tu lado"
+    if courtesy:
+        return (
+            "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
+            "Empieza un episodio NUEVO con este cliente. La conversación anterior "
+            f"{prev_clause}. El cliente solo agradece o saluda: contéstale breve y "
+            "cálido a lo que dijo, en una o dos frases (si comenta algo de su "
+            "pedido, por ejemplo que le gustó, agradéceselo). No abras una venta "
+            "nueva, no ofrezcas productos ni preguntes en qué más puedes ayudar."
+        )
     return (
         "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
         "Empieza un episodio NUEVO con este cliente. La conversación anterior "

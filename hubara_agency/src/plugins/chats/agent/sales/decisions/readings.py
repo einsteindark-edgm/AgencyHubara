@@ -34,7 +34,7 @@ import structlog
 
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_session
 from src.plugins.chats.agent.sales.decisions.capabilities import BY_RULE, Verdict, decide
-from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Acuse, Baja, Compra, Retoma
+from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Acuse, Baja, Compra, Cortesia, Retoma
 from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import (
     Cupon,
     CuponEnJuego,
@@ -69,6 +69,18 @@ class Inbound:
     synthetic: bool = False
 
 
+#: Metadata: el último mensaje del cliente que solo agradece o saluda.
+COURTESY_KEY = "last_inbound_courtesy"
+
+
+def last_inbound_is_courtesy(metadata: Mapping[str, Any]) -> bool:
+    """¿La marca de cortesía es del ÚLTIMO mensaje del cliente?"""
+    mark = metadata.get(COURTESY_KEY)
+    return isinstance(mark, Mapping) and bool(mark.get("message_id")) and (
+        mark.get("message_id") == metadata.get("last_inbound_message_id")
+    )
+
+
 @dataclass(frozen=True)
 class Readings:
     purchase: tuple[str | None, str]
@@ -76,6 +88,9 @@ class Readings:
     courtesy: bool
     opt_out: bool
     verdicts: tuple[dict[str, Any], ...] = ()
+    # El cliente solo agradece o saluda (capacidad `cortesia`): el turno no
+    # abre venta. Con `reglas`, siempre False.
+    courtesy_only: bool = False
 
 
 def _rule_verdict(capability: Any, inp: Inbound) -> Verdict:
@@ -105,10 +120,11 @@ class EngineReadings:
 
         baja = Baja()
         marketing = has_recent_marketing_context(dict(inbound.metadata), inbound.now_ms)
-        compra_v, retoma_v, baja_v = await asyncio.gather(
+        compra_v, retoma_v, baja_v, cortesia_v = await asyncio.gather(
             run(Compra()),
             run(Retoma()),
             run(baja) if marketing else _completed(_rule_verdict_off(baja, inbound)),
+            run(Cortesia()),
         )
         deferral = (retoma_v.value or {}).get("deferral")
         return Readings(
@@ -116,7 +132,8 @@ class EngineReadings:
             deferral=ReengagementDeferral(until_ms=int(deferral["until_ms"]), kind=str(deferral["kind"])) if deferral else None,
             courtesy=bool((retoma_v.value or {}).get("courtesy")),
             opt_out=bool(baja_v.value),
-            verdicts=tuple(v.to_trace() for v in (compra_v, retoma_v, baja_v)),
+            verdicts=tuple(v.to_trace() for v in (compra_v, retoma_v, baja_v, cortesia_v)),
+            courtesy_only=bool(cortesia_v.value),
         )
 
     async def read_ack(self, inbound: Inbound) -> Verdict:
@@ -181,6 +198,12 @@ def apply_readings(
     if not metadata.get("marketing_opt_out") and text and readings.opt_out:
         mark_marketing_opt_out(metadata, now_ms=now_ms, source=OPT_OUT_SOURCE_TEXT, campaign_id=opt_out_campaign_id)
         opted_out = True
+    # La cortesía vale para ESTE mensaje: la leen la nota del episodio nuevo,
+    # el paso desde remarketing y la guía del turno (con `reglas`, nunca).
+    if readings.courtesy_only:
+        metadata[COURTESY_KEY] = {"message_id": message_id, "at_ms": now_ms}
+    else:
+        metadata.pop(COURTESY_KEY, None)
     return Written(signal=signal, opted_out=opted_out)
 
 

@@ -48,8 +48,9 @@ DEFAULT_PROFILE = "jev-v5"
 #: Las capacidades que el control del dashboard conoce (cada una con su
 #: interruptor). Una capacidad nueva se suma aquí.
 CAPABILITIES: tuple[str, ...] = (
-    # Lecturas del cliente (F3) y el acuse tras la despedida (#379).
-    "compra", "retoma", "baja", "acuse", "cupon", "fuera_de_catalogo", "cantidad",
+    # Lecturas del cliente (F3), el acuse tras la despedida (#379) y la
+    # cortesía que no abre venta (2026-09-30).
+    "compra", "retoma", "baja", "acuse", "cortesia", "cupon", "fuera_de_catalogo", "cantidad",
     # Mapeos a listas cerradas dentro de las tools (F3) y la revisión de los
     # datos de envío de `set_order_slot` (F6).
     "categoria", "familia_de_color", "item_del_pedido", "zona_de_envio", "datos", "producto_nombrado",

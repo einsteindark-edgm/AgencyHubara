@@ -131,3 +131,61 @@ def test_est06_discarded_narration_fails_on_that_turn() -> None:
 
 def test_est06_legacy_is_unknown() -> None:
     assert _run("EST-06", traj(T(1, sent=["Claro"]), fidelity="legacy")).verdict == "desconocido"
+
+
+# ── EST-09 · cortesía sin empujón de venta ───────────────────────────────
+# Caso de producción del 2026-09-29: el ETA avisó «tu pedido ya está listo», el
+# cliente contestó con un agradecimiento y el bot cerró con «Cuéntame, ¿en qué
+# te puedo ayudar hoy?». Pasa también al volver de remarketing.
+
+READY_REPLY = (
+    "[Conversación anterior con este cliente, ya cerrada: terminó en una compra (order_X). Esta es una "
+    "conversación nueva: no la retomes salvo que el cliente la mencione.]\n"
+    "[El cliente responde a este mensaje que le enviamos: «Hola, tu pedido #47 ya está listo. ¿Nos confirmas para "
+    "coordinar la entrega?»]\n"
+    "Hola cómo están? Son geniales. Muchas gracias"
+)
+
+
+def test_est09_a_thank_you_answered_with_a_sales_question_fails() -> None:
+    t = traj(T(1, inbound=READY_REPLY,
+               sent=["Buenas tardes, con gusto 🤍\n\nNos alegra que te hayan gustado. Cuéntame, ¿en qué te puedo ayudar hoy?"]))
+
+    r = _run("EST-09", t)
+
+    assert (r.verdict, r.turn) == ("falla", 1)
+    assert "en qué te puedo ayudar" in r.evidence
+
+
+def test_est09_a_short_warm_reply_passes() -> None:
+    t = traj(T(1, inbound=READY_REPLY, sent=["¡Qué alegría que te gustaron! 🤍 Gracias a ti."]))
+
+    assert _run("EST-09", t).verdict == "pasa"
+
+
+def test_est09_offering_the_catalog_to_a_thank_you_fails() -> None:
+    t = traj(T(1, inbound="Ya lo recibí. Muchas gracias 💪", sent=["¡Qué bueno! 🤍"],
+               tools=[tool("send_quick_replies")]))
+
+    assert _run("EST-09", t).verdict == "falla"
+
+
+def test_est09_a_courtesy_reply_to_remarketing_counts_too() -> None:
+    t = traj(T(1, trigger="handoff", inbound="Usuario respondió: Muchas gracias, muy amables",
+               sent=["¡Con gusto! 🤍 ¿Te ayudo con algo más?"]))
+
+    assert _run("EST-09", t).verdict == "falla"
+
+
+def test_est09_a_customer_who_asks_or_asks_for_something_is_not_judged() -> None:
+    for inbound in ("Las puedo recibir en el apto a esta hora.. acá estoy.", "Gracias, ¿y cuánto vale el envío?"):
+        t = traj(T(1, inbound=inbound, sent=["Claro, ¿en qué más te puedo ayudar?"]))
+        assert _run("EST-09", t).verdict == "no_aplica", inbound
+
+
+def test_est09_is_registered_as_a_major_style_check() -> None:
+    from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION, SPECS_BY_ID
+
+    spec = SPECS_BY_ID.get("EST-09")
+    assert spec is not None and (spec.family, spec.level, spec.kind) == ("estilo", "mayor", "code")
+    assert REGISTRY_VERSION == 5

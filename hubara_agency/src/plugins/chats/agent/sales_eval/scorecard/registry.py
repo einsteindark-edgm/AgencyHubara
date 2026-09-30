@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckSpec
 
-REGISTRY_VERSION = 4
+REGISTRY_VERSION = 5
 
 LEVELS = ("critico", "mayor", "menor")
 KINDS = ("code", "judge")
@@ -331,6 +331,10 @@ CHECKS: tuple[CheckSpec, ...] = (
        "Cada asunto que el cliente plantea, sea pregunta o pedido y lleve o no \"?\", recibe respuesta en ese "
        "turno o el siguiente antes de avanzar la venta; en una ráfaga cuenta cada mensaje.",
        ("operador 2026-09-14", "plan del laboratorio §5.1: EST-08 v2")),
+    _c("EST-09", "Cortesía sin empujón de venta", "estilo", "mayor", "code",
+       "El cliente solo agradece, felicita o saluda, sin preguntar ni pedir nada (también al volver de remarketing).",
+       "La respuesta es breve y cálida: no pregunta en qué más puede ayudar ni ofrece productos o el catálogo.",
+       ("operador 2026-09-30: respuesta al aviso de «pedido listo» del ETA y a remarketing",)),
     # ── Ghosting ───────────────────────────────────────────────────────────
     _c("GHO-01", "El turno de ghosting no le escribe al cliente", "ghosting", "critico", "code",
        "Hubo turno de ghosting.",

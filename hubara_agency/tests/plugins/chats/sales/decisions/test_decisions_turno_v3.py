@@ -14,6 +14,8 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from src.plugins.chats.agent.sales.decisions.context import TurnContext, Window, stagnant_turns
 from src.plugins.chats.agent.sales.decisions.policies import get_policy
 from src.plugins.chats.agent.sales.decisions.questionnaire import load_questionnaire
@@ -186,6 +188,31 @@ def test_a_customer_who_is_choosing_is_not_stuck() -> None:
     )
 
     assert "Llevan 3 turnos" not in turn.note
+
+
+@pytest.mark.parametrize("stage", ["etapa_descubrimiento", "etapa_postcierre"])
+def test_a_customer_who_only_thanks_is_not_pushed_to_buy(stage: str) -> None:
+    """Caso de producción del 2026-09-29: el cliente contestó el «pedido
+    listo» del ETA con un agradecimiento; el episodio nuevo cae en
+    descubrimiento y la guía decía «ayúdale a escoger un producto». Con la
+    lectura `cortesia` (sin venta en curso), respuesta breve y cálida."""
+    ctx = TurnContext(window=Window(lines=("[asesor] Hola, tu pedido #47 ya está listo.",)), facts=(f"Etapa: {stage}",),
+                      stage=stage, courtesy=True)
+
+    turn = POLICY.decide_turn(_result(_noul("topic.saludo", 0.9)), questionnaire=RAFAGA, context=ctx, n_messages=1,
+                              thresholds=TH)
+
+    assert "ayúdale a escoger" not in turn.note and "solo agradece" in turn.note
+    assert turn.guide.get("courtesy") is True
+
+
+def test_a_thank_you_in_the_middle_of_a_sale_keeps_the_next_step() -> None:
+    ctx = TurnContext(window=Window(lines=("[asesor] ¿Qué color quieres?",)), facts=("Etapa: etapa_variantes",),
+                      stage="etapa_variantes", missing=("color",), courtesy=True)
+
+    turn = POLICY.decide_turn(_result(), questionnaire=RAFAGA, context=ctx, n_messages=1, thresholds=TH)
+
+    assert "pide solo lo que falta: color" in turn.note and "solo agradece" not in turn.note
 
 
 def test_before_choosing_the_product_the_card_also_answers_a_variant() -> None:

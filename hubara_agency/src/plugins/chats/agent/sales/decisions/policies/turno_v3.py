@@ -70,6 +70,13 @@ _CONTRACT: dict[str, tuple[tuple[str, ...], str]] = {
 
 #: Asuntos que el cliente puede estar ELIGIENDO en vez de preguntando.
 _CHOICE_TOPICS = ("variante", "aroma")
+#: Etapas sin una venta en curso: ahí un cliente que solo agradece o saluda
+#: (lectura `cortesia` del ingest) no se empuja a comprar.
+_NO_SALE_STAGES = ("etapa_descubrimiento", "etapa_postcierre")
+_COURTESY_STEP = (
+    "El cliente solo agradece o saluda: contéstale breve y cálido, sin abrir una venta ni preguntar en qué más "
+    "puedes ayudar."
+)
 
 # Re-exporta lo que no cambia con respecto a v2.
 coverage_decision = turno_v2.coverage_decision
@@ -189,7 +196,10 @@ def _guide(
     # Lo que falta es del borrador de ANTES del mensaje: si el cliente está
     # eligiendo, pudo haberlo dado ahora («Mejor 2»).
     chose = bool(chosen) and stage == "etapa_variantes"
-    step = _next_step(stage, missing, given, result, th, chose=chose)
+    # Caso del 2026-09-29 («pedido listo» → «Son geniales. Muchas gracias»):
+    # sin venta en curso, el que solo agradece no se lleva al catálogo.
+    courtesy = bool(getattr(context, "courtesy", False)) and stage in _NO_SALE_STAGES
+    step = "" if courtesy else _next_step(stage, missing, given, result, th, chose=chose)
     label = STAGE_LABELS.get(stage, stage)
     parts = [f"[ETAPA] {label[:1].upper() + label[1:]}."]
     if given:
@@ -198,13 +208,15 @@ def _guide(
         parts.append(f"{'Antes de este mensaje faltaba' if chose else 'Falta'}: {_labels(missing)}.")
     if going_back:
         parts.append("El cliente quiere ver otros productos: quita el anterior del pedido (quitar=true) y muéstrale opciones.")
+    elif courtesy:
+        parts.append(_COURTESY_STEP)
     elif step:
         parts.append(f"Siguiente paso: {step}")
-    if stagnant >= STAGNANT_TURNS and not chose:
+    if stagnant >= STAGNANT_TURNS and not chose and not courtesy:
         ask = f"pide de forma concreta {_labels(missing)}" if missing else "lleva al cliente al siguiente paso"
         parts.append(f"Llevan {stagnant} turnos en esta etapa sin un dato nuevo: {ask}.")
     guide = {"stage": stage, "given_now": given, "missing": missing, "going_back": going_back, "stagnant": stagnant,
-             "next": step, "chosen_now": list(chosen)}
+             "next": step, "chosen_now": list(chosen), "courtesy": courtesy}
     return guide, " ".join(parts)
 
 

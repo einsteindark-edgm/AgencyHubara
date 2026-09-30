@@ -243,3 +243,80 @@ async def test_the_context_says_whether_the_touch_is_not_needed(_isolate_vault_d
 
     assert today.skip_touch is False and today.contact == {}, "con reglas el contexto grabado es el de hoy"
     assert with_jev.skip_touch is True and with_jev.contact.get("by") == "jev"
+
+
+# --- Lo que ve `contactar` antes de redactar (2026-09-30) --------------------
+#
+# El operador: remarketing no reconoce que la conversación ya terminó. El
+# gancho ve solo el episodio activo; si ese episodio lo abrió un «gracias» al
+# aviso del ETA («tu pedido fue entregado»), `contactar` no veía ni el aviso ni
+# que la conversación anterior terminó en una compra, y un «Ya lo recibí.
+# Muchas gracias» parecía una conversación abierta.
+
+_PURCHASE = {"episode_id": "ep_001", "closed_at_ms": 5, "closing_tag": "COMPRA_EXITOSA", "order_id": "order_X"}
+_DELIVERED = "¡Tu pedido #47 fue entregado! 🎉 Esperamos que lo disfrutes."
+
+
+def _after_delivery() -> tuple[dict, list[dict]]:
+    events = [
+        _ev("user", "Quiero el Velón Gorrión"),
+        _ev("assistant", "Listo, tu pedido quedó registrado 🤍"),
+        _ev("assistant", _DELIVERED),
+        _ev("user", "Ya lo recibí. Muchas gracias 💪"),
+        _ev("assistant", "Qué alegría, que las disfrutes mucho 🤍"),
+    ]
+    metadata = {
+        "tag": "INTERESADO",
+        "episodes": [_PURCHASE, {"episode_id": "ep_002", "closed_at_ms": None, "msgs_count_at_start": 3}],
+    }
+    return metadata, events
+
+
+class TestContactTranscript:
+    def test_it_shows_how_the_previous_conversation_ended_and_what_the_customer_answered(self) -> None:
+        from src.plugins.chats.agent.remarketing.use_cases.context import contact_transcript
+
+        metadata, events = _after_delivery()
+
+        assert contact_transcript(metadata, events).splitlines() == [
+            "(Antes de esto, la conversación anterior terminó en una compra.)",
+            "Asesor: Listo, tu pedido quedó registrado 🤍",
+            f"Asesor: {_DELIVERED}",
+            "Cliente: Ya lo recibí. Muchas gracias 💪",
+            "Asesor: Qué alegría, que las disfrutes mucho 🤍",
+        ]
+
+    def test_without_a_previous_conversation_it_is_the_hook_transcript(self) -> None:
+        from src.plugins.chats.agent.remarketing.use_cases.context import contact_transcript
+
+        events = [_ev("user", "Hola"), _ev("assistant", "¡Hola! ¿Qué estás buscando?")]
+        metadata = {"episodes": [{"episode_id": "ep_001", "closed_at_ms": None, "msgs_count_at_start": 0}]}
+
+        assert contact_transcript(metadata, events) == render_transcript(events)
+
+
+@pytest.mark.asyncio
+async def test_contactar_decides_with_the_previous_purchase_in_view(_isolate_vault_dir: Path) -> None:
+    from src.plugins.chats.shared.agent_decisions import clear_contact_decider, register_contact_decider
+
+    seen: dict = {}
+
+    async def decider(**kw):
+        seen.update(kw)
+        return True, {"capability": "contactar"}
+
+    sid = "wa_573001234567"
+    metadata, events = _after_delivery()
+    session = _isolate_vault_dir / sid
+    (session / "sessions").mkdir(parents=True)
+    (session / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    (session / "sessions" / f"{sid}.jsonl").write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+    register_contact_decider(decider)
+    try:
+        context = await ActivityEnvironment().run(read_remarketing_context_activity, sid)
+    finally:
+        clear_contact_decider()
+
+    assert "terminó en una compra" in seen.get("transcript", "") and _DELIVERED in seen.get("transcript", "")
+    assert _DELIVERED not in context.transcript  # el gancho sigue viendo solo el episodio
+    assert context.skip_touch is True

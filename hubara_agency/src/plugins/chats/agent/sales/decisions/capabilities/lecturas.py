@@ -1,5 +1,5 @@
 """Capacidades de lectura del cliente en el ingest (diseño v2 §07, familia A):
-compra, retoma, baja y acuse. Cada una con la regla de hoy de respaldo; ver
+compra, retoma, baja, acuse y cortesía. Cada una con la regla de hoy de respaldo; ver
 el marco en `capabilities/__init__.py`.
 
 Entrada común: `Inbound` (`decisions/readings.py`). Si el texto lo escribió la
@@ -319,6 +319,57 @@ class Acuse:
     def floor(self, inp: Any, rule: bool, jev: bool) -> bool:
         text = str(getattr(inp, "text", None) or "")
         return bool(jev) and "?" not in text and "¿" not in text
+
+    def same(self, a: bool, b: bool) -> bool:
+        return bool(a) == bool(b)
+
+
+class Cortesia:
+    """«¿El cliente solo agradece o saluda?» (caso del 2026-09-29): el ETA
+    avisó «tu pedido ya está listo… ¿Nos confirmas para coordinar la
+    entrega?», el cliente contestó «Hola cómo están? Son geniales. Muchas
+    gracias» y el bot, con la nota de episodio nuevo, abrió venta («Cuéntame,
+    ¿en qué te puedo ayudar hoy?»). Con el valor, el turno le pide al LLM una
+    respuesta breve y cálida, sin abrir venta.
+
+    La regla de hoy no distingue: siempre «no», y todo sigue como hoy. Jev
+    lee el mensaje con lo que el cliente vio antes a la vista: un «sí» a
+    «¿Nos confirmas…?» responde una pregunta, no es cortesía. Con duda, se
+    atiende como siempre. Valor: bool (True = solo cortesía)."""
+
+    name = "cortesia"
+    thresholds: Mapping[str, float] = {"yes": 0.85}
+
+    def rule(self, inp: Any) -> bool:
+        return False
+
+    def ask(self, inp: Any) -> tuple[str, list[TypedQuestion]] | None:
+        text = _customer_text(inp)
+        if text is None:
+            return None
+        window = customer_window(list(getattr(inp, "events", ()) or ()), burst_wamids=set(), burst_size=0)
+        lines = ["CONTEXTO — lo que el cliente vio antes de este mensaje", *window.lines] if window.lines else []
+        state = "\n".join([*lines, "MENSAJE DEL CLIENTE", f"[1] {text.strip()}"])
+        return state, [
+            TypedQuestion(
+                id="cortesia.solo", kind="noul",
+                text=(
+                    "¿El cliente solo agradece, saluda o comenta algo amable (por ejemplo, que ya recibió el pedido "
+                    "o que le gustó), sin preguntar ni pedir nada y sin responder una pregunta de la tienda?"
+                ),
+                criteria={"true": "sí, solo agradece o saluda", "false": "no: pregunta, pide algo o responde una pregunta"},
+            )
+        ]
+
+    def decide(self, inp: Any, result: Any, rule: bool, thresholds: Mapping[str, float]) -> bool | None:
+        th = {**self.thresholds, **thresholds}
+        p = _p(result, "cortesia.solo")
+        if p is None:
+            return None  # sin respuesta: decide la regla
+        return p >= th["yes"]
+
+    def floor(self, inp: Any, rule: bool, jev: bool) -> bool:
+        return bool(jev)
 
     def same(self, a: bool, b: bool) -> bool:
         return bool(a) == bool(b)

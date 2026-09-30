@@ -25,7 +25,7 @@ def test_a_deferral_in_the_burst_reaches_the_turn_like_in_production(tmp_path: P
     result = report["result"]
     assert result["error"] is None, result
     assert any("EL CLIENTE APLAZÓ" in note for note in result["plugin_context"]), result["plugin_context"]
-    assert [v["capability"] for v in result["readings"][0]] == ["compra", "retoma", "baja"]
+    assert [v["capability"] for v in result["readings"][0]] == ["compra", "retoma", "baja", "cortesia"]
 
 
 async def test_the_readings_read_what_the_customer_wrote_not_what_the_ingest_added(tmp_path: Path, monkeypatch) -> None:

@@ -57,6 +57,7 @@ def _turn_context(session_id: str, messages: list[dict]) -> TurnContext | None:
     ráfaga) y los hechos del pedido. Sin vault legible, sin contexto: Jev lee
     solo la ráfaga, como en v1."""
     from src.plugins.chats.agent.sales.composition import build_session_history_reader
+    from src.plugins.chats.agent.sales.decisions.readings import last_inbound_is_courtesy
     from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
     from src.plugins.chats.agent.sales.turn_trace import draft_slots
     from src.plugins.chats.agent.sales.use_cases.funnel_stage import resolve_funnel_stage
@@ -80,6 +81,9 @@ def _turn_context(session_id: str, messages: list[dict]) -> TurnContext | None:
         stage=stage,
         missing=missing_for_stage(metadata, stage),
         stagnant=stagnant_turns(_episode_traces(session_id, episode_id), episode_id=episode_id, draft=draft_slots(episode)),
+        # El ingest marcó que el último mensaje solo agradece o saluda
+        # (capacidad `cortesia`): la guía no empuja la venta.
+        courtesy=last_inbound_is_courtesy(metadata),
     )
 
 

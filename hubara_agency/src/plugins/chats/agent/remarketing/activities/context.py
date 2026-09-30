@@ -23,6 +23,7 @@ from src.plugins.chats.agent.remarketing.contracts import (
 from src.plugins.chats.agent.remarketing.prompts import build_remarketing_trigger
 from src.plugins.chats.agent.remarketing.use_cases.context import (
     catalog_facts_for,
+    contact_transcript,
     context_from_metadata,
     customer_text_for,
     named_products,
@@ -80,7 +81,8 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
     # no hay decisión y el LLM decide como siempre.
     skip, trace = await decide_contact(
         session_id=session_id,
-        transcript=context.transcript,
+        # Con cómo terminó la conversación anterior a la vista (2026-09-30).
+        transcript=contact_transcript(metadata or {}, events),
         touch_number=context.touch_number,
         silence_minutes=context.silence_minutes,
         vault_dir=Path(WORKSPACE_VAULT_DIR),

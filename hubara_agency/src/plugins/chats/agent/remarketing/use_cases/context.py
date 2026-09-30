@@ -15,6 +15,8 @@ Acá se digiere lo que el gancho necesita:
     transcript del vault (`<vault>/<sid>/sessions/<sid>.jsonl`, el log que lee
     el dashboard) — no de toda la sesión (runs edbb0d8b / 8e73b7dc).
   * `campaign_context`: la campaña que abrió el episodio, si la hubo.
+  * `contact_transcript`: lo que ve la decisión `contactar` (el episodio y,
+    si abrió tras otro que se cerró, cómo terminó ese).
 """
 from __future__ import annotations
 
@@ -86,6 +88,48 @@ def episode_events(
     if isinstance(start, int) and 0 <= start <= len(events):
         return events[start:]
     return events
+
+
+#: Lo que la tienda le escribió al cliente desde su último mensaje, antes de
+#: la conversación nueva (la confirmación, los avisos del ETA): hasta 3.
+CONTACT_NOTICE_LINES = 3
+
+_PREVIOUS_OUTCOME = {
+    "COMPRA_EXITOSA": "la conversación anterior terminó en una compra",
+    "CONFIRMADO_PAGO_PENDIENTE": "la conversación anterior terminó con un pedido registrado",
+    "CONFIRMADO_SIN_DATOS": "la conversación anterior terminó con una compra confirmada",
+    "RECHAZO": "en la conversación anterior el cliente decidió no comprar",
+}
+
+
+def contact_transcript(meta: dict[str, Any], events: list[dict[str, Any]]) -> str:
+    """Lo que ve `contactar` («¿sobra el gancho?») antes de redactar.
+
+    El operador (2026-09-30): remarketing no reconoce que la conversación ya
+    terminó. Si el episodio activo lo abrió un mensaje tras otro que se cerró
+    (un «Ya lo recibí. Muchas gracias» al aviso de entrega del ETA), el
+    gancho solo ve ese episodio. Acá van además cómo terminó la conversación
+    anterior y lo que la tienda le escribió desde su último mensaje. Sin
+    conversación anterior, la misma transcripción del gancho. El gancho no
+    cambia: esto es solo para la decisión.
+    """
+    episode = _active_episode(meta)
+    current = render_transcript(episode_events(events, episode))
+    episodes = meta.get("episodes") if isinstance(meta.get("episodes"), list) else []
+    previous = episodes[-2] if episode is not None and len(episodes) >= 2 else None
+    start = (episode or {}).get("msgs_count_at_start")
+    if (
+        not isinstance(previous, dict)
+        or previous.get("closed_at_ms") is None
+        or not isinstance(start, int)
+        or not 0 <= start <= len(events)
+    ):
+        return current
+    before = events[:start]
+    last_customer = max((i for i, e in enumerate(before) if e.get("role") == "user"), default=-1)
+    notices = render_transcript(before[last_customer + 1 :], limit=CONTACT_NOTICE_LINES)
+    outcome = _PREVIOUS_OUTCOME.get(str(previous.get("closing_tag") or ""), "la conversación anterior se cerró")
+    return "\n".join(part for part in (f"(Antes de esto, {outcome}.)", notices, current) if part)
 
 
 def campaign_context_for(episode: dict[str, Any] | None) -> str:

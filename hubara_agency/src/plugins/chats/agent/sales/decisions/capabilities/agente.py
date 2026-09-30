@@ -43,8 +43,13 @@ class Contacto:
 
 
 class Contactar:
-    """«¿Sobra un mensaje proactivo ahora?» (ver el módulo). Valor: True =
-    el toque sobra (no se redacta nada)."""
+    """«¿Sobra un mensaje proactivo ahora?» (ver el módulo) y «¿la
+    conversación ya terminó?» (operador, 2026-09-30: remarketing no reconoce
+    una conversación terminada). Con Jev real sobre casos emulados, la
+    primera dudaba donde el cliente ya había recibido y agradecido (0,74 a
+    0,84); la segunda separa (0,91 tras la entrega y el gracias, 0,05 con una
+    venta abierta). Cualquiera de las dos, segura, salta el toque. Valor: True
+    = el toque sobra (no se redacta nada)."""
 
     name = "contactar"
     thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
@@ -70,22 +75,31 @@ class Contactar:
                 id="contactar.sobra",
                 kind="noul",
                 text=(
-                    "¿Sobra un mensaje proactivo ahora? Sobra si el cliente ya compró, se despidió o dijo que no, "
-                    "pidió que no le escribieran, lo está atendiendo una persona del equipo o la conversación "
-                    "sigue viva."
+                    "¿Sobra un mensaje proactivo ahora? Sobra si la conversación ya terminó (el cliente ya compró o "
+                    "recibió su pedido, se despidió o solo agradeció al final, o dijo que no), pidió que no le "
+                    "escribieran, lo está atendiendo una persona del equipo o la conversación sigue viva."
                 ),
                 criteria=_YES_NO,
-            )
+            ),
+            TypedQuestion(
+                id="contactar.terminada",
+                kind="noul",
+                text=(
+                    "¿La conversación ya terminó? Terminó si el cliente ya compró o recibió su pedido y solo "
+                    "agradeció, se despidió, dijo que no o dijo que él escribe después."
+                ),
+                criteria=_YES_NO,
+            ),
         ]
 
     def decide(self, inp: Contacto, result: Any, rule: bool, thresholds: Mapping[str, float]) -> bool | None:
         th = {**self.thresholds, **thresholds}
-        p = _p(result, "contactar.sobra")
-        if p is None:
+        p, ended = _p(result, "contactar.sobra"), _p(result, "contactar.terminada")
+        if p is None and ended is None:
             return None
-        if p >= th["yes"]:
+        if (p is not None and p >= th["yes"]) or (ended is not None and ended >= th["yes"]):
             return True
-        if p <= th["no"]:
+        if p is not None and p <= th["no"]:
             return False
         return None
 

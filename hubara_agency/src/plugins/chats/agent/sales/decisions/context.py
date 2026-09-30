@@ -85,6 +85,7 @@ class TurnContext:
     stage: str | None = None
     missing: tuple[str, ...] = ()
     stagnant: int = 0
+    courtesy: bool = False
 
     def when_facts(self) -> dict[str, Any]:
         """Los hechos con que se filtran las preguntas (`when` del cuestionario)."""

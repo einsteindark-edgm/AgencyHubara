@@ -252,7 +252,21 @@ async def read_and_clear_pending_handoff_activity(session_id: str) -> str | None
             "read_and_clear_pending_handoff: handoff consumido session=%s",
             session_id,
         )
+    from src.plugins.chats.agent.sales.decisions.readings import last_inbound_is_courtesy
+
+    if summary and last_inbound_is_courtesy(data):
+        summary = f"{summary}\n{_COURTESY_HANDOFF_LINE}"
     return summary if summary else None
+
+
+#: Lo que el framing del traspaso agrega cuando el cliente solo agradeció o
+#: saludó al gancho (capacidad `cortesia`): el framing pide «si solo saludó,
+#: saluda breve y pregunta en qué puedes ayudar», y así nacía el empujón.
+_COURTESY_HANDOFF_LINE = (
+    "[El cliente solo agradece o saluda: contéstale breve y cálido a lo que dijo; "
+    "no ofrezcas productos y no preguntes en qué más puedes ayudar.]"
+)
+
 
 
 @activity.defn(name="read_order_draft_note")
