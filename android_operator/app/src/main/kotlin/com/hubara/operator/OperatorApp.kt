@@ -5,14 +5,12 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import com.hubara.operator.core.ui.LocalRadarFloor
 import com.hubara.operator.core.ui.LocalRadarIndicator
-import com.hubara.operator.core.ui.RadarDefaults
 import com.hubara.operator.core.ui.RadarIndicatorModel
-import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -59,7 +57,8 @@ import com.hubara.operator.core.navigation.Navigator
 import com.hubara.operator.core.navigation.OrdersKey
 import com.hubara.operator.core.navigation.SyntheticStack
 import com.hubara.operator.core.navigation.rememberNavigationState
-import com.hubara.operator.core.ui.RadarOverlay
+import com.hubara.operator.core.ui.RadarFloorState
+import com.hubara.operator.core.ui.RadarLayer
 import com.hubara.operator.feature.auth.LoginScreen
 import com.hubara.operator.feature.fires.destinationFor
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -124,26 +123,9 @@ private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: Stat
         }
     }
 
-    // Radar: desplegado a pedido (chip) o, unos segundos, cuando llega un incendio grave nuevo.
+    // Radar: desplegado a pedido (chip) o, unos segundos, cuando llegan incendios graves nuevos.
     var expanded by rememberSaveable { mutableStateOf(false) }
-    var transient by remember { mutableStateOf<ImmutableList<Fire>>(persistentListOf()) }
-    var transientTick by remember { mutableIntStateOf(0) }
-    val seen = remember { mutableSetOf<String>() }
-    LaunchedEffect(radar) {
-        val fresh = radar.filter { seen.add(it.id.raw) }
-        if (fresh.isNotEmpty() && !expanded) {
-            transient = fresh.toImmutableList()
-            transientTick++
-        } else {
-            transient = transient.filter { t -> radar.any { it.id == t.id } }.toImmutableList()
-        }
-    }
-    LaunchedEffect(transientTick) {
-        if (transient.isNotEmpty()) {
-            delay(RadarDefaults.TRANSIENT_MS)
-            transient = persistentListOf()
-        }
-    }
+    val floor = remember { RadarFloorState() }
 
     val sheets = remember { BottomSheetSceneStrategy<NavKey>() }
     val listDetail = rememberListDetailSceneStrategy<NavKey>()
@@ -165,33 +147,32 @@ private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: Stat
         },
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            CompositionLocalProvider(LocalRadarIndicator provides RadarIndicatorModel(radar.size) { expanded = true }) {
+            CompositionLocalProvider(
+                LocalRadarIndicator provides RadarIndicatorModel(radar.size) { expanded = true },
+                LocalRadarFloor provides floor,
+            ) {
                 NavDisplay(
                     entries = state.toDecoratedEntries(provider),
                     onBack = { navigator.goBack() },
                     sceneStrategies = listOf(sheets, listDetail),
                 )
             }
-            // El radar es una capa encima de cualquier pantalla, no una clave de la pila. Un incendio nuevo
-            // aparece compacto unos segundos debajo del encabezado y se pliega al chip de la barra superior.
-            RadarOverlay(
-                cards = if (expanded) radar else transient,
-                expanded = expanded || transient.isNotEmpty(),
-                compact = !expanded,
+            // El radar es una capa encima de cualquier pantalla, no una clave de la pila. Los incendios nuevos
+            // aparecen compactos unos segundos debajo del encabezado (sin bajar del composer) y se pliegan al chip.
+            RadarLayer(
+                radar = radar,
+                expanded = expanded,
+                onExpandedChange = { expanded = it },
                 maxHeight = maxHeight * 0.75f - RADAR_TOP_OFFSET,
+                floor = floor,
                 onOpen = { id ->
                     shell.find(id)?.let { fire ->
                         expanded = false
-                        transient = persistentListOf()
                         navigator.navigate(FiresKey)
                         destinationFor(fire)?.let(navigator::navigate)
                     }
                 },
                 onHide = shell::hide,
-                onCollapse = {
-                    expanded = false
-                    transient = persistentListOf()
-                },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .windowInsetsPadding(WindowInsets.statusBars)

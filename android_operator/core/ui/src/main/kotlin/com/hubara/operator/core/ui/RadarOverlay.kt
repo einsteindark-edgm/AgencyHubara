@@ -25,11 +25,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -43,6 +48,7 @@ import com.hubara.operator.core.designsystem.OperatorTheme
 import com.hubara.operator.core.model.Fire
 import com.hubara.operator.core.model.FireId
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.coroutines.delay
 
 object RadarDefaults {
     /** Tiempo en que una tarjeta recién aparecida no responde al toque. */
@@ -50,6 +56,11 @@ object RadarDefaults {
 
     /** Cuánto se ve la tarjeta de un incendio nuevo antes de plegarse al chip de la barra superior. */
     const val TRANSIENT_MS = 4_000L
+
+    /** Aire entre las tarjetas que aparecen solas y el [RadarFloor] (el composer del chat). */
+    val FLOOR_GAP = 8.dp
+
+    const val TEST_TAG = "radar"
 }
 
 /** Lo que necesita el chip del radar en la barra superior de cada pantalla. */
@@ -82,6 +93,8 @@ fun RadarIndicator(modifier: Modifier = Modifier) {
  * (compacto, unos segundos) aunque el operador esté escribiendo, y NO le quita el foco al teclado: vive
  * en la misma ventana (no es un Dialog ni un Popup), no es enfocable, no pide foco y TalkBack lo anuncia
  * de forma cortés. Nunca pasa de [maxHeight]. Swipe = ocultar ese incendio; «Cerrar» lo pliega al chip.
+ * Compacto no trae «Ocultar» (se pliega solo) y, si hay más de los que se muestran, una línea «Ver N más»
+ * ([overflow]) despliega el radar completo.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +107,8 @@ fun RadarOverlay(
     onCollapse: () -> Unit,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    overflow: Int = 0,
+    onExpand: () -> Unit = {},
 ) {
     val haptics = LocalHapticFeedback.current
     val newest = cards.firstOrNull()?.id
@@ -113,31 +128,47 @@ fun RadarOverlay(
         exit = fadeOut(),
         modifier = modifier,
     ) {
+        // Las tarjetas se desplazan si no caben; «Ver N más» y «Cerrar» quedan siempre a la vista, debajo.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = maxHeight)
+                .testTag(RadarDefaults.TEST_TAG)
                 .padding(horizontal = 12.dp, vertical = 8.dp)
                 .focusProperties { canFocus = false }
-                .semantics { liveRegion = LiveRegionMode.Polite }
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .semantics { liveRegion = LiveRegionMode.Polite },
         ) {
-            cards.forEach { fire ->
-                key(fire.id) {
-                    SwipeToDismissBox(
-                        state = rememberSwipeToDismissBoxState(),
-                        backgroundContent = {},
-                        onDismiss = { onHide(fire.id) },
-                    ) {
-                        FireCard(
-                            fire = fire,
-                            onClick = { onOpen(fire.id) },
-                            armDelayMs = RadarDefaults.ARM_DELAY_MS,
-                            onHide = { onHide(fire.id) },
-                            compact = compact,
-                        )
+            Column(
+                modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                cards.forEach { fire ->
+                    key(fire.id) {
+                        SwipeToDismissBox(
+                            state = rememberSwipeToDismissBoxState(),
+                            backgroundContent = {},
+                            onDismiss = { onHide(fire.id) },
+                        ) {
+                            FireCard(
+                                fire = fire,
+                                onClick = { onOpen(fire.id) },
+                                armDelayMs = RadarDefaults.ARM_DELAY_MS,
+                                onHide = if (compact) null else { { onHide(fire.id) } },
+                                compact = compact,
+                            )
+                        }
                     }
+                }
+            }
+            if (compact && overflow > 0) {
+                // Mismo medio segundo inactivo que las tarjetas: un dedo que iba al teclado no despliega nada.
+                var armed by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) {
+                    delay(RadarDefaults.ARM_DELAY_MS)
+                    armed = true
+                }
+                TextButton(onClick = { if (armed) onExpand() }, modifier = Modifier.focusProperties { canFocus = false }) {
+                    Text("Ver $overflow más")
                 }
             }
             if (!compact) {

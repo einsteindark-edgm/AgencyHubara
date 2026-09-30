@@ -36,3 +36,41 @@ object FireOrdering {
     fun radar(fires: List<Fire>, hidden: Set<FireId>): List<Fire> =
         fires.filter { it.severity == Severity.GRAVE && it.id !in hidden }.sortedWith(FEED)
 }
+
+/**
+ * Los incendios graves nuevos que el radar muestra un momento sin que el operador lo pida. Si llegan varios
+ * seguidos se juntan (el más nuevo arriba) y se pliegan juntos al chip: ninguno reemplaza al anterior.
+ */
+data class RadarBurst(
+    val fires: List<Fire> = emptyList(),
+    /** Lo que ya está en el radar y no se vuelve a anunciar. */
+    val seen: Set<FireId> = emptySet(),
+    /** Sube con cada llegada: la espera antes de plegarse vuelve a empezar. */
+    val arrivals: Int = 0,
+) {
+    /**
+     * Con el radar desplegado no aparece nada solo: el operador ya está mirando la lista. Lo que sale del
+     * radar (resuelto u oculto) sale de la ráfaga y, si vuelve a prender, se anuncia otra vez.
+     */
+    fun onRadar(radar: List<Fire>, expanded: Boolean): RadarBurst {
+        // Dos que llegan en la misma recarga: arriba el del mensaje más reciente.
+        val fresh = radar.filter { it.id !in seen }.sortedByDescending { it.updatedMs }
+        val stillThere = fires.mapNotNull { shown -> radar.firstOrNull { it.id == shown.id } }
+        val seenNow = radar.mapTo(HashSet()) { it.id }
+        return when {
+            expanded -> RadarBurst(emptyList(), seenNow, arrivals)
+            fresh.isEmpty() -> RadarBurst(stillThere, seenNow, arrivals)
+            else -> RadarBurst(fresh + stillThere, seenNow, arrivals + 1)
+        }
+    }
+
+    fun folded(): RadarBurst = copy(fires = emptyList())
+
+    fun visible(max: Int = MAX_VISIBLE): List<Fire> = fires.take(max)
+
+    fun overflow(max: Int = MAX_VISIBLE): Int = (fires.size - max).coerceAtLeast(0)
+
+    companion object {
+        const val MAX_VISIBLE = 3
+    }
+}

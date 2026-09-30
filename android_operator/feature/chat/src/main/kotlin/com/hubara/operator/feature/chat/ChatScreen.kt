@@ -1,5 +1,6 @@
 package com.hubara.operator.feature.chat
 
+import com.hubara.operator.core.ui.RadarFloor
 import com.hubara.operator.core.ui.RadarIndicator
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -82,17 +83,20 @@ fun ChatScreen(
             ) {
                 items(reversed, key = { it.key }, contentType = { it.author }) { MessageBubble(it) }
             }
-            UndoBar(ui.pending, onUndo = vm::undo, onRetry = vm::retry, onDismiss = vm::dismiss)
-            when {
-                !ui.humanInControl -> Unit
-                !ui.windowOpen -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("La ventana de 24 h está cerrada: para escribirle hay que reactivar la conversación con una plantilla.",
-                        style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = onReactivate, modifier = Modifier.fillMaxWidth()) { Text("Reactivar con plantilla") }
-                }
-                else -> {
-                    QuickActionStrip(ui.suggestions, onSend = vm::send, onEdit = { onOpenPalette() }, onMore = onOpenPalette)
-                    Composer(vm.draft, enabled = true, onSend = vm::sendText)
+            // Piso del radar: los incendios que aparecen solos nunca tapan deshacer, burbujas ni lo que se escribe.
+            RadarFloor {
+                UndoBar(ui.pending, onUndo = vm::undo, onRetry = vm::retry, onDismiss = vm::dismiss)
+                when {
+                    !ui.humanInControl -> Unit
+                    !ui.windowOpen -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("La ventana de 24 h está cerrada: para escribirle hay que reactivar la conversación con una plantilla.",
+                            style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onReactivate, modifier = Modifier.fillMaxWidth()) { Text("Reactivar con plantilla") }
+                    }
+                    else -> {
+                        QuickActionStrip(ui.suggestions, onSend = vm::send, onEdit = { onOpenPalette() }, onMore = onOpenPalette)
+                        Composer(vm.draft, enabled = true, onSend = vm::sendText)
+                    }
                 }
             }
         }
