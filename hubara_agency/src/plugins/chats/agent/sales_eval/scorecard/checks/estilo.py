@@ -135,7 +135,10 @@ _REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 _GREETING_QUESTION_RE = re.compile(r"¿?\s*(c[oó]mo (est[aá]n|est[aá]s|vas|van)|qu[eé] tal)\s*\?", re.IGNORECASE)
-_BRACKET_LINE_RE = re.compile(r"^\s*\[[^\]]*\]\s*$")
+#: Las notas que el ingest antepone al mensaje («[Conversación anterior…]»,
+#: «[El cliente responde a este mensaje que le enviamos: «…»]»); pueden
+#: ocupar varias líneas si el aviso citado las tiene.
+_INGEST_NOTE_RE = re.compile(r"^\s*\[[^\]]*\]\s*\n")
 _HANDOFF_REPLY = "Usuario respondió:"
 _SALES_PUSH_RE = re.compile(
     r"(en qu[eé] (m[aá]s )?(te|le|les) (puedo|podemos) ayudar"
@@ -149,18 +152,23 @@ _SALES_PUSH_RE = re.compile(
 _CATALOG_INTENTS = frozenset({"quick_replies", "products_list", "product_gallery", "categories"})
 
 
+def _without_ingest_notes(text: str) -> str:
+    while m := _INGEST_NOTE_RE.match(text):
+        text = text[m.end():]
+    return text
+
+
 def _customer_words(turn: Any) -> str | None:
-    """Lo que escribió el cliente en el turno, sin las notas del ingest; en un
-    traspaso desde remarketing, lo que respondió al gancho."""
+    """Lo que escribió el cliente en el turno, sin las notas del ingest (en la
+    traza v1 y en cada mensaje de la v2); en un traspaso desde remarketing, lo
+    que respondió al gancho."""
     if turn.trigger == "handoff":
         text = turn.inbound_text.strip()
         return text[len(_HANDOFF_REPLY):].strip() if text.startswith(_HANDOFF_REPLY) else None
     if turn.trigger != "customer":
         return None
-    if turn.inbound:
-        return " ".join(str(m.text or "") for m in turn.inbound).strip()
-    lines = [line for line in turn.inbound_text.splitlines() if not _BRACKET_LINE_RE.match(line)]
-    return " ".join(lines).strip()
+    texts = [str(m.text or "") for m in turn.inbound] if turn.inbound else [turn.inbound_text]
+    return " ".join(_without_ingest_notes(t).strip() for t in texts).strip()
 
 
 def _is_courtesy(text: str) -> bool:

@@ -1240,6 +1240,44 @@ En V2 (política `turno-v3`), cuando el cliente responde la pregunta de variante
 - WHEN el motor arma el turno
 - THEN el contrato sigue pidiendo `present_variant_picker`
 
+### Requirement: Una cortesía no abre venta (2026-09-30)
+
+La capacidad `cortesia` del ingest le pregunta a Jev, con lo que el cliente vio antes: «¿El cliente solo agradece, saluda o comenta algo amable (por ejemplo, que ya recibió el pedido o que le gustó), sin preguntar ni pedir nada y sin responder una pregunta de la tienda?». Sí con p ≥ 0,85; con duda, no. La regla de hoy siempre dice que no: con `reglas` todo sigue igual. Cuando dice que sí:
+
+- la nota del episodio nuevo SHALL pedir una respuesta breve y cálida, sin abrir una venta, sin ofrecer productos y sin preguntar en qué más puede ayudar;
+- el resumen del traspaso desde remarketing SHALL decirlo, si la marca `last_inbound_courtesy` es del último mensaje del cliente;
+- la guía del bot nuevo MUST NOT empujar la venta en descubrimiento ni en postcierre; a mitad de una venta sigue el siguiente paso.
+
+El sandbox del laboratorio SHALL armar la misma nota del episodio nuevo en el primer turno del episodio, y el scorecard la mide con EST-09 «Cortesía sin empujón de venta».
+
+#### Scenario: Respuesta al «pedido listo» (caso de producción del 2026-09-29)
+
+- GIVEN la conversación anterior terminó en una compra y el ETA avisó «tu pedido ya está listo… ¿Nos confirmas para coordinar la entrega?»
+- WHEN el cliente contesta «Hola cómo están? Son geniales. Muchas gracias» y Jev dice que solo agradece (0,92 con Jev real)
+- THEN el turno no le pide al LLM «pregunta en qué puedes ayudar hoy», y EST-09 falla si la respuesta lo pregunta
+
+#### Scenario: Un «ok» que confirma no es cortesía
+
+- GIVEN el mismo aviso con «¿Nos confirmas…?»
+- WHEN el cliente contesta «ok» (0,04 con Jev real) o «Sí, las puedo recibir hoy en la portería»
+- THEN el turno es el de siempre
+
+### Requirement: Remarketing no le escribe a una conversación que terminó (2026-09-30)
+
+Antes de redactar el gancho, la decisión `contactar` SHALL ver, además del episodio activo, cómo terminó la conversación anterior y lo que la tienda le escribió desde el último mensaje del cliente, cuando el episodio abrió tras otro que se cerró. SHALL preguntar «¿Sobra un mensaje proactivo ahora?» y «¿La conversación ya terminó?»; cualquiera de las dos segura (p ≥ 0,85) salta el toque sin redactar nada. El gancho sigue viendo solo el episodio. Con `reglas` no se consulta y decide el LLM, como hoy.
+
+#### Scenario: Ya recibió el pedido y agradeció
+
+- GIVEN la conversación anterior terminó en una compra, el ETA avisó la entrega y el cliente contestó «Ya lo recibí. Muchas gracias»
+- WHEN la reactivación le va a escribir
+- THEN Jev ve «(Antes de esto, la conversación anterior terminó en una compra.)» y el aviso, dice que la conversación terminó (0,91 con Jev real) y el toque se salta
+
+#### Scenario: Venta abierta
+
+- GIVEN el cliente preguntó el precio y se quedó callado después de la respuesta
+- WHEN la reactivación le va a escribir
+- THEN la conversación no terminó (0,05 con Jev real) y el gancho se redacta como siempre
+
 ## Out of scope
 
 - Detalle del prompt engineering / SOUL.md / USER.md — viven en `hubara_vault/_templates/sales/`

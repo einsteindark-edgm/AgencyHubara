@@ -189,3 +189,19 @@ def test_est09_is_registered_as_a_major_style_check() -> None:
     spec = SPECS_BY_ID.get("EST-09")
     assert spec is not None and (spec.family, spec.level, spec.kind) == ("estilo", "mayor", "code")
     assert REGISTRY_VERSION == 5
+
+
+def test_est09_reads_the_customer_words_of_a_v2_trace_without_the_ingest_notes() -> None:
+    """Laboratorio caso-cortesia-1001-r1: la traza v2 trae el mensaje como lo
+    recibió el workflow, con las notas del ingest (el aviso citado dice «¿Nos
+    confirmas…?»); el check lo daba por pregunta y quedaba «no aplica»."""
+    from dataclasses import replace
+
+    from src.plugins.chats.agent.sales_eval.scorecard.trajectory import InboundMsg
+
+    turn = replace(
+        T(1, inbound=READY_REPLY, sent=["¡Hola! Qué alegría que te haya gustado 🤍\n\nCuéntame, ¿en qué te puedo ayudar hoy?"]),
+        inbound=(InboundMsg(seq=1, ts_ms=1, kind="text", text=READY_REPLY),),
+    )
+
+    assert _run("EST-09", traj(turn)).verdict == "falla"
