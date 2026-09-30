@@ -12,8 +12,9 @@ cd android_operator && ./gradlew :app:assembleDebug                             
 cd android_operator && ./gradlew :app:assembleRelease                             # R8 completo
 ```
 
-- E2E en emulador con Artemis contra el backend real de la rama y datos sintéticos: ver `e2e/README.md`
-  (`e2e/sandbox/run_api.sh start --reset` + `-Phubara.apiUrl=http://10.0.2.2:8010` + `python3 e2e/run_suite.py`).
+- E2E en emulador contra el backend real de la rama y datos sintéticos: `e2e/qa.sh` corre los escenarios con
+  guion (adb, sin LLM), igual que la compuerta de merge **QA emulador** en CI. Artemis explora a mano
+  (`run_suite.py --driver artemis`). Ver `e2e/README.md`.
 - Backend: `hubara.apiUrl` en `gradle.properties` (emulador → `http://10.0.2.2:8000`, el docker local).
   `hubara.cognitoClientId` vacío = modo dev sin login (el backend local tampoco exige token).
 - HTTP en claro solo en debug y solo hacia `10.0.2.2`/`localhost` (`src/debug/res/xml`).
@@ -36,7 +37,10 @@ cd android_operator && ./gradlew :app:assembleRelease                           
 - **Jev nunca se llama desde el teléfono.** Las burbujas e incendios los decide el backend (motor del PR #372)
   y llegan por REST/SSE. La app solo pinta y ejecuta lo que el operador toca.
 - **El radar no le quita el foco al teclado.** Capa en la misma ventana, `focusProperties { canFocus = false }`,
-  sin Dialog/Popup/FocusRequester, toque inactivo 0,5 s. Lo protege `core/ui/.../RadarOverlayTest`.
+  sin Dialog/Popup/FocusRequester, toque inactivo 0,5 s. Lo protegen `core/ui/.../RadarOverlayTest`,
+  `RadarLayerTest` y los escenarios S05/S14.
+- **Todo flujo nuevo de la app entra con su escenario en `e2e/scenarios.yaml`** (con `script` y chequeos):
+  esos escenarios son la base de la QA y la compuerta de merge los corre en cada PR que toca la app o su backend.
 - **Todo envío pasa por el outbox** (`OutboxRepository`): Room primero, WorkManager después, `client_action_id`
   idempotente. Deshacer solo si el envío no empezó (`OutboxDao.claim/undo`).
 - **Nada de teléfonos reales en tests** (forge gate): usa `wa_test_*` y números de ceros.
@@ -70,6 +74,9 @@ cd android_operator && ./gradlew :app:assembleRelease                           
     app recuerda cuántos había al abrir cada chat (`SeenCounts` + `SeenRepository`, DataStore). La primera bandeja
     cuenta todo como visto; con el chat en pantalla lo que llega queda leído. Room v2 renombró la columna
     (AutoMigration con `@RenameColumn`): cambios de esquema siempre con versión nueva y migración.
+15. **Ráfagas de incendios**: los graves nuevos se juntan (`RadarBurst`: el del mensaje más reciente arriba, máx. 3
+    y «Ver N más») y se pliegan juntos al chip 4 s después del último. Nunca bajan del `RadarFloor` (en el chat:
+    deshacer, burbujas y composer). Antes cada tarjeta reemplazaba a la anterior y la primera se veía 2 s (S14).
 
 ## Endpoints
 

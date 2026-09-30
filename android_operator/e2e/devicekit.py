@@ -1,18 +1,30 @@
-"""Chequeos deterministas por adb (sin LLM): árbol de UI, foco, teclado y capturas.
+"""Manejo y chequeos deterministas por adb (sin LLM): árbol de UI, toques, foco, teclado y capturas.
 
-Artemis recorre la app como un humano; esto verifica con precisión lo que un modelo
-no puede medir bien (quién tiene el foco, si el teclado sigue abierto, cuánto tarda algo).
+Con esto el conductor «script» recorre la app siempre igual (la compuerta de merge), y se verifica
+con precisión lo que un modelo no mide bien (quién tiene el foco, si el teclado sigue abierto,
+qué tapa a qué, cuánto tarda algo).
 """
 from __future__ import annotations
 
 import os
 import re
+import shlex
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-ADB = os.environ.get("ADB", str(Path.home() / "Library/Android/sdk/platform-tools/adb"))
+
+def _adb() -> str:
+    """ADB del entorno, del SDK (Linux en CI o Mac) o del PATH."""
+    candidates = [os.environ.get("ADB", "")]
+    candidates += [str(Path(os.environ[v]) / "platform-tools" / "adb") for v in ("ANDROID_HOME", "ANDROID_SDK_ROOT") if os.environ.get(v)]
+    candidates.append(str(Path.home() / "Library/Android/sdk/platform-tools/adb"))
+    return next((c for c in candidates if c and Path(c).exists()), shutil.which("adb") or "adb")
+
+
+ADB = _adb()
 
 
 @dataclass(frozen=True)
@@ -42,18 +54,25 @@ class Device:
         return out.stdout + out.stderr
 
     def nodes(self, attempts: int = 5) -> list[Node]:
-        """Árbol de accesibilidad actual. Reintenta: uiautomator falla si la UI no está quieta."""
+        """Árbol de accesibilidad actual, en una sola llamada a adb (el XML sale por la terminal: las
+        ventanas cortas, como los 5 s de «Deshacer», no alcanzan para dos idas y vueltas con el emulador
+        cargado). Reintenta: uiautomator falla si la UI no está quieta."""
+        res = ""
         for _ in range(attempts):
-            res = self.sh("uiautomator dump /sdcard/hubara-ui.xml")
-            if "dumped" in res:
-                xml = self.sh("cat /sdcard/hubara-ui.xml")
-                return [_node(m.group(0)) for m in re.finditer(r"<node [^>]*>", xml)]
+            out = subprocess.run([ADB, "-s", self.serial, "exec-out", "uiautomator", "dump", "/dev/tty"],
+                                 capture_output=True, text=True, timeout=30)
+            res = out.stdout + out.stderr
+            if "<hierarchy" in res:
+                return [_node(m.group(0)) for m in re.finditer(r"<node [^>]*>", res)]
             time.sleep(0.4)
-        raise RuntimeError(f"uiautomator no pudo leer la pantalla: {res.strip()}")
+        raise RuntimeError(f"uiautomator no pudo leer la pantalla: {res.strip()[:300]}")
 
     def find(self, needle: str, nodes: list[Node] | None = None) -> Node | None:
+        """Primer nodo cuyo texto o descripción contiene `needle`; con «=» adelante, igual exacto."""
+        exact = needle.startswith("=")
+        want = needle[1:] if exact else needle
         for n in nodes if nodes is not None else self.nodes():
-            if needle in n.text or needle in n.desc:
+            if (want in (n.text, n.desc)) if exact else (want in n.text or want in n.desc):
                 return n
         return None
 
@@ -67,6 +86,24 @@ class Device:
             time.sleep(0.3)
         return None, time.monotonic() - t0
 
+    def wait_for_all(self, needles: list[str], timeout: float = 15.0) -> list[Node] | None:
+        """Espera a que TODOS los textos estén a la vez en la misma lectura; devuelve esa lectura."""
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout:
+            nodes = self.nodes()
+            if all(self.find(n, nodes) for n in needles):
+                return nodes
+            time.sleep(0.3)
+        return None
+
+    def wait_gone(self, needle: str, timeout: float = 15.0) -> bool:
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout:
+            if self.find(needle) is None:
+                return True
+            time.sleep(0.3)
+        return False
+
     def focused(self) -> Node | None:
         return next((n for n in self.nodes() if n.focused and n.cls.endswith("EditText")), None)
 
@@ -77,16 +114,21 @@ class Device:
         x, y = node.center
         self.sh(f"input tap {x} {y}")
 
-    def type_ascii(self, text: str) -> None:
-        """Teclea como el teclado (eventos de tecla al campo con foco). Solo ASCII."""
+    def type_ascii(self, text: str, chunk: int = 10) -> None:
+        """Teclea como el teclado (eventos de tecla al campo con foco). Solo ASCII. Por trozos: un solo
+        `input text` largo llegaba cortado al campo («Hola Laura, ya te comparto » y el resto se perdía)."""
         assert text.isascii(), text
-        self.sh("input text " + text.replace(" ", "%s"))
+        for i in range(0, len(text), chunk):
+            self.sh("input text " + shlex.quote(text[i:i + chunk].replace(" ", "%s")))
 
     def screenshot(self, path: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as fh:
             subprocess.run([ADB, "-s", self.serial, "exec-out", "screencap", "-p"], stdout=fh, check=True, timeout=30)
         return path
+
+    def back(self) -> None:
+        self.sh("input keyevent KEYCODE_BACK")
 
     def launch(self, component: str = "com.hubara.operator/.MainActivity") -> None:
         self.sh(f"am start -W -n {component}")

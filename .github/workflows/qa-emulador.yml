@@ -1,0 +1,141 @@
+# QA en emulador de la App Operador (android_operator/): los escenarios mínimos de e2e/scenarios.yaml con el
+# conductor determinista (adb, sin LLM ni llaves) sobre un emulador Android 11, contra el código REAL del backend
+# de la rama (e2e/sandbox: datos sintéticos, sin credenciales, sin salida a internet).
+#
+# Es la compuerta de merge de la app Y de lo que ella consume del backend: #384 cambió la bandeja en el backend
+# y dejó el contador de la app en cero sin que ningún test lo notara.
+#
+# El job corre en TODO PR (el check es requerido en main): si el PR no toca la app ni su backend, pasa en segundos.
+# Corre en los runners de GitHub (gratis en repos públicos y con KVM para el emulador) y no usa secretos, así que
+# el código de un PR nunca corre en una máquina con credenciales. Artemis no corre aquí: se usa a mano para explorar.
+name: QA emulador
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-emulador-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qa-emulador:
+    name: QA emulador — App Operador
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: ¿Toca la app o lo que ella consume del backend?
+        id: scope
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE" ]; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            echo "sin PR → se corre (fail-safe)"; exit 0
+          fi
+          CHANGED="$(git diff --name-only "$BASE"...HEAD)"
+          if echo "$CHANGED" | grep -qE '^(android_operator/|hubara_agency/src/plugins/(chats|orders)/|hubara_agency/src/(platform|sdk)/|hubara_agency/src/main\.py$|hubara_agency/pyproject\.toml$|pyproject\.toml$|uv\.lock$|\.github/workflows/qa-emulador\.yml$)'; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            echo "→ toca la app o su backend: se corren los escenarios en el emulador"
+          else
+            echo "app=false" >> "$GITHUB_OUTPUT"
+            echo "→ no toca la app ni su backend: nada que probar en el emulador"
+          fi
+
+      - name: KVM para el emulador
+        if: steps.scope.outputs.app == 'true'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: actions/setup-java@v4
+        if: steps.scope.outputs.app == 'true'
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.scope.outputs.app == 'true'
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        if: steps.scope.outputs.app == 'true'
+        with:
+          # Misma versión pineada que architecture-gates.yml (un outage de la API de GitHub ya tumbó "latest").
+          version: "0.7.20"
+          python-version: "3.11"
+
+      - name: Dependencias del backend (uv workspace, lock en la raíz)
+        if: steps.scope.outputs.app == 'true'
+        working-directory: hubara_agency
+        run: uv sync --frozen
+
+      - name: APK apuntando al backend de prueba
+        if: steps.scope.outputs.app == 'true'
+        working-directory: android_operator
+        run: ./gradlew :app:assembleDebug -Phubara.apiUrl=http://10.0.2.2:8010 --console=plain
+
+      - name: Caché del emulador
+        if: steps.scope.outputs.app == 'true'
+        id: avd-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-30-google_apis-x86_64-pixel_6-v1
+
+      - name: Crear el emulador y su snapshot (solo sin caché)
+        if: steps.scope.outputs.app == 'true' && steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: false
+          script: echo "Snapshot del emulador listo."
+
+      - name: Escenarios en el emulador
+        if: steps.scope.outputs.app == 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          QA_OUT: ${{ runner.temp }}/qa-emulador
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: android_operator/e2e/qa.sh --skip-build
+
+      - name: Reporte, capturas y logs del backend de prueba
+        if: always() && steps.scope.outputs.app == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-emulador
+          path: |
+            ${{ runner.temp }}/qa-emulador
+            android_operator/e2e/sandbox/*.log
+          if-no-files-found: ignore
+
+      - name: Resumen
+        if: always() && steps.scope.outputs.app == 'true'
+        run: |
+          REPORT="$RUNNER_TEMP/qa-emulador/reporte.md"
+          if [ -f "$REPORT" ]; then cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          else echo "No hubo reporte: mira el log del paso «Escenarios en el emulador»." >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: El PR no toca la app
+        if: steps.scope.outputs.app != 'true'
+        run: echo "El PR no toca android_operator/ ni el backend que la app consume. El emulador no aplica."
