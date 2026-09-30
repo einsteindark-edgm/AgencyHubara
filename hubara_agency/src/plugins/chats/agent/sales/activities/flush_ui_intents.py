@@ -712,7 +712,7 @@ async def _dispatch_intent(
                             body=wa_limits.truncate(
                                 _with_card_guide(
                                     params.get("intro_text") or "Toca un producto para ver más:",
-                                    first_page=int(params.get("page") or 1) == 1,
+                                    first_page=params.get("page") in (None, 1),
                                 ),
                                 wa_limits.MAX_PRODUCT_LIST_BODY,
                             ),

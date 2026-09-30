@@ -826,6 +826,20 @@ async def test_other_routes_do_not_hear_about_the_photo(route: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_the_end_of_a_photo_reaches_sales_even_if_the_route_changed() -> None:
+    """Un comprobante de pago pasa la conversación a una persona mientras se
+    lee: el aviso de que la foto terminó igual le llega a ventas (solo quita
+    la foto de la espera). Sin él, ventas la esperaría en un turno futuro."""
+    handle = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
+    client = FakeClient(existing_handles={"session-wa_1": handle})
+    uc = _make_use_case(FakeMetadataStore({"active_route": ROUTE_HUMANO}), client)
+
+    await uc.notify_photo_reading("wa_1", "wamid.P", True)
+
+    assert handle.signals == [("photo_reading", ["wamid.P", True])]
+
+
+@pytest.mark.asyncio
 async def test_without_a_live_workflow_the_notice_is_dropped() -> None:
     client = FakeClient(existing_handles={"session-wa_1": _SignalFails(status=None)})
     uc = _make_use_case(FakeMetadataStore(), client)

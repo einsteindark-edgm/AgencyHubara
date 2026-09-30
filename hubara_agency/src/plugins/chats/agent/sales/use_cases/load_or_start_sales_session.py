@@ -153,11 +153,14 @@ class LoadOrStartSalesSession:
     async def notify_photo_reading(self, session_id: str, wamid: str, done: bool) -> None:
         """Le avisa al workflow de ventas que el ingest está leyendo una foto
         del cliente (`done=False`) o que la foto ya entró (`done=True`): la
-        ráfaga la espera (texto antes de la foto, 2026-09-30). Solo a ventas y
-        sin arrancar nada: sin workflow vivo (o con otra ruta), la foto entra
-        como hoy. Nunca lanza."""
+        ráfaga la espera (texto antes de la foto, 2026-09-30). Sin arrancar
+        nada: sin workflow vivo, la foto entra como hoy. El inicio va solo a
+        la ruta de ventas; el final va siempre (solo quita la foto de la
+        espera: un comprobante pasa la conversación a una persona mientras se
+        lee). Nunca lanza."""
         try:
-            if self._metadata_store.read(session_id).get("active_route", ROUTE_VENTAS) != ROUTE_VENTAS:
+            route = self._metadata_store.read(session_id).get("active_route", ROUTE_VENTAS)
+            if not done and route != ROUTE_VENTAS:
                 return
             client = await self._client_factory()
             await client.get_workflow_handle(f"session-{session_id}").signal(

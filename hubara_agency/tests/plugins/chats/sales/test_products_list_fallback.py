@@ -131,3 +131,21 @@ async def test_the_list_fallback_has_no_card_buttons_to_explain(monkeypatch):
     await _dispatch(_ListOnly(product_list_ok=False))
 
     assert "Enviar mensaje a la empresa" not in captured["body"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("page", "guided"), [(None, True), (1, True), (2, False), ("raro", False)])
+async def test_only_the_first_page_carries_the_guide_and_a_strange_page_never_breaks_the_send(
+    monkeypatch, page, guided
+):
+    monkeypatch.setenv("META_CATALOG_ID", "CAT123")
+    fake = _Capturing()
+    params = {**_params(), "page": page}
+
+    await _dispatch_intent(
+        wa_client=fake, wa_dtos=wa_dtos, kind="products_list", params=params,
+        fallback={"prefer_native_product_list": True}, phone_number_id="PH",
+        to_number="573001112233", last_inbound_message_id=None,
+    )
+
+    assert ("Enviar mensaje a la empresa" in fake.outbound.body) is guided
