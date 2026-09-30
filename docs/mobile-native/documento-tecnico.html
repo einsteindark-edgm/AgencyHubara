@@ -1,0 +1,1312 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>App Operador · técnico</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --color-paper: #f5f5f5; --color-paper-2: #ececec; --color-ink: #2d3142; --color-muted: #4f5d75;
+  --color-soft: #7a8399; --color-rule: rgba(45,49,66,0.12); --color-accent: #eb6c36;
+  --color-accent-tint: rgba(235,108,54,0.08); --color-link: #2e5aa8;
+  --font-sans: 'Geist', system-ui, sans-serif;
+  --font-serif: 'Instrument Serif', 'Noto Serif', 'Times New Roman', serif;
+  --font-mono: 'Geist Mono', ui-monospace, Menlo, monospace;
+}
+body { font-family: var(--font-sans); background: var(--color-paper); color: var(--color-ink);
+       min-height: 100vh; padding: 3rem 2rem; }
+.container { max-width: 1320px; margin: 0 auto; }
+.header { margin-bottom: 2rem; }
+.eyebrow { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500; letter-spacing: 0.18em;
+           text-transform: uppercase; color: var(--color-muted); margin-bottom: 0.75rem; }
+h1 { font-family: var(--font-serif); font-size: clamp(1.9rem, 3vw + 1rem, 2.9rem); font-weight: 400;
+     letter-spacing: -0.02em; line-height: 1.08; margin-bottom: 0.75rem; max-width: 24ch; }
+.subtitle { font-size: 1.05rem; line-height: 1.55; color: var(--color-muted); max-width: 70ch; }
+.toc { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; margin: 1.5rem 0 0; padding-top: 1rem;
+       border-top: 1px solid var(--color-rule); font-family: var(--font-mono); font-size: 0.72rem; }
+.toc a { color: var(--color-muted); text-decoration: none; }
+.toc a:hover { color: var(--color-accent); }
+section { margin-top: 3.5rem; }
+section > .eyebrow { margin-bottom: 0.4rem; }
+h2 { font-family: var(--font-serif); font-weight: 400; font-size: clamp(1.5rem, 2vw + 0.8rem, 2rem);
+     letter-spacing: -0.01em; line-height: 1.15; margin-bottom: 1rem; }
+h3 { font-size: 0.95rem; font-weight: 600; margin: 1.6rem 0 0.6rem; }
+.prose { max-width: 78ch; }
+.prose p, .prose li { font-size: 0.95rem; line-height: 1.62; color: var(--color-ink); }
+.prose p + p { margin-top: 0.8rem; }
+.prose ul, .prose ol { margin: 0.6rem 0 0.6rem 1.25rem; }
+.prose li { margin-bottom: 0.35rem; }
+.prose strong { font-weight: 600; }
+.lede { font-family: var(--font-serif); font-size: clamp(1.25rem, 1.2vw + 0.9rem, 1.6rem); line-height: 1.35;
+        max-width: 60ch; }
+.lede em { color: var(--color-accent); font-style: italic; }
+code { font-family: var(--font-mono); font-size: 0.82em; background: rgba(45,49,66,0.06);
+       padding: 0.05em 0.3em; border-radius: 3px; }
+pre { font-family: var(--font-mono); font-size: 0.76rem; line-height: 1.55; background: #ffffff;
+      border: 1px solid var(--color-rule); border-radius: 6px; padding: 1rem 1.1rem; overflow-x: auto;
+      margin: 0.9rem 0; color: var(--color-ink); max-width: 100%; }
+pre code { background: none; padding: 0; font-size: inherit; }
+.code-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 1rem; align-items: start; }
+.code-grid > * { min-width: 0; }
+.code-cap { font-family: var(--font-mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase;
+            color: var(--color-soft); margin-top: 1rem; }
+.diagram-container { width: 100%; overflow-x: auto; margin: 1.25rem 0 0.5rem; }
+svg { width: 100%; min-width: 1280px; display: block; }
+.figcap { font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-soft); letter-spacing: 0.04em;
+          margin-bottom: 1rem; }
+.table-wrap { width: 100%; overflow-x: auto; margin: 1rem 0; }
+table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 0.84rem; background: #ffffff;
+        border: 1px solid var(--color-rule); border-radius: 6px; }
+th { font-family: var(--font-mono); font-size: 0.64rem; font-weight: 500; letter-spacing: 0.14em;
+     text-transform: uppercase; color: var(--color-muted); text-align: left; padding: 0.7rem 0.8rem;
+     border-bottom: 1px solid var(--color-rule); background: rgba(45,49,66,0.03); }
+td { padding: 0.65rem 0.8rem; border-bottom: 1px solid rgba(45,49,66,0.07); vertical-align: top;
+     line-height: 1.5; color: var(--color-ink); }
+tr:last-child td { border-bottom: none; }
+td:first-child { font-weight: 600; min-width: 11rem; }
+td.soft { color: var(--color-muted); }
+.pill { display: inline-block; font-family: var(--font-mono); font-size: 0.64rem; letter-spacing: 0.08em;
+        text-transform: uppercase; padding: 0.1rem 0.45rem; border-radius: 3px; border: 1px solid var(--color-rule);
+        color: var(--color-muted); white-space: nowrap; }
+.pill.gen { color: var(--color-accent); border-color: rgba(235,108,54,0.45); }
+.pill.nat { color: var(--color-ink); border-color: rgba(45,49,66,0.35); }
+.cards { display: grid; grid-template-columns: 1.1fr 1fr 0.9fr; gap: 1rem; margin-top: 1.25rem; }
+.cards.two { grid-template-columns: 1.15fr 0.85fr; }
+.card { background: #ffffff; border-radius: 6px; border: 1px solid var(--color-rule); padding: 1.25rem; }
+.card-header { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.875rem; padding-bottom: 0.875rem;
+               border-bottom: 1px solid rgba(45,49,66,0.08); }
+.card-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.card-dot.ink { background: var(--color-ink); } .card-dot.muted { background: var(--color-muted); }
+.card-dot.coral { background: var(--color-accent); } .card-dot.link { background: var(--color-link); }
+.card-dot.soft { background: var(--color-soft); }
+.card h3 { font-size: 0.875rem; font-weight: 600; margin: 0; }
+.card p, .card li { color: var(--color-muted); font-size: 0.84rem; line-height: 1.55; }
+.card ul { list-style: none; }
+.card li { margin-bottom: 0.35rem; padding-left: 0.875rem; position: relative; }
+.card li::before { content: '—'; position: absolute; left: 0; color: rgba(45,49,66,0.25); font-size: 0.75rem; }
+.rules { counter-reset: r; list-style: none; margin: 1rem 0 0; padding: 0; display: grid;
+         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; }
+.rules li { counter-increment: r; background: #ffffff; border: 1px solid var(--color-rule); border-radius: 6px;
+            padding: 0.9rem 1rem 0.9rem 2.6rem; position: relative; font-size: 0.86rem; line-height: 1.5; }
+.rules li::before { content: counter(r, decimal-leading-zero); position: absolute; left: 0.9rem; top: 0.95rem;
+                    font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-accent); }
+.rules li strong { display: block; font-weight: 600; margin-bottom: 0.15rem; }
+.note { border-left: 2px solid var(--color-accent); padding: 0.2rem 0 0.2rem 1rem; margin: 1.2rem 0;
+        color: var(--color-muted); font-size: 0.9rem; line-height: 1.55; max-width: 78ch; }
+.sources { font-family: var(--font-mono); font-size: 0.72rem; line-height: 1.8; color: var(--color-muted);
+           columns: 2 360px; column-gap: 2rem; margin-top: 0.75rem; }
+.sources span { color: var(--color-soft); }
+.footer { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid rgba(45,49,66,0.10);
+          font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.06em; color: var(--color-soft);
+          display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+@media (max-width: 820px) {
+  body { padding: 2rem 16px; }
+  .cards, .cards.two, .code-grid { grid-template-columns: 1fr; }
+}
+@media print {
+  .diagram-container, .table-wrap { overflow-x: visible; }
+  svg { min-width: 0; }
+  table { min-width: 0; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header">
+  <p class="eyebrow">Documento técnico · App Operador nativa (Android) · 29 sep 2026</p>
+  <h1>Cómo construimos la app nativa del operador</h1>
+  <p class="subtitle">La solución completa para llevar la visión de chat, incendios y órdenes a Kotlin y Jetpack
+  Compose: el build, los módulos, la navegación, cada pantalla con sus componentes, los datos y la sincronización,
+  el backend con Jev, la seguridad, las pruebas y el orden de construcción. Los nombres de componentes y las buenas
+  prácticas salen de los skills oficiales de Android (github.com/android/skills).</p>
+  <nav class="toc">
+    <a href="#t0">00 Resumen</a><a href="#t1">01 Build</a><a href="#t2">02 Módulos</a><a href="#t3">03 Navegación</a>
+    <a href="#t4">04 Chat</a><a href="#t5">05 Radar e Incendios</a><a href="#t6">06 Fuera de la app</a>
+    <a href="#t7">07 Datos</a><a href="#t8">08 SDUI</a><a href="#t9">09 Backend</a><a href="#t10">10 Seguridad</a>
+    <a href="#t11">11 Rendimiento</a><a href="#t12">12 Pruebas</a><a href="#t13">13 Plan</a><a href="#t14">14 Referencias</a>
+  </nav>
+</div>
+
+<section id="t0">
+  <p class="eyebrow">00 · Resumen</p>
+  <p class="lede">Una app Android nativa, <em>una sola Activity</em>, tres pilas de navegación y Room como única
+  fuente de verdad. Jev <em>nunca se llama desde el teléfono</em>: decide en el backend, con el motor de decisiones
+  que ya existe en el PR #372, y la app pinta lo que llega por SSE o por push.</p>
+  <div class="cards">
+    <div class="card"><div class="card-header"><span class="card-dot coral"></span><h3>En el teléfono</h3></div>
+      <ul><li>Kotlin, Compose y Material 3, sobre AGP 9.</li>
+      <li>Navigation 3 con tres pilas: Chats, Incendios y Órdenes.</li>
+      <li>Room, WorkManager y FCM, para que nada se pierda sin señal ni con la app cerrada.</li></ul></div>
+    <div class="card"><div class="card-header"><span class="card-dot ink"></span><h3>En el backend</h3></div>
+      <ul><li>Los endpoints nuevos viven en el plugin chats, que es dueño de las conversaciones.</li>
+      <li>Burbujas y vigía son dos cuestionarios y dos políticas del motor de decisiones.</li>
+      <li>El oráculo es Jev con id fijo, anonimizado y con tiempo máximo.</li></ul></div>
+    <div class="card"><div class="card-header"><span class="card-dot muted"></span><h3>Cómo se verifica</h3></div>
+      <ul><li>Tests JVM, Compose sobre Robolectric y screenshots.</li>
+      <li>UI Automator para notificaciones y widget.</li>
+      <li>Un journey del Android CLI por cada flujo de la visión.</li></ul></div>
+  </div>
+  <h3>Decisiones</h3>
+  <div class="table-wrap"><table><thead><tr><th>Tema</th><th>Decisión</th><th>Por qué</th></tr></thead><tbody><tr><td>UI</td><td>Kotlin 2, Jetpack Compose y Material 3. Solo Android.</td><td>Decisión del operador. Sin WebView: se acaba el Chrome 86 de fábrica.</td></tr><tr><td>Build</td><td>AGP 9 con Kotlin integrado y el DSL nuevo; KSP, sin kapt; Gradle 9.1+ y JDK 17.</td><td>Skill <code>agp-9-upgrade</code>.</td></tr><tr><td>SDK</td><td>minSdk 30, targetSdk 36, compileSdk 37.</td><td>Android 11 en el Motorola de hoy; edge-to-edge desde target 35; OkHttp 5.5 exige compilar contra 37.</td></tr><tr><td>Navegación</td><td>Navigation 3: tres destinos de primer nivel con su pila, escenas de hoja inferior y list-detail.</td><td>Skill <code>navigation-3</code> (recetas multiple back stacks, bottom sheet, deep links, Hilt modular).</td></tr><tr><td>Layout adaptable</td><td><code>NavigationSuiteScaffold</code> y <code>ListDetailSceneStrategy</code>.</td><td>Skill <code>adaptive</code>: multi-panel con escenas, no con <code>ListDetailPaneScaffold</code>.</td></tr><tr><td>Retroceso</td><td>El de Navigation 3; <code>NavigationBackHandler</code> solo para plegar el radar.</td><td>Skill <code>navigation-event</code>.</td></tr><tr><td>Teclado</td><td><code>enableEdgeToEdge</code>, <code>adjustResize</code> y <code>fitInside(WindowInsetsRulers.Ime)</code>.</td><td>Skill <code>edge-to-edge</code> (preferido sobre <code>imePadding</code>).</td></tr><tr><td>Arquitectura</td><td>Flujo unidireccional; MVI en el motor SDUI; un ViewModel por isla nativa.</td><td>Documento de arquitectura del 28 sep.</td></tr><tr><td>Inyección</td><td>Hilt con multibinding: registro de componentes y entradas de navegación por módulo.</td><td>Skills <code>testing-setup</code> y <code>navigation-3</code>.</td></tr><tr><td>Datos</td><td>Room como única fuente de verdad; WorkManager para el outbox; DataStore + Tink para la sesión.</td><td>Offline primero; envíos idempotentes con <code>client_action_id</code>.</td></tr><tr><td>Red</td><td>OkHttp + Retrofit, SSE de OkHttp con ticket, kotlinx.serialization.</td><td>Reusa <code>/api/dashboard/sse-ticket</code> y <code>/events</code>.</td></tr><tr><td>Fuera de la app</td><td>FCM con mensajes de datos, Jetpack Glance y Live Update en Android 16.</td><td>Hoy no llega nada con la app cerrada.</td></tr><tr><td>Cámara y fotos</td><td>CameraX con <code>CameraXViewfinder</code>; galería con Photo Picker.</td><td>Skills <code>camerax</code> y <code>android-permissions-security</code>.</td></tr><tr><td>Jev</td><td>Siempre desde el backend, con el motor del PR #372 y el modelo fijo <code>typesafe/jev-1.13</code>. El teléfono no llama a OpenRouter.</td><td>Seguridad, anonimización, una sola fuente de verdad y, además, menos latencia (sección 09).</td></tr><tr><td>Estilos</td><td>Material 3 con tokens propios; Styles API más adelante.</td><td>Skill <code>styles</code>: todavía es experimental.</td></tr><tr><td>Calidad</td><td>R8 completo con recorte de recursos, screenshots, Robolectric, UI Automator y Baseline Profiles.</td><td>Skills <code>r8-analyzer</code> y <code>testing-setup</code>.</td></tr></tbody></table></div>
+</section>
+
+<section id="t1">
+  <p class="eyebrow">01 · Build y configuración</p>
+  <h2>AGP 9, Kotlin integrado y R8 completo</h2>
+  <div class="prose">
+  <p>El proyecto nace en AGP 9, así que no hay migración pendiente. Tres consecuencias que marca el skill
+  <code>agp-9-upgrade</code>:</p>
+  <ul>
+    <li><strong>Kotlin integrado:</strong> no se aplica el plugin <code>kotlin-android</code>, y las opciones del
+    compilador van en <code>kotlin { compilerOptions { } }</code>.</li>
+    <li><strong>KSP para todo</strong> (Hilt, Room): nada de kapt. KSP 2.3.6 o más y Hilt 2.59.2 o más.</li>
+    <li><strong>DSL nuevo:</strong> las APIs viejas de variantes no existen. La lógica común vive en plugins de
+    convención (<code>build-logic/</code>), no en scripts copiados.</li>
+  </ul>
+  <p>Requisitos de herramientas: Gradle 9.1 o más, JDK 17 y build tools 36. Las versiones de cada librería
+  se fijan en <code>gradle/libs.versions.toml</code>; nada de versiones dinámicas ni de alfas en los módulos
+  centrales.</p>
+  </div>
+  <pre><code class="kotlin">// android_operator/app/build.gradle.kts — AGP 9: Kotlin integrado (sin kotlin-android), DSL nuevo, KSP
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)          // plugin del compilador de Compose
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)                     // KSP ≥ 2.3.6 (skill agp-9-upgrade); nada de kapt
+    alias(libs.plugins.hilt)                    // Hilt ≥ 2.59.2
+    alias(libs.plugins.google.services)         // FCM
+    alias(libs.plugins.baselineprofile)
+}
+
+android {
+    namespace = &quot;com.hubara.operator&quot;
+    compileSdk = 37                             // OkHttp 5.5 lo exige (y navigation-event pide ≥ 36)
+    defaultConfig {
+        applicationId = &quot;com.hubara.operator&quot;
+        minSdk = 30                             // el Motorola del operador tiene Android 11
+        targetSdk = 36                          // edge-to-edge obligatorio desde 35
+        testInstrumentationRunner = &quot;com.hubara.operator.testing.HiltTestRunner&quot;
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = true              // R8 en modo completo (default desde AGP 8)
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile(&quot;proguard-android-optimize.txt&quot;), &quot;proguard-rules.pro&quot;)
+        }
+    }
+}
+
+kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_17 } }   // android.kotlinOptions ya no existe</code></pre>
+  <h3>Librerías</h3>
+  <div class="table-wrap"><table><thead><tr><th>Para qué</th><th>Artefactos</th><th>Nota</th></tr></thead><tbody><tr><td>UI</td><td><code>androidx.compose:compose-bom</code> · <code>material3</code> · <code>material3-adaptive-navigation-suite</code></td><td>Versiones alineadas por el BOM.</td></tr><tr><td>Navegación</td><td><code>androidx.navigation3:navigation3-runtime</code> · <code>navigation3-ui</code> · <code>androidx.compose.material3.adaptive:adaptive-navigation3</code> · <code>androidx.lifecycle:lifecycle-viewmodel-navigation3</code> · <code>androidx.navigationevent:navigationevent-compose</code></td><td>Pilas, escenas, ViewModel por entrada y retroceso.</td></tr><tr><td>Ciclo de vida</td><td><code>androidx.activity:activity-compose</code> · <code>androidx.lifecycle:lifecycle-runtime-compose</code></td><td><code>enableEdgeToEdge</code>, Photo Picker, <code>collectAsStateWithLifecycle</code>, <code>dropUnlessResumed</code>.</td></tr><tr><td>Inyección</td><td><code>com.google.dagger:hilt-android</code> + <code>hilt-compiler</code> (KSP) · <code>androidx.hilt:hilt-lifecycle-viewmodel-compose</code> · <code>androidx.hilt:hilt-work</code></td><td>Hilt 2.59.2 o más.</td></tr><tr><td>Datos</td><td><code>androidx.room:room-runtime</code> + <code>room-compiler</code> (KSP) · <code>androidx.work:work-runtime-ktx</code> · <code>androidx.datastore:datastore</code> · <code>com.google.crypto.tink:tink-android</code></td><td>Tink reemplaza a EncryptedSharedPreferences, que está deprecado.</td></tr><tr><td>Red</td><td><code>com.squareup.okhttp3:okhttp</code> · <code>okhttp-sse</code> · <code>com.squareup.retrofit2:retrofit</code> + <code>converter-kotlinx-serialization</code> · <code>org.jetbrains.kotlinx:kotlinx-serialization-json</code></td><td>Un solo <code>OkHttpClient</code> con interceptor de auth.</td></tr><tr><td>Imágenes y cámara</td><td><code>io.coil-kt.coil3:coil-compose</code> · <code>coil-network-okhttp</code> · <code>androidx.camera:camera-camera2</code> · <code>camera-lifecycle</code> · <code>camera-compose</code></td><td>Coil comparte el cliente HTTP.</td></tr><tr><td>Fuera de la app</td><td><code>com.google.firebase:firebase-messaging</code> · <code>androidx.glance:glance-appwidget</code> · <code>glance-material3</code></td><td>FCM solo con mensajes de datos.</td></tr><tr><td>Pruebas</td><td><code>junit</code> · <code>androidx.compose.ui:ui-test-junit4</code> · <code>org.robolectric:robolectric</code> · <code>hilt-android-testing</code> · <code>androidx.test.uiautomator:uiautomator</code> · <code>com.google.truth:truth</code> · Dropshots · Jacoco</td><td>Lo que recomienda <code>testing-setup</code>.</td></tr><tr><td>Rendimiento</td><td><code>androidx.baselineprofile</code> (plugin) · <code>androidx.benchmark:benchmark-macro-junit4</code> · <code>androidx.profileinstaller:profileinstaller</code></td><td>Módulo <code>:benchmark</code>.</td></tr></tbody></table></div>
+  <div class="prose">
+  <p><strong>Dónde vive:</strong> un directorio nuevo del monorepo, <code>android_operator/</code>, con su propio
+  <code>CLAUDE.md</code>, un job de CI (<code>./gradlew testDebugUnitTest lintDebug</code> más los screenshots) y
+  una regla en el hook <code>pre-bash-cd-check.sh</code>: <code>cd android_operator &amp;&amp;</code> antes de
+  cualquier <code>./gradlew</code>, igual que hoy con <code>hubara_agency</code> y <code>frontend_dashboard</code>.
+  Los datos de prueba siguen la regla del forge gate: nada de teléfonos reales en fixtures.</p>
+  </div>
+</section>
+
+<section id="t2">
+  <p class="eyebrow">02 · Módulos y arquitectura</p>
+  <h2>Seis capas, una responsabilidad cada una</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 524" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="modulos-title modulos-desc">
+<title id="modulos-title">Capas y módulos de la app</title>
+<desc id="modulos-desc">Seis capas de la app nativa, del shell con Navigation 3 hasta la plataforma. La capa de datos es la única fuente de verdad y el motor SDUI con su contrato es Kotlin puro.</desc>
+
+<defs><marker id="t1-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="t1-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="t1-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="t1-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="t1-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="t1-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<rect x="200" y="48" width="880" height="384" rx="6" fill="#f5f5f5"/>
+<rect x="200" y="48" width="880" height="384" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1"/>
+<line x1="200" y1="112" x2="1080" y2="112" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+<line x1="200" y1="176" x2="1080" y2="176" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+<line x1="200" y1="240" x2="1080" y2="240" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+<line x1="200" y1="304" x2="1080" y2="304" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+<line x1="200" y1="368" x2="1080" y2="368" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+<text x="220" y="84" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.04em">:app</text>
+<text x="452" y="85" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Shell</text>
+<text x="1060" y="84" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">NavigationSuiteScaffold · NavDisplay · RadarOverlay · deep links</text>
+<text x="220" y="148" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.04em">:feature:*</text>
+<text x="452" y="149" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Funcionalidades (api + impl)</text>
+<text x="1060" y="148" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">inbox · chat · fires · orders · live</text>
+<text x="220" y="212" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.04em">:core:ui · :sdui:compose</text>
+<text x="452" y="213" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">UI compartida</text>
+<text x="1060" y="212" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">design system M3 · ComponentRegistry · RenderNode</text>
+<text x="220" y="276" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.04em">:sdui:engine · :sdui:protocol</text>
+<text x="452" y="277" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Motor SDUI y contrato</text>
+<text x="1060" y="276" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">reducer MVI · bindings · NavKeys · DTOs</text>
+<rect x="200" y="304" width="880" height="64" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1.2"/>
+<text x="220" y="340" fill="#eb6c36" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.04em">:core:data</text>
+<text x="452" y="341" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Datos · única fuente de verdad</text>
+<text x="1060" y="340" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">repositorios · Room · outbox · sync</text>
+<text x="220" y="404" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.04em">:core:network · :core:database</text>
+<text x="452" y="405" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Plataforma</text>
+<text x="1060" y="404" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">OkHttp/Retrofit · SSE · Room · FCM · DataStore + Tink</text>
+<path d="M 160 424 V 60" fill="none" stroke="#2d3142" stroke-width="1" marker-end="url(#t1-arrow-ink)"/>
+<text x="160" y="448" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">ABSTRACCIÓN</text>
+<text x="1100" y="236" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">Kotlin puro, sin Android</text><path d="M 1104 244 Q 1098 232 1086 240" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="1084" cy="240" r="2" fill="#2d3142"/>
+<line x1="40" y1="480" x2="1240" y2="480" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="503" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="494" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="138" y="502" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Única fuente de verdad</text>
+<rect x="290" y="494" width="14" height="10" rx="2" fill="#f5f5f5" stroke="#4f5d75" stroke-width="1"/>
+<text x="312" y="502" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Capa de módulos Gradle</text>
+</svg>
+</div>
+<p class="figcap">Figura 1 · Las capas de la app. Los datos son la única fuente de verdad; el motor SDUI y su contrato son Kotlin puro y se prueban en la JVM.</p>
+  <div class="prose">
+  <ul>
+    <li><strong>Flujo unidireccional en toda la app.</strong> La UI solo emite eventos y pinta estado. El estado sale
+    de un <code>StateFlow</code> que la pantalla lee con <code>collectAsStateWithLifecycle()</code>.</li>
+    <li><strong>MVI en el motor SDUI</strong> (reducer puro, un <code>SurfaceViewModel</code> genérico) y
+    <strong>un ViewModel propio en cada isla nativa</strong>: timeline, composer, cámara y radar. Es lo que definió el
+    documento de arquitectura del 28 de septiembre.</li>
+    <li><strong>Offline primero:</strong> la red escribe en Room y la UI lee de Room. Ninguna pantalla espera una
+    respuesta HTTP para pintarse.</li>
+    <li><strong>Todas las claves de navegación viven en <code>:core:navigation</code></strong> y cada funcionalidad es un
+    módulo que registra sus entradas por multibinding de Hilt (receta modular de Navigation 3). Un módulo navega a
+    otro sin conocer su implementación, sin necesitar el par <code>api</code>/<code>impl</code> por funcionalidad.</li>
+  </ul>
+  </div>
+  <div class="table-wrap"><table><thead><tr><th>Módulo</th><th>Qué tiene</th><th>Depende de</th></tr></thead><tbody><tr><td><code>:app</code></td><td><code>MainActivity</code> (única), <code>OperatorNavHost</code>, <code>RadarHost</code>, <code>DeepLinks</code>, tema y arranque de Hilt.</td><td>Los <code>impl</code> de cada funcionalidad.</td></tr><tr><td><code>:core:model</code></td><td>Tipos de dominio: <code>SessionId</code>, <code>OrderId</code>, <code>FireId</code>, <code>Message</code>, <code>Suggestion</code>, <code>FireCardUi</code>, <code>OrderDetail</code>. Kotlin puro.</td><td>Nada.</td></tr><tr><td><code>:core:navigation</code></td><td>Claves, <code>Navigator</code>, <code>NavigationState</code>, <code>EntryProviderInstaller</code> y la <code>BottomSheetSceneStrategy</code> de la receta.</td><td><code>:core:model</code>.</td></tr><tr><td><code>:core:network</code></td><td>APIs de Retrofit, <code>OkHttpClient</code> con auth, <code>EventStream</code> (SSE) y DTOs.</td><td><code>:core:model</code>.</td></tr><tr><td><code>:core:database</code></td><td>Entidades de Room, DAOs y migraciones.</td><td><code>:core:model</code>.</td></tr><tr><td><code>:core:data</code></td><td>Repositorios, <code>SyncEngine</code>, outbox y workers, <code>DraftStore</code>, <code>SessionStore</code>.</td><td><code>network</code>, <code>database</code>.</td></tr><tr><td><code>:core:push</code></td><td><code>OperatorMessagingService</code>, <code>PushRouter</code>, canales y notificaciones.</td><td><code>:core:data</code>.</td></tr><tr><td><code>:core:designsystem</code> · <code>:core:ui</code></td><td>Tema M3 y tokens; <code>SuggestionBubble</code>, <code>FireCard</code>, <code>OrderStepper</code>, <code>LiveTranscript</code>, <code>RadarOverlay</code>.</td><td><code>:core:model</code>.</td></tr><tr><td><code>:sdui:protocol</code> · <code>:sdui:engine</code> · <code>:sdui:compose</code></td><td>Contrato, reducer MVI y <code>ComponentRegistry</code> con <code>RenderNode</code>.</td><td>El motor, solo del protocolo.</td></tr><tr><td><code>:feature:inbox</code> · <code>:feature:chat</code> · <code>:feature:fires</code> · <code>:feature:orders</code> · <code>:feature:auth</code></td><td>Pantallas, ViewModels y el registro de sus entradas de navegación.</td><td>Solo <code>core:*</code>: ninguna funcionalidad depende de otra.</td></tr><tr><td><code>:widget:hot</code> · <code>:benchmark</code></td><td>Widget de Glance; Macrobenchmark y generador de Baseline Profile.</td><td><code>:core:data</code>; <code>:app</code>.</td></tr></tbody></table></div>
+</section>
+
+<section id="t3">
+  <p class="eyebrow">03 · Navegación</p>
+  <h2>Tres pilas, escenas y un radar que no es pantalla</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 780" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="navegacion-title navegacion-desc">
+<title id="navegacion-title">Navegación con tres pilas</title>
+<desc id="navegacion-desc">Tres destinos de primer nivel, cada uno con su propia pila de claves: Chats (la pila de inicio), Incendios y Órdenes. El radar es una capa encima, no una clave. Un toque en el radar abre el caso en Incendios; «Volver a Laura» cambia a la pila de Chats, donde el chat sigue intacto; un deep link arma una pila sintética.</desc>
+
+<defs><marker id="t2-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="t2-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="t2-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="t2-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="t2-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="t2-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<rect x="120" y="136" width="340" height="492" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/><rect x="132" y="140" width="132" height="12" rx="2" fill="#f5f5f5"/><text x="198" y="149" fill="rgba(45,49,66,0.55)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">CHATS · PILA DE INICIO</text>
+<rect x="470" y="136" width="340" height="492" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/><rect x="482" y="140" width="60" height="12" rx="2" fill="#f5f5f5"/><text x="512" y="149" fill="rgba(45,49,66,0.55)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">INCENDIOS</text>
+<rect x="820" y="136" width="340" height="492" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/><rect x="832" y="140" width="52" height="12" rx="2" fill="#f5f5f5"/><text x="858" y="149" fill="rgba(45,49,66,0.55)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">ÓRDENES</text>
+<path d="M 790 88 V 444 Q 790 452 782 452 H 762" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#t2-arrow-accent)"/>
+<rect x="690" y="244" width="92" height="12" rx="2" fill="#f5f5f5"/><text x="736" y="253" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">TAP EN EL RADAR</text>
+<path d="M 520 348 H 448 Q 440 348 440 356 V 444 Q 440 452 432 452 H 412" fill="none" stroke="#eb6c36" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#t2-arrow-accent)"/>
+<rect x="344" y="398" width="88" height="12" rx="2" fill="#f5f5f5"/><text x="388" y="407" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">VOLVER A LAURA</text>
+<path d="M 640 664 V 578" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t2-arrow)"/>
+<rect x="648" y="615" width="88" height="12" rx="2" fill="#f5f5f5"/><text x="692" y="624" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PILA SINTÉTICA</text>
+<rect x="320" y="40" width="640" height="48" rx="6" fill="#f5f5f5"/>
+<rect x="320" y="40" width="640" height="48" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="640" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">RadarOverlay</text>
+<text x="640" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">capa sobre el NavDisplay · no es una clave de la pila</text>
+<rect x="170" y="520" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="170" y="520" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="290" y="544" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">InboxKey</text>
+<text x="290" y="560" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">raíz</text>
+<rect x="170" y="424" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="170" y="424" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="290" y="448" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ChatKey(laura)</text>
+<text x="290" y="464" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">chat intervenido</text>
+<rect x="170" y="328" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="170" y="328" width="240" height="56" rx="6" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="290" y="352" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">OrderSheetKey(#38)</text>
+<text x="290" y="368" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">escena: hoja inferior</text>
+<rect x="520" y="520" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="520" y="520" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="640" y="544" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">FiresKey</text>
+<text x="640" y="560" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">raíz</text>
+<rect x="520" y="424" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="520" y="424" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="640" y="448" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">LiveKey(carlos)</text>
+<text x="640" y="464" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">el bot atiende en vivo</text>
+<rect x="520" y="328" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="520" y="328" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="640" y="352" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ChatKey(carlos)</text>
+<text x="640" y="368" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">tomaste la conversación</text>
+<rect x="870" y="520" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="870" y="520" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="990" y="544" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">OrdersKey</text>
+<text x="990" y="560" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">raíz</text>
+<rect x="490" y="664" width="300" height="40" rx="20" fill="#f5f5f5"/><rect x="490" y="664" width="300" height="40" rx="20" fill="#ffffff" stroke="#2d3142" stroke-width="1"/><text x="640" y="688" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Deep link · hubara://live/{id}</text>
+<line x1="40" y1="736" x2="1240" y2="736" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="759" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="750" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="138" y="758" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Clave en la pila</text>
+<rect x="258" y="750" width="14" height="10" rx="2" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="280" y="758" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Escena: hoja inferior</text>
+<rect x="428" y="750" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="450" y="758" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Capa fuera de la pila</text>
+<rect x="598" y="750" width="16" height="10" rx="5" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="620" y="758" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Entrada externa</text>
+<path d="M 736 755 H 752" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#t2-arrow-accent)"/>
+<text x="758" y="758" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Salto entre pilas</text>
+</svg>
+</div>
+<p class="figcap">Figura 2 · Cada destino de primer nivel tiene su pila. El radar abre el caso en Incendios; «Volver a Laura» cambia a la pila de Chats, donde el chat sigue intacto; un deep link arma una pila sintética.</p>
+  <div class="prose">
+  <ul>
+    <li><strong>Tres destinos de primer nivel</strong> con <code>NavigationSuiteScaffold</code>: barra inferior en el
+    teléfono y riel en la tablet o el plegable abierto (skill <code>adaptive</code>). Cada destino tiene su propia pila
+    (receta <em>multiple back stacks</em>) y Chats es la pila de inicio: se sale de la app siempre por ahí.</li>
+    <li><strong>La pila es una lista de claves</strong> <code>@Serializable</code> guardada con
+    <code>rememberNavBackStack</code>. Sobrevive a la rotación y a que el sistema mate el proceso.</li>
+    <li><strong>Escenas:</strong> la ficha de la orden, «+ Más» y el selector de productos son entradas con metadata
+    de hoja inferior (la <code>BottomSheetSceneStrategy</code> de la receta oficial). En pantallas anchas, bandeja y
+    chat se ven lado a lado con <code>ListDetailSceneStrategy</code>, sin <code>ListDetailPaneScaffold</code>, como
+    pide el skill.</li>
+    <li><strong>Decoradores por entrada:</strong> <code>SaveableStateHolder</code> (scroll y campos),
+    <code>ViewModelStore</code> (un ViewModel por clave, con <code>hiltViewModel</code> y fábrica asistida) y
+    <code>ResultEventBus</code> para devolver resultados: el selector de productos le devuelve al chat lo elegido con
+    <code>ResultEffect</code>.</li>
+    <li><strong>«Volver a Laura»</strong> no es un pop: cambia de pila. El chat de Laura sigue arriba de la pila de Chats
+    con su ViewModel vivo; el borrador, además, está en Room.</li>
+    <li><strong>El radar no es una clave.</strong> Es una capa encima del <code>NavDisplay</code>. Si está desplegado,
+    el gesto de atrás lo pliega con <code>NavigationBackHandler</code> (skill <code>navigation-event</code>: en SDK 36
+    o más no se usa el <code>BackHandler</code> viejo). Todo lo demás usa el retroceso de Navigation 3.</li>
+    <li><strong>Los clics que navegan</strong> van envueltos en <code>dropUnlessResumed</code>, para que un doble toque
+    no apile dos pantallas.</li>
+  </ul>
+  </div>
+  <div class="code-grid">
+    <div><p class="code-cap">Claves de navegación</p><pre><code class="kotlin">// :core:navigation — las claves de la pila. Kotlin puro + kotlinx.serialization.
+@Serializable data object InboxKey : NavKey                                   // raíz de Chats
+@Serializable data class ChatKey(val session: SessionId) : NavKey
+@Serializable data class LiveKey(val session: SessionId) : NavKey
+@Serializable data object FiresKey : NavKey                                   // raíz de Incendios
+@Serializable data object OrdersKey : NavKey                                  // raíz de Órdenes
+@Serializable data class OrderSheetKey(val order: OrderId) : NavKey           // escena: hoja inferior
+@Serializable data class ActionPaletteKey(val session: SessionId) : NavKey    // «+ Más», hoja inferior
+@Serializable data class ProductPickerKey(val session: SessionId, val action: String) : NavKey
+@Serializable data class CameraKey(val session: SessionId) : NavKey
+
+// Los ids son value classes que solo se construyen validados: un id mal formado no llega a la pila.
+@JvmInline @Serializable value class SessionId private constructor(val raw: String) {
+    companion object { fun parse(raw: String): SessionId? = raw.takeIf(SessionIdFormat::matches)?.let(::SessionId) }
+}</code></pre></div>
+    <div><p class="code-cap">Raíz y registro por módulo</p><pre><code class="kotlin">// :app — la raíz: tres pilas (receta multiple back stacks), escenas y el radar encima
+typealias EntryProviderInstaller = EntryProviderScope&lt;NavKey&gt;.(Navigator) -&gt; Unit
+
+@Composable
+fun OperatorNavHost(installers: Set&lt;EntryProviderInstaller&gt;) {
+    val state = rememberNavigationState(startRoute = InboxKey, topLevelRoutes = setOf(InboxKey, FiresKey, OrdersKey))
+    val navigator = remember(state) { Navigator(state) }
+    val sheets = remember { BottomSheetSceneStrategy&lt;NavKey&gt;() }       // copiada de la receta oficial
+    val listDetail = rememberListDetailSceneStrategy&lt;NavKey&gt;()         // adaptive-navigation3: dos paneles en tablet
+    val provider = entryProvider { installers.forEach { install -&gt; install(navigator) } }
+
+    NavigationSuiteScaffold(navigationSuiteItems = { topLevelItems(state.topLevelRoute, navigator::navigate) }) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            NavDisplay(
+                entries = state.toDecoratedEntries(provider),  // SaveableStateHolder + ViewModelStore por entrada
+                onBack = navigator::goBack,
+                sceneStrategies = listOf(sheets, listDetail),
+            )
+            RadarHost(maxHeight = maxHeight * 0.75f, onOpen = navigator::openFire)   // capa: no es una clave
+        }
+    }
+}
+
+// :feature:chat:impl — cada módulo aporta sus entradas por multibinding de Hilt
+@Module @InstallIn(ActivityRetainedComponent::class)
+object ChatEntries {
+    @Provides @IntoSet
+    fun provide(): EntryProviderInstaller = { navigator -&gt;
+        entry&lt;ChatKey&gt;(metadata = ListDetailSceneStrategy.detailPane()) { key -&gt;
+            val vm = hiltViewModel&lt;ChatViewModel, ChatViewModel.Factory&gt;(creationCallback = { it.create(key) })
+            ChatScreen(vm, onOpenOrder = dropUnlessResumed { navigator.navigate(OrderSheetKey(it)) })
+        }
+    }
+}</code></pre></div>
+  </div>
+  <h3>Deep links: notificaciones y widget</h3>
+  <div class="prose">
+  <p>La notificación y el widget abren la app con un intent explícito a <code>MainActivity</code> que trae
+  <code>hubara://live/{id}</code> o <code>hubara://order/{id}</code>. No hace falta anunciar ese esquema con un
+  intent-filter, así que ninguna otra app lo ve. Igual se valida siempre, porque <code>MainActivity</code> está
+  exportada por ser el launcher. Cada link arma una <strong>pila sintética</strong>: desde una notificación de Carlos,
+  atrás vuelve a Incendios en vez de cerrar la app.</p>
+  </div>
+  <pre><code class="kotlin">// :app — MainActivity (launchMode singleTop). La notificación y el widget la abren con un intent EXPLÍCITO
+// que trae data = hubara://live/{id}. No hay intent-filter para ese esquema: ninguna otra app lo anuncia.
+override fun onCreate(savedInstanceState: Bundle?) {
+    enableEdgeToEdge()                                      // antes de setContent (skill edge-to-edge)
+    super.onCreate(savedInstanceState)
+    pendingLink.value = DeepLinks.parse(intent?.data)       // valida: esquema, ruta e id con formato estricto
+    setContent { OperatorTheme { OperatorApp(pendingLink) } }
+}
+
+override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)                                       // skill android-intent-security
+    pendingLink.value = DeepLinks.parse(intent.data)        // mismas reglas que en onCreate
+}
+
+// hubara://live/{id} → pila sintética de Incendios: [FiresKey, LiveKey(id)]. Atrás vuelve a Incendios, no sale.
+object DeepLinks {
+    fun parse(uri: Uri?): SyntheticStack? = when {
+        uri?.scheme != &quot;hubara&quot; -&gt; null
+        uri.host == &quot;live&quot; -&gt; SessionId.parse(uri.lastPathSegment.orEmpty())?.let { SyntheticStack(FiresKey, listOf(LiveKey(it))) }
+        uri.host == &quot;order&quot; -&gt; OrderId.parse(uri.lastPathSegment.orEmpty())?.let { SyntheticStack(OrdersKey, listOf(OrderSheetKey(it))) }
+        else -&gt; null                                        // un link inválido no navega
+    }
+}</code></pre>
+</section>
+
+<section id="t4">
+  <p class="eyebrow">04 · Chat</p>
+  <h2>Intervenir, burbujas, composer y envío</h2>
+  <div class="prose"><p>El chat es la pantalla más exigente: mensajes en vivo, teclado, burbujas que cambian y envíos
+  que no se pueden perder. Estos son sus componentes:</p></div>
+  <div class="table-wrap"><table><thead><tr><th>Componente</th><th>Base</th><th>Detalle</th></tr></thead><tbody><tr><td><code>ChatTopBar</code> + <code>OrderPill</code></td><td><code>TopAppBar</code></td><td>Nombre, estado y el botón «Pedido #38» solo si <code>order_ref</code> trae pedido («Pedidos · 2» si hay varios). Abre <code>OrderSheetKey</code>.</td></tr><tr><td><code>BotReadingPanel</code></td><td>Superficie SDUI</td><td>Lo que entendió el bot: producto, faltantes, pago y etapa, con el botón «Tomar la conversación».</td></tr><tr><td><code>MessageTimeline</code></td><td><code>LazyColumn(reverseLayout)</code></td><td>Clave = id del mensaje, <code>contentType</code> por tipo (texto, foto, catálogo, formulario); «el bot escribe…»; carga de mensajes viejos al llegar arriba.</td></tr><tr><td><code>QuickActionStrip</code></td><td><code>LazyRow</code> de <code>SuggestionBubble</code></td><td>Burbujas del servidor; tocar envía, mantener edita; «+ Más» al final.</td></tr><tr><td><code>Composer</code></td><td><code>TextField</code> con <code>TextFieldState</code></td><td>Borrador en Room; adjuntar (cámara o galería); enviar. Nunca se bloquea.</td></tr><tr><td><code>UndoBar</code></td><td><code>Snackbar</code> propia</td><td>Cinco segundos con «Deshacer»; cancela el trabajo único en WorkManager.</td></tr><tr><td><code>ActionPaletteSheet</code></td><td>Escena de hoja inferior</td><td>Todas las acciones agrupadas y un buscador. Una búsqueda aquí se registra como sugerencia fallida.</td></tr><tr><td><code>ProductPickerSheet</code></td><td>Escena de hoja inferior</td><td>Selección múltiple del catálogo con lo sugerido ya marcado; devuelve el resultado con <code>ResultEffect</code>.</td></tr><tr><td><code>CameraCapture</code></td><td><code>CameraXViewfinder</code> + <code>ImageCapture</code></td><td>Captura, previsualiza y encola la foto comprimida.</td></tr></tbody></table></div>
+  <pre><code class="kotlin">// :feature:chat:impl — el composer sube con el teclado sin doble padding (skill edge-to-edge, opción preferida)
+@Composable
+fun ChatScreen(vm: ChatViewModel, onOpenOrder: (OrderId) -&gt; Unit) {
+    val ui by vm.state.collectAsStateWithLifecycle()
+    Scaffold(topBar = { ChatTopBar(ui.header, onOpenOrder) }) { innerPadding -&gt;
+        Column(
+            Modifier
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
+                .fitInside(WindowInsetsRulers.Ime.current)
+        ) {
+            if (ui.botInControl) BotReadingPanel(ui.reading, onIntervene = vm::intervene)
+            MessageTimeline(ui.messages, Modifier.weight(1f))          // LazyColumn(reverseLayout), key = id del mensaje
+            QuickActionStrip(ui.suggestions, onSend = vm::send, onEdit = vm::edit, onMore = vm::openPalette)
+            Composer(state = vm.draft, onSend = vm::sendText, onAttach = vm::attach)   // TextFieldState en Room
+        }
+    }
+}
+
+// Las burbujas: Surface + combinedClickable (tocar envía, mantener edita). La lista nueva que llega por SSE
+// no se aplica mientras el dedo está encima; se aplica al soltar, con animateItem().
+@Composable
+fun QuickActionStrip(suggestions: ImmutableList&lt;Suggestion&gt;, onSend: (Suggestion) -&gt; Unit,
+                     onEdit: (Suggestion) -&gt; Unit, onMore: () -&gt; Unit) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 12.dp)) {
+        items(suggestions, key = { it.id }, contentType = { it.prominence }) { s -&gt;
+            SuggestionBubble(s, Modifier.animateItem(), onClick = { onSend(s) }, onLongClick = { onEdit(s) })
+        }
+        item(key = &quot;more&quot;) { SuggestionBubble.More(onClick = onMore) }
+    }
+}</code></pre>
+  <h3>Cómo llegan las burbujas</h3>
+  <div class="prose"><p>La app no calcula burbujas: las recibe. El backend corre el bucle de juego de la visión en cada
+  tick y manda el resultado por SSE. La app solo las pinta, las ordena como vienen y ejecuta lo que el operador
+  toca.</p></div>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 800" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="tick-title tick-desc">
+<title id="tick-title">Un tick de burbujas, de punta a punta</title>
+<desc id="tick-desc">Secuencia: llega un mensaje del cliente, el backend arma el tablero y las jugadas legales, el motor pregunta a Jev en un request (o aplica la regla por etapa si Jev falla), la app recibe las burbujas por SSE, el operador toca una y el backend la envía por WhatsApp y la guarda como última jugada.</desc>
+
+<defs><marker id="t4-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="t4-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="t4-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="t4-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="t4-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="t4-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<line x1="160" y1="88" x2="160" y2="736" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="400" y1="88" x2="400" y2="736" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="640" y1="88" x2="640" y2="736" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="880" y1="88" x2="880" y2="736" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="1120" y1="88" x2="1120" y2="736" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<rect x="584" y="236" width="352" height="200" rx="4" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.22)" stroke-width="1"/>
+<rect x="584" y="236" width="40" height="16" rx="2" fill="#f5f5f5" stroke="rgba(45,49,66,0.22)" stroke-width="1"/>
+<text x="604" y="248" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.12em">ALT</text>
+<text x="656" y="268" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.04em">[jev responde]</text>
+<line x1="592" y1="376" x2="928" y2="376" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="656" y="394" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.04em">[falla o tarda]</text>
+<rect x="396" y="120" width="8" height="104" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<rect x="636" y="200" width="8" height="272" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<rect x="876" y="284" width="8" height="40" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<rect x="1116" y="492" width="8" height="136" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<rect x="396" y="556" width="8" height="164" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<path d="M 160 128 H 396" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t4-arrow)"/>
+<rect x="254" y="108" width="48" height="12" rx="2" fill="#f5f5f5"/><text x="278" y="117" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">MENSAJE</text>
+<path d="M 404 148 H 444 Q 452 148 452 156 V 164 Q 452 172 444 172 H 406" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t4-arrow)"/><rect x="460" y="154" width="92" height="12" rx="2" fill="#f5f5f5"/><text x="464" y="163" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">ARMA EL TABLERO</text>
+<path d="M 404 208 H 636" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t4-arrow)"/>
+<rect x="482" y="188" width="76" height="12" rx="2" fill="#f5f5f5"/><text x="520" y="197" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SOLO LEGALES</text>
+<path d="M 644 292 H 876" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#t4-arrow-link)"/>
+<rect x="730" y="272" width="60" height="12" rx="2" fill="#f5f5f5"/><text x="760" y="281" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">1 REQUEST</text>
+<path d="M 876 320 H 644" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#t4-arrow)"/>
+<rect x="722" y="300" width="76" height="12" rx="2" fill="#f5f5f5"/><text x="760" y="309" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PROBS + CONF</text>
+<path d="M 644 336 H 684 Q 692 336 692 344 V 352 Q 692 360 684 360 H 646" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t4-arrow)"/><rect x="700" y="342" width="53" height="12" rx="2" fill="#f5f5f5"/><text x="704" y="351" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">UMBRALES</text>
+<path d="M 644 404 H 684 Q 692 404 692 412 V 420 Q 692 428 684 428 H 646" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t4-arrow)"/><rect x="700" y="410" width="92" height="12" rx="2" fill="#f5f5f5"/><text x="704" y="419" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">REGLA POR ETAPA</text>
+<path d="M 636 464 H 404" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#t4-arrow)"/>
+<rect x="494" y="444" width="52" height="12" rx="2" fill="#f5f5f5"/><text x="520" y="453" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">BURBUJAS</text>
+<path d="M 404 500 H 1116" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#t4-arrow-accent)"/>
+<rect x="716" y="480" width="88" height="12" rx="2" fill="#f5f5f5"/><text x="760" y="489" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SSE · BURBUJAS</text>
+<path d="M 1124 528 H 1164 Q 1172 528 1172 536 V 544 Q 1172 552 1164 552 H 1126" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t4-arrow)"/><rect x="1180" y="534" width="81" height="12" rx="2" fill="#f5f5f5"/><text x="1184" y="543" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">OPERADOR TOCA</text>
+<path d="M 1116 572 H 404" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#t4-arrow-link)"/>
+<rect x="730" y="552" width="60" height="12" rx="2" fill="#f5f5f5"/><text x="760" y="561" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">POST TOOL</text>
+<path d="M 396 612 H 160" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#t4-arrow-link)"/>
+<rect x="260" y="592" width="36" height="12" rx="2" fill="#f5f5f5"/><text x="278" y="601" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">ENVÍO</text>
+<path d="M 404 636 H 444 Q 452 636 452 644 V 652 Q 452 660 444 660 H 406" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t4-arrow)"/><rect x="460" y="642" width="81" height="12" rx="2" fill="#f5f5f5"/><text x="464" y="651" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">ÚLTIMA JUGADA</text>
+<path d="M 404 696 H 1116" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#t4-arrow-open)"/>
+<rect x="720" y="676" width="80" height="12" rx="2" fill="#f5f5f5"/><text x="760" y="685" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SSE · MENSAJE</text>
+<rect x="72" y="40" width="176" height="48" rx="6" fill="#f5f5f5"/>
+<rect x="72" y="40" width="176" height="48" rx="6" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+<text x="160" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Cliente</text>
+<text x="160" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">WhatsApp</text>
+<rect x="312" y="40" width="176" height="48" rx="6" fill="#f5f5f5"/>
+<rect x="312" y="40" width="176" height="48" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="400" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Backend · chats</text>
+<text x="400" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">sampler · tools</text>
+<rect x="552" y="40" width="176" height="48" rx="6" fill="#f5f5f5"/>
+<rect x="552" y="40" width="176" height="48" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="640" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Motor de decisiones</text>
+<text x="640" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">burbujas-v1</text>
+<rect x="792" y="40" width="176" height="48" rx="6" fill="#f5f5f5"/>
+<rect x="792" y="40" width="176" height="48" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="880" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Jev</text>
+<text x="880" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">typesafe/jev-1.13</text>
+<rect x="1032" y="40" width="176" height="48" rx="6" fill="#f5f5f5"/>
+<rect x="1032" y="40" width="176" height="48" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="1120" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">App del operador</text>
+<text x="1120" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">QuickActionStrip</text>
+<text x="952" y="312" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">~100 ms típico</text><path d="M 948 308 Q 918 300 890 306" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="888" cy="306" r="2" fill="#2d3142"/>
+<line x1="40" y1="756" x2="1240" y2="756" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="779" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<path d="M 116 775 H 132" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t4-arrow)"/>
+<text x="138" y="778" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Llamada</text>
+<path d="M 214 775 H 230" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#t4-arrow-link)"/>
+<text x="236" y="778" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">HTTP / WhatsApp</text>
+<path d="M 352 775 H 368" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#t4-arrow)"/>
+<text x="374" y="778" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Respuesta</text>
+<path d="M 458 775 H 474" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#t4-arrow-open)"/>
+<text x="480" y="778" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Asíncrono (SSE)</text>
+<path d="M 596 775 H 612" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#t4-arrow-accent)"/>
+<text x="618" y="778" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Resultado principal</text>
+<rect x="754" y="770" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="776" y="778" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Donde se decide</text>
+</svg>
+</div>
+<p class="figcap">Figura 3 · Un tick de punta a punta. El motor pregunta a Jev en un request o, si Jev falla o tarda, aplica la regla por etapa. La app recibe las burbujas por SSE y el toque vuelve como POST idempotente.</p>
+  <div class="code-grid">
+    <div><p class="code-cap">Evento que recibe la app</p><pre><code class="json">{
+  &quot;type&quot;: &quot;mobile.suggestions&quot;,
+  &quot;session_id&quot;: &quot;&lt;sesión&gt;&quot;,
+  &quot;version&quot;: 17,
+  &quot;decided_by&quot;: &quot;jev&quot;,
+  &quot;stage&quot;: &quot;etapa_variantes&quot;,
+  &quot;suggestions&quot;: [
+    { &quot;id&quot;: &quot;s1&quot;, &quot;label&quot;: &quot;Enviar aromas&quot;, &quot;prominence&quot;: &quot;primary&quot;, &quot;confidence&quot;: 0.91,
+      &quot;action&quot;: { &quot;name&quot;: &quot;present_variant_picker&quot;, &quot;args&quot;: { &quot;product&quot;: &quot;duo-zodiacal&quot; } }, &quot;editable&quot;: true },
+    { &quot;id&quot;: &quot;s2&quot;, &quot;label&quot;: &quot;Pedir datos de envío&quot;, &quot;prominence&quot;: &quot;normal&quot;, &quot;confidence&quot;: 0.72,
+      &quot;action&quot;: { &quot;name&quot;: &quot;request_shipping_details&quot;, &quot;args&quot;: {} }, &quot;editable&quot;: false }
+  ]
+}</code></pre></div>
+    <div class="prose"><ul>
+      <li><strong>La prominencia la decide el servidor</strong> (<code>primary</code>, <code>normal</code>). Los
+      umbrales viven en el perfil del motor, así que se ajustan sin publicar una versión de la app.</li>
+      <li><strong><code>version</code> ordena los eventos:</strong> uno más viejo que el que ya está se descarta.</li>
+      <li><strong><code>decided_by</code></strong> dice si decidió Jev o la regla de respaldo. Va al log de
+      calibración junto con lo que tocó el operador.</li>
+      <li><strong>Al abrir un chat</strong> se piden las burbujas actuales por REST; después llegan por SSE.</li>
+    </ul></div>
+  </div>
+  <h3>Enviar con cinco segundos para deshacer</h3>
+  <div class="prose">
+  <p>Tocar una burbuja escribe la acción en Room (el mensaje aparece como «enviando») y la encola en WorkManager con
+  cinco segundos de espera y un nombre único. «Deshacer» cancela ese trabajo. Como vive en WorkManager y no en
+  memoria, un envío confirmado no se pierde aunque el sistema cierre la app. El servidor deduplica por
+  <code>client_action_id</code>, así que un reintento nunca manda dos veces.</p>
+  </div>
+  <pre><code class="kotlin">// :core:data — tocar una burbuja: se escribe en Room (aparece «enviando») y se encola con 5 s de espera.
+// «Deshacer» cancela el trabajo por su nombre único. Sobrevive a que el sistema mate la app.
+suspend fun send(suggestion: Suggestion, session: SessionId) {
+    val id = ClientActionId.new()
+    outbox.insert(OutboxEntity(id, session, suggestion.action, state = PENDING_UNDO))
+    val work = OneTimeWorkRequestBuilder&lt;RunToolWorker&gt;()
+        .setInitialDelay(5, TimeUnit.SECONDS)
+        .setInputData(workDataOf(RunToolWorker.KEY_ID to id.raw))
+        .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
+        .build()
+    workManager.enqueueUniqueWork(id.raw, ExistingWorkPolicy.KEEP, work)
+}
+
+fun undo(id: ClientActionId) = workManager.cancelUniqueWork(id.raw)
+
+@HiltWorker
+class RunToolWorker @AssistedInject constructor(
+    @Assisted ctx: Context, @Assisted params: WorkerParameters,
+    private val api: OperatorToolsApi, private val outbox: OutboxDao,
+) : CoroutineWorker(ctx, params) {
+    override suspend fun doWork(): Result {
+        val item = outbox.get(inputData.getString(KEY_ID)!!) ?: return Result.success()
+        return when (val r = api.runTool(item.session, item.action, clientActionId = item.id)) {  // idempotente
+            is ToolResult.Sent -&gt; { outbox.markSent(item.id, r.messageId); Result.success() }
+            is ToolResult.WindowClosed -&gt; { outbox.markFailed(item.id, WINDOW_CLOSED); Result.failure() }  // 409
+            is ToolResult.Transient -&gt; if (runAttemptCount &lt; 5) Result.retry() else Result.failure()
+        }
+    }
+    companion object { const val KEY_ID = &quot;client_action_id&quot; }
+}</code></pre>
+  <h3>Fotos</h3>
+  <div class="prose"><ul>
+    <li><strong>Cámara dentro de la app</strong> con CameraX y <code>CameraXViewfinder</code> (skill
+    <code>camerax</code>: no se envuelve <code>PreviewView</code> en <code>AndroidView</code>). Pide
+    <code>CAMERA</code> recién al abrirla.</li>
+    <li><strong>Galería con Photo Picker</strong> (<code>PickVisualMedia</code>), sin permiso de almacenamiento.</li>
+    <li><strong>Antes de subir:</strong> JPEG de calidad 80 y lado máximo de 1.600 px. Re-codificar borra el EXIF y la
+    ubicación. Es la misma regla del plan de fotos actual.</li>
+    <li><strong>Subida en dos pasos</strong>, que ya existen: <code>POST /sessions/{id}/media</code> devuelve un
+    <code>attachment_id</code>, y <code>POST /sessions/{id}/messages</code> lo envía. Los dos van por el outbox, así
+    que un reintento del envío no vuelve a subir la foto.</li>
+  </ul></div>
+</section>
+
+<section id="t5">
+  <p class="eyebrow">05 · Radar, Incendios y órdenes</p>
+  <h2>Lo grave aparece al instante, sin quitarle el foco al teclado</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 700" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="incendio-title incendio-desc">
+<title id="incendio-title">Un incendio grave, del vigía a la pantalla</title>
+<desc id="incendio-desc">Flujo en la app: llega el evento de un incendio grave. Con la app en primer plano aparece el radar al instante, sin pedir foco y anunciado de forma cortés a TalkBack. Con la app cerrada llega una notificación privada; su PendingIntent inmutable abre un deep link validado con pila sintética. Los dos caminos terminan en el caso abierto en Incendios.</desc>
+
+<defs><marker id="t5-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="t5-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="t5-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="t5-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="t5-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="t5-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<path d="M 640 72 V 104" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t5-arrow)"/>
+<path d="M 520 152 H 332 Q 324 152 324 160 V 224" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#t5-arrow-accent)"/>
+<rect x="420" y="132" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="430" y="141" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SÍ</text>
+<path d="M 760 152 H 948 Q 956 152 956 160 V 224" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t5-arrow)"/>
+<rect x="840" y="132" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="850" y="141" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+<path d="M 324 288 V 368" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t5-arrow)"/>
+<rect x="332" y="322" width="32" height="12" rx="2" fill="#f5f5f5"/><text x="348" y="331" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">TOCA</text>
+<path d="M 956 288 V 336" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t5-arrow)"/>
+<rect x="964" y="306" width="32" height="12" rx="2" fill="#f5f5f5"/><text x="980" y="315" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">TOCA</text>
+<path d="M 956 400 V 448" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t5-arrow)"/>
+<rect x="964" y="418" width="44" height="12" rx="2" fill="#f5f5f5"/><text x="986" y="427" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">VALIDA</text>
+<path d="M 324 432 V 568 Q 324 576 332 576 H 490" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t5-arrow)"/>
+<path d="M 956 512 V 568 Q 956 576 948 576 H 790" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t5-arrow)"/>
+<rect x="826" y="556" width="88" height="12" rx="2" fill="#f5f5f5"/><text x="870" y="565" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PILA SINTÉTICA</text>
+<rect x="470" y="32" width="340" height="40" rx="20" fill="#f5f5f5"/><rect x="470" y="32" width="340" height="40" rx="20" fill="#ffffff" stroke="#2d3142" stroke-width="1"/><text x="640" y="56" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Evento: incendio grave (mobile.attention)</text>
+<polygon points="640,104 760,152 640,200 520,152" fill="#f5f5f5"/><polygon points="640,104 760,152 640,200 520,152" fill="#ffffff" stroke="#2d3142" stroke-width="1"/><text x="640" y="156" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿App en primer plano?</text>
+<rect x="204" y="224" width="240" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="204" y="224" width="240" height="64" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="324" y="245" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">RadarOverlay</text>
+<text x="324" y="261" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">al instante · sin pedir foco</text>
+<text x="324" y="275" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">liveRegion = Polite</text>
+<rect x="204" y="368" width="240" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="204" y="368" width="240" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="324" y="389" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Toque en la tarjeta</text>
+<text x="324" y="405" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">responde después de 0,5 s</text>
+<text x="324" y="419" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">abre el caso</text>
+<rect x="836" y="224" width="240" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="836" y="224" width="240" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="956" y="245" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Notificación</text>
+<text x="956" y="261" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">canal «Incendios graves»</text>
+<text x="956" y="275" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">privada · versión pública</text>
+<rect x="836" y="336" width="240" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="836" y="336" width="240" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="956" y="357" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">PendingIntent</text>
+<text x="956" y="373" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">FLAG_IMMUTABLE</text>
+<text x="956" y="387" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">intent explícito</text>
+<rect x="836" y="448" width="240" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="836" y="448" width="240" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="956" y="469" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Deep link validado</text>
+<text x="956" y="485" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">onCreate y onNewIntent</text>
+<text x="956" y="499" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">id con formato estricto</text>
+<rect x="490" y="556" width="300" height="40" rx="20" fill="#f5f5f5"/><rect x="490" y="556" width="300" height="40" rx="20" fill="#ffffff" stroke="#2d3142" stroke-width="1"/><text x="640" y="580" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Caso abierto en Incendios</text>
+<text x="460" y="272" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">el teclado sigue abierto</text><path d="M 456 268 Q 452 258 448 258" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="446" cy="258" r="2" fill="#2d3142"/>
+<text x="1096" y="500" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">un id inválido no navega</text><path d="M 1092 496 Q 1088 488 1080 486" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="1078" cy="486" r="2" fill="#2d3142"/>
+<line x1="40" y1="656" x2="1240" y2="656" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="679" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="670" width="16" height="10" rx="5" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="138" y="678" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Evento / resultado</text>
+<polygon points="277,669 284,675 277,681 270,675" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="292" y="678" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Decisión</text>
+<rect x="372" y="670" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="394" y="678" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Aparece sin robar foco</text>
+<rect x="546" y="670" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="568" y="678" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Paso</text>
+<path d="M 628 675 H 644" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#t5-arrow-accent)"/>
+<text x="650" y="678" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Camino con la app abierta</text>
+</svg>
+</div>
+<p class="figcap">Figura 4 · Un incendio grave en la app. Con la app abierta aparece el radar sin pedir foco; con la app cerrada llega una notificación privada que abre un deep link validado.</p>
+  <div class="prose">
+  <h3>Por qué el radar no le quita el foco al composer</h3>
+  <ul>
+    <li><strong>Vive en la misma ventana.</strong> Es un composable encima del <code>NavDisplay</code>, no un
+    <code>Dialog</code> ni un <code>Popup</code> enfocable: esos abren otra ventana y el teclado se cierra.</li>
+    <li><strong>No es enfocable:</strong> <code>focusProperties { canFocus = false }</code>. Nunca llama a
+    <code>FocusRequester</code> ni a <code>clearFocus()</code>, y no toca el controlador del teclado.</li>
+    <li><strong>No se abre por accidente:</strong> la tarjeta no responde al toque durante el primer medio segundo, por
+    si el dedo iba a una tecla.</li>
+    <li><strong>Se anuncia sin interrumpir:</strong> <code>liveRegion = Polite</code> hace que TalkBack la lea cuando
+    termine lo que está leyendo.</li>
+    <li><strong>No tapa el composer:</strong> su alto máximo es el menor entre el 75 % de la pantalla y el espacio que
+    queda sobre el composer y el teclado.</li>
+    <li><strong>Sin sonido mientras escribes:</strong> solo una animación corta y una háptica suave.</li>
+    <li><strong>Se pliega solo:</strong> la tarjeta de un incendio nuevo se ve 4 segundos, compacta y debajo del
+    encabezado, y después queda como un chip en la barra superior (<code>RadarIndicator</code>). La prueba de punta
+    a punta mostró que una tarjeta fija arriba tapaba «Tomar la conversación»; con el chip, el radar nunca cubre
+    botones.</li>
+  </ul>
+  </div>
+  <pre><code class="kotlin">// :core:ui — el radar. Aparece apenas llega un incendio grave, aunque el operador esté escribiendo.
+@Composable
+fun RadarOverlay(cards: ImmutableList&lt;FireCardUi&gt;, maxHeight: Dp, onOpen: (FireId) -&gt; Unit, onHide: (FireId) -&gt; Unit) {
+    val haptics = LocalHapticFeedback.current
+    LaunchedEffect(cards.firstOrNull()?.id) { if (cards.isNotEmpty()) haptics.performHapticFeedback(HapticFeedbackType.ContextClick) }
+
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    NavigationBackHandler(                                          // skill navigation-event (no BackHandler viejo)
+        state = rememberNavigationEventState(currentInfo = NavigationEventInfo.None),
+        isBackEnabled = expanded,
+        onBackCompleted = { expanded = false },
+    )
+
+    AnimatedVisibility(visible = cards.isNotEmpty(), enter = slideInVertically() + fadeIn(), exit = fadeOut()) {
+        Column(
+            Modifier
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .heightIn(max = maxHeight)                          // ≤ 3/4 de pantalla y nunca sobre el composer
+                .focusProperties { canFocus = false }               // no le quita el foco al TextField
+                .semantics { liveRegion = LiveRegionMode.Polite }   // TalkBack lo anuncia sin interrumpir
+        ) {
+            val visible = if (expanded) cards else cards.take(1)
+            visible.forEach { card -&gt;
+                key(card.id) {
+                    SwipeToDismissBox(
+                        state = rememberSwipeToDismissBoxState(),
+                        backgroundContent = {},
+                        onDismiss = { onHide(card.id) },            // ocultar ≠ resolver: sigue en Incendios
+                    ) { FireCard(card, onClick = { onOpen(card.id) }, armDelay = 500.milliseconds) }
+                }
+            }
+            if (cards.size &gt; 1 &amp;&amp; !expanded) RadarPill(count = cards.size, onClick = { expanded = true })
+        }
+    }
+}
+// Sin Dialog, sin Popup enfocable, sin FocusRequester y sin clearFocus(): la capa vive en la misma ventana.</code></pre>
+  <div class="code-grid">
+    <div><p class="code-cap">Evento de un incendio</p><pre><code class="json">{
+  &quot;type&quot;: &quot;mobile.attention&quot;,
+  &quot;fire_id&quot;: &quot;&lt;id&gt;&quot;,
+  &quot;subject&quot;: { &quot;kind&quot;: &quot;chat&quot;, &quot;session_id&quot;: &quot;&lt;sesión&gt;&quot;, &quot;order_id&quot;: null },
+  &quot;severity&quot;: &quot;grave&quot;,
+  &quot;kind&quot;: &quot;wants_human&quot;,
+  &quot;getting_worse&quot;: true,
+  &quot;title&quot;: &quot;Sofía pide un humano&quot;,
+  &quot;subtitle&quot;: &quot;12 min sin respuesta · 4 mensajes&quot;,
+  &quot;primary_action&quot;: { &quot;name&quot;: &quot;open_chat&quot;, &quot;args&quot;: { &quot;session_id&quot;: &quot;&lt;sesión&gt;&quot; } },
+  &quot;decided_by&quot;: &quot;jev&quot;,
+  &quot;confidence&quot;: 0.93
+}</code></pre></div>
+    <div class="prose"><h3>Incendios</h3><ul>
+      <li><strong><code>FiresScreen</code></strong>: un <code>LazyColumn</code> con claves estables y dos tipos de
+      tarjeta (<code>ChatFireCard</code> y <code>OrderFireCard</code>), con filtros por gravedad, chats y órdenes.</li>
+      <li><strong>No se reordena bajo el dedo:</strong> mientras hay scroll, los cambios esperan y arriba aparece
+      «3 nuevos».</li>
+      <li><strong>Una tarjeta por cliente:</strong> el servidor ya las manda fusionadas, y la clave es el
+      <code>fire_id</code>.</li>
+      <li><strong>El botón principal viene en el evento</strong> (<code>primary_action</code>): «Intervenir»,
+      «Responder» o «Ver orden».</li>
+    </ul></div>
+  </div>
+  <h3>La ficha de la orden</h3>
+  <div class="table-wrap"><table><thead><tr><th>Parte</th><th>Componente</th><th>Datos y acción</th></tr></thead><tbody><tr><td>Qué compró</td><td><code>OrderItemsBlock</code></td><td><code>GET /api/orders/orders/{id}</code> (existe): productos, variantes, cantidades, precios y cupón.</td></tr><tr><td>Estado</td><td><code>OrderStepper</code> + <code>AdvanceStageButton</code></td><td>El paso siguiente lo decide el servidor. <code>PATCH /api/chats/order-actions/{id}/stage</code> (existe).</td></tr><tr><td>Pasos con datos</td><td><code>StageInputs</code></td><td>Foto para «listo» (<code>PUT …/photo</code>, existe); guía y costo real para «despachar»; confirmar pago con <code>BiometricPrompt</code>.</td></tr><tr><td>Pago y envío</td><td><code>PaymentShippingBlock</code></td><td>Modalidad, estado del pago, quién recibe, dirección, barrio y ciudad. El link de la guía necesita un campo nuevo.</td></tr><tr><td>Varios pedidos</td><td><code>PrimaryTabRow</code></td><td>Una pestaña por pedido; el que está en curso va primero.</td></tr></tbody></table></div>
+</section>
+
+<section id="t6">
+  <p class="eyebrow">06 · Fuera de la app</p>
+  <h2>Widget, notificaciones y Live Update</h2>
+  <div class="prose"><ul>
+    <li><strong>Solo mensajes de datos por FCM.</strong> Nunca el bloque <code>notification</code>: así la app decide
+    qué mostrar y puede quitar un aviso que ya no aplica. Los incendios graves van con prioridad alta; las
+    actualizaciones del widget, con prioridad normal, para no gastar la cuota de prioridad alta.</li>
+    <li><strong>El widget lee DataStore.</strong> El push guarda las tres ventas más calientes y llama a
+    <code>updateAll</code>. Cada fila abre la conversación en vivo.</li>
+    <li><strong>Live Update solo en Android 16 o más</strong> y solo si el operador activa «Vigilar ventas»:
+    <code>Notification.ProgressStyle</code> con las etapas como segmentos y promoción a Live Update
+    (<code>setRequestPromotedOngoing</code>). En el Android 11 de hoy queda como notificación fija.</li>
+    <li><strong>Permiso de notificaciones</strong> con el flujo de tres estados del skill de permisos: se explica por qué
+    antes de pedirlo, y si se niega para siempre se ofrece ir a Ajustes.</li>
+  </ul></div>
+  <div class="table-wrap"><table><thead><tr><th>Canal</th><th>Importancia</th><th>Cuándo</th><th>Pantalla bloqueada</th></tr></thead><tbody><tr><td><code>incendios_graves</code></td><td>Alta, con sonido</td><td>Un incendio grave con la app cerrada.</td><td>Privada, con versión pública sin nombres: «1 incendio grave».</td></tr><tr><td><code>ventas_riesgo</code></td><td>Alta</td><td>Una venta caliente entra en riesgo.</td><td>«1 venta en riesgo».</td></tr><tr><td><code>vigilar_ventas</code></td><td>Baja, sin sonido</td><td>Live Update de «Vigilar ventas» (Android 16+).</td><td>Solo la etapa, sin nombre.</td></tr><tr><td><code>general</code></td><td>Normal</td><td>Todo lo demás (por ejemplo, un envío fallido).</td><td>Privada.</td></tr></tbody></table></div>
+  <pre><code class="kotlin">// :widget:hot — ventas calientes en la pantalla de inicio (Glance funciona en el Android 11 de hoy)
+class HotSalesWidget : GlanceAppWidget() {
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        val store = EntryPointAccessors.fromApplication&lt;WidgetEntryPoint&gt;(context).hotSalesStore()
+        provideContent {
+            val rows by store.top3.collectAsState(initial = emptyList())   // DataStore, lo escribe el push
+            HotSalesContent(rows) { row -&gt; actionStartActivity(liveIntent(context, row.session)) }
+        }
+    }
+}
+class HotSalesWidgetReceiver : GlanceAppWidgetReceiver() { override val glanceAppWidget = HotSalesWidget() }
+
+// :core:push — solo mensajes de DATOS: la app decide qué mostrar (y lo oculta si ya no aplica)
+@AndroidEntryPoint
+class OperatorMessagingService : FirebaseMessagingService() {
+    @Inject lateinit var router: PushRouter
+    override fun onMessageReceived(message: RemoteMessage) = router.handle(message.data)   // incendio, venta, widget
+    override fun onNewToken(token: String) = router.registerDevice(token)                  // POST /api/chats/mobile/devices
+}
+
+fun liveIntent(context: Context, session: SessionId): PendingIntent = PendingIntent.getActivity(
+    context, session.hashCode(),
+    Intent(context, MainActivity::class.java).setData(&quot;hubara://live/${session.raw}&quot;.toUri()),   // explícito
+    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+)</code></pre>
+</section>
+
+<section id="t7">
+  <p class="eyebrow">07 · Datos, sincronización y offline</p>
+  <h2>Room manda; la red solo lo actualiza</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="datos-title datos-desc">
+<title id="datos-title">Datos y sincronización</title>
+<desc id="datos-desc">El backend llega por REST, SSE y FCM a un motor de sincronización que escribe en Room, la única fuente de verdad. Los repositorios exponen Flows a los ViewModels. Las acciones del operador pasan por un outbox de WorkManager que escribe primero en Room y reintenta el POST de forma idempotente.</desc>
+
+<defs><marker id="t3-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="t3-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="t3-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="t3-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="t3-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="t3-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<path d="M 248 156 H 272 Q 280 156 280 164 V 290 Q 280 298 288 298 H 310" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t3-arrow)"/>
+<path d="M 248 316 H 310" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t3-arrow)"/>
+<path d="M 248 476 H 272 Q 280 476 280 468 V 342 Q 280 334 288 334 H 310" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t3-arrow)"/>
+<path d="M 488 316 H 550" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#t3-arrow-accent)"/>
+<rect x="498" y="296" width="44" height="12" rx="2" fill="#f5f5f5"/><text x="520" y="305" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">UPSERT</text>
+<path d="M 728 316 H 790" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t3-arrow)"/>
+<rect x="744" y="296" width="32" height="12" rx="2" fill="#f5f5f5"/><text x="760" y="305" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">FLOW</text>
+<path d="M 968 316 H 1030" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t3-arrow)"/>
+<rect x="982" y="296" width="36" height="12" rx="2" fill="#f5f5f5"/><text x="1000" y="305" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">STATE</text>
+<path d="M 1120 352 V 468 Q 1120 476 1112 476 H 970" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t3-arrow)"/>
+<rect x="1128" y="406" width="44" height="12" rx="2" fill="#f5f5f5"/><text x="1150" y="415" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">ACCIÓN</text>
+<path d="M 792 468 H 648 Q 640 468 640 460 V 354" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#t3-arrow)"/>
+<rect x="648" y="406" width="60" height="12" rx="2" fill="#f5f5f5"/><text x="678" y="415" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PENDIENTE</text>
+<path d="M 880 512 V 552 Q 880 560 872 560 H 56 Q 48 560 48 552 V 164 Q 48 156 56 156 H 70" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#t3-arrow-link)"/>
+<rect x="526" y="568" width="68" height="12" rx="2" fill="#f5f5f5"/><text x="560" y="577" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">IDEMPOTENTE</text>
+<path d="M 400 352 V 438" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t3-arrow)"/>
+<rect x="408" y="389" width="32" height="12" rx="2" fill="#f5f5f5"/><text x="424" y="398" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PUSH</text>
+<rect x="72" y="120" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="72" y="120" width="176" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<rect x="80" y="126" width="44" height="12" rx="2" fill="none" stroke="#7a8399" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="102" y="135" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">BACKEND</text>
+<text x="160" y="158" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">API REST</text>
+<text x="160" y="174" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">ETag · paginado</text>
+<rect x="72" y="280" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="72" y="280" width="176" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<rect x="80" y="286" width="44" height="12" rx="2" fill="none" stroke="#7a8399" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="102" y="295" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">BACKEND</text>
+<text x="160" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">SSE /events</text>
+<text x="160" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">ticket de vida corta</text>
+<rect x="72" y="440" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="72" y="440" width="176" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<rect x="80" y="446" width="44" height="12" rx="2" fill="none" stroke="#7a8399" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="102" y="455" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">BACKEND</text>
+<text x="160" y="478" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">FCM</text>
+<text x="160" y="494" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">con la app cerrada</text>
+<rect x="312" y="280" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="312" y="280" width="176" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="320" y="286" width="24" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="332" y="295" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">APP</text>
+<text x="400" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">SyncEngine</text>
+<text x="400" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">enruta y refresca</text>
+<rect x="552" y="280" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="552" y="280" width="176" height="72" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<rect x="560" y="286" width="24" height="12" rx="2" fill="none" stroke="#eb6c36" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="572" y="295" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">APP</text>
+<text x="640" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Room</text>
+<text x="640" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">única fuente de verdad</text>
+<rect x="792" y="280" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="792" y="280" width="176" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="800" y="286" width="24" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="812" y="295" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">APP</text>
+<text x="880" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Repositorios</text>
+<text x="880" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Flow por pantalla</text>
+<rect x="1032" y="280" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="1032" y="280" width="176" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="1040" y="286" width="24" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="1052" y="295" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">APP</text>
+<text x="1120" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ViewModels + UI</text>
+<text x="1120" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">collectAsStateWithLifecycle</text>
+<rect x="312" y="440" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="312" y="440" width="176" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="320" y="446" width="24" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="332" y="455" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">APP</text>
+<text x="400" y="478" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Widget y avisos</text>
+<text x="400" y="494" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">DataStore → Glance</text>
+<rect x="792" y="440" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="792" y="440" width="176" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="800" y="446" width="24" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="812" y="455" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">APP</text>
+<text x="880" y="478" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Outbox</text>
+<text x="880" y="494" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">WorkManager · reintenta</text>
+<text x="1008" y="208" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">la pantalla nunca lee la red directo</text><path d="M 1004 204 Q 1040 232 1060 276" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="1062" cy="278" r="2" fill="#2d3142"/>
+<line x1="40" y1="596" x2="1240" y2="596" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="619" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="610" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="138" y="618" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Fuente de verdad</text>
+<rect x="258" y="610" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="280" y="618" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Pieza de la app</text>
+<rect x="396" y="610" width="14" height="10" rx="2" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="418" y="618" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Backend</text>
+<path d="M 494 615 H 510" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t3-arrow)"/>
+<text x="516" y="618" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Datos</text>
+<path d="M 580 615 H 596" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#t3-arrow-link)"/>
+<text x="602" y="618" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">HTTP de salida</text>
+<path d="M 714 615 H 730" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#t3-arrow)"/>
+<text x="736" y="618" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Escritura optimista</text>
+</svg>
+</div>
+<p class="figcap">Figura 5 · REST, SSE y FCM escriben en Room a través del SyncEngine. Las pantallas leen Flows. Las acciones escriben primero en Room y salen por un outbox que reintenta de forma idempotente.</p>
+  <div class="prose"><ul>
+    <li><strong>Un solo stream SSE</strong> mientras la app está en primer plano (<code>ProcessLifecycleOwner</code>).
+    En segundo plano no hay SSE: manda FCM.</li>
+    <li><strong>Reconexión con ticket nuevo</strong> en cada intento, de 1 a 30 segundos con jitter. Es la lección del
+    token vencido en el SSE (#181). Al reconectar se piden los cambios desde el último cursor, no todo.</li>
+    <li><strong>Los tipos de evento desconocidos se ignoran</strong> (<code>ServerEvent.Unknown</code>): una app vieja
+    tolera eventos nuevos.</li>
+    <li><strong>El borrador de cada chat vive en Room:</strong> texto, cursor, fotos en cola y posición del scroll.</li>
+  </ul></div>
+  <div class="table-wrap"><table><thead><tr><th>Entidad</th><th>Clave</th><th>Para qué</th></tr></thead><tbody><tr><td><code>ConversationEntity</code></td><td><code>session_id</code></td><td>Bandeja: nombre, ruta (bot o humano), etapa, sin responder, último mensaje y <code>order_ref</code>.</td></tr><tr><td><code>MessageEntity</code></td><td>id del mensaje</td><td>Historial por sesión: quién lo envió (cliente, bot, humano), tipo, texto, foto y <code>client_id</code>.</td></tr><tr><td><code>DraftEntity</code></td><td><code>session_id</code></td><td>Borrador: texto, cursor, fotos en cola y posición del scroll.</td></tr><tr><td><code>OutboxEntity</code></td><td><code>client_action_id</code></td><td>Envíos pendientes: tool, texto o foto; estado, intentos y error.</td></tr><tr><td><code>SuggestionSetEntity</code></td><td><code>session_id</code></td><td>Las burbujas vigentes, con su <code>version</code>.</td></tr><tr><td><code>FireEntity</code></td><td><code>fire_id</code></td><td>Incendios: sujeto, gravedad, tipo, si empeora, textos y si está oculto.</td></tr><tr><td><code>OrderEntity</code></td><td><code>order_id</code></td><td>Detalle de la orden con su ETag.</td></tr><tr><td><code>SurfaceEntity</code></td><td><code>surface_id</code> + parámetros</td><td>Documentos SDUI con su ETag.</td></tr></tbody></table></div>
+  <pre><code class="kotlin">// :core:network — un solo stream por app en primer plano. Ticket nuevo en cada reconexión (#181, SEC-06).
+class EventStream @Inject constructor(
+    private val client: OkHttpClient, private val tickets: SseTicketApi, private val json: Json,
+) {
+    fun events(): Flow&lt;ServerEvent&gt; = callbackFlow {
+        val ticket = tickets.mint().ticket                                   // POST /api/dashboard/sse-ticket
+        val request = Request.Builder().url(&quot;$BASE_URL/api/dashboard/events?ticket=$ticket&quot;).build()
+        val source = EventSources.createFactory(client).newEventSource(request, object : EventSourceListener() {
+            override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
+                trySend(ServerEvent.decode(json, type, data))                // tipos desconocidos → ServerEvent.Unknown
+            }
+            override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) { close(t) }
+        })
+        awaitClose { source.cancel() }
+    }.retryWhen { _, attempt -&gt; delay(backoff(attempt)); true }            // 1 s → 30 s con jitter
+}</code></pre>
+</section>
+
+<section id="t8">
+  <p class="eyebrow">08 · Server-Driven UI en esta app</p>
+  <h2>Qué decide el servidor y qué es nativo</h2>
+  <div class="prose"><p>El contrato es el del documento de arquitectura: lista plana de nodos con id, bindings con
+  JSON Pointer, acciones como referencias y un tipo <code>Unknown</code> para que una app vieja no se rompa. La regla
+  de reparto en esta visión:</p></div>
+  <div class="table-wrap"><table><thead><tr><th>Superficie</th><th>Lo decide el servidor</th><th>Es nativo</th></tr></thead><tbody><tr><td><code>chat.header</code></td><td>Qué mostrar de lo que entendió el bot, en qué orden y el botón del pedido.</td><td>El encabezado y el gesto de tomar la conversación.</td></tr><tr><td><code>chat.suggestions</code></td><td>Cuáles burbujas, en qué orden, su prominencia y sus argumentos.</td><td>Tocar, mantener, deshacer y el outbox.</td></tr><tr><td><code>fires.feed</code> y radar</td><td>Qué tarjetas, en qué orden, sus textos y su acción principal.</td><td>Swipe, foco, animación y el retraso de medio segundo.</td></tr><tr><td><code>order.sheet</code></td><td>Los bloques y las transiciones permitidas.</td><td>El stepper y la captura de foto y guía.</td></tr><tr><td><code>widget.hot</code></td><td>Las filas.</td><td>Glance.</td></tr><tr><td>Timeline, composer y cámara</td><td>Nada.</td><td>Islas nativas completas.</td></tr></tbody></table></div>
+  <div class="prose"><p><strong>La Styles API de Compose</strong> encajaría para mapear tokens de estilo del servidor,
+  pero el skill <code>styles</code> la marca como experimental (alfa, compileSdk 37). Se evalúa en la fase 4, cuando
+  sea estable; mientras tanto, Material 3 con tokens propios.</p></div>
+</section>
+
+<section id="t9">
+  <p class="eyebrow">09 · Backend</p>
+  <h2>El motor de decisiones que ya existe, con dos consumidores nuevos</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="backend-title backend-desc">
+<title id="backend-title">El backend de la app</title>
+<desc id="backend-desc">WhatsApp entra al workflow de ventas, que deja el borrador y la etapa en el vault. El sampler del API detecta cada mensaje nuevo y le pasa el tick al motor de decisiones, que pregunta al oráculo Jev y lee los hechos de la orden. Las decisiones salen por la API móvil: SSE con la app abierta, FCM con la app cerrada. Las acciones del operador vuelven como POST.</desc>
+
+<defs><marker id="t6-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="t6-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="t6-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="t6-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="t6-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="t6-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<path d="M 248 156 H 310" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t6-arrow)"/>
+<rect x="254" y="136" width="52" height="12" rx="2" fill="#f5f5f5"/><text x="280" y="145" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">MENSAJES</text>
+<path d="M 400 192 V 278" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t6-arrow)"/>
+<rect x="408" y="229" width="36" height="12" rx="2" fill="#f5f5f5"/><text x="426" y="238" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">VAULT</text>
+<path d="M 488 316 H 550" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t6-arrow)"/>
+<rect x="504" y="296" width="32" height="12" rx="2" fill="#f5f5f5"/><text x="520" y="305" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">TICK</text>
+<path d="M 612 280 V 194" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#t6-arrow-link)"/>
+<rect x="544" y="231" width="60" height="12" rx="2" fill="#f5f5f5"/><text x="574" y="240" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">1 REQUEST</text>
+<path d="M 668 194 V 278" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#t6-arrow)"/>
+<rect x="676" y="231" width="36" height="12" rx="2" fill="#f5f5f5"/><text x="694" y="240" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PROBS</text>
+<path d="M 640 440 V 354" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t6-arrow)"/>
+<rect x="648" y="391" width="44" height="12" rx="2" fill="#f5f5f5"/><text x="670" y="400" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">HECHOS</text>
+<path d="M 728 316 H 790" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#t6-arrow-accent)"/>
+<rect x="728" y="296" width="64" height="12" rx="2" fill="#f5f5f5"/><text x="760" y="305" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">DECISIONES</text>
+<path d="M 968 306 H 1030" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#t6-arrow-link)"/>
+<rect x="986" y="286" width="28" height="12" rx="2" fill="#f5f5f5"/><text x="1000" y="295" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SSE</text>
+<path d="M 1030 330 H 970" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#t6-arrow-link)"/>
+<rect x="984" y="338" width="32" height="12" rx="2" fill="#f5f5f5"/><text x="1000" y="347" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">POST</text>
+<path d="M 880 352 V 438" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t6-arrow)"/>
+<rect x="888" y="389" width="32" height="12" rx="2" fill="#f5f5f5"/><text x="904" y="398" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PUSH</text>
+<path d="M 968 476 H 1112 Q 1120 476 1120 468 V 354" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#t6-arrow)"/>
+<rect x="1010" y="484" width="68" height="12" rx="2" fill="#f5f5f5"/><text x="1044" y="493" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">APP CERRADA</text>
+<rect x="72" y="120" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="72" y="120" width="176" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<rect x="80" y="126" width="24" height="12" rx="2" fill="none" stroke="#7a8399" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="92" y="135" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+<text x="160" y="158" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">WhatsApp</text>
+<text x="160" y="174" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Cloud API</text>
+<rect x="312" y="120" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="312" y="120" width="176" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="320" y="126" width="36" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="338" y="135" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CHATS</text>
+<text x="400" y="158" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Workflow de ventas</text>
+<text x="400" y="174" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">borrador · etapa · tools</text>
+<rect x="552" y="120" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="552" y="120" width="176" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<rect x="560" y="126" width="60" height="12" rx="2" fill="none" stroke="#7a8399" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="590" y="135" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PERCEPCIÓN</text>
+<text x="640" y="158" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Oráculo Jev</text>
+<text x="640" y="174" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">anonimizado · 3 s máx.</text>
+<rect x="312" y="280" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="312" y="280" width="176" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="320" y="286" width="36" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="338" y="295" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CHATS</text>
+<text x="400" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Sampler del API</text>
+<text x="400" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">mensaje nuevo · reloj</text>
+<rect x="552" y="280" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="552" y="280" width="176" height="72" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<rect x="560" y="286" width="44" height="12" rx="2" fill="none" stroke="#eb6c36" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="582" y="295" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PR #372</text>
+<text x="640" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Motor de decisiones</text>
+<text x="640" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">burbujas-v1 · vigia-v1</text>
+<rect x="552" y="440" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="552" y="440" width="176" height="72" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<rect x="560" y="446" width="24" height="12" rx="2" fill="none" stroke="#4f5d75" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="572" y="455" fill="#4f5d75" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SDK</text>
+<text x="640" y="478" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">OrderFacts</text>
+<text x="640" y="494" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">get_order_facts_port</text>
+<rect x="792" y="280" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="792" y="280" width="176" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="800" y="286" width="36" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="818" y="295" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CHATS</text>
+<text x="880" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">API móvil</text>
+<text x="880" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">/api/chats/mobile</text>
+<rect x="792" y="440" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="792" y="440" width="176" height="72" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<rect x="800" y="446" width="24" height="12" rx="2" fill="none" stroke="#7a8399" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="812" y="455" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+<text x="880" y="478" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">FCM</text>
+<text x="880" y="494" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">mensajes de datos</text>
+<rect x="1032" y="280" width="176" height="72" rx="6" fill="#f5f5f5"/>
+<rect x="1032" y="280" width="176" height="72" rx="6" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+<rect x="1040" y="286" width="24" height="12" rx="2" fill="none" stroke="#7a8399" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="1052" y="295" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">APP</text>
+<text x="1120" y="318" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">App del operador</text>
+<text x="1120" y="334" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Android nativa</text>
+<text x="760" y="200" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">Jev percibe, el código decide</text><path d="M 756 196 Q 740 186 732 180" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="730" cy="180" r="2" fill="#2d3142"/>
+<line x1="40" y1="556" x2="1240" y2="556" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="579" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="570" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="138" y="578" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Decide</text>
+<rect x="206" y="570" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="228" y="578" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Servicio propio</text>
+<rect x="344" y="570" width="14" height="10" rx="2" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="366" y="578" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Externo</text>
+<rect x="442" y="570" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<text x="464" y="578" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Puerto del SDK</text>
+<path d="M 576 575 H 592" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#t6-arrow-link)"/>
+<text x="598" y="578" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">HTTP</text>
+<path d="M 658 575 H 674" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#t6-arrow-accent)"/>
+<text x="680" y="578" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Salida principal</text>
+</svg>
+</div>
+<p class="figcap">Figura 6 · El sampler le pasa cada tick al motor de decisiones, que pregunta a Jev y lee los hechos de la orden. Las decisiones salen por la API móvil: SSE con la app abierta, FCM con la app cerrada.</p>
+  <div class="prose">
+  <ul>
+    <li><strong>Se reusa el motor del PR #372.</strong> Tiene tres capas: el oráculo
+    (<code>src/platform/perception</code>, Jev por la Decisions API de OpenRouter, <code>ask</code> nunca lanza), el
+    motor (cuestionarios en YAML, políticas puras y perfiles) y los consumidores, que solo leen decisiones. Su regla es
+    la misma de la visión: <em>Jev percibe, el código decide</em>. Si Jev falla o tarda, decide la regla de hoy.</li>
+    <li><strong>Las burbujas y el vigía son consumidores nuevos:</strong> dos cuestionarios
+    (<code>burbujas-v1</code>, <code>vigia-v1</code>), dos políticas y dos perfiles. Las burbujas reusan las preguntas
+    de tema de <code>rafaga-v3</code>, que ya pregunta por aroma, pagos, envío, catálogo y datos de envío.</li>
+    <li><strong>El oráculo no cambia:</strong> modelo fijo <code>typesafe/jev-1.13</code> (lección L-23: nunca
+    «latest»), anonimización de nombres, tiempo máximo de 3 s y sin retención de datos del lado del proveedor.</li>
+    <li><strong>Sombra y calibración vienen gratis:</strong> cada perfil puede correr otro en sombra, el
+    <code>DisagreementLog</code> guarda las diferencias y <code>calibrated_model</code> baja a sombra lo que actúa si
+    Jev responde con otra versión.</li>
+    <li><strong>Cambio respecto a la propuesta anterior:</strong> no se crea el plugin <code>mobile_ui</code>. Las
+    burbujas necesitan las tools, el borrador y la etapa, y todo eso es del plugin chats. Un plugin aparte obligaría a
+    abrir un puerto nuevo sin ganar nada. Los endpoints van en <code>src/plugins/chats/api/mobile.py</code>
+    (<code>/api/chats/mobile</code>), y las órdenes se leen por <code>get_order_facts_port()</code> (gotcha 13).</li>
+  </ul>
+  </div>
+  <div class="code-grid">
+    <div><p class="code-cap">Cuestionario del vigía</p><pre><code class="yaml"># decisions/questionnaires/vigia-v1.yaml — mismo formato que rafaga-v3 (PR #372)
+id: vigia-v1
+questions:
+  - id: fire.worth_it
+    kind: noul
+    text: &quot;¿Un humano debería mirar esta conversación ahora?&quot;
+    criteria: {&quot;true&quot;: &quot;sí, algo se está quemando&quot;, &quot;false&quot;: &quot;no, va bien sola&quot;}
+  - id: fire.severity
+    kind: score
+    text: &quot;¿Qué tan grave es para el cliente y la venta si nadie actúa?&quot;
+    criteria: [&quot;puede esperar&quot;, &quot;hoy&quot;, &quot;grave: hay que actuar ya&quot;]
+  - id: fire.kind
+    kind: choice
+    text: &quot;¿Qué está pasando en la conversación?&quot;
+    criteria:
+      pide_humano: &quot;pide hablar con una persona&quot;
+      molesto: &quot;está molesto o reclama&quot;
+      bot_trabado: &quot;el bot se repite, no responde lo preguntado o se equivocó&quot;
+      venta_en_riesgo: &quot;está por comprar y aparece una objeción o una duda&quot;
+      salud: &quot;alergias, embarazo, bebés o mascotas&quot;
+      reputacion: &quot;amenaza con una reseña, una denuncia o redes&quot;
+      problema_pedido: &quot;reclama por un pedido ya hecho&quot;
+      felicitacion: &quot;felicita o agradece&quot;
+      otro: &quot;otra cosa&quot;
+  - id: fire.getting_worse
+    kind: noul
+    when: {has_previous: true}          # condición nueva: solo si hay evaluación anterior
+    text: &quot;¿Está peor que en la evaluación anterior?&quot;
+    criteria: {&quot;true&quot;: &quot;sí, empeoró&quot;, &quot;false&quot;: &quot;no&quot;}</code></pre></div>
+    <div><p class="code-cap">Perfiles y política</p><pre><code class="yaml"># decisions/profiles.yaml — un perfil por consumidor; el oráculo es el mismo (jev-1.13, id fijo)
+mobile-vigia-v1:
+  oracle: jev-1.13
+  questions: vigia-v1
+  policy: vigia-v1
+  thresholds: {worth_it: 0.60, doubt: 0.60, grave: 1.5}
+  shadow: null
+  calibrated_model: null
+
+mobile-burbujas-v1:
+  oracle: jev-1.13
+  questions: burbujas-v1        # reusa las preguntas de tema de rafaga-v3 (aroma, pagos, envío, catálogo…)
+  policy: burbujas-v1
+  thresholds: {primary: 0.85, show: 0.60}
+  shadow: null
+  calibrated_model: null</code></pre><pre><code class="python"># decisions/policies/vigia_v1.py — pura y versionada: Jev percibe, el código decide.
+def decide(facts: FireFacts, reading: Reading, th: Thresholds) -&gt; FireDecision:
+    if not reading.ok:                                   # Jev falló o tardó: decide la regla de hoy
+        return rules_fallback(facts)                     # ruta humano con espera, motivo de escalamiento, atraso
+    if reading.p(&quot;fire.worth_it&quot;) &lt; th.worth_it:
+        return FireDecision.none()                       # queda en el chat o en la ficha
+    kind = reading.choice(&quot;fire.kind&quot;)
+    doubt = reading.confidence(&quot;fire.kind&quot;) &lt; th.doubt
+    grave = reading.score(&quot;fire.severity&quot;) &gt;= th.grave and not doubt and kind != &quot;felicitacion&quot;
+    return FireDecision(show=True, grave=grave, kind=kind,
+                        worse=reading.p(&quot;fire.getting_worse&quot;, default=0.0) &gt;= 0.5)</code></pre></div>
+  </div>
+  <h3>¿Jev directo a OpenRouter desde el teléfono, o por nuestro servidor?</h3>
+  <div class="prose">
+  <p><strong>Por nuestro servidor.</strong> La intuición de ir directo para ahorrar latencia no se cumple, porque el
+  turno de la burbuja empieza en el servidor y no en el teléfono:</p>
+  <ul>
+    <li><strong>Directo:</strong> el mensaje del cliente llega al webhook → el servidor lo manda al teléfono por SSE →
+    el teléfono arma el estado y llama a OpenRouter → responde. Son dos saltos en serie antes de Jev.</li>
+    <li><strong>Por el servidor:</strong> el mensaje llega al webhook → el servidor llama a Jev en ese mismo momento,
+    mientras le avisa al teléfono → la burbuja llega por SSE junto con el mensaje, o justo después. El operador no
+    espera a Jev al abrir el chat: la burbuja ya está calculada.</li>
+    <li><strong>El salto extra es mínimo:</strong> servidor → OpenRouter es de centro de datos a centro de datos (del
+    orden de decenas de milisegundos). Jev solo, medido en el PR #372, tarda 0,55 s de mediana y 1,06 s como máximo.</li>
+  </ul>
+  <p>Y hay razones que no son de latencia:</p>
+  <ul>
+    <li><strong>La llave de OpenRouter no puede vivir en el APK:</strong> se extrae en minutos y cualquiera gasta a
+    nuestra cuenta.</li>
+    <li><strong>La anonimización</strong> de nombres y el «sin retención» del proveedor ya los hace el oráculo del
+    servidor.</li>
+    <li><strong>El tablero y las jugadas legales</strong> salen del vault (borrador, etapa, ventana de 24 h, catálogo):
+    copiarlos al teléfono duplica la lógica y abre la puerta a burbujas que no aplican.</li>
+    <li><strong>El vigía tiene que correr con la app cerrada</strong>, así que de todos modos vive en el servidor.</li>
+    <li><strong>La API de decisiones está en alfa:</strong> si cambia de forma, se arregla en el servidor sin publicar
+    una versión de la app.</li>
+  </ul>
+  <p>La app ya consume las burbujas como un endpoint más (<code>GET /api/chats/mobile/suggestions/<built-in function id></code> y el
+  SSE). Hoy responden reglas; cuando Jev entre, la app no cambia.</p>
+  </div>
+  <h3>Endpoints</h3>
+  <div class="table-wrap"><table><thead><tr><th>Endpoint</th><th>Hoy</th><th>Para qué</th></tr></thead><tbody><tr><td><code>GET /api/dashboard/sessions</code> · <code>/sessions/{id}</code></td><td><span class="pill nat">existe</span> <span class="pill ">cambia</span></td><td>Bandeja con <code>order_ref</code> y no vistos (#384); historial. Falta paginar hacia atrás.</td></tr><tr><td><code>POST /api/dashboard/sse-ticket</code> · <code>GET /api/dashboard/events</code></td><td><span class="pill nat">existe</span></td><td>SSE. Eventos nuevos: <code>chats.message_appended</code>, <code>mobile.suggestions</code>, <code>mobile.attention</code>, <code>mobile.hot</code>.</td></tr><tr><td><code>POST /api/dashboard/sessions/{id}/intervene</code> · <code>return-to-bot</code></td><td><span class="pill nat">existe</span> <span class="pill ">cambia</span></td><td>Tomar y devolver. Al intervenir hay que vaciar los envíos pendientes del bot.</td></tr><tr><td><code>POST /api/dashboard/sessions/{id}/messages</code> · <code>media</code> · <code>template-messages</code></td><td><span class="pill nat">existe</span></td><td>Texto, fotos en dos pasos y plantillas para reactivar.</td></tr><tr><td><code>POST /api/chats/session-actions/{key}/tools/{tool}</code></td><td><span class="pill gen">nuevo</span></td><td>La tool del bot ejecutada por el humano: solo esa acción, <code>client_action_id</code>, ventana de 24 h (409 si está cerrada) y <code>sender: human</code>.</td></tr><tr><td><code>GET /api/chats/catalog</code></td><td><span class="pill gen">nuevo</span></td><td>Catálogo para el selector (regla P-22: no se usa el de marketing).</td></tr><tr><td><code>GET /api/chats/mobile/suggestions/{session}</code></td><td><span class="pill gen">nuevo</span></td><td>Burbujas vigentes al abrir el chat.</td></tr><tr><td><code>GET /api/chats/mobile/fires</code> · <code>/hot</code></td><td><span class="pill gen">nuevo</span></td><td>Incendios y ventas calientes.</td></tr><tr><td><code>POST /api/chats/mobile/devices</code></td><td><span class="pill gen">nuevo</span></td><td>Registrar el token de FCM del teléfono.</td></tr><tr><td><code>GET /api/chats/mobile/surfaces/{id}</code></td><td><span class="pill gen">nuevo</span></td><td>Documentos SDUI con ETag.</td></tr><tr><td><code>GET /api/orders/orders/{id}</code></td><td><span class="pill nat">existe</span></td><td>Detalle de la orden.</td></tr><tr><td><code>PATCH /api/chats/order-actions/{id}/stage</code> · <code>confirm-payment</code> · <code>schedule</code> · <code>PUT …/photo</code></td><td><span class="pill nat">existe</span></td><td>Avanzar la etapa, confirmar el pago, agendar y la foto de «listo».</td></tr><tr><td><code>POST /api/chats/order-intake/{key}/suggest</code></td><td><span class="pill nat">existe</span></td><td>Extraer los datos escritos a mano al crear el pedido.</td></tr></tbody></table></div>
+</section>
+
+<section id="t10">
+  <p class="eyebrow">10 · Seguridad y permisos</p>
+  <h2>Lo que exigen los skills de seguridad</h2>
+  <div class="table-wrap"><table><thead><tr><th>Tema</th><th>Regla</th><th>Cómo</th></tr></thead><tbody><tr><td>Sesión</td><td>El refresh token nunca queda en claro.</td><td>DataStore cifrado con Tink y la clave en el Android Keystore. Cerrar sesión borra todo.</td></tr><tr><td>Red</td><td>Solo TLS; el token nunca va en una URL.</td><td><code>network_security_config</code> sin tráfico en claro; el SSE usa el ticket de vida corta (SEC-06).</td></tr><tr><td>Componentes</td><td>Nada exportado que no haga falta.</td><td><code>exported="false"</code> en todo, salvo <code>MainActivity</code> (launcher) y el receiver del widget, que lo exige el sistema.</td></tr><tr><td>Deep links</td><td>Validar siempre, también en <code>onNewIntent</code>.</td><td>Esquema, ruta e id con formato estricto; <code>setIntent</code> antes de procesar; nunca reenviar un intent recibido (si hiciera falta, <code>IntentSanitizer</code>).</td></tr><tr><td>PendingIntent</td><td>Inmutable siempre.</td><td><code>FLAG_IMMUTABLE</code> con intent explícito en notificaciones y widget.</td></tr><tr><td>Permisos</td><td>Pedir lo mínimo, en contexto.</td><td><code>POST_NOTIFICATIONS</code> y <code>CAMERA</code> con el flujo de tres estados; galería sin permiso (Photo Picker).</td></tr><tr><td>Privacidad</td><td>Nada personal a la vista.</td><td>Notificaciones privadas con versión pública; widget sin mensajes por defecto; fotos sin EXIF; nada personal en logs.</td></tr><tr><td>Dinero</td><td>Confirmar un pago pide huella.</td><td><code>BiometricPrompt</code> antes de <code>confirm-payment</code>.</td></tr><tr><td>Copias de seguridad</td><td>La sesión no viaja a otro teléfono.</td><td><code>dataExtractionRules</code> excluye DataStore y Room. Restaurar la sesión con Credential Manager queda para después.</td></tr></tbody></table></div>
+  <pre><code class="xml">&lt;!-- android_operator/app/src/main/AndroidManifest.xml (extracto) --&gt;
+&lt;uses-permission android:name=&quot;android.permission.POST_NOTIFICATIONS&quot; /&gt;   &lt;!-- flujo de 3 estados --&gt;
+&lt;uses-permission android:name=&quot;android.permission.CAMERA&quot; /&gt;               &lt;!-- solo al abrir la cámara --&gt;
+&lt;!-- sin READ_MEDIA_IMAGES: la galería va por Photo Picker --&gt;
+
+&lt;application android:dataExtractionRules=&quot;@xml/data_extraction_rules&quot;
+             android:networkSecurityConfig=&quot;@xml/network_security_config&quot;&gt;
+  &lt;activity android:name=&quot;.MainActivity&quot; android:exported=&quot;true&quot;
+            android:launchMode=&quot;singleTop&quot; android:windowSoftInputMode=&quot;adjustResize&quot;&gt;
+    &lt;intent-filter&gt;
+      &lt;action android:name=&quot;android.intent.action.MAIN&quot; /&gt;
+      &lt;category android:name=&quot;android.intent.category.LAUNCHER&quot; /&gt;
+    &lt;/intent-filter&gt;
+  &lt;/activity&gt;
+  &lt;service android:name=&quot;.push.OperatorMessagingService&quot; android:exported=&quot;false&quot;&gt;
+    &lt;intent-filter&gt;&lt;action android:name=&quot;com.google.firebase.MESSAGING_EVENT&quot; /&gt;&lt;/intent-filter&gt;
+  &lt;/service&gt;
+  &lt;receiver android:name=&quot;.widget.HotSalesWidgetReceiver&quot; android:exported=&quot;true&quot;&gt;  &lt;!-- lo exige el sistema --&gt;
+    &lt;intent-filter&gt;&lt;action android:name=&quot;android.appwidget.action.APPWIDGET_UPDATE&quot; /&gt;&lt;/intent-filter&gt;
+    &lt;meta-data android:name=&quot;android.appwidget.provider&quot; android:resource=&quot;@xml/hot_sales_widget&quot; /&gt;
+  &lt;/receiver&gt;
+&lt;/application&gt;</code></pre>
+</section>
+
+<section id="t11">
+  <p class="eyebrow">11 · Rendimiento</p>
+  <h2>Rápida en el Motorola de hoy</h2>
+  <div class="table-wrap"><table><thead><tr><th>Qué</th><th>Cómo</th><th>Skill</th></tr></thead><tbody><tr><td>Tamaño y velocidad</td><td>R8 completo, <code>isShrinkResources</code> y <code>proguard-android-optimize.txt</code>. Sin reglas <code>-keep</code> amplias: kotlinx.serialization trae las suyas. Revisión con <code>./gradlew :app:analyzeReleaseR8Config</code> (AGP 9.3 o más).</td><td><code>r8-analyzer</code></td></tr><tr><td>Arranque</td><td>Baseline Profile para el arranque, abrir un chat y hacer scroll. Macrobenchmark en el módulo <code>:benchmark</code>.</td><td><code>testing-setup</code></td></tr><tr><td>Scroll del chat</td><td>Modelos de UI inmutables (<code>@Immutable</code>, <code>ImmutableList</code>), claves y <code>contentType</code> en las listas, eventos SSE agrupados con <code>conflate</code> antes de tocar la UI.</td><td>—</td></tr><tr><td>Imágenes</td><td>Coil con tamaño explícito y caché en disco; miniaturas del servidor cuando existan.</td><td>—</td></tr><tr><td>Diagnóstico</td><td>Trazas de Perfetto para los tirones del timeline y dumps de memoria si algo crece.</td><td><code>android-profiler</code></td></tr><tr><td>Meta inicial</td><td>Arranque en frío menor a 2 s y ningún frame congelado al hacer scroll en el Motorola de hoy. Se ajusta con la primera medición.</td><td>—</td></tr></tbody></table></div>
+</section>
+
+<section id="t12">
+  <p class="eyebrow">12 · Pruebas</p>
+  <h2>Primero el test que falla</h2>
+  <div class="prose"><p>La ley del repo aplica igual en Android: rojo, verde, refactor. Un rojo por un import que no
+  compila no cuenta. Las herramientas son las que recomienda el skill <code>testing-setup</code> para un proyecto
+  100 % Compose con Hilt:</p></div>
+  <div class="table-wrap"><table><thead><tr><th>Qué</th><th>Con qué</th><th>Dónde</th></tr></thead><tbody><tr><td>Reducer SDUI, políticas de UI, parsers de eventos y deep links</td><td>JUnit4 + Truth, en la JVM</td><td><code>test</code></td></tr><tr><td>ViewModels y repositorios</td><td>JUnit4 + fakes inyectados con Hilt (fakes antes que mocks)</td><td><code>test</code></td></tr><tr><td>Room</td><td>Instrumentado con base en memoria</td><td><code>androidTest</code></td></tr><tr><td>Comportamiento de UI</td><td>Compose testing sobre Robolectric; primero matchers semánticos, <code>testTag</code> solo si hace falta; siempre verificar la restauración de estado</td><td><code>test</code></td></tr><tr><td>Screenshots</td><td>Compose Preview Screenshot Testing (suites de test con AGP 9.5.0-alpha03 o más): cada pantalla en 9 tamaños (400, 610 y 900 dp de ancho por 400, 500 y 1.000 de alto), fuente 1,5 y tema oscuro</td><td><code>screenshotTest</code></td></tr><tr><td>Navegación</td><td>Atrás, deep links, salir por Chats y «Volver a Laura»</td><td><code>test</code></td></tr><tr><td>Con el sistema</td><td>Dropshots para edge-to-edge, teclado y notificaciones; UI Automator para notificación → en vivo → intervenir y para el widget (≈ 5 % de los tests)</td><td><code>androidTest</code></td></tr><tr><td>Cobertura</td><td>Jacoco en cada módulo con tests</td><td>—</td></tr></tbody></table></div>
+  <div class="code-grid">
+    <div><p class="code-cap">El radar no le quita el foco al composer</p><pre><code class="kotlin">// :feature:chat:impl — test de comportamiento con Compose testing sobre Robolectric (sourceset test)
+@RunWith(AndroidJUnit4::class)
+class RadarFocusTest {
+    @get:Rule val compose = createAndroidComposeRule&lt;ComponentActivity&gt;()
+
+    @Test fun un_incendio_grave_aparece_sin_quitarle_el_foco_al_composer() {
+        val radar = FakeRadarSource()
+        compose.setContent { OperatorTheme { ChatScreenHarness(radar = radar) } }
+        compose.onNode(hasSetTextAction()).performClick().performTextInput(&quot;te confirmo el&quot;)
+
+        radar.emit(graveFire(title = &quot;Sofía pide un humano&quot;))
+
+        compose.onNodeWithText(&quot;Sofía pide un humano&quot;).assertIsDisplayed()
+        compose.onNode(hasSetTextAction()).assertIsFocused().assert(hasText(&quot;te confirmo el&quot;))
+    }
+
+    @Test fun un_toque_en_el_primer_medio_segundo_no_abre_el_caso() { /* … */ }
+}</code></pre></div>
+    <div><p class="code-cap">Journey del Android CLI</p><pre><code class="xml">&lt;!-- android_operator/journeys/incendio-mientras-escribo.xml — se corre con el Android CLI --&gt;
+&lt;journey name=&quot;Incendio grave mientras escribo&quot;&gt;
+  &lt;description&gt;Un incendio grave aparece al instante y no le quita el foco al teclado.&lt;/description&gt;
+  &lt;actions&gt;
+    &lt;action&gt;Abre el chat de la conversación de prueba &quot;Laura&quot;&lt;/action&gt;
+    &lt;action&gt;Toca el campo de mensaje y escribe &quot;te confirmo el&quot;&lt;/action&gt;
+    &lt;action&gt;Dispara un incendio grave de prueba desde el menú de depuración&lt;/action&gt;
+    &lt;action&gt;Verifica que aparece una tarjeta del radar arriba del chat&lt;/action&gt;
+    &lt;action&gt;Verifica que el teclado sigue abierto y que el campo dice &quot;te confirmo el&quot;&lt;/action&gt;
+    &lt;action&gt;Escribe &quot; aroma&quot; y verifica que el campo dice &quot;te confirmo el aroma&quot;&lt;/action&gt;
+  &lt;/actions&gt;
+&lt;/journey&gt;</code></pre></div>
+  </div>
+  <h3>Journeys: la visión como pruebas de aceptación</h3>
+  <div class="table-wrap"><table><thead><tr><th>Journey</th><th>Qué verifica</th></tr></thead><tbody><tr><td>Intervenir y enviar aromas</td><td>Tomar la conversación, tocar «Enviar aromas», deshacer, tocar de nuevo y ver el mensaje como humano.</td></tr><tr><td>Incendio grave mientras escribo</td><td>El radar aparece al instante y el teclado y el texto siguen donde estaban.</td></tr><tr><td>Ver el pedido desde el chat</td><td>El botón «Pedido #38» abre la ficha; despachar pide guía y costo; al cerrar, el borrador sigue.</td></tr><tr><td>De la notificación a intervenir</td><td>Tocar la notificación abre en vivo; intervenir; «Volver a Laura» regresa con todo igual.</td></tr><tr><td>Del widget a en vivo</td><td>Tocar una fila del widget abre esa conversación en vivo; atrás vuelve a Incendios.</td></tr></tbody></table></div>
+</section>
+
+<section id="t13">
+  <p class="eyebrow">13 · Plan de construcción</p>
+  <h2>En qué orden, y cuándo está listo cada paso</h2>
+  <div class="table-wrap"><table><thead><tr><th>Fase</th><th>Qué se construye</th><th>Está lista cuando</th></tr></thead><tbody><tr><td>F0 · Base</td><td>Proyecto AGP 9 con módulos y plugins de convención, CI, tema, login, bandeja y chat de solo lectura con SSE. Backend: <code>chats.message_appended</code> y paginado del historial.</td><td>La app se instala y muestra los chats en vivo; CI verde.</td></tr><tr><td>F1 · Chat nativo con reglas</td><td>Intervenir, composer, fotos, burbujas por reglas de etapa, deshacer con outbox, ficha de la orden y avance de etapa. Backend: endpoint de tools, catálogo y vaciar la cola del bot al intervenir.</td><td>Pasan los journeys «Intervenir y enviar aromas» y «Ver el pedido desde el chat».</td></tr><tr><td>F2 · Radar, Incendios y widget</td><td>Vigía con la política de respaldo, radar, Incendios, FCM, notificaciones y widget.</td><td>Pasan los journeys del incendio, la notificación y el widget.</td></tr><tr><td>F3 · Jev</td><td>Necesita el PR #372 mergeado. Cuestionarios <code>burbujas-v1</code> y <code>vigia-v1</code>, primero en sombra con <code>DisagreementLog</code>; después, en vivo por rollout.</td><td>La primera burbuja acierta la mayoría de las veces y el vigía no deja pasar incendios que el operador atendió por su cuenta.</td></tr><tr><td>F4 · SDUI y afinado</td><td>Encabezado del chat, ficha y tarjetas como superficies SDUI; umbrales calibrados con ventas reales; Styles API si ya es estable.</td><td>Un cambio de orden o de texto sale sin publicar la app.</td></tr><tr><td>F5 · Retirar Tauri</td><td>Paridad completa, distribución firmada y apagar la app Tauri.</td><td>El operador usa solo la app nativa durante dos semanas sin volver a la anterior.</td></tr></tbody></table></div>
+  <h3>Estado al 29 de septiembre</h3>
+  <div class="table-wrap"><table><thead><tr><th>Parte</th><th>Estado</th><th>Qué falta</th></tr></thead><tbody><tr><td>Proyecto Android (<code>android_operator/</code>)</td><td>AGP 9.4, Kotlin 2.4, 14 módulos, R8 completo (APK de release de 4,2 MB) y CI en <code>.github/workflows/android-operator.yml</code>.</td><td>Firma y distribución.</td></tr><tr><td>Login, bandeja y chat</td><td>Login de Cognito (y modo dev), bandeja con filtros, chat en vivo por SSE, tomar y devolver, texto por el outbox, fotos que llegan, reactivar con plantilla.</td><td>Mandar fotos (cámara y galería).</td></tr><tr><td>Burbujas</td><td>Las decide el backend por reglas; tocar envía con 5 s para deshacer, a prueba de carreras; lo que el operador ya mandó no se le vuelve a ofrecer hasta que el cliente escriba; «+ Más» con las acciones sin producto.</td><td>Selector de productos (el catálogo ya existe) y Jev (F3).</td></tr><tr><td>Radar e Incendios</td><td>Incendios por reglas (chats y órdenes); radar que aparece sin robar foco y se pliega a un chip; feed con filtros.</td><td>Jev como clasificador (F3).</td></tr><tr><td>Órdenes</td><td>Lista, ficha como hoja inferior y avance de etapa con guía y costo.</td><td>La foto de «listo».</td></tr><tr><td>Fuera de la app</td><td>Canales de notificación, permiso en tres estados, widget de ventas calientes y un vigía cada 15 min que avisa incendios graves.</td><td>FCM al instante (falta el proyecto de Firebase) y Live Update.</td></tr><tr><td>Backend</td><td>Endpoints de burbujas, incendios, ventas calientes, dispositivos, catálogo y tools del operador; intervenir vacía la cola del bot; historial firmado por el humano.</td><td>Jev (F3), guardar el nombre de perfil de WhatsApp y acotar <code>/order</code> a sus intents.</td></tr><tr><td>Pruebas</td><td>92 tests de Android (JVM y Robolectric, con una prueba de humo de la app), 1.838 del backend en chats, handoff y órdenes, y 14 de 14 escenarios E2E en un emulador Android 11: Artemis recorre la app contra el código real del backend con datos sintéticos y chequeos deterministas deciden (<code>android_operator/e2e</code>). La E2E encontró 12 fallas que los tests no veían (5 del backend y 7 de la app), todas corregidas.</td><td>Screenshots, Baseline Profile y probar en el Motorola.</td></tr></tbody></table></div>
+  <h3>Riesgos técnicos</h3>
+  <div class="table-wrap"><table><thead><tr><th>Riesgo</th><th>Cómo se cubre</th></tr></thead><tbody><tr><td>El PR #372 no está mergeado</td><td>F0 a F2 no dependen de Jev: funcionan con reglas. F3 espera el merge.</td></tr><tr><td>Android 11 en el teléfono del operador</td><td>minSdk 30. Live Update solo en 16+, con degradación a notificación fija; se prueba en ese teléfono en cada fase.</td></tr><tr><td>FCM llega tarde con el teléfono en reposo</td><td>Prioridad alta solo para incendios graves; al abrir la app, REST trae todo lo que falte.</td></tr><tr><td>Librerías jóvenes (Navigation 3, escenas adaptables)</td><td>Versiones fijas en el catálogo, sin alfas en los módulos centrales y las recetas oficiales como base.</td></tr><tr><td>Envíos duplicados</td><td><code>client_action_id</code> en el servidor y trabajo único en WorkManager.</td></tr><tr><td>Jev en español</td><td>Los cuestionarios del motor ya están en español y se miden en sombra antes de actuar.</td></tr><tr><td>Un radar que confunde</td><td>Sin robar foco, sin sonido al escribir, medio segundo de gracia, y se mide cuánto se toca frente a cuánto se oculta.</td></tr></tbody></table></div>
+</section>
+<section id="t14">
+  <p class="eyebrow">14 · Referencias</p>
+  <h2>De dónde sale cada decisión</h2>
+  <div class="table-wrap"><table><thead><tr><th>Skill de Android</th><th>Qué aportó</th></tr></thead><tbody><tr><td><code>navigation-3</code></td><td>Claves <code>@Serializable</code>, <code>rememberNavBackStack</code>, tres pilas, hoja inferior como escena, deep links con pila sintética, Hilt modular, ViewModel por entrada y resultados con <code>ResultEffect</code>.</td></tr><tr><td><code>navigation-event</code></td><td><code>NavigationBackHandler</code> para plegar el radar; nada de <code>BackHandler</code> viejo en SDK 36+.</td></tr><tr><td><code>adaptive</code></td><td><code>NavigationSuiteScaffold</code> y <code>ListDetailSceneStrategy</code>; previews por tipo de dispositivo.</td></tr><tr><td><code>edge-to-edge</code></td><td><code>enableEdgeToEdge</code>, <code>adjustResize</code>, <code>fitInside(WindowInsetsRulers.Ime)</code>, <code>contentPadding</code> en listas.</td></tr><tr><td><code>agp-9-upgrade</code></td><td>Kotlin integrado, DSL nuevo, KSP y versiones mínimas de Hilt y KSP.</td></tr><tr><td><code>r8-analyzer</code></td><td>Configuración de release y el análisis de reglas <code>-keep</code>.</td></tr><tr><td><code>testing-setup</code></td><td>La estrategia de pruebas completa.</td></tr><tr><td><code>android-intent-security</code> · <code>android-permissions-security</code></td><td>Componentes no exportados, <code>onNewIntent</code>, PendingIntent inmutable, permisos en tres estados y Photo Picker.</td></tr><tr><td><code>camerax</code></td><td><code>CameraXViewfinder</code>, fakes en vez de mocks y Truth.</td></tr><tr><td><code>styles</code></td><td>Por qué la Styles API espera (es experimental).</td></tr><tr><td><code>android-cli</code> · <code>android-profiler</code></td><td>Journeys como pruebas de aceptación y trazas de Perfetto.</td></tr></tbody></table></div>
+  <div class="prose"><p><strong>En el repo:</strong> <code>chats/api/handoff.py</code> (intervenir, mensajes, fotos,
+  devolver al bot), <code>chats/api/dashboard.py</code> (bandeja, historial, SSE), <code>chats/api/session_actions.py</code>
+  y <code>order_actions.py</code>, <code>orders/api/__init__.py</code> (detalle de la orden), <code>src/main.py</code>
+  (ticket SSE), <code>platform/tools/escalation.py</code> (motivos de escalamiento),
+  <code>chats/agent/sales/use_cases/funnel_stage.py</code> (etapas) y, en el PR #372,
+  <code>platform/perception/</code> y <code>chats/agent/sales/decisions/</code>.</p>
+  <p><strong>Documentos hermanos:</strong> <code>docs/mobile-native/arquitectura-sdui-genui.html</code> (arquitectura
+  SDUI) y <code>docs/mobile-native/vision-chat-y-ordenes.html</code> (la visión que este documento construye).</p></div>
+</section>
+<div class="footer"><span>AgencyHubara · App Operador · Documento técnico</span><span>Propuesta · 29 sep 2026</span></div>
+
+</div>
+</body>
+</html>
