@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -115,6 +116,9 @@ def _append_intent(session_key: str, intent: dict[str, Any]) -> None:
     data = store.read(session_key)
     intents = list(data.get("pending_ui_intents") or [])
     intents.append({
+        # El id permite flushear SOLO lo que encoló una acción (la app del
+        # operador), sin arrastrar otros intents de la cola.
+        "id": intent.get("id") or f"ui_{uuid.uuid4().hex}",
         **intent,
         "queued_at_ms": int(time.time() * 1000),
     })

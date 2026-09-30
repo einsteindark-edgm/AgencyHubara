@@ -763,13 +763,16 @@ async def get_session_history(session_id: str):
                 elif role == "tool":
                     msg_obj["ui_type"] = "tool_execution_result"
                 elif role == "assistant":
-                    if msg_obj.get("sender") == "human":
-                        msg_obj["ui_type"] = "human_message"
-                    elif msg_obj.get("kind") == "ui_component":
+                    if msg_obj.get("kind") == "ui_component":
                         # Marker de envío no-textual (catálogo, flow, botones…)
                         # escrito por flush_pending_ui_intents_activity — el
-                        # frontend lo pinta como nota de sistema.
+                        # frontend lo pinta como nota de sistema. Va ANTES de
+                        # `sender`: si lo mandó el operador desde la app
+                        # (`sender=human`) sigue siendo una tarjeta, no un
+                        # texto que el cliente leyó.
                         msg_obj["ui_type"] = "ui_component_sent"
+                    elif msg_obj.get("sender") == "human":
+                        msg_obj["ui_type"] = "human_message"
                     elif msg_obj.get("tool_calls"):
                         msg_obj["ui_type"] = "agent_tool_call"
                     else:

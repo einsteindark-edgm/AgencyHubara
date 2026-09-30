@@ -105,6 +105,31 @@ def test_intervene_sets_humano_route_and_terminates_running_workflows(
     terminate_mock.assert_awaited_once()
 
 
+def test_intervene_drops_the_ui_intents_the_bot_left_queued(client_and_vault):
+    """Lo que el bot dejó encolado (catálogo, picker, formulario…) NO puede
+    salir después de que el humano tomó el control: el próximo flush — p. ej.
+    una acción del operador desde la app — lo mandaría como si fuera suyo."""
+    client, vault = client_and_vault
+    _write_metadata(vault, "wa_queued", {
+        "active_route": "ventas",
+        "pending_ui_intents": [
+            {"id": "ui_bot_1", "kind": "products_list", "params": {"sections": []}, "queued_at_ms": 1},
+            {"id": "ui_bot_2", "kind": "variant_picker", "params": {}, "queued_at_ms": 2},
+        ],
+    })
+
+    with (
+        patch("src.plugins.chats.api.handoff.get_temporal_client", new=AsyncMock(return_value=object())),
+        patch("src.plugins.chats.api.handoff.terminate_session_workflows", new=AsyncMock(return_value=[])),
+    ):
+        res = client.post("/api/dashboard/sessions/wa_queued/intervene", json={})
+
+    assert res.status_code == 200
+    data = _read_metadata(vault, "wa_queued")
+    assert data["active_route"] == "humano"
+    assert data["pending_ui_intents"] == []
+
+
 def test_intervene_uses_default_motivo_when_omitted(client_and_vault):
     client, vault = client_and_vault
     _write_metadata(vault, "wa_2", {})
@@ -392,3 +417,24 @@ def test_return_to_bot_rejects_invalid_target(client_and_vault):
         json={"target_route": "marte"},
     )
     assert res.status_code == 422  # pydantic Literal
+
+
+# ---------- /whatsapp-templates ----------
+
+
+def test_template_catalog_leaves_out_the_carousels_the_operator_cannot_send(client_and_vault):
+    """El envío del operador (`POST .../template-messages`) no arma tarjetas de
+    carrusel: ofrecer esas plantillas en "Reactivar conversación" (web y app
+    Android) terminaba en un 502 que culpaba a WhatsApp."""
+    from src.sdk.messagingkit import get_template_registry
+
+    client, _ = client_and_vault
+    carousels = {spec.name for spec in get_template_registry().values() if spec.carousel_cards > 0}
+    assert carousels  # las campañas de Marketing sí las usan
+
+    res = client.get("/api/dashboard/whatsapp-templates")
+
+    assert res.status_code == 200
+    offered = {t["name"] for t in res.json()["templates"]}
+    assert offered & carousels == set()
+    assert "human_followup_utility_v1" in offered  # lo que sí se puede mandar sigue

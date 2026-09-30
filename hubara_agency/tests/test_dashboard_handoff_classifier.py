@@ -115,3 +115,24 @@ def test_assistant_with_tool_calls_still_classified_as_tool_call_even_if_unknown
     body = res.json()
     msgs = body["messages"]
     assert msgs[0]["ui_type"] == "agent_tool_call"
+
+
+def test_a_card_the_operator_sent_from_the_app_is_a_component_note_not_a_text_bubble(client_with_temp_vault):
+    """Acción del operador desde la app móvil: el flush la firma con
+    `sender=human`, pero una tarjeta (catálogo, botones…) NO es un texto que el
+    cliente leyó — se pinta como nota del componente. El texto real (tarifas,
+    picker) sí va como burbuja del humano."""
+    client, vault = client_with_temp_vault
+    path = vault / "wa_Z" / "sessions" / "wa_Z.jsonl"
+    path.parent.mkdir(parents=True)
+    events = [
+        {"role": "assistant", "sender": "human", "operator_tool": "send_quick_replies", "kind": "ui_component",
+         "component_kind": "quick_replies", "content": "🔘 El operador envió botones: Sí · No"},
+        {"role": "assistant", "sender": "human", "operator_tool": "send_shipping_rates", "content": "Nuestras tarifas…"},
+    ]
+    path.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events), encoding="utf-8")
+
+    msgs = client.get("/api/dashboard/sessions/wa_Z").json()["messages"]
+
+    assert [m["ui_type"] for m in msgs] == ["ui_component_sent", "human_message"]
+    assert msgs[0]["sender"] == "human"

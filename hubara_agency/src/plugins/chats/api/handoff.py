@@ -331,7 +331,14 @@ async def intervene(
         active_route=ROUTE_HUMANO,
         extra={"source": "dashboard_intervene"},
     )
+    # Lo que el bot dejó encolado (catálogo, picker, formulario…) muere acá:
+    # con el humano al mando, un flush posterior lo mandaría como si fuera
+    # del operador.
+    dropped = [i.get("kind") for i in data.get("pending_ui_intents") or [] if isinstance(i, dict)]
+    data["pending_ui_intents"] = []
     metadata_store.write(session_id, data)
+    if dropped:
+        logger.info("dashboard.intervene: dropped bot ui intents", session_id=session_id, kinds=dropped)
 
     # 2. Termination de workflows en vuelo: BEST-EFFORT. Si Temporal está caído
     # o devuelve error, NO 500-amos el endpoint — la metadata ya está marcada,
@@ -701,7 +708,7 @@ async def send_human_message(
                 status_code=409,
                 detail=(
                     "Ese mensaje ya se está enviando (request en vuelo). "
-                    "Esperá unos segundos antes de reintentar."
+                    "Espera unos segundos antes de reintentar."
                 ),
             )
 
@@ -841,9 +848,12 @@ async def list_whatsapp_templates() -> WhatsAppTemplatesResponse:
 
     La de seguimiento humano va primero y marcada `is_default`; el resto se
     ofrece por si el caso encaja mejor (estado de pedido, pago pendiente…).
+    Solo las que el operador puede enviar: las de carrusel quedan fuera
+    (`POST .../template-messages` no arma tarjetas — Meta las rechazaba y el
+    502 culpaba a WhatsApp). Lo leen el dashboard y la app Android.
     """
     specs = sorted(
-        get_template_registry().values(),
+        (spec for spec in get_template_registry().values() if not spec.carousel_cards),
         key=lambda spec: (spec.name != OPERATOR_DEFAULT_TEMPLATE, spec.category, spec.name),
     )
     return WhatsAppTemplatesResponse(
