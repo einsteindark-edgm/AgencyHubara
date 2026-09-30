@@ -42,6 +42,7 @@ from src.plugins.chats.agent.sales.tools.ui_intents import (
     RequestShippingDetailsTool,
     SendQuickRepliesTool,
     SendShippingRatesTool,
+    collect_enqueued_intent_ids,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
 from src.plugins.chats.agent.sales.use_cases.quantity_capture import parse_leading_quantity
@@ -397,14 +398,6 @@ async def _operator_args(
     return args
 
 
-def _intent_ids(metadata: dict[str, Any]) -> list[str]:
-    return [
-        str(i["id"])
-        for i in metadata.get("pending_ui_intents") or []
-        if isinstance(i, dict) and i.get("id")
-    ]
-
-
 def _prior_action(metadata: dict[str, Any], client_action_id: str) -> dict[str, Any] | None:
     ledger = metadata.get(LEDGER_KEY)
     if not isinstance(ledger, list):
@@ -516,17 +509,21 @@ async def _run(session: str, tool: str, body: ToolBody, deps: OperatorToolsDeps)
 async def _run_bot_tool(
     store: FilesystemMetadataStore, session: str, tool: str, raw: dict[str, Any], deps: OperatorToolsDeps
 ) -> list[str]:
-    """Corre la tool del bot; devuelve los ids de los intents que encoló."""
+    """Corre la tool del bot; devuelve los ids de los intents que encoló ESTA llamada.
+
+    Los informa la propia tool (`collect_enqueued_intent_ids`). Comparar la cola antes y después atribuía
+    al operador un intent que un turno del bot encolara en medio desde el worker de Ventas: el candado de
+    este endpoint es por proceso, así que salía firmado como humano."""
     instance = _bot_tools(deps)[tool]()
     args, problems = _arg_problems(instance, await _operator_args(tool, raw, store.read(session), deps))
     if problems:
         raise _InvalidArgs(problems)
-    before = set(_intent_ids(store.read(session)))
-    envelope = json.loads(await instance.execute_with_context(_ctx(session), **args))
+    with collect_enqueued_intent_ids() as produced:
+        envelope = json.loads(await instance.execute_with_context(_ctx(session), **args))
     rejected = _rejection(envelope)
     if rejected is not None:
         raise _Rejected(*rejected)
-    return [i for i in _intent_ids(store.read(session)) if i not in before]
+    return list(produced)
 
 
 def _queue_payment_methods(store: FilesystemMetadataStore, session: str, args: dict[str, Any]) -> list[str]:

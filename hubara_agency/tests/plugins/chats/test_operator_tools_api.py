@@ -29,8 +29,10 @@ from src.platform.catalog.dtos import (
     CatalogVariantDTO,
 )
 from src.platform.catalog.errors import ProductNotFoundError
+from src.platform.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.activities.flush_ui_intents import flush_pending_ui_intents
 from src.plugins.chats.agent.sales.config.shipping import SHIPPING_RATES_MESSAGE
+from src.plugins.chats.agent.sales.tools import ui_intents
 from src.plugins.chats.api import operator_tools
 from src.plugins.chats.api.operator_tools import OperatorToolsDeps
 
@@ -148,6 +150,32 @@ def test_operator_sends_the_shipping_rates_and_nothing_else_from_the_queue(h: _H
     [event] = h.history()
     assert (event["role"], event["sender"], event["operator_tool"]) == ("assistant", "human", "send_shipping_rates")
     assert event["content"] == SHIPPING_RATES_MESSAGE
+
+
+def test_an_intent_the_bot_queues_meanwhile_from_another_process_is_not_sent_as_the_operators(
+    h: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El candado del endpoint es por proceso: un turno del bot en el worker de Ventas (otro proceso) puede
+    encolar mientras corre la tool del operador. Lo que sale y se firma como humano es SOLO lo que encoló
+    esta tool, no la diferencia de la cola antes y después."""
+    h.seed(_human())
+    bot_intent = {"id": "ui_turno_del_bot", "kind": "payment_instructions", "params": {"method": "transfer"},
+                  "queued_at_ms": _now()}
+    real_append = ui_intents._append_intent
+
+    def the_bot_queues_first(session_key: str, intent: dict[str, Any]) -> Any:
+        FilesystemMetadataStore(h.vault).update(
+            session_key, lambda d: {**d, "pending_ui_intents": [*(d.get("pending_ui_intents") or []), bot_intent]})
+        return real_append(session_key, intent)
+
+    monkeypatch.setattr(ui_intents, "_append_intent", the_bot_queues_first)
+
+    r = h.run("send_shipping_rates", cid="act-race")
+
+    assert r.status_code == 200, r.text
+    assert h.sent_texts() == [SHIPPING_RATES_MESSAGE]  # nada del bot salió como del operador
+    assert [i["id"] for i in h.meta()["pending_ui_intents"]] == ["ui_turno_del_bot"]  # queda para el flush del bot
+    assert [e["operator_tool"] for e in h.history()] == ["send_shipping_rates"]
 
 
 def test_the_same_client_action_id_again_sends_nothing_and_says_deduplicated(h: _Harness) -> None:
