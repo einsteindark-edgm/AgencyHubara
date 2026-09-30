@@ -471,11 +471,9 @@ def test_waiting_starts_at_the_first_customer_message_after_the_last_reply() -> 
     assert unanswered_since([]) == (0, None)
 
 
-def test_waiting_count_matches_the_inbox_badge(tmp_path) -> None:
-    """Mismo criterio que el contador de la bandeja (`dashboard._scan_unanswered_count`)."""
-    import json
-
-    from src.plugins.chats.api.dashboard import _scan_unanswered_count
+def test_waiting_count_is_what_the_customer_wrote_since_the_last_reply() -> None:
+    """Los mensajes SIN RESPUESTA del incendio («12 min sin respuesta · 2 mensajes»). Desde #384 la
+    bandeja cuenta otra cosa (no leídos por el operador), así que ya no se comparan."""
     from src.plugins.chats.shared.mobile_rules import unanswered_since
 
     events = [
@@ -485,10 +483,7 @@ def test_waiting_count_matches_the_inbox_badge(tmp_path) -> None:
         {"role": "assistant", "content": "", "tool_calls": [{"name": "x"}]},
         {"role": "user", "content": "d"},  # legacy sin timestamp: cuenta, no fecha
     ]
-    path = tmp_path / "h.jsonl"
-    path.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
-
-    assert unanswered_since(events)[0] == _scan_unanswered_count(path) == 2
+    assert unanswered_since(events)[0] == 2
     assert unanswered_since(events)[1] == NOW - 7 * MIN
 
 

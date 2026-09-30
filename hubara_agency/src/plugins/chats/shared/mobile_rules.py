@@ -497,7 +497,7 @@ def detect_fires(
 def _is_reply(event: dict[str, Any]) -> bool:
     """Lo que el cliente VIO como respuesta: texto del bot/operador o un envío
     no textual (`ui_component`). Un turno con `tool_calls` no (su texto no sale).
-    Mismo criterio que el contador de la bandeja (`api/dashboard._is_reply`)."""
+    Es el criterio del «sin respuesta» del incendio; la bandeja cuenta no leídos (#384)."""
     if event.get("role") != "assistant" or event.get("tool_calls"):
         return False
     return bool(event.get("content")) or event.get("kind") == "ui_component"
