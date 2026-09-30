@@ -33,8 +33,11 @@ los mismos chequeos:
   en el reporte).
 - Corre en los runners de GitHub: gratis en un repo público, con KVM para el emulador y **sin secretos**.
   El código de un PR nunca corre en una máquina con credenciales (por eso no es un runner en la Mac).
-- El reporte sale en el resumen de la corrida; capturas, pantallas de las fallas y logs del backend de
-  prueba quedan en el artefacto `qa-emulador`.
+- En el PR queda **un comentario** (se actualiza en cada corrida) con una captura por escenario y qué
+  probó cada uno (`resumen` en `scenarios.yaml`; el paso `shot` elige la captura). Las imágenes viven en la
+  rama `qa-emulador-capturas`, que se reescribe en cada publicación. El reporte completo sale en el resumen
+  de la corrida, y las capturas grandes, las pantallas de las fallas y los logs del backend de prueba quedan
+  en el artefacto `qa-emulador`.
 - Para que bloquee el merge, el check **«QA emulador — App Operador»** tiene que estar en los checks
   requeridos de `main` (Settings → Branches).
 
