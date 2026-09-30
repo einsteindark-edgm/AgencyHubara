@@ -340,3 +340,40 @@ El operador pidió los pasos 1 y 3 de la investigación de §6.3; el 2 («Enviar
 - La revisión final no le reconoce a la tarjeta de tarifas que respondió el envío (queda «pendiente»).
 - «Precio» leído en «¿cuánto vale el envío?» (0,98, con `envio.costo` 0,99).
 - El panel muestra las preguntas de Jev con su id (`topic.variante`), no en español llano.
+
+### 6.8 Cortesías que no abren venta y remarketing que reconoce una conversación terminada (2026-09-30, noche)
+
+**Lo que vio el operador (producción, 2026-09-29, 16:35–16:37).**
+- El ETA avisó «tu pedido ya está listo… ¿Nos confirmas para coordinar la entrega?» y el cliente contestó «Hola cómo están? Son geniales. Muchas gracias».
+- El bot (V1) respondió «…Cuéntame, ¿en qué te puedo ayudar hoy?».
+- La respuesta abrió un episodio nuevo, y la nota de frontera del ingest le pedía al LLM «saluda con calidez y pregunta en qué puedes ayudar hoy». La etapa de postcierre («solo agradece → una línea cálida») nunca aplicaba: el episodio nuevo no tiene pedido.
+- Lo mismo al volver de remarketing: el framing del traspaso pide «si solo saludó… pregunta en qué puedes ayudar».
+- Y remarketing no reconoce una conversación terminada: un «Ya lo recibí. Muchas gracias» al aviso de entrega abre un episodio sin la etiqueta de compra, así que la supresión central se levanta, y `contactar` solo veía ese episodio.
+
+**Qué quedó** (todo nace en `reglas`: el bot actual queda igual hasta activarlo en el control):
+- **`cortesia`** (lectura del ingest, con lo que el cliente vio antes): «¿el cliente solo agradece, saluda o comenta algo amable (por ejemplo, que ya recibió el pedido o que le gustó), sin preguntar ni pedir nada y sin responder una pregunta de la tienda?». Sí con p ≥ 0,85. Con sí:
+  - la nota del episodio nuevo pide una respuesta breve y cálida, sin abrir venta;
+  - la marca `last_inbound_courtesy` hace que el traspaso desde remarketing lo diga;
+  - la guía de V2 no empuja la venta en descubrimiento ni en postcierre.
+- **`contactar`:** ve cómo terminó la conversación anterior y lo que la tienda le escribió desde el último mensaje del cliente, y suma «¿la conversación ya terminó?». Cualquiera de las dos preguntas, segura, salta el toque. El gancho no cambia.
+- **Sandbox:** arma la nota del episodio nuevo como el ingest (sin ella el laboratorio no reproducía el empujón).
+- **Scorecard v5:** EST-09 «Cortesía sin empujón de venta».
+
+**Medido:**
+- **Jev real, casos emulados.** `cortesia`: 8 de 8, con 0,92–0,95 en los que agradecen y 0,02–0,05 en los que preguntan o confirman («ok» a «¿Nos confirmas…?» da 0,04). La primera redacción dudaba con «Ya lo recibí…» (0,75) y «Quedaron hermosas…» (0,79).
+- **`contactar`:** «¿terminó?» da 0,91 tras la entrega y el gracias, y 0,05 con una venta abierta. «¿Sobra?» sola dudaba entre 0,74 y 0,84.
+- **Laboratorio, banco emulado `caso-cortesia-1001`** (3 conversaciones sintéticas, US$0,03 por corrida). EST-09 en r2:
+
+| Caso emulado | Producción (referencia) | Bot actual | Bot nuevo |
+|---|---|---|---|
+| «Son geniales. Muchas gracias» al «pedido listo» | falla | falla («Cuéntame, ¿en qué te puedo ayudar hoy?») | pasa |
+| «Ya lo recibí. Muchas gracias» al aviso de entrega | falla (emulada) | pasa | pasa |
+| Control: pide que se lo lleven hoy | no aplica | no aplica | no aplica (Jev: no es cortesía) |
+
+- **Remarketing:** el laboratorio no simula el envío. La prueba de punta a punta con Jev falso usa la actividad real del contexto y el decisor real: tras la entrega y el gracias el toque se salta; con una venta abierta, no; con el bot de hoy, no se le pregunta a Jev.
+
+**Pendiente:**
+- Buscar en producción más casos de remarketing a conversaciones terminadas. La lectura masiva del vault la frenó el control de datos personales: hace falta el permiso del operador o las conversaciones puntuales.
+- Activar `cortesia` y `contactar` en producción (control del motor, con techo de Terraform).
+- En el caso de control, los dos bots prometieron «un colega coordina la entrega» sin `escalate_to_human`. La nota del episodio nuevo dice que el pedido lo gestiona un humano por separado.
+- Casos de capacidades (cortesía, `contactar`) en la sonda diaria de Jev.
