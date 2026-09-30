@@ -119,6 +119,12 @@ def _checklist_body(plan: TurnPlan, questionnaire: Any) -> str | None:
     )
 
 
+def reading_note(plan: TurnPlan, reading: dict[str, Any], questionnaire: Any, thresholds: dict[str, float]) -> str | None:
+    """La nota del turno: qué responde el cliente y los asuntos que planteó."""
+    parts = [p for p in (reading_sentence(reading, thresholds), _checklist_body(plan, questionnaire)) if p]
+    return ("[LECTURA DEL TURNO] " + " ".join(parts)) if parts else None
+
+
 def decide_turn(
     result: Any,
     *,
@@ -132,11 +138,10 @@ def decide_turn(
     if not plan.ok:
         return TurnOutcome(plan=plan)
     reading = reading_from(result, context, th)
-    parts = [p for p in (reading_sentence(reading, th), _checklist_body(plan, questionnaire)) if p]
     return TurnOutcome(
         plan=plan,
         topics=topic_rows(plan, questionnaire),
-        note=("[LECTURA DEL TURNO] " + " ".join(parts)) if parts else None,
+        note=reading_note(plan, reading, questionnaire, th),
         coverage=coverage_rules(plan),
         reading=reading,
     )

@@ -792,13 +792,16 @@ class SetOrderSlotTool(ToolBase):
                 )
 
         # Motor de decisiones (F6, capacidad `datos`): un dato de envío o de
-        # pago que el cliente NO dio (Jev con certeza alta) no se guarda; el
-        # LLM se lo pide. Con `reglas` (así nace) se guarda todo, como hoy.
+        # pago que el cliente NO dio no se guarda; el LLM se lo pide. Lo que
+        # el cliente escribió pasa sin preguntarle a Jev, y lo que ya estaba
+        # guardado igual no se revisa otra vez. Con `reglas` (así nace) se
+        # guarda todo, como hoy.
         for slot in await unconfirmed_order_data(
             provided,
             lambda: self._events(ctx.session_key),
             session_id=ctx.session_key,
             vault_dir=self._vault_dir,
+            saved=get_projectable_draft(data) or {},
         ):
             rejected.append({"field": slot, "given": provided.pop(slot), "reason": "not_given_by_customer"})
 

@@ -125,6 +125,57 @@ def test_a_variant_is_answered_with_the_picker_in_any_stage() -> None:
         assert "present_variant_picker" in required["nudge"], stage
 
 
+#: Laboratorio caso-fotos-0930, 4567 t22 (r10 y r11): el asesor le preguntó
+#: cuántas quería y el cliente contestó todo junto («Mejor 2, una lila y otra
+#: azul. Me las mandas a Chía…, cuánto vale el envío?»). Jev leyó bien que
+#: respondía la pregunta de variantes, pero también leyó «pregunta por colores»
+#: (0,73): el contrato pidió el selector, la guía dijo «pide solo lo que falta:
+#: cantidad» y la revisión final mandó un complemento «Sobre los colores…» que
+#: nadie había preguntado. Producción solo guardó los datos y mandó las tarifas.
+ANSWERS_THE_VARIANT_QUESTION = (
+    TypedAnswer(id="thread.bot_asked", kind="choice", choice="elegir_variante",
+                probs=(("elegir_variante", 0.97), ("pregunta_abierta", 0.03)), confidence=0.97),
+    TypedAnswer(id="thread.answers_bot", kind="noul", p=0.82),
+)
+
+
+def test_colors_the_customer_picks_when_answering_are_a_choice_not_a_question() -> None:
+    turn = POLICY.decide_turn(
+        _result(*ANSWERS_THE_VARIANT_QUESTION, _noul("topic.variante", 0.73), _noul("topic.envio", 0.98),
+                _noul("envio.costo", 0.99)),
+        questionnaire=RAFAGA, context=_ctx("etapa_variantes", missing=("cantidad",)), n_messages=1, thresholds=TH,
+    )
+
+    assert [t["topic"] for t in turn.topics] == ["envio"]
+    assert "variante" not in turn.coverage
+    assert [r["topic"] for r in turn.tools["required"]] == ["envio"]
+    assert turn.guide.get("chosen_now") == ["variante"]
+    assert "colores o variantes" not in turn.note and "pide solo lo que falta" not in turn.note
+    assert "guarda con set_order_slot lo que eligió" in turn.note
+
+
+def test_a_clear_question_about_colors_still_needs_the_picker() -> None:
+    """«Lila. ¿Y la tienen en rojo?»: responde y además pregunta."""
+    turn = POLICY.decide_turn(
+        _result(*ANSWERS_THE_VARIANT_QUESTION, _noul("topic.variante", 0.95)),
+        questionnaire=RAFAGA, context=_ctx("etapa_variantes", missing=("cantidad",)), n_messages=1, thresholds=TH,
+    )
+
+    [required] = [r for r in turn.tools["required"] if r["topic"] == "variante"]
+    assert "present_variant_picker" in required["any_of"]
+    assert "colores o variantes" in turn.note and turn.guide.get("chosen_now") == []
+
+
+def test_jev_saying_the_customer_chooses_is_a_choice_too() -> None:
+    turn = POLICY.decide_turn(
+        _result(_noul("variantes.elige", 0.93), _noul("topic.variante", 0.74), _noul("topic.aroma", 0.71)),
+        questionnaire=RAFAGA, context=_ctx("etapa_variantes", missing=("cantidad",)), n_messages=1, thresholds=TH,
+    )
+
+    assert turn.topics == [] and turn.tools["required"] == []
+    assert turn.guide.get("chosen_now") == ["variante", "aroma"]
+
+
 def test_before_choosing_the_product_the_card_also_answers_a_variant() -> None:
     turn = POLICY.decide_turn(_result(_noul("topic.variante", 0.91)), questionnaire=RAFAGA,
                               context=_ctx("etapa_descubrimiento"), n_messages=1, thresholds=TH)

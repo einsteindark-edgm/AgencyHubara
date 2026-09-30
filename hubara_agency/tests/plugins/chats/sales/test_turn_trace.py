@@ -384,3 +384,15 @@ def test_context_note_names_classifies_the_injected_notes() -> None:
 
     assert tt.context_note_names(notes) == ["burst_note", "draft", "handoff", "other"]
     assert tt.context_note_names(None) == []
+
+
+def test_every_answer_of_jev_reaches_the_step() -> None:
+    """El paso «Jev lee el mensaje» se cortaba en 24 respuestas (el tope de
+    las listas): en la etapa de variantes se perdían justo las de la etapa
+    («¿elige?», «¿cambia de producto?») y el asunto de cada mensaje (4567
+    t22, r11: 27 preguntas)."""
+    answers = [{"q": f"topic.t{i}", "type": "noul", "p": 0.1} for i in range(31)]
+
+    [perception] = _payload(steps=[{"kind": "perception", "at_ms": _T0, "answers": answers}])["steps"]
+
+    assert len(perception["answers"]) == 31

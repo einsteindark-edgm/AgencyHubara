@@ -13,6 +13,10 @@ más:
   ficha); una queja pide un humano solo si reclama por un pedido ya hecho;
   los datos que el cliente dio en este turno piden `set_order_slot` con esos
   campos.
+* Lo que el cliente ELIGE no es una pregunta: si responde la pregunta de
+  variantes del asesor (o Jev dice que elige), un «pregunta por colores o
+  aromas» dudoso es la elección leída como pregunta. No pide selector ni
+  complemento; la guía le dice al LLM que guarde la elección (4567 t22).
 * Guía de etapas: la etapa la calcula el código (borrador); Jev aporta la
   evidencia del turno y el motor le da al LLM el siguiente paso concreto,
   acompaña al cliente cuando se devuelve (`quitar=true`) y refuerza el paso
@@ -21,6 +25,7 @@ más:
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.context import SHIPPING_SLOTS, STAGE_LABELS
@@ -63,6 +68,9 @@ _CONTRACT: dict[str, tuple[tuple[str, ...], str]] = {
                   "Para promociones o cupones usa list_promotions (o apply_coupon si ya dio el código)."),
 }
 
+#: Asuntos que el cliente puede estar ELIGIENDO en vez de preguntando.
+_CHOICE_TOPICS = ("variante", "aroma")
+
 # Re-exporta lo que no cambia con respecto a v2.
 coverage_decision = turno_v2.coverage_decision
 complement_note = turno_v2.complement_note
@@ -73,6 +81,25 @@ topic_rows = turno_v2.topic_rows
 def _p(result: Any, qid: str) -> float:
     p = getattr(answer_of(result, qid), "p", None)
     return float(p) if isinstance(p, (int, float)) else 0.0
+
+
+def _chosen(plan: Any, result: Any, reading: dict[str, Any], stage: str | None, th: dict[str, float]) -> list[str]:
+    """Colores o aromas que el cliente ELIGE en este turno: responde la
+    pregunta de variantes del asesor (lectura del hilo) o Jev dice que elige
+    (`variantes.elige`, solo en la etapa de variantes). Un «pregunta por
+    colores» dudoso al lado es la elección leída como pregunta (4567 t22,
+    r11: 0,73 para «Mejor 2, una lila y otra azul»); uno claro (≥ `given`)
+    es una pregunta de verdad («Lila. ¿Y en rojo?») y se queda."""
+    answers_p = reading.get("answers_bot")
+    answering = (
+        reading.get("bot_asked") == "elegir_variante"
+        and isinstance(answers_p, (int, float))
+        and answers_p >= th["answers"]
+    )
+    chooses = stage == "etapa_variantes" and _p(result, "variantes.elige") >= th["given"]
+    if not (answering or chooses):
+        return []
+    return [t.topic for t in plan.topics if t.topic in _CHOICE_TOPICS and (t.p or 0.0) < th["given"]]
 
 
 def _required(topics: Sequence[str], result: Any, stage: str | None, given: list[str], th: dict[str, float]) -> list[dict[str, Any]]:
@@ -122,9 +149,14 @@ def _labels(items: Sequence[str]) -> str:
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " y " + names[-1]
 
 
-def _next_step(stage: str | None, missing: list[str], given: list[str], result: Any, th: dict[str, float]) -> str:
+def _next_step(
+    stage: str | None, missing: list[str], given: list[str], result: Any, th: dict[str, float], *, chose: bool = False
+) -> str:
     if stage == "etapa_descubrimiento":
         return "ayúdale a escoger un producto (catálogo o ficha)."
+    if stage == "etapa_variantes" and chose:
+        save = "guarda con set_order_slot lo que eligió y "
+        return f"{save}pide solo lo que siga faltando: {_labels(missing)}." if missing else f"{save}sigue con los datos de envío."
     if stage == "etapa_variantes":
         return f"pide solo lo que falta: {_labels(missing)}." if missing else "confirma la elección y sigue con los datos de envío."
     if stage == "etapa_datos_envio":
@@ -144,7 +176,9 @@ def _next_step(stage: str | None, missing: list[str], given: list[str], result: 
     return ""
 
 
-def _guide(result: Any, context: Any, th: dict[str, float]) -> tuple[dict[str, Any], str | None]:
+def _guide(
+    result: Any, context: Any, th: dict[str, float], *, chosen: Sequence[str] = ()
+) -> tuple[dict[str, Any], str | None]:
     stage = getattr(context, "stage", None)
     if not stage:
         return {}, None
@@ -152,13 +186,16 @@ def _guide(result: Any, context: Any, th: dict[str, float]) -> tuple[dict[str, A
     missing = [m for m in getattr(context, "missing", ()) if m not in given]
     going_back = stage in ("etapa_variantes", "etapa_datos_envio", "etapa_cierre") and _p(result, "etapa.cambia_producto") >= th["given"]
     stagnant = int(getattr(context, "stagnant", 0) or 0)
-    step = _next_step(stage, missing, given, result, th)
+    # Lo que falta es del borrador de ANTES del mensaje: si el cliente está
+    # eligiendo, pudo haberlo dado ahora («Mejor 2»).
+    chose = bool(chosen) and stage == "etapa_variantes"
+    step = _next_step(stage, missing, given, result, th, chose=chose)
     label = STAGE_LABELS.get(stage, stage)
     parts = [f"[ETAPA] {label[:1].upper() + label[1:]}."]
     if given:
         parts.append(f"El cliente acaba de dar: {_labels(given)}.")
     if missing:
-        parts.append(f"Falta: {_labels(missing)}.")
+        parts.append(f"{'Antes de este mensaje faltaba' if chose else 'Falta'}: {_labels(missing)}.")
     if going_back:
         parts.append("El cliente quiere ver otros productos: quita el anterior del pedido (quitar=true) y muéstrale opciones.")
     elif step:
@@ -167,7 +204,7 @@ def _guide(result: Any, context: Any, th: dict[str, float]) -> tuple[dict[str, A
         ask = f"pide de forma concreta {_labels(missing)}" if missing else "lleva al cliente al siguiente paso"
         parts.append(f"Llevan {stagnant} turnos en esta etapa sin un dato nuevo: {ask}.")
     guide = {"stage": stage, "given_now": given, "missing": missing, "going_back": going_back, "stagnant": stagnant,
-             "next": step}
+             "next": step, "chosen_now": list(chosen)}
     return guide, " ".join(parts)
 
 
@@ -183,17 +220,24 @@ def decide_turn(
     base = turno_v2.decide_turn(result, questionnaire=questionnaire, context=context, n_messages=n_messages, thresholds=th)
     if not base.plan.ok:
         return base
-    guide, stage_note = _guide(result, context, th)
-    required = _required([t.topic for t in base.plan.topics], result, getattr(context, "stage", None),
-                         list(guide.get("given_now") or []), th)
-    note_parts = [p for p in (base.note, stage_note) if p]
-    if not base.note and stage_note:
+    stage = getattr(context, "stage", None)
+    chosen = _chosen(base.plan, result, base.reading, stage, th)
+    plan, note, topics, coverage = base.plan, base.note, base.topics, base.coverage
+    if chosen:
+        plan = replace(base.plan, topics=tuple(t for t in base.plan.topics if t.topic not in chosen))
+        note = turno_v2.reading_note(plan, base.reading, questionnaire, th)
+        topics = topic_rows(plan, questionnaire)
+        coverage = coverage_rules(plan)
+    guide, stage_note = _guide(result, context, th, chosen=chosen)
+    required = _required([t.topic for t in plan.topics], result, stage, list(guide.get("given_now") or []), th)
+    note_parts = [p for p in (note, stage_note) if p]
+    if not note and stage_note:
         note_parts.insert(0, "[LECTURA DEL TURNO]")
     return TurnOutcome(
-        plan=base.plan,
-        topics=base.topics,
+        plan=plan,
+        topics=topics,
         note=" ".join(note_parts) if note_parts else None,
-        coverage=base.coverage,
+        coverage=coverage,
         reading=base.reading,
         tools={"required": required},
         guide=guide,

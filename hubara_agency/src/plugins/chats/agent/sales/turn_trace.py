@@ -189,6 +189,10 @@ TEXT_MAX = 600
 SENT_MAX = 6000
 STEPS_MAX = 60
 _MAX_TOOLS = 24
+#: Las respuestas de Jev en un paso (`answers`): el cuestionario de la ráfaga
+#: pasa de 24 preguntas en cuanto hay etapa (27 en variantes, 4567 t22) y el
+#: tope de las listas se comía justo las de la etapa.
+ANSWERS_MAX = 64
 
 TRIGGERS: tuple[str, ...] = ("customer", "ghost", "handoff", "complement")
 
@@ -216,11 +220,11 @@ def context_note_names(plugin_context: list[str] | None) -> list[str]:
     return names
 
 
-def _bound_value(value: Any, limit: int = TEXT_MAX) -> Any:
+def _bound_value(value: Any, limit: int = TEXT_MAX, *, max_items: int = _MAX_TOOLS) -> Any:
     if isinstance(value, str):
         return _bound(value, limit)
     if isinstance(value, list):
-        return [_bound_value(v, limit) for v in value[:_MAX_TOOLS]]
+        return [_bound_value(v, limit) for v in value[:max_items]]
     if isinstance(value, dict):
         return {str(k): _bound_value(v, limit) for k, v in value.items()}
     return value
@@ -251,7 +255,9 @@ def _normalize_steps(
             )
             break
         step = {
-            k: _bound_value(v, SENT_MAX if k == "sent" else TEXT_MAX)
+            k: _bound_value(
+                v, SENT_MAX if k == "sent" else TEXT_MAX, max_items=ANSWERS_MAX if k == "answers" else _MAX_TOOLS
+            )
             for k, v in raw.items()
             if k not in ("at_ms", "event") and v is not None
         }

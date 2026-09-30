@@ -205,15 +205,24 @@ async def unconfirmed_order_data(
     *,
     session_id: str,
     vault_dir: Path | None,
+    saved: Mapping[str, Any] | None = None,
 ) -> tuple[str, ...]:
     """Los datos de envío o de pago que el cliente NO dio (capacidad `datos`,
     F6): no se guardan. Con `reglas` (así nace), ninguno, y ni siquiera se
-    lee el historial (`events` es perezoso)."""
-    from src.plugins.chats.agent.sales.decisions.capabilities.datos import CHECKED_SLOTS, DATOS, DatosDelPedido
+    lee el historial (`events` es perezoso). Lo que ya estaba guardado con el
+    mismo valor (`saved`) no se vuelve a revisar: al confirmar, el LLM manda
+    todo otra vez y el mensaje donde el cliente lo dio ya quedó atrás."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.datos import (
+        CHECKED_SLOTS,
+        DATOS,
+        DatosDelPedido,
+        same_value,
+    )
 
+    before = saved or {}
     pairs = tuple(
         (slot, value) for slot, value in values.items()
-        if slot in CHECKED_SLOTS and isinstance(value, str) and value.strip()
+        if slot in CHECKED_SLOTS and isinstance(value, str) and value.strip() and not same_value(before.get(slot), value)
     )
     if not pairs:
         return ()

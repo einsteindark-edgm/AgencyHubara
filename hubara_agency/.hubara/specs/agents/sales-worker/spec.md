@@ -1208,6 +1208,38 @@ En una conversación del workflow V2 (`HubaraSalesSessionWorkflowV2`), toda lect
 - WHEN el sandbox corre cada turno real
 - THEN usa `jev-v3`, deja la ráfaga en el historial antes del turno, decide cupón y fuera de catálogo con el motor, le da a las lecturas solo lo que escribió el cliente (el texto de la foto, el botón, el carrito) y publica con cada turno las decisiones del motor y las caídas de Jev a la regla
 
+### Requirement: El desglose de datos del LLM se guarda si salió del cliente (2026-09-30)
+
+En V2, `set_order_slot` SHALL guardar cada dato de envío o de pago que el LLM desglosó cuando el valor está en lo que escribió el cliente (en lo último de la conversación, sin tildes, mayúsculas ni signos; teléfono y cédula por sus dígitos), sin preguntarle a Jev, igual que producción. Solo lo que no está en sus palabras SHALL preguntarse a Jev (capacidad `datos`), y la pregunta MUST NOT llevar el valor de un dato personal (quien recibe, dirección, barrio, teléfono, cédula): Jev los ve tapados en la conversación. Un dato que ya estaba guardado con el mismo valor MUST NOT revisarse otra vez. V1 (`reglas`) sigue guardando todo sin revisar.
+
+#### Scenario: Todo en un mensaje (laboratorio caso-fotos-0930, 4567 t22)
+
+- GIVEN el asesor preguntó cuántas quería y el cliente contestó «Mejor 2, una lila y otra azul. Me las mandas a Chía, calle 10 # 5-20 casa 3, recibe <nombre>, cuánto vale el envío? pago contra entrega»
+- WHEN el LLM llama `set_order_slot` con ciudad, dirección, quien recibe y método de pago
+- THEN se guardan los cuatro sin preguntarle a Jev (antes Jev contestaba 0,08 al nombre porque lo veía como «recibe [nombre]», y el complemento se lo volvía a pedir)
+
+#### Scenario: Un dato que el cliente no escribió
+
+- GIVEN el LLM manda un teléfono que no está en lo que escribió el cliente
+- WHEN la capacidad `datos` le pregunta a Jev si el cliente dio o confirmó ese dato (sin el número en la pregunta)
+- THEN solo se descarta con p ≤ 0,15 y el LLM se lo pide al cliente; si Jev duda o cae, se guarda
+
+### Requirement: Lo que el cliente elige no es una pregunta (2026-09-30)
+
+En V2 (política `turno-v3`), cuando el cliente responde la pregunta de variantes del asesor (lectura del hilo, respuesta ≥ 0,70) o Jev dice que elige (`variantes.elige` ≥ 0,85, etapa de variantes), un «pregunta por colores o aromas» por debajo de 0,85 SHALL tratarse como la elección: MUST NOT pedir el selector en el contrato ni entrar a la revisión final (no hay complemento por eso), y la guía de etapa SHALL decir que guarde lo que eligió con `set_order_slot` y pida solo lo que siga faltando. Una pregunta clara (≥ 0,85) sigue pidiendo el selector.
+
+#### Scenario: La elección junto con los datos de envío (4567 t22)
+
+- GIVEN Jev leyó que el cliente responde la pregunta de variantes (0,82) y «pregunta por colores» 0,73
+- WHEN el motor arma el turno
+- THEN el plan solo trae el envío, el contrato solo pide las tarifas y no sale el complemento «Sobre los colores…»
+
+#### Scenario: Responde y además pregunta
+
+- GIVEN «Lila. ¿Y la tienen en rojo?», con «pregunta por colores» 0,95
+- WHEN el motor arma el turno
+- THEN el contrato sigue pidiendo `present_variant_picker`
+
 ## Out of scope
 
 - Detalle del prompt engineering / SOUL.md / USER.md — viven en `hubara_vault/_templates/sales/`
