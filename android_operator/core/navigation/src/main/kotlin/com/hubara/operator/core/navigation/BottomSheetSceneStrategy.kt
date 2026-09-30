@@ -4,12 +4,15 @@
  */
 package com.hubara.operator.core.navigation
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.rememberLifecycleOwner
 import androidx.navigation3.runtime.NavEntry
@@ -35,9 +38,13 @@ internal data class BottomSheetScene<T : Any>(
     override val content: @Composable (() -> Unit) = {
         val lifecycleOwner = rememberLifecycleOwner()
         // Una ficha larga abre completa: a media altura la acción principal queda escondida (lo vio Artemis).
+        // Y completa desde el primer cuadro: si su alto dependiera del contenido, una ficha que todavía carga
+        // abriría baja y no subiría al llegar los datos (lo vio el conductor por guion en S07).
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = spec.expanded)
         ModalBottomSheet(onDismissRequest = onBack, sheetState = sheetState, properties = spec.properties) {
-            CompositionLocalProvider(LocalLifecycleOwner provides lifecycleOwner) { entry.Content() }
+            CompositionLocalProvider(LocalLifecycleOwner provides lifecycleOwner) {
+                if (spec.expanded) Box(Modifier.fillMaxHeight()) { entry.Content() } else entry.Content()
+            }
         }
     }
 }
