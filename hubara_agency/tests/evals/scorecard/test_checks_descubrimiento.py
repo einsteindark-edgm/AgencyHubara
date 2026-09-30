@@ -225,6 +225,25 @@ def test_des08_customer_names_shown_product_without_slot_fails() -> None:
     assert (r.verdict, r.turn) == ("falla", 2)
 
 
+def test_des08_the_product_a_photo_was_recognized_as_is_not_what_the_customer_wrote() -> None:
+    """Identificación de fotos (2026-09-30): la foto entra nombrando el producto
+    que reconoció el sistema. Eso no lo escribió el cliente: «Me gustan esas ?»
+    con fotos reconocidas no es elegir un producto (laboratorio
+    caso-fotos-0930-r7, 4567 t12). Lo que sí escribe sigue contando."""
+    photo = (
+        "[el cliente envió una foto: vela cúbica roja con la palabra LOVE "
+        "(es nuestro producto «Cubo Love»: se lee su nombre en la imagen)]"
+    )
+    asks = traj(T(1, tools=[tool("present_products")]), T(2, inbound=f"Me gustan esas ?\n{photo}", sent=["Sí, es nuestra"]))
+    chooses = traj(
+        T(1, tools=[tool("present_products")]),
+        T(2, inbound=f"me llevo el cubo love\n{photo}", sent=["¡Qué bonita elección!"]),
+    )
+
+    assert _run("DES-08", asks, CATALOG_CTX).verdict == "no_aplica"
+    assert _run("DES-08", chooses, CATALOG_CTX).verdict == "falla"
+
+
 def test_des08_title_mentioned_before_any_catalog_is_not_a_choice() -> None:
     t = traj(T(1, inbound="¿tienen el Cubo Love?", tools=[tool("search_products")]))
     assert _run("DES-08", t, CATALOG_CTX).verdict == "no_aplica"

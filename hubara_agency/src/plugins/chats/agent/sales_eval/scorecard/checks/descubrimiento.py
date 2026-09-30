@@ -39,6 +39,10 @@ _CATALOG_REQUEST_RE = re.compile(
 # Framing del handoff: "Usuario respondió: <texto>. Siguiente paso: <instrucción>".
 _HANDOFF_USER_RE = re.compile(r"usuario respondi[oó]:\s*(.*?)(?:siguiente paso:.*)?$", re.IGNORECASE | re.DOTALL)
 _SELECTION_MARKER = "[el cliente seleccionó:"
+#: La foto entra como texto con su descripción y, si se reconoció, el producto
+#: nuestro que es (identificación de fotos, 2026-09-30): eso no lo escribió el
+#: cliente.
+_PHOTO_ANNOTATION_RE = re.compile(r"\[el cliente envió una foto: [^\]]*\]")
 
 _GROUNDING_TOOLS = frozenset({
     "search_products", "get_product_by_handle", "list_categories", "present_products",
@@ -221,6 +225,7 @@ def _is_product_choice(traj: Trajectory, index: int, titles: list[str]) -> bool:
     words = _customer_words(turn)
     if words is None or low.startswith("["):
         return False
+    words = _PHOTO_ANNOTATION_RE.sub(" ", words)
     shown = any(set(t.intents) & CATALOG_DISPLAY_INTENTS for t in previous)
     return shown and any(title.lower() in words.lower() for title in titles)
 
