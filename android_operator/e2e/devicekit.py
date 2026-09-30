@@ -127,6 +127,21 @@ class Device:
             subprocess.run([ADB, "-s", self.serial, "exec-out", "screencap", "-p"], stdout=fh, check=True, timeout=30)
         return path
 
+    def dismiss_not_responding(self) -> bool:
+        """Cierra el aviso del sistema «X isn't responding» tocando «Wait». Sale en emuladores recién
+        arrancados en una máquina cargada y tapa toda la pantalla; no es una falla de la app."""
+        try:
+            nodes = self.nodes()
+        except RuntimeError:
+            return False
+        if not any("isn't responding" in n.text or "no responde" in n.text for n in nodes):
+            return False
+        wait = self.find("=Wait", nodes) or self.find("=Esperar", nodes)
+        if wait:
+            self.tap(wait)
+            time.sleep(1)
+        return wait is not None
+
     def back(self) -> None:
         self.sh("input keyevent KEYCODE_BACK")
 

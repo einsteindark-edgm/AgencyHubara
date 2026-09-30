@@ -92,6 +92,8 @@ android_operator/e2e/sandbox/run_api.sh stop
   toques van en `setup` (o el escenario es solo de guion) y Artemis verifica el resultado.
 - **Lo enviado se cuenta desde el `reset`**, no desde el fin de la preparación: si un «Deshacer» de
   `setup` falla, el envío sale ahí mismo y el chequeo lo ve.
+- **El aviso «… isn't responding» del sistema** (sale en un emulador recién arrancado en una máquina
+  cargada) tapa toda la pantalla: el arnés lo cierra con «Wait» antes de cada escenario.
 - **Con la máquina muy cargada, S03 puede fallar por tiempo.** El deshacer dura 5 s. En una Mac con
   Docker y otras sesiones encima, una lectura de pantalla tardó ~3 s y un toque hasta 4 s, así que el
   «Deshacer» llega tarde. En CI no pasa. Si pasa en local, mira la carga (`uptime`) antes de sospechar de la app.
