@@ -160,6 +160,30 @@ async def test_guards_keep_the_order_in_which_they_acted(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_the_trace_keeps_what_the_list_protection_sent(tmp_path: Path) -> None:
+    """Laboratorio caso-fotos-0930-r7, 4567 t19: la protección cambió la lista
+    de aromas por el selector y el laboratorio mostraba «el bot no envió
+    nada». La guarda devuelve el texto que recibe el cliente y la traza lo
+    guarda como el «después» del paso."""
+    tracker = Tracker()
+    listed = "Jengibre no está. Los que maneja son: Lavanda, Café, Sándalo y Drakar."
+    picker = "Jengibre no está. Los que maneja son:\n\n🌿 Lavanda\n☕ Café\n\nDime cuál te gusta y seguimos 🤍"
+
+    await _run(
+        tracker,
+        tmp_path,
+        messages=["La quiero en jengibre"],
+        llm_responses=[_final_resp(listed)],
+        variant_guard_result=picker,
+    )
+
+    trace = _customer_trace(tracker)
+    variant = next(s for s in trace["steps"] if s["kind"] == "guard" and s["name"] == "variant_enumeration_guard")
+    assert (variant["before"], variant["after"]) == (listed, picker)
+    assert trace["suppressed_reason"] == "variant_enumeration_guard"
+
+
+@pytest.mark.asyncio
 async def test_a_restarted_turn_keeps_the_aborted_attempt_and_the_restart(tmp_path: Path) -> None:
     """Corrientazo (run eda8d460): el cliente escribe mientras el LLM piensa y
     el turno se reinicia. La traza muestra el intento abortado, el corte en el

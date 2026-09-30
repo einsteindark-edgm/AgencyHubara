@@ -672,7 +672,10 @@ class HubaraSalesSessionWorkflowV2:
                         suppress_text_for_picker = True
                         _note_guard(
                             trace_steps, trace_guards, "variant_enumeration_guard",
-                            before=result.final_content, after="",
+                            before=result.final_content,
+                            # Lo que recibe el cliente (el selector); las
+                            # histories de antes del 2026-09-30 traen un bool.
+                            after=replaced_by_picker if isinstance(replaced_by_picker, str) else "",
                         )
                         trace_suppressed = "variant_enumeration_guard"
                 if admin_no_send and result.final_content:

@@ -1147,6 +1147,11 @@ async def _dispatch_intent(
     return None
 
 
+def render_variant_picker_text(params: dict[str, Any]) -> str | None:
+    """El texto que recibe el cliente con un selector de variantes."""
+    return _render_variant_picker_text(params)
+
+
 def _render_variant_picker_text(params: dict[str, Any]) -> str | None:
     """Aromas/colores/tamaños como **texto plano con emojis curados**.
 
@@ -1194,9 +1199,11 @@ def _render_variant_picker_text(params: dict[str, Any]) -> str | None:
                 text_lines.append(row_title)
         text_lines.append("")  # separador entre sections
 
-    # Pie pidiendo respuesta libre. Sin botones — esperamos texto.
+    # Pie pidiendo respuesta libre. Sin botones — esperamos texto. Si el
+    # selector lo armó la guarda de enumeración con la lista del bot, cierra
+    # con lo que el bot escribió después de la lista (su pregunta).
     variant_type = params.get("variant_type") or ""
-    tail = {
+    tail = str(params.get("closing_text") or "").strip() or {
         "scent": "Dime cuál te gusta y seguimos 🤍",
         "color": "Cuéntame qué color prefieres y seguimos 🤍",
         "size": "Dime qué tamaño quieres y seguimos 🤍",

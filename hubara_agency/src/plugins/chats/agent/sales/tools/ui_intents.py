@@ -2383,6 +2383,7 @@ def build_variant_picker_intent(
     intro_text: str,
     handle: str | None,
     coupon: dict[str, Any] | None = None,
+    closing_text: str | None = None,
 ) -> dict[str, Any] | None:
     """Intent `variant_picker` (texto curado con emojis) para `labels` ya
     validados. `None` si no queda ninguna row. Lo usan la tool
@@ -2473,6 +2474,7 @@ def build_variant_picker_intent(
                 if coupon
                 else {}
             ),
+            **({"closing_text": closing_text} if closing_text else {}),
         },
         "analytics": {
             "component_id": f"variant_picker.{variant_type}",

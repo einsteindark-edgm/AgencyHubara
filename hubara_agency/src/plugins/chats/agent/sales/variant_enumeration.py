@@ -134,6 +134,23 @@ def intro_before(text: str, labels: list[str]) -> str:
     return text[:original_cut].rstrip().rstrip(":;,-–— ").strip()
 
 
+def outro_after(text: str, labels: list[str]) -> str:
+    """Texto que sigue a la lista (la pregunta con que cierra el bot), sin la
+    puntuación que cerraba la lista. Vacío si la lista termina el texto."""
+    norm = _normalize(text)
+    hits = _find_labels(norm, labels)
+    if not hits:
+        return ""
+    end = max(pos + len(_normalize(label)) for pos, label in hits)
+    return text[_map_position(text, end):].lstrip(" \t\n.,;:!–—-").strip()
+
+
+def as_lead_in(intro: str) -> str:
+    """«Los que maneja son» → «Los que maneja son:» (la lista va debajo)."""
+    intro = intro.strip()
+    return f"{intro}:" if intro and intro[-1].isalnum() else intro
+
+
 def _map_position(original: str, norm_pos: int) -> int:
     """Posición en `original` que corresponde a `norm_pos` en `_normalize(original)`."""
     count = 0
