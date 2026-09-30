@@ -13,7 +13,7 @@ otra forma (la API está en alpha) devuelven `ok=False` sin lanzar.
 
 Reenvío de una petición colgada (laboratorio, 2026-09-29): ~1 de cada 10
 llamadas se colgaba más de 10 s mientras el resto respondía en medio segundo.
-Si no hay respuesta a los `resend_after_s` del perfil (2 s y 5 s), sale un
+Si no hay respuesta a cada uno de los `resend_after_s` del perfil, sale un
 reenvío y gana la primera respuesta válida; las demás se cancelan. Todo dentro
 de la MISMA espera (`timeout_s`).
 """
