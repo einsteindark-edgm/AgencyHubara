@@ -112,6 +112,11 @@ from src.plugins.chats.agent.sales.use_cases.coupon_application import (
     store_coupon_application,
 )
 from src.plugins.chats.agent.sales.use_cases.catalog_gap import catalog_gap_note
+from src.plugins.chats.agent.sales.use_cases.photo_product import (
+    PhotoIdentification,
+    build_photo_product_note,
+    photo_reentry_text,
+)
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
@@ -241,6 +246,14 @@ async def catalog_gap_note_for(
     return catalog_gap_note(verdict.value)
 
 
+class PhotoIdentifierPort(Protocol):
+    """Qué producto nuestro es la foto (``use_cases/photo_product``)."""
+
+    async def identify(self, vision: Any, image: Any) -> PhotoIdentification: ...
+
+    def refresh_index_soon(self) -> None: ...
+
+
 class IngestInboundMessage:
     """Procesa un `WhatsAppMessage` ya parseado: history + routing + signal."""
 
@@ -258,8 +271,10 @@ class IngestInboundMessage:
         campaign_coupon: CampaignCouponApplier | None = None,
         coupon_units_now: CouponUnitsReader | None = None,
         readings: InboundReadingsProvider | None = None,
+        photo_identifier: PhotoIdentifierPort | None = None,
     ) -> None:
         self._history_store = history_store
+        self._photo_identifier = photo_identifier
         # Motor de decisiones (enchufe 1): las lecturas del cliente (compra,
         # retoma, baja) las da el proveedor; el ingest escribe los MISMOS
         # campos de hoy. Sin proveedor, el del motor con el registro de bots
@@ -291,6 +306,7 @@ class IngestInboundMessage:
         *,
         persisted_image_url: str | None = None,
         customer_text: Any = _FROM_MESSAGE,
+        photo_note: str | None = None,
     ) -> None:
         """Procesa un inbound parseado.
 
@@ -305,6 +321,10 @@ class IngestInboundMessage:
         de visión pasa solo el texto que el cliente puso en la foto (o None):
         la descripción la escribió la visión y no se lee como si fuera del
         cliente (bug: un comprobante pausaba la reactivación una semana).
+
+        ``photo_note``: otro canal interno del reentry de visión: la nota del
+        turno cuando la foto se reconoció como un producto nuestro
+        (``photo_product.build_photo_product_note``).
         """
         session_id = f"{WHATSAPP_SESSION_PREFIX}{parsed.from_number}"
 
@@ -1125,6 +1145,7 @@ class IngestInboundMessage:
                     web_product_note,
                     order_draft_note,
                     coupon_note,
+                    photo_note,
                     photo_citation_note,
                     gap_note,
                 )
@@ -1844,6 +1865,13 @@ class IngestInboundMessage:
                 mime_type=media.get("mime_type") or "image/jpeg",
             )
         )
+        # ¿Qué producto nuestro es la foto? (2026-09-30: capturas de nuestro
+        # catálogo negadas o confundidas). Nunca en un comprobante.
+        product = (
+            await self._identify_photo(result, session_id=session_id, persisted=persisted, media_id=media_id)
+            if result.ok and not result.is_payment_receipt
+            else None
+        )
 
         # Limpiar pending_vision + registrar el resultado en metadata
         try:
@@ -1853,15 +1881,16 @@ class IngestInboundMessage:
         metadata.pop("pending_vision", None)
         if result.ok:
             recent = list(metadata.get("recent_image_descriptions") or [])
-            recent.append(
-                {
-                    "media_id": media_id,
-                    "kind": result.kind,
-                    "description": result.description,
-                    "provider": result.provider,
-                    "cost_usd_estimate": result.cost_usd_estimate,
-                }
-            )
+            described: dict[str, Any] = {
+                "media_id": media_id,
+                "kind": result.kind,
+                "description": result.description,
+                "provider": result.provider,
+                "cost_usd_estimate": result.cost_usd_estimate,
+            }
+            if product is not None:
+                described["product"] = {"handle": product.handle, "how": product.how}
+            recent.append(described)
             metadata["recent_image_descriptions"] = recent[-20:]
         else:
             errs = list(metadata.get("vision_failures") or [])
@@ -1900,6 +1929,8 @@ class IngestInboundMessage:
                     "latency_ms": result.latency_ms,
                     "error": result.error,
                     "is_payment_receipt": result.is_payment_receipt,
+                    "product_handle": product.handle if product is not None else None,
+                    "identified_by": product.how if product is not None else None,
                 },
             )
         )
@@ -1951,7 +1982,9 @@ class IngestInboundMessage:
                 f"[el cliente envió un comprobante de pago: {result.description}]"
             )
         else:
-            synthetic_text = f"[el cliente envió una foto: {result.description}]"
+            # Si se reconoció, la foto entra nombrando el producto (queda en el
+            # historial y en el dashboard) y el turno lleva su nota.
+            synthetic_text = photo_reentry_text(result.description, product)
         if caption:
             synthetic_text += f' con el texto: "{caption}"'
         logger.info(
@@ -1967,7 +2000,75 @@ class IngestInboundMessage:
             # La descripción la escribió la visión: las lecturas del cliente
             # (compra, retoma, baja) solo leen lo que él puso en la foto.
             customer_text=caption or None,
+            photo_note=(
+                build_photo_product_note(product, result.description)
+                if product is not None
+                else None
+            ),
         )
+
+    async def _identify_photo(
+        self,
+        result: Any,
+        *,
+        session_id: str,
+        persisted: tuple[str, str] | None,
+        media_id: str,
+    ) -> Any:
+        """El producto nuestro que es la foto, o None. Nunca tumba el ingest:
+        sin identificador, sin catálogo o con cualquier falla, la foto sigue
+        como siempre (con su descripción). Deja el índice de fotos del
+        catálogo completándose en segundo plano."""
+        identifier = self._photo_identifier
+        if identifier is None:
+            return None
+
+        async def image() -> tuple[bytes, str] | None:
+            return await self._inbound_image_bytes(session_id, persisted, media_id)
+
+        try:
+            identification = await identifier.identify(result, image)
+        except Exception as exc:  # noqa: BLE001 — la foto sigue sin identificar
+            logger.warning("photo_product.identify_failed", session=session_id, error_type=type(exc).__name__)
+            identification = None
+        try:
+            identifier.refresh_index_soon()
+        except Exception as exc:  # noqa: BLE001 — el índice se completa la próxima vez
+            logger.warning("photo_product.refresh_failed", error_type=type(exc).__name__)
+        product = identification.product if identification is not None else None
+        logger.info(
+            "photo_product.identified" if product is not None else "photo_product.not_identified",
+            session=session_id,
+            handle=product.handle if product is not None else None,
+            how=product.how if product is not None else None,
+            trace=identification.trace if identification is not None else None,
+        )
+        return product
+
+    @staticmethod
+    async def _inbound_image_bytes(
+        session_id: str, persisted: tuple[str, str] | None, media_id: str
+    ) -> tuple[bytes, str] | None:
+        """Los bytes de la foto: la copia que ya se guardó para el dashboard
+        o, si no se pudo guardar, otra vez desde Meta."""
+        from src.platform.audio.meta_media_fetcher import fetch_media_bytes
+        from src.platform.media import resolve_media_file
+
+        if persisted is not None:
+            path = resolve_media_file(session_id, persisted[1])
+            if path is not None:
+                try:
+                    return path.read_bytes(), "image/jpeg"
+                except OSError:
+                    pass
+        try:
+            fetched = await fetch_media_bytes(media_id)
+        except Exception:  # noqa: BLE001 — sin bytes, sin búsqueda por imagen
+            return None
+        if not fetched:
+            return None
+        data, mime = fetched
+        return data, mime or "image/jpeg"
 
     async def _persist_inbound_document(
         self, session_id: str, media_id: str, mime_type: str | None

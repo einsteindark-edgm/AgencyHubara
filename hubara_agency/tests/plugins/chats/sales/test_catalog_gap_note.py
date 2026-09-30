@@ -123,6 +123,26 @@ def test_the_note_never_denies_before_searching_the_catalog() -> None:
     assert note.index("search_products") < note.index("(eso no lo manejamos)"), "negar es el último recurso"
 
 
+def test_a_photo_already_identified_as_ours_names_nothing_as_missing() -> None:
+    """Identificación de fotos (2026-09-30): si la foto ya se reconoció como un
+    producto nuestro (por lo que se lee en ella o por la imagen), lo que la
+    visión describió con otras palabras («rostro de Jesús») existe: la foto no
+    alimenta la nota. Lo que el cliente escribió sí se sigue leyendo."""
+    from src.plugins.chats.agent.sales.use_cases.photo_product import PhotoProduct, photo_reentry_text
+
+    description = "vela gris con detalles dorados en forma de cruz y rostro de Jesús"
+    by_name = PhotoProduct(handle="sacrificio-de-amor", title="Sacrificio de Amor", how="nombre")
+    by_image = PhotoProduct(handle="sacrificio-de-amor", title="Sacrificio de Amor", how="imagen")
+    catalog = [*CATALOG, SACRIFICIO]
+
+    for product in (by_name, by_image):
+        text = photo_reentry_text(description, product) + ' con el texto: "tienes esta?"'
+        assert build_catalog_gap_note(text, catalog) is None, product.how
+        asks_vaso = photo_reentry_text(description, product) + ' con el texto: "y en vaso?"'
+        note = build_catalog_gap_note(asks_vaso, catalog)
+        assert note is not None and "«vaso»" in note and "jesús" not in note.lower()
+
+
 def test_question_about_a_real_product_has_no_note() -> None:
     assert build_catalog_gap_note("¿El cubo de corazón viene en azul?", CATALOG) is None
 

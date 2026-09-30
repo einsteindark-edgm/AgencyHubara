@@ -752,6 +752,59 @@ conversación en manos de un humano no se calcula.
 - WHEN el cliente pregunta «¿El cubo de corazón viene en azul?» y el catálogo tiene azul
 - THEN el turno no lleva la nota
 
+#### Scenario: Foto ya reconocida como un producto nuestro (2026-09-30)
+
+- GIVEN la foto se reconoció como el Sacrificio de Amor (ver «La foto del cliente se reconoce contra el catálogo»)
+- WHEN el cliente pregunta «tienes esta?»
+- THEN la descripción de esa foto no propone términos («jesús») y el turno no lleva la nota por ella
+- AND lo que el cliente escribió en la foto se sigue leyendo («¿y en vaso?» sí lleva la nota)
+
+### Requirement: La foto del cliente se reconoce contra el catálogo (2026-09-30)
+
+Cuando llega una foto que no es un comprobante, el ingest SHALL intentar
+reconocer qué producto NUESTRO es, sin que el LLM empareje texto contra texto:
+
+1. Texto visible: la visión devuelve por campo el texto que se lee (nombre,
+   precio, URL, código). Un código (SKU) de una variante, un enlace de NUESTRA
+   tienda (`/products/<handle>`, aunque venga cortado; un enlace de otra
+   tienda nunca cuenta) o el nombre exacto o casi exacto (≥ 0,90 y 0,08 por
+   encima del segundo) identifican el producto. El precio MUST NOT decidir;
+   si se lee un precio que no es el nuestro, la imagen confirma.
+2. Imagen, solo en fotos de producto y si el texto no decidió: los 5
+   productos más parecidos por embedding de imagen (índice de fotos del
+   catálogo junto al snapshot) y un verificador que dice cuál es el mismo
+   diseño o ninguno, con tiempo máximo. MUST preferir «ninguno» a un producto
+   equivocado.
+3. Sin identificación, la foto entra como hoy (con su descripción).
+
+Si se reconoce, la foto SHALL entrar a la conversación nombrando el producto y
+cómo se supo (`… (es nuestro producto «X»: se lee su nombre en la imagen)]`;
+queda en el historial y en el dashboard) y el turno SHALL llevar la nota
+`[FOTO DEL CLIENTE, metadata…]` que prohíbe negarlo; si fue por la imagen, la
+nota pide mostrarlo y preguntar si es ese. El reconocimiento MUST NOT frenar
+el ingest: cualquier falla deja la foto como hoy. El índice de fotos se
+completa en segundo plano.
+
+#### Scenario: Captura del catálogo con el nombre (caso 6543)
+
+- GIVEN la foto es una captura de nuestro catálogo donde se lee «Sacrificio de Amor» y COP 20,000
+- WHEN llega con el texto «tienes esta?»
+- THEN entra como «[el cliente envió una foto: … (es nuestro producto «Sacrificio de Amor»: se lee su nombre en la imagen)]»
+- AND el turno lleva la nota con «Sacrificio de Amor» (handle sacrificio-de-amor) y la orden de no negarlo
+
+#### Scenario: Foto sin texto de un producto nuestro
+
+- GIVEN la foto muestra dos velas lila y azul con pájaros en una rama, sin texto
+- WHEN la visión no lee nombre, enlace ni código
+- THEN el verificador elige el Velón Gorrión entre los 5 más parecidos
+- AND la nota pide mostrarlo y preguntar si es ese
+
+#### Scenario: Captura de otra tienda
+
+- GIVEN la captura muestra «Vela Aurora Boreal» y un enlace de otra tienda que termina en `/products/angel`
+- WHEN se busca el producto
+- THEN no se reconoce ninguno (ni por el enlace ni por la imagen) y la foto entra como hoy
+
 ### Requirement: Variantes siempre en formato picker
 
 Si el texto final del turno enumera 4 o más aromas o colores del catálogo y el

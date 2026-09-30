@@ -64,6 +64,7 @@ from src.plugins.chats.agent.sales.use_cases.coupons import promotion_from_snaps
 from src.plugins.chats.agent.sales.use_cases.ingest_handover import IngestHandover
 from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import emit_watchdog_events
 from src.plugins.chats.agent.sales.use_cases.ingest_standby import IngestStandby
+from src.plugins.chats.agent.sales.use_cases.photo_product import PhotoIdentifier
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
@@ -143,6 +144,7 @@ def build_ingest_use_case() -> IngestInboundMessage:
     from src.sdk.connectorkit import get_catalog_client, get_web_cart_reader
 
     validate_campaign_coupon, coupon_units_now = _coupon_checks()
+    catalog = get_catalog_client()
     _INGEST_USE_CASE = IngestInboundMessage(
         history_store=history_store,
         load_session=load_session,
@@ -150,11 +152,28 @@ def build_ingest_use_case() -> IngestInboundMessage:
         event_bus=event_bus,
         tenant_id=tenant_id,
         web_cart_reader=get_web_cart_reader(),
-        catalog=get_catalog_client(),
+        catalog=catalog,
         campaign_coupon=validate_campaign_coupon,
         coupon_units_now=coupon_units_now,
+        photo_identifier=build_photo_identifier(catalog),
     )
     return _INGEST_USE_CASE
+
+
+def build_photo_identifier(catalog: Any) -> PhotoIdentifier:
+    """Qué producto nuestro es la foto del cliente (``use_cases/photo_product``):
+    el texto que se lee en ella y, si no alcanza, el índice de fotos del
+    catálogo (junto al snapshot), los embeddings de imagen y el verificador.
+    Los mismos puertos que el laboratorio, por el SDK (P-28)."""
+    from src.sdk.catalogkit import get_catalog_photo_index
+    from src.sdk.connectorkit import get_image_embedding_port, get_photo_match_port
+
+    return PhotoIdentifier(
+        catalog=catalog,
+        index=get_catalog_photo_index(),
+        embedder=get_image_embedding_port(),
+        matcher=get_photo_match_port(),
+    )
 
 
 def _coupon_checks() -> tuple[

@@ -35,6 +35,11 @@ _ASKED_AFTER = re.compile(r"\b(?:en|de|con|tipo)\s+([^\W\d_]{4,})", re.UNICODE)
 #: lo que el cliente mostró.
 _ANNOTATION = re.compile(r"\[([^\]]*)\]")
 _PHOTO_ANNOTATION = "el cliente envio una foto"
+#: La foto que ya se reconoció como un producto NUESTRO (por lo que se lee en
+#: ella o por la imagen; `sales/use_cases/photo_product.photo_reentry_text`):
+#: lo que la visión describió con otras palabras («rostro de Jesús» = Sacrificio
+#: de Amor) existe, así que esa foto no propone nada como inexistente.
+OUR_PRODUCT_PHOTO_MARKS = ("(es nuestro producto «", "(es el mismo diseño de nuestro producto «")
 
 #: vocabulario de la tienda/charla que no es un producto aunque no esté en las
 #: descripciones del catálogo (evita bloquear ganchos legítimos).
@@ -79,6 +84,8 @@ def _singular(word: str) -> str:
 def _customer_asks(text: str) -> str:
     def keep_photo(match: re.Match[str]) -> str:
         inner = match.group(1)
+        if any(mark in inner for mark in OUR_PRODUCT_PHOTO_MARKS):
+            return " "
         return inner if _fold(inner).startswith(_PHOTO_ANNOTATION) else " "
 
     return _ANNOTATION.sub(keep_photo, text)

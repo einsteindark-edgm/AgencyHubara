@@ -486,3 +486,92 @@ def test_parse_kind_and_description_robust():
     kind2, desc2 = _parse_kind_and_description("una vela rosada bonita")
     assert kind2 == VISION_KIND_OTHER
     assert desc2 == "una vela rosada bonita"
+
+
+# --- Identificación de la foto contra el catálogo (2026-09-30) --------------
+
+
+class _Identifier:
+    """Doble del identificador de fotos: devuelve el producto que se le da."""
+
+    def __init__(self, product) -> None:  # noqa: ANN001
+        self.product = product
+        self.seen: list = []
+        self.refreshes = 0
+
+    async def identify(self, vision, image):  # noqa: ANN001, ANN201
+        from src.plugins.chats.agent.sales.use_cases.photo_product import PhotoIdentification
+
+        self.seen.append(vision)
+        return PhotoIdentification(self.product, {"text": {"handle": getattr(self.product, "handle", None)}})
+
+    def refresh_index_soon(self) -> None:
+        self.refreshes += 1
+
+
+def _identified_use_case(identifier: _Identifier) -> tuple[FakeLoadOrStart, FakeMetadataStore, IngestInboundMessage]:
+    loader, metadata = FakeLoadOrStart(), FakeMetadataStore()
+    use_case = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+        photo_identifier=identifier,
+    )
+    return loader, metadata, use_case
+
+
+@pytest.mark.asyncio
+async def test_a_photo_of_our_product_enters_naming_it_and_the_turn_carries_the_note(monkeypatch):
+    """Caso 6543 (laboratorio caso-fotos-0929): la captura de nuestro catálogo
+    con «Sacrificio de Amor». La foto entra a la conversación nombrando el
+    producto (queda en el historial y en el dashboard) y el turno lleva la nota
+    que prohíbe negarlo."""
+    from src.plugins.chats.agent.sales.use_cases.photo_product import PhotoProduct
+
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    identifier = _Identifier(PhotoProduct("sacrificio-de-amor", "Sacrificio de Amor", "nombre", "Sacrificio de Amor"))
+    loader, metadata, use_case = _identified_use_case(identifier)
+
+    await use_case._describe_image_and_reenter(_make_image("product_1", caption="tienes esta?"))
+
+    [call] = loader.calls
+    assert call.message == (
+        "[el cliente envió una foto: Foto de una vela artesanal color rosado (es nuestro producto "
+        '«Sacrificio de Amor»: se lee su nombre en la imagen)] con el texto: "tienes esta?"'
+    )
+    notes = [n for n in call.extra_context or [] if n.startswith("[FOTO DEL CLIENTE")]
+    assert len(notes) == 1 and "«Sacrificio de Amor» (handle sacrificio-de-amor)" in notes[0]
+    recent = metadata.store["wa_5491111111111"]["recent_image_descriptions"][-1]
+    assert recent["product"] == {"handle": "sacrificio-de-amor", "how": "nombre"}
+    assert identifier.refreshes == 1
+
+
+@pytest.mark.asyncio
+async def test_a_photo_that_is_not_identified_enters_as_before(monkeypatch):
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    identifier = _Identifier(None)
+    loader, metadata, use_case = _identified_use_case(identifier)
+
+    await use_case._describe_image_and_reenter(_make_image("product_1"))
+
+    [call] = loader.calls
+    assert call.message == "[el cliente envió una foto: Foto de una vela artesanal color rosado]"
+    assert not [n for n in call.extra_context or [] if n.startswith("[FOTO DEL CLIENTE")]
+    assert "product" not in metadata.store["wa_5491111111111"]["recent_image_descriptions"][-1]
+    assert len(identifier.seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_payment_receipt_is_never_matched_against_the_catalog(monkeypatch):
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    monkeypatch.setattr("src.platform.whatsapp.client.send_message", _noop_send, raising=False)
+    identifier = _Identifier(None)
+    _, _, use_case = _identified_use_case(identifier)
+
+    await use_case._describe_image_and_reenter(_make_image("receipt_1"))
+
+    assert identifier.seen == []
+
+
+async def _noop_send(*_args, **_kwargs) -> None:  # noqa: ANN002, ANN003
+    return None
