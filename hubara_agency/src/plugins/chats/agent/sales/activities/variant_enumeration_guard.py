@@ -35,32 +35,18 @@ from src.plugins.chats.agent.sales.tools.ui_intents import (
 from src.plugins.chats.agent.sales.activities.flush_ui_intents import render_variant_picker_text
 from src.plugins.chats.agent.sales.variant_enumeration import (
     as_lead_in,
+    catalog_variant_labels,
     default_intro,
     intro_before,
     outro_after,
 )
-from src.sdk.connectorkit import get_catalog_client, parse_variant_tags
+from src.sdk.connectorkit import get_catalog_client
 from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
 
 async def _catalog_labels() -> tuple[list[str], list[str]]:
-    catalog = get_catalog_client()
-    result = await catalog.search(q="", limit=30)
-    aromas: list[str] = []
-    colors: list[str] = []
-    seen_a: set[str] = set()
-    seen_c: set[str] = set()
-    for product in list(result.results):
-        attrs = parse_variant_tags(getattr(product, "tags", None))
-        for label in attrs.aromas:
-            if label.casefold() not in seen_a:
-                seen_a.add(label.casefold())
-                aromas.append(label)
-        for label in attrs.colors:
-            if label.casefold() not in seen_c:
-                seen_c.add(label.casefold())
-                colors.append(label)
-    return aromas, colors
+    result = await get_catalog_client().search(q="", limit=30)
+    return catalog_variant_labels(result.results)
 
 
 @activity.defn(name="apply_variant_enumeration_guard")

@@ -107,6 +107,32 @@ def test_sizes_are_answered_by_the_search_too() -> None:
     assert {"search_products", "get_product_by_handle", "present_product_detail"} <= set(required["any_of"])
 
 
+def test_a_variant_is_answered_with_the_picker_in_any_stage() -> None:
+    """Laboratorio caso-fotos-0930-r10, 4567 t20: «mejor la de los pajaritos /
+    en lila». La etapa al empezar el turno era descubrimiento, así que el
+    contrato pedía la ficha: el bot anotó producto y color, le escribió los
+    aromas como texto, el contrato lo retuvo por la ficha y el modelo mostró la
+    tarjeta en el diseño equivocado (azul) antes de volver a escribir la lista
+    (la protección la cambió por el selector). El selector trae las opciones
+    del catálogo: cumple lo que pedía la ficha, y es lo que hay que mandar
+    para que escoja."""
+    for stage in ("etapa_descubrimiento", "etapa_variantes"):
+        turn = POLICY.decide_turn(_result(_noul("topic.variante", 0.91)), questionnaire=RAFAGA,
+                                  context=_ctx(stage), n_messages=1, thresholds=TH)
+
+        [required] = [r for r in turn.tools["required"] if r["topic"] == "variante"]
+        assert "present_variant_picker" in required["any_of"], stage
+        assert "present_variant_picker" in required["nudge"], stage
+
+
+def test_before_choosing_the_product_the_card_also_answers_a_variant() -> None:
+    turn = POLICY.decide_turn(_result(_noul("topic.variante", 0.91)), questionnaire=RAFAGA,
+                              context=_ctx("etapa_descubrimiento"), n_messages=1, thresholds=TH)
+
+    [required] = [r for r in turn.tools["required"] if r["topic"] == "variante"]
+    assert {"present_product_detail", "get_product_by_handle"} <= set(required["any_of"])
+
+
 def test_a_price_already_on_screen_needs_no_tool() -> None:
     seen = POLICY.decide_turn(_result(_noul("topic.precio", 0.9), _noul("precio.en_contexto", 0.95)), questionnaire=RAFAGA,
                               context=_ctx("etapa_variantes"), n_messages=1, thresholds=TH)

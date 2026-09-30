@@ -158,8 +158,12 @@ register_tool_extension(
 register_tool_extension(
     "sales.send_reply",
     # Motor de decisiones (F5, `destinatario` y `rescate`): el vault del
-    # registro de bots y de la cola de desacuerdos.
-    lambda workspace: SendReplyTool(workspace=str(workspace), vault_dir=build_vault_dir()),
+    # registro de bots y de la cola de desacuerdos. El catálogo (aromas y
+    # colores): una lista para escoger vuelve al modelo para que la mande con
+    # el selector (laboratorio caso-fotos-0930-r10, 4567 t20).
+    lambda workspace: SendReplyTool(
+        workspace=str(workspace), vault_dir=build_vault_dir(), catalog=get_catalog_client()
+    ),
 )
 
 # HU-04: tools de catalogo. Leen del snapshot mantenido por catalog_sync (HU-03)

@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 MIN_ENUMERATED = 4
 
@@ -166,12 +168,45 @@ def default_intro(variant_type: str) -> str:
     return _DEFAULT_INTRO.get(variant_type, "Estas son las opciones")
 
 
+def catalog_variant_labels(products: Iterable[Any]) -> tuple[list[str], list[str]]:
+    """Aromas y colores de todos los productos (tags «Aroma: …» / «Color: …»),
+    sin repetir y en el orden en que aparecen."""
+    from src.sdk.connectorkit import parse_variant_tags
+
+    aromas: list[str] = []
+    colors: list[str] = []
+    for product in products:
+        attrs = parse_variant_tags(getattr(product, "tags", None))
+        aromas += [a for a in attrs.aromas if a.casefold() not in {x.casefold() for x in aromas}]
+        colors += [c for c in attrs.colors if c.casefold() not in {x.casefold() for x in colors}]
+    return aromas, colors
+
+
+_KIND_WORDS = {"scent": "aromas", "color": "colores"}
+
+
+def option_list_message(variant_type: str, labels: Sequence[str], intro: str) -> str:
+    """Lo que `send_reply` le dice al modelo al devolverle una lista de aromas o
+    colores escrita como texto (laboratorio caso-fotos-0930-r10, 4567 t20): que
+    la mande con el selector, con lo que le iba a decir antes de la lista."""
+    kind = _KIND_WORDS.get(variant_type, "opciones")
+    said = f" y en intro_text lo que le decías antes de la lista («{intro}»)" if intro else ""
+    return (
+        f"No se envió: le escribiste {len(labels)} {kind} como lista de texto. Para que escoja usa "
+        f'present_variant_picker con variant_type "{variant_type}", options con esos {kind}, el handle '
+        f"del producto{said}: le llega el selector con las opciones del catálogo y tu turno termina ahí. "
+        "Si la lista no era para que escoja, vuelve a llamar send_reply con el mismo texto."
+    )
+
+
 __all__ = [
     "MIN_COMBINATIONS",
     "MIN_ENUMERATED",
     "EnumerationCandidates",
+    "catalog_variant_labels",
     "default_intro",
     "enumeration_candidates",
     "find_enumerated_variants",
     "intro_before",
+    "option_list_message",
 ]

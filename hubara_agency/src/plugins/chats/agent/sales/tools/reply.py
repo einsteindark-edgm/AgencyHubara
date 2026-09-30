@@ -22,7 +22,11 @@ from typing import Any
 from exoclaw.agent.tools import ToolBase, ToolContext
 from loguru import logger
 
-from src.plugins.chats.agent.sales.decisions.guards import clean_llm_text, customer_reply_text
+from src.plugins.chats.agent.sales.decisions.guards import (
+    clean_llm_text,
+    customer_reply_text,
+    option_list,
+)
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.use_cases.photo_product import (
     PROMISE_MESSAGE,
@@ -30,6 +34,11 @@ from src.plugins.chats.agent.sales.use_cases.photo_product import (
     promises_to_follow_up,
     verified_denial_message,
     verified_photo_products,
+)
+from src.plugins.chats.agent.sales.variant_enumeration import (
+    catalog_variant_labels,
+    intro_before,
+    option_list_message,
 )
 
 _REJECTED_MESSAGE = (
@@ -44,6 +53,7 @@ _REJECTED_MESSAGE = (
 #: mensaje, nunca un bucle).
 _VERIFIED_CHECK_KEY = "verified_photos_denial_checked"
 _PROMISE_CHECK_KEY = "promise_later_checked"
+_LIST_CHECK_KEY = "option_list_checked"
 
 
 class SendReplyTool(ToolBase):
@@ -71,11 +81,16 @@ class SendReplyTool(ToolBase):
         "required": ["text"],
     }
 
-    def __init__(self, workspace: str | Path, vault_dir: str | Path | None = None) -> None:
+    def __init__(
+        self, workspace: str | Path, vault_dir: str | Path | None = None, catalog: Any = None
+    ) -> None:
         self._workspace = Path(workspace)
         # Vault del motor de decisiones (registro de bots, cola de
         # desacuerdos). Sin él: el bot fijado del laboratorio o la regla de hoy.
         self._vault_dir = Path(vault_dir) if vault_dir is not None else None
+        # Catálogo (aromas y colores) para ver si el texto es una lista para
+        # escoger. Sin él, el texto sale y la protección decide después.
+        self._catalog = catalog
 
     def _hold_once(self, session_key: str, key: str, error: str, message: str) -> str | None:
         """Retiene el texto si todavía no se retuvo uno por `key` en este
@@ -137,6 +152,46 @@ class SendReplyTool(ToolBase):
             session_key, _VERIFIED_CHECK_KEY, "verified_photos", verified_denial_message(products)
         )
 
+    def _held_before(self, session_key: str, key: str) -> bool:
+        """¿Ya se retuvo un texto por `key` en este mensaje del cliente? Evita
+        repetir la consulta (catálogo, Jev) en el segundo intento."""
+        try:
+            metadata = FilesystemMetadataStore(self._vault_dir).read(session_key) or {}
+        except Exception:  # noqa: BLE001 — ilegible: `_hold_once` decide
+            return False
+        inbound = metadata.get("last_inbound_message_id")
+        return bool(inbound) and metadata.get(key) == inbound
+
+    async def _held_for_option_list(self, session_key: str, text: str) -> str | None:
+        """Laboratorio caso-fotos-0930-r10, 4567 t19 y t20 (los dos bots): el
+        bot escribió los aromas como lista de texto y la protección los cambió
+        por el selector después del turno. Si el texto es una lista para
+        escoger (capacidad `enumeracion`: la regla en el bot actual, Jev en el
+        nuevo), se devuelve UNA vez por mensaje del cliente para que el modelo
+        mande el selector él mismo, con el producto y lo que iba a decir. Sin
+        catálogo, sin vault o si algo falla: el texto sale y la protección
+        sigue detrás."""
+        if self._catalog is None or self._vault_dir is None or self._held_before(session_key, _LIST_CHECK_KEY):
+            return None
+        try:
+            result = await self._catalog.search(q="", limit=30)
+            aromas, colors = catalog_variant_labels(result.results)
+            listed = await option_list(
+                text, aromas=aromas, colors=colors, session_id=session_key, vault_dir=self._vault_dir
+            )
+        except Exception as exc:  # noqa: BLE001 — nunca frena la respuesta
+            logger.warning("💬 [TOOL send_reply] sin revisar la lista ({}) session={}", exc, session_key)
+            return None
+        if not listed:
+            return None
+        variant_type, labels = str(listed[0]), list(listed[1])
+        return self._hold_once(
+            session_key,
+            _LIST_CHECK_KEY,
+            "option_list",
+            option_list_message(variant_type, labels, intro_before(text, labels)),
+        )
+
     async def execute_with_context(
         self, ctx: ToolContext, text: str = "", **_: Any
     ) -> str:
@@ -159,8 +214,10 @@ class SendReplyTool(ToolBase):
                 {"sent": False, "error": "internal_text", "message": _REJECTED_MESSAGE},
                 ensure_ascii=False,
             )
-        held = self._held_for_verified_photos(ctx.session_key, cleaned) or self._held_for_promise(
-            ctx.session_key, cleaned
+        held = (
+            self._held_for_verified_photos(ctx.session_key, cleaned)
+            or self._held_for_promise(ctx.session_key, cleaned)
+            or await self._held_for_option_list(ctx.session_key, cleaned)
         )
         if held is not None:
             return held

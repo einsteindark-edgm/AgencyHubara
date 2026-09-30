@@ -57,6 +57,7 @@ __all__ = [
     "customer_reply_text",
     "decide_for_session",
     "is_internal_text",
+    "option_list",
     "product_quote_sentences",
     "safe_customer_text",
     "session_redact_terms",
@@ -155,6 +156,24 @@ async def product_quote_sentences(sentences: Sequence[str], *, session_id: str, 
         vault_dir=vault_dir,
     )
     return frozenset(verdict.value)
+
+
+async def option_list(
+    text: str, *, aromas: Sequence[str], colors: Sequence[str], session_id: str, vault_dir: Path | None
+) -> tuple[Any, ...]:
+    """¿El texto le enumera al cliente aromas o colores para que escoja uno?
+    (capacidad `enumeracion`, la misma de la protección del workflow):
+    `("scent" | "color", etiquetas)`, o `()` si no. Con `reglas`, cuatro o más
+    etiquetas del catálogo."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import ENUMERACION, TextoCatalogo
+
+    verdict = await decide_for_session(
+        ENUMERACION,
+        TextoCatalogo(text=text, aromas=tuple(aromas), colors=tuple(colors)),
+        session_id=session_id,
+        vault_dir=vault_dir,
+    )
+    return tuple(verdict.value or ())
 
 
 async def catalog_choice_buttons(

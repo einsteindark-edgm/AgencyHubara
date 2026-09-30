@@ -81,11 +81,16 @@ def _required(topics: Sequence[str], result: Any, stage: str | None, given: list
         if topic == "precio" and _p(result, "precio.en_contexto") >= th["given"]:
             continue
         if topic in ("variante", "aroma"):
+            # El selector trae las opciones del catálogo: sirve en cualquier
+            # etapa (4567 t20, r10: el contrato pedía la ficha porque el turno
+            # empezó en descubrimiento, y el bot ya había anotado el producto).
             if stage == "etapa_variantes":
                 tools, nudge = ("present_variant_picker",), "Para que escoja color o aroma usa present_variant_picker."
             else:
-                tools, nudge = (("present_product_detail", "get_product_by_handle"),
-                                "Los colores y aromas salen de la ficha: usa present_product_detail.")
+                tools, nudge = (("present_variant_picker", "present_product_detail", "get_product_by_handle"),
+                                "Los colores y aromas salen del catálogo: para que escoja uno usa "
+                                "present_variant_picker con el handle del producto; para mostrarle el producto, "
+                                "present_product_detail.")
             out.append({"topic": topic, "any_of": list(tools), "nudge": nudge})
             continue
         if (
