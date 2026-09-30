@@ -863,8 +863,10 @@ ráfaga y en orden. Las fotos no se esperan entre sí y otro cliente no espera.
 Cuando el texto llega ANTES que la foto, el texto ya está en el workflow. El
 ingest SHALL avisarle al workflow de ventas (señal `photo_reading(wamid)`) que
 empezó a leer una foto del cliente y, después de que la foto entró como mensaje,
-que terminó (`done=True`). Solo a la ruta de ventas y sin arrancar nada: sin
-workflow vivo, la foto entra como hoy. El workflow (V1 y V2):
+que terminó (`done=True`). Sin arrancar nada: sin workflow vivo, la foto entra
+como hoy. El inicio va solo a la ruta de ventas; el fin va siempre (un
+comprobante pasa la conversación a una persona mientras se lee). El workflow
+(V1 y V2):
 - SHALL esperar la foto cuando la ráfaga iba a cerrar con una foto leyéndose
   (tope 15 s; una foto que no llega se da por perdida y no se vuelve a esperar);
 - SHALL tratar la foto que empieza a leerse mientras el modelo piensa como algo
