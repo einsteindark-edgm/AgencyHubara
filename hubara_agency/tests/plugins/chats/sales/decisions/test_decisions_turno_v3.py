@@ -176,6 +176,18 @@ def test_jev_saying_the_customer_chooses_is_a_choice_too() -> None:
     assert turn.guide.get("chosen_now") == ["variante", "aroma"]
 
 
+def test_a_customer_who_is_choosing_is_not_stuck() -> None:
+    """Tres turnos sin un dato nuevo cuentan hasta ANTES de este mensaje: si
+    ahora elige, «pide de forma concreta la cantidad» contradice la guía."""
+    turn = POLICY.decide_turn(
+        _result(*ANSWERS_THE_VARIANT_QUESTION, _noul("topic.variante", 0.73)),
+        questionnaire=RAFAGA, context=_ctx("etapa_variantes", missing=("cantidad",), stagnant=3), n_messages=1,
+        thresholds=TH,
+    )
+
+    assert "Llevan 3 turnos" not in turn.note
+
+
 def test_before_choosing_the_product_the_card_also_answers_a_variant() -> None:
     turn = POLICY.decide_turn(_result(_noul("topic.variante", 0.91)), questionnaire=RAFAGA,
                               context=_ctx("etapa_descubrimiento"), n_messages=1, thresholds=TH)

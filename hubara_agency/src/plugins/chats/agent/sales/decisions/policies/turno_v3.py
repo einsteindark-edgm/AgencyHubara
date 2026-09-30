@@ -200,7 +200,7 @@ def _guide(
         parts.append("El cliente quiere ver otros productos: quita el anterior del pedido (quitar=true) y muéstrale opciones.")
     elif step:
         parts.append(f"Siguiente paso: {step}")
-    if stagnant >= STAGNANT_TURNS:
+    if stagnant >= STAGNANT_TURNS and not chose:
         ask = f"pide de forma concreta {_labels(missing)}" if missing else "lleva al cliente al siguiente paso"
         parts.append(f"Llevan {stagnant} turnos en esta etapa sin un dato nuevo: {ask}.")
     guide = {"stage": stage, "given_now": given, "missing": missing, "going_back": going_back, "stagnant": stagnant,

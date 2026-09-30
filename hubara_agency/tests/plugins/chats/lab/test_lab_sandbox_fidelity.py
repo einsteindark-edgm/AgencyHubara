@@ -82,8 +82,9 @@ def test_the_burst_is_in_the_dashboard_history_as_production_wrote_it(new_bot_tu
 
 
 def test_the_new_bot_keeps_the_address_the_customer_just_gave(new_bot_turn: dict) -> None:
-    """`datos` (F6) le pregunta a Jev si el cliente dio la dirección: con la
-    ráfaga en el historial, la ve y la dirección se guarda."""
+    """`datos` (F6) busca la dirección en lo que escribió el cliente: con la
+    ráfaga en el historial la encuentra y se guarda sin preguntarle a Jev
+    (sin la ráfaga, Jev tampoco la vería y la dirección se descartaría)."""
     result = new_bot_turn["result"]
     sim = result["sim_session_id"]
     metadata = json.loads((Path(new_bot_turn["sandbox"]) / "vault" / sim / "metadata.json").read_text(encoding="utf-8"))
@@ -209,7 +210,9 @@ def test_every_decision_of_the_new_bot_travels_with_its_case(new_bot_turn: dict)
     assert {"compra", "retoma", "cupon"} <= {d["capability"] for d in ingest}, ingest
     assert all(d["message"] == 1 and d["provider"] == "jev" for d in ingest), ingest
     [datos] = [d for d in decisions if d["capability"] == "datos"]
-    assert (datos["stage"], datos["by"], datos["value"]) == ("turno", "jev", [])
+    # La dirección está en lo que escribió el cliente: no hubo nada que
+    # preguntarle a Jev (4567 t22, 2026-09-30), y la decisión viaja igual.
+    assert (datos["stage"], datos["by"], datos["reason"], datos["value"]) == ("turno", "respaldo", "no_question", [])
 
 
 def test_the_disagreements_of_the_case_travel_with_it(new_bot_coupon: dict) -> None:

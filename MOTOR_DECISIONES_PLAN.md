@@ -301,3 +301,42 @@ El operador pidió los pasos 1 y 3 de la investigación de §6.3; el 2 («Enviar
 - Que el texto final suelto pase por las mismas revisiones que `send_reply`: lista, lo verificado de las fotos y promesa de revisar después.
 - «Gracias por tu compra» como revisión mecánica.
 - Deploy: alias del proxy y Pillow.
+
+### 6.7 Todo en un mensaje: el bot nuevo guarda el desglose del LLM, como producción (2026-09-30, noche)
+
+**Lo que vio el operador (4567 t22).** El cliente mandó en un mensaje la cantidad, los colores, la ciudad, la dirección, quién recibe, el pago y la pregunta del envío.
+- Producción guardó los siete campos que desglosó el LLM (una llamada a `set_order_slot`) y mandó las tarifas.
+- El bot nuevo hizo el mismo desglose, pero:
+  - `datos` le preguntó a Jev por cada valor. Jev ve los datos personales tapados («recibe [nombre]», «[dirección] casa 3»): contestó 0,08 al nombre, que no se guardó, y 0,20 a la dirección, a cinco centésimas de descartarla. Además, la pregunta llevaba el valor sin tapar.
+  - Jev leyó la elección «una lila y otra azul» como «pregunta por colores» (0,73). El contrato pidió el selector, la guía dijo «pide solo lo que falta: cantidad» (la acababa de dar) y la revisión final mandó el complemento «Sobre los colores… ¿me confirmas el nombre completo de quien recibe?».
+  - El paso a paso cortaba las respuestas de Jev en 24, así que en la etapa de variantes se perdían las de la etapa. Entre ellas, `variantes.elige`, que Jev sí contestaba (0,93) y que ninguna política usaba.
+
+**Qué quedó** (V1 no cambia: `reglas` guarda todo y no usa la política):
+- **`datos`:**
+  - Lo que está en las palabras del cliente se guarda sin preguntarle a Jev: sin tildes, mayúsculas ni signos, y el teléfono y la cédula por sus dígitos, porque el LLM completa «cll» o junta un teléfono.
+  - Jev revisa solo lo demás: un «sí» a lo que propuso el asesor, o un dato inventado. La pregunta nunca lleva el valor de un dato personal.
+  - Lo que ya estaba guardado igual no se revisa otra vez (al confirmar, el LLM manda todo de nuevo).
+- **`turno-v3`:**
+  - Si el cliente responde la pregunta de variantes (o Jev dice que elige), un «pregunta por colores o aromas» dudoso (< 0,85) es la elección: no pide el selector ni entra a la revisión final. Una pregunta clara (≥ 0,85) sigue pidiendo el selector.
+  - La guía dice «Antes de este mensaje faltaba: …» y «guarda con set_order_slot lo que eligió y pide solo lo que siga faltando». No refuerza el estancamiento.
+- **Traza:** hasta 64 respuestas de Jev por paso.
+
+**Medido** (r12, `caso-fotos-0930`, US$1,06):
+
+| 4567 t22, bot nuevo | r11 | r12 | producción |
+|---|---|---|---|
+| `set_order_slot` | 2 llamadas; el nombre, descartado | 1 llamada con los 7 campos | 1 llamada con los 7 campos |
+| Revisión de datos | Jev: nombre 0,08 → no se guarda | nada que preguntarle a Jev | sin revisión |
+| Plan y contrato | precio, envío y colores (pide el selector) | precio y envío | — |
+| Lo que salió | tarifas + «Sobre los colores… ¿me confirmas el nombre…?» | tarifas | tarifas |
+
+- **Solo cambió 4567 t22.** Es el único turno de las tres conversaciones donde el cliente eligió y a la vez dio datos. En 4329 y 6543 no hubo elección ni datos que revisar, y los complementos son los mismos de r11.
+- **Bot nuevo:** 2 conversaciones que pasan y 1 en alerta (r11: 1 y 2).
+  - Fallas en 4567: EST-06 t1, DES-08 t19 y CIE-05 t24 («Gracias por tu compra», varía entre corridas; el bot actual la tiene en r11 y en r12).
+  - Fallas en 4329: EST-06 t1 y t13. VAR-01b t10 no apareció (texto final suelto, varía).
+
+**Pendiente:**
+- En t23 los tres (producción, bot actual y bot nuevo) confirman «2 × lila»; la azul queda solo en las notas.
+- La revisión final no le reconoce a la tarjeta de tarifas que respondió el envío (queda «pendiente»).
+- «Precio» leído en «¿cuánto vale el envío?» (0,98, con `envio.costo` 0,99).
+- El panel muestra las preguntas de Jev con su id (`topic.variante`), no en español llano.
