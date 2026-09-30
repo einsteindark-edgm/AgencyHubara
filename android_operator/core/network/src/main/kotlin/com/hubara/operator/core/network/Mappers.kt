@@ -66,6 +66,8 @@ fun ChatSessionDto.toDomain(): Conversation? = SessionId.parse(sessionId)?.let {
         lastInboundMs = lastInboundMs,
         inboundCount = inboundCount.coerceAtLeast(0),
         orderRef = orderRef?.toDomain(),
+        customerName = customerName?.trim()?.takeIf { it.isNotEmpty() },
+        lastMessagePreview = lastMessagePreview?.trim()?.takeIf { it.isNotEmpty() },
     )
 }
 

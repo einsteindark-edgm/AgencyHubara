@@ -72,6 +72,21 @@ class SyncAndFiresTest {
         assertThat(api.calls).doesNotContain("session:wa_test_laura")
     }
 
+    @Test fun el_nombre_del_cliente_y_la_vista_previa_quedan_en_la_bandeja_y_en_el_chat() = runTest {
+        val snapshot = listOf(
+            ChatSessionDto("wa_test_laura", customerName = "Laura Prueba", lastMessagePreview = "¿Me confirmas el precio?"),
+            ChatSessionDto("wa_test_carlos"),
+        ).mapNotNull { it.toDomain() }
+        sync.handle(ServerEvent.SessionsSnapshot(snapshot))
+
+        val inbox = ConversationRepository(api, db.conversations()).observeInbox().first().associateBy { it.sessionId.raw }
+        assertThat(inbox.getValue("wa_test_laura").customerName).isEqualTo("Laura Prueba")
+        assertThat(inbox.getValue("wa_test_laura").lastMessagePreview).isEqualTo("¿Me confirmas el precio?")
+        assertThat(inbox.getValue("wa_test_carlos").customerName).isNull()
+        val chat = ChatRepository(api, db.conversations(), db.messages(), db.outbox(), db.drafts()).observeChat(laura).first()
+        assertThat(chat.customerName).isEqualTo("Laura Prueba")
+    }
+
     @Test fun el_snapshot_reemplaza_la_bandeja() = runTest {
         val snapshot = listOf(ChatSessionDto("wa_test_laura", activeAgentRoute = "humano"), ChatSessionDto("wa_test_carlos"))
             .mapNotNull { it.toDomain() }

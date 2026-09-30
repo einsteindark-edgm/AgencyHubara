@@ -45,6 +45,18 @@ class InboxFilterTest {
         assertThat(conversationSubtitle(Route.BOT, "ALGO_NUEVO", null)).isEqualTo("Bot")
     }
 
+    // La bandeja solo mostraba el número: con el nombre de perfil de WhatsApp, arriba el nombre y debajo el número.
+    @Test fun la_fila_muestra_el_nombre_arriba_y_el_numero_debajo_y_sin_nombre_el_numero() {
+        val laura = Conversation(SessionId.parse("wa_test_laura")!!, "570000000000", "INTERESADO", Route.BOT, 0, null, 0, null,
+            customerName = "Laura Prueba")
+        assertThat(conversationTitle(laura)).isEqualTo("Laura Prueba")
+        assertThat(conversationDetail(laura)).isEqualTo("+57 000 000 0000 · Bot · Interesado")
+
+        val sinNombre = laura.copy(customerName = null)
+        assertThat(conversationTitle(sinNombre)).isEqualTo("+57 000 000 0000")
+        assertThat(conversationDetail(sinNombre)).isEqualTo("Bot · Interesado")
+    }
+
     @Test fun el_telefono_se_muestra_agrupado_y_sin_prefijo_del_vault() {
         assertThat(displayPhone("570000000000")).isEqualTo("+57 000 000 0000")
         assertThat(displayPhone("")).isEqualTo("Cliente")

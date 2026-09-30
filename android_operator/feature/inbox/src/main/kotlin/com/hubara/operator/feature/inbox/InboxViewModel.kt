@@ -50,6 +50,14 @@ fun displayPhone(raw: String): String {
     }
 }
 
+/** Primera línea de la fila: el nombre de perfil de WhatsApp o, si no hay, el número. */
+fun conversationTitle(c: Conversation): String = c.customerName ?: displayPhone(c.phone)
+
+/** Segunda línea: el número (cuando arriba va el nombre), quién atiende, en qué va y si tiene pedido. */
+fun conversationDetail(c: Conversation): String =
+    listOfNotNull(c.customerName?.let { displayPhone(c.phone) }, conversationSubtitle(c.route, c.tag, c.orderRef))
+        .joinToString(" · ")
+
 /** Segunda línea de la fila: quién atiende, en qué va y si tiene pedido. Sin códigos del backend. */
 fun conversationSubtitle(route: Route, tag: String, orderRef: OrderRef?): String {
     val who = if (route == Route.HUMAN) "Humano" else "Bot"

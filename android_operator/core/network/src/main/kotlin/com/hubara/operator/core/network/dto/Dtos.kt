@@ -30,6 +30,10 @@ data class ChatSessionDto(
     @SerialName("last_inbound_ms") val lastInboundMs: Long? = null,
     /** Total de mensajes del cliente (#384); los no leídos los calcula la app con lo que ya vio. */
     @SerialName("inbound_count") val inboundCount: Int = 0,
+    /** Nombre de perfil de WhatsApp (opcional: sin él la app muestra el número). */
+    @SerialName("customer_name") val customerName: String? = null,
+    /** Lo último con texto del historial, ya recortado por el backend. */
+    @SerialName("last_message_preview") val lastMessagePreview: String? = null,
 )
 
 @Serializable

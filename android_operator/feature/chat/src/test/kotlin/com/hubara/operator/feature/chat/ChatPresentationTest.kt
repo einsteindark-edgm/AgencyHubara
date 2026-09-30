@@ -11,6 +11,14 @@ class ChatPresentationTest {
         assertThat(stageLabel("etapa_nueva")).isEqualTo("sin datos")
     }
 
+    // El encabezado mostraba solo el número: con nombre de perfil, el nombre arriba y el número junto a quién atiende.
+    @Test fun el_encabezado_muestra_el_nombre_y_el_numero_y_sin_nombre_el_numero() {
+        assertThat(chatTitle("Laura Prueba", "570000000000")).isEqualTo("Laura Prueba")
+        assertThat(chatSubtitle("Laura Prueba", "570000000000", human = true)).isEqualTo("+57 000 000 0000 · Tú atiendes")
+        assertThat(chatTitle(null, "570000000000")).isEqualTo("+57 000 000 0000")
+        assertThat(chatSubtitle(null, "570000000000", human = false)).isEqualTo("El bot atiende")
+    }
+
     @Test fun la_paleta_solo_ofrece_acciones_que_no_piden_un_producto() {
         val tools = PALETTE.flatMap { it.second }.map { it.first }
         assertThat(tools).containsExactly(

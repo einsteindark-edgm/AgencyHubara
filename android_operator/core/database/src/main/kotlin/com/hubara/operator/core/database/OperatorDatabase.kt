@@ -19,9 +19,13 @@ import javax.inject.Singleton
         ConversationEntity::class, MessageEntity::class, OutboxEntity::class, DraftEntity::class,
         SuggestionSetEntity::class, FireEntity::class, HiddenFireEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 1, to = 2, spec = OperatorDatabase.InboundCount::class)],
+    autoMigrations = [
+        AutoMigration(from = 1, to = 2, spec = OperatorDatabase.InboundCount::class),
+        // v3: nombre de perfil de WhatsApp y vista previa del último mensaje (columnas nuevas, null por defecto).
+        AutoMigration(from = 2, to = 3),
+    ],
 )
 abstract class OperatorDatabase : RoomDatabase() {
     /** v2: la bandeja guarda el TOTAL de mensajes del cliente (#384); los no leídos se calculan en la app. */

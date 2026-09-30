@@ -37,6 +37,22 @@ class MappersTest {
         assertThat(c.orderRef!!.count).isEqualTo(2)
     }
 
+    // La bandeja solo mostraba el número: el backend ya manda el nombre de perfil y lo último que se dijo.
+    @Test fun la_bandeja_trae_el_nombre_del_cliente_y_la_vista_previa() {
+        val dto = json.decodeFromString<SessionsResponse>(
+            """{"sessions":[
+              {"session_id":"wa_test_laura","customer_name":"  Laura Prueba ","last_message_preview":"¿Me confirmas el precio?"},
+              {"session_id":"wa_test_sin_nombre","customer_name":"   "},
+              {"session_id":"wa_test_viejo"}]}""",
+        )
+        val (laura, blank, old) = dto.sessions.map { it.toDomain()!! }
+        assertThat(laura.customerName).isEqualTo("Laura Prueba")
+        assertThat(laura.lastMessagePreview).isEqualTo("¿Me confirmas el precio?")
+        assertThat(blank.customerName).isNull()
+        assertThat(old.customerName).isNull()
+        assertThat(old.lastMessagePreview).isNull()
+    }
+
     @Test fun una_sesion_con_id_invalido_se_descarta() {
         val dto = json.decodeFromString<SessionsResponse>("""{"sessions":[{"session_id":"../x"}]}""")
         assertThat(dto.sessions.single().toDomain()).isNull()

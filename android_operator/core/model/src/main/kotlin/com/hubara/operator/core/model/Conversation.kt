@@ -28,6 +28,9 @@ data class Conversation(
     val lastInboundMs: Long?,
     val inboundCount: Int,
     val orderRef: OrderRef?,
+    /** Nombre de perfil de WhatsApp; null = mostrar el número. */
+    val customerName: String? = null,
+    val lastMessagePreview: String? = null,
 )
 
 enum class Author { CUSTOMER, BOT, HUMAN, SYSTEM }

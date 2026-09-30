@@ -24,6 +24,8 @@ fun Conversation.toEntity(windowExpiresAtMs: Long? = null) = ConversationEntity(
     orderPayment = orderRef?.payment?.name,
     orderCount = orderRef?.count ?: 0,
     windowExpiresAtMs = windowExpiresAtMs,
+    customerName = customerName,
+    lastMessagePreview = lastMessagePreview,
 )
 
 fun ConversationEntity.orderRef(): OrderRef? = orderId?.let(OrderId::parse)?.let { id ->
@@ -45,6 +47,8 @@ fun ConversationEntity.toDomain(): Conversation? = SessionId.parse(sessionId)?.l
         lastInboundMs = lastInboundMs,
         inboundCount = inboundCount,
         orderRef = orderRef(),
+        customerName = customerName,
+        lastMessagePreview = lastMessagePreview,
     )
 }
 

@@ -19,6 +19,8 @@ data class ConversationEntity(
     val orderPayment: String?,
     val orderCount: Int,
     val windowExpiresAtMs: Long? = null,
+    val customerName: String? = null,
+    val lastMessagePreview: String? = null,
 )
 
 @Entity(tableName = "messages", primaryKeys = ["sessionId", "key"], indices = [Index("sessionId", "position")])

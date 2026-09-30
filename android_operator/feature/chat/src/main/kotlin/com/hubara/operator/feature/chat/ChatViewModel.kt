@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
 
 data class ChatUiState(
     val phone: String = "",
+    val customerName: String? = null,
     val humanInControl: Boolean = false,
     val orderRef: OrderRef? = null,
     val windowOpen: Boolean = true,
@@ -77,6 +78,7 @@ class ChatViewModel @AssistedInject constructor(
         val human = chat.route == Route.HUMAN
         ChatUiState(
             phone = chat.phone,
+            customerName = chat.customerName,
             humanInControl = human,
             orderRef = chat.orderRef,
             windowOpen = chat.windowExpiresAtMs?.let { it > clock.nowMs() } ?: true,

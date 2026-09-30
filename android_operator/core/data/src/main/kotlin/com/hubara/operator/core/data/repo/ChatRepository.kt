@@ -51,6 +51,8 @@ enum class OutboxState { PENDING_UNDO, QUEUED, SENDING, SENT, FAILED;
 data class ChatView(
     val sessionId: SessionId,
     val phone: String,
+    /** Nombre de perfil de WhatsApp; null = el encabezado muestra el número. */
+    val customerName: String? = null,
     val route: Route,
     val orderRef: OrderRef?,
     val windowExpiresAtMs: Long?,
@@ -75,6 +77,7 @@ class ChatRepository @Inject constructor(
         ChatView(
             sessionId = sessionId,
             phone = conv?.phone.orEmpty(),
+            customerName = conv?.customerName,
             route = conv?.route?.let { runCatching { Route.valueOf(it) }.getOrNull() } ?: Route.BOT,
             orderRef = conv?.orderRef(),
             windowExpiresAtMs = conv?.windowExpiresAtMs,

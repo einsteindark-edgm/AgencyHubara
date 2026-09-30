@@ -32,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.WindowInsetsRulers
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -57,7 +58,7 @@ fun ChatScreen(
     Scaffold(
         topBar = {
             ChatTopBar(
-                phone = ui.phone, human = ui.humanInControl, orderRef = ui.orderRef,
+                phone = ui.phone, customerName = ui.customerName, human = ui.humanInControl, orderRef = ui.orderRef,
                 onBack = onBack, onOpenOrder = onOpenOrder, onReturnToBot = vm::returnToBot,
             )
         },
@@ -107,6 +108,7 @@ fun ChatScreen(
 @Composable
 private fun ChatTopBar(
     phone: String,
+    customerName: String?,
     human: Boolean,
     orderRef: OrderRef?,
     onBack: () -> Unit,
@@ -118,8 +120,9 @@ private fun ChatTopBar(
         navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Atrás") } },
         title = {
             Column {
-                Text(displayPhoneShort(phone), style = MaterialTheme.typography.titleMedium)
-                Text(if (human) "Tú atiendes" else "El bot atiende", style = MaterialTheme.typography.labelSmall)
+                Text(chatTitle(customerName, phone), style = MaterialTheme.typography.titleMedium, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
+                Text(chatSubtitle(customerName, phone, human), style = MaterialTheme.typography.labelSmall)
             }
         },
         actions = {
@@ -138,6 +141,14 @@ private fun ChatTopBar(
         },
     )
 }
+
+/** Título del encabezado: el nombre de perfil de WhatsApp o, si no hay, el número. */
+internal fun chatTitle(customerName: String?, phone: String): String = customerName ?: displayPhoneShort(phone)
+
+/** Segunda línea: el número (cuando arriba va el nombre) y quién atiende. */
+internal fun chatSubtitle(customerName: String?, phone: String, human: Boolean): String =
+    listOfNotNull(customerName?.let { displayPhoneShort(phone) }, if (human) "Tú atiendes" else "El bot atiende")
+        .joinToString(" · ")
 
 private fun displayPhoneShort(raw: String): String {
     val d = raw.filter(Char::isDigit)
