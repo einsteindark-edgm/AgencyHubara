@@ -787,3 +787,49 @@ async def test_the_sales_workflow_version_comes_from_the_bot_registry(monkeypatc
     client2 = FakeClient()
     await _make_use_case(FakeMetadataStore(initial={}), client2).execute(session_id="wa_43", message="hola", phone_number_id=None)
     assert client2.start_calls[0]["workflow"] == bots.WORKFLOW_V2
+
+
+# --- Texto ANTES de la foto (2026-09-30) -------------------------------------
+# El ingest avisa al workflow de ventas que está leyendo una foto del cliente
+# (y cuándo ya entró): la ráfaga la espera. Solo a ventas, y sin arrancar
+# nada: si no hay workflow vivo, la foto entra como hoy.
+
+
+class _SignalFails(FakeHandle):
+    async def signal(self, fn, *, args) -> None:
+        raise RuntimeError("workflow not found")
+
+
+@pytest.mark.asyncio
+async def test_the_sales_workflow_hears_a_photo_being_read() -> None:
+    handle = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
+    client = FakeClient(existing_handles={"session-wa_1": handle})
+    uc = _make_use_case(FakeMetadataStore({"active_route": ROUTE_VENTAS}), client)
+
+    await uc.notify_photo_reading("wa_1", "wamid.P", False)
+    await uc.notify_photo_reading("wa_1", "wamid.P", True)
+
+    assert handle.signals == [("photo_reading", ["wamid.P", False]), ("photo_reading", ["wamid.P", True])]
+    assert client.start_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", [ROUTE_HUMANO, ROUTE_REMARKETING])
+async def test_other_routes_do_not_hear_about_the_photo(route: str) -> None:
+    handle = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
+    client = FakeClient(existing_handles={"session-wa_1": handle})
+    uc = _make_use_case(FakeMetadataStore({"active_route": route}), client)
+
+    await uc.notify_photo_reading("wa_1", "wamid.P", False)
+
+    assert handle.signals == []
+
+
+@pytest.mark.asyncio
+async def test_without_a_live_workflow_the_notice_is_dropped() -> None:
+    client = FakeClient(existing_handles={"session-wa_1": _SignalFails(status=None)})
+    uc = _make_use_case(FakeMetadataStore(), client)
+
+    await uc.notify_photo_reading("wa_1", "wamid.P", False)  # no lanza
+
+    assert client.start_calls == []

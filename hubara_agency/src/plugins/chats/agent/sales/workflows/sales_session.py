@@ -141,6 +141,48 @@ _DEBOUNCE_MAX_WAIT = timedelta(seconds=12)
 # Tras el cap, el turno corre hasta el final y lo pendiente va al siguiente.
 _MAX_TURN_RESTARTS = 2
 
+# Texto ANTES de la foto (2026-09-30): el ingest avisa (`photo_reading`) cuando
+# empieza a leer una foto del cliente y cuando ya entró. La ráfaga la espera y
+# un turno que todavía no le mostró nada al cliente vuelve a empezar con ella.
+# Tope: la visión tarda 2 a 8 s; una foto que no llega no retiene más.
+_PHOTO_WAIT_MAX = timedelta(seconds=15)
+_PHOTO_PATCH = "burst-waits-for-photo-v1"
+
+
+def _photo_arriving(photos: set[str]) -> bool:
+    """¿El ingest está leyendo una foto del cliente? El marker del patch se
+    graba solo cuando hay una: las histories sin la señal replayean igual."""
+    return bool(photos) and workflow.patched(_PHOTO_PATCH)
+
+
+async def _await_photo(photos: set[str], pending: list[Any], snapshot_len: int) -> bool:
+    """La ráfaga espera, con tope, la foto que el ingest está leyendo. True si
+    llegó algo nuevo a la bandeja (la foto u otro mensaje del cliente). Una
+    foto que no llega en el tope se da por perdida (no vuelve a esperarse)."""
+    if not _photo_arriving(photos):
+        return False
+    try:
+        await workflow.wait_condition(
+            lambda: len(pending) > snapshot_len or not photos, timeout=_PHOTO_WAIT_MAX
+        )
+    except asyncio.TimeoutError:
+        photos.clear()
+        return False
+    return len(pending) > snapshot_len
+
+
+async def _await_photos_done(photos: set[str]) -> bool:
+    """Un turno que vuelve a empezar espera, con tope, a que entren las fotos
+    que el ingest está leyendo (su mensaje llega antes del aviso de que
+    terminó). True si había alguna."""
+    if not _photo_arriving(photos):
+        return False
+    try:
+        await workflow.wait_condition(lambda: not photos, timeout=_PHOTO_WAIT_MAX)
+    except asyncio.TimeoutError:
+        photos.clear()
+    return True
+
 
 # Despedida mínima del cierre si el guard del portavelas vació el texto del
 # LLM (todo el mensaje hablaba del portavelas): el cliente que acaba de dar
@@ -362,6 +404,20 @@ class HubaraSalesSessionWorkflow:
         self._perception_mode: str = "off"
         self._perception_profile: str = _DEFAULT_PERCEPTION_PROFILE
         self._pending_topics: list[str] = []
+        # Fotos del cliente que el ingest está leyendo (wamid): la ráfaga las
+        # espera (texto antes de la foto, 2026-09-30).
+        self._photos_reading: set[str] = set()
+
+    @workflow.signal
+    async def photo_reading(self, wamid: Any = None, done: Any = False) -> None:
+        """El ingest empezó a leer una foto del cliente (`done=False`) o la foto
+        ya entró como mensaje (`done=True`, después de su `send_message`).
+        Tipado `Any`: un valor raro no hace que Temporal descarte la señal."""
+        key = str(wamid or "")
+        if done is True:
+            self._photos_reading.discard(key)
+        else:
+            self._photos_reading.add(key)
 
     @workflow.signal
     async def send_message(
@@ -611,6 +667,9 @@ class HubaraSalesSessionWorkflow:
                     elapsed = workflow.now() - debounce_start
                     cap_remaining = _DEBOUNCE_MAX_WAIT - elapsed
                     if cap_remaining <= timedelta(0):
+                        # Sin más silencio que esperar; la foto sí.
+                        if await _await_photo(self._photos_reading, self._pending, snapshot_len):
+                            continue
                         break
                     timeout = min(_DEBOUNCE_SILENCE, cap_remaining)
                     try:
@@ -621,6 +680,9 @@ class HubaraSalesSessionWorkflow:
                         # llego algo nuevo → siguiente iter con snapshot fresco
                         # = reset implicito del timer
                     except asyncio.TimeoutError:
+                        # Silencio, pero con una foto leyéndose: la espera.
+                        if await _await_photo(self._photos_reading, self._pending, snapshot_len):
+                            continue
                         break  # silencio achieved
 
                 batch = list(self._pending)
@@ -811,7 +873,9 @@ class HubaraSalesSessionWorkflow:
                             and restarts < _MAX_TURN_RESTARTS
                             and workflow.patched("turn-interrupt-v1")
                         ):
-                            hni = lambda: bool(self._pending)  # noqa: E731
+                            # Una foto que empieza a leerse también es algo
+                            # nuevo del cliente (texto antes de la foto).
+                            hni = lambda: bool(self._pending) or _photo_arriving(self._photos_reading)  # noqa: E731
                         # `admin_turn` (run b06636a6): el helper termina el
                         # turno apenas el tag declara su cierre (sin el
                         # llm_chat del acuse) y no le hace recordar al LLM un
@@ -835,6 +899,8 @@ class HubaraSalesSessionWorkflow:
                         trace_steps.extend(result.steps or [])
                         if result.interrupted:
                             restarts += 1
+                            # Si lo nuevo es una foto, el turno la espera.
+                            waited_photo = await _await_photos_done(self._photos_reading)
                             drained = list(self._pending)
                             self._pending.clear()
                             trace_steps.append(
@@ -844,6 +910,7 @@ class HubaraSalesSessionWorkflow:
                                     "reason": "checkpoint_a",
                                     "attempt": restarts,
                                     "drained": len(drained),
+                                    **({"photo": True} if waited_photo else {}),
                                 }
                             )
                             raw_batch = [

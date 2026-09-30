@@ -106,6 +106,8 @@ with workflow.unsafe.imports_passed_through():
         _LAYER_MODES,
         _MAX_TURN_RESTARTS,
         _PERCEPTION_OPTIONS,
+        _await_photo,
+        _await_photos_done,
         _burst_messages,
         _clean_inbound_meta,
         _flush_outbound,
@@ -115,6 +117,7 @@ with workflow.unsafe.imports_passed_through():
         _now_ms,
         _perception_settings,
         _perception_step,
+        _photo_arriving,
         _reply_as_sent,
         _text_outbound,
         _verify_step,
@@ -167,6 +170,19 @@ class HubaraSalesSessionWorkflowV2:
         self._pending_topics: list[str] = []
         # El turno en curso trae un traspaso de remarketing (sin saludo).
         self._turn_has_handoff: bool = False
+        # Fotos del cliente que el ingest está leyendo (wamid): la ráfaga las
+        # espera (texto antes de la foto, 2026-09-30).
+        self._photos_reading: set[str] = set()
+
+    @workflow.signal
+    async def photo_reading(self, wamid: Any = None, done: Any = False) -> None:
+        """El ingest empezó a leer una foto del cliente (`done=False`) o la foto
+        ya entró como mensaje (`done=True`, después de su `send_message`)."""
+        key = str(wamid or "")
+        if done is True:
+            self._photos_reading.discard(key)
+        else:
+            self._photos_reading.add(key)
 
     @workflow.signal
     async def send_message(
@@ -351,10 +367,13 @@ class HubaraSalesSessionWorkflowV2:
 
             # Debounce con reinicio: silencio de `_DEBOUNCE_SILENCE`, con tope.
             debounce_start = workflow.now()
+            # Con una foto leyéndose, la ráfaga la espera (con tope).
             while True:
                 snapshot_len = len(self._pending)
                 cap_remaining = _DEBOUNCE_MAX_WAIT - (workflow.now() - debounce_start)
                 if cap_remaining <= timedelta(0):
+                    if await _await_photo(self._photos_reading, self._pending, snapshot_len):
+                        continue
                     break
                 try:
                     await workflow.wait_condition(
@@ -362,6 +381,8 @@ class HubaraSalesSessionWorkflowV2:
                         timeout=min(_DEBOUNCE_SILENCE, cap_remaining),
                     )
                 except asyncio.TimeoutError:
+                    if await _await_photo(self._photos_reading, self._pending, snapshot_len):
+                        continue
                     break
 
             batch = list(self._pending)
@@ -471,7 +492,12 @@ class HubaraSalesSessionWorkflowV2:
                                 )
                     # Corrientazo (run eda8d460): si el cliente escribe mientras
                     # el LLM piensa, el turno se recompone (con tope).
-                    hni = (lambda: bool(self._pending)) if restarts < _MAX_TURN_RESTARTS else None
+                    # Una foto que empieza a leerse también es algo nuevo.
+                    hni = (
+                        (lambda: bool(self._pending) or _photo_arriving(self._photos_reading))
+                        if restarts < _MAX_TURN_RESTARTS
+                        else None
+                    )
                     result = await run_agent_turn(
                         session,
                         msg,
@@ -486,11 +512,13 @@ class HubaraSalesSessionWorkflowV2:
                     trace_steps.extend(result.steps or [])
                     if result.interrupted:
                         restarts += 1
+                        # Si lo nuevo es una foto, el turno la espera.
+                        waited_photo = await _await_photos_done(self._photos_reading)
                         drained = list(self._pending)
                         self._pending.clear()
                         trace_steps.append(
                             {"kind": "restart", "at_ms": _now_ms(), "reason": "checkpoint_a", "attempt": restarts,
-                             "drained": len(drained)}
+                             "drained": len(drained), **({"photo": True} if waited_photo else {})}
                         )
                         raw_batch = [p for p in [*raw_batch, *drained] if not p.is_complement_trigger]
                         msg = self._coalesce_batch(raw_batch)

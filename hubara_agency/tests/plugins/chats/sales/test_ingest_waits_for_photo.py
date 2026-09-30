@@ -79,12 +79,13 @@ class _Metadata:
         return out
 
 
-def _ingest(loader: _Loader, *, photo_wait_s: float = 5.0) -> IngestInboundMessage:
+def _ingest(loader: _Loader, *, photo_wait_s: float = 5.0, **kw: Any) -> IngestInboundMessage:
     return IngestInboundMessage(
         history_store=_History(),  # type: ignore[arg-type]
         load_session=loader,  # type: ignore[arg-type]
         metadata_store=_Metadata(),  # type: ignore[arg-type]
         photo_wait_s=photo_wait_s,
+        **kw,
     )
 
 
@@ -161,3 +162,56 @@ async def test_another_customer_does_not_wait(vision: _SlowVision) -> None:
     assert loader.messages == ["hola"]
     vision.finish("img_a")
     await asyncio.sleep(0.05)
+
+
+# ── Texto ANTES de la foto (2026-09-30) ──────────────────────────────────────
+# El texto ya salió hacia el bot cuando llega la foto: el ingest le avisa al
+# workflow que hay una foto leyéndose (la ráfaga la espera) y, cuando la foto
+# ya entró, que terminó (`tests/test_sales_burst_waits_for_photo.py`).
+
+SESSION = f"wa_{CUSTOMER}"
+
+
+async def test_the_bot_hears_that_a_photo_is_being_read_and_when_it_is_in(vision: _SlowVision) -> None:
+    loader = _Loader()
+    events: list[tuple[Any, ...]] = []
+
+    async def notify(session_id: str, wamid: str, done: bool) -> None:
+        events.append((session_id, wamid, done, list(loader.messages)))
+
+    ingest = _ingest(loader, photo_notifier=notify)
+    await ingest.execute(_text("¿tienes esta?"))
+    await ingest.execute(_photo("img_a"))
+    announced = list(events)
+    vision.finish("img_a")
+    await asyncio.sleep(0.05)
+
+    assert announced == [(SESSION, "wamid.img_a", False, ["¿tienes esta?"])]
+    assert events[-1] == (SESSION, "wamid.img_a", True, ["¿tienes esta?", _photo_text("img_a")])
+
+
+async def test_a_failing_notice_never_stops_the_photo(vision: _SlowVision) -> None:
+    loader = _Loader()
+
+    async def broken(session_id: str, wamid: str, done: bool) -> None:
+        raise RuntimeError("temporal caído")
+
+    ingest = _ingest(loader, photo_notifier=broken)
+    await ingest.execute(_photo("img_a"))
+    vision.finish("img_a")
+    await asyncio.sleep(0.05)
+
+    assert loader.messages == [_photo_text("img_a")]
+
+
+def test_the_real_webhook_tells_the_sales_workflow_about_photos(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gotcha #1 (tests verdes, feature muerta): el webhook real
+    (`build_ingest_use_case`) avisa por el mismo caso de uso que le entrega los
+    mensajes al workflow de ventas."""
+    import src.plugins.chats.agent.sales.composition as comp
+
+    monkeypatch.setattr(comp, "_INGEST_USE_CASE", None)
+    use_case = comp.build_ingest_use_case()
+
+    notifier = use_case._photo_notifier
+    assert notifier is not None and notifier == use_case._load_session.notify_photo_reading

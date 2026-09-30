@@ -229,7 +229,8 @@ function rowsFor(step: TraceStep, stepIndex: number): Draft[] {
     case "restart": {
       const attempt = typeof step.attempt === "number" ? step.attempt : 1;
       const drained = typeof step.drained === "number" ? step.drained : 0;
-      const label = `vuelve a empezar · +${drained} mensaje${drained === 1 ? "" : "s"}`;
+      // Texto antes de la foto (2026-09-30): el turno esperó la foto que se leía.
+      const label = step.photo === true ? "vuelve a empezar · esperó la foto" : `vuelve a empezar · +${drained} mensaje${drained === 1 ? "" : "s"}`;
       return [{ ...base, from: WORKFLOW, to: WORKFLOW, status: "warn", short: label, title: `Vuelve a empezar (${attempt})`, kind: "Reinicio", t: time }];
     }
     case "outbound": {

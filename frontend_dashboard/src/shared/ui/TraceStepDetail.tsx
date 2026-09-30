@@ -166,6 +166,7 @@ function Sections({ step, back, steps, index }: { step: TraceStep; back: boolean
             rows={[
               ["Intento", num(step.attempt)?.toString()],
               ["Mensajes nuevos", num(step.drained)?.toString()],
+              ["Esperó la foto", step.photo === true ? "sí: se estaba leyendo una foto del cliente" : null],
               ["Motivo", str(step.reason) ? (CUT_REASON[String(step.reason)] ?? String(step.reason)) : null],
             ]}
           />

@@ -156,6 +156,8 @@ def build_ingest_use_case() -> IngestInboundMessage:
         campaign_coupon=validate_campaign_coupon,
         coupon_units_now=coupon_units_now,
         photo_identifier=build_photo_identifier(catalog),
+        # Texto antes de la foto: el workflow de ventas espera la foto.
+        photo_notifier=load_session.notify_photo_reading,
     )
     return _INGEST_USE_CASE
 

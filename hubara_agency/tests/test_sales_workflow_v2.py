@@ -147,7 +147,8 @@ def test_v2_is_a_new_type_with_the_v1_signals_queries_and_input() -> None:
     v2 = workflow._Definition.must_from_class(HubaraSalesSessionWorkflowV2)
 
     assert v2.name == "HubaraSalesSessionWorkflowV2"
-    assert set(v2.signals) == set(v1.signals) == {"send_message"}
+    # `photo_reading` (2026-09-30): el ingest avisa que está leyendo una foto.
+    assert set(v2.signals) == set(v1.signals) == {"send_message", "photo_reading"}
     assert set(v2.queries) == set(v1.queries) == {"get_last_response", "is_processing"}
     assert v2.arg_types == v1.arg_types == [SalesSessionInput]
 

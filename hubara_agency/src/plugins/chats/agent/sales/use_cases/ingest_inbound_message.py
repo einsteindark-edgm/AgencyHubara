@@ -190,6 +190,8 @@ _WEB_CART_HYDRATION_TIMEOUT_S = 3.0
 #: Tope de la espera de un mensaje del cliente por su foto (visión ~1,5 s,
 #: hasta ~4,5 s comparando con el catálogo; el paso de imagen tiene tope de 6 s).
 PHOTO_WAIT_MAX_S = 10.0
+#: Tope del aviso al workflow de que una foto se está leyendo (una señal).
+_PHOTO_NOTICE_TIMEOUT_S = 2.0
 
 #: Validar el cupón de la campaña (promociones de Medusa + vendidas del cupo)
 #: antes del primer turno. Si no alcanza, el bot lo aplica con `apply_coupon`.
@@ -260,6 +262,12 @@ class PhotoIdentifierPort(Protocol):
     def refresh_index_soon(self) -> None: ...
 
 
+#: `(session_id, wamid, done)`: el ingest empezó a leer una foto del cliente
+#: (`done=False`) o la foto ya entró al bot (`done=True`). Texto antes de la
+#: foto (2026-09-30): el workflow espera la foto en la misma ráfaga.
+PhotoNotifier = Callable[[str, str, bool], Awaitable[None]]
+
+
 class IngestInboundMessage:
     """Procesa un `WhatsAppMessage` ya parseado: history + routing + signal."""
 
@@ -279,9 +287,13 @@ class IngestInboundMessage:
         readings: InboundReadingsProvider | None = None,
         photo_identifier: PhotoIdentifierPort | None = None,
         photo_wait_s: float = PHOTO_WAIT_MAX_S,
+        photo_notifier: PhotoNotifier | None = None,
     ) -> None:
         self._history_store = history_store
         self._photo_identifier = photo_identifier
+        # Aviso al workflow de ventas: una foto del cliente se está leyendo (y
+        # cuándo ya entró). Sin él, la foto entra como hoy.
+        self._photo_notifier = photo_notifier
         # Las fotos de cada cliente que se están leyendo: sus mensajes esperan
         # a que la foto entre al bot (ráfaga partida, 2026-09-30).
         self._photo_reads = PhotoReads()
@@ -913,6 +925,8 @@ class IngestInboundMessage:
             }
             self._safe_write_metadata(session_id, metadata)
             self._photo_reads.begin(session_id)
+            # Texto ANTES de la foto: el bot ya tiene el texto; que espere la foto.
+            await self._notify_photo(session_id, parsed.message_id, done=False)
             _spawn_safe(
                 self._read_photo(parsed, session_id),
                 label="vision.describe_and_reenter",
@@ -1887,11 +1901,25 @@ class IngestInboundMessage:
 
     async def _read_photo(self, parsed: WhatsAppMessage, session_id: str) -> None:
         """Lee la foto y la hace entrar al bot; al terminar (o fallar) suelta
-        los mensajes del cliente que esperaban por ella."""
+        los mensajes del cliente que esperaban por ella y le avisa al workflow
+        (después del mensaje de la foto) que ya no hay nada que esperar."""
         try:
             await self._describe_image_and_reenter(parsed)
         finally:
             self._photo_reads.end(session_id)
+            await self._notify_photo(session_id, parsed.message_id, done=True)
+
+    async def _notify_photo(self, session_id: str, wamid: str | None, *, done: bool) -> None:
+        """El aviso al workflow de ventas de que una foto del cliente se está
+        leyendo (o ya entró). Nunca frena la foto: sin aviso, entra como hoy."""
+        import asyncio
+
+        if self._photo_notifier is None or not wamid:
+            return
+        try:
+            await asyncio.wait_for(self._photo_notifier(session_id, wamid, done), timeout=_PHOTO_NOTICE_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 — la foto entra igual
+            logger.warning("photo_reading_notice_failed", session=session_id, done=done, error=repr(exc)[:200])
 
     async def _describe_image_and_reenter(self, parsed: WhatsAppMessage) -> None:
         """Describe la imagen (Gemini visión) y re-ejecuta el ingest con un

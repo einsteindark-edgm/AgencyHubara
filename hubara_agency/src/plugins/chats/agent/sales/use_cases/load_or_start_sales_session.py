@@ -150,6 +150,22 @@ class LoadOrStartSalesSession:
         # Es el unico canal por el que la identidad / tono / catalogo entran al workflow.
         self._sales_runtime_workspace = sales_runtime_workspace
 
+    async def notify_photo_reading(self, session_id: str, wamid: str, done: bool) -> None:
+        """Le avisa al workflow de ventas que el ingest está leyendo una foto
+        del cliente (`done=False`) o que la foto ya entró (`done=True`): la
+        ráfaga la espera (texto antes de la foto, 2026-09-30). Solo a ventas y
+        sin arrancar nada: sin workflow vivo (o con otra ruta), la foto entra
+        como hoy. Nunca lanza."""
+        try:
+            if self._metadata_store.read(session_id).get("active_route", ROUTE_VENTAS) != ROUTE_VENTAS:
+                return
+            client = await self._client_factory()
+            await client.get_workflow_handle(f"session-{session_id}").signal(
+                "photo_reading", args=[wamid, done]
+            )
+        except Exception as exc:  # noqa: BLE001 — sin workflow vivo: la foto entra como hoy
+            logger.info("photo_reading_signal_skipped", session_id=session_id, done=done, error=repr(exc)[:160])
+
     async def execute(
         self,
         session_id: str,

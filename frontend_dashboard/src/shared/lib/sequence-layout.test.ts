@@ -168,6 +168,12 @@ describe("layoutSequence", () => {
     ]);
   });
 
+  it("un reinicio que esperó la foto lo dice (texto antes de la foto, 2026-09-30)", () => {
+    const { rows } = layoutSequence([{ i: 0, at_ms: 0, kind: "restart", attempt: 1, drained: 1, photo: true }]);
+
+    expect(rows[0].short).toBe("vuelve a empezar · esperó la foto");
+  });
+
   it("una traza v1 sin tiempos deja el tiempo vacío y sigue dibujando", () => {
     const { rows } = layoutSequence([
       { i: 1, at_ms: null, kind: "inbound", messages: [{ text: "hola" }] },
