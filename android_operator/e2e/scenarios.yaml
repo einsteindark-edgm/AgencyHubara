@@ -1,0 +1,219 @@
+# Escenarios E2E de la App Operador con Artemis (emulador + backend de prueba).
+#
+# Datos del backend de prueba (sandbox/seed.py): la bandeja muestra los chats por número.
+#   000000000101 Laura    bot atiende, pregunta por aromas (burbuja «Enviar aromas»)
+#   000000000102 Sofía    pidió un humano hace 12 min (incendio GRAVE)
+#   000000000103 Camilo   venta caliente en cierre (widget)
+#   000000000104 Andrés   pedido #41 atrasado 4 días (incendio GRAVE, botón «Pedido #41»)
+#   000000000105 Valentina ventana de 24 h cerrada (solo plantillas)
+#   000000000106 Daniela  comprobante de pago por verificar (incendio HOY)
+# Órdenes: #40 Juan (en camino), #41 Andrés (preparando), #42 Daniela (borrador).
+#
+# `setup` deja la app en el punto de partida sin gastar pasos de Artemis; `checks` confirma con
+# hechos (lo que el backend registró como enviado, el árbol de UI) lo que Artemis dice que vio.
+
+common:
+  fresh: &fresh [reset, clear_app, launch, {wait: 7}]
+  laura_tomada: &laura_tomada
+    [reset, clear_app, launch, {wait: 7}, {tap: "000000000101"}, {tap: "Tomar la conversación"}, {wait: 3}]
+
+scenarios:
+  - id: S01_bandeja_radar
+    title: Bandeja y radar de incendios
+    setup: [reset, clear_app, launch, {wait: 7}]
+    goal: |
+      Estás probando la app «Operador», que usa un equipo de ventas por WhatsApp. En la pantalla
+      «Chats» las conversaciones aparecen por número (por ejemplo 000000000101).
+      1. Cuenta cuántas conversaciones hay en la lista.
+      2. Arriba a la derecha hay un chip con un triángulo de alerta y un número: anota el número y tócalo.
+      3. Debe desplegarse una lista de tarjetas de incendios. Anota el texto de cada tarjeta y
+         estima qué fracción de la pantalla ocupa la lista.
+      4. Cierra la lista con el botón «Cerrar» (o como indique la pantalla) y confirma que se cerró.
+      Reporta los cuatro puntos. No toques ninguna tarjeta.
+    checks:
+      - screen_has: "Chats"
+      - screen_lacks: "Ocultar"
+
+  - id: S02_tomar_y_enviar_aromas
+    title: Tomar la conversación y enviar la burbuja «Enviar aromas»
+    setup: *fresh
+    goal: |
+      En la pantalla «Chats» abre la conversación 000000000101 (la clienta preguntó por los aromas).
+      1. Confirma que el chat indica que el bot atiende y que hay un botón «Tomar la conversación». Tócalo.
+      2. Confirma que ahora indica «Tú atiendes» y que aparecen burbujas de sugerencia. Anota sus textos.
+      3. Toca UNA vez la burbuja «Enviar aromas». Debe aparecer una barra que dice «Enviando «Enviar aromas»»
+         con un botón «Deshacer» que cuenta hacia atrás. NO toques «Deshacer».
+      4. Espera unos 8 segundos y confirma que la barra desapareció y que en el chat aparece un mensaje
+         enviado con la lista de aromas.
+      Reporta lo que viste en cada paso.
+    checks:
+      - sent_contains: ['"to": "000000000101"', "aromas"]
+      - screen_has: "Tú atiendes"
+      # La última jugada vuelve al tablero: lo que el operador ya mandó no se le vuelve a ofrecer
+      # hasta que la clienta escriba de nuevo.
+      - screen_lacks: "Enviar aromas"
+
+  - id: S03_deshacer
+    title: Deshacer una burbuja antes de que salga
+    # El deshacer dura 5 s y Artemis tarda 4-5 s por paso en esta Mac: el toque lo da adb
+    # (a 1,5 s, como un humano) y Artemis verifica lo que quedó en pantalla.
+    setup: [reset, clear_app, launch, {wait: 7}, {tap: "000000000101"}, {tap: "Tomar la conversación"}, {wait: 3},
+            {tap: "Más fotos"}, {wait: 1.5}, {tap: "Deshacer"}, {wait: 7}]
+    goal: |
+      Estás en el chat 000000000101 y atiendes tú. Hace unos segundos alguien tocó la burbuja «Más fotos»
+      y enseguida «Deshacer».
+      1. Confirma que no hay ninguna barra «Enviando…» visible.
+      2. Confirma que el último mensaje del chat NO es un envío de fotos del operador.
+      3. Si ves un aviso como «Ya se estaba enviando: no se pudo deshacer», dilo.
+      Reporta los tres puntos.
+    checks:
+      - sent_nothing_matching: ['"to": "000000000101"']
+      - screen_lacks: "Enviando"
+
+  - id: S04_escribir_y_enviar
+    title: Escribir y enviar un mensaje de texto
+    setup: *laura_tomada
+    goal: |
+      Estás en el chat 000000000101 y ya atiendes tú.
+      1. Toca el campo «Escribe un mensaje…» y escribe exactamente: Hola Laura, ya te comparto los aromas disponibles
+      2. Toca el botón para enviar.
+      3. Confirma que el mensaje aparece en el chat como enviado por ti y que el campo de texto quedó vacío.
+      Reporta el resultado.
+    checks:
+      - sent_contains: ['"to": "000000000101"', "Hola Laura, ya te comparto los aromas disponibles"]
+
+  - id: S05_radar_a_otro_chat_y_volver
+    title: Del chat a un incendio en vivo y de vuelta
+    setup: *laura_tomada
+    goal: |
+      Estás en el chat 000000000101 y ya atiendes tú.
+      1. Arriba a la derecha hay un chip con un triángulo de alerta y un número. Tócalo.
+      2. En la lista que se despliega, toca la tarjeta «Sofía pide un humano».
+      3. Confirma que se abrió otro chat (el de 000000000102) y anota lo que dice el encabezado.
+      4. Busca un botón que diga «Volver con …» y tócalo.
+      5. Confirma que regresaste al chat 000000000101.
+      Reporta cada paso.
+    checks:
+      - screen_has: "000000000101"
+
+  - id: S06_pestana_incendios
+    title: Pestaña Incendios, orden y destino de una orden
+    setup: *fresh
+    goal: |
+      Toca la pestaña «Incendios» de la barra inferior.
+      1. Anota los incendios en el orden en que aparecen, con su etiqueta de gravedad (GRAVE, HOY, ESPERA).
+      2. Confirma si los GRAVE aparecen antes que los HOY.
+      3. Toca el incendio del pedido #41 de Andrés y anota qué se abrió (debería ser la ficha del pedido #41).
+      Reporta los tres puntos.
+    checks:
+      - screen_has: "Pedido #41"
+
+  - id: S07_orden_ficha_y_avance
+    title: Ficha de orden y avance de etapa
+    setup: *fresh
+    goal: |
+      Toca la pestaña «Órdenes» de la barra inferior.
+      1. Abre el pedido #41. Anota: qué compró, la dirección y el barrio, el estado del pago, el total y la etapa actual.
+         Toca el botón para avanzar a la siguiente etapa y anota qué pasa (si pide una foto, repórtalo; no inventes datos).
+         Cierra la ficha.
+      2. Abre el pedido #40. Anota la etapa actual y toca el botón para avanzar a la siguiente etapa
+         (debería ser «Marcar entregado»). Confirma la etapa nueva.
+      Reporta todo lo anotado.
+    checks:
+      - api_equals: {path: "/api/orders/orders/order_01SBXJUAN00000000000000040", key: "summary.status", equals: "delivered"}
+      - api_equals: {path: "/api/orders/orders/order_01SBXANDRES000000000000041", key: "summary.status", equals: "preparing"}
+
+  - id: S07b_ficha_abre_completa
+    title: La ficha de la orden abre completa, con la acción a la vista
+    # Rojo en la corrida 1: la hoja abría a media altura y Artemis tuvo que arrastrarla para
+    # encontrar «Marcar entregado». Los toques los da adb; el chequeo es inmediato, sin deslizar.
+    setup: [reset, clear_app, launch, {wait: 7}, {tap: "Órdenes"}, {wait: 2}, {tap: "Juan Prueba"}, {wait: 2}]
+    goal: |
+      Hay una ficha de pedido abierta. Sin tocar ni deslizar nada, describe lo que ves: el número de pedido
+      tal como aparece escrito, el cliente, la etapa y el botón de acción principal.
+    checks:
+      - screen_has: "Marcar entregado"
+      - screen_has: "Pedido #40"
+      - screen_lacks: "##"
+
+  - id: S08_pedido_desde_el_chat
+    title: Botón «Pedido #41» en el chat
+    setup: *fresh
+    goal: |
+      En «Chats» abre la conversación 000000000104.
+      1. En el encabezado debe haber un botón «Pedido #41». Tócalo.
+      2. Confirma que se abre la ficha del pedido por encima del chat, con productos y dirección.
+      3. Ciérrala con el botón Atrás del teléfono y confirma que vuelves al chat 000000000104.
+      Reporta cada paso.
+    checks:
+      - screen_has: "000000000104"
+
+  - id: S09_ventana_cerrada_plantilla
+    title: Ventana de 24 h cerrada y reactivación con plantilla
+    setup: *fresh
+    goal: |
+      En «Chats» abre la conversación 000000000105.
+      1. Confirma que no se puede escribir texto libre y que aparece un botón «Reactivar con plantilla». Tócalo.
+      2. Elige la primera plantilla de la lista, lee la vista previa y toca «Enviar plantilla».
+      3. Anota qué plantilla enviaste y qué muestra el chat después.
+      Reporta los tres puntos.
+    checks:
+      - sent_contains: ['"to": "000000000105"', '"type": "template"']
+
+  - id: S10_devolver_al_bot
+    title: Devolver la conversación al bot
+    setup: *laura_tomada
+    goal: |
+      Estás en el chat 000000000101 y ya atiendes tú.
+      1. Abre el menú «Más opciones» (tres puntos arriba a la derecha) y elige «Devolver al bot».
+      2. Confirma que el chat vuelve a indicar que el bot atiende y que aparece otra vez «Tomar la conversación».
+      Reporta el resultado.
+    checks:
+      - screen_has: "Tomar la conversación"
+      - api_not_equals: {path: "/api/dashboard/sessions/wa_000000000101", key: "active_agent_route", equals: "humano"}
+
+  - id: S11_enlace_a_incendio
+    title: Enlace profundo a un incendio en vivo
+    setup: [reset, clear_app, launch, {wait: 5}, {link: "hubara://live/wa_000000000102"}, {wait: 3}]
+    goal: |
+      La app acaba de abrir un enlace a un incendio.
+      1. Confirma qué chat se ve (debería ser 000000000102) y qué pestaña de la barra inferior está seleccionada.
+      2. Toca el botón Atrás del teléfono una vez y anota a qué pantalla llegaste.
+      Reporta los dos puntos.
+    checks:
+      - screen_has: "Incendios"
+
+  - id: S12_notificacion_incendio
+    title: Notificación de incendio grave con la app cerrada
+    # El vigía (WorkManager periódico) no se deja adelantar con `cmd jobscheduler run -f`; sí corre
+    # apenas arranca el proceso. Se despierta la app EN SEGUNDO PLANO (como tras reiniciar el teléfono)
+    # con un broadcast explícito al receptor del widget: APPWIDGET_UPDATE es protegido y el shell no
+    # puede mandarlo, pero una acción propia sí arranca el proceso. El incendio de Mateo ya está en el backend.
+    setup: [reset, clear_app, {inject: fire}, home, {wait: 1},
+            {adb: "am broadcast -n com.hubara.operator/com.hubara.operator.widget.hot.HotSalesWidgetReceiver -a com.hubara.operator.E2E_WAKE"},
+            {wait: 10}]
+    locked_app: false
+    goal: |
+      Estás en la pantalla de inicio de Android.
+      1. Abre la cortina de notificaciones (desliza desde arriba).
+      2. Busca una notificación de la app «Operador» sobre un incendio grave y anota su texto.
+      3. Tócala y confirma qué se abre en la app (debería ser el chat de Mateo, 000000000107).
+      Reporta los tres puntos. Si no hay notificación, dilo.
+    checks:
+      - screen_has: "000000000107"
+
+  - id: S13_widget_ventas_calientes
+    title: Widget de ventas calientes en la pantalla de inicio
+    profile: pro
+    timeout_s: 1500
+    setup: [reset, clear_app, launch, {wait: 10}, home, {wait: 2}]
+    locked_app: false
+    goal: |
+      Estás en la pantalla de inicio de Android (launcher de Pixel).
+      1. Agrega el widget «Ventas calientes» de la app «Operador»: mantén presionado un espacio vacío del
+         fondo, toca «Widgets», busca «Operador» y arrastra el widget «Ventas calientes» a la pantalla de inicio.
+      2. Confirma que el widget muestra al menos una venta (por ejemplo de Camilo o el producto «Plegaria de Luz»).
+      3. Toca esa venta dentro del widget y confirma que se abre la app en un chat.
+      Reporta cada paso con lo que viste.
+    checks:
+      - screen_has: "000000000103"
