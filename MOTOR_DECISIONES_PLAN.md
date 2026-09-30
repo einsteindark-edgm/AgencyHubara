@@ -189,3 +189,47 @@ El turno 2 del 6543 en r4 (bot nuevo): el cliente mandó una captura de nuestro 
 - **La puerta en `send_reply`** bajó los turnos que salen sin cumplir el contrato de 14 a 6–7 de 43. Casos buenos: medidas y estado del pedido consultados en vez de dichos de memoria.
 - **Una regresión, ya corregida:** «¿cuánto se demora el envío?» salía solo con la tarjeta de tarifas. `jev-v5` = `jev-v4` con `rafaga-v5`, que suma la pregunta `envio.costo`. La tarjeta se exige solo si preguntan el costo. En r6 el cliente recibe «A Medellín llega en 2 a 3 días hábiles…».
 - **r6, bot nuevo:** 2 PASA y 1 ALERTA, con menos fallas que r4. Jev con 0 caídas por tiempo gracias a los reenvíos [1,5, 3, 5, 7,5].
+
+### 6.4 Fotos de nuestro catálogo: identificación (2026-09-30)
+
+El operador pidió los pasos 1 y 3 de la investigación de §6.3; el 2 («Enviar mensaje a la empresa») se revisó aparte y queda abajo.
+
+**Qué quedó (36feb76e, b20f8ffd, 6ba68927, 7ca90503):**
+- **Visión:** el prompt pide un JSON por campo (tipo, si es captura, texto visible —nombre, precio, URL y código— y la descripción). Es el mismo modelo, y sigue leyendo el formato viejo.
+- **Reconocimiento en código** (`sales/use_cases/photo_product.py`), en este orden:
+  1. el código (SKU);
+  2. el enlace de NUESTRA tienda, aunque venga cortado (el de otra tienda no cuenta);
+  3. el nombre exacto o casi exacto (≥ 0,90 y 0,08 por encima del segundo).
+  - El precio no decide; si se lee uno que no es el nuestro, la imagen confirma.
+- **Por imagen**, solo en fotos de producto y cuando el texto no decidió:
+  - los 5 productos más parecidos por embedding (`gemini-embedding-2`) y un verificador que dice «el mismo diseño o ninguno»;
+  - el verificador es `gemini-3.5-flash-lite`: 74/74 en dos corridas, máximo 5,7 s y sin fecha de apagado (el 3.1 tuvo esperas de 20–50 s y se apaga en mayo de 2027);
+  - tope de 6 s.
+- **Cómo entra al turno:** la foto reconocida entra nombrando el producto y cómo se supo, y el turno lleva la nota «FOTO DEL CLIENTE»: no negarlo; si fue por la imagen, mostrarlo y preguntar si es ese. La foto reconocida ya no alimenta la nota de fuera de catálogo.
+- **Índice de fotos del catálogo** junto al snapshot (`photo_index/`): se completa por partes, en segundo plano, y se rehace si cambia el modelo detrás del alias.
+- **Laboratorio:**
+  - el banco trae las fotos de producto (nunca comprobantes);
+  - la preparación de la corrida las lee con la visión de hoy;
+  - el caso solo lee esa lectura, así que el candado del sandbox sigue intacto.
+
+**Medido:**
+- **Con modelos reales:** 13 de 13. Entran las 5 fotos reales del 28-sep, 2 capturas de WhatsApp Business con el código, 1 foto sin texto y 5 trampas (otra tienda, nombre parecido, fondo sin vela).
+- **r7** (banco `caso-fotos-0930`: lo mismo que r6 más las fotos): las 11 fotos del banco quedaron reconocidas en la preparación. Los 10 turnos con foto (5 por brazo) nombran y muestran el producto correcto, sin negar y sin buscar:
+  - **6543 t2:** «Sí, esa es Sacrificio de Amor, la tenemos disponible» (en r6: Sagrado Rostro).
+  - **4567 t12 y 4329 t11** (4 fotos): «Sí, las cuatro son nuestras» con las 4 fichas correctas (en r6: medio catálogo).
+  - **Luz Serena** (4567 t15, 4329 t14): «Sí, esa es la Luz Serena» (en r6: la negaba o decía «Ángel»).
+- **Veredictos:** bot actual 2 PASA y 1 ALERTA (igual que r6); bot nuevo 1 PASA y 2 ALERTA (r6: 2 y 1).
+  - Las fallas nuevas no son de los turnos con foto: VAR-01b en 4329 t10 (antes de la foto; varianza del LLM), CIE-05 en el cierre de 4567 («Gracias por tu compra») y APE-03/DES-09 en el turno 1.
+  - DES-08 marcaba el turno de las 4 fotos como «eligió un producto» porque leía la anotación del sistema como texto del cliente. Arreglado en 7ca90503.
+- **Contrato del bot nuevo:** 6 de 43 turnos salen sin cumplirlo (r6: 7). Jev: 0 caídas. Corrida: US$1,04.
+
+**Punto 2 (revisado, sin implementar):**
+- **«Enviar mensaje a la empresa»** manda el SKU exacto en `context.referred_product`, pero el código lo lee y lo descarta. En producción no hubo ningún uso desde el 17-sep.
+- **«Compartir»** (reenviar el producto al chat) no llega: Meta pone `product` entre los tipos que la Cloud API no entrega.
+- **El botón y su texto no se pueden cambiar.** Meta desaconseja texto o marcas de agua sobre las fotos e instrucciones en la descripción; además, editarlas manda el producto a revisión.
+- **El carrito** llega con los SKU (11 carritos desde el 10-sep), pero el LLM solo ve los códigos.
+
+**Pendiente:**
+- Usar `referred_product`: es un cambio chico, como el `ref:` de la web. Después, una línea en el mensaje del catálogo que invite a tocar «Enviar mensaje a la empresa».
+- **Ráfaga partida.** La foto sin texto tarda unos 3 s más en entrar. Si el cliente escribe justo después, su texto puede formar un turno aparte, porque la ráfaga cierra tras 1,5 s de silencio. Propuesta: que el ingest retenga el texto mientras se lee una foto del mismo cliente.
+- **Producción.** Con el deploy van los alias nuevos del proxy (`gemini-embedding`, `gemini-photo-match`) y Pillow. La primera foto sin texto después del deploy arma el índice (~1 min, en segundo plano) y sale sin búsqueda por imagen.
