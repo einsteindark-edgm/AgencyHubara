@@ -52,7 +52,8 @@ done
 "$ADB" -s "$SERIAL" install -r "$APK" >/dev/null
 
 "$E2E/sandbox/run_api.sh" start --reset
-trap '"$E2E/sandbox/run_api.sh" stop >/dev/null' EXIT
+# Al salir: los logs del backend de prueba van junto al reporte (CI los sube como artefacto) y se apaga.
+trap 'cp "$E2E"/sandbox/*.log "$OUT"/ 2>/dev/null || true; "$E2E/sandbox/run_api.sh" stop >/dev/null' EXIT
 
 args=(--driver script --serial "$SERIAL" --retries "${QA_RETRIES:-1}" --out "$OUT")
 [ -n "$only" ] && args+=(--only "$only")

@@ -29,10 +29,12 @@ common:
 scenarios:
   - id: S01_bandeja_radar
     title: Bandeja y radar de incendios
+    resumen: "Al abrir, la bandeja carga, el chip marca 2 incendios graves y la lista del radar se despliega y se cierra."
     setup: *fresh
     script:
       - {tap: "incendios graves"}
       - {expect_all: ["Sofía pide un humano", "va retrasado", "=Cerrar"]}
+      - {shot: radar-desplegado}
       - {wait: 0.6}
       - {tap: "=Cerrar"}
       - {expect_gone: "=Cerrar"}
@@ -52,6 +54,7 @@ scenarios:
 
   - id: S01b_no_leidos
     title: No leídos, como WhatsApp (#384)
+    resumen: "Un cliente escribe: su chat marca 1 sin leer, «No leídos» lo deja solo y al abrirlo el contador desaparece."
     # Primera carga = todo visto; luego Laura escribe y su chat marca 1 hasta que el operador lo abre.
     setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
             {inject: 'reply wa_000000000101 "Me confirmas el precio del duo porfa"'}]
@@ -78,6 +81,7 @@ scenarios:
 
   - id: S02_tomar_y_enviar_aromas
     title: Tomar la conversación y enviar la burbuja «Enviar aromas»
+    resumen: "El operador toma el chat de Laura y manda los aromas con una burbuja; el backend registra el envío y la burbuja ya no se ofrece."
     setup: *fresh
     script:
       - {tap: "000000000101"}
@@ -85,6 +89,7 @@ scenarios:
       - {expect: "Tú atiendes"}
       - {tap: "=Enviar aromas"}
       - {expect: "Enviando «Enviar aromas»"}
+      - {shot: deshacer}
       - {expect_gone: {text: "Enviando", timeout: 30}}
     goal: |
       En la pantalla «Chats» abre la conversación 000000000101 (la clienta preguntó por los aromas).
@@ -104,6 +109,7 @@ scenarios:
 
   - id: S03_deshacer
     title: Deshacer una burbuja antes de que salga
+    resumen: "Tocar una burbuja y «Deshacer» enseguida: no sale nada por WhatsApp."
     # El deshacer dura 5 s y Artemis tarda 4-5 s por paso en esta Mac: el toque lo da adb
     # (a 1,5 s, como un humano) y Artemis verifica lo que quedó en pantalla.
     setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
@@ -123,6 +129,7 @@ scenarios:
 
   - id: S04_escribir_y_enviar
     title: Escribir y enviar un mensaje de texto
+    resumen: "El operador escribe un mensaje y lo envía: llega completo al backend y el campo queda vacío."
     setup: *laura_tomada
     script:
       - {tap: "Escribe un mensaje…"}
@@ -141,6 +148,7 @@ scenarios:
 
   - id: S05_radar_a_otro_chat_y_volver
     title: Del chat a un incendio en vivo y de vuelta
+    resumen: "Desde el chat de Laura, el radar lleva al de Sofía (pide un humano) y «Volver con…» regresa a Laura."
     setup: *laura_tomada
     script:
       - {tap: "incendios graves"}
@@ -164,6 +172,7 @@ scenarios:
 
   - id: S06_pestana_incendios
     title: Pestaña Incendios, orden y destino de una orden
+    resumen: "La pestaña Incendios pone los graves antes que los de hoy, y el incendio del pedido #41 abre su ficha."
     setup: *fresh
     script:
       - {tap: "=Incendios"}
@@ -181,6 +190,7 @@ scenarios:
 
   - id: S07_orden_ficha_y_avance
     title: Ficha de orden y avance de etapa
+    resumen: "En Órdenes, el #41 pide la foto antes de marcarse listo y el #40 se marca entregado; el backend lo confirma."
     setup: *fresh
     script:
       - {tap: "=Órdenes"}
@@ -207,6 +217,7 @@ scenarios:
 
   - id: S07b_ficha_abre_completa
     title: La ficha de la orden abre completa, con la acción a la vista
+    resumen: "La ficha de un pedido abre completa, con «Marcar entregado» a la vista y el número sin «##»."
     # Rojo en la corrida 1: la hoja abría a media altura y Artemis tuvo que arrastrarla para
     # encontrar «Marcar entregado». Los toques los da adb; el chequeo es inmediato, sin deslizar.
     setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
@@ -222,6 +233,7 @@ scenarios:
 
   - id: S08_pedido_desde_el_chat
     title: Botón «Pedido #41» en el chat
+    resumen: "El botón «Pedido #41» del chat abre la ficha encima del chat y Atrás vuelve al chat."
     setup: *fresh
     script:
       - {tap: "000000000104"}
@@ -242,6 +254,7 @@ scenarios:
 
   - id: S09_ventana_cerrada_plantilla
     title: Ventana de 24 h cerrada y reactivación con plantilla
+    resumen: "Con la ventana de 24 h cerrada, el operador reactiva la conversación con la plantilla recomendada y el backend la envía."
     setup: *fresh
     script:
       - {tap: "000000000105"}
@@ -264,6 +277,7 @@ scenarios:
 
   - id: S10_devolver_al_bot
     title: Devolver la conversación al bot
+    resumen: "«Devolver al bot» devuelve la conversación: la app y el backend dejan de marcarla como humana."
     setup: *laura_tomada
     script:
       - {tap: "Más opciones"}
@@ -280,6 +294,7 @@ scenarios:
 
   - id: S11_enlace_a_incendio
     title: Enlace profundo a un incendio en vivo
+    resumen: "Un enlace a un incendio en vivo abre el chat de Sofía y Atrás lleva a la lista de Incendios."
     setup: [reset, clear_app, launch, {wait: 5}, {link: "hubara://live/wa_000000000102"}, {wait: 3}]
     script:
       - {expect: "000000000102"}
@@ -299,6 +314,7 @@ scenarios:
 
   - id: S12_notificacion_incendio
     title: Notificación de incendio grave con la app cerrada
+    resumen: "Con la app cerrada, un incendio grave llega como notificación y tocarla abre el chat de Mateo."
     # El vigía (WorkManager periódico) no se deja adelantar con `cmd jobscheduler run -f`; sí corre
     # apenas arranca el proceso. Se despierta la app EN SEGUNDO PLANO (como tras reiniciar el teléfono)
     # con un broadcast explícito al receptor del widget: APPWIDGET_UPDATE es protegido y el shell no
@@ -323,6 +339,7 @@ scenarios:
 
   - id: S13_widget_ventas_calientes
     title: Widget de ventas calientes en la pantalla de inicio
+    resumen: "El widget de ventas calientes muestra una venta y tocarla abre su chat."
     profile: pro
     timeout_s: 1500
     setup: [reset, clear_app, launch, {wait: 10}, home, {wait: 2}]
@@ -339,6 +356,7 @@ scenarios:
 
   - id: S14_varios_incendios_mientras_escribes
     title: Llegan tres incendios graves mientras el operador escribe
+    resumen: "Llegan tres incendios graves mientras el operador escribe: se ven juntos, el más nuevo arriba, sin tapar el campo, y el texto sigue entero."
     # Rojo en el emulador (09-30): cada tarjeta nueva reemplazaba a la anterior y la de Mateo se veía 2 s.
     # Ahora se apilan (la más nueva arriba, máx. 3 + «Ver N más»), nunca bajan del composer y se pliegan
     # juntas al chip 4 s después de la última. El teclado no se cierra y lo escrito sigue en el mismo campo.
@@ -356,6 +374,7 @@ scenarios:
           texts: ["Pedro pide un humano", "Lucía pide un humano", "Mateo pide un humano"]
           in_order: true
           above_focused: true
+      - {shot: tres-tarjetas}
       - {assert: {ime_shown: true}}
       - {type: " te cuento"}
       - {expect: "5 incendios graves"}

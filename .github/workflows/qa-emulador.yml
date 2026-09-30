@@ -8,6 +8,10 @@
 # El job corre en TODO PR (el check es requerido en main): si el PR no toca la app ni su backend, pasa en segundos.
 # Corre en los runners de GitHub (gratis en repos públicos y con KVM para el emulador) y no usa secretos, así que
 # el código de un PR nunca corre en una máquina con credenciales. Artemis no corre aquí: se usa a mano para explorar.
+#
+# Al terminar, el job «Capturas en el PR» publica una captura por escenario en la rama `qa-emulador-capturas`
+# (un solo commit, se reescribe en cada corrida) y deja UN comentario en el PR, que se actualiza, con la galería y
+# qué probó cada escenario. Solo en PRs de ramas de este repo: los forks no reciben permiso de escritura.
 name: QA emulador
 
 on:
@@ -26,6 +30,8 @@ jobs:
     name: QA emulador — App Operador
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      app: ${{ steps.scope.outputs.app }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -123,9 +129,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: qa-emulador
-          path: |
-            ${{ runner.temp }}/qa-emulador
-            android_operator/e2e/sandbox/*.log
+          path: ${{ runner.temp }}/qa-emulador
           if-no-files-found: ignore
 
       - name: Resumen
@@ -138,3 +142,71 @@ jobs:
       - name: El PR no toca la app
         if: steps.scope.outputs.app != 'true'
         run: echo "El PR no toca android_operator/ ni el backend que la app consume. El emulador no aplica."
+
+  capturas:
+    name: Capturas en el PR
+    needs: qa-emulador
+    if: >-
+      always() && github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && needs.qa-emulador.outputs.app == 'true' && needs.qa-emulador.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write        # la rama qa-emulador-capturas
+      pull-requests: write   # el comentario
+      issues: write
+    concurrency:
+      # Una publicación a la vez: la rama se reescribe entera y dos PRs a la vez se pisarían.
+      group: qa-emulador-capturas
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        continue-on-error: true   # si el emulador falló antes del reporte, el comentario lo dice
+        with:
+          name: qa-emulador
+          path: qa
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install --quiet pyyaml pillow
+
+      - name: Publicar capturas y comentario
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BRANCH: qa-emulador-capturas
+        run: |
+          set -euo pipefail
+          mkdir -p qa
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          work="$RUNNER_TEMP/capturas"
+          git init -q -b publicacion "$work"
+          if git ls-remote --exit-code --heads "$remote" "$BRANCH" >/dev/null 2>&1; then
+            git clone -q --depth 1 --branch "$BRANCH" "$remote" "$RUNNER_TEMP/actual"
+            rm -rf "$RUNNER_TEMP/actual/.git"
+            cp -R "$RUNNER_TEMP/actual/." "$work/"
+          fi
+          rm -rf "$work/pr-$PR"
+          [ -f "$work/README.md" ] || echo "Capturas que la QA en emulador (.github/workflows/qa-emulador.yml) muestra en los PRs. Se reescribe en cada corrida." > "$work/README.md"
+          python3 android_operator/e2e/publicar_pr.py --qa qa --dest "$work" --pr "$PR" --sha "$SHA" \
+            --base-url "https://raw.githubusercontent.com/${REPO}/${BRANCH}" --run-url "$RUN_URL" > "$RUNNER_TEMP/comentario.md"
+          cd "$work"
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "QA emulador: capturas del PR #$PR (${SHA:0:7})"
+          git push -q -f "$remote" publicacion:"$BRANCH"
+          gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[] | select(.body | startswith("<!-- qa-emulador -->")) | .id' > "$RUNNER_TEMP/ids.txt"
+          id="$(head -n 1 "$RUNNER_TEMP/ids.txt")"
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@"$RUNNER_TEMP/comentario.md" >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$RUNNER_TEMP/comentario.md" >/dev/null
+          fi

@@ -82,15 +82,18 @@ def sent_lines() -> list[str]:
 class Run:
     """Un escenario en curso: el dispositivo y desde qué envío contar lo que salió en este escenario."""
 
-    def __init__(self, dev: Device) -> None:
+    def __init__(self, dev: Device, out: Path | None = None, sid: str = "") -> None:
         self.dev = dev
+        self.out = out
+        self.sid = sid
         self.sent_before = len(sent_lines())
 
     def step(self, step: dict | str) -> None:
         """Un paso. Sin argumento: "reset", "clear_app", "launch", "home", "back", "notifications".
         Con argumento: {"link": uri}, {"wait": s}, {"inject": "fire …"}, {"adb": "shell cmd"},
         {"tap": "texto"}, {"type": "ascii"}, {"expect": "texto"}, {"expect_gone": "texto"},
-        {"expect_all": [...] | {texts, in_order, above_focused}}, {"assert": {<chequeo>}}.
+        {"expect_all": [...] | {texts, in_order, above_focused}}, {"assert": {<chequeo>}},
+        {"shot": "nombre"} (captura a mitad del escenario, la que muestra el comentario del PR).
         Un texto con «=» adelante busca igual exacto (p. ej. "=Enviar" y no «Enviar aromas»)."""
         if isinstance(step, str):
             step = {step: True}
@@ -135,6 +138,9 @@ class Run:
                 raise StepFailed(f"«{text}» seguía en pantalla a los {timeout:.0f} s")
         elif kind == "expect_all":
             self._expect_all(arg)
+        elif kind == "shot":
+            if self.out is not None:
+                self.dev.screenshot(self.out / f"{self.sid}.{arg}.png")
         elif kind == "assert":
             name, ok, detail = check(dev, arg, self.sent_before)
             if not ok:
@@ -251,7 +257,7 @@ def run_one(dev: Device, sc: dict, out: Path, serial: str, driver: str) -> Resul
     res = Result(sc["id"], sc["title"], driver)
     t0 = time.monotonic()
     timers: list[threading.Timer] = []
-    run = Run(dev)
+    run = Run(dev, out, sc["id"])
     try:
         # Lo enviado se cuenta desde el `reset`, no desde el fin de la preparación: si un «Deshacer» dado
         # en `setup` falla, el envío sale ahí mismo y el chequeo tiene que verlo.
