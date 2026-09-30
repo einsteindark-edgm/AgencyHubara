@@ -55,7 +55,8 @@ def var_01b(traj: Trajectory, ctx: CheckContext) -> CheckResult:
         if "variant_enumeration_guard" in t.guards:
             return failed(
                 "VAR-01b", t.turn,
-                f"turno {t.turn}: el LLM enumeró variantes en texto y la guarda lo cambió por el picker {quote(t.llm_text)}",
+                f"turno {t.turn}: el bot escribió la lista de opciones como texto (debía mandar el selector) "
+                f"y la protección se la cambió por el selector {quote(t.llm_text)}",
             )
     return passed("VAR-01b", "la guarda de variantes no tuvo que actuar")
 

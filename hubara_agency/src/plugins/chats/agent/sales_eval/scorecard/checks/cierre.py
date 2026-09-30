@@ -1,7 +1,7 @@
 """Checks de código de la familia `cierre` (HU-SC-1). Ver `scorecard/registry.py`."""
 from __future__ import annotations
 
-from src.plugins.chats.agent.sales_eval.evals.script_rubric import FORBIDDEN_CLOSINGS
+from src.plugins.chats.agent.sales_eval.evals.script_rubric import forbidden_closing
 from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     failed,
@@ -13,7 +13,6 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     not_applicable,
     not_judged,
     passed,
-    quote,
     sent_texts,
     unknown,
 )
@@ -23,6 +22,16 @@ from src.plugins.chats.agent.sales_eval.scorecard.trajectory import Trajectory, 
 _CPP = "CONFIRMADO_PAGO_PENDIENTE"
 _PVP = "PAYMENT_VERIFICATION_PENDING"
 _COMPRA_EXITOSA = "COMPRA_EXITOSA"
+#: Cuánto texto se cita a cada lado de la frase prohibida.
+_AROUND = 60
+
+
+def _around(text: str, start: int, end: int) -> str:
+    """La frase del texto con un poco de contexto a cada lado (la frase
+    prohibida suele ir al final de un mensaje largo)."""
+    left = max(0, start - _AROUND)
+    right = min(len(text), end + _AROUND)
+    return ("…" if left else "") + text[left:right] + ("…" if right < len(text) else "")
 
 
 def _reg_index(traj: Trajectory) -> int | None:
@@ -191,8 +200,13 @@ def check_single_closing_message(traj: Trajectory, ctx: CheckContext) -> CheckRe
         return not_judged("CIE-05", traj, "el bot no envió texto")
     failures: list[tuple[int, str]] = []
     for turn, text in texts:
-        if any(rx.search(text) for rx in FORBIDDEN_CLOSINGS):
-            failures.append((turn.turn, f"turno {turn.turn}: frase de cierre prohibida {quote(text)}"))
+        if hit := forbidden_closing(text):
+            match, why = hit
+            failures.append((
+                turn.turn,
+                f"turno {turn.turn}: usó «{match.group(0)}», que no se dice porque {why}. "
+                f"Dijo: «{_around(text, match.start(), match.end())}»",
+            ))
             break
     idx = _reg_index(traj)
     if idx is not None and judged(traj, traj.turns[idx]) and len(traj.turns[idx].sent_texts) >= 2:

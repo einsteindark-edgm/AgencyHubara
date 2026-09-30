@@ -43,6 +43,22 @@ _SELECTION_MARKER = "[el cliente seleccionó:"
 #: nuestro que es (identificación de fotos, 2026-09-30): eso no lo escribió el
 #: cliente.
 _PHOTO_ANNOTATION_RE = re.compile(r"\[el cliente envió una foto: [^\]]*\]")
+#: Decir que lo quiere (DES-08). «no quiero» no cuenta; «quiero ver/saber…» es
+#: pedir información.
+_WANTS_RE = re.compile(
+    r"(?<!no )\b(?:quiero(?! (?:ver|saber|preguntar|conocer|mirar|info))|quisiera|quer[ií]a"
+    r"|me (?:lo |la |los |las )?llevo|me gustar?[ií]a|me gustan?|me encantan?|me quedo con"
+    r"|voy con|vamos con|dame|deme|reg[aá]l[ae]me|pido|prefiero|escojo|elijo"
+    r"|sep[aá]ra(?:me|r|s|mela|melo)?|ap[aá]rta(?:me|mela|melo)?|res[eé]rva(?:me|mela|melo)?"
+    r"|compro|comprar|encargo|encargar)\b"
+)
+_NON_WORD_RE = re.compile(r"[^\w]+")
+#: Contestar solo con el nombre del producto («el cubo love porfa») también es
+#: elegirlo: lo que acompaña al nombre son estas palabras de relleno.
+_FILLER_WORDS = frozenset({
+    "el", "la", "los", "las", "un", "una", "ese", "esa", "este", "esta", "de", "del", "y", "entonces",
+    "mejor", "si", "sí", "ok", "listo", "porfa", "por", "favor", "gracias", "pls",
+})
 
 _GROUNDING_TOOLS = frozenset({
     "search_products", "get_product_by_handle", "list_categories", "present_products",
@@ -216,6 +232,20 @@ def _last_display_offers_products(previous: tuple[Turn, ...]) -> bool:
     return last is not None and bool({"products_list", "product_detail"} & set(last.intents))
 
 
+def _wants(words: str, title: str) -> bool:
+    """¿El cliente dice que QUIERE el producto que nombra? Nombrarlo no es
+    elegirlo: «se llama Luz Serena, la saqué de su catálogo» dice cómo se
+    llama (laboratorio caso-fotos-0930-r7, 4567 t17) y «¿tienen el Cubo Love?»
+    pregunta si hay. Sí lo es decir que lo quiere («la quiero», «me llevo»,
+    «me gusta», «sepárame»…) o contestar solo con su nombre («el cubo love
+    porfa»)."""
+    low = words.lower()
+    if _WANTS_RE.search(low):
+        return True
+    rest = _NON_WORD_RE.sub(" ", low.replace(title.lower(), " ")).split()
+    return "?" not in low and all(word in _FILLER_WORDS for word in rest)
+
+
 def _is_product_choice(traj: Trajectory, index: int, titles: list[str]) -> bool:
     turn = traj.turns[index]
     previous = traj.turns[:index]
@@ -227,7 +257,7 @@ def _is_product_choice(traj: Trajectory, index: int, titles: list[str]) -> bool:
         return False
     words = _PHOTO_ANNOTATION_RE.sub(" ", words)
     shown = any(set(t.intents) & CATALOG_DISPLAY_INTENTS for t in previous)
-    return shown and any(title.lower() in words.lower() for title in titles)
+    return shown and any(title.lower() in words.lower() and _wants(words, title) for title in titles)
 
 
 def _product_recorded(turn: Turn) -> bool:
@@ -251,7 +281,7 @@ def check_chosen_product_recorded(traj: Trajectory, ctx: CheckContext) -> CheckR
         if not _product_recorded(turn):
             return failed(
                 "DES-08", turn.turn,
-                f"turno {turn.turn}: eligió {quote(turn.inbound_text)} y no se llamó set_order_slot con el producto",
+                f"turno {turn.turn}: eligió {quote(turn.inbound_text)} y el producto no quedó anotado en el pedido",
             )
     return passed("DES-08", f"{len(choices)} elección(es) registradas")
 

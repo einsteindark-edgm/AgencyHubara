@@ -244,6 +244,40 @@ def test_des08_the_product_a_photo_was_recognized_as_is_not_what_the_customer_wr
     assert _run("DES-08", chooses, CATALOG_CTX).verdict == "falla"
 
 
+def _after_catalog(inbound: str):
+    return traj(T(1, tools=[tool("present_products")]), T(2, inbound=inbound, sent=["Sí, ese es"]))
+
+
+def test_des08_naming_a_product_is_not_choosing_it() -> None:
+    """Laboratorio caso-fotos-0930-r7, 4567 t17: «Esa de la mujer con la vasija
+    se llama Luz Serena, la saqué de su catálogo de WhatsApp» le dice al bot
+    CÓMO se llama; no dice que la quiera. El check esperaba set_order_slot
+    («el cliente nunca ha dicho que la quiere agregar»). Preguntar si hay
+    tampoco es elegir."""
+    for said in (
+        "Esa roja con letras se llama Cubo Love, la saqué de su catálogo de WhatsApp",
+        "¿Tienen el Cubo Love en azul?",
+        "Y el cubo love también estaba en el catálogo",
+        "no quiero el cubo love",
+        "quiero ver el cubo love",
+    ):
+        assert _run("DES-08", _after_catalog(said), CATALOG_CTX).verdict == "no_aplica", said
+
+
+def test_des08_saying_they_want_it_or_answering_with_just_its_name_is_choosing() -> None:
+    """4567 t19: «La Luz Serena la quiero en aroma jengibre, esa es la que más
+    me gusta» sí es elegirla (y ahí el producto debía quedar en el pedido)."""
+    for said in (
+        "El Cubo Love lo quiero en lavanda, es el que más me gusta",
+        "me gustaría el cubo love",
+        "cubo love",
+        "el cubo love porfa",
+        "¿Me separas el Cubo Love?",
+    ):
+        result = _run("DES-08", _after_catalog(said), CATALOG_CTX)
+        assert (result.verdict, result.turn) == ("falla", 2), said
+
+
 def test_des08_title_mentioned_before_any_catalog_is_not_a_choice() -> None:
     t = traj(T(1, inbound="¿tienen el Cubo Love?", tools=[tool("search_products")]))
     assert _run("DES-08", t, CATALOG_CTX).verdict == "no_aplica"
