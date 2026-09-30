@@ -4,6 +4,7 @@
 #   android_operator/e2e/qa.sh                  # APK nuevo + backend de prueba + todos los escenarios con guion
 #   android_operator/e2e/qa.sh --only S14_varios_incendios_mientras_escribes
 #   android_operator/e2e/qa.sh --skip-build     # usa el APK ya compilado (así lo llama CI)
+#   android_operator/e2e/qa.sh --build-only     # solo compila el APK (CI lo hace antes de arrancar el emulador)
 #
 # Si no hay un emulador conectado arranca el AVD $QA_AVD (por defecto hubara_api30) sin ventana y lo deja
 # prendido para la próxima corrida (apagarlo: adb emu kill). El reporte queda en $QA_OUT.
@@ -20,10 +21,12 @@ ADB="$SDK/platform-tools/adb"
 APK="$REPO/android_operator/app/build/outputs/apk/debug/app-debug.apk"
 
 build=1
+build_only=0
 only=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --skip-build) build=0 ;;
+    --build-only) build_only=1 ;;
     --only) only="$2"; shift ;;
     *) echo "opción desconocida: $1" >&2; exit 2 ;;
   esac
@@ -35,6 +38,7 @@ if [ "$build" = 1 ]; then
   echo "▶ APK apuntando al backend de prueba (10.0.2.2:8010)" >&2
   (cd "$REPO/android_operator" && ./gradlew :app:assembleDebug -Phubara.apiUrl=http://10.0.2.2:8010 --console=plain -q)
 fi
+[ "$build_only" = 1 ] && exit 0
 
 if ! "$ADB" -s "$SERIAL" get-state >/dev/null 2>&1; then
   echo "▶ arrancando el emulador $AVD (la primera vez tarda unos minutos)" >&2

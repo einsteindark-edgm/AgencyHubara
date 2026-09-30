@@ -78,8 +78,7 @@ jobs:
 
       - name: APK apuntando al backend de prueba
         if: steps.scope.outputs.app == 'true'
-        working-directory: android_operator
-        run: ./gradlew :app:assembleDebug -Phubara.apiUrl=http://10.0.2.2:8010 --console=plain
+        run: android_operator/e2e/qa.sh --build-only
 
       - name: Caché del emulador
         if: steps.scope.outputs.app == 'true'
