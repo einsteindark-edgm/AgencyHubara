@@ -293,7 +293,7 @@ function toUnixSeconds(ts: ChatMessage["timestamp"]): number {
   return 0;
 }
 
-const QUOTE_AUTHORS: readonly QuoteAuthor[] = ["user", "agent", "human"];
+const QUOTE_AUTHORS: readonly QuoteAuthor[] = ["user", "agent", "human", "catalog"];
 
 function adaptQuote(q: ChatMessage["reply_to"]): ChatQuote | undefined {
   if (!q) return undefined;

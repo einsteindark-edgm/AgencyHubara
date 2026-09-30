@@ -126,6 +126,7 @@ from src.plugins.chats.agent.sales.use_cases.coupons import (
     build_coupon_note,
 )
 from src.plugins.chats.agent.sales.use_cases.web_product_ref import (
+    CATALOG_ORIGIN,
     apply_web_product_capture,
     build_web_product_note,
     detect_agent_source,
@@ -133,6 +134,7 @@ from src.plugins.chats.agent.sales.use_cases.web_product_ref import (
     mark_web_product_resolved,
     mark_web_product_unresolved,
     record_agent_referral,
+    referred_product_id,
 )
 from src.plugins.chats.agent.sales.use_cases.web_cart import (
     apply_web_cart_capture,
@@ -794,6 +796,49 @@ class IngestInboundMessage:
                 if updated_ref is not None:
                     metadata = updated_ref
 
+        # --- 2f-bis. «Enviar mensaje a la empresa» desde la ficha del catálogo ---
+        # Meta manda el producto exacto (`context.referred_product`); hasta el
+        # 2026-09-30 se descartaba y el bot solo veía «¿la tienen disponible?».
+        # Mismo estado que el botón de la web (`web_product_ref`, por
+        # episodio), resuelto contra el catálogo como el carrito. La nota solo
+        # llega con el producto verificado.
+        referred = referred_product_id(parsed.context) if not product_ref else None
+        if referred and metadata.get("active_route") != ROUTE_HUMANO:
+            captured_card = {"new": False}
+
+            def _capture_card_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                if fresh.get("active_route") == ROUTE_HUMANO:
+                    return None
+                captured_card["new"] = apply_web_product_capture(
+                    fresh, sku=referred, source=None, now_ms=now_ms, origin=CATALOG_ORIGIN
+                )
+                return fresh if captured_card["new"] else None
+
+            fresh_after_card = self._metadata_store.update(session_id, _capture_card_mutator)
+            if fresh_after_card is not None:
+                metadata = fresh_after_card
+
+            if captured_card["new"]:
+                card_lines = await self._catalog_lines([{"product_retailer_id": referred}])
+                card_line = (card_lines or {}).get(referred)
+                card_reason = "not_in_catalog" if card_lines is not None else "catalog_unavailable"
+
+                def _apply_card_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                    state = fresh.get("web_product_ref") or {}
+                    if state.get("sku") != referred:
+                        return None  # otro producto ganó mientras se resolvía
+                    if card_line is not None:
+                        mark_web_product_resolved(
+                            fresh, handle=card_line.handle, title=card_line.title, variant=card_line.variant
+                        )
+                    else:
+                        mark_web_product_unresolved(fresh, reason=card_reason)
+                    return fresh
+
+                updated_card = self._metadata_store.update(session_id, _apply_card_mutator)
+                if updated_card is not None:
+                    metadata = updated_card
+
         # --- 2g. Cupón de la campaña: se aplica solo ---
         # Conversación de prueba del 2026-09-24 (AMOR2026 con cupo por
         # unidad): la nota pedía validarlo "si lo menciona", el bot nunca
@@ -1415,10 +1460,14 @@ class IngestInboundMessage:
         """Los ítems del carrito leídos en el catálogo, o None (sin carrito,
         sin catálogo o si no responde a tiempo: el carrito sale con sus
         códigos, como antes)."""
+        order = parsed.order if isinstance(parsed.order, dict) else None
+        return await self._catalog_lines((order or {}).get("product_items") or [])
+
+    async def _catalog_lines(self, items: list[Any]) -> dict[str, CartLine | None] | None:
+        """Cada `product_retailer_id` → su línea del catálogo (SKU, id de la
+        variante o del producto), o None si el catálogo no responde a tiempo."""
         import asyncio
 
-        order = parsed.order if isinstance(parsed.order, dict) else None
-        items = (order or {}).get("product_items") or []
         if not items or self._catalog is None:
             return None
         try:
@@ -2472,6 +2521,16 @@ def _build_reply_kwargs(
     if not quoted_id or not isinstance(quoted_id, str):
         return kwargs
     reply_to: dict[str, Any] = {"id": quoted_id}
+    # «Enviar mensaje a la empresa»: la cita es la ficha del producto.
+    referred = referred_product_id(context)
+    if referred:
+        state = metadata.get("web_product_ref")
+        resolved = isinstance(state, dict) and state.get("sku") == referred and state.get("status") == "resolved"
+        title = str(state.get("title") or "") if resolved else ""
+        variant = f" ({state['variant']})" if resolved and state.get("variant") else ""
+        reply_to.update(author="catalog", text=f"{title}{variant}" if title else referred)
+        kwargs["reply_to"] = reply_to
+        return kwargs
     entry = (metadata.get("outbound_media_index") or {}).get(quoted_id)
     if isinstance(entry, dict):
         reply_to["author"] = "agent"

@@ -97,7 +97,10 @@ async def test_products_list_uses_mpm_when_env_flag_and_retailer_ids_present(
     payload = call.args[2]
     assert isinstance(payload, wa_dtos.InteractiveProductListOutbound)
     assert payload.catalog_id == "1468134707823015"
-    assert payload.body == "Mirá nuestras velas:"
+    # La guía de los botones de la ficha va debajo del texto (2026-09-30).
+    from src.plugins.chats.agent.sales.activities.flush_ui_intents import CATALOG_CARD_GUIDE
+
+    assert payload.body == f"Mirá nuestras velas:\n\n{CATALOG_CARD_GUIDE}"
     assert len(payload.sections) == 1
     sec = payload.sections[0]
     assert len(sec.product_items) == 2

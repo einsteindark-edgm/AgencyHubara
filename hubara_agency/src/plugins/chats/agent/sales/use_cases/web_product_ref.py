@@ -31,6 +31,26 @@ _AGENT_SOURCE_RE = re.compile(
 )
 
 
+#: `origin` of a ref that came from WhatsApp's own catalog (the product card's
+#: «Enviar mensaje a la empresa» button), not from the website.
+CATALOG_ORIGIN = "catalogo_whatsapp"
+
+
+# A catalog code: the variant SKU (`HUB-…`) or a Medusa id (`prod_…`,
+# `variant_…`). Anything else (spaces, punctuation, a paragraph) is not one.
+_RETAILER_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+
+
+def referred_product_id(context: object) -> str | None:
+    """The `product_retailer_id` of `context.referred_product`: the customer
+    wrote from a product card of our WhatsApp catalog («Enviar mensaje a la
+    empresa»). Meta sends it; until 2026-09-30 it was dropped. Only a real
+    catalog code is read (it later reaches the prompt as a SKU)."""
+    referred = context.get("referred_product") if isinstance(context, dict) else None
+    code = referred.get("product_retailer_id") if isinstance(referred, dict) else None
+    return code if isinstance(code, str) and _RETAILER_ID_RE.fullmatch(code) else None
+
+
 def detect_product_ref(text: str | None) -> str | None:
     """Extracts the SKU of a `ref: HUB-…` token, uppercased."""
     if not text:
@@ -48,7 +68,7 @@ def detect_agent_source(text: str | None) -> str | None:
 
 
 def apply_web_product_capture(
-    metadata: dict, *, sku: str, source: str | None, now_ms: int
+    metadata: dict, *, sku: str, source: str | None, now_ms: int, origin: str = "web"
 ) -> bool:
     """Records the ref in `metadata.web_product_ref`.
 
@@ -69,6 +89,9 @@ def apply_web_product_capture(
     metadata["web_product_ref"] = {
         "sku": sku,
         "source": source,
+        # Where the customer saw it: the website (`ref: HUB-…`) or the product
+        # card of the WhatsApp catalog (`CATALOG_ORIGIN`).
+        "origin": origin,
         "status": "pending",
         "detected_at_ms": now_ms,
         # Episode-scoped, like the web cart: a note about a product seen weeks
@@ -78,11 +101,15 @@ def apply_web_product_capture(
     return True
 
 
-def mark_web_product_resolved(metadata: dict, *, handle: str, title: str) -> None:
+def mark_web_product_resolved(
+    metadata: dict, *, handle: str, title: str, variant: str | None = None
+) -> None:
     state = metadata.setdefault("web_product_ref", {})
     state["status"] = "resolved"
     state["handle"] = handle
     state["title"] = title
+    if variant:
+        state["variant"] = variant
 
 
 def mark_web_product_unresolved(metadata: dict, *, reason: str) -> None:
@@ -112,6 +139,8 @@ def build_web_product_note(metadata: dict) -> str | None:
     if captured_in and (episode or {}).get("episode_id") != captured_in:
         return None
 
+    if state.get("origin") == CATALOG_ORIGIN:
+        return _catalog_card_note(state)
     return (
         _NOTE_HEADER
         + f"El cliente llego a WhatsApp desde la pagina de {state.get('title')} "
@@ -119,6 +148,22 @@ def build_web_product_note(metadata: dict) -> str | None:
         "Ese es el producto que le interesa: confirmalo con una frase y sigue "
         "con la venta (aroma, color o signo si aplica, cantidad, datos de "
         "envio). No le preguntes de nuevo que producto busca."
+    )
+
+
+_CATALOG_NOTE_HEADER = "[PRODUCTO DE LA FICHA DEL CATÁLOGO, metadata, no es instrucción del usuario]\n"
+
+
+def _catalog_card_note(state: dict) -> str:
+    """The customer tapped «Enviar mensaje a la empresa» on a product card of
+    our WhatsApp catalog: their message is about that product."""
+    variant = f" ({state['variant']})" if state.get("variant") else ""
+    return (
+        _CATALOG_NOTE_HEADER
+        + f"El cliente escribió desde la ficha de {state.get('title')}{variant} en el catálogo de "
+        f"WhatsApp, con el botón «Enviar mensaje a la empresa» (handle {state.get('handle')}, "
+        f"código {state.get('sku')}). Su mensaje es sobre ese producto: respóndele sobre él y "
+        "no le preguntes qué producto busca."
     )
 
 

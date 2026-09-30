@@ -87,3 +87,47 @@ async def test_uses_native_and_does_not_double_send_when_it_succeeds(monkeypatch
     assert fake.product_list_called
     assert not fake.list_called, "si el native anda, NO debe mandar también la lista"
     assert res.ok
+
+
+# ── La guía de los dos botones de la ficha (2026-09-30) ─────────────────────
+# Los botones de la ficha no se pueden cambiar (son de WhatsApp). El texto del
+# catálogo sí es nuestro: le dice al cliente cómo pedir una vela y cómo
+# preguntar por una (ese botón manda el producto exacto: `referred_product`).
+
+
+class _Capturing(_FakeWaClient):
+    def __init__(self) -> None:
+        super().__init__(product_list_ok=True)
+        self.outbound = None
+
+    async def send_product_list(self, phone_number_id, to_number, outbound, **k):
+        self.outbound = outbound
+        return await super().send_product_list()
+
+
+@pytest.mark.asyncio
+async def test_the_catalog_tells_how_to_order_and_how_to_ask_about_one(monkeypatch):
+    monkeypatch.setenv("META_CATALOG_ID", "CAT123")
+    fake = _Capturing()
+
+    await _dispatch(fake)
+
+    body = fake.outbound.body
+    assert body.startswith("Nuestro catálogo:")
+    assert "«Añadir a la solicitud de pedido»" in body and "«Enviar mensaje a la empresa»" in body
+
+
+@pytest.mark.asyncio
+async def test_the_list_fallback_has_no_card_buttons_to_explain(monkeypatch):
+    """La lista de texto (sin el catálogo de Meta) no tiene esos botones."""
+    monkeypatch.setenv("META_CATALOG_ID", "CAT123")
+    captured = {}
+
+    class _ListOnly(_FakeWaClient):
+        async def send_interactive_list(self, phone_number_id, to_number, outbound, **k):
+            captured["body"] = outbound.body
+            return await super().send_interactive_list()
+
+    await _dispatch(_ListOnly(product_list_ok=False))
+
+    assert "Enviar mensaje a la empresa" not in captured["body"]

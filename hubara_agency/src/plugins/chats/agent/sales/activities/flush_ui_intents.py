@@ -710,8 +710,10 @@ async def _dispatch_intent(
                                 wa_limits.MAX_PRODUCT_LIST_HEADER,
                             ),
                             body=wa_limits.truncate(
-                                params.get("intro_text")
-                                or "Toca un producto para ver más:",
+                                _with_card_guide(
+                                    params.get("intro_text") or "Toca un producto para ver más:",
+                                    first_page=int(params.get("page") or 1) == 1,
+                                ),
                                 wa_limits.MAX_PRODUCT_LIST_BODY,
                             ),
                             sections=product_sections,
@@ -1145,6 +1147,20 @@ async def _dispatch_intent(
 
     # Unknown kind — sin dispatch
     return None
+
+
+#: Cómo se usan los dos botones de la ficha de un producto del catálogo de
+#: WhatsApp (no se pueden cambiar: son de WhatsApp). «Enviar mensaje a la
+#: empresa» manda el producto exacto (`referred_product`, 2026-09-30).
+CATALOG_CARD_GUIDE = (
+    "Toca una vela para ver sus fotos y el precio. Para pedirla, «Añadir a la solicitud de pedido» "
+    "y envía la solicitud; si tienes una duda sobre ella, «Enviar mensaje a la empresa»."
+)
+
+
+def _with_card_guide(intro: str, *, first_page: bool) -> str:
+    """El texto del catálogo con la guía de los botones (solo la primera página)."""
+    return f"{intro}\n\n{CATALOG_CARD_GUIDE}" if first_page else intro
 
 
 def render_variant_picker_text(params: dict[str, Any]) -> str | None:

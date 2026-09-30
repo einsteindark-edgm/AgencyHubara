@@ -456,6 +456,18 @@ describe("useChatMessages — reply del cliente (cita de un mensaje)", () => {
     });
   });
 
+  it("reply desde la ficha del catálogo → autor catalog", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "user_message",
+        role: "user",
+        content: "Hola, ¿la tienen disponible?",
+        reply_to: { id: "wamid.inquiry", author: "catalog", text: "Luz Serena" },
+      },
+    ]);
+    expect(data?.find((m) => m.kind === "in")?.replyTo).toEqual({ author: "catalog", text: "Luz Serena", imageUrl: undefined });
+  });
+
   it("reply a una foto del cliente → imagen relativa absolutizada", async () => {
     const data = await runMessages([
       {
