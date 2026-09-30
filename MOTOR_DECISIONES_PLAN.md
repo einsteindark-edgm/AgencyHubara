@@ -165,3 +165,20 @@ Corrida `caso-fotos-0929-r4` (A1 y B, mismo banco) contra r3:
 - **La hora del complemento.** Dijo «tardes» a las 08:55: los turnos de sistema no llevan el bloque «Hora actual en Colombia», y el LLM solo ve la hora del contenedor, en UTC (13:55). Pasa con el complemento y, en el bot actual, con los traspasos y los fantasmas. Queda como tarea aparte.
 - **Jev colgado.** Con 10 s igual caían 24 de 322 llamadas: no eran lentas, se colgaban. **Reenvío:** gana la primera respuesta válida, dentro de la misma espera. Con reenvíos a los 2 s y 5 s, r4 bajó a 1 de 330. Con 1,5, 3, 5 y 7,5 s, 0 de 200 en el experimento intercalado; el esquema anterior perdió 1 de 200.
 - **Sigue en el turno 1:** EST-06 (menor) en las tres conversaciones y en los dos brazos. El LLM escribe el saludo junto a la búsqueda y ese texto se descarta; el cliente igual recibe el saludo por la garantía de saludo.
+
+### 6.3 Turno de la foto en 6543 (2026-09-29, noche)
+
+El turno 2 del 6543 en r4 (bot nuevo): el cliente mandó una captura de nuestro catálogo («Sacrificio de Amor», con nombre y precio a la vista) y preguntó «tienes esta?». El bot respondió «esa pieza como tal no la manejamos» sin buscar. Aun así el scorecard marcó PASA, porque las revisiones del juez seguían pendientes (en r2 ese turno fue ALERTA). Causas, en orden:
+1. **Visión:** describió la forma («vela gris… rostro de Jesús») e ignoró el título. Ver «Fotos de nuestro catálogo» abajo.
+2. **Nota «fuera de catálogo»:** la regla es literal («jesús» no está escrito en el catálogo) y la nota *ordenaba* decir «eso no lo manejamos». **Arreglo:** la nota dice «no aparece por nombre», pide buscar con `search_products` (por nombre y por lo que describe) antes de responder, y solo si no aparece nada parecido se niega. Mismo cambio en SOUL.md y en la spec de ventas.
+3. **Contrato de herramientas:** el plan pedía consultar el catálogo, pero la segunda puerta solo actuaba si el modelo cerraba con texto suelto, no con `send_reply` (12 de 43 turnos en r4). **Arreglo:** la puerta también actúa en `send_reply`. Retiene la respuesta, le avisa al modelo que no salió y da una ronda más. No actúa si el cliente ya tiene algo delante (tarjeta o formulario) ni si el turno cierra por etiqueta. Lo retenido no queda en el historial ni cuenta como texto enviado. Aparte: «medidas» acepta `search_products`, que ya trae las medidas.
+4. **Hilo del turno:** la puerta y las rondas extra se nombran en palabras, y las cajas de los pasos internos crecen con su texto.
+
+**Fotos de nuestro catálogo (investigación, sin implementar):**
+- El modelo de visión actual (`gemini-2.5-flash-lite`) sí lee texto. Pidiendo cada dato en su campo (JSON: nombre, precio, URL, SKU) leyó bien las 5 capturas con texto, 15 de 15, sin inventar.
+- Hace falta **comparar con el catálogo en código:** SKU → URL `/products/<handle>` → nombre exacto → nombre parecido con umbral alto. Probado con nombres falsos («Luz Eterna» no pasa como Luz Serena).
+- Sin texto: 5 candidatos por similitud de imagen (embeddings) y un verificador (`gemini-3.1-flash-lite`) que elige uno o «ninguno». Acertó 74 de 74 en dos corridas, con casos trampa, a ~US$0,0008 por foto y ~2,5 s. Hace falta un tiempo límite.
+- **WhatsApp:** `context.referred_product` trae el SKU exacto cuando el cliente escribe desde el catálogo; hoy se guarda y no se usa.
+- **Nunca negar un producto por una foto:** si la identificación es probable, se pregunta «¿es esta?» mostrando la ficha.
+- El laboratorio no vuelve a llamar a la visión: para medir el cambio hay que llevar las fotos al banco.
+- Artefactos: scratchpad de la sesión fbec0352, `photo_research/`.
