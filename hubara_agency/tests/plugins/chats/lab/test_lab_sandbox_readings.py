@@ -221,3 +221,34 @@ async def test_what_happened_between_the_burst_and_the_turn_goes_in_its_place(
         "hola", "me mandas el catálogo", "Hola, te escribe Ana del equipo", "y el envío a Bogotá",
         "Claro, te comparto el catálogo",
     ]
+
+
+async def test_a_photo_of_our_catalog_reenters_as_production_would_today(tmp_path: Path, current_bot) -> None:
+    """Identificación de fotos (2026-09-30): el sandbox vuelve a leer la foto
+    del banco con la visión de hoy. El mensaje que recibe el turno, el evento
+    del dashboard y el contexto de su señal salen como en producción: la foto
+    nombra el producto y el turno lleva la nota «FOTO DEL CLIENTE»."""
+    from src.plugins.chats.agent.sales_lab.sandbox.readings import _history, ingest_burst
+    from tests.plugins.chats.lab.test_lab_sandbox_photos import OLD, SCREENSHOT, _step, _Vision
+
+    step = _step(tmp_path / "banco", _Vision(SCREENSHOT))
+    text = f'{OLD} con el texto: "tienes esta?"'
+    message = {"text": text, "kind": "text", "caption": "tienes esta?", "image": "2348323652689569.jpg",
+               "ts_ms": T0 + 60_000, "wamid": "wamid.P"}
+    record = {"role": "user", "content": text, "timestamp": "2026-09-15T14:21:00+00:00", "wamid": "wamid.P",
+              "image_url": "/api/dashboard/media/wa_573009876543/2348323652689569.jpg"}
+
+    [ingested] = await ingest_burst(
+        _metadata_with_product(), [message], session_id=SID_R, vault_dir=tmp_path / "vault", at_ms=T0 + 61_000,
+        records=[record], photos=step,
+    )
+
+    assert message["text"] == (
+        "[el cliente envió una foto: vela gris en forma de cruz con rostro y corona dorada (es nuestro producto "
+        '«Sacrificio de Amor»: se lee su nombre en la imagen)] con el texto: "tienes esta?"'
+    )
+    assert any(n.startswith("[FOTO DEL CLIENTE") and "«Sacrificio de Amor»" in n for n in ingested.context)
+    # La foto ya identificada no alimenta la nota de fuera de catálogo («jesús»).
+    assert not any("no aparece por nombre en el catálogo" in n for n in ingested.context)
+    assert _history(tmp_path / "vault", SID_R)[-1]["content"] == message["text"]
+    assert ingested.photo is not None and ingested.photo["product"] == {"handle": "sacrificio-de-amor", "how": "nombre"}

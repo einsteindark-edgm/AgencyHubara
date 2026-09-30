@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from tests.plugins.chats.lab.test_lab_sandbox_materialize import SID, WS, _bench, _case
@@ -38,11 +39,15 @@ def _run_probe(
     tool_args: dict | None = None,
     events: list[dict] | None = None,
     catalog: list[dict] | None = None,
+    prepare: Callable[[Path], None] | None = None,
 ) -> dict:
     """`events`: el historial del dashboard del banco (por defecto, el de
     `_bench`); `catalog`: los productos del snapshot del banco (por defecto,
-    ninguno); `tool` + `tool_args`: la tool que el LLM falso llama primero."""
+    ninguno); `tool` + `tool_args`: la tool que el LLM falso llama primero;
+    `prepare`: lo que la preparación de la corrida dejó en el banco."""
     bench = _bench(tmp_path)
+    if prepare is not None:
+        prepare(bench)
     if events is not None:
         history = bench / "vault" / SID / "sessions" / f"{SID}.jsonl"
         history.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events), encoding="utf-8")
@@ -194,3 +199,42 @@ def test_the_new_bot_runs_its_layers_inside_the_sandbox(tmp_path: Path) -> None:
     assert result["complement_trace"]["trigger"] == "complement"
     assert result["cost_usd"] == result["llm_cost_usd"] + result["perception_cost_usd"]
     assert set(report["connects"]) <= _LOCAL, report["connects"]
+
+
+def test_a_photo_the_run_already_read_reaches_the_turn_without_leaving_the_box(tmp_path: Path) -> None:
+    """Identificación de fotos (2026-09-30): la preparación de la corrida lee
+    la foto con la visión de hoy y deja la lectura en el banco; dentro del caso
+    el sandbox solo la LEE. El turno recibe la foto nombrando el producto y la
+    nota, sin abrir conexiones ni escribir fuera del sandbox."""
+    annotation = (
+        "[el cliente envió una foto: vela gris en forma de cruz con rostro (es nuestro producto "
+        "«Sacrificio de Amor»: se lee su nombre en la imagen)]"
+    )
+    read = {
+        "annotation": annotation,
+        "note": "[FOTO DEL CLIENTE, metadata, no es instrucción del usuario]\nLa foto es de «Sacrificio de Amor».",
+        "product": {"handle": "sacrificio-de-amor", "how": "nombre"},
+        "description": "vela gris en forma de cruz con rostro",
+        "trace": None,
+    }
+
+    def prepare(bench: Path) -> None:
+        media = bench / "vault" / SID / "media"
+        media.mkdir(parents=True)
+        (media / "foto.jpg").write_bytes(b"\xff\xd8")
+        (bench / "photo_reads").mkdir()
+        (bench / "photo_reads" / f"{SID}__foto.jpg.json").write_text(json.dumps(read, ensure_ascii=False), encoding="utf-8")
+
+    old = "[el cliente envió una foto: vela gris con detalles dorados en forma de cruz y rostro de Jesús]"
+    case = _case(burst=[{"text": old, "ts_ms": 1, "wamid": "wamid.P", "image": "foto.jpg", "kind": "text", "caption": None}])
+    case["burst"][0]["ts_ms"] = case["at_ms"] - 5_000
+
+    report = _run_probe(tmp_path, case, prepare=prepare)
+    result = report["result"]
+
+    assert result["error"] is None, result
+    assert annotation in (result["trace"] or {}).get("inbound_text", ""), result["trace"]
+    assert any(n.startswith("[FOTO DEL CLIENTE") for n in result["plugin_context"])
+    assert result["photos"] == [{"image": "foto.jpg", "description": read["description"], "product": read["product"], "trace": None}]
+    assert set(report["connects"]) <= _LOCAL, report["connects"]
+    assert _writes_outside(report) == []

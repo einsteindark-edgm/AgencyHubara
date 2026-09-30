@@ -7,11 +7,13 @@ incompleto y la caja no lo usa.
 
 Solo lee el vault. Lo que viaja, por conversación con mensajes del cliente
 desde el corte: `metadata.json`, el historial del dashboard
-(`sessions/<sid>.jsonl`), las trazas (`evals/turn_traces.jsonl`) y el
-historial del LLM de cada agente (`agent_state/<workspace>/sessions/<sid>.jsonl`).
-Además los scorecards desde el corte y el snapshot del catálogo. NO viajan las
-fotos (`media/`), los locks, los respaldos de rescate ni el estado de Meta del
-catálogo.
+(`sessions/<sid>.jsonl`), las trazas (`evals/turn_traces.jsonl`), el
+historial del LLM de cada agente (`agent_state/<workspace>/sessions/<sid>.jsonl`)
+y las fotos de PRODUCTO que mandó el cliente (`media/`, las que el índice de
+media marca `foto_producto`: el laboratorio las vuelve a pasar por la visión,
+2026-09-30). Además los scorecards desde el corte y el snapshot del catálogo
+(con su índice de fotos, si existe). NO viajan los comprobantes ni las demás
+fotos, los locks, los respaldos de rescate ni el estado de Meta del catálogo.
 
 Exclusiones con motivo (las de nivel turno, como los mensajes de una persona
 del equipo, las aplica el armado de casos en la caja):
@@ -166,6 +168,26 @@ def _order_ids(metadata: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(ids))
 
 
+#: El único tipo de foto que viaja: un comprobante trae datos bancarios.
+_PRODUCT_PHOTO_KIND = "foto_producto"
+
+
+def _product_photos(session_dir: Path, metadata: Mapping[str, Any], prefix: str) -> list[BenchFile]:
+    """Las fotos de producto del cliente que el vault tiene en `media/`."""
+    media = session_dir / "media"
+    out: list[BenchFile] = []
+    for entry in metadata.get("media_index") or []:
+        if not isinstance(entry, dict) or entry.get("kind") != _PRODUCT_PHOTO_KIND:
+            continue
+        name = entry.get("filename")
+        if not isinstance(name, str) or not name or Path(name).name != name or name.startswith("."):
+            continue
+        path = media / name
+        if path.is_file():
+            out.append(BenchFile(f"{prefix}/vault/{session_dir.name}/media/{name}", path))
+    return out
+
+
 def _customer_turns(traces: Path, since_ms: int) -> int:
     count = 0
     try:
@@ -222,6 +244,7 @@ def plan_bench_export(
         for rel in _SESSION_FILES:
             if (sdir / rel).is_file():
                 files.append(BenchFile(f"{prefix}/vault/{sid}/{rel}", sdir / rel))
+        files.extend(_product_photos(sdir, metadata, prefix))
         if state_dir is not None and state_dir.is_dir():
             for workspace in sorted(p for p in state_dir.iterdir() if p.is_dir()):
                 llm = workspace / "sessions" / f"{sid}.jsonl"

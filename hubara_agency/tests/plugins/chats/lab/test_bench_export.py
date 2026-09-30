@@ -5,8 +5,9 @@ las conversaciones desde el 2026-09-10 con su historial, trazas, metadata,
 historial del LLM, scorecards y el catálogo del día. Solo LEE el vault. Las
 exclusiones van con motivo: sesiones golden (#338), sembradas de prueba,
 números internos y conversaciones con un pedido marcado "prueba" en Órdenes
-(la marca la da OrderFacts, nunca el vault). Las fotos y los archivos
-auxiliares no viajan.
+(la marca la da OrderFacts, nunca el vault). De las fotos solo viajan las de
+producto que mandó el cliente (para que el laboratorio vuelva a pasarlas por
+la visión); los comprobantes, las demás fotos y los archivos auxiliares no.
 
 El plan es puro (qué archivo va a qué clave); la subida es otra función que
 va archivo por archivo.
@@ -103,10 +104,36 @@ def test_bench_takes_sessions_active_since_the_cut_with_their_history_traces_and
     assert plan.sessions == ("wa_573001234567",)
 
 
-def test_bench_leaves_out_photos_locks_backups_and_meta_state(tmp_path: Path) -> None:
+def test_bench_leaves_out_unindexed_photos_locks_backups_and_meta_state(tmp_path: Path) -> None:
     keys = {f.key for f in _plan(_vault(tmp_path)).files}
 
     assert not any(k.endswith((".jpg", ".lock")) or ".bak-rescue-" in k or ".meta_state" in k for k in keys)
+
+
+def test_only_the_product_photos_the_customer_sent_travel(tmp_path: Path) -> None:
+    """Identificación de fotos (2026-09-30): el laboratorio vuelve a pasar la
+    foto por la visión nueva, así que la foto de producto viaja al banco. Un
+    comprobante (datos bancarios) o cualquier otra foto, no."""
+    vault = _vault(tmp_path)
+    session = vault / "wa_573001234567"
+    metadata = json.loads((session / "metadata.json").read_text(encoding="utf-8"))
+    metadata["media_index"] = [
+        {"media_id": "1", "filename": "producto.jpg", "kind": "foto_producto"},
+        {"media_id": "2", "filename": "comprobante.jpg", "kind": "comprobante_pago"},
+        {"media_id": "3", "filename": "otra.jpg", "kind": "otro"},
+        {"media_id": "4", "filename": "../fuera.jpg", "kind": "foto_producto"},
+        {"media_id": "5", "filename": "borrada.jpg", "kind": "foto_producto"},
+    ]
+    (session / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    for name in ("producto.jpg", "comprobante.jpg", "otra.jpg"):
+        (session / "media" / name).write_bytes(b"\xff\xd8")
+    (vault / "fuera.jpg").write_bytes(b"\xff\xd8")
+
+    keys = {f.key for f in _plan(vault).files}
+
+    assert {k for k in keys if "/media/" in k or k.endswith(".jpg")} == {
+        "bench/bench-run-20260923-a1b2/vault/wa_573001234567/media/producto.jpg"
+    }
 
 
 def test_exclusions_carry_their_reason(tmp_path: Path) -> None:

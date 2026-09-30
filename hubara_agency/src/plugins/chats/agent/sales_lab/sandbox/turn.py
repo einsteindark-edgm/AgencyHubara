@@ -44,6 +44,7 @@ from src.plugins.chats.agent.sales_lab.sandbox.activities import SandboxCapture,
 from src.plugins.chats.agent.sales_lab.sandbox.clock import frozen_clock
 from src.plugins.chats.agent.sales_lab.sandbox.decisions import CaseDecisions, case_disagreements, case_redact_terms
 from src.plugins.chats.agent.sales_lab.sandbox.materialize import materialize_case, scrub_text
+from src.plugins.chats.agent.sales_lab.sandbox.photos import LabPhotoStep
 from src.plugins.chats.agent.sales_lab.sandbox.readings import ingest_burst
 
 PROD_SALES_WORKSPACE = "app-hubara-agency-src-plugins-chats-agent-sales-workspace"
@@ -199,11 +200,22 @@ async def run_case(
         # el motor), lo que en producción pasa antes del turno. En un turno de
         # handoff el resumen de remarketing NO es un mensaje del cliente: solo
         # pasan por el ingest los mensajes que el cliente mandó antes.
+        # Las fotos del cliente, como las leyó la visión de hoy al preparar la
+        # corrida (`sandbox/photos.py`): dentro del caso solo se lee esa lectura
+        # (sin red, sin escribir fuera del sandbox).
+        photos = LabPhotoStep(
+            media_dir=bench_dir / "vault" / str(case["session_id"]) / "media",
+            vision=None,
+            identifier=None,
+            cache_dir=bench_dir / "photo_reads",
+        )
         ingested = await ingest_burst(
             metadata, messages, session_id=box.session_id, vault_dir=box.vault_dir, at_ms=at_ms, records=records,
             catalog=get_catalog_client(), on_message=decisions.ingest_message, between=box.between_records,
+            photos=photos,
         )
         result["readings"] = [m.readings for m in ingested]
+        result["photos"] = [m.photo for m in ingested if m.photo is not None]
         contexts = [m.context for m in ingested]
         decisions.turn()
 

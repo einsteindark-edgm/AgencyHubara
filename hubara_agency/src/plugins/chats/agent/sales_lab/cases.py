@@ -212,9 +212,23 @@ def ingest_fields(text: str, kind: str | None = None) -> dict[str, Any]:
     return {"kind": kind or "text"}
 
 
+#: El archivo de la foto en el banco: el evento del dashboard la sirve desde
+#: `/api/dashboard/media/<sid>/<archivo>` (`vault/<sid>/media/<archivo>`).
+_MEDIA_URL_RE = re.compile(r"/media/[^/]+/([^/?#]+)$")
+
+
+def _image_file(event: dict[str, Any] | None) -> str | None:
+    url = (event or {}).get("image_url")
+    match = _MEDIA_URL_RE.search(url) if isinstance(url, str) else None
+    return match.group(1) if match else None
+
+
 def _burst_message(event: dict[str, Any]) -> dict[str, Any]:
     content = str(event.get("content") or "")
-    return {"text": content, "ts_ms": _ms(event.get("timestamp")), "wamid": event.get("wamid"), **ingest_fields(content)}
+    out = {"text": content, "ts_ms": _ms(event.get("timestamp")), "wamid": event.get("wamid"), **ingest_fields(content)}
+    if image := _image_file(event):
+        out["image"] = image
+    return out
 
 
 def _burst(events: list[dict[str, Any]], started_ms: int) -> tuple[list[int], int]:
@@ -303,6 +317,18 @@ def _inbound_message(m: dict[str, Any], events: list[dict[str, Any]]) -> dict[st
         out["raw_text"] = raw
     kind = m.get("kind")
     out.update(ingest_fields(raw or text, kind if isinstance(kind, str) and kind else None))
+    # La foto: el archivo que guardó el ingest (el evento del dashboard del mismo mensaje).
+    wamid = m.get("wamid")
+    event = next(
+        (
+            e for e in events
+            if wamid and e.get("role") == "user" and e.get("wamid")
+            and real_wamid(str(e["wamid"])) == real_wamid(str(wamid))
+        ),
+        None,
+    )
+    if image := _image_file(event):
+        out["image"] = image
     return out
 
 

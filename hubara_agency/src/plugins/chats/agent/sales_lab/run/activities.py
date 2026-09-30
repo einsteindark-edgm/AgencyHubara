@@ -109,6 +109,34 @@ def _download_bench(store: LabStorePort, bench_id: str, dest: Path) -> None:
         shutil.rmtree(partial, ignore_errors=True)
 
 
+async def _read_bench_photos(bench_dir: Path) -> None:
+    """Las fotos de producto del banco, leídas con la visión de hoy (visión,
+    índice de fotos del catálogo del banco y verificador) antes de simular:
+    dentro del caso el sandbox no abre conexiones, solo lee esta lectura
+    (`sandbox/photos.py`). Nunca frena la corrida: una foto sin lectura usa el
+    texto de producción."""
+    from src.plugins.chats.agent.sales.use_cases.photo_product import PhotoIdentifier
+    from src.plugins.chats.agent.sales_lab.sandbox.photos import read_bench_photos
+    from src.sdk.catalogkit import CatalogPhotoIndex
+    from src.sdk.connectorkit import get_image_embedding_port, get_image_vision_port, get_photo_match_port
+
+    if not any((bench_dir / "vault").glob("*/media/*")):
+        return
+    embedder = get_image_embedding_port()
+    identifier = PhotoIdentifier(
+        catalog=bench_catalog_client(bench_dir / "catalog"),
+        index=CatalogPhotoIndex(bench_dir / "catalog" / "photo_index", model=embedder.model, dimensions=embedder.dimensions),
+        embedder=embedder,
+        matcher=get_photo_match_port(),
+    )
+    try:
+        read = await read_bench_photos(bench_dir, vision=get_image_vision_port(), identifier=identifier)
+    except Exception as exc:  # noqa: BLE001 — sin lecturas, los casos usan el texto de producción
+        activity.logger.warning("lab_run_prepare: fotos del banco sin leer (%s)", type(exc).__name__)
+        return
+    activity.logger.info("lab_run_prepare: %d fotos del banco leídas con la visión de hoy", read)
+
+
 @activity.defn(name="lab_run_prepare")
 async def prepare_run_activity(run_id: str) -> RunPlan:
     store = _store()
@@ -118,6 +146,7 @@ async def prepare_run_activity(run_id: str) -> RunPlan:
     order = json.loads(raw)
     bench_id = str(order["bench_id"])
     await asyncio.to_thread(_download_bench, store, bench_id, _lab_root() / "bench" / bench_id)
+    await _read_bench_photos(_lab_root() / "bench" / bench_id)
     return RunPlan(
         run_id=run_id,
         bench_id=bench_id,

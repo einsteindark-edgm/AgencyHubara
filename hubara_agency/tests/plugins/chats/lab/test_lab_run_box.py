@@ -174,3 +174,30 @@ def test_a_bench_download_cut_in_the_middle_is_not_taken_as_complete(box, tmp_pa
     assert sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()) == sorted(
         k[len("bench/bench-x/"):] for k in keys
     )
+
+
+@pytest.mark.asyncio
+async def test_the_run_reads_the_bench_photos_before_simulating(box, monkeypatch) -> None:
+    """Identificación de fotos (2026-09-30): al preparar la corrida, cada foto
+    de producto del banco pasa por la visión de hoy y su lectura queda en el
+    banco (`photo_reads/`) para que los casos la usen sin red."""
+    import io
+
+    from PIL import Image
+
+    from src.sdk.connectorkit import get_image_embedding_port, get_image_vision_port, get_photo_match_port
+
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    for factory in (get_image_vision_port, get_image_embedding_port, get_photo_match_port):
+        factory.cache_clear()
+    out = io.BytesIO()
+    Image.new("RGB", (30, 20), (90, 90, 90)).save(out, "JPEG")
+    box["store"].put_bytes(f"bench/bench-x/vault/{SID}/media/foto.jpg", out.getvalue())
+    try:
+        result = await _run(box)
+    finally:
+        for factory in (get_image_vision_port, get_image_embedding_port, get_photo_match_port):
+            factory.cache_clear()
+
+    assert result["phase"] == "done"
+    assert (box["root"] / "bench" / "bench-x" / "photo_reads" / f"{SID}__foto.jpg.json").is_file()

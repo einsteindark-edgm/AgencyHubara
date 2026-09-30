@@ -51,6 +51,8 @@ class IngestedMessage:
     readings: list[dict[str, Any]]
     # El `plugin_context` de su señal: la hora de Bogotá y las notas del ingest.
     context: list[str]
+    # La foto leída de nuevo con la visión de hoy (`sandbox/photos.py`).
+    photo: dict[str, Any] | None = None
 
 
 def _history_path(vault_dir: Path, session_id: str) -> Path:
@@ -145,12 +147,14 @@ def turn_context(
     coupon_in_play: bool = True,
     photo_note: str | None = None,
     gap_note: str | None = None,
+    product_note: str | None = None,
 ) -> list[str]:
     """El `plugin_context` de la señal de un mensaje, como lo arma el ingest
     desde el metadata de ese momento: la hora de Bogotá y las notas, en el
     orden de producción. `coupon_in_play`: si el mensaje habla del cupón
     aplicado; `photo_note`: la foto del bot que citó; `gap_note`: la nota de
-    lo que no existe en el catálogo."""
+    lo que no existe en el catálogo; `product_note`: la foto del cliente es un
+    producto nuestro (`photo_product.build_photo_product_note`)."""
     from src.plugins.chats.agent.sales.context import build_bogota_context_string
     from src.plugins.chats.agent.sales.use_cases.coupons import build_coupon_note
     from src.plugins.chats.agent.sales.use_cases.order_draft import build_order_draft_note, get_projectable_draft
@@ -166,6 +170,7 @@ def turn_context(
         build_web_product_note(metadata),
         build_order_draft_note(draft) if draft else None,
         build_coupon_note(metadata, in_play=coupon_in_play),
+        product_note,
         photo_note,
         gap_note,
     ]
@@ -184,6 +189,7 @@ async def ingest_burst(
     catalog: Any = None,
     on_message: Callable[[int], None] | None = None,
     between: Sequence[dict[str, Any]] = (),
+    photos: Any = None,
 ) -> list[IngestedMessage]:
     """Pasa cada mensaje por el ingest (ver el módulo): escribe el metadata
     (mutación y archivo) y el historial del sandbox. `records`: el evento del
@@ -196,7 +202,10 @@ async def ingest_burst(
     respuesta del turno anterior en una ráfaga partida, un mensaje del
     equipo); cada uno entra en su lugar por la hora, así cada mensaje se lee
     con lo que había cuando llegó y el turno arranca con el historial de
-    producción."""
+    producción. `photos` (`sandbox/photos.LabPhotoStep`): la foto del banco
+    se vuelve a leer con la visión de hoy; su segmento cambia en el mensaje
+    (lo que recibe el turno) y en su evento del dashboard, y la señal lleva la
+    nota si la foto es un producto nuestro."""
     from src.plugins.chats.agent.sales.decisions.readings import (
         EngineReadings,
         Inbound,
@@ -218,6 +227,12 @@ async def ingest_burst(
     for k, message in enumerate(messages, 1):
         if on_message is not None:
             on_message(k)
+        # La foto, leída con la visión de hoy (como la reentrada del ingest).
+        reread = await photos.reread(message) if photos is not None else None
+        if reread is not None and isinstance(message, dict):
+            for key in ("text", "raw_text"):
+                if isinstance(message.get(key), str):
+                    message[key] = reread.apply(message[key])
         ts = message.get("ts_ms")
         now_ms = int(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else int(at_ms)
         while pending and (_event_ms(pending[0]) or 0) < now_ms:
@@ -243,6 +258,8 @@ async def ingest_burst(
             opt_out_campaign_id=opt_out_campaign_id(metadata, now_ms),
         )
         record = records[k - 1] if records is not None and k <= len(records) else burst_record(message, at_ms=at_ms)
+        if reread is not None:
+            record = {**record, "content": reread.apply(str(record.get("content") or ""))}
         append_history_event(vault_dir, session_id, record)
         # Como el ingest: la señal vale para el ÚLTIMO mensaje del cliente.
         metadata["last_inbound_message_id"] = wamid
@@ -266,7 +283,14 @@ async def ingest_burst(
             IngestedMessage(
                 readings=list(readings.verdicts),
                 context=turn_context(
-                    metadata, at_ms=at_ms, coupon_in_play=bool(coupon.value), photo_note=photo, gap_note=gap
+                    metadata, at_ms=at_ms, coupon_in_play=bool(coupon.value), photo_note=photo, gap_note=gap,
+                    product_note=reread.note if reread is not None else None,
+                ),
+                photo=(
+                    {"image": message.get("image"), "description": reread.description, "product": reread.product,
+                     "trace": reread.trace}
+                    if reread is not None
+                    else None
                 ),
             )
         )

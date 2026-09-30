@@ -244,6 +244,38 @@ def test_the_burst_carries_what_the_webhook_brought_besides_the_text(tmp_path: P
     assert [m["text"] for m in case.burst] == [PHOTO, BUTTON, CART]  # el LLM sigue viendo el texto efectivo
 
 
+def _with_photo_file(bench: Path, content: str, filename: str, wamid: str) -> None:
+    """El evento del dashboard de la foto con su archivo (como lo escribe el
+    ingest de producción) y su wamid."""
+    s = bench / "vault" / SID
+    path = s / "sessions" / f"{SID}.jsonl"
+    events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    for e in events:
+        if e.get("content") == content:
+            e["image_url"] = f"/api/dashboard/media/{SID}/{filename}"
+            e["wamid"] = wamid
+    path.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+
+
+def test_a_photo_in_the_burst_names_its_file_so_the_lab_can_read_it_again(tmp_path: Path) -> None:
+    """Identificación de fotos (2026-09-30): el laboratorio vuelve a pasar la
+    foto por la visión nueva, así que el mensaje de la ráfaga dice qué archivo
+    del banco es (`image`, del `image_url` del evento del dashboard), con la
+    traza v1 y con la v2 (por el wamid)."""
+    v1 = _with_burst(tmp_path / "v1", [PHOTO, "y en azul?"])
+    _with_photo_file(v1, PHOTO, "2348323652689569.jpg", "wamid.P")
+    inbound = [
+        {"seq": 1, "wamid": "wamid.P", "ts_ms": T0 + 60_000, "kind": "text", "text": PHOTO},
+        {"seq": 2, "wamid": "wamid.T", "ts_ms": T0 + 61_000, "kind": "text", "text": "y en azul?"},
+    ]
+    v2 = _with_burst(tmp_path / "v2", [PHOTO, "y en azul?"], inbound=inbound)
+    _with_photo_file(v2, PHOTO, "2348323652689569.jpg", "wamid.P")
+
+    for bench in (v1, v2):
+        case = _case(build_cases(bench, sales_workspace=WS).cases, 2)
+        assert [m.get("image") for m in case.burst] == ["2348323652689569.jpg", None]
+
+
 def test_old_traces_infer_the_kind_from_the_text_the_ingest_wrote(tmp_path: Path) -> None:
     """Traza v1 (ráfaga desde el dashboard): el tipo sale del texto efectivo."""
     b = _with_burst(tmp_path, [PHOTO, BUTTON, CART])
