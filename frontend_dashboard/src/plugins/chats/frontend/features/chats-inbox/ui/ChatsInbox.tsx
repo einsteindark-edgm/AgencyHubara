@@ -21,6 +21,7 @@ import {
 } from "@plugins/chats/frontend/entities/chat";
 import { Avatar, DateRangeFilter, Icon } from "@/shared/ui";
 import { useInboxFilters } from "../model/useInboxFilters";
+import { useUnseenChats } from "../model/unseen";
 import { SoundSettings } from "./SoundSettings";
 
 interface Props {
@@ -28,8 +29,11 @@ interface Props {
   onSelect: (id: string) => void;
 }
 
+const NO_CHATS: ChatInboxItem[] = [];
+
 export function ChatsInbox({ selectedId, onSelect }: Props) {
-  const { data: chats = [] } = useChatInbox();
+  const { data = NO_CHATS } = useChatInbox();
+  const chats = useUnseenChats(data, selectedId);
   const f = useInboxFilters(chats);
   const isHuman = f.activeFilter === "Humano";
   // El banner cuenta sobre el rango de fechas y la búsqueda vigentes, igual
@@ -227,8 +231,8 @@ function Row({ chat, selected, onSelect }: RowProps) {
   // Pospuesto con la fecha ya pasada: la fila entera en rojo + aviso — el
   // humano tiene que retomar esta conversación (pedido del operador).
   const overdue = Boolean(chat.postponed?.overdue);
-  // El cliente escribió y nadie le ha contestado: hora y nombre resaltados,
-  // como un chat con mensajes nuevos en WhatsApp.
+  // Mensajes del cliente que el operador no ha visto (no abrió el chat desde
+  // que llegaron): hora y nombre resaltados, como en WhatsApp.
   const waiting = chat.unread > 0;
   return (
     <div
@@ -259,8 +263,8 @@ function Row({ chat, selected, onSelect }: RowProps) {
           {waiting && (
             <span
               className="badge-unread"
-              aria-label={`${chat.unread} mensaje${chat.unread !== 1 ? "s" : ""} sin responder`}
-              title={`${chat.unread} mensaje${chat.unread !== 1 ? "s" : ""} sin responder`}
+              aria-label={`${chat.unread} mensaje${chat.unread !== 1 ? "s" : ""} sin leer`}
+              title={`${chat.unread} mensaje${chat.unread !== 1 ? "s" : ""} sin leer`}
             >
               {chat.unread}
             </span>

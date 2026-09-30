@@ -87,6 +87,10 @@ export interface ChatInboxItem {
   tagClass: string;
   color: AvatarColor;
   presence: Presence;
+  /** Total de mensajes del cliente en el historial (del backend). */
+  inboundCount: number;
+  /** Mensajes del cliente que el operador no ha visto (no abrió el chat desde
+   *  que llegaron). Lo llena `chats-inbox`; la entity lo deja en 0. */
   unread: number;
   pinned?: boolean;
   human?: boolean;

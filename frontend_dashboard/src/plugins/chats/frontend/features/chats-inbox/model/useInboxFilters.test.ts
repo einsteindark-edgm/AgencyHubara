@@ -27,6 +27,7 @@ function chat(overrides: Partial<ChatInboxItem> & { id: string }): ChatInboxItem
     tagClass: "t-int",
     color: "blue",
     presence: "online",
+    inboundCount: 0,
     unread: 0,
     ...overrides,
   };
@@ -291,24 +292,24 @@ describe("pastilla 'Pospuestos' en rojo si hay vencidos", () => {
   });
 });
 
-describe("filtro 'Sin responder' (como el contador verde de WhatsApp)", () => {
-  const waiting = [
+describe("filtro 'No leídos' (como WhatsApp)", () => {
+  const chats = [
     chat({ id: "x", unread: 2, timestamp: 100, dayIso: "2026-08-01" }),
     chat({ id: "y", unread: 0, timestamp: 200 }),
     chat({ id: "z", unread: 1, timestamp: 300 }),
   ];
 
-  it("cuenta y muestra solo los chats con mensajes del cliente sin responder", () => {
-    const { result } = run(waiting);
-    expect(result.current.filters.find((f) => f.key === "Sin responder")?.count).toBe(2);
-    act(() => result.current.setActiveFilter("Sin responder"));
+  it("cuenta y muestra solo los chats con mensajes que el operador no ha visto", () => {
+    const { result } = run(chats);
+    expect(result.current.filters.find((f) => f.key === "No leídos")?.count).toBe(2);
+    act(() => result.current.setActiveFilter("No leídos"));
     expect(result.current.filtered.map((c) => c.id).sort()).toEqual(["x", "z"]);
   });
 
-  it("es una cola: una sola sección, la espera más vieja primero", () => {
-    const { result } = run(waiting);
-    act(() => result.current.setActiveFilter("Sin responder"));
-    expect(result.current.sections.map((s) => s.key)).toEqual(["waiting"]);
-    expect(idsOf(result.current.sections, "waiting")).toEqual(["x", "z"]);
+  it("una sola sección, el más reciente primero", () => {
+    const { result } = run(chats);
+    act(() => result.current.setActiveFilter("No leídos"));
+    expect(result.current.sections.map((s) => s.key)).toEqual(["unread"]);
+    expect(idsOf(result.current.sections, "unread")).toEqual(["z", "x"]);
   });
 });

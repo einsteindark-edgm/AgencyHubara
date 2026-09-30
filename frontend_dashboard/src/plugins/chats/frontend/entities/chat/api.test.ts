@@ -79,15 +79,15 @@ describe("lastInboundMs (sonido de mensaje nuevo)", () => {
   });
 });
 
-describe("unread (mensajes del cliente en espera de respuesta)", () => {
-  it("el badge cuenta los mensajes sin responder que manda el backend", async () => {
-    const data = await runInbox([makeSession({ unanswered_count: 3 })]);
-    expect(data?.[0]?.unread).toBe(3);
+describe("inboundCount (base del contador de no leídos)", () => {
+  it("expone el total de mensajes del cliente que manda el backend", async () => {
+    const data = await runInbox([makeSession({ inbound_count: 7 })]);
+    expect(data?.[0]?.inboundCount).toBe(7);
   });
 
-  it("backend viejo sin el campo → 0 (sin badge)", async () => {
+  it("backend viejo sin el campo → 0", async () => {
     const data = await runInbox([makeSession()]);
-    expect(data?.[0]?.unread).toBe(0);
+    expect(data?.[0]?.inboundCount).toBe(0);
   });
 });
 

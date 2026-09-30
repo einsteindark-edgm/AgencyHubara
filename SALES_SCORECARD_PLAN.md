@@ -717,7 +717,9 @@ de `agents_admin` en `/api/agents/evals/*` (mismo shape, passthrough).
 1. `ALERTA` no bloquea ni abre issue; solo `FALLA` alerta.
 2. Los gemelos `*b` quedan en nivel `mayor` (sin degradación automática tras el drain).
 3. Juez: el mismo alias `EVAL_JUDGE_MODEL` vía litellm.
-4. Juez sobre el 100 % de los episodios al cierre (`SCORECARD_JUDGE_ENABLED=false` lo apaga).
+4. Juez sobre el 100 % de los episodios al cierre. **Apagado desde 2026-09-28 por costo**
+   (~USD 1 por episodio con Gemini 3.1 Pro): lo reactiva `EVAL_LLM_JUDGE_ENABLED=true`, que
+   reemplazó a `SCORECARD_JUDGE_ENABLED` y cubre también la eval legada y los goldens.
 5. **Desvío:** la traza va en un archivo propio, no en el JSONL del dashboard: el corte por
    episodio cuenta líneas de ese JSONL y el dashboard pinta cada evento como burbuja.
 6. El promedio legado convive (gris en el panel, pestaña "Métricas legadas"); retirarlo es decisión del operador.

@@ -78,9 +78,9 @@ export const chatSessionSchema = z.object({
   // `last_updated_timestamp`, que se mueve también con turnos del bot. Es lo
   // que dispara el sonido de "mensaje nuevo" de la bandeja.
   last_inbound_ms: z.number().nullable().default(null),
-  // Mensajes del cliente después de la última respuesta (bot u operador) —
-  // el contador verde tipo WhatsApp y el filtro "Sin responder". 0 = al día.
-  unanswered_count: z.number().default(0),
+  // Total de mensajes del cliente en el historial. La bandeja recuerda cuántos
+  // había al abrir el chat y pinta la diferencia (no leídos, como WhatsApp).
+  inbound_count: z.number().default(0),
   // `.default(null)` tolera snapshots viejos del SSE durante el rollout.
   origin: sessionOriginSchema.nullable().default(null),
   // Filtro "Pospuestos" (ver `sessionPostponedSchema`). `.default(null)`
