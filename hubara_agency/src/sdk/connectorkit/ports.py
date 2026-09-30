@@ -179,7 +179,27 @@ from src.platform.promotions.rules import (
     resolve_coupon as resolve_coupon,
 )
 from src.platform.vision.composition import (
+    get_image_embedding_port as get_image_embedding_port,
     get_image_vision_port as get_image_vision_port,
+    get_photo_match_port as get_photo_match_port,
+)
+from src.platform.vision.dtos import (
+    VISION_KIND_OTHER as VISION_KIND_OTHER,
+    VISION_KIND_PAYMENT_RECEIPT as VISION_KIND_PAYMENT_RECEIPT,
+    VISION_KIND_PRODUCT_PHOTO as VISION_KIND_PRODUCT_PHOTO,
+    VisibleText as VisibleText,
+    VisionResult as VisionResult,
+)
+from src.platform.vision.embeddings import (
+    FakeImageEmbeddingAdapter as FakeImageEmbeddingAdapter,
+    ImageEmbeddingPort as ImageEmbeddingPort,
+    NullImageEmbeddingAdapter as NullImageEmbeddingAdapter,
+)
+from src.platform.vision.photo_match import (
+    FakePhotoMatchAdapter as FakePhotoMatchAdapter,
+    NullPhotoMatchAdapter as NullPhotoMatchAdapter,
+    PhotoMatchPort as PhotoMatchPort,
+    PhotoPick as PhotoPick,
 )
 from src.platform.vision.port import (
     ImageVisionPort as ImageVisionPort,

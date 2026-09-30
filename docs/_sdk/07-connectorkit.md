@@ -299,6 +299,23 @@ su plugin como datos, no en platform: el perfil del motor nombra el
 cuestionario, la política y el perfil del oráculo, para que la traza y el
 laboratorio digan con qué se midió.
 
+## Fotos del cliente contra el catálogo: visión, embeddings y verificador
+
+Caso del 2026-09-28: el cliente mandó capturas de NUESTRO catálogo y el bot
+negó productos que sí tenemos. La visión ahora devuelve el texto que se lee en
+la foto, y dos ports nuevos buscan la foto en el catálogo cuando el texto no
+alcanza. La decisión (qué producto es) vive en el plugin de ventas
+(`chats/agent/sales/use_cases/photo_product.py`); acá, solo el transporte.
+
+| Símbolo | Qué es |
+|---|---|
+| `ImageVisionPort.describe_image(bytes, mime)` | lo mismo que `describe` con la imagen ya en memoria (el laboratorio describe las fotos de su banco). `VisionResult.visible_text` (`VisibleText`: nombre, precio, URL, código y otras líneas, copiados tal cual) y `is_screenshot` salen del prompt JSON |
+| `ImageEmbeddingPort.embed(bytes, mime)` | una foto → vector de 768 (`gemini-embedding-2`, alias `gemini-embedding` del proxy; convierte a JPEG porque el modelo solo acepta PNG/JPEG). Nunca lanza: una falla es None. `model` y `dimensions` dicen con qué se midió |
+| `PhotoMatchPort.pick_same_design(foto, mime, candidatos)` | la foto del cliente + una hoja con una fila numerada por candidato (hasta dos fotos cada uno) → `PhotoPick(number=1..N o None)`. Alias `gemini-photo-match` (`gemini-3.5-flash-lite`: 74/74 en la investigación, ~2 s). Nunca lanza; un número fuera de la lista es `ok=False` |
+| `get_image_embedding_port()` / `get_photo_match_port()` | factories; siguen el MISMO interruptor que la visión (`IMAGE_VISION_PROVIDER=fake` → dobles sin red, `off` → nulos) |
+| `FakeImageEmbeddingAdapter` / `NullImageEmbeddingAdapter`, `FakePhotoMatchAdapter` / `NullPhotoMatchAdapter` | dobles oficiales; contract suites en `tests/platform/test_image_embedding_contract.py` y `tests/platform/test_photo_match_contract.py` |
+| `CatalogPhotoIndex` / `get_catalog_photo_index()` (en `catalogkit`) | el índice de fotos del catálogo junto al snapshot (`<snapshot>/photo_index/`: vector + miniatura de cada foto). `refresh` mide solo lo que falta y rehace todo si el modelo de embeddings cambió (vuelve a medir una imagen de control); `nearest` solo devuelve productos y fotos del catálogo de HOY |
+
 ## Reglas al agregar un port (regla de oro del kit)
 
 Port nuevo ⇒ en el MISMO PR: el `Protocol` + su factory + su **fake** + su

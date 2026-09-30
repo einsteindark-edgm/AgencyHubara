@@ -10,6 +10,7 @@ from functools import lru_cache
 
 from src.platform.catalog.local_snapshot import LocalSnapshotCatalogClient
 from src.platform.catalog.paths import get_max_age_minutes, get_snapshot_dir
+from src.platform.catalog.photo_index import CatalogPhotoIndex
 from src.platform.catalog.port import CatalogPort
 
 
@@ -19,6 +20,17 @@ def get_catalog_client() -> CatalogPort:
         snapshot_dir=get_snapshot_dir(),
         max_age_minutes=get_max_age_minutes(),
     )
+
+
+@lru_cache(maxsize=1)
+def get_catalog_photo_index() -> CatalogPhotoIndex:
+    """El índice de fotos del catálogo, junto al snapshot
+    (``<snapshot>/photo_index``), medido con el embedder de la composición
+    de visión (su modelo y dimensiones: otro modelo, otro índice)."""
+    from src.platform.vision.composition import get_image_embedding_port
+
+    embedder = get_image_embedding_port()
+    return CatalogPhotoIndex(get_snapshot_dir() / "photo_index", model=embedder.model, dimensions=embedder.dimensions)
 
 
 @lru_cache(maxsize=1)

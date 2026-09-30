@@ -23,6 +23,10 @@ Mapeos a listas cerradas (motor de decisiones F3): el resolver de categorías
 `family_of_color`) son la regla de hoy, el respaldo, de las capacidades
 `categoria` y `familia_de_color` del plugin `chats`.
 
+Fotos del catálogo (2026-09-30): el índice de fotos (`CatalogPhotoIndex`,
+`get_catalog_photo_index`) guarda el vector de cada foto para encontrar los
+productos más parecidos a la foto de un cliente (visión de ventas).
+
 Regla 1 del SDK: `from x import y as y` — sin el `as y`, ruff --fix poda el
 re-export.
 """
@@ -40,8 +44,11 @@ from src.platform.catalog.color_families import (
 )
 from src.platform.catalog.composition import (
     get_catalog_client as get_catalog_client,
+    get_catalog_photo_index as get_catalog_photo_index,
 )
 from src.platform.catalog.dtos import (
+    CatalogImageDTO as CatalogImageDTO,
+    CatalogPriceDTO as CatalogPriceDTO,
     CatalogProductDTO as CatalogProductDTO,
     CatalogVariantDTO as CatalogVariantDTO,
     SearchResult as SearchResult,
@@ -50,6 +57,13 @@ from src.platform.catalog.errors import (
     CatalogError as CatalogError,
     CatalogUnavailableError as CatalogUnavailableError,
     ProductNotFoundError as ProductNotFoundError,
+)
+from src.platform.catalog.photo_index import (
+    CatalogPhoto as CatalogPhoto,
+    CatalogPhotoIndex as CatalogPhotoIndex,
+    PhotoCandidate as PhotoCandidate,
+    catalog_photos as catalog_photos,
+    fetch_catalog_photo as fetch_catalog_photo,
 )
 from src.platform.catalog.port import CatalogPort as CatalogPort
 from src.platform.catalog.portavelas import (

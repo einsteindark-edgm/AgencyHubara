@@ -111,6 +111,11 @@ REVIEWED_UPSTREAM_IDS: dict[str, UpstreamReview] = {
     "gemini/gemini-2.5-flash-lite": UpstreamReview(
         reviewed_on=dt.date(2026, 9, 18), source=_LIFECYCLE_GOOGLE
     ),
+    # Embeddings de imagen de la identificación de fotos: GA 2026-04-22, sin
+    # fecha de apagado en la tabla (mirada 2026-09-30).
+    "gemini/gemini-embedding-2": UpstreamReview(
+        reviewed_on=dt.date(2026, 9, 30), source=_LIFECYCLE_GOOGLE
+    ),
     "gemini/gemini-3.1-pro-preview": UpstreamReview(
         reviewed_on=dt.date(2026, 9, 18),
         source=_LIFECYCLE_GOOGLE,
