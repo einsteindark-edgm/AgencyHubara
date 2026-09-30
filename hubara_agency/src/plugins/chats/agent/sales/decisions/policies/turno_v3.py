@@ -48,7 +48,11 @@ _CONTRACT: dict[str, tuple[tuple[str, ...], str]] = {
                  "Para mostrarle el catálogo usa present_products (o list_categories)."),
     "precio": (("search_products", "get_product_by_handle", "present_product_detail", "present_products"),
                "El precio sale del catálogo: consúltalo con search_products o get_product_by_handle antes de darlo."),
-    "envio": (("send_shipping_rates",), "Para el costo del envío usa send_shipping_rates."),
+    # La tarjeta de tarifas trae solo costos y termina el turno: lo demás que
+    # preguntó va con `send_reply` en el mismo paso (6543 t6, r5, 2026-09-29).
+    "envio": (("send_shipping_rates",),
+              "Para el costo del envío usa send_shipping_rates. La tarjeta termina el turno: si además "
+              "preguntó otra cosa (por ejemplo, cuánto tarda), respóndela con send_reply en el mismo paso."),
     # `search_products` ya trae las medidas de cada producto (2026-09-29).
     "medidas": (("present_product_detail", "get_product_by_handle", "search_products"),
                 "Las medidas salen del catálogo: consúltalas con search_products o get_product_by_handle."),
@@ -83,6 +87,15 @@ def _required(topics: Sequence[str], result: Any, stage: str | None, given: list
                 tools, nudge = (("present_product_detail", "get_product_by_handle"),
                                 "Los colores y aromas salen de la ficha: usa present_product_detail.")
             out.append({"topic": topic, "any_of": list(tools), "nudge": nudge})
+            continue
+        if (
+            topic == "envio"
+            and answer_of(result, "envio.costo") is not None
+            and _p(result, "envio.costo") < th["detect"]
+        ):
+            # Pregunta si llega o cuánto tarda, no el costo (rafaga-v5): la
+            # tarjeta de tarifas no es la respuesta. Sin la pregunta
+            # (cuestionarios hasta v4), la regla de siempre.
             continue
         if topic == "queja":
             if _p(result, "queja.pedido_hecho") >= th["given"]:

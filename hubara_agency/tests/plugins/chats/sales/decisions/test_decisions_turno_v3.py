@@ -54,12 +54,44 @@ def test_only_the_questions_of_the_current_stage_are_asked() -> None:
 
 
 def test_shipping_needs_the_rates_tool() -> None:
+    """Sin la pregunta del costo (cuestionarios hasta v4) la regla es la de
+    siempre: «envío» pide la tarjeta de tarifas."""
     turn = POLICY.decide_turn(_result(_noul("topic.envio", 0.94)), questionnaire=RAFAGA,
                               context=_ctx("etapa_descubrimiento"), n_messages=1, thresholds=TH)
 
     [required] = turn.tools["required"]
     assert required["topic"] == "envio" and required["any_of"] == ["send_shipping_rates"]
     assert "send_shipping_rates" in required["nudge"]
+
+
+def test_a_question_about_delivery_time_does_not_need_the_rates_card() -> None:
+    """Laboratorio caso-fotos-0929-r5 (6543, turno 6): «¿cuánto se demora el
+    envío a Medellín?» dio «envío» y «tiempos». El contrato exigía la tarjeta de
+    tarifas (que solo trae costos y termina el turno) y la respuesta del tiempo
+    quedó retenida: salió solo la tarjeta. Con `rafaga-v5` Jev dice si pregunta
+    el costo (`envio.costo`, 0,03 en ese mensaje con Jev real)."""
+    turn = POLICY.decide_turn(
+        _result(_noul("topic.envio", 0.78), _noul("topic.tiempos", 0.97), _noul("envio.costo", 0.03)),
+        questionnaire=RAFAGA, context=_ctx("etapa_descubrimiento"), n_messages=1, thresholds=TH,
+    )
+
+    assert not [r for r in turn.tools.get("required") or [] if r["topic"] == "envio"]
+
+
+def test_a_question_about_the_shipping_cost_needs_the_card_and_the_rest_in_the_same_step() -> None:
+    """Con Jev real: «¿cuánto vale el envío?» 0,99; «¿el envío es gratis?»
+    0,76–0,80 (pasa el umbral de detección). La tarjeta termina el turno: lo
+    demás que preguntó (el tiempo, por ejemplo) va con `send_reply` en el
+    mismo paso, o se pierde."""
+    for p in (0.99, 0.78):
+        turn = POLICY.decide_turn(
+            _result(_noul("topic.envio", 0.98), _noul("topic.tiempos", 0.96), _noul("envio.costo", p)),
+            questionnaire=RAFAGA, context=_ctx("etapa_descubrimiento"), n_messages=1, thresholds=TH,
+        )
+
+        [required] = [r for r in turn.tools["required"] if r["topic"] == "envio"]
+        assert required["any_of"] == ["send_shipping_rates"]
+        assert "send_reply en el mismo paso" in required["nudge"]
 
 
 def test_sizes_are_answered_by_the_search_too() -> None:

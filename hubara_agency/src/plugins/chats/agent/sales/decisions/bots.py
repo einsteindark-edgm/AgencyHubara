@@ -39,11 +39,12 @@ WORKFLOW_V1 = "HubaraSalesSessionWorkflow"
 WORKFLOW_V2 = "HubaraSalesSessionWorkflowV2"
 PROVIDERS: tuple[str, ...] = ("reglas", "sombra", "jev")
 #: El perfil del bot nuevo: el laboratorio (brazo B) y producción (sin
-#: `SALES_PERCEPTION_PROFILE`) corren el MISMO. jev-v4 = motor completo (lectura
+#: `SALES_PERCEPTION_PROFILE`) corren el MISMO. jev-v5 = motor completo (lectura
 #: del hilo, contrato de herramientas y guía de etapas, F1–F6) con el
-#: cuestionario rafaga-v4: el pedido de un tipo o colección de velas entra al
-#: plan (revisión 2026-09-29).
-DEFAULT_PROFILE = "jev-v4"
+#: cuestionario rafaga-v5: el pedido de un tipo o colección de velas entra al
+#: plan y la tarjeta de tarifas solo si preguntan el costo del envío
+#: (revisiones 2026-09-29).
+DEFAULT_PROFILE = "jev-v5"
 #: Las capacidades que el control del dashboard conoce (cada una con su
 #: interruptor). Una capacidad nueva se suma aquí.
 CAPABILITIES: tuple[str, ...] = (

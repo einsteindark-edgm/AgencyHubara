@@ -77,3 +77,22 @@ jev-v4:
     given: 0.85
   shadow: null
   calibrated_model: null
+
+# Revisión 2026-09-29 (noche): jev-v4 con el cuestionario rafaga-v5 (la pregunta
+# `envio.costo`: el contrato pide la tarjeta de tarifas solo si preguntan el
+# costo; «¿cuánto tarda?» ya no se responde con las tarifas). Misma política y
+# mismos umbrales que jev-v4.
+jev-v5:
+  oracle: jev-1.13
+  questions: rafaga-v5
+  policy: turno-v3
+  thresholds:
+    detect: 0.70
+    confidence: 0.60
+    covered: 0.70
+    answers: 0.70
+    purchase_confirm: 0.85
+    purchase_retract: 0.20
+    given: 0.85
+  shadow: null
+  calibrated_model: null

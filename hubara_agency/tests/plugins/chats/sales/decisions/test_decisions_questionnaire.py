@@ -83,3 +83,24 @@ def test_rafaga_v4_asks_about_types_and_collections_of_candles() -> None:
     }
     changed = {t for (t, _l, h), (_t3, _l3, h3) in zip(v4.topics, v3.topics) if h != h3}
     assert changed == {"catalogo", "disponibilidad"}
+
+
+def test_rafaga_v5_asks_whether_the_shipping_question_is_about_the_cost() -> None:
+    """Laboratorio caso-fotos-0929-r5 (6543, turno 6): «¿cuánto se demora el
+    envío a Medellín?» dio «envío» 0,95 y «tiempos» 0,98. El contrato exigía la
+    tarjeta de tarifas para «envío» y, con la segunda puerta también en
+    `send_reply`, el turno salió solo con las tarifas: la pregunta del tiempo
+    quedó sin respuesta. `rafaga-v5` suma UNA pregunta (¿pregunta el costo?)
+    para que el contrato pida la tarjeta solo cuando la preguntan. Todo lo
+    demás es idéntico a v4 (el banco de referencia califica por id)."""
+    v4, v5 = load_questionnaire("rafaga-v4"), load_questionnaire("rafaga-v5")
+    extra = [q for q in v5.raw["questions"] if q not in v4.raw["questions"]]
+
+    assert v5.id == "rafaga-v5"
+    assert v5.topics == v4.topics
+    assert [q.get("id") for q in extra] == ["envio.costo"]
+    assert extra[0]["kind"] == "noul" and "cuánto cuesta" in extra[0]["text"]
+    assert [q for q in v5.raw["questions"] if q not in extra] == v4.raw["questions"]
+    assert {k: v for k, v in v5.raw.items() if k not in ("id", "questions")} == {
+        k: v for k, v in v4.raw.items() if k not in ("id", "questions")
+    }

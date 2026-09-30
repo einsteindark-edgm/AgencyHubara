@@ -59,3 +59,16 @@ def test_jev_v4_is_jev_v3_with_broader_topics() -> None:
     assert v4 is not None and v3 is not None
     assert (v4.oracle, v4.questions, v4.policy) == ("jev-1.13", "rafaga-v4", "turno-v3")
     assert (v4.thresholds, v4.shadow, v4.calibrated_model) == (v3.thresholds, v3.shadow, v3.calibrated_model)
+
+
+def test_jev_v5_is_jev_v4_with_the_shipping_cost_question() -> None:
+    """Laboratorio caso-fotos-0929-r5 (6543, turno 6): con la segunda puerta
+    también en `send_reply`, «¿cuánto se demora el envío?» salió solo con la
+    tarjeta de tarifas. `jev-v5` cambia SOLO el cuestionario (`rafaga-v5`: la
+    pregunta `envio.costo`), con la misma política y los mismos umbrales: el
+    laboratorio compara v4 contra v5 sabiendo qué se movió."""
+    v4, v5 = get_engine_profile("jev-v4"), get_engine_profile("jev-v5")
+
+    assert v5 is not None and v4 is not None
+    assert (v5.oracle, v5.questions, v5.policy) == ("jev-1.13", "rafaga-v5", "turno-v3")
+    assert (v5.thresholds, v5.shadow, v5.calibrated_model) == (v4.thresholds, v4.shadow, v4.calibrated_model)

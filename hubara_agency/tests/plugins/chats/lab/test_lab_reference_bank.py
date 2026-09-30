@@ -336,7 +336,7 @@ class _RecordingPort:
         return await self.fake.ask(state, questions, timeout_s=timeout_s, redact=redact)
 
 
-@pytest.mark.parametrize("profile_id", ["jev-v2", "jev-v3", "jev-v4"])
+@pytest.mark.parametrize("profile_id", ["jev-v2", "jev-v3", "jev-v4", "jev-v5"])
 async def test_the_item_state_is_exactly_what_the_engine_sends_jev_in_production(
     tmp_path: Path, _isolate_vault_dir: Path, monkeypatch, profile_id: str
 ) -> None:
@@ -675,7 +675,7 @@ async def test_when_jev_fails_the_reason_is_kept(monkeypatch) -> None:
     assert [(r["ok"], r["error"], r["answers"]) for r in rows] == [(False, "timeout", {})]
 
 
-@pytest.mark.parametrize("profile_id", ["jev-v1", "jev-v2", "jev-v3", "jev-v4"])
+@pytest.mark.parametrize("profile_id", ["jev-v1", "jev-v2", "jev-v3", "jev-v4", "jev-v5"])
 def test_every_item_is_json(tmp_path: Path, profile_id: str) -> None:
     bench = _write_bench(tmp_path)
     for case in build_cases(bench, sales_workspace=WS).cases:
