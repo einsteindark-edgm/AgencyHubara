@@ -37,6 +37,26 @@ describe("SequenceTrace", () => {
     expect(rows[2]).toHaveAccessibleName("Paso 3: Pide enviar las tarifas de envío");
   });
 
+  it("una protección con nombre largo cabe en su caja y el número no la tapa", () => {
+    // Laboratorio 2026-09-29: la caja medía siempre 116 px con el texto
+    // centrado; «retuvo la respuesta: antes debía consultar una herramienta»
+    // se salía por los dos lados y el número quedaba encima del texto.
+    const layout = layoutSequence([
+      { i: 0, at_ms: 0, kind: "guard", name: "contract_extra_round", before: "No la manejamos", after: "[CONTRATO]", tools: ["send_reply"] },
+    ]);
+    const { container } = render(<SequenceTrace layout={layout} selected={0} onSelect={vi.fn()} />);
+    const row = container.querySelector('[data-step="0"]') as SVGGElement;
+    const box = row.querySelectorAll("rect")[1];
+    const label = within(row as unknown as HTMLElement).getByText(layout.rows[0].short);
+    const badge = row.querySelector("circle") as SVGCircleElement;
+    const left = Number(box.getAttribute("x"));
+    const boxWidth = Number(box.getAttribute("width"));
+
+    expect(boxWidth).toBeGreaterThanOrEqual(layout.rows[0].short.length * 5.8);
+    expect(Number(label.getAttribute("x"))).toBe(left + boxWidth / 2);
+    expect(Number(badge.getAttribute("cx")) + Number(badge.getAttribute("r"))).toBeLessThanOrEqual(left);
+  });
+
   it("avisa que el clasificador no se usó en este turno", () => {
     setup();
     expect(screen.getByText("Jev · sin uso")).toBeInTheDocument();

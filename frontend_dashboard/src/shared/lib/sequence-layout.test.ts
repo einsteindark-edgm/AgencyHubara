@@ -137,6 +137,20 @@ describe("layoutSequence", () => {
     expect(rows.map((r) => r.short)).toEqual(["agregó la bienvenida del primer contacto", "no mandó el texto de una autotransferencia"]);
   });
 
+  it("la puerta del contrato y las rondas extra se nombran en palabras", () => {
+    const { rows } = layoutSequence([
+      { i: 0, at_ms: 0, kind: "guard", name: "contract_extra_round", before: "Esa pieza no la manejamos", after: "[CONTRATO DEL TURNO] …", tools: ["send_reply"] },
+      { i: 1, at_ms: 1, kind: "guard", name: "turn_policy_extra_round", before: null, after: "Falta atender el envío" },
+      { i: 2, at_ms: 2, kind: "guard", name: "send_reply_retry", before: "Listo, quedó registrado", after: "" },
+    ]);
+
+    expect(rows.map((r) => r.short)).toEqual([
+      "retuvo la respuesta: antes debía consultar una herramienta",
+      "pidió una ronda más por un asunto pendiente",
+      "no mandó la respuesta: otra herramienta del mismo paso falló",
+    ]);
+  });
+
   it("los cortes y reinicios del turno quedan dentro del workflow", () => {
     const { rows } = layoutSequence([
       { i: 0, at_ms: 0, kind: "cut", reason: "checkpoint_a" },

@@ -167,11 +167,17 @@ function Badge({ x, y, color, ring, n }: { x: number; y: number; color: string; 
   );
 }
 
+/** Ancho mínimo de la caja de un paso interno; una etiqueta más larga la
+ *  agranda hacia la derecha (el borde izquierdo y el número no se mueven). */
+const SELF_BOX_MIN_W = 116;
+
 function SelfBox({ x, y, color, on, n, label }: { x: number; y: number; color: string; on: boolean; n: number; label: string }) {
+  const left = x - SELF_BOX_MIN_W / 2;
+  const w = Math.max(SELF_BOX_MIN_W, Math.ceil(label.length * 5.8) + 16);
   return (
     <>
-      <rect x={x - 58} y={y - 13} width={116} height={26} rx={6} style={{ fill: "var(--color-toolbar)", stroke: color, strokeWidth: on ? 2 : 1 }} />
-      <text x={x} y={y + 4} textAnchor="middle" style={{ fill: "var(--color-fg)", font: "500 10.5px var(--font-sans)" }}>
+      <rect x={left} y={y - 13} width={w} height={26} rx={6} style={{ fill: "var(--color-toolbar)", stroke: color, strokeWidth: on ? 2 : 1 }} />
+      <text x={left + w / 2} y={y + 4} textAnchor="middle" style={{ fill: "var(--color-fg)", font: "500 10.5px var(--font-sans)" }}>
         {label}
       </text>
       <Badge x={x - 74} y={y} color={color} ring={on ? "#fff" : "none"} n={n} />
