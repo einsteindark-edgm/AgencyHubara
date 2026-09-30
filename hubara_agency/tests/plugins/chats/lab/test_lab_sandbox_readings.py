@@ -277,3 +277,71 @@ async def test_the_text_after_the_photos_carries_what_is_already_verified(tmp_pa
     [stored] = metadata["recent_image_descriptions"]
     assert stored["media_id"] == "2348323652689569" and stored["episode_id"] == "ep_1"
     assert stored["product"] == {"handle": "sacrificio-de-amor", "how": "nombre", "title": "Sacrificio de Amor"}
+
+
+# ── La nota del episodio nuevo (caso de producción del 2026-09-29) ──────────
+# El sandbox no la armaba: el laboratorio no podía reproducir el «Cuéntame, ¿en
+# qué te puedo ayudar hoy?» que produjo en producción la respuesta al «pedido
+# listo» del ETA, ni medir la cortesía del bot nuevo.
+
+_PURCHASE = {"episode_id": "ep_001", "started_at_ms": T0 - 900_000, "closed_at_ms": T0 - 600_000,
+             "closing_tag": "COMPRA_EXITOSA", "order_id": "order_X"}
+_THANKS = {"text": "Hola cómo están? Son geniales. Muchas gracias", "ts_ms": T0 + 60_000, "wamid": "wamid.G"}
+
+
+def _after_purchase() -> dict:
+    return {"episodes": [dict(_PURCHASE), {"episode_id": "ep_002", "started_at_ms": T0 + 60_000, "closed_at_ms": None}]}
+
+
+def test_the_new_episode_note_goes_right_after_the_bogota_time_like_in_production() -> None:
+    from src.plugins.chats.agent.sales_lab.sandbox.readings import turn_context
+
+    context = turn_context({}, at_ms=T0, boundary_note="[NOTA DE EPISODIO NUEVO]")
+
+    assert context[1:2] == ["[NOTA DE EPISODIO NUEVO]"]
+
+
+async def test_the_first_message_of_a_new_episode_gets_todays_note_with_rules(tmp_path: Path, monkeypatch) -> None:
+    from src.plugins.chats.agent.sales_lab.sandbox.readings import ingest_burst
+
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+
+    [ingested] = await ingest_burst(_after_purchase(), [dict(_THANKS)], session_id=SID_R, vault_dir=tmp_path,
+                                    at_ms=T0 + 60_000, boundary_from=dict(_PURCHASE))
+
+    notes = [n for n in ingested.context if "episodio NUEVO" in n]
+    assert len(notes) == 1 and "pregunta en qué puedes ayudar hoy" in notes[0], ingested.context
+
+
+async def test_with_jev_a_thank_you_gets_the_courtesy_note(tmp_path: Path, monkeypatch) -> None:
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.plugins.chats.agent.sales_lab.sandbox.readings import ingest_burst
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    fake = FakePerceptionAdapter({"cortesia.solo": TypedAnswer(id="cortesia.solo", kind="noul", p=0.95)})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+
+    [ingested] = await ingest_burst(_after_purchase(), [dict(_THANKS)], session_id=SID_R, vault_dir=tmp_path,
+                                    at_ms=T0 + 60_000, boundary_from=dict(_PURCHASE))
+
+    notes = [n for n in ingested.context if "episodio NUEVO" in n]
+    assert len(notes) == 1 and "solo agradece" in notes[0] and "pregunta en qué puedes ayudar" not in notes[0], notes
+
+
+def test_the_turn_builds_the_note_from_the_case(tmp_path: Path) -> None:
+    """El turno arma la nota con el caso: primer turno del episodio y el
+    episodio anterior cerrado (sin campaña que lo abriera)."""
+    case = _case(
+        case_id="wa_573001234567/ep_002/t1", episode_id="ep_002", turn=1, first_in_episode=True,
+        burst=[dict(_THANKS)], draft=None, draft_before=None, state={"tag": "NO_ETIQUETADO"},
+        episodes_at=[dict(_PURCHASE), {"episode_id": "ep_002", "started_at_ms": T0 + 60_000, "closed_at_ms": None}],
+        real={"inbound_text": _THANKS["text"], "sent_texts": ["Buenas tardes, con gusto 🤍"]},
+    )
+
+    report = _run_probe(tmp_path, case)
+
+    result = report["result"]
+    assert result["error"] is None, result
+    assert any("episodio NUEVO" in note for note in result["plugin_context"]), result["plugin_context"]

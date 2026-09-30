@@ -212,7 +212,7 @@ async def run_case(
         ingested = await ingest_burst(
             metadata, messages, session_id=box.session_id, vault_dir=box.vault_dir, at_ms=at_ms, records=records,
             catalog=get_catalog_client(), on_message=decisions.ingest_message, between=box.between_records,
-            photos=photos,
+            photos=photos, boundary_from=previous_closed_episode(case),
         )
         result["readings"] = [m.readings for m in ingested]
         result["photos"] = [m.photo for m in ingested if m.photo is not None]
@@ -284,3 +284,18 @@ async def run_case(
     result["decisions"] = decisions.published(redact=redact)
     result["disagreements"] = case_disagreements(box.vault_dir, redact=redact)
     return result
+
+
+def previous_closed_episode(case: dict[str, Any]) -> dict[str, Any] | None:
+    """El episodio que se cerró cuando el mensaje del cliente abrió el del
+    caso: el ingest le pone al turno la nota del episodio nuevo. Solo en el
+    primer turno del episodio, con un mensaje del cliente y sin una campaña
+    que lo abriera (la nota de la campaña la reemplaza)."""
+    if case.get("trigger") != "customer" or not case.get("first_in_episode"):
+        return None
+    episodes = [e for e in case.get("episodes_at") or [] if isinstance(e, dict)]
+    index = next((i for i, e in enumerate(episodes) if e.get("episode_id") == case.get("episode_id")), None)
+    if not index or episodes[index].get("opened_by_campaign"):
+        return None
+    previous = episodes[index - 1]
+    return previous if previous.get("closed_at_ms") is not None else None

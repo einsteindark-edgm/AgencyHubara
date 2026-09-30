@@ -27,7 +27,7 @@ EPISODIO-SCOPED por construccion:
   * El draft vive DENTRO del episodio activo (`episodes[-1]["order_draft"]`), no
     en la raiz de metadata. Asi hereda el ciclo de vida del episodio gratis:
     un episodio nuevo (re-engagement) arranca sin draft -> no se proyecta ->
-    NO hay leak entre episodios (el mismo bug que `_build_episode_boundary_note`
+    NO hay leak entre episodios (el mismo bug que `build_episode_boundary_note`
     mitiga para el historial; aca se evita por construccion). Es el mismo
     mecanismo que resetea `metadata.tag` en `ensure_active_episode`.
 

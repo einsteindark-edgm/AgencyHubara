@@ -23,9 +23,12 @@ producción (`ingest_inbound_message.py`):
    bot que citó el cliente (`build_photo_citation_note`). La coalescencia del
    workflow las junta, como en producción.
 
-No se reconstruyen las notas de la respuesta a una campaña y de la frontera
-de episodio ni la relectura del cupo del cupón en Medusa (el sandbox no tiene
-Medusa: queda lo último que se supo, como cuando Medusa no responde a tiempo).
+La nota del episodio nuevo (`boundary_from`: el episodio anterior, cerrado)
+va en el primer mensaje, con la cortesía que leyó el motor (2026-09-30: sin
+ella el laboratorio no reproducía el «¿en qué te puedo ayudar hoy?» de
+producción). No se reconstruyen la nota de la respuesta a una campaña ni la
+relectura del cupo del cupón en Medusa (el sandbox no tiene Medusa: queda lo
+último que se supo, como cuando Medusa no responde a tiempo).
 """
 from __future__ import annotations
 
@@ -156,6 +159,7 @@ def turn_context(
     gap_note: str | None = None,
     product_note: str | None = None,
     facts_note: str | None = None,
+    boundary_note: str | None = None,
 ) -> list[str]:
     """El `plugin_context` de la señal de un mensaje, como lo arma el ingest
     desde el metadata de ese momento: la hora de Bogotá y las notas, en el
@@ -164,7 +168,8 @@ def turn_context(
     lo que no existe en el catálogo; `product_note`: la foto del cliente es un
     producto nuestro (`photo_product.build_photo_product_note`); `facts_note`:
     las fotos del episodio ya reconocidas (`photo_product.build_photo_facts_note`,
-    en los mensajes que no son una foto)."""
+    en los mensajes que no son una foto); `boundary_note`: la nota del episodio
+    nuevo (`build_episode_boundary_note`)."""
     from src.plugins.chats.agent.sales.context import build_bogota_context_string
     from src.plugins.chats.agent.sales.use_cases.coupons import build_coupon_note
     from src.plugins.chats.agent.sales.use_cases.order_draft import build_order_draft_note, get_projectable_draft
@@ -186,7 +191,8 @@ def turn_context(
         gap_note,
     ]
     bogota = build_bogota_context_string(now=datetime.fromtimestamp(at_ms / 1000, tz=timezone.utc))
-    return [bogota, *(n for n in notes if n)]
+    # La nota del episodio nuevo va primero, como en el ingest.
+    return [bogota, *(n for n in [boundary_note, *notes] if n)]
 
 
 async def ingest_burst(
@@ -201,6 +207,7 @@ async def ingest_burst(
     on_message: Callable[[int], None] | None = None,
     between: Sequence[dict[str, Any]] = (),
     photos: Any = None,
+    boundary_from: dict[str, Any] | None = None,
 ) -> list[IngestedMessage]:
     """Pasa cada mensaje por el ingest (ver el módulo): escribe el metadata
     (mutación y archivo) y el historial del sandbox. `records`: el evento del
@@ -226,6 +233,7 @@ async def ingest_burst(
     from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
     from src.plugins.chats.agent.sales.use_cases.funnel_stage import resolve_funnel_stage
     from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
+        build_episode_boundary_note,
         build_photo_citation_note,
         catalog_gap_note_for,
     )
@@ -305,6 +313,13 @@ async def ingest_burst(
         # dashboard: `reply_to`, como el `context` del webhook).
         quoted = record.get("reply_to") if isinstance(record.get("reply_to"), dict) else None
         photo = build_photo_citation_note({"id": quoted.get("id")} if quoted else None, metadata)
+        # El mensaje que abrió el episodio lleva la nota del episodio nuevo,
+        # con la cortesía que acaba de leer (como el ingest).
+        boundary = (
+            build_episode_boundary_note(boundary_from, courtesy=readings.courtesy_only)
+            if boundary_from is not None and k == 1
+            else None
+        )
         out.append(
             IngestedMessage(
                 readings=list(readings.verdicts),
@@ -312,6 +327,7 @@ async def ingest_burst(
                     metadata, at_ms=at_ms, coupon_in_play=bool(coupon.value), photo_note=photo, gap_note=gap,
                     product_note=reread.note if reread is not None else None,
                     facts_note=None if is_photo else build_photo_facts_note(metadata),
+                    boundary_note=boundary,
                 ),
                 photo=(
                     {"image": message.get("image"), "description": reread.description, "product": reread.product,

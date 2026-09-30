@@ -506,7 +506,7 @@ class IngestInboundMessage:
             # Con respuesta a campaña la nota de la campaña reemplaza a la de
             # frontera ("saluda y pregunta en qué ayudar" la contradice).
             episode_boundary_note = (
-                _build_episode_boundary_note(_prev_closed_episode)
+                build_episode_boundary_note(_prev_closed_episode)
                 if _prev_closed_episode is not None and campaign_reply_note is None
                 else None
             )
@@ -600,7 +600,7 @@ class IngestInboundMessage:
         # El cliente solo agradece o saluda (capacidad `cortesia`): el episodio
         # nuevo no abre venta (caso del 2026-09-29, «pedido listo»).
         if episode_boundary_note is not None and _prev_closed_episode is not None and readings.courtesy_only:
-            episode_boundary_note = _build_episode_boundary_note(_prev_closed_episode, courtesy=True)
+            episode_boundary_note = build_episode_boundary_note(_prev_closed_episode, courtesy=True)
         if written.signal is not None:
             logger.info(
                 "inbound_purchase_signal",
@@ -2464,7 +2464,7 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _build_episode_boundary_note(prev_episode: dict[str, Any], *, courtesy: bool = False) -> str:
+def build_episode_boundary_note(prev_episode: dict[str, Any], *, courtesy: bool = False) -> str:
     """Nota de frontera de episodio para `plugin_context` en re-engagement.
 
     Cuando el cliente vuelve tras un episodio CERRADO, el `memory_window` del
