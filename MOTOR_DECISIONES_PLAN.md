@@ -233,3 +233,33 @@ El operador pidió los pasos 1 y 3 de la investigación de §6.3; el 2 («Enviar
 - Usar `referred_product`: es un cambio chico, como el `ref:` de la web. Después, una línea en el mensaje del catálogo que invite a tocar «Enviar mensaje a la empresa».
 - **Ráfaga partida.** La foto sin texto tarda unos 3 s más en entrar. Si el cliente escribe justo después, su texto puede formar un turno aparte, porque la ráfaga cierra tras 1,5 s de silencio. Propuesta: que el ingest retenga el texto mientras se lee una foto del mismo cliente.
 - **Producción.** Con el deploy van los alias nuevos del proxy (`gemini-embedding`, `gemini-photo-match`) y Pillow. La primera foto sin texto después del deploy arma el índice (~1 min, en segundo plano) y sale sin búsqueda por imagen.
+
+### 6.5 Lo que el operador revisó en r7: carritos, foto antes que texto y los turnos 13, 17, 19 y 24 (2026-09-30)
+
+**Qué quedó (a1f51015, d744443d, ad7de39c, 8ef40f7f, c1892544, d91b78e2):**
+- **t13 «no están todas» (negar lo verificado).** Con las 4 fotos reconocidas, el bot dijo que solo tenía el Velón Gorrión. Tres capas:
+  - la foto reconocida queda guardada con su episodio y el nombre del producto, y cada mensaje siguiente del episodio lleva la nota «FOTOS DEL CLIENTE YA RECONOCIDAS»;
+  - en el laboratorio, cada turno ve las fotos anteriores como las habría dejado el ingest de hoy (reconocidas; el metadata del banco traía también las fotos de DESPUÉS del turno);
+  - `send_reply` retiene UNA vez por mensaje del cliente un «no lo tenemos» cuando hay fotos verificadas (la nota sola perdió en r8 en los dos bots) y una promesa de «revisar y confirmar después» (el bot no puede volver a escribir). El segundo intento siempre sale.
+- **t17 (DES-08 esperaba `set_order_slot`).** Nombrar un producto («se llama Luz Serena, la saqué de su catálogo») ya no cuenta como elegirlo: cuenta decir que lo quiere o contestar solo con su nombre.
+- **t19 (la protección de la lista).** Jev decidió bien (era una lista de aromas para escoger). La protección ahora solo cambia el formato: lo que el bot dijo antes de la lista encabeza el selector y lo que dijo después lo cierra. El laboratorio muestra el selector que recibió el cliente, en vez de «el bot no envió nada».
+- **t24 (CIE-05).** La evidencia cita la frase prohibida y por qué el guion la prohíbe («Gracias por tu compra»: da la compra por hecha y el pago todavía no está verificado); antes citaba solo el comienzo del mensaje.
+- **Carrito:** cada ítem llega con nombre, variante y precio del catálogo, y la nota del turno trae los handles.
+- **Foto antes que texto:** el ingest retiene el mensaje del cliente mientras se lee una foto suya (tope de 10 s).
+
+**Medido** (banco `caso-fotos-0930`, mismos 43 turnos por brazo, US$1,06–1,08 por corrida):
+
+| 4567 | r7 | r8 (nota) | r9 (+ retención) | r10 (+ promesa) |
+|---|---|---|---|---|
+| t13, bot actual | «la que sí tenemos es el Velón Gorrión» | igual | bien a la primera | retenido → «Tienes razón… sí las manejamos todas» + las 4 |
+| t13, bot nuevo | igual | igual | «dame un momento y te confirmo» | retenido → busca → lista de las 4 «Sí las tenemos» |
+| t14, bot nuevo | «no la tenemos» | se corrige (contrato) | retenido → «me equivoqué… sí las tenemos todas» | «Sí, esta sí la tenemos: Luz de Belén» |
+
+- **DES-08 en t17:** desapareció en los dos brazos. Sigue en t19 (legítimo: dijo «la quiero» y el producto no quedó anotado).
+- **VAR-01b en t19** sigue: el LLM escribió los aromas como texto (el cliente recibe bien el selector).
+- **CIE-05 en t24** varía: r9 el bot nuevo cerró bien («Gracias por elegirnos»), r10 los dos dijeron «Gracias por tu compra».
+- **Retenciones:** r9 hubo una falsa (un cupón «no lo tenemos vigente»), ya corregida; r10, dos y las dos correctas.
+
+**Pendiente:**
+- El texto que llega ANTES que la foto (la ráfaga se cierra sin la foto): pide un cambio en el workflow (que el cierre de la ráfaga espere una foto en lectura).
+- «Enviar mensaje a la empresa» (`referred_product`), la línea en el mensaje del catálogo y el deploy (alias del proxy + Pillow).
