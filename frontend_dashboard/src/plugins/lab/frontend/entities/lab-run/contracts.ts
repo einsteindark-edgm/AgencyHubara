@@ -186,6 +186,8 @@ export const armOutputSchema = z
     guards: z.array(z.string()).catch([]).default([]),
     suppressed_reason: nullableString,
     llm_text: nullableString,
+    /** El selector que armó la protección con la lista que escribió el bot: el texto que recibió el cliente. */
+    selector_text: nullableString,
   })
   .passthrough();
 

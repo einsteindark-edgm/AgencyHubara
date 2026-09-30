@@ -175,9 +175,20 @@ def without_referral_banner(text: str) -> str:
     return text
 
 
+#: Un ítem del carrito con los nombres del catálogo (desde 2026-09-30,
+#: `sales/cart_lines.py`): «2× Cubo Love · Leo a $49.500 c/u (HUB-CUBO-01)» o
+#: «1× HUB-X (no está en el catálogo)». El código va entre paréntesis al final.
+_NAMED_CART_ITEM_RE = re.compile(r"(\d+)× (?:(?P<bare>\S+) \(no está en el catálogo\)|.*\((?P<code>[^()]+)\))")
+
+
 def _cart_items(summary: str) -> list[dict[str, Any]]:
     items = []
-    for part in summary.split(", "):
+    named = "; " in summary or summary.endswith(")")
+    for part in summary.split("; " if named else ", "):
+        if named and (match := _NAMED_CART_ITEM_RE.fullmatch(part.strip())):
+            retailer_id = match.group("bare") or match.group("code")
+            items.append({"product_retailer_id": retailer_id, "quantity": int(match.group(1))})
+            continue
         qty, sep, retailer_id = part.partition("× ")
         if sep and qty.strip().isdigit():
             items.append({"product_retailer_id": retailer_id, "quantity": int(qty)})

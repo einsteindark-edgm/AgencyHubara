@@ -41,6 +41,13 @@ from src.plugins.chats.agent.sales_lab.cases import without_referral_banner
 #: La ruta de la persona del equipo (`active_route`): con ella el ingest no
 #: arma la nota de fuera de catálogo.
 _HUMAN_ROUTE = "humano"
+#: Un mensaje que ES la foto (la reentrada de la visión: foto, foto que no se
+#: pudo ver o comprobante): no lleva la nota de las fotos ya reconocidas.
+_PHOTO_PREFIXES = (
+    "[el cliente envió una foto: ",
+    "[el cliente envió una imagen que no pude ver bien]",
+    "[el cliente envió un comprobante de pago: ",
+)
 
 
 @dataclass(frozen=True)
@@ -148,13 +155,16 @@ def turn_context(
     photo_note: str | None = None,
     gap_note: str | None = None,
     product_note: str | None = None,
+    facts_note: str | None = None,
 ) -> list[str]:
     """El `plugin_context` de la señal de un mensaje, como lo arma el ingest
     desde el metadata de ese momento: la hora de Bogotá y las notas, en el
     orden de producción. `coupon_in_play`: si el mensaje habla del cupón
     aplicado; `photo_note`: la foto del bot que citó; `gap_note`: la nota de
     lo que no existe en el catálogo; `product_note`: la foto del cliente es un
-    producto nuestro (`photo_product.build_photo_product_note`)."""
+    producto nuestro (`photo_product.build_photo_product_note`); `facts_note`:
+    las fotos del episodio ya reconocidas (`photo_product.build_photo_facts_note`,
+    en los mensajes que no son una foto)."""
     from src.plugins.chats.agent.sales.context import build_bogota_context_string
     from src.plugins.chats.agent.sales.use_cases.coupons import build_coupon_note
     from src.plugins.chats.agent.sales.use_cases.order_draft import build_order_draft_note, get_projectable_draft
@@ -170,6 +180,7 @@ def turn_context(
         build_web_product_note(metadata),
         build_order_draft_note(draft) if draft else None,
         build_coupon_note(metadata, in_play=coupon_in_play),
+        facts_note,
         product_note,
         photo_note,
         gap_note,
@@ -212,12 +223,15 @@ async def ingest_burst(
         apply_readings,
         read_coupon_talk,
     )
+    from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
     from src.plugins.chats.agent.sales.use_cases.funnel_stage import resolve_funnel_stage
     from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
         build_photo_citation_note,
         catalog_gap_note_for,
     )
+    from src.plugins.chats.agent.sales.use_cases.photo_product import build_photo_facts_note
     from src.plugins.chats.agent.sales_lab.sandbox.materialize import burst_record
+    from src.plugins.chats.agent.sales_lab.sandbox.photos import stored_photo
     from src.sdk.messagingkit import compute_service_window_expiry, opt_out_campaign_id, resolve_local_timezone
 
     tz = resolve_local_timezone(session_id)
@@ -233,6 +247,18 @@ async def ingest_burst(
             for key in ("text", "raw_text"):
                 if isinstance(message.get(key), str):
                     message[key] = reread.apply(message[key])
+            # Como el ingest de hoy antes de la reentrada: la foto queda en el
+            # metadata con su episodio y, si se reconoció, el producto.
+            active = get_active_episode(metadata)
+            recent = list(metadata.get("recent_image_descriptions") or [])
+            recent.append(stored_photo(
+                {"media_id": Path(str(message.get("image"))).stem, "kind": "foto_producto"}, reread,
+                episode_id=(active or {}).get("episode_id"),
+            ))
+            metadata["recent_image_descriptions"] = recent[-20:]
+        is_photo = reread is not None or without_referral_banner(str(message.get("text") or "")).startswith(
+            _PHOTO_PREFIXES
+        )
         ts = message.get("ts_ms")
         now_ms = int(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else int(at_ms)
         while pending and (_event_ms(pending[0]) or 0) < now_ms:
@@ -285,6 +311,7 @@ async def ingest_burst(
                 context=turn_context(
                     metadata, at_ms=at_ms, coupon_in_play=bool(coupon.value), photo_note=photo, gap_note=gap,
                     product_note=reread.note if reread is not None else None,
+                    facts_note=None if is_photo else build_photo_facts_note(metadata),
                 ),
                 photo=(
                     {"image": message.get("image"), "description": reread.description, "product": reread.product,

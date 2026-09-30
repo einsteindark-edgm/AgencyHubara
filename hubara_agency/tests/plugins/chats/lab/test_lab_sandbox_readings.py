@@ -252,3 +252,28 @@ async def test_a_photo_of_our_catalog_reenters_as_production_would_today(tmp_pat
     assert not any("no aparece por nombre en el catálogo" in n for n in ingested.context)
     assert _history(tmp_path / "vault", SID_R)[-1]["content"] == message["text"]
     assert ingested.photo is not None and ingested.photo["product"] == {"handle": "sacrificio-de-amor", "how": "nombre"}
+
+
+async def test_the_text_after_the_photos_carries_what_is_already_verified(tmp_path: Path, current_bot) -> None:
+    """Laboratorio caso-fotos-0930-r7, 4567 t13: el ingest de hoy guarda cada
+    foto reconocida con su producto y los mensajes que siguen llevan la nota
+    de las fotos ya reconocidas (la foto misma lleva la suya), como en
+    producción."""
+    from src.plugins.chats.agent.sales_lab.sandbox.readings import ingest_burst
+    from tests.plugins.chats.lab.test_lab_sandbox_photos import OLD, SCREENSHOT, _step, _Vision
+
+    step = _step(tmp_path / "banco", _Vision(SCREENSHOT))
+    photo = {"text": OLD, "kind": "text", "image": "2348323652689569.jpg", "ts_ms": T0 + 60_000, "wamid": "wamid.P"}
+    text = {"text": "me gustaría esas, pero no están todas", "kind": "text", "ts_ms": T0 + 61_000, "wamid": "wamid.T"}
+    metadata = _metadata_with_product()
+
+    photo_in, text_in = await ingest_burst(
+        metadata, [photo, text], session_id=SID_R, vault_dir=tmp_path / "vault", at_ms=T0 + 62_000, photos=step,
+    )
+
+    facts = [n for n in text_in.context if n.startswith("[FOTOS DEL CLIENTE YA RECONOCIDAS")]
+    assert len(facts) == 1 and "es «Sacrificio de Amor» (handle sacrificio-de-amor)" in facts[0]
+    assert not [n for n in photo_in.context if n.startswith("[FOTOS DEL CLIENTE YA RECONOCIDAS")]
+    [stored] = metadata["recent_image_descriptions"]
+    assert stored["media_id"] == "2348323652689569" and stored["episode_id"] == "ep_1"
+    assert stored["product"] == {"handle": "sacrificio-de-amor", "how": "nombre", "title": "Sacrificio de Amor"}

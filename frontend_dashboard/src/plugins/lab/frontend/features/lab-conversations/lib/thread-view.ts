@@ -205,6 +205,11 @@ function simulatedReplies(turn: ThreadTurn, arm: string): ReplyItem[] {
   const out = turn.outputs[arm];
   if (!out) return [{ dir: "note", text: NOT_RUN, hasImage: false }];
   const replies: ReplyItem[] = out.sent_texts.map((text) => ({ dir: "out" as const, text, hasImage: false }));
+  // La protección cambió la lista que escribió el bot por el selector: el
+  // cliente recibió ESE texto (lo de antes y después de la lista, y las opciones).
+  if (out.selector_text) {
+    replies.push({ dir: "comp", text: `🧩 Selector de opciones (armado con la lista que escribió el bot)\n${out.selector_text}`, hasImage: false });
+  }
   for (const call of out.tools) {
     const tool = describeTool(call);
     if (!tool.component || !tool.shown) continue;

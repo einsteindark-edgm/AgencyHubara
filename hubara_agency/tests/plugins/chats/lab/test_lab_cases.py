@@ -226,6 +226,20 @@ def _fields(message: dict) -> dict:
     return {k: message[k] for k in ("kind", "caption", "interactive", "order") if k in message}
 
 
+def test_a_cart_named_from_the_catalog_keeps_its_codes_for_the_lab() -> None:
+    """Desde 2026-09-30 el carrito entra con los nombres del catálogo
+    (`sales/cart_lines.py`); el laboratorio sigue sacando los códigos."""
+    from src.plugins.chats.agent.sales_lab.cases import ingest_fields
+
+    named = (
+        "[el cliente armó un carrito con: 2× Cubo Love · Leo a $49.500 c/u (HUB-CUBO-01); "
+        "1× HUB-BUDA-02 (no está en el catálogo)]"
+    )
+
+    assert ingest_fields(named) == EXPECTED_FIELDS[2]
+    assert ingest_fields(CART) == EXPECTED_FIELDS[2]
+
+
 def test_the_burst_carries_what_the_webhook_brought_besides_the_text(tmp_path: Path) -> None:
     """Las lecturas del ingest leen lo que el cliente ESCRIBIÓ: en una foto,
     solo el texto que puso en ella; un botón o un carrito los lee el código.

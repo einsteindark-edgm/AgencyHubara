@@ -206,6 +206,21 @@ def _real_identity(trace: dict[str, Any], case: dict[str, Any], *, sim_session_i
 _COMPLEMENT_FIELDS = ("sent_texts", "llm_text", "tools", "guards", "suppressed_reason", "steps")
 
 
+def _selector_text(trace: dict[str, Any]) -> str | None:
+    """El selector que armó la protección con la lista que escribió el bot: lo
+    que recibió el cliente en vez del texto (el «después» de la guarda)."""
+    for step in trace.get("steps") or []:
+        if (
+            isinstance(step, dict)
+            and step.get("kind") == "guard"
+            and step.get("name") == "variant_enumeration_guard"
+            and isinstance(step.get("after"), str)
+            and step["after"].strip()
+        ):
+            return step["after"]
+    return None
+
+
 def publish_arm(
     store: LabStorePort,
     *,
@@ -247,6 +262,8 @@ def publish_arm(
             if isinstance(result.get(key), list) and result[key]:
                 real[key] = result[key]
         output = {k: real[k] for k in _OUTPUT_FIELDS if k in real}
+        if selector := _selector_text(real):
+            output["selector_text"] = selector
         complement = result.get("complement_trace")
         if isinstance(complement, dict):
             second = _real_identity(complement, case, sim_session_id=sim, source=source)

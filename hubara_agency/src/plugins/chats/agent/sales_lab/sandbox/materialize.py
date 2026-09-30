@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.context import real_wamid
+from src.plugins.chats.agent.sales_lab.sandbox.photos import bench_reads, photo_rewrites, photos_as_of, rewrite_photos
 
 _DROP_KEYS = (
     "pending_ui_intents",
@@ -252,6 +253,14 @@ def _llm_lines(lines: list[dict[str, Any]], case: dict[str, Any]) -> list[dict[s
     return [head, *messages]
 
 
+def _with_photos(line: dict[str, Any], rewrites: dict[str, str]) -> dict[str, Any]:
+    """Un mensaje del cliente con sus fotos como entrarían hoy (nombrando el
+    producto si se reconoce)."""
+    if not rewrites or line.get("role") != "user" or not isinstance(line.get("content"), str):
+        return line
+    return {**line, "content": rewrite_photos(line["content"], rewrites)}
+
+
 def _iso(ms: int) -> str:
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
 
@@ -354,12 +363,27 @@ def materialize_case(
     )
     metadata = json.loads((src / "metadata.json").read_text(encoding="utf-8"))
     box = paths.vault_dir / sim
-    _write_json(box / "metadata.json", metadata_as_of(metadata, case, sales_workspace_path=sales_workspace_path), real, sim)
-    _write_jsonl(box / "sessions" / f"{sim}.jsonl", events[: int(case.get("dashboard_prefix") or 0)], real, sim)
+    as_of = metadata_as_of(metadata, case, sales_workspace_path=sales_workspace_path)
+    # Las fotos de turnos anteriores, como las habría dejado el ingest de hoy
+    # (reconocidas con la visión de hoy; sin las que llegaron después).
+    reads = bench_reads(bench_dir, real)
+    if "recent_image_descriptions" in metadata:
+        as_of["recent_image_descriptions"] = photos_as_of(metadata, case, reads)
+    rewrites = photo_rewrites(metadata, case, reads)
+    _write_json(box / "metadata.json", as_of, real, sim)
+    _write_jsonl(
+        box / "sessions" / f"{sim}.jsonl",
+        [_with_photos(e, rewrites) for e in events[: int(case.get("dashboard_prefix") or 0)]],
+        real, sim,
+    )
     traces = [t for t in _jsonl(src / "evals" / "turn_traces.jsonl") if (_ms(t.get("turn_started_ms")) or 0) < at]
     _write_jsonl(box / "evals" / "turn_traces.jsonl", traces, real, sim)
     llm = _jsonl(bench_dir / "agent_state" / bench_workspace / "sessions" / f"{real}.jsonl")
-    _write_jsonl(paths.state_dir / sales_workspace / "sessions" / f"{sim}.jsonl", _llm_lines(llm, case), real, sim)
+    _write_jsonl(
+        paths.state_dir / sales_workspace / "sessions" / f"{sim}.jsonl",
+        [_with_photos(line, rewrites) for line in _llm_lines(llm, case)],
+        real, sim,
+    )
     if (bench_dir / "catalog").is_dir():
         shutil.copytree(bench_dir / "catalog", paths.catalog_dir, dirs_exist_ok=True)
     else:

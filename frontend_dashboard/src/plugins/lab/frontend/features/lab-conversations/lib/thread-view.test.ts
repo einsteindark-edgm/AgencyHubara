@@ -88,7 +88,7 @@ describe("buildThreadView", () => {
       ...thread,
       turns: thread.turns.map((t) => ({
         ...t,
-        outputs: { ...t.outputs, B: { sent_texts: [`respuesta B al turno ${t.turn}`], tools: [], complement_texts: [], discarded_narration: [], guards: [], suppressed_reason: null, llm_text: null } },
+        outputs: { ...t.outputs, B: { sent_texts: [`respuesta B al turno ${t.turn}`], tools: [], complement_texts: [], discarded_narration: [], guards: [], suppressed_reason: null, llm_text: null, selector_text: null } },
       })),
     };
 
@@ -106,7 +106,7 @@ describe("buildThreadView", () => {
   it("un turno simulado que no envió nada lo explica", () => {
     const silent: LabThread = {
       ...thread,
-      turns: [{ ...thread.turns[0], outputs: { B: { sent_texts: [], tools: [], complement_texts: [], discarded_narration: [], guards: [], suppressed_reason: "tag_closure", llm_text: null } } }],
+      turns: [{ ...thread.turns[0], outputs: { B: { sent_texts: [], tools: [], complement_texts: [], discarded_narration: [], guards: [], suppressed_reason: "tag_closure", llm_text: null, selector_text: null } } }],
     };
 
     expect(brief(buildThreadView(silent, "B"))).toContain("note El bot no envió nada: cerró la conversación con una etiqueta.");
@@ -175,6 +175,23 @@ describe("turnReplies (lo que respondió cada bot en un turno)", () => {
     expect(brief(turnReplies(withList, withList.turns[0], "B"))).toEqual([
       "out ¡Buenos días! Bienvenido a *Hubara*",
       "comp 🧩 Lista de productos · Calabaza, Momia, Fantasma +1\n«Esta es la colección de Halloween 🎃»",
+    ]);
+  });
+
+  it("el selector que armó la protección con la lista del bot se ve, con lo que dijo antes y después", () => {
+    // Laboratorio caso-fotos-0930-r7, 4567 t19: salía «El bot no envió nada»
+    // aunque el cliente recibió «Jengibre no está…» con el selector de aromas.
+    const picker = "Jengibre no está entre los aromas de la Luz Serena. Los que maneja son:\n\n🌿 Lavanda\n\n¿Alguno de esos te llama la atención?";
+    const withPicker: LabThread = threadSchema.parse({
+      ...thread,
+      turns: [{
+        ...thread.turns[0],
+        outputs: { B: { sent_texts: [], tools: [], suppressed_reason: "variant_enumeration_guard", selector_text: picker } },
+      }],
+    });
+
+    expect(brief(turnReplies(withPicker, withPicker.turns[0], "B"))).toEqual([
+      `comp 🧩 Selector de opciones (armado con la lista que escribió el bot)\n${picker}`,
     ]);
   });
 

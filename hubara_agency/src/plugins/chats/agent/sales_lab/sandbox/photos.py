@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -132,6 +132,95 @@ class LabPhotoStep:
         )
         self._remember(name, reread)
         return reread
+
+
+# ── Las fotos de turnos anteriores (laboratorio 4567 t13) ───────────────────
+# El turno se simula sobre el historial de producción: las fotos de turnos
+# anteriores traen la descripción de la visión de ENTONCES, sin el producto, y
+# el metadata del banco trae todas las fotos del día (también las que llegaron
+# después del turno). El ingest de hoy las habría guardado reconocidas
+# (`recent_image_descriptions` con el producto y el episodio) y el historial
+# las mostraría nombrando el producto: el sandbox arma el turno así.
+
+_TITLE_RE = re.compile(r"nuestro producto «([^»]+)»")
+
+
+def bench_reads(bench_dir: Path, session_id: str) -> Callable[[Any], PhotoReread | None]:
+    """La lectura de hoy de una foto del banco, por su archivo (None si no hay)."""
+    cache = Path(bench_dir) / "photo_reads"
+
+    def read(filename: Any) -> PhotoReread | None:
+        if not _plain_name(filename):
+            return None
+        try:
+            data = json.loads((cache / f"{session_id}__{filename}.json").read_text(encoding="utf-8"))
+            return PhotoReread(**data)
+        except (OSError, ValueError, TypeError):
+            return None
+
+    return read
+
+
+def stored_photo(entry: Mapping[str, Any], reread: PhotoReread | None, *, episode_id: Any) -> dict[str, Any]:
+    """La foto como la guarda el ingest de hoy en `recent_image_descriptions`:
+    con su episodio y, si se reconoció, el producto con su nombre."""
+    out: dict[str, Any] = {**entry}
+    if reread is not None:
+        out["description"] = reread.description
+    if episode_id:
+        out["episode_id"] = episode_id
+    product = dict((reread.product if reread is not None else None) or {})
+    title = product.get("title") or (m.group(1) if reread is not None and (m := _TITLE_RE.search(reread.annotation)) else None)
+    if product.get("handle") and title:
+        out["product"] = {"handle": product["handle"], "how": product.get("how"), "title": title}
+    return out
+
+
+def _earlier_photos(
+    metadata: Mapping[str, Any], case: Mapping[str, Any], reads: Callable[[Any], PhotoReread | None]
+) -> list[tuple[dict[str, Any], dict[str, Any], PhotoReread | None]]:
+    """(foto guardada, índice, lectura de hoy) de las fotos que llegaron ANTES
+    de la ráfaga del caso. Las de la ráfaga las guarda el ingest del sandbox
+    al leerlas; una foto sin fecha no se puede ubicar y no entra."""
+    at = int(case.get("at_ms") or 0)
+    in_burst = {m.get("image") for m in case.get("burst") or [] if isinstance(m, Mapping)}
+    media = {m.get("media_id"): m for m in metadata.get("media_index") or [] if isinstance(m, Mapping)}
+    out = []
+    for entry in metadata.get("recent_image_descriptions") or []:
+        info = media.get(entry.get("media_id")) if isinstance(entry, Mapping) else None
+        created = (info or {}).get("created_at_ms")
+        if not isinstance(created, (int, float)) or created >= at or info.get("filename") in in_burst:
+            continue
+        out.append((dict(entry), dict(info), reads(info.get("filename"))))
+    return out
+
+
+def photos_as_of(
+    metadata: Mapping[str, Any], case: Mapping[str, Any], reads: Callable[[Any], PhotoReread | None]
+) -> list[dict[str, Any]]:
+    """`recent_image_descriptions` como lo habría dejado el ingest de hoy al
+    empezar la ráfaga del caso."""
+    return [stored_photo(entry, reread, episode_id=info.get("episode_id"))
+            for entry, info, reread in _earlier_photos(metadata, case, reads)]
+
+
+def photo_rewrites(
+    metadata: Mapping[str, Any], case: Mapping[str, Any], reads: Callable[[Any], PhotoReread | None]
+) -> dict[str, str]:
+    """El segmento con que cada foto anterior entró en producción → el de hoy."""
+    return {
+        f"[el cliente envió una foto: {entry.get('description')}]": reread.annotation
+        for entry, _info, reread in _earlier_photos(metadata, case, reads)
+        if reread is not None and entry.get("description")
+    }
+
+
+def rewrite_photos(text: Any, rewrites: Mapping[str, str]) -> Any:
+    if not isinstance(text, str) or not rewrites:
+        return text
+    for old, new in rewrites.items():
+        text = text.replace(old, new)
+    return text
 
 
 async def read_bench_photos(bench_dir: Path, *, vision: Any, identifier: Any) -> int:

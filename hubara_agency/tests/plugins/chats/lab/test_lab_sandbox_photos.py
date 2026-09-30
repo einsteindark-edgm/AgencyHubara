@@ -186,3 +186,70 @@ async def test_the_run_reads_every_product_photo_of_the_bench_once(tmp_path: Pat
     assert sorted(p.name for p in (bench / "photo_reads").iterdir()) == [
         "wa_573001234567__4567.jpg.json", "wa_573009876543__6543.jpg.json",
     ]
+
+
+# ── Las fotos de turnos anteriores (4567 t13, caso-fotos-0930-r7) ──────────
+# El turno se simula sobre el historial de producción: las fotos de turnos
+# anteriores tienen la descripción de la visión de ENTONCES, sin el producto,
+# y el metadata del banco trae todas las fotos del día (también las de
+# después del turno). El bot de hoy las habría guardado reconocidas: el
+# sandbox arma el turno con lo que habría dejado el ingest de hoy.
+
+
+def _photo_bench(tmp_path: Path) -> Path:
+    import json
+
+    from tests.plugins.chats.lab.test_lab_sandbox_materialize import T0, _bench, _iso
+
+    bench = _bench(tmp_path)
+    box = bench / "vault" / "wa_573001234567"
+    metadata = json.loads((box / "metadata.json").read_text(encoding="utf-8"))
+    metadata["recent_image_descriptions"] = [
+        {"media_id": "111", "kind": "foto_producto", "description": "vela de familia con rosas"},
+        {"media_id": "222", "kind": "foto_producto", "description": "vela de después del turno"},
+    ]
+    metadata["media_index"] = [
+        {"media_id": "111", "filename": "111.jpg", "episode_id": "ep_001", "created_at_ms": T0 + 20_000},
+        {"media_id": "222", "filename": "222.jpg", "episode_id": "ep_001", "created_at_ms": T0 + 200_000},
+    ]
+    (box / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    llm = bench / "agent_state" / "app-hubara-agency-src-plugins-chats-agent-sales-workspace" / "sessions"
+    lines = [json.loads(line) for line in (llm / "wa_573001234567.jsonl").read_text(encoding="utf-8").splitlines()]
+    lines[1] = {"role": "user", "content": "hola\n[el cliente envió una foto: vela de familia con rosas]",
+                "timestamp": _iso(T0 + 8_000)}
+    lines[2] = {"role": "assistant", "content": "Esa no la tenemos", "timestamp": _iso(T0 + 8_000)}
+    (llm / "wa_573001234567.jsonl").write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+    reads = bench / "photo_reads"
+    reads.mkdir()
+    reread = {
+        "annotation": "[el cliente envió una foto: la Sagrada Familia con rosas (es el mismo diseño de nuestro "
+                      "producto «Luz de Belén», comparada con las fotos del catálogo)]",
+        "note": "[FOTO DEL CLIENTE …]", "product": {"handle": "luz-de-belen", "how": "imagen"},
+        "description": "la Sagrada Familia con rosas", "trace": None,
+    }
+    (reads / "wa_573001234567__111.jpg.json").write_text(json.dumps(reread), encoding="utf-8")
+    return bench
+
+
+def test_a_turn_sees_the_earlier_photos_as_the_ingest_of_today_would_have_left_them(tmp_path: Path) -> None:
+    import json
+
+    from src.plugins.chats.agent.sales_lab.sandbox.materialize import materialize_case
+    from tests.plugins.chats.lab.test_lab_sandbox_materialize import WS, WS_PATH, _case
+
+    box = materialize_case(
+        _photo_bench(tmp_path), _case(), tmp_path / "sandbox",
+        bench_workspace=WS, sales_workspace=WS, sales_workspace_path=WS_PATH,
+    )
+
+    metadata = json.loads((box.vault_dir / box.session_id / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["recent_image_descriptions"] == [{
+        "media_id": "111", "kind": "foto_producto", "description": "la Sagrada Familia con rosas",
+        "episode_id": "ep_001", "product": {"handle": "luz-de-belen", "how": "imagen", "title": "Luz de Belén"},
+    }]
+    llm = [json.loads(line) for line in (box.state_dir / WS / "sessions" / f"{box.session_id}.jsonl").read_text(
+        encoding="utf-8").splitlines()]
+    assert llm[1]["content"] == (
+        "hola\n[el cliente envió una foto: la Sagrada Familia con rosas (es el mismo diseño de nuestro producto "
+        "«Luz de Belén», comparada con las fotos del catálogo)]"
+    )

@@ -306,3 +306,28 @@ async def test_the_first_run_validates_turn_mode_against_the_production_scorecar
     assert box["store"].get_bytes(f"runs/{RUN}/production/scores/{SID}.jsonl") is not None
     summary = json.loads(box["store"].get_bytes(f"runs/{RUN}/summary.json"))
     assert summary["validation"]["episodes"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_selector_the_protection_sent_reaches_the_thread(box, sims) -> None:  # noqa: F811
+    """4567 t19 (caso-fotos-0930-r7): la protección cambió la lista del bot
+    por el selector y el hilo decía «el bot no envió nada». El texto que
+    recibió el cliente (el «después» de la guarda) viaja al hilo."""
+    picker = "Jengibre no está. Los que maneja son:\n\n🌿 Lavanda\n\n¿Alguno te gusta?"
+
+    def with_picker(result: dict, arm: str) -> dict:
+        if arm == "B" and result.get("trace"):
+            result["trace"]["sent_texts"] = []
+            result["trace"]["suppressed_reason"] = "variant_enumeration_guard"
+            result["trace"]["steps"] = [
+                {"kind": "guard", "name": "variant_enumeration_guard", "before": "Los que maneja son: …", "after": picker},
+            ]
+        return result
+
+    sims["decorate"] = with_picker
+    await _run(box)
+
+    thread = json.loads(box["store"].get_bytes(f"runs/{RUN}/threads/{SID}.json"))
+    turn2 = next(t for t in thread["turns"] if t["turn"] == 2)
+    assert turn2["outputs"]["B"].get("selector_text") == picker
+    assert "selector_text" not in turn2["outputs"]["A1"]
