@@ -2,8 +2,8 @@
  * Decisiones del motor en un turno del bot nuevo (motor de decisiones con
  * Jev), en frases (revisión 2026-09-29). Agrupadas por cuándo se tomaron (al
  * leer cada mensaje del cliente, durante el turno o en el mensaje de
- * complemento): qué revisó, qué decidió («Le avisa al modelo que no vendemos:
- * «jesús»»), quién (Jev, o la regla y por qué), qué decía la regla si no
+ * complemento): qué revisó, qué decidió («Avisa al modelo que no aparece por
+ * nombre en el catálogo: «jesús»»), quién (Jev, o la regla y por qué), qué decía la regla si no
  * coincidió y qué respondió Jev a cada pregunta. Así se ve, turno por turno,
  * si el bot nuevo corrió con Jev o cayó a las reglas.
  */

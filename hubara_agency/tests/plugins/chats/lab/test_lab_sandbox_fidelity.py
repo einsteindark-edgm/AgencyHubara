@@ -127,7 +127,7 @@ _PROMOTION = {"id": "promo_1", "code": "AMOR26", "discount_type": "percentage", 
 COUPON = {"code": "AMOR26", "promotion": _PROMOTION, "applied_at_ms": T0 + 30_000,
           "eligible_products": [{"title": "Vela Buda", "price_cop": 40_000, "discounted_price_cop": 36_000}]}
 COUPON_NOT_IN_PLAY = "atiéndelo con el catálogo normal"
-GAP_NOTE = "Lo que el cliente pidió o mostró y NO existe en el catálogo: «vaso»"
+GAP_NOTE = "Lo que el cliente pidió o mostró y no aparece por nombre en el catálogo: «vaso»"
 
 
 def _coupon_case(*texts: str) -> dict:

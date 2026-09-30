@@ -716,24 +716,36 @@ para que ventas no avance el cierre.
 - THEN el handoff empieza con `[EL CLIENTE APLAZÓ]` y prohíbe pedir datos de envío
 - AND ventas responde texto y no manda el formulario
 
-### Requirement: Lo que no existe en el catálogo se dice (2026-09-23)
+### Requirement: Lo que no existe en el catálogo se dice (2026-09-23, revisado 2026-09-29)
 
 Cuando el mensaje del cliente (incluida la descripción de una foto) pide o
-muestra un producto, forma, envase, diseño o presentación que no aparece en el
-catálogo, el ingest SHALL detectarlo sin LLM (`unavailable_terms` de
-`chats/shared/product_truth`, el mismo detector de la guarda del remarketing)
-e inyectar al `plugin_context` una nota que NOMBRA esos términos como
-inexistentes. El agente MUST decirle al cliente que no los manejamos y ofrecer
-la alternativa real más cercana; MUST NOT responder solo con el catálogo. Sin
-catálogo o con el catálogo caído no hay nota y el turno sigue (nunca bloquea).
-Con la conversación en manos de un humano no se calcula.
+muestra un producto, forma, envase, diseño o presentación que no aparece por
+nombre en el catálogo, el ingest SHALL detectarlo sin LLM (`unavailable_terms`
+de `chats/shared/product_truth`, el mismo detector de la guarda del
+remarketing) e inyectar al `plugin_context` una nota que NOMBRA esos términos.
+El detector es literal: la nota MUST NOT afirmar que el producto no existe.
+El agente MUST buscarlo con `search_products` (por el nombre y por lo que
+describe) antes de responder; si aparece algo que puede ser, MUST mostrarlo y
+preguntar si es ese, sin decir que no lo manejamos. Solo si no aparece nada
+parecido MUST decirle al cliente que no lo manejamos y ofrecer la alternativa
+real más cercana; MUST NOT responder solo con el catálogo. Sin catálogo o con
+el catálogo caído no hay nota y el turno sigue (nunca bloquea). Con la
+conversación en manos de un humano no se calcula.
 
 #### Scenario: Foto con una vela de dragón y «¿y en vaso también?»
 
 - GIVEN ningún producto del catálogo viene en vaso ni tiene diseño de dragón
 - WHEN el cliente manda la foto y escribe «Estás y en vaso también»
 - THEN el turno lleva la nota con «dragón» y «vaso»
-- AND la respuesta dice que eso no lo manejamos y ofrece lo más parecido (Cubo Love, Cilindro Love, Cubo de corazón)
+- AND tras buscar sin encontrar nada parecido, la respuesta dice que eso no lo manejamos y ofrece lo más parecido (Cubo Love, Cilindro Love, Cubo de corazón)
+
+#### Scenario: Foto de un producto nuestro descrito con otras palabras (caso 6543, laboratorio 2026-09-29)
+
+- GIVEN la foto es una captura del Sacrificio de Amor y la visión la describe como «vela gris con detalles dorados en forma de cruz y rostro de Jesús»
+- AND «jesús» no aparece escrito en el catálogo
+- WHEN el cliente pregunta «tienes esta?»
+- THEN la nota nombra «jesús» sin afirmar que no existe y pide buscarlo antes de responder
+- AND la respuesta no dice que no lo manejamos antes de buscar en el catálogo
 
 #### Scenario: Pregunta por un producto real
 

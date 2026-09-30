@@ -83,7 +83,7 @@ def test_the_gap_note_is_the_terms_then_the_note(text: str) -> None:
 def test_the_gap_note_names_only_the_terms_it_gets() -> None:
     note = catalog_gap_note(["vaso"]) or ""
 
-    assert "«vaso»" in note and "NO existe" in note
+    assert "«vaso»" in note and "no aparece por nombre en el catálogo" in note
     assert "cartagena" not in note
     assert catalog_gap_note([]) is None
 

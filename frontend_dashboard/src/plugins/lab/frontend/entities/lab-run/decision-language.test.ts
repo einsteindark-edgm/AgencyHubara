@@ -13,9 +13,9 @@ import { decisionSentence, jevAnswers } from "./decision-language";
 const decision = (raw: Record<string, unknown>) => engineDecisionSchema.parse({ stage: "turno", by: "jev", provider: "jev", ...raw });
 
 describe("decisionSentence", () => {
-  it("fuera de catálogo dice qué le avisa al modelo que no vendemos (la causa de las negaciones)", () => {
+  it("fuera de catálogo dice qué no aparece por nombre en el catálogo (el detector es literal: no afirma que no lo vendemos)", () => {
     expect(decisionSentence(decision({ capability: "fuera_de_catalogo", value: ["jesús"] }))).toEqual({
-      text: "Le avisa al modelo que no vendemos: «jesús»",
+      text: "Avisa al modelo que no aparece por nombre en el catálogo: «jesús»",
       tone: "warn",
     });
     expect(decisionSentence(decision({ capability: "fuera_de_catalogo", value: [] })).text).toBe("Nada fuera del catálogo");

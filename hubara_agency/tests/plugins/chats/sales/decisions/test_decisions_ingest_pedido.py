@@ -235,7 +235,7 @@ def _gap_ingest(loader: _Loader) -> IngestInboundMessage:
 
 
 def _gap_note(loader: _Loader) -> str:
-    return next(n for n in loader.calls[-1]["extra_context"] if "NO existe en el catálogo" in n)
+    return next(n for n in loader.calls[-1]["extra_context"] if "no aparece por nombre en el catálogo" in n)
 
 
 async def test_with_rules_the_gap_note_is_todays(_isolate_vault_dir, oracle) -> None:
@@ -268,7 +268,7 @@ async def test_when_jev_takes_out_every_term_there_is_no_gap_note(_isolate_vault
 
     await _gap_ingest(loader).execute(_message("Vivo en Cartagena"))
 
-    assert not any("NO existe en el catálogo" in n for n in loader.calls[-1]["extra_context"])
+    assert not any("no aparece por nombre en el catálogo" in n for n in loader.calls[-1]["extra_context"])
 
 
 async def test_when_jev_fails_the_gap_note_is_todays(_isolate_vault_dir, oracle, turn_on) -> None:

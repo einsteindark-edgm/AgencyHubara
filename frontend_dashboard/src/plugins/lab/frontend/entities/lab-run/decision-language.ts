@@ -94,7 +94,9 @@ const SENTENCES: Record<string, (value: unknown) => Sentence> = {
   cupon: (value) => plain(value === true ? "Habla del cupón" : "No habla del cupón"),
   fuera_de_catalogo: (value) => {
     const terms = list(value);
-    return terms.length ? warn(`Le avisa al modelo que no vendemos: ${quoted(terms)}`) : plain("Nada fuera del catálogo");
+    return terms.length
+      ? warn(`Avisa al modelo que no aparece por nombre en el catálogo: ${quoted(terms)}`)
+      : plain("Nada fuera del catálogo");
   },
   cantidad: (value) => {
     const n = obj(value).cantidad;
