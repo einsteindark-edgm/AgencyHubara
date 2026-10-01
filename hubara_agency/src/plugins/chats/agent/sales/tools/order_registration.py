@@ -385,10 +385,15 @@ class RegisterOrderTool(ToolBase):
         quotas: Any = None,
         sales: Any = None,
         quota_lock: Any = None,
+        split_lines_guard: bool = True,
     ) -> None:
         """`quotas`/`sales`/`quota_lock`: cupo por unidad (central de cupones).
         Con cupo, el reparto se relee BAJO el candado del código antes de
-        crear el draft (nunca se vende dos veces la última unidad)."""
+        crear el draft (nunca se vende dos veces la última unidad).
+        `split_lines_guard`: un producto repartido en variantes en el borrador
+        exige una línea por cada una (`split_lines_mismatch`). Es para el bot:
+        el borrador es su memoria; el operador que registra desde el panel lo
+        apaga (manda lo que acordó con el cliente)."""
         # Mismo patrón que `ManageConversationTagTool`: el `workspace` que
         # llega es el RUNTIME WORKSPACE CANONICO compartido — NO se usa
         # para metadata. `vault_dir` (DI-friendly): default vault canónico.
@@ -410,6 +415,7 @@ class RegisterOrderTool(ToolBase):
         self._quotas = quotas
         self._sales = sales
         self._quota_lock = quota_lock
+        self._split_lines_guard = split_lines_guard
 
     def _quota_code(self, session_key: str) -> str | None:
         """Código del cupón aplicado si tiene cupo por unidad (hay que
@@ -727,12 +733,16 @@ class RegisterOrderTool(ToolBase):
         # Producto repartido en variantes (`set_order_slot(lineas=...)`): la
         # orden lleva una línea por cada una (laboratorio, caso 4567: «una
         # lila y otra azul» iba a registrar dos lilas).
-        mismatch = split_lines_mismatch(
-            metadata_before,
-            [
-                (v.title, int(it["quantity"]), v.color or _said(it, "color"), v.aroma or _said(it, "aroma"))
-                for it, v in zip(items, variants)
-            ],
+        mismatch = (
+            split_lines_mismatch(
+                metadata_before,
+                [
+                    (v.title, int(it["quantity"]), v.color or _said(it, "color"), v.aroma or _said(it, "aroma"))
+                    for it, v in zip(items, variants)
+                ],
+            )
+            if self._split_lines_guard
+            else []
         )
         if mismatch:
             return json.dumps(

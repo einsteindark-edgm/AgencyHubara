@@ -507,9 +507,11 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
     shipping_cop = shipping_rate_for_city(body.shipping.city)
     subtotal_cop = priced.subtotal_cop
     store = FilesystemMetadataStore(deps.vault_dir)
+    # El borrador repartido en variantes es memoria del bot: el operador
+    # registra lo que acordó con el cliente (`split_lines_guard=False`).
     tool = RegisterOrderTool(
         str(deps.vault_dir), vault_dir=deps.vault_dir, port=deps.order_port, catalog=deps.catalog,
-        quotas=deps.quotas, sales=deps.sales, quota_lock=deps.quota_lock,
+        quotas=deps.quotas, sales=deps.sales, quota_lock=deps.quota_lock, split_lines_guard=False,
     )
     # Color/aroma de cada ítem (cupo por unidad): un valor que el producto no
     # tiene NO registra nada — mismo contrato que `present_order_confirmation`.
