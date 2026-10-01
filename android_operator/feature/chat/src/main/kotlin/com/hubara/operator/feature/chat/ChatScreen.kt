@@ -37,7 +37,6 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hubara.operator.core.designsystem.Avatar
 import com.hubara.operator.core.designsystem.OperatorIcons
-import com.hubara.operator.core.designsystem.OperatorTheme
 import com.hubara.operator.core.designsystem.Spacing
 import com.hubara.operator.core.model.OrderId
 import com.hubara.operator.core.model.OrderRef
@@ -162,7 +161,7 @@ private fun ChatTopBar(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
                 Avatar(customerName, session.raw, size = 40.dp)
                 Column {
-                    Text(chatTitle(customerName, phone), style = OperatorTheme.emphasized.titleMedium, maxLines = 1,
+                    Text(chatTitle(customerName, phone), style = MaterialTheme.typography.titleMediumEmphasized, maxLines = 1,
                         overflow = TextOverflow.Ellipsis)
                     Text(chatSubtitle(customerName, phone, human), style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)

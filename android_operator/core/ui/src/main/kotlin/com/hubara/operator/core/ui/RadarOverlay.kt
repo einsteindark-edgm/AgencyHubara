@@ -47,7 +47,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigationevent.NavigationEventInfo
 import androidx.navigationevent.compose.NavigationBackHandler
 import androidx.navigationevent.compose.rememberNavigationEventState
-import com.hubara.operator.core.designsystem.ExpressiveMotion
 import com.hubara.operator.core.designsystem.OperatorIcons
 import com.hubara.operator.core.designsystem.OperatorTheme
 import com.hubara.operator.core.designsystem.Spacing
@@ -103,7 +102,7 @@ fun RadarIndicator(modifier: Modifier = Modifier) {
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Icon(OperatorIcons.FireFilled, contentDescription = null, modifier = Modifier.size(18.dp))
-            Text(model.count.toString(), style = OperatorTheme.emphasized.labelLarge)
+            Text(model.count.toString(), style = MaterialTheme.typography.labelLargeEmphasized)
         }
     }
 }
@@ -146,8 +145,8 @@ fun RadarOverlay(
 
     AnimatedVisibility(
         visible = expanded && cards.isNotEmpty(),
-        enter = slideInVertically(ExpressiveMotion.defaultSpatial()) { -it / 2 } + fadeIn(ExpressiveMotion.defaultEffects()),
-        exit = fadeOut(ExpressiveMotion.fastEffects()),
+        enter = slideInVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) { -it / 2 } + fadeIn(MaterialTheme.motionScheme.defaultEffectsSpec()),
+        exit = fadeOut(MaterialTheme.motionScheme.fastEffectsSpec()),
         modifier = modifier,
     ) {
         val list: @Composable () -> Unit = {

@@ -20,16 +20,18 @@ class FireRoutingTest {
         FireId.parse("chat:wa_test_sofia")!!, subject, severity, FireKind.OTHER, false, "t", "", ActionRef(action), "rules", 0,
     )
 
+    // Desde Incendios todo chat se abre como «en vivo» (LiveKey), que es de la pila de Incendios: ChatKey es de la
+    // pila de Chats. Antes el mismo chat podía quedar abierto en las dos pilas y, en tablet, mezclarse con otra pestaña.
     @Test fun la_accion_principal_decide_a_donde_va() {
-        assertThat(destinationFor(fire(FireSubject.Chat(sofia), "open_chat"))).isEqualTo(ChatKey(sofia))
+        assertThat(destinationFor(fire(FireSubject.Chat(sofia), "open_chat"))).isEqualTo(LiveKey(sofia))
         assertThat(destinationFor(fire(FireSubject.Chat(sofia), "open_live"))).isEqualTo(LiveKey(sofia))
         val order = OrderId.parse("order_01HX")!!
         assertThat(destinationFor(fire(FireSubject.Order(order, sofia), "open_order"))).isEqualTo(OrderSheetKey(order))
     }
 
     @Test fun una_orden_sin_id_cae_en_su_chat_y_una_accion_desconocida_tambien() {
-        assertThat(destinationFor(fire(FireSubject.Order(null, sofia), "open_order"))).isEqualTo(ChatKey(sofia))
-        assertThat(destinationFor(fire(FireSubject.Chat(sofia), "accion_nueva"))).isEqualTo(ChatKey(sofia))
+        assertThat(destinationFor(fire(FireSubject.Order(null, sofia), "open_order"))).isEqualTo(LiveKey(sofia))
+        assertThat(destinationFor(fire(FireSubject.Chat(sofia), "accion_nueva"))).isEqualTo(LiveKey(sofia))
         assertThat(destinationFor(fire(FireSubject.Order(null, null), "open_order"))).isNull()
     }
 

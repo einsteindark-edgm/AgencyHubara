@@ -1,7 +1,6 @@
 package com.hubara.operator.core.designsystem
 
 import androidx.compose.material3.Typography
-import androidx.compose.runtime.Immutable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -22,7 +21,11 @@ private val base = Typography()
 
 private fun TextStyle.flex() = copy(fontFamily = GoogleSansFlex)
 
-/** La escala tipográfica de Material 3 (tamaños e interlineado del estándar) con Google Sans Flex. */
+/**
+ * La escala tipográfica de Material 3 con Google Sans Flex, y los estilos «enfatizados» de Material 3 Expressive
+ * (`MaterialTheme.typography.titleMediumEmphasized`…): mismo tamaño, más peso, para lo que el operador tiene que ver
+ * primero (títulos de pantalla, quien escribió sin leer, montos).
+ */
 internal val OperatorTypography = Typography(
     displayLarge = base.displayLarge.flex(),
     displayMedium = base.displayMedium.flex(),
@@ -39,38 +42,19 @@ internal val OperatorTypography = Typography(
     labelLarge = base.labelLarge.flex(),
     labelMedium = base.labelMedium.flex(),
     labelSmall = base.labelSmall.flex(),
+    displayLargeEmphasized = base.displayLarge.flex().copy(fontWeight = FontWeight.SemiBold),
+    displayMediumEmphasized = base.displayMedium.flex().copy(fontWeight = FontWeight.SemiBold),
+    displaySmallEmphasized = base.displaySmall.flex().copy(fontWeight = FontWeight.SemiBold),
+    headlineLargeEmphasized = base.headlineLarge.flex().copy(fontWeight = FontWeight.SemiBold),
+    headlineMediumEmphasized = base.headlineMedium.flex().copy(fontWeight = FontWeight.SemiBold),
+    headlineSmallEmphasized = base.headlineSmall.flex().copy(fontWeight = FontWeight.SemiBold),
+    titleLargeEmphasized = base.titleLarge.flex().copy(fontWeight = FontWeight.SemiBold, fontSize = 24.sp, lineHeight = 30.sp),
+    titleMediumEmphasized = base.titleMedium.flex().copy(fontWeight = FontWeight.SemiBold),
+    titleSmallEmphasized = base.titleSmall.flex().copy(fontWeight = FontWeight.SemiBold),
+    bodyLargeEmphasized = base.bodyLarge.flex().copy(fontWeight = FontWeight.Medium),
+    bodyMediumEmphasized = base.bodyMedium.flex().copy(fontWeight = FontWeight.Medium),
+    bodySmallEmphasized = base.bodySmall.flex().copy(fontWeight = FontWeight.Medium),
+    labelLargeEmphasized = base.labelLarge.flex().copy(fontWeight = FontWeight.Bold),
+    labelMediumEmphasized = base.labelMedium.flex().copy(fontWeight = FontWeight.Bold),
+    labelSmallEmphasized = base.labelSmall.flex().copy(fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp),
 )
-
-/**
- * Los estilos «enfatizados» de Material 3 Expressive: mismo tamaño, más peso, para lo que el operador tiene que ver
- * primero (títulos de pantalla, nombre de quien escribió sin leer, montos). En material3 1.4 son internos, por eso
- * viven aquí.
- */
-@Immutable
-data class EmphasizedTypography(
-    val headlineMedium: TextStyle,
-    val headlineSmall: TextStyle,
-    val titleLarge: TextStyle,
-    val titleMedium: TextStyle,
-    val titleSmall: TextStyle,
-    val bodyLarge: TextStyle,
-    val bodyMedium: TextStyle,
-    val labelLarge: TextStyle,
-    val labelMedium: TextStyle,
-    val labelSmall: TextStyle,
-)
-
-internal val OperatorEmphasized = with(OperatorTypography) {
-    EmphasizedTypography(
-        headlineMedium = headlineMedium.copy(fontWeight = FontWeight.SemiBold),
-        headlineSmall = headlineSmall.copy(fontWeight = FontWeight.SemiBold),
-        titleLarge = titleLarge.copy(fontWeight = FontWeight.SemiBold, fontSize = 24.sp, lineHeight = 30.sp),
-        titleMedium = titleMedium.copy(fontWeight = FontWeight.SemiBold),
-        titleSmall = titleSmall.copy(fontWeight = FontWeight.SemiBold),
-        bodyLarge = bodyLarge.copy(fontWeight = FontWeight.Medium),
-        bodyMedium = bodyMedium.copy(fontWeight = FontWeight.Medium),
-        labelLarge = labelLarge.copy(fontWeight = FontWeight.Bold),
-        labelMedium = labelMedium.copy(fontWeight = FontWeight.Bold),
-        labelSmall = labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp),
-    )
-}

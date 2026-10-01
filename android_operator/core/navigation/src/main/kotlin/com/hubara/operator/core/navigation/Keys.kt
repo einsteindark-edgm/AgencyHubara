@@ -32,6 +32,16 @@ import kotlinx.serialization.Serializable
 @Serializable data class TemplateSheetKey(val session: SessionId) : NavKey
 
 /** Los tres destinos de primer nivel, cada uno con su pila. */
+/**
+ * Escena de lista + detalle de cada pila (pantallas ≥ 840 dp). Navigation 3 junta en una escena las entradas seguidas
+ * con la misma clave: con una por pila, Incendios nunca muestra al lado un chat de la pestaña Chats.
+ */
+object SceneKeys {
+    const val CHATS = "chats"
+    const val FIRES = "fires"
+    const val ORDERS = "orders"
+}
+
 object TopLevel {
     val roots: List<NavKey> = listOf(InboxKey, FiresKey, OrdersKey)
 }

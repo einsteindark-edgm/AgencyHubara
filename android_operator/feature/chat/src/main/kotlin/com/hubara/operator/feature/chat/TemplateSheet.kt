@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+
 package com.hubara.operator.feature.chat
 
 import androidx.compose.foundation.layout.Arrangement
@@ -7,7 +9,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -18,7 +19,6 @@ import com.hubara.operator.core.designsystem.segmentedShape
 import com.hubara.operator.core.designsystem.Spacing
 import com.hubara.operator.core.designsystem.SegmentGap
 import com.hubara.operator.core.designsystem.OperatorTheme
-import com.hubara.operator.core.designsystem.ExpressiveShapes
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
@@ -44,6 +44,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LoadingIndicator
 
 data class TemplateSheetState(
     val loading: Boolean = true,
@@ -89,12 +91,12 @@ fun TemplateSheet(vm: TemplateSheetViewModel, onDone: () -> Unit) {
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = Spacing.lg, end = Spacing.lg, bottom = Spacing.xl),
         verticalArrangement = Arrangement.spacedBy(Spacing.md),
     ) {
-        Text("Reactivar la conversación", style = OperatorTheme.emphasized.titleLarge)
+        Text("Reactivar la conversación", style = MaterialTheme.typography.titleLargeEmphasized)
         Text("La ventana de 24 h está cerrada: solo se puede escribir con una plantilla aprobada.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         val selected = ui.selected
         when {
-            ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
+            ui.loading -> LoadingIndicator(Modifier.align(Alignment.CenterHorizontally))
             ui.error != null -> Text(ui.error!!, color = MaterialTheme.colorScheme.error)
             selected == null -> Column(verticalArrangement = Arrangement.spacedBy(SegmentGap)) {
                 ui.templates.forEachIndexed { i, t ->
@@ -105,7 +107,7 @@ fun TemplateSheet(vm: TemplateSheetViewModel, onDone: () -> Unit) {
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     ) {
                         ListItem(
-                            headlineContent = { Text(t.label, style = OperatorTheme.emphasized.bodyLarge) },
+                            headlineContent = { Text(t.label, style = MaterialTheme.typography.bodyLargeEmphasized) },
                             supportingContent = {
                                 Text(if (t.needsImage) "Lleva foto: todavía se envía desde el dashboard" else t.body.orEmpty(), maxLines = 2)
                             },
@@ -122,7 +124,7 @@ fun TemplateSheet(vm: TemplateSheetViewModel, onDone: () -> Unit) {
 @Composable
 private fun TemplateForm(t: Template, onBack: () -> Unit, onSend: (Map<String, String>) -> Unit) {
     val values = remember(t.name) { mutableStateMapOf<String, String>() }
-    Text(t.label, style = OperatorTheme.emphasized.labelLarge, color = MaterialTheme.colorScheme.primary)
+    Text(t.label, style = MaterialTheme.typography.labelLargeEmphasized, color = MaterialTheme.colorScheme.primary)
     t.variables.forEach { v ->
         OutlinedTextField(
             value = values[v.name].orEmpty(),
@@ -133,11 +135,11 @@ private fun TemplateForm(t: Template, onBack: () -> Unit, onSend: (Map<String, S
         )
     }
     // Vista previa como la verá el cliente: una burbuja.
-    Surface(shape = ExpressiveShapes.largeIncreased, color = OperatorTheme.colors.bubbleOperator, contentColor = OperatorTheme.colors.onBubbleOperator) {
+    Surface(shape = MaterialTheme.shapes.largeIncreased, color = OperatorTheme.colors.bubbleOperator, contentColor = OperatorTheme.colors.onBubbleOperator) {
         Text(t.preview(values), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(Spacing.md))
     }
     Button(
-        onClick = { onSend(values.toMap()) }, enabled = t.missing(values).isEmpty(),
+        onClick = { onSend(values.toMap()) }, shapes = ButtonDefaults.shapes(), enabled = t.missing(values).isEmpty(),
         modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
     ) { Text("Enviar plantilla", style = MaterialTheme.typography.titleSmall) }
     TextButton(onClick = onBack) { Text("Elegir otra") }

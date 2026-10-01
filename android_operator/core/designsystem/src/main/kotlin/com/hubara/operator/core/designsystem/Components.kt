@@ -54,7 +54,7 @@ fun Avatar(name: String?, key: String, modifier: Modifier = Modifier, size: Dp =
         if (text != null) {
             Text(
                 text, color = fg,
-                style = OperatorTheme.emphasized.titleMedium.copy(fontSize = (size.value * 0.36f).sp),
+                style = MaterialTheme.typography.titleMediumEmphasized.copy(fontSize = (size.value * 0.36f).sp),
             )
         } else {
             Icon(OperatorIcons.Person, contentDescription = null, tint = fg, modifier = Modifier.size(size * 0.5f))
@@ -77,7 +77,7 @@ fun StatusPill(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         icon?.let { Icon(it, contentDescription = null, tint = content, modifier = Modifier.size(14.dp)) }
-        Text(text, color = content, style = OperatorTheme.emphasized.labelMedium, maxLines = 1)
+        Text(text, color = content, style = MaterialTheme.typography.labelMediumEmphasized, maxLines = 1)
     }
 }
 
@@ -106,9 +106,9 @@ fun EmptyState(icon: ImageVector, title: String, body: String, modifier: Modifie
     ) {
         IconTile(
             icon, MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer,
-            size = 72.dp, shape = ExpressiveShapes.extraLargeIncreased,
+            size = 72.dp, shape = MaterialTheme.shapes.extraLargeIncreased,
         )
-        Text(title, style = OperatorTheme.emphasized.titleMedium, textAlign = TextAlign.Center)
+        Text(title, style = MaterialTheme.typography.titleMediumEmphasized, textAlign = TextAlign.Center)
         Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
     }
 }

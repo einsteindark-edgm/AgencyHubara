@@ -50,11 +50,20 @@ import com.hubara.operator.core.ui.RadarIndicator
 import com.hubara.operator.core.ui.listTimeLabel
 import java.time.ZoneId
 import kotlinx.collections.immutable.persistentListOf
+import com.hubara.operator.core.ui.LocalSessionActions
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.AlertDialog
 
 @Composable
 fun InboxRoute(vm: InboxViewModel, onOpen: (Conversation) -> Unit) {
     val ui by vm.state.collectAsStateWithLifecycle()
-    InboxScreen(ui, onFilter = vm::setFilter, onOpen = onOpen)
+    val session = LocalSessionActions.current
+    InboxScreen(ui, onFilter = vm::setFilter, onOpen = onOpen, onSignOut = session?.signOut, onOpenPrivacy = session?.openPrivacy)
 }
 
 /** La bandeja: filtros, aviso de notificaciones y una fila por conversación (avatar, nombre, hora, último mensaje). */
@@ -64,6 +73,8 @@ fun InboxScreen(
     ui: InboxUiState,
     onFilter: (InboxFilter) -> Unit,
     onOpen: (Conversation) -> Unit,
+    onSignOut: (() -> Unit)? = null,
+    onOpenPrivacy: (() -> Unit)? = null,
     nowMs: Long = remember(ui) { System.currentTimeMillis() },
     zone: ZoneId = remember { ZoneId.systemDefault() },
 ) {
@@ -72,8 +83,11 @@ fun InboxScreen(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
             TopAppBar(
-                title = { Text("Chats", style = OperatorTheme.emphasized.titleLarge) },
-                actions = { RadarIndicator() },
+                title = { Text("Chats", style = MaterialTheme.typography.titleLargeEmphasized) },
+                actions = {
+                    RadarIndicator()
+                    if (onSignOut != null || onOpenPrivacy != null) SessionMenu(onSignOut, onOpenPrivacy)
+                },
                 scrollBehavior = scroll,
             )
         },
@@ -108,6 +122,32 @@ fun InboxScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * «Más opciones» de la bandeja: la política de privacidad y cerrar sesión (con confirmación, porque borra lo guardado
+ * en el teléfono).
+ */
+@Composable
+private fun SessionMenu(onSignOut: (() -> Unit)?, onOpenPrivacy: (() -> Unit)?) {
+    var menu by remember { mutableStateOf(false) }
+    var confirm by remember { mutableStateOf(false) }
+    IconButton(onClick = { menu = true }) { Icon(OperatorIcons.MoreVert, contentDescription = "Más opciones") }
+    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = MaterialTheme.shapes.large) {
+        onOpenPrivacy?.let { open -> DropdownMenuItem(text = { Text("Política de privacidad") }, onClick = { menu = false; open() }) }
+        if (onSignOut != null) DropdownMenuItem(text = { Text("Cerrar sesión") }, onClick = { menu = false; confirm = true })
+    }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text("¿Cerrar sesión?") },
+            text = {
+                Text("Se borran de este teléfono los chats, borradores y avisos guardados. Para volver a entrar necesitas tu email y contraseña.")
+            },
+            confirmButton = { TextButton(onClick = { confirm = false; onSignOut?.invoke() }) { Text("Cerrar sesión") } },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancelar") } },
+        )
     }
 }
 
@@ -150,11 +190,11 @@ private fun ConversationRow(c: Conversation, unseen: Int, nowMs: Long, zone: Zon
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     conversationTitle(c), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-                    style = if (unread) OperatorTheme.emphasized.titleMedium else MaterialTheme.typography.titleMedium,
+                    style = if (unread) MaterialTheme.typography.titleMediumEmphasized else MaterialTheme.typography.titleMedium,
                 )
                 Text(
                     listTimeLabel(c.lastUpdatedMs, nowMs, zone),
-                    style = if (unread) OperatorTheme.emphasized.labelMedium else MaterialTheme.typography.labelMedium,
+                    style = if (unread) MaterialTheme.typography.labelMediumEmphasized else MaterialTheme.typography.labelMedium,
                     color = if (unread) colors.primary else colors.onSurfaceVariant,
                     modifier = Modifier.padding(start = Spacing.sm),
                 )
@@ -163,7 +203,7 @@ private fun ConversationRow(c: Conversation, unseen: Int, nowMs: Long, zone: Zon
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         preview, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-                        style = if (unread) OperatorTheme.emphasized.bodyMedium else MaterialTheme.typography.bodyMedium,
+                        style = if (unread) MaterialTheme.typography.bodyMediumEmphasized else MaterialTheme.typography.bodyMedium,
                         color = if (unread) colors.onSurface else colors.onSurfaceVariant,
                     )
                     if (unread) UnreadBadge(unseen)
@@ -192,7 +232,7 @@ private fun UnreadBadge(unseen: Int) {
             .semantics { contentDescription = if (unseen == 1) "1 mensaje sin leer" else "$unseen mensajes sin leer" },
     ) {
         Text(
-            unseen.toString(), style = OperatorTheme.emphasized.labelMedium,
+            unseen.toString(), style = MaterialTheme.typography.labelMediumEmphasized,
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp),
         )
     }

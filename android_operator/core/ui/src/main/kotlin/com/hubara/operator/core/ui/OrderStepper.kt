@@ -23,7 +23,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.hubara.operator.core.designsystem.OperatorIcons
-import com.hubara.operator.core.designsystem.OperatorTheme
 import com.hubara.operator.core.model.OrderStage
 
 private val STEPS = listOf(
@@ -71,7 +70,7 @@ fun OrderStepper(current: OrderStage, modifier: Modifier = Modifier) {
                 }
                 Text(
                     label,
-                    style = if (now) OperatorTheme.emphasized.labelMedium else MaterialTheme.typography.labelMedium,
+                    style = if (now) MaterialTheme.typography.labelMediumEmphasized else MaterialTheme.typography.labelMedium,
                     color = if (done || now) colors.onSurface else colors.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(top = 4.dp),

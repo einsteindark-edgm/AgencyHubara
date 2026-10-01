@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+
 package com.hubara.operator.feature.fires
 
 import com.hubara.operator.core.ui.RadarIndicator
@@ -30,7 +32,6 @@ import com.hubara.operator.core.data.repo.FireRepository
 import com.hubara.operator.core.model.Fire
 import com.hubara.operator.core.model.FireSubject
 import com.hubara.operator.core.model.Severity
-import com.hubara.operator.core.navigation.ChatKey
 import com.hubara.operator.core.navigation.EntryProviderInstaller
 import com.hubara.operator.core.navigation.FiresKey
 import com.hubara.operator.core.navigation.LiveKey
@@ -55,7 +56,6 @@ import kotlinx.coroutines.launch
 import com.hubara.operator.core.ui.listContent
 import com.hubara.operator.core.ui.ListContent
 import com.hubara.operator.core.designsystem.Spacing
-import com.hubara.operator.core.designsystem.OperatorTheme
 import com.hubara.operator.core.designsystem.OperatorIcons
 import com.hubara.operator.core.designsystem.EmptyState
 import androidx.compose.ui.unit.LayoutDirection
@@ -64,11 +64,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Box
+import com.hubara.operator.core.navigation.SceneKeys
+import androidx.compose.material3.LoadingIndicator
 
 enum class FireFilter(val label: String) {
     TODO("Todo"), GRAVES("Graves"), CHATS("Chats"), ORDENES("Órdenes");
@@ -81,14 +82,16 @@ enum class FireFilter(val label: String) {
     }
 }
 
-/** A dónde lleva la acción principal de un incendio. null si no hay a dónde ir. */
+/**
+ * A dónde lleva la acción principal de un incendio. null si no hay a dónde ir. Los chats se abren «en vivo»
+ * (LiveKey, de la pila de Incendios): ChatKey es de la pila de Chats y el mismo chat no queda abierto en las dos.
+ */
 fun destinationFor(fire: Fire): NavKey? {
     val session = fire.subject.sessionId
     val order = (fire.subject as? FireSubject.Order)?.orderId
     return when (fire.primaryAction.name) {
-        "open_order" -> order?.let(::OrderSheetKey) ?: session?.let(::ChatKey)
-        "open_live" -> session?.let(::LiveKey)
-        else -> session?.let(::ChatKey)
+        "open_order" -> order?.let(::OrderSheetKey) ?: session?.let(::LiveKey)
+        else -> session?.let(::LiveKey)
     }
 }
 
@@ -131,7 +134,7 @@ fun FiresScreen(ui: FiresUiState, onFilter: (FireFilter) -> Unit, onOpen: (NavKe
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
-            TopAppBar(title = { Text("Incendios", style = OperatorTheme.emphasized.titleLarge) }, actions = { RadarIndicator() }, scrollBehavior = scroll)
+            TopAppBar(title = { Text("Incendios", style = MaterialTheme.typography.titleLargeEmphasized) }, actions = { RadarIndicator() }, scrollBehavior = scroll)
         },
     ) { inner ->
         val start = inner.calculateLeftPadding(LayoutDirection.Ltr)
@@ -150,7 +153,7 @@ fun FiresScreen(ui: FiresUiState, onFilter: (FireFilter) -> Unit, onOpen: (NavKe
                 }
             }
             when (ui.content) {
-                ListContent.LOADING -> Box(Modifier.fillMaxWidth().padding(Spacing.xxl), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                ListContent.LOADING -> Box(Modifier.fillMaxWidth().padding(Spacing.xxl), contentAlignment = Alignment.Center) { LoadingIndicator() }
                 ListContent.EMPTY -> EmptyState(OperatorIcons.Fire, "No hay incendios", "Todo va bien.")
                 ListContent.ERROR -> EmptyState(OperatorIcons.Error, "No se pudieron cargar", "Revisa la conexión; se reintenta solo.")
                 ListContent.LIST -> LazyColumn(
@@ -174,7 +177,12 @@ object FiresNavigation {
     @OptIn(ExperimentalMaterial3AdaptiveApi::class, ExperimentalMaterial3Api::class)
     @Provides @IntoSet
     fun entries(): EntryProviderInstaller = { navigator ->
-        entry<FiresKey>(metadata = ListDetailSceneStrategy.listPane()) {
+        entry<FiresKey>(
+            metadata = ListDetailSceneStrategy.listPane(
+                sceneKey = SceneKeys.FIRES,
+                detailPlaceholder = { EmptyState(OperatorIcons.Fire, "Elige un incendio", "El caso se abre aquí.") },
+            ),
+        ) {
             FiresRoute(hiltViewModel(), onOpen = { navigator.navigate(it) })
         }
     }

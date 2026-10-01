@@ -104,5 +104,32 @@ class AuthRepositoryTest {
         assertThat(r.state.value).isEqualTo(AuthState.SignedIn)
         assertThat(store.load()).isNotNull()
     }
+
+    // «Cerrar sesión» de verdad (auditoría de seguridad): el refresh token se revoca en Cognito, así que aunque alguien
+    // lo hubiera copiado del teléfono ya no sirve.
+    @Test fun cerrar_sesion_revoca_el_token_en_cognito_y_borra_la_sesion() = runTest {
+        store.save(SessionTokens("a", "i", "r-viejo", now + 3_600_000, "op@example.com"))
+        server.enqueue(MockResponse(code = 200, body = "{}"))
+        val r = repo()
+        r.restore()
+        r.signOut()
+
+        val request = server.takeRequest(2, java.util.concurrent.TimeUnit.SECONDS)
+        assertThat(request).isNotNull()
+        assertThat(request!!.headers["X-Amz-Target"]).isEqualTo("AWSCognitoIdentityProviderService.RevokeToken")
+        assertThat(request.body!!.utf8()).contains("\"Token\":\"r-viejo\"")
+        assertThat(r.state.value).isEqualTo(AuthState.SignedOut)
+        assertThat(store.load()).isNull()
+    }
+
+    @Test fun sin_red_cerrar_sesion_igual_borra_la_sesion_del_telefono() = runTest {
+        store.save(SessionTokens("a", "i", "r", now + 3_600_000, "op@example.com"))
+        val r = repo()
+        r.restore()
+        server.close()
+        r.signOut()
+        assertThat(r.state.value).isEqualTo(AuthState.SignedOut)
+        assertThat(store.load()).isNull()
+    }
 }
 

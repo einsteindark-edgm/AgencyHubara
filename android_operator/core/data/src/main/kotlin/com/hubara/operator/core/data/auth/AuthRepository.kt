@@ -55,6 +55,15 @@ class AuthRepository @Inject constructor(
         return handle(cognito.completeNewPassword(pending.username, pending.session, newPassword), pending.username)
     }
 
+    /**
+     * «Cerrar sesión» que elige el operador: revoca el refresh token en Cognito (aunque alguien lo hubiera copiado, ya
+     * no sirve) y borra la sesión. Sin red no se puede revocar, pero la sesión del teléfono se borra igual.
+     */
+    suspend fun signOut() {
+        tokens?.refreshToken?.let { cognito.revoke(it) }
+        logout()
+    }
+
     suspend fun logout() {
         tokens = null
         store.clear()

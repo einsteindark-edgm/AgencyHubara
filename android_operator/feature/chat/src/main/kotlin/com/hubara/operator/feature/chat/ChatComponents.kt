@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+
 package com.hubara.operator.feature.chat
 
 import androidx.compose.foundation.background
@@ -48,7 +50,6 @@ import coil3.compose.AsyncImage
 import com.hubara.operator.core.data.outbox.OutboxRepository
 import com.hubara.operator.core.data.repo.OutboxState
 import com.hubara.operator.core.data.repo.PendingAction
-import com.hubara.operator.core.designsystem.ExpressiveShapes
 import com.hubara.operator.core.designsystem.IconTile
 import com.hubara.operator.core.designsystem.OperatorIcons
 import com.hubara.operator.core.designsystem.OperatorTheme
@@ -64,6 +65,7 @@ import com.hubara.operator.core.ui.clockLabel
 import java.time.ZoneId
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.delay
+import androidx.compose.material3.ButtonDefaults
 
 private val BubbleRound = 20.dp
 private val BubbleJoin = 6.dp
@@ -140,7 +142,7 @@ fun MessageBubble(
                     tint = if (bot) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
                 )
                 Text(
-                    if (bot) "Bot" else "Operador", style = OperatorTheme.emphasized.labelSmall,
+                    if (bot) "Bot" else "Operador", style = MaterialTheme.typography.labelSmallEmphasized,
                     color = if (bot) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(start = 4.dp),
                 )
@@ -189,7 +191,7 @@ private fun ShippingFormCard(form: ShippingForm, fg: Color, modifier: Modifier =
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(OperatorIcons.Shipping, contentDescription = null, tint = fg, modifier = Modifier.size(18.dp))
-            Text("Datos de envío", style = OperatorTheme.emphasized.labelLarge, color = fg, modifier = Modifier.padding(start = 6.dp))
+            Text("Datos de envío", style = MaterialTheme.typography.labelLargeEmphasized, color = fg, modifier = Modifier.padding(start = 6.dp))
         }
         listOf(
             "Recibe" to form.receiverName,
@@ -254,7 +256,7 @@ fun UndoBar(pending: ImmutableList<PendingAction>, onUndo: (String) -> Unit, onR
         pending.forEach { p ->
             // Como un snackbar: superficie inversa, se despega del chat sin tapar el composer.
             Surface(
-                shape = ExpressiveShapes.largeIncreased,
+                shape = MaterialTheme.shapes.largeIncreased,
                 color = MaterialTheme.colorScheme.inverseSurface,
                 contentColor = MaterialTheme.colorScheme.inverseOnSurface,
                 shadowElevation = 2.dp,
@@ -299,7 +301,7 @@ private fun UndoButton(p: PendingAction, color: Color, onUndo: (String) -> Unit)
 @Composable
 fun BotReadingPanel(stage: String?, busy: Boolean, onIntervene: () -> Unit) {
     Surface(
-        shape = ExpressiveShapes.largeIncreased,
+        shape = MaterialTheme.shapes.largeIncreased,
         color = MaterialTheme.colorScheme.tertiaryContainer,
         contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
         modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.md, vertical = Spacing.xs),
@@ -307,10 +309,10 @@ fun BotReadingPanel(stage: String?, busy: Boolean, onIntervene: () -> Unit) {
         Row(Modifier.padding(Spacing.md), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
             IconTile(OperatorIcons.Bot, MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.onTertiary, shape = CircleShape)
             Column(Modifier.weight(1f)) {
-                Text("El bot atiende", style = OperatorTheme.emphasized.titleSmall)
+                Text("El bot atiende", style = MaterialTheme.typography.titleSmallEmphasized)
                 Text("Etapa: ${stageLabel(stage)}", style = MaterialTheme.typography.bodySmall)
             }
-            Button(onClick = onIntervene, enabled = !busy) { Text("Tomar la conversación") }
+            Button(onClick = onIntervene, shapes = ButtonDefaults.shapes(), enabled = !busy) { Text("Tomar la conversación") }
         }
     }
 }
@@ -319,7 +321,7 @@ fun BotReadingPanel(stage: String?, busy: Boolean, onIntervene: () -> Unit) {
 @Composable
 fun WindowClosedCard(onReactivate: () -> Unit) {
     Surface(
-        shape = ExpressiveShapes.largeIncreased,
+        shape = MaterialTheme.shapes.largeIncreased,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier.fillMaxWidth().padding(Spacing.md),
     ) {
@@ -331,7 +333,7 @@ fun WindowClosedCard(onReactivate: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f),
                 )
             }
-            Button(onClick = onReactivate, modifier = Modifier.fillMaxWidth()) { Text("Reactivar con plantilla") }
+            Button(onClick = onReactivate, shapes = ButtonDefaults.shapes(), modifier = Modifier.fillMaxWidth()) { Text("Reactivar con plantilla") }
         }
     }
 }
@@ -382,7 +384,7 @@ fun Composer(state: TextFieldState, enabled: Boolean, onSend: () -> Unit, modifi
 @Composable
 fun ErrorNotice(message: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
-        shape = ExpressiveShapes.largeIncreased,
+        shape = MaterialTheme.shapes.largeIncreased,
         color = MaterialTheme.colorScheme.errorContainer,
         contentColor = MaterialTheme.colorScheme.onErrorContainer,
         modifier = modifier.fillMaxWidth().padding(horizontal = Spacing.md, vertical = Spacing.xs),

@@ -87,10 +87,14 @@ class HotSalesWidget : GlanceAppWidget() {
     }
 }
 
-/** Intent explícito a la actividad de inicio con el link validable `hubara://live/{id}`. */
+/**
+ * Intent explícito a la actividad de inicio con el link validable `hubara://live/{id}`. Siempre con el paquete
+ * propio: nunca un intent implícito que otra app pudiera atender (skill android-intent-security).
+ */
 fun liveIntent(context: Context, sessionId: String): Intent {
-    val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: Intent()
-    return Intent(launch).setData("hubara://live/$sessionId".toUri()).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: Intent(Intent.ACTION_MAIN)
+    return Intent(launch).setPackage(context.packageName).setData("hubara://live/$sessionId".toUri())
+        .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
 }
 
 class HotSalesWidgetReceiver : GlanceAppWidgetReceiver() {

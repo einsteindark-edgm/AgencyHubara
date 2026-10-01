@@ -5,25 +5,79 @@ plugins {
     id("hubara.android.hilt")
 }
 
-android {
-    namespace = "com.hubara.operator"
-    defaultConfig {
-        applicationId = "com.hubara.operator"
-        versionCode = 1
-        versionName = "0.1.0"
-    }
-}
-
 // AGP 9: los campos de BuildConfig van por la API de variantes (skill agp-9-upgrade, BuildConfig).
 val apiUrl = providers.gradleProperty("hubara.apiUrl").getOrElse("http://10.0.2.2:8000")
 val cognitoClientId = providers.gradleProperty("hubara.cognitoClientId").getOrElse("")
 val cognitoRegion = providers.gradleProperty("hubara.cognitoRegion").getOrElse("us-east-1")
+val privacyUrl = providers.gradleProperty("hubara.privacyUrl").getOrElse("")
+
+// Clave de subida a Google Play: vive FUERA del repo (es público). Se configura en ~/.gradle/gradle.properties;
+// receta en docs/mobile-native/publicar-en-google-play.html.
+val uploadStoreFile = providers.gradleProperty("hubara.upload.storeFile").orNull
+val uploadStorePassword = providers.gradleProperty("hubara.upload.storePassword").orNull
+val uploadKeyAlias = providers.gradleProperty("hubara.upload.keyAlias").orNull
+val uploadKeyPassword = providers.gradleProperty("hubara.upload.keyPassword").orNull
+
+android {
+    namespace = "com.hubara.operator"
+    defaultConfig {
+        applicationId = "com.hubara.operator"
+        // Cada .aab que se sube a Google Play necesita un versionCode MAYOR que el anterior (nunca se reutiliza).
+        // versionName es lo que ve el operador. Se suben juntos en cada release.
+        versionCode = 1
+        versionName = "1.0.0"
+    }
+    signingConfigs {
+        if (uploadStoreFile != null) {
+            create("upload") {
+                storeFile = file(uploadStoreFile)
+                storePassword = uploadStorePassword
+                keyAlias = uploadKeyAlias
+                keyPassword = uploadKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            if (uploadStoreFile != null) signingConfig = signingConfigs.getByName("upload")
+        }
+    }
+}
+
+// El paquete para Google Play (bundleRelease) falla cerrado: sin HTTPS, sin Cognito o sin clave de subida no se arma.
+// La CI compila `assembleRelease` con los valores de desarrollo solo para probar R8; eso no pasa por aquí.
+val verifyPlayRelease by tasks.registering {
+    group = "publishing"
+    description = "Revisa que el .aab para Google Play apunte a producción y vaya firmado con la clave de subida."
+    val url = apiUrl
+    val clientId = cognitoClientId
+    val store = uploadStoreFile
+    val alias = uploadKeyAlias
+    val privacy = privacyUrl
+    doLast {
+        val problems = buildList {
+            if (!url.startsWith("https://")) add("hubara.apiUrl tiene que ser https:// (hoy: $url)")
+            if (clientId.isBlank()) add("falta hubara.cognitoClientId (sin él la app no deja entrar)")
+            if (store == null || !File(store).isFile) add("falta la clave de subida: hubara.upload.storeFile no apunta a un archivo")
+            if (alias.isNullOrBlank()) add("falta hubara.upload.keyAlias")
+            if (!privacy.startsWith("https://")) add("falta hubara.privacyUrl (Google Play exige la política de privacidad dentro de la app)")
+        }
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "El paquete para Google Play no se puede armar:\n- " + problems.joinToString("\n- ") +
+                    "\nReceta: docs/mobile-native/publicar-en-google-play.html",
+            )
+        }
+    }
+}
+tasks.matching { it.name == "bundleRelease" }.configureEach { dependsOn(verifyPlayRelease) }
 
 androidComponents {
     onVariants { variant ->
         variant.buildConfigFields?.put("API_URL", BuildConfigField("String", "\"$apiUrl\"", "URL del backend"))
         variant.buildConfigFields?.put("COGNITO_CLIENT_ID", BuildConfigField("String", "\"$cognitoClientId\"", "Vacío = modo dev sin login"))
         variant.buildConfigFields?.put("COGNITO_REGION", BuildConfigField("String", "\"$cognitoRegion\"", "Región del user pool"))
+        variant.buildConfigFields?.put("PRIVACY_URL", BuildConfigField("String", "\"$privacyUrl\"", "Política de privacidad pública; vacío = sin enlace"))
     }
 }
 

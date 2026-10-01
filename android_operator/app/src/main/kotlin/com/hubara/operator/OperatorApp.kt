@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+
 package com.hubara.operator
 
 import androidx.compose.foundation.layout.Box
@@ -13,7 +15,6 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Badge
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
@@ -79,6 +80,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.hubara.operator.core.ui.SessionActions
+import com.hubara.operator.core.ui.LocalSessionActions
+import com.hubara.operator.core.push.SignOut
+import androidx.compose.material3.LoadingIndicator
+import androidx.compose.ui.platform.LocalUriHandler
 
 @Composable
 fun OperatorApp(
@@ -88,12 +94,18 @@ fun OperatorApp(
     onLinkConsumed: () -> Unit,
 ) {
     val state by auth.state.collectAsStateWithLifecycle()
+    val uriHandler = LocalUriHandler.current
+    val session = remember(uriHandler) {
+        SessionActions(openPrivacy = BuildConfig.PRIVACY_URL.takeIf { it.isNotBlank() }?.let { url -> { uriHandler.openUri(url) } })
+    }
     // Superficie de fondo en todas las ramas: sin ella, login y carga quedaban transparentes en modo oscuro.
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        when (state) {
-            AuthState.Loading -> Box(Modifier.fillMaxSize()) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
-            AuthState.SignedOut, is AuthState.NeedsNewPassword -> LoginScreen()
-            AuthState.SignedIn, AuthState.DevMode -> MainShell(installers, pendingLink, onLinkConsumed)
+        CompositionLocalProvider(LocalSessionActions provides session) {
+            when (state) {
+                AuthState.Loading -> Box(Modifier.fillMaxSize()) { LoadingIndicator(Modifier.align(Alignment.Center)) }
+                AuthState.SignedOut, is AuthState.NeedsNewPassword -> LoginScreen()
+                AuthState.SignedIn, AuthState.DevMode -> MainShell(installers, pendingLink, onLinkConsumed)
+            }
         }
     }
 }
@@ -102,6 +114,7 @@ fun OperatorApp(
 class ShellViewModel @Inject constructor(
     private val fires: FireRepository,
     conversations: ConversationRepository,
+    private val signOutUseCase: SignOut,
 ) : ViewModel() {
     val radar: StateFlow<ImmutableList<Fire>> = fires.observeRadar().map { it.toImmutableList() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), persistentListOf())
@@ -112,6 +125,9 @@ class ShellViewModel @Inject constructor(
     fun find(id: FireId): Fire? = radar.value.firstOrNull { it.id == id }
 
     fun hide(id: FireId) { viewModelScope.launch { fires.hide(id) } }
+
+    /** Al terminar, la sesión queda cerrada y la app vuelve sola al login. */
+    fun signOut() { viewModelScope.launch { signOutUseCase() } }
 }
 
 /** El radar se abre debajo del encabezado (la barra superior mide 64 dp): nunca tapa atrás, título ni acciones. */
@@ -136,6 +152,9 @@ private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: Stat
             onLinkConsumed()
         }
     }
+
+    val parentSession = LocalSessionActions.current ?: SessionActions()
+    val session = remember(parentSession, shell) { parentSession.copy(signOut = shell::signOut) }
 
     // Radar: desplegado a pedido (chip) o, unos segundos, cuando llegan incendios graves nuevos.
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -171,6 +190,7 @@ private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: Stat
             CompositionLocalProvider(
                 LocalRadarIndicator provides RadarIndicatorModel(radar.size) { expanded = true },
                 LocalRadarFloor provides floor,
+                LocalSessionActions provides session,
             ) {
                 NavDisplay(
                     entries = state.toDecoratedEntries(provider),

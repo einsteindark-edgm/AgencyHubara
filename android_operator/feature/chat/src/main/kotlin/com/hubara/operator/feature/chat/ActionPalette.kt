@@ -18,7 +18,6 @@ import androidx.lifecycle.viewModelScope
 import com.hubara.operator.core.data.outbox.OutboxRepository
 import com.hubara.operator.core.designsystem.IconTile
 import com.hubara.operator.core.designsystem.OperatorIcons
-import com.hubara.operator.core.designsystem.OperatorTheme
 import com.hubara.operator.core.designsystem.SegmentGap
 import com.hubara.operator.core.designsystem.Spacing
 import com.hubara.operator.core.designsystem.segmentedShape
@@ -64,9 +63,9 @@ private fun actionIcon(tool: String): ImageVector = when (tool) {
 @Composable
 fun ActionPalette(vm: ActionPaletteViewModel, onDone: () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(start = Spacing.lg, end = Spacing.lg, bottom = Spacing.xl)) {
-        Text("Acciones", style = OperatorTheme.emphasized.titleLarge, modifier = Modifier.padding(bottom = Spacing.sm))
+        Text("Acciones", style = MaterialTheme.typography.titleLargeEmphasized, modifier = Modifier.padding(bottom = Spacing.sm))
         PALETTE.forEach { (group, actions) ->
-            Text(group, style = OperatorTheme.emphasized.labelLarge, color = MaterialTheme.colorScheme.primary,
+            Text(group, style = MaterialTheme.typography.labelLargeEmphasized, color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(start = Spacing.xs, top = Spacing.md, bottom = Spacing.sm))
             Column(verticalArrangement = Arrangement.spacedBy(SegmentGap)) {
                 actions.forEachIndexed { i, (tool, label) ->

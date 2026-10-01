@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+
 package com.hubara.operator.feature.orders
 
 import com.hubara.operator.core.ui.RadarIndicator
@@ -15,7 +17,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -80,7 +81,6 @@ import com.hubara.operator.core.designsystem.Spacing
 import com.hubara.operator.core.designsystem.OperatorTheme
 import com.hubara.operator.core.designsystem.OperatorIcons
 import com.hubara.operator.core.designsystem.IconTile
-import com.hubara.operator.core.designsystem.ExpressiveShapes
 import com.hubara.operator.core.designsystem.EmptyState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -94,6 +94,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Box
+import com.hubara.operator.core.navigation.SceneKeys
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LoadingIndicator
 
 private val COP = NumberFormat.getIntegerInstance(Locale.forLanguageTag("es-CO"))
 
@@ -141,11 +144,11 @@ fun OrdersScreen(ui: OrdersUiState, onOpen: (OrderId) -> Unit) {
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
-            TopAppBar(title = { Text("Órdenes", style = OperatorTheme.emphasized.titleLarge) }, actions = { RadarIndicator() }, scrollBehavior = scroll)
+            TopAppBar(title = { Text("Órdenes", style = MaterialTheme.typography.titleLargeEmphasized) }, actions = { RadarIndicator() }, scrollBehavior = scroll)
         },
     ) { inner ->
         when (ui.content) {
-            ListContent.LOADING -> Box(Modifier.fillMaxSize().padding(inner), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            ListContent.LOADING -> Box(Modifier.fillMaxSize().padding(inner), contentAlignment = Alignment.Center) { LoadingIndicator() }
             ListContent.EMPTY -> EmptyState(OperatorIcons.Orders, "No hay órdenes", "Cuando el bot registre un pedido, aparece aquí.", Modifier.padding(inner))
             ListContent.ERROR -> EmptyState(OperatorIcons.Error, "No se pudieron cargar", "Revisa la conexión y vuelve a abrir Órdenes.", Modifier.padding(inner))
             ListContent.LIST -> LazyColumn(Modifier.fillMaxSize(), contentPadding = inner) {
@@ -182,9 +185,9 @@ private fun OrderRow(o: OrderSummary, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(Spacing.lg),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconTile(icon, bg, fg, size = 48.dp, shape = ExpressiveShapes.largeIncreased)
+        IconTile(icon, bg, fg, size = 48.dp, shape = MaterialTheme.shapes.largeIncreased)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("#${o.displayId} · ${o.customer}", style = OperatorTheme.emphasized.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("#${o.displayId} · ${o.customer}", style = MaterialTheme.typography.titleMediumEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm), verticalAlignment = Alignment.CenterVertically) {
                 if (o.overdue) {
                     StatusPill("${stageLabel(o.stage)} · atrasada", OperatorTheme.colors.graveContainer, OperatorTheme.colors.onGraveContainer)
@@ -196,7 +199,7 @@ private fun OrderRow(o: OrderSummary, onClick: () -> Unit) {
                 }
             }
         }
-        Text(cop(o.totalCop), style = OperatorTheme.emphasized.titleSmall)
+        Text(cop(o.totalCop), style = MaterialTheme.typography.titleSmallEmphasized)
     }
 }
 
@@ -254,7 +257,7 @@ fun OrderSheet(vm: OrderSheetViewModel) {
     ) {
         val d = ui.detail
         when {
-            ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally).padding(Spacing.xl))
+            ui.loading -> LoadingIndicator(Modifier.align(Alignment.CenterHorizontally).padding(Spacing.xl))
             d == null -> Text(ui.message ?: "Sin datos.")
             else -> OrderSheetContent(d, ui.busy, ui.message, onAdvance = vm::advance)
         }
@@ -265,14 +268,14 @@ fun OrderSheet(vm: OrderSheetViewModel) {
 private fun OrderSheetContent(d: OrderDetail, busy: Boolean, message: String?, onAdvance: (String?, Long?) -> Unit) {
     val s = d.summary
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text("Pedido #${s.displayId}", style = OperatorTheme.emphasized.headlineSmall)
+        Text("Pedido #${s.displayId}", style = MaterialTheme.typography.headlineSmallEmphasized)
         Text(s.customer, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     SectionCard("Qué compró", OperatorIcons.Inventory) {
         d.items.forEach { item ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
                 Column(Modifier.weight(1f)) {
-                    Text("${item.title} × ${item.quantity}", style = OperatorTheme.emphasized.bodyMedium)
+                    Text("${item.title} × ${item.quantity}", style = MaterialTheme.typography.bodyMediumEmphasized)
                     item.variant?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
                 Text(cop(item.totalCop), style = MaterialTheme.typography.bodyMedium)
@@ -322,11 +325,11 @@ private fun NextStep(current: OrderStage, busy: Boolean, onAdvance: (String?, Lo
             OutlinedTextField(cost, { cost = it }, label = { Text("Costo real del envío") }, singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
             val ok = tracking.startsWith("http") && parseCop(cost) != null
-            Button(onClick = { onAdvance(tracking.trim(), parseCop(cost)) }, enabled = ok && !busy, modifier = big) {
+            Button(onClick = { onAdvance(tracking.trim(), parseCop(cost)) }, shapes = ButtonDefaults.shapes(), enabled = ok && !busy, modifier = big) {
                 Text(label, style = MaterialTheme.typography.titleSmall)
             }
         }
-        else -> Button(onClick = { onAdvance(null, null) }, enabled = !busy, modifier = big) { Text(label, style = MaterialTheme.typography.titleSmall) }
+        else -> Button(onClick = { onAdvance(null, null) }, shapes = ButtonDefaults.shapes(), enabled = !busy, modifier = big) { Text(label, style = MaterialTheme.typography.titleSmall) }
     }
 }
 
@@ -336,11 +339,11 @@ private fun NextStep(current: OrderStage, busy: Boolean, onAdvance: (String?, Lo
  */
 @Composable
 private fun SectionCard(title: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
-    Surface(shape = ExpressiveShapes.largeIncreased, color = MaterialTheme.colorScheme.surfaceContainerLowest, modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = MaterialTheme.shapes.largeIncreased, color = MaterialTheme.colorScheme.surfaceContainerLowest, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(Spacing.lg), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm), verticalAlignment = Alignment.CenterVertically) {
                 Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                Text(title, style = OperatorTheme.emphasized.titleSmall, color = MaterialTheme.colorScheme.primary)
+                Text(title, style = MaterialTheme.typography.titleSmallEmphasized, color = MaterialTheme.colorScheme.primary)
             }
             content()
         }
@@ -350,7 +353,7 @@ private fun SectionCard(title: String, icon: ImageVector, content: @Composable C
 @Composable
 private fun Field(label: String, value: String) {
     Column(Modifier.fillMaxWidth()) {
-        Text(label, style = OperatorTheme.emphasized.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(label, style = MaterialTheme.typography.labelSmallEmphasized, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyLarge)
     }
 }
@@ -361,7 +364,12 @@ object OrdersNavigation {
     @OptIn(ExperimentalMaterial3AdaptiveApi::class, ExperimentalMaterial3Api::class)
     @Provides @IntoSet
     fun entries(): EntryProviderInstaller = { navigator ->
-        entry<OrdersKey>(metadata = ListDetailSceneStrategy.listPane()) {
+        entry<OrdersKey>(
+            metadata = ListDetailSceneStrategy.listPane(
+                sceneKey = SceneKeys.ORDERS,
+                detailPlaceholder = { EmptyState(OperatorIcons.Orders, "Elige una orden", "Su ficha se abre al tocarla.") },
+            ),
+        ) {
             OrdersRoute(hiltViewModel(), onOpen = { navigator.navigate(OrderSheetKey(it)) })
         }
         entry<OrderSheetKey>(metadata = BottomSheetSceneStrategy.bottomSheet(expanded = true)) { key ->

@@ -12,6 +12,9 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.components.ActivityRetainedComponent
 import dagger.multibindings.IntoSet
+import com.hubara.operator.core.designsystem.OperatorIcons
+import com.hubara.operator.core.designsystem.EmptyState
+import com.hubara.operator.core.navigation.SceneKeys
 
 @Module
 @InstallIn(ActivityRetainedComponent::class)
@@ -20,7 +23,12 @@ object InboxNavigation {
     @Provides @IntoSet
     fun entries(): EntryProviderInstaller = { navigator ->
         // En pantallas anchas, la bandeja queda a la izquierda y el chat a la derecha.
-        entry<InboxKey>(metadata = ListDetailSceneStrategy.listPane()) {
+        entry<InboxKey>(
+            metadata = ListDetailSceneStrategy.listPane(
+                sceneKey = SceneKeys.CHATS,
+                detailPlaceholder = { EmptyState(OperatorIcons.Chat, "Elige un chat", "La conversación se abre aquí.") },
+            ),
+        ) {
             InboxRoute(hiltViewModel(), onOpen = { navigator.navigate(ChatKey(it.sessionId)) })
         }
     }

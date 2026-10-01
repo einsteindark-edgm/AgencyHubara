@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+
 package com.hubara.operator.feature.auth
 
 import androidx.compose.foundation.layout.Arrangement
@@ -30,17 +32,29 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hubara.operator.core.designsystem.Spacing
-import com.hubara.operator.core.designsystem.OperatorTheme
 import com.hubara.operator.core.designsystem.OperatorIcons
 import com.hubara.operator.core.designsystem.IconTile
-import com.hubara.operator.core.designsystem.ExpressiveShapes
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.ButtonDefaults
+import com.hubara.operator.core.ui.LocalSessionActions
+import androidx.compose.material3.TextButton
 
 @Composable
 fun LoginScreen(vm: LoginViewModel = hiltViewModel()) {
     val ui by vm.state.collectAsStateWithLifecycle()
+    LoginContent(ui, onLogin = vm::login, onSetNewPassword = vm::setNewPassword, onOpenPrivacy = LocalSessionActions.current?.openPrivacy)
+}
+
+/** El login sin ViewModel. */
+@Composable
+fun LoginContent(
+    ui: LoginUiState,
+    onLogin: (String, String) -> Unit,
+    onSetNewPassword: (String, String) -> Unit,
+    onOpenPrivacy: (() -> Unit)? = null,
+) {
     // Sin Scaffold: el padding de las barras y del teclado va en el contenedor (skill edge-to-edge).
     Column(
         modifier = Modifier
@@ -53,17 +67,18 @@ fun LoginScreen(vm: LoginViewModel = hiltViewModel()) {
     ) {
         IconTile(
             OperatorIcons.Storefront, MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer,
-            size = 72.dp, shape = ExpressiveShapes.extraLargeIncreased,
+            size = 72.dp, shape = MaterialTheme.shapes.extraLargeIncreased,
         )
         Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-            Text("App Operador", style = OperatorTheme.emphasized.headlineMedium)
+            Text("App Operador", style = MaterialTheme.typography.headlineMediumEmphasized)
             Text("Atiende los chats, los incendios y los pedidos de la tienda.",
                 style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (ui.needsNewPassword) NewPasswordForm(ui, vm::setNewPassword) else CredentialsForm(ui, vm::login)
+        if (ui.needsNewPassword) NewPasswordForm(ui, onSetNewPassword) else CredentialsForm(ui, onLogin)
         ui.error?.let {
             Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
         }
+        onOpenPrivacy?.let { open -> TextButton(onClick = open) { Text("Política de privacidad") } }
     }
 }
 
@@ -85,7 +100,7 @@ private fun CredentialsForm(ui: LoginUiState, onLogin: (String, String) -> Unit)
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
     )
-    Button(onClick = { onLogin(email, password) }, enabled = !ui.busy, modifier = BigButton) {
+    Button(onClick = { onLogin(email, password) }, shapes = ButtonDefaults.shapes(), enabled = !ui.busy, modifier = BigButton) {
         if (ui.busy) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 3.dp) else Text("Entrar", style = MaterialTheme.typography.titleSmall)
     }
 }
@@ -107,7 +122,7 @@ private fun NewPasswordForm(ui: LoginUiState, onSet: (String, String) -> Unit) {
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
     )
-    Button(onClick = { onSet(password, confirm) }, enabled = !ui.busy, modifier = BigButton) {
+    Button(onClick = { onSet(password, confirm) }, shapes = ButtonDefaults.shapes(), enabled = !ui.busy, modifier = BigButton) {
         Text("Guardar y entrar", style = MaterialTheme.typography.titleSmall)
     }
 }

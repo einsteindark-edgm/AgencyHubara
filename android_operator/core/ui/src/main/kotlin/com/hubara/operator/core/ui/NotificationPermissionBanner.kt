@@ -31,10 +31,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import com.hubara.operator.core.designsystem.ExpressiveShapes
 import com.hubara.operator.core.designsystem.IconTile
 import com.hubara.operator.core.designsystem.OperatorIcons
-import com.hubara.operator.core.designsystem.OperatorTheme
 import com.hubara.operator.core.designsystem.Spacing
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
@@ -67,7 +65,7 @@ fun NotificationPermissionBanner(modifier: Modifier = Modifier) {
     }
     if (granted || dismissed) return
     Surface(
-        shape = ExpressiveShapes.largeIncreased,
+        shape = MaterialTheme.shapes.largeIncreased,
         color = MaterialTheme.colorScheme.secondaryContainer,
         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         modifier = modifier.fillMaxWidth().padding(horizontal = Spacing.margin, vertical = Spacing.sm),
@@ -76,7 +74,7 @@ fun NotificationPermissionBanner(modifier: Modifier = Modifier) {
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
                 IconTile(OperatorIcons.Notifications, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Activa las notificaciones", style = OperatorTheme.emphasized.titleSmall)
+                    Text("Activa las notificaciones", style = MaterialTheme.typography.titleSmallEmphasized)
                     Text("Para enterarte de los incendios graves con la app cerrada.", style = MaterialTheme.typography.bodyMedium)
                 }
             }

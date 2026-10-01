@@ -317,10 +317,10 @@ scenarios:
     resumen: "Con la app cerrada, un incendio grave llega como notificación y tocarla abre el chat de Mateo."
     # El vigía (WorkManager periódico) no se deja adelantar con `cmd jobscheduler run -f`; sí corre
     # apenas arranca el proceso. Se despierta la app EN SEGUNDO PLANO (como tras reiniciar el teléfono)
-    # con un broadcast explícito al receptor del widget: APPWIDGET_UPDATE es protegido y el shell no
-    # puede mandarlo, pero una acción propia sí arranca el proceso. El incendio de Mateo ya está en el backend.
+    # con un broadcast explícito a E2eWakeReceiver, que solo existe en el build debug (el receptor del widget no
+    # está exportado y APPWIDGET_UPDATE es protegido). El incendio de Mateo ya está en el backend.
     setup: [reset, clear_app, {inject: fire}, home, {wait: 1},
-            {adb: "am broadcast -n com.hubara.operator/com.hubara.operator.widget.hot.HotSalesWidgetReceiver -a com.hubara.operator.E2E_WAKE"},
+            {adb: "am broadcast -n com.hubara.operator/com.hubara.operator.E2eWakeReceiver -a com.hubara.operator.E2E_WAKE"},
             {wait: 10}]
     locked_app: false
     script:

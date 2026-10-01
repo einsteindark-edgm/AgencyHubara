@@ -23,7 +23,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.hubara.operator.core.designsystem.ExpressiveShapes
 import com.hubara.operator.core.designsystem.IconTile
 import com.hubara.operator.core.designsystem.OperatorIcons
 import com.hubara.operator.core.designsystem.OperatorTheme
@@ -85,7 +84,7 @@ fun FireCard(
     }
     val (tileBg, tileFg) = severityContainer(fire.severity)
     Surface(
-        shape = ExpressiveShapes.largeIncreased,
+        shape = MaterialTheme.shapes.largeIncreased,
         color = if (floating) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow,
         shadowElevation = if (floating) 6.dp else 0.dp,
         modifier = modifier
@@ -105,10 +104,10 @@ fun FireCard(
             Column(Modifier.weight(1f).padding(end = Spacing.sm), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     "${subjectLabel(fire)} · ${severityLabel(fire.severity)}" + if (fire.gettingWorse) " · EMPEORA" else "",
-                    style = OperatorTheme.emphasized.labelSmall,
+                    style = MaterialTheme.typography.labelSmallEmphasized,
                     color = severityColor(fire.severity),
                 )
-                Text(fire.title, style = OperatorTheme.emphasized.titleSmall, maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis)
+                Text(fire.title, style = MaterialTheme.typography.titleSmallEmphasized, maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis)
                 if (!compact && fire.subtitle.isNotBlank()) {
                     Text(
                         fire.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,

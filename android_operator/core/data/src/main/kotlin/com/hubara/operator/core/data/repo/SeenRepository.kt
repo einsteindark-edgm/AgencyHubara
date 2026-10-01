@@ -34,6 +34,11 @@ class SeenRepository @Inject constructor(
 
     val counts: Flow<SeenCounts> = context.seenStore.data.map { prefs -> decode(prefs[key]) }.distinctUntilChanged()
 
+    /** Al cerrar sesión: el próximo operador arranca con su propia línea base. */
+    suspend fun clear() {
+        context.seenStore.edit { it.clear() }
+    }
+
     suspend fun update(transform: (SeenCounts) -> SeenCounts) {
         context.seenStore.edit { prefs ->
             val current = decode(prefs[key])

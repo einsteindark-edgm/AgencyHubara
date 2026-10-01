@@ -53,6 +53,11 @@ class AmbientStore @Inject constructor(@ApplicationContext private val context: 
 
     suspend fun notified(): Set<String> = context.ambientStore.data.first()[notifiedKey].orEmpty()
 
+    /** Al cerrar sesión: ni ventas calientes ni avisados quedan en el teléfono. */
+    suspend fun clear() {
+        context.ambientStore.edit { it.clear() }
+    }
+
     /** Guarda los avisados que siguen vigentes: si un incendio sale y vuelve, vuelve a avisar. */
     suspend fun setNotified(ids: Set<String>) {
         context.ambientStore.edit { it[notifiedKey] = ids }

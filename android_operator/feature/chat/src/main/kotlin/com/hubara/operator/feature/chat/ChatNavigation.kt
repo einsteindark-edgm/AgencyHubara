@@ -20,6 +20,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.components.ActivityRetainedComponent
 import dagger.multibindings.IntoSet
+import com.hubara.operator.core.navigation.SceneKeys
 
 @Module
 @InstallIn(ActivityRetainedComponent::class)
@@ -27,9 +28,10 @@ object ChatNavigation {
     @OptIn(ExperimentalMaterial3AdaptiveApi::class, ExperimentalMaterial3Api::class)
     @Provides @IntoSet
     fun entries(): EntryProviderInstaller = { navigator ->
-        entry<ChatKey>(metadata = ListDetailSceneStrategy.detailPane()) { key -> ChatRoute(key.session, navigator) }
+        // ChatKey es de la pila de Chats; LiveKey, de la de Incendios (cada una con su escena en pantallas anchas).
+        entry<ChatKey>(metadata = ListDetailSceneStrategy.detailPane(sceneKey = SceneKeys.CHATS)) { key -> ChatRoute(key.session, navigator) }
         // En vivo es el mismo chat: con el bot en control muestra la etapa y el botón para tomarla.
-        entry<LiveKey>(metadata = ListDetailSceneStrategy.detailPane()) { key -> ChatRoute(key.session, navigator) }
+        entry<LiveKey>(metadata = ListDetailSceneStrategy.detailPane(sceneKey = SceneKeys.FIRES)) { key -> ChatRoute(key.session, navigator) }
         entry<TemplateSheetKey>(metadata = BottomSheetSceneStrategy.bottomSheet(expanded = true)) { key ->
             val vm = hiltViewModel<TemplateSheetViewModel, TemplateSheetViewModel.Factory>(creationCallback = { it.create(key.session.raw) })
             TemplateSheet(vm, onDone = { navigator.goBack() })

@@ -60,6 +60,18 @@ class CognitoClient(
         return call("InitiateAuth", body).toOutcome(username = "", fallbackRefresh = refreshToken)
     }
 
+    /**
+     * Revoca el refresh token (y los access tokens que emitió) en Cognito. true si Cognito lo confirmó; sin red o con
+     * error, false: quien llama igual borra la sesión del teléfono.
+     */
+    suspend fun revoke(refreshToken: String): Boolean {
+        val body = buildJsonObject {
+            put("Token", refreshToken)
+            put("ClientId", clientId)
+        }
+        return call("RevokeToken", body) is Raw.Ok
+    }
+
     private sealed interface Raw {
         data class Ok(val body: JsonObject) : Raw
         data class Err(val failure: CognitoOutcome.Failure) : Raw
