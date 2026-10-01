@@ -63,6 +63,8 @@ class IngestedMessage:
     context: list[str]
     # La foto leída de nuevo con la visión de hoy (`sandbox/photos.py`).
     photo: dict[str, Any] | None = None
+    # El texto que recibe el turno.
+    text: str = ""
 
 
 def _history_path(vault_dir: Path, session_id: str) -> Path:
@@ -231,6 +233,11 @@ async def ingest_burst(
         read_coupon_talk,
     )
     from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
+    from src.plugins.chats.agent.sales.use_cases.episode_memory import (
+        quote_template_in_turn,
+        unseen_template_text,
+        with_previous_episode,
+    )
     from src.plugins.chats.agent.sales.use_cases.funnel_stage import resolve_funnel_stage
     from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import (
         build_episode_boundary_note,
@@ -274,6 +281,9 @@ async def ingest_burst(
         # Lo que el cliente vio ANTES de este mensaje (el ingest lo lee del
         # historial antes de guardar el mensaje).
         events = _history(vault_dir, session_id)
+        # Como el ingest: la plantilla a la que responde (un aviso del ETA, un
+        # gancho), si es lo último que recibió antes de este mensaje.
+        template = unseen_template_text(events)
         wamid = str(message.get("wamid") or f"lab.{k}")
         # Como el ingest, antes de las lecturas: el último mensaje del cliente
         # y la ventana de servicio que reabre (la nota del aplazamiento
@@ -320,8 +330,16 @@ async def ingest_burst(
             if boundary_from is not None and k == 1
             else None
         )
+        # El texto del turno, como el ingest: la plantilla citada adelante y,
+        # en el mensaje que abrió el episodio, la conversación anterior.
+        text = str(message.get("text") or "")
+        if template is not None:
+            text = quote_template_in_turn(template, text)
+        if boundary_from is not None and k == 1:
+            text = with_previous_episode(boundary_from, text)
         out.append(
             IngestedMessage(
+                text=text,
                 readings=list(readings.verdicts),
                 context=turn_context(
                     metadata, at_ms=at_ms, coupon_in_play=bool(coupon.value), photo_note=photo, gap_note=gap,

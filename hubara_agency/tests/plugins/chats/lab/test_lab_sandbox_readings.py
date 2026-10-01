@@ -345,3 +345,43 @@ def test_the_turn_builds_the_note_from_the_case(tmp_path: Path) -> None:
     result = report["result"]
     assert result["error"] is None, result
     assert any("episodio NUEVO" in note for note in result["plugin_context"]), result["plugin_context"]
+
+
+# ── El texto del turno, como lo arma el ingest (caso real ···4148) ──────────
+# Producción le antepone al mensaje la conversación anterior que se cerró y la
+# plantilla a la que responde («tu pedido ya está listo» del ETA). El sandbox
+# mandaba solo el texto del cliente: en el caso real el bot no sabía que le
+# contestaban al aviso y saludaba como a un cliente nuevo.
+
+_READY = "Hola, tu pedido #47 ya está listo. Te compartimos la foto para que lo veas. ¿Nos confirmas para coordinar la entrega?"
+
+
+def _template_event() -> dict:
+    from datetime import datetime, timezone
+
+    at = datetime.fromtimestamp((T0 + 30_000) / 1000, tz=timezone.utc).isoformat()
+    return {"role": "assistant", "kind": "template", "content": _READY, "timestamp": at}
+
+
+async def test_the_turn_text_carries_the_previous_episode_and_the_template_like_production(tmp_path: Path, monkeypatch) -> None:
+    from src.plugins.chats.agent.sales_lab.sandbox.readings import append_history_event, ingest_burst
+
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    append_history_event(tmp_path, SID_R, _template_event())
+
+    [ingested] = await ingest_burst(_after_purchase(), [dict(_THANKS)], session_id=SID_R, vault_dir=tmp_path,
+                                    at_ms=T0 + 60_000, boundary_from=dict(_PURCHASE))
+
+    assert ingested.text.startswith("[Conversación anterior con este cliente, ya cerrada: ")
+    assert ingested.text.endswith(f"[El cliente responde a este mensaje que le enviamos: «{_READY}»]\n{_THANKS['text']}")
+
+
+async def test_without_template_nor_new_episode_the_turn_text_is_what_the_customer_wrote(tmp_path: Path, monkeypatch) -> None:
+    from src.plugins.chats.agent.sales_lab.sandbox.readings import ingest_burst
+
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+
+    [ingested] = await ingest_burst(_after_purchase(), [dict(_THANKS)], session_id=SID_R, vault_dir=tmp_path,
+                                    at_ms=T0 + 60_000)
+
+    assert ingested.text == _THANKS["text"]

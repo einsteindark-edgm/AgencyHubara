@@ -217,11 +217,12 @@ async def run_case(
         result["readings"] = [m.readings for m in ingested]
         result["photos"] = [m.photo for m in ingested if m.photo is not None]
         contexts = [m.context for m in ingested]
+        texts = [m.text for m in ingested]
         decisions.turn()
 
-        def _args(message: dict[str, Any], context: list[str]) -> list[Any]:
+        def _args(message: dict[str, Any], context: list[str], text: str) -> list[Any]:
             meta = signal_meta(arm, message)
-            base: list[Any] = [str(message.get("text") or ""), None, context]
+            base: list[Any] = [text or str(message.get("text") or ""), None, context]
             return base if meta is None else [*base, meta]
 
         workflow_id = f"lab-sim-{box.session_id}-{uuid.uuid4().hex[:8]}"
@@ -245,10 +246,10 @@ async def run_case(
                     id=workflow_id,
                     task_queue=queue,
                     start_signal="send_message",
-                    start_signal_args=_args(messages[0], contexts[0]),
+                    start_signal_args=_args(messages[0], contexts[0], texts[0]),
                 )
-                for message, context in zip(messages[1:], contexts[1:]):
-                    await handle.signal("send_message", args=_args(message, context))
+                for message, context, text in zip(messages[1:], contexts[1:], texts[1:]):
+                    await handle.signal("send_message", args=_args(message, context, text))
             try:
                 await asyncio.wait_for(capture.turn_done.wait(), timeout=timeout_s)
             except TimeoutError:
