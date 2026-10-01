@@ -59,11 +59,27 @@ def test_jev_reads_the_message_with_what_the_customer_saw() -> None:
     assert "ya recibió el pedido" in question.text
 
 
+def test_the_question_reads_real_courtesy_like_the_customer_writes_it() -> None:
+    """Simulación de la conversación real ···4148 (2026-10-01): con la
+    pregunta anterior, Jev real daba 0,76 a «Hola cómo están? S even geniales.
+    Muchas gracias» (el aviso terminaba en «¿Nos confirmas…?» y la pregunta
+    excluía «responder una pregunta de la tienda»), 0,13 a «Hola sí.. están
+    geniales» tras «¿te gustó?» y 0,20 a «te enviaremos fotos». La nueva
+    redacción: 18 de 18 (mensajes reales y emulados) con el umbral en 0,80;
+    los que confirman, eligen o preguntan siguen en 0,02 a 0,11."""
+    _state, [question] = Cortesia().ask(_inbound(THANKS, events=SAW_READY))
+
+    assert "«¿cómo están?» no cuenta como pregunta" in question.text
+    assert "responder que le gustó sí es cortesía" in question.text
+    assert "promete mandar fotos" in question.text
+    assert "un dato o una decisión que la tienda necesite" in question.text
+
+
 def test_a_text_the_customer_did_not_write_is_not_read() -> None:
     assert Cortesia().ask(_inbound("[el cliente envió una foto: una vela]", events=SAW_READY, synthetic=True)) is None
 
 
-@pytest.mark.parametrize(("p", "expected"), [(0.93, True), (0.6, False), (0.05, False), (None, None)])
+@pytest.mark.parametrize(("p", "expected"), [(0.93, True), (0.82, True), (0.6, False), (0.05, False), (None, None)])
 def test_only_a_confident_yes_is_courtesy(p: float | None, expected: bool | None) -> None:
     """Con duda se atiende como siempre."""
     inp = _inbound(THANKS, events=SAW_READY)

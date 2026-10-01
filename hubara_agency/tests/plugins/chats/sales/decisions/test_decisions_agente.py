@@ -58,6 +58,17 @@ def test_contactar_also_asks_whether_the_conversation_ended() -> None:
     assert CONTACTAR.decide(inp, open_sale, False, {}) is None
 
 
+def test_the_ended_question_counts_a_closing_courtesy_after_a_delivery() -> None:
+    """Simulación de la conversación real ···4148 (2026-10-01): recibió,
+    agradeció, elogió y cerró con «te enviaremos fotos». Con la pregunta
+    anterior Jev real dudaba (0,53 a 0,59); con esta, 0,92, y con una
+    pregunta, una venta o un pedido a medias sigue en 0,05 a 0,19."""
+    _state, [_sobra, ended] = CONTACTAR.ask(Contacto(transcript=TRANSCRIPT, touch_number=1, silence_minutes=900))
+
+    assert "promete mandar fotos o escribir después" in ended.text
+    assert "No terminó si quedó una pregunta, una venta o un pedido a medias" in ended.text
+
+
 def test_without_a_conversation_there_is_nothing_to_judge() -> None:
     assert CONTACTAR.ask(Contacto(transcript="", touch_number=1, silence_minutes=None)) is None
 

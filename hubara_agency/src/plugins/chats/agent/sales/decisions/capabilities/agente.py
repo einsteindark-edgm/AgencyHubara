@@ -85,8 +85,13 @@ class Contactar:
                 id="contactar.terminada",
                 kind="noul",
                 text=(
-                    "¿La conversación ya terminó? Terminó si el cliente ya compró o recibió su pedido y solo "
-                    "agradeció, se despidió, dijo que no o dijo que él escribe después."
+                    # Simulación de la conversación real ···4148 (2026-10-01):
+                    # recibió, elogió y cerró con «te enviaremos fotos»; la
+                    # redacción anterior dudaba (0,53 a 0,59), esta da 0,92.
+                    "¿La conversación ya terminó? Terminó si el cliente ya compró o recibió su pedido y lo último "
+                    "que dijo es solo cortesía (agradece, elogia, se despide, promete mandar fotos o escribir "
+                    "después), o si dijo que no. No terminó si quedó una pregunta, una venta o un pedido a medias "
+                    "por resolver."
                 ),
                 criteria=_YES_NO,
             ),

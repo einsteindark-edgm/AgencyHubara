@@ -157,6 +157,15 @@ def test_est09_a_thank_you_answered_with_a_sales_question_fails() -> None:
     assert "en qué te puedo ayudar" in r.evidence
 
 
+def test_est09_an_open_invitation_to_buy_counts_too() -> None:
+    """Simulación del caso real ···4148: el bot nuevo contestó «Con gusto te
+    ayudo. ¿Qué tienes en mente hoy?», otro empujón de venta."""
+    for push in ("Con gusto te ayudo. ¿Qué tienes en mente hoy?", "¡Gracias! ¿Te muestro algo más?"):
+        t = traj(T(1, inbound=READY_REPLY, sent=[f"Buenas tardes 🤍 {push}"]))
+
+        assert _run("EST-09", t).verdict == "falla", push
+
+
 def test_est09_a_short_warm_reply_passes() -> None:
     t = traj(T(1, inbound=READY_REPLY, sent=["¡Qué alegría que te gustaron! 🤍 Gracias a ti."]))
 

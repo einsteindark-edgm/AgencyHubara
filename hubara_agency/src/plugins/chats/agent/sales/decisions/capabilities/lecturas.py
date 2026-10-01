@@ -335,10 +335,18 @@ class Cortesia:
     La regla de hoy no distingue: siempre «no», y todo sigue como hoy. Jev
     lee el mensaje con lo que el cliente vio antes a la vista: un «sí» a
     «¿Nos confirmas…?» responde una pregunta, no es cortesía. Con duda, se
-    atiende como siempre. Valor: bool (True = solo cortesía)."""
+    atiende como siempre. Valor: bool (True = solo cortesía).
+
+    Simulación de la conversación real ···4148 (2026-10-01): con la primera
+    redacción Jev real dudaba con lo que escribe un cliente de verdad (0,76 a
+    «Hola cómo están? S even geniales. Muchas gracias», porque el aviso
+    terminaba en «¿Nos confirmas…?»; 0,13 a «están geniales» tras «¿te
+    gustó?»). La pregunta dice ahora qué no excluye la cortesía, y el umbral
+    baja a 0,80: 18 de 18 con mensajes reales y emulados, y los que
+    confirman, eligen o preguntan quedan en 0,02 a 0,11."""
 
     name = "cortesia"
-    thresholds: Mapping[str, float] = {"yes": 0.85}
+    thresholds: Mapping[str, float] = {"yes": 0.80}
 
     def rule(self, inp: Any) -> bool:
         return False
@@ -354,8 +362,11 @@ class Cortesia:
             TypedQuestion(
                 id="cortesia.solo", kind="noul",
                 text=(
-                    "¿El cliente solo agradece, saluda o comenta algo amable (por ejemplo, que ya recibió el pedido "
-                    "o que le gustó), sin preguntar ni pedir nada y sin responder una pregunta de la tienda?"
+                    "¿El mensaje del cliente es solo cortesía: agradece, saluda, elogia, cuenta que ya recibió el "
+                    "pedido o que le gustó, promete mandar fotos o escribir después, o se despide, sin pedir ni "
+                    "preguntar nada y sin dar un dato o una decisión que la tienda necesite para seguir (confirmar, "
+                    "elegir, una dirección, una hora)? Un saludo como «¿cómo están?» no cuenta como pregunta, y "
+                    "responder que le gustó sí es cortesía."
                 ),
                 criteria={"true": "sí, solo agradece o saluda", "false": "no: pregunta, pide algo o responde una pregunta"},
             )

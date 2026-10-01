@@ -146,7 +146,10 @@ _SALES_PUSH_RE = re.compile(
     r"|algo m[aá]s en (lo )?que (te|le) (pueda|podamos) ayudar"
     r"|(quieres|te gustar[ií]a|deseas) (ver|conocer|mirar) (el cat[aá]logo|m[aá]s|otr[oa]s|nuestr)"
     r"|buscas algo (m[aá]s|en especial|en particular)"
-    r"|qu[eé] (te gustar[ií]a|necesitas|est[aá]s buscando|buscas)\b)",
+    r"|qu[eé] (te gustar[ií]a|necesitas|est[aá]s buscando|buscas)\b"
+    # Caso real ···4148, bot nuevo: «Con gusto te ayudo. ¿Qué tienes en mente hoy?».
+    r"|qu[eé] tienes en mente"
+    r"|te (muestro|enseño|comparto) algo m[aá]s)",
     re.IGNORECASE,
 )
 _CATALOG_INTENTS = frozenset({"quick_replies", "products_list", "product_gallery", "categories"})
