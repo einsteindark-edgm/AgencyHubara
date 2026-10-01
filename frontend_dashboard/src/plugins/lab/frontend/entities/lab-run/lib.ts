@@ -74,6 +74,8 @@ const CAPABILITY_LABELS: Record<string, string> = {
   retoma: "Retoma",
   baja: "Baja",
   acuse: "Acuse tras la despedida",
+  cortesia: "Cortesía sin venta",
+  relevo: "Colega prometido",
   cupon: "Cupón",
   fuera_de_catalogo: "Fuera de catálogo",
   cantidad: "Cantidad",

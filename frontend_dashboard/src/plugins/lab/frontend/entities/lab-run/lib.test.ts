@@ -95,6 +95,8 @@ describe("decisiones del motor en un turno (bot nuevo)", () => {
   it("nombra la capacidad como el panel del motor y la etapa del turno", () => {
     expect(capabilityLabel("familia_de_color")).toBe("Familia de color");
     expect(capabilityLabel("acuse")).toBe("Acuse tras la despedida");
+    expect(capabilityLabel("cortesia")).toBe("Cortesía sin venta");
+    expect(capabilityLabel("relevo")).toBe("Colega prometido");
     expect(capabilityLabel("preambulo")).toBe("Preámbulo del modelo");
     expect(capabilityLabel("una_nueva")).toBe("una_nueva");
     expect(decisionStageLabel({ stage: "ingest", message: 2 })).toBe("Al leer el mensaje 2");

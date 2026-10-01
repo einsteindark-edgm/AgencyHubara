@@ -92,3 +92,26 @@ describe("jevAnswers", () => {
     expect(jevAnswers(decision({ capability: "x", value: 1, answers: [{ q: "pregunta.nueva", p: 0.5 }] }))).toEqual(["pregunta.nueva: sí (50 %)"]);
   });
 });
+
+describe("cortesía y colega prometido (2026-09-30)", () => {
+  it("dice qué decidieron y qué se le preguntó a Jev", () => {
+    expect(decisionSentence(decision({ capability: "cortesia", value: true }))).toEqual({
+      text: "Solo agradece o saluda: responde breve, sin abrir venta",
+      tone: "neutral",
+    });
+    expect(decisionSentence(decision({ capability: "relevo", value: true }))).toEqual({
+      text: "Promete que un colega lo atiende: se escala",
+      tone: "warn",
+    });
+    expect(jevAnswers(decision({ capability: "cortesia", value: true, answers: [{ q: "cortesia.solo", p: 0.95 }] }))).toEqual([
+      "¿Solo agradece o saluda, sin pedir nada? sí (95 %)",
+    ]);
+    expect(jevAnswers(decision({ capability: "relevo", value: true, answers: [{ q: "relevo.promete", p: 0.93 }] }))).toEqual([
+      "¿El mensaje promete que un colega lo atiende? sí (93 %)",
+    ]);
+    expect(
+      jevAnswers(decision({ capability: "contactar", value: true, answers: [{ q: "contactar.sobra", p: 0.74 }, { q: "contactar.terminada", p: 0.91 }] })),
+    ).toEqual(["¿Sobra escribirle? sí (74 %)", "¿La conversación ya terminó? sí (91 %)"]);
+  });
+});
+

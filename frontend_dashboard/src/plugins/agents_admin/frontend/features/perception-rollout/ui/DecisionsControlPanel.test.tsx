@@ -109,6 +109,16 @@ describe("DecisionsControlPanel", () => {
     expect(within(acuse).getByText("Ahora: Reglas")).toBeInTheDocument();
   });
 
+  it("nombra la cortesía y el colega prometido con su pregunta (2026-09-30)", async () => {
+    state = payload({ cortesia: "off", relevo: "off" });
+    renderPanel();
+
+    const cortesia = await screen.findByRole("group", { name: "Cortesía sin venta" });
+    expect(within(cortesia).getByText("¿el cliente solo agradece o saluda, sin pedir nada?")).toBeInTheDocument();
+    const relevo = screen.getByRole("group", { name: "Colega prometido" });
+    expect(within(relevo).getByText("¿el mensaje promete que un colega lo atiende? (escala si nadie lo hizo)")).toBeInTheDocument();
+  });
+
   it("nombra el preámbulo del modelo con su pregunta", async () => {
     state = payload({ preambulo: "shadow" });
     renderPanel();

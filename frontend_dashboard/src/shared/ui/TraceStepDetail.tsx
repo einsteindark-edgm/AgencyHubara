@@ -16,6 +16,8 @@ import type { ReactNode } from "react";
 import {
   describeTool,
   GUARD_LABELS,
+  jevChoiceLabel,
+  jevQuestionLabel,
   modelRound,
   productName,
   roundInput,
@@ -608,16 +610,28 @@ function Classifier({ step }: { step: TraceStep }) {
               {answers.map((a, k) => {
                 const p = num(a.p);
                 const picked = a.picked === true;
+                const id = str(a.q);
+                // Pregunta de opción (qué preguntó el asesor, el asunto de un
+                // mensaje): lo que eligió Jev y qué tan seguro estaba.
+                const choice = str(a.choice);
+                const confidence = num(a.confidence);
+                const shown = p ?? (choice ? confidence : null);
                 return (
                   <tr key={k}>
-                    <td className={"max-w-[150px] truncate py-0.5 pr-2 " + (picked ? "font-semibold text-fg" : "text-fg-soft")}>{str(a.q) ?? `pregunta ${k + 1}`}</td>
-                    <td className="w-full py-0.5">
-                      <span className="relative block h-2 overflow-hidden rounded bg-white/[0.06]" aria-hidden="true">
-                        <b className="absolute inset-y-0 left-0 rounded" style={{ width: `${Math.round((p ?? 0) * 100)}%`, background: picked ? "var(--color-violet)" : "var(--color-neutral)" }} />
-                        {threshold !== null ? <em className="absolute -inset-y-0.5 w-0.5 bg-white/55" style={{ left: `${Math.round(threshold * 100)}%` }} /> : null}
-                      </span>
+                    <td title={id ?? undefined} className={"w-[46%] py-0.5 pr-2 align-top " + (picked ? "font-semibold text-fg" : "text-fg-soft")}>
+                      {id ? jevQuestionLabel(id) : `pregunta ${k + 1}`}
                     </td>
-                    <td className="w-11 py-0.5 pl-2 text-right tabular-nums text-fg-soft">{p !== null ? prob(p) : "—"}</td>
+                    <td className="w-full py-0.5">
+                      {choice && p === null ? (
+                        <span className="text-fg-soft">{jevChoiceLabel(id ?? "", choice)}</span>
+                      ) : (
+                        <span className="relative block h-2 overflow-hidden rounded bg-white/[0.06]" aria-hidden="true">
+                          <b className="absolute inset-y-0 left-0 rounded" style={{ width: `${Math.round((p ?? 0) * 100)}%`, background: picked ? "var(--color-violet)" : "var(--color-neutral)" }} />
+                          {threshold !== null ? <em className="absolute -inset-y-0.5 w-0.5 bg-white/55" style={{ left: `${Math.round(threshold * 100)}%` }} /> : null}
+                        </span>
+                      )}
+                    </td>
+                    <td className="w-11 py-0.5 pl-2 text-right tabular-nums text-fg-soft">{shown !== null ? prob(shown) : "—"}</td>
                     <td className="w-[18px] py-0.5 text-center">{picked ? "✓" : ""}</td>
                   </tr>
                 );

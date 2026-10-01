@@ -149,6 +149,8 @@ const SENTENCES: Record<string, (value: unknown) => Sentence> = {
     return titles.length ? warn(`Rechaza los botones: ${titles.map(String).join(", ")}`) : plain("Los botones salen");
   },
   contactar: (value) => plain(value === true ? "No hace falta escribirle" : "Hace falta escribirle"),
+  cortesia: (value) => plain(value === true ? "Solo agradece o saluda: responde breve, sin abrir venta" : "No es solo una cortesía"),
+  relevo: (value) => (value === true ? warn("Promete que un colega lo atiende: se escala") : plain("No promete que un colega lo atiende")),
   cierre: (value) => {
     const tag = str(value);
     return plain(tag ? `Cierra como ${CLOSING_TAGS[tag] ?? tag}` : "El modelo elige la etiqueta");
@@ -200,6 +202,9 @@ const QUESTIONS: Record<string, string> = {
   "enumeracion.que": "¿Qué enumera el texto?",
   "selector.elige": "¿Los botones piden elegir un producto o una variante?",
   "contactar.sobra": "¿Sobra escribirle?",
+  "contactar.terminada": "¿La conversación ya terminó?",
+  "cortesia.solo": "¿Solo agradece o saluda, sin pedir nada?",
+  "relevo.promete": "¿El mensaje promete que un colega lo atiende?",
   "cierre.etiqueta": "¿Con qué etiqueta cierra?",
   "afirmacion.sin_consultar": "¿Afirma algo que requiere consultar, sin haber consultado?",
   "egreso.destinatario": "¿Para quién es el texto?",

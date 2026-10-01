@@ -12,6 +12,7 @@ export * from "./tracking-url";
 export * from "./sequence-layout";
 export * from "./sales-tools";
 export * from "./trace-rounds";
+export * from "./jev-questions";
 export * from "./quality-view";
 export * from "./trajectory-strip";
 export {

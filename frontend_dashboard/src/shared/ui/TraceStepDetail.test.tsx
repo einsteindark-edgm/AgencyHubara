@@ -139,13 +139,24 @@ describe("TraceStepDetail", () => {
     expect(screen.getByText("(vacío: la protección se llevó el texto)")).toBeInTheDocument();
   });
 
-  it("la percepción muestra cada respuesta con su probabilidad, el umbral y lo elegido", () => {
-    show([{ i: 1, at_ms: 0, dur_ms: 420, kind: "perception", model: "typesafe/jev-1.13", threshold: 0.5, answers: [{ q: "topic.catalogo", p: 0.96, picked: true }, { q: "topic.envio", p: 0.12, picked: false }] }], 1);
+  it("la percepción muestra cada pregunta en palabras, con su probabilidad, el umbral y lo elegido", () => {
+    // Operador, 2026-09-30: «¿qué quiere decir topic.variante?». El id queda
+    // en el `title` para depurar; una pregunta de opción dice qué eligió Jev.
+    show([{ i: 1, at_ms: 0, dur_ms: 420, kind: "perception", model: "typesafe/jev-1.13", threshold: 0.5, answers: [
+      { q: "topic.catalogo", p: 0.96, picked: true },
+      { q: "topic.envio", p: 0.12, picked: false },
+      { q: "thread.bot_asked", type: "choice", choice: "elegir_variante", confidence: 0.97 },
+    ] }], 1);
 
-    const picked = screen.getByRole("row", { name: /topic\.catalogo/ });
+    const picked = screen.getByRole("row", { name: /¿Pide ver el catálogo o un tipo de velas\?/ });
     expect(picked).toHaveTextContent("0,96");
     expect(picked).toHaveTextContent("✓");
-    expect(screen.getByRole("row", { name: /topic\.envio/ })).not.toHaveTextContent("✓");
+    expect(screen.getByRole("row", { name: /¿Pregunta por el envío o el domicilio\?/ })).not.toHaveTextContent("✓");
+    expect(screen.queryByText("topic.catalogo")).not.toBeInTheDocument();
+    expect(screen.getByTitle("topic.catalogo")).toBeInTheDocument();
+    const asked = screen.getByRole("row", { name: /¿Qué le preguntó el asesor en su último mensaje\?/ });
+    expect(asked).toHaveTextContent("que elija una variante");
+    expect(asked).toHaveTextContent("0,97");
     expect(screen.getByText("typesafe/jev-1.13")).toBeInTheDocument();
   });
 
