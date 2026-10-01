@@ -1073,6 +1073,7 @@ class PresentOrderConfirmationTool(ToolBase):
 
         from src.plugins.chats.agent.sales.use_cases.order_draft import (
             get_projectable_draft,
+            split_lines_mismatch,
         )
 
         metadata_now = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(ctx.session_key)
@@ -1093,6 +1094,43 @@ class PresentOrderConfirmationTool(ToolBase):
                     "opción de la lista y vuelve a llamar present_order_confirmation."
                 ),
             }, ensure_ascii=False)
+        # Producto repartido en variantes (`set_order_slot(lineas=...)`): la
+        # tarjeta lleva una línea por cada una (laboratorio, caso 4567, turno
+        # 23: salió con dos lilas para «una lila y otra azul»).
+        line_variants = [
+            (
+                v.color or (str(it.get("color") or "").strip() or None),
+                v.aroma or (str(it.get("aroma") or "").strip() or None),
+            )
+            for it, v in zip(items, variants)
+        ]
+        mismatch = split_lines_mismatch(
+            metadata_now,
+            [
+                (v.title, int(it["quantity"]), color, aroma)
+                for it, v, (color, aroma) in zip(items, variants, line_variants)
+            ],
+        )
+        if mismatch:
+            return json.dumps({
+                "queued": False,
+                "error": "split_lines_mismatch",
+                "message": (
+                    "El pedido tiene productos en varias líneas, una por variante: "
+                    + "; ".join(mismatch)
+                    + ". NO se encoló la confirmación: manda una línea por cada una, con "
+                    "su `color`, `aroma` y `quantity`. Si el cliente cambió las variantes "
+                    "o las cantidades, actualiza primero el borrador con "
+                    "set_order_slot(lineas=...)."
+                ),
+            }, ensure_ascii=False)
+        # Un producto que va en varias líneas: la tarjeta dice la variante de
+        # cada una (si no, el cliente ve dos renglones iguales).
+        handles = [str(it["handle"]) for it in items]
+        for resolved, (color, aroma) in zip(resolved_items, line_variants):
+            variant = " · ".join(value for value in (color, aroma) if value)
+            if variant and handles.count(resolved["handle"]) > 1:
+                resolved["variant"] = variant
         draft_city = (get_projectable_draft(metadata_now) or {}).get("ciudad")
 
         # Los rechazos baratos (precio, envío) van ANTES del descuento: el

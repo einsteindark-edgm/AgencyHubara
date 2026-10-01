@@ -110,6 +110,7 @@ from src.plugins.chats.agent.sales.use_cases.coupons import (
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     attach_order_to_active_episode,
 )
+from src.plugins.chats.agent.sales.use_cases.order_draft import split_lines_mismatch
 from src.sdk.catalogkit import (
     CatalogPort,
     ProductNotFoundError,
@@ -719,6 +720,35 @@ class RegisterOrderTool(ToolBase):
                         "; ".join(v.message() for v in invalid_variants)
                         + ". El pedido NO se registró: confirma con el cliente una opción "
                         "de la lista y vuelve a presentar la confirmación."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        # Producto repartido en variantes (`set_order_slot(lineas=...)`): la
+        # orden lleva una línea por cada una (laboratorio, caso 4567: «una
+        # lila y otra azul» iba a registrar dos lilas).
+        mismatch = split_lines_mismatch(
+            metadata_before,
+            [
+                (v.title, int(it["quantity"]), v.color or _said(it, "color"), v.aroma or _said(it, "aroma"))
+                for it, v in zip(items, variants)
+            ],
+        )
+        if mismatch:
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "split_lines_mismatch",
+                    "error": "split_lines_mismatch",
+                    "summary": (
+                        "El pedido tiene productos en varias líneas, una por variante: "
+                        + "; ".join(mismatch)
+                        + ". El pedido NO se registró: manda una línea por cada una, con su "
+                        "`color`, `aroma` y `quantity`, como en la confirmación que vio el "
+                        "cliente. Si el cliente cambió las variantes o las cantidades, "
+                        "actualiza primero el borrador con set_order_slot(lineas=...) y "
+                        "vuelve a presentar la confirmación."
                     ),
                 },
                 ensure_ascii=False,

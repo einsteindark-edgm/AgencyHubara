@@ -520,6 +520,44 @@ def _label_contradicts(label: str, chosen: dict[str, str | None], attrs: Any) ->
     return False
 
 
+def _split_draft_lines(metadata: dict[str, Any] | None) -> dict[str, list[dict[str, Any]]]:
+    """Los productos del borrador repartidos en varias líneas (una por
+    variante, `set_order_slot(lineas=...)`), con sus líneas."""
+    episode = get_active_episode(metadata or {}) or {}
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for item in draft_items(episode.get("order_draft")):
+        key = product_key(item.get("producto"))
+        if key:
+            groups.setdefault(key, []).append(item)
+    return {k: lines for k, lines in groups.items() if len(lines) > 1}
+
+
+def _matching_draft_line(
+    lines: list[dict[str, Any]], item: dict[str, Any], attrs: Any, used: set[int]
+) -> dict[str, Any]:
+    """La línea del borrador que corresponde a una línea del pedido: la
+    primera sin usar con la misma cantidad y con el color y el aroma que la
+    línea sí dice (las líneas iguales se intercambian sin cambiar el pedido).
+    Vacío si ninguna corresponde: no se adivina."""
+
+    def said(field: str, options: list[str]) -> str:
+        given = str(item.get(field) or "").strip()
+        return product_key((match_option(given, options) if options else None) or given)
+
+    color, aroma = said("color", attrs.colors), said("aroma", attrs.aromas)
+    quantity = str(item.get("quantity") or "").strip()
+    for k, line in enumerate(lines):
+        if k in used or str(line.get("cantidad") or "").strip() != quantity:
+            continue
+        if (color and color != product_key(line.get("color"))) or (
+            aroma and aroma != product_key(line.get("aroma"))
+        ):
+            continue
+        used.add(k)
+        return line
+    return {}
+
+
 def _draft_attrs(metadata: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     """Color/aroma del borrador estructurado del pedido, por producto."""
     episode = get_active_episode(metadata or {}) or {}
@@ -552,7 +590,10 @@ async def resolve_item_variants(
     drafts = _draft_attrs(metadata)
     # El borrador guarda UN color/aroma por producto: solo completa una línea
     # si ese producto está una sola vez en el pedido (con dos líneas no se
-    # sabe cuál es cuál — premortem C9).
+    # sabe cuál es cuál — premortem C9). Un producto repartido en variantes
+    # (`set_order_slot(lineas=...)`) sí lo sabe: cada línea toma la suya.
+    split = _split_draft_lines(metadata)
+    used: dict[str, set[int]] = {}
     handles = [str(item.get("handle") or "") for item in items]
     variants: list[ItemVariant] = []
     invalid: list[InvalidAttribute] = []
@@ -565,12 +606,17 @@ async def resolve_item_variants(
                 product = None
         title = str(getattr(product, "title", "") or item.get("handle") or "")
         attrs = parse_variant_tags(list(getattr(product, "tags", None) or []))
-        draft = drafts.get(product_key(title), {}) if handles.count(handles[index]) == 1 else {}
+        key = product_key(title)
+        if key in split:
+            draft = _matching_draft_line(split[key], item, attrs, used.setdefault(key, set()))
+        else:
+            draft = drafts.get(key, {}) if handles.count(handles[index]) == 1 else {}
         chosen: dict[str, str | None] = {}
         for field, options in (("color", attrs.colors), ("aroma", attrs.aromas)):
             given = str(item.get(field) or "").strip()
             if not options:
-                chosen[field] = None
+                # Sin lista no hay canónico; la línea repartida dice el suyo.
+                chosen[field] = (given or str(draft.get(field) or "").strip() or None) if key in split else None
                 continue
             if given:
                 canonical = match_option(given, options)

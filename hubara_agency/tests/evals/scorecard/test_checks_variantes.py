@@ -70,6 +70,28 @@ def test_var06_reasking_quantity_fails() -> None:
     assert (r.verdict, r.turn) == ("falla", 2)
 
 
+def test_var06_reads_the_quantity_of_every_line() -> None:
+    """Un producto en varias variantes (laboratorio, caso 4567): el borrador
+    no tiene cantidad plana, cada línea tiene la suya."""
+    lines = {"producto": "Velón Gorrión", "items": [
+        {"producto": "Velón Gorrión", "color": "Lila", "cantidad": "1"},
+        {"producto": "Velón Gorrión", "color": "Azul", "cantidad": "1"},
+    ]}
+    t = traj(T(1, draft=lines), T(2, sent=["¿Cuántas unidades deseas?"]))
+
+    assert (run("VAR-06", t).verdict, run("VAR-06", t).turn) == ("falla", 2)
+
+
+def test_var06_asking_the_quantity_of_a_product_still_without_it_passes() -> None:
+    order = {"producto": "Trilogía del Terror + Duo Zodiacal", "items": [
+        {"producto": "Trilogía del Terror", "cantidad": "1"},
+        {"producto": "Duo Zodiacal", "diseno": "Leo"},
+    ]}
+    t = traj(T(1, draft=order), T(2, sent=["¿Cuántas unidades del Duo deseas?"]))
+
+    assert run("VAR-06", t).verdict != "falla"
+
+
 def test_var06_asking_before_known_passes() -> None:
     t = traj(T(1, sent=["¿Cuántas unidades deseas?"]), T(2, draft={"cantidad": "2"}))
     assert run("VAR-06", t).verdict == "no_aplica" or run("VAR-06", t).verdict == "pasa"

@@ -676,6 +676,35 @@ migrarse en la primera escritura.
 - AND `quitar=true` saca un producto del pedido (el cliente lo descartó o lo cambió)
 - AND un `set_order_slot` que no guardó nada se traza como fallo (`slots_rejected`), no en verde
 
+### Requirement: Un producto en varias variantes, una línea por variante (2026-09-30)
+
+Cuando el cliente reparte las unidades de un producto entre variantes, el
+borrador MUST guardar una línea por variante con SU cantidad
+(`set_order_slot(lineas=[{color, aroma, diseno, cantidad}, ...])`), no la
+cantidad total con un color y la otra variante en `notas`. Cada línea MUST
+validarse contra el producto; si una no sirve, no se escribe ninguna. Lo que
+todas las líneas anteriores compartían (el aroma) MUST conservarse, y las
+líneas con la misma variante se juntan. La confirmación y el registro MUST
+llevar una línea por cada una: completan el color y el aroma de cada línea con
+la del borrador cuando el LLM no los manda, y MUST rechazar
+(`split_lines_mismatch`) un pedido que junta las líneas. Un pedido sin
+productos repartidos MUST salir igual que antes.
+
+#### Scenario: «Mejor 2, una lila y otra azul» (laboratorio, caso 4567, turnos 22–23)
+
+- GIVEN un borrador con Velón Gorrión en Lavanda y color Lila
+- WHEN el cliente escribe «Mejor 2, una lila y otra azul» y el LLM invoca `set_order_slot(producto="Velón Gorrión", lineas=[{color: "Lila", cantidad: "1"}, {color: "Azul", cantidad: "1"}])`
+- THEN el borrador queda con dos líneas (1× Lila · Lavanda, 1× Azul · Lavanda) y la nota del turno las lista con «va en 2 líneas… una línea por cada una»
+- AND `present_order_confirmation` con `{velon-gorrion, Lila, quantity 2}` NO encola la tarjeta (`split_lines_mismatch`, con las líneas del borrador)
+- AND con dos líneas de cantidad 1 la tarjeta dice «1× Velón Gorrión (Lila · Lavanda)» y «1× Velón Gorrión (Azul · Lavanda)», y `register_order` registra dos líneas con su color y su aroma
+
+#### Scenario: escribir sobre un producto repartido sin las líneas
+
+- GIVEN Velón Gorrión repartido en 1× Lila y 1× Azul
+- WHEN el LLM manda `set_order_slot(color="Rosado")` o una cantidad distinta de la que suman
+- THEN no se guarda (`split_lines`) y el `summary` le pide `lineas` con TODAS las líneas
+- AND lo que todas comparten (`aroma="Limoncillo"`) se cambia en todas, la cantidad que ya suman no cambia nada y `quitar=true` saca todas sus líneas
+
 ### Requirement: Confirmación de compra antes del cierre
 
 El sistema SHALL registrar de forma determinista la confirmación de compra del

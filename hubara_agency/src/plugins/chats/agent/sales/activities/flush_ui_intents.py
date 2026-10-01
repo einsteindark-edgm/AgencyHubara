@@ -895,9 +895,14 @@ async def _dispatch_intent(
         # textual completo. A.12 nativo (interactive.order_details) requiere
         # Meta Catalog + gateway approved — se activará por feature flag.
         items = params.get("items") or []
+        # La variante va cuando el producto se repite en varias líneas
+        # («1× Velón Gorrión (Lila · Lavanda)»); si no, la línea de siempre.
         lines = [
-            f"• {it.get('quantity', 1)}× {it.get('title') or it.get('handle')} — "
-            f"${it.get('unit_price_cop', 0):,}".replace(",", ".")
+            (
+                f"• {it.get('quantity', 1)}× {it.get('title') or it.get('handle')}"
+                + (f" ({it['variant']})" if it.get("variant") else "")
+                + f" — ${it.get('unit_price_cop', 0):,}"
+            ).replace(",", ".")
             for it in items
         ]
         items_summary = "\n".join(lines)

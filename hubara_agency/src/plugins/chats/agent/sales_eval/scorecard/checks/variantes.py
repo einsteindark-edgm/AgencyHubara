@@ -113,6 +113,17 @@ def var_04(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     return passed("VAR-04", f"{len(choices)} elección(es) registradas")
 
 
+def _quantity_known(draft: dict | None) -> bool:
+    """¿El pedido ya tiene cantidad? Con varias líneas (varios productos, o
+    uno en varias variantes) no hay cantidad plana: cuenta cuando TODAS la
+    tienen (preguntar la de un producto que aún no la tiene no es re-preguntar)."""
+    draft = draft or {}
+    items = [i for i in draft.get("items") or [] if isinstance(i, dict)]
+    if items:
+        return all(i.get("cantidad") for i in items)
+    return bool(draft.get("cantidad"))
+
+
 @code_check("VAR-06")
 def var_06(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if is_legacy(traj):
@@ -120,7 +131,7 @@ def var_06(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     known = False
     known_at_focus = False
     for prev, t in zip(traj.turns, traj.turns[1:]):
-        known = known or bool((prev.draft or {}).get("cantidad"))
+        known = known or _quantity_known(prev.draft)
         if not known or not judged(traj, t):
             continue
         known_at_focus = True
@@ -129,7 +140,7 @@ def var_06(traj: Trajectory, ctx: CheckContext) -> CheckResult:
                 return failed("VAR-06", t.turn, f"turno {t.turn}: vuelve a preguntar la cantidad {quote(text)}")
     if in_focus(traj) and not known_at_focus:
         return not_judged("VAR-06", traj, "la cantidad no se conocía antes del turno")
-    if not known and not any((t.draft or {}).get("cantidad") for t in traj.turns):
+    if not known and not any(_quantity_known(t.draft) for t in traj.turns):
         return not_applicable("VAR-06", "el pedido nunca tuvo cantidad")
     return passed("VAR-06", "no re-preguntó la cantidad")
 

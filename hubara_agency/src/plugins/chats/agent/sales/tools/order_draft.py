@@ -66,6 +66,9 @@ from src.plugins.chats.agent.sales.use_cases.order_draft import (
     current_item,
     get_active_draft,
     get_projectable_draft,
+    line_conflicts,
+    line_label,
+    set_product_lines,
     update_order_draft,
 )
 from src.plugins.chats.shared.draft_items import (
@@ -133,7 +136,10 @@ class SetOrderSlotTool(ToolBase):
         "con sus propias variantes — manda `producto` junto con su aroma/"
         "color/diseno/cantidad (sin `producto`, el dato va al producto al que "
         "pertenece). Si el cliente cambia de producto, quita el anterior con "
-        "`quitar=true`. Texto libre que no entra en los campos → `notas`."
+        "`quitar=true`. Un mismo producto en varias variantes (el cliente "
+        "reparte las unidades: «2, una lila y otra azul») → `lineas`, una "
+        "línea por variante con su cantidad. Texto libre que no entra en los "
+        "campos → `notas`."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -217,6 +223,38 @@ class SetOrderSlotTool(ToolBase):
                     "lo descartó o lo cambió por otro; el nuevo se agrega con "
                     "otra llamada)."
                 ),
+            },
+            "lineas": {
+                "type": "array",
+                "description": (
+                    "Un mismo producto en VARIAS variantes, cada una con SU "
+                    "cantidad (el cliente reparte las unidades: «2, una lila y "
+                    "otra azul»): una línea por variante, ej. "
+                    '[{"color": "Lila", "cantidad": "1"}, {"color": "Azul", '
+                    '"cantidad": "1"}]. Va con `producto` (sin él, al producto '
+                    "en curso) y reemplaza las líneas que ese producto tenía; "
+                    "lo que no cambia entre líneas (el aroma) se conserva. Para "
+                    "cambiar el color o la cantidad de una línea, vuelve a "
+                    "mandar TODAS sus líneas. Nunca pongas la cantidad total "
+                    "con un solo color y la otra variante en `notas`."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "color": {"type": "string", "description": "Color de esta línea."},
+                        "aroma": {"type": "string", "description": "Aroma de esta línea."},
+                        "diseno": {
+                            "type": "string",
+                            "description": "Diseño/signo de esta línea.",
+                        },
+                        "cantidad": {
+                            "type": "string",
+                            "description": "Unidades de esta línea (ej. '1').",
+                        },
+                    },
+                    "required": ["cantidad"],
+                    "additionalProperties": False,
+                },
             },
         },
         "additionalProperties": False,
@@ -392,8 +430,17 @@ class SetOrderSlotTool(ToolBase):
         producto en un pedido de varios. Lo decide el motor (capacidad
         `item_del_pedido`) con lo que el catálogo acepta de cada producto (la
         regla de hoy, sin Jev) y lo último de la conversación."""
+        # Entre productos: un producto repartido en varias líneas es uno solo.
+        items_now = _first_line_per_product(items_now)
         products = [_find_product(catalog_products, item.get("producto")) for item in items_now]
-        actual = next((k for k, item in enumerate(items_now) if item is current), None)
+        actual = next(
+            (
+                k
+                for k, item in enumerate(items_now)
+                if product_key(item.get("producto")) == product_key(current.get("producto"))
+            ),
+            None,
+        )
         if actual is None:
             return current, _find_product(catalog_products, current.get("producto"))
         accepts: list[bool | None] = []
@@ -456,6 +503,73 @@ class SetOrderSlotTool(ToolBase):
             },
             ensure_ascii=False,
         )
+
+    async def _write_lines(
+        self,
+        ctx: ToolContext,
+        data: dict[str, Any],
+        provided: dict[str, Any],
+        lineas: Any,
+        now_ms: int,
+    ) -> tuple[str | None, list[dict[str, str]] | None, list[dict[str, Any]]]:
+        """`lineas`: un producto en varias variantes, cada una con su cantidad
+        (laboratorio, caso 4567, turno 22: «Mejor 2, una lila y otra azul»
+        quedaba como dos lilas). Cada línea se valida contra el producto; si
+        una no sirve, no se escribe ninguna (no queda un reparto a medias).
+        Consume de `provided` el producto y sus variantes: las de la llamada
+        valen para las líneas que no las dicen. Devuelve `(producto, líneas
+        escritas o None, rechazos)`."""
+        shared = {k: provided.pop(k) for k in _LINE_VARIANTS if k in provided}
+        provided.pop("cantidad", None)
+        producto = provided.pop("producto", None)
+        draft = get_active_draft(data)
+        items_now = draft_items(draft)
+        if not producto:
+            producto = (current_item(draft, items_now) or {}).get("producto")
+        parsed = _parse_lines(lineas)
+        if parsed is None:
+            return producto, None, [{"field": "lineas", "given": lineas, "reason": "invalid_lines"}]
+        if not producto:
+            return None, None, [{"field": "lineas", "given": lineas, "reason": "lines_without_product"}]
+        catalog_products = await self._catalog_products() or []
+        product = _find_product(catalog_products, producto)
+        if product is not None:
+            # Mismo producto escrito distinto: el nombre que ya tiene el pedido.
+            same = next(
+                (i for i in items_now if _find_product(catalog_products, i.get("producto")) is product),
+                None,
+            )
+            producto = same["producto"] if same is not None else product.title
+        family = self._family_by_engine(ctx.session_key)
+        lines: list[dict[str, str]] = []
+        rejected: list[dict[str, Any]] = []
+        tones: list[str] = []
+        for n, line in enumerate(parsed, start=1):
+            values = {k: v for k, v in shared.items() if isinstance(v, str) and v.strip()}
+            values.update({k: line[k] for k in _LINE_VARIANTS if k in line})
+            if product is not None and values:
+                canonical, bad, family_info = await self._check_values(
+                    product, values, list(values), family=family
+                )
+                rejected.extend({**r, "line": n} for r in bad)
+                values = {k: canonical[k] for k in values if k in canonical}
+                if family_info is not None and family_info["shade_requested"]:
+                    tones.append(
+                        f"línea {n}: '{family_info['requested']}' (registrado como "
+                        f"{family_info['captured']})"
+                    )
+            lines.append({**values, "cantidad": line["cantidad"]})
+        if rejected:
+            return producto, None, rejected
+        set_product_lines(data, producto=producto, lines=lines, now_ms=now_ms)
+        if tones:
+            # El tono pedido queda para el operador (empaque), como en un ítem.
+            note = f"{producto}: tono de color pedido por el cliente, " + "; ".join(tones)
+            extra = provided.get("notas")
+            provided["notas"] = (
+                f"{extra} | {note}" if isinstance(extra, str) and extra.strip() else note
+            )
+        return producto, lines, []
 
     def _validate_choice(
         self, kind: str, raw_value: str, valid: list[str]
@@ -636,6 +750,7 @@ class SetOrderSlotTool(ToolBase):
         metodo_pago: str | None = None,
         notas: str | None = None,
         quitar: bool | None = None,
+        lineas: Any = None,
     ) -> str:
         # Solo los campos que el LLM mando (None = no lo toco esta llamada).
         # OJO: string vacio SI viaja -> `update_order_draft` lo interpreta como
@@ -660,7 +775,7 @@ class SetOrderSlotTool(ToolBase):
             if value is not None
         }
 
-        if not provided:
+        if not provided and lineas is None:
             return json.dumps(
                 {
                     "updated": False,
@@ -678,6 +793,15 @@ class SetOrderSlotTool(ToolBase):
         if quitar and producto:
             return await self._remove(ctx, data, producto, now_ms)
 
+        # Un producto en varias variantes, cada una con su cantidad (`lineas`).
+        lines_product: str | None = None
+        lines_written: list[dict[str, str]] | None = None
+        line_rejections: list[dict[str, Any]] = []
+        if lineas is not None:
+            lines_product, lines_written, line_rejections = await self._write_lines(
+                ctx, data, provided, lineas, now_ms
+            )
+
         # Validacion closed-list de aroma/color/diseño (caso ep_010, run
         # fa1eb974: el color "Melocotón" no existe y entro al draft → llego a
         # la orden real). Cada valor se valida contra SU producto: el de
@@ -685,7 +809,7 @@ class SetOrderSlotTool(ToolBase):
         # (2026-09-22: "Escorpio" se validaba contra la Trilogía y el Duo
         # nunca entró). Los valores invalidos NO se escriben; el envelope le
         # dice al LLM las opciones reales (guion: "el rojo no lo manejo").
-        rejected: list[dict[str, Any]] = []
+        rejected: list[dict[str, Any]] = list(line_rejections)
         signs_for_color: list[dict[str, Any]] = []
         custom_color: dict[str, Any] | None = None
         color_family: dict[str, Any] | None = None
@@ -732,7 +856,11 @@ class SetOrderSlotTool(ToolBase):
                 )
 
         if to_check and product is not None:
-            if not provided.get("producto") and len(items_now) > 1 and target_item is not None:
+            if (
+                not provided.get("producto")
+                and len(_first_line_per_product(items_now)) > 1
+                and target_item is not None
+            ):
                 # El dato llega sin producto en un pedido de varios: ¿a cuál
                 # ítem va? Lo decide el motor (capacidad `item_del_pedido`).
                 # La regla de hoy: al ítem en curso, salvo que su producto lo
@@ -791,6 +919,33 @@ class SetOrderSlotTool(ToolBase):
                     provided, target_item or {}, variant_colors
                 )
 
+        # Producto repartido en varias líneas (`lineas`): la variante que las
+        # distingue y la cantidad solo cambian diciendo las líneas; lo que
+        # todas comparten se cambia en todas. La cantidad que ya suman no
+        # cambia nada.
+        own = [
+            i
+            for i in items_now
+            if target_item is not None
+            and target_item.get("producto")
+            and product_key(i.get("producto")) == product_key(target_item["producto"])
+        ]
+        if len(own) > 1:
+            conflicts = line_conflicts(items_now, own[0]["producto"], provided)
+            for field in conflicts:
+                rejected.append(
+                    {
+                        "field": field,
+                        "given": provided.pop(field),
+                        "reason": "split_lines",
+                        "product": own[0]["producto"],
+                        "lines": [line_label(line) for line in own],
+                    }
+                )
+            provided.pop("cantidad", None)
+            if conflicts and set(provided) <= {"producto"}:
+                provided.clear()  # solo quedaba a qué producto iba: nada que guardar
+
         # Motor de decisiones (F6, capacidad `datos`): un dato de envío o de
         # pago que el cliente NO dio no se guarda; el LLM se lo pide. Lo que
         # el cliente escribió pasa sin preguntarle a Jev, y lo que ya estaba
@@ -819,7 +974,9 @@ class SetOrderSlotTool(ToolBase):
         wrote = bool(provided) and not (injected and set(provided) == {"producto"})
         if wrote:
             update_order_draft(data, slots=provided, now_ms=now_ms)
+        if wrote or lines_written is not None:
             self._store.write(ctx.session_key, data)
+        wrote = wrote or lines_written is not None
         current_slots = get_projectable_draft(data) or {}
 
         logger.info(
@@ -832,7 +989,9 @@ class SetOrderSlotTool(ToolBase):
 
         envelope: dict[str, Any] = {
             "updated": wrote,
-            "captured": provided,
+            "captured": (
+                {**provided, "lineas": lines_written} if lines_written is not None else provided
+            ),
             "order_draft": current_slots,
             "summary": (
                 "Datos del pedido guardados. Se te recuerdan automaticamente "
@@ -843,7 +1002,21 @@ class SetOrderSlotTool(ToolBase):
         # Cupón con cupo: lo que dice de lo recién elegido, en ESTE turno (la
         # nota del turno se armó antes de la elección — conversación de
         # prueba del 2026-09-24, Sándalo · Amarillo fuera del cupo).
-        coupon_lines = _coupon_lines(data, provided.get("producto") if wants_item else None)
+        if lines_written is not None and lines_product:
+            own = [
+                i
+                for i in draft_items(get_active_draft(data))
+                if product_key(i.get("producto")) == product_key(lines_product)
+            ]
+            envelope["summary"] += (
+                f" {lines_product} quedó en {len(own)} {'línea' if len(own) == 1 else 'líneas'}: "
+                + ", ".join(line_label(line) for line in own)
+                + "."
+            )
+        touched = provided.get("producto") if wants_item else None
+        if lines_written is not None:
+            touched = touched or lines_product
+        coupon_lines = _coupon_lines(data, touched)
         if coupon_lines:
             envelope["coupon"] = coupon_lines
             envelope["summary"] += " " + " ".join(coupon_lines)
@@ -882,8 +1055,25 @@ class SetOrderSlotTool(ToolBase):
         if rejected:
             envelope["rejected"] = rejected
             parts = []
+            split_fields = [r["field"] for r in rejected if r.get("reason") == "split_lines"]
             for r in rejected:
-                if r.get("reason") == "not_given_by_customer":
+                if r.get("reason") == "invalid_lines":
+                    parts.append(
+                        "`lineas` necesita una línea por variante, cada una con su "
+                        "`cantidad` (un número mayor que 0)"
+                    )
+                elif r.get("reason") == "lines_without_product":
+                    parts.append("`lineas` necesita el producto: manda `producto` con las líneas")
+                elif r.get("reason") == "split_lines":
+                    if r["field"] != split_fields[0]:
+                        continue
+                    parts.append(
+                        f"{r['product']} va en {len(r['lines'])} líneas "
+                        f"({' y '.join(r['lines'])}): {' y '.join(split_fields)} se "
+                        "cambia mandando `lineas` con TODAS sus líneas, cada una con "
+                        "su variante y su cantidad"
+                    )
+                elif r.get("reason") == "not_given_by_customer":
                     parts.append(
                         f"no encuentro que el cliente haya dado {r['field']} "
                         f"{r['given']!r}: pídeselo en vez de suponerlo"
@@ -959,3 +1149,47 @@ def _products_accepting(
         if valid and all(match_option(t, valid) is not None for t in tokens):
             owners.append(p.title)
     return owners
+
+
+#: Lo que distingue una línea de otra del mismo producto (`lineas`).
+_LINE_VARIANTS: tuple[str, ...] = ("color", "aroma", "diseno")
+
+
+def _parse_lines(raw: Any) -> list[dict[str, str]] | None:
+    """Las líneas de `lineas`: una lista de objetos, cada uno con su variante y
+    su cantidad (entero mayor que 0). Llegan como lista o como texto JSON
+    (algunos proveedores mandan así los arreglos). None si no sirven."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return None
+    if not isinstance(raw, list) or not raw:
+        return None
+    lines: list[dict[str, str]] = []
+    for line in raw:
+        if not isinstance(line, dict):
+            return None
+        quantity = str(line.get("cantidad") if line.get("cantidad") is not None else "").strip()
+        if not quantity.isdigit() or int(quantity) < 1:
+            return None
+        values = {
+            k: str(line[k]).strip()
+            for k in _LINE_VARIANTS
+            if isinstance(line.get(k), str) and str(line[k]).strip()
+        }
+        lines.append({**values, "cantidad": str(int(quantity))})
+    return lines
+
+
+def _first_line_per_product(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Un ítem por producto (la primera línea de cada uno): a qué producto va
+    un dato se decide entre productos, no entre las líneas de uno repartido."""
+    seen: set[str] = set()
+    firsts: list[dict[str, Any]] = []
+    for item in items:
+        key = product_key(item.get("producto"))
+        if key not in seen:
+            seen.add(key)
+            firsts.append(item)
+    return firsts
