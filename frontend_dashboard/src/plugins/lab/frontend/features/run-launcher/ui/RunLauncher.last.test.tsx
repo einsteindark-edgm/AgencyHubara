@@ -34,7 +34,7 @@ describe("RunLauncher: la última corrida", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
-        <RunLauncher lastBenchId={null} />
+        <RunLauncher benches={[]} />
       </QueryClientProvider>,
     );
 

@@ -79,6 +79,30 @@ describe("LabPage", () => {
     expect(await screen.findByRole("table", { name: "Corridas" })).toBeInTheDocument();
   });
 
+  it("Nueva corrida ofrece los bancos de todas las corridas, sin repetir y del más nuevo al más viejo", async () => {
+    runsResponse = { status: 200, body: { runs: [
+      { run_id: "caso-cortesia-1001-r4", bench_id: "caso-cortesia-1001", arms: ["A1", "B"], reps: 1, phase: "done" },
+      { run_id: "caso-4148-real-r3", bench_id: "caso-4148-real", arms: ["A1", "B"], reps: 1, phase: "done" },
+      { run_id: "caso-cortesia-1001-r3", bench_id: "caso-cortesia-1001", arms: ["A1", "B"], reps: 1, phase: "done" },
+      { run_id: "caso-fotos-0930-r1", bench_id: "caso-fotos-0930", arms: ["A1", "B"], reps: 1, phase: "done" },
+    ] } };
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
+    fireEvent.click(screen.getByRole("button", { name: "Repetir un banco guardado" }));
+
+    const picker = screen.getByRole("combobox", { name: "Banco" });
+    expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual(["caso-cortesia-1001", "caso-4148-real", "caso-fotos-0930"]);
+  });
+
+  it("la sección ocupa todo el ancho de la ventana (sin franja negra a la derecha)", async () => {
+    renderPage();
+
+    // El contenedor del shell es `display:flex` en fila: sin crecer, la
+    // sección mide lo que su contenido y deja el resto de la ventana vacío.
+    expect(await screen.findByRole("region", { name: "Laboratorio" })).toHaveClass("flex-1", "min-w-0");
+  });
+
   it("la pestaña Resumen muestra el resumen de la corrida (PR 13)", async () => {
     runsResponse = { status: 200, body: { runs: [{ run_id: RUN, bench_id: "bench-x", arms: ["A0", "A1", "B"], reps: 3, phase: "done" }] } };
     renderPage();

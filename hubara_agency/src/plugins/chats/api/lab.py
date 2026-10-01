@@ -64,7 +64,9 @@ ARMS: dict[str, str] = {
     "B": "Bot nuevo + Jev (workflow V2, OpenRouter)",
 }
 _REPS = (1, 3)
-_BENCH_RE = re.compile(r"^bench-[a-z0-9-]{6,64}$")
+# `bench-<corrida>` (exportado) o un caso armado a mano (`caso-4148-real`):
+# un segmento de ruta seguro, la misma forma que una corrida.
+_BENCH_RE = re.compile(r"^[a-z0-9][a-z0-9-]{5,63}$")
 _BOGOTA = timezone(timedelta(hours=-5))
 _DEFAULT_SINCE = "2026-09-10"
 

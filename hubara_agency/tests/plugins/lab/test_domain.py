@@ -54,6 +54,11 @@ def test_clean_query_drops_missing_values_and_validates_shapes() -> None:
     with pytest.raises(LabPathError):
         clean_query(bench="../bench")
     assert clean_query(arms="A1,B,C", reps=3, bench="new") == {"arms": "A1,B,C", "reps": 3, "bench": "new"}
+    # Los bancos armados a mano también se repiten; la forma sigue siendo un segmento seguro.
+    assert clean_query(bench="caso-4148-real") == {"bench": "caso-4148-real"}
+    for bad in ("caso/4148", "Caso-4148", "caso.4148", "abc"):
+        with pytest.raises(LabPathError):
+            clean_query(bench=bad)
 
 
 def test_b0_is_a_valid_arm_for_every_parameter() -> None:

@@ -167,6 +167,27 @@ def test_reusing_a_missing_bench_is_a_422(env) -> None:
     assert resp.status_code == 422
 
 
+def test_a_hand_built_bench_can_be_repeated(env) -> None:
+    """Los casos armados a mano (`caso-4148-real`, contrafactuales) no se llaman
+    `bench-…`: también se repiten desde «Nueva corrida»."""
+    env["store"].put_bytes("bench/caso-4148-real/manifest.json", json.dumps({"counts": {"customer_turns": 3}}).encode())
+
+    est = env["http"].get("/api/chats/lab/estimate", params={"arms": "A1,B", "reps": 1, "bench": "caso-4148-real"})
+    resp = env["http"].post("/api/chats/lab/runs", json={"arms": ["A1", "B"], "reps": 1, "bench": "caso-4148-real"})
+
+    assert est.status_code == 200, est.text
+    assert (est.json()["bench_id"], est.json()["turns"]) == ("caso-4148-real", 3)
+    assert resp.status_code == 202, resp.text
+    assert env["client"].started[0]["input"].bench_id == "caso-4148-real"
+
+
+@pytest.mark.parametrize("bench", ["../x", "caso/4148", "Caso-4148", "caso.4148", "abc"])
+def test_a_bench_name_is_still_a_safe_path_segment(env, bench: str) -> None:
+    resp = env["http"].post("/api/chats/lab/runs", json={"arms": ["A1"], "reps": 1, "bench": bench})
+
+    assert resp.status_code == 422
+
+
 def test_active_run_merges_the_workflow_phase_and_the_box_progress(env) -> None:
     env["http"].post("/api/chats/lab/runs", json={"arms": ["A1"], "reps": 1, "bench": "new"})
     run_id = env["client"].status["run_id"]

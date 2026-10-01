@@ -31,6 +31,11 @@ function runMeta(run: LabRun): string {
   return [run.bench_id, `${bots} ${bots === 1 ? "bot" : "bots"}`, run.reps ? `${run.reps} ${run.reps === 1 ? "repetición" : "repeticiones"}` : ""].filter(Boolean).join(" · ");
 }
 
+/** Los bancos de las corridas, del más nuevo al más viejo y sin repetir. */
+function benchesOf(runs: LabRun[]): string[] {
+  return [...new Set(runs.map((r) => r.bench_id).filter((b): b is string => !!b))];
+}
+
 export default function LabPage() {
   const runs = useLabRuns();
   const list = runs.data?.runs ?? [];
@@ -50,7 +55,7 @@ export default function LabPage() {
       : (error?.message ?? "No se pudieron leer las corridas del laboratorio.");
 
   return (
-    <section className="flex h-full min-h-0 flex-col overflow-hidden bg-win-bg text-fg" aria-label="Laboratorio">
+    <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-win-bg text-fg" aria-label="Laboratorio">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-titlebar px-4 py-2.5">
         <h1 className="m-0 text-[13px] font-semibold">Laboratorio · Agente de ventas</h1>
         {list.length > 0 ? (
@@ -73,7 +78,7 @@ export default function LabPage() {
           <span className="ml-auto" />
         )}
         {run ? <span className="text-xs tabular-nums text-fg-muted">{runMeta(run)}</span> : null}
-        {runs.isSuccess ? <RunLauncher lastBenchId={list.find((r) => r.bench_id)?.bench_id ?? null} /> : null}
+        {runs.isSuccess ? <RunLauncher benches={benchesOf(list)} /> : null}
       </div>
 
       <div role="tablist" aria-label="Pestañas del laboratorio" className="flex gap-0.5 overflow-x-auto border-b border-line bg-inspector px-3">

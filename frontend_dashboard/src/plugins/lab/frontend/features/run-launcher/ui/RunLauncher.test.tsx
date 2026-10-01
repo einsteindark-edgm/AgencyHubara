@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { RunLauncher } from "./RunLauncher";
@@ -64,11 +64,13 @@ afterEach(() => {
   fetchMock.mockReset();
 });
 
-function renderLauncher(lastBench: string | null = "bench-run-20260920-0900-cd34") {
+const BENCHES = ["caso-cortesia-1001", "caso-4148-real", "bench-run-20260920-0900-cd34"];
+
+function renderLauncher(benches: string[] = BENCHES) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <RunLauncher lastBenchId={lastBench} />
+      <RunLauncher benches={benches} />
     </QueryClientProvider>,
   );
 }
@@ -115,9 +117,35 @@ describe("RunLauncher", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Bot nuevo con Jev" }));
     fireEvent.click(screen.getByRole("button", { name: "3 veces (para decidir)" }));
-    fireEvent.click(screen.getByRole("button", { name: /Repetir las de la última corrida/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Repetir un banco guardado" }));
 
-    await waitFor(() => expect(estimateCalls().at(-1)).toContain("arms=A1&reps=3&bench=bench-run-20260920-0900-cd34"));
+    await waitFor(() => expect(estimateCalls().at(-1)).toContain("arms=A1&reps=3&bench=caso-cortesia-1001"));
+  });
+
+  it("deja escoger cualquier banco guardado, no solo el de la última corrida", async () => {
+    renderLauncher();
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
+    fireEvent.click(screen.getByRole("button", { name: "Repetir un banco guardado" }));
+
+    const picker = screen.getByRole("combobox", { name: "Banco" });
+    expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual(BENCHES);
+    fireEvent.change(picker, { target: { value: "caso-4148-real" } });
+
+    await waitFor(() => expect(estimateCalls().at(-1)).toContain("bench=caso-4148-real"));
+    await screen.findByText(/≈ US\$21/);
+    fireEvent.click(screen.getByRole("button", { name: "Lanzar corrida" }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([u, init]) => String(u).endsWith("/api/lab/runs") && init?.method === "POST");
+      expect(post && JSON.parse(post[1].body)).toEqual({ arms: ["A1", "B"], reps: 1, bench: "caso-4148-real" });
+    });
+  });
+
+  it("sin bancos guardados, repetir está apagado y no hay selector", async () => {
+    renderLauncher([]);
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
+
+    expect(screen.getByRole("button", { name: "Repetir un banco guardado (no hay)" })).toBeDisabled();
+    expect(screen.queryByRole("combobox", { name: "Banco" })).toBeNull();
   });
 
   it("si pasa un tope, dice cuál y no deja lanzar", async () => {

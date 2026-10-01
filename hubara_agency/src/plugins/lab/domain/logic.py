@@ -23,7 +23,9 @@ _EPISODE_RE = re.compile(r"^ep_\d{1,6}$")
 # brazos existen hoy, acá solo se valida la forma.
 _ARM_RE = re.compile(r"^(A0|A1|B0|B|C)$")
 _ARMS_RE = re.compile(r"^(A0|A1|B0|B|C)(,(A0|A1|B0|B|C)){0,4}$")
-_BENCH_RE = re.compile(r"^(new|bench-[a-z0-9-]{6,64})$")
+# Un banco exportado se llama `bench-<corrida>`; los armados a mano
+# (`caso-4148-real`) también se repiten: misma forma segura que una corrida.
+_BENCH_RE = re.compile(r"^(new|[a-z0-9][a-z0-9-]{5,63})$")
 _TURN_KEY_RE = re.compile(r"^[A-Za-z0-9_:/+.-]{1,200}$")
 _REPS = (1, 3)
 _REP_MAX = 2

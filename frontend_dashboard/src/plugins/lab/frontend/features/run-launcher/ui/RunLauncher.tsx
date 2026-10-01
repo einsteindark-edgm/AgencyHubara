@@ -2,7 +2,8 @@
  * Botón "Nueva corrida" y su panel (plan §3.7, diseño §09).
  *
  * Formulario: los bots (A1 siempre va: es el control), las repeticiones (1
- * rápida · 3 para decidir) y el banco (exportar ahora o reusar el último). El
+ * rápida · 3 para decidir) y el banco (exportar ahora o repetir uno guardado,
+ * cualquiera de los de las corridas publicadas). El
  * costo lo estima el backend con lo marcado; si pasa un tope, "Lanzar
  * corrida" se apaga y se dice cuál. Con una corrida en curso el panel muestra
  * el avance y "Cancelar corrida" pide confirmar en dos pasos (sin diálogos
@@ -27,8 +28,8 @@ import {
 } from "@plugins/lab/frontend/entities/lab-run";
 
 interface Props {
-  /** Banco de la última corrida (para "Reusar el último"); null si no hay. */
-  lastBenchId: string | null;
+  /** Bancos de las corridas publicadas, del más nuevo al más viejo y sin repetir. */
+  benches: string[];
 }
 
 // B0 (workflow nuevo con las reglas de hoy) va sin marcar: se prende para
@@ -77,7 +78,7 @@ function launchErrorMessage(error: unknown): string {
 const BTN = "whitespace-nowrap rounded-[7px] px-3 py-2 text-xs font-semibold leading-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 const GHOST = "rounded-[7px] border border-line-strong bg-transparent px-3 py-2 text-xs font-medium leading-none text-fg-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
-export function RunLauncher({ lastBenchId }: Props) {
+export function RunLauncher({ benches }: Props) {
   const panelId = useId();
   const [open, setOpen] = useState(false);
   const activeQuery = useActiveRun();
@@ -99,7 +100,7 @@ export function RunLauncher({ lastBenchId }: Props) {
       {open ? (
         <div id={panelId} className="order-last grid basis-full gap-3 border-t border-line bg-canvas px-4 py-3.5">
           {!status && last && (last.phase === "failed" || last.phase === "cancelled") ? <LastRun last={last} /> : null}
-          {status ? <Progress status={status} /> : <LaunchForm lastBenchId={lastBenchId} onClose={() => setOpen(false)} />}
+          {status ? <Progress status={status} /> : <LaunchForm benches={benches} onClose={() => setOpen(false)} />}
         </div>
       ) : null}
     </>
@@ -137,12 +138,15 @@ function Seg({ label, options, value, onChange }: { label: string; options: Arra
   );
 }
 
-function LaunchForm({ lastBenchId, onClose }: { lastBenchId: string | null; onClose: () => void }) {
+function LaunchForm({ benches, onClose }: { benches: string[]; onClose: () => void }) {
   const [picked, setPicked] = useState<Record<string, boolean>>({ B: true });
   const [reps, setReps] = useState(1);
   const [bench, setBench] = useState<"new" | "reuse">("new");
+  const [saved, setSaved] = useState<string | null>(null);
   const arms = ["A1", ...OPTIONAL_ARMS.filter((a) => picked[a])];
-  const input = { arms, reps, bench: bench === "reuse" && lastBenchId ? lastBenchId : "new" };
+  // El banco guardado elegido; por defecto, el de la corrida más nueva.
+  const savedBench = saved !== null && benches.includes(saved) ? saved : (benches[0] ?? null);
+  const input = { arms, reps, bench: bench === "reuse" && savedBench ? savedBench : "new" };
   const estimate = useLabEstimate(input, true);
   const launch = useLaunchRun();
 
@@ -188,11 +192,25 @@ function LaunchForm({ lastBenchId, onClose }: { lastBenchId: string | null; onCl
             { value: "new", text: "Las reales de hoy" },
             {
               value: "reuse",
-              text: lastBenchId ? `Repetir las de la última corrida (${lastBenchId})` : "Repetir las de la última corrida (no hay)",
-              disabled: !lastBenchId,
+              text: savedBench ? "Repetir un banco guardado" : "Repetir un banco guardado (no hay)",
+              disabled: !savedBench,
             },
           ]}
         />
+        {bench === "reuse" && savedBench ? (
+          <select
+            aria-label="Banco"
+            value={savedBench}
+            onChange={(e) => setSaved(e.target.value)}
+            className="max-w-full rounded-md border border-line-strong bg-canvas px-2 py-1.5 font-mono text-[11.5px] text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            {benches.map((b) => (
+              <option key={b} value={b}>
+                {b}
+              </option>
+            ))}
+          </select>
+        ) : null}
       </Row>
       <p className="m-0 text-[11.5px] text-fg-muted">
         Cada bot responde cada turno real de esas conversaciones, sin escribirle a ningún cliente. Con 3 veces se ve si responde igual cada vez.
