@@ -148,7 +148,7 @@ Pedido del operador: simular el caso real en código de producción y en el bot 
   - `calibrated_model: null` en los tres perfiles: la guarda de calibración no actúa hasta calibrar con el banco de referencia.
   - Historias reales de V2 congeladas y casos de `jev-v3` en la sonda diaria.
   - PDF = comprobante y comprobante leído por la visión quedan como invariantes: Jev no ve archivos ni imágenes.
-  - Partición léxica «rojo y azul»: el diseño la dejó en código, pero el caso «una lila y otra azul» registró 2× lila (ver la foto → producto y los pedidos multi-variante como propuestas aparte).
+  - Partición léxica «rojo y azul»: el diseño la dejó en código, pero el caso «una lila y otra azul» registró 2× lila (ver la foto → producto y los pedidos multi-variante como propuestas aparte). → resuelto en §6.11.
   - En el laboratorio local, 2 de 6 turnos de B cayeron a la regla por el tope de 3 s de Jev (latencia medida aparte: p50 0,55 s, máx. 1,06 s): vigilar la tasa de caídas en cada corrida.
 
 ### 6.1 Primeros arreglos tras la UI legible (2026-09-29, tarde)
@@ -409,3 +409,33 @@ El operador pidió los pasos 1 y 3 de la investigación de §6.3; el 2 («Enviar
 - Ahora muestra la pregunta en palabras («¿Pregunta por colores o variantes?»), con el id en el `title` de la fila, y en las de opción lo que eligió Jev con su confianza («que elija una variante · 0,97»).
 - El mapa vive en `shared/lib/jev-questions.ts`: lo usan el Laboratorio y Chats.
 - `cortesia`, `relevo` y «¿la conversación ya terminó?» de `contactar` ya tienen nombre y pregunta en el panel de decisiones y en el control del motor.
+
+### 6.11 Un producto en varias variantes: una línea por variante (2026-09-30, noche)
+
+**Lo que se vio (laboratorio, caso 4567, turnos 22 y 23; producción y los dos bots).**
+- «Mejor 2, una lila y otra azul» quedó como `cantidad=2`, `color=Lila` y `notas="Segunda unidad en azul"`.
+- La confirmación salió con `{velon-gorrion, Lila, Lavanda, quantity 2}`: el cliente confirmó dos lilas y la orden iba a registrar dos lilas.
+- La causa: el borrador identificaba cada ítem solo por producto. Más abajo (verificar, confirmar, registrar y Medusa), dos líneas del mismo producto ya funcionaban.
+
+**Qué quedó** (`59acf3e2`, `69c212c9`, `07a6759e`; el bot de hoy hace lo mismo con productos de una sola variante o distintos):
+- **`set_order_slot(lineas=[...])`:** una línea por variante con su cantidad. Si una línea no sirve, no se escribe ninguna. Se conserva lo que compartían las líneas anteriores (el aroma) y las iguales se juntan.
+- **Producto repartido:** lo que todas sus líneas comparten se cambia en todas. La variante que las distingue y la cantidad solo cambian con `lineas` (`split_lines`). `quitar` saca todas las líneas.
+- **Nota del turno:** lista las líneas («va en 2 líneas… una línea por cada una»).
+- **Confirmación y registro:**
+  - completan el color y el aroma de cada línea; eligen primero las líneas que dicen su variante;
+  - rechazan un pedido que junta las líneas (`split_lines_mismatch`) y degradan abierto sin el producto en el pedido;
+  - el registro desde el panel no lo exige: el borrador es memoria del bot y el operador registra lo que acordó con el cliente.
+- **Tarjeta:** la variante de cada línea cuando el producto se repite.
+- **Prompt:** una frase en `TOOLS.md` y una en la etapa de variantes. `TOOLS.md` queda en 15.967 de 16.000 bytes: lo próximo va a mecánica, no a texto.
+- **Scorecard:** VAR-06 lee la cantidad de cada línea.
+
+**Medido:**
+- **r13** (imagen 59acf3e2, banco completo, A1 y B, US$1,14):
+  - **4567 t22:** los dos bots guardan `lineas=[{1, Lila}, {1, Azul}]`. El borrador queda 1× Lila · Lavanda y 1× Azul · Lavanda.
+  - **4567 t23** (parte del borrador de producción, 2 lilas + notas): A1 confirma 2 lilas, como antes. B describe bien el pedido («una lila y una azul») pero pide el teléfono en vez de confirmar. Jev leyó lo mismo que en r11 y r12 (estado del pedido, 0,92–0,93): es elección del LLM.
+  - **Contra r12, turno por turno:** sin regresiones. Los dos «pasa → falla» son EST-06 (narración descartada, menor) en 4329 t4, que se mueve en ambos sentidos entre corridas.
+- **`caso-lineas-1001` r1** (contrafactual: t23 con el borrador ya repartido, imagen 07a6759e, US$0,06): A1 y B confirman con dos líneas, 1× Lila · Lavanda y 1× Azul · Lavanda. Producción, en el mismo turno, confirmó 2× Lila.
+
+**Pendiente:**
+- Ningún chequeo de código compara la confirmación con lo que pidió el cliente (la referencia de producción pasa el scorecard con 2× Lila). Lo ve el juez (VAR-05), con las calificaciones pendientes en este modo.
+- El operador no puede repartir un producto desde el panel (`DraftBody` no tiene `lineas`): si edita el color de un producto repartido, la tool lo rechaza con las líneas.
