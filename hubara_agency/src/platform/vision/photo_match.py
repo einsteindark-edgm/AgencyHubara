@@ -28,6 +28,7 @@ import litellm
 import structlog
 
 from src.platform.config import API_BASE_LLMLITE
+from src.platform.observability.pricing import response_cost_usd
 from src.platform.vision.images import candidate_sheet
 from src.platform.vision.json_answer import json_object
 
@@ -63,6 +64,8 @@ class PhotoPick:
     reason: str | None = None
     error: str | None = None
     latency_ms: int | None = None
+    # Lo que costó la comparación (USD); None = no se sabe o no hubo llamada.
+    cost_usd: float | None = None
 
 
 class PhotoMatchPort(Protocol):
@@ -144,16 +147,17 @@ class LiteLLMPhotoMatchAdapter:
             logger.warning("photo_match.error", model=self._model, error_type=type(exc).__name__)
             return PhotoPick(ok=False, error=f"provider_error: {type(exc).__name__}", latency_ms=_ms(started))
         latency_ms = _ms(started)
+        cost = response_cost_usd(response, self._model)
         data = json_object(raw)
         if data is None or "numero" not in data:
-            return PhotoPick(ok=False, error="bad_response_shape", latency_ms=latency_ms)
+            return PhotoPick(ok=False, error="bad_response_shape", latency_ms=latency_ms, cost_usd=cost)
         reason = data.get("motivo") if isinstance(data.get("motivo"), str) else None
         number = data.get("numero")
         if number is None:
-            return PhotoPick(ok=True, reason=reason, latency_ms=latency_ms)
+            return PhotoPick(ok=True, reason=reason, latency_ms=latency_ms, cost_usd=cost)
         if isinstance(number, bool) or not isinstance(number, int) or not 1 <= number <= n:
-            return PhotoPick(ok=False, error="number_out_of_range", reason=reason, latency_ms=latency_ms)
-        return PhotoPick(ok=True, number=number, reason=reason, latency_ms=latency_ms)
+            return PhotoPick(ok=False, error="number_out_of_range", reason=reason, latency_ms=latency_ms, cost_usd=cost)
+        return PhotoPick(ok=True, number=number, reason=reason, latency_ms=latency_ms, cost_usd=cost)
 
 
 def _data_uri(data: bytes, mime: str) -> str:

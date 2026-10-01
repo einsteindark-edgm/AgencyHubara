@@ -29,6 +29,7 @@ import litellm
 import structlog
 
 from src.platform.config import API_BASE_LLMLITE
+from src.platform.observability.pricing import response_cost_usd
 from src.platform.vision.images import to_jpeg
 
 logger = structlog.get_logger()
@@ -109,9 +110,16 @@ class LiteLLMImageEmbeddingAdapter:
         return cls(model=model, api_base=api_base or None, api_key=api_key or None)
 
     async def embed(self, image_bytes: bytes, mime_type: str) -> list[float] | None:
+        vector, _cost = await self.embed_measured(image_bytes, mime_type)
+        return vector
+
+    async def embed_measured(self, image_bytes: bytes, mime_type: str) -> tuple[list[float] | None, float | None]:
+        """El vector y lo que costó la llamada (USD; None = no se sabe o no
+        hubo llamada). La foto del cliente lo usa para cobrarlo a la
+        conversación; el índice del catálogo usa `embed`."""
         jpeg = to_jpeg(image_bytes, max_side=_MAX_SIDE)
         if jpeg is None:
-            return None
+            return None, None
         data_uri = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
         try:
             response = await litellm.aembedding(
@@ -126,11 +134,12 @@ class LiteLLMImageEmbeddingAdapter:
             value = item["embedding"] if isinstance(item, dict) else getattr(item, "embedding", None)
         except Exception as exc:  # noqa: BLE001 — el puerto nunca lanza
             logger.warning("image_embedding.error", model=self._model, error_type=type(exc).__name__)
-            return None
+            return None, None
+        cost = response_cost_usd(response, self._model)
         vector = _vector(value, self._dimensions)
         if vector is None:
             logger.warning("image_embedding.bad_response", model=self._model)
-        return vector
+        return vector, cost
 
 
 class FakeImageEmbeddingAdapter:
@@ -149,6 +158,10 @@ class FakeImageEmbeddingAdapter:
     @property
     def dimensions(self) -> int:
         return self._dimensions
+
+    async def embed_measured(self, image_bytes: bytes, mime_type: str) -> tuple[list[float] | None, float | None]:
+        """El doble no cobra: el vector y costo desconocido."""
+        return await self.embed(image_bytes, mime_type), None
 
     async def embed(self, image_bytes: bytes, mime_type: str) -> list[float] | None:
         if to_jpeg(image_bytes, max_side=64) is None:

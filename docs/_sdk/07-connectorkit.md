@@ -316,6 +316,27 @@ alcanza. La decisión (qué producto es) vive en el plugin de ventas
 | `FakeImageEmbeddingAdapter` / `NullImageEmbeddingAdapter`, `FakePhotoMatchAdapter` / `NullPhotoMatchAdapter` | dobles oficiales; contract suites en `tests/platform/test_image_embedding_contract.py` y `tests/platform/test_photo_match_contract.py` |
 | `CatalogPhotoIndex` / `get_catalog_photo_index()` (en `catalogkit`) | el índice de fotos del catálogo junto al snapshot (`<snapshot>/photo_index/`: vector + miniatura de cada foto). `refresh` mide solo lo que falta y rehace todo si el modelo de embeddings cambió (vuelve a medir una imagen de control); `nearest` solo devuelve productos y fotos del catálogo de HOY |
 
+## Costos por conversación que no pasan por el agente: Jev y las fotos
+
+El costo LLM del agente (`episodes[].llm_usage`) y el de WhatsApp
+(`cost_summary`) tienen sus escritores. Lo que cobra Jev y lo que cuesta leer
+las fotos del cliente se suman al episodio con la MISMA forma:
+`{"calls": <llamadas>, "cost_usd_micros": <micro-USD>}` (micro-USD enteros:
+son fracciones de centavo). Ads los lee del vault («Costo Jev» y «Costo
+imágenes», junto a «Costo LLM» y «Costo WA»).
+
+| Símbolo | Qué es |
+|---|---|
+| `record_jev_cost(session_id, cost_usd)` | suma una pregunta a Jev (`PerceptionResult.cost_usd`, de OpenRouter `usage.cost`) a `jev_usage`. Lo llaman las capacidades del motor (también en sombra), la lectura del turno, la revisión antes de enviar y el lector del Order Sentinel. Sin costo no cuenta |
+| `record_vision_cost(session_id, cost_usd, calls=, store=)` | suma las llamadas a Gemini de una foto (describirla, su huella y la comparación contra el catálogo) a `vision_usage`. El costo sale del proxy (`_hidden_params.response_cost`) o de tokens × `OPENLIT_PRICING_JSON`; una llamada sin precio conocido se cuenta sin inventar el costo. `store`: el metadata store del ingest (con `update`) |
+| `ImageEmbeddingPort.embed_measured(bytes, mime)` | el vector y lo que costó la llamada (el ingest lo cobra a la conversación; el índice del catálogo, un costo de la tienda, usa `embed`). `PhotoPick.cost_usd` y `VisionResult.cost_usd_estimate` dicen lo mismo para la comparación y la descripción |
+
+Los dos van al episodio abierto o, si no hay, al último (remarketing pregunta
+sobre una conversación cerrada; un comprobante llega con la conversación en
+manos de una persona). Nunca crean la sesión, escriben con `update` (lock por
+sesión) y nunca lanzan: registrar un costo no frena a quien lo registra.
+Implementación común: `platform/observability/episode_usage.py`.
+
 ## Reglas al agregar un port (regla de oro del kit)
 
 Port nuevo ⇒ en el MISMO PR: el `Protocol` + su factory + su **fake** + su

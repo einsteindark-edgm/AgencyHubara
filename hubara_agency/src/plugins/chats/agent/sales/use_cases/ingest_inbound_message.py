@@ -2072,6 +2072,9 @@ class IngestInboundMessage:
                 kind=result.kind if result.ok else "unknown",
             )
         self._safe_write_metadata(session_id, metadata)
+        # Lo que costó describirla (también un comprobante) va a la conversación.
+        if result.ok:
+            self._charge_vision(session_id, result.cost_usd_estimate, calls=1)
 
         # Analytics
         await self._emit_event(
@@ -2168,6 +2171,13 @@ class IngestInboundMessage:
             from_photo=True,
         )
 
+    def _charge_vision(self, session_id: str, cost_usd: float | None, *, calls: int) -> None:
+        """Lo que costó leer la foto, al episodio de la conversación
+        (`vision_usage`, como el costo LLM, el de WhatsApp y el de Jev)."""
+        from src.sdk.connectorkit import record_vision_cost
+
+        record_vision_cost(session_id, cost_usd, calls=calls, store=self._metadata_store)
+
     async def _identify_photo(
         self,
         result: Any,
@@ -2192,6 +2202,11 @@ class IngestInboundMessage:
         except Exception as exc:  # noqa: BLE001 — la foto sigue sin identificar
             logger.warning("photo_product.identify_failed", session=session_id, error_type=type(exc).__name__)
             identification = None
+        # La búsqueda por imagen (huella + comparación) también se cobra a la
+        # conversación; por texto no cuesta nada.
+        calls = int(getattr(identification, "calls", 0) or 0)
+        if calls:
+            self._charge_vision(session_id, getattr(identification, "cost_usd", 0.0), calls=calls)
         try:
             identifier.refresh_index_soon()
         except Exception as exc:  # noqa: BLE001 — el índice se completa la próxima vez

@@ -17,6 +17,8 @@ Los nombres, precios y SKU son los del catálogo del banco caso-fotos-0929.
 """
 from __future__ import annotations
 
+import pytest
+
 import asyncio
 import io
 from collections.abc import Sequence
@@ -164,9 +166,10 @@ class _Catalog:
 class _Matcher:
     """Doble del verificador: elige por el producto del candidato."""
 
-    def __init__(self, pick_handle: str | None, *, delay_s: float = 0.0) -> None:
+    def __init__(self, pick_handle: str | None, *, delay_s: float = 0.0, cost_usd: float | None = None) -> None:
         self.pick_handle = pick_handle
         self.delay_s = delay_s
+        self.cost_usd = cost_usd
         self.calls: list[int] = []
         self.handles: list[str] = []
 
@@ -174,8 +177,8 @@ class _Matcher:
         self.calls.append(len(candidates))
         await asyncio.sleep(self.delay_s)
         if self.pick_handle in self.handles:
-            return PhotoPick(ok=True, number=self.handles.index(self.pick_handle) + 1, reason="misma figura")
-        return PhotoPick(ok=True)
+            return PhotoPick(ok=True, number=self.handles.index(self.pick_handle) + 1, reason="misma figura", cost_usd=self.cost_usd)
+        return PhotoPick(ok=True, cost_usd=self.cost_usd)
 
 
 class _Embedder(FakeImageEmbeddingAdapter):
@@ -230,6 +233,30 @@ async def test_a_photo_without_text_is_identified_by_the_image(tmp_path: Path) -
 
     assert found.product == PhotoProduct(handle="velon-gorrion", title="Velón Gorrión", how="imagen", seen=None)
     assert matcher.calls == [5] and found.trace["image"]["candidates"][0] == "velon-gorrion"
+
+
+async def test_the_image_search_says_what_it_cost(tmp_path: Path) -> None:
+    """La huella y la comparación cuestan: el ingest lo suma a la conversación."""
+    matcher = _Matcher("velon-gorrion", cost_usd=0.0008)
+    identifier, embedder = await _identifier(tmp_path, matcher)
+
+    async def measured(image_bytes: bytes, mime_type: str):  # noqa: ANN202
+        return await embedder.embed(image_bytes, mime_type), 0.00003
+
+    embedder.embed_measured = measured  # type: ignore[method-assign]
+
+    found = await identifier.identify(_vision(), _loader(PHOTOS["https://assets.test/gorrion.webp"]))
+
+    assert found.cost_usd == pytest.approx(0.00083)
+    assert found.calls == 2
+
+
+async def test_when_the_text_decides_nothing_more_is_charged(tmp_path: Path) -> None:
+    identifier, _ = await _identifier(tmp_path, _Matcher("sagrado-rostro", cost_usd=0.0008))
+
+    found = await identifier.identify(_vision(visible=VisibleText(product_name="Sacrificio de Amor")), _loader(b"x"))
+
+    assert (found.cost_usd, found.calls) == (0.0, 0)
 
 
 async def test_when_no_candidate_is_the_same_design_the_photo_stays_unidentified(tmp_path: Path) -> None:

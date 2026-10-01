@@ -1111,6 +1111,7 @@ def _ep(
     llm_tokens: int | None = None,
     cost_summary: dict | None = None,
     jev_usage: dict | None = None,
+    vision_usage: dict | None = None,
 ) -> dict:
     """Construye un episodio con shape de `episode_lifecycle._make_empty_episode`.
     `referral_snapshot=None` → la atribución cae al `origin` de la sesión.
@@ -1141,6 +1142,8 @@ def _ep(
         ep["cost_summary"] = cost_summary
     if jev_usage is not None:
         ep["jev_usage"] = jev_usage
+    if vision_usage is not None:
+        ep["vision_usage"] = vision_usage
     return ep
 
 
@@ -1294,6 +1297,29 @@ def test_aggregates_jev_cost_per_campaign_and_conversation(_isolate_vault_dir: P
     convs = {c.episode_id: c for c in list_attributed_conversations(_isolate_vault_dir, "AD_X")}
     assert (convs["ep_001"].jev_cost_usd_micros, convs["ep_001"].jev_calls) == (60, 3)
     assert (convs["ep_002"].jev_cost_usd_micros, convs["ep_002"].jev_calls) == (45, 2)
+
+
+def test_aggregates_the_cost_of_reading_photos(_isolate_vault_dir: Path):
+    """«Costo imágenes»: suma `episode.vision_usage` (describir, huella y
+    comparar las fotos del cliente). Sin fotos leídas → None."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_001", started_at_ms=1, closed_at_ms=2, vision_usage={"calls": 3, "cost_usd_micros": 940}),
+            _ep("ep_002", started_at_ms=3, vision_usage={"calls": 1, "cost_usd_micros": 140}),
+        ],
+    )
+    _write_episodic_session(
+        _isolate_vault_dir, phone="222", source_id="AD_Y", episodes=[_ep("ep_001", started_at_ms=1)],
+    )
+
+    camps = list_ads_campaigns(_isolate_vault_dir)
+    assert (_only(camps, "AD_X").vision_cost_usd_micros, _only(camps, "AD_X").vision_calls) == (1080, 4)
+    assert (_only(camps, "AD_Y").vision_cost_usd_micros, _only(camps, "AD_Y").vision_calls) == (None, None)
+    convs = {c.episode_id: c for c in list_attributed_conversations(_isolate_vault_dir, "AD_X")}
+    assert (convs["ep_001"].vision_cost_usd_micros, convs["ep_001"].vision_calls) == (940, 3)
 
 
 def test_campaign_without_llm_usage_has_none(_isolate_vault_dir: Path):

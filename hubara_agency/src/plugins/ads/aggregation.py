@@ -159,6 +159,11 @@ class AdsCampaignSummary:
     # le preguntó a Jev (≠ "costó 0").
     jev_cost_usd_micros: int | None = None
     jev_calls: int | None = None
+    # Costo de LEER LAS FOTOS del cliente (Gemini por el proxy: describir,
+    # huella y comparar contra el catálogo) — USD micros + llamadas, suma de
+    # `episode.vision_usage`. None si ninguna conversación mandó fotos.
+    vision_cost_usd_micros: int | None = None
+    vision_calls: int | None = None
     # Duración media de los episodios CERRADOS del bucket (ms) — el "tiempo"
     # del embudo. None si no hay episodios cerrados con timestamps válidos.
     avg_episode_duration_ms: int | None = None
@@ -260,6 +265,11 @@ class AdsAttributedConversation:
     # el episodio no le preguntó a Jev.
     jev_cost_usd_micros: int | None = None
     jev_calls: int | None = None
+
+    # Costo de leer las fotos del cliente en el episodio (USD micros) +
+    # llamadas — de `episode.vision_usage`. None si no mandó fotos.
+    vision_cost_usd_micros: int | None = None
+    vision_calls: int | None = None
 
     # Evento CAPI reportado a Meta para este episodio (fix 2026-07-01):
     # "OrderCanceled" | "Purchase" | "LeadSubmitted" | None (nada reportado /
@@ -898,17 +908,27 @@ def _as_count(value: Any) -> int:
     return max(0, int(value))
 
 
-def _episode_jev_usage(episode: dict[str, Any] | None) -> tuple[int, int] | None:
-    """`(cost_usd_micros, calls)` del episodio, o None si no le preguntó a Jev.
+def _episode_usage(episode: dict[str, Any] | None, field: str) -> tuple[int, int] | None:
+    """`(cost_usd_micros, calls)` de `episode[field]`, o None si no lo trae.
 
-    Lectura CRUDA del vault (P-3): el shape lo escribe `record_jev_cost`
-    (platform/perception/costs.py)."""
+    Lectura CRUDA del vault (P-3): `jev_usage` y `vision_usage` los escribe
+    `record_episode_usage` (platform/observability/episode_usage.py)."""
     if not isinstance(episode, dict):
         return None
-    usage = episode.get("jev_usage")
+    usage = episode.get(field)
     if not isinstance(usage, dict):
         return None
     return _as_count(usage.get("cost_usd_micros")), _as_count(usage.get("calls"))
+
+
+def _episode_jev_usage(episode: dict[str, Any] | None) -> tuple[int, int] | None:
+    """Lo que costó Jev en el episodio, o None si no le preguntó."""
+    return _episode_usage(episode, "jev_usage")
+
+
+def _episode_vision_usage(episode: dict[str, Any] | None) -> tuple[int, int] | None:
+    """Lo que costó leer las fotos del episodio, o None si no mandó fotos."""
+    return _episode_usage(episode, "vision_usage")
 
 
 def merge_wa_cost_categories(
@@ -997,6 +1017,9 @@ def _empty_bucket(
         "jev_cost": 0,
         "jev_calls": 0,
         "has_jev": False,
+        "vision_cost": 0,
+        "vision_calls": 0,
+        "has_vision": False,
         "dur_sum": 0,
         "dur_count": 0,
         "capi_leads": 0,
@@ -1221,6 +1244,12 @@ def list_ads_campaigns(
                 bucket["jev_cost"] += jev[0]
                 bucket["jev_calls"] += jev[1]
                 bucket["has_jev"] = True
+            # Costo de leer las fotos del episodio.
+            vision = _episode_vision_usage(ep)
+            if vision is not None:
+                bucket["vision_cost"] += vision[0]
+                bucket["vision_calls"] += vision[1]
+                bucket["has_vision"] = True
             # Duración (solo episodios cerrados con timestamps válidos).
             dur = _episode_duration_ms(ep)
             if dur is not None:
@@ -1318,6 +1347,8 @@ def list_ads_campaigns(
                 wa_msgs_pending=bucket["wa_pending"],
                 jev_cost_usd_micros=bucket["jev_cost"] if bucket["has_jev"] else None,
                 jev_calls=bucket["jev_calls"] if bucket["has_jev"] else None,
+                vision_cost_usd_micros=bucket["vision_cost"] if bucket["has_vision"] else None,
+                vision_calls=bucket["vision_calls"] if bucket["has_vision"] else None,
                 avg_episode_duration_ms=avg_episode_duration_ms,
                 revenue_count=bucket["revenue_count"],
                 duration_count=bucket["dur_count"],
@@ -1442,6 +1473,7 @@ def list_attributed_conversations(
             _usage = ep.get("llm_usage") if isinstance(ep, dict) else None
             _wa_cost = _episode_wa_cost(ep, _campaign_wamids(metadata))
             _jev = _episode_jev_usage(ep)
+            _vision = _episode_vision_usage(ep)
             _capi_slot = capi_idx.get(ep_id) or {}
             if _capi_slot.get("order_canceled_sent"):
                 _capi_event = "OrderCanceled"  # lo último que Meta sabe del pedido
@@ -1479,6 +1511,8 @@ def list_attributed_conversations(
                     wa_msgs_pending=_wa_cost[2] if _wa_cost else 0,
                     jev_cost_usd_micros=_jev[0] if _jev else None,
                     jev_calls=_jev[1] if _jev else None,
+                    vision_cost_usd_micros=_vision[0] if _vision else None,
+                    vision_calls=_vision[1] if _vision else None,
                     capi_event=_capi_event,
                     state_reason=(
                         STATE_REASON_ORDER_CANCELLED

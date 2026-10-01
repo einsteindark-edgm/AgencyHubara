@@ -32,7 +32,7 @@ import difflib
 import re
 import unicodedata
 from collections.abc import Awaitable, Callable, Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -89,6 +89,10 @@ class PhotoProduct:
 class PhotoIdentification:
     product: PhotoProduct | None
     trace: dict[str, Any] = field(default_factory=dict)
+    # Lo que costó buscar la foto por imagen (huella + comparación): el ingest
+    # lo suma a la conversación (`vision_usage`). Por texto no cuesta nada.
+    cost_usd: float = 0.0
+    calls: int = 0
 
 
 # ── 1. El texto que se lee en la foto ───────────────────────────────────────
@@ -188,6 +192,13 @@ def _price_is_not_ours(visible: VisibleText | None, product: Any) -> bool:
 # ── 2. La imagen ───────────────────────────────────────────────────────────
 
 
+def _charge(info: dict[str, Any], cost: float | None, *, called: bool) -> None:
+    """Una llamada de la búsqueda por imagen que respondió, con su costo."""
+    if called:
+        info["calls"] += 1
+        info["cost_usd"] += float(cost or 0.0)
+
+
 class PhotoIdentifier:
     """Identifica la foto del cliente: texto primero, imagen después.
 
@@ -223,9 +234,14 @@ class PhotoIdentifier:
         return list(getattr(result, "results", None) or [])
 
     async def identify(self, vision: VisionResult, image: ImageLoader) -> PhotoIdentification:
+        trace: dict[str, Any] = {}
+        found = await self._identify(vision, image, trace)
+        spent = trace.get("image") or {}
+        return replace(found, cost_usd=float(spent.get("cost_usd") or 0.0), calls=int(spent.get("calls") or 0))
+
+    async def _identify(self, vision: VisionResult, image: ImageLoader, trace: dict[str, Any]) -> PhotoIdentification:
         from src.sdk.connectorkit import VISION_KIND_PAYMENT_RECEIPT, VISION_KIND_PRODUCT_PHOTO
 
-        trace: dict[str, Any] = {}
         if not vision.ok or vision.is_payment_receipt or vision.kind == VISION_KIND_PAYMENT_RECEIPT:
             return PhotoIdentification(None, trace)
         products = await self._products()
@@ -250,7 +266,7 @@ class PhotoIdentifier:
         return PhotoIdentification(PhotoProduct(handle=handle, title=title, how=HOW_IMAGE), trace)
 
     async def _by_image(self, image: ImageLoader, products: list[Any], trace: dict[str, Any]) -> str | None:
-        info: dict[str, Any] = {"candidates": [], "pick": None, "error": None}
+        info: dict[str, Any] = {"candidates": [], "pick": None, "error": None, "cost_usd": 0.0, "calls": 0}
         trace["image"] = info
         index, embedder, matcher = self._index, self._embedder, self._matcher
         if index is None or embedder is None or matcher is None:
@@ -263,7 +279,12 @@ class PhotoIdentifier:
                 info["error"] = "sin_imagen"
                 return None
             data, mime = loaded
-            vector = await embedder.embed(data, mime)
+            measure = getattr(embedder, "embed_measured", None)
+            if measure is not None:
+                vector, cost = await measure(data, mime)
+            else:
+                vector, cost = await embedder.embed(data, mime), None
+            _charge(info, cost, called=vector is not None or cost is not None)
             if vector is None:
                 info["error"] = "sin_vector"
                 return None
@@ -275,6 +296,7 @@ class PhotoIdentifier:
             info["scores"] = [round(c.score, 3) for c in candidates]
             rows = [[b for b in (index.photo_bytes(url) for url in c.photos) if b] for c in candidates]
             pick = await matcher.pick_same_design(data, mime, rows)
+            _charge(info, getattr(pick, "cost_usd", None), called=pick.ok or getattr(pick, "cost_usd", None) is not None)
             info["reason"], info["ms"] = pick.reason, pick.latency_ms
             if not pick.ok:
                 info["error"] = pick.error or "verificador"

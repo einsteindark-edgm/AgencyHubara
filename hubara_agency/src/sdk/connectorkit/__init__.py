@@ -199,6 +199,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     # Lo que cobra cada pregunta a Jev, sumado a la conversación (como el
     # costo del LLM y el de WhatsApp): `episodes[].jev_usage`.
     "record_jev_cost": "src.platform.perception.costs",
+    # Lo que cuesta leer las fotos del cliente (describir, huella, comparar),
+    # sumado a la conversación: `episodes[].vision_usage`.
+    "record_vision_cost": "src.platform.vision.costs",
     # La cola de desacuerdos regla ↔ Jev y las métricas de cada decisión (una
     # sola de cada una: ventas y el Order Sentinel).
     "DisagreementLog": "src.platform.perception.disagreements",

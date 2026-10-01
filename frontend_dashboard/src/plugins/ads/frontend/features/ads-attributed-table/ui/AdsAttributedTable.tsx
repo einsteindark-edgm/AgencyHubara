@@ -104,6 +104,9 @@ export function AdsAttributedTable({ rows }: Props) {
               <th className="num" title="Lo que cobra Jev (el clasificador del bot nuevo) por las preguntas de esta conversación">
                 Costo Jev
               </th>
+              <th className="num" title="Lo que cuesta leer las fotos del cliente: describirlas y buscarlas en el catálogo">
+                Costo imágenes
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -238,12 +241,31 @@ export function AdsAttributedTable({ rows }: Props) {
                       </span>
                     )}
                   </td>
+                  {/* Costo de leer las fotos del cliente (describir, huella y
+                      comparar contra el catálogo) + cuántas lecturas. null =
+                      no mandó fotos. */}
+                  <td className="num" data-testid="vision-cost-cell">
+                    {c.visionCostUsdMicros != null ? (
+                      <div>
+                        <div>{fmtUsdMicrosFine(c.visionCostUsdMicros)}</div>
+                        {c.visionCalls != null && (
+                          <div style={{ fontSize: 11, color: "var(--fg-mute)" }}>
+                            {fmtN(c.visionCalls)} {c.visionCalls === 1 ? "lectura" : "lecturas"}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span title="El cliente no mandó fotos en esta conversación" style={{ color: "var(--fg-faint)" }}>
+                        —
+                      </span>
+                    )}
+                  </td>
                 </tr>
               );
             })}
             {list.length === 0 && (
               <tr>
-                <td colSpan={12} className="att-empty">
+                <td colSpan={13} className="att-empty">
                   Sin chats que coincidan con el filtro.
                 </td>
               </tr>

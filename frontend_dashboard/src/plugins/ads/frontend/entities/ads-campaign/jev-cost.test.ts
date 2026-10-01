@@ -60,4 +60,13 @@ describe("costo de Jev", () => {
     expect(camp.jevCostUsdMicros).toBe(400);
     expect(camp.jevCalls).toBe(20);
   });
+  it("la conversación trae lo que costó leer sus fotos (describir, huella y comparar)", () => {
+    const row = mapBackendConversation(
+      backendAttributedConversationSchema.parse({ ...conversation, vision_cost_usd_micros: 940, vision_calls: 3 }),
+    );
+    expect(row.visionCostUsdMicros).toBe(940);
+    expect(row.visionCalls).toBe(3);
+    const old = mapBackendConversation(backendAttributedConversationSchema.parse(conversation));
+    expect(old.visionCostUsdMicros).toBeNull();
+  });
 });

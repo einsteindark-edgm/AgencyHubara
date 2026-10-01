@@ -222,6 +222,9 @@ from src.platform.perception.composition import (
 from src.platform.perception.costs import (
     record_jev_cost as record_jev_cost,
 )
+from src.platform.vision.costs import (
+    record_vision_cost as record_vision_cost,
+)
 from src.platform.perception.disagreements import (
     DisagreementLog as DisagreementLog,
 )

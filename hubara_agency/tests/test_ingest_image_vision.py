@@ -73,6 +73,14 @@ class FakeMetadataStore:
     def write(self, session_id: str, data: dict) -> None:
         self.store[session_id] = dict(data)
 
+    def update(self, session_id: str, mutator):  # noqa: ANN001, ANN201
+        import copy
+
+        result = mutator(copy.deepcopy(self.read(session_id)))
+        if result is not None:
+            self.write(session_id, result)
+        return result
+
 
 def _make_image(media_id: str, *, caption: str | None = None) -> WhatsAppMessage:
     media: dict = {"type": "image", "id": media_id, "mime_type": "image/jpeg"}
@@ -499,11 +507,17 @@ class _Identifier:
         self.seen: list = []
         self.refreshes = 0
 
+    cost_usd = 0.0
+    calls = 0
+
     async def identify(self, vision, image):  # noqa: ANN001, ANN201
         from src.plugins.chats.agent.sales.use_cases.photo_product import PhotoIdentification
 
         self.seen.append(vision)
-        return PhotoIdentification(self.product, {"text": {"handle": getattr(self.product, "handle", None)}})
+        return PhotoIdentification(
+            self.product, {"text": {"handle": getattr(self.product, "handle", None)}},
+            cost_usd=self.cost_usd, calls=self.calls,
+        )
 
     def refresh_index_soon(self) -> None:
         self.refreshes += 1
@@ -602,3 +616,20 @@ async def test_a_payment_receipt_is_never_matched_against_the_catalog(monkeypatc
 
 async def _noop_send(*_args, **_kwargs) -> None:  # noqa: ANN002, ANN003
     return None
+
+
+@pytest.mark.asyncio
+async def test_what_reading_the_photo_cost_goes_to_the_conversation(monkeypatch):
+    """Describir la foto + buscarla en el catálogo (huella y comparación):
+    todo queda en `vision_usage` del episodio, como el costo LLM, WA y Jev."""
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    identifier = _Identifier(None)
+    identifier.cost_usd, identifier.calls = 0.0008, 2
+    loader, metadata, use_case = _identified_use_case(identifier)
+    metadata.store["wa_5491111111111"] = {"episodes": [{"episode_id": "ep_001", "closed_at_ms": None}]}
+
+    await use_case._describe_image_and_reenter(_make_image("product_1"))
+
+    [episode] = metadata.store["wa_5491111111111"]["episodes"]
+    # 1 descripción (el doble no cobra) + 2 de la búsqueda por imagen.
+    assert episode["vision_usage"] == {"calls": 3, "cost_usd_micros": 800}

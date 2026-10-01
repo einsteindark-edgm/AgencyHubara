@@ -47,6 +47,7 @@ import litellm
 import structlog
 
 from src.platform.config import API_BASE_LLMLITE
+from src.platform.observability.pricing import response_cost_usd
 # Reusa el descargador de media de Meta del layer de audio — es
 # media-agnostic (resuelve media_id → bytes, con retry/backoff). Candidato a
 # moverse a `platform/whatsapp/` si un tercer consumidor aparece.
@@ -254,6 +255,10 @@ class LiteLLMVisionAdapter:
             )
 
         latency_ms = int((time.time() - started) * 1000)
+        # Lo que costó de verdad (proxy o tokens × tabla); si no se sabe, el
+        # promedio medido.
+        measured = response_cost_usd(response, self._model)
+        cost = measured if measured is not None else self._cost_per_image
 
         # 3. Extraer texto crudo
         try:
@@ -298,7 +303,7 @@ class LiteLLMVisionAdapter:
             kind=kind,
             is_payment_receipt=(kind == VISION_KIND_PAYMENT_RECEIPT),
             provider=self.name,
-            cost_usd_estimate=self._cost_per_image,
+            cost_usd_estimate=cost,
             latency_ms=latency_ms,
             visible_text=visible_text,
             is_screenshot=is_screenshot,

@@ -209,6 +209,8 @@ export function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
     waMsgsPending: b.wa_msgs_pending,
     jevCostUsdMicros: b.jev_cost_usd_micros,
     jevCalls: b.jev_calls,
+    visionCostUsdMicros: b.vision_cost_usd_micros,
+    visionCalls: b.vision_calls,
     avgEpisodeDurationMs: b.avg_episode_duration_ms,
     firstResp: b.first_resp,
     tendency: asCampaignTendency(b.tendency),
@@ -257,6 +259,8 @@ export function mapBackendConversation(
     waMsgsPending: b.wa_msgs_pending,
     jevCostUsdMicros: b.jev_cost_usd_micros,
     jevCalls: b.jev_calls,
+    visionCostUsdMicros: b.vision_cost_usd_micros,
+    visionCalls: b.vision_calls,
     capiEvent: asCapiEvent(b.capi_event),
     stateReason: asStateReason(b.state_reason),
   };
