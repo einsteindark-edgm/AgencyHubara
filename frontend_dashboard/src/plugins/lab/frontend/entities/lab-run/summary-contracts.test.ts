@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { armSummarySchema, checkVerdictSchema, runDiffSchema, runReportSchema } from "./contracts";
+import { armScorecardsSchema, armSummarySchema, checkSpecSchema, checkVerdictSchema, runDiffSchema, runReportSchema } from "./contracts";
 
 /** Resumen de una corrida (PR 13): lo que publica la caja, leído tolerante (L-10). */
 describe("contratos del Resumen", () => {
@@ -68,5 +68,23 @@ describe("contratos del Resumen", () => {
     expect(r.validation?.episodes).toBe(91);
     expect(r.arena.B.metrics[0].perception?.p95_ms).toBe(480);
     expect(r.arena.B.topics.calibration.brier).toBe(0.08);
+  });
+  it("las filas de la matriz de un bot: tolerantes por fila y por check", () => {
+    const d = armScorecardsSchema.parse({
+      arm: "B",
+      rep: 0,
+      rows: [
+        { session_id: "wa_573001234567", episode_id: "ep_001", verdict: "FALLA", stage_final: "variantes", episode_date: "2026-09-30", checks: { "APE-01": "pasa", "EST-09": "raro" } },
+        { episode_id: "sin sesión" },
+      ],
+    });
+    expect(d.rows).toHaveLength(1);
+    expect(d.rows[0].checks).toEqual({ "APE-01": "pasa", "EST-09": "desconocido" });
+    expect(armScorecardsSchema.parse({}).rows).toEqual([]);
+  });
+
+  it("cada check del registro trae su etapa (agrupa las columnas de la matriz)", () => {
+    expect(checkSpecSchema.parse({ id: "APE-01", stage: "descubrimiento" }).stage).toBe("descubrimiento");
+    expect(checkSpecSchema.parse({ id: "APE-01" }).stage).toBe("");
   });
 });

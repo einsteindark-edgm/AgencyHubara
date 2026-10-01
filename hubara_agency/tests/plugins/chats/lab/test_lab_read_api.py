@@ -104,6 +104,46 @@ def test_summary_has_the_quality_chart_shape_and_pending_arms_say_so(http) -> No
     assert "todavía" in pending.json()["detail"]
 
 
+def _turn_record(sid: str, episode: str, verdict: str, results: list[dict], **extra) -> dict:
+    return {"mode": "turn", "session_id": sid, "episode_id": episode, "verdict": verdict, "stage_final": "variantes",
+            "episode_date": "2026-09-30", "by_turn": [{"turn": 1, "results": results}], "results": results,
+            "judge": {"topics": ["x"]}, **extra}
+
+
+def test_scorecards_of_a_bot_are_the_rows_of_the_compliance_matrix(http) -> None:
+    """La matriz episodios × checks del Resumen: una fila por episodio del
+    bot, con cada check agregado sobre los turnos (falla manda), como en
+    Calidad LLM. Un episodio sin turnos calificados no cuenta (como en el
+    resumen)."""
+    store = api.get_lab_store()
+    other = "wa_573007654321"
+    store.put_bytes(f"runs/{RUN}/scores/B/0/{SID}.jsonl", (json.dumps(_turn_record(SID, "ep_001", "FALLA", [
+        {"check_id": "APE-01", "verdict": "pasa", "turn": 1},
+        {"check_id": "EST-09", "verdict": "pasa", "turn": 1},
+        {"check_id": "EST-09", "verdict": "falla", "turn": 2},
+    ])) + "\n" + json.dumps({**_turn_record(SID, "ep_002", "PASA", []), "by_turn": []}) + "\n").encode())
+    store.put_bytes(f"runs/{RUN}/scores/B/0/{other}.jsonl", (json.dumps(_turn_record(other, "ep_001", "PASA", [
+        {"check_id": "APE-01", "verdict": "pasa", "turn": 1},
+    ])) + "\n").encode())
+
+    data = http.get(f"/api/chats/lab/runs/{RUN}/scorecards", params={"arm": "B"}).json()
+
+    assert (data["arm"], data["rep"]) == ("B", 0)
+    rows = {(r["session_id"], r["episode_id"]): r for r in data["rows"]}
+    assert set(rows) == {(SID, "ep_001"), (other, "ep_001")}
+    row = rows[(SID, "ep_001")]
+    assert (row["verdict"], row["stage_final"], row["episode_date"]) == ("FALLA", "variantes", "2026-09-30")
+    assert row["checks"] == {"APE-01": "pasa", "EST-09": "falla"}
+    # Solo lo que pinta la matriz: ni los turnos ni lo que dijo el juez.
+    assert not {"results", "by_turn", "judge"} & set(row)
+
+
+def test_scorecards_of_a_bot_without_results_is_an_empty_list(http) -> None:
+    data = http.get(f"/api/chats/lab/runs/{RUN}/scorecards", params={"arm": "B0"}).json()
+
+    assert data["rows"] == []
+
+
 def test_diff_needs_both_arms(http) -> None:
     assert http.get(f"/api/chats/lab/runs/{RUN}/diff", params={"base": "A1", "cand": "B"}).status_code == 404
 
@@ -124,6 +164,7 @@ def test_b0_is_a_readable_arm(http) -> None:
         "/api/chats/lab/runs/RUN!/bench",
         f"/api/chats/lab/runs/{RUN}/conversations/..%2Fx",
         f"/api/chats/lab/runs/{RUN}/summary?arm=Z",
+        f"/api/chats/lab/runs/{RUN}/scorecards?arm=Z",
     ],
 )
 def test_ids_are_validated(http, path: str) -> None:

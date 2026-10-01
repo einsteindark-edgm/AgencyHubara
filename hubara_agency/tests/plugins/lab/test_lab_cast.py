@@ -72,6 +72,7 @@ def _client(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> TestClient:
         ("GET", f"/api/lab/runs/{RUN}/conversations/{SID}/evaluations?arm=A1", f"/api/chats/lab/runs/{RUN}/conversations/{SID}/evaluations", {"arm": "A1", "rep": 0}),
         ("GET", f"/api/lab/runs/{RUN}/summary?arm=C", f"/api/chats/lab/runs/{RUN}/summary", {"arm": "C"}),
         ("GET", f"/api/lab/runs/{RUN}/report", f"/api/chats/lab/runs/{RUN}/report", None),
+        ("GET", f"/api/lab/runs/{RUN}/scorecards?arm=B", f"/api/chats/lab/runs/{RUN}/scorecards", {"arm": "B", "rep": 0}),
         ("GET", f"/api/lab/runs/{RUN}/diff?base=A1&cand=B", f"/api/chats/lab/runs/{RUN}/diff", {"base": "A1", "cand": "B"}),
     ],
 )
@@ -124,6 +125,7 @@ def test_cancel_forwards_and_keeps_202(monkeypatch: pytest.MonkeyPatch) -> None:
         f"/api/lab/runs/{RUN}/conversations/not-a-session",
         f"/api/lab/runs/{RUN}/conversations/{SID}?episode=../x",
         f"/api/lab/runs/{RUN}/summary?arm=Z",
+        f"/api/lab/runs/{RUN}/scorecards?arm=Z",
         f"/api/lab/runs/{RUN}/conversations/{SID}/turns/trace?turn_key=k&rep=7",
         "/api/lab/estimate?bench=../../x",
     ],

@@ -16,5 +16,6 @@ export const labKeys = {
   evaluations: (run: string, sid: string, arm: string, rep: number) => [...labKeys.run(run), "evaluations", sid, arm, rep] as const,
   report: (run: string) => [...labKeys.run(run), "report"] as const,
   summary: (run: string, arm: string) => [...labKeys.run(run), "summary", arm] as const,
+  scorecards: (run: string, arm: string) => [...labKeys.run(run), "scorecards", arm] as const,
   diff: (run: string, base: string, cand: string) => [...labKeys.run(run), "diff", base, cand] as const,
 } as const;

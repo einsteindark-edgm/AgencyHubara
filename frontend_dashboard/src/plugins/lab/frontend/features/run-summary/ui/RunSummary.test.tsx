@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { LabRun } from "@plugins/lab/frontend/entities/lab-run";
@@ -7,12 +7,11 @@ import type { LabRun } from "@plugins/lab/frontend/entities/lab-run";
 import { RunSummary } from "./RunSummary";
 
 /**
- * Pestaña Resumen del laboratorio (plan §5 y §11; revisión 2026-09-29: el
- * operador no entendía «IC 95 %», «pp», «Holm», «F1», «Brier» ni «vara»).
- * Responde, en este orden: ¿el bot nuevo es mejor?, cómo le fue a cada bot,
- * en qué se diferencian (cada check por nombre), qué turnos cambiaron, si se
- * puede confiar en la corrida y cómo anduvo Jev. Las gráficas de Calidad LLM
- * quedan plegadas; el detalle estadístico, también.
+ * Pestaña Resumen del laboratorio (2026-10-01: las tres gráficas de Calidad
+ * LLM, por bot): cumplimiento por check semana a semana, dónde terminan los
+ * episodios y la matriz episodios × checks. Debajo, plegada, la comparación
+ * entre bots (¿el bot nuevo es mejor?, por bot, en qué se diferencian, qué
+ * turnos cambiaron, si se puede confiar en la corrida y cómo anduvo Jev).
  */
 
 const RUN = "run-20260924-0930-ab12";
@@ -69,8 +68,22 @@ const DIFF = {
 
 const CATALOG = {
   registry_version: 4,
-  checks: [{ id: "EST-08", name: "Responde lo que el cliente preguntó", level: "mayor", kind: "judge", rule: "…" }],
+  checks: [
+    { id: "EST-08", name: "Responde lo que el cliente preguntó", level: "mayor", kind: "judge", rule: "…", stage: "transversal" },
+    { id: "APE-01", name: "Saludo por hora y marca en el primer contacto", level: "mayor", kind: "code", rule: "…", stage: "descubrimiento" },
+    { id: "VAR-01", name: "Pregunta la variante", level: "critico", kind: "code", rule: "…", stage: "variantes" },
+  ],
 };
+
+function scorecards(arm: string) {
+  const rows = arm === "B"
+    ? [
+        { session_id: SID, episode_id: "ep_001", verdict: "FALLA", stage_final: "variantes", episode_date: "2026-09-30", checks: { "APE-01": "pasa", "VAR-01": "falla" } },
+        { session_id: "wa_573007654321", episode_id: "ep_002", verdict: "PASA", stage_final: "descubrimiento", episode_date: "2026-09-29", checks: { "APE-01": "pasa" } },
+      ]
+    : [{ session_id: SID, episode_id: "ep_001", verdict: "ALERTA", stage_final: "variantes", episode_date: "2026-09-30", checks: { "APE-01": "falla" } }];
+  return { arm, rep: 0, rows };
+}
 
 const fetchMock = vi.fn();
 
@@ -87,6 +100,8 @@ function routes(diff = DIFF) {
     if (u.includes(`/runs/${RUN}/summary?arm=A1`)) return json(summary(1, { invented: 3, greeting: 0 }));
     if (u.includes(`/runs/${RUN}/summary?arm=B`)) return json(summary(2, { invented: 2, greeting: 1 }));
     if (u.includes(`/runs/${RUN}/diff?base=A1&cand=B`)) return json(diff);
+    const cards = /\/runs\/[^/]+\/scorecards\?arm=(\w+)/.exec(u);
+    if (cards) return json(scorecards(cards[1]));
     return json({ detail: "no" }, 404);
   });
 }
@@ -112,8 +127,9 @@ function renderTab(onOpenConversations = vi.fn()) {
 }
 
 describe("RunSummary", () => {
-  it("arriba responde si el bot nuevo es mejor, en palabras; el detalle estadístico queda plegado", async () => {
+  it("la comparación entre bots responde si el bot nuevo es mejor, en palabras; el detalle estadístico queda plegado", async () => {
     renderTab();
+    fireEvent.click(await screen.findByText("Comparación entre bots, confianza y Jev"));
 
     const answer = await screen.findByRole("region", { name: "¿El bot nuevo es mejor?" });
     expect(
@@ -187,11 +203,52 @@ describe("RunSummary", () => {
     expect(jev).not.toHaveTextContent("Brier");
   });
 
-  it("las gráficas de Calidad LLM quedan plegadas y sin la tendencia semanal (una corrida no tiene semanas)", async () => {
+  it("arriba van las tres gráficas de Calidad LLM del bot nuevo con Jev; la comparación queda plegada", async () => {
     renderTab();
 
-    expect(await screen.findByText("Gráficas de Calidad LLM (por bot)")).toBeVisible();
-    expect(screen.queryByText("Cumplimiento por check, semana a semana")).toBeNull();
+    expect(await screen.findByRole("radio", { name: "Bot nuevo con Jev" })).toBeChecked();
+    const trend = await screen.findByRole("region", { name: "Cumplimiento por check, semana a semana" });
+    expect(await within(trend).findByText("Saludo por hora y marca en el primer contacto")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Dónde terminan los episodios" })).toBeInTheDocument();
+    const matrix = await screen.findByRole("region", { name: "Matriz de cumplimiento por episodio" });
+    expect(await within(matrix).findByText("Cliente ···4567 · ep_001")).toBeInTheDocument();
+    expect(matrix).not.toHaveTextContent("3001234567");
+    expect(screen.getByText("Comparación entre bots, confianza y Jev")).toBeVisible();
+    expect(screen.getByRole("region", { name: "¿Se puede confiar en esta corrida?" })).not.toBeVisible();
+    // Las otras gráficas de antes ya no están.
+    expect(screen.queryByText("Qué arreglar primero")).toBeNull();
+  });
+
+  it("al elegir otro bot, las gráficas y la matriz son las de ese bot", async () => {
+    renderTab();
+    const matrix = await screen.findByRole("region", { name: "Matriz de cumplimiento por episodio" });
+    expect(await within(matrix).findByText("Cliente ···4321 · ep_002")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("radio", { name: "Bot actual simulado" }));
+
+    await waitFor(() => {
+      const now = screen.getByRole("region", { name: "Matriz de cumplimiento por episodio" });
+      expect(within(now).queryByText("Cliente ···4321 · ep_002")).toBeNull();
+      expect(within(now).getByText("Cliente ···4567 · ep_001")).toBeInTheDocument();
+    });
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes(`/runs/${RUN}/scorecards?arm=A1`))).toBe(true);
+  });
+
+  it("la matriz filtra por veredicto y por etapa final, y una fila abre la conversación", async () => {
+    const open = renderTab();
+    const matrix = await screen.findByRole("region", { name: "Matriz de cumplimiento por episodio" });
+    await within(matrix).findByText("Cliente ···4321 · ep_002");
+
+    fireEvent.click(within(matrix).getByRole("button", { name: "Falla" }));
+    expect(within(matrix).queryByText("Cliente ···4321 · ep_002")).toBeNull();
+    expect(within(matrix).getByText("1 de 2 episodios")).toBeInTheDocument();
+
+    fireEvent.click(within(matrix).getByRole("button", { name: "Todos" }));
+    fireEvent.change(within(matrix).getByRole("combobox", { name: "Etapa final" }), { target: { value: "descubrimiento" } });
+    expect(within(matrix).queryByText("Cliente ···4567 · ep_001")).toBeNull();
+
+    fireEvent.click(within(matrix).getByText("Cliente ···4321 · ep_002"));
+    expect(open).toHaveBeenCalledWith("wa_573007654321");
   });
 
   it("un bot que la corrida no alcanzó a simular queda pendiente, no como falla", async () => {

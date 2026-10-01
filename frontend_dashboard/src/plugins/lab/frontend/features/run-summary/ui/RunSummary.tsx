@@ -1,18 +1,18 @@
 /**
- * Pestaña Resumen del laboratorio (plan §5 y §11; revisión 2026-09-29: el
- * operador no entendía «IC 95 %», «pp», «Holm», «F1», «Brier» ni «vara»).
- * Responde, en este orden:
- *  1. ¿El bot nuevo es mejor? (la comparación pareada, en palabras; los
- *     números estadísticos, plegados) y qué turnos cambiaron.
- *  2. Cómo le fue a cada bot (cuántas conversaciones pasan, alerta, fallan).
- *  3. En qué se diferencian: cada check por su nombre, con cada bot.
- *  4. Si se puede confiar en la corrida (fidelidad del simulador, juez).
- *  5. Cómo anduvo Jev (tiempos, caídas, costo, acuerdo con el juez).
- * Las gráficas de Calidad LLM quedan plegadas, sin la tendencia semanal (una
- * corrida no tiene semanas).
+ * Pestaña Resumen del laboratorio. Arriba (2026-10-01), las tres gráficas de
+ * Calidad LLM del bot elegido (por defecto, el bot nuevo con Jev):
+ *  · cumplimiento por check, semana a semana (las semanas son las de las
+ *    conversaciones del banco);
+ *  · dónde terminan los episodios;
+ *  · la matriz episodios × checks, con sus filtros; una fila abre la
+ *    conversación.
+ * Debajo, plegada, la comparación entre bots (revisión 2026-09-29: el
+ * operador no entendía «IC 95 %», «pp», «Holm», «F1», «Brier» ni «vara»):
+ * ¿el bot nuevo es mejor? y qué turnos cambiaron, cómo le fue a cada bot, en
+ * qué se diferencian, si se puede confiar en la corrida y cómo anduvo Jev.
  */
 
-import { useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import {
   armLabel,
@@ -24,6 +24,7 @@ import {
   useCheckCatalog,
   useRunDiff,
   useRunReport,
+  useRunScorecards,
   useRunSummaries,
   useRunSummary,
   type ArenaArm,
@@ -32,9 +33,10 @@ import {
   type LabRun,
   type RunReport,
 } from "@plugins/lab/frontend/entities/lab-run";
-import { toQualityFunnel } from "@/shared/lib";
-import { FailurePareto, StageFunnel, VerdictTiles } from "@/shared/ui";
+import { qualityStageLabel, toQualityFunnel } from "@/shared/lib";
+import { CheckTrend, ComplianceMatrixLegend, ComplianceMatrixTable, StageFunnel } from "@/shared/ui";
 
+import { filterRows, finalStages, matrixGroups, rowKey, toRowView, type VerdictFilter } from "../lib/matrix-view";
 import { checkDifferences, conclusion, intervalText, MIN_CONCLUSIVE_SESSIONS, pct, points, topChecks } from "../lib/summary-view";
 
 interface Props {
@@ -368,7 +370,7 @@ function JevReport({ arena }: { arena: Record<string, ArenaArm> }) {
   );
 }
 
-// ── Gráficas de Calidad LLM (plegadas) ───────────────────────────────────────
+// ── Las tres gráficas de Calidad LLM, por bot ────────────────────────────────
 
 function BotPicker({ arms, value, onChange }: { arms: string[]; value: string; onChange: (arm: string) => void }) {
   return (
@@ -386,32 +388,118 @@ function BotPicker({ arms, value, onChange }: { arms: string[]; value: string; o
   );
 }
 
-function Charts({ run, arm, onOpenConversations }: { run: string; arm: string; onOpenConversations: () => void }) {
+function Charts({ run, arm }: { run: string; arm: string }) {
   const summary = useRunSummary(run, arm);
-  const [check, setCheck] = useState<string | null>(null);
   if (summary.isPending) return <p className="text-sm text-fg-muted">Cargando las gráficas…</p>;
   if (summary.isError) return <p className="text-sm text-fg-muted">{apiErrorDetail(summary.error).message ?? "No se pudieron leer las gráficas."}</p>;
   const data = summary.data;
+  // Dos columnas en pantallas anchas, como en Calidad LLM: el embudo es un SVG
+  // que escala con el ancho y a lo ancho de la ventana se ve gigante.
   return (
-    <div className="flex flex-col gap-3">
-      <VerdictTiles totals={data.verdicts} episodes={data.episodes} onSelectVerdict={onOpenConversations} />
-      <div className="grid gap-3 xl:grid-cols-2">
-        <section className={CARD} aria-labelledby="lab-pareto-title">
-          <h3 id="lab-pareto-title" className={H3}>Qué arreglar primero</h3>
-          <p className="mb-2 mt-1 text-[11px] text-fg-faint">Fallos por check, coloreados por nivel, con el acumulado.</p>
-          <FailurePareto pareto={data.pareto} period="en esta corrida" selectedCheckId={check} onSelectCheck={setCheck} />
-        </section>
-        <section className={CARD} aria-labelledby="lab-funnel-title">
-          <h3 id="lab-funnel-title" className={H3}>Dónde terminan las conversaciones</h3>
-          <p className="mb-2 mt-1 text-[11px] text-fg-faint">Etapa del último turno simulado y resultado de la conversación.</p>
-          <StageFunnel funnel={toQualityFunnel(data.funnel)} />
-        </section>
-      </div>
+    <div className="grid items-start gap-3 xl:grid-cols-2">
+      <section className={CARD} aria-labelledby="lab-trend-title">
+        <h3 id="lab-trend-title" className={H3}>Cumplimiento por check, semana a semana</h3>
+        <CheckTrend trend={data.trend} />
+      </section>
+      <section className={CARD} aria-labelledby="lab-funnel-title">
+        <h3 id="lab-funnel-title" className={H3}>Dónde terminan los episodios</h3>
+        <p className="mb-2 mt-1 text-[11px] text-fg-faint">Etapa final de cada episodio y su veredicto.</p>
+        <StageFunnel funnel={toQualityFunnel(data.funnel)} />
+      </section>
     </div>
   );
 }
 
+const VERDICT_OPTIONS: ReadonlyArray<{ value: VerdictFilter; label: string }> = [
+  { value: "todos", label: "Todos" },
+  { value: "FALLA", label: "Falla" },
+  { value: "ALERTA", label: "Alerta" },
+  { value: "PASA", label: "Pasa" },
+];
+
+const ROW_CAP = 120;
+
+function Matrix({ run, arm, catalog, onOpenConversations }: { run: string; arm: string; catalog: CheckCatalog | undefined; onOpenConversations: (sid?: string) => void }) {
+  const cards = useRunScorecards(run, arm);
+  const [verdict, setVerdict] = useState<VerdictFilter>("todos");
+  const [stage, setStage] = useState<string | null>(null);
+  const [onlyFailing, setOnlyFailing] = useState(false);
+  const all = useMemo(() => cards.data?.rows ?? [], [cards.data]);
+  const rows = useMemo(() => filterRows(all, { verdict, stage }), [all, verdict, stage]);
+  const groups = useMemo(() => matrixGroups(catalog?.checks ?? [], rows, { onlyFailing }), [catalog, rows, onlyFailing]);
+  const stages = useMemo(() => finalStages(all), [all]);
+  const sessions = useMemo(() => new Map(rows.map((r) => [rowKey(r), r.session_id])), [rows]);
+
+  let body: ReactNode;
+  if (cards.isPending) body = <p className="text-sm text-fg-muted">Cargando la matriz…</p>;
+  else if (cards.isError) body = <p className="text-sm text-fg-muted">{apiErrorDetail(cards.error).message ?? "No se pudo leer la matriz."}</p>;
+  else if (all.length === 0) body = <p className="text-sm text-fg-muted">Este bot no tiene episodios calificados en esta corrida.</p>;
+  else if (rows.length === 0) body = <p className="text-sm text-fg-muted">Ningún episodio coincide con los filtros.</p>;
+  else {
+    body = (
+      <ComplianceMatrixTable
+        groups={groups}
+        rows={rows.map(toRowView)}
+        selectedKey={null}
+        onSelectRow={(view) => onOpenConversations(sessions.get(view.key))}
+        rowCap={ROW_CAP}
+        resetKey={`${arm}|${verdict}|${stage ?? ""}`}
+      />
+    );
+  }
+
+  return (
+    <section className={CARD + " flex min-w-0 flex-col gap-2"} aria-label="Matriz de cumplimiento por episodio">
+      <h3 className={H3}>Cada episodio, check por check</h3>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <div role="group" aria-label="Filtrar por veredicto" className="flex items-center gap-1">
+          <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-fg-faint">Veredicto</span>
+          {VERDICT_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              aria-pressed={verdict === o.value}
+              onClick={() => setVerdict(o.value)}
+              className={"rounded-full border px-2.5 py-0.5 transition " + (verdict === o.value ? "border-fg bg-fg" : "border-line-strong hover:bg-white/5")}
+            >
+              {/* El color va en el span: `button { color: inherit }` de index.css le gana a las utilidades. */}
+              <span className={verdict === o.value ? "text-win-bg" : "text-fg"}>{o.label}</span>
+            </button>
+          ))}
+        </div>
+        <label className="ml-2 inline-flex items-center gap-1.5 text-fg-muted">
+          Etapa final
+          <select
+            value={stage ?? ""}
+            onChange={(e) => setStage(e.target.value || null)}
+            className="rounded-md border border-line-strong bg-canvas px-1.5 py-0.5 text-xs text-fg"
+          >
+            <option value="">Todas</option>
+            {stages.map((s) => (
+              <option key={s} value={s}>
+                {qualityStageLabel(s)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="ml-2 inline-flex items-center gap-1.5 text-fg-muted">
+          <input type="checkbox" checked={onlyFailing} onChange={(e) => setOnlyFailing(e.target.checked)} className="accent-accent" />
+          Solo checks con fallas
+        </label>
+        <span className="ml-auto text-fg-faint">{`${rows.length} de ${all.length} episodios`}</span>
+      </div>
+      {body}
+      <ComplianceMatrixLegend hint="Elige una fila para abrir la conversación." />
+    </section>
+  );
+}
+
 // ── La pestaña ───────────────────────────────────────────────────────────────
+
+/** Por defecto, el bot nuevo con Jev; si la corrida no lo trae, el bot actual simulado. */
+function defaultArm(arms: string[]): string {
+  return ["B", "A1"].find((a) => arms.includes(a)) ?? arms[0] ?? "A0";
+}
 
 export function RunSummary({ run, onOpenConversations }: Props) {
   const report = useRunReport(run?.run_id ?? null);
@@ -431,21 +519,22 @@ export function RunSummary({ run, onOpenConversations }: Props) {
   }
   const data = report.data;
   const loaded = Object.fromEntries(arms.map((a) => [a, summaries[a]?.data])) as Record<string, ArmSummary | undefined>;
-  const arm = picked && arms.includes(picked) ? picked : arms.includes("A1") ? "A1" : (arms[0] ?? "A0");
+  const arm = picked && arms.includes(picked) ? picked : defaultArm(arms);
   return (
     <div className="flex flex-col gap-3">
-      {data.diffs.length > 0 ? <Answer run={run.run_id} keys={data.diffs} catalog={catalog.data} onOpenConversations={onOpenConversations} /> : null}
-      <ResultsByBot arms={arms} summaries={loaded} />
-      <Differences arms={arms} summaries={loaded} />
-      <div className="grid gap-3 xl:grid-cols-2">
-        <Trust report={data} />
-        {Object.keys(data.arena).length > 0 ? <JevReport arena={data.arena} /> : null}
-      </div>
+      <BotPicker arms={arms} value={arm} onChange={setPicked} />
+      <Charts key={`charts:${arm}`} run={run.run_id} arm={arm} />
+      <Matrix key={`matrix:${arm}`} run={run.run_id} arm={arm} catalog={catalog.data} onOpenConversations={onOpenConversations} />
       <details className={CARD}>
-        <summary className="cursor-pointer select-none text-sm font-semibold text-fg">Gráficas de Calidad LLM (por bot)</summary>
+        <summary className="cursor-pointer select-none text-sm font-semibold text-fg">Comparación entre bots, confianza y Jev</summary>
         <div className="mt-3 flex flex-col gap-3">
-          <BotPicker arms={arms} value={arm} onChange={setPicked} />
-          <Charts run={run.run_id} arm={arm} onOpenConversations={() => onOpenConversations()} />
+          {data.diffs.length > 0 ? <Answer run={run.run_id} keys={data.diffs} catalog={catalog.data} onOpenConversations={onOpenConversations} /> : null}
+          <ResultsByBot arms={arms} summaries={loaded} />
+          <Differences arms={arms} summaries={loaded} />
+          <div className="grid gap-3 xl:grid-cols-2">
+            <Trust report={data} />
+            {Object.keys(data.arena).length > 0 ? <JevReport arena={data.arena} /> : null}
+          </div>
         </div>
       </details>
     </div>

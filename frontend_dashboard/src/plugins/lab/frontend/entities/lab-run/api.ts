@@ -11,6 +11,7 @@ import {
   estimateSchema,
   evaluationsSchema,
   launchResultSchema,
+  armScorecardsSchema,
   armSummarySchema,
   runDiffSchema,
   runReportSchema,
@@ -204,6 +205,11 @@ async function fetchSummary(run: string, arm: string, signal?: AbortSignal) {
   return armSummarySchema.parse(await apiClient.get<unknown>(`${runBase(run)}/summary?${query}`, { signal }));
 }
 
+async function fetchScorecards(run: string, arm: string, signal?: AbortSignal) {
+  const query = new URLSearchParams({ arm }).toString();
+  return armScorecardsSchema.parse(await apiClient.get<unknown>(`${runBase(run)}/scorecards?${query}`, { signal }));
+}
+
 async function fetchDiff(run: string, base: string, cand: string, signal?: AbortSignal) {
   const query = new URLSearchParams({ base, cand }).toString();
   return runDiffSchema.parse(await apiClient.get<unknown>(`${runBase(run)}/diff?${query}`, { signal }));
@@ -225,6 +231,17 @@ export function useRunSummary(run: string | null, arm: string) {
   return useQuery({
     queryKey: labKeys.summary(run ?? "", arm),
     queryFn: ({ signal }) => fetchSummary(run as string, arm, signal),
+    enabled: Boolean(run),
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+/** Las filas de la matriz episodios × checks de un brazo (primera repetición). */
+export function useRunScorecards(run: string | null, arm: string) {
+  return useQuery({
+    queryKey: labKeys.scorecards(run ?? "", arm),
+    queryFn: ({ signal }) => fetchScorecards(run as string, arm, signal),
     enabled: Boolean(run),
     staleTime: 60_000,
     retry: false,

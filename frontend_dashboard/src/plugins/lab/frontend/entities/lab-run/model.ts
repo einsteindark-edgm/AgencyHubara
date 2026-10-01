@@ -1,6 +1,7 @@
 import type { z } from "zod";
 
 import type {
+  armScorecardsSchema,
   arenaArmSchema,
   engineDecisionSchema,
   armMetricsSchema,
@@ -55,6 +56,8 @@ export type EvalResult = z.infer<typeof evalResultSchema>;
 export type EpisodeEvaluation = z.infer<typeof episodeEvaluationSchema>;
 export type Evaluations = z.infer<typeof evaluationsSchema>;
 export type ArmSummary = z.infer<typeof armSummarySchema>;
+export type ArmScorecards = z.infer<typeof armScorecardsSchema>;
+export type LabScorecardRow = ArmScorecards["rows"][number];
 export type Interval = z.infer<typeof intervalSchema>;
 export type RunDiff = z.infer<typeof runDiffSchema>;
 export type ArmMetrics = z.infer<typeof armMetricsSchema>;

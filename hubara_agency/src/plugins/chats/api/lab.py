@@ -19,6 +19,7 @@ Lecturas (PR 8), SOLO desde `runs/<corrida>/` del S3 del laboratorio:
   GET  /lab/runs/{run}/summary?arm=
   GET  /lab/runs/{run}/diff?base=A1&cand=B
   GET  /lab/runs/{run}/report     fidelidad, arena, producción y comparaciones (PR 13)
+  GET  /lab/runs/{run}/scorecards?arm=&rep=  filas de la matriz episodios × checks
 El `turn_key` va como query (lleva `/`, que no viaja en un segmento de ruta).
 
 Registro de checks (revisión 2026-09-29): las evaluaciones solo traen el
@@ -45,6 +46,7 @@ from fastapi import APIRouter, Body, HTTPException, Query
 
 from src.plugins.chats.agent.sales_lab.launch.bench_export import plan_bench_export
 from src.plugins.chats.agent.sales_lab.launch.contracts import LabLaunchInput
+from src.plugins.chats.agent.sales_lab.run.compare import arm_row
 from src.plugins.chats.agent.sales_lab.launch.costs import check_caps, estimate_run_usd, month_spent_usd
 from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION, specs_payload
 from src.plugins.chats.agent.sales_eval.workflows.lab_launch import LAB_LAUNCH_WORKFLOW_ID
@@ -456,6 +458,28 @@ def run_summary(run: str, arm: str = Query("A0")) -> dict[str, Any]:
     if data is None:
         raise HTTPException(404, detail=f"El brazo {arm} todavía no tiene resultados en esta corrida.")
     return data
+
+
+# Lo que pinta la matriz episodios × checks; ni turnos ni lo que dijo el juez.
+_SCORECARD_FIELDS = ("session_id", "episode_id", "verdict", "stage_final", "episode_date", "first_failure", "first_critical", "checks")
+
+
+@router.get("/lab/runs/{run}/scorecards")
+def run_scorecards(run: str, arm: str = Query("A0"), rep: int = Query(0, ge=0, le=2)) -> dict[str, Any]:
+    """Las filas de la matriz de cumplimiento de un bot: una por episodio, cada
+    check agregado sobre los turnos (`arm_row`, falla manda). Como el resumen,
+    un episodio sin turnos calificados no cuenta."""
+    store = _store()
+    prefix = f"runs/{_run_id(run)}/scores/{_arm(arm)}/{rep}/"
+    rows: list[dict[str, Any]] = []
+    for key in sorted(store.list_keys(prefix)):
+        if not key.endswith(".jsonl"):
+            continue
+        for record in _jsonl_key(store, key):
+            if record.get("by_turn"):
+                row = arm_row(record)
+                rows.append({k: row.get(k) for k in _SCORECARD_FIELDS})
+    return {"arm": arm, "rep": rep, "rows": rows}
 
 
 @router.get("/lab/runs/{run}/diff")

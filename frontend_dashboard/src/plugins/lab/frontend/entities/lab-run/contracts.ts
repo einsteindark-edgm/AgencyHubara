@@ -313,6 +313,22 @@ const verdictCountsSchema = z
 
 export const passKSchema = z.object({ k: count, episodes: count, rate });
 
+/** Una fila de la matriz episodios × checks de un bot: cada check agregado sobre los turnos. */
+export const scorecardRowSchema = z.object({
+  session_id: z.string(),
+  episode_id: z.string(),
+  verdict: episodeVerdictSchema,
+  stage_final: nullableString,
+  episode_date: nullableString,
+  checks: z.record(z.string(), checkVerdictSchema).catch({}).default({}),
+});
+
+export const armScorecardsSchema = z.object({
+  arm: z.string().catch("").default(""),
+  rep: count,
+  rows: tolerantArray(scorecardRowSchema),
+});
+
 /** Un brazo: la MISMA forma que Calidad LLM (`stats.compute_stats`) + pass^k. */
 export const armSummarySchema = z.object({
   reps: count,
@@ -450,6 +466,8 @@ export const checkSpecSchema = z.object({
   applies: z.string().catch("").default(""),
   rule: z.string().catch("").default(""),
   family_label: z.string().catch("").default(""),
+  /** Etapa del guion a la que pertenece (agrupa las columnas de la matriz). */
+  stage: z.string().catch("").default(""),
 });
 
 export const checkCatalogSchema = z.object({
