@@ -439,3 +439,44 @@ El operador pidió los pasos 1 y 3 de la investigación de §6.3; el 2 («Enviar
 **Pendiente:**
 - Ningún chequeo de código compara la confirmación con lo que pidió el cliente (la referencia de producción pasa el scorecard con 2× Lila). Lo ve el juez (VAR-05), con las calificaciones pendientes en este modo.
 - El operador no puede repartir un producto desde el panel (`DraftBody` no tiene `lineas`): si edita el color de un producto repartido, la tool lo rechaza con las líneas.
+
+### 6.12 La conversación real ···4148, simulada de punta a punta (2026-10-01)
+
+El banco `caso-cortesia-1001` (§6.8) emulaba el caso con textos limpios y con las notas escritas a mano en el mensaje. Faltaba simular la conversación de verdad: copia de solo lectura de producción, en el scratchpad.
+
+**Lo que mostró la primera corrida (sin los arreglos):**
+- **El laboratorio no armaba el texto del turno como producción.** Faltaban las dos líneas que antepone el ingest: la conversación anterior y la plantilla a la que responde el cliente («tu pedido ya está listo»). El bot simulado saludaba «Bienvenido a Hubara» como a un cliente nuevo. Arreglado (`9dfe54e5`): el banco sintético las traía escritas en el mensaje y por eso no se notaba.
+- **Jev no alcanzaba con lo que escribe un cliente de verdad.**
+  - cortesía: «Hola cómo están? S even geniales. Muchas gracias» daba 0,76; «Ya lo recibí. Muchas gracias», 0,78; «Hola sí.. están geniales» tras «¿te gustó?», 0,13;
+  - «¿terminó?» con la transcripción real: 0,53 a 0,59.
+  - En el banco emulado los mismos casos daban 0,91 a 0,95.
+- La revisión de cortesía no contaba «¿Qué tienes en mente hoy?» como empujón de venta.
+
+**Qué quedó** (`f9d57025`):
+- **cortesía:** la pregunta dice qué no excluye la cortesía («¿cómo están?» no cuenta como pregunta, responder que le gustó sí cuenta, prometer fotos también) y qué sí la excluye (un dato o una decisión que la tienda necesite). Umbral 0,80. Jev real: 18 de 18 en dos corridas (mensajes reales y emulados); los que confirman, eligen o preguntan, 0,02 a 0,11.
+- **«¿terminó?»:** la cortesía tras recibir el pedido cuenta como cierre. Transcripción real: 0,92; con una pregunta, una venta o un pedido a medias, 0,05 a 0,19.
+- **Revisión de cortesía:** también «¿qué tienes en mente?» y «¿te muestro algo más?».
+
+**Medido con la conversación real** (`caso-4148-real` r3, imagen f9d57025, US$0,04):
+
+| Turno | Producción | Bot actual | Bot nuevo con Jev |
+|---|---|---|---|
+| 1. «Hola cómo están? S even geniales. Muchas gracias» al «pedido listo» | «…Cuéntame, ¿en qué te puedo ayudar hoy?» | bienvenida de cliente nuevo + «¿en qué te puedo ayudar?» | cortesía 0,88: «Nos alegra mucho que te hayan gustado 🤍 Gracias a ti por la confianza.» |
+| 2. «Las puedo recibir en el apto a esta hora.. acá estoy.» | escaló | escaló | prometió un colega sin escalar; la red escaló (relevo 0,96) |
+| 3. «Ya lo recibí. Muchas gracias. 💪🏽💪🏽» | «Qué alegría…» y etiquetó COMPRA_EXITOSA | «Con mucho gusto…» | cortesía 0,89: «Con mucho gusto 🤍 Que las disfrutes mucho.» |
+
+- Banco emulado `caso-cortesia-1001` r4 con los arreglos: el bot nuevo pasa los tres casos (cortesía 0,93 y 0,96; control 0,01).
+
+**Remarketing**, con el workflow real (`RemarketingSessionWorkflow`: elegibilidad, política central, contexto con `contactar` y turno del LLM) sobre una copia de la conversación, en la caja del laboratorio (envío simulado; solo se reemplazan los arranques de otros workflows):
+- **Estado real** (RETOMA_VENTA tras «te enviaremos fotos»): elegible, pero la política central lo frena con los dos bots («compra ya hecha (cierre del último episodio) — no re-targetear»), porque el último episodio cerró con COMPRA_EXITOSA.
+- **Variante con un episodio nuevo abierto por «Hola sí.. están geniales…»** (lo que pasa cuando el gracias abre un episodio sin compra): la política deja escribir.
+  - Bot nuevo: `contactar` salta el toque antes de redactar («¿terminó?» 0,92).
+  - Bot actual: no hay decisión; el LLM recibe un aviso que lo empuja a escribir («El cliente miró productos pero NO eligió ninguno… re-abrir la conversación con UN único gancho») y respondió NO_MESSAGE en 4 de 4 corridas: con esta conversación el LLM reconoce el final, pero depende de él. Los casos que no lo reconoce (los «muchas veces» del operador) no están en el banco: hacen falta conversaciones puntuales.
+
+**Pendiente:**
+- Activar `cortesia` y `contactar` con Jev. Con el bot de hoy, el turno 1 sigue cerrando con «¿en qué te puedo ayudar?».
+- El aviso de remarketing trata a un cliente que ya compró como «miró productos pero no eligió ninguno».
+- En el laboratorio, tras la escalación del turno 2 la ruta queda humano en los turnos siguientes (en producción el humano la devolvió): «el bot le habló al cliente en ruta humano» sale en los tres brazos, también en producción.
+- El bot de producción etiquetó COMPRA_EXITOSA en el turno 3 (lo pone el equipo, no el bot).
+- Llevar cortesía y «¿terminó?» a la sonda diaria de Jev, con estos mensajes reales (sin datos personales).
+
