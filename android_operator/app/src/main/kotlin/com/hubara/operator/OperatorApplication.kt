@@ -51,5 +51,7 @@ object AppModule {
         baseUrl = normalizeBaseUrl(BuildConfig.API_URL),
         cognitoClientId = BuildConfig.COGNITO_CLIENT_ID,
         cognitoRegion = BuildConfig.COGNITO_REGION,
+        // Sin login solo en debug (backend local); un release sin client id pide login.
+        devModeAllowed = BuildConfig.DEBUG,
     )
 }

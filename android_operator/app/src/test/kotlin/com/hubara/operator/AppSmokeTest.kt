@@ -38,7 +38,6 @@ import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import mockwebserver3.RecordedRequest
-import org.junit.AfterClass
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -54,7 +53,13 @@ object FakeBackend {
 
     private const val SESSION = "wa_test_laura"
 
+    private var started = false
+
+    /** Un solo servidor para todas las clases de test del módulo (corren en el mismo JVM). */
+    @Synchronized
     fun start() {
+        if (started) return
+        started = true
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path = request.url.encodedPath
@@ -99,7 +104,7 @@ object FakeBackend {
 object TestAppModule {
     // Cognito vacío = modo dev: la app entra sin login, como contra el backend local.
     @Provides @Singleton
-    fun apiConfig(): ApiConfig = ApiConfig(FakeBackend.server.url("/"), "", "us-east-1")
+    fun apiConfig(): ApiConfig = ApiConfig(FakeBackend.server.url("/"), "", "us-east-1", devModeAllowed = true)
 }
 
 @Module
@@ -125,8 +130,6 @@ class AppSmokeTest {
 
     companion object {
         init { FakeBackend.start() }
-
-        @AfterClass @JvmStatic fun stop() = FakeBackend.server.close()
     }
 
     @Before fun setUp() {

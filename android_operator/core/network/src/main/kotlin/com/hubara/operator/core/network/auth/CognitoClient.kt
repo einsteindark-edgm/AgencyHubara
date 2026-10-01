@@ -84,7 +84,7 @@ class CognitoClient(
                 }
             }
         } catch (_: IOException) {
-            Raw.Err(CognitoOutcome.Failure("network", "Sin conexión con el servidor de inicio de sesión. Revisa la señal."))
+            Raw.Err(CognitoOutcome.Failure(NETWORK, "Sin conexión con el servidor de inicio de sesión. Revisa la señal."))
         }
     }
 
@@ -108,6 +108,9 @@ class CognitoClient(
     }
 
     companion object {
+        /** Código de [CognitoOutcome.Failure] cuando no hubo red (no es un rechazo de Cognito). */
+        const val NETWORK = "network"
+
         private val AMZ_JSON = "application/x-amz-json-1.1".toMediaType()
 
         /** Credenciales malas y usuario inexistente dan el MISMO mensaje: no se revela qué cuentas existen. */

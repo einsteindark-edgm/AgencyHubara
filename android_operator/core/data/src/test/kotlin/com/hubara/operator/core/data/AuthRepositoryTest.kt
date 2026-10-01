@@ -24,8 +24,8 @@ class AuthRepositoryTest {
     @Before fun setUp() = server.start()
     @After fun tearDown() = server.close()
 
-    private fun repo(clientId: String = "client-test") = AuthRepository(
-        config = ApiConfig("http://localhost/".toHttpUrl(), clientId, "us-east-1"),
+    private fun repo(clientId: String = "client-test", devModeAllowed: Boolean = true) = AuthRepository(
+        config = ApiConfig("http://localhost/".toHttpUrl(), clientId, "us-east-1", devModeAllowed),
         cognito = CognitoClient(OkHttpClient(), server.url("/"), clientId),
         store = store,
         clock = { now },
@@ -84,4 +84,25 @@ class AuthRepositoryTest {
         assertThat(r.state.value).isEqualTo(AuthState.SignedOut)
         assertThat(store.load()).isNull()
     }
+
+    // Auditoría de seguridad: un build de release compilado sin client id de Cognito entraba sin login (modo dev).
+    // Sin Cognito y sin permiso de modo dev, la app pide login (y no puede entrar): falla cerrada.
+    @Test fun sin_cognito_y_sin_modo_dev_permitido_no_se_entra_sin_login() = runTest {
+        val r = repo(clientId = "", devModeAllowed = false)
+        r.restore()
+        assertThat(r.state.value).isEqualTo(AuthState.SignedOut)
+    }
+
+    // Auditoría de seguridad: una caída de señal durante el refresh cerraba la sesión (el vigía quedaba mudo sin que
+    // el operador se enterara). Solo un rechazo de Cognito la cierra; sin red se conserva y se reintenta después.
+    @Test fun una_caida_de_red_al_refrescar_no_cierra_la_sesion() = runTest {
+        store.save(SessionTokens("a", "i", "r", now + 3_600_000, "op@example.com"))
+        val r = repo()
+        r.restore()
+        server.close()  // sin servidor: IOException, como sin señal
+        assertThat(r.forceRefresh(rejectedToken = "a")).isNull()
+        assertThat(r.state.value).isEqualTo(AuthState.SignedIn)
+        assertThat(store.load()).isNotNull()
+    }
 }
+

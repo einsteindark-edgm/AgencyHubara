@@ -15,8 +15,16 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 
-/** Configuración de la app (la provee `:app` desde BuildConfig). */
-data class ApiConfig(val baseUrl: HttpUrl, val cognitoClientId: String, val cognitoRegion: String) {
+/**
+ * Configuración de la app (la provee `:app` desde BuildConfig). [devModeAllowed]: si sin Cognito se entra sin login
+ * (solo el build debug contra el backend local).
+ */
+data class ApiConfig(
+    val baseUrl: HttpUrl,
+    val cognitoClientId: String,
+    val cognitoRegion: String,
+    val devModeAllowed: Boolean = false,
+) {
     val cognitoEnabled: Boolean get() = cognitoClientId.isNotBlank()
     val cognitoEndpoint: HttpUrl get() = "https://cognito-idp.$cognitoRegion.amazonaws.com/".toHttpUrl()
 
@@ -47,12 +55,15 @@ interface AccessTokenProvider {
 object NetworkModule {
 
     @Provides @Singleton
-    fun okHttp(tokens: AccessTokenProvider): OkHttpClient = OkHttpClient.Builder()
+    fun okHttp(tokens: AccessTokenProvider, config: ApiConfig): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        // El token va SOLO a nuestro backend: Coil usa este mismo cliente y una foto de otro host no lo recibe.
         .addInterceptor(Interceptor { chain ->
+            val url = chain.request().url
+            val ours = url.host == config.baseUrl.host && url.port == config.baseUrl.port
             val token = tokens.currentAccessToken()
-            val request = if (token.isNullOrBlank()) chain.request()
+            val request = if (!ours || token.isNullOrBlank()) chain.request()
             else chain.request().newBuilder().header("Authorization", "Bearer $token").build()
             chain.proceed(request)
         })

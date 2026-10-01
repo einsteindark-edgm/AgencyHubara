@@ -19,7 +19,7 @@ sealed interface AuthState {
     data object SignedOut : AuthState
     data class NeedsNewPassword(val username: String, val session: String) : AuthState
     data object SignedIn : AuthState
-    /** Sin Cognito configurado (backend local): no hay login. */
+    /** Sin Cognito configurado y build debug (backend local): no hay login. */
     data object DevMode : AuthState
 }
 
@@ -38,7 +38,8 @@ class AuthRepository @Inject constructor(
 
     suspend fun restore() {
         if (!config.cognitoEnabled) {
-            _state.value = AuthState.DevMode
+            // Falla cerrada: un release compilado sin client id pide login (y no entra), nunca abre sin sesión.
+            _state.value = if (config.devModeAllowed) AuthState.DevMode else AuthState.SignedOut
             return
         }
         tokens = store.load()
@@ -57,7 +58,7 @@ class AuthRepository @Inject constructor(
     suspend fun logout() {
         tokens = null
         store.clear()
-        _state.value = if (config.cognitoEnabled) AuthState.SignedOut else AuthState.DevMode
+        _state.value = if (!config.cognitoEnabled && config.devModeAllowed) AuthState.DevMode else AuthState.SignedOut
     }
 
     override fun currentAccessToken(): String? = tokens?.accessToken
@@ -71,12 +72,16 @@ class AuthRepository @Inject constructor(
         else forceRefresh(current.accessToken)
     }
 
-    /** Refresca una sola vez aunque lo pidan varias llamadas a la vez. Si falla, cierra la sesión. */
+    /**
+     * Refresca una sola vez aunque lo pidan varias llamadas a la vez. Si Cognito lo rechaza, cierra la sesión; sin red
+     * la conserva (se reintenta en la próxima llamada): una caída de señal no saca al operador.
+     */
     suspend fun forceRefresh(rejectedToken: String?): String? = refreshLock.withLock {
         val current = tokens ?: return@withLock null
         if (rejectedToken != null && current.accessToken != rejectedToken) return@withLock current.accessToken
         when (val out = cognito.refresh(current.refreshToken)) {
             is CognitoOutcome.Tokens -> save(out, current.username).accessToken
+            is CognitoOutcome.Failure if out.code == CognitoClient.NETWORK -> null
             else -> {
                 logout()
                 null
