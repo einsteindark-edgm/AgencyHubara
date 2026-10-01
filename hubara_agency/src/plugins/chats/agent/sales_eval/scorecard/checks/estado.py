@@ -148,8 +148,10 @@ _HANDOFF_WHO = r"(?:colega|companer[oa]|asesora?|alguien del equipo|persona del 
 _HANDOFF_PROMISE_RE = re.compile(
     rf"\b{_HANDOFF_WHO}\b[^.!?\n]{{0,60}}?\b(?:te|le|les)\s+(?:van?\s+a\s+)?"
     r"(?:respond|escrib|contact|confirm|coordin|atiend|llam|avis|cuent|ayud)\w*"
-    rf"|\b{_HANDOFF_WHO}\b[^.!?\n]{{0,40}}?\b(?:coordin|confirm|habl)\w*\s+contigo"
+    rf"|\b{_HANDOFF_WHO}\b[^.!?\n]{{0,40}}?\b(?:coordin|confirm|habl|cuadr|organiz)\w*\b[^.!?\n]{{0,30}}?\bcontigo\b"
     r"|\b(?:le|les) paso\s+(?:el aviso|tu caso|tu pedido|tus datos)"
+    rf"|\bpas(?:o|ar|amos|are|aremos)\s+(?:tu|su|tus|sus|el|la)\s+\w+\s+(?:con|a)\s+"
+    rf"(?:(?:un|una|el|la|mi|nuestro|nuestra)\s+)?{_HANDOFF_WHO}\b"
 )
 
 

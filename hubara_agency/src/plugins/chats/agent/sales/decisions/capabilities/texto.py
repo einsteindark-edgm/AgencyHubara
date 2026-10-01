@@ -443,15 +443,20 @@ class TextoAlCliente:
 #: Quién promete el relevo y qué hará por el cliente (texto sin tildes ni
 #: mayúsculas). El relevo de verdad lo anuncia `escalate_to_human` («un colega
 #: del equipo te responde en este mismo chat»); dicho fuera de esa tool, nadie
-#: queda avisado.
+#: queda avisado. Lo que se coordina puede ir entre el verbo y «contigo»
+#: («coordina la entrega contigo»), y el caso «se pasa» a un colega
+#: (laboratorio r3).
 _WHO = r"(?:colega|companer[oa]|asesora?|persona del equipo|alguien del equipo)"
 _DOES = r"(?:respond|escrib|contact|confirm|coordin|atiend|llam|avis|cuent|ayud)\w*"
 _RELEVO_RE = re.compile(
     rf"\b{_WHO}\b[^.!?\n]{{0,60}}?\b(?:te|le|les)\s+(?:va(?:n)?\s+a\s+)?{_DOES}"
-    rf"|\b(?:{_WHO}|el equipo|nuestro equipo)\b[^.!?\n]{{0,40}}?\b(?:coordin|confirm|habl|cuadr|organiz)\w*\s+contigo"
+    rf"|\b(?:{_WHO}|el equipo|nuestro equipo)\b[^.!?\n]{{0,40}}?\b(?:coordin|confirm|habl|cuadr|organiz)\w*"
+    r"\b[^.!?\n]{0,30}?\bcontigo\b"
     rf"|\b(?:el|nuestro) equipo\s+(?:te|le)\s+(?:va(?:n)?\s+a\s+)?{_DOES}"
     r"|\b(?:le|les) paso\s+(?:el aviso|tu caso|tu pedido|tus datos|tu solicitud|la solicitud|tu mensaje|la informacion)"
     r"|\bte\s+(?:paso|comunico|conecto)\s+con\s+(?:un|una|el|la|alguien|nuestro|nuestra)\b"
+    r"|\bpas(?:o|ar|amos|are|aremos)\s+(?:tu|su|tus|sus|el|la)\s+\w+\s+(?:con|a)\s+"
+    rf"(?:(?:un|una|el|la|mi|nuestro|nuestra)\s+)?(?:{_WHO}|el equipo|nuestro equipo)\b"
 )
 
 

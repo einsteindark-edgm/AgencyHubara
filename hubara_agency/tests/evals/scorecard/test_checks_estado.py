@@ -119,6 +119,18 @@ def test_tag08_a_promise_without_escalation_fails() -> None:
     assert "coordina contigo" in r.evidence
 
 
+def test_tag08_reads_the_phrasings_of_the_new_bot() -> None:
+    """Laboratorio r3: lo que se coordina va entre el verbo y «contigo», y el
+    caso «se pasa» a un colega."""
+    for text in (
+        "Claro que sí, un colega del equipo coordina la entrega contigo en este mismo chat 🤍",
+        "Déjame pasar tu caso con un colega del equipo para que confirme la logística contigo.",
+    ):
+        t = traj(T(1, sent=[text], state=_tag_state("NO_ETIQUETADO")))
+
+        assert run("TAG-08", t).verdict == "falla", text
+
+
 def test_tag08_a_promise_with_the_llm_escalation_passes() -> None:
     t = traj(T(1, sent=["Un colega del equipo te responde en este mismo chat 🤍"],
                tools=[tool("escalate_to_human", reason_category="SHIPPING_ISSUE")],

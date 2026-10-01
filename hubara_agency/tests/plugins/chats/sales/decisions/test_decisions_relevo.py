@@ -27,12 +27,19 @@ PROMISES = (
     "Perfecto 🤍 Ya le paso el aviso a un colega del equipo para que coordine la entrega contigo en este mismo chat.",
     "Listo, nuestro equipo te va a escribir para cuadrar la hora.",
     "Te paso con una colega que maneja los pedidos grandes 🤍",
+    # Laboratorio r3: el bot nuevo pone lo que se coordina entre el verbo y
+    # «contigo», y «pasa el caso» en vez de «te paso con».
+    "Claro que sí, un colega del equipo coordina la entrega contigo en este mismo chat para hoy después de las 5 🤍",
+    "Déjame pasar tu caso con un colega del equipo para que confirme la logística contigo en este mismo chat.",
+    "Ya pasamos tu solicitud a una asesora 🤍",
 )
 NOT_PROMISES = (
     "El equipo de Hubara hace cada vela a mano 🤍",
     "Qué alegría que ya lo tengas contigo 🤍 Cualquier cosa que necesites, aquí estamos.",
     "Te confirmo el pedido: 2 Velón Gorrión en lila.",
     "¿En qué color lo quieres, lila o azul?",
+    "Te paso el enlace con un descuento para tu próxima compra 🤍",
+    "Coordino la entrega contigo: ¿a qué hora te queda bien?",
 )
 
 
