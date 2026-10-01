@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckSpec
 
-REGISTRY_VERSION = 5
+REGISTRY_VERSION = 6
 
 LEVELS = ("critico", "mayor", "menor")
 KINDS = ("code", "judge")
@@ -287,8 +287,12 @@ CHECKS: tuple[CheckSpec, ...] = (
        ("memoria:human_handoff_tag_invariant",)),
     _c("TAG-06", "La red de escalación tuvo que actuar", "estado", "mayor", "code",
        "Siempre (trazas).",
-       "La escalación de cierre la hizo el LLM, no la red de seguridad.",
-       ("patrón A ensure-closing-escalation",)),
+       "Las escalaciones las hizo el LLM, no una red de seguridad (la del cierre o la del colega prometido).",
+       ("patrón A ensure-closing-escalation", "red del relevo prometido (2026-09-30)")),
+    _c("TAG-08", "Promete un colega solo si escala", "estado", "mayor", "code",
+       "El bot le dijo al cliente que un colega o alguien del equipo lo atiende.",
+       "Ese turno escaló (el LLM con escalate_to_human o la red de seguridad): el colega queda avisado.",
+       ("laboratorio caso-cortesia-1001: «un colega coordina la entrega» sin escalar (2026-09-30)",)),
     _c("TAG-07", "RECHAZO o INTERESADO sostenidos por la conversación", "estado", "mayor", "judge",
        "El episodio cerró con RECHAZO o quedó en INTERESADO.",
        "La conversación sostiene la etiqueta (el cliente rechazó, o mostró interés sin comprar).",

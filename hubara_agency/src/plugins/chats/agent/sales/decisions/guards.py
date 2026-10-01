@@ -59,6 +59,7 @@ __all__ = [
     "is_internal_text",
     "option_list",
     "product_quote_sentences",
+    "promised_handoff",
     "safe_customer_text",
     "session_redact_terms",
     "unconfirmed_order_data",
@@ -281,3 +282,12 @@ async def is_internal_text(text: str, *, session_id: str, vault_dir: Path | None
     )
     return bool(verdict.value)
 
+
+async def promised_handoff(text: str, *, session_id: str, vault_dir: Path | None) -> bool:
+    """¿El texto final le promete al cliente que una persona del equipo lo va
+    a atender? (capacidad `relevo`: las frases del relevo son piso; con Jev,
+    también sus paráfrasis). Lo consulta la red de seguridad antes de enviar."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import RELEVO, TextoAlCliente
+
+    verdict = await decide_for_session(RELEVO, TextoAlCliente(text=text), session_id=session_id, vault_dir=vault_dir)
+    return bool(verdict.value)

@@ -188,7 +188,7 @@ def test_est09_is_registered_as_a_major_style_check() -> None:
 
     spec = SPECS_BY_ID.get("EST-09")
     assert spec is not None and (spec.family, spec.level, spec.kind) == ("estilo", "mayor", "code")
-    assert REGISTRY_VERSION == 5
+    assert REGISTRY_VERSION >= 5
 
 
 def test_est09_reads_the_customer_words_of_a_v2_trace_without_the_ingest_notes() -> None:

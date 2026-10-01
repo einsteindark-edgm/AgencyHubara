@@ -35,6 +35,7 @@ PARITY_SUITES: tuple[str, ...] = (
     "tests.test_sales_turn_steps",
     "tests.test_sales_perception_layers",
     "tests.test_sales_burst_waits_for_photo",
+    "tests.test_sales_promised_handoff",
 )
 
 

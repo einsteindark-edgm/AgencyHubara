@@ -63,6 +63,7 @@ with workflow.unsafe.imports_passed_through():
         decide_ghosting_action,
         ensure_closing_escalation_activity,
         ensure_payment_pending_closure_activity,
+        ensure_promised_handoff_activity,
         flush_pending_ui_intents_activity,
         persist_turn_trace_activity,
         read_and_clear_pending_handoff_activity,
@@ -182,6 +183,28 @@ async def _await_photos_done(photos: set[str]) -> bool:
     except asyncio.TimeoutError:
         photos.clear()
     return True
+
+
+# Relevo prometido (laboratorio caso-cortesia-1001, 2026-09-30): el texto final
+# le dice al cliente «un colega del equipo coordina contigo…» y nadie escaló.
+# La activity decide (capacidad `relevo`) y escala; el workflow solo aplica lo
+# que quedó grabado. Las histories sin el marker replayean igual.
+_PROMISED_HANDOFF_PATCH = "promised-handoff-escalation-v1"
+
+
+async def _ensure_promised_handoff(session_id: str, text: str) -> bool:
+    """¿La red del relevo prometido escaló? (`ensure_promised_handoff_activity`)."""
+    if not workflow.patched(_PROMISED_HANDOFF_PATCH):
+        return False
+    return bool(
+        await workflow.execute_activity(
+            ensure_promised_handoff_activity,
+            args=[session_id, text],
+            # Jev espera hasta 10 s y la regla responde de una.
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
+    )
 
 
 # Despedida mínima del cierre si el guard del portavelas vació el texto del
@@ -1583,6 +1606,20 @@ class HubaraSalesSessionWorkflow:
                     ):
                         # Evitamos enviar respuestas vacías o alucinar respuestas internas durante auto-cierres
                         if not suppress_text_for_picker:
+                            # El texto promete que un colega lo atiende y
+                            # nadie escaló: la red escala antes de enviarlo
+                            # (shutdown diferido, como las otras redes).
+                            if (
+                                result.escalation_decision is None
+                                and not safety_net_escalated
+                                and await _ensure_promised_handoff(session.session_id, result.final_content)
+                            ):
+                                _note_guard(
+                                    trace_steps, trace_guards, "safety_net_promised_handoff",
+                                    before=result.final_content, after=result.final_content,
+                                )
+                                shutdown_after_send = True
+                                safety_net_escalated = True
                             final_delivered = await workflow.execute_activity(
                                 send_whatsapp_message_activity,
                                 args=[session.session_id, result.final_content],

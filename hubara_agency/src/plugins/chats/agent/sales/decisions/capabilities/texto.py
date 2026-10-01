@@ -28,6 +28,9 @@ a Jev, la política, el piso y la comparación.
 * afirmación — pregunta de respaldo en SOMBRA (F6): «¿afirma algo que solo
   se sabe consultando, sin haber consultado?». La hace la activity de la
   traza después de enviar; nunca actúa.
+* relevo — «¿le promete al cliente que una persona del equipo lo va a
+  atender?», en la red de seguridad antes de enviar el texto final (escala si
+  nadie escaló). Las frases del relevo son PISO; Jev suma paráfrasis.
 """
 from __future__ import annotations
 
@@ -36,7 +39,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from src.plugins.chats.agent.sales.decisions.plan import answer_of
+from src.plugins.chats.agent.sales.decisions.plan import answer_of, plain
 from src.sdk.connectorkit import TypedQuestion
 
 _YES_NO = {"true": "sí", "false": "no"}
@@ -428,3 +431,84 @@ __all__ = [
     "Selector",
     "TextoCatalogo",
 ]
+
+
+@dataclass(frozen=True)
+class TextoAlCliente:
+    """El texto final que el cliente va a leer."""
+
+    text: str
+
+
+#: Quién promete el relevo y qué hará por el cliente (texto sin tildes ni
+#: mayúsculas). El relevo de verdad lo anuncia `escalate_to_human` («un colega
+#: del equipo te responde en este mismo chat»); dicho fuera de esa tool, nadie
+#: queda avisado.
+_WHO = r"(?:colega|companer[oa]|asesora?|persona del equipo|alguien del equipo)"
+_DOES = r"(?:respond|escrib|contact|confirm|coordin|atiend|llam|avis|cuent|ayud)\w*"
+_RELEVO_RE = re.compile(
+    rf"\b{_WHO}\b[^.!?\n]{{0,60}}?\b(?:te|le|les)\s+(?:va(?:n)?\s+a\s+)?{_DOES}"
+    rf"|\b(?:{_WHO}|el equipo|nuestro equipo)\b[^.!?\n]{{0,40}}?\b(?:coordin|confirm|habl|cuadr|organiz)\w*\s+contigo"
+    rf"|\b(?:el|nuestro) equipo\s+(?:te|le)\s+(?:va(?:n)?\s+a\s+)?{_DOES}"
+    r"|\b(?:le|les) paso\s+(?:el aviso|tu caso|tu pedido|tus datos|tu solicitud|la solicitud|tu mensaje|la informacion)"
+    r"|\bte\s+(?:paso|comunico|conecto)\s+con\s+(?:un|una|el|la|alguien|nuestro|nuestra)\b"
+)
+
+
+def promises_a_handoff(text: str | None) -> bool:
+    """¿El texto le dice al cliente que una persona del equipo lo va a
+    contactar, coordinar o confirmar algo con él? (la regla de `relevo`)."""
+    return bool(_RELEVO_RE.search(plain(" ".join(str(text or "").split()))))
+
+
+class Relevo:
+    """«¿El texto le promete al cliente que una persona del equipo lo va a
+    atender?» (laboratorio caso-cortesia-1001, 2026-09-30: los dos bots
+    dijeron «un colega del equipo coordina contigo la entrega» sin escalar y
+    nadie quedaba avisado). La consulta la red de seguridad antes de enviar el
+    texto final: si promete el relevo y nadie escaló, escala. Las frases del
+    relevo son PISO (la regla vale para el bot de hoy); Jev suma las
+    paráfrasis que la regla no conoce. Valor: bool."""
+
+    name = "relevo"
+    thresholds: Mapping[str, float] = {"yes": 0.85, "no": 0.15}
+
+    def rule(self, inp: TextoAlCliente) -> bool:
+        return promises_a_handoff(inp.text)
+
+    def ask(self, inp: TextoAlCliente) -> tuple[str, list[TypedQuestion]] | None:
+        text = " ".join(str(inp.text or "").split())
+        if not text:
+            return None
+        state = f"Mensaje que la tienda le va a enviar a un cliente por WhatsApp:\n{inp.text.strip()}"
+        return state, [
+            TypedQuestion(
+                id="relevo.promete",
+                kind="noul",
+                text=(
+                    "¿El mensaje le dice al cliente que una persona del equipo (un colega, un asesor, alguien de "
+                    "despachos) lo va a contactar, a coordinar o a confirmar algo con él?"
+                ),
+                criteria=_YES_NO,
+            )
+        ]
+
+    def decide(self, inp: TextoAlCliente, result: Any, rule: bool, thresholds: Mapping[str, float]) -> bool | None:
+        th = {**self.thresholds, **thresholds}
+        p = _p(result, "relevo.promete")
+        if p is None:
+            return None
+        if p >= th["yes"]:
+            return True
+        if p <= th["no"]:
+            return False
+        return None
+
+    def floor(self, inp: TextoAlCliente, rule: bool, jev: bool) -> bool:
+        return bool(rule) or bool(jev)
+
+    def same(self, a: bool, b: bool) -> bool:
+        return bool(a) == bool(b)
+
+
+RELEVO = Relevo()

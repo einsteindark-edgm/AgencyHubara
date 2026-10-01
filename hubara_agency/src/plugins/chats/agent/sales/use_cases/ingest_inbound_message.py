@@ -2488,6 +2488,7 @@ def build_episode_boundary_note(prev_episode: dict[str, Any], *, courtesy: bool 
         "CONFIRMADO_PAGO_PENDIENTE",
         "CONFIRMADO_SIN_DATOS",
     }
+    order_hint = ""
     if closing_tag in _CLOSED_WITH_ORDER:
         prev_clause = (
             "ya cerró con un pedido"
@@ -2496,13 +2497,22 @@ def build_episode_boundary_note(prev_episode: dict[str, Any], *, courtesy: bool 
             "(verificación de pago / envío). NO lo retomes ni vuelvas a "
             "confirmarlo"
         )
+        # Laboratorio caso-cortesia-1001 (2026-09-30): con solo «NO lo
+        # retomes», los dos bots le prometieron al cliente «un colega coordina
+        # la entrega» sin escalar, y nadie quedaba avisado.
+        order_hint = (
+            " Si el cliente pide algo de ese pedido (coordinar la entrega, un "
+            "cambio o el pago), escálalo con escalate_to_human para que el "
+            "equipo lo atienda en este chat; no le prometas que alguien lo va a "
+            "contactar sin escalar."
+        )
     else:
         prev_clause = "ya se cerró y no tiene nada pendiente de tu lado"
     if courtesy:
         return (
             "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
             "Empieza un episodio NUEVO con este cliente. La conversación anterior "
-            f"{prev_clause}. El cliente solo agradece o saluda: contéstale breve y "
+            f"{prev_clause}.{order_hint} El cliente solo agradece o saluda: contéstale breve y "
             "cálido a lo que dijo, en una o dos frases (si comenta algo de su "
             "pedido, por ejemplo que le gustó, agradéceselo). No abras una venta "
             "nueva, no ofrezcas productos ni preguntes en qué más puedes ayudar."
@@ -2510,7 +2520,7 @@ def build_episode_boundary_note(prev_episode: dict[str, Any], *, courtesy: bool 
     return (
         "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
         "Empieza un episodio NUEVO con este cliente. La conversación anterior "
-        f"{prev_clause}. Trata este mensaje como el inicio de una conversación "
+        f"{prev_clause}.{order_hint} Trata este mensaje como el inicio de una conversación "
         "nueva: saluda con calidez y pregunta en qué puedes ayudar hoy. Solo "
         "menciona lo anterior si el cliente lo trae explícitamente."
     )

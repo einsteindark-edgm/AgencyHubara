@@ -57,8 +57,9 @@ CAPABILITIES: tuple[str, ...] = (
     # Texto del LLM en tools y activities (F5) y respaldo en sombra (F6). El
     # preámbulo del modelo se decide también en el egreso de V2.
     "persona", "enumeracion", "monto", "selector", "afirmacion", "preambulo",
-    # Decisiones del agente (F8).
-    "contactar", "cierre",
+    # Decisiones del agente (F8) y la promesa del relevo a un colega
+    # (red de seguridad antes de enviar, 2026-09-30).
+    "contactar", "cierre", "relevo",
     # Egreso del workflow V2 (F4/F5): solo actúan en conversaciones con V2.
     "destinatario", "rescate", "portavelas", "saludo",
 )

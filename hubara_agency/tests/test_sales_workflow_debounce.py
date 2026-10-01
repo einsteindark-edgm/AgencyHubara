@@ -78,6 +78,8 @@ class Tracker:
         self.flush_calls: int = 0
         self.ensure_closure_calls: list[tuple[str, str, str]] = []
         self.closing_escalation_calls: list[tuple[str, str, str]] = []
+        # Red del relevo prometido: (sesión, texto final) de cada consulta.
+        self.promised_handoff_calls: list[tuple[str, str]] = []
         # Orden client-visible del turno: "send:<texto>" y "flush" en el orden
         # en que el workflow los ejecutó (el flush entrega los UI intents, ej.
         # el menú de present_products).
@@ -113,6 +115,7 @@ def _make_fake_activities(
     order_draft_note: str | None = None,
     payment_closure_result: PaymentPendingClosureResult | None = None,
     closing_escalation_result: bool = False,
+    promised_handoff_result: bool = False,
     variant_guard_result: bool = False,
     send_returns_none: bool = False,
     flush_results: list[dict] | None = None,
@@ -291,6 +294,13 @@ def _make_fake_activities(
         )
         return closing_escalation_result
 
+    # Red de seguridad del relevo prometido (el texto final promete un colega
+    # y nadie escaló).
+    @activity.defn(name="ensure_promised_handoff")
+    async def fake_ensure_promised_handoff(session_id: str, text: str) -> bool:
+        tracker.promised_handoff_calls.append((session_id, text))
+        return promised_handoff_result
+
     # Dispatcher activities — registradas para que el worker las acepte aun
     # cuando el workflow las ignore en este test.
     @activity.defn(name="start_or_signal_sales_workflow")
@@ -365,6 +375,7 @@ def _make_fake_activities(
         fake_ghosting,
         fake_ensure_payment_pending_closure,
         fake_ensure_closing_escalation,
+        fake_ensure_promised_handoff,
         fake_start_sales,
         fake_schedule_remarketing,
         fake_get_active_episode_id,

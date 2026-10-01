@@ -1,6 +1,9 @@
 """Checks de código de la familia `estado` (HU-SC-1). Ver `scorecard/registry.py`."""
 from __future__ import annotations
 
+import re
+import unicodedata
+
 from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._evidence import (
     CONFIRMED_TAGS,
@@ -18,6 +21,7 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     not_applicable,
     not_judged,
     passed,
+    quote,
     unknown,
 )
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext, CheckResult
@@ -129,9 +133,41 @@ def tag_06(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if is_legacy(traj):
         return unknown("TAG-06", "sin trazas: no se ven las redes de seguridad")
     for t in judged_turns(traj):
-        net = "safety_net_closing_escalation" in t.guards or any(
+        net = bool({"safety_net_closing_escalation", "safety_net_promised_handoff"} & set(t.guards)) or any(
             ch.get("source") == "safety_net" and ch.get("tag") == "HUMANO" for ch in t.state_changes
         )
         if net:
             return failed("TAG-06", t.turn, f"turno {t.turn}: la red de seguridad escaló porque el LLM no lo hizo")
     return passed("TAG-06", "la red de escalación no tuvo que actuar")
+
+
+# ── TAG-08 · el colega prometido queda avisado (2026-09-30) ──────────────
+# El evaluador lee el relevo con su propia regla (no con la del bot que juzga):
+# quién (un colega, alguien del equipo…) y qué hará con el cliente.
+_HANDOFF_WHO = r"(?:colega|companer[oa]|asesora?|alguien del equipo|persona del equipo|nuestro equipo|el equipo)"
+_HANDOFF_PROMISE_RE = re.compile(
+    rf"\b{_HANDOFF_WHO}\b[^.!?\n]{{0,60}}?\b(?:te|le|les)\s+(?:van?\s+a\s+)?"
+    r"(?:respond|escrib|contact|confirm|coordin|atiend|llam|avis|cuent|ayud)\w*"
+    rf"|\b{_HANDOFF_WHO}\b[^.!?\n]{{0,40}}?\b(?:coordin|confirm|habl)\w*\s+contigo"
+    r"|\b(?:le|les) paso\s+(?:el aviso|tu caso|tu pedido|tus datos)"
+)
+
+
+def _plain(text: str) -> str:
+    folded = unicodedata.normalize("NFKD", text.lower())
+    return " ".join("".join(c for c in folded if not unicodedata.combining(c)).split())
+
+
+@code_check("TAG-08")
+def tag_08(traj: Trajectory, ctx: CheckContext) -> CheckResult:
+    promised = None
+    for t in judged_turns(traj):
+        for text in t.sent_texts:
+            if not _HANDOFF_PROMISE_RE.search(_plain(text)):
+                continue
+            if t.state.get("route") != "humano" and not t.tool_ok("escalate_to_human"):
+                return failed("TAG-08", t.turn, f"turno {t.turn}: prometió un colega sin escalar {quote(text)}")
+            promised = promised or t.turn
+    if promised is None:
+        return not_judged("TAG-08", traj, "el bot no le prometió un colega al cliente")
+    return passed("TAG-08", "el colega prometido quedó avisado", promised)

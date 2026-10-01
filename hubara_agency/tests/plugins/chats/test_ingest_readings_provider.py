@@ -174,3 +174,20 @@ async def test_the_new_episode_note_follows_the_courtesy(_isolate_vault_dir, cou
 
     [note] = [n for n in loader.extra_context[-1] if "episodio NUEVO" in n]
     assert says in note and never not in note
+
+
+@pytest.mark.parametrize("courtesy", [False, True])
+def test_a_request_about_the_closed_order_is_escalated_not_promised(courtesy: bool) -> None:
+    """Laboratorio caso-cortesia-1001 (2026-09-30), caso de control: la nota
+    decía que el pedido lo gestiona un humano por separado y «NO lo retomes»;
+    los dos bots le prometieron al cliente «un colega coordina la entrega» sin
+    escalar. La nota ahora dice qué hacer cuando el cliente pide algo de ese
+    pedido."""
+    from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import build_episode_boundary_note
+
+    note = build_episode_boundary_note(
+        {"closing_tag": "COMPRA_EXITOSA", "order_id": "order_TEST"}, courtesy=courtesy
+    )
+
+    assert "escalate_to_human" in note
+    assert "entrega" in note

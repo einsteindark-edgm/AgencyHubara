@@ -110,6 +110,7 @@ with workflow.unsafe.imports_passed_through():
         _await_photos_done,
         _burst_messages,
         _clean_inbound_meta,
+        _ensure_promised_handoff,
         _flush_outbound,
         _inbound_trace,
         _map_closing_tag_to_capi_event,
@@ -766,6 +767,19 @@ class HubaraSalesSessionWorkflowV2:
                         # «Usa el código VELAS_10 al pagar» que Jev aprobó
                         # moría ahí mientras el panel y el LLM lo daban por
                         # enviado). Payload: V2 no tiene historias vivas.
+                        # El texto promete que un colega lo atiende y nadie
+                        # escaló: la red escala antes de enviarlo (2026-09-30).
+                        if (
+                            result.escalation_decision is None
+                            and not safety_net_escalated
+                            and await _ensure_promised_handoff(session.session_id, text_out)
+                        ):
+                            _note_guard(
+                                trace_steps, trace_guards, "safety_net_promised_handoff",
+                                before=text_out, after=text_out,
+                            )
+                            shutdown_after_send = True
+                            safety_net_escalated = True
                         final_delivered = await workflow.execute_activity(
                             send_whatsapp_message_activity,
                             args=[session.session_id, text_out, True],

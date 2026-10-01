@@ -101,3 +101,49 @@ def test_tag06_safety_net_escalation_fails() -> None:
     assert (run("TAG-06", t).verdict, run("TAG-06", t).turn) == ("falla", 1)
     assert run("TAG-06", traj(T(1))).verdict == "pasa"
     assert run("TAG-06", traj(T(1), fidelity="legacy")).verdict == "desconocido"
+
+
+# TAG-08 · el colega prometido queda avisado ─────────────────────────────────
+# Laboratorio caso-cortesia-1001 (2026-09-30): los dos bots dijeron «un colega
+# del equipo coordina contigo la entrega» sin escalar; nadie quedaba avisado.
+
+PROMISE = "Claro que sí 🤍 Un colega del equipo coordina contigo la entrega de hoy después de las 5."
+
+
+def test_tag08_a_promise_without_escalation_fails() -> None:
+    t = traj(T(1, sent=[PROMISE], state=_tag_state("NO_ETIQUETADO")))
+
+    r = run("TAG-08", t)
+
+    assert (r.verdict, r.turn) == ("falla", 1)
+    assert "coordina contigo" in r.evidence
+
+
+def test_tag08_a_promise_with_the_llm_escalation_passes() -> None:
+    t = traj(T(1, sent=["Un colega del equipo te responde en este mismo chat 🤍"],
+               tools=[tool("escalate_to_human", reason_category="SHIPPING_ISSUE")],
+               state=_tag_state("HUMANO", route="humano")))
+
+    assert run("TAG-08", t).verdict == "pasa"
+
+
+def test_tag08_the_safety_net_keeps_the_promise_but_tag06_records_it() -> None:
+    t = traj(T(1, sent=[PROMISE], guards=["safety_net_promised_handoff"],
+               state=_tag_state("HUMANO", source="safety_net", route="humano")))
+
+    assert run("TAG-08", t).verdict == "pasa"
+    assert run("TAG-06", t).verdict == "falla"
+
+
+def test_tag08_a_reply_without_a_promise_is_not_judged() -> None:
+    t = traj(T(1, sent=["Qué alegría que ya lo tengas contigo 🤍 Cualquier cosa que necesites, aquí estamos."]))
+
+    assert run("TAG-08", t).verdict == "no_aplica"
+
+
+def test_tag08_is_a_major_state_check() -> None:
+    from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION, SPECS_BY_ID
+
+    spec = SPECS_BY_ID.get("TAG-08")
+    assert spec is not None and (spec.family, spec.level, spec.kind) == ("estado", "mayor", "code")
+    assert REGISTRY_VERSION >= 6

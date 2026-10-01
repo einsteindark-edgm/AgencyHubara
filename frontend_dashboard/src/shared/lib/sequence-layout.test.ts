@@ -154,6 +154,16 @@ describe("layoutSequence", () => {
     ]);
   });
 
+  it("la red del relevo prometido se nombra en palabras y deja el texto como estaba", () => {
+    // Laboratorio caso-cortesia-1001 (2026-09-30): el bot dijo «un colega del
+    // equipo coordina contigo la entrega» sin escalar; la red escala y el
+    // texto sale igual (la promesa ya es cierta).
+    const promise = "Claro que sí, un colega del equipo coordina contigo la entrega de hoy.";
+    const { rows } = layoutSequence([{ i: 0, at_ms: 0, kind: "guard", name: "safety_net_promised_handoff", before: promise, after: promise }]);
+
+    expect(rows[0]).toMatchObject({ status: "warn", short: "escaló a una persona: el mensaje prometía que un colega lo atiende" });
+  });
+
   it("los cortes y reinicios del turno quedan dentro del workflow", () => {
     const { rows } = layoutSequence([
       { i: 0, at_ms: 0, kind: "cut", reason: "checkpoint_a" },

@@ -110,6 +110,7 @@ export const GUARD_LABELS: Record<string, string> = {
   first_contact_greeting: "agregó la bienvenida del primer contacto",
   self_transfer_noop: "no mandó el texto de una autotransferencia",
   safety_net_closing_escalation: "escaló a una persona al cerrar (red de seguridad)",
+  safety_net_promised_handoff: "escaló a una persona: el mensaje prometía que un colega lo atiende",
   contract_extra_round: "retuvo la respuesta: antes debía consultar una herramienta",
   turn_policy_extra_round: "pidió una ronda más por un asunto pendiente",
   send_reply_retry: "no mandó la respuesta: otra herramienta del mismo paso falló",
