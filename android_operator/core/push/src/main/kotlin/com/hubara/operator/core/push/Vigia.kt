@@ -18,6 +18,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.hubara.operator.core.data.auth.AuthRepository
+import com.hubara.operator.core.data.config.ServerConfigStore
 import com.hubara.operator.core.data.auth.AuthState
 import com.hubara.operator.core.data.repo.FireRepository
 import com.hubara.operator.core.model.Fire
@@ -87,9 +88,13 @@ class VigiaWorker @AssistedInject constructor(
     private val api: OperatorApi,
     private val store: AmbientStore,
     private val widget: HotWidgetUpdater,
+    private val serverConfig: ServerConfigStore,
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        // Corre con la app cerrada (tras reiniciar el teléfono o borrar datos): primero a qué servidor ir. Sin esto,
+        // sin configuración guardada iba a la dirección de respaldo del build (lo encontró el escenario S12).
+        serverConfig.refresh()
         auth.restore()
         val state = auth.state.value
         if (state != AuthState.SignedIn && state != AuthState.DevMode) return Result.success()

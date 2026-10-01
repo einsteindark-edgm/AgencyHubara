@@ -23,6 +23,7 @@ not computed for injected replies.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -37,6 +38,7 @@ from sandbox_common import (  # noqa: E402
     DAY_MS,
     DEFAULT_IMAGE_BASE,
     MIN_MS,
+    MOBILE_CONFIG,
     PHONE_NUMBER_ID,
     SANDBOX_DIR,
     VAULT_DIR,
@@ -181,8 +183,16 @@ def reply(session_id: str, text: str) -> None:
 # ── reset ────────────────────────────────────────────────────────────────────
 
 
+def mobile_config(min_version: int) -> None:
+    MOBILE_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    MOBILE_CONFIG.write_text(json.dumps({"min_version_code": min_version}), encoding="utf-8")
+    print(f"config: min_version_code={min_version}")
+
+
 def reset(image_base: str) -> None:
     import seed
+
+    MOBILE_CONFIG.unlink(missing_ok=True)  # la configuración de la app vuelve a la de siempre
 
     info = seed.build(image_base=image_base)
     for name in ("sent.log", "temporal.log", "medusa.log"):
@@ -205,6 +215,8 @@ def main() -> None:
     p_reply = sub.add_parser("reply", help="append a customer message")
     p_reply.add_argument("session")
     p_reply.add_argument("text")
+    p_config = sub.add_parser("config", help="change the App Operador server config (mobile/config.json)")
+    p_config.add_argument("--min-version", type=int, required=True)
     p_reset = sub.add_parser("reset", help="restore the seed")
     p_reset.add_argument("--image-base", default=DEFAULT_IMAGE_BASE)
     args = parser.parse_args()
@@ -216,6 +228,8 @@ def main() -> None:
             fire_new(args.session, args.name, args.waiting_min)
     elif args.cmd == "reply":
         reply(args.session, args.text)
+    elif args.cmd == "config":
+        mobile_config(args.min_version)
     else:
         reset(args.image_base)
 

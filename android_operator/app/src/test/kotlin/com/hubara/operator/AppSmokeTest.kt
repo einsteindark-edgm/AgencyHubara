@@ -43,6 +43,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
+import com.hubara.operator.core.network.config.ServerConfig
+import com.hubara.operator.core.data.config.ServerConfigDefaults
 
 /** Backend falso con las respuestas del contrato (mismas formas que el API real). */
 object FakeBackend {
@@ -102,7 +104,11 @@ object FakeBackend {
 @Module
 @TestInstallIn(components = [SingletonComponent::class], replaces = [AppModule::class])
 object TestAppModule {
-    // Cognito vacío = modo dev: la app entra sin login, como contra el backend local.
+    // Sin configuración remota: el backend falso fijo. Cognito vacío = modo dev, como contra el backend local.
+    @Provides @Singleton
+    fun serverConfigDefaults(): ServerConfigDefaults =
+        ServerConfigDefaults(configUrl = "", fallback = ServerConfig(FakeBackend.server.url("/"), "", "us-east-1"), allowCleartext = true)
+
     @Provides @Singleton
     fun apiConfig(): ApiConfig = ApiConfig(FakeBackend.server.url("/"), "", "us-east-1", devModeAllowed = true)
 }

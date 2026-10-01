@@ -10,6 +10,9 @@ val apiUrl = providers.gradleProperty("hubara.apiUrl").getOrElse("http://10.0.2.
 val cognitoClientId = providers.gradleProperty("hubara.cognitoClientId").getOrElse("")
 val cognitoRegion = providers.gradleProperty("hubara.cognitoRegion").getOrElse("us-east-1")
 val privacyUrl = providers.gradleProperty("hubara.privacyUrl").getOrElse("")
+// De dónde baja la app la configuración del servidor (backend, Cognito, privacidad, versión mínima). Es lo único fijo
+// en el APK: si la IP del backend cambia, la app se entera por aquí. Vacío = usa los valores de arriba (debug local).
+val configUrl = providers.gradleProperty("hubara.configUrl").getOrElse("")
 
 // Clave de subida a Google Play: vive FUERA del repo (es público). Se configura en ~/.gradle/gradle.properties;
 // receta en docs/mobile-native/publicar-en-google-play.html.
@@ -50,14 +53,20 @@ val verifyPlayRelease by tasks.registering {
     group = "publishing"
     description = "Revisa que el .aab para Google Play apunte a producción y vaya firmado con la clave de subida."
     val url = apiUrl
+    val remote = configUrl
     val clientId = cognitoClientId
     val store = uploadStoreFile
     val alias = uploadKeyAlias
     val privacy = privacyUrl
     doLast {
         val problems = buildList {
-            if (!url.startsWith("https://")) add("hubara.apiUrl tiene que ser https:// (hoy: $url)")
-            if (clientId.isBlank()) add("falta hubara.cognitoClientId (sin él la app no deja entrar)")
+            if (remote.isNotBlank()) {
+                if (!remote.startsWith("https://")) add("hubara.configUrl tiene que ser https:// (hoy: $remote)")
+            } else {
+                // Sin configuración remota, la dirección y Cognito quedan fijos en el APK.
+                if (!url.startsWith("https://")) add("hubara.apiUrl tiene que ser https:// (hoy: $url), o define hubara.configUrl")
+                if (clientId.isBlank()) add("falta hubara.cognitoClientId (sin él la app no deja entrar), o define hubara.configUrl")
+            }
             if (store == null || !File(store).isFile) add("falta la clave de subida: hubara.upload.storeFile no apunta a un archivo")
             if (alias.isNullOrBlank()) add("falta hubara.upload.keyAlias")
             if (!privacy.startsWith("https://")) add("falta hubara.privacyUrl (Google Play exige la política de privacidad dentro de la app)")
@@ -77,6 +86,7 @@ androidComponents {
         variant.buildConfigFields?.put("API_URL", BuildConfigField("String", "\"$apiUrl\"", "URL del backend"))
         variant.buildConfigFields?.put("COGNITO_CLIENT_ID", BuildConfigField("String", "\"$cognitoClientId\"", "Vacío = modo dev sin login"))
         variant.buildConfigFields?.put("COGNITO_REGION", BuildConfigField("String", "\"$cognitoRegion\"", "Región del user pool"))
+        variant.buildConfigFields?.put("CONFIG_URL", BuildConfigField("String", "\"$configUrl\"", "Configuración del servidor; vacío = sin remota"))
         variant.buildConfigFields?.put("PRIVACY_URL", BuildConfigField("String", "\"$privacyUrl\"", "Política de privacidad pública; vacío = sin enlace"))
     }
 }

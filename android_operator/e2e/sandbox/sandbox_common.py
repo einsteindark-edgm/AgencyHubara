@@ -38,6 +38,7 @@ STATIC_DIR = DATA_DIR / "static"
 MEDUSA_STORE = DATA_DIR / "medusa" / "store.json"
 TEMPORAL_STORE = DATA_DIR / "temporal" / "workflows.json"
 SEED_INFO = DATA_DIR / "seed_info.json"
+MOBILE_CONFIG = DATA_DIR / "mobile_config.json"  # lo que inject.py cambia de la configuración de la app
 
 PORT = 8010
 #: Catalog photo URLs. The REAL WhatsApp outbound builder only accepts

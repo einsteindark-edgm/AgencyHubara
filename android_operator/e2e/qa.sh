@@ -35,8 +35,11 @@ done
 mkdir -p "$OUT"
 
 if [ "$build" = 1 ]; then
-  echo "▶ APK apuntando al backend de prueba (10.0.2.2:8010)" >&2
-  (cd "$REPO/android_operator" && ./gradlew :app:assembleDebug -Phubara.apiUrl=http://10.0.2.2:8010 --console=plain -q)
+  # Respaldo muerto (:9) + configuración remota del backend de prueba: si la app llega a la bandeja, tomó la
+  # dirección del config.json (como en producción la toma del CloudFront del dashboard).
+  echo "▶ APK con la configuración remota del backend de prueba (10.0.2.2:8010)" >&2
+  (cd "$REPO/android_operator" && ./gradlew :app:assembleDebug -Phubara.apiUrl=http://10.0.2.2:9 \
+    -Phubara.configUrl=http://10.0.2.2:8010/__sandbox/mobile/config.json --console=plain -q)
 fi
 [ "$build_only" = 1 ] && exit 0
 

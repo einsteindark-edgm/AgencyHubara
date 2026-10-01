@@ -259,6 +259,7 @@ def run_one(dev: Device, sc: dict, out: Path, serial: str, driver: str) -> Resul
     timers: list[threading.Timer] = []
     run = Run(dev, out, sc["id"])
     try:
+        dev.collapse_shade()
         dev.dismiss_not_responding()
         # Lo enviado se cuenta desde el `reset`, no desde el fin de la preparación: si un «Deshacer» dado
         # en `setup` falla, el envío sale ahí mismo y el chequeo tiene que verlo.

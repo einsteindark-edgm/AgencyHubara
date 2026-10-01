@@ -60,11 +60,23 @@ variable "tenants" {
       episode_boundary_event = optional(bool, false)      # nota de frontera episode_closed (D1.10)
       allow_everyone         = optional(bool, false)      # permite ai_audience=EVERYONE desde la tab (D2.3)
     }), {})
+
+    # App Operador (Android). frontend-deploy publica <cloudfront>/mobile/config.json con api_url + Cognito + esto:
+    # la app solo trae fija esa URL, así un cambio de api_url (nueva IP) le llega sin publicar otra versión.
+    mobile = optional(object({
+      privacy_url      = optional(string, "") # política de privacidad pública (Google Play la exige en la app)
+      min_version_code = optional(number, 0)  # versionCode mínimo; una app más vieja pide actualizarse
+    }), {})
   }))
 
   validation {
     condition     = alltrue([for t in values(var.tenants) : can(regex("^https://[^\\s\"'#]+$", t.api_url))])
     error_message = "tenants.*.api_url: https://… sin espacios, comillas ni '#' (entra al agent.yaml de MBA)."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : t.mobile.privacy_url == "" || can(regex("^https://[^\\s\"'#]+$", t.mobile.privacy_url))])
+    error_message = "tenants.*.mobile.privacy_url: vacío o https://… (Google Play exige una URL pública y la app solo acepta https)."
   }
 
   validation {

@@ -385,3 +385,34 @@ scenarios:
       - screen_has: "5 incendios graves"
       - screen_lacks: "pide un humano"
       - sent_nothing_matching: ['"to": "000000000101"']
+
+  - id: S15_configuracion_del_servidor
+    title: La app toma la dirección del backend de la configuración del servidor
+    resumen: "El APK no trae la dirección buena del backend: la baja de la configuración del servidor (en producción, del CloudFront del dashboard) y con ella llega a la bandeja."
+    # El APK de prueba trae http://10.0.2.2:9 de respaldo (no responde). Si la bandeja carga, la dirección salió del
+    # config.json del backend de prueba (/__sandbox/mobile/config.json). En producción: <cloudfront>/mobile/config.json,
+    # que publica frontend-deploy con el api_url de Terraform. Así una IP nueva no obliga a publicar otra versión.
+    setup: [reset, clear_app, launch]
+    script:
+      - {expect: "000000000101"}
+      - {expect: "incendios graves"}
+    goal: |
+      Abre la app y di si ves la bandeja «Chats» con conversaciones (por ejemplo la de Laura Prueba) o algún aviso de
+      que no hay conexión.
+    checks:
+      - screen_has: "000000000101"
+      - screen_lacks: "Sin conexión"
+
+  - id: S16_version_minima
+    title: El servidor pide actualizar una versión vieja de la app
+    resumen: "El servidor sube la versión mínima en su configuración: la app instalada no deja entrar y ofrece actualizarla en Google Play."
+    setup: [reset, {inject: "config --min-version 99"}, clear_app, launch]
+    script:
+      - {expect: "Hay una versión nueva"}
+      - {expect: "=Actualizar"}
+      - {shot: actualizar}
+    goal: |
+      Abre la app y di qué pantalla aparece y qué botón ofrece.
+    checks:
+      - screen_has: "Hay una versión nueva"
+      - screen_lacks: "000000000101"

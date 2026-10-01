@@ -23,12 +23,14 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import com.hubara.operator.core.data.config.ServerConfigStore
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     @Inject lateinit var installers: Set<@JvmSuppressWildcards EntryProviderInstaller>
     @Inject lateinit var auth: AuthRepository
     @Inject lateinit var sync: SyncEngine
+    @Inject lateinit var serverConfig: ServerConfigStore
 
     /** Deep link pendiente (notificación o widget), ya validado. */
     private val pendingLink = MutableStateFlow<SyntheticStack?>(null)
@@ -43,10 +45,16 @@ class MainActivity : ComponentActivity() {
         val fromRecents = (intent?.flags ?: 0) and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
         if (savedInstanceState == null && !fromRecents) pendingLink.value = DeepLinks.parse(intent?.dataString)
 
-        lifecycleScope.launch { auth.restore() }
+        // Primero a qué servidor ir (la primera vez se espera la configuración; después arranca con la guardada).
+        lifecycleScope.launch {
+            serverConfig.start(this)
+            auth.restore()
+        }
         // El SSE solo corre con la app en primer plano y la sesión abierta. En segundo plano manda el push.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // Cada vez que la app vuelve a primer plano: ¿cambió algo en el servidor (dirección, versión mínima)?
+                launch { serverConfig.refresh() }
                 auth.state.collectLatest { state ->
                     if (state == AuthState.SignedIn || state == AuthState.DevMode) {
                         try {
@@ -63,7 +71,10 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             OperatorTheme {
-                OperatorApp(installers = installers, auth = auth, pendingLink = pendingLink, onLinkConsumed = { pendingLink.value = null })
+                OperatorApp(
+                    installers = installers, auth = auth, server = serverConfig.current,
+                    pendingLink = pendingLink, onLinkConsumed = { pendingLink.value = null },
+                )
             }
         }
     }

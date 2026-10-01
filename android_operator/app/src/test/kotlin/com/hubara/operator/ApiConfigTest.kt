@@ -1,6 +1,7 @@
 package com.hubara.operator
 
 import com.google.common.truth.Truth.assertThat
+import com.hubara.operator.core.network.di.ApiConfig
 import org.junit.Test
 
 class ApiConfigTest {
@@ -10,6 +11,7 @@ class ApiConfigTest {
     }
 
     @Test fun sin_cliente_de_cognito_la_app_arranca_en_modo_dev() {
-        assertThat(AppModule.apiConfig().cognitoEnabled).isEqualTo(BuildConfig.COGNITO_CLIENT_ID.isNotBlank())
+        val fallback = AppModule.serverConfigDefaults().fallback
+        assertThat(ApiConfig({ fallback }).cognitoEnabled).isEqualTo(BuildConfig.COGNITO_CLIENT_ID.isNotBlank())
     }
 }

@@ -92,6 +92,12 @@ android_operator/e2e/sandbox/run_api.sh stop
   toques van en `setup` (o el escenario es solo de guion) y Artemis verifica el resultado.
 - **Lo enviado se cuenta desde el `reset`**, no desde el fin de la preparación: si un «Deshacer» de
   `setup` falla, el envío sale ahí mismo y el chequeo lo ve.
+- **El APK de prueba no trae la dirección buena del backend**: trae `http://10.0.2.2:9` (no responde) y baja la real de
+  `/__sandbox/mobile/config.json`, como en producción la baja del CloudFront del dashboard. Si un escenario llega a la
+  bandeja, la configuración remota funcionó. `inject.py config --min-version N` cambia la versión mínima (S16);
+  `reset` la devuelve a la de siempre.
+- **La cortina de notificaciones se cierra antes de cada escenario** (`collapse_shade`): un escenario que fallaba con
+  ella abierta (S12) la dejaba encima de la app y tumbaba todos los siguientes.
 - **El aviso «… isn't responding» del sistema** (sale en un emulador recién arrancado en una máquina
   cargada) tapa toda la pantalla: el arnés lo cierra con «Wait» antes de cada escenario.
 - **Con la máquina muy cargada, S03 puede fallar por tiempo.** El deshacer dura 5 s. En una Mac con

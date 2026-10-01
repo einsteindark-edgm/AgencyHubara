@@ -127,6 +127,11 @@ class Device:
             subprocess.run([ADB, "-s", self.serial, "exec-out", "screencap", "-p"], stdout=fh, check=True, timeout=30)
         return path
 
+    def collapse_shade(self) -> None:
+        """Cierra la cortina de notificaciones. Un escenario que falla con ella abierta (S12) la dejaba encima de la
+        app y tumbaba todos los siguientes."""
+        self.sh("cmd statusbar collapse")
+
     def dismiss_not_responding(self) -> bool:
         """Cierra el aviso del sistema «X isn't responding» tocando «Wait». Sale en emuladores recién
         arrancados en una máquina cargada y tapa toda la pantalla; no es una falla de la app."""

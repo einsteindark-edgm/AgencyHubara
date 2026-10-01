@@ -41,6 +41,7 @@ from sandbox_common import (  # noqa: E402
     CATALOG_DIR,
     DATA_DIR,
     MEDUSA_STORE,
+    MOBILE_CONFIG,
     PHONE_NUMBER_ID,
     PORT,
     SEED_INFO,
@@ -301,6 +302,20 @@ def _mount_sandbox_extras(app, main_mod, swept: list[str]) -> None:  # noqa: ANN
     from fastapi.staticfiles import StaticFiles
 
     app.mount("/__sandbox/static", StaticFiles(directory=str(STATIC_DIR)), name="sandbox-static")
+
+    # La configuración del servidor de la App Operador (en producción, <cloudfront>/mobile/config.json que publica
+    # frontend-deploy). El APK de prueba trae una dirección muerta de respaldo: si la app llega a la bandeja es porque
+    # tomó el backend de aquí. `inject.py config --min-version N` cambia la versión mínima.
+    @app.get("/__sandbox/mobile/config.json", include_in_schema=False)
+    def sandbox_mobile_config() -> dict:
+        override = read_json(MOBILE_CONFIG, {})
+        return {
+            "version": 1,
+            "api_base_url": f"http://10.0.2.2:{PORT}",
+            "cognito_region": "us-east-1",
+            "cognito_client_id": "",
+            "min_version_code": int(override.get("min_version_code", 0)),
+        }
 
     @app.get("/__sandbox/info", include_in_schema=False)
     def sandbox_info() -> dict:

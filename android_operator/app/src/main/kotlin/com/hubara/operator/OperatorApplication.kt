@@ -19,6 +19,9 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Inject
 import javax.inject.Singleton
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import com.hubara.operator.core.network.config.ServerConfig
+import com.hubara.operator.core.data.config.ServerConfigStore
+import com.hubara.operator.core.data.config.ServerConfigDefaults
 
 @HiltAndroidApp
 class OperatorApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
@@ -46,12 +49,23 @@ fun normalizeBaseUrl(raw: String) = raw.trimEnd('/').plus("/").toHttpUrl()
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
+    /** La configuración del servidor baja de CONFIG_URL; lo del build es el respaldo mientras no llegue. */
     @Provides @Singleton
-    fun apiConfig(): ApiConfig = ApiConfig(
-        baseUrl = normalizeBaseUrl(BuildConfig.API_URL),
-        cognitoClientId = BuildConfig.COGNITO_CLIENT_ID,
-        cognitoRegion = BuildConfig.COGNITO_REGION,
-        // Sin login solo en debug (backend local); un release sin client id pide login.
-        devModeAllowed = BuildConfig.DEBUG,
+    fun serverConfigDefaults(): ServerConfigDefaults = ServerConfigDefaults(
+        configUrl = BuildConfig.CONFIG_URL,
+        fallback = ServerConfig(
+            apiBaseUrl = normalizeBaseUrl(BuildConfig.API_URL),
+            cognitoClientId = BuildConfig.COGNITO_CLIENT_ID,
+            cognitoRegion = BuildConfig.COGNITO_REGION,
+            privacyUrl = BuildConfig.PRIVACY_URL.ifBlank { null },
+        ),
+        // http solo hacia el backend de prueba en el emulador o la Mac, y solo en debug.
+        allowCleartext = BuildConfig.DEBUG,
     )
+
+    /** Lee siempre la configuración vigente: si el servidor cambia de dirección, la siguiente llamada va al nuevo. */
+    @Provides @Singleton
+    fun apiConfig(store: ServerConfigStore): ApiConfig =
+        // Sin login solo en debug (backend local); un release sin client id pide login.
+        ApiConfig({ store.current.value }, devModeAllowed = BuildConfig.DEBUG)
 }

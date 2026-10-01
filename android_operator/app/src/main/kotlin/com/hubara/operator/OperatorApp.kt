@@ -85,26 +85,37 @@ import com.hubara.operator.core.ui.LocalSessionActions
 import com.hubara.operator.core.push.SignOut
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.ui.platform.LocalUriHandler
+import com.hubara.operator.core.ui.VersionGate
+import com.hubara.operator.core.network.config.ServerConfig
 
 @Composable
 fun OperatorApp(
     installers: Set<EntryProviderInstaller>,
     auth: AuthRepository,
+    server: StateFlow<ServerConfig>,
     pendingLink: StateFlow<SyntheticStack?>,
     onLinkConsumed: () -> Unit,
 ) {
     val state by auth.state.collectAsStateWithLifecycle()
+    val config by server.collectAsStateWithLifecycle()
     val uriHandler = LocalUriHandler.current
-    val session = remember(uriHandler) {
-        SessionActions(openPrivacy = BuildConfig.PRIVACY_URL.takeIf { it.isNotBlank() }?.let { url -> { uriHandler.openUri(url) } })
+    // La política de privacidad y la versión mínima las manda el servidor (config.json).
+    val session = remember(uriHandler, config.privacyUrl) {
+        SessionActions(openPrivacy = config.privacyUrl?.let { url -> { uriHandler.openUri(url) } })
     }
     // Superficie de fondo en todas las ramas: sin ella, login y carga quedaban transparentes en modo oscuro.
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        CompositionLocalProvider(LocalSessionActions provides session) {
-            when (state) {
-                AuthState.Loading -> Box(Modifier.fillMaxSize()) { LoadingIndicator(Modifier.align(Alignment.Center)) }
-                AuthState.SignedOut, is AuthState.NeedsNewPassword -> LoginScreen()
-                AuthState.SignedIn, AuthState.DevMode -> MainShell(installers, pendingLink, onLinkConsumed)
+        VersionGate(
+            minVersionCode = config.minVersionCode,
+            appVersionCode = BuildConfig.VERSION_CODE,
+            onUpdate = { uriHandler.openUri("https://play.google.com/store/apps/details?id=${BuildConfig.APPLICATION_ID}") },
+        ) {
+            CompositionLocalProvider(LocalSessionActions provides session) {
+                when (state) {
+                    AuthState.Loading -> Box(Modifier.fillMaxSize()) { LoadingIndicator(Modifier.align(Alignment.Center)) }
+                    AuthState.SignedOut, is AuthState.NeedsNewPassword -> LoginScreen()
+                    AuthState.SignedIn, AuthState.DevMode -> MainShell(installers, pendingLink, onLinkConsumed)
+                }
             }
         }
     }

@@ -22,14 +22,17 @@ import okhttp3.sse.EventSources
  */
 class EventStream(
     client: OkHttpClient,
-    private val baseUrl: HttpUrl,
+    /** El backend vigente: se lee en cada conexión (si el servidor se muda, la reconexión ya va al nuevo). */
+    private val baseUrl: () -> HttpUrl,
     private val api: OperatorApi,
 ) {
+    constructor(client: OkHttpClient, baseUrl: HttpUrl, api: OperatorApi) : this(client, { baseUrl }, api)
+
     private val sseClient = client.newBuilder().readTimeout(java.time.Duration.ZERO).build()
 
     fun events(): Flow<ServerEvent> = callbackFlow {
         val ticket = api.sseTicket().ticket
-        val url = baseUrl.newBuilder()
+        val url = baseUrl().newBuilder()
             .addPathSegments("api/dashboard/events")
             .addQueryParameter("ticket", ticket)
             .build()

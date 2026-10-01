@@ -10,14 +10,15 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"  
 cd android_operator && ./gradlew testDebugUnitTest :core:model:test               # todos los tests locales
 cd android_operator && ./gradlew :app:assembleDebug                               # APK debug
 cd android_operator && ./gradlew :app:assembleRelease                             # R8 completo (lo corre la CI)
-cd android_operator && ./gradlew :app:bundleRelease -Phubara.apiUrl=https://… \
-  -Phubara.cognitoClientId=… -Phubara.privacyUrl=https://…                         # .aab para Google Play
+cd android_operator && ./gradlew :app:bundleRelease \
+  -Phubara.configUrl=https://d1hvhzkh01tri0.cloudfront.net/mobile/config.json \
+  -Phubara.privacyUrl=https://…                                                    # .aab para Google Play
 ```
 
 - **Publicar en Google Play**: receta paso a paso con enlaces oficiales en `docs/mobile-native/publicar-en-google-play.html`;
   lo que se sube (ícono, gráficos, capturas, textos, seguridad de datos, borrador de la política de privacidad) en
-  `release/`. `bundleRelease` falla cerrado (`verifyPlayRelease`): sin https, sin client id de Cognito, sin clave de
-  subida o sin política de privacidad no arma nada. La clave de subida y sus contraseñas viven en
+  `release/`. `bundleRelease` falla cerrado (`verifyPlayRelease`): sin configuración https, sin clave de subida o sin
+  política de privacidad no arma nada. La clave de subida y sus contraseñas viven en
   `~/.gradle/gradle.properties` (`hubara.upload.*`), **nunca** en el repo (es público). Cada subida sube `versionCode`.
 
 - E2E en emulador contra el backend real de la rama y datos sintéticos: `e2e/qa.sh` corre los escenarios con
@@ -115,6 +116,14 @@ cd android_operator && ./gradlew :app:bundleRelease -Phubara.apiUrl=https://… 
 18. **`ExtendedFloatingActionButton(icon = …, text = …)` llega a accesibilidad sin texto** (material3 1.4): uiautomator
     lo marca `NAF` y TalkBack dice solo «botón». Usa la variante con contenido (`{ Icon(); Spacer(); Text() }`). Lo
     encontró el escenario S05 del rediseño.
+19. **La dirección del backend NO va en el APK** (Server-Driven): lo único fijo es `hubara.configUrl`
+    (`<cloudfront del dashboard>/mobile/config.json`, lo publica `frontend-deploy.yml` con `api_url` + Cognito +
+    `tenants.*.mobile` de Terraform). `ServerConfigStore` arranca con la última buena (o la del build) y la renueva al
+    abrir y al volver a primer plano; `ApiConfig` lee siempre la vigente y Retrofit nace con `PLACEHOLDER_BASE_URL`, que
+    el interceptor cambia por el backend del momento: una IP nueva no obliga a publicar otra versión. Solo se acepta
+    https (en debug, http hacia 10.0.2.2/localhost). `min_version_code` > versionCode → «Hay una versión nueva».
+    El APK de prueba trae un respaldo muerto (`10.0.2.2:9`) y la configuración del sandbox (`/__sandbox/mobile/config.json`):
+    si un escenario llega a la bandeja, la remota funcionó (S15; S16 = versión mínima).
 
 ## Endpoints
 

@@ -12,10 +12,13 @@ Aquí queda lo que se sube a Play Console:
 | `play-store/capturas/*.png` | Capturas de teléfono (1080×2160), con datos de prueba. |
 | `ficha-play-store.md` | Nombre, descripciones, categoría y contacto. |
 | `seguridad-de-datos.md` | Respuestas del formulario «Seguridad de los datos». |
-| `politica-de-privacidad.html` | Borrador de la política: completar lo marcado `[COMPLETAR]` y publicarla en una URL pública. |
+| `politica-de-privacidad.html` | Borrador de la política: completar lo marcado `[COMPLETAR]`, publicarla en una URL pública y ponerla en Terraform (`tenants.hubara.mobile.privacy_url`). |
 | `acceso-para-revision.md` | Cuenta de prueba e instrucciones (en inglés) para la revisión de Google. |
 
 Los gráficos y las capturas se regeneran con `play-store/generar_graficos.py` a partir de las capturas del arnés E2E
 (instrucciones en el propio script); los datos que se ven son sintéticos («Laura Prueba», números de ceros).
 
-**Nunca** van al repo (es público): la clave de subida (`.jks`), sus contraseñas, ni el client id de Cognito.
+La app solo trae fija la dirección de la configuración del servidor (`hubara.configUrl`); la API, Cognito, la política
+de privacidad y la versión mínima los baja de ahí (lo publica `frontend-deploy.yml` desde Terraform).
+
+**Nunca** van al repo (es público): la clave de subida (`.jks`) ni sus contraseñas.

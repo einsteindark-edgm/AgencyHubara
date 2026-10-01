@@ -29,13 +29,16 @@ sealed interface CognitoOutcome {
  */
 class CognitoClient(
     private val http: OkHttpClient,
-    private val endpoint: HttpUrl,
-    private val clientId: String,
+    /** Se leen en cada llamada: llegan de la configuración del servidor. */
+    private val endpoint: () -> HttpUrl,
+    private val clientId: () -> String,
 ) {
+    constructor(http: OkHttpClient, endpoint: HttpUrl, clientId: String) : this(http, { endpoint }, { clientId })
+
     suspend fun login(username: String, password: String): CognitoOutcome {
         val body = buildJsonObject {
             put("AuthFlow", "USER_PASSWORD_AUTH")
-            put("ClientId", clientId)
+            put("ClientId", clientId())
             put("AuthParameters", buildJsonObject { put("USERNAME", username); put("PASSWORD", password) })
         }
         return call("InitiateAuth", body).let { it.toOutcome(username = username, fallbackRefresh = null) }
@@ -44,7 +47,7 @@ class CognitoClient(
     suspend fun completeNewPassword(username: String, session: String, newPassword: String): CognitoOutcome {
         val body = buildJsonObject {
             put("ChallengeName", "NEW_PASSWORD_REQUIRED")
-            put("ClientId", clientId)
+            put("ClientId", clientId())
             put("Session", session)
             put("ChallengeResponses", buildJsonObject { put("USERNAME", username); put("NEW_PASSWORD", newPassword) })
         }
@@ -54,7 +57,7 @@ class CognitoClient(
     suspend fun refresh(refreshToken: String): CognitoOutcome {
         val body = buildJsonObject {
             put("AuthFlow", "REFRESH_TOKEN_AUTH")
-            put("ClientId", clientId)
+            put("ClientId", clientId())
             put("AuthParameters", buildJsonObject { put("REFRESH_TOKEN", refreshToken) })
         }
         return call("InitiateAuth", body).toOutcome(username = "", fallbackRefresh = refreshToken)
@@ -67,7 +70,7 @@ class CognitoClient(
     suspend fun revoke(refreshToken: String): Boolean {
         val body = buildJsonObject {
             put("Token", refreshToken)
-            put("ClientId", clientId)
+            put("ClientId", clientId())
         }
         return call("RevokeToken", body) is Raw.Ok
     }
@@ -79,7 +82,7 @@ class CognitoClient(
 
     private suspend fun call(target: String, payload: JsonObject): Raw = withContext(Dispatchers.IO) {
         val request = Request.Builder()
-            .url(endpoint)
+            .url(endpoint())
             .header("X-Amz-Target", "AWSCognitoIdentityProviderService.$target")
             .post(payload.toString().toRequestBody(AMZ_JSON))
             .build()
