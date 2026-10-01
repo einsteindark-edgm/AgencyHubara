@@ -1278,6 +1278,22 @@ Antes de redactar el gancho, la decisión `contactar` SHALL ver, además del epi
 - WHEN la reactivación le va a escribir
 - THEN la conversación no terminó (0,05 con Jev real) y el gancho se redacta como siempre
 
+### Requirement: Si el bot promete un colega, el humano queda avisado (2026-09-30)
+
+Antes de enviar el texto final de un turno que no escaló, V1 y V2 SHALL preguntarle a la red de seguridad (`ensure_promised_handoff_activity`) si ese texto le promete al cliente que una persona del equipo lo va a contactar, coordinar o confirmar algo (capacidad `relevo`: las frases del relevo son PISO, también con `reglas`; Jev suma paráfrasis). Si lo promete, la red MUST escalar como `escalate_to_human` (ruta humano, HUMANO, motivo con la promesa). El texto sale igual (la promesa ya es cierta) y el workflow termina como cualquier escalación. Un turno que ya escaló no se revisa. En V1 va con el parche `promised-handoff-escalation-v1`. La nota del episodio nuevo, si el anterior cerró con un pedido, SHALL decir que lo que el cliente pida de ese pedido se escala con `escalate_to_human`, sin prometerlo antes. El scorecard lo mide con TAG-08 (y TAG-06 cuando tuvo que actuar la red).
+
+#### Scenario: «Un colega coordina contigo la entrega» (laboratorio caso-cortesia-1001)
+
+- GIVEN la conversación anterior cerró con un pedido y el cliente pide que se lo lleven hoy a la portería
+- WHEN el bot cierra el turno con «…un colega del equipo coordina contigo la entrega…» sin `escalate_to_human`
+- THEN la red escala antes de enviar, la protección queda en el paso a paso y la conversación pasa a la bandeja humana
+
+#### Scenario: Escaló el LLM
+
+- GIVEN el LLM llamó `escalate_to_human` y su despedida dice «Un colega del equipo te responde en este mismo chat»
+- WHEN el workflow envía la despedida
+- THEN la red no se consulta
+
 ## Out of scope
 
 - Detalle del prompt engineering / SOUL.md / USER.md — viven en `hubara_vault/_templates/sales/`

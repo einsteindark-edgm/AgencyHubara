@@ -59,6 +59,9 @@ REAL_IN_SANDBOX = frozenset(
         "decide_egress",
         "ensure_closing_escalation",
         "ensure_payment_pending_closure",
+        # Red del relevo prometido (2026-09-30): decide con el bot del brazo
+        # (A1 la regla, B también Jev) y escribe solo el vault del sandbox.
+        "ensure_promised_handoff",
         "execute_tool",
         "flush_capi_outbox_activity",
         "flush_pending_ui_intents_activity",
