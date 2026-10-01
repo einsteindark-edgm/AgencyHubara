@@ -532,30 +532,44 @@ def _split_draft_lines(metadata: dict[str, Any] | None) -> dict[str, list[dict[s
     return {k: lines for k, lines in groups.items() if len(lines) > 1}
 
 
-def _matching_draft_line(
-    lines: list[dict[str, Any]], item: dict[str, Any], attrs: Any, used: set[int]
-) -> dict[str, Any]:
-    """La línea del borrador que corresponde a una línea del pedido: la
-    primera sin usar con la misma cantidad y con el color y el aroma que la
-    línea sí dice (las líneas iguales se intercambian sin cambiar el pedido).
-    Vacío si ninguna corresponde: no se adivina."""
+def _assign_split_lines(
+    split: dict[str, list[dict[str, Any]]],
+    items: list[dict[str, Any]],
+    keys: list[str],
+    attrs: list[Any],
+) -> dict[int, dict[str, Any]]:
+    """La línea del borrador que le corresponde a cada línea del pedido de un
+    producto repartido: misma cantidad y el color y el aroma que la línea sí
+    dice. Eligen primero las líneas que dicen su variante y después las que
+    no (si no, una sin color se quedaría con la que otra pide por nombre); las
+    líneas iguales se intercambian sin cambiar el pedido. Sin una que
+    corresponda, nada: no se adivina."""
 
-    def said(field: str, options: list[str]) -> str:
-        given = str(item.get(field) or "").strip()
+    def said(index: int, field: str, options: list[str]) -> str:
+        given = str(items[index].get(field) or "").strip()
         return product_key((match_option(given, options) if options else None) or given)
 
-    color, aroma = said("color", attrs.colors), said("aroma", attrs.aromas)
-    quantity = str(item.get("quantity") or "").strip()
-    for k, line in enumerate(lines):
-        if k in used or str(line.get("cantidad") or "").strip() != quantity:
-            continue
-        if (color and color != product_key(line.get("color"))) or (
-            aroma and aroma != product_key(line.get("aroma"))
-        ):
-            continue
-        used.add(k)
-        return line
-    return {}
+    assigned: dict[int, dict[str, Any]] = {}
+    for key, lines in split.items():
+        mine = [i for i, k in enumerate(keys) if k == key]
+        wanted = {
+            i: (said(i, "color", attrs[i].colors), said(i, "aroma", attrs[i].aromas)) for i in mine
+        }
+        used: set[int] = set()
+        for index in sorted(mine, key=lambda i: not any(wanted[i])):
+            color, aroma = wanted[index]
+            quantity = str(items[index].get("quantity") or "").strip()
+            for k, line in enumerate(lines):
+                if k in used or str(line.get("cantidad") or "").strip() != quantity:
+                    continue
+                if (color and color != product_key(line.get("color"))) or (
+                    aroma and aroma != product_key(line.get("aroma"))
+                ):
+                    continue
+                used.add(k)
+                assigned[index] = line
+                break
+    return assigned
 
 
 def _draft_attrs(metadata: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
@@ -593,22 +607,29 @@ async def resolve_item_variants(
     # sabe cuál es cuál — premortem C9). Un producto repartido en variantes
     # (`set_order_slot(lineas=...)`) sí lo sabe: cada línea toma la suya.
     split = _split_draft_lines(metadata)
-    used: dict[str, set[int]] = {}
     handles = [str(item.get("handle") or "") for item in items]
-    variants: list[ItemVariant] = []
-    invalid: list[InvalidAttribute] = []
-    for index, item in enumerate(items):
+    products: list[Any] = []
+    for item in items:
         product = None
         if catalog is not None:
             try:
                 product = await catalog.get_by_handle(str(item.get("handle") or ""))
             except Exception:  # noqa: BLE001 — sin producto no hay listas
                 product = None
-        title = str(getattr(product, "title", "") or item.get("handle") or "")
-        attrs = parse_variant_tags(list(getattr(product, "tags", None) or []))
-        key = product_key(title)
+        products.append(product)
+    titles = [
+        str(getattr(product, "title", "") or item.get("handle") or "")
+        for product, item in zip(products, items)
+    ]
+    tag_lists = [parse_variant_tags(list(getattr(p, "tags", None) or [])) for p in products]
+    keys = [product_key(title) for title in titles]
+    split_lines = _assign_split_lines(split, items, keys, tag_lists)
+    variants: list[ItemVariant] = []
+    invalid: list[InvalidAttribute] = []
+    for index, item in enumerate(items):
+        product, title, attrs, key = products[index], titles[index], tag_lists[index], keys[index]
         if key in split:
-            draft = _matching_draft_line(split[key], item, attrs, used.setdefault(key, set()))
+            draft = split_lines.get(index, {})
         else:
             draft = drafts.get(key, {}) if handles.count(handles[index]) == 1 else {}
         chosen: dict[str, str | None] = {}

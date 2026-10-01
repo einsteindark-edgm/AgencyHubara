@@ -131,6 +131,20 @@ async def test_lines_in_another_order_are_the_same_order(_isolate_vault_dir) -> 
 
 
 @pytest.mark.asyncio
+async def test_the_lines_that_say_their_variant_choose_first(_isolate_vault_dir) -> None:
+    """Sin color en la primera y «Lila» en la segunda: la segunda se queda con
+    la lila y la primera con la azul (no se empareja en el orden en que
+    llegan)."""
+    path = _seed(_isolate_vault_dir, [_LILA, _AZUL])
+
+    env = await _confirm(_isolate_vault_dir, [_line(1), _line(1, color="Lila")])
+
+    assert env["queued"] is True, env
+    (intent,) = _queued(path)
+    assert [it.get("variant") for it in intent["params"]["items"]] == ["Azul · Lavanda", "Lila · Lavanda"]
+
+
+@pytest.mark.asyncio
 async def test_an_order_without_split_products_is_sent_as_always(_isolate_vault_dir) -> None:
     path = _seed(_isolate_vault_dir, [{**_LILA, "cantidad": "2"}])
 
