@@ -52,6 +52,23 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.hubara.operator.core.ui.listContent
+import com.hubara.operator.core.ui.ListContent
+import com.hubara.operator.core.designsystem.Spacing
+import com.hubara.operator.core.designsystem.OperatorTheme
+import com.hubara.operator.core.designsystem.OperatorIcons
+import com.hubara.operator.core.designsystem.EmptyState
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Box
 
 enum class FireFilter(val label: String) {
     TODO("Todo"), GRAVES("Graves"), CHATS("Chats"), ORDENES("Órdenes");
@@ -79,41 +96,72 @@ data class FiresUiState(
     val filter: FireFilter = FireFilter.TODO,
     val fires: ImmutableList<Fire> = persistentListOf(),
     val counts: Map<FireFilter, Int> = emptyMap(),
+    val content: ListContent = ListContent.LOADING,
 )
 
 @HiltViewModel
 class FiresViewModel @Inject constructor(private val repo: FireRepository) : ViewModel() {
     private val filter = MutableStateFlow(FireFilter.TODO)
+    /** null = la primera recarga no ha vuelto; si no, si falló. */
+    private val refresh = MutableStateFlow<Boolean?>(null)
 
-    val state: StateFlow<FiresUiState> = combine(repo.observeFeed(), filter) { fires, f ->
-        FiresUiState(f, f.apply(fires).toImmutableList(), FireFilter.entries.associateWith { it.apply(fires).size })
+    val state: StateFlow<FiresUiState> = combine(repo.observeFeed(), filter, refresh) { fires, f, failed ->
+        val shown = f.apply(fires)
+        FiresUiState(
+            f, shown.toImmutableList(), FireFilter.entries.associateWith { it.apply(fires).size },
+            listContent(isEmpty = shown.isEmpty(), refreshed = failed != null, failed = failed == true),
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FiresUiState())
 
-    init { viewModelScope.launch { repo.refresh() } }
+    init { viewModelScope.launch { refresh.value = repo.refresh().isFailure } }
 
     fun setFilter(f: FireFilter) { filter.value = f }
 }
 
+@Composable
+fun FiresRoute(vm: FiresViewModel, onOpen: (NavKey) -> Unit) {
+    val ui by vm.state.collectAsStateWithLifecycle()
+    FiresScreen(ui, onFilter = vm::setFilter, onOpen = onOpen)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FiresScreen(vm: FiresViewModel, onOpen: (NavKey) -> Unit) {
-    val ui by vm.state.collectAsStateWithLifecycle()
-    Scaffold(topBar = { TopAppBar(title = { Text("Incendios") }, actions = { RadarIndicator() }) }) { inner ->
-        Column(Modifier.fillMaxSize().padding(top = inner.calculateTopPadding())) {
-            LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+fun FiresScreen(ui: FiresUiState, onFilter: (FireFilter) -> Unit, onOpen: (NavKey) -> Unit) {
+    val scroll = TopAppBarDefaults.pinnedScrollBehavior()
+    Scaffold(
+        modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
+        topBar = {
+            TopAppBar(title = { Text("Incendios", style = OperatorTheme.emphasized.titleLarge) }, actions = { RadarIndicator() }, scrollBehavior = scroll)
+        },
+    ) { inner ->
+        val start = inner.calculateLeftPadding(LayoutDirection.Ltr)
+        val end = inner.calculateRightPadding(LayoutDirection.Ltr)
+        Column(Modifier.fillMaxSize().padding(top = inner.calculateTopPadding(), start = start, end = end)) {
+            LazyRow(contentPadding = PaddingValues(horizontal = Spacing.margin), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 items(FireFilter.entries) { f ->
-                    FilterChip(selected = ui.filter == f, onClick = { vm.setFilter(f) }, label = { Text("${f.label} ${ui.counts[f] ?: 0}") })
+                    val selected = ui.filter == f
+                    FilterChip(
+                        selected = selected, onClick = { onFilter(f) }, label = { Text("${f.label} ${ui.counts[f] ?: 0}") },
+                        leadingIcon = if (selected) {
+                            { Icon(OperatorIcons.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+                        } else null,
+                        shape = CircleShape,
+                    )
                 }
             }
-            if (ui.fires.isEmpty()) {
-                Text("No hay incendios. Todo va bien.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(24.dp))
-            }
-            LazyColumn(
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = inner.calculateBottomPadding() + 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(ui.fires, key = { it.id.raw }) { fire ->
-                    FireCard(fire, onClick = { destinationFor(fire)?.let(onOpen) })
+            when (ui.content) {
+                ListContent.LOADING -> Box(Modifier.fillMaxWidth().padding(Spacing.xxl), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                ListContent.EMPTY -> EmptyState(OperatorIcons.Fire, "No hay incendios", "Todo va bien.")
+                ListContent.ERROR -> EmptyState(OperatorIcons.Error, "No se pudieron cargar", "Revisa la conexión; se reintenta solo.")
+                ListContent.LIST -> LazyColumn(
+                    contentPadding = PaddingValues(
+                        start = Spacing.margin, end = Spacing.margin, top = Spacing.md, bottom = inner.calculateBottomPadding() + Spacing.sm,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                ) {
+                    items(ui.fires, key = { it.id.raw }) { fire ->
+                        FireCard(fire, onClick = { destinationFor(fire)?.let(onOpen) }, modifier = Modifier.animateItem())
+                    }
                 }
             }
         }
@@ -127,7 +175,7 @@ object FiresNavigation {
     @Provides @IntoSet
     fun entries(): EntryProviderInstaller = { navigator ->
         entry<FiresKey>(metadata = ListDetailSceneStrategy.listPane()) {
-            FiresScreen(hiltViewModel(), onOpen = { navigator.navigate(it) })
+            FiresRoute(hiltViewModel(), onOpen = { navigator.navigate(it) })
         }
     }
 }

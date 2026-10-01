@@ -8,6 +8,7 @@ import com.hubara.operator.core.model.Conversation
 import com.hubara.operator.core.model.OrderRef
 import com.hubara.operator.core.model.Route
 import com.hubara.operator.core.model.SeenCounts
+import com.hubara.operator.core.model.ShippingForm
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.collections.immutable.ImmutableList
@@ -57,6 +58,9 @@ fun conversationTitle(c: Conversation): String = c.customerName ?: displayPhone(
 fun conversationDetail(c: Conversation): String =
     listOfNotNull(c.customerName?.let { displayPhone(c.phone) }, conversationSubtitle(c.route, c.tag, c.orderRef))
         .joinToString(" · ")
+
+/** Lo que se ve del último mensaje en la fila: el formulario de envío en palabras, no `clave=valor`. */
+fun inboxPreview(raw: String?): String? = if (ShippingForm.parse(raw) != null) "Datos de envío recibidos" else raw
 
 /** Segunda línea de la fila: quién atiende, en qué va y si tiene pedido. Sin códigos del backend. */
 fun conversationSubtitle(route: Route, tag: String, orderRef: OrderRef?): String {

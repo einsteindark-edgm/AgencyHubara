@@ -21,7 +21,7 @@ object InboxNavigation {
     fun entries(): EntryProviderInstaller = { navigator ->
         // En pantallas anchas, la bandeja queda a la izquierda y el chat a la derecha.
         entry<InboxKey>(metadata = ListDetailSceneStrategy.listPane()) {
-            InboxScreen(hiltViewModel(), onOpen = { navigator.navigate(ChatKey(it.sessionId)) })
+            InboxRoute(hiltViewModel(), onOpen = { navigator.navigate(ChatKey(it.sessionId)) })
         }
     }
 }

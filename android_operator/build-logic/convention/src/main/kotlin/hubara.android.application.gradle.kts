@@ -48,6 +48,12 @@ tasks.withType<Test>().configureEach {
     )
 }
 
+
+// Mismos tipos estables que las bibliotecas (ver hubara.android.library.compose).
+composeCompiler {
+    stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("compose-stability.conf"))
+}
+
 val catalog = extensions.getByType<VersionCatalogsExtension>().named("libs")
 fun lib(alias: String) = catalog.findLibrary(alias).get()
 

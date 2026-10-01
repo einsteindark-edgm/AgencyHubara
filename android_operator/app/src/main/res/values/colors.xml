@@ -1,0 +1,4 @@
+<resources>
+    <!-- Igual a LightScheme.surface (core/designsystem/Color.kt). -->
+    <color name="operator_surface">#F9F9FE</color>
+</resources>

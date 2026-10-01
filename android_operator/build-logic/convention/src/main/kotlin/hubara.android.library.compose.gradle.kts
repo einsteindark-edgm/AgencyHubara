@@ -8,6 +8,12 @@ android {
     buildFeatures { compose = true }
 }
 
+// :core:model es Kotlin puro: sin esto sus tipos cuentan como inestables y la bandeja, el chat y las tarjetas se
+// recomponen en cada emisión aunque sus datos no cambien.
+composeCompiler {
+    stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("compose-stability.conf"))
+}
+
 val catalog = extensions.getByType<VersionCatalogsExtension>().named("libs")
 fun lib(alias: String) = catalog.findLibrary(alias).get()
 

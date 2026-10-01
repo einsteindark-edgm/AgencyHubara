@@ -1,21 +1,19 @@
 package com.hubara.operator.feature.chat
 
-import com.hubara.operator.core.ui.RadarFloor
-import com.hubara.operator.core.ui.RadarIndicator
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fitInside
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,16 +28,25 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.WindowInsetsRulers
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.hubara.operator.core.designsystem.Avatar
+import com.hubara.operator.core.designsystem.OperatorIcons
+import com.hubara.operator.core.designsystem.OperatorTheme
+import com.hubara.operator.core.designsystem.Spacing
 import com.hubara.operator.core.model.OrderId
 import com.hubara.operator.core.model.OrderRef
+import com.hubara.operator.core.model.SessionId
+import com.hubara.operator.core.model.Suggestion
+import com.hubara.operator.core.ui.RadarFloor
+import com.hubara.operator.core.ui.RadarIndicator
+import java.time.ZoneId
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
     vm: ChatViewModel,
@@ -53,13 +60,43 @@ fun ChatScreen(
         vm.onVisible(true)
         onPauseOrDispose { vm.onVisible(false) }
     }
-
     val ui by vm.state.collectAsStateWithLifecycle()
+    ChatLayout(
+        ui = ui, session = vm.sessionId, draft = vm.draft,
+        actions = ChatActions(
+            onBack = onBack, onOpenOrder = onOpenOrder, onOpenPalette = onOpenPalette, onReactivate = onReactivate,
+            onReturnToBot = vm::returnToBot, onIntervene = vm::intervene, onSend = vm::send, onSendText = vm::sendText,
+            onUndo = vm::undo, onRetry = vm::retry, onDismiss = vm::dismiss, onClearError = vm::clearError,
+        ),
+    )
+}
+
+/** Lo que el chat le pide a quien lo contiene. */
+class ChatActions(
+    val onBack: () -> Unit,
+    val onOpenOrder: (OrderId) -> Unit,
+    val onOpenPalette: () -> Unit,
+    val onReactivate: () -> Unit,
+    val onReturnToBot: () -> Unit,
+    val onIntervene: () -> Unit,
+    val onSend: (Suggestion) -> Unit,
+    val onSendText: () -> Unit,
+    val onUndo: (String) -> Unit,
+    val onRetry: (String) -> Unit,
+    val onDismiss: (String) -> Unit,
+    val onClearError: () -> Unit,
+)
+
+/** El chat sin ViewModel: lo que se ve dado un [ChatUiState]. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ChatLayout(ui: ChatUiState, session: SessionId, draft: TextFieldState, actions: ChatActions) {
     Scaffold(
         topBar = {
             ChatTopBar(
-                phone = ui.phone, customerName = ui.customerName, human = ui.humanInControl, orderRef = ui.orderRef,
-                onBack = onBack, onOpenOrder = onOpenOrder, onReturnToBot = vm::returnToBot,
+                phone = ui.phone, customerName = ui.customerName, session = session, human = ui.humanInControl,
+                orderRef = ui.orderRef, onBack = actions.onBack, onOpenOrder = actions.onOpenOrder,
+                onReturnToBot = actions.onReturnToBot,
             )
         },
     ) { inner ->
@@ -70,33 +107,35 @@ fun ChatScreen(
                 .consumeWindowInsets(inner)
                 .fitInside(WindowInsetsRulers.Ime.current),
         ) {
-            if (!ui.humanInControl) BotReadingPanel(ui.stage, ui.busy, vm::intervene)
-            ui.error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-            }
-            val reversed = remember(ui.messages) { ui.messages.asReversed() }
+            if (!ui.humanInControl) BotReadingPanel(ui.stage, ui.busy, actions.onIntervene)
+            ui.error?.let { ErrorNotice(it, onDismiss = actions.onClearError) }
+            val zone = remember { ZoneId.systemDefault() }
+            val items = remember(ui.messages) { chatItems(ui.messages, System.currentTimeMillis(), zone).asReversed() }
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 reverseLayout = true,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(start = Spacing.md, end = Spacing.md, top = Spacing.sm, bottom = Spacing.md),
             ) {
-                items(reversed, key = { it.key }, contentType = { it.author }) { MessageBubble(it) }
+                items(
+                    items,
+                    key = { if (it is ChatItem.Bubble) it.message.key else "day:${(it as ChatItem.Day).label}" },
+                    contentType = { if (it is ChatItem.Bubble) it.message.author else "day" },
+                ) { item ->
+                    when (item) {
+                        is ChatItem.Day -> DayHeader(item.label)
+                        is ChatItem.Bubble -> MessageBubble(item.message, position = item.position, zone = zone)
+                    }
+                }
             }
             // Piso del radar: los incendios que aparecen solos nunca tapan deshacer, burbujas ni lo que se escribe.
             RadarFloor {
-                UndoBar(ui.pending, onUndo = vm::undo, onRetry = vm::retry, onDismiss = vm::dismiss)
+                UndoBar(ui.pending, onUndo = actions.onUndo, onRetry = actions.onRetry, onDismiss = actions.onDismiss)
                 when {
                     !ui.humanInControl -> Unit
-                    !ui.windowOpen -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("La ventana de 24 h está cerrada: para escribirle hay que reactivar la conversación con una plantilla.",
-                            style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = onReactivate, modifier = Modifier.fillMaxWidth()) { Text("Reactivar con plantilla") }
-                    }
+                    !ui.windowOpen -> WindowClosedCard(actions.onReactivate)
                     else -> {
-                        QuickActionStrip(ui.suggestions, onSend = vm::send, onEdit = { onOpenPalette() }, onMore = onOpenPalette)
-                        Composer(vm.draft, enabled = true, onSend = vm::sendText)
+                        QuickActionStrip(ui.suggestions, onSend = actions.onSend, onEdit = { actions.onOpenPalette() }, onMore = actions.onOpenPalette)
+                        Composer(draft, enabled = true, onSend = actions.onSendText)
                     }
                 }
             }
@@ -109,6 +148,7 @@ fun ChatScreen(
 private fun ChatTopBar(
     phone: String,
     customerName: String?,
+    session: SessionId,
     human: Boolean,
     orderRef: OrderRef?,
     onBack: () -> Unit,
@@ -117,12 +157,16 @@ private fun ChatTopBar(
 ) {
     var menu by remember { mutableStateOf(false) }
     TopAppBar(
-        navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Atrás") } },
+        navigationIcon = { IconButton(onClick = onBack) { Icon(OperatorIcons.ArrowBack, contentDescription = "Atrás") } },
         title = {
-            Column {
-                Text(chatTitle(customerName, phone), style = MaterialTheme.typography.titleMedium, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis)
-                Text(chatSubtitle(customerName, phone, human), style = MaterialTheme.typography.labelSmall)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                Avatar(customerName, session.raw, size = 40.dp)
+                Column {
+                    Text(chatTitle(customerName, phone), style = OperatorTheme.emphasized.titleMedium, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                    Text(chatSubtitle(customerName, phone, human), style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         },
         actions = {
@@ -130,12 +174,19 @@ private fun ChatTopBar(
             // El botón del pedido aparece solo si la conversación tiene uno asignado.
             orderRef?.let { ref ->
                 val label = if (ref.count > 1) "Pedidos · ${ref.count}" else ref.displayId?.let { "Pedido #$it" } ?: "Pedido"
-                AssistChip(onClick = { onOpenOrder(ref.orderId) }, label = { Text(label) })
+                AssistChip(
+                    onClick = { onOpenOrder(ref.orderId) }, label = { Text(label) },
+                    leadingIcon = { Icon(OperatorIcons.Orders, contentDescription = null, modifier = Modifier.size(AssistChipDefaults.IconSize)) },
+                    shape = MaterialTheme.shapes.extraLarge,
+                )
             }
             if (human) {
-                IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Más opciones") }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { Text("Devolver al bot") }, onClick = { menu = false; onReturnToBot() })
+                IconButton(onClick = { menu = true }) { Icon(OperatorIcons.MoreVert, contentDescription = "Más opciones") }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = MaterialTheme.shapes.large) {
+                    DropdownMenuItem(
+                        text = { Text("Devolver al bot") }, onClick = { menu = false; onReturnToBot() },
+                        leadingIcon = { Icon(OperatorIcons.Bot, contentDescription = null) },
+                    )
                 }
             }
         },

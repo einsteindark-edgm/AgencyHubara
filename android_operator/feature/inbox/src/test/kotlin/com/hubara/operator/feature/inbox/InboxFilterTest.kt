@@ -62,4 +62,12 @@ class InboxFilterTest {
         assertThat(displayPhone("")).isEqualTo("Cliente")
         assertThat(displayPhone("12345")).isEqualTo("12345")
     }
+
+    // En el emulador la fila de Camilo mostraba el formulario crudo («[datos de envío recibidos] receiver_name=Ca…»).
+    @Test fun la_vista_previa_del_formulario_de_envio_se_lee_en_palabras() {
+        assertThat(inboxPreview("[datos de envío recibidos] receiver_name=Camilo Prueba; city=Bogo…")).isEqualTo("Datos de envío recibidos")
+        assertThat(inboxPreview("¿y qué aromas tienen? quiero 2")).isEqualTo("¿y qué aromas tienen? quiero 2")
+        assertThat(inboxPreview(null)).isNull()
+    }
 }
+

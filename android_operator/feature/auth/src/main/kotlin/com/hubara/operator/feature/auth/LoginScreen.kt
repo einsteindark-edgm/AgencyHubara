@@ -29,6 +29,14 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.hubara.operator.core.designsystem.Spacing
+import com.hubara.operator.core.designsystem.OperatorTheme
+import com.hubara.operator.core.designsystem.OperatorIcons
+import com.hubara.operator.core.designsystem.IconTile
+import com.hubara.operator.core.designsystem.ExpressiveShapes
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
 
 @Composable
 fun LoginScreen(vm: LoginViewModel = hiltViewModel()) {
@@ -40,10 +48,18 @@ fun LoginScreen(vm: LoginViewModel = hiltViewModel()) {
             .safeDrawingPadding()
             .imePadding()
             .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .padding(horizontal = Spacing.xl, vertical = Spacing.xxl),
+        verticalArrangement = Arrangement.spacedBy(Spacing.lg),
     ) {
-        Text("App Operador", style = MaterialTheme.typography.headlineMedium)
+        IconTile(
+            OperatorIcons.Storefront, MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer,
+            size = 72.dp, shape = ExpressiveShapes.extraLargeIncreased,
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Text("App Operador", style = OperatorTheme.emphasized.headlineMedium)
+            Text("Atiende los chats, los incendios y los pedidos de la tienda.",
+                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (ui.needsNewPassword) NewPasswordForm(ui, vm::setNewPassword) else CredentialsForm(ui, vm::login)
         ui.error?.let {
             Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
@@ -51,36 +67,47 @@ fun LoginScreen(vm: LoginViewModel = hiltViewModel()) {
     }
 }
 
+private val BigButton = Modifier.fillMaxWidth().heightIn(min = 56.dp)
+
 @Composable
 private fun CredentialsForm(ui: LoginUiState, onLogin: (String, String) -> Unit) {
     var email by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
+    // La contraseña no va al estado guardado de la actividad (remember, no rememberSaveable).
+    var password by remember { mutableStateOf("") }
     OutlinedTextField(
         value = email, onValueChange = { email = it }, label = { Text("Email") }, singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
     )
     OutlinedTextField(
         value = password, onValueChange = { password = it }, label = { Text("Contraseña") }, singleLine = true,
         visualTransformation = PasswordVisualTransformation(),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
     )
-    Button(onClick = { onLogin(email, password) }, enabled = !ui.busy, modifier = Modifier.fillMaxWidth()) {
-        if (ui.busy) CircularProgressIndicator(Modifier.padding(2.dp)) else Text("Entrar")
+    Button(onClick = { onLogin(email, password) }, enabled = !ui.busy, modifier = BigButton) {
+        if (ui.busy) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 3.dp) else Text("Entrar", style = MaterialTheme.typography.titleSmall)
     }
 }
 
 @Composable
 private fun NewPasswordForm(ui: LoginUiState, onSet: (String, String) -> Unit) {
-    var password by rememberSaveable { mutableStateOf("") }
-    var confirm by rememberSaveable { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
     Text("Es tu primer ingreso: elige una contraseña nueva.", style = MaterialTheme.typography.bodyMedium)
     OutlinedTextField(
         value = password, onValueChange = { password = it }, label = { Text("Contraseña nueva") }, singleLine = true,
-        visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(),
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
     )
     OutlinedTextField(
         value = confirm, onValueChange = { confirm = it }, label = { Text("Repítela") }, singleLine = true,
-        visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(),
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
     )
-    Button(onClick = { onSet(password, confirm) }, enabled = !ui.busy, modifier = Modifier.fillMaxWidth()) { Text("Guardar y entrar") }
+    Button(onClick = { onSet(password, confirm) }, enabled = !ui.busy, modifier = BigButton) {
+        Text("Guardar y entrar", style = MaterialTheme.typography.titleSmall)
+    }
 }

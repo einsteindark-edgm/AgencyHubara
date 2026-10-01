@@ -38,7 +38,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Con NavigationBar al pie, el sistema no agrega su velo translúcido (skill edge-to-edge).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) window.isNavigationBarContrastEnforced = false
-        pendingLink.value = DeepLinks.parse(intent?.dataString)
+        // Solo en el arranque: al recrear (girar, tema, letra, muerte del proceso) manda la pila restaurada, no el
+        // enlace con el que se abrió la app. Abrir desde Recientes reentrega el intent viejo: tampoco cuenta.
+        val fromRecents = (intent?.flags ?: 0) and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+        if (savedInstanceState == null && !fromRecents) pendingLink.value = DeepLinks.parse(intent?.dataString)
 
         lifecycleScope.launch { auth.restore() }
         // El SSE solo corre con la app en primer plano y la sesión abierta. En segundo plano manda el push.

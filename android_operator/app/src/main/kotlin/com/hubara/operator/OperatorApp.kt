@@ -1,39 +1,41 @@
 package com.hubara.operator
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import com.hubara.operator.core.ui.LocalRadarFloor
-import com.hubara.operator.core.ui.LocalRadarIndicator
-import com.hubara.operator.core.ui.RadarIndicatorModel
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.ShoppingCart
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.navigation3.rememberListDetailSceneStrategy
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -46,9 +48,12 @@ import com.hubara.operator.core.data.auth.AuthRepository
 import com.hubara.operator.core.data.auth.AuthState
 import com.hubara.operator.core.data.repo.ConversationRepository
 import com.hubara.operator.core.data.repo.FireRepository
+import com.hubara.operator.core.designsystem.OperatorIcons
+import com.hubara.operator.core.designsystem.OperatorTheme
 import com.hubara.operator.core.model.Conversation
 import com.hubara.operator.core.model.Fire
 import com.hubara.operator.core.model.FireId
+import com.hubara.operator.core.model.SessionId
 import com.hubara.operator.core.navigation.BottomSheetSceneStrategy
 import com.hubara.operator.core.navigation.EntryProviderInstaller
 import com.hubara.operator.core.navigation.FiresKey
@@ -57,7 +62,10 @@ import com.hubara.operator.core.navigation.Navigator
 import com.hubara.operator.core.navigation.OrdersKey
 import com.hubara.operator.core.navigation.SyntheticStack
 import com.hubara.operator.core.navigation.rememberNavigationState
+import com.hubara.operator.core.ui.LocalRadarFloor
+import com.hubara.operator.core.ui.LocalRadarIndicator
 import com.hubara.operator.core.ui.RadarFloorState
+import com.hubara.operator.core.ui.RadarIndicatorModel
 import com.hubara.operator.core.ui.RadarLayer
 import com.hubara.operator.feature.auth.LoginScreen
 import com.hubara.operator.feature.fires.destinationFor
@@ -80,10 +88,13 @@ fun OperatorApp(
     onLinkConsumed: () -> Unit,
 ) {
     val state by auth.state.collectAsStateWithLifecycle()
-    when (state) {
-        AuthState.Loading -> Box(Modifier.fillMaxSize()) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
-        AuthState.SignedOut, is AuthState.NeedsNewPassword -> LoginScreen()
-        AuthState.SignedIn, AuthState.DevMode -> MainShell(installers, pendingLink, onLinkConsumed)
+    // Superficie de fondo en todas las ramas: sin ella, login y carga quedaban transparentes en modo oscuro.
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+        when (state) {
+            AuthState.Loading -> Box(Modifier.fillMaxSize()) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
+            AuthState.SignedOut, is AuthState.NeedsNewPassword -> LoginScreen()
+            AuthState.SignedIn, AuthState.DevMode -> MainShell(installers, pendingLink, onLinkConsumed)
+        }
     }
 }
 
@@ -106,6 +117,10 @@ class ShellViewModel @Inject constructor(
 /** El radar se abre debajo del encabezado (la barra superior mide 64 dp): nunca tapa atrás, título ni acciones. */
 private val RADAR_TOP_OFFSET = 64.dp
 
+private data class Tab(val key: NavKey, val label: String)
+
+private val TABS = listOf(Tab(InboxKey, "Chats"), Tab(FiresKey, "Incendios"), Tab(OrdersKey, "Órdenes"))
+
 @OptIn(ExperimentalMaterial3AdaptiveApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: StateFlow<SyntheticStack?>, onLinkConsumed: () -> Unit) {
@@ -113,7 +128,6 @@ private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: Stat
     val navigator = remember(state) { Navigator(state) }
     val shell: ShellViewModel = hiltViewModel()
     val radar by shell.radar.collectAsStateWithLifecycle()
-    val inbox by shell.inbox.collectAsStateWithLifecycle()
 
     val link by pendingLink.collectAsStateWithLifecycle()
     LaunchedEffect(link) {
@@ -129,21 +143,28 @@ private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: Stat
 
     val sheets = remember { BottomSheetSceneStrategy<NavKey>() }
     val listDetail = rememberListDetailSceneStrategy<NavKey>()
-    val provider = entryProvider<NavKey> { installers.forEach { install -> install(navigator) } }
+    val provider = remember(installers, navigator) { entryProvider<NavKey> { installers.forEach { install -> install(navigator) } } }
 
+    // Material 3 Expressive: barra corta abajo en teléfono, riel ancho en tablet (lo decide el tamaño de ventana).
     NavigationSuiteScaffold(
+        layoutType = NavigationSuiteScaffoldDefaults.navigationSuiteType(currentWindowAdaptiveInfo()),
         navigationSuiteItems = {
-            item(selected = state.topLevelRoute == InboxKey, onClick = { navigator.navigate(InboxKey) },
-                icon = { Icon(Icons.Filled.Email, contentDescription = null) }, label = { Text("Chats") })
-            item(selected = state.topLevelRoute == FiresKey, onClick = { navigator.navigate(FiresKey) },
-                icon = {
-                    BadgedBox(badge = { if (radar.isNotEmpty()) Badge { Text(radar.size.toString()) } }) {
-                        Icon(Icons.Filled.Warning, contentDescription = null)
-                    }
-                },
-                label = { Text("Incendios") })
-            item(selected = state.topLevelRoute == OrdersKey, onClick = { navigator.navigate(OrdersKey) },
-                icon = { Icon(Icons.Filled.ShoppingCart, contentDescription = null) }, label = { Text("Órdenes") })
+            TABS.forEach { tab ->
+                val selected = state.topLevelRoute == tab.key
+                item(
+                    selected = selected,
+                    onClick = { navigator.navigate(tab.key) },
+                    icon = { Icon(tabIcon(tab.key, selected), contentDescription = null) },
+                    label = { Text(tab.label) },
+                    badge = if (tab.key == FiresKey && radar.isNotEmpty()) {
+                        {
+                            Badge(containerColor = OperatorTheme.colors.grave, contentColor = MaterialTheme.colorScheme.onError) {
+                                Text(radar.size.toString())
+                            }
+                        }
+                    } else null,
+                )
+            }
         },
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -179,12 +200,39 @@ private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: Stat
                     .padding(top = RADAR_TOP_OFFSET),
             )
             navigator.returnTarget()?.let { session ->
-                val who = inbox.firstOrNull { it.sessionId == session }?.phone?.takeLast(4)?.let { "…$it" } ?: "el chat"
-                ExtendedFloatingActionButton(
-                    onClick = { navigator.navigate(InboxKey) },
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
-                ) { Text("Volver con $who") }
+                ReturnButton(session, shell, onClick = { navigator.navigate(InboxKey) }, modifier = Modifier.align(Alignment.BottomCenter))
             }
         }
+    }
+}
+
+@Composable
+private fun tabIcon(key: NavKey, selected: Boolean): ImageVector = when (key) {
+    InboxKey -> if (selected) OperatorIcons.ChatFilled else OperatorIcons.Chat
+    FiresKey -> if (selected) OperatorIcons.FireFilled else OperatorIcons.Fire
+    else -> if (selected) OperatorIcons.OrdersFilled else OperatorIcons.Orders
+}
+
+/**
+ * «Volver con …» al chat que el operador dejó para atender un incendio. Lee la bandeja aquí (no en MainShell): así
+ * cada mensaje que llega recompone solo este botón.
+ */
+@Composable
+private fun ReturnButton(session: SessionId, shell: ShellViewModel, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val inbox by shell.inbox.collectAsStateWithLifecycle()
+    val who = inbox.firstOrNull { it.sessionId == session }
+        ?.let { it.customerName ?: it.phone.takeLast(4).let { digits -> "…$digits" } } ?: "el chat"
+    // Con contenido propio y no `icon =`/`text =`: esa variante expone el botón a accesibilidad SIN texto (TalkBack
+    // decía solo «botón» y el arnés E2E no lo encontraba).
+    ExtendedFloatingActionButton(
+        onClick = onClick,
+        // Con riel lateral o en horizontal, el botón no queda debajo de la barra de gestos ni de los 3 botones.
+        modifier = modifier
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
+            .padding(bottom = 16.dp),
+    ) {
+        Icon(OperatorIcons.ArrowBack, contentDescription = null)
+        Spacer(Modifier.width(12.dp))
+        Text("Volver con $who")
     }
 }

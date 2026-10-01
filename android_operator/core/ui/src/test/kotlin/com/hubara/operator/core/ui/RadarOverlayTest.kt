@@ -12,7 +12,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -35,7 +36,7 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class RadarOverlayTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
     private fun grave(title: String) = Fire(
         id = FireId.parse("chat:wa_test_sofia")!!,
@@ -82,5 +83,29 @@ class RadarOverlayTest {
         compose.mainClock.advanceTimeBy(RadarDefaults.ARM_DELAY_MS + 50)
         compose.onNodeWithText("Sofía").performClick()
         assertThat(opened).hasSize(1)
+    }
+
+    // Atrás pliega la lista que el operador desplegó; las tarjetas que aparecieron solas no se quedan con el gesto
+    // (se pliegan solas a los 4 s): atrás sigue siendo atrás para la pantalla de abajo.
+    @Test fun atras_pliega_el_radar_desplegado_pero_no_las_tarjetas_que_aparecieron_solas() {
+        var collapsed = 0
+        var compact by mutableStateOf(true)
+        compose.setContent {
+            OperatorTheme {
+                RadarOverlay(
+                    cards = persistentListOf(grave("Sofía pide un humano")), expanded = true, compact = compact,
+                    maxHeight = 600.dp, onOpen = {}, onHide = {}, onCollapse = { collapsed++ },
+                )
+            }
+        }
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
+        assertThat(collapsed).isEqualTo(0)
+
+        compact = false
+        compose.waitForIdle()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
+        assertThat(collapsed).isEqualTo(1)
     }
 }

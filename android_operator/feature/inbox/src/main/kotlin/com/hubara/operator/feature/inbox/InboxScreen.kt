@@ -1,7 +1,5 @@
 package com.hubara.operator.feature.inbox
 
-import com.hubara.operator.core.ui.NotificationPermissionBanner
-import com.hubara.operator.core.ui.RadarIndicator
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,72 +8,213 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Badge
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.hubara.operator.core.designsystem.Avatar
+import com.hubara.operator.core.designsystem.EmptyState
+import com.hubara.operator.core.designsystem.OperatorIcons
+import com.hubara.operator.core.designsystem.OperatorTheme
+import com.hubara.operator.core.designsystem.Spacing
 import com.hubara.operator.core.model.Conversation
+import com.hubara.operator.core.model.Route
+import com.hubara.operator.core.model.SessionId
+import com.hubara.operator.core.ui.NotificationPermissionBanner
+import com.hubara.operator.core.ui.RadarIndicator
+import com.hubara.operator.core.ui.listTimeLabel
+import java.time.ZoneId
+import kotlinx.collections.immutable.persistentListOf
 
+@Composable
+fun InboxRoute(vm: InboxViewModel, onOpen: (Conversation) -> Unit) {
+    val ui by vm.state.collectAsStateWithLifecycle()
+    InboxScreen(ui, onFilter = vm::setFilter, onOpen = onOpen)
+}
+
+/** La bandeja: filtros, aviso de notificaciones y una fila por conversación (avatar, nombre, hora, último mensaje). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InboxScreen(vm: InboxViewModel, onOpen: (Conversation) -> Unit) {
-    val ui by vm.state.collectAsStateWithLifecycle()
-    Scaffold(topBar = { TopAppBar(title = { Text("Chats") }, actions = { RadarIndicator() }) }) { inner ->
-        Column(Modifier.fillMaxSize().padding(top = inner.calculateTopPadding())) {
-            LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+fun InboxScreen(
+    ui: InboxUiState,
+    onFilter: (InboxFilter) -> Unit,
+    onOpen: (Conversation) -> Unit,
+    nowMs: Long = remember(ui) { System.currentTimeMillis() },
+    zone: ZoneId = remember { ZoneId.systemDefault() },
+) {
+    val scroll = TopAppBarDefaults.pinnedScrollBehavior()
+    Scaffold(
+        modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
+        topBar = {
+            TopAppBar(
+                title = { Text("Chats", style = OperatorTheme.emphasized.titleLarge) },
+                actions = { RadarIndicator() },
+                scrollBehavior = scroll,
+            )
+        },
+    ) { inner ->
+        val start = inner.calculateLeftPadding(LayoutDirection.Ltr)
+        val end = inner.calculateRightPadding(LayoutDirection.Ltr)
+        Column(Modifier.fillMaxSize().padding(top = inner.calculateTopPadding(), start = start, end = end)) {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = Spacing.margin),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+            ) {
                 items(InboxFilter.entries) { f ->
-                    FilterChip(selected = ui.filter == f, onClick = { vm.setFilter(f) }, label = { Text(f.label) })
+                    val selected = ui.filter == f
+                    FilterChip(
+                        selected = selected, onClick = { onFilter(f) }, label = { Text(f.label) },
+                        leadingIcon = if (selected) {
+                            { Icon(OperatorIcons.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+                        } else null,
+                        shape = CircleShape,
+                    )
                 }
             }
             NotificationPermissionBanner()
-            if (ui.offline) {
-                Text("Sin conexión: mostrando lo último guardado.", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            if (ui.offline) OfflineNotice()
+            if (ui.rows.isEmpty()) {
+                EmptyState(OperatorIcons.Chat, "No hay chats aquí", emptyHint(ui.filter))
             }
             // El padding inferior del Scaffold va en contentPadding: la lista se desliza detrás de la barra.
-            LazyColumn(contentPadding = PaddingValues(bottom = inner.calculateBottomPadding())) {
+            LazyColumn(contentPadding = PaddingValues(top = Spacing.xs, bottom = inner.calculateBottomPadding() + Spacing.sm)) {
                 items(ui.rows, key = { it.conversation.sessionId.raw }) { row ->
-                    ConversationRow(row.conversation, row.unseen, onClick = { onOpen(row.conversation) })
-                    HorizontalDivider()
+                    ConversationRow(row.conversation, row.unseen, nowMs, zone, onClick = { onOpen(row.conversation) })
                 }
             }
         }
     }
 }
 
+private fun emptyHint(filter: InboxFilter): String = when (filter) {
+    InboxFilter.TODOS -> "Cuando un cliente escriba, su conversación aparece aquí."
+    InboxFilter.NO_LEIDOS -> "Estás al día: ya leíste todo."
+    InboxFilter.HUMANO -> "Ninguna conversación está en tus manos ahora."
+    InboxFilter.CON_PEDIDO -> "Ninguna conversación tiene pedido todavía."
+}
+
 @Composable
-private fun ConversationRow(c: Conversation, unseen: Int, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+private fun OfflineNotice() {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        modifier = Modifier.padding(horizontal = Spacing.margin, vertical = Spacing.xs),
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(conversationTitle(c), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(conversationDetail(c), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(Modifier.padding(horizontal = Spacing.md, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(OperatorIcons.Error, contentDescription = null, modifier = Modifier.size(16.dp))
+            Text("Sin conexión: mostrando lo último guardado.", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 6.dp))
         }
-        if (unseen > 0) {
-            Badge(Modifier.semantics { contentDescription = if (unseen == 1) "1 mensaje sin leer" else "$unseen mensajes sin leer" }) {
-                Text(unseen.toString())
+    }
+}
+
+@Composable
+private fun ConversationRow(c: Conversation, unseen: Int, nowMs: Long, zone: ZoneId, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val unread = unseen > 0
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = Spacing.margin, vertical = Spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.lg),
+    ) {
+        Avatar(c.customerName, c.sessionId.raw, size = 52.dp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    conversationTitle(c), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                    style = if (unread) OperatorTheme.emphasized.titleMedium else MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    listTimeLabel(c.lastUpdatedMs, nowMs, zone),
+                    style = if (unread) OperatorTheme.emphasized.labelMedium else MaterialTheme.typography.labelMedium,
+                    color = if (unread) colors.primary else colors.onSurfaceVariant,
+                    modifier = Modifier.padding(start = Spacing.sm),
+                )
+            }
+            inboxPreview(c.lastMessagePreview)?.let { preview ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        preview, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                        style = if (unread) OperatorTheme.emphasized.bodyMedium else MaterialTheme.typography.bodyMedium,
+                        color = if (unread) colors.onSurface else colors.onSurfaceVariant,
+                    )
+                    if (unread) UnreadBadge(unseen)
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (c.route == Route.HUMAN) OperatorIcons.Person else OperatorIcons.Bot, contentDescription = null,
+                    tint = if (c.route == Route.HUMAN) colors.primary else colors.tertiary, modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    conversationDetail(c), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 4.dp),
+                )
+                if (unread && c.lastMessagePreview == null) UnreadBadge(unseen)
             }
         }
     }
+}
+
+@Composable
+private fun UnreadBadge(unseen: Int) {
+    Surface(
+        shape = CircleShape, color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
+        modifier = Modifier.padding(start = Spacing.sm)
+            .semantics { contentDescription = if (unseen == 1) "1 mensaje sin leer" else "$unseen mensajes sin leer" },
+    ) {
+        Text(
+            unseen.toString(), style = OperatorTheme.emphasized.labelMedium,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp),
+        )
+    }
+}
+
+@Preview(showBackground = true, heightDp = 640)
+@Composable
+private fun InboxPreview() = OperatorTheme {
+    val now = 1_790_000_000_000
+    fun conv(n: Int, name: String?, route: Route, tag: String, preview: String?, minutesAgo: Int) = Conversation(
+        sessionId = SessionId.parse("wa_00000000010$n")!!, phone = "00000000010$n", tag = tag, route = route,
+        lastUpdatedMs = now - minutesAgo * 60_000L, lastInboundMs = null, inboundCount = 3, orderRef = null,
+        customerName = name, lastMessagePreview = preview,
+    )
+    InboxScreen(
+        InboxUiState(
+            rows = persistentListOf(
+                InboxRow(conv(1, "Laura Prueba", Route.BOT, "INTERESADO", "¿y qué aromas tienen? quiero 2", 3), 2),
+                InboxRow(conv(2, "Sofía Prueba", Route.HUMAN, "HUMANO", "Me confirmas el precio del duo porfa", 15), 0),
+                InboxRow(conv(3, null, Route.BOT, "INTERESADO", null, 60 * 26), 0),
+            ),
+        ),
+        onFilter = {}, onOpen = {}, nowMs = now,
+    )
 }

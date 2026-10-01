@@ -1,11 +1,8 @@
 package com.hubara.operator.feature.chat
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -17,6 +14,16 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import com.hubara.operator.core.designsystem.segmentedShape
+import com.hubara.operator.core.designsystem.Spacing
+import com.hubara.operator.core.designsystem.SegmentGap
+import com.hubara.operator.core.designsystem.OperatorTheme
+import com.hubara.operator.core.designsystem.ExpressiveShapes
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.Surface
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
@@ -77,22 +84,35 @@ class TemplateSheetViewModel @AssistedInject constructor(
 @Composable
 fun TemplateSheet(vm: TemplateSheetViewModel, onDone: () -> Unit) {
     val ui by vm.state.collectAsStateWithLifecycle()
+    // La hoja ya aplica las barras del sistema y el teclado (ModalBottomSheet consume safeDrawing).
     Column(
-        Modifier.fillMaxWidth().navigationBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = Spacing.lg, end = Spacing.lg, bottom = Spacing.xl),
+        verticalArrangement = Arrangement.spacedBy(Spacing.md),
     ) {
-        Text("Reactivar la conversación", style = MaterialTheme.typography.titleMedium)
-        Text("La ventana de 24 h está cerrada: solo se puede escribir con una plantilla aprobada.", style = MaterialTheme.typography.bodySmall)
+        Text("Reactivar la conversación", style = OperatorTheme.emphasized.titleLarge)
+        Text("La ventana de 24 h está cerrada: solo se puede escribir con una plantilla aprobada.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         val selected = ui.selected
         when {
-            ui.loading -> CircularProgressIndicator()
+            ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
             ui.error != null -> Text(ui.error!!, color = MaterialTheme.colorScheme.error)
-            selected == null -> ui.templates.forEach { t ->
-                ListItem(
-                    headlineContent = { Text(t.label) },
-                    supportingContent = { Text(if (t.needsImage) "Lleva foto: todavía se envía desde el dashboard" else t.body.orEmpty(), maxLines = 2) },
-                    modifier = Modifier.clickable(enabled = !t.needsImage) { vm.select(t) },
-                )
+            selected == null -> Column(verticalArrangement = Arrangement.spacedBy(SegmentGap)) {
+                ui.templates.forEachIndexed { i, t ->
+                    Surface(
+                        onClick = { vm.select(t) },
+                        enabled = !t.needsImage,
+                        shape = segmentedShape(i, ui.templates.size),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        ListItem(
+                            headlineContent = { Text(t.label, style = OperatorTheme.emphasized.bodyLarge) },
+                            supportingContent = {
+                                Text(if (t.needsImage) "Lleva foto: todavía se envía desde el dashboard" else t.body.orEmpty(), maxLines = 2)
+                            },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        )
+                    }
+                }
             }
             else -> TemplateForm(selected, onBack = { vm.select(null) }, onSend = { values -> vm.send(values); onDone() })
         }
@@ -102,7 +122,7 @@ fun TemplateSheet(vm: TemplateSheetViewModel, onDone: () -> Unit) {
 @Composable
 private fun TemplateForm(t: Template, onBack: () -> Unit, onSend: (Map<String, String>) -> Unit) {
     val values = remember(t.name) { mutableStateMapOf<String, String>() }
-    Text(t.label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+    Text(t.label, style = OperatorTheme.emphasized.labelLarge, color = MaterialTheme.colorScheme.primary)
     t.variables.forEach { v ->
         OutlinedTextField(
             value = values[v.name].orEmpty(),
@@ -112,7 +132,13 @@ private fun TemplateForm(t: Template, onBack: () -> Unit, onSend: (Map<String, S
             modifier = Modifier.fillMaxWidth(),
         )
     }
-    Text(t.preview(values), style = MaterialTheme.typography.bodyMedium)
-    Button(onClick = { onSend(values.toMap()) }, enabled = t.missing(values).isEmpty(), modifier = Modifier.fillMaxWidth()) { Text("Enviar plantilla") }
+    // Vista previa como la verá el cliente: una burbuja.
+    Surface(shape = ExpressiveShapes.largeIncreased, color = OperatorTheme.colors.bubbleOperator, contentColor = OperatorTheme.colors.onBubbleOperator) {
+        Text(t.preview(values), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(Spacing.md))
+    }
+    Button(
+        onClick = { onSend(values.toMap()) }, enabled = t.missing(values).isEmpty(),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+    ) { Text("Enviar plantilla", style = MaterialTheme.typography.titleSmall) }
     TextButton(onClick = onBack) { Text("Elegir otra") }
 }

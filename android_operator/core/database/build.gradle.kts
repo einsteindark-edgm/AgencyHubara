@@ -8,6 +8,12 @@ android {
     namespace = "com.hubara.operator.core.database"
 }
 
+// MigrationTestHelper lee los esquemas exportados como assets de los tests. Con el tipo de la DSL nueva de AGP 9:
+// el accesor `android.sourceSets` del script devuelve el tipo viejo y revienta con ClassCastException.
+extensions.configure<com.android.build.api.dsl.LibraryExtension> {
+    sourceSets.getByName("test").assets.directories.add("$projectDir/schemas")
+}
+
 room {
     schemaDirectory("$projectDir/schemas")
 }

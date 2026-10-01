@@ -11,12 +11,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,6 +32,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -44,7 +47,10 @@ import androidx.compose.ui.unit.dp
 import androidx.navigationevent.NavigationEventInfo
 import androidx.navigationevent.compose.NavigationBackHandler
 import androidx.navigationevent.compose.rememberNavigationEventState
+import com.hubara.operator.core.designsystem.ExpressiveMotion
+import com.hubara.operator.core.designsystem.OperatorIcons
 import com.hubara.operator.core.designsystem.OperatorTheme
+import com.hubara.operator.core.designsystem.Spacing
 import com.hubara.operator.core.model.Fire
 import com.hubara.operator.core.model.FireId
 import kotlinx.collections.immutable.ImmutableList
@@ -61,6 +67,9 @@ object RadarDefaults {
     val FLOOR_GAP = 8.dp
 
     const val TEST_TAG = "radar"
+
+    /** En tablet o en horizontal el radar no cruza toda la pantalla. */
+    val MAX_WIDTH = 560.dp
 }
 
 /** Lo que necesita el chip del radar en la barra superior de cada pantalla. */
@@ -77,15 +86,26 @@ val LocalRadarIndicator = compositionLocalOf<RadarIndicatorModel?> { null }
 fun RadarIndicator(modifier: Modifier = Modifier) {
     val model = LocalRadarIndicator.current ?: return
     if (model.count == 0) return
-    AssistChip(
+    // Píldora tonal roja: se distingue de las acciones de la barra sin gritar más que el contenido.
+    Surface(
         onClick = model.onExpand,
-        label = { Text(model.count.toString()) },
-        leadingIcon = { Icon(Icons.Filled.Warning, contentDescription = null) },
-        colors = AssistChipDefaults.assistChipColors(labelColor = OperatorTheme.colors.grave, leadingIconContentColor = OperatorTheme.colors.grave),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = OperatorTheme.colors.graveContainer,
+        contentColor = OperatorTheme.colors.onGraveContainer,
         modifier = modifier
+            .padding(end = Spacing.xs)
             .focusProperties { canFocus = false }
             .semantics { contentDescription = "${model.count} incendios graves. Toca para verlos." },
-    )
+    ) {
+        Row(
+            Modifier.padding(start = 10.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(OperatorIcons.FireFilled, contentDescription = null, modifier = Modifier.size(18.dp))
+            Text(model.count.toString(), style = OperatorTheme.emphasized.labelLarge)
+        }
+    }
 }
 
 /**
@@ -93,8 +113,9 @@ fun RadarIndicator(modifier: Modifier = Modifier) {
  * (compacto, unos segundos) aunque el operador esté escribiendo, y NO le quita el foco al teclado: vive
  * en la misma ventana (no es un Dialog ni un Popup), no es enfocable, no pide foco y TalkBack lo anuncia
  * de forma cortés. Nunca pasa de [maxHeight]. Swipe = ocultar ese incendio; «Cerrar» lo pliega al chip.
- * Compacto no trae «Ocultar» (se pliega solo) y, si hay más de los que se muestran, una línea «Ver N más»
- * ([overflow]) despliega el radar completo.
+ * Desplegado va en un panel propio (las tarjetas y «Cerrar» nunca quedan sobre el texto de la pantalla). Compacto
+ * no trae «Ocultar» (se pliega solo) y, si hay más de los que se muestran, «Ver N más» ([overflow]) despliega el
+ * radar completo. Atrás pliega solo lo que el operador desplegó.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -115,65 +136,86 @@ fun RadarOverlay(
     LaunchedEffect(newest) {
         if (newest != null) haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
     }
-    // Atrás pliega la lista desplegada. Todo lo demás usa el retroceso de Navigation 3.
+    // Atrás pliega la lista desplegada. Las tarjetas que aparecieron solas no se quedan con el gesto (se pliegan
+    // solas): todo lo demás usa el retroceso de Navigation 3.
     NavigationBackHandler(
         state = rememberNavigationEventState(currentInfo = NavigationEventInfo.None),
-        isBackEnabled = expanded && cards.isNotEmpty(),
+        isBackEnabled = expanded && !compact && cards.isNotEmpty(),
         onBackCompleted = onCollapse,
     )
 
     AnimatedVisibility(
         visible = expanded && cards.isNotEmpty(),
-        enter = slideInVertically { -it } + fadeIn(),
-        exit = fadeOut(),
+        enter = slideInVertically(ExpressiveMotion.defaultSpatial()) { -it / 2 } + fadeIn(ExpressiveMotion.defaultEffects()),
+        exit = fadeOut(ExpressiveMotion.fastEffects()),
         modifier = modifier,
     ) {
-        // Las tarjetas se desplazan si no caben; «Ver N más» y «Cerrar» quedan siempre a la vista, debajo.
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = maxHeight)
-                .testTag(RadarDefaults.TEST_TAG)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .focusProperties { canFocus = false }
-                .semantics { liveRegion = LiveRegionMode.Polite },
-        ) {
+        val list: @Composable () -> Unit = {
+            // Las tarjetas se desplazan si no caben; «Ver N más» y «Cerrar» quedan siempre a la vista, debajo.
             Column(
-                modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .widthIn(max = RadarDefaults.MAX_WIDTH)
+                    .fillMaxWidth()
+                    .heightIn(max = maxHeight)
+                    .testTag(RadarDefaults.TEST_TAG)
+                    .padding(horizontal = Spacing.md, vertical = Spacing.sm)
+                    .focusProperties { canFocus = false }
+                    .semantics { liveRegion = LiveRegionMode.Polite },
             ) {
-                cards.forEach { fire ->
-                    key(fire.id) {
-                        SwipeToDismissBox(
-                            state = rememberSwipeToDismissBoxState(),
-                            backgroundContent = {},
-                            onDismiss = { onHide(fire.id) },
-                        ) {
-                            FireCard(
-                                fire = fire,
-                                onClick = { onOpen(fire.id) },
-                                armDelayMs = RadarDefaults.ARM_DELAY_MS,
-                                onHide = if (compact) null else { { onHide(fire.id) } },
-                                compact = compact,
-                            )
+                Column(
+                    modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                ) {
+                    cards.forEach { fire ->
+                        key(fire.id) {
+                            SwipeToDismissBox(
+                                state = rememberSwipeToDismissBoxState(),
+                                backgroundContent = {},
+                                onDismiss = { onHide(fire.id) },
+                            ) {
+                                FireCard(
+                                    fire = fire,
+                                    onClick = { onOpen(fire.id) },
+                                    armDelayMs = RadarDefaults.ARM_DELAY_MS,
+                                    onHide = if (compact) null else { { onHide(fire.id) } },
+                                    compact = compact,
+                                    floating = compact,
+                                )
+                            }
                         }
                     }
                 }
-            }
-            if (compact && overflow > 0) {
-                // Mismo medio segundo inactivo que las tarjetas: un dedo que iba al teclado no despliega nada.
-                var armed by remember { mutableStateOf(false) }
-                LaunchedEffect(Unit) {
-                    delay(RadarDefaults.ARM_DELAY_MS)
-                    armed = true
+                if (compact && overflow > 0) {
+                    // Mismo medio segundo inactivo que las tarjetas: un dedo que iba al teclado no despliega nada.
+                    var armed by remember { mutableStateOf(false) }
+                    LaunchedEffect(Unit) {
+                        delay(RadarDefaults.ARM_DELAY_MS)
+                        armed = true
+                    }
+                    FilledTonalButton(
+                        onClick = { if (armed) onExpand() },
+                        modifier = Modifier.padding(top = Spacing.sm).align(Alignment.CenterHorizontally)
+                            .focusProperties { canFocus = false },
+                    ) { Text("Ver $overflow más") }
                 }
-                TextButton(onClick = { if (armed) onExpand() }, modifier = Modifier.focusProperties { canFocus = false }) {
-                    Text("Ver $overflow más")
+                if (!compact) {
+                    TextButton(
+                        onClick = onCollapse,
+                        modifier = Modifier.align(Alignment.End).focusProperties { canFocus = false },
+                    ) { Text("Cerrar") }
                 }
             }
-            if (!compact) {
-                TextButton(onClick = onCollapse, modifier = Modifier.focusProperties { canFocus = false }) { Text("Cerrar") }
-            }
+        }
+        if (compact) {
+            list()
+        } else {
+            // Desplegado: un panel con sombra encima de la pantalla, para que nada se lea por debajo.
+            Surface(
+                shape = MaterialTheme.shapes.extraLarge,
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                shadowElevation = 8.dp,
+                modifier = Modifier.padding(horizontal = Spacing.sm).widthIn(max = RadarDefaults.MAX_WIDTH),
+            ) { list() }
         }
     }
 }

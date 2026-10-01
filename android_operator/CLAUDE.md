@@ -40,7 +40,8 @@ cd android_operator && ./gradlew :app:assembleRelease                           
 | `:core:database` | Room: bandeja, mensajes, outbox, borradores, burbujas, incendios. |
 | `:core:data` | Repositorios (Room = única fuente de verdad), `AuthRepository`, outbox con deshacer, `SyncEngine`. |
 | `:core:navigation` | TODAS las claves de navegación, `Navigator` (tres pilas), deep links, hoja inferior. |
-| `:core:designsystem` · `:core:ui` | Tema (colores del dashboard), `SuggestionBubble`, `RadarOverlay`, `FireCard`, `OrderStepper`. |
+| `:core:designsystem` | **Material 3 Expressive con la marca**: paleta (`Color.kt`), Google Sans Flex (`Type.kt`), esquinas (`Shape.kt`), `Spacing`, `ExpressiveMotion`, íconos Material Symbols (`OperatorIcons`), `Avatar`, `StatusPill`, `IconTile`, `EmptyState`, `SuggestionBubble`, `segmentedShape`. |
+| `:core:ui` | `RadarOverlay`/`RadarLayer`, `FireCard`, `OrderStepper`, horas (`TimeLabels`), `listContent` (cargando/vacía/error). |
 | `:feature:*` | auth, inbox, chat, fires, orders. Cada una registra sus entradas con `@IntoSet`. |
 | `:app` | `MainActivity`, `OperatorApp` (login o shell), `NavigationSuiteScaffold` + `NavDisplay` + radar. |
 
@@ -58,6 +59,11 @@ cd android_operator && ./gradlew :app:assembleRelease                           
 - **Nada de teléfonos reales en tests** (forge gate): usa `wa_test_*` y números de ceros.
 - **Textos en español con tú** (nunca voseo).
 - **TDD**: primero el test que falla por aserción (un error de compilación no cuenta como rojo).
+- **Diseño (Material 3 Expressive)**: los colores salen de `MaterialTheme.colorScheme` u `OperatorTheme.colors`
+  (nunca `Color(0x…)` en una pantalla), el espaciado de `Spacing` (grilla de 4 dp, margen 16 dp), la letra de
+  `MaterialTheme.typography` / `OperatorTheme.emphasized` y los íconos de `OperatorIcons`. Toda pantalla nueva:
+  `XRoute(vm)` que junta el estado + `XScreen(ui, callbacks)` sin ViewModel, con su `@Preview`.
+  `ThemeContrastTest` exige 4,5:1 a todo texto: si cambias la paleta, cámbiala en `Color.kt` (ahí dice cómo se generó).
 
 ## Gotchas que ya nos quemaron
 
@@ -89,6 +95,17 @@ cd android_operator && ./gradlew :app:assembleRelease                           
 15. **Ráfagas de incendios**: los graves nuevos se juntan (`RadarBurst`: el del mensaje más reciente arriba, máx. 3
     y «Ver N más») y se pliegan juntos al chip 4 s después del último. Nunca bajan del `RadarFloor` (en el chat:
     deshacer, burbujas y composer). Antes cada tarjeta reemplazaba a la anterior y la primera se veía 2 s (S14).
+16. **material3 1.4 estable esconde Expressive**: `MaterialExpressiveTheme`, `MotionScheme.expressive()`, los pasos
+    `largeIncreased`/`extraLargeIncreased` de `Shapes` y los estilos enfatizados son `internal` (viven en las alpha
+    de la 1.5). Por eso están en `:core:designsystem` (`ExpressiveMotion`, `ExpressiveShapes`,
+    `OperatorTheme.emphasized`). Con material3 1.5 estable: `MaterialExpressiveTheme` y se borran.
+17. **El enlace de una notificación se aplica una sola vez**: `MainActivity` lo lee solo si `savedInstanceState == null`
+    y no viene de Recientes. Si no, cada giro o cambio de tema devolvía al chat del enlace (`DeepLinkRecreateTest`).
+    No le cambies el intent a la actividad (`setIntent(...setData(null))`): `ActivityScenario` la sigue por su intent
+    y `recreate()` se cuelga para siempre en Robolectric.
+18. **`ExtendedFloatingActionButton(icon = …, text = …)` llega a accesibilidad sin texto** (material3 1.4): uiautomator
+    lo marca `NAF` y TalkBack dice solo «botón». Usa la variante con contenido (`{ Icon(); Spacer(); Text() }`). Lo
+    encontró el escenario S05 del rediseño.
 
 ## Endpoints
 

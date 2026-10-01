@@ -52,7 +52,6 @@ dependencies {
     implementation(libs.androidx.navigation3.ui)
     implementation(libs.androidx.compose.material3.adaptive.navigation.suite)
     implementation(libs.androidx.compose.material3.adaptive.navigation3)
-    implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.kotlinx.collections.immutable)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)

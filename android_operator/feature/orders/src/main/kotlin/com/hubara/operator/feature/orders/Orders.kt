@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,7 +17,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -69,6 +67,33 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.ImmutableList
+import com.hubara.operator.core.ui.listContent
+import com.hubara.operator.core.ui.ListContent
+import com.hubara.operator.core.designsystem.StatusPill
+import com.hubara.operator.core.designsystem.Spacing
+import com.hubara.operator.core.designsystem.OperatorTheme
+import com.hubara.operator.core.designsystem.OperatorIcons
+import com.hubara.operator.core.designsystem.IconTile
+import com.hubara.operator.core.designsystem.ExpressiveShapes
+import com.hubara.operator.core.designsystem.EmptyState
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Box
 
 private val COP = NumberFormat.getIntegerInstance(Locale.forLanguageTag("es-CO"))
 
@@ -86,34 +111,92 @@ fun advanceLabel(current: OrderStage): String? = when (current.next()) {
 
 // ── Lista ─────────────────────────────────────────────────────────────────────────────────────
 
+data class OrdersUiState(
+    val orders: ImmutableList<OrderSummary> = persistentListOf(),
+    val content: ListContent = ListContent.LOADING,
+)
+
 @HiltViewModel
 class OrdersViewModel @Inject constructor(private val repo: OrderRepository) : ViewModel() {
-    val orders: StateFlow<List<OrderSummary>> = repo.orders
-    init { viewModelScope.launch { repo.refreshList() } }
+    /** null = la primera recarga no ha vuelto; si no, si falló. */
+    private val refresh = MutableStateFlow<Boolean?>(null)
+
+    val state: StateFlow<OrdersUiState> = combine(repo.orders, refresh) { orders, failed ->
+        OrdersUiState(orders.toImmutableList(), listContent(orders.isEmpty(), refreshed = failed != null, failed = failed == true))
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), OrdersUiState())
+
+    init { viewModelScope.launch { refresh.value = repo.refreshList().isFailure } }
+}
+
+@Composable
+fun OrdersRoute(vm: OrdersViewModel, onOpen: (OrderId) -> Unit) {
+    val ui by vm.state.collectAsStateWithLifecycle()
+    OrdersScreen(ui, onOpen)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun OrdersScreen(vm: OrdersViewModel, onOpen: (OrderId) -> Unit) {
-    val orders by vm.orders.collectAsStateWithLifecycle()
-    Scaffold(topBar = { TopAppBar(title = { Text("Órdenes") }, actions = { RadarIndicator() }) }) { inner ->
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = inner) {
-            items(orders, key = { it.id.raw }) { o ->
-                Row(
-                    Modifier.fillMaxWidth().clickable(role = Role.Button) { onOpen(o.id) }.padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("#${o.displayId} · ${o.customer}", style = MaterialTheme.typography.titleSmall)
-                        val late = if (o.overdue) " · atrasada" else ""
-                        Text("${stageLabel(o.stage)}$late · ${o.city.orEmpty()}", style = MaterialTheme.typography.bodySmall,
-                            color = if (o.overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Text(cop(o.totalCop), style = MaterialTheme.typography.bodyMedium)
-                }
-                HorizontalDivider()
+fun OrdersScreen(ui: OrdersUiState, onOpen: (OrderId) -> Unit) {
+    val scroll = TopAppBarDefaults.pinnedScrollBehavior()
+    Scaffold(
+        modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
+        topBar = {
+            TopAppBar(title = { Text("Órdenes", style = OperatorTheme.emphasized.titleLarge) }, actions = { RadarIndicator() }, scrollBehavior = scroll)
+        },
+    ) { inner ->
+        when (ui.content) {
+            ListContent.LOADING -> Box(Modifier.fillMaxSize().padding(inner), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            ListContent.EMPTY -> EmptyState(OperatorIcons.Orders, "No hay órdenes", "Cuando el bot registre un pedido, aparece aquí.", Modifier.padding(inner))
+            ListContent.ERROR -> EmptyState(OperatorIcons.Error, "No se pudieron cargar", "Revisa la conexión y vuelve a abrir Órdenes.", Modifier.padding(inner))
+            ListContent.LIST -> LazyColumn(Modifier.fillMaxSize(), contentPadding = inner) {
+                items(ui.orders, key = { it.id.raw }) { o -> OrderRow(o, onClick = { onOpen(o.id) }) }
             }
         }
+    }
+}
+
+/** Ícono y tono de una etapa: atrasada en rojo, lista o entregada en verde, el resto neutro. */
+@Composable
+private fun stageVisual(o: OrderSummary): Triple<ImageVector, Color, Color> {
+    val c = OperatorTheme.colors
+    val s = MaterialTheme.colorScheme
+    val icon = when (o.stage) {
+        OrderStage.NEW, OrderStage.PREPARING -> OperatorIcons.Inventory
+        OrderStage.READY, OrderStage.DELIVERED -> OperatorIcons.Check
+        OrderStage.SHIPPING -> OperatorIcons.Shipping
+        OrderStage.CANCELLED -> OperatorIcons.Close
+    }
+    return when {
+        o.overdue -> Triple(icon, c.graveContainer, c.onGraveContainer)
+        o.stage == OrderStage.READY || o.stage == OrderStage.DELIVERED -> Triple(icon, c.successContainer, c.onSuccessContainer)
+        o.stage == OrderStage.CANCELLED -> Triple(icon, s.surfaceContainerHighest, s.onSurfaceVariant)
+        else -> Triple(icon, s.secondaryContainer, s.onSecondaryContainer)
+    }
+}
+
+@Composable
+private fun OrderRow(o: OrderSummary, onClick: () -> Unit) {
+    val (icon, bg, fg) = stageVisual(o)
+    Row(
+        Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick).padding(horizontal = Spacing.margin, vertical = Spacing.md),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.lg),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconTile(icon, bg, fg, size = 48.dp, shape = ExpressiveShapes.largeIncreased)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("#${o.displayId} · ${o.customer}", style = OperatorTheme.emphasized.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm), verticalAlignment = Alignment.CenterVertically) {
+                if (o.overdue) {
+                    StatusPill("${stageLabel(o.stage)} · atrasada", OperatorTheme.colors.graveContainer, OperatorTheme.colors.onGraveContainer)
+                } else {
+                    StatusPill(stageLabel(o.stage), MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                o.city?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+            }
+        }
+        Text(cop(o.totalCop), style = OperatorTheme.emphasized.titleSmall)
     }
 }
 
@@ -164,50 +247,57 @@ class OrderSheetViewModel @AssistedInject constructor(
 @Composable
 fun OrderSheet(vm: OrderSheetViewModel) {
     val ui by vm.state.collectAsStateWithLifecycle()
+    // La hoja ya aplica las barras del sistema (ModalBottomSheet consume safeDrawing).
     Column(
-        Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = Spacing.lg, end = Spacing.lg, bottom = Spacing.xl),
+        verticalArrangement = Arrangement.spacedBy(Spacing.md),
     ) {
         val d = ui.detail
         when {
-            ui.loading -> CircularProgressIndicator()
+            ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally).padding(Spacing.xl))
             d == null -> Text(ui.message ?: "Sin datos.")
-            else -> OrderSheetContent(d, ui, vm)
+            else -> OrderSheetContent(d, ui.busy, ui.message, onAdvance = vm::advance)
         }
     }
 }
 
 @Composable
-private fun OrderSheetContent(d: OrderDetail, ui: OrderSheetState, vm: OrderSheetViewModel) {
+private fun OrderSheetContent(d: OrderDetail, busy: Boolean, message: String?, onAdvance: (String?, Long?) -> Unit) {
     val s = d.summary
-    Text("Pedido #${s.displayId} · ${s.customer}", style = MaterialTheme.typography.titleMedium)
-    Section("QUÉ COMPRÓ")
-    d.items.forEach { item ->
-        Row(Modifier.fillMaxWidth()) {
-            Column(Modifier.weight(1f)) {
-                Text("${item.title} × ${item.quantity}", style = MaterialTheme.typography.bodyMedium)
-                item.variant?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("Pedido #${s.displayId}", style = OperatorTheme.emphasized.headlineSmall)
+        Text(s.customer, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    SectionCard("Qué compró", OperatorIcons.Inventory) {
+        d.items.forEach { item ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                Column(Modifier.weight(1f)) {
+                    Text("${item.title} × ${item.quantity}", style = OperatorTheme.emphasized.bodyMedium)
+                    item.variant?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+                Text(cop(item.totalCop), style = MaterialTheme.typography.bodyMedium)
             }
-            Text(cop(item.totalCop), style = MaterialTheme.typography.bodyMedium)
         }
     }
-    Section("ESTADO Y SIGUIENTE PASO")
-    OrderStepper(s.stage)
-    NextStep(s.stage, ui.busy, onAdvance = vm::advance)
-    ui.message?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-    Section("PAGO Y ENVÍO")
-    val pago = when (s.payStatus) {
-        PayStatus.PAID -> "pagado ✓"
-        PayStatus.PARTIAL -> "pago parcial"
-        PayStatus.REFUND -> "reembolso"
-        PayStatus.PENDING -> "pago pendiente"
+    SectionCard("Estado y siguiente paso", OperatorIcons.Shipping) {
+        OrderStepper(s.stage)
+        NextStep(s.stage, busy, onAdvance = onAdvance)
+        message?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
     }
-    Field("PAGO", listOfNotNull(d.paymentLabel, pago).joinToString(" · "))
-    Field("TOTAL", "${cop(s.totalCop)} (envío ${cop(d.shippingCop)})")
-    d.address?.let { a ->
-        a.receiver?.let { Field("RECIBE", it) }
-        a.address?.let { Field("DIRECCIÓN", it) }
-        listOfNotNull(a.neighborhood, a.city).joinToString(" · ").takeIf { it.isNotBlank() }?.let { Field("BARRIO", it) }
+    SectionCard("Pago y envío", OperatorIcons.Payments) {
+        val pago = when (s.payStatus) {
+            PayStatus.PAID -> "pagado ✓"
+            PayStatus.PARTIAL -> "pago parcial"
+            PayStatus.REFUND -> "reembolso"
+            PayStatus.PENDING -> "pago pendiente"
+        }
+        Field("PAGO", listOfNotNull(d.paymentLabel, pago).joinToString(" · "))
+        Field("TOTAL", "${cop(s.totalCop)} (envío ${cop(d.shippingCop)})")
+        d.address?.let { a ->
+            a.receiver?.let { Field("RECIBE", it) }
+            a.address?.let { Field("DIRECCIÓN", it) }
+            listOfNotNull(a.neighborhood, a.city).joinToString(" · ").takeIf { it.isNotBlank() }?.let { Field("BARRIO", it) }
+        }
     }
 }
 
@@ -217,33 +307,51 @@ private fun NextStep(current: OrderStage, busy: Boolean, onAdvance: (String?, Lo
     val next = current.next() ?: return
     var tracking by rememberSaveable { mutableStateOf("") }
     var cost by rememberSaveable { mutableStateOf("") }
+    val big = Modifier.fillMaxWidth().heightIn(min = 56.dp)
     when {
         StageInput.PHOTO in next.requires ->
             // La foto de «listo» se sube con la cámara; esa pantalla todavía no está en la app.
-            Text("Para marcarla lista hace falta la foto del pedido: por ahora súbela desde el dashboard.",
-                style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm), verticalAlignment = Alignment.CenterVertically) {
+                Icon(OperatorIcons.Error, contentDescription = null, tint = OperatorTheme.colors.hoy, modifier = Modifier.size(18.dp))
+                Text("Para marcarla lista hace falta la foto del pedido: por ahora súbela desde el dashboard.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
         StageInput.TRACKING_URL in next.requires -> {
             OutlinedTextField(tracking, { tracking = it }, label = { Text("Link de la guía") }, singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
             OutlinedTextField(cost, { cost = it }, label = { Text("Costo real del envío") }, singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
             val ok = tracking.startsWith("http") && parseCop(cost) != null
-            Button(onClick = { onAdvance(tracking.trim(), parseCop(cost)) }, enabled = ok && !busy, modifier = Modifier.fillMaxWidth()) { Text(label) }
+            Button(onClick = { onAdvance(tracking.trim(), parseCop(cost)) }, enabled = ok && !busy, modifier = big) {
+                Text(label, style = MaterialTheme.typography.titleSmall)
+            }
         }
-        else -> Button(onClick = { onAdvance(null, null) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(label) }
+        else -> Button(onClick = { onAdvance(null, null) }, enabled = !busy, modifier = big) { Text(label, style = MaterialTheme.typography.titleSmall) }
+    }
+}
+
+/**
+ * Una sección de la ficha: tarjeta con su ícono y título. La hoja ya es `surfaceContainerLow`: la tarjeta va un tono
+ * más arriba (`surfaceContainerLowest`) para que se vea.
+ */
+@Composable
+private fun SectionCard(title: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
+    Surface(shape = ExpressiveShapes.largeIncreased, color = MaterialTheme.colorScheme.surfaceContainerLowest, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(Spacing.lg), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm), verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                Text(title, style = OperatorTheme.emphasized.titleSmall, color = MaterialTheme.colorScheme.primary)
+            }
+            content()
+        }
     }
 }
 
 @Composable
-private fun Section(title: String) {
-    Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp))
-}
-
-@Composable
 private fun Field(label: String, value: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
-        Text(value, style = MaterialTheme.typography.bodyMedium)
+    Column(Modifier.fillMaxWidth()) {
+        Text(label, style = OperatorTheme.emphasized.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyLarge)
     }
 }
 
@@ -254,7 +362,7 @@ object OrdersNavigation {
     @Provides @IntoSet
     fun entries(): EntryProviderInstaller = { navigator ->
         entry<OrdersKey>(metadata = ListDetailSceneStrategy.listPane()) {
-            OrdersScreen(hiltViewModel(), onOpen = { navigator.navigate(OrderSheetKey(it)) })
+            OrdersRoute(hiltViewModel(), onOpen = { navigator.navigate(OrderSheetKey(it)) })
         }
         entry<OrderSheetKey>(metadata = BottomSheetSceneStrategy.bottomSheet(expanded = true)) { key ->
             OrderSheet(hiltViewModel<OrderSheetViewModel, OrderSheetViewModel.Factory>(creationCallback = { it.create(key.order.raw) }))
