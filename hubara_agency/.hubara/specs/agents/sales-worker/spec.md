@@ -1307,6 +1307,25 @@ Antes de redactar el gancho, la decisión `contactar` SHALL ver, además del epi
 - WHEN la reactivación le va a escribir
 - THEN la conversación no terminó (0,05 con Jev real) y el gancho se redacta como siempre
 
+### Requirement: Después de una compra, remarketing cierra el ciclo y nunca vende (2026-10-01)
+
+Si la conversación justo anterior terminó en una compra (COMPRA_EXITOSA, CONFIRMADO_PAGO_PENDIENTE, CONFIRMADO_SIN_DATOS) y no hay un pedido nuevo en curso, el gancho MUST usar una instrucción de posventa en lugar de la del gancho de venta:
+- si el último mensaje del cliente quedó sin respuesta (`closing`), un cierre breve y cálido que retome lo que dijo, sin ofrecer productos ni preguntar qué más quiere; la decisión `contactar` no lo corta;
+- si ya le respondimos (`answered`), NO_MESSAGE, salvo que quedara algo abierto (una pregunta o un producto que pidió).
+En los demás casos la instrucción del gancho no cambia.
+
+#### Scenario: La clienta ya recibió su pedido y su gracias quedó sin respuesta (conversación real ···4148)
+
+- GIVEN la conversación anterior terminó en una compra y los últimos mensajes del cliente («Listo.. gracias por los datos..», «te enviaremos fotos») no tienen respuesta
+- WHEN la reactivación le va a escribir
+- THEN la instrucción dice que ya compró y que se le debe un cierre, nunca «miró productos pero no eligió ninguno», y el mensaje es un cierre sin productos
+
+#### Scenario: Ya le respondimos
+
+- GIVEN la misma conversación, con la respuesta de la tienda al final
+- WHEN la reactivación le va a escribir
+- THEN no se envía nada (NO_MESSAGE, o el corte de `contactar` con Jev)
+
 ### Requirement: Si el bot promete un colega, el humano queda avisado (2026-09-30)
 
 Antes de enviar el texto final de un turno que no escaló, V1 y V2 SHALL preguntarle a la red de seguridad (`ensure_promised_handoff_activity`) si ese texto le promete al cliente que una persona del equipo lo va a contactar, coordinar o confirmar algo (capacidad `relevo`: las frases del relevo son PISO, también con `reglas`; Jev suma paráfrasis). Si lo promete, la red MUST escalar como `escalate_to_human` (ruta humano, HUMANO, motivo con la promesa). El texto sale igual (la promesa ya es cierta) y el workflow termina como cualquier escalación. Un turno que ya escaló no se revisa. En V1 va con el parche `promised-handoff-escalation-v1`. La nota del episodio nuevo, si el anterior cerró con un pedido, SHALL decir que lo que el cliente pida de ese pedido se escala con `escalate_to_human`, sin prometerlo antes. El scorecard lo mide con TAG-08 (y TAG-06 cuando tuvo que actuar la red).

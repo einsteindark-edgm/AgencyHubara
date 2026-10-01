@@ -475,8 +475,29 @@ El banco `caso-cortesia-1001` (§6.8) emulaba el caso con textos limpios y con l
 
 **Pendiente:**
 - Activar `cortesia` y `contactar` con Jev. Con el bot de hoy, el turno 1 sigue cerrando con «¿en qué te puedo ayudar?».
-- El aviso de remarketing trata a un cliente que ya compró como «miró productos pero no eligió ninguno».
+- El aviso de remarketing trata a un cliente que ya compró como «miró productos pero no eligió ninguno». → resuelto en §6.13.
 - En el laboratorio, tras la escalación del turno 2 la ruta queda humano en los turnos siguientes (en producción el humano la devolvió): «el bot le habló al cliente en ruta humano» sale en los tres brazos, también en producción.
 - El bot de producción etiquetó COMPRA_EXITOSA en el turno 3 (lo pone el equipo, no el bot).
 - Llevar cortesía y «¿terminó?» a la sonda diaria de Jev, con estos mensajes reales (sin datos personales).
+
+### 6.13 Después de una compra, remarketing cierra el ciclo y nunca vende (2026-10-01)
+
+**Decisión del operador:** un NO_MESSAGE queda frío si el cliente felicita o confirma que le llegó y nadie le respondió. Lo recomendado en posventa es cerrar el ciclo con un mensaje breve y personal, sin vender en ese mismo mensaje (la venta cruzada va aparte, días después y con consentimiento), y no responder dos veces.
+
+**Qué quedó** (`d0e24027`):
+- **El contexto del gancho** sabe si el cliente ya compró: la conversación justo anterior terminó en una compra y no hay un pedido nuevo en curso. También sabe si su último mensaje quedó sin respuesta.
+- **Instrucción propia de posventa**, en lugar de la del gancho de venta:
+  - si se le debe el cierre, uno breve y cálido que retome lo que dijo, sin ofrecer productos ni preguntar qué más quiere;
+  - si ya le respondimos, NO_MESSAGE, salvo que quedara algo abierto.
+- **Jev** («¿terminó?») ya no corta el cierre que se le debe al cliente. Para todos los demás casos, el gancho no cambia.
+
+**Medido** (workflow real de remarketing sobre la copia de ···4148, con un episodio nuevo abierto por el gracias; imagen d0e24027):
+
+| Caso | Bot actual | Bot nuevo con Jev |
+|---|---|---|
+| «Listo.. gracias por los datos..» y «te enviaremos fotos» sin respuesta | «Qué alegría que te hayan gustado de verdad 🤍 Quedamos atentos a esas fotos cuando se las entregues a tu esposa.» (2 de 2) | el mismo cierre (2 de 2); Jev decía «terminó» (0,92) y ya no lo corta |
+| La misma, con la respuesta de la tienda al final | NO_MESSAGE | no se redacta (Jev 0,92) |
+
+**Pendiente:**
+- En el estado real de ···4148, esos mensajes quedaron sin respuesta porque llegaron cuando la conversación la tenía una persona. Cuando el humano la devolvió a Ventas, nadie los contestó, y remarketing no lo hace porque la política central lo frena por «compra ya hecha». Responder lo pendiente al devolver la conversación es otro arreglo, en Ventas.
 
