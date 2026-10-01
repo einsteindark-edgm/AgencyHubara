@@ -9,8 +9,16 @@
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"   # no hay Java del sistema
 cd android_operator && ./gradlew testDebugUnitTest :core:model:test               # todos los tests locales
 cd android_operator && ./gradlew :app:assembleDebug                               # APK debug
-cd android_operator && ./gradlew :app:assembleRelease                             # R8 completo
+cd android_operator && ./gradlew :app:assembleRelease                             # R8 completo (lo corre la CI)
+cd android_operator && ./gradlew :app:bundleRelease -Phubara.apiUrl=https://… \
+  -Phubara.cognitoClientId=… -Phubara.privacyUrl=https://…                         # .aab para Google Play
 ```
+
+- **Publicar en Google Play**: receta paso a paso con enlaces oficiales en `docs/mobile-native/publicar-en-google-play.html`;
+  lo que se sube (ícono, gráficos, capturas, textos, seguridad de datos, borrador de la política de privacidad) en
+  `release/`. `bundleRelease` falla cerrado (`verifyPlayRelease`): sin https, sin client id de Cognito, sin clave de
+  subida o sin política de privacidad no arma nada. La clave de subida y sus contraseñas viven en
+  `~/.gradle/gradle.properties` (`hubara.upload.*`), **nunca** en el repo (es público). Cada subida sube `versionCode`.
 
 - E2E en emulador contra el backend real de la rama y datos sintéticos: `e2e/qa.sh` corre los escenarios con
   guion (adb, sin LLM), igual que la compuerta de merge **QA emulador** en CI. Artemis explora a mano
@@ -40,7 +48,7 @@ cd android_operator && ./gradlew :app:assembleRelease                           
 | `:core:database` | Room: bandeja, mensajes, outbox, borradores, burbujas, incendios. |
 | `:core:data` | Repositorios (Room = única fuente de verdad), `AuthRepository`, outbox con deshacer, `SyncEngine`. |
 | `:core:navigation` | TODAS las claves de navegación, `Navigator` (tres pilas), deep links, hoja inferior. |
-| `:core:designsystem` | **Material 3 Expressive con la marca**: paleta (`Color.kt`), Google Sans Flex (`Type.kt`), esquinas (`Shape.kt`), `Spacing`, `ExpressiveMotion`, íconos Material Symbols (`OperatorIcons`), `Avatar`, `StatusPill`, `IconTile`, `EmptyState`, `SuggestionBubble`, `segmentedShape`. |
+| `:core:designsystem` | **Material 3 Expressive con la marca**: paleta (`Color.kt`), Google Sans Flex (`Type.kt`), esquinas (`Shape.kt`), `Spacing`, íconos Material Symbols (`OperatorIcons`), `Avatar`, `StatusPill`, `IconTile`, `EmptyState`, `SuggestionBubble`, `segmentedShape`. |
 | `:core:ui` | `RadarOverlay`/`RadarLayer`, `FireCard`, `OrderStepper`, horas (`TimeLabels`), `listContent` (cargando/vacía/error). |
 | `:feature:*` | auth, inbox, chat, fires, orders. Cada una registra sus entradas con `@IntoSet`. |
 | `:app` | `MainActivity`, `OperatorApp` (login o shell), `NavigationSuiteScaffold` + `NavDisplay` + radar. |
@@ -61,7 +69,7 @@ cd android_operator && ./gradlew :app:assembleRelease                           
 - **TDD**: primero el test que falla por aserción (un error de compilación no cuenta como rojo).
 - **Diseño (Material 3 Expressive)**: los colores salen de `MaterialTheme.colorScheme` u `OperatorTheme.colors`
   (nunca `Color(0x…)` en una pantalla), el espaciado de `Spacing` (grilla de 4 dp, margen 16 dp), la letra de
-  `MaterialTheme.typography` / `OperatorTheme.emphasized` y los íconos de `OperatorIcons`. Toda pantalla nueva:
+  `MaterialTheme.typography` (los `*Emphasized` para lo que se ve primero) y los íconos de `OperatorIcons`. Toda pantalla nueva:
   `XRoute(vm)` que junta el estado + `XScreen(ui, callbacks)` sin ViewModel, con su `@Preview`.
   `ThemeContrastTest` exige 4,5:1 a todo texto: si cambias la paleta, cámbiala en `Color.kt` (ahí dice cómo se generó).
 
@@ -83,8 +91,8 @@ cd android_operator && ./gradlew :app:assembleRelease                           
 11. **Hojas largas abren completas** (`bottomSheet(expanded = true)`): a media altura la acción quedaba escondida.
 12. **Emulador**: los enlaces `hubara://` van con intent explícito (`am start -n …/.MainActivity -d …`); el manifest
     no tiene filtro VIEW. El vigía (periódico) no se adelanta con `cmd jobscheduler run -f`: corre al arrancar el
-    proceso: se despierta con un broadcast explícito de acción propia al receptor del widget
-    (APPWIDGET_UPDATE es protegido y el shell no puede mandarlo).
+    proceso: se despierta con un broadcast explícito a `E2eWakeReceiver`, que solo existe en el build debug
+    (el receptor del widget no está exportado y APPWIDGET_UPDATE es protegido).
 13. **Nada que cambie cada segundo en la semántica**: la cuenta de «Deshacer» se ve pero va con
     `clearAndSetSemantics {}`, y la región viva es solo «Enviando «…»». Si no, TalkBack la repite cada segundo
     y uiautomator/Artemis nunca ven la pantalla quieta («could not get idle state»).
@@ -95,10 +103,11 @@ cd android_operator && ./gradlew :app:assembleRelease                           
 15. **Ráfagas de incendios**: los graves nuevos se juntan (`RadarBurst`: el del mensaje más reciente arriba, máx. 3
     y «Ver N más») y se pliegan juntos al chip 4 s después del último. Nunca bajan del `RadarFloor` (en el chat:
     deshacer, burbujas y composer). Antes cada tarjeta reemplazaba a la anterior y la primera se veía 2 s (S14).
-16. **material3 1.4 estable esconde Expressive**: `MaterialExpressiveTheme`, `MotionScheme.expressive()`, los pasos
-    `largeIncreased`/`extraLargeIncreased` de `Shapes` y los estilos enfatizados son `internal` (viven en las alpha
-    de la 1.5). Por eso están en `:core:designsystem` (`ExpressiveMotion`, `ExpressiveShapes`,
-    `OperatorTheme.emphasized`). Con material3 1.5 estable: `MaterialExpressiveTheme` y se borran.
+16. **Material 3 Expressive va en material3 1.5 alpha** (`libs.versions.toml`: `material3 = "1.5.0-alpha29"`, fuera
+    del BOM): `MaterialExpressiveTheme` con `MotionScheme.expressive()`, `Shapes.largeIncreased…`,
+    `typography.*Emphasized`, `LoadingIndicator`, `ButtonDefaults.shapes()`. Arrastra compose-foundation
+    1.13.0-alpha01. Volver a estable = borrar esa versión y sus `version.ref` (y recuperar los equivalentes propios
+    del commit «sistema de diseño Material 3 Expressive»). Con la 1.5 estable: solo cambiar la versión.
 17. **El enlace de una notificación se aplica una sola vez**: `MainActivity` lo lee solo si `savedInstanceState == null`
     y no viene de Recientes. Si no, cada giro o cambio de tema devolvía al chat del enlace (`DeepLinkRecreateTest`).
     No le cambies el intent a la actividad (`setIntent(...setData(null))`): `ActivityScenario` la sigue por su intent

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Íconos temáticos (Android 13+): el sistema lo tiñe; los puntos son huecos. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFF" android:fillType="evenOdd" android:pathData="M42,34H66A12,12 0,0 1,78 46V58A12,12 0,0 1,66 70H50L38,79L42,69.5A12,12 0,0 1,30 58V46A12,12 0,0 1,42 34ZM38.4,52a3.6,3.6 0,1 0,7.2 0a3.6,3.6 0,1 0,-7.2 0ZM50.4,52a3.6,3.6 0,1 0,7.2 0a3.6,3.6 0,1 0,-7.2 0ZM62.4,52a3.6,3.6 0,1 0,7.2 0a3.6,3.6 0,1 0,-7.2 0Z" />
+</vector>
