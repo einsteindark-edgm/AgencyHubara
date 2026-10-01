@@ -87,7 +87,10 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
         silence_minutes=context.silence_minutes,
         vault_dir=Path(WORKSPACE_VAULT_DIR),
     )
-    context = replace(context, skip_touch=skip, contact=trace)
+    # Ya compró y su cortesía quedó sin respuesta: el cierre se le debe
+    # (operador, 2026-10-01: un NO_MESSAGE ahí queda frío). Jev decide el
+    # resto; esto solo le quita el corte a ese caso.
+    context = replace(context, skip_touch=skip and context.post_purchase != "closing", contact=trace)
     products = await _catalog_products()
     if not products:
         return context
@@ -139,4 +142,5 @@ async def build_remarketing_trigger_v2_activity(input: RemarketingTriggerInput) 
         campaign_context=input.campaign_context,
         catalog_facts=input.catalog_facts,
         unavailable_terms=input.unavailable_terms,
+        post_purchase=input.post_purchase,
     )

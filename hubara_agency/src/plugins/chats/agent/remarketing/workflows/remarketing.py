@@ -232,6 +232,9 @@ class RemarketingSessionWorkflow:
                 # activity, no los comandos → replay-safe sin patch.
                 catalog_facts=context.catalog_facts,
                 unavailable_terms=list(context.unavailable_terms),
+                # Posventa (caso real ···4148): solo cambia el input de la
+                # activity, no los comandos → replay-safe sin patch.
+                post_purchase=str(getattr(context, "post_purchase", "") or ""),
             ),
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=RetryPolicy(maximum_attempts=2),

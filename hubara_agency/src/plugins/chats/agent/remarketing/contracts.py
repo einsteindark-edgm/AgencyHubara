@@ -73,6 +73,7 @@ class RemarketingContext:
     unavailable_terms: list[str] = field(default_factory=list)
     skip_touch: bool = False
     contact: dict = field(default_factory=dict)
+    post_purchase: str = ""
 
 
 @dataclass(frozen=True)
@@ -91,3 +92,4 @@ class RemarketingTriggerInput:
     catalog_facts: str = ""
     #: Ver `RemarketingContext.unavailable_terms`.
     unavailable_terms: list[str] = field(default_factory=list)
+    post_purchase: str = ""

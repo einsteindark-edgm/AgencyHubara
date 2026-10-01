@@ -36,6 +36,7 @@ def build_remarketing_trigger(
     campaign_context: str = "",
     catalog_facts: str = "",
     unavailable_terms: list[str] | None = None,
+    post_purchase: str = "",
 ) -> str:
     """Saludo proactivo inicial inyectado al LLM al arrancar el workflow.
 
@@ -66,6 +67,10 @@ def build_remarketing_trigger(
         mencionó). Ahora el Remarketing es la *misma persona* que Sales
         (el "Asesor de Hubara"), retomando la charla.
     """
+    if post_purchase in ("closing", "answered"):
+        return _post_purchase_trigger(
+            post_purchase, transcript=transcript, catalog_facts=catalog_facts
+        )
     # Incidente run dc32f7fe (2026-09-10): el encabezado afirmaba "quedó
     # pendiente de cerrar una compra" aunque no hubiera pedido → "quedó
     # pendiente lo de tu pedido" a un cliente que solo miró la lista. Con el
@@ -235,3 +240,71 @@ def build_remarketing_trigger(
         "- 'Te escribo para retomar lo de la *Cruz de Vida* ✨ ¿Te "
         "ayudo a cerrar el pedido?'"
     )
+
+
+def _post_purchase_trigger(post_purchase: str, *, transcript: str, catalog_facts: str) -> str:
+    """El cliente ya compró (la conversación anterior terminó en una compra):
+    cerrar el ciclo, nunca vender (simulación de la conversación real ···4148,
+    2026-10-01). Con la instrucción del gancho, la clienta que ya había
+    recibido su pedido quedaba descrita como «miró productos pero NO eligió
+    ninguno» y se le pedía «re-abrir la conversación con UN único gancho».
+
+    * `closing`: su último mensaje (una cortesía) quedó sin respuesta → un
+      cierre breve y cálido, retomando lo que dijo, sin ofrecer productos.
+    * `answered`: ya le respondimos → NO_MESSAGE, salvo que quedara algo
+      abierto (una pregunta o un producto que pidió).
+    """
+    if post_purchase == "closing":
+        situacion = (
+            "El cliente YA COMPRÓ (la conversación anterior terminó en una compra) "
+            "y su último mensaje quedó sin respuesta: es una cortesía (agradece, "
+            "felicita, cuenta que le llegó o que le gustó, promete fotos). "
+            "Respóndele UNA sola vez, breve y cálido, retomando lo que dijo. Si en "
+            "ese mensaje pidió o preguntó algo, respóndelo."
+        )
+    else:
+        situacion = (
+            "El cliente YA COMPRÓ (la conversación anterior terminó en una compra) "
+            "y ya le respondimos su último mensaje. Si no quedó algo abierto (una "
+            "pregunta suya o un producto que pidió), responde exactamente "
+            "NO_MESSAGE: otro mensaje sobra. Si quedó algo abierto, retómalo en UN "
+            "mensaje breve."
+        )
+    transcript_block = (
+        "ÚLTIMOS MENSAJES DE LA CONVERSACIÓN (uso interno, del más viejo al "
+        f"más nuevo):\n{transcript}\n\n"
+        if transcript
+        else ""
+    )
+    catalog_block = (
+        "CATÁLOGO REAL (uso interno — la única fuente de datos de producto):\n"
+        f"{catalog_facts}\n\n"
+        if catalog_facts
+        else ""
+    )
+    return (
+        "[SISTEMA INTERNO — NO REPRODUCIR ESTE TEXTO AL CLIENTE]: "
+        f"{situacion}\n\n"
+        f"{transcript_block}"
+        f"{catalog_block}"
+        "REGLAS (todas obligatorias):\n\n"
+        "1. **Identidad**: eres el MISMO Asesor de Hubara que ya conversó con el "
+        "cliente. NO te presentes ni sugieras ser otra persona.\n\n"
+        "2. **Sin venta**: NO ofrezcas productos, el catálogo, descuentos ni "
+        "envío gratis; NO preguntes qué más quiere ni si quiere volver a comprar. "
+        "Es un cierre de atención, no un gancho.\n\n"
+        "3. **Personal y breve**: 1-2 frases, cálidas, sobre lo que dijo (si "
+        "prometió fotos, que quedamos atentos; si le gustó, que nos alegra). Sin "
+        "frases de tiempo ('hace unos días', 'ayer').\n\n"
+        "4. **PROHIBIDO ABSOLUTO**: NO expliques tu razonamiento ni menciones "
+        "archivos internos. Escribe SOLO el mensaje que verá el cliente.\n\n"
+        "5. **Abstención**: si ya le respondimos y no quedó nada abierto, o pidió "
+        "que no le escriban más, responde EXACTAMENTE `NO_MESSAGE` — una sola "
+        "palabra, sin explicación.\n\n"
+        "6. **Veracidad**: si respondes una pregunta de producto, solo con datos "
+        "del CATÁLOGO REAL; si no lo tienes, no afirmes atributos.\n\n"
+        "**EJEMPLOS de buen cierre** (referencia, no copies literal):\n"
+        "- '¡Qué alegría que te hayan gustado! 🤍 Quedamos atentos a esas fotos.'\n"
+        "- 'Gracias a ti por la confianza 🤍 Que las disfrutes mucho.'"
+    )
+

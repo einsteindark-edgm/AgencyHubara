@@ -132,6 +132,39 @@ def contact_transcript(meta: dict[str, Any], events: list[dict[str, Any]]) -> st
     return "\n".join(part for part in (f"(Antes de esto, {outcome}.)", notices, current) if part)
 
 
+#: Cierres de la conversación anterior que cuentan como compra.
+_BOUGHT = frozenset({"COMPRA_EXITOSA", "CONFIRMADO_PAGO_PENDIENTE", "CONFIRMADO_SIN_DATOS"})
+
+
+def post_purchase_state(meta: dict[str, Any], events: list[dict[str, Any]]) -> str:
+    """Si el cliente ya compró: la conversación justo anterior terminó en una
+    compra y no hay un pedido nuevo en curso (simulación de la conversación
+    real ···4148, 2026-10-01). `closing` si su último mensaje quedó sin
+    respuesta (se le debe un cierre), `answered` si ya le respondimos, `""`
+    si no aplica."""
+    episodes = [e for e in meta.get("episodes") or [] if isinstance(e, dict)]
+    if not episodes:
+        return ""
+    if _active_episode(meta) is not None:
+        previous = episodes[-2] if len(episodes) >= 2 else None
+    else:
+        previous = episodes[-1]
+    if (
+        not isinstance(previous, dict)
+        or previous.get("closed_at_ms") is None
+        or str(previous.get("closing_tag") or "") not in _BOUGHT
+    ):
+        return ""
+    last = next(
+        (
+            e for e in reversed(events)
+            if e.get("role") in _LABELS and isinstance(e.get("content"), str) and e["content"].strip()
+        ),
+        None,
+    )
+    return "closing" if last is not None and last.get("role") == "user" else "answered"
+
+
 def campaign_context_for(episode: dict[str, Any] | None) -> str:
     """La campaña que abrió el episodio, redactada para el trigger ("" si no)."""
     campaign = (episode or {}).get("opened_by_campaign")
@@ -298,4 +331,6 @@ def context_from_metadata(
         touch_number=touch_number,
         silence_minutes=silence_minutes,
         campaign_context=campaign_context_for(episode),
+        # Un pedido nuevo en curso manda: es una venta, no una posventa.
+        post_purchase="" if lead.has_order_draft else post_purchase_state(meta, events),
     )
