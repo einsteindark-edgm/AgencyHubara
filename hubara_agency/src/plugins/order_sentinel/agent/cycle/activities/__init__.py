@@ -47,7 +47,7 @@ from src.plugins.order_sentinel.agent.cycle.use_cases.readings import (
     reading_from,
     redact_terms,
 )
-from src.sdk.connectorkit import DecisionMetrics, DisagreementLog, oracle_timeout_s
+from src.sdk.connectorkit import DecisionMetrics, DisagreementLog, oracle_timeout_s, record_jev_cost
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, with_heartbeat
 
 #: prefijo de sesiones WhatsApp en el vault (los demás dirs se saltan).
@@ -185,6 +185,10 @@ async def _read_state(
         if request is not None:
             second = await port.ask(request[0], request[1], timeout_s=timeout_s, redact=redact)
         latency_ms = int(first.latency_ms or 0) + int(getattr(second, "latency_ms", 0) or 0)
+        # Lo que cobró Jev va a la conversación (como en ventas).
+        for result in (first, second):
+            if result is not None:
+                record_jev_cost(str(convo.get("session_id") or ""), getattr(result, "cost_usd", None))
         return reading_from(convo, first, second, since_ms=since_ms), latency_ms
     except Exception as e:  # noqa: BLE001 — el lector nunca tumba el ciclo
         activity.logger.warning(

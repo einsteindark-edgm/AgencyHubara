@@ -101,21 +101,36 @@ def _episode_traces(session_id: str, episode_id: str) -> list[dict]:
         return []
 
 
+def _charge(session_id: str, *costs: float | None) -> None:
+    """Lo que cobró Jev (el perfil y su sombra) va a la conversación."""
+    from src.sdk.connectorkit import record_jev_cost
+
+    for cost in costs:
+        try:
+            record_jev_cost(session_id, cost)
+        except Exception:  # noqa: BLE001 — el costo nunca frena el turno
+            activity.logger.warning("decisions: no se registró el costo de Jev", exc_info=True)
+
+
 @activity.defn(name="perceive_burst")
 async def perceive_burst_activity(inp: PerceiveInput) -> TurnDecisions:
     try:
         context = _turn_context(inp.session_id, list(inp.messages)) if engine.needs_context(inp.profile) else None
-        return await engine.perceive(inp, redact=_redact_terms(inp.session_id), context=context)
+        decisions = await engine.perceive(inp, redact=_redact_terms(inp.session_id), context=context)
     except Exception as exc:  # noqa: BLE001 — fail-open: el turno sale como hoy
         return TurnDecisions(ok=False, profile=inp.profile, error=f"unexpected: {exc!r}"[:300], contract=CONTRACT_VERSION)
+    _charge(inp.session_id, decisions.cost_usd, (decisions.shadow or {}).get("cost_usd"))
+    return decisions
 
 
 @activity.defn(name="verify_coverage")
 async def verify_coverage_activity(inp: VerifyInput) -> VerifyOutput:
     try:
-        return await engine.verify(inp, redact=_redact_terms(inp.session_id))
+        out = await engine.verify(inp, redact=_redact_terms(inp.session_id))
     except Exception as exc:  # noqa: BLE001 — fail-open
         return VerifyOutput(ok=False, decision="send", error=f"unexpected: {exc!r}"[:300])
+    _charge(inp.session_id, out.cost_usd)
+    return out
 
 
 PERCEPTION_ACTIVITIES = [perceive_burst_activity, verify_coverage_activity]

@@ -48,6 +48,16 @@ export function fmtUsdMicros(micros: number): string {
   return "US$" + usd.toFixed(usd < 1 ? 4 : 2);
 }
 
+/** Como `fmtUsdMicros`, pero lo que cuesta menos de un centavo se lee con 6
+ *  decimales (sin ceros de sobra): una pregunta a Jev cuesta ~US$0,00002 y con
+ *  4 decimales una conversación entera se leería "US$0.0001". */
+export function fmtUsdMicrosFine(micros: number): string {
+  if (!micros) return "US$0";
+  const usd = micros / 1_000_000;
+  if (usd >= 0.01) return fmtUsdMicros(micros);
+  return "US$" + usd.toFixed(6).replace(/0+$/, "");
+}
+
 /** "1h 12m" / "45m" / "38s" — duración legible desde milisegundos. Para el
  *  "tiempo" del embudo (duración de episodio). "—" si null/0/negativo. */
 export function fmtDuration(ms: number): string {

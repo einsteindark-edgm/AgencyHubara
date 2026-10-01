@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { fmtUsdMicros } from "./format";
+import { fmtUsdMicros, fmtUsdMicrosFine } from "./format";
 
 describe("fmtUsdMicros", () => {
   it("sub-dólar con 4 decimales (un mensaje de servicio se lee)", () => {
@@ -21,5 +21,17 @@ describe("fmtUsdMicros", () => {
 
   it("cero es 'US$0'", () => {
     expect(fmtUsdMicros(0)).toBe("US$0");
+  });
+});
+
+describe("fmtUsdMicrosFine", () => {
+  it("una pregunta a Jev (~US$0,00002) se lee con 6 decimales, sin ceros de sobra", () => {
+    expect(fmtUsdMicrosFine(105)).toBe("US$0.000105");
+    expect(fmtUsdMicrosFine(20)).toBe("US$0.00002");
+  });
+
+  it("desde un centavo, igual que fmtUsdMicros", () => {
+    expect(fmtUsdMicrosFine(22_100)).toBe("US$0.0221");
+    expect(fmtUsdMicrosFine(0)).toBe("US$0");
   });
 });

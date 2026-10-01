@@ -26,8 +26,8 @@ SID = "wa_573009876543"
 class RecordingPort:
     """El fake oficial + lo que se tapó en cada pregunta."""
 
-    def __init__(self, answers=None, *, error=None) -> None:
-        self.inner = FakePerceptionAdapter(answers, error=error)
+    def __init__(self, answers=None, *, error=None, cost_usd=0.0) -> None:
+        self.inner = FakePerceptionAdapter(answers, error=error, cost_usd=cost_usd)
         self.redacts: list[tuple[str, ...]] = []
 
     @property
@@ -169,3 +169,22 @@ async def test_la_evidencia_se_pregunta_solo_sobre_lo_nuevo_desde_el_watermark(
     [convo] = snapshot["conversations"]
     assert [ids for _, ids in port.calls][1] == ("estado_pedido.evidencia.2",)
     assert convo["reading"]["verdict"]["evidence"] == ["Hola Ana! ya salió con el mensajero"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_lo_que_cobra_jev_queda_en_la_conversacion(_isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    """Las dos preguntas del lector (¿cambió? y la evidencia) se suman al
+    costo de Jev de esa conversación, como en ventas."""
+    import json
+
+    monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
+    monkeypatch.setenv("ORDER_SENTINEL_READER", "shadow")
+    port = RecordingPort(_JEV_SALIO, cost_usd=0.00002)
+    monkeypatch.setattr(acts, "get_reader_port", lambda: port)
+    _seed(_isolate_vault_dir)
+
+    await ActivityEnvironment().run(acts.build_order_sentinel_snapshot_activity)
+
+    metadata = json.loads((_isolate_vault_dir / SID / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["episodes"][0]["jev_usage"] == {"calls": 2, "cost_usd_micros": 40}

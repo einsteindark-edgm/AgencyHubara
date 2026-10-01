@@ -196,6 +196,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "FakePerceptionAdapter": "src.platform.perception.adapters.fake",
     "NullPerceptionAdapter": "src.platform.perception.adapters.null",
     "anonymize_text": "src.platform.perception.anonymize",
+    # Lo que cobra cada pregunta a Jev, sumado a la conversación (como el
+    # costo del LLM y el de WhatsApp): `episodes[].jev_usage`.
+    "record_jev_cost": "src.platform.perception.costs",
     # La cola de desacuerdos regla ↔ Jev y las métricas de cada decisión (una
     # sola de cada una: ventas y el Order Sentinel).
     "DisagreementLog": "src.platform.perception.disagreements",

@@ -219,6 +219,9 @@ from src.platform.perception.composition import (
     get_perception_port as get_perception_port,
     oracle_timeout_s as oracle_timeout_s,
 )
+from src.platform.perception.costs import (
+    record_jev_cost as record_jev_cost,
+)
 from src.platform.perception.disagreements import (
     DisagreementLog as DisagreementLog,
 )

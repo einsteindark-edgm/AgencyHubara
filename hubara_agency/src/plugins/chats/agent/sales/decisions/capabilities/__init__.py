@@ -150,6 +150,16 @@ async def _ask_oracle(profile: Any, state: str, questions: Sequence[Any], *, red
     return result
 
 
+def _charge(session_id: str | None, result: Any) -> None:
+    """Lo que cobró Jev va a la conversación (también en sombra: pregunta igual)."""
+    from src.sdk.connectorkit import record_jev_cost
+
+    try:
+        record_jev_cost(session_id, getattr(result, "cost_usd", None))
+    except Exception as exc:  # noqa: BLE001 — el costo nunca frena la decisión
+        logger.warning("decisions.jev_cost_not_recorded", error=repr(exc)[:200])
+
+
 async def decide(
     capability: Any,
     inp: Any,
@@ -198,6 +208,7 @@ async def _decide(
         return Verdict(capability=name, value=rule, by=fallback_by, provider=provider, rule=rule, reason="no_question")
     state, questions = asked
     result = await _ask_oracle(profile, state, questions, redact=redact)
+    _charge(session_id, result)
     jev = capability.decide(inp, result, rule, _thresholds(capability)) if result.ok else None
     agree = None if jev is None else bool(capability.same(rule, jev))
     base = dict(

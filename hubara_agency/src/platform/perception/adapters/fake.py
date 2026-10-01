@@ -24,9 +24,12 @@ class FakePerceptionAdapter:
     name = "fake"
     model = "fake"
 
-    def __init__(self, answers: Mapping[str, TypedAnswer] | None = None, *, error: str | None = None) -> None:
+    def __init__(
+        self, answers: Mapping[str, TypedAnswer] | None = None, *, error: str | None = None, cost_usd: float = 0.0
+    ) -> None:
         self._answers = dict(answers or {})
         self._error = error
+        self._cost_usd = cost_usd  # lo que "cobra" cada pregunta (el costo de Jev por conversación)
         self.calls: list[tuple[str, tuple[str, ...]]] = []
 
     def _default(self, q: TypedQuestion, state: str) -> TypedAnswer:
@@ -50,4 +53,4 @@ class FakePerceptionAdapter:
         if self._error:
             return failed(self._error, provider=self.name, model=self.model)
         answers = tuple(self._answers.get(q.id) or self._default(q, state) for q in questions)
-        return PerceptionResult(ok=True, answers=answers, provider=self.name, model=self.model, cost_usd=0.0)
+        return PerceptionResult(ok=True, answers=answers, provider=self.name, model=self.model, cost_usd=self._cost_usd)

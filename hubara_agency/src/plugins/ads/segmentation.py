@@ -88,6 +88,10 @@ def merge_bucket_group(members: list[AdsCampaignSummary]) -> AdsCampaignSummary:
         for m in wa_members:
             merge_wa_cost_categories(wa_by_category, m.wa_cost_by_category)
 
+    jev_members = [m for m in members if m.jev_cost_usd_micros is not None]
+    jev_cost = sum(m.jev_cost_usd_micros or 0 for m in jev_members) if jev_members else None
+    jev_calls = sum(m.jev_calls or 0 for m in jev_members) if jev_members else None
+
     firsts = [m.first_seen_ms for m in members if m.first_seen_ms is not None]
     lasts = [m.last_seen_ms for m in members if m.last_seen_ms is not None]
 
@@ -106,6 +110,8 @@ def merge_bucket_group(members: list[AdsCampaignSummary]) -> AdsCampaignSummary:
         wa_cost_usd_micros=wa_cost,
         wa_cost_by_category=wa_by_category,
         wa_msgs_pending=sum(m.wa_msgs_pending for m in members),
+        jev_cost_usd_micros=jev_cost,
+        jev_calls=jev_calls,
         avg_episode_duration_ms=avg_duration,
         revenue_count=revenue_count,
         duration_count=dur_count,
