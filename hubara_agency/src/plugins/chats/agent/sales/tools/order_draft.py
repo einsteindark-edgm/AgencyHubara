@@ -1069,9 +1069,10 @@ class SetOrderSlotTool(ToolBase):
                         continue
                     parts.append(
                         f"{r['product']} va en {len(r['lines'])} líneas "
-                        f"({' y '.join(r['lines'])}): {' y '.join(split_fields)} se "
-                        "cambia mandando `lineas` con TODAS sus líneas, cada una con "
-                        "su variante y su cantidad"
+                        f"({' y '.join(r['lines'])}): {' y '.join(split_fields)} "
+                        f"{'se cambia' if len(split_fields) == 1 else 'se cambian'} "
+                        "mandando `lineas` con TODAS sus líneas, cada una con su "
+                        "variante y su cantidad"
                     )
                 elif r.get("reason") == "not_given_by_customer":
                     parts.append(

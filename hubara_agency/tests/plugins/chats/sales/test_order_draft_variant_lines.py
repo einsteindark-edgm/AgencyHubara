@@ -205,3 +205,32 @@ def test_quantity_capture_never_writes_into_a_split_product():
     assert quantity_slot_open(meta) is False
     assert apply_reply_quantity(meta, 5, now_ms=_NOW) is None
     assert [i["cantidad"] for i in draft_items(_draft(meta))] == ["1", "1"]
+
+
+def test_split_lines_mismatch_names_the_lines_the_order_does_not_keep():
+    from src.plugins.chats.agent.sales.use_cases.order_draft import split_lines_mismatch
+
+    meta = _split(
+        _gorrion_lila_x2(),
+        {"color": "Lila", "cantidad": "1"},
+        {"color": "Azul", "cantidad": "1"},
+    )
+
+    assert split_lines_mismatch(meta, [(GORRION, 2, "Lila", "Lavanda")]) == [
+        f"{GORRION}: 1× Lila · Lavanda y 1× Azul · Lavanda"
+    ]
+    assert split_lines_mismatch(meta, [(GORRION, 1, "azul", "lavanda"), (GORRION, 1, "Lila", "Lavanda")]) == []
+
+
+def test_split_lines_mismatch_degrades_open_without_the_product_in_the_order():
+    """Catálogo caído: la línea se nombra por su handle y no se reconoce el
+    producto; no se bloquea la confirmación por infraestructura."""
+    from src.plugins.chats.agent.sales.use_cases.order_draft import split_lines_mismatch
+
+    meta = _split(
+        _gorrion_lila_x2(),
+        {"color": "Lila", "cantidad": "1"},
+        {"color": "Azul", "cantidad": "1"},
+    )
+
+    assert split_lines_mismatch(meta, [("velon-gorrion", 2, None, None)]) == []

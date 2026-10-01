@@ -273,7 +273,8 @@ def split_lines_mismatch(
     Lavanda y 1× Azul · Lavanda». `lines` trae `(producto, cantidad, color,
     aroma)` de cada línea del pedido; se compara cuántas unidades van en cada
     color y aroma, sin importar el orden. Vacío si coinciden, si ningún
-    producto está repartido o si el pedido ya se registró."""
+    producto está repartido, si el pedido no trae el producto o si ya se
+    registró."""
     episode = get_active_episode(metadata)
     if episode is None or episode.get("order_id"):
         return []
@@ -295,7 +296,10 @@ def split_lines_mismatch(
             for title, quantity, color, aroma in lines
             if product_key(title) == key
         )
-        if sent != wanted:
+        # Sin líneas de ese producto en el pedido (lo sacó, o el catálogo
+        # está caído y la línea solo trae su handle) no hay contra qué
+        # comparar: degrada abierto, nunca bloquea por infraestructura.
+        if sent and sent != wanted:
             mismatched.append(f"{own[0]['producto']}: " + " y ".join(line_label(i) for i in own))
     return mismatched
 
