@@ -375,5 +375,37 @@ El operador pidió los pasos 1 y 3 de la investigación de §6.3; el 2 («Enviar
 **Pendiente:**
 - Buscar en producción más casos de remarketing a conversaciones terminadas. La lectura masiva del vault la frenó el control de datos personales: hace falta el permiso del operador o las conversaciones puntuales.
 - Activar `cortesia` y `contactar` en producción (control del motor, con techo de Terraform).
-- En el caso de control, los dos bots prometieron «un colega coordina la entrega» sin `escalate_to_human`. La nota del episodio nuevo dice que el pedido lo gestiona un humano por separado.
+- En el caso de control, los dos bots prometieron «un colega coordina la entrega» sin `escalate_to_human`. La nota del episodio nuevo dice que el pedido lo gestiona un humano por separado. → resuelto en §6.9.
 - Casos de capacidades (cortesía, `contactar`) en la sonda diaria de Jev.
+
+### 6.9 Si el bot promete un colega, el humano queda avisado (2026-09-30, noche)
+
+**Lo que se vio (laboratorio `caso-cortesia-1001`, r1 y r2, caso de control).**
+- El ETA avisó «tu pedido ya está listo… ¿Nos confirmas para coordinar la entrega?» y el cliente pidió que se lo llevaran hoy después de las 5 a la portería.
+- Los dos bots contestaron «…un colega del equipo coordina contigo la entrega…» sin llamar `escalate_to_human`.
+- La conversación siguió en la ruta del bot: ningún humano la veía en su bandeja y el cliente esperaba a una persona. Producción, en el mismo caso, sí escaló.
+
+**Qué quedó:**
+- **Red de seguridad** (`ensure_promised_handoff`): corre antes de enviar el texto final del turno, en V1 y en V2, sea texto suelto o `send_reply`. Si el texto promete el relevo y nadie escaló, escala igual que `escalate_to_human`: ruta humano, etiqueta HUMANO y el motivo con la promesa. El texto sale igual. En V1 va con el parche `promised-handoff-escalation-v1`.
+- **`relevo`:** «¿el mensaje promete que un colega lo atiende?». Las frases del relevo son PISO, así que el bot de hoy ya queda protegido al desplegar. Con Jev se suman las paráfrasis.
+- **Prevención:** cuando el episodio anterior cerró con un pedido, la nota del episodio nuevo dice que, si el cliente pide algo de ese pedido (entrega, cambio, pago), se escala con `escalate_to_human` y no se promete sin escalar.
+- **Scorecard v6:** TAG-08 «Promete un colega solo si escala» y TAG-06 también cuenta la red nueva.
+- **Paso a paso:** la red se lee «escaló a una persona: el mensaje prometía que un colega lo atiende».
+
+**Medido en r3** (imagen 43e46786, US$0,03):
+- En el caso de control, los dos bots escalaron solos (`escalate_to_human`, SHIPPING_ISSUE, ruta humano). La red no tuvo que actuar (TAG-06 pasa) y TAG-08 pasa.
+- EST-09, igual que en r2: producción falla en los dos casos de cortesía; el bot actual falla en el primero; el bot nuevo pasa los dos.
+- El bot nuevo lo dijo de dos formas que ni la regla ni TAG-08 conocían: «un colega del equipo coordina **la entrega** contigo» y «Déjame **pasar tu caso** con un colega del equipo…». Sin la escalación del LLM, el piso del bot de hoy y el evaluador lo habrían dejado pasar.
+- Arreglado: las dos reglas aceptan lo que se coordina entre el verbo y «contigo», y «pasar tu caso… con / a un colega».
+- Pasadas las dos reglas por los 601 textos enviados o descartados en todas las corridas del laboratorio: 7 coincidencias, todas promesas reales del caso de control. Ningún falso positivo.
+
+**Pendiente:**
+- Activar `relevo` con Jev en producción (control del motor). La regla ya corre en el bot de hoy desde el despliegue.
+- Vigilar en producción las escalaciones con el motivo «El asesor le dijo al cliente que alguien del equipo lo atiende y no escaló»: cada una es un turno en que el LLM prometió sin escalar.
+
+### 6.10 Las preguntas de Jev, en palabras (2026-09-30, noche)
+
+- El paso «Jev lee el mensaje» mostraba el id del cuestionario (`topic.variante`) y una raya en las preguntas de opción.
+- Ahora muestra la pregunta en palabras («¿Pregunta por colores o variantes?»), con el id en el `title` de la fila, y en las de opción lo que eligió Jev con su confianza («que elija una variante · 0,97»).
+- El mapa vive en `shared/lib/jev-questions.ts`: lo usan el Laboratorio y Chats.
+- `cortesia`, `relevo` y «¿la conversación ya terminó?» de `contactar` ya tienen nombre y pregunta en el panel de decisiones y en el control del motor.
