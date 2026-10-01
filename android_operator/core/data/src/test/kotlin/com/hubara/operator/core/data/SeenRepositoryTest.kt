@@ -53,7 +53,9 @@ class SeenRepositoryTest {
         assertThat(counts.unseen(laura(inbound = 6))).isEqualTo(1)
     }
 
+    // 20 s y no 5: en los runners de GitHub, con todos los módulos probando en paralelo, Room + DataStore llegaron a
+    // tardar más de 5 s (falló así el 1-oct-2026 sin cambios en este código). Aquí tarda milisegundos.
     private suspend fun awaitSeen(n: Int): SeenCounts = withContext(Dispatchers.Default) {
-        withTimeoutOrNull(5_000) { seen.counts.first { it.seen[laura.raw] == n } }
+        withTimeoutOrNull(20_000) { seen.counts.first { it.seen[laura.raw] == n } }
     } ?: error("el chat abierto no quedó visto hasta $n (${seen.counts.first()})")
 }
