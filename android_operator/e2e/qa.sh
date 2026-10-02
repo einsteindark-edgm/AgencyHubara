@@ -19,6 +19,9 @@ SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"
 ADB="$SDK/platform-tools/adb"
 [ -x "$ADB" ] || ADB="$(command -v adb)"
 APK="$REPO/android_operator/app/build/outputs/apk/debug/app-debug.apk"
+# Puerto del backend de prueba. Si 8010 está ocupado (otra sesión, otro contenedor): QA_SANDBOX_PORT=8020.
+PORT="${QA_SANDBOX_PORT:-8010}"
+export SANDBOX_PORT="$PORT" SANDBOX_URL="http://127.0.0.1:$PORT"
 
 build=1
 build_only=0
@@ -37,9 +40,9 @@ mkdir -p "$OUT"
 if [ "$build" = 1 ]; then
   # Respaldo muerto (:9) + configuración remota del backend de prueba: si la app llega a la bandeja, tomó la
   # dirección del config.json (como en producción la toma del CloudFront del dashboard).
-  echo "▶ APK con la configuración remota del backend de prueba (10.0.2.2:8010)" >&2
+  echo "▶ APK con la configuración remota del backend de prueba (10.0.2.2:$PORT)" >&2
   (cd "$REPO/android_operator" && ./gradlew :app:assembleDebug -Phubara.apiUrl=http://10.0.2.2:9 \
-    -Phubara.configUrl=http://10.0.2.2:8010/__sandbox/mobile/config.json --console=plain -q)
+    -Phubara.configUrl=http://10.0.2.2:$PORT/__sandbox/mobile/config.json --console=plain -q)
 fi
 [ "$build_only" = 1 ] && exit 0
 
@@ -52,7 +55,19 @@ for _ in $(seq 1 150); do
   [ "$("$ADB" -s "$SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] && break
   sleep 2
 done
-"$ADB" -s "$SERIAL" install -r "$APK" >/dev/null
+# Si el emulador ya trae la app firmada con otra llave de debug (en CI: el disco del AVD en caché guarda la que
+# instaló otro runner, y cada runner genera su propia llave), `install -r` falla con INSTALL_FAILED_UPDATE_INCOMPATIBLE:
+# se desinstala y se instala limpia. Los escenarios borran los datos de la app igual (clear_app).
+if ! "$ADB" -s "$SERIAL" install -r "$APK" >"$OUT/install.log" 2>&1; then
+  if grep -q INSTALL_FAILED_UPDATE_INCOMPATIBLE "$OUT/install.log"; then
+    echo "▶ la app instalada tiene otra firma: se desinstala y se instala de nuevo" >&2
+    "$ADB" -s "$SERIAL" uninstall com.hubara.operator >/dev/null
+    "$ADB" -s "$SERIAL" install "$APK" >/dev/null
+  else
+    cat "$OUT/install.log" >&2
+    exit 1
+  fi
+fi
 
 "$E2E/sandbox/run_api.sh" start --reset
 # Al salir: los logs del backend de prueba van junto al reporte (CI los sube como artefacto) y se apaga.
