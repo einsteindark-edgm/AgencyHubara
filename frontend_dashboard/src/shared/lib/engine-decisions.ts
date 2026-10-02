@@ -88,6 +88,11 @@ const FALLBACK_REASONS: Record<string, string> = {
   bundle_error: "falló el paquete de decisión",
 };
 
+/** Por qué decidió la regla, en palabras (el código tal cual si no se conoce). */
+export function fallbackReasonLabel(reason: string): string {
+  return FALLBACK_REASONS[reason] ?? reason;
+}
+
 /** Quién decidió: Jev, la regla, o la regla porque Jev falló o dudó (y por qué). */
 export function decidedByLabel(d: Pick<EngineDecisionView, "by" | "provider" | "reason">): string {
   if (d.by === "jev") return "Jev";

@@ -145,3 +145,9 @@ export function worstVerdict(verdicts: QualityVerdict[]): QualityVerdict {
 export function customerLabel(sessionId: string): string {
   return `Cliente ···${sessionId.slice(-4)}`;
 }
+
+/** Dólares con coma decimal; `digits` sube la precisión (costo por turno: 4). */
+export function formatUsd(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  return `US$${value.toLocaleString("es-CO", { maximumFractionDigits: digits })}`;
+}

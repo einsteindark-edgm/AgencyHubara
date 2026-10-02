@@ -1,0 +1,63 @@
+{
+  "fidelity": "v2",
+  "trace": {
+    "turn": 3,
+    "decisions": [
+      {
+        "stage": "ingest",
+        "message": 1,
+        "capability": "compra",
+        "by": "jev",
+        "provider": "jev",
+        "value": [
+          "none",
+          null
+        ],
+        "answers": [
+          {
+            "q": "compra.que_hace",
+            "choice": "pregunta",
+            "confidence": 0.93
+          }
+        ]
+      },
+      {
+        "stage": "turno",
+        "capability": "monto",
+        "by": "respaldo",
+        "provider": "jev",
+        "value": [],
+        "reason": "timeout"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "i": 0,
+      "at_ms": 0,
+      "kind": "inbound",
+      "messages": [
+        {
+          "text": "velas de lavanda"
+        }
+      ]
+    },
+    {
+      "i": 1,
+      "at_ms": 120,
+      "kind": "llm",
+      "dur_ms": 900
+    },
+    {
+      "i": 2,
+      "at_ms": 1100,
+      "kind": "outbound",
+      "bubbles": [
+        {
+          "kind": "text",
+          "text": "Tenemos la vela de lavanda a $30.000"
+        }
+      ]
+    }
+  ]
+}

@@ -6,11 +6,23 @@ import statsFixture from "@plugins/agents_admin/frontend/entities/check-stats/fi
 import calibrationFixture from "@plugins/agents_admin/frontend/entities/eval-label/fixtures/calibration.json";
 import labelsFixture from "@plugins/agents_admin/frontend/entities/eval-label/fixtures/labels.json";
 import queueFixture from "@plugins/agents_admin/frontend/entities/eval-label/fixtures/labels-queue.json";
+import conversationsFixture from "@plugins/agents_admin/frontend/entities/production-quality/fixtures/conversations.json";
+import evaluationsFixture from "@plugins/agents_admin/frontend/entities/production-quality/fixtures/evaluations.json";
+import jevFixture from "@plugins/agents_admin/frontend/entities/production-quality/fixtures/jev.json";
+import threadFixture from "@plugins/agents_admin/frontend/entities/production-quality/fixtures/thread.json";
+import traceFixture from "@plugins/agents_admin/frontend/entities/production-quality/fixtures/turn-trace.json";
 import checksFixture from "@plugins/agents_admin/frontend/entities/scorecard/fixtures/checks.json";
-import detailFixture from "@plugins/agents_admin/frontend/entities/scorecard/fixtures/scorecard-detail.json";
 import listFixture from "@plugins/agents_admin/frontend/entities/scorecard/fixtures/scorecards.json";
 
 import { AgentsQuality } from "./AgentsQuality";
+
+/**
+ * Calidad LLM con la vista del laboratorio sobre producción (decisión del
+ * operador, 2026-10-02): el Resumen trae las gráficas, la matriz y el informe
+ * de Jev; Conversaciones, cada conversación real como un hilo con cada turno
+ * calificado y la ventana del turno (resultado, paso a paso, decisiones de
+ * Jev). El filtro separa el bot actual del bot Jev (el workflow nuevo).
+ */
 
 const fetchMock = vi.fn();
 let statsPayload: unknown = statsFixture;
@@ -22,16 +34,26 @@ function json(body: unknown) {
   });
 }
 
+const S1 = "wa_100000000001";
+
 /** Router de fetch por endpoint (orden: rutas más específicas primero). */
 const ROUTES: Array<[string, () => unknown]> = [
+  [`/api/agents/evals/production/conversations/${S1}/turns/trace`, () => traceFixture],
+  [`/api/agents/evals/production/conversations/${S1}/evaluations`, () => evaluationsFixture],
+  [`/api/agents/evals/production/conversations/${S1}`, () => threadFixture],
+  ["/api/agents/evals/production/conversations", () => conversationsFixture],
+  ["/api/agents/evals/production/jev", () => jevFixture],
   ["/api/agents/evals/checks/stats", () => statsPayload],
   ["/api/agents/evals/checks", () => checksFixture],
   ["/api/agents/evals/scorecards", () => listFixture],
-  ["/api/agents/evals/scorecard?", () => detailFixture],
   ["/api/agents/evals/labels/queue", () => queueFixture],
   ["/api/agents/evals/labels?", () => labelsFixture],
   ["/api/agents/evals/calibration", () => calibrationFixture],
 ];
+
+function called(fragment: string): boolean {
+  return fetchMock.mock.calls.some(([u]) => String(u).includes(fragment));
+}
 
 beforeEach(() => {
   statsPayload = statsFixture;
@@ -56,61 +78,146 @@ function renderIt() {
   );
 }
 
-describe("AgentsQuality (scorecard por etapa)", () => {
-  it("abre en Resumen con veredictos, Pareto, embudo y tendencia", async () => {
+async function openConversations() {
+  fireEvent.click(screen.getByRole("tab", { name: /conversaciones/i }));
+  return screen.findByRole("list", { name: /conversaciones calificadas/i });
+}
+
+describe("Calidad LLM: Resumen como el laboratorio", () => {
+  it("abre en Resumen con las gráficas y la matriz de cada episodio", async () => {
     renderIt();
     expect(screen.getByRole("tab", { name: /resumen/i })).toHaveAttribute("aria-selected", "true");
-    const tiles = await screen.findByRole("list", { name: /veredictos de los episodios/i });
-    expect(within(tiles).getByRole("button", { name: /falla: 9 episodios/i })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: /pareto de fallos/i })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /embudo de etapa terminal/i })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /^CON-01: cumplimiento semanal/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /cumplimiento por check, semana a semana/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /dónde terminan los episodios/i })).toBeInTheDocument();
+    expect(await screen.findByRole("table", { name: /matriz de cumplimiento/i })).toBeInTheDocument();
+    // La vista de antes (tiles de veredictos y Pareto) ya no está.
+    expect(screen.queryByRole("list", { name: /veredictos de los episodios/i })).not.toBeInTheDocument();
   });
 
-  it("explica el vacío cuando todavía no hay scorecards", async () => {
-    statsPayload = { episodes: 0 };
+  it("dice cómo le fue a cada bot y cómo anduvo Jev en producción", async () => {
     renderIt();
-    expect(
-      await screen.findByText(/aún no hay scorecards: se generan al cerrar cada episodio/i),
-    ).toBeInTheDocument();
+    const details = await screen.findByText(/cómo le fue a cada bot y a jev/i);
+    fireEvent.click(details);
+    const jev = await screen.findByRole("region", { name: /jev en producción/i });
+    expect(within(jev).getByText(/50 % de las preguntas/i)).toBeInTheDocument();
+    expect(within(jev).getByText(/1 de 2 decisiones cayeron a la regla porque jev falló/i)).toBeInTheDocument();
+    expect(await screen.findByRole("table", { name: /resultado por bot/i })).toBeInTheDocument();
+    await waitFor(() => expect(called("/api/agents/evals/production/jev?days=56&bot=nuevo")).toBe(true));
   });
 
-  it("la alerta cuenta episodios en FALLA y lleva a Conversaciones filtradas", async () => {
+  it("una fila de la matriz abre esa conversación", async () => {
     renderIt();
-    const alert = await screen.findByRole("button", { name: /2 episodios para revisar/i });
-    fireEvent.click(alert);
-    expect(screen.getByRole("tab", { name: /conversaciones/i })).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByRole("button", { name: "Falla" })).toHaveAttribute("aria-pressed", "true");
-    const table = await screen.findByRole("table", { name: /matriz de cumplimiento/i });
-    expect(within(table).getAllByRole("row").filter((r) => r.closest("tbody"))).toHaveLength(2);
-  });
-
-  it("una barra del Pareto filtra la matriz a los episodios que fallan ese check", async () => {
-    renderIt();
-    fireEvent.click(await screen.findByRole("button", { name: /^VAR-01:/ }));
-    expect(screen.getByRole("tab", { name: /conversaciones/i })).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByRole("button", { name: /quitar filtro VAR-01/i })).toBeInTheDocument();
-    const table = await screen.findByRole("table", { name: /matriz de cumplimiento/i });
-    expect(within(table).getAllByRole("row").filter((r) => r.closest("tbody"))).toHaveLength(1);
-  });
-
-  it("elegir un episodio muestra su tira y su scorecard, con el primer crítico seleccionado", async () => {
-    renderIt();
-    fireEvent.click(screen.getByRole("tab", { name: /conversaciones/i }));
-    expect(await screen.findByText(/elige una conversación/i)).toBeInTheDocument();
     const table = await screen.findByRole("table", { name: /matriz de cumplimiento/i });
     fireEvent.click(within(table).getAllByRole("row").filter((r) => r.closest("tbody"))[0]);
-    expect(await screen.findByRole("group", { name: /tira de trayectoria/i })).toBeInTheDocument();
-    const panel = screen.getByRole("complementary", { name: /scorecard del episodio/i });
-    const rule = checksFixture.checks.find((c) => c.id === "VAR-01")!.rule;
-    expect(within(panel).getByText(rule)).toBeInTheDocument();
-    // Click en otro check de la tira cambia el detalle del panel.
-    fireEvent.click(screen.getByRole("button", { name: /^CON-01 · .*falla crítica/ }));
-    const con01 = checksFixture.checks.find((c) => c.id === "CON-01")!.rule;
-    await waitFor(() => expect(within(panel).getByText(con01)).toBeInTheDocument());
+
+    expect(screen.getByRole("tab", { name: /conversaciones/i })).toHaveAttribute("aria-selected", "true");
+    const list = await screen.findByRole("list", { name: /conversaciones calificadas/i });
+    expect(within(list).getByRole("button", { name: /cliente ···0001/i })).toHaveAttribute("aria-current", "true");
   });
 
-  it("conserva las métricas legadas y los goldens en sus pestañas", async () => {
+  it("explica el vacío cuando todavía no hay episodios calificados", async () => {
+    statsPayload = { episodes: 0 };
+    renderIt();
+    expect(await screen.findByText(/aún no hay episodios calificados/i)).toBeInTheDocument();
+  });
+});
+
+describe("Calidad LLM: Conversaciones como el laboratorio", () => {
+  it("lista las conversaciones reales con su resultado y su bot", async () => {
+    renderIt();
+    const list = await openConversations();
+    const first = within(list).getByRole("button", { name: /cliente ···0001/i });
+    expect(within(first).getByText("FALLA")).toBeInTheDocument();
+    expect(within(first).getByText("Bot Jev")).toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: /cliente ···0005/i })).toBeInTheDocument();
+  });
+
+  it("muestra el hilo real con cada turno calificado", async () => {
+    renderIt();
+    await openConversations();
+    expect(await screen.findByText("velas de lavanda")).toBeInTheDocument();
+    const chips = await screen.findAllByRole("button", { name: /ver hilo del turno/i });
+    expect(chips).toHaveLength(2);
+    await waitFor(() => expect(within(chips[1]).getByText("FALLA")).toBeInTheDocument());
+    expect(within(chips[0]).getByText("PASA")).toBeInTheDocument();
+  });
+
+  it("la ventana del turno trae el resultado, el paso a paso y las decisiones de Jev", async () => {
+    renderIt();
+    await openConversations();
+    const chips = await screen.findAllByRole("button", { name: /ver hilo del turno/i });
+    fireEvent.click(chips[1]);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Hilo del turno 3")).toBeInTheDocument();
+    expect(await within(dialog).findByText("Busca en el catálogo antes de nombrar productos", { exact: false })).toBeInTheDocument();
+    expect(within(dialog).getByText("Tenemos la vela de lavanda a $30.000")).toBeInTheDocument();
+
+    fireEvent.click(await within(dialog).findByRole("tab", { name: /decisiones de jev/i }));
+    expect(within(dialog).getByText(/jev decidió 1 de 2/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/jev no respondió a tiempo/i)).toBeInTheDocument();
+    await waitFor(() => expect(called(`/production/conversations/${S1}/turns/trace?turn_key=`)).toBe(true));
+  });
+
+  it("«Qué falló» dice cada check por su nombre y abre su turno", async () => {
+    renderIt();
+    await openConversations();
+    fireEvent.click(await screen.findByRole("tab", { name: /qué falló/i }));
+    const failed = await screen.findByRole("list", { name: /lo que falló/i });
+    expect(within(failed).getByText(/busca en el catálogo antes de nombrar/i)).toBeInTheDocument();
+    fireEvent.click(within(failed).getByRole("button", { name: "turno 3" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("la alerta lleva a las conversaciones que fallaron", async () => {
+    renderIt();
+    fireEvent.click(await screen.findByRole("button", { name: /2 episodios para revisar/i }));
+    const list = await screen.findByRole("list", { name: /conversaciones calificadas/i });
+    expect(within(list).getAllByRole("button")).toHaveLength(1);
+    expect(within(list).getByRole("button", { name: /cliente ···0001/i })).toBeInTheDocument();
+  });
+});
+
+describe("Calidad LLM: el filtro por bot", () => {
+  it("«Bot Jev» pide solo las conversaciones del workflow nuevo", async () => {
+    renderIt();
+    await screen.findByRole("table", { name: /matriz de cumplimiento/i });
+
+    const picker = screen.getByRole("radiogroup", { name: "Bot que respondió" });
+    expect(within(picker).getByRole("radio", { name: "Todos" })).toBeChecked();
+    fireEvent.click(within(picker).getByRole("radio", { name: "Bot Jev" }));
+
+    await waitFor(() => expect(called("/checks/stats?days=56&bot=nuevo")).toBe(true));
+    await waitFor(() => expect(called("/scorecards?days=56&bot=nuevo")).toBe(true));
+    await openConversations();
+    await waitFor(() => expect(called("/production/conversations?days=56&bot=nuevo")).toBe(true));
+  });
+
+  it("el filtro solo aparece en las vistas que filtra", async () => {
+    renderIt();
+    expect(screen.getByRole("radiogroup", { name: "Bot que respondió" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /métricas legadas/i }));
+    expect(screen.queryByRole("radiogroup", { name: "Bot que respondió" })).not.toBeInTheDocument();
+  });
+
+  it("si el servidor no filtró por bot, lo dice (API sin desplegar)", async () => {
+    renderIt();
+    await screen.findByRole("table", { name: /matriz de cumplimiento/i });
+    fireEvent.click(screen.getByRole("radio", { name: "Bot Jev" }));
+    expect(await screen.findByText(/el servidor no filtró por bot/i)).toBeInTheDocument();
+  });
+
+  it("con filtro, el vacío dice de qué bot", async () => {
+    statsPayload = { episodes: 0 };
+    renderIt();
+    await screen.findByText(/aún no hay episodios calificados/i);
+    fireEvent.click(screen.getByRole("radio", { name: "Bot Jev" }));
+    expect(await screen.findByText(/aún no hay episodios del bot jev/i)).toBeInTheDocument();
+  });
+});
+
+describe("Calidad LLM: las otras pestañas", () => {
+  it("conserva calibración, métricas legadas y goldens", async () => {
     renderIt();
     fireEvent.click(screen.getByRole("tab", { name: /métricas legadas/i }));
     expect(await screen.findByText("Tendencia de calidad")).toBeInTheDocument();
@@ -118,81 +225,5 @@ describe("AgentsQuality (scorecard por etapa)", () => {
     expect(await screen.findByText("Candidatos a golden")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /calibración/i }));
     expect(await screen.findByRole("table", { name: /calibración del juez/i })).toBeInTheDocument();
-  });
-
-  it("filtra por bot durante el encendido: las gráficas y la matriz piden solo ese bot (PR 18)", async () => {
-    renderIt();
-    await screen.findByRole("list", { name: /veredictos de los episodios/i });
-
-    const picker = screen.getByRole("radiogroup", { name: "Bot que respondió" });
-    expect(within(picker).getByRole("radio", { name: "Todos" })).toBeChecked();
-    fireEvent.click(within(picker).getByRole("radio", { name: "Bot nuevo" }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/checks/stats?days=56&bot=nuevo"))).toBe(true),
-    );
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/scorecards?days=56&bot=nuevo"))).toBe(true),
-    );
-  });
-
-  it("el filtro de bot solo aparece en las vistas que filtra (PR 18)", async () => {
-    renderIt();
-    await screen.findByRole("list", { name: /veredictos de los episodios/i });
-    expect(screen.getByRole("radiogroup", { name: "Bot que respondió" })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("tab", { name: /métricas legadas/i }));
-    expect(screen.queryByRole("radiogroup", { name: "Bot que respondió" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: /goldens/i }));
-    expect(screen.queryByRole("radiogroup", { name: "Bot que respondió" })).not.toBeInTheDocument();
-  });
-
-  it("si el servidor no filtró por bot, lo dice (API sin desplegar)", async () => {
-    renderIt();
-    await screen.findByRole("list", { name: /veredictos de los episodios/i });
-
-    fireEvent.click(screen.getByRole("radio", { name: "Bot nuevo" }));
-
-    expect(await screen.findByText(/el servidor no filtró por bot/i)).toBeInTheDocument();
-  });
-
-  it("con el servidor filtrando, no hay aviso", async () => {
-    fetchMock.mockImplementation((url: string) => {
-      const hit = ROUTES.find(([p]) => url.includes(p));
-      const body = hit ? hit[1]() : {};
-      const bot = new URL(url, "http://x").searchParams.get("bot");
-      return Promise.resolve(json(bot && body && typeof body === "object" ? { ...body, bot } : body));
-    });
-    renderIt();
-    await screen.findByRole("list", { name: /veredictos de los episodios/i });
-
-    fireEvent.click(screen.getByRole("radio", { name: "Bot nuevo" }));
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/scorecards?days=56&bot=nuevo"))).toBe(true),
-    );
-    expect(screen.queryByText(/el servidor no filtró por bot/i)).not.toBeInTheDocument();
-  });
-
-  it("cambiar de bot cierra la conversación abierta (puede no ser de ese bot)", async () => {
-    renderIt();
-    fireEvent.click(await screen.findByRole("tab", { name: /conversaciones/i }));
-    const table = await screen.findByRole("table", { name: /matriz de cumplimiento/i });
-    fireEvent.click(within(table).getAllByRole("row").filter((r) => r.closest("tbody"))[0]);
-    expect(screen.queryByText(/elige una conversación en la matriz/i)).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("radio", { name: "Bot actual" }));
-
-    expect(await screen.findByText(/elige una conversación en la matriz/i)).toBeInTheDocument();
-  });
-
-  it("con filtro, el vacío dice de qué bot", async () => {
-    statsPayload = { episodes: 0 };
-    renderIt();
-    await screen.findByText(/aún no hay scorecards/i);
-
-    fireEvent.click(screen.getByRole("radio", { name: "Bot nuevo" }));
-
-    expect(await screen.findByText(/aún no hay episodios del bot nuevo/i)).toBeInTheDocument();
   });
 });

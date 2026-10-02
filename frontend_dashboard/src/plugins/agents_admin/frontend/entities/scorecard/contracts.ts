@@ -17,9 +17,10 @@ export const episodeVerdictSchema = z
   .enum(["FALLA", "ALERTA", "PASA", "SIN_DATOS"])
   .catch("SIN_DATOS");
 
-/** Resultado de UN check sobre el episodio. */
+/** Resultado de UN check sobre el episodio. `sin_senal`: calificado turno por
+ *  turno (2026-10-02), el check depende de lo que vino después de cada turno. */
 export const checkVerdictSchema = z
-  .enum(["pasa", "falla", "no_aplica", "desconocido"])
+  .enum(["pasa", "falla", "no_aplica", "desconocido", "sin_senal"])
   .catch("desconocido");
 
 export const checkLevelSchema = z.enum(["critico", "mayor", "menor"]).catch("menor");

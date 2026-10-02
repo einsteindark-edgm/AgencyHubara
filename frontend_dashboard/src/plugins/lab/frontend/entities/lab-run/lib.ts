@@ -53,11 +53,6 @@ export function armHelp(arm: string): string {
 
 
 
-/** Dólares con coma decimal; `digits` sube la precisión (costo por turno: 4). */
-export function formatUsd(value: number | null | undefined, digits = 2): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
-  return `US$${value.toLocaleString("es-CO", { maximumFractionDigits: digits })}`;
-}
 
 /**
  * Status y mensaje de un error del API. FastAPI manda `{detail: "…"}` o, en
@@ -91,6 +86,7 @@ export {
   decidedByLabel,
   decisionStageLabel,
   formatDecisionValue,
+  formatUsd,
   jevFailed,
   LEVEL_HELP,
   levelLabel,

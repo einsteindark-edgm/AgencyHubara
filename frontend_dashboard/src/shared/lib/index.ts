@@ -17,6 +17,7 @@ export * from "./quality-view";
 export * from "./quality-checks";
 export * from "./engine-decisions";
 export * from "./quality-thread";
+export * from "./quality-matrix";
 export * from "./trajectory-strip";
 export {
   dotOffset,

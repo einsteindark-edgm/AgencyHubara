@@ -86,6 +86,7 @@ const CHECK_VERDICT_LABELS: Record<CheckVerdict, string> = {
   falla: "falla",
   no_aplica: "no aplica",
   desconocido: "desconocido",
+  sin_senal: "sin señal",
 };
 
 export function checkVerdictLabel(v: CheckVerdict): string {

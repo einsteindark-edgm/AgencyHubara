@@ -1,22 +1,15 @@
 import { useState, type ReactNode } from "react";
 
-import {
-  useScorecards,
-  type EpisodeRef,
-  type ScorecardBot,
-} from "@plugins/agents_admin/frontend/entities/scorecard";
-import {
-  ComplianceMatrix,
-  type VerdictFilter,
-} from "@plugins/agents_admin/frontend/features/compliance-matrix";
+import { BOT_LABEL, type QualityBot } from "@plugins/agents_admin/frontend/entities/production-quality";
+import { useScorecards } from "@plugins/agents_admin/frontend/entities/scorecard";
 import { EpisodeEvals } from "@plugins/agents_admin/frontend/features/episode-evals";
 import { EvalTrendChart } from "@plugins/agents_admin/frontend/features/eval-trend-chart";
 import { GoldenEvalCuration } from "@plugins/agents_admin/frontend/features/golden-eval-curation";
 import { JudgeCalibration } from "@plugins/agents_admin/frontend/features/judge-calibration";
+import { QualityConversations } from "@plugins/agents_admin/frontend/features/quality-conversations";
+import { QualitySummary } from "@plugins/agents_admin/frontend/features/quality-summary";
+import type { QualityVerdict } from "@/shared/lib";
 import { Icon } from "@/shared/ui";
-
-import { ConversationDetail } from "./ConversationDetail";
-import { SummaryView } from "./SummaryView";
 
 /** Ventana (días) del scorecard: la MISMA para la alerta, la matriz y los
  *  agregados (8 semanas: la tendencia semanal necesita historia). Una sola
@@ -28,12 +21,12 @@ const LEGACY_WINDOW_DAYS = 30;
 
 type Tab = "resumen" | "conversaciones" | "calibracion" | "legado" | "goldens";
 
-/** Durante el encendido del bot nuevo (plan del laboratorio PR 18), las mismas
- *  gráficas separan los episodios de cada bot (el `mode` de su traza). */
-const BOT_OPTIONS: ReadonlyArray<{ value: ScorecardBot | null; label: string }> = [
+/** Las mismas vistas separan los episodios de cada bot: el actual o el bot
+ *  Jev (el workflow nuevo, decisión del operador del 2026-10-02). */
+const BOT_OPTIONS: ReadonlyArray<{ value: QualityBot | null; label: string }> = [
   { value: null, label: "Todos" },
-  { value: "actual", label: "Bot actual" },
-  { value: "nuevo", label: "Bot nuevo" },
+  { value: "actual", label: BOT_LABEL.actual },
+  { value: "nuevo", label: BOT_LABEL.nuevo },
 ];
 
 const TABS: ReadonlyArray<{ id: Tab; label: string; icon: () => ReactNode }> = [
@@ -45,33 +38,33 @@ const TABS: ReadonlyArray<{ id: Tab; label: string; icon: () => ReactNode }> = [
 ];
 
 /**
- * Panel "Calidad LLM" del agente de ventas: el **scorecard por etapa**. Un
- * checklist binario por etapa del guion, con checks críticos que reprueban
- * solos, evaluado sobre la trayectoria completa (texto, tools, componentes,
- * etiquetas, guardas). Todas las superficies leen `/api/agents/evals/*`.
+ * Panel "Calidad LLM" del agente de ventas, con la vista del laboratorio
+ * sobre producción (decisión del operador, 2026-10-02: «eliminar la forma
+ * actual de ver la calificación y reemplazarla por la del laboratorio»). Cada
+ * episodio real se califica turno por turno, como el laboratorio califica su
+ * bot de producción. Todas las superficies leen `/api/agents/evals/*`.
  *
- *   * **Resumen** — veredictos, Pareto de fallos, embudo de etapa terminal y
- *     tendencia semanal por check.
- *   * **Conversaciones** — matriz episodios × checks; elegir un episodio abre su
- *     tira de trayectoria + scorecard.
+ *   * **Resumen** — cumplimiento por check semana a semana, dónde terminan
+ *     los episodios y la matriz episodios × checks; a pedido, cómo le fue a
+ *     cada bot y cómo anduvo Jev en los turnos reales.
+ *   * **Conversaciones** — cada conversación real como un hilo con cada turno
+ *     calificado; la ventana del turno trae el resultado, el paso a paso y
+ *     las decisiones de Jev.
  *   * **Calibración** — confiabilidad del juez contra etiquetas humanas + cola.
- *   * **Métricas legadas** — la tendencia y los episodios del eval por promedio,
- *     intactos mientras conviven ambos sistemas.
+ *   * **Métricas legadas** — la tendencia y los episodios del eval por promedio.
  *   * **Goldens** — curación de candidatos.
  *
  * Nota FSD: composición intra-plugin (feature → feature del MISMO plugin), que
- * `dependency-cruiser` permite. El estado compartido entre superficies (filtros
- * de la matriz, episodio y check seleccionados, estado del legado) vive ACÁ,
- * lifted: las features hermanas no se hablan entre sí, reciben callbacks.
+ * `dependency-cruiser` permite. El estado compartido entre superficies (bot,
+ * conversación elegida, filtro de la alerta) vive ACÁ, lifted: las features
+ * hermanas no se hablan entre sí, reciben callbacks.
  */
 export function AgentsQuality() {
   const [tab, setTab] = useState<Tab>("resumen");
 
-  // Scorecard
-  const [verdictFilter, setVerdictFilter] = useState<VerdictFilter>("todos");
-  const [checkFilter, setCheckFilter] = useState<string | null>(null);
-  const [selectedEpisode, setSelectedEpisode] = useState<EpisodeRef | null>(null);
-  const [selectedCheckId, setSelectedCheckId] = useState<string | null>(null);
+  // Conversaciones: la elegida desde el Resumen y el filtro de la alerta.
+  const [openSid, setOpenSid] = useState<string | null>(null);
+  const [verdictFilter, setVerdictFilter] = useState<QualityVerdict | null>(null);
 
   // Legado (sin cambios de comportamiento)
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -80,30 +73,34 @@ export function AgentsQuality() {
   const [onlyFailing, setOnlyFailing] = useState(false);
 
   // Alerta: episodios con veredicto FALLA (cayó al menos un check crítico).
-  // Mismo query que la matriz (cache compartido).
-  const [bot, setBot] = useState<ScorecardBot | null>(null);
+  // Mismo query que la matriz del Resumen (cache compartido).
+  const [bot, setBot] = useState<QualityBot | null>(null);
   const { data: list } = useScorecards(WINDOW_DAYS, bot);
   const failingCount = (list?.scorecards ?? []).filter((s) => s.verdict === "FALLA").length;
-  // El filtro de bot solo aplica al scorecard (Resumen y Conversaciones). Si la
-  // API todavía no lo soporta, ignora `?bot=` y devuelve todos: se avisa.
+  // El filtro de bot solo aplica a Resumen y Conversaciones. Si la API todavía
+  // no lo soporta, ignora `?bot=` y devuelve todos: se avisa.
   const botFilterShown = tab === "resumen" || tab === "conversaciones";
   const serverIgnoredBot = bot !== null && list !== undefined && list.bot !== bot;
-  const chooseBot = (value: ScorecardBot | null) => {
+  const chooseBot = (value: QualityBot | null) => {
     setBot(value);
     // La conversación abierta puede no ser de ese bot.
-    setSelectedEpisode(null);
+    setOpenSid(null);
   };
 
-  const goConversations = (verdict: VerdictFilter, check: string | null) => {
-    setVerdictFilter(verdict);
-    setCheckFilter(check);
+  const openConversation = (sid: string) => {
+    setOpenSid(sid);
+    setVerdictFilter(null);
     setTab("conversaciones");
   };
-
-  const selectEpisode = (sessionId: string, episodeId: string) => {
-    setSelectedEpisode({ sessionId, episodeId });
-    // Viniendo del Pareto, abrir directamente en el check que se está investigando.
-    setSelectedCheckId(checkFilter);
+  const showFailing = () => {
+    setOpenSid(null);
+    setVerdictFilter("FALLA");
+    setTab("conversaciones");
+  };
+  const chooseTab = (next: Tab) => {
+    // Volver a Conversaciones desde la barra muestra todas.
+    if (next === "conversaciones") setVerdictFilter(null);
+    setTab(next);
   };
 
   // Legado: día y episodio son filtros mutuamente excluyentes de la misma vista.
@@ -135,7 +132,7 @@ export function AgentsQuality() {
                 role="tab"
                 aria-selected={on}
                 aria-controls={`quality-panel-${t.id}`}
-                onClick={() => setTab(t.id)}
+                onClick={() => chooseTab(t.id)}
                 className={
                   "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition " +
                   (on ? "bg-white/10 text-fg" : "text-fg-muted hover:bg-white/5")
@@ -176,7 +173,7 @@ export function AgentsQuality() {
         {failingCount > 0 && (
           <button
             type="button"
-            onClick={() => goConversations("FALLA", null)}
+            onClick={showFailing}
             className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-red/15 px-3 py-1.5 text-xs font-semibold text-red transition hover:bg-red/25"
             title={`Episodios de los últimos ${WINDOW_DAYS} días cuyo scorecard dio FALLA (cayó al menos un check crítico)`}
           >
@@ -195,41 +192,16 @@ export function AgentsQuality() {
             : "min-h-0 flex-1 overflow-y-auto p-3"
         }
       >
-        {tab === "resumen" && (
-          <SummaryView
-            days={STATS_DAYS}
-            bot={bot}
-            onSelectVerdict={(v) => goConversations(v, null)}
-            onSelectCheck={(id) => goConversations("todos", id)}
-          />
-        )}
+        {tab === "resumen" && <QualitySummary days={STATS_DAYS} bot={bot} onOpenConversation={openConversation} />}
 
         {tab === "conversaciones" && (
-          <div className="flex min-w-0 flex-col gap-3">
-            <ComplianceMatrix
-              days={WINDOW_DAYS}
-              bot={bot}
-              verdictFilter={verdictFilter}
-              onVerdictFilterChange={setVerdictFilter}
-              checkFilter={checkFilter}
-              onClearCheckFilter={() => setCheckFilter(null)}
-              selectedEpisode={selectedEpisode}
-              onSelectEpisode={selectEpisode}
-            />
-            {selectedEpisode ? (
-              <ConversationDetail
-                key={`${selectedEpisode.sessionId}::${selectedEpisode.episodeId}`}
-                episode={selectedEpisode}
-                selectedCheckId={selectedCheckId}
-                onSelectCheck={setSelectedCheckId}
-                onClose={() => setSelectedEpisode(null)}
-              />
-            ) : (
-              <p className="rounded-lg border border-dashed border-line-strong p-4 text-sm text-fg-muted">
-                Elige una conversación en la matriz para ver su trayectoria turno a turno y su scorecard.
-              </p>
-            )}
-          </div>
+          <QualityConversations
+            key={`${bot ?? "todos"}|${verdictFilter ?? ""}|${openSid ?? ""}`}
+            days={WINDOW_DAYS}
+            bot={bot}
+            verdictFilter={verdictFilter}
+            initialSid={openSid}
+          />
         )}
 
         {tab === "calibracion" && <JudgeCalibration days={WINDOW_DAYS} />}

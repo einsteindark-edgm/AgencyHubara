@@ -8,6 +8,7 @@ import {
   checkResultSchema,
   scorecardDetailSchema,
   scorecardListSchema,
+  scorecardRowSchema,
 } from "./contracts";
 
 /**
@@ -136,5 +137,12 @@ describe("checkResultSchema — EST-08 v2", () => {
   it("un resultado sin asuntos (registro v2) queda con la lista vacía", () => {
     const r = checkResultSchema.parse({ check_id: "CON-01", verdict: "pasa", level: "critico", source: "code" });
     expect(r.topics).toEqual([]);
+  });
+});
+
+describe("scorecard turno por turno (Calidad LLM con la vista del laboratorio, 2026-10-02)", () => {
+  it("un check que depende de lo que vino después queda «sin señal», no desconocido", () => {
+    const row = scorecardRowSchema.parse({ session_id: "wa_100000000001", episode_id: "ep_001", verdict: "PASA", checks: { "DES-03": "sin_senal" } });
+    expect(row.checks["DES-03"]).toBe("sin_senal");
   });
 });

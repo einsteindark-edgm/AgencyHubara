@@ -1,0 +1,43 @@
+{
+  "session_id": "wa_100000000001",
+  "episodes": [
+    {
+      "session_id": "wa_100000000001",
+      "episode_id": "ep_007",
+      "verdict": "FALLA",
+      "mode": "turn",
+      "results": [
+        {
+          "check_id": "APE-01",
+          "verdict": "pasa",
+          "level": "mayor",
+          "turn": 1,
+          "evidence": "turno 1: saludó",
+          "critique": null,
+          "source": "code",
+          "topics": []
+        },
+        {
+          "check_id": "DES-05",
+          "verdict": "falla",
+          "level": "critico",
+          "turn": 3,
+          "evidence": "turno 3: nombró «vela de lavanda» sin buscar en el catálogo",
+          "critique": null,
+          "source": "code",
+          "topics": []
+        },
+        {
+          "check_id": "DES-02",
+          "verdict": "pasa",
+          "level": "menor",
+          "turn": 3,
+          "evidence": "",
+          "critique": null,
+          "source": "code",
+          "topics": []
+        }
+      ]
+    }
+  ]
+}
