@@ -18,7 +18,7 @@ si el paquete no compila, no existe.
 ```
 bundles/
   builtins.yaml            catálogo del motor: lo que un paquete puede pedir por nombre
-  hubara-ventas/
+  ventas/
     bundle.yaml            id, versión, engine_contract, oráculo, capacidades
     capabilities/<c>.yaml  regla, estado, preguntas, umbrales, tabla, piso, ejemplos
 ```
@@ -85,7 +85,7 @@ con la forma de `Capability`) y los lugares lo piden por nombre al resolutor
 (`decisions/registry.py: capability("baja")`), que toma el paquete activo
 de la tienda (`SALES_DECISIONS_BUNDLE`, Terraform `tenants.<t>.lab.decisions_bundle`)
 o, si la capacidad todavía no migró, su clase. El `Verdict` lleva
-`bundle: "hubara-ventas@1"` en la traza.
+`bundle: "ventas@1"` en la traza.
 
 ## Reglas al escribir un paquete
 

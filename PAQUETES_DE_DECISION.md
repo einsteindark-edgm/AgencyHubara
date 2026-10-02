@@ -132,7 +132,7 @@ cruzadas y semántica). Todo en el mismo proceso de Python.
 ```
 decisions/bundles/
   builtins.yaml                      # catálogo del motor: lo que un paquete puede pedir por nombre
-  hubara-ventas/
+  ventas/
     bundle.yaml                      # id, versión, engine_contract, oráculo, dominio
     capabilities/
       baja.yaml
@@ -144,7 +144,7 @@ decisions/bundles/
 
 ```yaml
 # yaml-language-server: $schema=../../../../../../../../schemas/decision-bundle.schema.json
-id: hubara-ventas
+id: ventas
 version: 1
 engine_contract: 1
 oracle: jev-1.13
@@ -288,7 +288,7 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
 
 ## 9. Versionado y despliegue
 
-- Un paquete es inmutable: `hubara-ventas@3` no cambia; otro texto u otro
+- Un paquete es inmutable: `ventas@3` no cambia; otro texto u otro
   umbral = `@4`.
 - El `Verdict` y la traza llevan `bundle` (`id@version`), igual que hoy
   llevan el modelo de Jev.
@@ -316,7 +316,7 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   `CelExpressions`, certificador DB001–DB012, tablas compiladas), fachada
   `src.sdk.decisionkit`, CLI `decisions check|schema`, esquemas del editor en
   `hubara_agency/schemas/` (con prueba de que no se desactualizan).
-- Paquete `hubara-ventas@1` con `baja` y `cortesia`; el ingest las lee del
+- Paquete `ventas@1` con `baja` y `cortesia`; el ingest las lee del
   paquete (`decisions/bundled.py`) y el `Verdict` lleva `bundle` en la traza.
   Paridad exacta con las clases: 27 pruebas (estado y preguntas byte a byte,
   bordes de umbral, piso, veredicto completo con reglas/sombra/jev).
@@ -331,7 +331,7 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   la decisión por nombre. Dos pruebas prohíben instanciar o importar clases
   de capacidad (o sus instancias globales) fuera del resolutor.
 - Paquete activo desde Terraform: `tenants.<t>.lab.decisions_bundle`
-  (default `hubara-ventas`, validado) → SSM `SALES_DECISIONS_BUNDLE`. Un
+  (default `ventas`, validado) → SSM `SALES_DECISIONS_BUNDLE`. Un
   paquete que no existe falla con `DB013`; el id del paquete debe ser su
   carpeta (DB013 también).
 - Motor: tipos de valor, `then: {expr}`, `vars`, `inp.campo`, `consts.X`,
@@ -378,7 +378,7 @@ tocarlos.
    resolutor.
 2. **El paquete activo estaba fijo en el código.** Desde F2 viene de la
    configuración de la tienda, igual que el perfil de Jev:
-   `tenants.<t>.lab.decisions_bundle` (Terraform, default `hubara-ventas`) →
+   `tenants.<t>.lab.decisions_bundle` (Terraform, default `ventas`) →
    SSM `SALES_DECISIONS_BUNDLE` → el resolutor. Un paquete configurado que no
    existe falla fuerte (no se corre la inteligencia de otra tienda); una
    prueba exige que el default de Terraform exista en el repo.

@@ -15,8 +15,8 @@ migradas viven en YAML:
 ```
 src/plugins/chats/agent/sales/decisions/bundles/
   builtins.yaml                     catálogo: lo que un paquete puede pedir por nombre
-  hubara-ventas/bundle.yaml         id, versión, engine_contract, capacidades
-  hubara-ventas/capabilities/*.yaml una capacidad por archivo
+  ventas/bundle.yaml         id, versión, engine_contract, capacidades
+  ventas/capabilities/*.yaml una capacidad por archivo
 ```
 
 Migradas hoy (F1–F2): afirmacion, baja, cantidad, cierre, contactar,

@@ -10,7 +10,7 @@ de enviar, remarketing, abandono— nombran SOLO la decisión:
 El resolutor la toma del **paquete activo** si la trae; si no, de su clase
 de Python (mientras dure la migración, F2–F4). El paquete activo es
 configuración de la tienda, no código: `SALES_DECISIONS_BUNDLE` (nace en
-Terraform, `tenants.<t>.lab.decisions_bundle`), default `hubara-ventas`.
+Terraform, `tenants.<t>.lab.decisions_bundle`), default `ventas`.
 Cambiar de tienda o de versión de la inteligencia es este único punto.
 
 Un paquete configurado que no existe (o que no compila) falla fuerte con
@@ -32,15 +32,15 @@ from src.plugins.chats.agent.sales.decisions.bundled import BundledCapability
 from src.sdk.decisionkit import BundleError, CompiledBundle, Diagnostic, load_bundle
 
 BUNDLES_DIR = Path(__file__).parent / "bundles"
-#: Paquete de Hubara (velas). Una tienda nueva trae el suyo y lo nombra en Terraform.
-DEFAULT_BUNDLE = "hubara-ventas"
+#: El paquete por defecto (la tienda actual). Una tienda nueva trae el suyo y lo nombra en Terraform.
+DEFAULT_BUNDLE = "ventas"
 BUNDLE_ENV = "SALES_DECISIONS_BUNDLE"
 
 _resolved: dict[tuple[str, str, str], Any] = {}
 
 
 def active_bundle_id() -> str:
-    """El paquete de la tienda (config), o el de Hubara."""
+    """El paquete de la tienda (config), o el por defecto."""
     return (os.getenv(BUNDLE_ENV) or "").strip() or DEFAULT_BUNDLE
 
 

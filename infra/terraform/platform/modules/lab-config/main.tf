@@ -51,7 +51,7 @@ variable "config" {
     capabilities_ceiling    = optional(string, "off")
     workflow_v2_ceiling     = optional(string, "off")
     order_sentinel_reader   = optional(string, "off")
-    decisions_bundle        = optional(string, "hubara-ventas")
+    decisions_bundle        = optional(string, "ventas")
   })
 }
 

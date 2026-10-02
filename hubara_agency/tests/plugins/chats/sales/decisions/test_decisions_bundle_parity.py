@@ -1,5 +1,5 @@
 """Paquetes de decisión (PAQUETES_DE_DECISION.md §10): cada capacidad
-migrada sale del paquete `hubara-ventas` (YAML) y decide EXACTAMENTE igual
+migrada sale del paquete `ventas` (YAML) y decide EXACTAMENTE igual
 que su clase de Python.
 
 La paridad es la compuerta de cada fase: sobre las mismas entradas, el
@@ -167,7 +167,7 @@ def _hubara_bundle(monkeypatch):
 
 @pytest.mark.parametrize("name", NAMES)
 def test_it_comes_from_the_bundle(name: str) -> None:
-    assert getattr(registry.capability(name), "bundle", "") == "hubara-ventas@1"
+    assert getattr(registry.capability(name), "bundle", "") == "ventas@1"
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -222,12 +222,12 @@ async def test_the_whole_verdict_is_the_same(monkeypatch, name: str, provider: s
         for inp in inputs:
             got = await decide(new, inp, provider=provider, profile_id="jev-v3", session_id=SID)
             want = await decide(old, inp, provider=provider, profile_id="jev-v3", session_id=SID)
-            assert got.bundle == "hubara-ventas@1" and want.bundle == ""
+            assert got.bundle == "ventas@1" and want.bundle == ""
             assert replace(got, bundle="") == want, (name, inp, provider, answers)
 
 
 def test_the_shipped_bundle_compiles() -> None:
-    assert check_bundle(BUNDLES_DIR / "hubara-ventas", CATALOG_PATH) == []
+    assert check_bundle(BUNDLES_DIR / "ventas", CATALOG_PATH) == []
 
 
 def test_the_catalog_and_the_code_declare_the_same_builtins_and_constants() -> None:
@@ -253,7 +253,7 @@ def test_the_cli_certifies_the_repo_bundles(capsys) -> None:
     from src.sdk.cli import main
 
     assert main(["decisions", "check"]) == 0
-    assert "OK hubara-ventas@1" in capsys.readouterr().out
+    assert "OK ventas@1" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
@@ -269,5 +269,5 @@ async def test_the_ingest_reads_from_the_bundle(tmp_path: Path, monkeypatch) -> 
     readings = await EngineReadings(tmp_path).read(INBOUND[0])
 
     bundles = {v["capability"]: v["bundle"] for v in readings.verdicts}
-    assert bundles == {"compra": "", "retoma": "hubara-ventas@1", "baja": "hubara-ventas@1", "cortesia": "hubara-ventas@1"}
+    assert bundles == {"compra": "", "retoma": "ventas@1", "baja": "ventas@1", "cortesia": "ventas@1"}
     assert readings.courtesy_only is True

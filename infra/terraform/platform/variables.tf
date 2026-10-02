@@ -65,16 +65,16 @@ variable "tenants" {
     # (LABORATORIO_CONVERSACIONES_PLAN.md §4.4). Defaults = todo apagado. Se
     # materializa como SSM String en /hubara/<tenant>/<VAR> (modules/lab-config).
     lab = optional(object({
-      perception_mode_ceiling = optional(string, "off")           # techo del modo: off | shadow | canary | on
-      perception_profile      = optional(string, "jev-v5")        # perfil del motor (sales/decisions/profiles.yaml): el mismo del brazo B del laboratorio
-      signal_inbound_meta     = optional(bool, false)             # 4.º argumento de send_message (se enciende tras desplegar el worker)
-      max_usd_per_run         = optional(number, 120)             # tope de gasto de una corrida del laboratorio
-      max_usd_per_month       = optional(number, 300)             # tope mensual del laboratorio
-      internal_numbers        = optional(list(string), [])        # teléfonos del equipo, E.164 (+573001234567): sus conversaciones no entran al banco; [] = ninguno
-      capabilities_ceiling    = optional(string, "off")           # techo de las capacidades del motor de decisiones: off | shadow | canary | on
-      workflow_v2_ceiling     = optional(string, "off")           # techo del workflow de ventas V2: off | canary | on
-      order_sentinel_reader   = optional(string, "off")           # lector de Jev del Order Sentinel: off | shadow | on
-      decisions_bundle        = optional(string, "hubara-ventas") # paquete de decisión de la tienda (sales/decisions/bundles/<id>, PAQUETES_DE_DECISION.md)
+      perception_mode_ceiling = optional(string, "off")    # techo del modo: off | shadow | canary | on
+      perception_profile      = optional(string, "jev-v5") # perfil del motor (sales/decisions/profiles.yaml): el mismo del brazo B del laboratorio
+      signal_inbound_meta     = optional(bool, false)      # 4.º argumento de send_message (se enciende tras desplegar el worker)
+      max_usd_per_run         = optional(number, 120)      # tope de gasto de una corrida del laboratorio
+      max_usd_per_month       = optional(number, 300)      # tope mensual del laboratorio
+      internal_numbers        = optional(list(string), []) # teléfonos del equipo, E.164 (+573001234567): sus conversaciones no entran al banco; [] = ninguno
+      capabilities_ceiling    = optional(string, "off")    # techo de las capacidades del motor de decisiones: off | shadow | canary | on
+      workflow_v2_ceiling     = optional(string, "off")    # techo del workflow de ventas V2: off | canary | on
+      order_sentinel_reader   = optional(string, "off")    # lector de Jev del Order Sentinel: off | shadow | on
+      decisions_bundle        = optional(string, "ventas") # paquete de decisión de la tienda (sales/decisions/bundles/<id>, PAQUETES_DE_DECISION.md)
     }), {})
   }))
 
@@ -112,7 +112,7 @@ variable "tenants" {
 
   validation {
     condition     = alltrue([for t in values(var.tenants) : can(regex("^[a-z][a-z0-9-]*$", t.lab.decisions_bundle))])
-    error_message = "tenants.*.lab.decisions_bundle: id de paquete de decisión (la carpeta en sales/decisions/bundles/), p.ej. hubara-ventas."
+    error_message = "tenants.*.lab.decisions_bundle: id de paquete de decisión (la carpeta en sales/decisions/bundles/), p.ej. ventas."
   }
 
   validation {

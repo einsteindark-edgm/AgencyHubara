@@ -33,8 +33,8 @@ def _fresh(monkeypatch):
 def test_a_migrated_capability_comes_from_the_bundle_and_the_rest_from_their_class() -> None:
     from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Compra
 
-    assert capability("baja").bundle == "hubara-ventas@1"
-    assert capability("cortesia").bundle == "hubara-ventas@1"
+    assert capability("baja").bundle == "ventas@1"
+    assert capability("cortesia").bundle == "ventas@1"
     assert isinstance(capability("compra"), Compra)
     assert getattr(capability("compra"), "bundle", "") == ""
 
@@ -54,8 +54,8 @@ def test_the_store_configuration_chooses_the_bundle(tmp_path: Path, monkeypatch)
     bundles = tmp_path / "bundles"
     shutil.copytree(registry.BUNDLES_DIR, bundles)
     demo = bundles / "tienda-demo"
-    shutil.move(bundles / "hubara-ventas", demo)
-    head = (demo / "bundle.yaml").read_text(encoding="utf-8").replace("id: hubara-ventas", "id: tienda-demo")
+    shutil.move(bundles / "ventas", demo)
+    head = (demo / "bundle.yaml").read_text(encoding="utf-8").replace("id: ventas", "id: tienda-demo")
     (demo / "bundle.yaml").write_text(head, encoding="utf-8")
     baja = demo / "capabilities" / "baja.yaml"
     baja.write_text(baja.read_text(encoding="utf-8").replace("de la tienda?", "de la zapatería?"), encoding="utf-8")
@@ -84,11 +84,11 @@ def test_a_bundle_whose_id_is_not_its_folder_is_rejected(tmp_path: Path, monkeyp
 
     bundles = tmp_path / "bundles"
     shutil.copytree(registry.BUNDLES_DIR, bundles)
-    shutil.move(bundles / "hubara-ventas", bundles / "otra-carpeta")
+    shutil.move(bundles / "ventas", bundles / "otra-carpeta")
     monkeypatch.setattr(registry, "BUNDLES_DIR", bundles)
     monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "otra-carpeta")
 
-    with pytest.raises(BundleError, match="hubara-ventas"):
+    with pytest.raises(BundleError, match="ventas"):
         capability("baja")
 
 

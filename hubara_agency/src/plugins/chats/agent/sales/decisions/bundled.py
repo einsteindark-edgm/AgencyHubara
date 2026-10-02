@@ -1,6 +1,6 @@
 """Capacidades desde el paquete de decisión (PAQUETES_DE_DECISION.md, fase F1).
 
-El paquete `bundles/hubara-ventas/` (YAML certificado) trae las preguntas,
+El paquete `bundles/ventas/` (YAML certificado) trae las preguntas,
 los umbrales y la tabla de decisión de cada capacidad; este módulo pone lo
 que sigue siendo código —los builtins: reglas, constructores de estado,
 pisos y comparadores— y arma con los dos un objeto con la forma de

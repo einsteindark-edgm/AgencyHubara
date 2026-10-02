@@ -207,8 +207,8 @@ run "un_lector_del_order_sentinel_raro_no_pasa_el_plan" {
 }
 
 # Paquetes de decisión (PAQUETES_DE_DECISION.md §10.1): el paquete activo es
-# configuración de la tienda, igual que el perfil de Jev. Default: Hubara.
-run "el_paquete_de_decision_por_defecto_es_el_de_hubara" {
+# configuración de la tienda, igual que el perfil de Jev. Default: ventas.
+run "el_paquete_de_decision_por_defecto_es_ventas" {
   command = plan
   variables {
     tenants = {
@@ -220,8 +220,8 @@ run "el_paquete_de_decision_por_defecto_es_el_de_hubara" {
     }
   }
   assert {
-    condition     = module.lab_config["t"].params["SALES_DECISIONS_BUNDLE"] == "hubara-ventas"
-    error_message = "Sin bloque lab, SALES_DECISIONS_BUNDLE es hubara-ventas."
+    condition     = module.lab_config["t"].params["SALES_DECISIONS_BUNDLE"] == "ventas"
+    error_message = "Sin bloque lab, SALES_DECISIONS_BUNDLE es ventas."
   }
 }
 
