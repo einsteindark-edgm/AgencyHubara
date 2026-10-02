@@ -68,3 +68,16 @@ def test_b0_is_a_valid_arm_for_every_parameter() -> None:
     assert clean_query(arms="A1,B0,B") == {"arms": "A1,B0,B"}
     with pytest.raises(LabPathError):
         clean_query(arm="B00")
+
+
+def test_an_arm_can_carry_a_decision_bundle() -> None:
+    """`B@ventas-2` = el bot B con otro paquete de decisión
+    (PAQUETES_DE_DECISION.md F6): pasa la forma en cada parámetro; qué
+    paquete existe lo decide chats."""
+    assert clean_query(arm="B@ventas-2", base="B", cand="B@ventas-2") == {
+        "arm": "B@ventas-2", "base": "B", "cand": "B@ventas-2",
+    }
+    assert clean_query(arms="A1,B,B@ventas-2") == {"arms": "A1,B,B@ventas-2"}
+    for bad in ("B@../x", "B@", "B@Ventas", "Z@ventas", "B@ventas@2"):
+        with pytest.raises(LabPathError):
+            clean_query(arm=bad)

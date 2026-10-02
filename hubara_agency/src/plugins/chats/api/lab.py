@@ -29,6 +29,11 @@ código del check; la pantalla lo muestra por su nombre, su nivel y su regla.
 Candados: A1 (el control) siempre va; repeticiones 1 o 3; una corrida a la
 vez (workflow `lab-launch` con conflicto FAIL → 409); topes por corrida y por
 mes desde Terraform (`LAB_MAX_USD_PER_RUN` / `LAB_MAX_USD_PER_MONTH`) → 422.
+
+Un brazo puede fijar el paquete de decisión (PAQUETES_DE_DECISION.md F6):
+`B@ventas-2` corre el bot B con la inteligencia de `ventas-2`. Solo los bots
+del motor (`BUNDLE_ARMS`) y solo paquetes que trae la imagen; el estimado
+lista los paquetes (`bundles`) para el lanzador.
 """
 from __future__ import annotations
 
@@ -42,6 +47,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
 from fastapi import APIRouter, Body, HTTPException, Query
 
 from src.plugins.chats.agent.sales_lab.launch.bench_export import plan_bench_export
@@ -50,9 +56,11 @@ from src.plugins.chats.agent.sales_lab.run.compare import arm_row
 from src.plugins.chats.agent.sales_lab.launch.costs import check_caps, estimate_run_usd, month_spent_usd
 from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION, specs_payload
 from src.plugins.chats.agent.sales_eval.workflows.lab_launch import LAB_LAUNCH_WORKFLOW_ID
+from src.plugins.chats.shared.store_pack import BUNDLES_DIR, active_bundle_id, bundle_dir
 from src.plugins.chats.shared.turn_view import trace_view
 from src.sdk import get_task_queue
-from src.sdk.labkit import IMAGE_RE, RUN_ID_RE, LabStorePort, get_lab_store
+from src.sdk.decisionkit import BundleError
+from src.sdk.labkit import IMAGE_RE, RUN_ID_RE, LabStorePort, arm_pattern, get_lab_store, split_arm
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, get_temporal_client
 
 router = APIRouter()
@@ -65,6 +73,10 @@ ARMS: dict[str, str] = {
     "B0": "Bot nuevo sin Jev (workflow V2 con reglas)",
     "B": "Bot nuevo + Jev (workflow V2, OpenRouter)",
 }
+#: Los bots que pueden fijar paquete de decisión (`B@<paquete>`): los que le
+#: preguntan al motor. A1 es el bot de hoy (V1 con reglas): no fija paquete.
+BUNDLE_ARMS: tuple[str, ...] = ("B0", "B")
+_BUNDLE_ARM = arm_pattern(BUNDLE_ARMS)
 _REPS = (1, 3)
 # `bench-<corrida>` (exportado) o un caso armado a mano (`caso-4148-real`):
 # un segmento de ruta seguro, la misma forma que una corrida.
@@ -105,11 +117,37 @@ def _store() -> LabStorePort:
     return store
 
 
+def _bundles() -> list[dict[str, Any]]:
+    """Los paquetes de decisión que trae la imagen (id, versión, si es el de la tienda)."""
+    active = active_bundle_id()
+    out: list[dict[str, Any]] = []
+    for path in sorted(BUNDLES_DIR.glob("*/bundle.yaml")):
+        try:
+            version = int((yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("version") or 0)
+        except (OSError, ValueError, yaml.YAMLError):
+            version = 0
+        out.append({"id": path.parent.name, "version": version, "active": path.parent.name == active})
+    return out
+
+
+def _bundle_arm(arm: str) -> str:
+    """`B@<paquete>`: un bot del motor y un paquete que existe."""
+    if not _BUNDLE_ARM.fullmatch(arm):
+        raise HTTPException(422, detail={"reason": "arms", "message": f"{arm}: solo B0 y B fijan paquete de decisión."})
+    try:
+        bundle_dir(split_arm(arm)[1])
+    except BundleError:
+        raise HTTPException(422, detail={"reason": "arms", "message": f"{arm}: ese paquete de decisión no está en la imagen."}) from None
+    return arm
+
+
 def _parse_arms(arms: list[str]) -> list[str]:
     wanted = [a.strip() for a in arms if a and a.strip()]
-    if "A1" not in wanted or any(a not in ARMS for a in wanted) or len(set(wanted)) != len(wanted):
+    plain = [a for a in wanted if "@" not in a]
+    if "A1" not in wanted or any(a not in ARMS for a in plain) or len(set(wanted)) != len(wanted):
         raise HTTPException(422, detail={"reason": "arms", "message": "Bots válidos: A1 (siempre), B0 y B."})
-    return [a for a in ARMS if a in wanted]
+    pinned = [_bundle_arm(a) for a in wanted if "@" in a]
+    return [*(a for a in ARMS if a in plain), *pinned]
 
 
 def _parse_reps(reps: int) -> int:
@@ -152,6 +190,8 @@ def _estimate(store: LabStorePort, arms: list[str], reps: int, bench: str) -> di
         "bench_id": bench_id,
         "turns": turns,
         "arms": [{"id": a, "label": ARMS[a], "selected": a in arms} for a in ARMS],
+        "bundles": _bundles(),
+        "bundle_arms": list(BUNDLE_ARMS),
         "reps": reps,
         "estimate_usd": estimate,
         "run_cap_usd": run_cap,
@@ -166,7 +206,7 @@ def _estimate(store: LabStorePort, arms: list[str], reps: int, bench: str) -> di
 
 @router.get("/lab/estimate")
 def estimate(
-    arms: str = Query("A1", max_length=20),
+    arms: str = Query("A1", max_length=200),
     reps: int = Query(1),
     bench: str = Query("new", max_length=80),
 ) -> dict[str, Any]:
@@ -277,6 +317,7 @@ async def cancel_active() -> dict[str, Any]:
 _SID_RE = re.compile(r"^wa_[A-Za-z0-9_+]{3,40}$")
 _EPISODE_RE = re.compile(r"^ep_\d{1,6}$")
 _READ_ARMS = ("A0", *ARMS)
+_READ_ARM = arm_pattern(_READ_ARMS)
 
 
 def _run_id(run: str) -> str:
@@ -292,7 +333,9 @@ def _sid(sid: str) -> str:
 
 
 def _arm(arm: str) -> str:
-    if arm not in _READ_ARMS:
+    # Un brazo con paquete (`B@ventas-2`, F6) se lee igual: la forma es un
+    # segmento de ruta seguro.
+    if not _READ_ARM.fullmatch(arm):
         raise HTTPException(422, detail="Brazo inválido: A0, A1, B0 o B.")
     return arm
 

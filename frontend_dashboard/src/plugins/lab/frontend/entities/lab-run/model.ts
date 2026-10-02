@@ -40,6 +40,7 @@ export type CheckLevel = CheckSpec["level"];
 export type LabRun = z.infer<typeof runSchema>;
 export type LabRuns = z.infer<typeof runsSchema>;
 export type LabEstimate = z.infer<typeof estimateSchema>;
+export type LabBundle = LabEstimate["bundles"][number];
 export type ActiveStatus = z.infer<typeof activeStatusSchema>;
 export type ActiveRun = z.infer<typeof activeRunSchema>;
 export type BenchReport = z.infer<typeof benchReportSchema>;

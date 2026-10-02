@@ -120,3 +120,24 @@ def test_validation_compares_the_production_scorecard_with_turn_mode() -> None:
     assert (est06["both_fail"], est06["only_production"], est06["only_turn"], est06["agree"]) == (1, 0, 1, 1)
     assert out["checks"]["APE-01"]["agree"] == 2
     assert out["agreement"] == 3 / 4 and out["verdict_agreement"] == 1 / 2
+
+
+def test_an_arm_with_a_bundle_is_compared_against_its_bot() -> None:
+    """PAQUETES_DE_DECISION.md F6: `B@ventas-2` corre el bot B con otro paquete
+    de decisión. Se compara contra el bot de hoy (A1) y contra el mismo bot
+    con el paquete de la tienda (B): esa diferencia es la del paquete nuevo.
+    Tiene el clasificador de B: entra a la arena con su perfil."""
+    topics = [{"topic": "catálogo"}]
+    scores = {
+        "A1": [[_rec("A1", "FALLA", turns={1: {"EST-06": "falla"}})]],
+        "B": [[_rec("B", "FALLA", turns={1: {"EST-06": "falla"}})]],
+        "B@ventas-2": [[_rec("B@ventas-2", "PASA", turns={1: {"EST-06": "pasa"}}, topics=topics)]],
+    }
+
+    s = build_summary(run_id="run-1", registry_version=4, previous={}, scores=scores, metrics={}, rows={},
+                      code_checks={"EST-06"})
+
+    assert set(s["diffs"]) == {"A1:B", "A1:B@ventas-2", "B:B@ventas-2"}
+    assert s["diffs"]["B:B@ventas-2"]["episode_pass"]["delta"] == 1.0
+    assert set(s["arena"]) == {"B", "B@ventas-2"}
+    assert s["arena"]["B@ventas-2"]["profile"] == "jev-v5"

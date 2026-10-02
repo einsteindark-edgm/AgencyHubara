@@ -18,7 +18,7 @@ from pathlib import Path
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from src.plugins.chats.agent.sales_lab.arms import ARM_PROFILES
+from src.plugins.chats.agent.sales_lab.arms import arm_profile
 from src.plugins.chats.agent.sales_lab.cases import build_cases
 from src.plugins.chats.agent.sales_eval.scorecard.claude_judge import ClaudeCodeJudge, JudgeQueue
 from src.plugins.chats.agent.sales_lab.launch.costs import AGENT_USD_PER_TURN, JUDGE_USD_PER_TURN
@@ -239,7 +239,7 @@ async def smoke_turn_activity(plan: RunPlan) -> SmokeResult:
     case_id = str(case.get("case_id") or "")
     cost = 0.0
     sent: list[str] = []
-    for arm in ("A1", *(a for a in plan.arms if a in ARM_PROFILES)):
+    for arm in ("A1", *(a for a in plan.arms if arm_profile(a) is not None)):
         result = await run_case_in_subprocess(
             case,
             bench_dir=_lab_root() / "bench" / plan.bench_id,
@@ -250,7 +250,7 @@ async def smoke_turn_activity(plan: RunPlan) -> SmokeResult:
         cost += _charged_usd(result)
         trace = result.get("trace") or {}
         error = result.get("error") or (None if trace else "el turno no dejó traza")
-        fallback = _classifier_fallback(trace) if error is None and arm in ARM_PROFILES else None
+        fallback = _classifier_fallback(trace) if error is None and arm_profile(arm) is not None else None
         if fallback:
             error = f"el bot {arm} no pudo usar su clasificador ({fallback}): revisa la llave de OpenRouter del laboratorio"
         if error:

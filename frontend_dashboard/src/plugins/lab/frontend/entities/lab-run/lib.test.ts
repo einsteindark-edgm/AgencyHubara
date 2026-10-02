@@ -30,6 +30,11 @@ describe("lib del laboratorio", () => {
     expect(armLabel("Z")).toBe("Z");
   });
 
+  it("nombra un bot que corre con otro paquete de decisión (PAQUETES_DE_DECISION.md F6)", () => {
+    expect(armLabel("B@ventas-2")).toBe("Bot nuevo con Jev · paquete ventas-2");
+    expect(armLabel("B0@vincenzo")).toBe("Bot nuevo sin Jev · paquete vincenzo");
+  });
+
   it("muestra al cliente sin su teléfono completo", () => {
     expect(customerLabel("wa_573001234567")).toBe("Cliente ···4567");
     expect(customerLabel("wa_abc")).toBe("Cliente ···_abc");

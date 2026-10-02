@@ -140,3 +140,31 @@ def test_every_capability_of_the_engine_has_a_switch_in_the_control() -> None:
                             names.add(constants[value.id])
 
     assert names and names <= set(bots.CAPABILITIES), sorted(names - set(bots.CAPABILITIES))
+
+
+# ── Un brazo puede fijar el paquete de decisión (PAQUETES_DE_DECISION.md F6) ──
+
+
+def test_a_lab_arm_can_pin_a_decision_bundle() -> None:
+    """`B@<paquete>` = el bot B con la inteligencia de ese paquete: así se
+    prueba un paquete nuevo contra el banco antes de promoverlo."""
+    pinned = bots.bot_for_arm("B@ventas")
+
+    assert pinned.bundle == "ventas"
+    assert pinned.id == "B@ventas"
+    assert (pinned.workflow, pinned.layers, pinned.profile) == (bots.WORKFLOW_V2, "on", "jev-v5")
+    assert pinned.provider("compra") == "jev"
+    assert bots.bot_for_arm("B").bundle == ""  # sin @: el paquete de la tienda
+
+
+def test_a_bundle_that_does_not_exist_is_refused() -> None:
+    with pytest.raises(ValueError, match="no-existe"):
+        bots.bot_for_arm("B@no-existe")
+    with pytest.raises(ValueError, match="Z"):
+        bots.bot_for_arm("Z@ventas")
+
+
+def test_the_sandbox_pins_the_bundle_of_its_arm_too(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DECISIONS_BOT", "B@ventas")
+
+    assert bots.bot_for_session(OTHER, vault_dir=tmp_path).bundle == "ventas"

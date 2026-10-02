@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_arm
+from src.plugins.chats.agent.sales_lab.arms import arm_env
 from src.plugins.chats.agent.sales.decisions.capabilities import watching_verdicts
 from src.plugins.chats.agent.sales_lab.arms import signal_meta
 from src.plugins.chats.agent.sales_lab.sandbox.activities import SandboxCapture, sandbox_activities
@@ -54,16 +55,20 @@ DEFAULT_TIMEOUT_S = 600.0
 @contextmanager
 def _pinned_bot(arm: str):
     """El bot del brazo para todo lo que corre en este proceso (lecturas,
-    activities y tools: `bot_for_session` lee `DECISIONS_BOT`)."""
-    previous = os.environ.get("DECISIONS_BOT")
-    os.environ["DECISIONS_BOT"] = arm
+    activities y tools: `bot_for_session` lee `DECISIONS_BOT`) y su paquete
+    de decisión si lo fija (`B@ventas-2`: el resolutor lee
+    `SALES_DECISIONS_BUNDLE`; el entrypoint ya lo fijó antes de importar)."""
+    pins = {"DECISIONS_BOT": arm, **arm_env(arm)}
+    previous = {name: os.environ.get(name) for name in pins}
+    os.environ.update(pins)
     try:
         yield
     finally:
-        if previous is None:
-            os.environ.pop("DECISIONS_BOT", None)
-        else:
-            os.environ["DECISIONS_BOT"] = previous
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def workspace_slug(path: str) -> str:

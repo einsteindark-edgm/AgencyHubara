@@ -72,10 +72,19 @@ export const estimateArmSchema = z.object({
   selected: z.boolean().default(false),
 });
 
+/** Un paquete de decisión que trae la imagen (PAQUETES_DE_DECISION.md F6). */
+export const estimateBundleSchema = z.object({
+  id: z.string(),
+  version: z.number().catch(0).default(0),
+  active: z.boolean().catch(false).default(false),
+});
+
 export const estimateSchema = z.object({
   bench_id: nullableString,
   turns: z.number().catch(0).default(0),
   arms: z.array(estimateArmSchema).catch([]).default([]),
+  bundles: z.array(estimateBundleSchema).catch([]).default([]),
+  bundle_arms: z.array(z.string()).catch([]).default([]),
   reps: z.number().catch(1).default(1),
   estimate_usd: z.number().catch(0).default(0),
   run_cap_usd: nullableNumber,

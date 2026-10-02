@@ -24,6 +24,7 @@ import {
   useLabEstimate,
   useLaunchRun,
   type ActiveStatus,
+  type LabBundle,
   type LabEstimate,
 } from "@plugins/lab/frontend/entities/lab-run";
 
@@ -138,17 +139,53 @@ function Seg({ label, options, value, onChange }: { label: string; options: Arra
   );
 }
 
+/** El paquete de decisión: cuál corre (el de la tienda) y, si la imagen trae
+ * otro, cuál comparar con el bot nuevo con Jev. */
+function BundleRow({ bundles, candidate, onChange, enabled }: { bundles: LabBundle[]; candidate: string; onChange: (id: string) => void; enabled: boolean }) {
+  const store = bundles.find((b) => b.active) ?? bundles[0];
+  if (!store) return null;
+  const others = bundles.filter((b) => b.id !== store.id);
+  return (
+    <Row label="Paquete">
+      {others.length === 0 ? (
+        <span className="text-fg-muted">{`${store.id}, versión ${store.version} (el de la tienda). Para comparar otro, primero hay que subirlo.`}</span>
+      ) : (
+        <select
+          aria-label="Paquete a comparar"
+          value={candidate}
+          disabled={!enabled}
+          onChange={(e) => onChange(e.target.value)}
+          className="max-w-full rounded-md border border-line-strong bg-canvas px-2 py-1.5 text-[11.5px] text-fg disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          <option value="">{`Ninguno (solo el de la tienda: ${store.id}, versión ${store.version})`}</option>
+          {others.map((b) => (
+            <option key={b.id} value={b.id}>{`${b.id} (versión ${b.version})`}</option>
+          ))}
+        </select>
+      )}
+    </Row>
+  );
+}
+
 function LaunchForm({ benches, onClose }: { benches: string[]; onClose: () => void }) {
   const [picked, setPicked] = useState<Record<string, boolean>>({ B: true });
   const [reps, setReps] = useState(1);
   const [bench, setBench] = useState<"new" | "reuse">("new");
   const [saved, setSaved] = useState<string | null>(null);
-  const arms = ["A1", ...OPTIONAL_ARMS.filter((a) => picked[a])];
+  // Otro paquete de decisión para el bot nuevo con Jev (F6): corre como
+  // `B@<paquete>` junto a B (el de la tienda), así se ve la diferencia.
+  const [candidate, setCandidate] = useState("");
+  const [bundles, setBundles] = useState<LabBundle[]>([]);
+  const arms = ["A1", ...OPTIONAL_ARMS.filter((a) => picked[a]), ...(candidate && picked.B ? [`B@${candidate}`] : [])];
   // El banco guardado elegido; por defecto, el de la corrida más nueva.
   const savedBench = saved !== null && benches.includes(saved) ? saved : (benches[0] ?? null);
   const input = { arms, reps, bench: bench === "reuse" && savedBench ? savedBench : "new" };
   const estimate = useLabEstimate(input, true);
   const launch = useLaunchRun();
+  // La lista de paquetes no cambia con lo marcado: se guarda (la última que
+  // llegó) para que el selector no parpadee mientras se recalcula el costo.
+  const estimatedBundles = estimate.data?.bundles;
+  if (estimatedBundles && estimatedBundles.length > 0 && estimatedBundles !== bundles) setBundles(estimatedBundles);
 
   const cap = estimate.data ? capMessage(estimate.data) : null;
   const estimateError = estimate.isError ? apiErrorDetail(estimate.error) : null;
@@ -172,6 +209,7 @@ function LaunchForm({ benches, onClose }: { benches: string[]; onClose: () => vo
           </label>
         ))}
       </Row>
+      <BundleRow bundles={bundles} candidate={candidate} onChange={setCandidate} enabled={!!picked.B} />
       <Row label="Repeticiones">
         <Seg
           label="Repeticiones"

@@ -285,3 +285,51 @@ def test_the_last_run_that_failed_before_reporting_stays_visible(env) -> None:
 
     assert body["active"] is None
     assert (body["last"]["phase"], body["last"]["error"]) == ("failed", "la caja no prendió")
+
+
+# ── Un brazo con paquete de decisión: `B@<paquete>` (PAQUETES_DE_DECISION.md F6) ──
+
+
+def test_the_estimate_lists_the_decision_bundles(env, monkeypatch) -> None:
+    """El lanzador ofrece los paquetes del repo (los que trae la imagen) para
+    correr el bot nuevo con uno distinto al de la tienda."""
+    monkeypatch.delenv("SALES_DECISIONS_BUNDLE", raising=False)
+    data = env["http"].get("/api/chats/lab/estimate", params={"arms": "A1,B", "reps": 1, "bench": "new"}).json()
+
+    assert data["bundles"] == [{"id": "ventas", "version": 1, "active": True}]
+    assert data["bundle_arms"] == ["B0", "B"]
+
+
+def test_launch_with_an_arm_that_pins_a_bundle(env) -> None:
+    body = {"arms": ["B@ventas", "A1", "B"], "reps": 1, "bench": "new"}
+    resp = env["http"].post("/api/chats/lab/runs", json=body)
+
+    assert resp.status_code == 202, resp.text
+    [started] = env["client"].started
+    assert started["input"].arms == ["A1", "B", "B@ventas"]
+
+
+@pytest.mark.parametrize(
+    "arms",
+    [
+        ["A1", "B@no-existe"],      # el paquete no existe en la imagen
+        ["A1", "A1@ventas"],        # el bot de hoy no le pregunta a Jev: no fija paquete
+        ["A1", "B@ventas", "B@ventas"],
+        ["A1", "B@../ventas"],
+    ],
+)
+def test_a_bundle_arm_that_cannot_run_is_a_422(env, arms: list[str]) -> None:
+    resp = env["http"].post("/api/chats/lab/runs", json={"arms": arms, "reps": 1, "bench": "new"})
+
+    assert resp.status_code == 422
+
+
+def test_the_results_of_a_bundle_arm_can_be_read() -> None:
+    """Las lecturas (traza, evaluaciones, resumen) aceptan el brazo con su
+    paquete; la forma sigue siendo un segmento de ruta seguro."""
+    from fastapi import HTTPException
+
+    assert api._arm("B@ventas-2") == "B@ventas-2"
+    for bad in ("B@../x", "Z@ventas", "B@"):
+        with pytest.raises(HTTPException):
+            api._arm(bad)

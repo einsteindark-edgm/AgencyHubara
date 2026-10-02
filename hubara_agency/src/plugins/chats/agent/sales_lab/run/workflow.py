@@ -47,12 +47,12 @@ with workflow.unsafe.imports_passed_through():
         SummarizeInput,
         SummarizeResult,
     )
-    from src.plugins.chats.agent.sales_lab.arms import SIMULATED_ARMS
+    from src.plugins.chats.agent.sales_lab.arms import runnable_arm
 
 _QUICK = {"start_to_close_timeout": timedelta(minutes=2), "retry_policy": RetryPolicy(maximum_attempts=3)}
-#: Brazos que el simulador sabe correr: el bot actual (A1) y el bot nuevo con
-#: Jev (B). Un brazo desconocido se informa, no se corre.
-RUNNABLE_ARMS = SIMULATED_ARMS
+#: Los brazos que el simulador sabe correr son los bots del registro
+#: (`SIMULATED_ARMS`) con o sin paquete fijado (`runnable_arm`). Un brazo
+#: desconocido se informa, no se corre.
 ARMS_PENDING_NOTE = "{arms}: el simulador no conoce ese bot (corre A1 y B)"
 SPEND_CAP_NOTE = "la corrida se detuvo al llegar al tope de gasto"
 NO_JUDGE_NOTE = "calificada sin juez (solo checks de código): el gasto ya estaba en el tope"
@@ -135,8 +135,10 @@ class LabRunWorkflow:
                     error = f"el turno de humo no pasó ({smoke.case_id}): {smoke.error}"[:500]
                     await progress(ProgressUpdate(run_id=inp.run_id, phase="failed", error=error, spent_usd=self._spent))
                     return {"phase": "failed", "error": error}
-            runnable = [a for a in simulated if a in RUNNABLE_ARMS]
-            pending = [a for a in simulated if a not in RUNNABLE_ARMS]
+            # Un brazo con paquete (`B@ventas-2`, F6) corre como su bot (forma
+            # pura: que el paquete exista lo validó el lanzador).
+            runnable = [a for a in simulated if runnable_arm(a)]
+            pending = [a for a in simulated if not runnable_arm(a)]
             notes = [ARMS_PENDING_NOTE.format(arms=", ".join(pending))] if pending else []
             if not runnable:
                 await progress(ProgressUpdate(run_id=inp.run_id, phase="done", turns_done=published.cases,

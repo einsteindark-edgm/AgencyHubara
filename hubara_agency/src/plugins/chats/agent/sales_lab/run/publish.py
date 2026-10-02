@@ -23,7 +23,7 @@ from typing import Any
 
 from src.plugins.chats.agent.sales_eval.scorecard import stats, store as card_store
 from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION
-from src.plugins.chats.agent.sales_lab.arms import ARM_PROFILES
+from src.plugins.chats.agent.sales_lab.arms import arm_profile
 from src.plugins.chats.agent.sales_lab.cases import CaseSet
 from src.plugins.chats.agent.sales_lab.run.arena import arena_metrics
 from src.sdk.labkit import LabStorePort
@@ -276,7 +276,7 @@ def publish_arm(
     metrics = {
         "arm": arm,
         "rep": rep,
-        "profile": ARM_PROFILES.get(arm),
+        "profile": arm_profile(arm),
         "missing": missing,
         **arena_metrics(results.values()),
     }

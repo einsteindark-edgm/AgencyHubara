@@ -334,9 +334,15 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   umbral = `@4`.
 - El `Verdict` y la traza llevan `bundle` (`id@version`), igual que hoy
   llevan el modelo de Jev.
-- El laboratorio corre un paquete nuevo contra el banco; si pasa, se promueve.
-- Producción elige la versión por capacidad (el despliegue gradual que ya
-  existe), siempre dentro del techo de Terraform.
+- El laboratorio corre un paquete nuevo contra el banco (un brazo
+  `B@<paquete>`, F6); si pasa, se promueve.
+- Promover = nombrar el paquete en Terraform (`tenants.<t>.lab.decisions_bundle`)
+  y desplegar: es la misma palanca que hoy, con historial y revisión. El
+  despliegue gradual de cada capacidad (reglas → sombra → jev, por
+  porcentaje y números de prueba) sigue siendo el que ya existe, ahora sobre
+  las capacidades del paquete activo. Un despliegue gradual de una VERSIÓN de
+  paquete por conversación (dos paquetes vivos a la vez) no hace falta para
+  operar y queda fuera (exigiría pasar el paquete por cada lugar que decide).
 - Recargar: hoy los YAML se cachean; un paquete nuevo entra con el despliegue
   (como los cuestionarios). Recarga en caliente queda para después.
 
@@ -349,7 +355,7 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
 | F3 ✅ | Las 9 B con sus builtins de estado, opciones de la entrada, vistas y preguntas condicionales + las del egreso de una pregunta (destinatario, su variante de plantilla y saludo) | ninguno |
 | F4 ✅ | Las 4 C + las del egreso parte por parte (preámbulo, destinatario por oración, rescate, portavelas), con `items:` + `each:` (el `per_item_select` del diseño) | ninguno |
 | F5 ✅ | Dominio de la tienda en el paquete (`domain.yaml`, certificado; `dom.x` en CEL): nombre, despedida y el vocabulario del agente. Los paquetes pasan a `chats/shared/decisions/bundles/` (los leen los dos agentes). Quita las 21 reglas de reemplazo de forge | ninguno en Hubara |
-| F6 | Versión de paquete en el laboratorio (un brazo puede fijar paquete) y en el despliegue gradual | — |
+| F6 ✅ | Un brazo del laboratorio fija paquete (`B@ventas-2`): se compara contra B (el de la tienda) y contra A1. Producción promueve por Terraform (`decisions_bundle`) | — |
 | F7 | El turno dentro del paquete: la ráfaga ① (`rafaga-v5` → `turn.yaml`) y la verificación ③ (`coverage_decision`), con las tablas de la política como filas certificadas | ninguno |
 | F8 | Paquete propio del Order Sentinel («¿qué cambió?» y la evidencia) sobre el mismo motor genérico | ninguno |
 
@@ -444,6 +450,22 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   catálogo la constante con la marca).
 - Forge: las 21 reglas `ej-*` se borraron; el clon recibe un dominio
   neutral desde una plantilla.
+
+**F6 hecho (2026-10-02).**
+- Un brazo del laboratorio es un bot y, si fija paquete, `@<paquete>`
+  (`B@ventas-2`). La forma la valida la plataforma (`labkit.split_arm`,
+  `arm_pattern`); qué bots existen, chats (`bots.bot_for_arm`: el bot con
+  `bundle`, y el paquete tiene que existir); el plugin `lab` deja pasar la
+  forma y chats rechaza un paquete que no está en la imagen (422).
+- El proceso del caso fija `SALES_DECISIONS_BUNDLE` ANTES de importar la app
+  (`sales_lab.arms.arm_env`, entrypoint), así las capacidades y el
+  vocabulario de las tools salen de ese paquete.
+- La corrida lo corre como su bot (costo, perfil, arena) y el resumen lo
+  compara contra A1 y contra el mismo bot con el paquete de la tienda
+  (`B:B@ventas-2`: la diferencia del paquete nuevo).
+- Lanzador: si la imagen trae otro paquete, «Paquete a comparar» lo suma
+  junto a B; con uno solo, dice cuál corre. Toda la pantalla nombra el brazo
+  «Bot nuevo con Jev · paquete ventas-2».
 
 **La paridad es la compuerta de cada fase:** para cada capacidad migrada,
 (a) el estado y las preguntas son byte a byte iguales a los de la clase en

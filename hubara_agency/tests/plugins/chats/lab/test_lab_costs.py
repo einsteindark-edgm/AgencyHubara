@@ -108,3 +108,9 @@ def test_the_month_spend_only_reads_this_months_runs(tmp_path) -> None:
 
     assert month_spent_usd(store, now_ms=now) == 12.5
     assert read == ["runs/run-20260910-090000-aa11/progress.json"]
+
+
+def test_an_arm_with_a_bundle_costs_like_its_bot() -> None:
+    """`B@ventas-2` (PAQUETES_DE_DECISION.md F6) es el bot B con otro paquete:
+    le pregunta a Jev igual que B."""
+    assert estimate_run_usd(["A1", "B@ventas-2"], reps=1, turns=400) == estimate_run_usd(["A1", "B"], reps=1, turns=400)

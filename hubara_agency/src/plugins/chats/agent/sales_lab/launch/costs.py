@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from src.sdk.labkit import LabStorePort
+from src.sdk.labkit import LabStorePort, split_arm
 
 AGENT_USD_PER_TURN = 7.09 / 404
 JUDGE_USD_PER_TURN = 30.0 / (9 * 404)
@@ -31,7 +31,8 @@ def estimate_run_usd(
     de la caja y no gasta API, así que por defecto no suma. Con el juez de pago
     (`LAB_JUDGE=litellm` en la caja) se pasa `JUDGE_USD_PER_TURN`."""
     judge = judge_usd_per_turn
-    per_turn = sum(AGENT_USD_PER_TURN + judge + PERCEPTION_USD_PER_TURN.get(a, 0.0) for a in arms) * reps
+    # Un brazo con paquete (`B@ventas-2`, F6) cuesta como su bot.
+    per_turn = sum(AGENT_USD_PER_TURN + judge + PERCEPTION_USD_PER_TURN.get(split_arm(a)[0], 0.0) for a in arms) * reps
     if control and arms:
         per_turn += judge  # la pasada del juez sobre A0
     return round(per_turn * max(0, turns), 2)

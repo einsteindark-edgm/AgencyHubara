@@ -8,7 +8,9 @@ Un proceso por caso: el vault, el historial del LLM y los clientes quedan en
 caché por proceso (`lru_cache`, constantes de módulo), así que cada caso
 arranca limpio. Orden (candado 3 del plan §3.5):
 
-  1. el entorno del sandbox ANTES de importar la app (`sandbox/env.py`);
+  1. el entorno del sandbox ANTES de importar la app (`sandbox/env.py`),
+     con el paquete de decisión del brazo si lo fija (`B@ventas-2`,
+     PAQUETES_DE_DECISION.md F6: las tools leen el vocabulario al importarse);
   2. el guard de la caja: sin llaves de producción, el Temporal de la caja,
      carpetas dentro de /lab. Si falla, sale con 2 sin importar nada;
   3. se importa la app y el guard corre OTRA vez: `load_dotenv` de la config
@@ -25,9 +27,19 @@ import os
 import sys
 from pathlib import Path
 
-from src.plugins.chats.agent.sales_lab.arms import SIMULATED_ARMS
+from src.plugins.chats.agent.sales.decisions.bots import bot_for_arm
+from src.plugins.chats.agent.sales_lab.arms import arm_env
 from src.plugins.chats.agent.sales_lab.guard import check_lab_env
 from src.plugins.chats.agent.sales_lab.sandbox.env import prepare_case_env
+
+
+def _arm(value: str) -> str:
+    """Un brazo que el simulador sabe correr (con su paquete, si lo fija)."""
+    try:
+        bot_for_arm(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+    return value
 
 
 def _refuse(stage: str, problems: list[str]) -> None:
@@ -64,8 +76,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sandbox", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--timeout", default="600")
-    parser.add_argument("--arm", default="A1", choices=SIMULATED_ARMS)
+    parser.add_argument("--arm", default="A1", type=_arm)
     args = parser.parse_args(argv)
+    os.environ.update(arm_env(args.arm))
     prepare_case_env(os.environ, Path(args.sandbox))
     problems = check_lab_env(os.environ)
     if problems:

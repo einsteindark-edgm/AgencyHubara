@@ -13,16 +13,18 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from src.sdk.labkit import RUN_ID_RE
+from src.sdk.labkit import RUN_ID_RE, arm_pattern, arms_pattern
 
 PROVIDER_PREFIX = "/api/chats/lab"
 
 _SID_RE = re.compile(r"^wa_[A-Za-z0-9_+]{3,40}$")
 _EPISODE_RE = re.compile(r"^ep_\d{1,6}$")
-# B0 = workflow V2 con reglas (motor de decisiones F4); chats decide cuáles
-# brazos existen hoy, acá solo se valida la forma.
-_ARM_RE = re.compile(r"^(A0|A1|B0|B|C)$")
-_ARMS_RE = re.compile(r"^(A0|A1|B0|B|C)(,(A0|A1|B0|B|C)){0,4}$")
+# B0 = workflow V2 con reglas (motor de decisiones F4); un brazo puede fijar
+# paquete de decisión (`B@ventas-2`, PAQUETES_DE_DECISION.md F6). Chats decide
+# cuáles brazos y paquetes existen hoy; acá solo se valida la forma.
+_BOTS = ("A0", "A1", "B0", "B", "C")
+_ARM_RE = arm_pattern(_BOTS)
+_ARMS_RE = arms_pattern(_BOTS, max_arms=8)
 # Un banco exportado se llama `bench-<corrida>`; los armados a mano
 # (`caso-4148-real`) también se repiten: misma forma segura que una corrida.
 _BENCH_RE = re.compile(r"^(new|[a-z0-9][a-z0-9-]{5,63})$")

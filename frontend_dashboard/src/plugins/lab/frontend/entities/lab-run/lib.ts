@@ -24,7 +24,16 @@ export const ARM_HELP: Record<string, string> = {
   B: "El bot nuevo, con Jev decidiendo.",
 };
 
+/**
+ * El nombre del bot en palabras. Un brazo con paquete de decisión
+ * (`B@ventas-2`, PAQUETES_DE_DECISION.md F6) es ese bot con otra inteligencia.
+ */
 export function armLabel(arm: string): string {
+  const at = arm.indexOf("@");
+  if (at > 0) {
+    const bot = arm.slice(0, at);
+    return `${ARM_LABELS[bot] ?? bot} · paquete ${arm.slice(at + 1)}`;
+  }
   return ARM_LABELS[arm] ?? arm;
 }
 

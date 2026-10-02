@@ -115,6 +115,16 @@ ejemplo de la tienda que vuelva al código y exige que, para la tienda
 actual, el texto que ve el LLM sea idéntico a la foto congelada (si lo
 cambias a propósito, regenera la foto en el mismo cambio).
 
+## Probar un paquete nuevo (F6)
+
+1. Copiá la carpeta de la tienda a una nueva (`bundles/ventas-2/`), cambiá
+   `id` (= la carpeta) y `version`, y hacé el cambio de comportamiento.
+2. `decisions check` en verde y commit (la caja del laboratorio corre la
+   imagen del commit).
+3. En el laboratorio, «Nueva corrida» → «Paquete a comparar: ventas-2»: corre
+   `B@ventas-2` junto a B y el resumen muestra la diferencia `B → B@ventas-2`.
+4. Si gana, se promueve en Terraform (`tenants.<t>.lab.decisions_bundle`).
+
 ## Lo que NO se hace
 
 - Editar una versión publicada: otra pregunta u otro umbral = `version: N+1`.

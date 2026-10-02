@@ -169,6 +169,42 @@ describe("RunLauncher", () => {
     });
   });
 
+  it("con otro paquete de decisión en la imagen, deja probarlo junto al de la tienda (F6)", async () => {
+    estimate = {
+      bundles: [
+        { id: "ventas", version: 1, active: true },
+        { id: "ventas-2", version: 2, active: false },
+      ],
+      bundle_arms: ["B0", "B"],
+    };
+    renderLauncher();
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
+
+    const picker = await screen.findByRole("combobox", { name: "Paquete a comparar" });
+    expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Ninguno (solo el de la tienda: ventas, versión 1)",
+      "ventas-2 (versión 2)",
+    ]);
+    fireEvent.change(picker, { target: { value: "ventas-2" } });
+
+    await waitFor(() => expect(estimateCalls().at(-1)).toContain("arms=A1%2CB%2CB%40ventas-2"));
+    await screen.findByText(/≈ US\$31/);
+    fireEvent.click(screen.getByRole("button", { name: "Lanzar corrida" }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([u, init]) => String(u).endsWith("/api/lab/runs") && init?.method === "POST");
+      expect(post && JSON.parse(post[1].body)).toEqual({ arms: ["A1", "B", "B@ventas-2"], reps: 1, bench: "new" });
+    });
+  });
+
+  it("con un solo paquete de decisión, dice cuál corre y no ofrece comparar", async () => {
+    estimate = { bundles: [{ id: "ventas", version: 1, active: true }], bundle_arms: ["B0", "B"] };
+    renderLauncher();
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva corrida" }));
+
+    expect(await screen.findByText("ventas, versión 1 (el de la tienda). Para comparar otro, primero hay que subirlo.")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Paquete a comparar" })).toBeNull();
+  });
+
   it("si ya hay una corrida, lo dice", async () => {
     launchResponse = { status: 409, body: { detail: { message: "Ya hay una corrida en curso." } } };
     renderLauncher();

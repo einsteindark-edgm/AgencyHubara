@@ -41,6 +41,7 @@ export type {
   EvalResult,
   Evaluations,
   Interval,
+  LabBundle,
   LabEstimate,
   LabRun,
   LabRuns,

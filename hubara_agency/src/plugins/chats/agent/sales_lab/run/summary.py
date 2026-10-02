@@ -27,7 +27,8 @@ from typing import Any
 
 from src.plugins.chats.agent.sales_eval.scorecard import stats
 from src.plugins.chats.agent.sales_eval.scorecard.service import aggregate_checks
-from src.plugins.chats.agent.sales_lab.arms import ARM_PROFILES, SIMULATED_ARMS
+from src.plugins.chats.agent.sales_lab.arms import SIMULATED_ARMS, arm_profile
+from src.sdk.labkit import split_arm
 from src.plugins.chats.agent.sales_lab.run.arena import judge_topic_codes, perceived_topics, topic_arena
 from src.plugins.chats.agent.sales_lab.run.compare import arm_row, diff_entry, fidelity, pass_k
 
@@ -68,7 +69,7 @@ def _arena(arm: str, scores: Records, rows: Records, metrics: list[dict[str, Any
             codes, missed = judge_topic_codes(judged[key])
             unmapped += missed
             pairs.append((perceived, codes))
-    return {"profile": ARM_PROFILES.get(arm), "metrics": metrics, "topics": topic_arena(pairs), "unmapped_judge_topics": unmapped}
+    return {"profile": arm_profile(arm), "metrics": metrics, "topics": topic_arena(pairs), "unmapped_judge_topics": unmapped}
 
 
 def build_summary(
@@ -90,9 +91,17 @@ def build_summary(
         diffs[f"{CONTROL}:{CURRENT}"] = diff_entry(CONTROL, CURRENT, scores[CONTROL], scores[CURRENT])
     # Cada bot nuevo contra el actual: los de Jev (B) y el workflow V2 con
     # reglas (B0, que tiene que dar lo mismo que A1: motor de decisiones F4).
-    for cand in SIMULATED_ARMS:
+    # Un brazo con paquete (`B@ventas-2`, PAQUETES_DE_DECISION.md F6) también
+    # contra el bot de hoy, y contra el mismo bot con el paquete de la tienda:
+    # esa diferencia es la del paquete nuevo.
+    pinned = [a for a in scores if "@" in a]
+    for cand in (*SIMULATED_ARMS, *pinned):
         if cand != base and cand in scores and base in scores:
             diffs[f"{base}:{cand}"] = diff_entry(base, cand, scores[base], scores[cand])
+    for cand in pinned:
+        bot = split_arm(cand)[0]
+        if bot != base and bot in scores:
+            diffs[f"{bot}:{cand}"] = diff_entry(bot, cand, scores[bot], scores[cand])
     previous_arms = previous.get("arms") or {}
     # El control publicó `arms.A0` (producción); un resumen ya escrito la trae
     # en `production` y su `arms.A0` es el re-medido: el reintento no la pisa.
@@ -113,8 +122,8 @@ def build_summary(
         else None,
         "arena": {
             arm: _arena(arm, scores[arm], list(rows.get(arm) or []), list(metrics.get(arm) or []))
-            for arm in ARM_PROFILES
-            if arm in scores
+            for arm in scores
+            if arm_profile(arm) is not None
         },
         "validation": validation(production_records, scores[CONTROL][0], code_checks=code_checks)
         if production_records and CONTROL in scores and scores[CONTROL]

@@ -67,3 +67,22 @@ def test_jev_reads_the_raw_text_of_the_customer_like_in_production() -> None:
 
     assert signal_meta("B", message)["text"] == "quiero ese"
     assert "text" not in signal_meta("B", {"text": "hola"})
+
+
+# ── Un brazo con paquete de decisión: `B@<paquete>` (PAQUETES_DE_DECISION.md F6) ──
+
+
+def test_an_arm_with_a_bundle_is_the_same_bot_with_other_intelligence() -> None:
+    from src.plugins.chats.agent.sales_lab.arms import arm_env, arm_profile, runnable_arm
+
+    message = {"text": "hola", "ts_ms": 5}
+    assert signal_meta("B@ventas", message) == signal_meta("B", message)
+    assert arm_profile("B@ventas") == ARM_PROFILES["B"]
+    assert arm_profile("B0@ventas") is None
+    # El proceso del caso fija el paquete ANTES de importar la app (las tools
+    # leen el vocabulario de la tienda al importarse).
+    assert arm_env("B@ventas") == {"SALES_DECISIONS_BUNDLE": "ventas"}
+    assert arm_env("B") == {}
+    # Lo que puede correr el simulador (puro: lo usa el workflow de la corrida).
+    assert runnable_arm("B@ventas-2") and runnable_arm("A1")
+    assert not runnable_arm("Z") and not runnable_arm("B@") and not runnable_arm("C@ventas")

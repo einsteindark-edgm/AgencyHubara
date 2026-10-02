@@ -331,3 +331,17 @@ async def test_the_selector_the_protection_sent_reaches_the_thread(box, sims) ->
     turn2 = next(t for t in thread["turns"] if t["turn"] == 2)
     assert turn2["outputs"]["B"].get("selector_text") == picker
     assert "selector_text" not in turn2["outputs"]["A1"]
+
+
+@pytest.mark.asyncio
+async def test_an_arm_with_a_bundle_runs_like_its_bot(box, sims) -> None:  # noqa: F811
+    """`B@ventas` (PAQUETES_DE_DECISION.md F6): el simulador lo corre (no queda
+    pendiente) con su brazo completo, que el proceso del caso fija."""
+    order = json.loads(box["store"].get_bytes(f"orders/{RUN}.json"))
+    box["store"].put_bytes(f"orders/{RUN}.json", json.dumps({**order, "arms": ["A1", "B@ventas"]}).encode())
+
+    await _run(box)
+
+    progress = json.loads(box["store"].get_bytes(f"runs/{RUN}/progress.json"))
+    assert not any("B@ventas" in note for note in progress.get("notes") or [])
+    assert {c[2] for c in sims["calls"]} >= {"A1", "B@ventas"}

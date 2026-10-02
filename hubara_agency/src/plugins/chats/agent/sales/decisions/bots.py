@@ -13,7 +13,9 @@ Jev (+ el modo de las capas ①②③ de V1):
 
 Dónde se escoge:
 * laboratorio: el brazo (`bot_for_arm`); el sandbox lo fija para el proceso
-  del caso con `DECISIONS_BOT`;
+  del caso con `DECISIONS_BOT`. Un brazo puede fijar también el paquete de
+  decisión (`B@ventas-2`: el bot B con la inteligencia de `ventas-2`,
+  PAQUETES_DE_DECISION.md F6) para probar un paquete nuevo contra el banco;
 * producción (`bot_for_session`): el despliegue gradual que ya existe (números
   de prueba y porcentaje estable por conversación del control «Bot nuevo»),
   ahora por capacidad (`_rollout/decisions.json`) y por versión del workflow,
@@ -28,12 +30,15 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.rollout import MODES, RolloutState, effective_mode
 from src.plugins.chats.agent.sales.decisions.rollout_store import read_state
+from src.plugins.chats.shared.store_pack import bundle_dir
+from src.sdk.decisionkit import BundleError
+from src.sdk.labkit import split_arm
 
 WORKFLOW_V1 = "HubaraSalesSessionWorkflow"
 WORKFLOW_V2 = "HubaraSalesSessionWorkflowV2"
@@ -81,6 +86,9 @@ class Bot:
     layers: str = "off"
     providers: Mapping[str, str] = field(default_factory=dict)
     default_provider: str = "reglas"
+    #: Paquete de decisión fijado (un brazo `B@<paquete>` del laboratorio);
+    #: "" = el de la tienda (`SALES_DECISIONS_BUNDLE`, desde Terraform).
+    bundle: str = ""
 
     def provider(self, capability: str) -> str:
         """`reglas`, `sombra` o `jev` para esta capacidad."""
@@ -100,10 +108,20 @@ LAB_BOTS: dict[str, Bot] = {
 
 
 def bot_for_arm(arm: str) -> Bot:
+    """El bot del brazo. `B@<paquete>` = el bot B con ese paquete de decisión
+    (tiene que existir: nunca se corre otra inteligencia por un error)."""
+    name, bundle = split_arm(arm)
     try:
-        return LAB_BOTS[arm]
+        bot = LAB_BOTS[name]
     except KeyError:
         raise ValueError(f"brazo desconocido: {arm!r} (hay {', '.join(LAB_BOTS)})") from None
+    if "@" not in arm:
+        return bot
+    try:
+        bundle_dir(bundle)
+    except BundleError as exc:
+        raise ValueError(f"brazo {arm!r}: el paquete de decisión {bundle!r} no existe ({exc})") from None
+    return replace(bot, id=arm, bundle=bundle)
 
 
 def _decisions_path(vault_dir: Path) -> Path:

@@ -21,12 +21,25 @@ pone los puertos de plataforma que hablan con Medusa en modo sandbox (sin
 Medusa, promociones del banco, pedido stub, verificación contra el snapshot)
 ANTES de importar el worker de ventas.
 
+Un brazo es un bot y, si fija paquete de decisión, `@<paquete>`
+(`B@ventas-2`): `split_arm`, `arm_pattern`, `arms_pattern` validan la forma
+(PAQUETES_DE_DECISION.md F6).
+
 Calificar una corrida (worker `sales_lab`, PR 13): `bench_catalog_client`
 lee el snapshot del catálogo que viajó con el banco, para el contexto del
 scorecard.
 """
 from __future__ import annotations
 
+from src.platform.lab.arms import (
+    arm_pattern as arm_pattern,
+)
+from src.platform.lab.arms import (
+    arms_pattern as arms_pattern,
+)
+from src.platform.lab.arms import (
+    split_arm as split_arm,
+)
 from src.platform.lab.bench_catalog import (
     bench_catalog_client as bench_catalog_client,
 )

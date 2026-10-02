@@ -78,7 +78,7 @@ def _valid(build: Any, *args: Any, **kwargs: Any) -> Any:
 @router.get("/estimate")
 async def estimate(
     request: Request,
-    arms: str = Query("A1", max_length=20),
+    arms: str = Query("A1", max_length=200),
     reps: int = Query(1),
     bench: str = Query("new", max_length=80),
 ) -> dict[str, Any]:
