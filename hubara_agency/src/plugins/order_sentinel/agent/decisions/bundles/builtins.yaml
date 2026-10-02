@@ -11,11 +11,15 @@
 #   input   tipo de entrada que lee
 #   params  parámetros que se pasan con `with:`
 #   fields  los campos de cada ítem
+#   keys    los campos que identifican un ítem (los que puede llevar el id de su pregunta)
 engine_contract: 1
 
 inputs:
   # Una conversación del snapshot y, para la evidencia, el cambio que Jev leyó.
   Conversacion: {change: "string?"}
+
+# Las capacidades que lee el código del lector (`readings.py`): todas en el paquete (DB003).
+capabilities: [cambio, evidencia]
 
 builtins:
   no_reading:
@@ -38,6 +42,7 @@ builtins:
     input: Conversacion
     params: {limit: int, quote_chars: int}
     fields: {number: int, text: string, quote: string}
+    keys: [number]              # su número en la conversación (el id de su pregunta)
     doc: >-
       Los mensajes NUEVOS desde el último análisis que podrían probar el
       cambio, los últimos `limit`: del equipo o del cliente; el pago, SOLO del

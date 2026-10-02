@@ -45,8 +45,9 @@ def sims(box, monkeypatch):  # noqa: F811
 
     state: dict = {"calls": [], "cost": 0.01}
 
-    async def fake_case(case, *, bench_dir, sandbox_dir, timeout_s, arm="A1"):
+    async def fake_case(case, *, bench_dir, sandbox_dir, timeout_s, arm="A1", store_bundle=""):
         state["calls"].append((case["case_id"], sandbox_dir.parts[-3:], arm))
+        state.setdefault("store_bundles", []).append((arm, store_bundle))
         result = _fake_result(case, cost=state["cost"])
         return state["decorate"](result, arm) if state.get("decorate") else result
 
@@ -222,7 +223,7 @@ async def test_a_silent_jev_fallback_is_a_metric_and_a_run_note(box, sims) -> No
 async def test_a_failed_case_is_counted_and_the_run_goes_on(box, sims, monkeypatch) -> None:  # noqa: F811
     from src.plugins.chats.agent.sales_lab.run import activities as run_acts
 
-    async def flaky(case, *, bench_dir, sandbox_dir, timeout_s, arm="A1"):
+    async def flaky(case, *, bench_dir, sandbox_dir, timeout_s, arm="A1", store_bundle=""):
         sims["calls"].append((case["case_id"], sandbox_dir.parts[-3:]))
         if sandbox_dir.parts[-3] == "A1" and case["turn"] == 2:
             return _fake_result(case, error="el turno no terminó en 600 s")
@@ -345,3 +346,46 @@ async def test_an_arm_with_a_bundle_runs_like_its_bot(box, sims) -> None:  # noq
     progress = json.loads(box["store"].get_bytes(f"runs/{RUN}/progress.json"))
     assert not any("B@ventas" in note for note in progress.get("notes") or [])
     assert {c[2] for c in sims["calls"]} >= {"A1", "B@ventas"}
+
+
+@pytest.mark.asyncio
+async def test_every_case_runs_the_store_bundle_the_launcher_sent(box, sims) -> None:  # noqa: F811
+    """El paquete de la tienda (lo sabe el lanzador, en producción) viaja en la
+    orden: el turno de humo y cada caso lo reciben; el brazo que fija otro
+    (`B@ventas`) corre el suyo (lo resuelve `arm_env`)."""
+    order = json.loads(box["store"].get_bytes(f"orders/{RUN}.json"))
+    box["store"].put_bytes(
+        f"orders/{RUN}.json", json.dumps({**order, "arms": ["A1", "B", "B@ventas"], "store_bundle": "ventas-2"}).encode()
+    )
+
+    await _run(box)
+
+    assert sims["store_bundles"]
+    assert {bundle for _arm, bundle in sims["store_bundles"]} == {"ventas-2"}
+    assert {arm for arm, _bundle in sims["store_bundles"]} >= {"A1", "B", "B@ventas"}
+
+
+@pytest.mark.asyncio
+async def test_every_arm_gets_its_rep_before_any_gets_the_next_and_the_pinned_arm_goes_early(box, sims) -> None:  # noqa: F811
+    """Premortem 2026-10-02: se simulaba brazo por brazo con el fijado
+    (`B@x`, la razón de la corrida) al final: el tope de gasto o el límite de
+    historia lo cortaban primero. Ahora por repetición, y el brazo fijado justo
+    después de su bot base (antes de B0, la prueba de fidelidad del esqueleto)."""
+    order = json.loads(box["store"].get_bytes(f"orders/{RUN}.json"))
+    box["store"].put_bytes(
+        f"orders/{RUN}.json", json.dumps({**order, "arms": ["A1", "B0", "B", "B@ventas"], "reps": 2}).encode()
+    )
+
+    await _run(box)
+
+    seen: list[tuple[str, str]] = []
+    for _case, parts, _arm in sims["calls"]:
+        if parts[0] == "smoke":
+            continue
+        step = (parts[0], parts[1])
+        if not seen or seen[-1] != step:
+            seen.append(step)
+    assert seen == [
+        ("A1", "0"), ("B", "0"), ("B@ventas", "0"), ("B0", "0"),
+        ("A1", "1"), ("B", "1"), ("B@ventas", "1"), ("B0", "1"),
+    ]

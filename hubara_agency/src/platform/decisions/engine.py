@@ -10,6 +10,7 @@ consumidor.
 """
 from __future__ import annotations
 
+import copy
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -299,25 +300,70 @@ class CompiledCapability:
         """El valor de la tabla (en la forma de Python de `value:`), o DOUBT.
         `options`: opción → valor de cada pregunta con opciones de la entrada.
         `items`: la lista de una capacidad que decide ítem por ítem."""
+        return self.decide_explained(
+            answers=answers, thresholds=thresholds, rule=rule, inp=inp, options=options, items=items
+        ).value
+
+    def decide_explained(
+        self,
+        *,
+        answers: Mapping[str, Any],
+        thresholds: Mapping[str, float] | None = None,
+        rule: Any = None,
+        inp: Mapping[str, Any] | None = None,
+        options: Mapping[str, Mapping[str, Any]] | None = None,
+        items: Iterable[Mapping[str, Any]] | None = None,
+    ) -> Decision:
+        """El valor (o DOUBT), la fila que decidió y el error de la tabla si lo
+        hubo. Leer una respuesta que no llegó NO es un error (es la duda
+        legítima: debug); cualquier otro error (tipos, una salida de otro
+        tipo) es un bug del paquete: warning con el paquete, la capacidad y la
+        fila, y la duda."""
         env = self.environment(answers, thresholds, rule, inp, options, items)
+        where: str | int = "vars"
         try:
             for name, expression in self.vars:
+                where = f"vars.{name}"
                 env["vars"] = {**env["vars"], name: expression.evaluate(env)}
-            for row in self.rows:
+            for index, row in enumerate(self.rows):
+                where = index
                 if row.when is not None and row.when.evaluate(env) is not True:
                     continue
                 if row.expr is None:
-                    return row.then
-                return convert(row.expr.evaluate(env), self.type)
+                    # Un literal mutable (`{zona: …}`) no se comparte entre decisiones.
+                    return Decision(copy.deepcopy(row.then) if isinstance(row.then, (dict, list)) else row.then, row=index)
+                return Decision(convert(row.expr.evaluate(env), self.type), row=index)
         except ExpressionError as exc:
-            # Lo normal: leer una respuesta que Jev no dio (la tabla la guarda
-            # con `'x' in p`, o la duda es la respuesta correcta).
-            logger.debug("decision_bundle.row_unanswered", capability=self.name, error=str(exc)[:200])
-            return DOUBT
+            error = str(exc)[:200]
+            if missing_answer(error):
+                # Lo normal: leer una respuesta que Jev no dio (la tabla la guarda
+                # con `'x' in p`, o la duda es la respuesta correcta).
+                logger.debug("decision_bundle.row_unanswered", bundle=self.bundle, capability=self.name, row=where, error=error)
+                return Decision(DOUBT)
+            logger.warning("decision_bundle.row_error", bundle=self.bundle, capability=self.name, row=where, error=error)
+            return Decision(DOUBT, error=error)
         except TypeError as exc:  # la salida no es del tipo declarado: un bug del paquete
-            logger.warning("decision_bundle.bad_output", capability=self.name, error=str(exc)[:200])
-            return DOUBT
-        return DOUBT
+            error = str(exc)[:200]
+            logger.warning("decision_bundle.bad_output", bundle=self.bundle, capability=self.name, row=where, error=error)
+            return Decision(DOUBT, error=error)
+        return Decision(DOUBT)
+
+
+@dataclass(frozen=True)
+class Decision:
+    """Lo que decidió una tabla: el valor (o DOUBT), la fila que decidió
+    (None si ninguna: faltó una respuesta o falló) y el error si lo hubo."""
+
+    value: Any
+    row: int | None = None
+    error: str | None = None
+
+
+def missing_answer(error: str) -> bool:
+    """¿El error de CEL es leer una llave que no está (una respuesta que no
+    llegó, un campo vacío)? Eso es duda legítima, no un bug del paquete."""
+    text = error.lower()
+    return "key not found" in text or "no such key" in text or text.startswith("not_found")
 
 
 @dataclass(frozen=True)

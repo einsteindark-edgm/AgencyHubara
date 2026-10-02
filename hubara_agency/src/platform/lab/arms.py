@@ -11,8 +11,9 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-#: El id de un paquete de decisión (su carpeta, como en Terraform), hasta 40 caracteres.
-BUNDLE_ID = r"[a-z][a-z0-9-]{0,39}"
+# El id de un paquete de decisión (su carpeta, como en Terraform), hasta 40
+# caracteres: el MISMO patrón que el modelo del paquete.
+from src.platform.decisions.model import BUNDLE_ID
 
 
 def split_arm(arm: str) -> tuple[str, str]:

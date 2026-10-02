@@ -76,7 +76,10 @@ def uncovered_topics(
     los textos de las tools que salieron), nunca la narración que el
     default-deny descarta. Cada regla: `tools` que lo atienden, `words` del
     texto (sin tildes) y `any_text` (cualquier texto lo atiende, p. ej. un
-    aplazamiento). Un asunto sin regla no se juzga (no pide ronda)."""
+    aplazamiento). Un asunto fuera de `rules` no se juzga (no pide ronda);
+    una regla VACÍA (`{}` en el `coverage` del paquete) no se cumple nunca: el
+    asunto queda siempre sin atender y pide otra ronda (el bug de `promocion`
+    en `ventas@1`, premortem 2026-10-02)."""
     used = set(tools_used)
     text = plain(shown)
     missing: list[PlanTopic] = []

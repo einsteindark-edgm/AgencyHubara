@@ -23,7 +23,16 @@ from typing import Any
 from src.platform.decisions.engine import CompiledRow, Diagnostic
 from src.platform.decisions.expressions import ExpressionError, ExpressionPort
 from src.platform.decisions.model import Catalog, OtherwiseRow, TurnCatalog, TurnPolicySpec, WhenRow
-from src.platform.decisions.parsing import _ITEM_FIELD, _parse, _read_yaml, _references, _sample
+from src.platform.decisions.parsing import (
+    _ITEM_FIELD,
+    _parse,
+    _read_yaml,
+    _references,
+    _sample,
+    domain_problems,
+    literal_comparisons,
+    unkeyed_reads,
+)
 from src.platform.decisions.turn import (
     BANDS,
     VERIFY_ITEM,
@@ -188,7 +197,11 @@ class _TurnCheck:
                 self.add("DB015", f"coverage.{topic}.tools", f"tools que el agente no tiene {unknown}")
         for topic in self.topics:
             if topic not in self.spec.coverage:
-                self.add("DB015", f"coverage.{topic}", "falta la regla de ② del asunto (`{}` si nada lo atiende dentro del turno)")
+                self.add(
+                    "DB015", f"coverage.{topic}",
+                    "falta la regla de ② del asunto (tools o words que lo atienden; `{}` lo deja siempre sin atender "
+                    "y pide otra ronda del LLM en cada turno con ese asunto)",
+                )
 
     # ── la lectura del hilo ───────────────────────────────────────────────
 
@@ -224,6 +237,12 @@ class _TurnCheck:
             if problem is not None:
                 self.add(problem[0], where, problem[1])
                 ok = False
+        for var in unkeyed_reads(source):
+            self.add("DB005", where, f"lee {var} sin una llave literal a la vista ({var}['…'] o '…' in {var}): no se puede validar qué lee")
+            ok = False
+        for problem in domain_problems(source, self.catalog.domain):
+            self.add("DB005", where, problem)
+            ok = False
         return ok
 
     def _key_problem(self, var: str, key: str, readable: set[str]) -> tuple[str, str] | None:
@@ -287,11 +306,38 @@ class _TurnCheck:
                 unconditional.add(row.topic)
             elif not self._keys(f"{where}.when", row.when, set(_CONTRACT_VARS)):
                 failed = True
+            elif bad := [lit for _k, lit in literal_comparisons(row.when, r"inp\.stage") if lit not in self.vocab.stages]:
+                self.add("DB015", f"{where}.when", f"etapas que no existen {bad} (hay: {', '.join(self.vocab.stages)})")
+                failed = True
             else:
                 when = self._condition(f"{where}.when", row.when, _CONTRACT_VARS, sample)
                 failed = failed or when is None
             rows.append(CompiledContractRow(row.topic, when, tuple(row.any_of), row.nudge))
+        if not failed:
+            failed = not self._walks_without_answers(rows, sample)
         return None if failed else tuple(rows)
+
+    def _walks_without_answers(self, rows: tuple[CompiledContractRow, ...] | list[CompiledContractRow], sample: dict[str, Any]) -> bool:
+        """En ejecución, una respuesta puede no llegar (Jev no la contestó o la
+        pregunta no se hizo): cada asunto se recorre con `p` vacío como en el
+        turno, y ninguna fila puede fallar antes de que una decida."""
+        ok = True
+        for topic in dict.fromkeys(row.topic for row in rows):
+            for i, row in enumerate(rows):
+                if row.topic != topic:
+                    continue
+                if row.when is None:
+                    break
+                try:
+                    if row.when.evaluate(sample) is True:
+                        break
+                except ExpressionError as exc:
+                    self.add("DB005", f"contract[{i}].when", (
+                        f"falla si la respuesta no llegó ({exc}): pregunta antes si está, p. ej. `'x' in p && p['x'] …`"
+                    ))
+                    ok = False
+                    break
+        return ok
 
     # ── ③ la banda de cada asunto ─────────────────────────────────────────
 
@@ -329,6 +375,20 @@ class _TurnCheck:
         if not isinstance(decide[-1], OtherwiseRow):
             self.add("DB008", "verify_decide", "falta la fila final `otherwise` (qué pasa si ninguna condición se cumple)")
             failed = True
+        if not failed:
+            for item in ({"topic": "x", "msg": None}, {"topic": "x", "msg": 1, "p": 0.5}):
+                for k, row in enumerate(rows):
+                    if row.when is None:
+                        break
+                    try:
+                        if row.when.evaluate({**sample, "item": item}) is True:
+                            break
+                    except ExpressionError as exc:
+                        self.add("DB005", f"verify_decide[{k}].when", (
+                            f"falla con un asunto que Jev no contestó ({exc}): antes, `!('p' in item)`"
+                        ))
+                        failed = True
+                        break
         return None if failed else tuple(rows)
 
     # ── la guía de etapas ─────────────────────────────────────────────────
@@ -389,6 +449,20 @@ class _TurnCheck:
         return None
 
 
+def _normalized(raw: Any) -> Any:
+    """El cuestionario tal cual lo escribió el paquete, con las llaves de
+    `criteria` que YAML lee como booleanas (`{true: …}` sin comillas) como el
+    modelo las certificó: "true"/"false". Es lo que llega a Jev."""
+    if isinstance(raw, list):
+        return [_normalized(v) for v in raw]
+    if not isinstance(raw, dict):
+        return raw
+    out = {k: _normalized(v) for k, v in raw.items()}
+    if isinstance(out.get("criteria"), dict):
+        out["criteria"] = {str(k).lower() if isinstance(k, bool) else k: v for k, v in out["criteria"].items()}
+    return out
+
+
 def check_turn(
     bundle_dir: Path, catalog: Catalog, expressions: ExpressionPort, *, bundle: str, domain: Mapping[str, Any],
     out: list[Diagnostic],
@@ -419,7 +493,7 @@ def check_turn(
         out += check.out
         return None
     raw, _error = _read_yaml(path)
-    turn = CompiledTurn(spec, raw["questionnaire"], contract, verify, bundle=bundle, domain=domain)
+    turn = CompiledTurn(spec, _normalized(raw["questionnaire"]), contract, verify, bundle=bundle, domain=domain)
     check.examples(turn)
     out += check.out
     return None if check.out else turn

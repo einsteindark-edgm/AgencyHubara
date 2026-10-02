@@ -26,6 +26,9 @@ import importlib
 from collections.abc import Callable
 from typing import Any
 
+import structlog
+
+from src.plugins.chats.agent.sales.decisions.capabilities import BUNDLE_FAULT
 from src.plugins.chats.agent.sales.decisions.context import customer_window
 from src.plugins.chats.shared.store_pack import BUNDLES_DIR, CATALOG_PATH
 from src.sdk.connectorkit import TypedQuestion
@@ -33,6 +36,8 @@ from src.sdk.decisionkit import DOUBT, CompiledCapability, answers_from_result
 
 __all__ = ["BUNDLES_DIR", "CATALOG_PATH", "BUILTINS", "LAZY_BUILTINS", "BundledCapability", "builtin", "builtin_names"]
 
+
+logger = structlog.get_logger()
 
 def customer_text(inp: Any) -> str | None:
     """El texto que escribió el cliente: None si viene vacío o si lo escribió
@@ -417,6 +422,8 @@ class BundledCapability:
         #: El interruptor (proveedor, panel, traza): el de la capacidad, o el
         #: de la que esta variante pregunta de otra forma (`control:`).
         self.name = table.control
+        #: La variante (`destinatario_oracion`) si pregunta por otro control; "" si es el control.
+        self.variant = spec.capability if spec.capability != table.control else ""
         self.thresholds = dict(spec.thresholds)
         #: `id@versión` del paquete con el que se decide.
         self.bundle = table.bundle
@@ -449,6 +456,22 @@ class BundledCapability:
         return self._call("rule", self._spec.rule, inp)
 
     def ask(self, inp: Any) -> tuple[str, list[TypedQuestion]] | None:
+        """La pregunta a Jev, o None (decide la regla). Un builtin que falla
+        nunca tumba a quien pregunta: no se pregunta y queda el error
+        (premortem 2026-10-02: la guarda caía con un TypeError)."""
+        try:
+            return self._ask(inp)
+        except Exception as exc:  # noqa: BLE001 — decide la regla
+            self._failed("ask", exc)
+            return None
+
+    def _failed(self, where: str, exc: Exception) -> None:
+        logger.error(
+            "decisions.builtin_failed", bundle=self.bundle, capability=self.name, where=where,
+            error=f"{type(exc).__name__}: {exc}"[:300],
+        )
+
+    def _ask(self, inp: Any) -> tuple[str, list[TypedQuestion]] | None:
         if self._spec.state is None:
             return None
         items = self._items(inp)
@@ -475,13 +498,24 @@ class BundledCapability:
         return state, questions
 
     def decide(self, inp: Any, result: Any, rule: Any, thresholds: Any) -> Any:
+        """Lo que decide la tabla con las respuestas de Jev; None = duda. Un
+        builtin que falla (opciones, vista, ítems) o una fila con un error es
+        BUNDLE_FAULT (decide la regla con `reason=bundle_error`), nunca una
+        excepción ni una «duda» de Jev."""
+        try:
+            return self._decide(inp, result, rule, thresholds)
+        except Exception as exc:  # noqa: BLE001 — decide la regla
+            self._failed("decide", exc)
+            return BUNDLE_FAULT
+
+    def _decide(self, inp: Any, result: Any, rule: Any, thresholds: Any) -> Any:
         options = {qid: {key: value for key, (_label, value) in opts.items()} for qid, opts in self._options(inp).items()}
         fields = self._inp(inp)
         items = self._items(inp)
         # Se leen también las respuestas de los ítems que no se preguntaron
         # (si llegaron, cuentan: igual que las clases).
         questions = [*self._spec.questions, *self._table.each_questions(items or (), fields, all_items=True)]
-        value = self._table.decide(
+        decision = self._table.decide_explained(
             answers=answers_from_result(questions, result),
             thresholds=dict(thresholds or {}),
             rule=rule,
@@ -489,7 +523,9 @@ class BundledCapability:
             options=options,
             items=items,
         )
-        return None if value is DOUBT else value
+        if decision.error is not None:
+            return BUNDLE_FAULT  # el motor ya dejó el warning con el paquete y la fila
+        return None if decision.value is DOUBT else decision.value
 
     def floor(self, inp: Any, rule: Any, jev: Any) -> Any:
         return self._call("floor", self._spec.floor, inp, rule, jev)

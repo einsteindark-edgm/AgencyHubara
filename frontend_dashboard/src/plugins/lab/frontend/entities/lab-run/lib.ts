@@ -37,6 +37,20 @@ export function armLabel(arm: string): string {
   return ARM_LABELS[arm] ?? arm;
 }
 
+/**
+ * La ayuda del selector para un bot. Un brazo con paquete (`B@ventas-2`) es el
+ * mismo bot leyendo otras reglas: sin esto la ayuda quedaba en blanco.
+ */
+export function armHelp(arm: string): string {
+  const at = arm.indexOf("@");
+  if (at > 0) {
+    const base = ARM_HELP[arm.slice(0, at)];
+    const bundle = `Usa las reglas del paquete ${arm.slice(at + 1)} en lugar de las de la tienda.`;
+    return base ? `${base} ${bundle}` : bundle;
+  }
+  return ARM_HELP[arm] ?? "";
+}
+
 /** El cliente sin su número completo: solo los 4 últimos caracteres. */
 export function customerLabel(sessionId: string): string {
   return `Cliente ···${sessionId.slice(-4)}`;

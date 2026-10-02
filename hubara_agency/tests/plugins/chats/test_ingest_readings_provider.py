@@ -191,3 +191,37 @@ def test_a_request_about_the_closed_order_is_escalated_not_promised(courtesy: bo
 
     assert "escalate_to_human" in note
     assert "entrega" in note
+
+
+class _BrokenProvider:
+    """El motor no puede leer (p. ej. el paquete de la tienda no compila)."""
+
+    async def read(self, inbound: Inbound) -> Readings:
+        from src.sdk.decisionkit import BundleError, Diagnostic
+
+        raise BundleError([Diagnostic("DB005", "capabilities/compra.yaml: decide[0].when", "roto")])
+
+
+@pytest.mark.asyncio
+async def test_if_the_engine_cannot_read_the_message_is_kept_with_the_rules_of_the_code(_isolate_vault_dir) -> None:
+    """Premortem 2026-10-02: un paquete que no compila hacía fallar el ingest
+    ANTES de guardar el mensaje (Meta ya tenía su 200: no reintenta). El
+    mensaje nunca se pierde: lecturas con las reglas del código (las del
+    proveedor `reglas`), el mensaje en el historial y el turno sigue."""
+    import structlog
+
+    from src.plugins.chats.agent.sales.decisions import bundled_ingest
+    from src.plugins.chats.agent.sales.decisions.readings import Inbound as _In
+
+    store = _draft_store()
+    history = _History([{"role": "assistant", "content": "¿Confirmas el pedido?"}])
+    ingest = IngestInboundMessage(history_store=history, load_session=_Loader(), metadata_store=store,
+                                  readings=_BrokenProvider())  # type: ignore[arg-type]
+
+    with structlog.testing.capture_logs() as logs:
+        await ingest.execute(_msg("Te confirmo, sí la quiero"))
+
+    assert {"role": "user", "content": "Te confirmo, sí la quiero"} in history.read_events(SID)
+    kind, _source = bundled_ingest.purchase_signal(_In(session_id=SID, text="Te confirmo, sí la quiero", now_ms=0))
+    assert store.read(SID).get("last_inbound_signal", {}).get("kind") == kind
+    assert any(e["event"] == "ingest.readings_failed" and e["log_level"] == "error" for e in logs), logs

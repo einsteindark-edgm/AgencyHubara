@@ -235,21 +235,22 @@ laboratorio antes de promover una versión.
 
 | Código | Qué rechaza |
 |---|---|
-| DB001 | YAML ilegible o estructura inválida (llave desconocida, tipo equivocado, campo faltante) — Pydantic estricto |
-| DB002 | `engine_contract` que el motor no sabe correr |
-| DB003 | capacidad listada sin archivo, archivo sin listar, o `capability` distinto del nombre del archivo |
-| DB004 | builtin que no existe en el catálogo, o de otro tipo (un piso usado como regla) |
-| DB005 | id de pregunta repetido, o llave `p['…']` / `choice['…']` / `th['…']` que no es literal o no está declarada |
+| DB001 | YAML ilegible o estructura inválida (llave desconocida, tipo equivocado, campo faltante) — Pydantic estricto; una llave repetida; `yes:`/`no:` sin comillas como opción de una pregunta de opciones |
+| DB002 | `engine_contract` que el motor no corre (`SUPPORTED_CONTRACTS`: al subir el contrato, el viejo se queda) |
+| DB003 | capacidad listada sin archivo, archivo sin listar, `capability` distinto del nombre del archivo, o una capacidad que el catálogo exige (`capabilities:`) y el paquete no trae |
+| DB004 | builtin que no existe en el catálogo, o de otro tipo (un piso usado como regla); el estado de una capacidad con ítems que no los recibe (`takes_items`) |
+| DB005 | id de pregunta repetido; llave `p['…']` / `choice['…']` / `th['…']` que no es literal o no está declarada; una lectura sin llave a la vista (`(choice)['x']`, `size(p)`); `dom.seccion.campo` o `i.campo` (dentro de `items.filter(i, …)`) que no existen; una opción mal escrita (`choice['x'] == 'otra'`); el id de cada ítem sin su posición o su llave |
 | DB006 | condición que no compila en CEL (tipos, nombres) o que no devuelve bool |
 | DB007 | `then` que no es del tipo `value` de la capacidad (ni `doubt`) |
 | DB008 | `decide` sin `otherwise` final, o filas después del `otherwise` |
 | DB009 | umbral fuera de [0,1] |
-| DB010 | ejemplo que no da lo esperado |
+| DB010 | ejemplo que no da lo esperado, que solo pasa porque la tabla falló, o una fila `when` que ningún ejemplo decide |
 | DB011 | `p['x']` sobre una pregunta de opciones (o `choice` sobre una sí/no) |
-| DB012 | piso obligatorio cambiado (la baja legal, el relevo, los invariantes del cierre) |
+| DB012 | piso o regla obligatorios cambiados (la baja legal, el relevo, los invariantes del cierre; `required_rules` del catálogo) |
 | DB013 | el id del paquete no es su carpeta, o el paquete configurado no existe |
 | DB014 | el dominio de la tienda (`domain.yaml`) no es el que declara el catálogo |
-| DB015 | el turno (`turn.yaml`) nombra una política, un hecho, un asunto, una tool, una etapa o un dato que el catálogo no declara; un umbral que la política no lee; o el cuestionario no hace una pregunta que la política lee |
+| DB015 | el turno (`turn.yaml`) nombra una política, un hecho, un asunto, una tool, una etapa (también dentro de una condición) o un dato que el catálogo no declara; un umbral que la política no lee; o el cuestionario no hace una pregunta que la política lee |
+| DB016 | el paquete está calibrado para un oráculo (`oracle:`) que ningún perfil usa |
 
 Además: el esquema JSON (`decisions schema`) para que el editor autocomplete
 y marque errores mientras se escribe (`# yaml-language-server: $schema=…`).
@@ -358,6 +359,30 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   operar y queda fuera (exigiría pasar el paquete por cada lugar que decide).
 - Recargar: hoy los YAML se cachean; un paquete nuevo entra con el despliegue
   (como los cuestionarios). Recarga en caliente queda para después.
+
+**Promover un paquete (procedimiento, premortem del 2026-10-02):**
+
+1. El paquete nuevo ya está en `main` y DESPLEGADO (la imagen lo trae). CI lo
+   certifica (`decisions check` en `architecture-gates.yml`) y su huella queda
+   congelada en `tests/plugins/test_decision_bundles_published.py`.
+2. PR con `tenants.<t>.lab.decisions_bundle = "<paquete>"` en
+   `infra/terraform/platform/tenants.auto.tfvars` (una prueba exige que el
+   paquete exista) y `terraform apply` de platform (el operador).
+3. `workflow_dispatch` de **Backend deploy**: renderiza el `.env` desde SSM y
+   recrea los containers. `backend-deploy.yml` no se dispara con cambios de
+   Terraform; sin este paso el paquete entra con el siguiente merge ajeno,
+   mezclado con otro cambio. Antes del `up -d`, el deploy certifica DENTRO
+   de la imagen nueva el paquete que nombra SSM: si no está o no compila,
+   aborta y los containers viejos siguen sirviendo.
+4. Verificar: la API y los workers registran `decisions.bundle_ready` con el
+   `id@versión` al arrancar (`decisions.bundle_broken` si no compila).
+5. Volver atrás = el id anterior en Terraform, apply y dispatch.
+
+Nunca se borra del repo un paquete que SSM nombra (o que un rollback de
+imagen puede pedir): el deploy aborta, pero un paquete borrado deja sin
+salida al rollback. `ventas-2@2` hoy no cambia nada en vivo: su única
+diferencia (la regla ② de `promocion`) solo actúa con la percepción del V1
+en canary/on, y el techo de producción es `off`.
 
 ## 10. Fases
 
@@ -519,9 +544,13 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
     promociones, descuentos o cupones) y nada más; una prueba lo exige
     (`test_decisions_ventas_2.py`). El laboratorio no lo mide con un brazo:
     el bot B es el V2, que no usa la regla ② (solo el contrato); la prueba
-    es determinista sobre la misma función que aplica el workflow V1. Se
-    promueve nombrándolo en Terraform (`decisions_bundle = "ventas-2"`);
-    `ventas-2` no viaja a un clon de forge (`deletes`).
+    es determinista sobre la misma función que aplica el workflow V1.
+    **Promovido** para el tenant hubara el 2026-10-02
+    (`infra/terraform/platform/tenants.auto.tfvars: lab.decisions_bundle =
+    "ventas-2"`; el default de la variable sigue en `ventas`, que es lo que
+    recibe un clon). Entra con el `terraform apply` de platform y el redeploy
+    (render del `.env` desde SSM); volver atrás = `"ventas"`. `ventas-2` no
+    viaja a un clon de forge (`deletes`).
 
 **F8 hecho (2026-10-02).**
 - El lector de Jev del Order Sentinel tiene su paquete,
@@ -582,9 +611,11 @@ tocarlos.
 1. **Los lugares nombraban la implementación** (`Baja()`,
    `bundled_capability("baja")`). Desde F2 nombran solo la decisión:
    `capability("baja")`. Un único resolutor (`decisions/registry.py`) la
-   toma del paquete activo si la trae y, si no, de la clase (mientras dure la
-   migración). Una prueba prohíbe instanciar clases de capacidad fuera del
-   resolutor.
+   toma del paquete activo. Desde el premortem del 2026-10-02 ya no cae a la
+   clase si el paquete no la trae (corría en silencio la inteligencia de
+   velas): el catálogo lista las capacidades que el código pide y el
+   certificador exige que el paquete las traiga (DB003). Una prueba prohíbe
+   instanciar clases de capacidad fuera del resolutor.
 2. **El paquete activo estaba fijo en el código.** Desde F2 viene de la
    configuración de la tienda, igual que el perfil de Jev:
    `tenants.<t>.lab.decisions_bundle` (Terraform, default `ventas`) →
@@ -613,5 +644,45 @@ tocarlos.
 4. Lo que no cabe en una fila es un builtin nuevo en el motor (con su prueba
    y su entrada en el catálogo), no una condición CEL de 3 líneas.
 5. Otro texto u otro umbral = otra versión del paquete; nunca se edita una
-   versión publicada.
+   versión publicada (su huella está congelada en una prueba).
+6. En el `coverage` del turno, `{}` NO significa «no se juzga»: es una regla
+   que nunca se cumple, así que el asunto queda siempre sin atender y pide
+   otra ronda del LLM (el bug de `promocion` en `ventas@1`). Un asunto lleva
+   las tools o las palabras que lo atienden.
+
+## 13. Premortem del 2026-10-02
+
+Antes de promover `ventas-2`, cuatro revisiones en paralelo (motor y
+certificador, runtime de ventas, despliegue, laboratorio y centinela)
+buscaron cómo fallaría la solución en producción. La promesa del certificador
+es «si compila, corre»; cada hueco quedó con su prueba
+(`tests/platform/decisions/test_bundle_premortem.py`,
+`tests/infra/test_decision_bundles_gates.py`,
+`tests/plugins/test_decision_bundles_published.py` y las de cada capa).
+
+| Cómo fallaba | Qué se hizo |
+|---|---|
+| CI no certificaba ningún paquete; uno roto llegaba a `main` | `architecture-gates.yml` corre `decisions check` y las suites de paquetes |
+| SSM nombra un paquete que la imagen no trae (rollback de imagen): API y worker de ventas caídos, webhook en 502 | el deploy certifica el paquete de SSM dentro de la imagen nueva antes del `up -d` |
+| Un paquete roto tumbaba cada mensaje en el ingest, y recompilaba en cada uno | el resolutor guarda el error; el ingest sigue con las reglas del código; la API y los workers precompilan al arrancar (`warm_up`, fuera del event loop) |
+| La regla de la baja legal y la del relevo se podían cambiar | `required_rules` del catálogo (DB012) |
+| Una fila del contrato del turno que falla apagaba el contrato del asunto | sigue con la fila siguiente; el certificador exige preguntar si la respuesta llegó |
+| Llave repetida en el YAML, `criteria` sin comillas («True»), `no:` como opción `false` | DB001 / normalización del cuestionario que viaja |
+| Lecturas que el certificador no veía: `(choice)['x']`, `size(p)`, `dom.seccion.campo`, `i.campo` en `items.filter`, opciones o etapas mal escritas | DB005 / DB015 |
+| Un error de la tabla quedaba como «duda» de Jev, con log en debug | warning con paquete y fila; el veredicto dice `reason=bundle_error`; un ejemplo que solo pasa por error no certifica |
+| Un literal mutable de `then` se compartía entre decisiones | se copia en cada decisión |
+| Un builtin que lanza (argumento implícito) tumbaba la guarda | `takes_items` / `keys` en el catálogo (DB004) y el builtin que falla deja `BUNDLE_FAULT` (decide la regla) |
+| Una capacidad que faltaba en el paquete corría la clase de Python | el catálogo lista las 29 (DB003); sin respaldo a la clase |
+| Métricas y cola de desacuerdos sin paquete ni variante | `bundle` y `variant` en cada fila |
+| Una versión publicada se podía editar | huella sha256 congelada por versión; cada versión publicada debe seguir certificando (`SUPPORTED_CONTRACTS`) |
+| El oráculo del paquete no se comparaba con nada | DB016 + pruebas de que ventas y centinela usan el oráculo del código |
+| El laboratorio corría `ventas` como «el de la tienda» después de promover | la orden de cada corrida lleva `store_bundle`; fijar el mismo paquete de la tienda es 422 |
+| Jev sin `probabilities` → el adaptador inventaba 1,0 | la distribución queda vacía y se lee `confidence` |
+| La foto del lector del centinela se podía regenerar con el lector nuevo (tautológica) | el generador se niega sin `--regenerar` |
+| La evaluación golden siempre corría `ventas` | entrada `bundle` y el reporte dice cuál corrió |
+| `{}` en `coverage` documentado al revés | mensaje del certificador y docstring corregidos (regla 6) |
+
+Queda del operador: `tenants.hubara.lab.internal_numbers` (los teléfonos del
+equipo, para que el banco del laboratorio no los incluya) y el `apply` +
+dispatch de la promoción.
 6. Los pisos se piden por nombre; nunca se reescriben en el paquete.

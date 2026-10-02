@@ -150,3 +150,19 @@ def test_what_each_change_claims_is_the_bundle_s(edited_bundle) -> None:
     _state, questions = readings.evidence_request(grid.CONVOS["salio"], "listo")
 
     assert all("afirma que el pedido está listo" in q.text for q in questions)
+
+
+def test_the_photo_is_not_regenerated_by_accident() -> None:
+    """La foto es del lector ANTES de su paquete: regenerarla con el lector de
+    hoy la vuelve tautológica (premortem 2026-10-02). El generador se niega a
+    sobrescribirla sin `--regenerar`."""
+    import subprocess
+    import sys
+
+    hub = Path(__file__).resolve().parents[3]
+    proc = subprocess.run(
+        [sys.executable, "tests/fixtures/generate_order_sentinel_readings_fixture.py"],
+        cwd=hub, capture_output=True, text=True, timeout=120,
+    )
+
+    assert proc.returncode != 0 and "--regenerar" in (proc.stderr + proc.stdout)

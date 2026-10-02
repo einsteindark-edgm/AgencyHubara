@@ -87,7 +87,7 @@ class LabLaunchWorkflow:
                 LabOrder(
                     run_id=inp.run_id, bench_id=bench.bench_id, arms=list(inp.arms), reps=inp.reps,
                     image=inp.image, estimate_usd=inp.estimate_usd, spend_limit_usd=inp.spend_limit_usd,
-                    requested_at_ms=self._status["started_at_ms"],
+                    requested_at_ms=self._status["started_at_ms"], store_bundle=inp.store_bundle,
                 ),
                 start_to_close_timeout=timedelta(seconds=60),
                 retry_policy=RetryPolicy(maximum_attempts=3),

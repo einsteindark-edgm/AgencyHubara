@@ -41,3 +41,5 @@ examples:
   - {answers: {zona.cual: {choice: ninguno, p: 0.9}}, expect: {zona: null}}
   - {answers: {zona.cual: {choice: ambiguo, p: 0.9}}, expect: doubt}
   - {answers: {zona.cual: {choice: bogota, p: 0.84}}, expect: doubt}
+  # Una opción que no es de la lista (premortem 2026-10-02).
+  - {answers: {zona.cual: {choice: otra, p: 0.9}}, expect: doubt}

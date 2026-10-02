@@ -185,6 +185,7 @@ def test_a_choice_question_reads_its_option_and_confidence(tmp_path: Path) -> No
     zona["examples"] = [
         {"answers": {"zona.cual": {"choice": "bogota", "p": 0.95}}, "expect": "bogota"},
         {"answers": {"zona.cual": {"choice": "bogota", "p": 0.5}}, "expect": "doubt"},
+        {"answers": {"zona.cual": {"choice": "ambiguo", "p": 0.95}}, "expect": "doubt"},
     ]
     bundle_dir, catalog_path = _write(tmp_path, {"zona": zona}, catalog=catalog)
 

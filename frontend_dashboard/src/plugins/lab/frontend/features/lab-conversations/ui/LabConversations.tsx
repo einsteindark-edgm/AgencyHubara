@@ -15,7 +15,7 @@ import { useMemo, useState } from "react";
 
 import { bogotaDayIsoFromMs, formatDayLabelEs } from "@/shared/lib";
 import {
-  ARM_HELP,
+  armHelp,
   armLabel,
   checkView,
   customerLabel,
@@ -173,7 +173,7 @@ export function LabConversations({ run, initialSid = null }: Props) {
               </button>
             </div>
           </div>
-          <p className="m-0 text-[11.5px] text-fg-muted">{view === "compare" ? COMPARE_HELP : (ARM_HELP[arm] ?? "")}</p>
+          <p className="m-0 text-[11.5px] text-fg-muted">{view === "compare" ? COMPARE_HELP : armHelp(arm)}</p>
         </div>
         {view === "compare" ? (
           <Compare run={run.run_id} sid={row.session_id} arms={arms} onOpen={(turn, a) => setOpen({ turn, arm: a })} />

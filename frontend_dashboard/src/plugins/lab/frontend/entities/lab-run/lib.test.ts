@@ -5,6 +5,7 @@ import { ApiError } from "@/shared/api";
 import { checkCatalogSchema, evalResultSchema } from "./contracts";
 import {
   apiErrorDetail,
+  armHelp,
   armLabel,
   capabilityLabel,
   checkView,
@@ -33,6 +34,16 @@ describe("lib del laboratorio", () => {
   it("nombra un bot que corre con otro paquete de decisión (PAQUETES_DE_DECISION.md F6)", () => {
     expect(armLabel("B@ventas-2")).toBe("Bot nuevo con Jev · paquete ventas-2");
     expect(armLabel("B0@vincenzo")).toBe("Bot nuevo sin Jev · paquete vincenzo");
+  });
+
+  it("explica en el selector qué es un bot con otro paquete (no queda en blanco)", () => {
+    expect(armHelp("B")).toBe("El bot nuevo, con Jev decidiendo.");
+    expect(armHelp("B@ventas-2")).toBe(
+      "El bot nuevo, con Jev decidiendo. Usa las reglas del paquete ventas-2 en lugar de las de la tienda.",
+    );
+    expect(armHelp("B0@vincenzo")).toBe(
+      "El bot nuevo con las reglas de hoy, sin Jev. Usa las reglas del paquete vincenzo en lugar de las de la tienda.",
+    );
   });
 
   it("muestra al cliente sin su teléfono completo", () => {

@@ -67,3 +67,5 @@ examples:
   - {answers: {compra.que_hace: {choice: aplaza, p: 0.7}}, expect: [deferral, text]}
   - {answers: {compra.que_hace: {choice: pregunta, p: 0.9}}, expect: [null, text]}
   - {answers: {compra.que_hace: {choice: confirma, p: 0.69}}, expect: doubt}
+  # Con contexto y sin la tarjeta, sin la respuesta de si le preguntó: duda (premortem 2026-10-02).
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.9}}, input: {context: true}, expect: doubt}

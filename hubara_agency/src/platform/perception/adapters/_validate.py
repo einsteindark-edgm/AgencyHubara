@@ -43,7 +43,10 @@ def check_answer(q: TypedQuestion, raw: Any) -> TypedAnswer:
         choice = raw.get("choice")
         if choice not in q.options:
             raise BadShape(f"{q.id}: opción fuera de los criterios")
-        probs = _dist(raw.get("probabilities"), q.options) or ((str(choice), 1.0),)
+        # Sin `probabilities` la distribución queda vacía: quien lee la cae a
+        # `confidence` (o a 0 si tampoco vino). Antes se inventaba {opción: 1.0}
+        # y una respuesta de 0,6 pasaba el umbral de 0,85 (premortem 2026-10-02).
+        probs = _dist(raw.get("probabilities"), q.options)
         conf = raw.get("confidence")
         return TypedAnswer(
             id=q.id, kind="choice", choice=str(choice), probs=probs,

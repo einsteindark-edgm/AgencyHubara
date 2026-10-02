@@ -34,6 +34,13 @@ BY_RULE = "reglas"
 BY_JEV = "jev"
 BY_FLOOR = "piso"
 BY_FALLBACK = "respaldo"
+#: Lo que devuelve `decide` cuando falló el PAQUETE (una fila con un error de
+#: tipos, un builtin que lanza): no es una duda de Jev. El veredicto lo dice
+#: (`reason=bundle_error`); antes quedaba como «duda» y un bug del paquete
+#: degradaba la capacidad a la regla sin que la traza lo dijera (premortem
+#: 2026-10-02).
+BUNDLE_FAULT: Any = type("BundleFault", (), {"__repr__": lambda self: "BUNDLE_FAULT"})()
+BUNDLE_ERROR = "bundle_error"
 
 
 class Capability(Protocol):
@@ -44,7 +51,9 @@ class Capability(Protocol):
 
     def ask(self, inp: Any) -> tuple[str, Sequence[Any]] | None: ...
 
-    def decide(self, inp: Any, result: Any, rule: Any, thresholds: Mapping[str, float]) -> Any | None: ...
+    def decide(self, inp: Any, result: Any, rule: Any, thresholds: Mapping[str, float]) -> Any | None:
+        """El valor de Jev, None (duda) o BUNDLE_FAULT (falló el paquete)."""
+        ...
 
     def floor(self, inp: Any, rule: Any, jev: Any) -> Any: ...
 
@@ -216,6 +225,9 @@ async def _decide(
     result = await _ask_oracle(profile, state, questions, redact=redact)
     _charge(session_id, result)
     jev = capability.decide(inp, result, rule, _thresholds(capability)) if result.ok else None
+    fault = jev is BUNDLE_FAULT
+    if fault:
+        jev = None
     agree = None if jev is None else bool(capability.same(rule, jev))
     base = dict(
         capability=name, provider=provider, rule=rule, jev=jev, agree=agree, model=str(result.model or ""),
@@ -223,14 +235,19 @@ async def _decide(
     )
     if metrics is not None:
         try:
-            metrics.record(capability=name, provider=provider, ok=bool(result.ok), latency_ms=base["latency_ms"], agree=agree)
+            metrics.record(
+                capability=name, provider=provider, ok=bool(result.ok), latency_ms=base["latency_ms"], agree=agree,
+                bundle=str(getattr(capability, "bundle", "") or ""),
+                variant=str(getattr(capability, "variant", "") or ""),
+            )
         except Exception as exc:  # noqa: BLE001 — medir nunca frena la decisión
             logger.warning("decisions.metric_not_recorded", capability=name, error=repr(exc)[:200])
     if jev is not None and not agree and disagreements is not None:
         try:
             disagreements.record(
                 capability=name, state=state, rule=rule, jev=jev, model=base["model"], answers=list(base["answers"]),
-                session_id=session_id, redact=redact,
+                session_id=session_id, redact=redact, bundle=str(getattr(capability, "bundle", "") or ""),
+                variant=str(getattr(capability, "variant", "") or ""),
             )
         except Exception as exc:  # noqa: BLE001 — la cola nunca frena la decisión
             logger.warning("decisions.disagreement_not_recorded", capability=name, error=repr(exc)[:200])
@@ -241,6 +258,6 @@ async def _decide(
     if profile.calibrated_model and result.model != profile.calibrated_model:
         return Verdict(value=rule, by=BY_FALLBACK, reason="model_changed", **base)
     if jev is None:
-        return Verdict(value=rule, by=BY_FALLBACK, reason="duda", **base)
+        return Verdict(value=rule, by=BY_FALLBACK, reason=BUNDLE_ERROR if fault else "duda", **base)
     final = capability.floor(inp, rule, jev)
     return Verdict(value=final, by=BY_JEV if capability.same(final, jev) else BY_FLOOR, **base)

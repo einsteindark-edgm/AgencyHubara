@@ -32,12 +32,18 @@ class DecisionMetrics:
         latency_ms: int,
         agree: bool | None,
         at_ms: int | None = None,
+        bundle: str = "",
+        variant: str = "",
     ) -> None:
         at = int(at_ms if at_ms is not None else time.time() * 1000)
         day = datetime.fromtimestamp(at / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
         path = self._dir / f"{day}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         row = {"at_ms": at, "capability": capability, "provider": provider, "ok": ok, "latency_ms": latency_ms, "agree": agree}
+        if bundle:  # con qué paquete de decisión (`id@versión`) se decidió
+            row["bundle"] = bundle
+        if variant:  # la variante que decidió (`destinatario_oracion`), si no es el control
+            row["variant"] = variant
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
 

@@ -304,13 +304,35 @@ def test_the_estimate_lists_the_decision_bundles(env, monkeypatch) -> None:
     assert data["bundle_arms"] == ["B0", "B"]
 
 
-def test_launch_with_an_arm_that_pins_a_bundle(env) -> None:
+def test_launch_with_an_arm_that_pins_a_bundle(env, monkeypatch) -> None:
+    """La tienda corre `ventas-2` (Terraform): `B@ventas` compara contra el anterior."""
+    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-2")
     body = {"arms": ["B@ventas", "A1", "B"], "reps": 1, "bench": "new"}
     resp = env["http"].post("/api/chats/lab/runs", json=body)
 
     assert resp.status_code == 202, resp.text
     [started] = env["client"].started
     assert started["input"].arms == ["A1", "B", "B@ventas"]
+
+
+def test_the_launch_carries_the_store_bundle(env, monkeypatch) -> None:
+    """La caja no lee la config de la tienda: el lanzador le manda el paquete
+    activo (premortem 2026-10-02: si no, «B» corría el default del código)."""
+    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-2")
+    resp = env["http"].post("/api/chats/lab/runs", json={"arms": ["A1", "B", "B@ventas"], "reps": 1, "bench": "new"})
+
+    assert resp.status_code == 202, resp.text
+    [started] = env["client"].started
+    assert started["input"].store_bundle == "ventas-2"
+
+
+def test_pinning_the_store_bundle_is_the_same_bot_and_is_refused(env, monkeypatch) -> None:
+    """`B@<el de la tienda>` es B otra vez: un brazo entero gastado en ruido."""
+    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-2")
+    resp = env["http"].post("/api/chats/lab/runs", json={"arms": ["A1", "B", "B@ventas-2"], "reps": 1, "bench": "new"})
+
+    assert resp.status_code == 422
+    assert "ventas-2" in json.dumps(resp.json(), ensure_ascii=False)
 
 
 @pytest.mark.parametrize(

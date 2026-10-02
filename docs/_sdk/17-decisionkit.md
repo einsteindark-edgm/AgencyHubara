@@ -34,13 +34,46 @@ src/plugins/chats/shared/decisions/bundles/
    (umbrales), `rule` (lo que dijo la regla). Va detrás de `ExpressionPort`:
    se puede cambiar de implementación sin tocar los paquetes.
 3. **Certificador:** referencias cruzadas que CEL no ve (llaves de mapa,
-   builtins del catálogo, pisos obligatorios) y los ejemplos del paquete.
-   Códigos DB001–DB015 (lista en `src/platform/decisions/checker.py`; los
-   del turno, en `turn_check.py`).
+   builtins del catálogo, pisos y reglas obligatorios) y los ejemplos del
+   paquete. Códigos DB001–DB016 (lista en `src/platform/decisions/checker.py`;
+   los del turno, en `turn_check.py`). Desde el premortem del 2026-10-02
+   también rechaza:
+   - lecturas sin llave a la vista (`(choice)['x']`, `('x') in choice`,
+     `choice.exists(…)`, `size(p)`), `dom.seccion.campo` que no existe e
+     `i.campo` que el ítem no trae dentro de `items.filter(i, …)` (o de una
+     `vars` que es un `filter` de `items`) — DB005;
+   - una comparación con una opción que la pregunta no tiene
+     (`choice['q'] == 'otra'`) — DB005; una etapa que el catálogo no declara
+     en una condición del turno — DB015;
+   - una llave repetida en el YAML, y `yes:`/`no:` sin comillas como opción
+     (YAML los vuelve `true`/`false`) — DB001;
+   - una fila `when` que ningún ejemplo decide, o un ejemplo que solo pasa
+     porque la tabla falló — DB010;
+   - un oráculo (`oracle:`) que ningún perfil usa — DB016.
+
+   Lo que declara el catálogo (`builtins.yaml`) para que el certificador lo
+   haga cumplir:
+   - `capabilities:` las que el código del plugin pide (DB003 si falta una;
+     el resolutor no cae a otra implementación);
+   - `required_rules:` / `required_floors:` la regla o el piso que una
+     capacidad no puede cambiar (DB012: la baja legal, el relevo);
+   - `takes_items: true` en los builtins de estado que reciben la lista de
+     ítems e `items_to_state: true` si el motor se la pasa (DB004 si el
+     estado de una capacidad con ítems no la recibe);
+   - `keys: [campo]` en un builtin `items`: los campos que identifican al
+     ítem; `each.id` lleva `{n}`, `{index}` o esas llaves, y nada más.
+   - `engine_contract`: el motor corre los de `SUPPORTED_CONTRACTS` (al subir
+     el contrato, el viejo se queda: un paquete publicado es inmutable).
 4. **Tabla:** la primera fila cuya condición se cumple decide; `doubt` =
    decide la regla. Una condición que falla al evaluarse también es duda
    (leer una llave que no está devuelve un *valor de error* en CEL; el motor
    lo trata como duda, nunca como false: la fila siguiente no decide).
+   `decide_explained(…)` devuelve `Decision(value, row, error)`: leer una
+   respuesta que no llegó es duda legítima (log en debug); cualquier otro
+   error es un bug del paquete (warning `decision_bundle.row_error` con
+   paquete y fila, y `error`). En ventas ese caso no es «duda»: el veredicto
+   dice `reason=bundle_error`. Un `then` literal (`{zona: …}`) se copia en
+   cada decisión.
 5. **Tipos de valor** (`value:`): `bool`, `string`, `int`, `double`, `any`,
    `list<T>`, `tuple<T>` (tupla de Python), tuplas posicionales
    `(string, tuple<string>)`, registros `{campo: tipo}`, `?` para null y
@@ -101,11 +134,14 @@ src/plugins/chats/shared/decisions/bundles/
      pregunta de ③ y los textos del `state` (un `{campo}` que el motor no
      llena es DB005);
    - `coverage` (②: tools, palabras o cualquier texto por asunto; todos los
-     asuntos, `{}` si nada lo atiende), `reading` (la nota según lo que
+     asuntos; `{}` es una regla que nunca se cumple: el asunto queda SIEMPRE
+     sin atender y pide otra ronda), `reading` (la nota según lo que
      preguntó el asesor y lo que responde el cliente) y `guide`;
    - `contract`: asunto → tools, como **filas**: la primera del asunto que
      se cumple decide, `any_of: []` = no pide tool. CEL sobre `p` (una
-     respuesta sin probabilidad vale 0), `th`, `inp` y `dom`:
+     respuesta sin probabilidad vale 0), `th`, `inp` y `dom`; una fila que
+     lee `p['x']` pregunta antes `'x' in p` (DB005), y una fila que falla al
+     evaluarse no decide (sigue la siguiente del asunto):
 
      ```yaml
      contract:
@@ -164,9 +200,13 @@ corre sus builtins con los `with:` del paquete (`call(table.spec.state, convo)`)
 El motor de ventas lo envuelve en `decisions/bundled.py` (`BundledCapability`,
 con la forma de `Capability`) y los lugares lo piden por nombre al resolutor
 (`decisions/registry.py: capability("baja")`), que toma el paquete activo
-de la tienda (`SALES_DECISIONS_BUNDLE`, Terraform `tenants.<t>.lab.decisions_bundle`)
-o, si la capacidad todavía no migró, su clase. El `Verdict` lleva
-`bundle: "ventas@1"` en la traza.
+de la tienda (`SALES_DECISIONS_BUNDLE`, Terraform `tenants.<t>.lab.decisions_bundle`).
+Un paquete que no compila se registra una vez (`decisions.bundle_broken`) y
+el ingest sigue con las reglas del código; la API y los workers lo compilan
+al arrancar (`warm_up`: `decisions.bundle_ready` con el `id@versión`). El
+`Verdict` lleva `bundle: "ventas@1"` en la traza, y las métricas y la cola
+de desacuerdos guardan `bundle` y `variant`. Cómo promover un paquete:
+`PAQUETES_DE_DECISION.md` §9.
 
 ## Reglas al escribir un paquete
 
@@ -176,9 +216,11 @@ o, si la capacidad todavía no migró, su clase. El `Verdict` lleva
    respuesta, preguntar si llegó (`'baja.pide' in p`).
 4. Lo que no cabe en una fila es un builtin nuevo (código + prueba + entrada
    en `builtins.yaml`), no una condición CEL de tres líneas.
-5. Otra pregunta u otro umbral = otra versión del paquete.
-6. Los pisos se piden por nombre; los obligatorios (`required_floors`) no se
-   pueden cambiar.
+5. Otra pregunta u otro umbral = otra versión del paquete (la huella de
+   cada versión publicada está congelada en
+   `tests/plugins/test_decision_bundles_published.py`).
+6. Los pisos y las reglas se piden por nombre; los obligatorios
+   (`required_floors`, `required_rules`) no se pueden cambiar.
 7. Una opción que no está en la lista no pasa: antes de leer
    `opt['q'][choice['q']]`, preguntar `choice['q'] in opt['q']`.
 8. Un ítem sin respuesta no trae `p` (ni `choice`): `has(i.p)` antes de

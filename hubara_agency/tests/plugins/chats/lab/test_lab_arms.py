@@ -86,3 +86,16 @@ def test_an_arm_with_a_bundle_is_the_same_bot_with_other_intelligence() -> None:
     # Lo que puede correr el simulador (puro: lo usa el workflow de la corrida).
     assert runnable_arm("B@ventas-2") and runnable_arm("A1")
     assert not runnable_arm("Z") and not runnable_arm("B@") and not runnable_arm("C@ventas")
+
+
+def test_an_arm_without_a_bundle_runs_the_store_bundle() -> None:
+    """La caja del laboratorio no lee la config de la tienda (solo `/hubara-lab`):
+    el paquete de la tienda viaja con la corrida y lo corren los brazos que no
+    fijan otro (A1, B0, B). Si no, «B» correría el default del código mientras
+    producción corre el promovido (premortem 2026-10-02)."""
+    from src.plugins.chats.agent.sales_lab.arms import arm_env
+
+    assert arm_env("B", "ventas-2") == {"SALES_DECISIONS_BUNDLE": "ventas-2"}
+    assert arm_env("A1", "ventas-2") == {"SALES_DECISIONS_BUNDLE": "ventas-2"}
+    assert arm_env("B@ventas", "ventas-2") == {"SALES_DECISIONS_BUNDLE": "ventas"}
+    assert arm_env("B", "") == {}

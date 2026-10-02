@@ -27,10 +27,31 @@ BuiltinKind = Literal["rule", "state", "options", "view", "items", "floor", "sam
 
 #: La duda: la fila no decide y decide la regla (`then: doubt`).
 DOUBT_WORD = "doubt"
+#: El id de un paquete (= su carpeta): el mismo patrón en el modelo, en el
+#: brazo del laboratorio (`B@<id>`) y en Terraform (`decisions_bundle`).
+BUNDLE_ID = r"[a-z][a-z0-9-]{0,39}"
 
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def yaml_booleans(data: Any) -> Any:
+    """Las llaves de `criteria` que YAML 1.1 lee como booleanas.
+
+    En una pregunta sí/no, `{true: …, false: …}` sin comillas es la forma
+    esperada: se normaliza a "true"/"false". En una de opciones es un error:
+    `no:` sin comillas es `false` y la opción «no» se volvería «false» (la
+    fila `== 'no'` quedaría muerta sin que nada lo diga)."""
+    if not isinstance(data, dict) or not isinstance(data.get("criteria"), dict):
+        return data
+    criteria = data["criteria"]
+    if not any(isinstance(k, bool) for k in criteria):
+        return data
+    if data.get("kind") != "noul":
+        bad = sorted(str(k).lower() for k in criteria if isinstance(k, bool))
+        raise ValueError(f"opciones sin comillas que YAML lee como booleanas {bad}: escribe por ejemplo \"no\": …")
+    return {**data, "criteria": {str(k).lower() if isinstance(k, bool) else k: v for k, v in criteria.items()}}
 
 
 class BuiltinRef(_Strict):
@@ -56,13 +77,10 @@ class Question(_Strict):
     #: (lee `inp` y `consts`; todavía no hay respuestas).
     when: str | None = Field(default=None, min_length=1)
 
-    @field_validator("criteria", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _yaml_booleans(cls, value: Any) -> Any:
-        # `{true: sí, false: no}` sin comillas llega como llaves booleanas.
-        if isinstance(value, dict):
-            return {str(k).lower() if isinstance(k, bool) else k: v for k, v in value.items()}
-        return value
+    def _yaml_booleans(cls, data: Any) -> Any:
+        return yaml_booleans(data)
 
     @model_validator(mode="after")
     def _criteria_shape(self) -> Question:
@@ -96,12 +114,10 @@ class Each(_Strict):
     #: Se pregunta solo por los ítems donde se cumple (lee `item`, `inp`, `consts`).
     when: str | None = Field(default=None, min_length=1)
 
-    @field_validator("criteria", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _yaml_booleans(cls, value: Any) -> Any:
-        if isinstance(value, dict):
-            return {str(k).lower() if isinstance(k, bool) else k: v for k, v in value.items()}
-        return value
+    def _yaml_booleans(cls, data: Any) -> Any:
+        return yaml_booleans(data)
 
     @model_validator(mode="after")
     def _shape(self) -> Each:
@@ -197,7 +213,7 @@ class Capability(_Strict):
 
 
 class Bundle(_Strict):
-    id: str = Field(pattern=r"^[a-z][a-z0-9-]*$")
+    id: str = Field(pattern=f"^{BUNDLE_ID}$")
     version: int = Field(ge=1)
     engine_contract: int = Field(ge=1)
     oracle: str = Field(min_length=1)
@@ -218,12 +234,23 @@ class BuiltinSpec(_Strict):
     params: dict[str, ParamType] = Field(default_factory=dict)
     #: Los campos que deriva una vista, o los de cada ítem (nombre → tipo).
     fields: dict[str, str] = Field(default_factory=dict)
+    #: Campos de cada ítem que lo identifican (valores del código, no texto
+    #: del cliente): los únicos que puede llevar el id de la pregunta por ítem
+    #: además de su posición (`{n}`, `{index}`).
+    keys: list[str] = Field(default_factory=list)
+    #: Un estado que recibe los ítems (`items=`): el de una capacidad por ítems
+    #: los recibe siempre.
+    takes_items: bool = False
     doc: str = ""
 
     @model_validator(mode="after")
     def _fields_only_for_views(self) -> BuiltinSpec:
         if self.fields and self.kind not in ("view", "items"):
             raise ValueError("fields es solo para un builtin de clase view o items")
+        if self.keys and (self.kind != "items" or not set(self.keys) <= set(self.fields)):
+            raise ValueError("keys son campos de los ítems (`fields`) de un builtin de clase items")
+        if self.takes_items and self.kind != "state":
+            raise ValueError("takes_items es solo para un builtin de clase state")
         for name, text in self.fields.items():
             try:
                 parse_type(text)
@@ -297,6 +324,16 @@ class Catalog(_Strict):
     constants: dict[str, ConstantSpec] = Field(default_factory=dict)
     #: capacidad → piso que el paquete NO puede cambiar (p. ej. la baja legal).
     required_floors: dict[str, str] = Field(default_factory=dict)
+    #: capacidad → regla que el paquete NO puede cambiar (la baja legal: si
+    #: Jev duda o cae, decide esta regla).
+    required_rules: dict[str, str] = Field(default_factory=dict)
+    #: Las capacidades que el código del motor le pide a un paquete: tiene que
+    #: traerlas todas (si no, se corría la clase de Python: la inteligencia de
+    #: otra tienda).
+    capabilities: list[str] = Field(default_factory=list)
+    #: El plugin le pasa los ítems (`items=`) al estado de una capacidad por
+    #: ítems: entonces ese estado tiene que recibirlos (`takes_items`).
+    items_to_state: bool = False
     #: El dominio de la tienda que trae cada paquete (`domain.yaml`): campo →
     #: tipo, o una sección (campo → tipo). Lo leen las condiciones (`dom.x`)
     #: y el código del agente (el vocabulario de sus herramientas).

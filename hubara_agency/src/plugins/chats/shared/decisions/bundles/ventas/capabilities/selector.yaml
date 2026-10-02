@@ -37,3 +37,5 @@ examples:
     expect: [Rosado]
   - {answers: {selector.elige: 0.1}, expect: []}
   - {answers: {selector.elige: 0.5}, expect: doubt}
+  # Sin respuesta (premortem 2026-10-02: un ejemplo por fila).
+  - {answers: {}, expect: doubt}

@@ -75,6 +75,8 @@ class DisagreementLog:
         answers: Sequence[dict[str, Any]],
         session_id: str | None = None,
         redact: Sequence[str] = (),
+        bundle: str = "",
+        variant: str = "",
     ) -> str:
         from src.platform.perception.anonymize import anonymize_text
 
@@ -92,6 +94,10 @@ class DisagreementLog:
                 "jev": jev,
                 "answers": list(answers),
                 "model": model,
+                # con qué paquete de decisión (`id@versión`) se decidió
+                **({"bundle": bundle} if bundle else {}),
+                # la variante que decidió (`destinatario_oracion`), si no es el control
+                **({"variant": variant} if variant else {}),
             },
         )
         return item_id

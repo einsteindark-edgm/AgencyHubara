@@ -155,6 +155,7 @@ async def prepare_run_activity(run_id: str) -> RunPlan:
         spend_limit_usd=float(order.get("spend_limit_usd") or 0.0),
         image=str(order.get("image") or ""),
         judge_usd_per_turn=judge_usd_per_turn(),
+        store_bundle=str(order.get("store_bundle") or ""),
     )
 
 
@@ -246,6 +247,7 @@ async def smoke_turn_activity(plan: RunPlan) -> SmokeResult:
             sandbox_dir=_lab_root() / "runs" / plan.run_id / "smoke" / arm / "case",
             timeout_s=SMOKE_TIMEOUT_S,
             arm=arm,
+            store_bundle=plan.store_bundle,
         )
         cost += _charged_usd(result)
         trace = result.get("trace") or {}
@@ -275,6 +277,7 @@ async def simulate_case_activity(inp: SimulateInput) -> CaseOutcome:
         sandbox_dir=_lab_root() / "runs" / inp.run_id / inp.arm / str(inp.rep) / str(inp.index),
         timeout_s=CASE_TIMEOUT_S,
         arm=inp.arm,
+        store_bundle=inp.store_bundle,
     )
     out = _results_dir(inp.run_id, inp.arm, inp.rep)
     out.mkdir(parents=True, exist_ok=True)

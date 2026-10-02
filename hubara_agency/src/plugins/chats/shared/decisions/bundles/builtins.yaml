@@ -18,6 +18,10 @@
 #   input   tipo de entrada que lee (si está, debe ser el de la capacidad)
 #   params  parámetros que se pasan con `with:` (str | int | float | bool)
 #   fields  campos que deriva una vista, o los de cada ítem (nombre → tipo)
+#   keys    campos que identifican un ítem (valores del código, no texto del
+#           cliente): los únicos que lleva el id de su pregunta además de {n}
+#   takes_items  un estado que recibe los ítems (`items=`): el de una capacidad
+#           por ítems los recibe siempre
 engine_contract: 1
 
 inputs:
@@ -267,18 +271,22 @@ builtins:
     doc: "Los mensajes del primer contacto, solo si el turno le manda algo al cliente (como mucho 8)."
   numbered_items:
     kind: state
+    takes_items: true
     params: {header: str, max: int}
     doc: "«<header>» y los ítems numerados ([1] …); sin ítems o con más de `max`, no se pregunta."
   leading_sentences_state:
     kind: state
+    takes_items: true
     input: PreambuloCheck
     doc: "Las primeras oraciones del texto (hasta 5, «[…]» si hay más); con menos de dos, no se pregunta."
   conversation_for_slots:
     kind: state
+    takes_items: true
     input: DatosDelPedido
     doc: "Lo último de la conversación, si algún dato no está en las palabras del cliente."
   customer_order_text:
     kind: state
+    takes_items: true
     input: PedidoDelCliente
     doc: "El mensaje del cliente, si la regla propone algún término."
   # ── ítems ──
@@ -306,6 +314,7 @@ builtins:
     kind: items
     input: DatosDelPedido
     fields: {slot: string, value: string, ask: bool, personal: bool, label: string}
+    keys: [slot]                # el nombre del dato (ciudad, direccion…): lo pone el código, no el cliente
     doc: "Los datos de envío y pago a guardar; ask = no está en las palabras del cliente; personal = Jev lo ve tapado."
   unavailable_term_items:
     kind: items
@@ -415,6 +424,15 @@ builtins:
     kind: same
     doc: "Los mismos elementos ordenados (índices)."
 
+# Las capacidades que el código del motor le pide a un paquete de ventas: un
+# paquete tiene que traerlas todas (DB003). Sin esto, el resolutor corría en
+# silencio la clase de Python de la que faltara (la inteligencia de velas).
+capabilities: [acuse, afirmacion, baja, cantidad, categoria, cierre, compra, contactar, cortesia, cupon, datos, destinatario, destinatario_oracion, destinatario_plantilla, enumeracion, familia_de_color, fuera_de_catalogo, item_del_pedido, monto, persona, portavelas, preambulo, producto_nombrado, relevo, rescate, retoma, saludo, selector, zona_de_envio]
+
+# El motor de ventas le pasa los ítems (`items=`) al estado de una capacidad
+# por ítems (`BundledCapability.ask`): ese estado tiene que recibirlos.
+items_to_state: true
+
 required_floors:
   # La baja explícita es un piso legal: achicarlo es decisión del operador.
   baja: rule_or_jev
@@ -422,6 +440,13 @@ required_floors:
   relevo: rule_or_jev
   # Los invariantes del pedido nunca los decide Jev.
   cierre: closing_invariants
+
+# La REGLA de esas mismas capacidades: es la que decide si Jev duda, cae o el
+# proveedor está en reglas. Cambiarla apagaría el piso por otro lado (premortem
+# 2026-10-02: `rule: constant_false` en la baja certificaba).
+required_rules:
+  baja: opt_out_text
+  relevo: promises_a_handoff
 
 # El vocabulario del turno (PAQUETES_DE_DECISION.md F7): lo que el `turn.yaml`
 # de un paquete puede nombrar. Con esto, cada paquete trae su turno: la ráfaga

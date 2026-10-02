@@ -515,3 +515,19 @@ async def test_the_ingest_reads_from_the_bundle(tmp_path: Path, monkeypatch) -> 
     bundles = {v["capability"]: v["bundle"] for v in readings.verdicts}
     assert bundles == {"compra": "ventas@1", "retoma": "ventas@1", "baja": "ventas@1", "cortesia": "ventas@1"}
     assert readings.courtesy_only is True
+
+
+def test_the_catalog_says_which_states_take_the_items_and_the_code_agrees() -> None:
+    """`takes_items` del catálogo ⇔ el builtin de estado recibe `items=`."""
+    import inspect
+
+    import yaml
+
+    from src.plugins.chats.agent.sales.decisions.bundled import builtin
+
+    catalog = yaml.safe_load(CATALOG_PATH.read_text(encoding="utf-8"))
+    for name, spec in catalog["builtins"].items():
+        if spec["kind"] != "state":
+            continue
+        takes = "items" in inspect.signature(builtin("state", name)).parameters
+        assert bool(spec.get("takes_items")) == takes, name

@@ -69,6 +69,7 @@ CATEGORIA: dict[str, Any] = {
         {"answers": {"categoria.cual": {"choice": "otra", "p": 0.9}},
          "options": {"categoria.cual": {"santos": "religiosas"}}, "expect": "doubt"},
         {"answers": {"categoria.cual": {"choice": "ninguno", "p": 0.9}}, "expect": {"categoria": None}},
+        {"answers": {}, "expect": "doubt"},
     ],
 }
 
@@ -105,6 +106,7 @@ COMPRA: dict[str, Any] = {
         {"answers": {"compra.que_hace": {"choice": "confirma", "p": 0.9}, "compra.pregunta_compra": 0.9},
          "input": {"context": True, "asked_known": None}, "expect": ["affirmation", "text"]},
         {"answers": {"compra.que_hace": {"choice": "otro", "p": 0.9}}, "expect": [None, "text"]},
+        {"answers": {}, "expect": "doubt"},
     ],
 }
 
@@ -129,6 +131,7 @@ ENUMERACION: dict[str, Any] = {
     "examples": [
         {"answers": {"enumeracion.que": {"choice": "aromas", "p": 0.9}}, "expect": ["scent", ["Lavanda", "Vainilla"]]},
         {"answers": {"enumeracion.que": {"choice": "nada", "p": 0.9}}, "expect": []},
+        {"answers": {}, "expect": "doubt"},
     ],
 }
 

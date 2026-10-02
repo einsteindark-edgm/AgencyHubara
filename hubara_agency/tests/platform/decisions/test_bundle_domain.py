@@ -44,7 +44,10 @@ DESPEDIDA: dict[str, Any] = {
     ],
     "floor": {"builtin": "jev_any"},
     "same": {"builtin": "same_any"},
-    "examples": [{"answers": {"baja.pide": 0.9}, "expect": "Listo, tu pedido quedó registrado. Gracias por elegir a Velas del Sol."}],
+    "examples": [
+        {"answers": {"baja.pide": 0.9}, "expect": "Listo, tu pedido quedó registrado. Gracias por elegir a Velas del Sol."},
+        {"answers": {}, "expect": "doubt"},
+    ],
 }
 
 

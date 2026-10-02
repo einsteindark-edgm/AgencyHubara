@@ -153,6 +153,34 @@ class EngineReadings:
         )
 
 
+def rules_readings(inbound: Inbound) -> Readings:
+    """Las lecturas con las reglas del código, sin el motor (las del proveedor
+    `reglas`): las usa el ingest si el motor no puede leer (p. ej. el paquete
+    de la tienda no compila). El mensaje nunca se pierde y la baja explícita
+    se respeta (premortem 2026-10-02)."""
+    from src.plugins.chats.agent.sales.decisions import bundled_ingest as rules
+    from src.sdk.messagingkit import ReengagementDeferral, has_recent_marketing_context
+
+    kind, source = rules.purchase_signal(inbound)
+    retoma = rules.reengagement(inbound)
+    deferral = retoma.get("deferral")
+    marketing = has_recent_marketing_context(dict(inbound.metadata), inbound.now_ms)
+    return Readings(
+        purchase=(kind, source),
+        deferral=ReengagementDeferral(until_ms=int(deferral["until_ms"]), kind=str(deferral["kind"])) if deferral else None,
+        courtesy=bool(retoma.get("courtesy")),
+        opt_out=bool(marketing and rules.opt_out_text(inbound)),
+    )
+
+
+def rules_ack(inbound: Inbound) -> Verdict:
+    """El acuse con la regla del código (`is_closing_ack`), sin el motor."""
+    from src.plugins.chats.agent.sales.decisions import bundled_ingest as rules
+
+    value = bool(rules.closing_ack(inbound))
+    return Verdict(capability="acuse", value=value, by=BY_RULE, provider="reglas", rule=value, reason="engine_error")
+
+
 def _last_episode_redact_terms(metadata: Mapping[str, Any]) -> tuple[str, ...]:
     """Los datos personales del borrador del ÚLTIMO episodio, abierto o no."""
     from src.plugins.chats.agent.sales.decisions.context import redact_terms_from_slots

@@ -47,14 +47,25 @@ SHADOW_TIMEOUT_S = 1.5
 def _resolve(profile_id: str) -> tuple[EngineProfile, Turn] | None:
     """El perfil y con qué corre su turno (su cuestionario y su política, o
     el turno del paquete activo: `decisions/turn.py`)."""
+    resolved, _error = _resolve_or_error(profile_id)
+    return resolved
+
+
+def _resolve_or_error(profile_id: str) -> tuple[tuple[EngineProfile, Turn] | None, str]:
+    """(lo resuelto, o None y el motivo para la traza): un perfil que no
+    existe es `unknown_profile`; un paquete que no compila, `bundle_error: …`
+    (no se disfraza de perfil desconocido)."""
     try:
         profile = get_engine_profile(profile_id)
         if profile is None:
-            return None
-        return profile, turn_of(profile)
-    except (KeyError, BundleError) as exc:  # perfil o paquete mal armados: el turno sale como hoy
+            return None, ERROR_UNKNOWN_PROFILE
+        return (profile, turn_of(profile)), ""
+    except BundleError as exc:  # el paquete no compila: el turno sale como hoy
+        logger.warning("decisions.bundle_error", profile=profile_id, error=str(exc)[:300])
+        return None, f"bundle_error: {exc}"[:300]
+    except KeyError as exc:  # perfil mal armado: el turno sale como hoy
         logger.warning("decisions.bad_profile", profile=profile_id, error=str(exc))
-        return None
+        return None, ERROR_UNKNOWN_PROFILE
 
 
 def needs_context(profile_id: str) -> bool:
@@ -148,9 +159,9 @@ def _acting(profile: EngineProfile, served_model: str) -> dict[str, Any]:
 async def _shadow(
     shadow_id: str, inp: PerceiveInput, *, redact: Sequence[str], context: Any
 ) -> dict[str, Any]:
-    resolved = _resolve(shadow_id)
+    resolved, error = _resolve_or_error(shadow_id)
     if resolved is None:
-        return {"profile": shadow_id, "ok": False, "error": ERROR_UNKNOWN_PROFILE}
+        return {"profile": shadow_id, "ok": False, "error": error}
     try:
         result = await asyncio.wait_for(
             _ask(resolved, inp, redact=redact, context=context, timeout_s=SHADOW_TIMEOUT_S), timeout=SHADOW_TIMEOUT_S + 0.25
@@ -177,9 +188,9 @@ async def _shadow(
 async def perceive(inp: PerceiveInput, *, redact: Sequence[str] = (), context: Any = None) -> TurnDecisions:
     """① Antes del turno: los asuntos de la ráfaga, la nota, las reglas de ② y
     la lectura del hilo (con el perfil en sombra al lado, si hay)."""
-    resolved = _resolve(inp.profile)
+    resolved, error = _resolve_or_error(inp.profile)
     if resolved is None:
-        return TurnDecisions(ok=False, profile=inp.profile, error=ERROR_UNKNOWN_PROFILE, contract=CONTRACT_VERSION)
+        return TurnDecisions(ok=False, profile=inp.profile, error=error, contract=CONTRACT_VERSION)
     profile = resolved[0]
     shadow_task = (
         asyncio.ensure_future(_shadow(profile.shadow, inp, redact=redact, context=context)) if profile.shadow else None
@@ -232,9 +243,9 @@ async def verify(inp: VerifyInput, *, redact: Sequence[str] = ()) -> VerifyOutpu
     plan = _plan_of_rows(inp.topics)
     if not plan.topics:
         return VerifyOutput(ok=True, decision="send")
-    resolved = _resolve(inp.profile)
+    resolved, error = _resolve_or_error(inp.profile)
     if resolved is None:
-        return VerifyOutput(ok=False, decision="send", error=ERROR_UNKNOWN_PROFILE)
+        return VerifyOutput(ok=False, decision="send", error=error)
     profile, turn = resolved
     questionnaire = turn.questionnaire
     try:

@@ -18,6 +18,10 @@ class LabLaunchInput:
     # La caja corta la corrida si el gasto real llega acá: el menor entre el
     # tope por corrida y lo que queda del tope del mes (plan §3.7).
     spend_limit_usd: float = 0.0
+    # El paquete de decisión de la tienda (`SALES_DECISIONS_BUNDLE` de
+    # producción): la caja no lo lee de la config, lo recibe con la corrida y
+    # lo corren los brazos que no fijan otro. "" = el default del código.
+    store_bundle: str = ""
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,7 @@ class LabOrder:
     estimate_usd: float
     spend_limit_usd: float
     requested_at_ms: int
+    store_bundle: str = ""
 
 
 @dataclass(frozen=True)

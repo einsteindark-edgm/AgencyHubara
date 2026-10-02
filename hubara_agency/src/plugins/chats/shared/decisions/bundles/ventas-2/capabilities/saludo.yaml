@@ -30,3 +30,5 @@ examples:
   - {answers: {egreso.saludo: 0.85}, expect: false}
   - {answers: {egreso.saludo: 0.15}, expect: true}
   - {answers: {egreso.saludo: 0.5}, expect: doubt}
+  # Sin respuesta (premortem 2026-10-02: un ejemplo por fila).
+  - {answers: {}, expect: doubt}

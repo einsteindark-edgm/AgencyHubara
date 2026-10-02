@@ -17,9 +17,10 @@ A0 no se simula (es lo que pasó de verdad). El brazo C (OpenAI) se quitó el
 2026-09-28: 100 % Jev.
 
 Un brazo puede fijar el paquete de decisión: `B@ventas-2` es el bot B con la
-inteligencia de `ventas-2` (PAQUETES_DE_DECISION.md F6). El proceso del caso
-lo fija ANTES de importar la app (`arm_env`), así las capacidades y el
-vocabulario de las tools salen de ese paquete.
+inteligencia de `ventas-2` (PAQUETES_DE_DECISION.md F6). Los demás corren el
+paquete de la tienda, que viaja con la corrida. El proceso del caso lo fija
+ANTES de importar la app (`arm_env`), así las capacidades y el vocabulario de
+las tools salen de ese paquete.
 """
 from __future__ import annotations
 
@@ -46,9 +47,13 @@ def arm_profile(arm: str) -> str | None:
     return ARM_PROFILES.get(split_arm(arm)[0])
 
 
-def arm_env(arm: str) -> dict[str, str]:
-    """Las variables del proceso del caso para este brazo: el paquete fijado."""
-    bundle = split_arm(arm)[1]
+def arm_env(arm: str, store_bundle: str = "") -> dict[str, str]:
+    """Las variables del proceso del caso para este brazo: el paquete que fija
+    (`B@ventas-2`) o, si no fija ninguno, el de la tienda. La caja no lee la
+    config de la tienda (solo `/hubara-lab`): el paquete de la tienda viaja con
+    la corrida (`store_bundle`, lo manda el lanzador). Sin él, el default del
+    código."""
+    bundle = split_arm(arm)[1] or store_bundle
     return {BUNDLE_ENV: bundle} if bundle else {}
 
 

@@ -85,6 +85,19 @@ _CASE = {
 }
 
 
+def simulation_order(arms: list[str]) -> list[str]:
+    """El orden en que se simulan los brazos: A1 (la línea base) primero; cada
+    brazo que fija paquete (`B@x`, la razón de la corrida) justo después de su
+    bot base; lo demás (B0, la fidelidad del esqueleto) después, en su orden."""
+    pinned = [a for a in arms if "@" in a]
+    bases = {a.partition("@")[0] for a in pinned}
+    out = ["A1"] if "A1" in arms else []
+    for base in (a for a in arms if "@" not in a and a in bases):
+        out += [base, *(p for p in pinned if p.partition("@")[0] == base)]
+    out += [a for a in pinned if a not in out]
+    return out + [a for a in arms if a not in out]
+
+
 @workflow.defn(name="LabRunWorkflow")
 class LabRunWorkflow:
     @workflow.run
@@ -137,7 +150,7 @@ class LabRunWorkflow:
                     return {"phase": "failed", "error": error}
             # Un brazo con paquete (`B@ventas-2`, F6) corre como su bot (forma
             # pura: que el paquete exista lo validó el lanzador).
-            runnable = [a for a in simulated if runnable_arm(a)]
+            runnable = simulation_order([a for a in simulated if runnable_arm(a)])
             pending = [a for a in simulated if not runnable_arm(a)]
             notes = [ARMS_PENDING_NOTE.format(arms=", ".join(pending))] if pending else []
             if not runnable:
@@ -182,8 +195,11 @@ class LabRunWorkflow:
         failed = 0
         stopped = False
         out_of_history = False
-        for arm in arms:
-            for rep in range(plan.reps):
+        # Por repetición: cada brazo tiene su repetición antes de que alguno
+        # tenga la siguiente (un corte por gasto o historia no se lleva entero
+        # al último brazo).
+        for rep in range(plan.reps):
+            for arm in arms:
                 self._simulated[arm] = rep + 1
                 for start in range(0, cases, CONCURRENCY):
                     if await workflow.execute_activity("lab_run_cancel_requested", run_id, result_type=bool, **_QUICK):
@@ -194,7 +210,8 @@ class LabRunWorkflow:
                     batch = [
                         workflow.execute_activity(
                             "lab_run_simulate_case",
-                            SimulateInput(run_id=run_id, bench_id=plan.bench_id, arm=arm, rep=rep, index=i),
+                            SimulateInput(run_id=run_id, bench_id=plan.bench_id, arm=arm, rep=rep, index=i,
+                                          store_bundle=plan.store_bundle),
                             result_type=CaseOutcome,
                             **_CASE,
                         )

@@ -188,3 +188,36 @@ async def test_lo_que_cobra_jev_queda_en_la_conversacion(_isolate_vault_dir: Pat
 
     metadata = json.loads((_isolate_vault_dir / SID / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["episodes"][0]["jev_usage"] == {"calls": 2, "cost_usd_micros": 40}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_un_paquete_roto_no_se_cuenta_como_caida_de_jev(_isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    """Premortem 2026-10-02: con el paquete del lector roto, cada conversación
+    cae al LLM (bien), pero la métrica lo contaba como Jev caído y ensuciaba la
+    vara de producción del lector. Queda `bundle_error` en la lectura, un error
+    en el log y ninguna métrica de Jev."""
+    import structlog
+
+    from src.plugins.order_sentinel.agent import decisions
+    from src.sdk.decisionkit import BundleError, Diagnostic
+
+    monkeypatch.setenv("HUBARA_API_BASE_URL", BASE)
+    monkeypatch.setenv("ORDER_SENTINEL_READER", "shadow")
+    port = RecordingPort(_JEV_SALIO)
+    monkeypatch.setattr(acts, "get_reader_port", lambda: port)
+
+    def broken():
+        raise BundleError([Diagnostic("DB005", "capabilities/cambio.yaml: decide[0].when", "roto")])
+
+    monkeypatch.setattr(decisions, "active_bundle", broken)
+    _seed(_isolate_vault_dir)
+
+    with structlog.testing.capture_logs() as logs:
+        snapshot = await ActivityEnvironment().run(acts.build_order_sentinel_snapshot_activity)
+
+    [convo] = snapshot["conversations"]
+    assert convo["reading"]["verdict"] is None and convo["reading"]["error"] == "bundle_error"
+    assert port.calls == []
+    assert DecisionMetrics(_isolate_vault_dir).rows("estado_pedido", since_ms=0) == []
+    assert any(e["event"] == "order_sentinel.bundle_broken" and e["log_level"] == "error" for e in logs), logs

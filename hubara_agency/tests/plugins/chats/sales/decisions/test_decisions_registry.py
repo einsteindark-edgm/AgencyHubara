@@ -10,6 +10,7 @@ tienda o de versión es un solo punto.
 from __future__ import annotations
 
 import re
+import importlib
 import shutil
 from pathlib import Path
 
@@ -156,3 +157,143 @@ def _inbound(text: str):
     from src.plugins.chats.agent.sales.decisions.readings import Inbound
 
     return Inbound(session_id="wa_573001234567", text=text, now_ms=1)
+
+
+def _broken_bundles(tmp_path: Path, monkeypatch) -> Path:
+    bundles = tmp_path / "bundles"
+    shutil.copytree(registry.BUNDLES_DIR, bundles)
+    compra = bundles / "ventas" / "capabilities" / "compra.yaml"
+    compra.write_text(compra.read_text(encoding="utf-8").replace("decide:", "decide_mal:", 1), encoding="utf-8")
+    monkeypatch.setattr(registry, "BUNDLES_DIR", bundles)
+    monkeypatch.delenv("SALES_DECISIONS_BUNDLE", raising=False)
+    registry.reset()
+    return bundles
+
+
+def test_a_bundle_that_does_not_compile_is_compiled_once_not_on_every_call(tmp_path: Path, monkeypatch) -> None:
+    """Premortem 2026-10-02: el caché no guardaba el error y cada decisión
+    recompilaba el paquete entero (~0,5 s de CPU en el event loop de la API)."""
+    from src.sdk.decisionkit import BundleError
+
+    _broken_bundles(tmp_path, monkeypatch)
+    calls: list[str] = []
+    real = registry.load_bundle
+    monkeypatch.setattr(registry, "load_bundle", lambda *a, **kw: calls.append("x") or real(*a, **kw))
+
+    for _ in range(3):
+        with pytest.raises(BundleError):
+            capability("baja")
+
+    assert calls == ["x"]
+    registry.reset()
+
+
+def test_warm_up_compiles_the_store_bundle_and_says_which(monkeypatch) -> None:
+    import structlog
+
+    monkeypatch.delenv("SALES_DECISIONS_BUNDLE", raising=False)
+    registry.reset()
+
+    with structlog.testing.capture_logs() as logs:
+        registry.warm_up()
+
+    assert registry._bundle.cache_info().currsize == 1
+    assert any(e["event"] == "decisions.bundle_ready" and e["bundle"] == "ventas@1" for e in logs), logs
+
+
+def test_warm_up_with_a_broken_bundle_logs_an_error_and_does_not_raise(tmp_path: Path, monkeypatch) -> None:
+    """El arranque no cae (el ingest sigue con las reglas del código y el
+    deploy ya lo frena antes): queda un error claro con el motivo."""
+    import structlog
+
+    _broken_bundles(tmp_path, monkeypatch)
+
+    with structlog.testing.capture_logs() as logs:
+        registry.warm_up()
+
+    [error] = [e for e in logs if e["event"] == "decisions.bundle_broken"]
+    assert error["log_level"] == "error" and "DB001" in error["error"]
+    registry.reset()
+
+
+@pytest.mark.parametrize("module", ["src.plugins.chats.workers.sales", "src.plugins.chats.workers.remarketing"])
+def test_the_workers_warm_up_the_store_bundle_before_listening(module: str) -> None:
+    """La primera decisión no compila el paquete dentro de una activity, y el
+    log de arranque dice qué paquete corre."""
+    import inspect
+
+    main = importlib.import_module(module).main
+    source = inspect.getsource(main)
+
+    assert "warm_up" in source and source.index("warm_up") < source.index("worker.run()")
+
+
+async def test_the_api_warms_up_the_store_bundle_off_the_event_loop(monkeypatch) -> None:
+    import asyncio
+
+    from src.plugins.chats.api import sales as sales_api
+
+    warmed: list[str] = []
+    monkeypatch.setattr(registry, "warm_up", lambda: warmed.append("ok"))
+    hooks = [h for h in sales_api.router.on_startup if h.__name__ == "_warm_decisions"]
+
+    assert len(hooks) == 1
+    await hooks[0]()
+    for _ in range(50):
+        if warmed:
+            break
+        await asyncio.sleep(0.01)
+    assert warmed == ["ok"]
+
+
+def test_the_catalog_lists_every_capability_the_code_asks_for() -> None:
+    import yaml
+
+    from src.plugins.chats.shared.store_pack import CATALOG_PATH
+
+    catalog = yaml.safe_load(CATALOG_PATH.read_text(encoding="utf-8"))
+
+    assert set(catalog["capabilities"]) == set(registry._CLASS_PATHS)
+
+
+def test_a_capability_missing_from_the_bundle_never_falls_back_to_a_class(tmp_path: Path, monkeypatch) -> None:
+    """Premortem 2026-10-02: «nunca se corre la inteligencia de otra tienda»."""
+    monkeypatch.delenv("SALES_DECISIONS_BUNDLE", raising=False)
+    registry.reset()
+    bundle = registry.active_bundle()
+    monkeypatch.setattr(type(bundle), "capabilities", property(lambda self: {"baja": None}), raising=False)
+
+    with pytest.raises(KeyError, match="cortesia"):
+        capability("cortesia")
+    registry.reset()
+
+
+def test_a_builtin_that_fails_never_breaks_the_caller(monkeypatch) -> None:
+    """Premortem 2026-10-02: una excepción de un builtin al armar la pregunta
+    (o al decidir) tumbaba la guarda. La capacidad no pregunta (o duda) y
+    decide la regla; queda un error con el paquete y la capacidad."""
+    import structlog
+
+    from src.plugins.chats.agent.sales.decisions import bundled
+
+    monkeypatch.delenv("SALES_DECISIONS_BUNDLE", raising=False)
+    registry.reset()
+    baja = capability("baja")
+    real = bundled.builtin
+
+    def broken(kind: str, name: str):
+        if kind in ("state", "view", "options", "items"):
+            def fails(*_a, **_kw):
+                raise TypeError("got an unexpected keyword argument 'items'")
+            return fails
+        return real(kind, name)
+
+    monkeypatch.setattr(bundled, "builtin", broken)
+
+    with structlog.testing.capture_logs() as logs:
+        asked = baja.ask(_inbound("no me escriban más"))
+
+    assert asked is None
+    assert any(e["event"] == "decisions.builtin_failed" and e["log_level"] == "error" and e["bundle"] == "ventas@1"
+               and e["capability"] == "baja" for e in logs), logs
+    registry.reset()

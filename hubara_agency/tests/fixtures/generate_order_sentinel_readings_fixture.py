@@ -6,9 +6,14 @@ cambios, cortes de lo ya analizado y respuestas en los bordes. Pasar el
 lector a su paquete no puede cambiar ni un carácter de esto:
 `tests/plugins/order_sentinel/test_sentinel_bundle.py` lo compara.
 
-Uso (solo para regenerar la foto, a propósito):
+La foto ya NO se regenera: este archivo importa el lector de HOY (el que
+lee del paquete `centinela`), así que regenerarla comparaba el paquete contra
+sí mismo y la prueba de paridad pasaba siempre (premortem 2026-10-02). Queda
+como documentación de cómo se armó la grilla. Si un cambio de comportamiento
+del lector es a propósito, se regenera con `--regenerar` y el diff de la foto
+va en el mismo PR, explicado:
 
-    cd hubara_agency && uv run python tests/fixtures/generate_order_sentinel_readings_fixture.py
+    cd hubara_agency && uv run python tests/fixtures/generate_order_sentinel_readings_fixture.py --regenerar
 """
 from __future__ import annotations
 
@@ -144,6 +149,11 @@ def build() -> dict[str, Any]:
 
 
 if __name__ == "__main__":
+    if "--regenerar" not in sys.argv[1:]:
+        sys.exit(
+            f"{OUT.name} es la foto del lector ANTES de su paquete: regenerarla con el lector de hoy "
+            "la vuelve tautológica. Solo para un cambio de comportamiento a propósito: --regenerar"
+        )
     OUT.parent.mkdir(parents=True, exist_ok=True)
     frozen = build()
     OUT.write_text(json.dumps(frozen, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")

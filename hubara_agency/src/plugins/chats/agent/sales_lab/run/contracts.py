@@ -27,6 +27,8 @@ class RunPlan:
     image: str = ""
     # Tarifa del juez por turno calificado: 0 con Claude Code (no gasta API).
     judge_usd_per_turn: float = 0.0
+    # El paquete de decisión de la tienda (lo manda el lanzador en la orden).
+    store_bundle: str = ""
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,7 @@ class SimulateInput:
     arm: str
     rep: int
     index: int
+    store_bundle: str = ""
 
 
 @dataclass(frozen=True)

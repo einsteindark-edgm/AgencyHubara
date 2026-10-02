@@ -389,3 +389,16 @@ def _frozen_contexts() -> dict[str, Any]:
 def _plain(q: Any) -> dict[str, Any]:
     crit = dict(q.criteria) if isinstance(q.criteria, Mapping) else list(q.criteria)
     return {"id": q.id, "kind": q.kind, "text": q.text, "criteria": crit}
+
+
+async def test_a_broken_bundle_is_reported_as_such_not_as_an_unknown_profile(other_bundle) -> None:
+    """Premortem 2026-10-02: el turno salía como hoy (bien) pero la traza decía
+    `unknown_profile`, y el operador buscaba un perfil que sí existe."""
+    from src.plugins.chats.agent.sales.decisions import engine
+
+    other_bundle(lambda text: text.replace("stagnant_turns: 3", "stagnant_turnz: 3"))
+
+    out = await engine.perceive(PerceiveInput(session_id=SID, profile="jev-v5", messages=[{"text": "hola", "ts_ms": 1}]))
+
+    assert out.ok is False
+    assert out.error.startswith("bundle_error: ") and "DB001" in out.error

@@ -66,3 +66,18 @@ def test_a_bundle_that_does_not_exist_stops_the_case(tmp_path: Path) -> None:
     assert proc.returncode == 2
     assert "--arm" in proc.stderr and "no-existe" in proc.stderr
     assert not (tmp_path / "out.json").exists()
+
+
+def test_a_store_bundle_that_does_not_exist_stops_the_case(tmp_path: Path) -> None:
+    proc = _run(tmp_path, "--arm", "B", "--store-bundle", "no-existe")
+
+    assert proc.returncode == 2
+    assert "--store-bundle" in proc.stderr and "no-existe" in proc.stderr
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_the_store_bundle_passes_the_parse(tmp_path: Path) -> None:
+    proc = _run(tmp_path, "--arm", "B", "--store-bundle", "ventas", WHATSAPP_ACCESS_TOKEN="EAAG-real")
+
+    assert proc.returncode == 2
+    assert "WHATSAPP_ACCESS_TOKEN" in proc.stderr and "--store-bundle" not in proc.stderr

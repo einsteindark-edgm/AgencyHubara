@@ -38,3 +38,7 @@ examples:
   - {answers: {cierre.etiqueta: {choice: interesado, p: 0.85}}, expect: INTERESADO}
   - {answers: {cierre.etiqueta: {choice: interesado, p: 0.84}}, expect: doubt}
   - {answers: {}, expect: doubt}
+  # Una fila por etiqueta y una opción que no es de la lista (premortem 2026-10-02).
+  - {answers: {cierre.etiqueta: {choice: confirmado_sin_datos, p: 0.9}}, expect: CONFIRMADO_SIN_DATOS}
+  - {answers: {cierre.etiqueta: {choice: compra_exitosa, p: 0.9}}, expect: COMPRA_EXITOSA}
+  - {answers: {cierre.etiqueta: {choice: otra, p: 0.9}}, expect: doubt}

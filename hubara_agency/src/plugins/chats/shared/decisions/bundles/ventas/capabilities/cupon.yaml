@@ -31,3 +31,5 @@ examples:
   - {answers: {cupon.habla: 0.7}, expect: true}
   - {answers: {cupon.habla: 0.15}, expect: false}
   - {answers: {cupon.habla: 0.5}, expect: doubt}
+  # Sin respuesta (premortem 2026-10-02: un ejemplo por fila).
+  - {answers: {}, expect: doubt}

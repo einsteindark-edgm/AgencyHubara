@@ -247,12 +247,16 @@ async def catalog_gap_note_for(
     except Exception as exc:  # noqa: BLE001 — degrade, never break the ingest
         logger.warning("catalog_gap_check_failed", reason=type(exc).__name__)
         return None
-    verdict = await read_catalog_gap(
-        vault_dir,
-        session_id=session_id,
-        text=text,
-        products=list(result.results),
-    )
+    try:
+        verdict = await read_catalog_gap(
+            vault_dir,
+            session_id=session_id,
+            text=text,
+            products=list(result.results),
+        )
+    except Exception as exc:  # noqa: BLE001 — degrade, never break the ingest
+        logger.error("catalog_gap_reading_failed", session_id=session_id, error=f"{type(exc).__name__}: {exc}"[:300])
+        return None
     return catalog_gap_note(verdict.value)
 
 
@@ -1267,13 +1271,21 @@ class IngestInboundMessage:
     # =========================================================================
 
     async def _read_inbound(self, inbound: Inbound) -> Any:
-        """Las lecturas del cliente con el proveedor inyectado o el del motor."""
+        """Las lecturas del cliente con el proveedor inyectado o el del motor.
+        Si el motor no puede leer (p. ej. el paquete de la tienda no compila),
+        las reglas del código: el mensaje nunca se pierde (premortem 2026-10-02)."""
         provider = self._readings
         if provider is None:
             from src.plugins.chats.agent.sales.decisions.readings import EngineReadings
 
             provider = EngineReadings(WORKSPACE_VAULT_DIR)
-        return await provider.read(inbound)
+        try:
+            return await provider.read(inbound)
+        except Exception as exc:  # noqa: BLE001 — el ingest nunca pierde el mensaje
+            from src.plugins.chats.agent.sales.decisions.readings import rules_readings
+
+            logger.error("ingest.readings_failed", session_id=inbound.session_id, error=f"{type(exc).__name__}: {exc}"[:300])
+            return rules_readings(inbound)
 
     async def _is_closing_ack(
         self,
@@ -1323,6 +1335,15 @@ class IngestInboundMessage:
     async def _read_ack(self, inbound: Inbound) -> Any:
         """El acuse con el proveedor inyectado o el del motor. Un proveedor
         sin `read_ack` (anterior a la capacidad) deja el acuse al del motor."""
+        try:
+            return await self._read_ack_or_raise(inbound)
+        except Exception as exc:  # noqa: BLE001 — el ingest nunca pierde el mensaje
+            from src.plugins.chats.agent.sales.decisions.readings import rules_ack
+
+            logger.error("ingest.ack_reading_failed", session_id=inbound.session_id, error=f"{type(exc).__name__}: {exc}"[:300])
+            return rules_ack(inbound)
+
+    async def _read_ack_or_raise(self, inbound: Inbound) -> Any:
         read_ack = getattr(self._readings, "read_ack", None)
         if read_ack is None:
             from src.plugins.chats.agent.sales.decisions.readings import EngineReadings
@@ -1340,13 +1361,20 @@ class IngestInboundMessage:
         """¿Este mensaje habla del cupón aplicado? Lo decide el motor con el
         bot de la conversación (capacidad `cupon`; regla de hoy:
         `coupon_in_play`). `events`: lo que el cliente vio antes."""
-        verdict = await read_coupon_talk(
-            WORKSPACE_VAULT_DIR,
-            session_id=session_id,
-            metadata=metadata,
-            text=text,
-            events=events,
-        )
+        try:
+            verdict = await read_coupon_talk(
+                WORKSPACE_VAULT_DIR,
+                session_id=session_id,
+                metadata=metadata,
+                text=text,
+                events=events,
+            )
+        except Exception as exc:  # noqa: BLE001 — sin el motor, la regla de hoy
+            from src.plugins.chats.agent.sales.decisions.bundled_ingest import coupon_in_play
+            from src.plugins.chats.agent.sales.decisions.readings import Inbound as _Inbound
+
+            logger.error("ingest.coupon_reading_failed", session_id=session_id, error=f"{type(exc).__name__}: {exc}"[:300])
+            return bool(coupon_in_play(_Inbound(session_id=session_id, text=text, now_ms=0, metadata=metadata)))
         return bool(verdict.value)
 
     def _session_events(self, session_id: str) -> list[dict[str, Any]]:

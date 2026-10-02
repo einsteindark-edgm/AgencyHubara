@@ -47,6 +47,7 @@ class Box:
     cancelled: bool = False
     spend_limits: list[float] = field(default_factory=list)
     poll_fails: bool = False
+    store_bundles: list[str] = field(default_factory=list)
 
 
 def _activities(box: Box):
@@ -64,6 +65,7 @@ def _activities(box: Box):
     async def write_order(order: LabOrder) -> None:
         box.calls.append(f"order:{order.run_id}:{order.bench_id}:{','.join(order.arms)}x{order.reps}")
         box.spend_limits.append(order.spend_limit_usd)
+        box.store_bundles.append(getattr(order, "store_bundle", None))
 
     @activity.defn(name="lab_start_box")
     async def start_box() -> None:
@@ -257,3 +259,15 @@ def test_sales_eval_worker_registers_the_launcher_and_every_activity_it_uses() -
         and isinstance(node.args[0], ast.Constant)
     }
     assert scheduled == registered
+
+
+@pytest.mark.asyncio
+async def test_the_order_carries_the_store_bundle() -> None:
+    """La caja no lee la config de la tienda: la orden le lleva el paquete activo."""
+    from dataclasses import replace
+
+    box = Box()
+
+    await _run(box, replace(_input(), store_bundle="ventas-2"))
+
+    assert box.store_bundles == ["ventas-2"]

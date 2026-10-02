@@ -57,6 +57,7 @@ CANTIDAD: dict[str, Any] = {
         {"answers": {"cantidad.pregunto": 0.9, "cantidad.dio": {"choice": "2", "p": 0.9}}, "expect": {"cantidad": 2}},
         {"answers": {"cantidad.pregunto": 0.1}, "expect": {"cantidad": None}},
         {"answers": {"cantidad.pregunto": 0.9, "cantidad.dio": {"choice": "otra", "p": 0.9}}, "expect": "doubt"},
+        {"answers": {}, "expect": "doubt"},
     ],
 }
 
@@ -87,6 +88,9 @@ RETOMA: dict[str, Any] = {
          "expect": {"deferral": {"kind": "open", "until_ms": 1005}, "courtesy": True}},
         {"answers": {"retoma.aplaza": 0.1, "retoma.cortesia": 0.5}, "rule": {"deferral": None, "courtesy": True},
          "input": {"text": "ok", "now_ms": 5}, "expect": {"deferral": None, "courtesy": True}},
+        {"answers": {"retoma.cortesia": 0.5}, "rule": {"deferral": None, "courtesy": True}, "expect": "doubt"},
+        {"answers": {"retoma.aplaza": 0.5, "retoma.cortesia": 0.5}, "rule": {"deferral": None, "courtesy": True},
+         "expect": "doubt"},
     ],
 }
 

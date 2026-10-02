@@ -3,7 +3,11 @@ el certificador de las capacidades y el del turno).
 
   _parse        YAML → modelo Pydantic estricto; cada error es un DB001 con su ruta
   _references   (variable, llave) que lee una condición CEL: `p['x']`, `'x' in p`, `inp.campo`
+  unkeyed_reads las lecturas sin llave a la vista (`(choice)['x']`, `size(p)`): no se validan
+  domain_problems  `dom.seccion.campo` contra lo que declara el catálogo
+  item_field_problems  `i.campo` dentro de `items.filter(i, …)` contra los campos del ítem
   _sample       un valor de ejemplo de un tipo declarado
+  literal_comparisons  los literales con que se compara una lectura (`choice['x'] == 'a'`)
 """
 from __future__ import annotations
 
@@ -25,13 +29,39 @@ _LITERAL = re.compile(r"\s*(['\"])(.*?)\1\s*\]")
 _IN = re.compile(rf"(['\"])([^'\"]*)\1\s+in\s+({_READABLE})\b")
 _FIELD = re.compile(rf"(?<![\w.])({_READABLE})\.([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()")
 _ITEM_FIELD = re.compile(r"(?<![\w.])item\.([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()")
+_STRINGS = re.compile(r"'(?:[^'\\]|\\.)*'" r'|"(?:[^"\\]|\\.)*"')
+_TOKEN = re.compile(rf"(?<![\w.])({_READABLE})\b")
+_DOM_PATH = re.compile(
+    r"""(?<![\w.])dom(?:\.([A-Za-z_]\w*)|\[\s*['"]([^'"]+)['"]\s*\])"""
+    r"""(?:\.([A-Za-z_]\w*)\b(?!\s*\()|\[\s*['"]([^'"]+)['"]\s*\])?"""
+)
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """`safe_load` que rechaza una llave repetida (YAML se quedaba con la
+    última, en silencio: una regla o un umbral duplicado se perdía)."""
+
+
+def _unique_mapping(loader: _UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+    seen: set[Any] = set()
+    for key_node, _value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in seen:
+            raise yaml.constructor.ConstructorError(
+                None, None, f"llave repetida {key!r} (línea {key_node.start_mark.line + 1})", key_node.start_mark
+            )
+        seen.add(key)
+    return loader.construct_mapping(node, deep=deep)
+
+
+_UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping)
 
 
 def _read_yaml(path: Path) -> tuple[Any, str | None]:
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8")), None
+        return yaml.load(path.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader), None  # noqa: S506 — SafeLoader
     except (OSError, yaml.YAMLError) as exc:
-        return None, str(exc).splitlines()[0]
+        return None, " ".join(str(exc).split())[:300]
 
 
 #: Los nombres de las ramas de una unión en la ruta de un error de Pydantic:
@@ -86,6 +116,125 @@ def _references(source: str) -> tuple[list[tuple[str, str]], list[str]]:
     return refs, bad
 
 
+def _masked(source: str) -> str:
+    """El texto con el contenido de cada literal en blanco (mismo largo)."""
+    return _STRINGS.sub(lambda m: m.group(0)[0] + " " * (len(m.group(0)) - 2) + m.group(0)[-1], source)
+
+
+def unkeyed_reads(source: str) -> list[str]:
+    """Las variables que la condición lee sin una llave literal a la vista:
+    `(choice)['x']`, `('x') in choice`, `choice.exists(…)`, `size(p)`. Compilan,
+    pero el certificador no ve qué llave leen: una mal escrita nunca se cumple
+    en ejecución (premortem 2026-10-02, P-H10)."""
+    masked = _masked(source)
+    out: list[str] = []
+    for match in _TOKEN.finditer(masked):
+        after = masked[match.end():]
+        if re.match(r"\s*\[", after) or re.match(r"\.[A-Za-z_]\w*\b(?!\s*\()", after):
+            continue  # `p[…]` (la llave la valida _references) o `inp.campo`
+        if re.search(r"""(['"])[^'"]*\1\s+in\s+$""", masked[: match.start()]):
+            continue  # `'x' in p`
+        out.append(match.group(1))
+    return out
+
+
+def domain_problems(source: str, domain: dict[str, Any]) -> list[str]:
+    """`dom.seccion.campo` (o `dom['seccion']['campo']`) contra el dominio que
+    declara el catálogo; el primer nivel lo valida quien lee _references."""
+    out: list[str] = []
+    for match in _DOM_PATH.finditer(source):
+        name = match.group(1) or match.group(2)
+        field = match.group(3) or match.group(4)
+        declared = domain.get(name)
+        if declared is None or field is None:
+            continue
+        if not isinstance(declared, dict):
+            out.append(f"dom.{name} es un campo ({declared}), no una sección: no tiene {field!r}")
+        elif field not in declared:
+            out.append(f"campo del dominio no declarado {name}.{field} (hay en {name}: {', '.join(declared)})")
+    return out
+
+
+_MACRO = re.compile(r"\.(all|exists_one|exists|filter|map)\(\s*([A-Za-z_]\w*)\s*,")
+_CHAIN_TOKEN = re.compile(r"[A-Za-z_]\w*|[(\[]|[)\]]")
+
+
+def _closing(masked: str, open_at: int) -> int:
+    """La posición del paréntesis que cierra el de `open_at` (o el final)."""
+    depth = 0
+    for i in range(open_at, len(masked)):
+        if masked[i] in "([":
+            depth += 1
+        elif masked[i] in ")]":
+            depth -= 1
+            if depth == 0:
+                return i
+    return len(masked)
+
+
+def _receiver(masked: str, dot: int) -> str:
+    """Lo que está antes de `.macro(`: nombres, puntos y paréntesis balanceados."""
+    i = dot
+    while i > 0:
+        c = masked[i - 1]
+        if c.isalnum() or c in "_.":
+            i -= 1
+        elif c in ")]":
+            depth, j = 0, i - 1
+            while j >= 0:
+                if masked[j] in ")]":
+                    depth += 1
+                elif masked[j] in "([":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j -= 1
+            i = max(j, 0)
+        else:
+            break
+    return masked[i:dot]
+
+
+def is_item_list(expr: str, item_vars: set[str]) -> bool:
+    """¿La expresión es la lista de ítems (o un `filter` de ella)? `items`,
+    `items.filter(i, …)` o `vars.x` cuando `x` lo es."""
+    names: list[str] = []
+    depth = 0
+    for token in _CHAIN_TOKEN.findall(_masked(expr)):
+        if token in "([":
+            depth += 1
+        elif token in ")]":
+            depth -= 1
+        elif depth == 0:
+            names.append(token)
+    if names[:1] == ["items"]:
+        rest = names[1:]
+    elif names[:1] == ["vars"] and len(names) > 1 and names[1] in item_vars:
+        rest = names[2:]
+    else:
+        return False
+    return all(name == "filter" for name in rest)
+
+
+def item_field_problems(source: str, allowed: set[str], item_vars: set[str]) -> list[str]:
+    """`i.campo` dentro de cada macro que recorre los ítems (`items.filter(i,
+    …)`, `vars.x.exists(j, …)`): un campo que el ítem no trae hace `has(i.x)`
+    false para siempre y `i.x < …` un error en ejecución (premortem
+    2026-10-02, P-H10)."""
+    masked = _masked(source)
+    out: list[str] = []
+    for macro in _MACRO.finditer(masked):
+        if not is_item_list(_receiver(masked, macro.start()), item_vars):
+            continue
+        var = macro.group(2)
+        body = masked[macro.end(1): _closing(masked, macro.end(1))]
+        for read in re.finditer(rf"(?<![\w.]){re.escape(var)}\.([A-Za-z_]\w*)\b(?!\s*\()", body):
+            problem = f"{var}.{read.group(1)}: campo que el ítem no trae (hay: {', '.join(sorted(allowed))})"
+            if read.group(1) not in allowed and problem not in out:
+                out.append(problem)
+    return out
+
+
 def _sample(text: str) -> Any:
     """Un valor de ejemplo del tipo declarado (para ver qué da una condición
     que lee campos `dyn`)."""
@@ -93,3 +242,30 @@ def _sample(text: str) -> Any:
     if t.kind == "record":
         return {name: _sample(str(field)) for name, field in t.fields}
     return {"bool": False, "string": "", "int": 0, "double": 0.0, "list": [], "tuple": [], "fixed": []}.get(t.kind)
+
+
+_STR = r"""(?:'([^'\\]*)'|"([^"\\]*)")"""
+
+
+def literal_comparisons(source: str, target: str) -> list[tuple[str, str]]:
+    """(llave, literal) de cada comparación de `target` con un texto literal:
+    `target == 'a'`, `target != 'a'`, `'a' == target` o `target in ['a', 'b']`.
+    `target` es una regex; si trae el grupo `key`, es la llave leída
+    (`choice['q']`), si no, "". Sirve para ver que el literal existe (una
+    opción mal escrita compila y en ejecución nunca se cumple)."""
+    out: list[tuple[str, str]] = []
+
+    def key_of(match: re.Match[str]) -> str:
+        return match.groupdict().get("key") or ""
+
+    for m in re.finditer(rf"(?:{target})\s*(?:==|!=)\s*{_STR}", source):
+        out.append((key_of(m), m.group(m.re.groups - 1) or m.group(m.re.groups) or ""))
+    for m in re.finditer(rf"{_STR}\s*(?:==|!=)\s*(?:{target})", source):
+        out.append((key_of(m), m.group(1) or m.group(2) or ""))
+    for m in re.finditer(rf"(?:{target})\s+in\s+\[([^\]]*)\]", source):
+        out += [(key_of(m), a or b) for a, b in re.findall(_STR, m.group(m.re.groups))]
+    return out
+
+
+#: `choice['q']` (con la llave en el grupo `key`).
+CHOICE_READ = r"""choice\[\s*['"](?P<key>[^'"]+)['"]\s*\]"""

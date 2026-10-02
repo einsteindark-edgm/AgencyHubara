@@ -53,12 +53,12 @@ DEFAULT_TIMEOUT_S = 600.0
 
 
 @contextmanager
-def _pinned_bot(arm: str):
+def _pinned_bot(arm: str, store_bundle: str = ""):
     """El bot del brazo para todo lo que corre en este proceso (lecturas,
     activities y tools: `bot_for_session` lee `DECISIONS_BOT`) y su paquete
     de decisión si lo fija (`B@ventas-2`: el resolutor lee
     `SALES_DECISIONS_BUNDLE`; el entrypoint ya lo fijó antes de importar)."""
-    pins = {"DECISIONS_BOT": arm, **arm_env(arm)}
+    pins = {"DECISIONS_BOT": arm, **arm_env(arm, store_bundle)}
     previous = {name: os.environ.get(name) for name in pins}
     os.environ.update(pins)
     try:
@@ -128,6 +128,7 @@ async def run_case(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     bench_workspace: str = PROD_SALES_WORKSPACE,
     arm: str = "A1",
+    store_bundle: str = "",
 ) -> dict[str, Any]:
     from temporalio.worker import Worker
 
@@ -165,7 +166,7 @@ async def run_case(
     decisions = CaseDecisions(capture)
     # El bot del brazo vale para TODO el caso: las lecturas del ingest, las
     # activities y las tools consultan el registro de bots (`DECISIONS_BOT`).
-    with _pinned_bot(arm), installed_sandbox_ports(
+    with _pinned_bot(arm, store_bundle), installed_sandbox_ports(
         promotions_path=bench_dir / "promotions.json", catalog=get_catalog_client()
     ), frozen_clock(at_ms), watching_verdicts(decisions):
         # Los workflows y sus activities salen del WORKER de ventas (R-DIP #10: un

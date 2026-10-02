@@ -14,6 +14,7 @@ from src.platform.decisions.engine import (
     BundleError,
     CompiledBundle,
     CompiledCapability,
+    Decision,
     Diagnostic,
     answers_from_result,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "CompiledBundle",
     "CompiledCapability",
     "CompiledTurn",
+    "Decision",
     "Diagnostic",
     "ExpressionError",
     "ExpressionPort",

@@ -134,10 +134,14 @@ def _bundle_arm(arm: str) -> str:
     """`B@<paquete>`: un bot del motor y un paquete que existe."""
     if not _BUNDLE_ARM.fullmatch(arm):
         raise HTTPException(422, detail={"reason": "arms", "message": f"{arm}: solo B0 y B fijan paquete de decisión."})
+    bundle = split_arm(arm)[1]
     try:
-        bundle_dir(split_arm(arm)[1])
+        bundle_dir(bundle)
     except BundleError:
         raise HTTPException(422, detail={"reason": "arms", "message": f"{arm}: ese paquete de decisión no está en la imagen."}) from None
+    if bundle == active_bundle_id():
+        # Es el bot sin `@` otra vez (los brazos sin paquete corren el de la tienda).
+        raise HTTPException(422, detail={"reason": "arms", "message": f"{arm}: {bundle} ya es el paquete de la tienda; ese brazo es {split_arm(arm)[0]}."})
     return arm
 
 
@@ -284,6 +288,8 @@ async def launch(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str,
                 since_ms=_since_ms(),
                 estimate_usd=est["estimate_usd"],
                 spend_limit_usd=est["spend_limit_usd"],
+                # La caja no lee la config de la tienda: los brazos sin `@` corren este.
+                store_bundle=active_bundle_id(),
             ),
             id=LAB_LAUNCH_WORKFLOW_ID,
             task_queue=get_task_queue("chats", "sales_eval"),

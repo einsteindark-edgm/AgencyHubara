@@ -60,6 +60,7 @@ export {
   ARM_HELP,
   ARM_LABELS,
   apiErrorDetail,
+  armHelp,
   armLabel,
   capabilityLabel,
   checksHeadline,

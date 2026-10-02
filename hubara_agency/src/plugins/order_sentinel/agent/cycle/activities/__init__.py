@@ -30,6 +30,7 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+import structlog
 from temporalio import activity
 
 from src.plugins.order_sentinel.agent.cycle.composition import get_launcher, get_reader_port
@@ -48,6 +49,7 @@ from src.plugins.order_sentinel.agent.cycle.use_cases.readings import (
     redact_terms,
 )
 from src.sdk.connectorkit import DecisionMetrics, DisagreementLog, oracle_timeout_s, record_jev_cost
+from src.sdk.decisionkit import BundleError
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, with_heartbeat
 
 #: prefijo de sesiones WhatsApp en el vault (los demás dirs se saltan).
@@ -163,6 +165,19 @@ async def _fetch_order_state(
     return stage, summary.get("pay_status") == "paid"
 
 
+#: La lectura cuando el paquete del lector no compila (no es una caída de Jev).
+BUNDLE_ERROR = "bundle_error"
+_logged_broken: set[str] = set()
+
+
+def _bundle_broken(error: Exception) -> None:
+    """Un error por motivo (no uno por conversación del ciclo)."""
+    reason = str(error)[:300]
+    if reason not in _logged_broken:
+        _logged_broken.add(reason)
+        structlog.get_logger().error("order_sentinel.bundle_broken", error=reason)
+
+
 async def _read_state(
     port: Any,
     convo: dict[str, Any],
@@ -190,6 +205,11 @@ async def _read_state(
             if result is not None:
                 record_jev_cost(str(convo.get("session_id") or ""), getattr(result, "cost_usd", None))
         return reading_from(convo, first, second, since_ms=since_ms), latency_ms
+    except BundleError as e:
+        # El paquete del lector no compila: no es una caída de Jev (no se mide
+        # como tal) y decide el LLM, como hoy.
+        _bundle_broken(e)
+        return {"verdict": None, "model": "", "error": BUNDLE_ERROR, "answers": []}, 0
     except Exception as e:  # noqa: BLE001 — el lector nunca tumba el ciclo
         activity.logger.warning(
             "order-sentinel: la lectura de Jev de %s falló (%s: %s) — decide el LLM.",
@@ -228,6 +248,8 @@ async def _attach_readings(
     metrics = DecisionMetrics(WORKSPACE_VAULT_DIR)
     for convo, (reading, latency_ms) in zip(conversations, readings):
         convo["reading"] = reading
+        if reading.get("error") == BUNDLE_ERROR:
+            continue  # no es Jev: la vara del lector no lo cuenta
         try:
             metrics.record(
                 capability=CAPABILITY,

@@ -37,7 +37,7 @@ def box(tmp_path: Path, monkeypatch) -> dict:
     root = tmp_path / "lab"
     smoke: dict = {"calls": [], "result": {"error": None, "trace": {"sent_texts": ["¡Hola!"]}}}
 
-    async def fake_case(case, *, bench_dir, sandbox_dir, timeout_s, arm="A1"):
+    async def fake_case(case, *, bench_dir, sandbox_dir, timeout_s, arm="A1", store_bundle=""):
         smoke["calls"].append(case["case_id"])
         return {"case_id": case["case_id"], **smoke["result"]}
 

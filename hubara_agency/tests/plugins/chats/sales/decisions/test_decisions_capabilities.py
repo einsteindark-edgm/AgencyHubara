@@ -290,3 +290,88 @@ def test_the_activities_that_ask_jev_leave_room_for_its_whole_wait() -> None:
     wait = oracle_timeout_s("jev-1.13")
     assert _PERCEPTION_OPTIONS["start_to_close_timeout"].total_seconds() >= 2 * wait
     assert _EGRESS_OPTIONS["start_to_close_timeout"].total_seconds() >= 7 * wait
+
+
+async def test_the_metric_and_the_disagreement_say_which_bundle_decided(port, tmp_path: Path) -> None:
+    """Premortem 2026-10-02: tras promover un paquete, el acuerdo por capacidad
+    y la cola que califica Claude Code mezclaban versiones. Cada fila dice con
+    qué paquete se decidió."""
+    from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
+
+    class FromBundle(Unsubscribe):
+        bundle = "ventas-2@2"
+
+    metrics, log = DecisionMetrics(tmp_path), DisagreementLog(tmp_path)
+    await caps.decide(FromBundle(), Ask("no me escriban"), provider="sombra", profile_id="jev-v1", metrics=metrics,
+                      disagreements=log, session_id="wa_573001234567")
+
+    [row] = metrics.rows("juguete", since_ms=0)
+    [item] = log.items()
+    assert row["bundle"] == "ventas-2@2" and item["bundle"] == "ventas-2@2"
+
+
+@pytest.mark.parametrize(
+    ("table", "reason"),
+    [
+        ("error", "bundle_error"),     # una fila con un error de tipos (CEL)
+        ("raises", "bundle_error"),    # un builtin o la tabla lanzan
+        ("doubt", "duda"),             # la duda legítima de Jev sigue siendo duda
+    ],
+)
+async def test_a_bundle_bug_is_not_a_doubt_of_jev(port, monkeypatch, table: str, reason: str) -> None:
+    """Premortem 2026-10-02: un error de la tabla quedaba como `reason=duda`,
+    igual que una duda real de Jev: en modo jev un bug del paquete degradaba la
+    capacidad a la regla el 100 % del tiempo sin que la traza lo dijera."""
+    from src.plugins.chats.agent.sales.decisions import registry
+    from src.plugins.chats.agent.sales.decisions.readings import Inbound
+    from src.sdk.decisionkit import DOUBT, Decision
+
+    monkeypatch.delenv("SALES_DECISIONS_BUNDLE", raising=False)
+    registry.reset()
+    baja = registry.capability("baja")
+
+    def decide_explained(self, **_kw):
+        if table == "raises":
+            raise RuntimeError("boom")
+        return Decision(DOUBT, error="No matching overloads found : !_" if table == "error" else None)
+
+    monkeypatch.setattr(type(baja._table), "decide_explained", decide_explained)
+
+    verdict = await caps.decide(baja, Inbound(session_id="wa_573001234567", text="hola", now_ms=1),
+                                provider="jev", profile_id="jev-v1")
+
+    assert (verdict.by, verdict.reason) == ("respaldo", reason)
+    registry.reset()
+
+
+async def test_the_metric_and_the_disagreement_say_which_variant_decided(port, tmp_path: Path) -> None:
+    """Premortem 2026-10-02: las variantes de `destinatario` (oración,
+    plantilla) se registraban con el nombre del control: el acuerdo por
+    variante no se podía medir."""
+    from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
+
+    class Variant(Unsubscribe):
+        bundle = "ventas@1"
+        variant = "juguete_oracion"
+
+    metrics, log = DecisionMetrics(tmp_path), DisagreementLog(tmp_path)
+    await caps.decide(Variant(), Ask("no me escriban"), provider="sombra", profile_id="jev-v1", metrics=metrics,
+                      disagreements=log, session_id="wa_573001234567")
+
+    [row] = metrics.rows("juguete", since_ms=0)
+    [item] = log.items()
+    assert (row.get("variant"), item.get("variant")) == ("juguete_oracion", "juguete_oracion")
+
+
+def test_a_bundled_variant_knows_its_own_name(monkeypatch) -> None:
+    from src.plugins.chats.agent.sales.decisions import registry
+
+    monkeypatch.delenv("SALES_DECISIONS_BUNDLE", raising=False)
+    registry.reset()
+
+    variants = {name: getattr(registry.capability(name), "variant", None)
+                for name in ("destinatario", "destinatario_oracion", "destinatario_plantilla")}
+
+    assert variants == {"destinatario": "", "destinatario_oracion": "destinatario_oracion",
+                        "destinatario_plantilla": "destinatario_plantilla"}
+    registry.reset()

@@ -68,3 +68,11 @@ examples:
   - answers: {retoma.aplaza: 0.9}
     rule: {deferral: null, courtesy: true}
     expect: doubt
+  # Falta la respuesta de si aplaza; aplaza sin fecha de la regla ni «otro día» (premortem 2026-10-02).
+  - answers: {retoma.cortesia: 0.5}
+    rule: {deferral: null, courtesy: true}
+    expect: doubt
+  - answers: {retoma.aplaza: 0.9, retoma.cortesia: 0.1}
+    rule: {deferral: null, courtesy: false}
+    input: {text: "luego", now_ms: 1, synthetic: false}
+    expect: {deferral: null, courtesy: false}

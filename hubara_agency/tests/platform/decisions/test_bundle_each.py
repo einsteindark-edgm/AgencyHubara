@@ -33,7 +33,7 @@ CATALOG4: dict[str, Any] = {
         "same_any": {"kind": "same"},
         "jev_any": {"kind": "floor"},
         "parts": {"kind": "items", "input": "Frases", "fields": {"text": "string"}},
-        "slot_values": {"kind": "items", "input": "Datos",
+        "slot_values": {"kind": "items", "input": "Datos", "keys": ["slot"],
                         "fields": {"slot": "string", "value": "string", "ask": "bool", "personal": "bool"}},
     },
 }
@@ -86,6 +86,7 @@ DATOS: dict[str, Any] = {
     "same": {"builtin": "same_any"},
     "examples": [
         {"items": [{"slot": "ciudad", "value": "Cali", "ask": True, "personal": False, "p": 0.1}], "expect": ["ciudad"]},
+        {"items": [{"slot": "ciudad", "value": "Cali", "ask": True, "personal": False}], "expect": "doubt"},
     ],
 }
 

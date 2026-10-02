@@ -31,8 +31,9 @@ YAML (y, si hace falta código, a un builtin).
 **Nunca nombres una clase de capacidad ni su instancia global** (`Baja()`,
 `PERSONA`): pedila por nombre al resolutor, `capability("baja")` (desde una
 tool, vía `guards`). Él elige el paquete activo de la tienda
-(`SALES_DECISIONS_BUNDLE`, nace en Terraform `tenants.<t>.lab.decisions_bundle`)
-o la clase si todavía no migró. Dos pruebas
+(`SALES_DECISIONS_BUNDLE`, nace en Terraform `tenants.<t>.lab.decisions_bundle`);
+si el paquete no trae la capacidad es un error, nunca la clase (el catálogo
+la lista en `capabilities:` y el certificador da DB003). Dos pruebas
 (`test_decisions_registry.py`) frenan cualquier instancia o import de clase
 fuera del resolutor.
 
@@ -71,6 +72,16 @@ fuera del resolutor.
 | `turn.yaml`: asunto, tool, etapa, dato, hecho o política que el catálogo (`turn:`) no declara; umbral que la política no lee; el cuestionario no hace una pregunta que la política lee | DB015 |
 | `turn.yaml`: `{campo}` de una plantilla del cuestionario que el motor no llena | DB005 |
 | `turn.yaml`: fila del contrato que nunca se lee (una anterior del mismo asunto no tiene condición) | DB008 |
+| Una llave repetida en el YAML; `yes:`/`no:` sin comillas como opción de una pregunta de opciones | DB001 |
+| Leer sin llave a la vista: `(choice)['x']`, `('x') in choice`, `choice.exists(…)`, `size(p)` | DB005 |
+| `dom.vocabulary.campo_inexistente`; `i.cnof` dentro de `items.filter(i, …)` (o de una `vars` que filtra `items`) | DB005 |
+| `choice['q'] == 'opcion_mal_escrita'`; `inp.stage == 'etapa_inexistente'` en el turno | DB005 / DB015 |
+| `each.id` sin `{n}`/`{index}`/llave del ítem, o con un campo de texto del cliente | DB005 |
+| Una fila `when` sin ningún ejemplo que la decida; un ejemplo que solo pasa porque la tabla falló | DB010 |
+| Cambiar la regla de la baja legal o del relevo (`required_rules`) | DB012 |
+| Falta una capacidad que el catálogo lista (`capabilities:`) | DB003 |
+| El estado de una capacidad con ítems que no los recibe (`takes_items`) | DB004 |
+| `oracle:` que ningún perfil usa | DB016 |
 
 ## Cómo escribir una condición (CEL)
 
@@ -136,6 +147,10 @@ paquete), no la política**.
   `covered | missing | doubt`; `!('p' in item)` = Jev no contestó.
 - **Ejemplos** (`examples.contract` / `examples.verify`): uno por excepción
   del contrato y por banda, en los bordes.
+- **Cobertura ②** (`coverage:`): `{}` NO es «no se juzga»: es una regla que
+  nunca se cumple, el asunto queda siempre sin atender y pide otra ronda del
+  LLM (el bug de `promocion` en `ventas@1`). Cada asunto lleva sus tools o
+  sus palabras.
 - **Una pregunta nueva de la ráfaga** va en `questionnaire.questions` (con
   `when` sobre los hechos del catálogo); si la va a leer el CÓDIGO de la
   política, declárala en `builtins.yaml: turn.policies.<política>.reads`.
@@ -161,7 +176,11 @@ paridad contra una foto del comportamiento de antes si reemplaza código vivo.
    imagen del commit).
 3. En el laboratorio, «Nueva corrida» → «Paquete a comparar: ventas-2»: corre
    `B@ventas-2` junto a B y el resumen muestra la diferencia `B → B@ventas-2`.
-4. Si gana, se promueve en Terraform (`tenants.<t>.lab.decisions_bundle`).
+4. Si gana, se promueve en Terraform (`tenants.<t>.lab.decisions_bundle`):
+   el paquete ya desplegado → `terraform apply` → dispatch de Backend deploy
+   (procedimiento completo en `PAQUETES_DE_DECISION.md` §9). La huella de la
+   versión nueva va a `tests/plugins/test_decision_bundles_published.py`
+   (la prueba lo pide).
 
 Ejemplo vivo: `bundles/ventas-2/` es `ventas` con la regla ② de `promocion`
 (`test_decisions_ventas_2.py` exige que sea eso y nada más: así se escribe
@@ -170,7 +189,11 @@ clon de forge: agrégalo a `deletes` en `forge/manifest.yaml`.
 
 ## Lo que NO se hace
 
-- Editar una versión publicada: otra pregunta u otro umbral = `version: N+1`.
+- Editar una versión publicada: otra pregunta u otro umbral = `version: N+1`
+  (su huella sha256 está congelada en `test_decision_bundles_published.py`).
+- Borrar un paquete que SSM nombra (o que un rollback puede pedir).
+- Regenerar una foto de paridad con el código nuevo (la vuelve tautológica;
+  el generador de la del centinela se niega sin `--regenerar`).
 - Escribir un piso en el YAML: los pisos son builtins (código) y los
   obligatorios (`required_floors`) no se pueden cambiar.
 - Importar `src.platform.decisions` desde un plugin: se usa `src.sdk.decisionkit` (P-28).

@@ -6,8 +6,9 @@ código y la ruta exacta (`capabilities/baja.yaml: decide[0].when`).
 
   DB001 estructura (llave desconocida, tipo, campo faltante) — Pydantic estricto
   DB002 contrato del motor que no se sabe correr
-  DB003 capacidad listada sin archivo, archivo sin listar, nombre distinto, o
-        variante (`control`) de una capacidad que no está en el paquete
+  DB003 capacidad listada sin archivo, archivo sin listar, nombre distinto,
+        variante (`control`) de una capacidad que no está en el paquete, o
+        falta una capacidad que el código pide (`capabilities:` del catálogo)
   DB004 builtin inexistente, de otra clase, de otro tipo o con otros parámetros
         (también las opciones de una pregunta y la vista de la entrada)
   DB005 pregunta repetida, llave de p/choice/conf/th/inp/vars/consts/opt no
@@ -25,6 +26,8 @@ código y la ruta exacta (`capabilities/baja.yaml: decide[0].when`).
         falta el archivo o un campo, sobra un campo, o un valor es de otro tipo
   DB015 el turno (`turn.yaml`) nombra algo que el catálogo no declara, o no
         lee lo que su política lee (`turn_check.py`)
+  DB016 el oráculo con que se calibró el paquete (`oracle:`) no existe
+        (`platform/perception/profiles.yaml`)
 """
 from __future__ import annotations
 
@@ -47,18 +50,29 @@ from src.platform.decisions.engine import (
 from src.platform.decisions.expressions import CelExpressions, ExpressionError, ExpressionPort
 from src.platform.decisions.model import DOUBT_WORD, Bundle, Capability, Catalog, OtherwiseRow, TextOtherwise, WhenRow
 from src.platform.decisions.parsing import (
+    CHOICE_READ,
     _CONDITION_READS,
     _ITEM_FIELD,
     _parse,
     _read_yaml,
     _references,
+    domain_problems,
+    is_item_list,
+    item_field_problems,
     _sample,
+    literal_comparisons,
+    unkeyed_reads,
 )
 from src.platform.decisions.turn_check import check_turn
 from src.platform.decisions.types import ValueType, conforms, convert, parse_type
 
-#: El contrato de paquetes que este motor sabe correr.
+#: El contrato que declara un paquete nuevo.
 ENGINE_CONTRACT = 1
+#: Los contratos que este motor corre. Al subir ENGINE_CONTRACT, el viejo se
+#: queda aquí: un paquete publicado es inmutable y SSM puede nombrarlo (un
+#: rollback de la promoción); sacarlo lo deja sin certificar (premortem
+#: 2026-10-02, H13).
+SUPPORTED_CONTRACTS = frozenset({1})
 
 _SLOTS = ("rule", "state", "floor", "same")
 def _value_ok(spec: Capability, value_type: ValueType, value: Any) -> bool:
@@ -103,8 +117,15 @@ class _CapabilityCheck:
         self.expressions = expressions
         self.type = parse_type(spec.value)
         self.fields = dict(catalog.inputs.get(spec.input, {}))
-        #: Los campos de cada ítem (capacidades con `items:`).
+        #: Los campos de cada ítem (capacidades con `items:`) y los que lo identifican.
         self.item_fields: dict[str, str] = {}
+        self.item_keys: set[str] = set()
+        #: Las `vars` que son la lista de ítems o un `filter` de ella (sus macros se validan igual).
+        self.item_vars: set[str] = set()
+        if spec.items is not None:
+            for name, source in spec.vars.items():
+                if is_item_list(source, self.item_vars):
+                    self.item_vars.add(name)
         self.out: list[Diagnostic] = []
 
     def add(self, code: str, where: str, message: str) -> None:
@@ -152,9 +173,16 @@ class _CapabilityCheck:
                 self.fields.update(builtin.fields)
             if kind == "items" and builtin.kind == "items":
                 self.item_fields = dict(builtin.fields)
+                self.item_keys = set(builtin.keys)
+        state = self.catalog.builtins.get(spec.state.builtin) if spec.state is not None else None
+        if self.catalog.items_to_state and spec.items is not None and state is not None and state.kind == "state" and not state.takes_items:
+            self.add("DB004", "state.builtin", f"{spec.state.builtin!r} no recibe los ítems (`takes_items`): una capacidad por ítems se los pasa")
         required = self.catalog.required_floors.get(spec.capability)
         if required is not None and spec.floor.builtin != required:
             self.add("DB012", "floor.builtin", f"el piso de {spec.capability} es obligatorio: {required!r}")
+        required = self.catalog.required_rules.get(spec.capability)
+        if required is not None and spec.rule.builtin != required:
+            self.add("DB012", "rule.builtin", f"la regla de {spec.capability} es obligatoria: {required!r}")
 
     def questions_and_thresholds(self) -> None:
         seen: set[str] = set()
@@ -193,6 +221,15 @@ class _CapabilityCheck:
             if unknown:
                 self.add("DB005", where, f"{{…}} que el ítem no trae: {unknown} (hay: {', '.join(sorted(known))})")
                 failed = True
+        id_fields = {m.group(1) for m in PLACEHOLDER.finditer(each.id)}
+        safe = set(ITEM_POSITION) | self.item_keys
+        if not id_fields & safe or not id_fields <= safe:
+            self.add("DB005", "each.id", (
+                f"el id de cada ítem lleva su posición ({{n}} o {{index}}) o un campo que lo identifica "
+                f"({', '.join(sorted(self.item_keys)) or 'ninguno en el catálogo'}), y nada más: sin eso todos "
+                "los ítems comparten respuesta, y un campo de texto mete lo que escribió el cliente en el id"
+            ))
+            failed = True
         when = self._item_condition(each.when, "each.when", known) if each.when is not None else None
         failed = failed or (each.when is not None and when is None)
         compiled_texts: list[tuple[Any, str]] = []
@@ -364,6 +401,24 @@ class _CapabilityCheck:
             if problem is not None:
                 self.add(problem[0], where, problem[1])
                 ok = False
+        for var in unkeyed_reads(source):
+            self.add("DB005", where, f"lee {var} sin una llave literal a la vista ({var}['…'] o '…' in {var}): no se puede validar qué lee")
+            ok = False
+        for problem in domain_problems(source, self.catalog.domain):
+            self.add("DB005", where, problem)
+            ok = False
+        if self.spec.items is not None:
+            allowed = set(self.item_fields) | set(ITEM_POSITION) | set(ITEM_ANSWER)
+            for problem in item_field_problems(source, allowed, self.item_vars):
+                self.add("DB005", where, problem)
+                ok = False
+        for key, literal in literal_comparisons(source, CHOICE_READ):
+            question = next((q for q in self.spec.questions if q.id == key), None)
+            if question is None or question.kind != "choice" or question.options is not None:
+                continue  # otro error ya lo dice, o las opciones salen de la entrada
+            if literal not in question.criteria:
+                self.add("DB005", where, f"{literal!r} no es una opción de {key} ({', '.join(question.criteria)})")
+                ok = False
         return ok
 
     def _key_problem(self, var: str, key: str, kinds: dict[str, str], known_vars: set[str]) -> tuple[str, str] | None:
@@ -410,6 +465,7 @@ class _CapabilityCheck:
 
     def examples(self, compiled: CompiledCapability) -> None:
         declared = {q.id for q in self.spec.questions}
+        decided: set[int] = set()
         for i, example in enumerate(self.spec.examples):
             unknown = sorted(set(example.answers) - declared)
             if unknown:
@@ -443,11 +499,25 @@ class _CapabilityCheck:
                 continue
             # Un campo que el ejemplo no da vale null (como un atributo vacío de la entrada).
             inp = {**{name: None for name in self.fields}, **example.input}
-            got = compiled.decide(answers=example.answers, rule=example.rule, inp=inp, options=example.options, items=items)
+            decision = compiled.decide_explained(
+                answers=example.answers, rule=example.rule, inp=inp, options=example.options, items=items
+            )
+            got = decision.value
+            if decision.error is not None:
+                self.add("DB010", f"examples[{i}]", f"la tabla falló al evaluarse ({decision.error}): un ejemplo pasa por una fila, no por un error")
+                continue
+            if decision.row is not None:
+                decided.add(decision.row)
             want = _result(example.expect, self.type)
             if got is not want and got != want:
                 shown = DOUBT_WORD if got is DOUBT else got
                 self.add("DB010", f"examples[{i}]", f"se esperaba {example.expect!r} y la tabla da {shown!r}")
+        if self.out:
+            return  # con ejemplos que fallan, la cobertura no dice nada nuevo
+        for row, compiled_row in enumerate(compiled.rows):
+            # El `otherwise` puede ser inalcanzable a propósito (va siempre al final).
+            if compiled_row.when is not None and row not in decided:
+                self.add("DB010", f"decide[{row}]", "ninguno de los ejemplos pasa por esta fila (regla 2: un ejemplo por fila)")
 
 
 def _param_ok(value: Any, kind: str) -> bool:
@@ -513,11 +583,20 @@ def _build(bundle_dir: Path, catalog_path: Path, expressions: ExpressionPort | N
     if bundle.id != bundle_dir.name:
         out.append(Diagnostic("DB013", "bundle.yaml: id", f"el paquete se llama {bundle.id!r} pero su carpeta es {bundle_dir.name!r}"))
     for label, contract in (("bundle.yaml", bundle.engine_contract), (catalog_path.name, catalog.engine_contract)):
-        if contract != ENGINE_CONTRACT:
-            out.append(Diagnostic("DB002", f"{label}: engine_contract", f"este motor corre el contrato {ENGINE_CONTRACT}, no {contract}"))
+        if contract not in SUPPORTED_CONTRACTS:
+            supported = ", ".join(str(c) for c in sorted(SUPPORTED_CONTRACTS))
+            out.append(Diagnostic("DB002", f"{label}: engine_contract", f"este motor corre los contratos {supported}, no {contract}"))
     if out:
         return None, out
     domain = _check_domain(bundle_dir, catalog, out)
+    from src.platform.perception.profiles import load_profiles
+
+    oracles = load_profiles()
+    if bundle.oracle not in oracles:
+        out.append(Diagnostic("DB016", "bundle.yaml: oracle", f"oráculo desconocido {bundle.oracle!r} (hay: {', '.join(oracles)})"))
+    missing = [name for name in catalog.capabilities if name not in bundle.capabilities]
+    if missing:
+        out.append(Diagnostic("DB003", "bundle.yaml: capabilities", f"faltan capacidades que el código pide: {missing}"))
     files = {p.stem: p for p in sorted((bundle_dir / "capabilities").glob("*.yaml"))}
     for name in bundle.capabilities:
         if name not in files:

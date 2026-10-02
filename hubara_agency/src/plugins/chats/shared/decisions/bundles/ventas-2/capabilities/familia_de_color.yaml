@@ -39,3 +39,7 @@ examples:
     expect: {estado: resolved, color: Rojo, familias: [Rojo], candidatas: [Rojo], tono: true}
   - {answers: {color.cual: {choice: ninguno, p: 0.9}}, expect: {estado: null, color: null, familias: [], candidatas: [], tono: false}}
   - {answers: {color.cual: {choice: rojo, p: 0.79}}, expect: doubt}
+  # Una opción que no armó la entrada (premortem 2026-10-02).
+  - answers: {color.cual: {choice: azul, p: 0.9}}
+    options: {color.cual: {rojo: {estado: resolved, color: Rojo, familias: [Rojo], candidatas: [Rojo], tono: true}}}
+    expect: doubt

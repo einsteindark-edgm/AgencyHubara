@@ -66,3 +66,5 @@ examples:
   - {answers: {cantidad.pregunto: 0.9, cantidad.dio: {choice: otra, p: 0.95}}, expect: doubt}
   - {answers: {cantidad.pregunto: 0.9, cantidad.dio: {choice: "21", p: 0.95}}, expect: doubt}
   - {answers: {cantidad.pregunto: 0.84, cantidad.dio: {choice: "2", p: 0.95}}, expect: doubt}
+  # Sin la respuesta de si preguntó (premortem 2026-10-02: un ejemplo por fila).
+  - {answers: {}, expect: doubt}

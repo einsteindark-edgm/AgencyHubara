@@ -50,3 +50,27 @@ async def test_the_case_process_gets_its_arm(tmp_path: Path, monkeypatch) -> Non
 
     argv = list(seen[0])
     assert argv[argv.index("--arm") + 1] == "B"
+
+
+@pytest.mark.asyncio
+async def test_the_case_process_gets_the_store_bundle(tmp_path: Path, monkeypatch) -> None:
+    from src.plugins.chats.agent.sales_lab.sandbox import process
+
+    seen: list[tuple] = []
+
+    class _Proc:
+        returncode = 1
+
+        async def communicate(self):
+            return b"", b"no corre en el test"
+
+    async def fake_exec(*args, **kwargs):
+        seen.append(args)
+        return _Proc()
+
+    monkeypatch.setattr(process.asyncio, "create_subprocess_exec", fake_exec)
+    await run_case_in_subprocess({"case_id": "c1"}, bench_dir=tmp_path / "bench",
+                                 sandbox_dir=tmp_path / "lab" / "c1", timeout_s=5, arm="B", store_bundle="ventas-2")
+
+    argv = list(seen[0])
+    assert argv[argv.index("--store-bundle") + 1] == "ventas-2"

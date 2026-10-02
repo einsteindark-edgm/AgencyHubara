@@ -41,3 +41,7 @@ examples:
     expect: []
   - {answers: {enumeracion.que: {choice: productos, p: 0.9}}, input: {found_scents: [], found_colors: []}, expect: []}
   - {answers: {enumeracion.que: {choice: aromas, p: 0.84}}, expect: doubt}
+  # Una lista de colores (premortem 2026-10-02: un ejemplo por fila).
+  - answers: {enumeracion.que: {choice: colores, p: 0.9}}
+    input: {found_scents: [], found_colors: [Rojo, Azul, Verde, Negro]}
+    expect: [color, [Rojo, Azul, Verde, Negro]]

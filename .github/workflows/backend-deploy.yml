@@ -147,6 +147,15 @@ jobs:
             # y cualquier SHA viejo sigue en GHCR para rollback.
             docker image prune -af
             docker compose pull
+            # Paquete de decisión de la tienda (PAQUETES_DE_DECISION.md §9): el que
+            # nombra SSM (SALES_DECISIONS_BUNDLE en el .env) tiene que existir y
+            # certificar DENTRO de la imagen nueva. Si no, la API y el worker de
+            # ventas no arrancan (lo leen al importar las tools) y el webhook de
+            # WhatsApp queda en 502: pasa con un rollback de imagen cuando SSM ya
+            # promovió un paquete más nuevo (premortem 2026-10-02). Se aborta ANTES
+            # del `up -d`: los containers viejos siguen sirviendo.
+            BUNDLE="$(grep '^SALES_DECISIONS_BUNDLE=' .env | cut -d= -f2- || true)"
+            docker run --rm --workdir /app/hubara_agency --entrypoint python "$HUBARA_IMAGE" -m src.sdk.cli decisions check "src/plugins/chats/shared/decisions/bundles/${BUNDLE:-ventas}"
             # Manifests DESPUÉS del pull y SIN `rm -rf` del directorio: `./plugins`
             # es el bind mount de `api` (/app/frontend_dashboard/src/plugins). Si se
             # borra y recrea el dir mientras el container viejo sigue corriendo (p.ej.

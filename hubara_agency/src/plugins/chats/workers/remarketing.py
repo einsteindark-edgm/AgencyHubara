@@ -7,6 +7,7 @@ import asyncio
 # provider litellm (`from litellm import acompletion`). Sino esa referencia queda
 # sin instrumentar por OpenLIT → el span gen_ai se crea pero gen_ai.usage.*
 # (tokens/cost) sale 0. Ver la nota más detallada en el worker `sales`.
+from src.plugins.chats.agent.sales.decisions import registry as decisions_registry
 from src.platform.logging import setup_logging
 from src.platform.observability import init_otel, otel_workflow_runner
 
@@ -92,6 +93,9 @@ register_decisions_routing()
 async def main() -> None:
     """Worker Exclusivo para el Dominio de Remarketing."""
     ensure_plugin_enabled("chats")  # P-21: self-gate del toggle (INV-2)
+    # El paquete de decisión de la tienda compila AL ARRANCAR (no en la primera
+    # activity) y el log dice cuál corre (PAQUETES_DE_DECISION.md, premortem).
+    await asyncio.to_thread(decisions_registry.warm_up)
     logger.info("Conectando Especialista (Remarketing) al clúster Temporal mTLS...")
     client = await get_temporal_client()
 

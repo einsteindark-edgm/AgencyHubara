@@ -33,11 +33,11 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal
 
 import structlog
-from pydantic import Discriminator, Field, Tag, field_validator, model_validator
+from pydantic import Discriminator, Field, Tag, model_validator
 
 from src.platform.decisions.engine import CompiledRow
 from src.platform.decisions.expressions import CompiledExpression, ExpressionError
-from src.platform.decisions.model import FactValue, OtherwiseRow, QuestionKind, WhenRow, _Strict
+from src.platform.decisions.model import FactValue, OtherwiseRow, QuestionKind, WhenRow, _Strict, yaml_booleans
 
 logger = structlog.get_logger()
 
@@ -57,13 +57,10 @@ Facts = dict[str, FactValue | list[FactValue]]
 class _WithCriteria(_Strict):
     """Una pregunta con `kind` y `criteria` (sí/no u opciones)."""
 
-    @field_validator("criteria", mode="before", check_fields=False)
+    @model_validator(mode="before")
     @classmethod
-    def _yaml_booleans(cls, value: Any) -> Any:
-        # `{true: sí, false: no}` sin comillas llega como llaves booleanas.
-        if isinstance(value, dict):
-            return {str(k).lower() if isinstance(k, bool) else k: v for k, v in value.items()}
-        return value
+    def _yaml_booleans(cls, data: Any) -> Any:
+        return yaml_booleans(data)
 
     @model_validator(mode="after")
     def _criteria_shape(self) -> Any:
@@ -344,8 +341,9 @@ class CompiledTurn:
                     try:
                         holds = row.when.evaluate(env)
                     except ExpressionError as exc:
+                        # No decide: la siguiente fila del asunto (antes el asunto dejaba de pedir tool).
                         logger.warning("decisions.turn.contract_error", bundle=self.bundle, topic=topic, error=str(exc))
-                        break
+                        continue
                     if holds is not True:
                         continue
                 if row.any_of:
