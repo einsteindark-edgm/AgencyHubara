@@ -21,6 +21,9 @@ import pytest
 import yaml
 
 _PLUGINS = Path(__file__).resolve().parents[2] / "src" / "plugins"
+#: forge no viaja a un clon (`copy_exclude`): ahí los paquetes son de otra
+#: tienda (forge reescribe su dominio) y sus huellas, las de ese repo.
+IN_FORGE_CLONE = not (Path(__file__).resolve().parents[3] / "forge").is_dir()
 #: id@versión → sha256 de sus archivos (ruta relativa + contenido, en orden).
 PUBLISHED = {
     "ventas@1": "54a57cac9e6764f53cf50689891ab089e38184a0895f6d04744d141b6d6670b9",
@@ -47,8 +50,8 @@ def _digest(folder: Path) -> str:
 @pytest.mark.parametrize("ref", sorted(PUBLISHED))
 def test_a_published_version_is_never_edited(ref: str) -> None:
     folder = _bundles().get(ref)
-    if folder is None:
-        pytest.skip(f"{ref} no viaja aquí (clon de forge)")
+    if folder is None or IN_FORGE_CLONE:
+        pytest.skip(f"{ref}: clon de forge (otra tienda, otras huellas)")
 
     assert _digest(folder) == PUBLISHED[ref], (
         f"{ref} cambió: un paquete publicado es inmutable. Otra pregunta, otro umbral u otro texto = "
