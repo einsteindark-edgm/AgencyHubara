@@ -155,6 +155,12 @@ if value is DOUBT:
     ...  # decide la regla
 ```
 
+Otro plugin, su propio paquete: el lector de Jev del Order Sentinel
+(`order_sentinel/agent/decisions/`) trae su catálogo y su paquete
+(`centinela`: «¿qué cambió?» y la evidencia), los carga con `load_bundle` y
+corre sus builtins con los `with:` del paquete (`call(table.spec.state, convo)`);
+`decisions check` lo encuentra junto a los de ventas.
+
 El motor de ventas lo envuelve en `decisions/bundled.py` (`BundledCapability`,
 con la forma de `Capability`) y los lugares lo piden por nombre al resolutor
 (`decisions/registry.py: capability("baja")`), que toma el paquete activo

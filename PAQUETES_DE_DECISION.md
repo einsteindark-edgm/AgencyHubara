@@ -368,7 +368,7 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
 | F5 ✅ | Dominio de la tienda en el paquete (`domain.yaml`, certificado; `dom.x` en CEL): nombre, despedida y el vocabulario del agente. Los paquetes pasan a `chats/shared/decisions/bundles/` (los leen los dos agentes). Quita las 21 reglas de reemplazo de forge | ninguno en Hubara |
 | F6 ✅ | Un brazo del laboratorio fija paquete (`B@ventas-2`): se compara contra B (el de la tienda) y contra A1. Producción promueve por Terraform (`decisions_bundle`) | — |
 | F7 ✅ | El turno dentro del paquete: la ráfaga ① (`rafaga-v5` → `turn.yaml`) y la verificación ③ (`coverage_decision`), con las tablas de la política como filas certificadas | ninguno |
-| F8 | Paquete propio del Order Sentinel («¿qué cambió?» y la evidencia) sobre el mismo motor genérico | ninguno |
+| F8 ✅ | Paquete propio del Order Sentinel («¿qué cambió?» y la evidencia) sobre el mismo motor genérico | ninguno |
 
 **F1 hecho (2026-10-01).**
 - Motor genérico en `src/platform/decisions/` (modelos, `ExpressionPort` +
@@ -510,6 +510,33 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   cuando una tool corta el turno, cuenta como sin atender y pide la ronda
   más (una). Queda explícito (`promocion: {}`) y comentado.
 
+**F8 hecho (2026-10-02).**
+- El lector de Jev del Order Sentinel tiene su paquete,
+  `order_sentinel/agent/decisions/bundles/centinela/` (su propio catálogo
+  `builtins.yaml`), sobre el MISMO motor genérico y certificado con
+  `decisions check` (lo encuentra junto a los de ventas). Dos capacidades:
+  `cambio` (choice «¿qué cambió en el pedido…?» con sus seis opciones;
+  decide con certeza ≥ 0,85, una opción fuera de la lista es duda) y
+  `evidencia` (ítem por ítem: un sí/no por mensaje nuevo; lo que afirma cada
+  cambio —«ya está listo», «la tienda ya recibió o verificó el pago»— son
+  variantes del texto por cambio; la tabla junta los mensajes ≥ 0,85 con su
+  texto exacto). Los últimos 16 candidatos y los 500/200 caracteres son
+  parámetros del paquete (`with:`).
+- Sigue en código (builtins, `order_sentinel/agent/decisions/builtins.py`):
+  el texto de la conversación que ve Jev, qué mensajes pueden ser evidencia
+  (los nuevos; el pago, SOLO del equipo) y, en `readings.py`, la forma del
+  veredicto (la del LLM, para que las guardas del grafo no cambien) y lo
+  que se tapa.
+- Paridad: una foto del lector de antes (`fixtures/order_sentinel/readings_frozen.json`,
+  su generador al lado) con lo que pregunta en seis conversaciones, la
+  evidencia de cada cambio con tres cortes de lo ya analizado y 744
+  lecturas sobre respuestas en los bordes; el lector del paquete la iguala
+  carácter por carácter. Otra certeza u otra afirmación en una copia del
+  paquete cambian lo que lee (el paquete manda); una certeza nueva sin su
+  ejemplo en el borde no certifica.
+- El lector sigue apagado por Terraform (`ORDER_SENTINEL_READER=off`): el
+  ciclo diario de producción no cambia.
+
 **La paridad es la compuerta de cada fase:** para cada capacidad migrada,
 (a) el estado y las preguntas son byte a byte iguales a los de la clase en
 entradas representativas, y (b) la decisión coincide sobre una grilla de
@@ -535,7 +562,7 @@ tocarlos.
 | Después de enviar: afirmación (sombra) | `decide()` | sí (F2) |
 | Remarketing (contactar, producto nombrado, fuera de catálogo) | `decide()` vía el enchufe compartido | sí (F2–F4) |
 | Abandono (cierre) | `decide()` | sí (F2) |
-| Order Sentinel | directo al puerto, preguntas y lógica propias | **no → F8** |
+| Order Sentinel | directo al puerto, con las tablas de su paquete (`centinela`) | sí (F8) |
 
 **Dos huecos que cierra F2:**
 

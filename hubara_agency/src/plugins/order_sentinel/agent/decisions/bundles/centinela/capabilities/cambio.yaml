@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿Qué cambió en el pedido que el sistema todavía no sabe?», sobre la
+# conversación entera. Con certeza (≥ yes) decide el cambio; si no, duda: no
+# hay veredicto de Jev y decide el LLM, como hoy. Un cambio que no es `nada`
+# pide la evidencia (`evidencia`); el veredicto lo arma el código con la
+# forma del LLM (`use_cases/readings.py`).
+capability: cambio
+value: "string?"
+input: Conversacion
+rule: {builtin: no_reading}
+state: {builtin: order_conversation, with: {max_chars: 500}}
+questions:
+  - id: estado_pedido.cambio
+    kind: choice
+    text: "Según la conversación, ¿qué cambió en el pedido que el sistema de la tienda todavía no sabe?"
+    criteria:
+      nada: "Nada nuevo: no hay una señal clara, solo hay anuncios a futuro («mañana te lo envío»), dudas o preguntas, o el sistema ya lo sabe."
+      preparacion: "El equipo de la tienda dice que ya está preparando o haciendo el pedido."
+      listo: "El equipo de la tienda dice que el pedido ya está listo."
+      en_camino: "El pedido ya salió: el equipo dice que ya lo envió, que ya lo despachó o que va en camino."
+      entregado: "El pedido ya se entregó: el cliente dice que ya le llegó o el equipo confirma la entrega."
+      pago: "El equipo de la tienda confirma que recibió o verificó el pago (que el cliente diga que pagó no basta)."
+thresholds: {"yes": 0.85}
+decide:
+  - when: "!('estado_pedido.cambio' in choice)"
+    then: doubt
+  # Una opción que no es de la lista (Jev no debería darla) no decide.
+  - when: "!(choice['estado_pedido.cambio'] in ['nada', 'preparacion', 'listo', 'en_camino', 'entregado', 'pago'])"
+    then: doubt
+  - when: "conf['estado_pedido.cambio'] >= th['yes']"
+    then: {expr: "choice['estado_pedido.cambio']"}
+  - otherwise: doubt
+floor: {builtin: jev}
+same: {builtin: same_value}
+examples:
+  - answers: {estado_pedido.cambio: {choice: listo, p: 0.85}}
+    expect: listo
+  - answers: {estado_pedido.cambio: {choice: listo, p: 0.84}}
+    expect: doubt
+  - answers: {estado_pedido.cambio: {choice: nada, p: 0.99}}
+    expect: nada
+  - answers: {estado_pedido.cambio: {choice: pago, p: 0.9}}
+    expect: pago
+  - answers: {estado_pedido.cambio: {choice: otra, p: 0.99}}
+    expect: doubt
+  - answers: {}
+    expect: doubt

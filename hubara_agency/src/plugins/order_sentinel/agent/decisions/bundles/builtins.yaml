@@ -1,0 +1,52 @@
+# Catálogo de builtins del lector de Jev del Order Sentinel (PAQUETES_DE_DECISION.md F8).
+#
+# Lo que el paquete del lector puede pedir por nombre: el texto que ve Jev
+# (la conversación numerada y lo que el sistema ya sabe del pedido), los
+# mensajes que pueden ser evidencia de un cambio y las reglas, pisos y
+# comparadores. Cada builtin existe en código (`order_sentinel/agent/decisions:
+# BUILTINS`, una prueba lo verifica). El certificador lee SOLO este archivo.
+#
+#   kind    rule | state | items | floor | same
+#   value   tipo del valor (si está, solo sirve a capacidades de ese tipo)
+#   input   tipo de entrada que lee
+#   params  parámetros que se pasan con `with:`
+#   fields  los campos de cada ítem
+engine_contract: 1
+
+inputs:
+  # Una conversación del snapshot y, para la evidencia, el cambio que Jev leyó.
+  Conversacion: {change: "string?"}
+
+builtins:
+  no_reading:
+    kind: rule
+    value: "string?"
+    input: Conversacion
+    doc: "Sin lectura de Jev (el lector en reglas, o Jev duda): decide el LLM, como hoy."
+  no_evidence:
+    kind: rule
+    value: "tuple<string>"
+    input: Conversacion
+    doc: "Ningún mensaje lo prueba."
+  order_conversation:
+    kind: state
+    input: Conversacion
+    params: {max_chars: int}
+    doc: "Lo que el sistema ya sabe del pedido (etapa, pago) y la conversación numerada ([n] quién: texto), cada mensaje hasta max_chars."
+  evidence_candidates:
+    kind: items
+    input: Conversacion
+    params: {limit: int, quote_chars: int}
+    fields: {number: int, text: string, quote: string}
+    doc: >-
+      Los mensajes NUEVOS desde el último análisis que podrían probar el
+      cambio, los últimos `limit`: del equipo o del cliente; el pago, SOLO del
+      equipo (que el cliente diga que pagó no basta). `number` es su número
+      en la conversación, `text` el texto exacto (la evidencia) y `quote` el
+      texto en una línea hasta quote_chars (lo que lee Jev).
+  jev:
+    kind: floor
+    doc: "Lo que dijo Jev (el lector no tiene piso: si duda, decide el LLM)."
+  same_value:
+    kind: same
+    doc: "El mismo valor."

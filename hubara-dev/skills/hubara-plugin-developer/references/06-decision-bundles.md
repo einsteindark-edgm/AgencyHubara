@@ -143,6 +143,16 @@ paquete), no la política**.
   está en `test_decisions_turn_bundle.py`: si cambias `ventas` a propósito,
   esa prueba falla (y debe: es otra versión).
 
+## Otro plugin con su paquete (F8)
+
+El Order Sentinel tiene el suyo: `order_sentinel/agent/decisions/`
+(`bundles/builtins.yaml` = su catálogo, `bundles/centinela/` = el paquete,
+`builtins.py` + `BUILTINS` = el código que el catálogo nombra, una prueba
+exige que coincidan). Para un plugin nuevo, la misma forma: catálogo propio
+junto a sus paquetes (`**/decisions/bundles/<id>/bundle.yaml`: el
+certificador los descubre), `load_bundle` desde `src.sdk.decisionkit`, y la
+paridad contra una foto del comportamiento de antes si reemplaza código vivo.
+
 ## Probar un paquete nuevo (F6)
 
 1. Copiá la carpeta de la tienda a una nueva (`bundles/ventas-2/`), cambiá

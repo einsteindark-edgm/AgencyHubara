@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# Si Jev leyó un cambio con certeza: un sí/no por cada mensaje NUEVO que
+# podría probarlo (lo nuevo desde el último análisis; lo viejo ya se analizó
+# y puede ser de un pedido anterior). La evidencia son esos mensajes, con su
+# texto EXACTO; sin ninguno seguro (≥ yes), no hay veredicto de Jev.
+capability: evidencia
+value: "tuple<string>"
+input: Conversacion
+rule: {builtin: no_evidence}
+state: {builtin: order_conversation, with: {max_chars: 500}}
+# Los últimos 16 candidatos: en el único despacho real de 30 días la prueba
+# era el candidato 12 contando desde el final de la ventana (el 12 de 13 nuevos).
+items: {builtin: evidence_candidates, with: {limit: 16, quote_chars: 200}}
+each:
+  id: "estado_pedido.evidencia.{number}"
+  kind: noul
+  # Solo un cambio que se prueba con un mensaje (`nada` no pide evidencia).
+  when: "inp.change in ['preparacion', 'listo', 'en_camino', 'entregado', 'pago']"
+  text:
+    - when: "inp.change == 'preparacion'"
+      text: "¿El mensaje [{number}] («{quote}») dice que el pedido ya se está preparando? Un anuncio a futuro, una duda o una pregunta no cuenta."
+    - when: "inp.change == 'listo'"
+      text: "¿El mensaje [{number}] («{quote}») dice que el pedido ya está listo? Un anuncio a futuro, una duda o una pregunta no cuenta."
+    - when: "inp.change == 'en_camino'"
+      text: "¿El mensaje [{number}] («{quote}») dice que el pedido ya salió o va en camino? Un anuncio a futuro, una duda o una pregunta no cuenta."
+    - when: "inp.change == 'entregado'"
+      text: "¿El mensaje [{number}] («{quote}») dice que el pedido ya se entregó? Un anuncio a futuro, una duda o una pregunta no cuenta."
+    - otherwise: "¿El mensaje [{number}] («{quote}») dice que la tienda ya recibió o verificó el pago? Un anuncio a futuro, una duda o una pregunta no cuenta."
+  criteria: {"true": "sí", "false": "no"}
+thresholds: {"yes": 0.85}
+decide:
+  - otherwise: {expr: "items.filter(i, has(i.p) && i.p >= th['yes']).map(i, i.text)"}
+floor: {builtin: jev}
+same: {builtin: same_value}
+examples:
+  - input: {change: listo}
+    items:
+      - {number: 3, text: "Hola! ya está listo", quote: "Hola! ya está listo", p: 0.85}
+      - {number: 5, text: "gracias", quote: "gracias", p: 0.84}
+      - {number: 6, text: "mañana", quote: "mañana"}
+    expect: ["Hola! ya está listo"]
+  - input: {change: listo}
+    items: [{number: 1, text: "¿ya?", quote: "¿ya?", p: 0.2}]
+    expect: []
+  - items: []
+    expect: []

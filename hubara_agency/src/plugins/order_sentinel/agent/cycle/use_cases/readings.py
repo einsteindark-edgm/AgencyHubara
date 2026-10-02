@@ -13,6 +13,12 @@ cerradas antes de despachar el run:
      «¿Este mensaje dice que …?». La evidencia son esos mensajes, con su texto
      EXACTO. Lo viejo ya se analizó (y puede ser de un pedido anterior).
 
+Las preguntas, sus opciones, lo que afirma cada cambio, la certeza que se
+pide y cómo se junta la evidencia son el paquete del lector
+(`order_sentinel/agent/decisions/bundles/centinela/`, PAQUETES_DE_DECISION.md
+F8), certificado con `decisions check`: cambiarlas es otra versión del
+paquete, no código.
+
 El código arma el veredicto con la MISMA forma del LLM ({action, to_stage,
 evidence, confidence}), así las guardas del grafo (etapa permitida, paso
 adyacente, certeza alta, pago idempotente, una intención por pedido,
@@ -28,56 +34,21 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from src.plugins.order_sentinel.agent import decisions
 from src.sdk.connectorkit import TypedQuestion
+from src.sdk.decisionkit import DOUBT, answers_from_result
 
 #: El nombre de la capacidad en la cola de desacuerdos.
 CAPABILITY = "estado_pedido"
 #: Perfil del oráculo (`src/platform/perception/profiles.yaml`).
 ORACLE_PROFILE = "jev-1.13"
+#: La pregunta «¿qué cambió?» del paquete (la leen las pruebas y la traza).
 CHANGE_QID = "estado_pedido.cambio"
-EVIDENCE_QID = "estado_pedido.evidencia.{}"
-#: Certeza que pide el código para el cambio y para cada evidencia.
-THRESHOLD = 0.85
-#: Cuántos mensajes candidatos se preguntan como evidencia (los últimos). En
-#: el único despacho real de 30 días la prueba era el candidato 12 contando
-#: desde el final de la ventana; entre los mensajes nuevos, el 12 de 13.
-MAX_EVIDENCE = 16
-#: Tope de cada mensaje en lo que ve Jev.
-MAX_CHARS = 500
 
 #: Terraform (off | shadow | on) → el lector (reglas | sombra | jev).
 _READER_OF = {"off": "reglas", "shadow": "sombra", "on": "jev"}
-
-_WHO = {"customer": "cliente", "human_operator": "equipo de la tienda", "bot": "bot de la tienda"}
-_STAGE_LABEL = {
-    "new": "nuevo",
-    "preparing": "en preparación",
-    "ready": "listo",
-    "shipping": "en camino",
-    "delivered": "entregado",
-    "cancelled": "cancelado",
-}
-
-_CHANGES: Mapping[str, str] = {
-    "nada": (
-        "Nada nuevo: no hay una señal clara, solo hay anuncios a futuro («mañana te lo envío»), dudas o "
-        "preguntas, o el sistema ya lo sabe."
-    ),
-    "preparacion": "El equipo de la tienda dice que ya está preparando o haciendo el pedido.",
-    "listo": "El equipo de la tienda dice que el pedido ya está listo.",
-    "en_camino": "El pedido ya salió: el equipo dice que ya lo envió, que ya lo despachó o que va en camino.",
-    "entregado": "El pedido ya se entregó: el cliente dice que ya le llegó o el equipo confirma la entrega.",
-    "pago": "El equipo de la tienda confirma que recibió o verificó el pago (que el cliente diga que pagó no basta).",
-}
-_CLAIM = {
-    "preparacion": "el pedido ya se está preparando",
-    "listo": "el pedido ya está listo",
-    "en_camino": "el pedido ya salió o va en camino",
-    "entregado": "el pedido ya se entregó",
-    "pago": "la tienda ya recibió o verificó el pago",
-}
+#: El cambio leído → la etapa a la que pasa el pedido (la forma del LLM).
 _STAGE_OF = {"preparacion": "preparing", "listo": "ready", "en_camino": "shipping", "entregado": "delivered"}
-_YES_NO = {"true": "sí", "false": "no"}
 
 #: Las casillas personales del borrador que se tapan antes de que salga el texto.
 _PERSONAL_SLOTS = ("nombre_recibe", "direccion", "barrio", "telefono", "cedula")
@@ -91,82 +62,44 @@ def reader_mode(raw: str | None) -> str:
     return _READER_OF.get((raw or "").strip().lower(), "reglas")
 
 
-def _messages(convo: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    messages = convo.get("messages")
-    return [m for m in messages if isinstance(m, Mapping)] if isinstance(messages, list) else []
+def _capability(name: str) -> Any:
+    return decisions.active_bundle().capability(name)
 
 
 def conversation_state(convo: Mapping[str, Any]) -> str:
     """Lo que ve Jev: lo que el sistema ya sabe del pedido y la conversación
     numerada (el mismo texto va a la cola de desacuerdos, anonimizado)."""
-    stage = _STAGE_LABEL.get(str(convo.get("current_stage")), str(convo.get("current_stage") or "desconocido"))
-    paid = "sí" if convo.get("payment_confirmed") else "no"
-    lines = [
-        "Conversación de WhatsApp entre una tienda y un cliente sobre un pedido (en orden; [n] es el número "
-        "del mensaje).",
-        f"Lo que el sistema de la tienda ya sabe: pedido {stage}; pago confirmado: {paid}.",
-    ]
-    for i, message in enumerate(_messages(convo), 1):
-        text = " ".join(str(message.get("text") or "").split())[:MAX_CHARS]
-        media = "[adjuntó una imagen]" if message.get("has_media") else ""
-        body = " ".join(part for part in (text, media) if part) or "(sin texto)"
-        lines.append(f"[{i}] {_WHO.get(str(message.get('who')), 'otro')}: {body}")
-    return "\n".join(lines)
+    table = _capability("cambio")
+    return decisions.call(table.spec.state, convo)
+
+
+def _typed(questions: Sequence[Any]) -> list[TypedQuestion]:
+    return [TypedQuestion(id=q.id, kind=q.kind, text=q.text, criteria=dict(q.criteria)) for q in questions]
 
 
 def change_request(convo: Mapping[str, Any]) -> tuple[str, list[TypedQuestion]]:
     """La primera pregunta: qué cambió en el pedido que el sistema no sabe."""
-    return conversation_state(convo), [
-        TypedQuestion(
-            id=CHANGE_QID,
-            kind="choice",
-            text="Según la conversación, ¿qué cambió en el pedido que el sistema de la tienda todavía no sabe?",
-            criteria=dict(_CHANGES),
-        )
-    ]
+    table = _capability("cambio")
+    return decisions.call(table.spec.state, convo), _typed(table.questions_for({}))
 
 
-def _is_new(message: Mapping[str, Any], since_ms: int | None) -> bool:
-    at = message.get("at_ms")
-    return since_ms is None or not isinstance(at, int) or at > since_ms
-
-
-def _candidates(convo: Mapping[str, Any], change: str, since_ms: int | None) -> list[tuple[int, str]]:
-    """(número, texto exacto) de los mensajes nuevos que podrían probar el
-    cambio. `since_ms` = hasta dónde se analizó antes (None = nunca)."""
-    allowed = ("human_operator",) if change == "pago" else ("human_operator", "customer")
-    out = [
-        (i, message["text"])
-        for i, message in enumerate(_messages(convo), 1)
-        if message.get("who") in allowed
-        and isinstance(message.get("text"), str)
-        and message["text"].strip()
-        and _is_new(message, since_ms)
-    ]
-    return out[-MAX_EVIDENCE:]
+def _candidates(convo: Mapping[str, Any], change: str | None, since_ms: int | None) -> list[dict[str, Any]]:
+    """Los mensajes nuevos que podrían probar el cambio (`since_ms` = hasta
+    dónde se analizó antes; None = nunca)."""
+    table = _capability("evidencia")
+    return decisions.call(table.spec.items, convo, change=change, since_ms=since_ms)
 
 
 def evidence_request(
     convo: Mapping[str, Any], change: str, *, since_ms: int | None = None
 ) -> tuple[str, list[TypedQuestion]] | None:
     """La segunda pregunta: un sí/no por cada mensaje candidato. None si no
-    hay ninguno (entonces nada lo prueba)."""
-    claim = _CLAIM.get(change)
-    candidates = _candidates(convo, change, since_ms)
-    if claim is None or not candidates:
+    hay ninguno, o si el cambio no se prueba con un mensaje (`nada`)."""
+    table = _capability("evidencia")
+    questions = table.each_questions(_candidates(convo, change, since_ms), {"change": change})
+    if not questions:
         return None
-    return conversation_state(convo), [
-        TypedQuestion(
-            id=EVIDENCE_QID.format(i),
-            kind="noul",
-            text=(
-                f"¿El mensaje [{i}] («{' '.join(text.split())[:200]}») dice que {claim}? Un anuncio a futuro, "
-                "una duda o una pregunta no cuenta."
-            ),
-            criteria=_YES_NO,
-        )
-        for i, text in candidates
-    ]
+    return decisions.call(table.spec.state, convo), _typed(questions)
 
 
 def _choice_p(answer: Any) -> float | None:
@@ -176,11 +109,24 @@ def _choice_p(answer: Any) -> float | None:
 
 
 def _decided_change(result: Any) -> str | None:
-    answer = result.answer(CHANGE_QID) if getattr(result, "ok", False) else None
-    if answer is None or answer.choice not in _CHANGES:
+    """El cambio que la tabla `cambio` del paquete decide con las respuestas
+    de Jev; None si duda (o si Jev cayó)."""
+    if not getattr(result, "ok", False):
         return None
-    p = _choice_p(answer)
-    return answer.choice if p is not None and p >= THRESHOLD else None
+    table = _capability("cambio")
+    value = table.decide(answers=answers_from_result(table.spec.questions, result))
+    return None if value is DOUBT else value
+
+
+def _evidence(convo: Mapping[str, Any], change: str, second: Any, since_ms: int | None) -> list[str]:
+    """Los mensajes que la tabla `evidencia` del paquete da por prueba (su
+    texto exacto, en orden)."""
+    table = _capability("evidencia")
+    items = _candidates(convo, change, since_ms)
+    questions = table.each_questions(items, {"change": change}, all_items=True)
+    answers = answers_from_result(questions, second) if second is not None else {}
+    value = table.decide(answers=answers, inp={"change": change}, items=items)
+    return [] if value is DOUBT else list(value)
 
 
 def _compact(result: Any) -> list[dict[str, Any]]:
@@ -219,12 +165,7 @@ def reading_from(
     if second is not None and not getattr(second, "ok", False):
         reading["error"] = getattr(second, "error", None) or "provider_error"
         return reading
-    evidence = []
-    for i, text in _candidates(convo, change, since_ms):
-        answer = second.answer(EVIDENCE_QID.format(i)) if second is not None else None
-        p = getattr(answer, "p", None)
-        if isinstance(p, (int, float)) and p >= THRESHOLD:
-            evidence.append(text)
+    evidence = _evidence(convo, change, second, since_ms)
     if not evidence:
         return reading
     if change == "pago":
