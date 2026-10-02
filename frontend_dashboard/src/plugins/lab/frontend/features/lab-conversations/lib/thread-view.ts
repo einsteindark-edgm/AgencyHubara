@@ -16,27 +16,35 @@
  * evaluar». Antes se pintaba de ámbar si el bot había descartado un texto,
  * y el color no coincidía con lo que decía el modal (revisión 2026-09-29).
  *
- * Función pura: el día sale como ISO (la etiqueta "Hoy"/"Ayer" se calcula en
+ * La vista de producción es la de `@/shared/lib` (`quality-thread.ts`, la
+ * misma de Calidad LLM de Agents). Función pura: el día sale como ISO (la etiqueta "Hoy"/"Ayer" se calcula en
  * render, que es quien mira el reloj).
  */
 
-import { BOGOTA_TZ, bogotaDayIsoFromMs, describeTool } from "@/shared/lib";
-import type { EpisodeVerdict, LabThread, ThreadMessage, ThreadTurn } from "@plugins/lab/frontend/entities/lab-run";
+import {
+  bogotaDayIsoFromMs,
+  burstItem,
+  describeTool,
+  hhmm,
+  productionReplies,
+  productionThreadView,
+  sortedTurns,
+  turnChip,
+  type ReplyItem as SharedReplyItem,
+  type ThreadItem as SharedThreadItem,
+  type TurnVerdictOf as SharedTurnVerdictOf,
+} from "@/shared/lib";
+import type { LabThread, ThreadTurn } from "@plugins/lab/frontend/entities/lab-run";
 
-export type ThreadItem =
-  | { type: "day"; key: string; day: string }
-  | { type: "msg"; key: string; dir: "in" | "out" | "comp" | "system"; text: string; time: string; hasImage: boolean; byHuman?: boolean; complement?: boolean }
-  | { type: "burst"; key: string; turn: ThreadTurn; messages: Array<{ text: string; time: string }>; spanS: number }
-  | { type: "chip"; key: string; turn: ThreadTurn; verdict: EpisodeVerdict | null; sub: string }
-  | { type: "note"; key: string; text: string };
+export type ThreadItem = SharedThreadItem<ThreadTurn>;
 
 /** El resultado de un turno con el bot del hilo (`null` si todavía no tiene evaluación). */
-export type TurnVerdictOf = (turn: ThreadTurn) => EpisodeVerdict | null;
+export type TurnVerdictOf = SharedTurnVerdictOf<ThreadTurn>;
 
 const NOT_EVALUATED: TurnVerdictOf = () => null;
 
 /** Lo que respondió un bot en un turno: sus burbujas y, si no hay, por qué. */
-export type ReplyItem = { dir: "out" | "comp" | "system" | "note"; text: string; hasImage: boolean; byHuman?: boolean; complement?: boolean };
+export type ReplyItem = SharedReplyItem;
 
 /** El texto que acompañó a un componente (intro de la lista, cuerpo de los botones). */
 function componentIntro(args: unknown): string | null {
@@ -62,142 +70,8 @@ const SUPPRESSED: Record<string, string> = {
   shutdown: "la conversación se estaba cerrando",
 };
 
-const TIME_FMT = new Intl.DateTimeFormat("es-CO", { timeZone: BOGOTA_TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-
-function hhmm(ms: number | null): string {
-  return ms === null || !Number.isFinite(ms) ? "" : TIME_FMT.format(new Date(ms)).replace(/^24:/, "00:");
-}
-
-function msOf(message: ThreadMessage): number | null {
-  if (!message.timestamp) return null;
-  const ms = Date.parse(message.timestamp);
-  return Number.isFinite(ms) ? ms : null;
-}
-
-function dirOf(message: ThreadMessage): "in" | "out" | "comp" | "system" {
-  if (message.role === "user") return "in";
-  if (message.role === "system") return "system";
-  return message.kind === "component" ? "comp" : "out";
-}
-
-function chip(turn: ThreadTurn, key: string, verdictOf: TurnVerdictOf): ThreadItem {
-  const n = turn.burst.length;
-  return { type: "chip", key, turn, verdict: verdictOf(turn), sub: `turno ${turn.turn} · ${n} ${n === 1 ? "mensaje" : "mensajes"}` };
-}
-
-function burstItem(turn: ThreadTurn, key: string): ThreadItem {
-  const times = turn.burst.map((m) => m.ts_ms).filter((t): t is number => t !== null);
-  const spanS = times.length > 1 ? Math.round((Math.max(...times) - Math.min(...times)) / 1000) : 0;
-  return { type: "burst", key, turn, messages: turn.burst.map((m) => ({ text: m.text, time: hhmm(m.ts_ms) })), spanS };
-}
-
-function sortedTurns(thread: LabThread): ThreadTurn[] {
-  return [...thread.turns].sort((a, b) => (a.at_ms ?? 0) - (b.at_ms ?? 0));
-}
-
 export function buildThreadView(thread: LabThread, arm: string, verdictOf: TurnVerdictOf = NOT_EVALUATED): ThreadItem[] {
-  return arm === PRODUCTION_ARM ? productionView(thread, verdictOf) : simulatedView(thread, arm, verdictOf);
-}
-
-/** A qué turno del banco pertenece cada mensaje del cliente (por wamid o por su hora exacta). */
-function turnFinder(turns: ThreadTurn[]): (m: ThreadMessage) => ThreadTurn | undefined {
-  const byWamid = new Map<string, ThreadTurn>();
-  const byTs = new Map<number, ThreadTurn>();
-  for (const turn of turns) {
-    for (const m of turn.burst) {
-      if (m.wamid) byWamid.set(m.wamid, turn);
-      if (m.ts_ms !== null) byTs.set(m.ts_ms, turn);
-    }
-  }
-  return (m) => {
-    if (m.role !== "user") return undefined;
-    if (m.wamid && byWamid.has(m.wamid)) return byWamid.get(m.wamid);
-    const ms = msOf(m);
-    return ms !== null ? byTs.get(ms) : undefined;
-  };
-}
-
-function productionView(thread: LabThread, verdictOf: TurnVerdictOf): ThreadItem[] {
-  const turns = sortedTurns(thread);
-  const turnOf = turnFinder(turns);
-
-  const items: ThreadItem[] = [];
-  let day = "";
-  let open: ThreadTurn | null = null;
-  const shown = new Set<string>();
-  // Un turno puede cerrarse y reabrirse (un mensaje que no está en el banco
-  // entre dos de su ráfaga): cada chip lleva su propia key.
-  const chips = new Map<string, number>();
-  const chipKey = (turn: ThreadTurn): string => {
-    const n = chips.get(turn.turn_key) ?? 0;
-    chips.set(turn.turn_key, n + 1);
-    return n === 0 ? `chip-${turn.turn_key}` : `chip-${turn.turn_key}-${n}`;
-  };
-
-  thread.messages.forEach((m, idx) => {
-    const ms = msOf(m);
-    const turn = turnOf(m);
-    if (m.role === "user" && open) {
-      if (turn !== open) {
-        items.push(chip(open, chipKey(open), verdictOf));
-        open = null;
-      }
-    }
-    const d = ms !== null ? bogotaDayIsoFromMs(ms) : "";
-    if (d && d !== day) {
-      day = d;
-      items.push({ type: "day", key: `day-${d}-${idx}`, day: d });
-    }
-    if (turn) {
-      if (!shown.has(turn.turn_key)) {
-        shown.add(turn.turn_key);
-        items.push(
-          turn.burst.length > 1
-            ? burstItem(turn, `burst-${turn.turn_key}`)
-            : { type: "msg", key: `m-${idx}`, dir: "in", text: m.content, time: hhmm(ms), hasImage: m.has_image },
-        );
-      }
-      open = turn;
-      return;
-    }
-    items.push({ type: "msg", key: `m-${idx}`, dir: dirOf(m), text: m.content, time: hhmm(ms), hasImage: m.has_image, byHuman: m.sender === "human" });
-  });
-  if (open) items.push(chip(open, chipKey(open as ThreadTurn), verdictOf));
-  return items;
-}
-
-/** Producción: los mensajes reales que siguieron a la ráfaga del turno, hasta que el cliente vuelve a escribir. */
-function productionReplies(thread: LabThread, turn: ThreadTurn): ReplyItem[] {
-  const turnOf = turnFinder(thread.turns);
-  const replies: ReplyItem[] = [];
-  let open = false;
-  let seen = false;
-  let wroteAgain = false;
-  for (const m of thread.messages) {
-    if (m.role === "user") {
-      const mine = turnOf(m)?.turn_key === turn.turn_key;
-      if (seen && !mine && replies.length === 0) wroteAgain = true;
-      seen = seen || mine;
-      open = mine;
-      continue;
-    }
-    if (open) {
-      const dir = dirOf(m);
-      replies.push({ dir: dir === "in" ? "out" : dir, text: m.content, hasImage: m.has_image, byHuman: m.sender === "human" });
-    }
-  }
-  if (replies.length === 0) {
-    return [
-      {
-        dir: "note",
-        text: wroteAgain
-          ? "El cliente volvió a escribir antes de que el bot respondiera: la respuesta salió con el turno siguiente."
-          : "El bot no respondió este turno.",
-        hasImage: false,
-      },
-    ];
-  }
-  return replies;
+  return arm === PRODUCTION_ARM ? productionThreadView(thread, verdictOf) : simulatedView(thread, arm, verdictOf);
 }
 
 /** Un bot simulado: sus textos, lo que mandó aparte (tarjetas, botones, formularios) y lo que le rechazaron. */
@@ -240,7 +114,7 @@ export function turnReplies(thread: LabThread, turn: ThreadTurn, arm: string): R
 function simulatedView(thread: LabThread, arm: string, verdictOf: TurnVerdictOf): ThreadItem[] {
   const items: ThreadItem[] = [];
   let day = "";
-  for (const turn of sortedTurns(thread)) {
+  for (const turn of sortedTurns(thread.turns)) {
     const d = turn.at_ms !== null ? bogotaDayIsoFromMs(turn.at_ms) : "";
     if (d && d !== day) {
       day = d;
@@ -259,7 +133,7 @@ function simulatedView(thread: LabThread, arm: string, verdictOf: TurnVerdictOf)
           : { type: "msg", key: `out-${turn.turn_key}-${k}`, dir: r.dir, text: r.text, time: "", hasImage: r.hasImage, complement: r.complement },
       ),
     );
-    items.push(chip(turn, `chip-${turn.turn_key}`, verdictOf));
+    items.push(turnChip(turn, `chip-${turn.turn_key}`, verdictOf));
   }
   return items;
 }

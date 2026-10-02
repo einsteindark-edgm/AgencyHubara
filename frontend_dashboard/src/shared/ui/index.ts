@@ -24,3 +24,9 @@ export { CheckTrend } from "./quality/CheckTrend";
 export { VerdictTiles } from "./quality/VerdictTiles";
 export { TrajectoryStrip } from "./quality/TrajectoryStrip";
 export { ComplianceMatrixTable, ComplianceMatrixLegend } from "./quality/ComplianceMatrixTable";
+// La vista de una conversación turno por turno (laboratorio + Calidad LLM, 2026-10-02).
+export { Chip, VerdictBadge, LevelPill, type ChipTone } from "./quality/QualityChips";
+export { CheckResults } from "./quality/CheckResults";
+export { EngineDecisions } from "./quality/EngineDecisions";
+export { Bubble, ConversationThread, ReplyBubbles, ThreadRow } from "./quality/ConversationThread";
+export { TurnWindow, type TurnWindowProps } from "./quality/TurnWindow";

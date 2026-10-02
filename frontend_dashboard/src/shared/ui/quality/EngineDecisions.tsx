@@ -5,23 +5,25 @@
  * complemento): qué revisó, qué decidió («Avisa al modelo que no aparece por
  * nombre en el catálogo: «jesús»»), quién (Jev, o la regla y por qué), qué decía la regla si no
  * coincidió y qué respondió Jev a cada pregunta. Así se ve, turno por turno,
- * si el bot nuevo corrió con Jev o cayó a las reglas.
+ * si el bot nuevo corrió con Jev o cayó a las reglas. Compartido por el
+ * laboratorio y Calidad LLM de Agents (2026-10-02).
  */
 
 import {
   capabilityLabel,
-  Chip,
   decidedByLabel,
   decisionSentence,
   decisionStageLabel,
   jevAnswers,
   jevFailed,
-  type EngineDecision,
-} from "@plugins/lab/frontend/entities/lab-run";
+  type EngineDecisionView,
+} from "@/shared/lib";
+
+import { Chip } from "./QualityChips";
 
 const TONE_TEXT = { neutral: "text-fg", warn: "text-warn", bad: "text-danger" } as const;
 
-function summaryOf(decisions: EngineDecision[]): string {
+function summaryOf(decisions: EngineDecisionView[]): string {
   const n = decisions.length;
   const byJev = decisions.filter((d) => d.by === "jev").length;
   const failed = decisions.filter(jevFailed).length;
@@ -35,8 +37,8 @@ function summaryOf(decisions: EngineDecision[]): string {
     .join(" · ");
 }
 
-function groups(decisions: EngineDecision[]): Array<[string, EngineDecision[]]> {
-  const out = new Map<string, EngineDecision[]>();
+function groups(decisions: EngineDecisionView[]): Array<[string, EngineDecisionView[]]> {
+  const out = new Map<string, EngineDecisionView[]>();
   for (const d of decisions) {
     const label = decisionStageLabel(d);
     out.set(label, [...(out.get(label) ?? []), d]);
@@ -44,7 +46,7 @@ function groups(decisions: EngineDecision[]): Array<[string, EngineDecision[]]> 
   return [...out.entries()];
 }
 
-export function EngineDecisions({ decisions }: { decisions: EngineDecision[] }) {
+export function EngineDecisions({ decisions }: { decisions: EngineDecisionView[] }) {
   if (decisions.length === 0) return null;
   return (
     <section aria-label="Decisiones de Jev" className="grid gap-3 px-4 py-3 text-[12.5px]">

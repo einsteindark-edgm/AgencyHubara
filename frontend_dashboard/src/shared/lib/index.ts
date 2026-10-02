@@ -14,6 +14,9 @@ export * from "./sales-tools";
 export * from "./trace-rounds";
 export * from "./jev-questions";
 export * from "./quality-view";
+export * from "./quality-checks";
+export * from "./engine-decisions";
+export * from "./quality-thread";
 export * from "./trajectory-strip";
 export {
   dotOffset,

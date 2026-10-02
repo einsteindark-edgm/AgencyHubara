@@ -4,20 +4,23 @@
  * porqué (la crítica del juez o la evidencia del check de código), lo que
  * dijo el bot y lo que se esperaba; lo que cumplió, plegado; lo que no se
  * puede decidir con un turno solo, contado. El código queda como referencia
- * pequeña (para hablar de un check con el equipo).
+ * pequeña (para hablar de un check con el equipo). Compartido por el
+ * laboratorio y Calidad LLM de Agents (2026-10-02).
  */
 
-import { checkView, LevelPill, type CheckCatalog, type CheckLevel, type EvalResult } from "@plugins/lab/frontend/entities/lab-run";
+import { checkView, type CheckCatalogView, type EvalResultView, type QualityLevel } from "@/shared/lib";
 
-const LEVEL_RANK: Record<CheckLevel, number> = { critico: 0, mayor: 1, menor: 2 };
+import { LevelPill } from "./QualityChips";
+
+const LEVEL_RANK: Record<QualityLevel, number> = { critico: 0, mayor: 1, menor: 2 };
 
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
 interface Props {
-  results: EvalResult[];
-  catalog: CheckCatalog | undefined;
+  results: EvalResultView[];
+  catalog: CheckCatalogView | undefined;
   /**
    * `turn`: los checks de un turno. `conversation`: los de toda la
    * conversación (cada fallo dice su turno; lo cumplido cuenta cada check una
