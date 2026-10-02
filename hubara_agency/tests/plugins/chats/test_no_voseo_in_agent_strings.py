@@ -53,7 +53,7 @@ _VOSEO_DENYLIST = [
     "esperá", "mirá", "mandá", "llamá", "usá", "empezá", "cerrá", "informá",
     "avisá", "invitá", "continuá", "reasoná", "considerá", "tocá", "recordá",
     "aguantá", "volvé", "poné", "hacé", "andá", "contá", "dejá", "recortá",
-    "fijá", "tomá", "respondé", "contestá", "mencioná", "ofrecé",
+    "fijá", "tomá", "respondé", "contestá", "mencioná", "ofrecé", "agendá", "confirmá",
     # Imperativos con enclítico (voseo)
     "decime", "contame", "mirame", "mostrame", "avisame", "pedile", "mandale",
     "decile", "contale", "preguntale", "fijate", "acordate", "llevate",
@@ -165,6 +165,9 @@ _OPERATOR_FACING_FILES = [
     _HUBARA_ROOT / "src" / "plugins" / "chats" / "api" / "operator_tools.py",
     _HUBARA_ROOT / "src" / "plugins" / "chats" / "api" / "handoff.py",
     _HUBARA_ROOT / "src" / "plugins" / "chats" / "shared" / "mobile_rules.py",
+    # Los errores de los comandos de pedidos llegan tal cual a la App Operador (pantalla «Por cobrar», ficha del pedido)
+    # y al dashboard: la app mostró «Agendá la entrega… podés confirmar el pago» al confirmar un borrador (S19).
+    _HUBARA_ROOT / "src" / "platform" / "orders" / "medusa_order_command.py",
 ]
 
 
