@@ -16,67 +16,16 @@ personal del borrador).
 """
 from __future__ import annotations
 
-import dataclasses
-import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-_ANSWER_FIELDS = ("q", "p", "choice", "confidence")
+from src.plugins.chats.agent.sales.decisions.decision_log import compact_verdict, plain_value
 
-
-def _plain(value: Any, redact: Sequence[str]) -> Any:
-    """JSON sin texto personal: tuplas y conjuntos como listas, dataclasses
-    como dicts y cada texto anonimizado."""
-    from src.sdk.connectorkit import anonymize_text
-
-    if isinstance(value, str):
-        return anonymize_text(value, redact=redact)
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-    if isinstance(value, dict):
-        return {str(k): _plain(v, redact) for k, v in value.items()}
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return _plain(dataclasses.asdict(value), redact)
-    if isinstance(value, (set, frozenset)):
-        return sorted((_plain(v, redact) for v in value), key=lambda v: json.dumps(v, sort_keys=True))
-    if isinstance(value, (list, tuple)):
-        return [_plain(v, redact) for v in value]
-    return anonymize_text(str(value), redact=redact)
-
-
-def _answer(answer: Any) -> dict[str, Any]:
-    raw = dict(answer) if isinstance(answer, dict) else {}
-    out: dict[str, Any] = {}
-    for key in _ANSWER_FIELDS:
-        value = raw.get(key)
-        if value is None:
-            continue
-        out[key] = round(float(value), 3) if isinstance(value, float) else value
-    return out
-
-
-def _empty(value: Any) -> bool:
-    """Nada que decir: None, texto vacío o una latencia de 0 (un `False` sí dice algo)."""
-    if value is None or value == "":
-        return True
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and value == 0
-
-
-def _compact(trace: dict[str, Any]) -> dict[str, Any]:
-    """Un veredicto (`Verdict.to_trace()`) sin lo vacío: `rule` solo si no es
-    el valor final; Jev, acuerdo, motivo, modelo, latencia y respuestas solo
-    si los hay."""
-    row: dict[str, Any] = {k: trace.get(k) for k in ("capability", "by", "provider", "value")}
-    if trace.get("rule") != trace.get("value"):
-        row["rule"] = trace.get("rule")
-    for key in ("jev", "agree", "reason", "model", "latency_ms"):
-        if not _empty(trace.get(key)):
-            row[key] = trace[key]
-    answers = [a for a in (_answer(a) for a in trace.get("answers") or ()) if a]
-    if answers:
-        row["answers"] = answers
-    return row
+# Lo mismo que guarda producción (`decision_log`): el laboratorio y Calidad
+# LLM muestran la misma decisión compacta y anonimizada.
+_plain = plain_value
+_compact = compact_verdict
 
 
 class CaseDecisions:

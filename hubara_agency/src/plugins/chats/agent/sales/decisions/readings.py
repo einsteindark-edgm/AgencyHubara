@@ -36,6 +36,7 @@ from src.plugins.chats.agent.sales.decisions.bots import bot_for_session
 from src.plugins.chats.agent.sales.decisions.capabilities import BY_RULE, Verdict, decide
 from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import CuponEnJuego, PedidoDelCliente
 from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
+from src.plugins.chats.agent.sales.decisions.decision_log import SessionDecisionLog
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
 from src.plugins.chats.agent.sales.decisions.registry import capability
 from src.plugins.chats.agent.sales.decisions.guards import decide_for_session
@@ -111,6 +112,7 @@ class EngineReadings:
             return decide(
                 capability, inbound, provider=bot.provider(capability.name), profile_id=bot.profile,
                 disagreements=log, session_id=inbound.session_id, redact=self._redact, metrics=metrics,
+                decisions=SessionDecisionLog(self._vault), stage="ingest", message_id=inbound.message_id,
             )
 
         # Cada capacidad por su nombre: el resolutor la toma del paquete de
@@ -150,6 +152,7 @@ class EngineReadings:
             acuse, inbound, provider=provider, profile_id=bot.profile,
             disagreements=DisagreementLog(self._vault), session_id=inbound.session_id, redact=redact,
             metrics=DecisionMetrics(self._vault),
+            decisions=SessionDecisionLog(self._vault), stage="ingest", message_id=inbound.message_id,
         )
 
 
@@ -247,7 +250,7 @@ async def read_coupon_talk(
     cliente vio ANTES de este mensaje."""
     return await decide_for_session(
         capability("cupon"), CuponEnJuego(metadata=metadata, text=text, events=tuple(events)),
-        session_id=session_id, vault_dir=Path(vault_dir), redact=tuple(redact),
+        session_id=session_id, vault_dir=Path(vault_dir), redact=tuple(redact), stage="ingest",
     )
 
 
@@ -258,13 +261,14 @@ async def read_catalog_gap(
     text: str,
     products: Sequence[Any],
     redact: Sequence[str] = (),
+    stage: str = "ingest",
 ) -> Verdict:
     """Lo que el cliente pide o muestra y no existe en el catálogo (capacidad
     `fuera_de_catalogo`; regla de hoy: `unavailable_terms`). El valor son los
     términos que quedan: la nota la arma el ingest con el código de hoy."""
     return await decide_for_session(
         capability("fuera_de_catalogo"), PedidoDelCliente(text=text, products=tuple(products)),
-        session_id=session_id, vault_dir=Path(vault_dir), redact=tuple(redact),
+        session_id=session_id, vault_dir=Path(vault_dir), redact=tuple(redact), stage=stage,
     )
 
 

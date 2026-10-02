@@ -29,6 +29,7 @@ async def decide_contact(
         Contacto(transcript=transcript, touch_number=touch_number, silence_minutes=silence_minutes),
         session_id=session_id,
         vault_dir=vault_dir,
+        stage="remarketing",
     )
     # Con `reglas` el motor no decidió nada: el contexto grabado queda
     # idéntico al de hoy (sin traza).

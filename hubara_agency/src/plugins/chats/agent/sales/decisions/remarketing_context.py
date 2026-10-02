@@ -40,8 +40,11 @@ async def decide_catalog_context(
         ProductosDeLaCharla(text=text, titles=titles, named=tuple(named)),
         session_id=session_id,
         vault_dir=vault_dir,
+        stage="remarketing",
     )
-    gap = await read_catalog_gap(Path(vault_dir), session_id=session_id, text=customer_text, products=products)
+    gap = await read_catalog_gap(
+        Path(vault_dir), session_id=session_id, text=customer_text, products=products, stage="remarketing"
+    )
     return list(named_verdict.value or ()), list(gap.value or [])
 
 
@@ -57,7 +60,8 @@ async def decide_template_label(*, session_id: str, text: str, vault_dir: Path) 
     from src.plugins.chats.agent.sales.decisions.egress import TextCheck
 
     verdict = await decide_for_session(
-        capability("destinatario_plantilla"), TextCheck(text), session_id=session_id, vault_dir=vault_dir
+        capability("destinatario_plantilla"), TextCheck(text), session_id=session_id, vault_dir=vault_dir,
+        stage="remarketing",
     )
     return bool(verdict.value)
 

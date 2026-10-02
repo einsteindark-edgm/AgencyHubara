@@ -34,6 +34,7 @@ from src.plugins.chats.agent.sales.decisions.capabilities.mapeos import (
     DatoDelItem,
 )
 from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
+from src.plugins.chats.agent.sales.decisions.decision_log import SessionDecisionLog
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
 from src.plugins.chats.agent.sales.decisions.registry import capability
 
@@ -66,6 +67,8 @@ async def decide_for_session(
     session_id: str,
     vault_dir: Path | None,
     redact: tuple[str, ...] = (),
+    stage: str = "turno",
+    message_id: str | None = None,
 ) -> Verdict:
     """La decisión de la capacidad para ESTA conversación (ver el módulo).
     Sin vault (una tool armada sin él) no hay control del despliegue ni cola
@@ -88,6 +91,9 @@ async def decide_for_session(
         session_id=session_id,
         redact=redact,
         metrics=DecisionMetrics(vault) if vault is not None else None,
+        decisions=SessionDecisionLog(vault) if vault is not None else None,
+        stage=stage,
+        message_id=message_id,
     )
 
 

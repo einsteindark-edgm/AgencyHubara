@@ -182,9 +182,14 @@ async def decide(
     session_id: str | None = None,
     redact: Sequence[str] = (),
     metrics: Any = None,
+    decisions: Any = None,
+    stage: str = "turno",
+    message_id: str | None = None,
 ) -> Verdict:
     """La decisión de la capacidad con el proveedor del bot. Nunca lanza por
-    Jev; la regla sí puede lanzar (igual que hoy)."""
+    Jev; la regla sí puede lanzar (igual que hoy). `decisions`: dónde queda
+    con su conversación si Jev participó (`SessionDecisionLog`), con su
+    `stage` y el mensaje que la disparó."""
     verdict = await _decide(
         capability, inp, provider=provider, profile_id=profile_id, disagreements=disagreements,
         session_id=session_id, redact=redact, metrics=metrics,
@@ -192,6 +197,13 @@ async def decide(
     bundle = getattr(capability, "bundle", "")
     if bundle:
         verdict = replace(verdict, bundle=str(bundle))
+    if decisions is not None and session_id and verdict.provider != "reglas" and verdict.reason != "no_question":
+        # Calidad LLM la muestra en su turno (sin pregunta para Jev no hay qué
+        # mostrar); escribirla nunca frena la decisión.
+        try:
+            decisions.record(session_id, verdict, stage=stage, message_id=message_id, redact=redact)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("decisions.session_log_failed", capability=verdict.capability, error=repr(exc)[:200])
     if _WATCHERS:
         _tell_watchers(verdict)
     return verdict

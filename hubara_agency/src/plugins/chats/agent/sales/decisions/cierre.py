@@ -66,6 +66,7 @@ async def decided_close_tag(session_id: str, *, vault_dir: Path) -> str:
         Abandono(transcript=_transcript(vault_dir, session_id), purchase_confirmed=confirmed, order_registered=registered),
         session_id=session_id,
         vault_dir=vault_dir,
+        stage="cierre",
     )
     return str(verdict.value or "")
 
