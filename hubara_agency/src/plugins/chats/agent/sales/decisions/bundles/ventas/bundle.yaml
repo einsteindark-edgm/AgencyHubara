@@ -8,13 +8,24 @@ version: 1
 engine_contract: 1
 oracle: jev-1.13
 capabilities:
+  - acuse
   - afirmacion
   - baja
   - cantidad
+  - categoria
   - cierre
+  - compra
   - contactar
   - cortesia
+  - cupon
+  - destinatario
+  - destinatario_plantilla
+  - enumeracion
+  - familia_de_color
+  - item_del_pedido
+  - producto_nombrado
   - relevo
   - retoma
+  - saludo
   - selector
   - zona_de_envio

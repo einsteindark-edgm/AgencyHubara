@@ -2,14 +2,17 @@
 
 Gramática (la escribe quien arma el paquete; el certificador la parsea):
 
-    tipo     := base ['?']                    '?' = puede ser null
+    tipo     := alt ('|' alt)*                unión: vale si es alguno (el primero que calce)
+    alt      := base ['?']                    '?' = puede ser null
     base     := bool | string | int | double | any
-              | list<tipo> | tuple<tipo>      tuple = tupla de Python (inmutable)
+              | list<tipo> | tuple<tipo>      tuple = tupla de Python (inmutable), cualquier largo
+              | '(' [tipo (',' tipo)*] ')'    tupla posicional: ese largo, cada uno de su tipo
               | '{' campo (',' campo)* '}'    registro (dict con esas llaves)
     campo    := nombre ':' tipo
 
 Ejemplos: `bool`, `tuple<string>`, `{cantidad: int?}`,
-`{deferral: {kind: string, until_ms: int}?, courtesy: bool}`.
+`{deferral: {kind: string, until_ms: int}?, courtesy: bool}`,
+`() | (string, tuple<string>)` (nada, o la dimensión y sus etiquetas).
 
 `conforms` dice si un valor es del tipo (los `then:` literales y los
 `expect:` de los ejemplos); `convert` lo lleva a la forma de Python que
@@ -27,14 +30,20 @@ _TOKEN = re.compile(r"\s*(?:([A-Za-z_][A-Za-z0-9_]*)|(.))")
 
 @dataclass(frozen=True)
 class ValueType:
-    kind: str  # bool | string | int | double | any | list | tuple | record
+    kind: str  # bool | string | int | double | any | list | tuple | fixed | record | union
     nullable: bool = False
     item: ValueType | None = None
     fields: tuple[tuple[str, ValueType], ...] = field(default_factory=tuple)
+    #: Los tipos de una tupla posicional (`fixed`) o las ramas de una unión.
+    items: tuple[ValueType, ...] = field(default_factory=tuple)
 
     def __str__(self) -> str:
+        if self.kind == "union":
+            return " | ".join(str(t) for t in self.items)
         if self.kind in ("list", "tuple"):
             base = f"{self.kind}<{self.item}>"
+        elif self.kind == "fixed":
+            base = "(" + ", ".join(str(t) for t in self.items) + ")"
         elif self.kind == "record":
             base = "{" + ", ".join(f"{n}: {t}" for n, t in self.fields) + "}"
         else:
@@ -47,6 +56,11 @@ class ValueType:
         if self.nullable:
             return "dyn"
         return {"bool": "bool", "string": "string", "int": "int", "double": "double"}.get(self.kind, "dyn")
+
+    @property
+    def alternatives(self) -> tuple[ValueType, ...]:
+        """Las ramas de una unión; un tipo que no es unión es su única rama."""
+        return self.items if self.kind == "union" else (self,)
 
 
 class TypeSyntaxError(ValueError):
@@ -69,8 +83,24 @@ def parse_type(text: str) -> ValueType:
         return token
 
     def parse() -> ValueType:
+        alternatives = [alternative()]
+        while peek() == "|":
+            take("|")
+            alternatives.append(alternative())
+        return alternatives[0] if len(alternatives) == 1 else ValueType("union", items=tuple(alternatives))
+
+    def alternative() -> ValueType:
         token = take()
-        if token == "{":
+        if token == "(":
+            items: list[ValueType] = []
+            if peek() != ")":
+                items.append(parse())
+                while peek() == ",":
+                    take(",")
+                    items.append(parse())
+            take(")")
+            base = ValueType("fixed", items=tuple(items))
+        elif token == "{":
             fields: list[tuple[str, ValueType]] = []
             while True:
                 name = take()
@@ -94,10 +124,12 @@ def parse_type(text: str) -> ValueType:
         elif token in _PRIMITIVES:
             base = ValueType(token)
         else:
-            raise TypeSyntaxError(f"tipo desconocido {token!r} en {text!r} (hay: {', '.join(_PRIMITIVES)}, list<…>, tuple<…>, {{…}})")
+            raise TypeSyntaxError(
+                f"tipo desconocido {token!r} en {text!r} (hay: {', '.join(_PRIMITIVES)}, list<…>, tuple<…>, (…), {{…}}, A | B)"
+            )
         if peek() == "?":
             take("?")
-            return ValueType(base.kind, True, base.item, base.fields)
+            return ValueType(base.kind, True, base.item, base.fields, base.items)
         return base
 
     result = parse()
@@ -107,6 +139,8 @@ def parse_type(text: str) -> ValueType:
 
 
 def conforms(value: Any, t: ValueType) -> bool:
+    if t.kind == "union":
+        return any(conforms(value, alt) for alt in t.items)
     if value is None:
         return t.nullable or t.kind == "any"
     if t.kind == "any":
@@ -121,6 +155,10 @@ def conforms(value: Any, t: ValueType) -> bool:
         return isinstance(value, (int, float)) and not isinstance(value, bool)
     if t.kind in ("list", "tuple"):
         return isinstance(value, (list, tuple)) and all(conforms(v, t.item) for v in value)  # type: ignore[arg-type]
+    if t.kind == "fixed":
+        return isinstance(value, (list, tuple)) and len(value) == len(t.items) and all(
+            conforms(v, it) for v, it in zip(value, t.items)
+        )
     if t.kind == "record":
         return isinstance(value, dict) and set(value) == {n for n, _ in t.fields} and all(
             conforms(value[n], ft) for n, ft in t.fields
@@ -133,6 +171,8 @@ def convert(value: Any, t: ValueType) -> Any:
     `TypeError` si no es del tipo."""
     if not conforms(value, t):
         raise TypeError(f"{value!r} no es {t}")
+    if t.kind == "union":
+        return convert(value, next(alt for alt in t.items if conforms(value, alt)))
     if value is None or t.kind == "any":
         return value
     if t.kind == "double":
@@ -141,6 +181,8 @@ def convert(value: Any, t: ValueType) -> Any:
         return [convert(v, t.item) for v in value]  # type: ignore[arg-type]
     if t.kind == "tuple":
         return tuple(convert(v, t.item) for v in value)  # type: ignore[arg-type]
+    if t.kind == "fixed":
+        return tuple(convert(v, it) for v, it in zip(value, t.items))
     if t.kind == "record":
         return {n: convert(value[n], ft) for n, ft in t.fields}
     return value

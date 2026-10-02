@@ -161,7 +161,7 @@ rule: {builtin: constant_false}      # lo que decide sin Jev (o con duda)
 state: {builtin: customer_message_with_window}   # nada (null) = no se pregunta
 questions:
   - id: cortesia.solo
-    kind: yes_no
+    kind: noul
     text: "¿El mensaje del cliente es solo cortesía: …?"
     criteria: {"true": "sí, solo agradece o saluda", "false": "no: pregunta, pide algo o responde una pregunta"}
 thresholds: {yes: 0.80}
@@ -172,7 +172,7 @@ decide:                              # en orden; la primera fila que se cumple d
     then: true
   - otherwise: false
 floor: {builtin: jev}                # piso: lo que nunca se quita
-same: bool_eq
+same: {builtin: bool_eq}
 examples:                            # el certificador los corre
   - answers: {cortesia.solo: 0.88}
     expect: true
@@ -191,12 +191,33 @@ examples:                            # el certificador los corre
 | `conf` | `map<string,double>` | confianza de esa opción |
 | `th` | `map<string,double>` | umbrales de la capacidad |
 | `rule` | según `value` | lo que dijo la regla |
+| `inp` | `map<string,dyn>` | los campos de la entrada declarados en el catálogo y los de la vista |
+| `vars` | `map<string,dyn>` | los cálculos intermedios de la capacidad, en orden |
+| `consts` | `map<string,dyn>` | las constantes del catálogo |
+| `opt` | `map<string,map<string,dyn>>` | el valor de cada opción que armó la entrada (F3) |
+
+**Lo que la entrada decide (F3):**
+
+- `options:` en una pregunta choice: un builtin arma las opciones desde la
+  entrada (`{opción: (etiqueta, valor)}`); Jev lee la etiqueta, la tabla lee
+  el valor como `opt['<pregunta>'][<opción>]`. Las opciones fijas de
+  `criteria` (`ambiguo`, `ninguno`) van al final.
+- `when:` en una pregunta: se pregunta solo si la condición se cumple. Lee
+  `inp` y `consts`, nunca respuestas (todavía no hay).
+- `view:` en la capacidad: un builtin deriva campos de la entrada (la
+  ventana de lo que vio el cliente, lo que el texto enumera) que se leen como
+  `inp.campo`.
+- `control:` una variante de otra capacidad (la misma decisión preguntada de
+  otra forma) comparte su interruptor, su fila del panel y su nombre en la
+  traza.
+- Tipos posicionales y uniones: `() | (string, tuple<string>)`.
 
 **Builtins** (código del motor, catalogados en `builtins.yaml` con su firma):
-constructores de estado, generadores de preguntas dinámicas
-(`closed_choice`, `fan_out`), reglas (`is_opt_out_text`, …), pisos (`jev`,
-`rule_or_jev`, …), comparadores (`bool_eq`, `set_eq`, …) y un reductor por
-ítem (`per_item_select`) para las capacidades que deciden sobre una lista.
+reglas (`opt_out_text`, …), constructores de estado, opciones de la entrada
+(`catalog_categories`, …), vistas (`purchase_window`, …), pisos (`jev`,
+`rule_or_jev`, …), comparadores (`bool_eq`, `set_eq`, …) y, desde F4, un
+reductor por ítem (`per_item_select`) para las capacidades que deciden sobre
+una lista.
 El catálogo es el "header" entre motor y paquetes: el certificador lo lee
 sin importar código de plugins (R-DIP), y una prueba del plugin verifica
 que el catálogo coincide con lo registrado en código.
@@ -260,10 +281,13 @@ y marque errores mientras se escribe (`# yaml-language-server: $schema=…`).
 (`per_item_select`): qué selecciona un ítem, qué hacer en la banda de duda,
 qué devuelve y cuándo es duda.
 
-**Fuera de alcance por ahora:** las 5 del egreso (`Preambulo`,
-`Destinatario`, `Rescate`, `Portavelas` —100 % velas—, `Saludo`) y las
-políticas del turno `turno_v1..v3` (≈70 % ya son tablas; un `turno-v4`
-declarativo es posible después con `plan_from_topics`, `coverage_triage`).
+**Las del egreso** (`preambulo`, `destinatario` y sus variantes `destinatario_plantilla`
+y `destinatario_oracion`, `rescate`, `portavelas` —100 % velas—, `saludo`):
+las que hacen UNA pregunta (`destinatario`, `destinatario_plantilla`,
+`saludo`) migran en F3; las que preguntan parte por parte (`preambulo` por
+oración, `destinatario_oracion`, `rescate` por párrafo, `portavelas` por
+oración) tienen la forma C y migran en F4 con `per_item_select`. Las
+políticas del turno `turno_v1..v3` (≈70 % ya son tablas) van en F7.
 
 **Pisos que siguen siendo código** (los pide el paquete por nombre, no los
 escribe): baja, relevo, persona, acuse, selector, enumeracion, cierre,
@@ -304,8 +328,8 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
 |---|---|---|
 | **F1** ✅ | Motor de paquetes: esquema, puerto de expresiones (CEL), catálogo de builtins, certificador + CLI + esquema JSON. Primeras capacidades desde YAML con paridad contra la clase: `baja` (A, piso legal) y `cortesia` (B) | ninguno (paridad) |
 | F2 ✅ | **Resolutor único por nombre** (`capability("baja")`: los lugares dejan de nombrar clases), **paquete activo desde Terraform** (`tenants.<t>.lab.decisions_bundle` → `SALES_DECISIONS_BUNDLE`), tipos de valor del paquete (más allá de bool/string) y las 8 A restantes | ninguno |
-| F3 | Las 9 B con sus builtins de estado y de preguntas (`customer_window`, `closed_choice`, …) + las 5 del egreso (preámbulo, destinatario y sus variantes, rescate, portavelas, saludo) | ninguno |
-| F4 | Las 4 C con `per_item_select` | ninguno |
+| F3 ✅ | Las 9 B con sus builtins de estado, opciones de la entrada, vistas y preguntas condicionales + las del egreso de una pregunta (destinatario, su variante de plantilla y saludo) | ninguno |
+| F4 | Las 4 C con `per_item_select` + las del egreso parte por parte (preámbulo, destinatario por oración, rescate, portavelas) | ninguno |
 | F5 | Paquete de dominio: dimensiones, zonas, vocabulario. Quita las 22 reglas de reemplazo de forge | ninguno en Hubara |
 | F6 | Versión de paquete en el laboratorio (un brazo puede fijar paquete) y en el despliegue gradual | — |
 | F7 | El turno dentro del paquete: la ráfaga ① (`rafaga-v5` → `turn.yaml`) y la verificación ③ (`coverage_decision`), con las tablas de la política como filas certificadas | ninguno |
@@ -341,6 +365,25 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   del pedido como piso obligatorio), retoma, cantidad, zona_de_envio,
   selector, afirmacion y relevo (piso obligatorio). Paquete: 10 capacidades.
 
+**F3 hecho (2026-10-01).**
+- Motor: `options:` (opciones de un choice armadas desde la entrada, leídas
+  como `opt[…]`), `when:` (preguntas condicionales sobre `inp`), `view:`
+  (campos derivados), `control:` (variantes que comparten interruptor),
+  tuplas posicionales y uniones de tipos. El certificador las cubre (DB003,
+  DB004, DB005, DB006, DB010).
+- Migradas con paridad en grilla completa (y el orden de las opciones byte a
+  byte): compra (pregunta condicional y la ventana como vista), acuse (piso:
+  sin signo de pregunta), cupón, categoría, familia de color (piso: el
+  detalle de la regla si coincide), ítem del pedido, producto nombrado
+  (piso: la regla más Jev), enumeración (piso: sin combinaciones),
+  destinatario, destinatario de plantilla (`control: destinatario`) y saludo.
+  Paquete: 21 capacidades.
+- Los builtins que arrastran el ingest, `use_cases/` o el catálogo viven en
+  `bundled_ingest.py`, `bundled_catalog.py` y `bundled_egress.py` y se
+  cargan por nombre: las tools no importan Temporal.
+- Quedan como clases: las 4 C (datos, fuera_de_catalogo, persona, monto) y
+  las 4 del egreso parte por parte → F4.
+
 **La paridad es la compuerta de cada fase:** para cada capacidad migrada,
 (a) el estado y las preguntas son byte a byte iguales a los de la clase en
 entradas representativas, y (b) la decisión coincide sobre una grilla de
@@ -357,15 +400,15 @@ tocarlos.
 
 | Lugar | Cómo le pregunta a Jev | ¿Lo cubre el paquete? |
 |---|---|---|
-| Ingest (compra, retoma, baja, cortesía, acuse, cupón, fuera de catálogo) | `decide()` | sí (baja y cortesía desde F1; las demás al migrarlas) |
-| Antes del turno: cantidad (`build_prompt_stage`) | `decide()` | sí, al migrarla |
+| Ingest (compra, retoma, baja, cortesía, acuse, cupón, fuera de catálogo) | `decide()` | sí (todas desde F3, menos fuera de catálogo → F4) |
+| Antes del turno: cantidad (`build_prompt_stage`) | `decide()` | sí (F2) |
 | Antes del turno: la ráfaga ① (`rafaga-v5` + `turno_v3`) | directo al puerto (`engine.perceive`) | **no → F7** |
-| Dentro de una tool (categoría, color, ítem del pedido, zona de envío) | `decide()` vía `guards` | sí, al migrarlas |
-| Egreso: preámbulo, destinatario, rescate, portavelas, saludo + guardas (persona, monto, enumeración, selector, datos, relevo) | `decide()` | sí, al migrarlas (F3–F4) |
+| Dentro de una tool (categoría, color, ítem del pedido, zona de envío) | `decide()` vía `guards` | sí (F2–F3) |
+| Egreso: preámbulo, destinatario, rescate, portavelas, saludo + guardas (persona, monto, enumeración, selector, datos, relevo) | `decide()` | destinatario, saludo, enumeración, selector y relevo sí (F2–F3); el resto en F4 |
 | Antes de enviar: la verificación ③ | directo al puerto (`verify_questions` + `coverage_decision`) | **no → F7** |
-| Después de enviar: afirmación (sombra) | `decide()` | sí, al migrarla |
-| Remarketing (contactar, producto nombrado, fuera de catálogo) | `decide()` vía el enchufe compartido | sí, al migrarlas |
-| Abandono (cierre) | `decide()` | sí, al migrarla |
+| Después de enviar: afirmación (sombra) | `decide()` | sí (F2) |
+| Remarketing (contactar, producto nombrado, fuera de catálogo) | `decide()` vía el enchufe compartido | contactar y producto nombrado sí (F2–F3); fuera de catálogo en F4 |
+| Abandono (cierre) | `decide()` | sí (F2) |
 | Order Sentinel | directo al puerto, preguntas y lógica propias | **no → F8** |
 
 **Dos huecos que cierra F2:**

@@ -19,10 +19,13 @@ src/plugins/chats/agent/sales/decisions/bundles/
   ventas/capabilities/*.yaml una capacidad por archivo
 ```
 
-Migradas hoy (F1–F2): afirmacion, baja, cantidad, cierre, contactar,
-cortesia, relevo, retoma, selector, zona_de_envio. Las demás siguen siendo
-clases en `decisions/capabilities/` hasta su fase (F3–F4, clasificación A/B/C
-en el diseño §7).
+Migradas hoy (F1–F3, 21): acuse, afirmacion, baja, cantidad, categoria,
+cierre, compra, contactar, cortesia, cupon, destinatario,
+destinatario_plantilla, enumeracion, familia_de_color, item_del_pedido,
+producto_nombrado, relevo, retoma, saludo, selector, zona_de_envio. Siguen
+siendo clases hasta F4 (`per_item_select`): datos, fuera_de_catalogo,
+persona, monto y las del egreso parte por parte (preambulo,
+destinatario_oracion, rescate, portavelas).
 
 **Nunca nombres una clase de capacidad ni su instancia global** (`Baja()`,
 `PERSONA`): pedila por nombre al resolutor, `capability("baja")` (desde una
@@ -42,9 +45,10 @@ fuera del resolutor.
    `decisions/bundles/` y te devuelve 🟢/🔴 con cada error.
 4. **Si migrás una clase:** la prueba de paridad
    (`tests/plugins/chats/sales/decisions/test_decisions_bundle_parity.py`)
-   compara regla, estado y preguntas byte a byte, la decisión en los bordes de
-   cada umbral, el piso y el veredicto completo. Agregá el par
-   `(nombre, Clase(), pregunta)` a `PAIRS` ANTES de cambiar el consumidor.
+   compara regla, estado y preguntas byte a byte (también el orden de las
+   opciones), la decisión en toda la grilla de respuestas, el piso y el
+   veredicto completo. Agregá `nombre: (Clase(), entradas, grilla)` a `CASES`
+   ANTES de escribir el YAML (rojo: `bundle '' == 'ventas@1'`).
 
 ## Reglas duras (lo que el certificador te frena)
 
@@ -60,6 +64,9 @@ fuera del resolutor.
 | Ejemplo que no da lo esperado | DB010 |
 | `p[...]` sobre una pregunta choice (o `choice[...]` sobre una noul) | DB011 |
 | Cambiar un piso obligatorio (la baja legal) | DB012 |
+| `opt['q']` de una pregunta sin `options:`; una pregunta condicional que lee `p`/`choice` | DB005 |
+| `options:` con un builtin que no es de clase `options`; una `view:` de otra entrada | DB004 |
+| `control:` de una capacidad que no está en el paquete | DB003 |
 
 ## Cómo escribir una condición (CEL)
 
@@ -73,10 +80,23 @@ fuera del resolutor.
   `doubt`. Leer una que no llegó falla al evaluarse y la tabla da duda.
 - Llaves siempre literales entre comillas simples: `p['baja.pide']`.
 - `then: doubt` = decide la regla. La primera fila que se cumple gana.
+- **Opciones que salen de la entrada** (categorías, colores, ítems, títulos):
+  `options: {builtin: catalog_categories}` en la pregunta + `criteria` solo
+  con las fijas (`ambiguo`, `ninguno`). El builtin devuelve
+  `{opción: (etiqueta, valor)}`; la tabla lee el valor:
+  `when: "choice['q'] in opt['q']"` → `then: {expr: "opt['q'][choice['q']]"}`.
+- **Pregunta que solo a veces se hace:** `when: "inp.context && inp.asked_known == null"`
+  (lee `inp` y `consts`). Los campos derivados (la ventana, lo que el texto
+  enumera) los da una `view:`.
+- **Variante** (la misma decisión preguntada de otra forma, mismo
+  interruptor): `control: <capacidad>`.
 - Si necesitás iterar, sumar o leer el catálogo: eso es un **builtin** nuevo
-  (función en `bundled.py: BUILTINS` + entrada en `builtins.yaml` + prueba),
-  no una condición larga. `test_the_catalog_and_the_code_declare_the_same_builtins`
-  exige que catálogo y código coincidan.
+  (función + entrada en `builtins.yaml` + prueba), no una condición larga.
+  Si arrastra `use_cases/`, el ingest o el catálogo, va en
+  `bundled_ingest.py` / `bundled_catalog.py` / `bundled_egress.py` y se
+  registra en `LAZY_BUILTINS` (las tools no pueden importar Temporal).
+  `test_the_catalog_and_the_code_declare_the_same_builtins` exige que
+  catálogo y código coincidan.
 
 ## Lo que NO se hace
 

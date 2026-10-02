@@ -3,9 +3,14 @@
 El paquete `bundles/ventas/` (YAML certificado) trae las preguntas,
 los umbrales y la tabla de decisión de cada capacidad; este módulo pone lo
 que sigue siendo código —los builtins: reglas, constructores de estado,
-pisos y comparadores— y arma con los dos un objeto con la forma de
-`Capability` (`rule`/`ask`/`decide`/`floor`/`same`), que corre igual que las
-clases por el mismo `decide()` del motor.
+opciones de la entrada, vistas, pisos y comparadores— y arma con los dos un
+objeto con la forma de `Capability` (`rule`/`ask`/`decide`/`floor`/`same`),
+que corre igual que las clases por el mismo `decide()` del motor.
+
+Los builtins que arrastran el ingest, `use_cases/` o el catálogo viven en
+`bundled_ingest.py`, `bundled_catalog.py` y `bundled_egress.py` y se cargan
+por nombre (`LAZY_BUILTINS`) solo cuando una capacidad los pide: las tools
+llegan acá por `guards` y no pueden importar Temporal.
 
 Los builtins que existen están declarados en `bundles/builtins.yaml` (lo
 único que lee el certificador); `test_decisions_bundle_parity.py` verifica
@@ -185,6 +190,22 @@ def _jev_and_button_ids(inp: Any, rule: Any, jev: Any) -> tuple[str, ...]:
     return tuple(dict.fromkeys([*jev, *inp.by_id]))
 
 
+def _jev_without_question_mark(inp: Any, rule: Any, jev: Any) -> bool:
+    """Un mensaje con signo de pregunta nunca se absorbe (acuse)."""
+    text = str(getattr(inp, "text", None) or "")
+    return bool(jev) and "?" not in text and "¿" not in text
+
+
+def _rule_if_same_key(inp: Any, rule: Any, jev: Any, *, key: str) -> Any:
+    """Si Jev coincide con la regla en `key`, queda el detalle de la regla."""
+    return rule if (rule or {}).get(key) == (jev or {}).get(key) else jev
+
+
+def _rule_then_jev(inp: Any, rule: Any, jev: Any) -> tuple[Any, ...]:
+    """Lo de la regla nunca se quita; Jev solo suma (sin repetir, en orden)."""
+    return tuple(dict.fromkeys([*rule, *jev]))
+
+
 # ── Comparadores: si dos decisiones coinciden ──────────────────────────────
 
 
@@ -211,6 +232,18 @@ def _deferral_and_courtesy_eq(a: Any, b: Any) -> bool:
     return kind(a) == kind(b) and bool((a or {}).get("courtesy")) == bool((b or {}).get("courtesy"))
 
 
+def _first_eq(a: Any, b: Any) -> bool:
+    return (a or [None])[0] == (b or [None])[0]
+
+
+def _set_eq(a: Any, b: Any) -> bool:
+    return set(a or ()) == set(b or ())
+
+
+def _tuple_eq(a: Any, b: Any) -> bool:
+    return tuple(a or ()) == tuple(b or ())
+
+
 BUILTINS: dict[str, dict[str, Callable[..., Any]]] = {
     "rule": {
         "constant_false": _constant_false,
@@ -235,6 +268,9 @@ BUILTINS: dict[str, dict[str, Callable[..., Any]]] = {
         "rule_or_jev": _rule_or_jev,
         "closing_invariants": _closing_invariants,
         "jev_and_button_ids": _jev_and_button_ids,
+        "jev_without_question_mark": _jev_without_question_mark,
+        "rule_if_same_key": _rule_if_same_key,
+        "rule_then_jev": _rule_then_jev,
     },
     "same": {
         "bool_eq": _bool_eq,
@@ -242,16 +278,56 @@ BUILTINS: dict[str, dict[str, Callable[..., Any]]] = {
         "truthy_eq": _truthy_eq,
         "key_eq": _key_eq,
         "deferral_and_courtesy_eq": _deferral_and_courtesy_eq,
+        "first_eq": _first_eq,
+        "set_eq": _set_eq,
+        "tuple_eq": _tuple_eq,
     },
 }
 
 
 #: Builtins que se cargan solo cuando una capacidad los pide (módulo aparte:
 #: arrastran dependencias que las tools no pueden importar).
+_INGEST = "src.plugins.chats.agent.sales.decisions.bundled_ingest"
+_CATALOG = "src.plugins.chats.agent.sales.decisions.bundled_catalog"
+_EGRESS = "src.plugins.chats.agent.sales.decisions.bundled_egress"
 LAZY_BUILTINS: dict[str, dict[str, str]] = {
     "rule": {
-        "opt_out_text": "src.plugins.chats.agent.sales.decisions.bundled_ingest",
-        "reengagement": "src.plugins.chats.agent.sales.decisions.bundled_ingest",
+        "opt_out_text": _INGEST,
+        "reengagement": _INGEST,
+        "purchase_signal": _INGEST,
+        "closing_ack": _INGEST,
+        "coupon_in_play": _INGEST,
+        "category_of_query": _CATALOG,
+        "color_family": _CATALOG,
+        "order_item_for_values": _CATALOG,
+        "named_titles": _CATALOG,
+        "enumerated_variants": _CATALOG,
+        "admin_leak": _EGRESS,
+        "first_contact_greeting": _EGRESS,
+    },
+    "state": {
+        "purchase_context": _INGEST,
+        "message_after_close": _INGEST,
+        "coupon_talk": _INGEST,
+        "category_request": _CATALOG,
+        "color_request": _CATALOG,
+        "order_item_data": _CATALOG,
+        "chat_and_catalog": _CATALOG,
+        "text_with_lists": _CATALOG,
+        "greeting_texts": _EGRESS,
+    },
+    "view": {
+        "purchase_window": _INGEST,
+        "enumeration_found": _CATALOG,
+    },
+    "options": {
+        "catalog_categories": _CATALOG,
+        "product_colors": _CATALOG,
+        "accepting_items": _CATALOG,
+        "catalog_titles": _CATALOG,
+    },
+    "floor": {
+        "no_enumeration_with_combinations": _CATALOG,
     },
 }
 
@@ -281,16 +357,30 @@ class BundledCapability:
         spec = table.spec
         self._table = table
         self._spec = spec
-        self.name = spec.capability
+        #: El interruptor (proveedor, panel, traza): el de la capacidad, o el
+        #: de la que esta variante pregunta de otra forma (`control:`).
+        self.name = table.control
         self.thresholds = dict(spec.thresholds)
         #: `id@versión` del paquete con el que se decide.
         self.bundle = table.bundle
-        self._questions = [
-            TypedQuestion(id=q.id, kind=q.kind, text=q.text, criteria=dict(q.criteria)) for q in spec.questions
-        ]
 
-    def _call(self, kind: str, ref: Any, *args: Any) -> Any:
-        return builtin(kind, ref.builtin)(*args, **ref.params)
+    def _call(self, kind: str, ref: Any, *args: Any, **extra: Any) -> Any:
+        return builtin(kind, ref.builtin)(*args, **ref.params, **extra)
+
+    def _inp(self, inp: Any) -> dict[str, Any]:
+        """Lo que las condiciones leen como `inp`: los campos declarados y los
+        que deriva la vista."""
+        out = {name: getattr(inp, name, None) for name in self._table.input_fields}
+        if self._spec.view is not None:
+            out.update(self._call("view", self._spec.view, inp))
+        return out
+
+    def _options(self, inp: Any) -> dict[str, dict[str, tuple[str, Any]]]:
+        """`{pregunta: {opción: (etiqueta, valor)}}` de las preguntas con opciones de la entrada."""
+        return {
+            q.id: self._call("options", q.options, inp, reserved=tuple(q.criteria))
+            for q in self._spec.questions if q.options is not None
+        }
 
     def rule(self, inp: Any) -> Any:
         return self._call("rule", self._spec.rule, inp)
@@ -301,14 +391,25 @@ class BundledCapability:
         state = self._call("state", self._spec.state, inp)
         if state is None:
             return None
-        return state, list(self._questions)
+        options = self._options(inp)
+        questions = [
+            TypedQuestion(
+                id=q.id, kind=q.kind, text=q.text,
+                # Las de la entrada primero; las fijas (ambiguo, ninguno) al final.
+                criteria={**{key: label for key, (label, _value) in options.get(q.id, {}).items()}, **q.criteria},
+            )
+            for q in self._table.questions_for(self._inp(inp))
+        ]
+        return state, questions
 
     def decide(self, inp: Any, result: Any, rule: Any, thresholds: Any) -> Any:
+        options = {qid: {key: value for key, (_label, value) in opts.items()} for qid, opts in self._options(inp).items()}
         value = self._table.decide(
             answers=answers_from_result(self._spec.questions, result),
             thresholds=dict(thresholds or {}),
             rule=rule,
-            inp={name: getattr(inp, name, None) for name in self._table.input_fields},
+            inp=self._inp(inp),
+            options=options,
         )
         return None if value is DOUBT else value
 

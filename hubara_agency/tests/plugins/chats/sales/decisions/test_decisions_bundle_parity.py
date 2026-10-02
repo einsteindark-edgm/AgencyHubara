@@ -12,32 +12,59 @@ Mientras esto pase, la clase es solo el oráculo de la prueba.
 from __future__ import annotations
 
 import itertools
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from src.platform.catalog.color_families import parse_color_families
 from src.platform.perception.adapters.fake import FakePerceptionAdapter
 from src.plugins.chats.agent.sales.decisions import registry
 from src.plugins.chats.agent.sales.decisions.bundled import BUNDLES_DIR, CATALOG_PATH, builtin_names
 from src.plugins.chats.agent.sales.decisions.capabilities import decide
 from src.plugins.chats.agent.sales.decisions.capabilities.agente import Abandono, CierrePorAbandono, Contactar, Contacto
-from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Baja, Cortesia, Retoma
-from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import Cantidad, RespuestaDeCantidad
-from src.plugins.chats.agent.sales.decisions.capabilities.mapeos import CiudadDeEnvio, ZonaDeEnvio
+from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Acuse, Baja, Compra, Cortesia, Retoma
+from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import (
+    Cantidad,
+    Cupon,
+    CuponEnJuego,
+    RespuestaDeCantidad,
+)
+from src.plugins.chats.agent.sales.decisions.capabilities.mapeos import (
+    Categoria,
+    CategoriaPedida,
+    CiudadDeEnvio,
+    ColorPedido,
+    DatoDelItem,
+    FamiliaDeColor,
+    ItemDelPedido,
+    ProductoNombrado,
+    ProductosDeLaCharla,
+    ZonaDeEnvio,
+)
 from src.plugins.chats.agent.sales.decisions.capabilities.texto import (
     Afirmacion,
     AfirmacionSinConsultar,
     Botones,
+    Enumeracion,
     Relevo,
     Selector,
     TextoAlCliente,
+    TextoCatalogo,
+)
+from src.plugins.chats.agent.sales.decisions.egress import (
+    Destinatario,
+    DestinatarioDePlantilla,
+    GreetingCheck,
+    Saludo,
+    TextCheck,
 )
 from src.plugins.chats.agent.sales.decisions.readings import Inbound
 from src.sdk import connectorkit
-from src.sdk.connectorkit import PerceptionResult, TypedAnswer
+from src.sdk.catalogkit import CatalogCategoryDTO
+from src.sdk.connectorkit import PerceptionResult, PromotionDTO, TypedAnswer
 from src.sdk.decisionkit import Catalog, check_bundle
 
 SID = "wa_573001234567"
@@ -73,6 +100,60 @@ INBOUND = [
     _inbound("Foto de una vela rosada", SAW, synthetic=True),
 ]
 TRANSCRIPT = "cliente: hola\ntienda: ¡Hola! ¿En qué te ayudo?\ncliente: ya lo recibí, gracias"
+CARD = {"role": "assistant", "kind": "ui_component", "component_kind": "order_confirmation",
+        "content": "Tu pedido: Cubo Love x1. ¿Confirmas?", "timestamp": "2026-09-29T21:38:00+00:00"}
+SHIPPING_CARD = {**CARD, "component_kind": "shipping_flow", "content": "Datos de envío"}
+COMPRA_INBOUND = [
+    *INBOUND,
+    _inbound("Sí, confirmo", [*SAW, CARD]),
+    _inbound("dale, mañana te pago", [*SAW, CARD]),
+    _inbound("sí", [*SAW, SHIPPING_CARD]),
+    replace(_inbound("Confirmar", SAW), interactive={"type": "button_reply", "id": "confirm_order", "title": "Confirmar"}),
+    replace(_inbound(None, SAW), order={"product_items": [{"product_retailer_id": "cubo-love", "quantity": 1}]}),
+    replace(_inbound("sí, ese", SAW), metadata={"episodes": [{"episode_id": "ep_1", "closed_at_ms": None,
+                                                             "order_draft": {"slots": {"producto": "Cubo Love"}}}]},
+            stage="etapa_cierre"),
+]
+
+
+def _promo(**kw: Any) -> PromotionDTO:
+    base = dict(
+        id="promo_amor", code="AMOR2026", discount_type="percentage", value=10, currency_code=None,
+        target_type="items", allocation="across", max_quantity=None, product_ids=("prod_cubo",), variant_ids=(),
+        collection_ids=(), min_subtotal_cop=None, is_automatic=False, status="active", starts_at_ms=None,
+        ends_at_ms=None, budget_type=None, budget_limit=None, budget_used=None, description="Amor y amistad",
+    )
+    return PromotionDTO(**{**base, **kw})
+
+
+def _coupon_md(**promo: Any) -> dict[str, Any]:
+    return {"episodes": [{
+        "episode_id": "ep_1", "closed_at_ms": None,
+        "applied_coupon": {"code": "AMOR2026", "promotion": asdict(_promo(**promo)), "applied_at_ms": 1,
+                           "eligible_products": [{"handle": "cubo-love", "title": "Cubo Love"}]},
+    }]}
+
+
+CATEGORIES = (
+    CatalogCategoryDTO(slug="velas-aromaticas", label="Velas Aromáticas", product_count=1),
+    CatalogCategoryDTO(slug="velas-religiosas", label="Velas Religiosas", product_count=2),
+    CatalogCategoryDTO(slug="ninguno", label="Ninguno", product_count=1),  # choca con una opción reservada
+)
+FAMILIES = parse_color_families({
+    "version": 1,
+    "modifiers": ["claro", "clarito"],
+    "families": {
+        "rojo": {"label": "Rojo", "shades": ["rojo", "vinotinto", "vino"]},
+        "azul": {"label": "Azul", "shades": ["azul", "celeste", "marino"]},
+        "amarillo": {"label": "Amarillo", "shades": ["amarillo", "dorado", "oro"]},
+    },
+})
+COLORS = ("Rojo", "Azul", "Amarillo", "Dorado", "Azul marino")
+ITEMS = ("Duo Zodiacal", "Velón Amor Eterno", "Cubo Love")
+PARA_EL_VELON = [{"role": "assistant", "content": "¿Qué aroma quieres?"},
+                 {"role": "user", "content": "La lavanda es para el velón"}]
+AROMAS = ("Lavanda", "Vainilla", "Canela", "Limoncillo", "Caballero de la noche")
+COLORES = ("Rojo", "Blanco", "Negro", "Dorado")
 
 
 def _single(qid: str) -> list[list[TypedAnswer]]:
@@ -99,6 +180,8 @@ def _mix(*grids: list[list[TypedAnswer]]) -> list[list[TypedAnswer]]:
 
 
 _QUANTITY = [str(n) for n in range(1, 21)] + ["21", "otra", "ninguna"]
+_COMPRA = ["confirma", "aplaza", "rechaza", "pregunta", "da_datos", "elige", "se_despide", "otro"]
+_WHAT_IS_IT = ["mensaje_al_cliente", "razonamiento", "reporte_interno", "acuse_al_sistema", "deliberacion", "otra"]
 CASES: dict[str, tuple[Any, list[Any], list[list[TypedAnswer]]]] = {
     "baja": (Baja(), INBOUND, _single("baja.pide")),
     "cortesia": (Cortesia(), INBOUND, _single("cortesia.solo")),
@@ -149,6 +232,80 @@ CASES: dict[str, tuple[Any, list[Any], list[list[TypedAnswer]]]] = {
          TextoAlCliente("   ")],
         _single("relevo.promete"),
     ),
+    # ── F3: las B ──
+    "compra": (
+        Compra(), COMPRA_INBOUND,
+        _mix(_choice("compra.que_hace", _COMPRA, probs=(0.69, 0.7, 0.84, 0.85, 0.9)),
+             [[], *_single("compra.pregunta_compra")[1:]][::2] + [[TypedAnswer(id="compra.pregunta_compra", kind="noul", p=0.2)],
+                                                                 [TypedAnswer(id="compra.pregunta_compra", kind="noul", p=0.21)]]),
+    ),
+    "acuse": (Acuse(), INBOUND, _single("acuse.solo_cortesia")),
+    "cupon": (
+        Cupon(),
+        [CuponEnJuego(_coupon_md(), "Te paso el código postal: 110111"),
+         CuponEnJuego(_coupon_md(), "¿Todavía aplica el beneficio del mensaje?", SAW),
+         CuponEnJuego(_coupon_md(), "   "), CuponEnJuego(_coupon_md(target_type="shipping_methods"), "¿y el cupón?"),
+         CuponEnJuego({}, "¿y el descuento?")],
+        _single("cupon.habla"),
+    ),
+    "categoria": (
+        Categoria(),
+        [CategoriaPedida("velas de santos", CATEGORIES), CategoriaPedida("Velas Aromáticas", CATEGORIES),
+         CategoriaPedida("estampas religiosas", CATEGORIES[:2]), CategoriaPedida("  ", CATEGORIES),
+         CategoriaPedida("religiosas", ())],
+        _choice("categoria.cual", ["velas_aromaticas", "velas_religiosas", "ninguno_2", "ambiguo", "ninguno", "otra"]),
+    ),
+    "familia_de_color": (
+        FamiliaDeColor(),
+        [ColorPedido("bordó", COLORS, FAMILIES, "Cubo Love"), ColorPedido("oro", COLORS, FAMILIES),
+         ColorPedido("rojo", COLORS, FAMILIES, "Cubo Love"), ColorPedido("  ", COLORS, FAMILIES),
+         ColorPedido("azul", (), FAMILIES)],
+        _choice("color.cual", ["rojo", "azul", "amarillo", "dorado", "azul_marino", "ambiguo", "ninguno", "otra"]),
+    ),
+    "item_del_pedido": (
+        ItemDelPedido(),
+        [DatoDelItem({"aroma": "Lavanda"}, ITEMS, 0, (True, True, False), PARA_EL_VELON),
+         DatoDelItem({"aroma": "Lavanda", "color": "Rojo"}, ITEMS, 2, (True, None, True)),
+         DatoDelItem({"aroma": "Lavanda"}, ITEMS, 0, (False, True, False)),
+         DatoDelItem({"aroma": "Lavanda"}, ITEMS, 1, (True, True, True), PARA_EL_VELON)],
+        _choice("item.cual", ["item_1", "item_2", "item_3", "item_4", "ambiguo", "ninguno"]),
+    ),
+    "producto_nombrado": (
+        ProductoNombrado(),
+        [ProductosDeLaCharla("el Cubo Love y la de los corazoncitos", ("Cubo Love", "Cubo de corazón", "Velón Koala"),
+                             ("Cubo Love",)),
+         ProductosDeLaCharla("hola", ("Cubo Love",)), ProductosDeLaCharla("  ", ("Cubo Love",)),
+         ProductosDeLaCharla("la de koala", ())],
+        _choice("producto.nombrado", ["cubo_love", "cubo_de_corazon", "velon_koala", "ambiguo", "ninguno", "otra"]),
+    ),
+    "enumeracion": (
+        Enumeracion(),
+        [TextoCatalogo("Tenemos estos aromas: Lavanda, Vainilla, Canela y Limoncillo. ¿Cuál te gusta?", AROMAS, COLORES),
+         TextoCatalogo("Colores: Rojo, Blanco, Negro y Dorado", AROMAS, COLORES),
+         TextoCatalogo("Rojo · Lavanda $20.000 y Blanco · Vainilla $22.000, también Negro · Canela y Dorado · "
+                       "Limoncillo", AROMAS, COLORES),
+         TextoCatalogo("Lavanda o Vainilla", AROMAS, COLORES)],
+        _choice("enumeracion.que", ["aromas", "colores", "combinaciones_cupon", "productos", "nada"]),
+    ),
+    # ── F3: egreso (una pregunta) ──
+    "destinatario": (
+        Destinatario(),
+        [TextCheck("Usa el código VELAS_10 al pagar"), TextCheck("ESTADO: etiqueta INTERESADO asignada", extended=False),
+         TextCheck("  ")],
+        _choice("egreso.destinatario", _WHAT_IS_IT),
+    ),
+    "destinatario_plantilla": (
+        DestinatarioDePlantilla(),
+        [TextCheck("Te esperamos con tu vela favorita"), TextCheck("ESTADO: etiqueta INTERESADO asignada"), TextCheck("")],
+        _choice("egreso.destinatario", _WHAT_IS_IT),
+    ),
+    "saludo": (
+        Saludo(),
+        [GreetingCheck(True, (), ("¡Hola! Bienvenida a la tienda",)), GreetingCheck(True, ("send_product_card",), ()),
+         GreetingCheck(False, (), ("Hola",)), GreetingCheck(True, (), ("Claro, te cuento",) * 9),
+         GreetingCheck(True, (), ("  ", "Te cuento los precios"))],
+        _single("egreso.saludo"),
+    ),
 }
 NAMES = sorted(CASES)
 
@@ -180,6 +337,10 @@ def test_rule_state_and_questions_are_byte_for_byte_the_same(name: str) -> None:
     for inp in inputs:
         assert new.rule(inp) == old.rule(inp), inp
         assert new.ask(inp) == old.ask(inp), inp
+        # Byte a byte: también el orden de las opciones (Jev las lee en ese orden).
+        got, want = new.ask(inp), old.ask(inp)
+        if want is not None:
+            assert [list(q.criteria.items()) for q in got[1]] == [list(q.criteria.items()) for q in want[1]], inp
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -236,6 +397,7 @@ def test_the_catalog_and_the_code_declare_the_same_builtins_and_constants() -> N
     constante vale lo mismo que en el código."""
     import yaml
 
+    from src.plugins.chats.agent.sales.variant_enumeration import MIN_ENUMERATED
     from src.sdk.messagingkit import DEFERRAL_KIND_OPEN, OPEN_DEFERRAL_MS
 
     catalog = Catalog.model_validate(yaml.safe_load(Path(CATALOG_PATH).read_text(encoding="utf-8")))
@@ -246,6 +408,7 @@ def test_the_catalog_and_the_code_declare_the_same_builtins_and_constants() -> N
     assert {n: c.value for n, c in catalog.constants.items()} == {
         "DEFERRAL_KIND_OPEN": DEFERRAL_KIND_OPEN,
         "OPEN_DEFERRAL_MS": OPEN_DEFERRAL_MS,
+        "MIN_ENUMERATED": MIN_ENUMERATED,
     }
 
 
@@ -258,8 +421,7 @@ def test_the_cli_certifies_the_repo_bundles(capsys) -> None:
 
 @pytest.mark.asyncio
 async def test_the_ingest_reads_from_the_bundle(tmp_path: Path, monkeypatch) -> None:
-    """La traza de cada lectura dice con qué paquete se decidió (las que
-    todavía son clases, con nada)."""
+    """La traza de cada lectura dice con qué paquete se decidió."""
     from src.plugins.chats.agent.sales.decisions.readings import EngineReadings
 
     fake = FakePerceptionAdapter({"cortesia.solo": TypedAnswer(id="cortesia.solo", kind="noul", p=0.9)})
@@ -269,5 +431,5 @@ async def test_the_ingest_reads_from_the_bundle(tmp_path: Path, monkeypatch) -> 
     readings = await EngineReadings(tmp_path).read(INBOUND[0])
 
     bundles = {v["capability"]: v["bundle"] for v in readings.verdicts}
-    assert bundles == {"compra": "", "retoma": "ventas@1", "baja": "ventas@1", "cortesia": "ventas@1"}
+    assert bundles == {"compra": "ventas@1", "retoma": "ventas@1", "baja": "ventas@1", "cortesia": "ventas@1"}
     assert readings.courtesy_only is True

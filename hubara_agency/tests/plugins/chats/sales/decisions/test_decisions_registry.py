@@ -31,17 +31,25 @@ def _fresh(monkeypatch):
 
 
 def test_a_migrated_capability_comes_from_the_bundle_and_the_rest_from_their_class() -> None:
-    from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Compra
+    from src.plugins.chats.agent.sales.decisions.capabilities.datos import DATOS
 
     assert capability("baja").bundle == "ventas@1"
-    assert capability("cortesia").bundle == "ventas@1"
-    assert isinstance(capability("compra"), Compra)
-    assert getattr(capability("compra"), "bundle", "") == ""
+    assert capability("compra").bundle == "ventas@1"
+    assert capability("datos") is DATOS  # C: sigue siendo clase hasta F4
+    assert getattr(capability("datos"), "bundle", "") == ""
+
+
+def test_a_variant_answers_to_the_control_it_shares() -> None:
+    """`destinatario_plantilla` es la misma decisión preguntada de otra forma:
+    mismo interruptor en el panel y misma traza que `destinatario`."""
+    assert capability("destinatario_plantilla").name == "destinatario"
+    assert capability("destinatario_plantilla").bundle == "ventas@1"
+    assert capability("destinatario_plantilla") is not capability("destinatario")
 
 
 def test_the_same_name_is_the_same_object() -> None:
     assert capability("baja") is capability("baja")
-    assert capability("compra") is capability("compra")
+    assert capability("datos") is capability("datos")
 
 
 def test_an_unknown_capability_says_which_exist() -> None:

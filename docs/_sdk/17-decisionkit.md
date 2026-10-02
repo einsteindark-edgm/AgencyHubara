@@ -33,25 +33,36 @@ bundles/
    se puede cambiar de implementación sin tocar los paquetes.
 3. **Certificador:** referencias cruzadas que CEL no ve (llaves de mapa,
    builtins del catálogo, pisos obligatorios) y los ejemplos del paquete.
-   Códigos DB001–DB012 (lista en `src/platform/decisions/checker.py`).
+   Códigos DB001–DB013 (lista en `src/platform/decisions/checker.py`).
 4. **Tabla:** la primera fila cuya condición se cumple decide; `doubt` =
    decide la regla. Una condición que falla al evaluarse también es duda
    (leer una llave que no está devuelve un *valor de error* en CEL; el motor
    lo trata como duda, nunca como false: la fila siguiente no decide).
 5. **Tipos de valor** (`value:`): `bool`, `string`, `int`, `double`, `any`,
-   `list<T>`, `tuple<T>` (tupla de Python), registros `{campo: tipo}` y `?`
-   para null — p. ej. `{cantidad: int?}` o
-   `{deferral: {kind: string, until_ms: int}?, courtesy: bool}`. Un `then`
+   `list<T>`, `tuple<T>` (tupla de Python), tuplas posicionales
+   `(string, tuple<string>)`, registros `{campo: tipo}`, `?` para null y
+   uniones `A | B` — p. ej. `{cantidad: int?}`,
+   `{deferral: {kind: string, until_ms: int}?, courtesy: bool}` o
+   `() | (string, tuple<string>)`. Un `then`
    literal tiene que ser del tipo (DB007); `then: {expr: "<CEL>"}` lo calcula
    (`{'cantidad': int(choice['cantidad.dio'])}`) y se convierte al tipo.
 6. **Variables legibles en CEL:** `p`, `choice`, `conf`, `th`, `rule`,
-   `inp.campo` (los campos de la entrada declarados en el catálogo),
-   `vars.nombre` (cálculos intermedios de la capacidad, en orden) y
-   `consts.NOMBRE` (constantes del catálogo, con su valor). `let` y `const`
-   son palabras reservadas de CEL: por eso `vars` y `consts`.
-7. **Builtins:** lo que sigue siendo código (reglas de texto, constructores
-   de estado, pisos legales, comparadores) lo pone el plugin, registrado en
-   código y declarado en `builtins.yaml`; una prueba exige que coincidan.
+   `inp.campo` (los campos de la entrada declarados en el catálogo y los de
+   la vista), `vars.nombre` (cálculos intermedios de la capacidad, en
+   orden), `consts.NOMBRE` (constantes del catálogo, con su valor) y
+   `opt['<pregunta>'][<opción>]` (el valor de una opción armada desde la
+   entrada). `let` y `const` son palabras reservadas de CEL: por eso `vars`
+   y `consts`.
+7. **Lo que depende de la entrada:** `options:` en una pregunta choice (un
+   builtin arma las opciones: etiqueta para Jev, valor para la tabla; las
+   fijas de `criteria`, como `ambiguo`/`ninguno`, van al final), `when:` en
+   una pregunta (se hace solo si la condición sobre `inp`/`consts` se
+   cumple), `view:` en la capacidad (campos derivados de la entrada) y
+   `control:` (una variante comparte el interruptor de otra capacidad).
+8. **Builtins:** lo que sigue siendo código (reglas de texto, constructores
+   de estado, opciones, vistas, pisos legales, comparadores) lo pone el
+   plugin, registrado en código y declarado en `builtins.yaml`; una prueba
+   exige que coincidan.
 
 ## Cómo se usa
 
@@ -75,7 +86,9 @@ from src.sdk.decisionkit import DOUBT, answers_from_result, load_bundle
 
 bundle = load_bundle(bundle_dir, catalog_path)        # BundleError si no compila
 table = bundle.capability("baja")
-value = table.decide(answers=answers_from_result(table.spec.questions, result), rule=rule_value)
+questions = table.questions_for(inp_fields)          # las fijas y las condicionales que se cumplen
+value = table.decide(answers=answers_from_result(table.spec.questions, result), rule=rule_value,
+                     inp=inp_fields, options={"categoria.cual": {"santos": "velas-religiosas"}})
 if value is DOUBT:
     ...  # decide la regla
 ```
@@ -98,3 +111,5 @@ o, si la capacidad todavía no migró, su clase. El `Verdict` lleva
 5. Otra pregunta u otro umbral = otra versión del paquete.
 6. Los pisos se piden por nombre; los obligatorios (`required_floors`) no se
    pueden cambiar.
+7. Una opción que no está en la lista no pasa: antes de leer
+   `opt['q'][choice['q']]`, preguntar `choice['q'] in opt['q']`.

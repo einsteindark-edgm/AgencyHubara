@@ -15,6 +15,7 @@ from typing import Any, Literal, Protocol
 
 VarType = Literal[
     "bool", "string", "int", "double", "dyn", "map<string,double>", "map<string,string>", "map<string,dyn>",
+    "map<string,map<string,dyn>>", "list<map<string,dyn>>",
 ]
 
 
@@ -75,14 +76,25 @@ def _cel_type(cel: Any, kind: VarType) -> Any:
         "map<string,double>": t.Map(t.STRING, t.DOUBLE),
         "map<string,string>": t.Map(t.STRING, t.STRING),
         "map<string,dyn>": t.Map(t.STRING, t.DYN),
+        "map<string,map<string,dyn>>": t.Map(t.STRING, t.Map(t.STRING, t.DYN)),
+        "list<map<string,dyn>>": t.List(t.Map(t.STRING, t.DYN)),
     }[kind]
 
 
-@lru_cache(maxsize=16)
+#: Extensiones de CEL del motor: `strings` trae `join`, `lowerAscii`,
+#: `trim`… (para unir las partes que quedan, p. ej. los párrafos del rescate).
+_EXTENSIONS = """
+extensions:
+  - name: strings
+"""
+
+
+@lru_cache(maxsize=32)
 def _cel_env(variables: tuple[tuple[str, VarType], ...]) -> Any:
     from cel_expr_python import cel
 
-    return cel.NewEnv(variables={name: _cel_type(cel, kind) for name, kind in variables})
+    config = cel.NewEnvConfigFromYaml(_EXTENSIONS)
+    return cel.NewEnv(config=config, variables={name: _cel_type(cel, kind) for name, kind in variables})
 
 
 class CelExpressions:

@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=../../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿A cuál categoría del catálogo se refiere el cliente?». La regla:
+# exacto → contenido → parecido de texto ≥ 0,80. Jev lee lo que el texto no
+# puede: «velas de santos» son las religiosas; unas «estampas religiosas» no
+# son una categoría de velas. Las opciones son las categorías del catálogo.
+capability: categoria
+value: "{categoria: string?}"
+input: CategoriaPedida
+rule: {builtin: category_of_query}
+state: {builtin: category_request}
+questions:
+  - id: categoria.cual
+    kind: choice
+    text: "¿A cuál categoría del catálogo se refiere el cliente?"
+    options: {builtin: catalog_categories}
+    criteria:
+      "ambiguo": "podría ser más de una de estas categorías"
+      "ninguno": "ninguna de estas categorías"
+thresholds: {"choice": 0.8}
+decide:
+  - when: "!('categoria.cual' in choice) || conf['categoria.cual'] < th['choice'] || choice['categoria.cual'] == 'ambiguo'"
+    then: doubt
+  - when: "choice['categoria.cual'] == 'ninguno'"
+    then: {categoria: null}
+  - when: "choice['categoria.cual'] in opt['categoria.cual']"
+    then: {expr: "{'categoria': opt['categoria.cual'][choice['categoria.cual']]}"}
+  - otherwise: doubt
+floor: {builtin: jev}
+same:
+  builtin: key_eq
+  with: {key: categoria}
+examples:
+  - {answers: {categoria.cual: {choice: velas_religiosas, p: 0.8}}, options: {categoria.cual: {velas_religiosas: velas-religiosas}}, expect: {categoria: velas-religiosas}}
+  - {answers: {categoria.cual: {choice: ninguno, p: 0.9}}, expect: {categoria: null}}
+  - {answers: {categoria.cual: {choice: ambiguo, p: 0.9}}, expect: doubt}
+  - {answers: {categoria.cual: {choice: inventada, p: 0.9}}, options: {categoria.cual: {velas_religiosas: velas-religiosas}}, expect: doubt}
+  - {answers: {categoria.cual: {choice: velas_religiosas, p: 0.79}}, options: {categoria.cual: {velas_religiosas: velas-religiosas}}, expect: doubt}

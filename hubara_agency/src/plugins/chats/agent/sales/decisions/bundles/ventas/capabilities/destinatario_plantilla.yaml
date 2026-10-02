@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=../../../../../../../../../schemas/decision-capability.schema.json
+#
+# El mismo «¿qué es este texto?» para un texto del LLM que viaja como
+# variable de una plantilla (el `motivo` del watchdog de remarketing): la
+# misma decisión con el mismo interruptor (`control: destinatario`). Hoy no
+# se revisa nada: la regla dice «es para el cliente» (false).
+capability: destinatario_plantilla
+control: destinatario
+value: bool
+input: TextCheck
+rule: {builtin: constant_false}
+state:
+  builtin: text_template
+  with: {template: "Texto que el asesor de ventas escribió para enviarle al cliente por WhatsApp:\n{text}", required: text}
+questions:
+  - id: egreso.destinatario
+    kind: choice
+    text: "¿Qué es este texto?"
+    criteria:
+      "mensaje_al_cliente": "un mensaje para el cliente (le responde, le pregunta, le informa o se despide)"
+      "razonamiento": "el razonamiento del asesor sobre qué responder o qué hacer"
+      "reporte_interno": "un reporte interno: etiquetas, estados, sistemas o datos para el equipo"
+      "acuse_al_sistema": "un acuse de recibo a una herramienta o al sistema"
+      "deliberacion": "la deliberación de si responder o no"
+thresholds: {"choice": 0.8}
+decide:
+  - when: "!('egreso.destinatario' in choice) || conf['egreso.destinatario'] < th['choice']"
+    then: doubt
+  - when: "choice['egreso.destinatario'] == 'mensaje_al_cliente'"
+    then: false
+  - otherwise: true
+floor: {builtin: jev}
+same: {builtin: bool_eq}
+examples:
+  - {answers: {egreso.destinatario: {choice: mensaje_al_cliente, p: 0.8}}, expect: false}
+  - {answers: {egreso.destinatario: {choice: reporte_interno, p: 0.9}}, expect: true}
+  - {answers: {egreso.destinatario: {choice: razonamiento, p: 0.79}}, expect: doubt}

@@ -6,9 +6,13 @@ código y la ruta exacta (`capabilities/baja.yaml: decide[0].when`).
 
   DB001 estructura (llave desconocida, tipo, campo faltante) — Pydantic estricto
   DB002 contrato del motor que no se sabe correr
-  DB003 capacidad listada sin archivo, archivo sin listar o nombre distinto
+  DB003 capacidad listada sin archivo, archivo sin listar, nombre distinto, o
+        variante (`control`) de una capacidad que no está en el paquete
   DB004 builtin inexistente, de otra clase, de otro tipo o con otros parámetros
-  DB005 pregunta repetida, o llave de p/choice/conf/th no literal o no declarada
+        (también las opciones de una pregunta y la vista de la entrada)
+  DB005 pregunta repetida, llave de p/choice/conf/th/inp/vars/consts/opt no
+        literal o no declarada, condición de pregunta que lee respuestas, o
+        `{campo}` / `item.campo` de la pregunta por ítem que el ítem no trae
   DB006 condición que no compila o no devuelve bool
   DB007 resultado (`then`/`otherwise`) que no es del tipo de la capacidad
   DB008 tabla sin `otherwise` al final, o filas después de él
@@ -30,6 +34,9 @@ from pydantic import BaseModel, ValidationError
 
 from src.platform.decisions.engine import (
     DOUBT,
+    ITEM_ANSWER,
+    ITEM_POSITION,
+    PLACEHOLDER,
     BundleError,
     CompiledBundle,
     CompiledCapability,
@@ -37,18 +44,21 @@ from src.platform.decisions.engine import (
     Diagnostic,
 )
 from src.platform.decisions.expressions import CelExpressions, ExpressionError, ExpressionPort
-from src.platform.decisions.model import DOUBT_WORD, Bundle, Capability, Catalog, OtherwiseRow, WhenRow
+from src.platform.decisions.model import DOUBT_WORD, Bundle, Capability, Catalog, OtherwiseRow, TextOtherwise, WhenRow
 from src.platform.decisions.types import ValueType, conforms, convert, parse_type
 
 #: El contrato de paquetes que este motor sabe correr.
 ENGINE_CONTRACT = 1
 
 _SLOTS = ("rule", "state", "floor", "same")
-_READABLE = "p|choice|conf|th|inp|vars|consts"
+_READABLE = "p|choice|conf|th|inp|vars|consts|opt"
+#: Lo único que lee la condición de una pregunta (todavía no hay respuestas).
+_CONDITION_READS = ("inp", "consts")
 _INDEX = re.compile(rf"(?<![\w.])({_READABLE})\s*\[")
 _LITERAL = re.compile(r"\s*(['\"])(.*?)\1\s*\]")
 _IN = re.compile(rf"(['\"])([^'\"]*)\1\s+in\s+({_READABLE})\b")
 _FIELD = re.compile(rf"(?<![\w.])({_READABLE})\.([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()")
+_ITEM_FIELD = re.compile(r"(?<![\w.])item\.([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()")
 
 
 def _read_yaml(path: Path) -> tuple[Any, str | None]:
@@ -121,8 +131,19 @@ def _is_expr(value: Any) -> bool:
 #: Lo que una expresión de salida puede devolver para cada clase de tipo.
 _RETURNS_FOR = {
     "bool": {"bool"}, "string": {"string"}, "int": {"int"}, "double": {"double", "int"},
-    "list": {"list"}, "tuple": {"list"}, "record": {"map"}, "any": None,
+    "list": {"list"}, "tuple": {"list"}, "fixed": {"list"}, "record": {"map"}, "any": None,
 }
+
+
+def _returns_allowed(value_type: ValueType) -> set[str] | None:
+    """Lo que puede devolver una expresión de salida (None = cualquier cosa)."""
+    allowed: set[str] = set()
+    for alt in value_type.alternatives:
+        kinds = _RETURNS_FOR.get(alt.kind)
+        if kinds is None:
+            return None
+        allowed |= kinds
+    return allowed
 
 
 class _CapabilityCheck:
@@ -133,6 +154,8 @@ class _CapabilityCheck:
         self.expressions = expressions
         self.type = parse_type(spec.value)
         self.fields = dict(catalog.inputs.get(spec.input, {}))
+        #: Los campos de cada ítem (capacidades con `items:`).
+        self.item_fields: dict[str, str] = {}
         self.out: list[Diagnostic] = []
 
     def add(self, code: str, where: str, message: str) -> None:
@@ -140,22 +163,28 @@ class _CapabilityCheck:
 
     # ── builtins ──────────────────────────────────────────────────────────
 
+    def _refs(self) -> list[tuple[str, Any, str]]:
+        """(dónde, referencia, clase) de cada builtin que pide la capacidad."""
+        spec = self.spec
+        refs = [(slot, getattr(spec, slot), slot) for slot in _SLOTS]
+        refs.append(("view", spec.view, "view"))
+        refs.append(("items", spec.items, "items"))
+        refs += [(f"questions[{i}].options", q.options, "options") for i, q in enumerate(spec.questions)]
+        return [(where, ref, kind) for where, ref, kind in refs if ref is not None]
+
     def builtins(self) -> None:
         spec = self.spec
         if spec.input not in self.catalog.inputs:
             self.add("DB004", "input", f"tipo de entrada desconocido {spec.input!r} (hay {', '.join(self.catalog.inputs)})")
-        for slot in _SLOTS:
-            ref = getattr(spec, slot)
-            if ref is None:
-                continue
+        for slot, ref, kind in self._refs():
             builtin = self.catalog.builtins.get(ref.builtin)
             where = f"{slot}.builtin"
             if builtin is None:
-                options = sorted(n for n, b in self.catalog.builtins.items() if b.kind == slot)
-                self.add("DB004", where, f"builtin desconocido {ref.builtin!r} (de clase {slot} hay: {', '.join(options)})")
+                options = sorted(n for n, b in self.catalog.builtins.items() if b.kind == kind)
+                self.add("DB004", where, f"builtin desconocido {ref.builtin!r} (de clase {kind} hay: {', '.join(options)})")
                 continue
-            if builtin.kind != slot:
-                self.add("DB004", where, f"{ref.builtin!r} es un builtin de clase {builtin.kind}, no {slot}")
+            if builtin.kind != kind:
+                self.add("DB004", where, f"{ref.builtin!r} es un builtin de clase {builtin.kind}, no {kind}")
             if builtin.input is not None and builtin.input != spec.input:
                 self.add("DB004", where, f"{ref.builtin!r} lee {builtin.input}, la capacidad recibe {spec.input}")
             if builtin.value is not None and str(parse_type(builtin.value)) != str(self.type):
@@ -164,9 +193,16 @@ class _CapabilityCheck:
             extra = sorted(set(ref.params) - set(builtin.params))
             if missing or extra:
                 self.add("DB004", f"{slot}.with", f"parámetros de {ref.builtin!r}: faltan {missing}, sobran {extra}")
-            for name, kind in builtin.params.items():
-                if name in ref.params and not _param_ok(ref.params[name], kind):
-                    self.add("DB004", f"{slot}.with.{name}", f"se esperaba {kind}")
+            for name, param in builtin.params.items():
+                if name in ref.params and not _param_ok(ref.params[name], param):
+                    self.add("DB004", f"{slot}.with.{name}", f"se esperaba {param}")
+            if kind == "view" and builtin.kind == "view":
+                clash = sorted(set(builtin.fields) & set(self.fields))
+                if clash:
+                    self.add("DB004", where, f"la vista {ref.builtin!r} repite campos de la entrada: {clash}")
+                self.fields.update(builtin.fields)
+            if kind == "items" and builtin.kind == "items":
+                self.item_fields = dict(builtin.fields)
         required = self.catalog.required_floors.get(spec.capability)
         if required is not None and spec.floor.builtin != required:
             self.add("DB012", "floor.builtin", f"el piso de {spec.capability} es obligatorio: {required!r}")
@@ -188,7 +224,109 @@ class _CapabilityCheck:
             "p": "map<string,double>", "choice": "map<string,string>", "conf": "map<string,double>",
             "th": "map<string,double>", "rule": self.type.cel_var,
             "inp": "map<string,dyn>", "vars": "map<string,dyn>", "consts": "map<string,dyn>",
+            "opt": "map<string,map<string,dyn>>",
+            **({"items": "list<map<string,dyn>>"} if self.spec.items is not None else {}),
         }
+
+    def each(self) -> tuple[Any, tuple[tuple[Any, str], ...]] | None:
+        """(`each.when` compilado, variantes del texto compiladas)."""
+        each = self.spec.each
+        if each is None:
+            return None, ()
+        known = set(self.item_fields) | set(ITEM_POSITION)
+        failed = False
+        texts = [(None, each.text)] if isinstance(each.text, str) else [
+            (None, v.otherwise) if isinstance(v, TextOtherwise) else (v.when, v.text) for v in each.text
+        ]
+        for where, template in [("each.id", each.id), *((f"each.text[{i}]", t) for i, (_w, t) in enumerate(texts))]:
+            unknown = sorted({m.group(1) for m in PLACEHOLDER.finditer(template)} - known)
+            if unknown:
+                self.add("DB005", where, f"{{…}} que el ítem no trae: {unknown} (hay: {', '.join(sorted(known))})")
+                failed = True
+        when = self._item_condition(each.when, "each.when", known) if each.when is not None else None
+        failed = failed or (each.when is not None and when is None)
+        compiled_texts: list[tuple[Any, str]] = []
+        for i, (condition, template) in enumerate(texts):
+            if condition is None:
+                compiled_texts.append((None, template))
+                continue
+            expression = self._item_condition(condition, f"each.text[{i}].when", known)
+            failed = failed or expression is None
+            compiled_texts.append((expression, template))
+        return None if failed else (when, tuple(compiled_texts))
+
+    def _item_condition(self, source: str, where: str, known: set[str]) -> Any:
+        """Una condición sobre el ítem: lee `item`, `inp` y `consts` (todavía no hay respuestas)."""
+        refs, _bad = _references(source)
+        answers = sorted({var for var, _key in refs if var not in _CONDITION_READS})
+        if answers:
+            self.add("DB005", where, f"la condición de un ítem solo lee item, inp y consts (lee {', '.join(answers)})")
+            return None
+        unknown = sorted({m.group(1) for m in _ITEM_FIELD.finditer(source)} - known)
+        if unknown:
+            self.add("DB005", where, f"campos que el ítem no trae: {unknown} (hay: {', '.join(sorted(known))})")
+            return None
+        if not self._keys_ok(source, where, set()):
+            return None
+        try:
+            expression = self.expressions.compile(
+                source, {"item": "map<string,dyn>", "inp": "map<string,dyn>", "consts": "map<string,dyn>"}
+            )
+        except ExpressionError as exc:
+            self.add("DB006", where, f"no compila (lee item, inp y consts): {exc}")
+            return None
+        sample = {**{name: _sample(t) for name, t in self.item_fields.items()}, "n": 1, "index": 0}
+        if not self._gives_bool(expression, {"item": sample}, where):
+            return None
+        return expression
+
+    def _gives_bool(self, expression: Any, extra: dict[str, Any], where: str) -> bool:
+        """¿La condición da true o false? Si lee campos (`dyn`), se evalúa
+        con valores de ejemplo de los tipos declarados."""
+        if expression.returns_bool:
+            return True
+        if expression.returns == "dyn":
+            env = {
+                "inp": {name: _sample(t) for name, t in self.fields.items()},
+                "consts": {name: c.value for name, c in self.catalog.constants.items()},
+                **extra,
+            }
+            try:
+                if isinstance(expression.evaluate(env), bool):
+                    return True
+            except ExpressionError:
+                pass
+        self.add("DB006", where, "la condición tiene que dar true o false")
+        return False
+
+    def conditions(self) -> tuple[tuple[str, Any], ...] | None:
+        """La condición compilada de cada pregunta condicional."""
+        compiled: list[tuple[str, Any]] = []
+        failed = False
+        for i, question in enumerate(self.spec.questions):
+            if question.when is None:
+                continue
+            where = f"questions[{i}].when"
+            refs, _bad = _references(question.when)
+            answers = sorted({var for var, _key in refs if var not in _CONDITION_READS})
+            if answers:
+                self.add("DB005", where, f"una pregunta condicional solo lee inp y consts (lee {', '.join(answers)})")
+                failed = True
+                continue
+            if not self._keys_ok(question.when, where, set()):
+                failed = True
+                continue
+            try:
+                expression = self.expressions.compile(question.when, {"inp": "map<string,dyn>", "consts": "map<string,dyn>"})
+            except ExpressionError as exc:
+                self.add("DB006", where, f"no compila (solo lee inp y consts): {exc}")
+                failed = True
+                continue
+            if not self._gives_bool(expression, {}, where):
+                failed = True
+                continue
+            compiled.append((question.id, expression))
+        return None if failed else tuple(compiled)
 
     def _compile(self, source: str, where: str, known_vars: set[str]) -> Any:
         if not self._keys_ok(source, where, known_vars):
@@ -249,7 +387,7 @@ class _CapabilityCheck:
             expression = self._compile(value["expr"], f"{where}.expr", known)
             if expression is None:
                 return None
-            allowed = _RETURNS_FOR.get(self.type.kind)
+            allowed = _returns_allowed(self.type)
             ok = (
                 allowed is None
                 or expression.returns in allowed | {"dyn"}
@@ -297,6 +435,11 @@ class _CapabilityCheck:
             if key not in self.catalog.constants:
                 return "DB005", f"constante no declarada {key!r} (hay: {', '.join(self.catalog.constants) or 'ninguna'})"
             return None
+        if var == "opt":
+            with_options = [q.id for q in self.spec.questions if q.options is not None]
+            if key not in with_options:
+                return "DB005", f"{key!r} no es una pregunta con opciones de la entrada (hay: {', '.join(with_options) or 'ninguna'})"
+            return None
         if key not in kinds:
             return "DB005", f"pregunta no declarada {key!r} (hay: {', '.join(kinds)})"
         if (var == "p") != (kinds[key] == "noul"):
@@ -322,17 +465,44 @@ class _CapabilityCheck:
             if fields:
                 self.add("DB010", f"examples[{i}].input", f"campos de entrada no declarados {fields} en {self.spec.input}")
                 continue
+            not_options = sorted(set(example.options) - set(compiled.option_questions))
+            if not_options:
+                self.add("DB010", f"examples[{i}].options", f"preguntas sin opciones de la entrada {not_options}")
+                continue
+            items = None
+            if example.items is not None:
+                if self.spec.items is None:
+                    self.add("DB010", f"examples[{i}].items", "la capacidad no decide ítem por ítem (no tiene items:)")
+                    continue
+                allowed = set(self.item_fields) | set(ITEM_ANSWER)
+                bad = sorted({k for item in example.items for k in item} - allowed)
+                if bad:
+                    self.add("DB010", f"examples[{i}].items", f"campos de ítem no declarados {bad}")
+                    continue
+                # Un campo que el ejemplo no da vale null (como en la entrada).
+                items = [{**{name: None for name in self.item_fields}, **item} for item in example.items]
             if example.rule is not None and not conforms(example.rule, self.type):
                 self.add("DB010", f"examples[{i}].rule", f"{example.rule!r} no es {self.spec.value}")
                 continue
             if not _value_ok(self.spec, self.type, example.expect):
                 self.add("DB010", f"examples[{i}].expect", self._value_message(example.expect))
                 continue
-            got = compiled.decide(answers=example.answers, rule=example.rule, inp=example.input)
+            # Un campo que el ejemplo no da vale null (como un atributo vacío de la entrada).
+            inp = {**{name: None for name in self.fields}, **example.input}
+            got = compiled.decide(answers=example.answers, rule=example.rule, inp=inp, options=example.options, items=items)
             want = _result(example.expect, self.type)
             if got is not want and got != want:
                 shown = DOUBT_WORD if got is DOUBT else got
                 self.add("DB010", f"examples[{i}]", f"se esperaba {example.expect!r} y la tabla da {shown!r}")
+
+
+def _sample(text: str) -> Any:
+    """Un valor de ejemplo del tipo declarado (para ver qué da una condición
+    que lee campos `dyn`)."""
+    t = parse_type(text).alternatives[0]
+    if t.kind == "record":
+        return {name: _sample(str(field)) for name, field in t.fields}
+    return {"bool": False, "string": "", "int": 0, "double": 0.0, "list": [], "tuple": [], "fixed": []}.get(t.kind)
 
 
 def _param_ok(value: Any, kind: str) -> bool:
@@ -378,16 +548,22 @@ def _build(bundle_dir: Path, catalog_path: Path, expressions: ExpressionPort | N
         if spec.capability != name:
             out.append(Diagnostic("DB003", f"{label}: capability", f"se llama {spec.capability!r} pero el archivo es {name}.yaml"))
             continue
+        if spec.control is not None and spec.control not in bundle.capabilities:
+            out.append(Diagnostic("DB003", f"{label}: control", f"es variante de {spec.control!r}, que no está en el paquete"))
+            continue
         check = _CapabilityCheck(spec, label, catalog, expressions)
         check.builtins()
         check.questions_and_thresholds()
+        conditions = check.conditions()
+        each = check.each()
         variables = check.vars()
         rows = check.rows()
-        if rows is not None and variables is not None and not check.out:
+        if rows is not None and variables is not None and conditions is not None and each is not None and not check.out:
             capability = CompiledCapability(
                 spec, rows, bundle=f"{bundle.id}@{bundle.version}", value_type=check.type, vars=variables,
                 constants={name: c.value for name, c in catalog.constants.items()},
-                input_fields=tuple(check.fields),
+                input_fields=tuple(check.fields), conditions=conditions,
+                each_when=each[0], each_texts=each[1],
             )
             check.examples(capability)
             if not check.out:
