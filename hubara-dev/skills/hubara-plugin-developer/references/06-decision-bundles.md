@@ -163,6 +163,11 @@ paridad contra una foto del comportamiento de antes si reemplaza código vivo.
    `B@ventas-2` junto a B y el resumen muestra la diferencia `B → B@ventas-2`.
 4. Si gana, se promueve en Terraform (`tenants.<t>.lab.decisions_bundle`).
 
+Ejemplo vivo: `bundles/ventas-2/` es `ventas` con la regla ② de `promocion`
+(`test_decisions_ventas_2.py` exige que sea eso y nada más: así se escribe
+la prueba de una versión nueva). Un experimento de esta tienda no viaja a un
+clon de forge: agrégalo a `deletes` en `forge/manifest.yaml`.
+
 ## Lo que NO se hace
 
 - Editar una versión publicada: otra pregunta u otro umbral = `version: N+1`.

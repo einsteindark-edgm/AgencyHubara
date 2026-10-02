@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿A cuál color del producto corresponde lo que pidió el cliente?». La regla
+# es la tabla de familias del tenant; Jev lleva «bordó» al Rojo aunque no esté
+# en la tabla y sabe que el «oro» es el Dorado cuando la tabla duda. Cuando
+# Jev coincide con la regla queda el detalle de la regla (piso).
+# Dominio (F5): el color está cableado como dimensión.
+capability: familia_de_color
+value: "{estado: string?, color: string?, familias: list<string>, candidatas: list<string>, tono: bool}"
+input: ColorPedido
+rule: {builtin: color_family}
+state: {builtin: color_request}
+questions:
+  - id: color.cual
+    kind: choice
+    text: "¿A cuál color del producto corresponde lo que pidió el cliente?"
+    options: {builtin: product_colors}
+    criteria:
+      "ambiguo": "podría ser más de uno de estos colores"
+      "ninguno": "ninguno de estos colores"
+thresholds: {"choice": 0.8}
+decide:
+  - when: "!('color.cual' in choice) || conf['color.cual'] < th['choice'] || choice['color.cual'] == 'ambiguo'"
+    then: doubt
+  - when: "choice['color.cual'] == 'ninguno'"
+    then: {estado: null, color: null, familias: [], candidatas: [], tono: false}
+  - when: "choice['color.cual'] in opt['color.cual']"
+    then: {expr: "opt['color.cual'][choice['color.cual']]"}
+  - otherwise: doubt
+floor:
+  builtin: rule_if_same_key
+  with: {key: color}
+same:
+  builtin: key_eq
+  with: {key: color}
+examples:
+  - answers: {color.cual: {choice: rojo, p: 0.8}}
+    options: {color.cual: {rojo: {estado: resolved, color: Rojo, familias: [Rojo], candidatas: [Rojo], tono: true}}}
+    expect: {estado: resolved, color: Rojo, familias: [Rojo], candidatas: [Rojo], tono: true}
+  - {answers: {color.cual: {choice: ninguno, p: 0.9}}, expect: {estado: null, color: null, familias: [], candidatas: [], tono: false}}
+  - {answers: {color.cual: {choice: rojo, p: 0.79}}, expect: doubt}

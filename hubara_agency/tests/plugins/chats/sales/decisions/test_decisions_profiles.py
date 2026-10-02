@@ -9,6 +9,8 @@ Terraform (`tenants.*.lab.perception_profile`).
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from src.platform.perception.profiles import load_profiles as load_oracle_profiles
@@ -22,7 +24,7 @@ def test_jev_v1_is_the_classifier_of_today() -> None:
 
     assert profile is not None
     assert (profile.oracle, profile.questions, profile.policy) == ("jev-1.13", "rafaga-v1", "turno-v1")
-    assert profile.thresholds == {"detect": 0.70, "confidence": 0.60, "covered": 0.70}
+    assert profile.thresholds == {"detect": 0.70, "covered": 0.70}
 
 
 def test_every_engine_profile_resolves_its_oracle_questionnaire_and_policy() -> None:
@@ -71,10 +73,43 @@ def test_jev_v5_is_jev_v4_with_the_shipping_cost_question() -> None:
     laboratorio compara v4 contra v5 sabiendo qué se movió.
 
     Desde F7 (PAQUETES_DE_DECISION.md) su turno sale del paquete activo
-    (`ventas@1`), que no trae `confidence`: ninguna política del turno la lee."""
+    (`ventas@1`). Ningún perfil trae ya `confidence`: ninguna política la leía."""
     v4, v5 = get_engine_profile("jev-v4"), get_engine_profile("jev-v5")
 
     assert v5 is not None and v4 is not None
     assert (v5.oracle, v5.questions, v5.policy, v5.bundle) == ("jev-1.13", "rafaga-v5", "turno-v3", "ventas@1")
-    assert v5.thresholds == {k: v for k, v in v4.thresholds.items() if k != "confidence"}
+    assert v5.thresholds == v4.thresholds
     assert (v5.shadow, v5.calibrated_model) == (v4.shadow, v4.calibrated_model)
+
+
+#: Las políticas que lee cada una (una política nueva arrastra lo que hereda).
+_POLICY_CHAIN = {"turno-v1": ("turno_v1",), "turno-v2": ("turno_v1", "turno_v2"), "turno-v3": ("turno_v1", "turno_v2", "turno_v3")}
+
+
+def _thresholds_read(policy_id: str) -> set[str]:
+    """Los umbrales que el código de la política (y lo que hereda) lee: `th["…"]`."""
+    import re
+
+    root = Path(__file__).resolve().parents[5] / "src/plugins/chats/agent/sales/decisions/policies"
+    return {
+        key
+        for module in _POLICY_CHAIN[policy_id]
+        for key in re.findall(r'th\["([a-z_]+)"\]', (root / f"{module}.py").read_text(encoding="utf-8"))
+    }
+
+
+def test_no_profile_or_policy_carries_a_threshold_nobody_reads() -> None:
+    """Un umbral que nadie lee engaña: parece que calibra algo y no hace nada
+    (`confidence: 0.60` estuvo así desde jev-v1, PAQUETES_DE_DECISION.md §1).
+    Lo mismo que el certificador exige a un `turn.yaml` (DB015)."""
+    import yaml
+
+    from src.plugins.chats.shared.store_pack import CATALOG_PATH
+
+    for policy_id in _POLICY_CHAIN:
+        policy = get_policy(policy_id)
+        assert set(policy.DEFAULT_THRESHOLDS) == _thresholds_read(policy_id), policy_id
+    for profile in load_engine_profiles().values():
+        assert set(profile.thresholds) <= _thresholds_read(profile.policy), profile.id
+    declared = yaml.safe_load(CATALOG_PATH.read_text(encoding="utf-8"))["turn"]["policies"]["turno-v3"]["thresholds"]
+    assert set(declared) == _thresholds_read("turno-v3")

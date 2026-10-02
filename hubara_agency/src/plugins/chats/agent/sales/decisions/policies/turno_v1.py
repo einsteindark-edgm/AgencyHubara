@@ -27,8 +27,10 @@ from src.plugins.chats.agent.sales.decisions.policies.tables import TurnTables
 
 POLICY_ID = "turno-v1"
 
-#: Los mismos umbrales que el perfil `jev-v1` (un test los mantiene iguales).
-DEFAULT_THRESHOLDS: dict[str, float] = {"detect": 0.70, "confidence": 0.60, "covered": 0.70}
+#: Los mismos umbrales que el perfil `jev-v1` (un test los mantiene iguales) y
+#: SOLO los que esta política lee (`confidence: 0.60` no lo leía nadie: se
+#: quitó el 2026-10-02, PAQUETES_DE_DECISION.md F7).
+DEFAULT_THRESHOLDS: dict[str, float] = {"detect": 0.70, "covered": 0.70}
 
 # ② Qué atiende cada asunto dentro del turno: tools que lo atienden, palabras
 # del texto que el cliente ve (sin tildes) y si cualquier texto lo atiende.

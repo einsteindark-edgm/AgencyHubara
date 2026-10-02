@@ -46,7 +46,9 @@ da lo esperado.
   dos redacciones de la misma capacidad sin desplegar código.
 - **Valores duplicados que pueden divergir:** `compra` tiene `confirm .85` y
   `retract .20` en la clase y otra vez `purchase_confirm` / `purchase_retract`
-  en `profiles.yaml`. `confidence: 0.60` del perfil no lo lee nadie.
+  en `profiles.yaml`. `confidence: 0.60` del perfil no lo lee nadie
+  (resuelto el 2026-10-02: se quitó de todos los perfiles y de `turno-v1`, y
+  una prueba frena un umbral que su política no lee).
 - **El dominio está en el código.** Aroma y color son las dos dimensiones de
   variante cableadas (`texto.py`, `mapeos.py`, `context.py`, `turno_v3.py`,
   `rafaga-v5.yaml`); las zonas de envío son Bogotá/nacional
@@ -502,13 +504,24 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   (`decide_turn`) igual en más de 8 000 combinaciones de asuntos, etapas,
   lecturas y respuestas en los bordes, el contrato y ③ en grilla, y el motor
   corriendo el turno de otro paquete (`ventas-2`).
-- Dos cosas que la certificación dejó a la vista (sin cambiarlas: otra
-  versión del paquete): `confidence` no la leía ninguna política del turno
-  (el paquete no la trae; el certificador rechaza un umbral que nadie lee),
-  y el asunto `promocion` no tiene regla ② desde que llegó (rafaga-v4):
-  nada lo da por atendido dentro del turno, así que en el V1 con motor,
-  cuando una tool corta el turno, cuenta como sin atender y pide la ronda
-  más (una). Queda explícito (`promocion: {}`) y comentado.
+- Dos cosas que la certificación dejó a la vista, resueltas el mismo día:
+  - `confidence` no la leía ninguna política del turno: el paquete no la
+    trae (el certificador rechaza un umbral que nadie lee) y se quitó de los
+    perfiles jev-v1…v4 y de `turno-v1` (sin cambio: nadie la leía). Una
+    prueba exige que cada perfil y cada política traigan solo los umbrales
+    que su código lee (`test_no_profile_or_policy_carries_a_threshold_nobody_reads`).
+  - El asunto `promocion` no tenía regla ② desde que llegó (rafaga-v4): nada
+    lo daba por atendido dentro del turno, así que en el V1 con motor, cuando
+    una tool cortaba el turno, «¿tienen promociones?» pedía una ronda más
+    aunque el bot ya las hubiera mostrado. `ventas@1` no se edita (queda
+    `promocion: {}`, comentado): **`ventas-2@2`** es `ventas` con esa regla
+    (las tools de promociones y cupones, o un texto que hable de
+    promociones, descuentos o cupones) y nada más; una prueba lo exige
+    (`test_decisions_ventas_2.py`). El laboratorio no lo mide con un brazo:
+    el bot B es el V2, que no usa la regla ② (solo el contrato); la prueba
+    es determinista sobre la misma función que aplica el workflow V1. Se
+    promueve nombrándolo en Terraform (`decisions_bundle = "ventas-2"`);
+    `ventas-2` no viaja a un clon de forge (`deletes`).
 
 **F8 hecho (2026-10-02).**
 - El lector de Jev del Order Sentinel tiene su paquete,

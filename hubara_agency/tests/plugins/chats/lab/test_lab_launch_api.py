@@ -296,7 +296,11 @@ def test_the_estimate_lists_the_decision_bundles(env, monkeypatch) -> None:
     monkeypatch.delenv("SALES_DECISIONS_BUNDLE", raising=False)
     data = env["http"].get("/api/chats/lab/estimate", params={"arms": "A1,B", "reps": 1, "bench": "new"}).json()
 
-    assert data["bundles"] == [{"id": "ventas", "version": 1, "active": True}]
+    from src.plugins.chats.shared.store_pack import BUNDLES_DIR
+
+    # ventas-2 viaja en la imagen de esta tienda (no en un clon de forge).
+    others = [{"id": "ventas-2", "version": 2, "active": False}] if (BUNDLES_DIR / "ventas-2").is_dir() else []
+    assert data["bundles"] == [{"id": "ventas", "version": 1, "active": True}, *others]
     assert data["bundle_arms"] == ["B0", "B"]
 
 

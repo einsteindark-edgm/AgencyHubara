@@ -299,20 +299,24 @@ class _Port:
         return await self.fake.ask(state, questions, timeout_s=timeout_s, redact=redact)
 
 
+#: El paquete de prueba (no `ventas-2`: ese ya existe en el repo).
+OTHER = "ventas-prueba"
+
+
 @pytest.fixture
 def other_bundle(tmp_path: Path, monkeypatch):
-    """Otro paquete (`ventas-2`, una copia de `ventas` con su turno editado) como el de la tienda."""
+    """Otro paquete (`ventas-prueba`, una copia de `ventas` con su turno editado) como el de la tienda."""
 
     def make(edit) -> None:
         bundles = tmp_path / "bundles"
         shutil.copytree(registry.BUNDLES_DIR, bundles)
-        shutil.move(bundles / "ventas", bundles / "ventas-2")
-        head = bundles / "ventas-2" / "bundle.yaml"
-        head.write_text(head.read_text(encoding="utf-8").replace("id: ventas", "id: ventas-2"), encoding="utf-8")
-        turn = bundles / "ventas-2" / "turn.yaml"
+        shutil.move(bundles / "ventas", bundles / OTHER)
+        head = bundles / OTHER / "bundle.yaml"
+        head.write_text(head.read_text(encoding="utf-8").replace("id: ventas\n", f"id: {OTHER}\n"), encoding="utf-8")
+        turn = bundles / OTHER / "turn.yaml"
         turn.write_text(edit(turn.read_text(encoding="utf-8")), encoding="utf-8")
         monkeypatch.setattr(registry, "BUNDLES_DIR", bundles)
-        monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-2")
+        monkeypatch.setenv("SALES_DECISIONS_BUNDLE", OTHER)
         registry.reset()
 
     yield make
@@ -333,7 +337,7 @@ async def test_the_engine_runs_the_turn_of_the_active_bundle(other_bundle, monke
     out = await engine.perceive(PerceiveInput(session_id=SID, profile="jev-v5", messages=[{"text": "catálogo?", "ts_ms": 1}]))
 
     assert out.versions == {
-        "profile": "jev-v5", "questions": "rafaga-v5", "policy": "turno-v3", "model": out.model, "bundle": "ventas-2@1",
+        "profile": "jev-v5", "questions": "rafaga-v5", "policy": "turno-v3", "model": out.model, "bundle": f"{OTHER}@1",
     }
     assert out.tools["required"][0]["nudge"].startswith("Muéstrale el catálogo con present_products")
     assert "envio.costo" in port.questions[0]

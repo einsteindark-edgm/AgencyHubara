@@ -23,7 +23,7 @@ from src.sdk.connectorkit import PerceptionResult, TypedAnswer
 
 RAFAGA = load_questionnaire("rafaga-v3")
 POLICY = get_policy("turno-v3")
-TH = {"detect": 0.70, "confidence": 0.60, "covered": 0.70, "answers": 0.70, "purchase_confirm": 0.85,
+TH = {"detect": 0.70, "covered": 0.70, "answers": 0.70, "purchase_confirm": 0.85,
       "purchase_retract": 0.20, "given": 0.85}
 BURST = [{"text": "Soy de Medellín", "ts_ms": 1_000}]
 

@@ -9,6 +9,10 @@
 # política u otros umbrales = un perfil NUEVO (jev-v2…), para que el
 # laboratorio y la traza digan con qué se midió.
 #
+# Un perfil trae SOLO umbrales que su política lee (una prueba lo exige):
+# `confidence: 0.60` estuvo desde jev-v1 y nadie lo leía; se quitó el
+# 2026-10-02 sin cambiar nada (PAQUETES_DE_DECISION.md §1 y F7).
+#
 #   oracle            perfil del oráculo (platform/perception/profiles.yaml)
 #   questions         cuestionario (decisions/questionnaires/<id>.yaml)
 #   policy            política (decisions/policies/)
@@ -24,7 +28,7 @@ jev-v1:
   oracle: jev-1.13
   questions: rafaga-v1
   policy: turno-v1
-  thresholds: {detect: 0.70, confidence: 0.60, covered: 0.70}
+  thresholds: {detect: 0.70, covered: 0.70}
   shadow: null
   calibrated_model: null
 
@@ -37,7 +41,6 @@ jev-v2:
   policy: turno-v2
   thresholds:
     detect: 0.70
-    confidence: 0.60
     covered: 0.70
     answers: 0.70
     purchase_confirm: 0.85
@@ -53,7 +56,6 @@ jev-v3:
   policy: turno-v3
   thresholds:
     detect: 0.70
-    confidence: 0.60
     covered: 0.70
     answers: 0.70
     purchase_confirm: 0.85
@@ -71,7 +73,6 @@ jev-v4:
   policy: turno-v3
   thresholds:
     detect: 0.70
-    confidence: 0.60
     covered: 0.70
     answers: 0.70
     purchase_confirm: 0.85

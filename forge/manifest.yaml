@@ -288,6 +288,10 @@ deletes:
   - "infra/DEPLOY_RUNBOOK.md"          # ídem — NEXT_STEPS.md del clon lo reemplaza
   - "infra/SERVICIOS_AWS_Y_SCHEDULERS.md"
   - "infra/PENDING_IMPLEMENTATION.md"
+  # Versiones de prueba del paquete de decisión de ESTA tienda (PAQUETES_DE_DECISION.md
+  # F6/F7): el clon recibe solo `ventas/` con un dominio neutral (`templates:`).
+  # Si una se promueve a default, el template del dominio pasa a apuntarle.
+  - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-2"
   - "infra/VAULT_EBS_MIGRATION_PLAN.md"  # plan de migración del vault VIVO de Hubara (vol/EBS IDs, pasos op)
   - "SECURITY_AUDIT_fable.md"          # auditoría interna de Hubara con hallazgos ancla archivo:línea
 

@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿Qué le enumera el texto al cliente?» (activity de enumeración). Si va el
+# selector: la dimensión y las etiquetas que el código sacó del catálogo; si
+# no, nada. Jev decide qué enumera el texto. Piso: las combinaciones «Color ·
+# Aroma» de un cupón nunca van al selector.
+# Dominio (F5): aroma/color están cableados como dimensiones.
+capability: enumeracion
+value: "() | (string, tuple<string>)"
+input: TextoCatalogo
+view: {builtin: enumeration_found}
+rule: {builtin: enumerated_variants}
+state: {builtin: text_with_lists}
+questions:
+  - id: enumeracion.que
+    kind: choice
+    text: "¿Qué le enumera el texto al cliente, una opción tras otra?"
+    criteria:
+      "aromas": "una lista de aromas para que el cliente escoja uno"
+      "colores": "una lista de colores para que el cliente escoja uno"
+      "combinaciones_cupon": "combinaciones de color y aroma (por ejemplo las de un cupón), con productos o precios"
+      "productos": "productos, o las características de un solo producto"
+      "nada": "no enumera opciones para escoger"
+thresholds: {"confidence": 0.85}
+decide:
+  - when: "!('enumeracion.que' in choice) || conf['enumeracion.que'] < th['confidence']"
+    then: doubt
+  - when: "choice['enumeracion.que'] == 'aromas' && size(inp.found_scents) >= consts.MIN_ENUMERATED"
+    then: {expr: "['scent', inp.found_scents]"}
+  - when: "choice['enumeracion.que'] == 'colores' && size(inp.found_colors) >= consts.MIN_ENUMERATED"
+    then: {expr: "['color', inp.found_colors]"}
+  - otherwise: []
+floor: {builtin: no_enumeration_with_combinations}
+same: {builtin: tuple_eq}
+examples:
+  - answers: {enumeracion.que: {choice: aromas, p: 0.85}}
+    input: {found_scents: [Lavanda, Vainilla, Canela, Limoncillo], found_colors: []}
+    expect: [scent, [Lavanda, Vainilla, Canela, Limoncillo]]
+  - answers: {enumeracion.que: {choice: aromas, p: 0.9}}
+    input: {found_scents: [Lavanda, Vainilla], found_colors: []}
+    expect: []
+  - {answers: {enumeracion.que: {choice: productos, p: 0.9}}, input: {found_scents: [], found_colors: []}, expect: []}
+  - {answers: {enumeracion.que: {choice: aromas, p: 0.84}}, expect: doubt}
