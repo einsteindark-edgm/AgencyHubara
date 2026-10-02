@@ -27,6 +27,17 @@ tenants = {
       standby_enabled    = true
       customer_allowlist = ["+573125671604"]
     }
+
+    # Paquete de decisión de la tienda (PAQUETES_DE_DECISION.md §9): promover
+    # una versión (ya desplegada) = nombrarla aquí + `terraform apply` de
+    # platform + dispatch de Backend deploy, que no se dispara con Terraform
+    # (render del .env desde SSM → SALES_DECISIONS_BUNDLE; certifica el paquete
+    # en la imagen antes de cambiar containers). `ventas-2` (2026-10-02) es
+    # `ventas` con la regla ② de `promocion`. El resto de `lab` queda en sus
+    # defaults (todo apagado). Volver atrás = "ventas".
+    lab = {
+      decisions_bundle = "ventas-2"
+    }
   }
 
   vincenzo = {

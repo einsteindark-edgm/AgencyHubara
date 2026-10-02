@@ -111,8 +111,8 @@ variable "tenants" {
   }
 
   validation {
-    condition     = alltrue([for t in values(var.tenants) : can(regex("^[a-z][a-z0-9-]*$", t.lab.decisions_bundle))])
-    error_message = "tenants.*.lab.decisions_bundle: id de paquete de decisión (la carpeta en chats/shared/decisions/bundles/), p.ej. ventas."
+    condition     = alltrue([for t in values(var.tenants) : can(regex("^[a-z][a-z0-9-]{0,39}$", t.lab.decisions_bundle))])
+    error_message = "tenants.*.lab.decisions_bundle: id de paquete de decisión (la carpeta en chats/shared/decisions/bundles/, hasta 40 caracteres), p.ej. ventas."
   }
 
   validation {

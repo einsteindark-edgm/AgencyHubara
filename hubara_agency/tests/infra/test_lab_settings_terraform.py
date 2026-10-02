@@ -90,3 +90,42 @@ def test_the_store_decision_bundle_is_configuration_born_in_terraform() -> None:
     assert re.search(rf"^\s*{registry.BUNDLE_ENV}\s*=\s*var\.config\.decisions_bundle", lab_config, re.M), (
         "lab-config no materializa SALES_DECISIONS_BUNDLE"
     )
+
+
+def _tenant_bundles(text: str) -> dict[str, str]:
+    """`tenants.<t>.lab.decisions_bundle` de un tenants.auto.tfvars (los que
+    lo fijan; los demás corren el default de la variable)."""
+    out: dict[str, str] = {}
+    for tenant, block in re.findall(r"^  ([\w-]+) = \{\n(.*?)^  \}", text, re.M | re.S):
+        lab = re.search(r"^\s*lab\s*=\s*\{(.*?)^\s*\}", block, re.M | re.S)
+        bundle = re.search(r'decisions_bundle\s*=\s*"([^"]+)"', lab.group(1)) if lab else None
+        if bundle:
+            out[tenant] = bundle.group(1)
+    return out
+
+
+def test_every_bundle_a_tenant_names_exists() -> None:
+    """Promover un paquete = nombrarlo en el tenant (PAQUETES_DE_DECISION.md §9;
+    Hubara corre `ventas-2` desde el 2026-10-02). El que se nombra tiene que
+    estar en el repo: si no, la API y el worker de ventas no arrancarían. Cuál
+    corre cada tenant es dato del tfvars (volver atrás no toca esta prueba), y
+    un clon de forge, sin bloque `lab`, corre el default de la variable."""
+    from src.plugins.chats.agent.sales.decisions import registry
+
+    bundles = _tenant_bundles((_TERRAFORM / "platform" / "tenants.auto.tfvars").read_text(encoding="utf-8"))
+
+    for tenant, bundle in bundles.items():
+        assert (registry.BUNDLES_DIR / bundle / "bundle.yaml").is_file(), f"{tenant}: el paquete {bundle!r} no existe"
+
+
+def test_the_tenant_parser_reads_any_tenant_name() -> None:
+    text = 'tenants = {\n  mi-tienda = {\n    api_url = "x"\n    lab = {\n      decisions_bundle = "ventas"\n    }\n  }\n  otra = {\n    api_url = "y"\n  }\n}\n'
+
+    assert _tenant_bundles(text) == {"mi-tienda": "ventas"}
+
+
+def test_terraform_accepts_the_same_bundle_ids_as_the_engine_and_the_lab() -> None:
+    variables = (_TERRAFORM / "platform" / "variables.tf").read_text(encoding="utf-8")
+
+    # El mismo patrón que el modelo del paquete y el brazo del laboratorio (hasta 40).
+    assert 'regex("^[a-z][a-z0-9-]{0,39}$", t.lab.decisions_bundle)' in variables
