@@ -128,3 +128,24 @@ async def test_the_backup_question_on_unconsulted_claims_runs_in_shadow(_isolate
     today, with_jev = turn_traces.read_traces(_isolate_vault_dir, SESSION)
     assert "claims" not in today
     assert with_jev["claims"]["jev"] is True and with_jev["claims"]["capability"] == "afirmacion"
+
+
+import dataclasses  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("workflow_type", "expected"),
+    [("HubaraSalesSessionWorkflowV2", "v2"), ("HubaraSalesSessionWorkflow", "v1"), ("OtroWorkflow", None)],
+)
+async def test_the_trace_says_which_workflow_answered(_isolate_vault_dir: Path, workflow_type: str, expected) -> None:
+    """Calidad LLM separa el bot Jev (el workflow nuevo) del actual: la traza
+    lo dice (antes solo se deducía por la salida de Jev, que el V1 no trae)."""
+    env = ActivityEnvironment()
+    env.info = dataclasses.replace(env.info, workflow_type=workflow_type)
+
+    assert await env.run(persist_turn_trace_activity, SESSION, _payload()) is True
+
+    [trace] = turn_traces.read_traces(_isolate_vault_dir, SESSION)
+    assert trace.get("workflow") == expected

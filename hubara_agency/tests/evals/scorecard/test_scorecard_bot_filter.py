@@ -1,8 +1,11 @@
-"""Calidad LLM: filtro "bot actual / bot nuevo" en Producción (plan del
-laboratorio PR 18). Durante el canary, las mismas gráficas separan los
-episodios que respondió el bot nuevo (algún turno con modo `on` o `canary`
-en la traza) de los que respondió el actual (sin modo o en sombra: en sombra
-el bot actual es el que contesta)."""
+"""Calidad LLM: filtro "bot actual / bot Jev" en producción.
+
+El bot Jev es el workflow nuevo (decisión del operador, 2026-10-02): lo dice
+la traza de cada turno del cliente (`workflow: v2`). Las trazas de antes no
+lo traen, pero el workflow nuevo siempre deja la salida de Jev (`egress`) y
+el actual nunca. Las capas de percepción encendidas sobre el workflow actual
+(`mode: on/canary`) siguen siendo el bot actual.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,31 +25,33 @@ OLD = "wa_100000000002"
 SHADOW = "wa_100000000003"
 
 
-def test_the_bot_of_an_episode_comes_from_its_customer_turns() -> None:
-    assert episode_bot([{"mode": "canary"}]) == "nuevo"
-    assert episode_bot([{"mode": "shadow"}, {}]) == "actual"
+def test_the_bot_of_an_episode_is_the_workflow_that_answered_its_customer_turns() -> None:
+    assert episode_bot([{"workflow": "v2"}]) == "nuevo"
+    assert episode_bot([{"workflow": "v1"}, {}]) == "actual"
     assert episode_bot([]) == "actual"
-    # El complemento y el ghosting corren sin capas (`mode: off`): no dicen
-    # qué bot respondió al cliente.
-    assert episode_bot([{"mode": "on", "trigger": "customer"}, {"mode": "off", "trigger": "complement"},
-                        {"mode": "off", "trigger": "ghost"}]) == "nuevo"
+    # Las capas de percepción sobre el workflow actual no son el bot Jev.
+    assert episode_bot([{"workflow": "v1", "mode": "on"}]) == "actual"
+    # Trazas de antes de `workflow`: el nuevo deja la salida de Jev, el actual no.
+    assert episode_bot([{"egress": {"verdicts": []}}]) == "nuevo"
+    assert episode_bot([{"mode": "canary"}]) == "actual"
+    # El complemento y el ghosting no dicen qué bot respondió al cliente.
+    assert episode_bot([{"workflow": "v2", "trigger": "customer"}, {"workflow": "v1", "trigger": "complement"},
+                        {"trigger": "ghost"}]) == "nuevo"
 
 
 def test_an_episode_answered_by_both_bots_is_mixed() -> None:
-    """Al subir o bajar de etapa, un episodio en curso queda con turnos de los
-    dos bots: no se le carga a ninguno (solo aparece en "Todos")."""
-    assert episode_bot([{"mode": "shadow", "trigger": "customer"}, {"mode": "on", "trigger": "customer"}]) == "mixto"
-    assert episode_bot([{"mode": "on", "trigger": "customer"}, {"mode": "off", "trigger": "customer"}]) == "mixto"
+    """Al encender o apagar el workflow nuevo, un episodio en curso queda con
+    turnos de los dos: no se le carga a ninguno (solo aparece en "Todos")."""
+    assert episode_bot([{"workflow": "v1", "trigger": "customer"}, {"workflow": "v2", "trigger": "customer"}]) == "mixto"
 
 
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setattr(api, "get_vault_dir", lambda: tmp_path)
     cards = store.scorecards_dir(tmp_path)
-    for sid, mode, verdict in ((NEW, "on", "PASA"), (OLD, None, "FALLA"), (SHADOW, "shadow", "ALERTA")):
-        trace = {"turn": 1, "episode_id": "ep_001", "trigger": "customer", "turn_started_ms": 1}
-        if mode:
-            trace["mode"] = mode
+    for sid, extra, verdict in ((NEW, {"workflow": "v2"}, "PASA"), (OLD, {}, "FALLA"),
+                                (SHADOW, {"workflow": "v1", "mode": "on"}, "ALERTA")):
+        trace = {"turn": 1, "episode_id": "ep_001", "trigger": "customer", "turn_started_ms": 1, **extra}
         turn_traces.append_trace(tmp_path, sid, trace)
         store.append_scorecard(cards, {"session_id": sid, "episode_id": "ep_001", "verdict": verdict,
                                        "stage_final": "descubrimiento", "results": []})
@@ -78,7 +83,7 @@ def test_without_a_filter_the_traces_are_not_read(client: TestClient, monkeypatc
 
 def test_the_traces_of_a_session_are_read_once(client: TestClient, tmp_path: Path, monkeypatch) -> None:
     cards = store.scorecards_dir(tmp_path)
-    turn_traces.append_trace(tmp_path, NEW, {"turn": 2, "episode_id": "ep_002", "trigger": "customer", "mode": "on"})
+    turn_traces.append_trace(tmp_path, NEW, {"turn": 2, "episode_id": "ep_002", "trigger": "customer", "workflow": "v2"})
     store.append_scorecard(cards, {"session_id": NEW, "episode_id": "ep_002", "verdict": "PASA",
                                    "stage_final": "descubrimiento", "results": []})
     calls: list[str] = []
@@ -92,8 +97,9 @@ def test_the_traces_of_a_session_are_read_once(client: TestClient, tmp_path: Pat
 
 def test_a_mixed_episode_counts_for_neither_bot(client: TestClient, tmp_path: Path) -> None:
     mixed = "wa_100000000004"
-    for mode in ("shadow", "on"):
-        turn_traces.append_trace(tmp_path, mixed, {"turn": 1, "episode_id": "ep_001", "trigger": "customer", "mode": mode})
+    for workflow in ("v1", "v2"):
+        turn_traces.append_trace(tmp_path, mixed, {"turn": 1, "episode_id": "ep_001", "trigger": "customer",
+                                                   "workflow": workflow})
     store.append_scorecard(store.scorecards_dir(tmp_path), {"session_id": mixed, "episode_id": "ep_001",
                                                             "verdict": "FALLA", "stage_final": "descubrimiento", "results": []})
 

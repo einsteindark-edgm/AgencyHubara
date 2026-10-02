@@ -47,6 +47,15 @@ async def _unconsulted_claims(session_id: str, payload: dict) -> dict:
     return verdict.to_trace() if verdict.provider != "reglas" else {}
 
 
+def _workflow_label() -> str | None:
+    """`v2` (el workflow nuevo, el bot Jev) o `v1` (el actual): Calidad LLM
+    separa por esto. Sale de la activity, no del payload: el workflow no
+    cambia (sin comandos nuevos, el replay no se entera)."""
+    from src.plugins.chats.agent.sales.decisions.bots import WORKFLOW_V1, WORKFLOW_V2
+
+    return {WORKFLOW_V2: "v2", WORKFLOW_V1: "v1"}.get(activity.info().workflow_type)
+
+
 @activity.defn(name="persist_turn_trace")
 async def persist_turn_trace_activity(session_id: str, payload_json: str) -> bool:
     from src.sdk.runtime import WORKSPACE_VAULT_DIR, FilesystemMetadataStore
@@ -64,6 +73,9 @@ async def persist_turn_trace_activity(session_id: str, payload_json: str) -> boo
             session_id=session_id,
             recorded_at_ms=int(time.time() * 1000),
         )
+        workflow = _workflow_label()
+        if workflow:
+            record["workflow"] = workflow
         claims = await _unconsulted_claims(session_id, payload)
         if claims:
             record["claims"] = claims
