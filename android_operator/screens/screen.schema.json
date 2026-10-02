@@ -1,0 +1,3137 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantalla de la App Operador",
+  "description": "Una pantalla definida por el servidor. Guía: android_operator/screens/README.md · Referencia: CATALOGO.md",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "body"
+  ],
+  "patternProperties": {
+    "^[_$]": {
+      "description": "Nota para quien lee el archivo (la app la ignora)."
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema": {
+      "const": 1,
+      "description": "Versión de la forma del archivo (siempre 1)."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]{1,64}$",
+      "description": "Igual al nombre del archivo, sin .json."
+    },
+    "title": {
+      "type": "string",
+      "description": "Título del encabezado. Acepta {{ … }}."
+    },
+    "subtitle": {
+      "type": "string",
+      "description": "Segunda línea del encabezado."
+    },
+    "avatar": {
+      "type": "string",
+      "description": "Nombre para un avatar junto al título."
+    },
+    "avatar_seed": {
+      "type": "string",
+      "description": "Valor estable para el color del avatar."
+    },
+    "layout": {
+      "enum": [
+        "list",
+        "fill"
+      ],
+      "description": "list (se desliza, por defecto) o fill (llena la pantalla: el chat)."
+    },
+    "requires": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1,
+      "description": "Versión del catálogo que necesita (por defecto 1). Una app más vieja pide actualizarse."
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Parámetros obligatorios: {{params.x}}."
+    },
+    "state": {
+      "type": "object",
+      "description": "Valores que la pantalla cambia (un filtro), con su valor inicial: {{state.x}}."
+    },
+    "data": {
+      "type": "object",
+      "description": "Fuentes de datos: cada una es un GET a nuestro backend y se lee por su id ({{pedidos.orders}}).",
+      "additionalProperties": {
+        "type": "object",
+        "patternProperties": {
+          "^[_$]": {
+            "description": "Nota para quien lee el archivo (la app la ignora)."
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "get": {
+            "type": "string",
+            "pattern": "^/api/",
+            "description": "Ruta de nuestro backend, empieza con /api/. Acepta {{params.x}} y {{state.x}}."
+          },
+          "app": {
+            "enum": [
+              "conversations",
+              "fires",
+              "radar",
+              "chat",
+              "templates",
+              "app"
+            ],
+            "description": "conversations: Los chats de la bandeja: session_id, title (nombre o número), phone, name, detail («Bot · Interesado · Pedido #41»), preview, unseen, unseen_label, unread, human, has_order, all, time_ms. · fires: Los incendios (graves primero): fire_id, kind (chat/order), severity (grave/hoy/espera), overline («CHAT · GRAVE»), title, subtitle, getting_worse, session_id, order_id, opens (chat/order), all, grave, chat, order. · radar: Los incendios graves que el operador no ocultó (lo que cuenta el chip del radar). Mismos campos que fires. · chat: Una conversación (params: session): session_id, title, subtitle («Tú atiendes»), name, phone, human, window_open, order_id, order_label («Pedido #41»), stage. · templates: Las plantillas aprobadas: name, title, label (con «· recomendada»), body, preview_body ({{variable}}), fallback, needs_image, is_default, variables [{name, label, max_length}], variable_names. · app: La app: privacy (si hay política de privacidad para abrir)."
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Parámetros de una fuente del teléfono."
+          },
+          "query": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Parámetros de la consulta; los vacíos no se mandan."
+          },
+          "optional": {
+            "type": "boolean",
+            "description": "Si falla, la pantalla igual se muestra."
+          },
+          "refreshOn": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "chats",
+                "fires",
+                "marketing",
+                "orders"
+              ]
+            },
+            "description": "Avisos del servidor que la vuelven a pedir."
+          },
+          "every": {
+            "type": "integer",
+            "minimum": 15,
+            "description": "Cada cuántos segundos se vuelve a pedir mientras se ve."
+          }
+        }
+      }
+    },
+    "computed": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Valores calculados con nombre, en orden: \"validos\": \"{{pedidos.orders | where_not:'is_test'}}\"."
+    },
+    "topActions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "icon",
+          "label",
+          "action"
+        ],
+        "properties": {
+          "icon": {
+            "anyOf": [
+              {
+                "enum": [
+                  "add",
+                  "apps",
+                  "arrow_back",
+                  "bar_chart",
+                  "bolt",
+                  "bot",
+                  "calendar",
+                  "call",
+                  "campaign",
+                  "chat",
+                  "chat_filled",
+                  "check",
+                  "check_circle",
+                  "chevron_right",
+                  "close",
+                  "edit",
+                  "error",
+                  "filter",
+                  "fire",
+                  "fire_filled",
+                  "group",
+                  "info",
+                  "inventory",
+                  "link",
+                  "location",
+                  "mail",
+                  "more_vert",
+                  "notifications",
+                  "orders",
+                  "orders_filled",
+                  "payments",
+                  "person",
+                  "receipt",
+                  "refresh",
+                  "schedule",
+                  "search",
+                  "sell",
+                  "send",
+                  "settings",
+                  "shipping",
+                  "star",
+                  "storefront",
+                  "trending_down",
+                  "trending_up",
+                  "undo",
+                  "warning"
+                ]
+              },
+              {
+                "type": "string",
+                "pattern": "\\{\\{"
+              }
+            ],
+            "description": "Ícono del catálogo."
+          },
+          "label": {
+            "type": "string",
+            "description": "Lo lee TalkBack; en chip y menú es el texto."
+          },
+          "style": {
+            "enum": [
+              "icon",
+              "chip",
+              "menu"
+            ],
+            "description": "icon (por defecto), chip (botón con texto) o menu (renglón de «Más opciones»)."
+          },
+          "visible": {
+            "type": [
+              "string",
+              "array"
+            ],
+            "description": "Se muestra solo si da verdadero."
+          },
+          "action": {
+            "$ref": "#/definitions/action"
+          }
+        }
+      },
+      "description": "Íconos de la barra superior."
+    },
+    "fab": {
+      "type": "object",
+      "description": "Botón flotante abajo a la derecha.",
+      "required": [
+        "label",
+        "action"
+      ],
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "enum": [
+                "add",
+                "apps",
+                "arrow_back",
+                "bar_chart",
+                "bolt",
+                "bot",
+                "calendar",
+                "call",
+                "campaign",
+                "chat",
+                "chat_filled",
+                "check",
+                "check_circle",
+                "chevron_right",
+                "close",
+                "edit",
+                "error",
+                "filter",
+                "fire",
+                "fire_filled",
+                "group",
+                "info",
+                "inventory",
+                "link",
+                "location",
+                "mail",
+                "more_vert",
+                "notifications",
+                "orders",
+                "orders_filled",
+                "payments",
+                "person",
+                "receipt",
+                "refresh",
+                "schedule",
+                "search",
+                "sell",
+                "send",
+                "settings",
+                "shipping",
+                "star",
+                "storefront",
+                "trending_down",
+                "trending_up",
+                "undo",
+                "warning"
+              ]
+            },
+            {
+              "type": "string",
+              "pattern": "\\{\\{"
+            }
+          ],
+          "description": "Ícono del catálogo."
+        },
+        "action": {
+          "$ref": "#/definitions/action"
+        }
+      }
+    },
+    "body": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/node"
+      },
+      "description": "Los componentes, de arriba abajo."
+    }
+  },
+  "definitions": {
+    "node": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "column",
+            "row",
+            "grid",
+            "card",
+            "section",
+            "list",
+            "spacer",
+            "divider",
+            "text",
+            "icon",
+            "image",
+            "avatar",
+            "tag",
+            "list_item",
+            "stat",
+            "key_value",
+            "stepper",
+            "progress",
+            "notice",
+            "empty",
+            "button",
+            "chips",
+            "text_field",
+            "switch",
+            "chat",
+            "notifications_banner"
+          ],
+          "description": "El componente (ver CATALOGO.md)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "column"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Apila sus hijos de arriba abajo.",
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "column"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/node"
+                }
+              },
+              "spacing": {
+                "type": "number",
+                "description": "Espacio entre hijos en dp (por defecto 8)."
+              },
+              "padding": {
+                "type": "number",
+                "description": "Margen interno en dp."
+              },
+              "align": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "start",
+                      "center",
+                      "end"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Alineación horizontal."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "row"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Pone sus hijos uno al lado del otro. Un hijo con `\"weight\": 1` ocupa el espacio que sobra.",
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "row"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/node"
+                }
+              },
+              "spacing": {
+                "type": "number",
+                "description": "Espacio entre hijos en dp (por defecto 8)."
+              },
+              "align": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "top",
+                      "center",
+                      "bottom"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Alineación vertical."
+              },
+              "arrange": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "start",
+                      "center",
+                      "end",
+                      "between"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Cómo reparte el espacio."
+              },
+              "scroll": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "description": "Se desliza de lado si no cabe."
+              },
+              "wrap": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "description": "Pasa a otra línea si no cabe."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "grid"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Cuadrícula de N columnas (para tarjetas de cifras).",
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "grid"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/node"
+                }
+              },
+              "columns": {
+                "type": "number",
+                "description": "Columnas (por defecto 2)."
+              },
+              "spacing": {
+                "type": "number",
+                "description": "Espacio en dp (por defecto 8)."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "card"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Tarjeta que agrupa a sus hijos. Se puede tocar.",
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "card"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "action": {
+                "$ref": "#/definitions/action"
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/node"
+                }
+              },
+              "style": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "filled",
+                      "outlined",
+                      "elevated"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Relleno tonal, con borde o elevada."
+              },
+              "tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "neutral",
+                      "primary",
+                      "secondary",
+                      "bot",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color del fondo (neutral por defecto)."
+              },
+              "padding": {
+                "type": "number",
+                "description": "Margen interno en dp (por defecto 16)."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "section"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Un bloque con título (y un enlace opcional a la derecha, con `action` + `action_label`).",
+            "required": [
+              "title"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "section"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "action": {
+                "$ref": "#/definitions/action"
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/node"
+                }
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Título de la sección."
+              },
+              "subtitle": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Línea de ayuda debajo."
+              },
+              "action_label": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Texto del enlace de la derecha («Ver todo»)."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "list"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Repite `item` por cada elemento de `items` (cada uno se lee con el nombre de `as`, por defecto `item`, y su posición con `index`), o muestra sus `children` como renglones fijos (un menú).",
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "list"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/node"
+                }
+              },
+              "as": {
+                "type": "string",
+                "description": "Nombre de cada elemento (por defecto item)."
+              },
+              "item": {
+                "$ref": "#/definitions/node"
+              },
+              "empty": {
+                "$ref": "#/definitions/node"
+              },
+              "items": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "La lista: `{{pedidos.orders}}` o una lista escrita tal cual `[{…}, {…}]`."
+              },
+              "key": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Identificador estable de cada elemento (`{{item.id}}`)."
+              },
+              "style": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "segmented",
+                      "cards",
+                      "plain"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Renglones segmentados (por defecto), tarjetas separadas o plana (sin fondo ni separadores, como la bandeja)."
+              },
+              "limit": {
+                "type": "number",
+                "description": "Muestra como mucho N."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "spacer"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Espacio vacío.",
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "spacer"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "size": {
+                "type": "number",
+                "description": "Alto en dp (por defecto 16)."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "divider"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Línea divisoria.",
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "divider"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "text"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Un texto.",
+            "required": [
+              "text"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "text"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "El texto."
+              },
+              "style": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "display",
+                      "headline",
+                      "title",
+                      "subtitle",
+                      "body",
+                      "label",
+                      "caption"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Tamaño (por defecto body)."
+              },
+              "emphasis": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "description": "Versión enfatizada de Material 3 Expressive (más peso)."
+              },
+              "tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "default",
+                      "muted",
+                      "primary",
+                      "bot",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color."
+              },
+              "align": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "start",
+                      "center",
+                      "end"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Alineación."
+              },
+              "max_lines": {
+                "type": "number",
+                "description": "Corta con «…» después de N líneas."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "icon"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Un ícono suelto.",
+            "required": [
+              "name"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "icon"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "add",
+                      "apps",
+                      "arrow_back",
+                      "bar_chart",
+                      "bolt",
+                      "bot",
+                      "calendar",
+                      "call",
+                      "campaign",
+                      "chat",
+                      "chat_filled",
+                      "check",
+                      "check_circle",
+                      "chevron_right",
+                      "close",
+                      "edit",
+                      "error",
+                      "filter",
+                      "fire",
+                      "fire_filled",
+                      "group",
+                      "info",
+                      "inventory",
+                      "link",
+                      "location",
+                      "mail",
+                      "more_vert",
+                      "notifications",
+                      "orders",
+                      "orders_filled",
+                      "payments",
+                      "person",
+                      "receipt",
+                      "refresh",
+                      "schedule",
+                      "search",
+                      "sell",
+                      "send",
+                      "settings",
+                      "shipping",
+                      "star",
+                      "storefront",
+                      "trending_down",
+                      "trending_up",
+                      "undo",
+                      "warning"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Nombre del ícono."
+              },
+              "tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "default",
+                      "muted",
+                      "primary",
+                      "bot",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color."
+              },
+              "size": {
+                "type": "number",
+                "description": "Tamaño en dp (por defecto 24)."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "image"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Una imagen por https.",
+            "required": [
+              "url"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "image"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Dirección https de la imagen."
+              },
+              "ratio": {
+                "type": "number",
+                "description": "Ancho/alto (por defecto 1.5)."
+              },
+              "shape": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "rounded",
+                      "square",
+                      "circle"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Forma."
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Qué muestra (para TalkBack)."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "avatar"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Círculo con las iniciales de un nombre.",
+            "required": [
+              "name"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "avatar"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Nombre (de ahí salen las iniciales)."
+              },
+              "seed": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Valor estable para el color (por defecto el nombre)."
+              },
+              "size": {
+                "type": "number",
+                "description": "Tamaño en dp (por defecto 40)."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "tag"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Píldora corta de estado.",
+            "required": [
+              "text"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "tag"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "El texto."
+              },
+              "tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "neutral",
+                      "primary",
+                      "secondary",
+                      "bot",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color con significado."
+              },
+              "icon": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "add",
+                      "apps",
+                      "arrow_back",
+                      "bar_chart",
+                      "bolt",
+                      "bot",
+                      "calendar",
+                      "call",
+                      "campaign",
+                      "chat",
+                      "chat_filled",
+                      "check",
+                      "check_circle",
+                      "chevron_right",
+                      "close",
+                      "edit",
+                      "error",
+                      "filter",
+                      "fire",
+                      "fire_filled",
+                      "group",
+                      "info",
+                      "inventory",
+                      "link",
+                      "location",
+                      "mail",
+                      "more_vert",
+                      "notifications",
+                      "orders",
+                      "orders_filled",
+                      "payments",
+                      "person",
+                      "receipt",
+                      "refresh",
+                      "schedule",
+                      "search",
+                      "sell",
+                      "send",
+                      "settings",
+                      "shipping",
+                      "star",
+                      "storefront",
+                      "trending_down",
+                      "trending_up",
+                      "undo",
+                      "warning"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Ícono a la izquierda."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "list_item"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "El renglón de una lista: ícono o avatar, título, subtítulo, una píldora y un valor a la derecha. Se puede tocar.",
+            "required": [
+              "title"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "list_item"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "action": {
+                "$ref": "#/definitions/action"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Primera línea."
+              },
+              "subtitle": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Segunda línea."
+              },
+              "overline": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Línea chica arriba del título."
+              },
+              "icon": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "add",
+                      "apps",
+                      "arrow_back",
+                      "bar_chart",
+                      "bolt",
+                      "bot",
+                      "calendar",
+                      "call",
+                      "campaign",
+                      "chat",
+                      "chat_filled",
+                      "check",
+                      "check_circle",
+                      "chevron_right",
+                      "close",
+                      "edit",
+                      "error",
+                      "filter",
+                      "fire",
+                      "fire_filled",
+                      "group",
+                      "info",
+                      "inventory",
+                      "link",
+                      "location",
+                      "mail",
+                      "more_vert",
+                      "notifications",
+                      "orders",
+                      "orders_filled",
+                      "payments",
+                      "person",
+                      "receipt",
+                      "refresh",
+                      "schedule",
+                      "search",
+                      "sell",
+                      "send",
+                      "settings",
+                      "shipping",
+                      "star",
+                      "storefront",
+                      "trending_down",
+                      "trending_up",
+                      "undo",
+                      "warning"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Ícono a la izquierda."
+              },
+              "icon_tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "neutral",
+                      "primary",
+                      "secondary",
+                      "bot",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color del ícono."
+              },
+              "avatar": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Nombre para un avatar a la izquierda (en vez de ícono)."
+              },
+              "avatar_seed": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Valor estable para el color del avatar (por defecto el nombre)."
+              },
+              "tag": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Píldora debajo del título."
+              },
+              "tag_tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "neutral",
+                      "primary",
+                      "secondary",
+                      "bot",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color de la píldora."
+              },
+              "trailing": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Valor a la derecha (un total, una cifra)."
+              },
+              "trailing_caption": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Línea chica debajo del valor (una hora)."
+              },
+              "trailing_tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "default",
+                      "muted",
+                      "primary",
+                      "bot",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color del valor y su línea chica."
+              },
+              "chevron": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "description": "Flecha a la derecha (lleva a otra pantalla)."
+              },
+              "overline_tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "default",
+                      "muted",
+                      "primary",
+                      "bot",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color de la línea de arriba."
+              },
+              "emphasis": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "description": "Título más marcado (algo sin leer)."
+              },
+              "badge": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Número en una píldora a la derecha (no leídos); vacío o 0 no se muestra."
+              },
+              "badge_label": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Lo que dice TalkBack del número («2 mensajes sin leer»)."
+              },
+              "caption": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Tercera línea chica (quién atiende, en qué va)."
+              },
+              "caption_icon": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "add",
+                      "apps",
+                      "arrow_back",
+                      "bar_chart",
+                      "bolt",
+                      "bot",
+                      "calendar",
+                      "call",
+                      "campaign",
+                      "chat",
+                      "chat_filled",
+                      "check",
+                      "check_circle",
+                      "chevron_right",
+                      "close",
+                      "edit",
+                      "error",
+                      "filter",
+                      "fire",
+                      "fire_filled",
+                      "group",
+                      "info",
+                      "inventory",
+                      "link",
+                      "location",
+                      "mail",
+                      "more_vert",
+                      "notifications",
+                      "orders",
+                      "orders_filled",
+                      "payments",
+                      "person",
+                      "receipt",
+                      "refresh",
+                      "schedule",
+                      "search",
+                      "sell",
+                      "send",
+                      "settings",
+                      "shipping",
+                      "star",
+                      "storefront",
+                      "trending_down",
+                      "trending_up",
+                      "undo",
+                      "warning"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Ícono chico antes de la tercera línea."
+              },
+              "caption_icon_tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "default",
+                      "muted",
+                      "primary",
+                      "bot",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color de ese ícono."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "stat"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Una cifra con su nombre (para tableros).",
+            "required": [
+              "label",
+              "value"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "stat"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "action": {
+                "$ref": "#/definitions/action"
+              },
+              "label": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Qué es («Ventas de hoy»)."
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "La cifra."
+              },
+              "caption": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Línea chica debajo."
+              },
+              "tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "neutral",
+                      "primary",
+                      "secondary",
+                      "bot",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color con significado."
+              },
+              "icon": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "add",
+                      "apps",
+                      "arrow_back",
+                      "bar_chart",
+                      "bolt",
+                      "bot",
+                      "calendar",
+                      "call",
+                      "campaign",
+                      "chat",
+                      "chat_filled",
+                      "check",
+                      "check_circle",
+                      "chevron_right",
+                      "close",
+                      "edit",
+                      "error",
+                      "filter",
+                      "fire",
+                      "fire_filled",
+                      "group",
+                      "info",
+                      "inventory",
+                      "link",
+                      "location",
+                      "mail",
+                      "more_vert",
+                      "notifications",
+                      "orders",
+                      "orders_filled",
+                      "payments",
+                      "person",
+                      "receipt",
+                      "refresh",
+                      "schedule",
+                      "search",
+                      "sell",
+                      "send",
+                      "settings",
+                      "shipping",
+                      "star",
+                      "storefront",
+                      "trending_down",
+                      "trending_up",
+                      "undo",
+                      "warning"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Ícono arriba."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "key_value"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Un dato con su etiqueta, uno debajo del otro (como en la ficha del pedido).",
+            "required": [
+              "label",
+              "value"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "key_value"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "label": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "La etiqueta."
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "El dato."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "stepper"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Los pasos de un proceso con el actual marcado (las etapas de un pedido).",
+            "required": [
+              "steps",
+              "current"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "stepper"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "steps": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "value",
+                        "label"
+                      ]
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Los pasos en orden: `[{ \"value\": \"…\", \"label\": \"…\" }]`."
+              },
+              "current": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "El valor del paso actual."
+              },
+              "label": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Lo que dice TalkBack («Etapa: Preparando»)."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "progress"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Barra de avance. Sin `value` gira indefinida.",
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "progress"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Avance de 0 a 1."
+              },
+              "label": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Texto encima."
+              },
+              "tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "neutral",
+                      "primary",
+                      "secondary",
+                      "bot",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color con significado."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "notice"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Aviso en una franja de color. Se puede tocar.",
+            "required": [
+              "text"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "notice"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "action": {
+                "$ref": "#/definitions/action"
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "El aviso."
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Título."
+              },
+              "tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "info",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color (por defecto info)."
+              },
+              "icon": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "add",
+                      "apps",
+                      "arrow_back",
+                      "bar_chart",
+                      "bolt",
+                      "bot",
+                      "calendar",
+                      "call",
+                      "campaign",
+                      "chat",
+                      "chat_filled",
+                      "check",
+                      "check_circle",
+                      "chevron_right",
+                      "close",
+                      "edit",
+                      "error",
+                      "filter",
+                      "fire",
+                      "fire_filled",
+                      "group",
+                      "info",
+                      "inventory",
+                      "link",
+                      "location",
+                      "mail",
+                      "more_vert",
+                      "notifications",
+                      "orders",
+                      "orders_filled",
+                      "payments",
+                      "person",
+                      "receipt",
+                      "refresh",
+                      "schedule",
+                      "search",
+                      "sell",
+                      "send",
+                      "settings",
+                      "shipping",
+                      "star",
+                      "storefront",
+                      "trending_down",
+                      "trending_up",
+                      "undo",
+                      "warning"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Ícono."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "empty"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Estado vacío: ícono grande, título y ayuda.",
+            "required": [
+              "title"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "empty"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Título."
+              },
+              "body": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Línea de ayuda."
+              },
+              "icon": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "add",
+                      "apps",
+                      "arrow_back",
+                      "bar_chart",
+                      "bolt",
+                      "bot",
+                      "calendar",
+                      "call",
+                      "campaign",
+                      "chat",
+                      "chat_filled",
+                      "check",
+                      "check_circle",
+                      "chevron_right",
+                      "close",
+                      "edit",
+                      "error",
+                      "filter",
+                      "fire",
+                      "fire_filled",
+                      "group",
+                      "info",
+                      "inventory",
+                      "link",
+                      "location",
+                      "mail",
+                      "more_vert",
+                      "notifications",
+                      "orders",
+                      "orders_filled",
+                      "payments",
+                      "person",
+                      "receipt",
+                      "refresh",
+                      "schedule",
+                      "search",
+                      "sell",
+                      "send",
+                      "settings",
+                      "shipping",
+                      "star",
+                      "storefront",
+                      "trending_down",
+                      "trending_up",
+                      "undo",
+                      "warning"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Ícono."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "button"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Un botón. Necesita `action`.",
+            "required": [
+              "text",
+              "action"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "button"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "action": {
+                "$ref": "#/definitions/action"
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "El texto."
+              },
+              "style": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "filled",
+                      "tonal",
+                      "outlined",
+                      "text"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Relleno (por defecto), tonal, con borde o solo texto."
+              },
+              "icon": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "add",
+                      "apps",
+                      "arrow_back",
+                      "bar_chart",
+                      "bolt",
+                      "bot",
+                      "calendar",
+                      "call",
+                      "campaign",
+                      "chat",
+                      "chat_filled",
+                      "check",
+                      "check_circle",
+                      "chevron_right",
+                      "close",
+                      "edit",
+                      "error",
+                      "filter",
+                      "fire",
+                      "fire_filled",
+                      "group",
+                      "info",
+                      "inventory",
+                      "link",
+                      "location",
+                      "mail",
+                      "more_vert",
+                      "notifications",
+                      "orders",
+                      "orders_filled",
+                      "payments",
+                      "person",
+                      "receipt",
+                      "refresh",
+                      "schedule",
+                      "search",
+                      "sell",
+                      "send",
+                      "settings",
+                      "shipping",
+                      "star",
+                      "storefront",
+                      "trending_down",
+                      "trending_up",
+                      "undo",
+                      "warning"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Ícono a la izquierda."
+              },
+              "enabled": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "description": "Si se puede tocar (`{{form.guia | present}}`)."
+              },
+              "full_width": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "description": "Ocupa todo el ancho."
+              },
+              "tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "default",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "`danger` para acciones que borran o cancelan."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "chips"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Elige UNA opción. Guarda el valor en `bind` (`state.x` vuelve a pedir los datos que lo usan).",
+            "required": [
+              "bind",
+              "options"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "chips"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "bind": {
+                "type": "string",
+                "pattern": "^(state|form)\\.",
+                "description": "Dónde se guarda: `state.<clave>`."
+              },
+              "options": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "value",
+                        "label"
+                      ]
+                    }
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "`[{ \"value\": \"…\", \"label\": \"…\" }]`."
+              },
+              "style": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "chips",
+                      "segmented"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Chips (por defecto) o botones segmentados."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "text_field"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Campo de texto. Lo escrito queda en `bind` (`form.x` para mandarlo en una llamada).",
+            "required": [
+              "bind",
+              "label"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "text_field"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "bind": {
+                "type": "string",
+                "pattern": "^(state|form)\\.",
+                "description": "Dónde se guarda: `form.<clave>` o `state.<clave>`."
+              },
+              "label": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Etiqueta."
+              },
+              "placeholder": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Ejemplo dentro del campo."
+              },
+              "keyboard": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "text",
+                      "number",
+                      "phone",
+                      "email",
+                      "url"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Teclado."
+              },
+              "multiline": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "description": "Varias líneas."
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Valor inicial."
+              },
+              "max_length": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Como mucho N letras (un número o un dato: `{{v.max_length}}`)."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "switch"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Interruptor sí/no. Guarda true/false en `bind`.",
+            "required": [
+              "bind",
+              "label"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "switch"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "bind": {
+                "type": "string",
+                "pattern": "^(state|form)\\.",
+                "description": "Dónde se guarda."
+              },
+              "label": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Etiqueta."
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Línea de ayuda."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "chat"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "El chat nativo de una conversación: lo que entendió el bot, el historial, deshacer, las burbujas y el composer. Llena el espacio (pantalla con `\"layout\": \"fill\"` y `\"weight\": 1`).",
+            "required": [
+              "session"
+            ],
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "chat"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              },
+              "session": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "La conversación (`wa_…`)."
+              },
+              "on_more": {
+                "allOf": [
+                  {
+                    "$ref": "#/definitions/action"
+                  }
+                ],
+                "description": "Lo que hace «+ Más» y mantener una burbuja (abrir la paleta de acciones)."
+              },
+              "on_reactivate": {
+                "allOf": [
+                  {
+                    "$ref": "#/definitions/action"
+                  }
+                ],
+                "description": "Lo que hace «Reactivar con plantilla» con la ventana de 24 h cerrada."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "notifications_banner"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Aviso para activar las notificaciones (solo si están apagadas; pide el permiso).",
+            "patternProperties": {
+              "^[_$]": {
+                "description": "Nota para quien lee el archivo (la app la ignora)."
+              }
+            },
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "notifications_banner"
+              },
+              "id": {
+                "type": "string"
+              },
+              "visible": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "description": "Se pinta solo si da verdadero (con varias, todas)."
+              },
+              "weight": {
+                "type": "number",
+                "description": "Dentro de un «row»: ocupa el espacio que sobra."
+              }
+            }
+          }
+        }
+      ]
+    },
+    "action": {
+      "description": "Lo que hace un toque. Una lista [ … ] ejecuta varias en orden.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/action"
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "patternProperties": {
+            "^[_$]": {
+              "description": "Nota para quien lee el archivo (la app la ignora)."
+            }
+          },
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "navigate",
+                "open_chat",
+                "open_order",
+                "open_url",
+                "back",
+                "refresh",
+                "set_state",
+                "call",
+                "message",
+                "copy",
+                "native",
+                "confirm",
+                "if"
+              ],
+              "description": "navigate: Abre otra pantalla del servidor: `screen`, `params` y `sheet: true` para abrirla como hoja. · open_chat: Abre el chat de una conversación: `session` (`live: true` lo abre en la pila de Incendios). · open_order: Abre la ficha nativa de un pedido: `order`. · open_url: Abre un enlace https (o `tel:`): `url`. · back: Vuelve a la pantalla anterior. · refresh: Vuelve a pedir los datos (todos, o los de `data: [ids]`). · set_state: Cambia valores de `state` (`values`); los datos que los usan se vuelven a pedir. · call: Llama al backend: `method` (POST, PUT, PATCH, DELETE), `path`, `query`, `body`, `confirm`, `success` y `then`. · message: Muestra un aviso corto abajo: `text`. · copy: Copia un texto: `text`. · native: Algo que hace la app con lo suyo: `name` (ver acciones nativas) y `args`. · confirm: Pide confirmación (`title`, `body`, `accept`, `dismiss`) y, si el operador acepta, hace `then`. · if: Si `condition` da verdadero hace `then`; si no, `else`."
+            },
+            "screen": {
+              "type": "string",
+              "description": "navigate: id de la pantalla."
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "navigate: parámetros."
+            },
+            "sheet": {
+              "type": "boolean",
+              "description": "navigate: abrir como hoja inferior."
+            },
+            "session": {
+              "type": "string",
+              "description": "open_chat: id de la conversación (wa_…)."
+            },
+            "order": {
+              "type": "string",
+              "description": "open_order: id del pedido."
+            },
+            "url": {
+              "type": "string",
+              "pattern": "^(https://|tel:)",
+              "description": "open_url: https:// o tel:."
+            },
+            "data": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "refresh: qué fuentes (vacío = todas)."
+            },
+            "values": {
+              "type": "object",
+              "description": "set_state: claves de state y su valor nuevo."
+            },
+            "method": {
+              "enum": [
+                "GET",
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE"
+              ],
+              "description": "call: método."
+            },
+            "path": {
+              "type": "string",
+              "pattern": "^/api/",
+              "description": "call: ruta de nuestro backend."
+            },
+            "query": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "body": {
+              "description": "call: cuerpo JSON; los textos aceptan {{ … }} (una expresión sola conserva su tipo)."
+            },
+            "confirm": {
+              "type": "object",
+              "description": "call: pide confirmación antes de llamar.",
+              "required": [
+                "title"
+              ],
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "body": {
+                  "type": "string"
+                },
+                "accept": {
+                  "type": "string"
+                },
+                "dismiss": {
+                  "type": "string"
+                }
+              }
+            },
+            "success": {
+              "type": "string",
+              "description": "call: aviso si salió bien."
+            },
+            "then": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/action"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/action"
+                  }
+                }
+              ],
+              "description": "call: lo que sigue si salió bien."
+            },
+            "text": {
+              "type": "string",
+              "description": "message / copy: el texto."
+            },
+            "live": {
+              "type": "boolean",
+              "description": "open_chat: en la pila de Incendios."
+            },
+            "name": {
+              "enum": [
+                "sign_out",
+                "open_privacy",
+                "hide_fire",
+                "take_over",
+                "return_to_bot",
+                "send_tool",
+                "send_template"
+              ],
+              "description": "sign_out: Cierra la sesión y borra del teléfono los chats, borradores y avisos. · open_privacy: Abre la política de privacidad. · hide_fire: Saca un incendio del radar (sigue en Incendios). args: fire_id. · take_over: El operador toma la conversación. args: session. · return_to_bot: Devuelve la conversación al bot. args: session. · send_tool: Manda una acción del bot por el outbox, con deshacer. args: session, tool, label. · send_template: Manda una plantilla aprobada por el outbox. args: session, template, values."
+            },
+            "args": {
+              "type": "object",
+              "description": "native: sus argumentos; los textos aceptan {{ … }}."
+            },
+            "title": {
+              "type": "string",
+              "description": "confirm: la pregunta."
+            },
+            "accept": {
+              "type": "string",
+              "description": "confirm: el botón de aceptar."
+            },
+            "dismiss": {
+              "type": "string",
+              "description": "confirm: el botón de cancelar."
+            },
+            "condition": {
+              "type": "string",
+              "description": "if: la condición ({{ … }})."
+            },
+            "else": {
+              "$ref": "#/definitions/action"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

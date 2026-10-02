@@ -29,6 +29,7 @@ import asyncio
 import json
 import os
 import time
+from collections.abc import Callable, Collection
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -301,7 +302,12 @@ async def flush_pending_ui_intents_activity(session_id: str) -> int:
     return await flush_pending_ui_intents(session_id)
 
 
-async def flush_pending_ui_intents(session_id: str) -> int:
+async def flush_pending_ui_intents(
+    session_id: str,
+    *,
+    only_ids: Collection[str] | None = None,
+    operator_tool: str | None = None,
+) -> int:
     """Lee `metadata.json[pending_ui_intents]` y dispatch a `send_*`.
 
     Devuelve la cantidad de intents enviados (excluye los que fallaron y
@@ -313,6 +319,13 @@ async def flush_pending_ui_intents(session_id: str) -> int:
     por Meta Business Agent (no hay turno del bot que flushee las
     instrucciones de pago). `activity.logger` es seguro fuera de un activity:
     sin contexto solo omite el sufijo con los datos del activity.
+
+    ``only_ids``: flush ACOTADO — se envían solo los intents con esos ids; el
+    resto de la cola no se toca (ni se envía ni se descarta). Lo usa la acción
+    del operador desde la app (``session-actions .../tools/{tool}``).
+    ``operator_tool``: lo que sale lo mandó el OPERADOR con esa acción — el
+    historial queda con ``sender: "human"`` (como ``append_human_event``) y
+    ``operator_tool``, y las notas dicen "El operador envió…".
     """
     # Imports tardíos para evitar tocar httpx/Temporal-imports en module load
     from src.platform.analytics import (
@@ -322,6 +335,7 @@ async def flush_pending_ui_intents(session_id: str) -> int:
     from src.platform.config import WORKSPACE_VAULT_DIR
     from src.platform.whatsapp import client as wa_client
     from src.platform.whatsapp import dtos as wa_dtos
+    from src.sdk.runtime import FilesystemMetadataStore
 
     metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
     if not metadata_file.exists():
@@ -335,7 +349,23 @@ async def flush_pending_ui_intents(session_id: str) -> int:
         )
         return 0
 
-    intents = list(data.get("pending_ui_intents") or [])
+    # `data` es la FOTO del arranque: decide qué se envía y a quién, pero
+    # NUNCA se reescribe entera. Entre un envío y el siguiente el cliente pudo
+    # escribir (ingest del webhook) o alguien encolar otro intent; reescribir
+    # la foto los borraba (2026-09-29: `last_inbound_*` volvía atrás). Cada
+    # escritura del flush es un read-modify-write bajo el lock del store que
+    # aplica SOLO sus propios cambios sobre el metadata fresco.
+    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+
+    def persist(apply: Callable[[dict[str, Any]], bool]) -> None:
+        _update_metadata(store, session_id, metadata_file, apply)
+
+    queue = list(data.get("pending_ui_intents") or [])
+    wanted = set(only_ids) if only_ids is not None else None
+    intents = [
+        i for i in queue
+        if wanted is None or (isinstance(i, dict) and i.get("id") in wanted)
+    ]
     if not intents:
         return 0
 
@@ -372,8 +402,7 @@ async def flush_pending_ui_intents(session_id: str) -> int:
                 ],
             },
         )
-        data["pending_ui_intents"] = fresh_intents
-        _safe_write_metadata(metadata_file, data)
+        persist(lambda md: _drop_processed(md, stale_intents))
     intents = fresh_intents
     if not intents:
         return 0
@@ -388,9 +417,9 @@ async def flush_pending_ui_intents(session_id: str) -> int:
             "flush_ui_intents.no_phone_number_id",
             extra={"session_id": session_id, "intents_count": len(intents)},
         )
-        # Limpiar igual — no podemos enviar, mejor no acumular forever
-        data["pending_ui_intents"] = []
-        _safe_write_metadata(metadata_file, data)
+        # Limpiar igual (lo que se iba a enviar) — no podemos enviar, mejor
+        # no acumular forever
+        persist(lambda md: _drop_processed(md, intents))
         return 0
 
     last_inbound_msg_id = data.get("last_inbound_message_id")
@@ -410,13 +439,10 @@ async def flush_pending_ui_intents(session_id: str) -> int:
     # 2+1=3 pendientes (los 2 enviados ya se limpiaron, el que falló se
     # reintenta o se descarta según política abajo).
     #
-    # Hacemos una copia de la lista para iterar — `pending_ui_intents`
-    # se va vaciando in-place.
-    intents_pending = list(intents)
-    data["pending_ui_intents"] = intents_pending
-
-    while intents_pending:
-        intent = intents_pending[0]
+    # Cada intent procesado sale de la cola FRESCA (`_drop_processed`: por
+    # id, o por contenido si es legacy sin id) — los que este flush no
+    # procesa (flush acotado, o encolados mientras enviaba) se quedan.
+    for intent in intents:
         kind = intent.get("kind")
         params = intent.get("params") or {}
         analytics_meta = intent.get("analytics") or {}
@@ -448,15 +474,13 @@ async def flush_pending_ui_intents(session_id: str) -> int:
             failed.append({"kind": kind, "error": str(e)})
             # Pop el intent fallido (NO retry automático — el LLM puede
             # decidir reemitir en próxima iteración) y persistir.
-            intents_pending.pop(0)
-            _safe_write_metadata(metadata_file, data)
+            persist(lambda md: _drop_processed(md, [intent]))
             continue
 
         if result is None:
             # kind desconocido o intent inválido (sin imagen, etc)
             failed.append({"kind": kind, "error": "no_dispatch"})
-            intents_pending.pop(0)
-            _safe_write_metadata(metadata_file, data)
+            persist(lambda md: _drop_processed(md, [intent]))
             continue
 
         if not result.ok:
@@ -469,42 +493,41 @@ async def flush_pending_ui_intents(session_id: str) -> int:
                 },
             )
             failed.append({"kind": kind, "error": result.error})
-            intents_pending.pop(0)
-            _safe_write_metadata(metadata_file, data)
+            persist(lambda md: _drop_processed(md, [intent]))
             continue
 
         # ENVÍO EXITOSO — pop e inmediatamente persistir antes de
         # cualquier otra operación (analytics es best-effort y NO debe
-        # bloquear la idempotencia).
-        intents_pending.pop(0)
-        if media_log:
-            _merge_media_index(data, media_log)
-        if kind == "shipping_flow":
-            # Run 01a0a0f1 (2026-09-14): `_mark_flow_awaiting_reply` escribe
-            # el flag del Flow releyendo el archivo, y esta escritura lo
-            # pisaba con la copia vieja de `data` → el timeout extendido de
-            # ghosting (10 min) nunca aplicaba. Se trae el flag fresco antes
-            # de persistir.
-            _reload_flow_awaiting_flag(metadata_file, data)
-        _safe_write_metadata(metadata_file, data)
+        # bloquear la idempotencia). El flag del Flow que escribió
+        # `_mark_flow_awaiting_reply` ya está en el metadata fresco: esta
+        # escritura no lo pisa (run 01a0a0f1, 2026-09-14).
+        persist(lambda md: _record_sent(md, intent, media_log))
         sent_count += 1
 
         # Auditoría CAPI 2026-09-08: lo que el cliente acaba de VER es la
         # señal de embudo para Meta (ViewContent / AddToCart /
         # InitiateCheckout). Se encola acá y lo manda el flusher del turno.
         try:
-            if _enqueue_capi_for_sent_intent(
-                data, session_id=session_id, kind=kind, params=params, now_ms=now_ms
-            ):
-                _safe_write_metadata(metadata_file, data)
+            persist(
+                lambda md: _enqueue_capi_for_sent_intent(
+                    md, session_id=session_id, kind=kind, params=params, now_ms=now_ms
+                )
+            )
         except Exception:  # noqa: BLE001 - atribución nunca bloquea el envío
             pass
 
         # Marker al histórico del dashboard (post-pop, post-write —
         # best-effort: si crashea, el intent NO se reenvía y el flush sigue).
         try:
-            history_event = _build_history_event(kind, params)
+            history_event = _build_history_event(
+                kind, params, actor="El operador" if operator_tool else "El bot"
+            )
             if history_event is not None:
+                if operator_tool:
+                    # Lo mandó el humano desde la app: mismo marcador que
+                    # `append_human_event` + la acción que usó.
+                    history_event["sender"] = "human"
+                    history_event["operator_tool"] = operator_tool
                 # `wamid`: destino de las citas del cliente ("este" citando
                 # los botones / el catálogo / la foto). Sin él el dashboard
                 # muestra "Mensaje no disponible" (caso 2026-09-17).
@@ -535,12 +558,105 @@ async def flush_pending_ui_intents(session_id: str) -> int:
 
     # Persistir failures finales (histórico, último N).
     if failed:
-        history = list(data.get("ui_intents_failures") or [])
-        history.extend(failed)
-        data["ui_intents_failures"] = history[-50:]
-        _safe_write_metadata(metadata_file, data)
+        persist(lambda md: _record_failures(md, failed))
 
     return sent_count
+
+
+#: Tope del histórico `ui_intents_failures` en metadata.json.
+_FAILURES_MAX = 50
+
+
+def _update_metadata(
+    store: Any,
+    session_id: str,
+    metadata_file: Path,
+    apply: Callable[[dict[str, Any]], bool],
+) -> None:
+    """Read-modify-write de metadata.json bajo el lock por sesión del store
+    (el mismo `update()` que usa el ingest del webhook), sobre la lectura
+    FRESCA. `apply` muta el dict fresco y devuelve si cambió algo (False = no
+    se escribe).
+
+    La lectura del store es tolerante: un archivo ausente, corrupto o a medio
+    escribir (writer legacy sin escritura atómica) llega como ``{}``. Con eso
+    NO se escribe — el flush nunca deja un metadata a medias ni revive una
+    sesión borrada. Best-effort como la escritura de antes: un OSError se
+    loguea y el flush sigue.
+    """
+
+    def _mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+        if not fresh and not _is_empty_metadata(metadata_file):
+            activity.logger.warning(
+                "flush_ui_intents.unreadable_metadata_write_skipped",
+                extra={"session_id": session_id},
+            )
+            return None
+        return fresh if apply(fresh) else None
+
+    try:
+        store.update(session_id, _mutator)
+    except OSError:
+        activity.logger.warning(
+            "flush_ui_intents.write_failed", extra={"path": str(metadata_file)}
+        )
+
+
+def _is_empty_metadata(metadata_file: Path) -> bool:
+    """¿El archivo existe y es de verdad ``{}``? (vs. ilegible)."""
+    try:
+        return json.loads(metadata_file.read_text(encoding="utf-8")) == {}
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
+def _is_same_intent(item: Any, intent: dict[str, Any]) -> bool:
+    """¿`item` (cola fresca) es `intent` (foto del arranque del flush)? Por
+    ``id``; los intents legacy sin id, por contenido."""
+    intent_id = intent.get("id")
+    if intent_id is not None:
+        return isinstance(item, dict) and item.get("id") == intent_id
+    return item == intent
+
+
+def _drop_processed(metadata: dict[str, Any], processed: list[dict[str, Any]]) -> bool:
+    """Saca de la cola fresca los intents que este flush ya procesó: cada uno
+    se lleva UNA entrada, la primera que coincide. Lo encolado mientras el
+    flush enviaba (aunque sea idéntico a lo enviado) queda para el próximo."""
+    queue = list(metadata.get("pending_ui_intents") or [])
+    changed = False
+    for intent in processed:
+        idx = next(
+            (i for i, item in enumerate(queue) if _is_same_intent(item, intent)),
+            None,
+        )
+        if idx is not None:
+            del queue[idx]
+            changed = True
+    if changed:
+        metadata["pending_ui_intents"] = queue
+    return changed
+
+
+def _record_sent(
+    metadata: dict[str, Any],
+    intent: dict[str, Any],
+    media_log: list[dict[str, Any]],
+) -> bool:
+    """Intent enviado: sale de la cola y sus fotos entran al índice
+    wamid→foto."""
+    changed = _drop_processed(metadata, [intent])
+    if media_log:
+        _merge_media_index(metadata, media_log)
+        changed = True
+    return changed
+
+
+def _record_failures(metadata: dict[str, Any], failed: list[dict[str, Any]]) -> bool:
+    history = list(metadata.get("ui_intents_failures") or [])
+    history.extend(failed)
+    metadata["ui_intents_failures"] = history[-_FAILURES_MAX:]
+    return True
 
 
 async def _dispatch_intent(
@@ -1261,7 +1377,7 @@ def _trunc(text: str, limit: int = _NOTE_TEXT_LIMIT) -> str:
 
 
 def _build_history_event(
-    kind: str | None, params: dict[str, Any]
+    kind: str | None, params: dict[str, Any], *, actor: str = "El bot"
 ) -> dict[str, Any] | None:
     """Marker human-readable del intent enviado, para el JSONL del dashboard.
 
@@ -1300,29 +1416,29 @@ def _build_history_event(
 
     if kind == "product_detail":
         caption = (params.get("caption") or "").strip()
-        content = "📷 El bot envió una foto del producto"
+        content = f"📷 {actor} envió una foto del producto"
         if caption:
             content += f": «{_trunc(caption)}»"
     elif kind == "products_list":
         total = sum(
             len(s.get("rows") or []) for s in (params.get("sections") or [])
         )
-        content = f"🛍️ El bot envió el catálogo con {total} productos"
+        content = f"🛍️ {actor} envió el catálogo con {total} productos"
     elif kind == "shipping_flow":
-        content = "📋 El bot pidió los datos de envío (formulario)"
+        content = f"📋 {actor} pidió los datos de envío (formulario)"
     elif kind == "order_confirmation":
-        content = "🧾 El bot envió el resumen del pedido con botones para confirmar"
+        content = f"🧾 {actor} envió el resumen del pedido con botones para confirmar"
     elif kind == "reaction":
-        content = f"El bot reaccionó con {params.get('emoji', '🤍')} a un mensaje del cliente"
+        content = f"{actor} reaccionó con {params.get('emoji', '🤍')} a un mensaje del cliente"
     elif kind == "contact_card":
-        content = "👤 El bot envió la tarjeta de contacto del asesor"
+        content = f"👤 {actor} envió la tarjeta de contacto del asesor"
     elif kind == "cta_url":
         button = _trunc(str(params.get("button_text") or ""), 60)
-        content = f"🔗 El bot envió un botón «{button}» → {params.get('url', '')}"
+        content = f"🔗 {actor} envió un botón «{button}» → {params.get('url', '')}"
     elif kind == "product_gallery":
         n = min(len(params.get("image_urls") or []), _GALLERY_MAX_IMAGES)
         lead = (params.get("lead_caption") or "").strip()
-        content = f"🖼️ El bot envió {n} fotos del producto"
+        content = f"🖼️ {actor} envió {n} fotos del producto"
         if lead:
             content += f" — «{_trunc(lead)}»"
     elif kind == "quick_replies":
@@ -1331,14 +1447,14 @@ def _build_history_event(
             for b in (params.get("buttons") or [])
             if b.get("title")
         )
-        content = f"🔘 El bot envió botones: {titles}"
+        content = f"🔘 {actor} envió botones: {titles}"
         body = _trunc(str(params.get("body") or ""))
         if body:
             content += f" — con el mensaje: «{body}»"
     else:
         # Kind futuro sin descripción específica: nota genérica — si se
         # envió con éxito, el operador merece saber que ALGO salió.
-        content = f"📤 El bot envió un mensaje interactivo ({kind})"
+        content = f"📤 {actor} envió un mensaje interactivo ({kind})"
 
     return {
         "role": "assistant",
@@ -1372,36 +1488,14 @@ def _append_history_event(session_id: str, event: dict[str, Any]) -> None:
         )
 
 
-def _safe_write_metadata(path, data: dict) -> None:
-    try:
-        path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    except OSError:
-        activity.logger.warning(
-            "flush_ui_intents.write_failed", extra={"path": str(path)}
-        )
-
-
-def _reload_flow_awaiting_flag(metadata_file: Path, data: dict[str, Any]) -> None:
-    """Copia a `data` el `shipping_flow_awaiting_reply_since_ms` que
-    `_mark_flow_awaiting_reply` acaba de escribir en disco (lost update)."""
-    try:
-        fresh = json.loads(metadata_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-    flag = fresh.get("shipping_flow_awaiting_reply_since_ms")
-    if isinstance(flag, int) and not isinstance(flag, bool):
-        data["shipping_flow_awaiting_reply_since_ms"] = flag
-
-
 def _mark_flow_awaiting_reply(to_number: str) -> None:
     """Escribe `shipping_flow_awaiting_reply_since_ms` en metadata.json para
     que el workflow Sales extienda su timeout de ghosting (sesión c4e3416f).
 
     Best-effort: si falla, loguea pero NO bloquea el envío del Flow.
     El nfm_reply (cuando llegue) limpia el flag desde `ingest_inbound_message`.
+    Se escribe bajo el lock del store sobre la lectura fresca
+    (`_update_metadata`): un `update()` del ingest en vuelo ya no lo pisa.
 
     Resolución del session_id desde `to_number`: respetamos el prefijo
     canónico `WHATSAPP_SESSION_PREFIX` (mismo del wrapper arriba).
@@ -1412,35 +1506,31 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
     misma activity attempt-1 → attempt-N. Si la activity hace retry (Meta tira
     flaky, worker crash mid-execution), el ghosting window NO se renueva por
     cada intento — preserva el momento "real" en que el workflow programó el
-    envío del Flow. Fallback a `time.time()` solo defensivo por si la helper se
-    llamara desde fuera de un activity context en el futuro (no es el caso hoy
-    — todos los call-sites están dentro de `flush_pending_ui_intents_activity`).
+    envío del Flow. Fallback a `time.time()` fuera de un activity context (el
+    flush que invoca la API: `/order` y las acciones del operador).
     """
     from src.platform.config import WORKSPACE_VAULT_DIR
+    from src.sdk.runtime import FilesystemMetadataStore
 
     session_id = f"{WHATSAPP_SESSION_PREFIX}{to_number}"
     metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
     if not metadata_file.exists():
-        return
-    try:
-        data = json.loads(metadata_file.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
-        activity.logger.warning(
-            "flush_ui_intents.flow_awaiting_flag_read_failed",
-            extra={"session_id": session_id, "error": str(e)},
-        )
         return
 
     try:
         # SDK-native: estable entre retries de esta activity attempt.
         ts_ms = int(activity.info().scheduled_time.timestamp() * 1000)
     except RuntimeError:
-        # Defensive — solo dispararía si la helper fuese invocada fuera de un
-        # activity context en el futuro. Wall-clock se acerca lo suficiente.
+        # Fuera de un activity context: wall-clock se acerca lo suficiente.
         ts_ms = int(time.time() * 1000)
 
-    data["shipping_flow_awaiting_reply_since_ms"] = ts_ms
-    _safe_write_metadata(metadata_file, data)
+    def _flag(metadata: dict[str, Any]) -> bool:
+        metadata["shipping_flow_awaiting_reply_since_ms"] = ts_ms
+        return True
+
+    _update_metadata(
+        FilesystemMetadataStore(WORKSPACE_VAULT_DIR), session_id, metadata_file, _flag
+    )
 
 
 def _humanize_payment(code: str | None) -> str:

@@ -114,6 +114,32 @@ def test_new_and_removed_sessions_are_changes(tmp_path: Path) -> None:
     assert changed_ids == ["wa_b"]
 
 
+def test_a_new_conversation_without_an_order_does_not_dirty_the_orders(tmp_path: Path) -> None:
+    """Con el API real y datos sintéticos (09-30): cada cliente nuevo publicaba `orders.changed` y
+    `eta.changed` (la firma anterior de una sesión nueva era `None`). Eso ensucia TODAS las órdenes
+    cacheadas y la siguiente lectura de incendios o del tablero relista Medusa entero: una recarga
+    completa por cada conversación nueva del día."""
+    _mk_session(tmp_path, "wa_a", {"tag": "NUEVO"})
+    s1 = _sample_vault_state(tmp_path)
+
+    _mk_session(tmp_path, "wa_b", {"tag": "NUEVO", "last_inbound_at_ms": 1}, with_history=True)
+    s2 = _sample_vault_state(tmp_path, prev=s1)
+
+    assert _diff_to_events(s1, s2) == (["wa_b"], False, False)  # solo el evento de la sesión
+    assert _diff_to_events(s2, s1) == (["wa_b"], False, False)  # ni al borrarse
+
+
+def test_a_new_conversation_that_arrives_with_an_order_or_eta_does_announce_it(tmp_path: Path) -> None:
+    _mk_session(tmp_path, "wa_a", {"tag": "NUEVO"})
+    s1 = _sample_vault_state(tmp_path)
+
+    _mk_session(tmp_path, "wa_pedido", {"registered_order": {"success": True, "order_id": "o1"}})
+    _mk_session(tmp_path, "wa_eta", {"eta_tracking": {"orders": {"o2": {"current_stage": "ready"}}}})
+    s2 = _sample_vault_state(tmp_path, prev=s1)
+
+    assert _diff_to_events(s1, s2) == (["wa_eta", "wa_pedido"], True, True)
+
+
 def test_mtime_cache_avoids_reparse(tmp_path: Path) -> None:
     """Si el mtime no cambió, las signatures se reutilizan del sample previo
     (el sampler corre cada 2.5s — no puede re-parsear todo el vault siempre)."""

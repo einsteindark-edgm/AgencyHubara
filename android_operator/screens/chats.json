@@ -1,0 +1,59 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "La bandeja. Los chats salen de Room (al día por el SSE) con lo no leído de este teléfono; cada filtro es un campo verdadero/falso de la fila.",
+  "schema": 1,
+  "id": "chats",
+  "title": "Chats",
+  "state": { "filtro": "all" },
+  "data": {
+    "chats": { "app": "conversations" },
+    "info": { "app": "app" }
+  },
+  "computed": {
+    "filas": "{{chats | where:state.filtro}}"
+  },
+  "topActions": [
+    {
+      "style": "menu", "icon": "info", "label": "Política de privacidad", "visible": "{{info.privacy}}",
+      "action": { "type": "native", "name": "open_privacy" }
+    },
+    {
+      "style": "menu", "icon": "close", "label": "Cerrar sesión",
+      "action": {
+        "type": "confirm", "title": "¿Cerrar sesión?",
+        "body": "Se borran de este teléfono los chats, borradores y avisos guardados. Para volver a entrar necesitas tu email y contraseña.",
+        "accept": "Cerrar sesión", "then": { "type": "native", "name": "sign_out" }
+      }
+    }
+  ],
+  "body": [
+    {
+      "type": "chips", "bind": "state.filtro",
+      "options": [
+        { "value": "all", "label": "Todos" },
+        { "value": "unread", "label": "No leídos" },
+        { "value": "human", "label": "Humano" },
+        { "value": "has_order", "label": "Con pedido" }
+      ]
+    },
+    { "type": "notifications_banner" },
+    { "type": "notice", "tone": "danger", "text": "Sin conexión: mostrando lo último guardado.", "visible": "{{status.chats.failed}}" },
+    {
+      "type": "list", "items": "{{filas}}", "as": "c", "key": "{{c.session_id}}", "style": "plain",
+      "item": {
+        "type": "list_item",
+        "avatar": "{{c.name}}", "avatar_seed": "{{c.session_id}}",
+        "title": "{{c.title}}", "emphasis": "{{c.unread}}",
+        "subtitle": "{{c.preview}}",
+        "trailing_caption": "{{c.time_ms | list_time}}", "trailing_tone": "{{c.unread | if:'primary':'muted'}}",
+        "badge": "{{c.unseen}}", "badge_label": "{{c.unseen_label}}",
+        "caption": "{{c.detail}}", "caption_icon": "{{c.human | if:'person':'bot'}}", "caption_icon_tone": "{{c.human | if:'primary':'bot'}}",
+        "action": { "type": "open_chat", "session": "{{c.session_id}}" }
+      },
+      "empty": {
+        "type": "empty", "icon": "chat", "title": "No hay chats aquí",
+        "body": "{{state.filtro | map:'all=Cuando un cliente escriba, su conversación aparece aquí.;unread=Estás al día: ya leíste todo.;human=Ninguna conversación está en tus manos ahora.;has_order=Ninguna conversación tiene pedido todavía.'}}"
+      }
+    }
+  ]
+}

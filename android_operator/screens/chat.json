@@ -1,0 +1,32 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "Una conversación. El encabezado sale de este archivo (nombre, «Pedido #41», «Devolver al bot»); el historial, las burbujas y el composer son la pieza nativa «chat». «+ Más» abre acciones.json y «Reactivar con plantilla», plantillas.json.",
+  "schema": 1,
+  "id": "chat",
+  "params": ["session"],
+  "layout": "fill",
+  "data": {
+    "chat": { "app": "chat", "params": { "session": "{{params.session}}" } }
+  },
+  "title": "{{chat.title}}",
+  "subtitle": "{{chat.subtitle}}",
+  "avatar": "{{chat.name}}",
+  "avatar_seed": "{{params.session}}",
+  "topActions": [
+    {
+      "style": "chip", "icon": "orders", "label": "{{chat.order_label}}", "visible": "{{chat.order_id | present}}",
+      "action": { "type": "open_order", "order": "{{chat.order_id}}" }
+    },
+    {
+      "style": "menu", "icon": "bot", "label": "Devolver al bot", "visible": "{{chat.human}}",
+      "action": { "type": "native", "name": "return_to_bot", "args": { "session": "{{params.session}}" } }
+    }
+  ],
+  "body": [
+    {
+      "type": "chat", "session": "{{params.session}}", "weight": 1,
+      "on_more": { "type": "navigate", "screen": "acciones", "params": { "session": "{{params.session}}" }, "sheet": true },
+      "on_reactivate": { "type": "navigate", "screen": "plantillas", "params": { "session": "{{params.session}}" }, "sheet": true }
+    }
+  ]
+}

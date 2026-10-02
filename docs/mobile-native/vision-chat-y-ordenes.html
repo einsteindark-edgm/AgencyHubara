@@ -1,0 +1,1377 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat y órdenes · visión</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --color-paper: #f5f5f5; --color-paper-2: #ececec; --color-ink: #2d3142; --color-muted: #4f5d75;
+  --color-soft: #7a8399; --color-rule: rgba(45,49,66,0.12); --color-accent: #eb6c36;
+  --color-accent-tint: rgba(235,108,54,0.08); --color-link: #2e5aa8;
+  --font-sans: 'Geist', system-ui, sans-serif;
+  --font-serif: 'Instrument Serif', 'Noto Serif', 'Times New Roman', serif;
+  --font-mono: 'Geist Mono', ui-monospace, Menlo, monospace;
+}
+body { font-family: var(--font-sans); background: var(--color-paper); color: var(--color-ink);
+       min-height: 100vh; padding: 3rem 2rem; }
+.container { max-width: 1320px; margin: 0 auto; }
+.header { margin-bottom: 2rem; }
+.eyebrow { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500; letter-spacing: 0.18em;
+           text-transform: uppercase; color: var(--color-muted); margin-bottom: 0.75rem; }
+h1 { font-family: var(--font-serif); font-size: clamp(1.9rem, 3vw + 1rem, 2.9rem); font-weight: 400;
+     letter-spacing: -0.02em; line-height: 1.08; margin-bottom: 0.75rem; max-width: 24ch; }
+.subtitle { font-size: 1.05rem; line-height: 1.55; color: var(--color-muted); max-width: 70ch; }
+.toc { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; margin: 1.5rem 0 0; padding-top: 1rem;
+       border-top: 1px solid var(--color-rule); font-family: var(--font-mono); font-size: 0.72rem; }
+.toc a { color: var(--color-muted); text-decoration: none; }
+.toc a:hover { color: var(--color-accent); }
+section { margin-top: 3.5rem; }
+section > .eyebrow { margin-bottom: 0.4rem; }
+h2 { font-family: var(--font-serif); font-weight: 400; font-size: clamp(1.5rem, 2vw + 0.8rem, 2rem);
+     letter-spacing: -0.01em; line-height: 1.15; margin-bottom: 1rem; }
+h3 { font-size: 0.95rem; font-weight: 600; margin: 1.6rem 0 0.6rem; }
+.prose { max-width: 78ch; }
+.prose p, .prose li { font-size: 0.95rem; line-height: 1.62; color: var(--color-ink); }
+.prose p + p { margin-top: 0.8rem; }
+.prose ul, .prose ol { margin: 0.6rem 0 0.6rem 1.25rem; }
+.prose li { margin-bottom: 0.35rem; }
+.prose strong { font-weight: 600; }
+.lede { font-family: var(--font-serif); font-size: clamp(1.25rem, 1.2vw + 0.9rem, 1.6rem); line-height: 1.35;
+        max-width: 60ch; }
+.lede em { color: var(--color-accent); font-style: italic; }
+code { font-family: var(--font-mono); font-size: 0.82em; background: rgba(45,49,66,0.06);
+       padding: 0.05em 0.3em; border-radius: 3px; }
+pre { font-family: var(--font-mono); font-size: 0.76rem; line-height: 1.55; background: #ffffff;
+      border: 1px solid var(--color-rule); border-radius: 6px; padding: 1rem 1.1rem; overflow-x: auto;
+      margin: 0.9rem 0; color: var(--color-ink); max-width: 100%; }
+pre code { background: none; padding: 0; font-size: inherit; }
+.code-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 1rem; align-items: start; }
+.code-grid > * { min-width: 0; }
+.code-cap { font-family: var(--font-mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase;
+            color: var(--color-soft); margin-top: 1rem; }
+.diagram-container { width: 100%; overflow-x: auto; margin: 1.25rem 0 0.5rem; }
+svg { width: 100%; min-width: 1280px; display: block; }
+.figcap { font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-soft); letter-spacing: 0.04em;
+          margin-bottom: 1rem; }
+.table-wrap { width: 100%; overflow-x: auto; margin: 1rem 0; }
+table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 0.84rem; background: #ffffff;
+        border: 1px solid var(--color-rule); border-radius: 6px; }
+th { font-family: var(--font-mono); font-size: 0.64rem; font-weight: 500; letter-spacing: 0.14em;
+     text-transform: uppercase; color: var(--color-muted); text-align: left; padding: 0.7rem 0.8rem;
+     border-bottom: 1px solid var(--color-rule); background: rgba(45,49,66,0.03); }
+td { padding: 0.65rem 0.8rem; border-bottom: 1px solid rgba(45,49,66,0.07); vertical-align: top;
+     line-height: 1.5; color: var(--color-ink); }
+tr:last-child td { border-bottom: none; }
+td:first-child { font-weight: 600; min-width: 11rem; }
+td.soft { color: var(--color-muted); }
+.pill { display: inline-block; font-family: var(--font-mono); font-size: 0.64rem; letter-spacing: 0.08em;
+        text-transform: uppercase; padding: 0.1rem 0.45rem; border-radius: 3px; border: 1px solid var(--color-rule);
+        color: var(--color-muted); white-space: nowrap; }
+.pill.gen { color: var(--color-accent); border-color: rgba(235,108,54,0.45); }
+.pill.nat { color: var(--color-ink); border-color: rgba(45,49,66,0.35); }
+.cards { display: grid; grid-template-columns: 1.1fr 1fr 0.9fr; gap: 1rem; margin-top: 1.25rem; }
+.cards.two { grid-template-columns: 1.15fr 0.85fr; }
+.card { background: #ffffff; border-radius: 6px; border: 1px solid var(--color-rule); padding: 1.25rem; }
+.card-header { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.875rem; padding-bottom: 0.875rem;
+               border-bottom: 1px solid rgba(45,49,66,0.08); }
+.card-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.card-dot.ink { background: var(--color-ink); } .card-dot.muted { background: var(--color-muted); }
+.card-dot.coral { background: var(--color-accent); } .card-dot.link { background: var(--color-link); }
+.card-dot.soft { background: var(--color-soft); }
+.card h3 { font-size: 0.875rem; font-weight: 600; margin: 0; }
+.card p, .card li { color: var(--color-muted); font-size: 0.84rem; line-height: 1.55; }
+.card ul { list-style: none; }
+.card li { margin-bottom: 0.35rem; padding-left: 0.875rem; position: relative; }
+.card li::before { content: '—'; position: absolute; left: 0; color: rgba(45,49,66,0.25); font-size: 0.75rem; }
+.rules { counter-reset: r; list-style: none; margin: 1rem 0 0; padding: 0; display: grid;
+         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; }
+.rules li { counter-increment: r; background: #ffffff; border: 1px solid var(--color-rule); border-radius: 6px;
+            padding: 0.9rem 1rem 0.9rem 2.6rem; position: relative; font-size: 0.86rem; line-height: 1.5; }
+.rules li::before { content: counter(r, decimal-leading-zero); position: absolute; left: 0.9rem; top: 0.95rem;
+                    font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-accent); }
+.rules li strong { display: block; font-weight: 600; margin-bottom: 0.15rem; }
+.note { border-left: 2px solid var(--color-accent); padding: 0.2rem 0 0.2rem 1rem; margin: 1.2rem 0;
+        color: var(--color-muted); font-size: 0.9rem; line-height: 1.55; max-width: 78ch; }
+.sources { font-family: var(--font-mono); font-size: 0.72rem; line-height: 1.8; color: var(--color-muted);
+           columns: 2 360px; column-gap: 2rem; margin-top: 0.75rem; }
+.sources span { color: var(--color-soft); }
+.footer { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid rgba(45,49,66,0.10);
+          font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.06em; color: var(--color-soft);
+          display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+@media (max-width: 820px) {
+  body { padding: 2rem 16px; }
+  .cards, .cards.two, .code-grid { grid-template-columns: 1fr; }
+}
+@media print {
+  .diagram-container, .table-wrap { overflow-x: visible; }
+  svg { min-width: 0; }
+  table { min-width: 0; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header">
+  <p class="eyebrow">Visión de producto · Chat y órdenes · 29 sep 2026</p>
+  <h1>Cerrar la venta en el chat y no perder ningún pedido</h1>
+  <p class="subtitle">Cómo debería funcionar la app nativa en sus dos trabajos centrales: tomar una conversación y
+  cerrar la venta con burbujas que se arman solas, saber en todo momento qué chat u orden se está incendiando sin
+  salir del chat que tienes abierto, y enterarte de las ventas que están por cerrarse aunque la app esté cerrada.</p>
+  <nav class="toc">
+    <a href="#v0">00 La visión</a><a href="#v1">01 El chat intervenido</a><a href="#v2">02 Burbujas solo con Jev</a>
+    <a href="#v3">03 Incendios</a><a href="#v4">04 Radar y feed</a><a href="#v5">05 Ida y vuelta</a>
+    <a href="#v6">06 Ventas calientes</a><a href="#v7">07 Cómo lo hacemos realidad</a>
+  </nav>
+</div>
+
+<section id="v0">
+  <p class="eyebrow">00 · La visión</p>
+  <p class="lede">En el chat, <em>tomas el control y cierras</em> con burbujas que ya traen lo que el cliente
+  necesita. Mientras chateas, <em>los incendios te encuentran</em> sin taparte la conversación: chats que se salen de
+  control y órdenes con problemas. En cada orden, <em>ves exactamente</em> qué compró el cliente, en qué va y cuál
+  es el siguiente paso. Y con la app cerrada,
+  <em>las ventas que están por cerrarse</em> aparecen en el widget.</p>
+  <div class="cards">
+    <div class="card"><div class="card-header"><span class="card-dot coral"></span><h3>Chat · intervenir y cerrar</h3></div>
+      <ul><li>Un botón para tomar la conversación, con lo que el bot ya entendió a la vista.</li>
+      <li>Burbujas que envían aromas, productos, formulario de envío o medios de pago con un toque.</li>
+      <li>Son las mismas tools que usa el bot. El teclado siempre está libre.</li>
+      <li>Botón «Pedido» en el chat cuando el cliente ya tiene uno.</li></ul></div>
+    <div class="card"><div class="card-header"><span class="card-dot ink"></span><h3>Radar · los incendios te encuentran</h3></div>
+      <ul><li>Una tarjeta discreta arriba del chat cuando Jev juzga que algo es grave.</li>
+      <li>Si son varias, una lista que nunca pasa de tres cuartos de pantalla.</li>
+      <li>Se oculta con un swipe; con un toque, vas al caso.</li></ul></div>
+    <div class="card"><div class="card-header"><span class="card-dot muted"></span><h3>Incendios · chats y órdenes</h3></div>
+      <ul><li>Chats que se salen de control y órdenes con problemas, en un solo feed.</li>
+      <li>Jev decide qué vale la pena, qué tan grave es y si empeora.</li>
+      <li>La ficha de cada orden: productos, estado, pago y envío, y avanzar con un toque.</li></ul></div>
+  </div>
+</section>
+
+<section id="v1">
+  <p class="eyebrow">01 · El chat intervenido</p>
+  <h2>Tomar la conversación y cerrar la venta</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 740" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="chat-title chat-desc">
+<title id="chat-title">El chat intervenido</title>
+<desc id="chat-desc">Tres pantallas del chat: el bot atiende y la app muestra lo que entendió, el operador toma el control y recibe burbujas de acción ordenadas por Jev, y la paleta completa para elegir otra acción.</desc>
+
+<defs><marker id="c1-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="c1-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="c1-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="c1-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="c1-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="c1-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<text x="80" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">1 · EL BOT ATIENDE</text><rect x="80" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="194" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<circle cx="116" cy="108" r="12" fill="rgba(45,49,66,0.12)"/><text x="136" y="106" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Laura M.</text><text x="136" y="120" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Bot de ventas atiende · en vivo</text>
+<rect x="92" y="140" width="264" height="236" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="100" y="152" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">CONVERSACIÓN EN VIVO</text>
+<rect x="104" y="160" width="232" height="22" rx="8" fill="rgba(45,49,66,0.06)"/><text x="114" y="175" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">hola, ¿tienen el Duo Zodiacal en azul?</text>
+<rect x="194" y="190" width="150" height="22" rx="8" fill="rgba(45,49,66,0.14)"/><text x="334" y="205" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="end">¡Sí! Mira, te lo muestro</text>
+<rect x="196" y="220" width="148" height="56" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<rect x="204" y="228" width="40" height="40" rx="4" fill="rgba(45,49,66,0.08)"/>
+<text x="252" y="244" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Duo Zodiacal</text>
+<text x="252" y="258" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">$89.900</text>
+<rect x="104" y="288" width="184" height="22" rx="8" fill="rgba(45,49,66,0.06)"/><text x="114" y="303" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">¿y qué aromas tienen? quiero 2</text>
+<circle cx="316" cy="346" r="2.5" fill="#7a8399"/>
+<circle cx="324" cy="346" r="2.5" fill="#7a8399"/>
+<circle cx="332" cy="346" r="2.5" fill="#7a8399"/>
+<text x="310" y="350" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="end">el bot escribe</text>
+<rect x="92" y="388" width="264" height="164" rx="6" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3"/><text x="100" y="400" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LO QUE ENTENDIÓ EL BOT</text>
+<text x="104" y="416" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">QUIERE</text>
+<text x="160" y="416" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Duo Zodiacal azul × 2</text>
+<text x="104" y="446" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">FALTA</text>
+<text x="160" y="446" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">aroma · dirección</text>
+<text x="104" y="476" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">PAGO</text>
+<text x="160" y="476" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">sin definir</text>
+<text x="104" y="506" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">ETAPA</text>
+<text x="160" y="506" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">decidiendo</text>
+<rect x="92" y="564" width="264" height="84" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="100" y="576" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">CONTROL</text>
+<rect x="104" y="588" width="240" height="40" rx="8" fill="#2d3142"/>
+<text x="224" y="613" fill="#ffffff" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Tomar la conversación</text>
+<text x="496" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">2 · TOMASTE EL CONTROL</text><rect x="496" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="610" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<circle cx="532" cy="108" r="12" fill="rgba(45,49,66,0.12)"/><text x="552" y="106" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Laura M.</text><text x="552" y="120" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Tú atiendes</text><rect x="692" y="98" width="72" height="20" rx="4" fill="#ffffff" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="728" y="112" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">ventana 22 h</text>
+<rect x="508" y="140" width="264" height="48" rx="6" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3"/><text x="516" y="152" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">RADAR</text>
+<rect x="516" y="154" width="248" height="28" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<circle cx="528" cy="168" r="3" fill="#eb6c36"/>
+<text x="538" y="172" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Carlos pregunta por el pedido #38</text>
+<text x="756" y="172" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="end">+2</text>
+<rect x="508" y="200" width="264" height="240" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="516" y="212" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">CONVERSACIÓN</text>
+<rect x="520" y="220" width="184" height="22" rx="8" fill="rgba(45,49,66,0.06)"/><text x="530" y="235" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">¿y qué aromas tienen? quiero 2</text>
+<rect x="612" y="252" width="148" height="22" rx="8" fill="rgba(45,49,66,0.14)"/><text x="750" y="267" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="end">¡Hola Laura! Ya te ayudo</text>
+<text x="760" y="284" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="end">HUMANO · 10:42</text>
+<rect x="520" y="300" width="120" height="22" rx="8" fill="rgba(45,49,66,0.06)"/><text x="530" y="315" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">dale, gracias</text>
+<rect x="508" y="452" width="264" height="120" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/><text x="516" y="464" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">BURBUJAS · JEV</text>
+<rect x="520" y="476" width="112" height="24" rx="12" fill="#2d3142"/><text x="576.0" y="492" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Enviar aromas</text>
+<rect x="640" y="476" width="120" height="24" rx="12" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="700.0" y="492" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Duo Zodiacal azul</text>
+<rect x="520" y="508" width="136" height="24" rx="12" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="588.0" y="524" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Pedir datos de envío</text>
+<rect x="664" y="508" width="96" height="24" rx="12" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="712.0" y="524" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Medios de pago</text>
+<rect x="520" y="540" width="64" height="24" rx="12" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1" stroke-dasharray="3,2"/><text x="552.0" y="556" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">+ Más</text>
+<text x="596" y="556" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">mantén presionado para editar</text>
+<rect x="508" y="584" width="264" height="64" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="516" y="596" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">COMPOSER · SIEMPRE LIBRE</text>
+<rect x="516" y="608" width="196" height="32" rx="8" fill="#ffffff" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="528" y="628" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Escribe o toca una burbuja…</text><rect x="724" y="616" width="20" height="16" rx="3" fill="none" stroke="#4f5d75" stroke-width="1"/><circle cx="734" cy="624" r="4" fill="none" stroke="#4f5d75" stroke-width="1"/><circle cx="768" cy="624" r="14" fill="#2d3142"/><polygon points="763,617 775,624 763,631" fill="#ffffff"/>
+<text x="912" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">3 · + MÁS: ELIGE OTRA ACCIÓN</text><rect x="912" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="1026" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<rect x="913" y="61" width="286" height="598" rx="9" fill="rgba(45,49,66,0.06)"/>
+<rect x="924" y="140" width="264" height="508" rx="6" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3"/><text x="932" y="152" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">PALETA COMPLETA</text>
+<rect x="936" y="160" width="240" height="28" rx="8" fill="#ffffff" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="948" y="178" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Buscar acción o producto…</text>
+<text x="936" y="212" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">CATÁLOGO</text>
+<rect x="936" y="222" width="240" height="26" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="948" y="239" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Enviar productos…</text>
+<text x="1164" y="239" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="end">›</text>
+<rect x="936" y="252" width="240" height="26" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="948" y="269" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Enviar aromas o colores</text>
+<text x="1164" y="269" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="end">›</text>
+<rect x="936" y="282" width="240" height="26" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="948" y="299" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Enviar más fotos</text>
+<text x="1164" y="299" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="end">›</text>
+<text x="936" y="324" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">VENTA</text>
+<rect x="936" y="334" width="240" height="26" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="948" y="351" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Tarifas de envío</text>
+<text x="1164" y="351" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="end">›</text>
+<rect x="936" y="364" width="240" height="26" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="948" y="381" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Medios de pago</text>
+<text x="1164" y="381" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="end">›</text>
+<rect x="936" y="394" width="240" height="26" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="948" y="411" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Aplicar cupón</text>
+<text x="1164" y="411" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="end">›</text>
+<text x="936" y="436" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">CIERRE</text>
+<rect x="936" y="446" width="240" height="26" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="948" y="463" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Pedir datos de envío</text>
+<text x="1164" y="463" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="end">›</text>
+<rect x="936" y="476" width="240" height="26" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="948" y="493" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Resumen para confirmar</text>
+<text x="1164" y="493" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="end">›</text>
+<rect x="936" y="506" width="240" height="26" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="948" y="523" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Crear pedido</text>
+<text x="1164" y="523" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="end">›</text>
+<text x="936" y="548" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">CONVERSACIÓN</text>
+<rect x="936" y="558" width="240" height="26" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="948" y="575" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Botones de respuesta</text>
+<text x="1164" y="575" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="end">›</text>
+<rect x="936" y="588" width="240" height="26" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="948" y="605" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Devolver al bot</text>
+<text x="1164" y="605" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="end">›</text>
+<text x="432" y="440" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="middle">tap = enviar</text><path d="M 432 448 Q 468 468 504 488" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="506" cy="490" r="2" fill="#2d3142"/>
+<text x="848" y="700" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="middle">si la sugerencia no sirve</text><path d="M 848 690 Q 880 670 920 640" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="922" cy="638" r="2" fill="#2d3142"/>
+<line x1="40" y1="704" x2="1240" y2="704" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="727" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="718" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="rgba(45,49,66,0.35)" stroke-width="1"/>
+<text x="138" y="726" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Fijo</text>
+<rect x="198" y="718" width="14" height="10" rx="2" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="220" y="726" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Se arma al vuelo</text>
+<rect x="340" y="718" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="362" y="726" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Lo que decide Jev</text>
+</svg>
+</div>
+<p class="figcap">Figura 1 · Antes de intervenir ves lo que entendió el bot. Al intervenir, las burbujas de Jev aparecen sobre el composer, y con «+ Más» eliges cualquier otra acción.</p>
+  <div class="prose">
+  <h3>Cómo se usa</h3>
+  <ul>
+    <li><strong>Tomar la conversación.</strong> Un solo botón. El bot se pausa y el operador ya tiene arriba lo
+    que el bot fue guardando en el borrador del pedido: qué producto, qué variantes, qué datos de envío faltan,
+    cómo quiere pagar y en qué etapa va. No hay que leer todo el historial para ponerse al día.</li>
+    <li><strong>Tocar una burbuja envía.</strong> «Enviar aromas» manda la lista de aromas; «Duo Zodiacal azul»
+    manda el producto del catálogo; «Pedir datos de envío» manda el formulario; «Medios de pago» manda los datos
+    para pagar. Es exactamente lo que habría enviado el bot, con la misma tool. (Medios de pago es la única
+    acción nueva: hoy esos datos solo salen al crear el pedido.)</li>
+    <li><strong>Cinco segundos para deshacer.</strong> El envío sale después de una barra con «Deshacer», porque
+    un toque accidental no debe llegarle al cliente.</li>
+    <li><strong>Mantener presionado edita.</strong> Abre la burbuja antes de enviarla: cambiar los productos,
+    elegir otros aromas, ajustar la cantidad.</li>
+    <li><strong>«+ Más» es la salida.</strong> Si ninguna sugerencia sirve, la paleta completa tiene todas las
+    acciones agrupadas (catálogo, venta, cierre, conversación) y un buscador de acciones y productos.</li>
+    <li><strong>El teclado nunca se bloquea.</strong> El operador escribe cuando quiere. Lo que va escribiendo
+    también cuenta: si escribe «te mando las fotos», la burbuja de fotos sube.</li>
+    <li><strong>Después de cada envío, las burbujas se recalculan.</strong> Enviados los aromas, lo siguiente
+    suele ser pedir los datos de envío, y esa burbuja pasa a ser la principal.</li>
+  </ul>
+  </div>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 540" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="envio-title envio-desc">
+<title id="envio-title">Del toque al envío</title>
+<desc id="envio-desc">Dos estados: al mantener presionada una burbuja se abre un selector de productos con la sugerencia de Jev preseleccionada; al tocarla se envía con cinco segundos para deshacer y las burbujas se recalculan.</desc>
+
+<defs><marker id="c2-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="c2-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="c2-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="c2-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="c2-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="c2-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<text x="232" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">A · MANTENER: EDITAR ANTES DE ENVIAR</text><rect x="232" y="60" width="288" height="440" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="346" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<rect x="233" y="61" width="286" height="438" rx="9" fill="rgba(45,49,66,0.06)"/>
+<rect x="244" y="132" width="264" height="356" rx="6" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3"/><text x="252" y="144" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">ENVIAR PRODUCTOS</text>
+<rect x="256" y="152" width="240" height="28" rx="8" fill="#ffffff" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="268" y="170" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Buscar en el catálogo…</text>
+<rect x="256" y="192" width="240" height="44" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<rect x="268" y="208" width="12" height="12" rx="2" fill="#2d3142" stroke="#4f5d75" stroke-width="1"/>
+<text x="290" y="212" fill="#2d3142" font-size="10" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Duo Zodiacal · azul</text>
+<text x="290" y="226" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">$89.900 · cantidad 2</text>
+<text x="484" y="212" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="end">SUGERIDO</text>
+<rect x="256" y="244" width="240" height="44" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<rect x="268" y="260" width="12" height="12" rx="2" fill="#2d3142" stroke="#4f5d75" stroke-width="1"/>
+<text x="290" y="264" fill="#2d3142" font-size="10" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Cubo Love</text>
+<text x="290" y="278" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">$64.000</text>
+<rect x="256" y="296" width="240" height="44" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<rect x="268" y="312" width="12" height="12" rx="2" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<text x="290" y="316" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Portavelas</text>
+<text x="290" y="330" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">$52.000</text>
+<rect x="256" y="348" width="240" height="44" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<rect x="268" y="364" width="12" height="12" rx="2" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<text x="290" y="368" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Vela de soya 250 g</text>
+<text x="290" y="382" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">$38.000</text>
+<rect x="256" y="408" width="240" height="24" rx="4" fill="#2d3142"/><text x="376.0" y="424" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Enviar 2 productos</text>
+<text x="376" y="456" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">llegan como mensaje de catálogo</text>
+<text x="376" y="470" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">de WhatsApp, igual que si los enviara el bot</text>
+<text x="760" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">B · TOCAR: ENVÍO CON 5 s PARA DESHACER</text><rect x="760" y="60" width="288" height="440" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="874" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<rect x="772" y="92" width="264" height="212" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="780" y="104" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">CONVERSACIÓN</text>
+<rect x="784" y="112" width="184" height="22" rx="8" fill="rgba(45,49,66,0.06)"/><text x="794" y="127" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">¿y qué aromas tienen? quiero 2</text>
+<rect x="860" y="144" width="164" height="92" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="872" y="162" fill="#2d3142" font-size="10" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Aromas disponibles</text>
+<rect x="872" y="172" width="140" height="16" rx="4" fill="rgba(45,49,66,0.06)"/>
+<text x="880" y="184" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Vainilla</text>
+<rect x="872" y="192" width="140" height="16" rx="4" fill="rgba(45,49,66,0.06)"/>
+<text x="880" y="204" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Lavanda</text>
+<rect x="872" y="212" width="140" height="16" rx="4" fill="rgba(45,49,66,0.06)"/>
+<text x="880" y="224" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Canela</text>
+<text x="1024" y="250" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="end">HUMANO · ENVIANDO…</text>
+<rect x="772" y="316" width="264" height="92" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/><text x="780" y="328" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">BURBUJAS RECALCULADAS</text>
+<rect x="784" y="340" width="136" height="24" rx="12" fill="#2d3142"/><text x="852.0" y="356" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Pedir datos de envío</text>
+<rect x="928" y="340" width="96" height="24" rx="12" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="976.0" y="356" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Medios de pago</text>
+<rect x="784" y="372" width="112" height="24" rx="12" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="840.0" y="388" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Tarifas de envío</text>
+<rect x="904" y="372" width="64" height="24" rx="12" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1" stroke-dasharray="3,2"/><text x="936.0" y="388" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">+ Más</text>
+<rect x="772" y="420" width="264" height="36" rx="8" fill="#2d3142"/>
+<text x="784" y="442" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Aromas enviados</text>
+<text x="1024" y="442" fill="#ffffff" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end">DESHACER · 5 s</text>
+<text x="640" y="300" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="middle">el siguiente paso ya está arriba</text><path d="M 700 306 Q 740 330 768 344" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="770" cy="346" r="2" fill="#2d3142"/>
+<line x1="40" y1="504" x2="1240" y2="504" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="527" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="518" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="rgba(45,49,66,0.35)" stroke-width="1"/>
+<text x="138" y="526" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Fijo</text>
+<rect x="198" y="518" width="14" height="10" rx="2" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="220" y="526" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Hoja de edición</text>
+<rect x="336" y="518" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="358" y="526" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Lo que decide Jev</text>
+</svg>
+</div>
+<p class="figcap">Figura 2 · Mantener presionado abre la edición, con lo que sugirió Jev ya marcado. Tocar envía con 5 s para deshacer, y la siguiente burbuja ya está arriba.</p>
+  <div class="prose">
+  <h3>Ver el pedido sin salir del chat</h3>
+  <ul>
+    <li><strong>El botón aparece solo si el cliente tiene un pedido asignado.</strong> Se ve en el encabezado, con el
+    número («Pedido #38») y un punto con el estado. Si tiene varios, dice «Pedidos · 2». Si no tiene ninguno, no hay botón.</li>
+    <li><strong>Se sabe al instante.</strong> La lista de conversaciones ya trae <code>order_ref</code> (número, estado
+    de pago y cantidad de pedidos), así que el botón no espera ninguna llamada extra.</li>
+    <li><strong>La ficha se abre encima del chat,</strong> como hoja inferior. Es la misma ficha de Incendios: qué
+    compró, estado con el siguiente paso, pago y envío. Si hay varios pedidos, hay una pestaña por pedido y el que
+    está en curso va primero.</li>
+    <li><strong>Desde ahí se puede avanzar la etapa</strong> (por ejemplo «Despachar») sin salir de la conversación.</li>
+    <li><strong>Al cerrarla, todo sigue igual:</strong> el borrador del mensaje, las burbujas y el scroll.</li>
+  </ul>
+  </div>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 700" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="pedidochat-title pedidochat-desc">
+<title id="pedidochat-title">Ver el pedido sin salir del chat</title>
+<desc id="pedidochat-desc">Dos estados: si el cliente tiene un pedido asignado, el encabezado del chat muestra un botón con su número; al tocarlo, la ficha del pedido se abre encima del chat y al cerrarla todo sigue igual.</desc>
+
+<defs><marker id="c3-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="c3-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="c3-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="c3-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="c3-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="c3-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<text x="232" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">A · EL CLIENTE TIENE PEDIDO: BOTÓN EN EL CHAT</text><rect x="232" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="346" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<rect x="244" y="80" width="264" height="60" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/><text x="252" y="92" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">ENCABEZADO</text>
+<circle cx="268" cy="114" r="12" fill="rgba(45,49,66,0.12)"/>
+<text x="288" y="112" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Carlos R.</text>
+<text x="288" y="126" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Tú atiendes</text>
+<rect x="396" y="100" width="104" height="26" rx="13" fill="#2d3142"/>
+<circle cx="410" cy="113" r="3" fill="#ffffff"/>
+<text x="456" y="117" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Pedido #38 ›</text>
+<rect x="244" y="152" width="264" height="412" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="252" y="164" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">CONVERSACIÓN</text>
+<rect x="256" y="172" width="148" height="22" rx="8" fill="rgba(45,49,66,0.06)"/><text x="266" y="187" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">¿ya salió mi pedido?</text>
+<rect x="320" y="204" width="176" height="22" rx="8" fill="rgba(45,49,66,0.14)"/><text x="486" y="219" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="end">Hola Carlos, ya lo reviso</text>
+<text x="496" y="236" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="end">HUMANO · 15:02</text>
+<text x="376" y="540" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">sin pedido asignado, el botón no aparece</text>
+<rect x="244" y="576" width="264" height="72" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="252" y="588" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">COMPOSER</text>
+<rect x="252" y="600" width="196" height="32" rx="8" fill="#ffffff" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="264" y="620" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">Te cuento: sale hoy…</text><rect x="460" y="608" width="20" height="16" rx="3" fill="none" stroke="#4f5d75" stroke-width="1"/><circle cx="470" cy="616" r="4" fill="none" stroke="#4f5d75" stroke-width="1"/><circle cx="504" cy="616" r="14" fill="#2d3142"/><polygon points="499,609 511,616 499,623" fill="#ffffff"/>
+<text x="760" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">B · TOCAS: LA FICHA SE ABRE ENCIMA</text><rect x="760" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="874" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<rect x="761" y="61" width="286" height="598" rx="9" fill="rgba(45,49,66,0.10)"/>
+<rect x="761" y="132" width="286" height="527" rx="10" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<rect x="884" y="142" width="40" height="4" rx="2" fill="rgba(45,49,66,0.25)"/>
+<rect x="772" y="156" width="104" height="24" rx="12" fill="#2d3142"/><text x="824.0" y="172" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">#38 · en curso</text>
+<rect x="884" y="156" width="112" height="24" rx="12" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="940.0" y="172" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">#29 · entregado</text>
+<rect x="772" y="192" width="264" height="100" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="780" y="204" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">QUÉ COMPRÓ</text>
+<rect x="784" y="214" width="28" height="28" rx="4" fill="rgba(45,49,66,0.08)"/>
+<text x="820" y="226" fill="#2d3142" font-size="10" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Duo Zodiacal · azul × 2</text>
+<text x="820" y="239" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">aroma vainilla</text>
+<text x="1024" y="226" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="end">$179.800</text>
+<rect x="784" y="250" width="28" height="28" rx="4" fill="rgba(45,49,66,0.08)"/>
+<text x="820" y="262" fill="#2d3142" font-size="10" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Portavelas × 1</text>
+<text x="820" y="275" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">negro</text>
+<text x="1024" y="262" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="end">$52.000</text>
+<rect x="772" y="304" width="264" height="132" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/><text x="780" y="316" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">ESTADO Y SIGUIENTE PASO</text>
+<circle cx="796" cy="336" r="6" fill="#2d3142" stroke="#2d3142" stroke-width="1.2"/>
+<text x="796" y="358" fill="#2d3142" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">Nuevo</text>
+<line x1="804" y1="336" x2="842" y2="336" stroke="#2d3142" stroke-width="1.5"/>
+<circle cx="850" cy="336" r="6" fill="#2d3142" stroke="#2d3142" stroke-width="1.2"/>
+<text x="850" y="358" fill="#2d3142" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">Prep.</text>
+<line x1="858" y1="336" x2="896" y2="336" stroke="#2d3142" stroke-width="1.5"/>
+<circle cx="904" cy="336" r="6" fill="#2d3142" stroke="#2d3142" stroke-width="1.2"/>
+<text x="904" y="358" fill="#2d3142" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">Listo</text>
+<line x1="912" y1="336" x2="950" y2="336" stroke="rgba(45,49,66,0.25)" stroke-width="1.5"/>
+<circle cx="958" cy="336" r="6" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/>
+<text x="958" y="358" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">Camino</text>
+<line x1="966" y1="336" x2="1004" y2="336" stroke="rgba(45,49,66,0.25)" stroke-width="1.5"/>
+<circle cx="1012" cy="336" r="6" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/>
+<text x="1012" y="358" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">Entreg.</text>
+<rect x="784" y="372" width="240" height="24" rx="4" fill="#2d3142"/><text x="904.0" y="388" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Despachar</text>
+<text x="784" y="416" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">pide guía y costo real · avisa al cliente</text>
+<rect x="772" y="448" width="264" height="200" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="780" y="460" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">PAGO Y ENVÍO</text>
+<text x="784" y="476" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">PAGO</text>
+<text x="848" y="476" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Transferencia · pagado ✓</text>
+<text x="784" y="502" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">TOTAL</text>
+<text x="848" y="502" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">$243.800 (envío $12.000)</text>
+<text x="784" y="528" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">RECIBE</text>
+<text x="848" y="528" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Carlos R.</text>
+<text x="784" y="554" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">DIRECCIÓN</text>
+<text x="848" y="554" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Cra 12 # 34-56, apto 301</text>
+<text x="784" y="580" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">BARRIO</text>
+<text x="848" y="580" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Chapinero · Bogotá</text>
+<text x="784" y="606" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">ENVÍO</text>
+<text x="848" y="606" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">estimado · guía pendiente</text>
+<text x="640" y="118" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="middle">solo si hay pedido</text><path d="M 584 114 Q 548 108 504 112" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="502" cy="112" r="2" fill="#2d3142"/>
+<text x="640" y="420" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="middle">cierras y sigues escribiendo</text><path d="M 690 408 Q 740 330 760 204" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="762" cy="202" r="2" fill="#2d3142"/>
+<line x1="40" y1="664" x2="1240" y2="664" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="687" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="678" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="rgba(45,49,66,0.35)" stroke-width="1"/>
+<text x="138" y="686" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Fijo</text>
+<rect x="198" y="678" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="220" y="686" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Botón y paso siguiente</text>
+</svg>
+</div>
+<p class="figcap">Figura 3 · Con pedido asignado, el encabezado muestra su número. Al tocarlo, la ficha se abre encima del chat; al cerrarla sigues escribiendo donde ibas.</p>
+</section>
+
+<section id="v2">
+  <p class="eyebrow">02 · Burbujas solo con Jev</p>
+  <h2>¿Hace falta un LLM que interprete la conversación? No.</h2>
+  <div class="prose">
+  <p>Jev solo, presente en la conversación, alcanza para sugerir las burbujas. Hay tres razones:</p>
+  <ol>
+    <li><strong>El bot ya dejó la lectura hecha.</strong> Mientras atiende, el bot llena el borrador del pedido con
+    <code>set_order_slot</code>: producto, aroma, color, cantidad, ciudad, dirección, teléfono, quién recibe y forma de
+    pago. De ese borrador sale la etapa (<code>resolve_funnel_stage</code>) y qué falta, sin ningún modelo. Qué
+    falta define casi solo la burbuja: falta el aroma → «Enviar aromas»; falta la dirección → «Pedir datos de envío».</li>
+    <li><strong>Casi todos los parámetros son listas cerradas.</strong> El catálogo visible tiene unos 24 productos,
+    y un Choice de Jev acepta hasta 255 opciones. Los aromas y colores salen de las etiquetas de cada producto, y
+    la cantidad se elige entre 1, 2, 3, 4 o 5+. Nada de eso es texto libre, que es donde Jev falla.</li>
+    <li><strong>Los datos libres llegan estructurados.</strong> La dirección, el teléfono y el nombre llegan por el
+    formulario de WhatsApp, ya separados. Solo si el cliente los escribe a mano hace falta extraerlos, y para eso ya
+    existe <code>order-intake/suggest</code>: se usa a pedido, al tocar «Crear pedido», no en cada mensaje.</li>
+  </ol>
+  <p>Además, un request de Jev tarda ~100 ms y cuesta fracciones de centavo; un LLM en cada mensaje tarda 1–2 s.
+  Con el humano en control, Jev también mantiene el borrador al día: cuando el cliente dice «vainilla», Jev lo
+  elige de la lista de aromas y el código lo guarda (el bot está en pausa y no lo haría).</p>
+  </div>
+  <h3>Es la técnica de los videojuegos</h3>
+  <div class="prose">
+  <p>Sí: es la misma técnica con la que la comunidad pone a Jev a jugar Mario, Snake o Doom, y encaja muy bien con
+  las burbujas. Así funcionan esos agentes:</p>
+  <ul>
+    <li><strong>No le pasan la pantalla.</strong> Un arnés lee la memoria del emulador y la resume en un JSON chico,
+    por objetos: dónde está Mario, qué enemigos vienen, cómo es el terreno y qué pasó con la última jugada.</li>
+    <li><strong>Las cuentas las hace el código</strong> (por ejemplo, si el salto alcanza), no Jev.</li>
+    <li><strong>El motor calcula las jugadas legales</strong> y solo esas llegan como opciones: una jugada ilegal ni
+    siquiera se puede expresar.</li>
+    <li><strong>Un request por turno:</strong> Jev elige la jugada (Choice) y a la vez responde preguntas de apoyo,
+    como «¿conviene saltar ya?» (Noul) o «¿qué tan peligroso está?» (Score).</li>
+    <li><strong>Si la confianza no alcanza,</strong> juega una heurística, y eso queda registrado.</li>
+    <li><strong>La jugada se ejecuta,</strong> el juego avanza y el resultado entra al estado del turno siguiente.</li>
+  </ul>
+  <p>Las burbujas son ese mismo bucle. El juego es la conversación, el turno es cada cosa que pasa en el chat y la
+  jugada es la burbuja.</p>
+  </div>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 740" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="bucle-title bucle-desc">
+<title id="bucle-title">El bucle de juego aplicado a las burbujas</title>
+<desc id="bucle-desc">Ciclo de seis pasos como el de los agentes que juegan con Jev: algo cambia en el chat, el código lee el estado y lo resume, calcula las jugadas legales, Jev elige en un request, el operador juega y el resultado vuelve al estado de la partida para el siguiente tick.</desc>
+
+<defs><marker id="p9-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="p9-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="p9-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="p9-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="p9-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="p9-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<path d="M 728.000 116.715 A 240 240 0 0 1 824.969 187.073" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p9-arrow)"/>
+<path d="M 863.285 252.000 A 240 240 0 0 1 863.722 426.883" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p9-arrow)"/>
+<path d="M 825.731 492.000 A 240 240 0 0 1 729.115 562.842" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p9-arrow)"/>
+<path d="M 552.000 563.285 A 240 240 0 0 1 455.031 492.927" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p9-arrow)"/>
+<path d="M 416.715 428.000 A 240 240 0 0 1 416.278 253.118" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p9-arrow)"/>
+<path d="M 454.269 188.000 A 240 240 0 0 1 550.885 117.158" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p9-arrow)"/>
+<path d="M 640.000 548.000 L 640.000 398.000" fill="none" stroke="#7a8399" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#p9-arrow-soft)"/>
+<rect x="648.0" y="467" width="68" height="12" rx="2" fill="#f5f5f5"/><text x="682" y="476" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">LLENA SLOTS</text>
+<path d="M 487.467 252.000 L 544.670 285.002" fill="none" stroke="#7a8399" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#p9-arrow-soft)"/>
+<rect x="552" y="68" width="176" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="552" y="68" width="176" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="560" y="74" width="28" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="574" y="83" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">TICK</text>
+<text x="640" y="102" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Algo cambia</text>
+<text x="640" y="118" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">mensaje · envío · abrir chat</text>
+<rect x="760" y="188" width="176" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="760" y="188" width="176" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="768" y="194" width="40" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="788" y="203" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CÓDIGO</text>
+<text x="848" y="222" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Se lee el tablero</text>
+<text x="848" y="238" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">vault → JSON compacto</text>
+<rect x="760" y="428" width="176" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="760" y="428" width="176" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="768" y="434" width="40" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="788" y="443" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CÓDIGO</text>
+<text x="848" y="462" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Jugadas legales</text>
+<text x="848" y="478" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">solo las tools válidas ya</text>
+<rect x="552" y="548" width="176" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="552" y="548" width="176" height="64" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<rect x="560" y="554" width="24" height="12" rx="2" fill="none" stroke="#eb6c36" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="572" y="563" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">JEV</text>
+<text x="640" y="582" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Jev elige</text>
+<text x="640" y="598" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">1 request · ~100 ms</text>
+<rect x="344" y="428" width="176" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="344" y="428" width="176" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="352" y="434" width="40" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="372" y="443" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">HUMANO</text>
+<text x="432" y="462" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">El operador juega</text>
+<text x="432" y="478" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">toca · edita · escribe</text>
+<rect x="344" y="188" width="176" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="344" y="188" width="176" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="352" y="194" width="48" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="376" y="203" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">WHATSAPP</text>
+<text x="432" y="222" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Se ve el resultado</text>
+<text x="432" y="238" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">queda como última jugada</text>
+<rect x="540" y="288" width="200" height="104" rx="6" fill="#2d3142"/>
+<text x="640" y="336" fill="#f5f5f5" font-size="13" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Estado de la partida</text>
+<text x="640" y="354" fill="#f5f5f5" fill-opacity="0.75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">borrador · etapa · última jugada</text>
+<text x="968" y="464" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">lo que no aplica, no se ofrece</text><path d="M 964 460 H 940" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="938" cy="460" r="2" fill="#2d3142"/>
+<text x="312" y="464" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="end">aquí Jev propone; el que juega eres tú</text><path d="M 316 460 H 340" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="342" cy="460" r="2" fill="#2d3142"/>
+<line x1="40" y1="696" x2="1240" y2="696" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="719" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="710" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="138" y="718" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Decide Jev</text>
+<rect x="226" y="710" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="248" y="718" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Paso del ciclo</text>
+<rect x="360" y="710" width="14" height="10" rx="2" fill="#2d3142"/>
+<text x="382" y="718" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Estado de la partida</text>
+<path d="M 522 715 H 538" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p9-arrow)"/>
+<text x="544" y="718" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Ciclo</text>
+<path d="M 608 715 H 624" fill="none" stroke="#7a8399" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#p9-arrow-soft)"/>
+<text x="630" y="718" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Escribe en el estado</text>
+</svg>
+</div>
+<p class="figcap">Figura 4 · El bucle de juego aplicado al chat. En cada tick, el código resume el estado y calcula las jugadas legales, Jev elige en un request y el operador juega. El resultado vuelve al estado para el tick siguiente.</p>
+<div class="table-wrap"><table><thead><tr><th>Paso</th><th>En el juego (Mario, Snake, Doom)</th><th>En el chat</th></tr></thead><tbody><tr><td>Tick</td><td>Cada pocos cuadros; en Doom, unas 10 veces por segundo.</td><td>Cada evento: llega un mensaje, el operador envía algo, abre el chat o deja de escribir. Sin cambios no se pregunta nada.</td></tr><tr><td>Tablero</td><td>La memoria del emulador, resumida por objetos: jugador, enemigos, terreno.</td><td>El vault resumido: etapa, borrador, qué falta, ventana de 24 h y últimos mensajes.</td></tr><tr><td>Cuentas</td><td>Las ventanas de salto las calcula el código.</td><td>Minutos de espera, horas de ventana y conteos: los calcula el código y le llegan a Jev en rangos.</td></tr><tr><td>Jugadas legales</td><td>El motor quita las jugadas imposibles.</td><td>El código quita las burbujas que no aplican: con la ventana cerrada no hay interactivas; sin borrador completo no hay «Resumen» ni «Crear pedido»; no se repite lo recién enviado.</td></tr><tr><td>Decisión</td><td>Choice (la jugada) + Noul (¿saltar ya?) + Score (peligro), en un request.</td><td>Choice (la burbuja principal) + un Noul por producto + Choice de aroma, color y cantidad, en un request.</td></tr><tr><td>Umbral</td><td>Con poca confianza juega una heurística.</td><td>0,85 o más: burbuja rellena. De 0,60 a 0,85: normal. Menos: no aparece y mandan las reglas por etapa.</td></tr><tr><td>Memoria</td><td>La última jugada: qué se hizo, cuánto duró y qué pasó.</td><td>La última jugada: qué envió el bot o el operador, hace cuánto y qué respondió el cliente.</td></tr><tr><td>Quién juega</td><td>Jev.</td><td>El operador. Jev solo propone.</td></tr></tbody></table></div>
+  <div class="prose">
+  <h3>Dónde se parece al juego y dónde no</h3>
+  <ul>
+    <li><strong>Jev propone y el humano juega.</strong> En Mario, Jev aprieta el botón. Aquí se parece más al dron del
+    recetario de TypeSafe, donde Jev aconseja y el control queda en otro lado; en nuestro caso, en el operador.</li>
+    <li><strong>Jev no planea: el plan es el embudo.</strong> En los juegos, Jev rinde cuando la jugada correcta se ve
+    en la posición actual (en Snake llega al 88 % de una heurística afinada, en 2048 al 97 %) y se cae cuando hay que
+    planear varias jugadas adelante (en Tetris, 7 %). Vender es un juego de varios pasos, pero la etapa del embudo
+    (<code>resolve_funnel_stage</code>) ya lo parte en pasos locales: en «variantes», la jugada correcta se ve en el
+    tablero. A Jev no le pedimos el camino al cierre, solo la siguiente jugada.</li>
+    <li><strong>El resultado calibra.</strong> En el juego, el resultado es el puntaje. Aquí es lo que hizo el operador:
+    tocó la primera burbuja, eligió otra, buscó en «+ Más» o escribió. Esa es la verdad para ajustar los umbrales.</li>
+    <li><strong>El texto del cliente no mueve las reglas.</strong> Los mensajes del cliente van en un campo aparte,
+    citados. Las jugadas legales las calcula el código sin mirar ese texto, así que ningún mensaje puede hacer que
+    Jev ofrezca algo que no aplica.</li>
+    <li><strong>Un tick, muchas preguntas.</strong> Sumar preguntas a un request casi no agrega tiempo. En el mismo
+    request van las preguntas del vigía de incendios (sección 03).</li>
+  </ul>
+  <p class="note">Fuentes: typesafe-mario (<code>github.com/t-nakatani/typesafe-mario</code>, Mario desde la memoria
+  del emulador), jev-arcade (<code>github.com/CankatSarac/jev-arcade</code>, Snake, 2048 y Tetris contra heurísticas),
+  The Register del 16 sep 2026 (Doom), MindStudio (demos en tiempo real) y la guía práctica de Jev en DEV Community
+  (recetario: dron, navegador y varias preguntas por request).</p>
+  </div>
+<h3>Quién hace qué</h3><div class="table-wrap"><table><thead><tr><th>Pieza</th><th>Qué hace</th><th>Por qué ella</th></tr></thead><tbody><tr><td>Estado del bot</td><td>El borrador del pedido, la etapa y lo que falta. Ya existe: lo mantiene el bot mientras atiende.</td><td>Es determinista y ya está en el vault. No hay que adivinarlo.</td></tr><tr><td>Código</td><td>Arma los <strong>candidatos</strong> desde lo que falta y el catálogo de tools. Aplica precondiciones: ventana de 24 h abierta, producto en el catálogo, no repetir algo recién enviado.</td><td>Lo que se decide con reglas no se le pregunta a ningún modelo.</td></tr><tr><td>Jev</td><td>En <strong>un solo request</strong>: la burbuja principal, de qué productos habla el cliente (un Noul por producto), qué aroma o color eligió y cuántas unidades quiere.</td><td>Todo es elegir de listas cerradas, en ~100 ms y con probabilidades calibradas.</td></tr><tr><td>Operador</td><td>Toca, mantiene presionado, abre «+ Más» o escribe.</td><td>Siempre decide él. Ninguna burbuja se envía sola.</td></tr><tr><td>Ejecutor</td><td>Corre la <strong>misma tool</strong> que usaría el bot, marcada como enviada por el humano.</td><td>Un solo camino de envío: lo que funciona para el bot funciona para el humano.</td></tr><tr><td>LLM, solo a pedido</td><td>Extraer una dirección escrita a mano al tocar «Crear pedido» (ya existe). Más adelante, si se quiere, un borrador de respuesta.</td><td>Es texto libre: ahí sí hace falta.</td></tr></tbody></table></div>
+  <h3>Catálogo de burbujas</h3>
+  <div class="table-wrap"><table><thead><tr><th>Burbuja</th><th>Tool del bot</th><th>Qué recibe el cliente</th><th>Cuándo la ofrece</th><th>¿El operador puede hoy?</th></tr></thead><tbody><tr><td>Enviar aromas o colores</td><td><code>present_variant_picker</code></td><td>La lista de aromas o colores del producto, validada contra el catálogo.</td><td>Pregunta por aromas o colores, o falta el aroma para el pedido.</td><td><span class="pill gen">no existe</span></td></tr><tr><td>Enviar un producto</td><td><code>present_product_detail</code></td><td>Foto con título y precio.</td><td>Menciona un producto que todavía no se le mostró.</td><td><span class="pill ">a medias</span> subiendo la foto a mano</td></tr><tr><td>Enviar varios productos</td><td><code>present_products</code></td><td>Mensaje de catálogo de WhatsApp con varios productos (o una lista si no hay catálogo).</td><td>Pide opciones, «qué tienen», o una categoría.</td><td><span class="pill gen">no existe</span></td></tr><tr><td>Enviar más fotos</td><td><code>present_product_gallery</code></td><td>De 1 a 4 fotos más del producto, con su diseño.</td><td>Pide ver más del producto.</td><td><span class="pill ">a medias</span> a mano</td></tr><tr><td>Pedir datos de envío</td><td><code>request_shipping_details</code></td><td>Formulario de WhatsApp (Flow) con el total y las formas de pago.</td><td>Confirmó qué compra y falta la dirección.</td><td><span class="pill gen">no existe</span></td></tr><tr><td>Medios de pago</td><td><strong>nueva:</strong> <code>send_payment_methods</code>, con el texto de <code>payment_instructions</code></td><td>Datos de Nequi y transferencia, y el aviso del link de pago.</td><td>Pregunta cómo pagar o ya está listo.</td><td><span class="pill ">a medias</span> solo al crear el pedido</td></tr><tr><td>Tarifas de envío</td><td><code>send_shipping_rates</code></td><td>Las tarifas publicadas (Bogotá y nacional).</td><td>Pregunta cuánto cuesta el envío.</td><td><span class="pill gen">no existe</span></td></tr><tr><td>Resumen para confirmar</td><td><code>present_order_confirmation</code></td><td>Resumen del pedido con ✅ Confirmar, ✏️ Modificar y ❌ Cancelar.</td><td>Ya se saben productos, envío y forma de pago.</td><td><span class="pill gen">no existe</span></td></tr><tr><td>Crear pedido</td><td><code>register_order</code></td><td>Las instrucciones de pago (con transferencia o link).</td><td>El cliente confirmó.</td><td><span class="pill nat">ya existe</span> «Crear pedido»</td></tr><tr><td>Aplicar cupón</td><td><code>apply_coupon</code></td><td>Nada directo: el descuento queda en el pedido.</td><td>Menciona un cupón o una campaña.</td><td><span class="pill gen">no existe</span></td></tr><tr><td>Botones de respuesta</td><td><code>send_quick_replies</code></td><td>Hasta 3 botones para responder.</td><td>Una pregunta de sí o no.</td><td><span class="pill gen">no existe</span></td></tr><tr><td>Devolver al bot</td><td><code>return-to-bot</code></td><td>Nada: el bot retoma la conversación.</td><td>La venta quedó cerrada o encaminada.</td><td><span class="pill nat">ya existe</span></td></tr></tbody></table></div>
+
+  <div class="code-grid">
+    <div><p class="code-cap">El tablero: lo que el bot ya dejó guardado</p><pre><code class="json">{
+  &quot;tag&quot;: &quot;INTERESADO&quot;,
+  &quot;funnel_stage&quot;: &quot;etapa_variantes&quot;,
+  &quot;order_draft&quot;: {
+    &quot;items&quot;: [ { &quot;producto&quot;: &quot;Duo Zodiacal&quot;, &quot;color&quot;: &quot;azul&quot;, &quot;cantidad&quot;: 2, &quot;aroma&quot;: null } ],
+    &quot;slots&quot;: { &quot;ciudad&quot;: &quot;Cali&quot;, &quot;direccion&quot;: null, &quot;telefono&quot;: null,
+               &quot;nombre_recibe&quot;: null, &quot;metodo_pago&quot;: null }
+  },
+  &quot;missing&quot;: [&quot;aroma&quot;, &quot;direccion&quot;, &quot;telefono&quot;, &quot;nombre_recibe&quot;, &quot;metodo_pago&quot;],
+  &quot;already_sent&quot;: [&quot;present_product_detail:duo-zodiacal&quot;]
+}</code></pre></div>
+    <div><p class="code-cap">El request del tick: solo jugadas legales</p><pre><code class="json">POST https://openrouter.ai/api/alpha/decisions   (PerceptionPort · PR #372)
+{
+  &quot;model&quot;: &quot;typesafe/jev-1.13&quot;,
+  &quot;state&quot;: {
+    &quot;board&quot;: {
+      &quot;funnel_stage&quot;: &quot;etapa_variantes&quot;,
+      &quot;draft&quot;: { &quot;items&quot;: [&quot;Duo Zodiacal azul x2&quot;], &quot;missing&quot;: [&quot;aroma&quot;, &quot;direccion&quot;, &quot;metodo_pago&quot;] },
+      &quot;window_24h&quot;: &quot;open_more_than_6h&quot;
+    },
+    &quot;last_play&quot;: { &quot;by&quot;: &quot;operator&quot;, &quot;action&quot;: &quot;present_product_detail:duo-zodiacal&quot;,
+                   &quot;ago&quot;: &quot;under_2_min&quot;, &quot;customer_reply&quot;: &quot;¿y qué aromas tienen? quiero 2&quot; }
+  },
+  &quot;questions&quot;: {
+    &quot;next_move&quot;: { &quot;type&quot;: &quot;choice&quot;,
+      &quot;instructions&quot;: &quot;Which single action moves this sale forward right now?&quot;,
+      &quot;criteria&quot;: {
+        &quot;present_variant_picker&quot;:   { &quot;what&quot;: &quot;Send the scents or colors to choose from&quot; },
+        &quot;present_products&quot;:         { &quot;what&quot;: &quot;Show products not shown yet&quot; },
+        &quot;request_shipping_details&quot;: { &quot;what&quot;: &quot;Ask for delivery data with the form&quot; },
+        &quot;send_payment_methods&quot;:     { &quot;what&quot;: &quot;Send how to pay&quot; },
+        &quot;send_shipping_rates&quot;:      { &quot;what&quot;: &quot;Send the published shipping rates&quot; },
+        &quot;none&quot;:                     { &quot;what&quot;: &quot;The operator should just type&quot; } } },
+    &quot;asks_duo_zodiacal&quot;: { &quot;type&quot;: &quot;noul&quot;, &quot;instructions&quot;: &quot;Is the customer asking about Duo Zodiacal?&quot; },
+    &quot;asks_cubo_love&quot;:    { &quot;type&quot;: &quot;noul&quot;, &quot;instructions&quot;: &quot;Is the customer asking about Cubo Love?&quot; },
+    &quot;scent&quot;: { &quot;type&quot;: &quot;choice&quot;, &quot;instructions&quot;: &quot;Which scent did the customer pick, if any?&quot;,
+      &quot;criteria&quot;: { &quot;vainilla&quot;: {}, &quot;lavanda&quot;: {}, &quot;canela&quot;: {}, &quot;none_yet&quot;: {} } },
+    &quot;quantity&quot;: { &quot;type&quot;: &quot;choice&quot;, &quot;instructions&quot;: &quot;How many units does the customer want?&quot;,
+      &quot;criteria&quot;: { &quot;1&quot;: {}, &quot;2&quot;: {}, &quot;3&quot;: {}, &quot;4&quot;: {}, &quot;5_or_more&quot;: {}, &quot;not_said&quot;: {} } }
+  }
+}</code></pre></div>
+  </div>
+  <div class="prose"><ul>
+    <li><strong>Confianza → forma.</strong> Con 0,85 o más, la burbuja principal va rellena y primera. Entre 0,60
+    y 0,85 va como burbuja normal. Por debajo de 0,60 no aparece (sigue en «+ Más»).</li>
+    <li><strong>Faltan «Resumen para confirmar» y «Crear pedido»</strong> porque el borrador está incompleto: el
+    código no los manda como opción, así que Jev no puede sugerirlos.</li>
+    <li><strong>Máximo cuatro burbujas</strong> más «+ Más». Si Jev elige <code>none</code>, no se muestra
+    ninguna: es momento de escribir.</li>
+    <li><strong>Lo que hay que medir antes de confiar:</strong> Jev está optimizado para inglés. Las preguntas van
+    en inglés y los mensajes en español, y se evalúa en sombra con conversaciones reales antes de encenderlo. Si no
+    alcanza, el plan B es un LLM barato detrás del mismo puerto, sin cambiar la app.</li>
+    <li><strong>Todo se registra:</strong> qué se ofreció, qué se tocó, qué se editó y qué se buscó en «+ Más».
+    Una búsqueda en «+ Más» es una sugerencia que falló, y con eso se calibra.</li>
+  </ul></div>
+</section>
+
+<section id="v3">
+  <p class="eyebrow">03 · Incendios</p>
+  <h2>Lo que se quema si nadie actúa, en chats y en órdenes</h2>
+  <div class="prose">
+  <p>Un incendio es cualquier cosa que empeora si nadie hace nada: una venta que se enfría, un cliente que se enoja,
+  plata que queda trabada o un reclamo que puede terminar en una mala reseña. Puede empezar en un chat o en una
+  orden, y todos viven en un solo lugar: <strong>Incendios</strong>.</p>
+  <p>Una venta caliente que va bien no es un incendio: va al widget (sección 06). Se vuelve incendio cuando se traba:
+  aparece una objeción, el bot se repite o la ventana de 24 h está por cerrarse.</p>
+  </div>
+  <h3>Tipos de incendio</h3>
+  <div class="table-wrap"><table><thead><tr><th>Incendio</th><th>Dónde</th><th>Cómo se ve</th><th>Hechos que ya existen</th></tr></thead><tbody><tr><td>Pide un humano y nadie responde</td><td>Chat</td><td>«Quiero hablar con una persona», y los mensajes se acumulan sin respuesta.</td><td><span class="pill nat">ya existe</span> ruta humano, <code>EXPLICIT_REQUEST</code> y <code>unanswered_count</code></td></tr><tr><td>Cliente molesto</td><td>Chat</td><td>El tono sube: «nadie me responde», reclamos, insultos.</td><td><span class="pill gen">no existe</span> lo detecta Jev</td></tr><tr><td>Bot trabado o equivocado</td><td>Chat</td><td>Repite la misma respuesta, no contesta lo que le preguntaron, o el cliente lo corrige («no, ese no es»).</td><td><span class="pill gen">no existe</span> el código compara las respuestas; Jev juzga</td></tr><tr><td>Venta en riesgo</td><td>Chat</td><td>En datos de envío o cierre aparece una objeción («está caro el envío»), una duda, o la ventana de 24 h está por cerrarse.</td><td><span class="pill ">a medias</span> la etapa; el valor del carrito y la ventana hay que calcularlos</td></tr><tr><td>Salud o seguridad</td><td>Chat</td><td>Alergias, embarazo, bebés, mascotas.</td><td><span class="pill nat">ya existe</span> <code>HEALTH_SAFETY</code></td></tr><tr><td>Amenaza de reputación</td><td>Chat u orden</td><td>«Voy a poner una reseña», «los voy a denunciar», «lo subo a redes».</td><td><span class="pill gen">no existe</span> lo detecta Jev</td></tr><tr><td>Queja o reclamo</td><td>Orden</td><td>No llegó, llegó roto, quiere devolverlo o que le devuelvan la plata.</td><td><span class="pill nat">ya existe</span> <code>POST_SALE_ISSUE</code>, <code>SHIPPING_ISSUE</code> y el atraso</td></tr><tr><td>Pregunta repetida por el estado</td><td>Orden</td><td>«¿Ya salió?» por tercera vez.</td><td><span class="pill ">a medias</span> el mensaje; el conteo hay que hacerlo</td></tr><tr><td>Plata trabada</td><td>Orden</td><td>Un comprobante sin verificar, o un pedido confirmado que no se pudo registrar.</td><td><span class="pill nat">ya existe</span> <code>PAYMENT_VERIFICATION_PENDING</code>, <code>ORDER_REGISTRATION_FAILED</code></td></tr><tr><td>Felicitación (no es incendio)</td><td>Orden</td><td>«Me encantó». Vale la pena para pedir reseña o foto.</td><td>Entra como «puede esperar»; nunca interrumpe</td></tr></tbody></table></div>
+  <h3>Jev es el clasificador principal</h3>
+  <div class="prose">
+  <p>No hay reglas de prioridad fijas, ni para chats ni para órdenes. El código convierte cada situación en
+  <strong>hechos</strong> y Jev decide cuatro cosas:</p>
+  <ul>
+    <li><strong>Si vale la pena</strong> (Noul): entra o no a Incendios.</li>
+    <li><strong>Qué tan grave es</strong> (Score: puede esperar, hoy o grave). Con eso se ordena el feed, y lo grave
+    va al radar.</li>
+    <li><strong>De qué se trata</strong> (Choice): uno de los tipos de la tabla. Es el título de la tarjeta.</li>
+    <li><strong>Si empeora</strong> (Noul). Jev recibe su evaluación anterior, como la «última jugada» de los juegos,
+    y dice si la cosa va peor. Un chat que empeora sube en el feed aunque su gravedad no cambie.</li>
+  </ul>
+  <p>Ejemplo en órdenes: un día de atraso en «preparando» con el cliente tranquilo puede esperar; tres días «en
+  camino» con el cliente preguntando por tercera vez es grave. Ejemplo en chats: alguien que pidió un humano hace 2
+  minutos puede esperar un poco; alguien que lleva 12 minutos, 4 mensajes sin respuesta y cada vez más molesto es
+  grave. Esa diferencia la ve Jev, no una regla.</p>
+  <p><strong>Cuando Jev duda</strong> (confianza menor a 0,6), se trata como «hoy»: entra al feed pero no
+  interrumpe. Si Jev no responde, decide el adaptador de reglas del <code>DecisionPort</code>, que queda solo como
+  respaldo.</p>
+  </div>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 604" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="interrumpir-title interrumpir-desc">
+<title id="interrumpir-title">Jev decide qué es un incendio y qué aparece en el radar</title>
+<desc id="interrumpir-desc">Flujo: el código convierte cada situación de un chat o de una orden en hechos; Jev decide si vale la pena (entra a Incendios) y si es grave (aparece en el radar al instante, aunque el operador esté escribiendo, sin quitarle el foco al teclado).</desc>
+
+<defs><marker id="p2-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="p2-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="p2-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="p2-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="p2-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="p2-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<path d="M 640 72 V 96" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p2-arrow)"/>
+<path d="M 520 144 H 480" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p2-arrow)"/>
+<rect x="490" y="152" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="500" y="161" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+<path d="M 640 192 V 224" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p2-arrow)"/>
+<rect x="648" y="202" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="658" y="211" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SÍ</text>
+<path d="M 640 280 V 304" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p2-arrow)"/>
+<path d="M 520 352 H 480" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p2-arrow)"/>
+<rect x="490" y="360" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="500" y="369" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+<path d="M 640 400 V 472" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#p2-arrow-accent)"/>
+<rect x="648" y="430" width="48" height="12" rx="2" fill="#f5f5f5"/><text x="672" y="439" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SÍ · YA</text>
+<rect x="490" y="32" width="300" height="40" rx="20" fill="#f5f5f5"/><rect x="490" y="32" width="300" height="40" rx="20" fill="#ffffff" stroke="#2d3142" stroke-width="1"/><text x="640" y="56" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Hecho nuevo en un chat o una orden</text>
+<polygon points="640,96 760,144 640,192 520,144" fill="#f5f5f5"/><polygon points="640,96 760,144 640,192 520,144" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/><text x="640" y="148" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Vale la pena? (Jev)</text>
+<rect x="240" y="116" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="240" y="116" width="240" height="56" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<text x="360" y="140" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">No aparece</text>
+<text x="360" y="156" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">queda en el chat o en la ficha</text>
+<rect x="520" y="224" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="520" y="224" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="640" y="248" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Entra a Incendios</text>
+<text x="640" y="264" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">ordenado por gravedad</text>
+<polygon points="640,304 760,352 640,400 520,352" fill="#f5f5f5"/><polygon points="640,304 760,352 640,400 520,352" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/><text x="640" y="356" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Es grave? (Jev)</text>
+<rect x="240" y="324" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="240" y="324" width="240" height="56" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<text x="360" y="348" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Solo en el feed</text>
+<text x="360" y="364" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">sin interrumpir</text>
+<rect x="520" y="472" width="240" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="520" y="472" width="240" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="640" y="493" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Tarjeta en el radar</text>
+<text x="640" y="509" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">aunque esté escribiendo</text>
+<text x="640" y="523" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">sin quitar el foco del teclado</text>
+<text x="800" y="116" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">el código pone los hechos; Jev decide</text><path d="M 796 112 Q 780 122 764 140" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="762" cy="142" r="2" fill="#2d3142"/>
+<text x="800" y="324" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">si Jev duda, va al feed sin interrumpir</text><path d="M 796 320 Q 780 330 764 348" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="762" cy="350" r="2" fill="#2d3142"/>
+<line x1="40" y1="560" x2="1240" y2="560" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="583" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="574" width="16" height="10" rx="5" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="138" y="582" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Hecho</text>
+<rect x="202" y="574" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="224" y="582" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Decide Jev</text>
+<rect x="312" y="574" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="334" y="582" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Resultado</text>
+<rect x="418" y="574" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<text x="440" y="582" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Sin interrupción</text>
+<path d="M 560 579 H 576" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#p2-arrow-accent)"/>
+<text x="582" y="582" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Camino de lo grave</text>
+</svg>
+</div>
+<p class="figcap">Figura 5 · Para chats y órdenes, Jev decide las dos cosas: si vale la pena (entra a Incendios) y si es grave (aparece en el radar). El código solo aporta los hechos. Lo grave aparece al instante, aunque estés escribiendo, sin quitarle el foco al teclado.</p>
+  <div class="prose">
+  <h3>El vigía: el mismo bucle de juego, sin humano en el medio</h3>
+  <ul>
+    <li><strong>Tick:</strong> cada mensaje nuevo en cualquier conversación (la atienda el bot o un humano), cada
+    cambio de etapa de una orden, y una revisión cada pocos minutos para lo que empeora solo con el tiempo, como un
+    atraso o una espera sin respuesta.</li>
+    <li><strong>Tablero:</strong> los hechos en rangos y los últimos mensajes. Las cuentas las hace el código.</li>
+    <li><strong>Jugada:</strong> a dónde va: a ningún lado, al feed, al radar o, si es una venta caliente, al widget.
+    Sale de lo que responde Jev.</li>
+    <li><strong>Resultado:</strong> qué hizo el operador (lo atendió, lo ocultó o lo ignoró) y cómo terminó. Con eso
+    se calibra el umbral de «grave».</li>
+    <li><strong>Un solo request por mensaje:</strong> las preguntas de incendio, las de temperatura del widget y, si
+    el operador tomó ese chat, las de burbujas. Con un estado de unas 2.000 palabras cuesta menos de una centésima de
+    centavo de dólar.</li>
+  </ul>
+  </div>
+  <div class="code-grid">
+    <div><p class="code-cap">Un chat que se sale de control</p><pre><code class="json">POST https://openrouter.ai/api/alpha/decisions   (PerceptionPort · PR #372)
+{
+  &quot;model&quot;: &quot;typesafe/jev-1.13&quot;,
+  &quot;state&quot;: {
+    &quot;facts&quot;: {
+      &quot;route&quot;: &quot;human&quot;,
+      &quot;escalation_reason&quot;: &quot;EXPLICIT_REQUEST&quot;,
+      &quot;funnel_stage&quot;: &quot;etapa_cierre&quot;,
+      &quot;unanswered_messages&quot;: &quot;4_or_more&quot;,
+      &quot;waiting&quot;: &quot;10_to_30_min&quot;,
+      &quot;cart_value&quot;: &quot;high&quot;,
+      &quot;has_order&quot;: false
+    },
+    &quot;last_messages&quot;: [&quot;Cliente: quiero hablar con una persona&quot;, &quot;Cliente: ¿hola?&quot;,
+                      &quot;Cliente: llevo rato esperando, ¿me van a atender o no?&quot;],
+    &quot;previous_assessment&quot;: { &quot;severity&quot;: &quot;Handle today&quot;, &quot;kind&quot;: &quot;wants_human&quot; }
+  },
+  &quot;questions&quot;: {
+    &quot;worth_it&quot;: { &quot;type&quot;: &quot;noul&quot;, &quot;instructions&quot;: &quot;Should a human look at this conversation now?&quot; },
+    &quot;severity&quot;: { &quot;type&quot;: &quot;score&quot;, &quot;instructions&quot;: &quot;How bad is it for the customer and the sale if nobody acts?&quot;,
+      &quot;criteria&quot;: [&quot;Can wait&quot;, &quot;Handle today&quot;, &quot;Out of control: act now&quot;] },
+    &quot;kind&quot;: { &quot;type&quot;: &quot;choice&quot;, &quot;instructions&quot;: &quot;What is going on in this conversation?&quot;,
+      &quot;criteria&quot;: { &quot;wants_human&quot;: {}, &quot;angry_customer&quot;: {}, &quot;bot_stuck_or_wrong&quot;: {}, &quot;sale_at_risk&quot;: {},
+                    &quot;health_or_safety&quot;: {}, &quot;reputation_threat&quot;: {}, &quot;order_problem&quot;: {}, &quot;praise&quot;: {},
+                    &quot;other&quot;: {} } },
+    &quot;getting_worse&quot;: { &quot;type&quot;: &quot;noul&quot;, &quot;instructions&quot;: &quot;Is this worse than in the previous assessment?&quot; }
+  }
+}</code></pre></div>
+    <div><p class="code-cap">Una orden con problemas</p><pre><code class="json">POST https://openrouter.ai/api/alpha/decisions   (PerceptionPort · PR #372)
+{
+  &quot;model&quot;: &quot;typesafe/jev-1.13&quot;,
+  &quot;state&quot;: {
+    &quot;facts&quot;: {
+      &quot;stage&quot;: &quot;shipping&quot;,
+      &quot;delivery&quot;: &quot;overdue_2_to_3_days&quot;,
+      &quot;payment&quot;: &quot;paid&quot;,
+      &quot;escalation_reason&quot;: null,
+      &quot;customer_asked_before&quot;: &quot;twice&quot;
+    },
+    &quot;new_message&quot;: &quot;ya pasaron 5 días y nada, ¿qué pasó con mi pedido?&quot;,
+    &quot;bot_is_replying&quot;: true
+  },
+  &quot;questions&quot;: {
+    &quot;worth_it&quot;: { &quot;type&quot;: &quot;noul&quot;, &quot;instructions&quot;: &quot;Should an operator look at this order today?&quot; },
+    &quot;severity&quot;: { &quot;type&quot;: &quot;score&quot;, &quot;instructions&quot;: &quot;How serious is this for the customer and the sale?&quot;,
+      &quot;criteria&quot;: [&quot;Can wait&quot;, &quot;Handle today&quot;, &quot;Serious: handle now&quot;] },
+    &quot;kind&quot;: { &quot;type&quot;: &quot;choice&quot;, &quot;instructions&quot;: &quot;What is going on with this order?&quot;,
+      &quot;criteria&quot;: { &quot;asking_status&quot;: {}, &quot;complaint&quot;: {}, &quot;praise&quot;: {}, &quot;payment_proof&quot;: {},
+                    &quot;delayed_silent&quot;: {}, &quot;other&quot;: {} } }
+  }
+}</code></pre></div>
+  </div>
+  <h3>Qué hechos le llegan a Jev</h3>
+  <div class="prose"><p>Hechos, no prioridades. Todo lo que es contar o medir tiempo lo hace el código, y a Jev le
+  llega en rangos, porque no hace cuentas.</p></div>
+  <div class="table-wrap"><table><thead><tr><th>Hecho</th><th>Cómo lo prepara el código</th><th>Hoy</th><th>Qué decide Jev con eso</th></tr></thead><tbody><tr><td>Espera sin respuesta (chat)</td><td><code>unanswered_count</code> (mensajes del cliente después de la última respuesta) y minutos de espera, en rangos.</td><td><span class="pill nat">ya existe</span> el conteo (#381)</td><td>Si la espera ya es un problema, según quién atiende y qué pidió el cliente.</td></tr><tr><td>Ruta y motivo (chat)</td><td><code>active_route</code> (bot o humano) y <code>escalation_reason</code>: <code>EXPLICIT_REQUEST</code>, <code>HEALTH_SAFETY</code>…</td><td><span class="pill nat">ya existe</span></td><td>Si un humano tiene que entrar ya.</td></tr><tr><td>Bot repetido (chat)</td><td>Si las últimas respuestas del bot son iguales o casi, y cuántos mensajes van sin que avance la etapa.</td><td><span class="pill gen">no existe</span></td><td>Si el bot se trabó o se equivocó.</td></tr><tr><td>Venta en juego (chat)</td><td>Etapa del embudo, valor del carrito en rangos y horas que le quedan a la ventana de 24 h.</td><td><span class="pill nat">ya existe</span> la etapa</td><td>Si es una venta en riesgo.</td></tr><tr><td>Evaluación anterior</td><td>La gravedad y el tipo que dio Jev la última vez, guardados por sesión.</td><td><span class="pill gen">no existe</span></td><td>Si empeora.</td></tr><tr><td>Mensaje del cliente sobre su orden</td><td>El texto recortado, y cuántas veces ya preguntó (el conteo lo hace el código).</td><td><span class="pill nat">ya existe</span> el mensaje · <span class="pill gen">no existe</span> el conteo</td><td>El tipo (pregunta, queja, felicitación, comprobante), si vale la pena y qué tan grave es.</td></tr><tr><td>Atraso</td><td><code>overdue</code> y días de atraso en rangos (1 día, 2 a 3, más de 3), junto con la etapa.</td><td><span class="pill nat">ya existe</span></td><td>Si ese atraso, en esa etapa y con ese cliente, es grave o puede esperar.</td></tr><tr><td>Comprobante de pago</td><td>La marca de la visión (<code>PAYMENT_VERIFICATION_PENDING</code>) y si el monto coincide.</td><td><span class="pill nat">ya existe</span> la marca</td><td>Si hay que verificarlo ya.</td></tr><tr><td>Escalamiento</td><td><code>escalation_reason</code>: <code>SHIPPING_ISSUE</code>, <code>POST_SALE_ISSUE</code>…</td><td><span class="pill nat">ya existe</span></td><td>La gravedad según el motivo y el último mensaje.</td></tr><tr><td>Lista sin guía</td><td>Horas en «listo» con <code>shipping_confirmed = false</code>, en rangos.</td><td><span class="pill nat">ya existe</span> el dato</td><td>Si ya vale la pena mirarla.</td></tr><tr><td>Datos incompletos</td><td><code>data_completeness_missing</code>.</td><td><span class="pill nat">ya existe</span> el dato</td><td>Si eso frena el despacho de hoy.</td></tr></tbody></table></div>
+</section>
+
+<section id="v4">
+  <p class="eyebrow">04 · Radar y feed</p>
+  <h2>Los incendios te encuentran, sin taparte el chat</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 740" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ordenes-title ordenes-desc">
+<title id="ordenes-title">El radar y los incendios</title>
+<desc id="ordenes-desc">Tres pantallas: el radar desplegado sobre el chat con incendios de chats y de órdenes sin pasar de tres cuartos de pantalla, el feed de Incendios ordenado por gravedad con una conversación en vivo, y el detalle exacto de una orden con su siguiente paso.</desc>
+
+<defs><marker id="o1-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="o1-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="o1-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="o1-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="o1-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="o1-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<text x="80" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">1 · RADAR SOBRE EL CHAT</text><rect x="80" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="194" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<rect x="81" y="61" width="286" height="598" rx="9" fill="rgba(45,49,66,0.04)"/>
+<rect x="92" y="88" width="264" height="452" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/><text x="100" y="100" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">RADAR · SOLO LO GRAVE · MÁX. 3/4</text>
+<rect x="104" y="112" width="240" height="80" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="116" y="130" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">CHAT · GRAVE</text>
+<text x="116" y="148" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Sofía pide un humano</text>
+<text x="116" y="164" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">12 min sin respuesta · 4 mensajes</text>
+<text x="116" y="182" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Ver el caso ›</text>
+<text x="332" y="182" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="end">← desliza</text>
+<rect x="104" y="204" width="240" height="80" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="116" y="222" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">ORDEN · GRAVE</text>
+<text x="116" y="240" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">#41 · Queja: no ha llegado</text>
+<text x="116" y="256" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Cali · 2 días tarde · el bot atiende</text>
+<text x="116" y="274" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Ver el caso ›</text>
+<text x="332" y="274" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="end">← desliza</text>
+<rect x="104" y="296" width="240" height="80" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="116" y="314" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">CHAT · GRAVE</text>
+<text x="116" y="332" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Andrés · venta en riesgo</text>
+<text x="116" y="348" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">cierre · «está caro el envío»</text>
+<text x="116" y="366" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Ver el caso ›</text>
+<text x="332" y="366" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="end">← desliza</text>
+<text x="224" y="412" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Ocultar todo</text>
+<line x1="104" y1="432" x2="344" y2="432" stroke="rgba(45,49,66,0.10)" stroke-width="1"/>
+<text x="224" y="460" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">lo oculto sigue en Incendios</text>
+<rect x="92" y="564" width="264" height="84" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="100" y="576" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">SIGUES CON LAURA</text>
+<rect x="100" y="596" width="196" height="32" rx="8" fill="#ffffff" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="112" y="616" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">te confirmo el aroma…</text><rect x="308" y="604" width="20" height="16" rx="3" fill="none" stroke="#4f5d75" stroke-width="1"/><circle cx="318" cy="612" r="4" fill="none" stroke="#4f5d75" stroke-width="1"/><circle cx="352" cy="612" r="14" fill="#2d3142"/><polygon points="347,605 359,612 347,619" fill="#ffffff"/>
+<text x="496" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">2 · INCENDIOS · CHATS Y ÓRDENES</text><rect x="496" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="610" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<rect x="508" y="88" width="264" height="60" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="516" y="100" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">FILTROS</text>
+<rect x="516" y="112" width="48" height="24" rx="12" fill="#2d3142"/><text x="540.0" y="128" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Todo 7</text>
+<rect x="570" y="112" width="60" height="24" rx="12" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="600.0" y="128" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Graves 3</text>
+<rect x="636" y="112" width="56" height="24" rx="12" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="664.0" y="128" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Chats 3</text>
+<rect x="698" y="112" width="64" height="24" rx="12" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="730.0" y="128" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Órdenes 4</text>
+<rect x="508" y="160" width="264" height="488" rx="6" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3"/><text x="516" y="172" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">ORDENADO POR JEV · GRAVEDAD</text>
+<rect x="520" y="180" width="240" height="188" rx="6" fill="#ffffff" stroke="#eb6c36" stroke-width="1"/>
+<text x="532" y="202" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">#41 · Queja</text>
+<text x="748" y="202" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="end">GRAVE</text>
+<text x="532" y="218" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">orden · en camino · 2 días tarde</text>
+<rect x="532" y="228" width="216" height="76" rx="6" fill="rgba(45,49,66,0.04)"/>
+<text x="540" y="244" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">EN VIVO</text>
+<text x="540" y="262" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Cliente: ya pasaron 5 días y nada</text>
+<text x="540" y="278" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Bot: Te entiendo, reviso la guía…</text>
+<text x="540" y="296" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">el bot escribe…</text>
+<rect x="532" y="320" width="104" height="24" rx="4" fill="#2d3142"/><text x="584.0" y="336" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Intervenir</text>
+<rect x="644" y="320" width="104" height="24" rx="4" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="696.0" y="336" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Ver orden</text>
+<text x="532" y="360" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">Jev: queja · grave · confianza 0,94</text>
+<rect x="520" y="380" width="240" height="84" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="532" y="402" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Sofía · pide un humano</text>
+<text x="748" y="402" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="end">GRAVE</text>
+<text x="532" y="418" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">chat · 12 min sin respuesta · empeora</text>
+<rect x="532" y="430" width="104" height="24" rx="4" fill="#2d3142"/><text x="584.0" y="446" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Responder</text>
+<rect x="520" y="476" width="240" height="72" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="532" y="498" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Andrés · venta en riesgo</text>
+<text x="748" y="498" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="end">GRAVE</text>
+<text x="532" y="514" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">chat · cierre · el bot repite la tarifa</text>
+<text x="532" y="536" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Ver en vivo ›</text>
+<rect x="520" y="560" width="240" height="72" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="532" y="582" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">#38 · Pregunta por el estado</text>
+<text x="748" y="582" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="end">HOY</text>
+<text x="532" y="598" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">orden · listo · sin guía · el bot responde</text>
+<text x="532" y="620" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Ver orden ›</text>
+<text x="912" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">3 · ORDEN #38 · CARLOS R.</text><rect x="912" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="1026" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<rect x="924" y="88" width="264" height="128" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="932" y="100" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">QUÉ COMPRÓ</text>
+<rect x="936" y="112" width="32" height="32" rx="4" fill="rgba(45,49,66,0.08)"/>
+<text x="976" y="125" fill="#2d3142" font-size="10" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Duo Zodiacal · azul × 2</text>
+<text x="976" y="139" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">aroma vainilla</text>
+<text x="1176" y="125" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="end">$179.800</text>
+<rect x="936" y="156" width="32" height="32" rx="4" fill="rgba(45,49,66,0.08)"/>
+<text x="976" y="169" fill="#2d3142" font-size="10" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Portavelas × 1</text>
+<text x="976" y="183" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">negro</text>
+<text x="1176" y="169" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="end">$52.000</text>
+<text x="1176" y="206" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="end">subtotal $231.800</text>
+<rect x="924" y="228" width="264" height="164" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/><text x="932" y="240" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">ESTADO Y SIGUIENTE PASO</text>
+<circle cx="948" cy="262" r="6" fill="#2d3142" stroke="#2d3142" stroke-width="1.2"/>
+<text x="948" y="284" fill="#2d3142" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">Nuevo</text>
+<line x1="956" y1="262" x2="994" y2="262" stroke="#2d3142" stroke-width="1.5"/>
+<circle cx="1002" cy="262" r="6" fill="#2d3142" stroke="#2d3142" stroke-width="1.2"/>
+<text x="1002" y="284" fill="#2d3142" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">Prep.</text>
+<line x1="1010" y1="262" x2="1048" y2="262" stroke="#2d3142" stroke-width="1.5"/>
+<circle cx="1056" cy="262" r="6" fill="#2d3142" stroke="#2d3142" stroke-width="1.2"/>
+<text x="1056" y="284" fill="#2d3142" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">Listo</text>
+<line x1="1064" y1="262" x2="1102" y2="262" stroke="rgba(45,49,66,0.25)" stroke-width="1.5"/>
+<circle cx="1110" cy="262" r="6" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/>
+<text x="1110" y="284" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">Camino</text>
+<line x1="1118" y1="262" x2="1156" y2="262" stroke="rgba(45,49,66,0.25)" stroke-width="1.5"/>
+<circle cx="1164" cy="262" r="6" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/>
+<text x="1164" y="284" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">Entreg.</text>
+<text x="936" y="308" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Listo desde ayer 16:20 · falta la guía</text>
+<rect x="936" y="320" width="240" height="24" rx="4" fill="#2d3142"/><text x="1056.0" y="336" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Avanzar a En camino</text>
+<text x="936" y="362" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">pide guía y costo real del envío</text>
+<text x="936" y="378" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">avisa al cliente por WhatsApp</text>
+<rect x="924" y="404" width="264" height="244" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="932" y="416" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">PAGO Y ENVÍO</text>
+<text x="936" y="432" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">PAGO</text>
+<text x="1000" y="432" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Transferencia · pagado ✓</text>
+<text x="936" y="460" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">TOTAL</text>
+<text x="1000" y="460" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">$243.800 (envío $12.000)</text>
+<text x="936" y="488" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">RECIBE</text>
+<text x="1000" y="488" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Carlos R. · tel. del pedido</text>
+<text x="936" y="516" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">DIRECCIÓN</text>
+<text x="1000" y="516" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Cra 12 # 34-56, apto 301</text>
+<text x="936" y="544" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">BARRIO</text>
+<text x="1000" y="544" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Chapinero · Bogotá</text>
+<text x="936" y="572" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">ENVÍO</text>
+<text x="1000" y="572" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">tarifa estimada · guía pendiente</text>
+<text x="936" y="600" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">ENTREGA</text>
+<text x="1000" y="600" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">mié 1 oct · mañana</text>
+<text x="936" y="636" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Ver conversación ›</text>
+<text x="432" y="700" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="middle">tap: vas al caso</text><path d="M 432 690 Q 470 668 510 650" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="512" cy="648" r="2" fill="#2d3142"/>
+<text x="848" y="700" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="middle">el paso siguiente, a un toque</text><path d="M 848 690 Q 890 540 920 330" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="922" cy="328" r="2" fill="#2d3142"/>
+<line x1="40" y1="704" x2="1240" y2="704" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="727" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="718" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="rgba(45,49,66,0.35)" stroke-width="1"/>
+<text x="138" y="726" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Fijo</text>
+<rect x="198" y="718" width="14" height="10" rx="2" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="220" y="726" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Lo ordena Jev</text>
+<rect x="324" y="718" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="346" y="726" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Solo lo grave</text>
+</svg>
+</div>
+<p class="figcap">Figura 6 · A la izquierda, el radar sobre el chat con incendios de chats y de órdenes: nunca pasa de tres cuartos de pantalla y el composer sigue visible. Un toque lleva al caso en Incendios (centro); desde ahí, al chat en vivo o al detalle de la orden (derecha).</p>
+  <div class="prose">
+  <h3>El radar</h3>
+  <ul>
+    <li><strong>Solo llega lo grave.</strong> Lo decide Jev, no una regla fija. Lo que vale la pena pero no es grave
+    entra a Incendios sin interrumpir.</li>
+    <li><strong>Un incendio:</strong> aparece una tarjeta angosta bajo el encabezado del chat, de una línea. A los
+    pocos segundos se encoge a una píldora «2 por atender».</li>
+    <li><strong>Varios:</strong> se apilan. Al tocar la pila se despliega la lista, que no pasa de tres cuartos de la
+    pantalla y nunca cubre el composer.</li>
+    <li><strong>Swipe = ocultar, no resolver.</strong> Lo oculto sigue en Incendios. También hay un botón visible
+    «Ocultar», porque un gesto solo no es accesible.</li>
+    <li><strong>Tap = ir al caso.</strong> Abre Incendios con ese caso enfocado.</li>
+    <li><strong>Aparece apenas se sabe que es grave, aunque estés escribiendo.</strong> No espera ninguna pausa.
+    Tampoco toma el foco: el teclado sigue abierto, el cursor queda donde estaba y lo que tecleas sigue yendo a tu
+    mensaje. Solo entra con una animación corta y una vibración suave; sin sonido mientras escribes.</li>
+    <li><strong>No se toca por accidente.</strong> Mientras escribes, la tarjeta aparece arriba, lejos del teclado, y
+    no responde al toque hasta medio segundo después de aparecer, para que un dedo que iba a una tecla no la abra.</li>
+    <li><strong>Con la app cerrada,</strong> lo grave llega como notificación, por el mismo canal de los avisos de
+    riesgo del widget.</li>
+  </ul>
+  <h3>El feed de Incendios</h3>
+  <ul>
+    <li><strong>Chats y órdenes juntos,</strong> ordenados por la gravedad que da Jev, después por si empeora y
+    después por el tiempo de espera. Filtros: todo, graves, chats y órdenes.</li>
+    <li><strong>Una tarjeta por cliente.</strong> Si el chat es sobre una orden (una queja, una pregunta por el estado,
+    un pago), la tarjeta es de la orden y trae el chat en vivo adentro. Si no, es del chat.</li>
+    <li><strong>El botón depende del caso.</strong> Si el bot atiende: «Ver en vivo» e «Intervenir». Si ya está en
+    manos de un humano y nadie responde: «Responder», que abre el chat con las burbujas. Si es una orden: «Ver orden».</li>
+    <li><strong>No se reordena bajo tu dedo.</strong> Mientras hay scroll o toque, el orden queda quieto y arriba
+    aparece «3 nuevos».</li>
+    <li><strong>Sale solo</strong> cuando alguien responde, se interviene, se avanza la orden o Jev deja de verlo como
+    incendio. No vuelve a entrar salvo que suba de gravedad.</li>
+  </ul>
+  </div>
+  <h3>Qué muestra la ficha de la orden</h3>
+  <div class="prose"><p>Es la misma ficha desde Incendios, desde la lista de órdenes y desde el botón «Pedido» del chat.</p></div>
+  <div class="table-wrap"><table><thead><tr><th>Bloque</th><th>Qué ve el operador</th><th>De dónde sale</th></tr></thead><tbody><tr><td>Qué compró</td><td>Producto, variante, color, aroma, cantidad, precio unitario y total, miniatura y cupón.</td><td><code>OrderDetailDTO.items_detail</code></td></tr><tr><td>Estado</td><td>Etapa actual en el stepper, el historial con fechas y el próximo paso permitido.</td><td><code>stage</code> y <code>hubara_stage_history</code>; las transiciones las decide el servidor</td></tr><tr><td>Pago</td><td>Modalidad (transferencia, link o contra entrega), estado y monto. Aparece como pagado solo si <code>pay_status = paid</code>.</td><td><code>pay_status</code>, <code>pay_type</code>, <code>payment_method_label</code></td></tr><tr><td>Envío</td><td>Quién recibe, teléfono, dirección, barrio y ciudad.</td><td><code>shipping_address</code> (el barrio está en <code>address_2</code>)</td></tr><tr><td>Costo del envío</td><td>Estimado o real, marcado de forma distinta.</td><td><code>shipping_cop</code> + <code>shipping_confirmed</code> (el real, en <code>shipping_cost_cop</code>)</td></tr><tr><td>Totales</td><td>Subtotal, envío, descuento y total.</td><td><code>subtotal</code>, <code>shipping</code>, <code>discount</code>, <code>total_cop</code></td></tr><tr><td>Entrega</td><td>Fecha y franja agendadas, y si está atrasada.</td><td><code>due_iso</code>, <code>due_time</code>, <code>overdue</code></td></tr><tr><td>Qué falta</td><td>Los datos que faltan para despachar.</td><td><code>data_completeness_missing</code></td></tr><tr><td>Guía</td><td>El link de seguimiento. <strong>Hoy no se guarda como campo</strong>: solo queda en la nota del historial. Hay que guardarlo.</td><td>nuevo campo en la metadata de la orden</td></tr></tbody></table></div>
+  <div class="prose">
+  <h3>Ver al bot en vivo e intervenir</h3>
+  <p>Si el cliente está preguntando o reclamando y el bot ya le está respondiendo, la tarjeta muestra la
+  conversación en vivo: los últimos mensajes, con «el bot escribe…» mientras genera. Un toque en
+  <strong>Intervenir</strong> pausa el bot y abre ese chat con las burbujas listas. El operador puede entrar en
+  cualquier momento, sin esperar a que el bot termine.</p>
+  <h3>Avanzar al siguiente paso</h3>
+  <p>El botón principal siempre es el paso siguiente permitido para esa orden, y lo decide el servidor: «Marcar
+  listo», «Despachar», «Marcar entregado». Si el paso necesita datos, el botón los pide antes de avanzar: foto
+  para «listo», guía y costo real del envío para «despachar». Cancelar pide confirmación en dos pasos.</p>
+  </div>
+</section>
+
+<section id="v5">
+  <p class="eyebrow">05 · Ida y vuelta</p>
+  <h2>Atender otra cosa sin perder el hilo</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 424" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="idavuelta-title idavuelta-desc">
+<title id="idavuelta-title">Ida y vuelta sin perder el hilo</title>
+<desc id="idavuelta-desc">Recorrido del operador desde el chat con Laura hasta intervenir el chat de Carlos desde Incendios, y vuelta directa al chat de Laura con el borrador, el scroll y las burbujas intactos.</desc>
+
+<defs><marker id="p3-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="p3-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="p3-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="p3-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="p3-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="p3-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<path d="M 248 156 H 312" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p3-arrow)"/>
+<path d="M 488 156 H 552" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p3-arrow)"/>
+<path d="M 728 156 H 792" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p3-arrow)"/>
+<path d="M 968 156 H 1032" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p3-arrow)"/>
+<rect x="266" y="136" width="28" height="12" rx="2" fill="#f5f5f5"/><text x="280" y="145" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">TAP</text>
+<rect x="504" y="136" width="32" height="12" rx="2" fill="#f5f5f5"/><text x="520" y="145" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">CASO</text>
+<rect x="744" y="136" width="32" height="12" rx="2" fill="#f5f5f5"/><text x="760" y="145" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">VIVO</text>
+<rect x="982" y="136" width="36" height="12" rx="2" fill="#f5f5f5"/><text x="1000" y="145" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">TOMAR</text>
+<path d="M 1120 204 V 292 Q 1120 300 1112 300 H 168 Q 160 300 160 292 V 204" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#p3-arrow-accent)"/>
+<rect x="592" y="308" width="96" height="12" rx="2" fill="#f5f5f5"/><text x="640" y="317" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">VOLVER CON LAURA</text>
+<rect x="72" y="108" width="176" height="96" rx="6" fill="#f5f5f5"/>
+<rect x="72" y="108" width="176" height="96" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="160" y="145" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Chat con Laura</text>
+<text x="160" y="161" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">humano en control</text>
+<text x="160" y="175" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">pila: Laura</text>
+<rect x="312" y="108" width="176" height="96" rx="6" fill="#f5f5f5"/>
+<rect x="312" y="108" width="176" height="96" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="400" y="145" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Radar</text>
+<text x="400" y="161" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">3 situaciones</text>
+<text x="400" y="175" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">pila: Laura</text>
+<rect x="552" y="108" width="176" height="96" rx="6" fill="#f5f5f5"/>
+<rect x="552" y="108" width="176" height="96" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="640" y="145" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Incendios · #38</text>
+<text x="640" y="161" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Carlos pregunta</text>
+<text x="640" y="175" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">pila: Laura › Incendios</text>
+<rect x="792" y="108" width="176" height="96" rx="6" fill="#f5f5f5"/>
+<rect x="792" y="108" width="176" height="96" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="880" y="145" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Carlos en vivo</text>
+<text x="880" y="161" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">el bot responde</text>
+<text x="880" y="175" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">pila: … › Carlos (vivo)</text>
+<rect x="1032" y="108" width="176" height="96" rx="6" fill="#f5f5f5"/>
+<rect x="1032" y="108" width="176" height="96" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="1120" y="145" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Chat con Carlos</text>
+<text x="1120" y="161" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">tomaste el control</text>
+<text x="1120" y="175" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">pila: … › Carlos</text>
+<text x="260" y="64" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">el borrador, el scroll y las burbujas de Laura siguen ahí</text><path d="M 254 60 Q 184 64 164 104" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="162" cy="106" r="2" fill="#2d3142"/>
+<line x1="40" y1="384" x2="1240" y2="384" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="407" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="398" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="138" y="406" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Chat que se retoma</text>
+<rect x="270" y="398" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="292" y="406" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Pantalla</text>
+<path d="M 372 403 H 388" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#p3-arrow)"/>
+<text x="394" y="406" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Navegación</text>
+<path d="M 482 403 H 498" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#p3-arrow-accent)"/>
+<text x="504" y="406" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Retorno directo</text>
+</svg>
+</div>
+<p class="figcap">Figura 7 · El chat con Laura queda en la pila. «Volver con Laura» regresa directo, con todo como estaba.</p>
+  <div class="prose"><ul>
+    <li><strong>La pila de navegación es una lista</strong> (Navigation 3): chat de Laura › Incendios › Carlos en vivo
+    › chat de Carlos. Volver es sacar de la lista, y cada pantalla conserva su estado.</li>
+    <li><strong>El borrador de cada chat vive en Room</strong>, por conversación: lo escrito, las fotos en cola y
+    la posición del scroll. Ni reiniciar la app lo pierde.</li>
+    <li><strong>Una píldora «Volver con Laura»</strong> aparece en cualquier otra pantalla mientras esa intervención
+    siga abierta. Es el camino corto de regreso, sin tener que pasar por atrás pantalla por pantalla.</li>
+    <li><strong>El bot sigue en pausa</strong> en el chat de Laura mientras el operador está en otro lado. Si Laura
+    escribe, el radar lo avisa como a cualquier otro caso.</li>
+  </ul></div>
+</section>
+
+<section id="v6">
+  <p class="eyebrow">06 · Ventas calientes</p>
+  <h2>Con la app cerrada, las ventas que están por cerrarse te encuentran</h2>
+  <div class="prose">
+  <p>El bot atiende decenas de conversaciones a la vez, y la mayoría van solas. Las que valen oro son las que están
+  por cerrarse: si se traban ahí, se pierde la venta que ya estaba ganada. El widget de la pantalla de inicio muestra
+  solo esas. El operador las mira sin abrir la app y, si quiere, toca una para verla en vivo e intervenir.</p>
+  <h3>El termómetro: etapa del bot + contexto</h3>
+  <p>La base no la inventa ningún modelo: es la etapa que el bot ya calcula desde el borrador del pedido
+  (<code>resolve_funnel_stage</code>). Las dos etapas anteriores a la venta, <strong>datos de envío</strong> y
+  <strong>cierre</strong>, son las candidatas al widget.</p>
+  </div>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 468" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="termometro-title termometro-desc">
+<title id="termometro-title">Las etapas del bot como termómetro</title>
+<desc id="termometro-desc">Embudo con las cinco etapas que el bot de ventas calcula desde el borrador del pedido; las dos anteriores a la venta (datos de envío y cierre) son las que entran al widget de ventas calientes.</desc>
+
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<polygon points="280,40 1000,40 952,104 328,104" fill="#ececec" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="640" y="68" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Descubrimiento</text>
+<text x="640" y="84" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">todavía no eligió producto</text>
+<text x="240" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.14em">FRÍA</text>
+<polygon points="328,104 952,104 904,168 376,168" fill="#ececec" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="640" y="132" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Variantes</text>
+<text x="640" y="148" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">falta aroma, color o cantidad</text>
+<text x="240" y="140" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.14em">TIBIA</text>
+<polygon points="376,168 904,168 856,232 424,232" fill="#ececec" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="640" y="196" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Datos de envío</text>
+<text x="640" y="212" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">faltan dirección, teléfono, quién recibe o pago</text>
+<text x="240" y="204" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.14em">CALIENTE</text>
+<polygon points="424,232 856,232 808,296 472,296" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="640" y="260" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Cierre</text>
+<text x="640" y="276" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">ya está todo; falta registrar el pedido</text>
+<text x="240" y="268" fill="#eb6c36" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.14em">A PUNTO</text>
+<polygon points="472,296 808,296 760,360 520,360" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="640" y="324" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Venta</text>
+<text x="640" y="340" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">el episodio ya tiene pedido</text>
+<text x="240" y="332" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.14em">SALE DEL WIDGET</text>
+<path d="M 932 172 H 944 V 292 H 932" fill="none" stroke="#2d3142" stroke-width="1"/>
+<text x="960" y="228" fill="#2d3142" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.14em">ENTRAN AL WIDGET</text>
+<text x="960" y="244" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">las dos etapas antes de vender</text>
+<text x="640" y="392" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">anchos ilustrativos · la etapa la calcula el código desde el borrador del pedido</text>
+<line x1="40" y1="424" x2="1240" y2="424" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="447" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="438" width="14" height="10" rx="2" fill="#ececec" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="138" y="447" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Etapa del bot</text>
+<rect x="248" y="438" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="270" y="447" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">A punto de cerrar</text>
+<path d="M 404 438 H 410 V 448 H 404" fill="none" stroke="#2d3142" stroke-width="1"/>
+<text x="420" y="447" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Zona del widget</text>
+</svg>
+</div>
+<p class="figcap">Figura 8 · Las etapas las calcula el bot desde el borrador del pedido; datos de envío y cierre son las candidatas al widget.</p>
+  <div class="prose">
+  <p>Sobre esa base, Jev lee los últimos mensajes y agrega lo que la etapa no ve:</p>
+  <ul>
+    <li><strong>Qué tan cerca está de comprar</strong> (Score). Detecta a quien dice «¿cómo te pago?» aunque el
+    borrador todavía no tenga su dirección: la etapa puede ir atrasada respecto de la conversación.</li>
+    <li><strong>Si hay una objeción o una duda</strong> («está caro el envío», «lo voy a pensar»).</li>
+    <li><strong>Si el bot se trabó</strong>: repite la respuesta o no contesta lo que le preguntaron.</li>
+    <li><strong>Si vale la pena que un humano la mire ahora</strong> (Noul). Esta es la decisión final para entrar al widget.</li>
+  </ul>
+  <p>El compromiso lo mide el código, no Jev: qué tan rápido responde el cliente y cuántos mensajes van en los
+  últimos 15 minutos. A Jev le llegan como categorías («responde en menos de 2 min»), porque no hace cuentas.</p>
+  </div>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 628" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="alwidget-title alwidget-desc">
+<title id="alwidget-title">¿Esta conversación va al widget?</title>
+<desc id="alwidget-desc">Flujo: si la conversación está caliente o a punto y Jev juzga que vale la pena mirarla, entra al widget; si además hay riesgo (objeción, molestia o el bot trabado), llega con un aviso de que conviene intervenir.</desc>
+
+<defs><marker id="h2-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="h2-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="h2-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="h2-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="h2-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="h2-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<path d="M 640 72 V 96" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#h2-arrow)"/>
+<path d="M 640 192 V 224" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#h2-arrow)"/>
+<rect x="648" y="202" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="658" y="211" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SÍ</text>
+<path d="M 520 144 H 368 Q 360 144 360 152 V 180" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#h2-arrow)"/>
+<rect x="430" y="124" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="440" y="133" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+<path d="M 520 272 H 368 Q 360 272 360 264 V 236" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#h2-arrow)"/>
+<rect x="430" y="252" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="440" y="261" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+<path d="M 640 320 V 352" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#h2-arrow)"/>
+<rect x="648" y="330" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="658" y="339" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SÍ</text>
+<path d="M 520 400 H 456 Q 448 400 448 408 V 496" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#h2-arrow)"/>
+<rect x="474" y="380" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="484" y="389" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+<path d="M 760 400 H 824 Q 832 400 832 408 V 496" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#h2-arrow-accent)"/>
+<rect x="786" y="380" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="796" y="389" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SÍ</text>
+<rect x="500" y="32" width="280" height="40" rx="20" fill="#f5f5f5"/><rect x="500" y="32" width="280" height="40" rx="20" fill="#ffffff" stroke="#2d3142" stroke-width="1"/><text x="640" y="56" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Mensaje en una conversación del bot</text>
+<polygon points="640,96 760,144 640,192 520,144" fill="#f5f5f5"/><polygon points="640,96 760,144 640,192 520,144" fill="#ffffff" stroke="#2d3142" stroke-width="1"/><text x="640" y="148" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Caliente o a punto?</text>
+<rect x="240" y="180" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="240" y="180" width="240" height="56" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<text x="360" y="204" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Sin widget</text>
+<text x="360" y="220" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">se sigue midiendo</text>
+<polygon points="640,224 760,272 640,320 520,272" fill="#f5f5f5"/><polygon points="640,224 760,272 640,320 520,272" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/><text x="640" y="276" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Vale la pena? (Jev)</text>
+<polygon points="640,352 760,400 640,448 520,400" fill="#f5f5f5"/><polygon points="640,352 760,400 640,448 520,400" fill="#ffffff" stroke="#2d3142" stroke-width="1"/><text x="640" y="404" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Hay riesgo?</text>
+<rect x="328" y="496" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="328" y="496" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="448" y="520" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">En el widget · va sola</text>
+<text x="448" y="536" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">para mirar si quieres</text>
+<rect x="712" y="496" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="712" y="496" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="832" y="520" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">En el widget + aviso</text>
+<text x="832" y="536" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">conviene intervenir</text>
+<text x="800" y="120" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">temperatura = etapa del bot + contexto</text><path d="M 796 116 Q 780 124 764 140" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="762" cy="142" r="2" fill="#2d3142"/>
+<text x="200" y="372" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">riesgo: objeción, molestia o bot trabado</text><path d="M 456 368 Q 520 360 578 376" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="580" cy="376" r="2" fill="#2d3142"/>
+<line x1="40" y1="584" x2="1240" y2="584" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="607" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="598" width="16" height="10" rx="5" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="138" y="606" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Señal</text>
+<polygon points="209,597 216,603 209,609 202,603" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="224" y="606" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Decisión</text>
+<rect x="304" y="598" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="326" y="606" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Entra al widget</text>
+<rect x="442" y="598" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<text x="464" y="606" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">No entra</text>
+<path d="M 544 603 H 560" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#h2-arrow-accent)"/>
+<text x="566" y="606" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Riesgo: intervenir</text>
+</svg>
+</div>
+<p class="figcap">Figura 9 · La etapa pone la base, y Jev decide si vale la pena y si hay riesgo.</p>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 740" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="widget-title widget-desc">
+<title id="widget-title">Ventas calientes fuera de la app</title>
+<desc id="widget-desc">Tres pantallas: el widget de la pantalla de inicio con las conversaciones calientes, el aviso cuando una está en riesgo, y la conversación en vivo que se abre al tocar, con el botón para tomarla.</desc>
+
+<defs><marker id="h3-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="h3-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="h3-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="h3-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="h3-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="h3-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<text x="80" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">1 · PANTALLA DE INICIO · WIDGET</text><rect x="80" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="194" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<text x="104" y="88" fill="#2d3142" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">9:41</text>
+<rect x="92" y="100" width="264" height="212" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/><text x="100" y="112" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">WIDGET · VENTAS CALIENTES</text>
+<text x="104" y="132" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Ventas calientes · 3</text>
+<circle cx="300" cy="128" r="3" fill="#eb6c36"/>
+<text x="344" y="132" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="end">EN VIVO</text>
+<rect x="104" y="148" width="240" height="44" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="116" y="166" fill="#2d3142" font-size="10" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Laura · Duo Zodiacal × 2</text>
+<text x="116" y="182" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">cierre · $179.800 · hace 1 min</text>
+<rect x="276" y="160" width="12" height="6" rx="2" fill="#2d3142"/><rect x="290" y="160" width="12" height="6" rx="2" fill="#2d3142"/><rect x="304" y="160" width="12" height="6" rx="2" fill="#2d3142"/><rect x="318" y="160" width="12" height="6" rx="2" fill="#2d3142"/>
+<rect x="104" y="200" width="240" height="44" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="116" y="218" fill="#2d3142" font-size="10" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Andrés · Cubo Love</text>
+<text x="116" y="234" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">envío · «está caro el envío»</text>
+<rect x="276" y="212" width="12" height="6" rx="2" fill="#eb6c36"/><rect x="290" y="212" width="12" height="6" rx="2" fill="#eb6c36"/><rect x="304" y="212" width="12" height="6" rx="2" fill="#eb6c36"/><rect x="318" y="212" width="12" height="6" rx="2" fill="rgba(45,49,66,0.12)"/>
+<text x="332" y="234" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="end">RIESGO</text>
+<rect x="104" y="252" width="240" height="44" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="116" y="270" fill="#2d3142" font-size="10" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Sofía · Portavelas × 3</text>
+<text x="116" y="286" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">envío · $156.000 · hace 4 min</text>
+<rect x="276" y="264" width="12" height="6" rx="2" fill="#2d3142"/><rect x="290" y="264" width="12" height="6" rx="2" fill="#2d3142"/><rect x="304" y="264" width="12" height="6" rx="2" fill="#2d3142"/><rect x="318" y="264" width="12" height="6" rx="2" fill="rgba(45,49,66,0.12)"/>
+<rect x="92" y="328" width="264" height="320" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="100" y="340" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">PANTALLA DE INICIO</text>
+<rect x="116" y="356" width="40" height="40" rx="10" fill="rgba(45,49,66,0.08)"/>
+<rect x="122" y="404" width="28" height="4" rx="2" fill="rgba(45,49,66,0.10)"/>
+<rect x="176" y="356" width="40" height="40" rx="10" fill="rgba(45,49,66,0.08)"/>
+<rect x="182" y="404" width="28" height="4" rx="2" fill="rgba(45,49,66,0.10)"/>
+<rect x="236" y="356" width="40" height="40" rx="10" fill="rgba(45,49,66,0.08)"/>
+<rect x="242" y="404" width="28" height="4" rx="2" fill="rgba(45,49,66,0.10)"/>
+<rect x="296" y="356" width="40" height="40" rx="10" fill="rgba(45,49,66,0.08)"/>
+<rect x="302" y="404" width="28" height="4" rx="2" fill="rgba(45,49,66,0.10)"/>
+<rect x="116" y="428" width="40" height="40" rx="10" fill="rgba(45,49,66,0.08)"/>
+<rect x="122" y="476" width="28" height="4" rx="2" fill="rgba(45,49,66,0.10)"/>
+<rect x="176" y="428" width="40" height="40" rx="10" fill="rgba(45,49,66,0.08)"/>
+<rect x="182" y="476" width="28" height="4" rx="2" fill="rgba(45,49,66,0.10)"/>
+<rect x="236" y="428" width="40" height="40" rx="10" fill="rgba(45,49,66,0.08)"/>
+<rect x="242" y="476" width="28" height="4" rx="2" fill="rgba(45,49,66,0.10)"/>
+<rect x="296" y="428" width="40" height="40" rx="10" fill="rgba(45,49,66,0.08)"/>
+<rect x="302" y="476" width="28" height="4" rx="2" fill="rgba(45,49,66,0.10)"/>
+<rect x="116" y="500" width="40" height="40" rx="10" fill="rgba(45,49,66,0.08)"/>
+<rect x="122" y="548" width="28" height="4" rx="2" fill="rgba(45,49,66,0.10)"/>
+<rect x="176" y="500" width="40" height="40" rx="10" fill="rgba(45,49,66,0.08)"/>
+<rect x="182" y="548" width="28" height="4" rx="2" fill="rgba(45,49,66,0.10)"/>
+<rect x="236" y="500" width="40" height="40" rx="10" fill="rgba(45,49,66,0.08)"/>
+<rect x="242" y="548" width="28" height="4" rx="2" fill="rgba(45,49,66,0.10)"/>
+<rect x="296" y="500" width="40" height="40" rx="10" fill="rgba(45,49,66,0.08)"/>
+<rect x="302" y="548" width="28" height="4" rx="2" fill="rgba(45,49,66,0.10)"/>
+<rect x="116" y="588" width="220" height="44" rx="12" fill="rgba(45,49,66,0.05)"/>
+<text x="496" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">2 · PANEL DE NOTIFICACIONES</text><rect x="496" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="610" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<text x="520" y="88" fill="#2d3142" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">9:42</text>
+<rect x="508" y="100" width="264" height="132" rx="6" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3"/><text x="516" y="112" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LIVE UPDATE · ANDROID 16+</text>
+<text x="520" y="132" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Vigilando ventas · 3 calientes</text>
+<text x="520" y="148" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">la más caliente: Laura · cierre</text>
+<rect x="520" y="164" width="44" height="6" rx="2" fill="#2d3142"/>
+<text x="542" y="186" fill="#2d3142" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">desc.</text>
+<rect x="568" y="164" width="44" height="6" rx="2" fill="#2d3142"/>
+<text x="590" y="186" fill="#2d3142" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">var.</text>
+<rect x="616" y="164" width="44" height="6" rx="2" fill="#2d3142"/>
+<text x="638" y="186" fill="#2d3142" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">envío</text>
+<rect x="664" y="164" width="44" height="6" rx="2" fill="#eb6c36"/>
+<text x="686" y="186" fill="#2d3142" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">cierre</text>
+<rect x="712" y="164" width="44" height="6" rx="2" fill="rgba(45,49,66,0.12)"/>
+<text x="734" y="186" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">venta</text>
+<text x="520" y="214" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">en Android 11 se ve como notificación fija</text>
+<rect x="508" y="248" width="264" height="176" rx="6" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3"/><text x="516" y="260" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">AVISO · SOLO SI HAY RIESGO</text>
+<rect x="520" y="268" width="240" height="140" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="532" y="286" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">HUBARA · VENTAS CALIENTES</text>
+<text x="532" y="306" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Andrés duda por el envío</text>
+<text x="532" y="322" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Cubo Love · datos de envío · caliente</text>
+<text x="532" y="338" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">el bot respondió 2 veces lo mismo</text>
+<rect x="532" y="352" width="104" height="24" rx="4" fill="#2d3142"/><text x="584.0" y="368" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Ver en vivo</text>
+<rect x="644" y="352" width="104" height="24" rx="4" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="696.0" y="368" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Intervenir</text>
+<text x="532" y="396" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">sonido solo cuando hay riesgo</text>
+<text x="640" y="456" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">en la pantalla bloqueada sin nombres:</text>
+<text x="640" y="472" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">«1 venta en riesgo»</text>
+<text x="912" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">3 · EN VIVO · AL TOCAR</text><rect x="912" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="1026" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<circle cx="948" cy="108" r="12" fill="rgba(45,49,66,0.12)"/>
+<text x="968" y="106" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Andrés</text>
+<text x="968" y="120" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">el bot atiende · en vivo</text>
+<rect x="1112" y="100" width="12" height="6" rx="2" fill="#eb6c36"/><rect x="1126" y="100" width="12" height="6" rx="2" fill="#eb6c36"/><rect x="1140" y="100" width="12" height="6" rx="2" fill="#eb6c36"/><rect x="1154" y="100" width="12" height="6" rx="2" fill="rgba(45,49,66,0.12)"/>
+<text x="1168" y="122" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="end">RIESGO</text>
+<rect x="924" y="140" width="264" height="100" rx="6" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3"/><text x="932" y="152" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">POR QUÉ ESTÁ AQUÍ</text>
+<text x="936" y="168" fill="#2d3142" font-size="10" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Datos de envío · caliente</text>
+<text x="936" y="186" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">objeción: precio del envío (0,91)</text>
+<text x="936" y="202" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">responde en menos de 2 min · 8 mensajes</text>
+<text x="936" y="218" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">el bot repitió la misma respuesta</text>
+<rect x="924" y="252" width="264" height="292" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="932" y="264" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">CONVERSACIÓN EN VIVO</text>
+<rect x="1008" y="272" width="168" height="22" rx="8" fill="rgba(45,49,66,0.14)"/><text x="1166" y="287" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="end">¿A qué dirección lo envío?</text>
+<rect x="936" y="304" width="184" height="22" rx="8" fill="rgba(45,49,66,0.06)"/><text x="946" y="319" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">uy, está caro el envío a Cali</text>
+<rect x="980" y="336" width="196" height="22" rx="8" fill="rgba(45,49,66,0.14)"/><text x="1166" y="351" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="end">El envío nacional es $16.940</text>
+<rect x="936" y="368" width="148" height="22" rx="8" fill="rgba(45,49,66,0.06)"/><text x="946" y="383" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">mmm lo voy a pensar</text>
+<circle cx="1152" cy="412" r="2.5" fill="#7a8399"/>
+<circle cx="1160" cy="412" r="2.5" fill="#7a8399"/>
+<circle cx="1168" cy="412" r="2.5" fill="#7a8399"/>
+<text x="1140" y="416" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="end">el bot escribe</text>
+<text x="1056" y="520" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">los mensajes llegan al instante</text>
+<rect x="924" y="556" width="264" height="92" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="932" y="568" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">CONTROL</text>
+<rect x="936" y="576" width="240" height="36" rx="8" fill="#2d3142"/>
+<text x="1056" y="599" fill="#ffffff" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Tomar la conversación</text>
+<text x="1056" y="634" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Seguir mirando</text>
+<text x="432" y="250" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="middle">tap: en vivo</text><path d="M 424 256 Q 400 262 358 250" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="356" cy="250" r="2" fill="#2d3142"/>
+<text x="848" y="590" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="middle">el bot sigue</text><path d="M 850 578 Q 880 560 920 588" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="922" cy="590" r="2" fill="#2d3142"/>
+<line x1="40" y1="704" x2="1240" y2="704" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="727" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="718" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="rgba(45,49,66,0.35)" stroke-width="1"/>
+<text x="138" y="726" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Fijo</text>
+<rect x="198" y="718" width="14" height="10" rx="2" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="220" y="726" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Lo decide Jev</text>
+<rect x="324" y="718" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="346" y="726" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Widget</text>
+</svg>
+</div>
+<p class="figcap">Figura 10 · El widget muestra las ventas calientes sin abrir la app; si una entra en riesgo llega un aviso, y al tocar se abre en vivo con el botón para tomarla.</p>
+  <div class="cards">
+    <div class="card"><div class="card-header"><span class="card-dot coral"></span><h3>Widget · pantalla de inicio</h3></div>
+      <ul><li>Hasta 3 conversaciones calientes: nombre, producto, etapa, valor del carrito y termómetro.</li>
+      <li>Marca «riesgo» cuando conviene intervenir.</li>
+      <li>Tocar una fila abre la conversación en vivo; tocar el título abre la lista completa.</li></ul></div>
+    <div class="card"><div class="card-header"><span class="card-dot ink"></span><h3>Aviso · solo con riesgo</h3></div>
+      <ul><li>Si una conversación caliente entra en riesgo, llega una notificación con «Ver en vivo» e «Intervenir».</li>
+      <li>Además entra a Incendios como «venta en riesgo».</li>
+      <li>Las que van solas no suenan: solo actualizan el widget.</li>
+      <li>En Android 16 o superior, «Vigilar ventas» muestra la más caliente como Live Update, con las etapas como progreso.</li></ul></div>
+    <div class="card"><div class="card-header"><span class="card-dot muted"></span><h3>En vivo · tú decides</h3></div>
+      <ul><li>La conversación llega al instante, con «el bot escribe…».</li>
+      <li>Arriba, por qué está ahí: etapa, objeción y velocidad de respuesta.</li>
+      <li>«Tomar la conversación» abre el chat con las burbujas. «Seguir mirando» deja trabajar al bot.</li></ul></div>
+  </div>
+  <p class="code-cap">Las preguntas de temperatura, que van en el mismo request del vigía de incendios (sección 03)</p>
+  <pre><code class="json">POST https://openrouter.ai/api/alpha/decisions   (PerceptionPort · PR #372)
+{
+  &quot;model&quot;: &quot;typesafe/jev-1.13&quot;,
+  &quot;state&quot;: {
+    &quot;funnel_stage&quot;: &quot;etapa_datos_envio&quot;,
+    &quot;last_messages&quot;: [&quot;Bot: El envío nacional es $16.940&quot;,
+                      &quot;Cliente: uy, está caro el envío a Cali&quot;, &quot;Cliente: mmm lo voy a pensar&quot;],
+    &quot;customer_reply_speed&quot;: &quot;under_2_min&quot;,
+    &quot;messages_last_15_min&quot;: &quot;6_to_10&quot;
+  },
+  &quot;questions&quot;: {
+    &quot;closeness&quot;: { &quot;type&quot;: &quot;score&quot;, &quot;instructions&quot;: &quot;How close is the customer to buying?&quot;,
+      &quot;criteria&quot;: [&quot;Just browsing&quot;, &quot;Interested&quot;, &quot;Deciding&quot;, &quot;Ready to buy&quot;] },
+    &quot;objection&quot;: { &quot;type&quot;: &quot;noul&quot;, &quot;instructions&quot;: &quot;Is the customer raising an objection or hesitating?&quot; },
+    &quot;bot_stuck&quot;: { &quot;type&quot;: &quot;noul&quot;, &quot;instructions&quot;: &quot;Is the bot failing to answer what the customer asked?&quot; },
+    &quot;watch_now&quot;: { &quot;type&quot;: &quot;noul&quot;, &quot;instructions&quot;: &quot;Should a sales operator watch this conversation now?&quot; }
+  }
+}</code></pre>
+  <h3>Reglas para que no moleste</h3>
+  <ol class="rules">
+    <li><strong>Máximo 3 en el widget</strong>Primero las que están en riesgo, después la temperatura y después el valor del carrito.</li>
+    <li><strong>Sonido solo con riesgo</strong>Lo que va solo actualiza el widget en silencio.</li>
+    <li><strong>No insistir</strong>Una misma conversación solo vuelve a avisar si sube de nivel.</li>
+    <li><strong>Salen solas</strong>Si el cliente se enfría (30 min sin responder), sale. Si se registra el pedido, muestra «venta cerrada ✓» un rato y sale. Si intervienes, pasa a «tú atiendes».</li>
+    <li><strong>Privacidad</strong>El widget no muestra mensajes, salvo que el operador lo active. En la pantalla bloqueada no aparecen nombres: «1 venta en riesgo».</li>
+    <li><strong>Horario</strong>Fuera del horario de atención no suena nada; el widget sigue actualizándose.</li>
+  </ol>
+  <div class="prose">
+  <h3>Cómo se calibra: con ventas reales</h3>
+  <p>Cada conversación que entra al widget termina de una de dos formas: con pedido en las 24 horas siguientes o
+  sin pedido. Eso es la verdad para medir el termómetro, sin etiquetar nada a mano. Se mide cuántas de las que
+  marcó «a punto» terminan en venta, cuántas en riesgo se salvaron con intervención, y en qué umbral de Jev conviene
+  cortar.</p>
+  </div>
+</section>
+
+<section id="v7">
+  <p class="eyebrow">07 · Cómo lo hacemos realidad</p>
+  <h2>Qué hay que construir, en qué orden</h2>
+  <h3>Backend: qué existe y qué falta</h3><div class="table-wrap"><table><thead><tr><th>Pieza</th><th>Hoy</th><th>Qué hay que hacer</th></tr></thead><tbody><tr><td>Tools del bot para el operador</td><td>Solo «Crear pedido» usa el patrón: la API instancia la tool y hace el envío.</td><td>Endpoint <code>POST /api/chats/session-actions/{s}/tools/{tool}</code> con <code>client_action_id</code>. Exige ruta humano y la ventana de 24 h abierta, envía <strong>solo esa acción</strong> (hoy el envío saca todo lo pendiente) y la escribe en el historial con <code>sender: human</code>. Tiene un modo operador que se salta las guardas pensadas para el LLM.</td></tr><tr><td>Cola del bot al intervenir</td><td><code>/intervene</code> termina los workflows, pero deja la cola de envíos pendientes del bot.</td><td>Vaciar la cola al intervenir, para que no salga nada del bot después.</td></tr><tr><td>Medios de pago sueltos</td><td>Solo salen al registrar la orden.</td><td>Acción nueva <code>send_payment_methods</code> que reusa el texto de <code>payment_instructions</code>.</td></tr><tr><td>Catálogo para el selector</td><td>Chats no tiene endpoint: el único es el de marketing, y la regla P-22 impide usarlo.</td><td><code>GET /api/chats/catalog</code> desde el snapshot: handle, título, precio, miniatura, aromas, colores y diseños.</td></tr><tr><td>Estado del bot como lectura</td><td>El borrador del pedido y <code>resolve_funnel_stage</code> ya existen; se usan dentro del bot.</td><td>Exponerlos en el surface del chat (etapa y faltantes). Con el humano en control, guardar en el borrador lo que Jev elija (aroma, color, cantidad, producto), marcado con su fuente y su confianza.</td></tr><tr><td>Jev</td><td>No existe.</td><td><code>DecisionPort</code> con el adaptador de TypeSafe: un request por tick con las preguntas de burbujas (si el operador tomó el chat), de temperatura y de incendios.</td></tr><tr><td>Mensajes en vivo</td><td>Un sampler revisa cada 2,5 s y el cliente vuelve a pedir el historial completo.</td><td>Evento <code>chats.message_appended</code> con las líneas nuevas ya clasificadas (el sampler guarda un offset por sesión). Más adelante, Redis pub/sub.</td></tr><tr><td>«El bot escribe…»</td><td>No hay señal.</td><td>El turno del bot marca <code>bot_typing_since</code> en la metadata y el sampler lo emite.</td></tr><tr><td>Vigía de incendios (chats y órdenes)</td><td>Solo existen piezas sueltas: <code>unanswered_count</code> (#381), ruta y motivo de escalamiento, atraso y comprobante. No se detectan quejas, enojo ni bot trabado, y no hay prioridad.</td><td>Productor en el sampler del API: en cada mensaje nuevo, cambio de etapa o revisión periódica, el código junta los hechos del chat o de la orden y <strong>Jev decide</strong> si vale la pena, la gravedad, el tipo y si empeora. Guarda la evaluación por sesión (para saber si empeora) y deja una tarjeta por cliente. Sin reglas de prioridad fijas: las reglas quedan solo como respaldo si Jev no responde. Evento <code>mobile.attention</code> y <code>GET /api/mobile/fires</code>.</td></tr><tr><td>Orden completa</td><td>El endpoint por sesión devuelve solo resúmenes.</td><td><code>GET /api/mobile/orders/{id}</code> con el detalle y las transiciones permitidas.</td></tr><tr><td>Ventas calientes</td><td>No existe.</td><td>El sampler del API detecta cada mensaje nuevo en conversaciones del bot: se calcula la etapa, el compromiso y la pregunta a Jev, y se guarda una <code>HotConversation</code> por sesión. <strong>No toca el workflow de ventas.</strong></td></tr><tr><td>Push al widget</td><td>FCM no existe todavía en la app.</td><td>Mensaje de datos de FCM cuando una conversación entra, sube de nivel, entra en riesgo o sale. <code>GET /api/mobile/hot</code> para refrescar al abrir.</td></tr></tbody></table></div>
+  <h3>App: los componentes Compose</h3><div class="table-wrap"><table><thead><tr><th>Componente</th><th>Qué hace</th><th>Cómo</th></tr></thead><tbody><tr><td><code>InterveneBar</code></td><td>Tomar la conversación y mostrar lo que entendió el bot.</td><td>Lectura desde el surface; pausa el bot con <code>/intervene</code>.</td></tr><tr><td><code>QuickActionStrip</code></td><td>Las burbujas.</td><td><code>LazyRow</code> con <code>animateItem</code>; <code>combinedClickable</code> (tocar / mantener); háptica; estados sugerida, enviando, deshacer y fallida.</td></tr><tr><td><code>UndoSender</code></td><td>Los 5 s para deshacer.</td><td>Retiene la acción en memoria antes de pasarla al outbox (WorkManager); «Deshacer» la cancela.</td></tr><tr><td><code>ActionPalette</code></td><td>«+ Más».</td><td><code>ModalBottomSheet</code> con buscador y los grupos del catálogo de acciones.</td></tr><tr><td><code>ProductPicker</code></td><td>Editar antes de enviar.</td><td>Selección múltiple desde <code>/api/chats/catalog</code>, miniaturas con Coil y lo sugerido ya marcado.</td></tr><tr><td><code>RadarOverlay</code></td><td>El radar.</td><td>Capa sobre el <code>NavDisplay</code>; <code>SwipeToDismissBox</code>; <code>heightIn(max = 0.75 × alto)</code>; nunca tapa el composer. Aparece al instante, también con el teclado abierto, sin pedir foco: la tarjeta no es enfocable, no usa <code>Dialog</code> ni <code>FocusRequester</code>, y TalkBack la anuncia con <code>liveRegion = Polite</code>.</td></tr><tr><td><code>FiresFeed</code></td><td>El feed de Incendios.</td><td><code>LazyColumn</code> con keys estables y dos tipos de tarjeta (chat y orden); no reordena mientras hay scroll o toque; aviso de «nuevos».</td></tr><tr><td><code>OrderSheet</code></td><td>La ficha de la orden.</td><td>Stepper, bloques de datos y pasos de etapa nativos (foto para listo; guía y costo para despachar). La misma ficha se usa desde Incendios, desde la lista de órdenes y desde el chat.</td></tr><tr><td><code>OrderButton</code></td><td>El botón «Pedido #38» en el encabezado del chat.</td><td>Solo aparece si <code>order_ref</code> trae pedido; abre <code>OrderSheet</code> como <code>ModalBottomSheet</code>, con una pestaña por pedido.</td></tr><tr><td><code>LiveConversation</code></td><td>Ver al bot en vivo.</td><td>Recibe <code>message_appended</code> en Room; indicador «el bot escribe»; botón Intervenir siempre visible.</td></tr><tr><td><code>ReturnPill</code> + <code>DraftStore</code></td><td>Volver sin perder nada.</td><td>Píldora visible si hay una intervención abierta en otra pantalla; borrador, outbox y scroll guardados por sesión en Room.</td></tr><tr><td><code>HotWidget</code></td><td>El widget de ventas calientes.</td><td>Jetpack Glance (funciona en el Android 11 de hoy). El push de FCM guarda el estado en DataStore y llama a <code>updateAll</code>; cada fila abre <code>hubara://live/{sesión}</code>.</td></tr><tr><td><code>HotAlerts</code></td><td>El aviso de riesgo y el Live Update.</td><td>Canal de notificación propio, con versión pública sin nombres. En Android 16 o superior, <code>ProgressStyle</code> con las etapas como segmentos (solo si el operador activa «Vigilar ventas»).</td></tr></tbody></table></div>
+  <h3>Fases</h3><div class="table-wrap"><table><thead><tr><th>Fase</th><th>Qué se construye</th><th>Termina cuando</th></tr></thead><tbody><tr><td>F0 · Acciones del operador</td><td>Endpoint de tools (aromas, productos, fotos, datos de envío, medios de pago, tarifas, resumen), vaciar la cola al intervenir, catálogo de chats y <code>message_appended</code>.</td><td>Desde curl, cada acción llega al cliente y queda en el historial como humano.</td></tr><tr><td>F1 · Chat nativo con reglas</td><td>Intervenir, composer y burbujas que salen de lo que falta en el borrador del bot, «+ Más», editar y deshacer. Ficha de la orden y avance de etapa.</td><td>El operador cierra ventas desde la app nativa.</td></tr><tr><td>F2 · Radar, Incendios y widget (pantallas)</td><td>Las pantallas completas: radar, Incendios (chats y órdenes), ficha, botón «Pedido» en el chat, vista en vivo con Intervenir, píldora para volver y widget con FCM. Mientras Jev está en sombra, clasifica el adaptador de reglas (respaldo: ruta humano con espera, motivos de escalamiento, atraso) y el widget usa solo la etapa.</td><td>Ningún chat escalado queda sin respuesta, ninguna orden atrasada pasa desapercibida, y las ventas en etapa de cierre se ven sin abrir la app.</td></tr><tr><td>F3 · Jev como clasificador principal</td><td>Un request por mensaje: burbujas y datos cerrados con el humano en control; termómetro, riesgo y «vale la pena» con el bot en control. En chats y órdenes, Jev decide si vale la pena, la gravedad, el tipo y si empeora. Primero en sombra, comparando con lo que hace el operador; luego en vivo.</td><td>La primera burbuja acierta la mayoría de las veces, y el widget muestra riesgos que la etapa sola no veía.</td></tr><tr><td>F4 · Afinado con ventas reales</td><td>Umbrales por burbuja y del termómetro calibrados con el resultado: ¿terminó en pedido en 24 h?</td><td>Las métricas de abajo se estabilizan.</td></tr></tbody></table></div>
+  <h3>Cómo sabemos que funciona</h3><div class="prose"><ul>
+    <li><strong>Tiempo hasta la primera respuesta</strong> después de tomar la conversación.</li>
+    <li><strong>% de mensajes del operador enviados con burbujas</strong>, frente a los escritos a mano.</li>
+    <li><strong>Acierto de la primera burbuja</strong>: cuántas veces se toca la primera, y cuántas alguna de las cuatro.</li>
+    <li><strong>Uso de «+ Más» y ediciones</strong>: cada vez que se usan es una sugerencia que falló.</li>
+    <li><strong>Ventas cerradas por intervención</strong> y tiempo hasta cerrar.</li>
+    <li><strong>Tiempo hasta atender un incendio</strong> (un chat escalado, una queja), y en el radar cuántos se tocan frente a cuántos se ocultan.</li>
+    <li><strong>Incendios que Jev no vio</strong>: chats o reclamos que el operador atendió por su cuenta sin que aparecieran en el feed.</li>
+    <li><strong>Precisión del widget</strong>: de las conversaciones que marcó «a punto», cuántas terminan en pedido en 24 h.</li>
+    <li><strong>Rescates</strong>: de las que llegaron con «riesgo», cuántas intervino el operador y cuántas de esas se vendieron.</li>
+</ul></div>
+  <h3>Riesgos</h3><div class="table-wrap"><table><thead><tr><th>Riesgo</th><th>Cómo se cubre</th></tr></thead><tbody><tr><td>Enviar algo por error</td><td>5 s para deshacer, más idempotencia con <code>client_action_id</code>.</td></tr><tr><td>Que salgan envíos viejos del bot después de intervenir</td><td>Vaciar la cola al intervenir y enviar solo la acción tocada.</td></tr><tr><td>Guardas del LLM que bloquean al humano</td><td>Modo operador explícito, siempre registrado en el historial.</td></tr><tr><td>Ventana de 24 h cerrada</td><td>Las burbujas interactivas se ocultan y solo queda «Reactivar» con una plantilla.</td></tr><tr><td>Un radar molesto o confuso</td><td>Solo lo grave, sin robar el foco del teclado ni tapar el composer, sin sonido mientras escribes y sin responder al toque en el primer medio segundo. Las felicitaciones nunca interrumpen, no pasa de 3/4 de pantalla, y se mide tocar frente a ocultar.</td></tr><tr><td>Acceso a Jev o su rendimiento en español</td><td>F0 a F2 no dependen de Jev: las burbujas, el radar y el widget arrancan con reglas y la etapa del bot. Si Jev no alcanza en español, el plan B es un LLM barato detrás del mismo puerto.</td></tr><tr><td>Jev subestima algo grave</td><td>Nada se pierde: todo sigue en el chat o en la ficha de la orden. Si Jev duda, va al feed. En la sombra se compara con lo que el operador sí atendió, y el umbral de «grave» se calibra con eso.</td></tr><tr><td>Si todo es incendio, nada lo es</td><td>El radar solo muestra lo grave, las felicitaciones nunca interrumpen, y se mide cuánto se oculta sin atender para subir el umbral.</td></tr><tr><td>El cliente escribe «¡urgente!» para que lo atiendan</td><td>Lo peor que puede pasar es una tarjeta en el feed. Los hechos (espera, ruta, motivo) los pone el código, y el texto del cliente va en un campo aparte, citado.</td></tr><tr><td>Un widget ruidoso</td><td>Máximo 3, sonido solo con riesgo, no insistir salvo que suba de nivel, y salida automática.</td></tr><tr><td>Privacidad en la pantalla de inicio</td><td>Sin mensajes por defecto y sin nombres en la pantalla bloqueada.</td></tr></tbody></table></div>
+  <p class="note">Esta visión se apoya en la arquitectura del documento
+  <code>docs/mobile-native/arquitectura-sdui-genui.html</code> (contrato SDUI, UI Composer, Jev detrás de
+  <code>DecisionPort</code>).</p>
+</section>
+<div class="footer"><span>AgencyHubara · App Operador · Chat y órdenes</span><span>Propuesta · 29 sep 2026</span></div>
+
+</div>
+</body>
+</html>

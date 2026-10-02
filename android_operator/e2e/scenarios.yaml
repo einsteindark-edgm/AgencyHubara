@@ -1,0 +1,482 @@
+# Escenarios E2E de la App Operador (emulador + backend de prueba). Son la BASE de la QA de la app:
+# la compuerta de merge (.github/workflows/qa-emulador.yml) corre todos los que tienen `script`.
+#
+# Datos del backend de prueba (sandbox/seed.py): la bandeja muestra los chats por número.
+#   000000000101 Laura    bot atiende, pregunta por aromas (burbuja «Enviar aromas»)
+#   000000000102 Sofía    pidió un humano hace 12 min (incendio GRAVE)
+#   000000000103 Camilo   venta caliente en cierre (widget)
+#   000000000104 Andrés   pedido #41 atrasado 4 días (incendio GRAVE, botón «Pedido #41»)
+#   000000000105 Valentina ventana de 24 h cerrada (solo plantillas)
+#   000000000106 Daniela  comprobante de pago por verificar (incendio HOY)
+# Órdenes: #40 Juan (en camino), #41 Andrés (preparando), #42 Daniela (borrador).
+# Pantallas del servidor (pestaña «Más»): android_operator/screens/; las de prueba de S18 en e2e/screens/.
+#
+# Cada escenario:
+#   setup   deja la app en el punto de partida (lo comparten los dos conductores).
+#   script  los pasos por adb del conductor `script` (determinista, sin LLM): la compuerta de merge.
+#   goal    el objetivo en español para el conductor `artemis` (explora; se corre a mano).
+#   checks  los hechos que deciden si pasa, iguales para los dos conductores.
+# Un texto con «=» adelante se busca exacto ("=Enviar" no confunde con «Enviar aromas»).
+
+common:
+  # Arranque limpio. Al abrir, la app muestra 4 s los graves que ya ardían: se espera a que se plieguen
+  # al chip para que no tapen la primera fila de la bandeja.
+  fresh: &fresh
+    [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"}]
+  laura_tomada: &laura_tomada
+    [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+     {tap: "000000000101"}, {tap: "Tomar la conversación"}, {expect: "Tú atiendes"}]
+
+scenarios:
+  - id: S01_bandeja_radar
+    title: Bandeja y radar de incendios
+    resumen: "Al abrir, la bandeja carga, el chip marca 2 incendios graves y la lista del radar se despliega y se cierra."
+    setup: *fresh
+    script:
+      - {tap: "incendios graves"}
+      - {expect_all: ["Sofía pide un humano", "va retrasado", "=Cerrar"]}
+      - {shot: radar-desplegado}
+      - {wait: 0.6}
+      - {tap: "=Cerrar"}
+      - {expect_gone: "=Cerrar"}
+    goal: |
+      Estás probando la app «Operador», que usa un equipo de ventas por WhatsApp. En la pantalla
+      «Chats» las conversaciones aparecen por número (por ejemplo 000000000101).
+      1. Cuenta cuántas conversaciones hay en la lista.
+      2. Arriba a la derecha hay un chip con un triángulo de alerta y un número: anota el número y tócalo.
+      3. Debe desplegarse una lista de tarjetas de incendios. Anota el texto de cada tarjeta y
+         estima qué fracción de la pantalla ocupa la lista.
+      4. Cierra la lista con el botón «Cerrar» (o como indique la pantalla) y confirma que se cerró.
+      Reporta los cuatro puntos. No toques ninguna tarjeta.
+    checks:
+      - screen_has: "Chats"
+      - screen_has: "2 incendios graves"
+      - screen_lacks: "Ocultar"
+
+  - id: S01b_no_leidos
+    title: No leídos, como WhatsApp (#384)
+    resumen: "Un cliente escribe: su chat marca 1 sin leer, «No leídos» lo deja solo y al abrirlo el contador desaparece."
+    # Primera carga = todo visto; luego Laura escribe y su chat marca 1 hasta que el operador lo abre.
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+            {inject: 'reply wa_000000000101 "Me confirmas el precio del duo porfa"'}]
+    script:
+      - {expect: "1 mensaje sin leer"}
+      - {tap: "No leídos"}
+      - {expect_gone: "000000000102"}
+      - {assert: {screen_has: "000000000101"}}
+      - {tap: "000000000101"}
+      - {expect: "Me confirmas el precio del duo porfa"}
+      - {wait: 2}
+      - back
+      - {expect_gone: "sin leer"}
+    goal: |
+      En la bandeja «Chats»:
+      1. Di qué conversaciones muestran un contador de mensajes sin leer (un número en un círculo a la
+         derecha de la fila) y cuánto marca cada uno.
+      2. Toca el filtro «No leídos» y di qué conversaciones quedan en la lista.
+      3. Abre la conversación 000000000101, espera unos 2 segundos y vuelve atrás con el botón Atrás del teléfono.
+      4. Di si el contador de 000000000101 desapareció.
+      Reporta los cuatro puntos.
+    checks:
+      - screen_lacks: "sin leer"
+
+  - id: S02_tomar_y_enviar_aromas
+    title: Tomar la conversación y enviar la burbuja «Enviar aromas»
+    resumen: "El operador toma el chat de Laura y manda los aromas con una burbuja; el backend registra el envío y la burbuja ya no se ofrece."
+    setup: *fresh
+    script:
+      - {tap: "000000000101"}
+      - {tap: "Tomar la conversación"}
+      - {expect: "Tú atiendes"}
+      - {tap: "=Enviar aromas"}
+      - {expect: "Enviando «Enviar aromas»"}
+      - {shot: deshacer}
+      - {expect_gone: {text: "Enviando", timeout: 30}}
+    goal: |
+      En la pantalla «Chats» abre la conversación 000000000101 (la clienta preguntó por los aromas).
+      1. Confirma que el chat indica que el bot atiende y que hay un botón «Tomar la conversación». Tócalo.
+      2. Confirma que ahora indica «Tú atiendes» y que aparecen burbujas de sugerencia. Anota sus textos.
+      3. Toca UNA vez la burbuja «Enviar aromas». Debe aparecer una barra que dice «Enviando «Enviar aromas»»
+         con un botón «Deshacer» que cuenta hacia atrás. NO toques «Deshacer».
+      4. Espera unos 8 segundos y confirma que la barra desapareció y que en el chat aparece un mensaje
+         enviado con la lista de aromas.
+      Reporta lo que viste en cada paso.
+    checks:
+      - sent_contains: ['"to": "000000000101"', "aromas"]
+      - screen_has: "Tú atiendes"
+      # La última jugada vuelve al tablero: lo que el operador ya mandó no se le vuelve a ofrecer
+      # hasta que la clienta escriba de nuevo.
+      - screen_lacks: "Enviar aromas"
+
+  - id: S03_deshacer
+    title: Deshacer una burbuja antes de que salga
+    resumen: "Tocar una burbuja y «Deshacer» enseguida: no sale nada por WhatsApp."
+    # El deshacer dura 5 s y Artemis tarda 4-5 s por paso en esta Mac: el toque lo da adb
+    # (a 1,5 s, como un humano) y Artemis verifica lo que quedó en pantalla.
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+            {tap: "000000000101"}, {tap: "Tomar la conversación"}, {expect: "Tú atiendes"},
+            {tap: "=Más fotos"}, {tap: "=Deshacer"}, {wait: 7}]
+    script: []
+    goal: |
+      Estás en el chat 000000000101 y atiendes tú. Hace unos segundos alguien tocó la burbuja «Más fotos»
+      y enseguida «Deshacer».
+      1. Confirma que no hay ninguna barra «Enviando…» visible.
+      2. Confirma que el último mensaje del chat NO es un envío de fotos del operador.
+      3. Si ves un aviso como «Ya se estaba enviando: no se pudo deshacer», dilo.
+      Reporta los tres puntos.
+    checks:
+      - sent_nothing_matching: ['"to": "000000000101"']
+      - screen_lacks: "Enviando"
+
+  - id: S04_escribir_y_enviar
+    title: Escribir y enviar un mensaje de texto
+    resumen: "El operador escribe un mensaje y lo envía: llega completo al backend y el campo queda vacío."
+    setup: *laura_tomada
+    script:
+      - {tap: "Escribe un mensaje…"}
+      - {type: "Hola Laura, ya te comparto los aromas disponibles"}
+      - {expect: "Hola Laura, ya te comparto los aromas disponibles"}
+      - {tap: "=Enviar"}
+      - {expect: "Escribe un mensaje…"}
+    goal: |
+      Estás en el chat 000000000101 y ya atiendes tú.
+      1. Toca el campo «Escribe un mensaje…» y escribe exactamente: Hola Laura, ya te comparto los aromas disponibles
+      2. Toca el botón para enviar.
+      3. Confirma que el mensaje aparece en el chat como enviado por ti y que el campo de texto quedó vacío.
+      Reporta el resultado.
+    checks:
+      - sent_contains: ['"to": "000000000101"', "Hola Laura, ya te comparto los aromas disponibles"]
+
+  - id: S05_radar_a_otro_chat_y_volver
+    title: Del chat a un incendio en vivo y de vuelta
+    resumen: "Desde el chat de Laura, el radar lleva al de Sofía (pide un humano) y «Volver con…» regresa a Laura."
+    setup: *laura_tomada
+    script:
+      - {tap: "incendios graves"}
+      - {expect: "Sofía pide un humano"}
+      - {wait: 0.8}
+      - {tap: "Sofía pide un humano"}
+      - {expect: "000000000102"}
+      - {tap: "Volver con"}
+      - {expect: "000000000101"}
+      - {expect_gone: "000000000102"}
+    goal: |
+      Estás en el chat 000000000101 y ya atiendes tú.
+      1. Arriba a la derecha hay un chip con un triángulo de alerta y un número. Tócalo.
+      2. En la lista que se despliega, toca la tarjeta «Sofía pide un humano».
+      3. Confirma que se abrió otro chat (el de 000000000102) y anota lo que dice el encabezado.
+      4. Busca un botón que diga «Volver con …» y tócalo.
+      5. Confirma que regresaste al chat 000000000101.
+      Reporta cada paso.
+    checks:
+      - screen_has: "000000000101"
+
+  - id: S06_pestana_incendios
+    title: Pestaña Incendios, orden y destino de una orden
+    resumen: "La pestaña Incendios pone los graves antes que los de hoy, y el incendio del pedido #41 abre su ficha."
+    setup: *fresh
+    script:
+      - {tap: "=Incendios"}
+      - {expect_all: {texts: ["Sofía pide un humano", "Verificar el pago de Daniela"], in_order: true}}
+      - {tap: "va retrasado"}
+      - {expect: "Pedido #41"}
+    goal: |
+      Toca la pestaña «Incendios» de la barra inferior.
+      1. Anota los incendios en el orden en que aparecen, con su etiqueta de gravedad (GRAVE, HOY, ESPERA).
+      2. Confirma si los GRAVE aparecen antes que los HOY.
+      3. Toca el incendio del pedido #41 de Andrés y anota qué se abrió (debería ser la ficha del pedido #41).
+      Reporta los tres puntos.
+    checks:
+      - screen_has: "Pedido #41"
+
+  - id: S07_orden_ficha_y_avance
+    title: Ficha de orden y avance de etapa
+    resumen: "En Órdenes, el #41 pide la foto antes de marcarse listo y el #40 se marca entregado; el backend lo confirma."
+    setup: *fresh
+    script:
+      - {tap: "=Órdenes"}
+      - {tap: "Andrés Prueba"}
+      - {expect: "Pedido #41"}
+      - {expect: "hace falta la foto"}
+      - back
+      - {expect_gone: "hace falta la foto"}
+      - {tap: "Juan Prueba"}
+      - {expect: "Pedido #40"}
+      - {tap: "Marcar entregado"}
+      - {expect_gone: "Marcar entregado"}
+    goal: |
+      Toca la pestaña «Órdenes» de la barra inferior.
+      1. Abre el pedido #41. Anota: qué compró, la dirección y el barrio, el estado del pago, el total y la etapa actual.
+         Toca el botón para avanzar a la siguiente etapa y anota qué pasa (si pide una foto, repórtalo; no inventes datos).
+         Cierra la ficha.
+      2. Abre el pedido #40. Anota la etapa actual y toca el botón para avanzar a la siguiente etapa
+         (debería ser «Marcar entregado»). Confirma la etapa nueva.
+      Reporta todo lo anotado.
+    checks:
+      - api_equals: {path: "/api/orders/orders/order_01SBXJUAN00000000000000040", key: "summary.status", equals: "delivered"}
+      - api_equals: {path: "/api/orders/orders/order_01SBXANDRES000000000000041", key: "summary.status", equals: "preparing"}
+
+  - id: S07b_ficha_abre_completa
+    title: La ficha de la orden abre completa, con la acción a la vista
+    resumen: "La ficha de un pedido abre completa, con «Marcar entregado» a la vista y el número sin «##»."
+    # Rojo en la corrida 1: la hoja abría a media altura y Artemis tuvo que arrastrarla para
+    # encontrar «Marcar entregado». Los toques los da adb; el chequeo es inmediato, sin deslizar.
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+            {tap: "=Órdenes"}, {tap: "Juan Prueba"}, {expect: "Pedido #40"}, {wait: 1}]
+    script: []
+    goal: |
+      Hay una ficha de pedido abierta. Sin tocar ni deslizar nada, describe lo que ves: el número de pedido
+      tal como aparece escrito, el cliente, la etapa y el botón de acción principal.
+    checks:
+      - screen_has: "Marcar entregado"
+      - screen_has: "Pedido #40"
+      - screen_lacks: "##"
+
+  - id: S08_pedido_desde_el_chat
+    title: Botón «Pedido #41» en el chat
+    resumen: "El botón «Pedido #41» del chat abre la ficha encima del chat y Atrás vuelve al chat."
+    setup: *fresh
+    script:
+      - {tap: "000000000104"}
+      - {tap: "Pedido #41"}
+      - {expect: "Dúo Zodiacal"}
+      - {expect: "DIRECCIÓN"}
+      - back
+      - {expect_gone: "DIRECCIÓN"}
+      - {expect: "000000000104"}
+    goal: |
+      En «Chats» abre la conversación 000000000104.
+      1. En el encabezado debe haber un botón «Pedido #41». Tócalo.
+      2. Confirma que se abre la ficha del pedido por encima del chat, con productos y dirección.
+      3. Ciérrala con el botón Atrás del teléfono y confirma que vuelves al chat 000000000104.
+      Reporta cada paso.
+    checks:
+      - screen_has: "000000000104"
+
+  - id: S09_ventana_cerrada_plantilla
+    title: Ventana de 24 h cerrada y reactivación con plantilla
+    resumen: "Con la ventana de 24 h cerrada, el operador reactiva la conversación con la plantilla recomendada y el backend la envía."
+    setup: *fresh
+    script:
+      - {tap: "000000000105"}
+      - {tap: "Reactivar con plantilla"}
+      - {expect: "Reactivar la conversación"}
+      - {tap: "recomendada"}
+      # La recomendada pide el tema: sin llenarlo, «Enviar plantilla» sigue apagado.
+      - {tap: "Mensaje del operador sobre el tema pendiente"}
+      - {type: "tu pedido de velas"}
+      - {tap: "=Enviar plantilla"}
+      - {expect_gone: "=Enviar plantilla"}
+    goal: |
+      En «Chats» abre la conversación 000000000105.
+      1. Confirma que no se puede escribir texto libre y que aparece un botón «Reactivar con plantilla». Tócalo.
+      2. Elige la primera plantilla de la lista, lee la vista previa y toca «Enviar plantilla».
+      3. Anota qué plantilla enviaste y qué muestra el chat después.
+      Reporta los tres puntos.
+    checks:
+      - sent_contains: ['"to": "000000000105"', '"type": "template"', "tu pedido de velas"]
+
+  - id: S10_devolver_al_bot
+    title: Devolver la conversación al bot
+    resumen: "«Devolver al bot» devuelve la conversación: la app y el backend dejan de marcarla como humana."
+    setup: *laura_tomada
+    script:
+      - {tap: "Más opciones"}
+      - {tap: "Devolver al bot"}
+      - {expect: "Tomar la conversación"}
+    goal: |
+      Estás en el chat 000000000101 y ya atiendes tú.
+      1. Abre el menú «Más opciones» (tres puntos arriba a la derecha) y elige «Devolver al bot».
+      2. Confirma que el chat vuelve a indicar que el bot atiende y que aparece otra vez «Tomar la conversación».
+      Reporta el resultado.
+    checks:
+      - screen_has: "Tomar la conversación"
+      - api_not_equals: {path: "/api/dashboard/sessions/wa_000000000101", key: "active_agent_route", equals: "humano"}
+
+  - id: S11_enlace_a_incendio
+    title: Enlace profundo a un incendio en vivo
+    resumen: "Un enlace a un incendio en vivo abre el chat de Sofía y Atrás lleva a la lista de Incendios."
+    setup: [reset, clear_app, launch, {wait: 5}, {link: "hubara://live/wa_000000000102"}, {wait: 3}]
+    script:
+      - {expect: "000000000102"}
+      - {expect: "incendios graves"}
+      - {wait: 1}
+      - {expect_gone: "· GRAVE"}
+      - back
+      - {expect_all: ["Sofía pide un humano", "=Incendios"]}
+    goal: |
+      La app acaba de abrir un enlace a un incendio.
+      1. Confirma qué chat se ve (debería ser 000000000102) y qué pestaña de la barra inferior está seleccionada.
+      2. Toca el botón Atrás del teléfono una vez y anota a qué pantalla llegaste.
+      Reporta los dos puntos.
+    checks:
+      - screen_has: "Verificar el pago de Daniela"
+      - screen_lacks: "000000000102"
+
+  - id: S12_notificacion_incendio
+    title: Notificación de incendio grave con la app cerrada
+    resumen: "Con la app cerrada, un incendio grave llega como notificación y tocarla abre el chat de Mateo."
+    # El vigía (WorkManager periódico) no se deja adelantar con `cmd jobscheduler run -f`; sí corre
+    # apenas arranca el proceso. Se despierta la app EN SEGUNDO PLANO (como tras reiniciar el teléfono)
+    # con un broadcast explícito a E2eWakeReceiver, que solo existe en el build debug (el receptor del widget no
+    # está exportado y APPWIDGET_UPDATE es protegido). El incendio de Mateo ya está en el backend.
+    setup: [reset, clear_app, {inject: fire}, home, {wait: 1},
+            {adb: "am broadcast -n com.hubara.operator/com.hubara.operator.E2eWakeReceiver -a com.hubara.operator.E2E_WAKE"},
+            {wait: 10}]
+    locked_app: false
+    script:
+      - notifications
+      - {expect: "Mateo pide un humano"}
+      - {tap: "Mateo pide un humano"}
+      - {expect: "000000000107"}
+    goal: |
+      Estás en la pantalla de inicio de Android.
+      1. Abre la cortina de notificaciones (desliza desde arriba).
+      2. Busca una notificación de la app «Operador» sobre un incendio grave y anota su texto.
+      3. Tócala y confirma qué se abre en la app (debería ser el chat de Mateo, 000000000107).
+      Reporta los tres puntos. Si no hay notificación, dilo.
+    checks:
+      - screen_has: "000000000107"
+
+  - id: S13_widget_ventas_calientes
+    title: Widget de ventas calientes en la pantalla de inicio
+    resumen: "El widget de ventas calientes muestra una venta y tocarla abre su chat."
+    profile: pro
+    timeout_s: 1500
+    setup: [reset, clear_app, launch, {wait: 10}, home, {wait: 2}]
+    locked_app: false
+    goal: |
+      Estás en la pantalla de inicio de Android (launcher de Pixel).
+      1. Agrega el widget «Ventas calientes» de la app «Operador»: mantén presionado un espacio vacío del
+         fondo, toca «Widgets», busca «Operador» y arrastra el widget «Ventas calientes» a la pantalla de inicio.
+      2. Confirma que el widget muestra al menos una venta (por ejemplo de Camilo o el producto «Plegaria de Luz»).
+      3. Toca esa venta dentro del widget y confirma que se abre la app en un chat.
+      Reporta cada paso con lo que viste.
+    checks:
+      - screen_has: "000000000103"
+
+  - id: S14_varios_incendios_mientras_escribes
+    title: Llegan tres incendios graves mientras el operador escribe
+    resumen: "Llegan tres incendios graves mientras el operador escribe: se ven juntos, el más nuevo arriba, sin tapar el campo, y el texto sigue entero."
+    # Rojo en el emulador (09-30): cada tarjeta nueva reemplazaba a la anterior y la de Mateo se veía 2 s.
+    # Ahora se apilan (la más nueva arriba, máx. 3 + «Ver N más»), nunca bajan del composer y se pliegan
+    # juntas al chip 4 s después de la última. El teclado no se cierra y lo escrito sigue en el mismo campo.
+    # Solo guion: todo pasa en menos de 4 s y Artemis tarda 4-5 s por paso.
+    setup: *laura_tomada
+    script:
+      - {tap: "Escribe un mensaje…"}
+      - {type: "Hola Laura"}
+      - {inject: "fire --name 'Mateo Prueba' --session wa_000000000107 --waiting-min 11"}
+      - {wait: 1.5}
+      - {inject: "fire --name 'Lucía Prueba' --session wa_000000000108 --waiting-min 15"}
+      - {wait: 1.5}
+      - {inject: "fire --name 'Pedro Prueba' --session wa_000000000109 --waiting-min 13"}
+      - expect_all:
+          texts: ["Pedro pide un humano", "Lucía pide un humano", "Mateo pide un humano"]
+          in_order: true
+          above_focused: true
+      - {shot: tres-tarjetas}
+      - {assert: {ime_shown: true}}
+      - {type: " te cuento"}
+      - {expect: "5 incendios graves"}
+      - {expect_gone: {text: "pide un humano", timeout: 15}}
+    checks:
+      - ime_shown: true
+      - focused_contains: "Hola Laura te cuento"
+      - screen_has: "5 incendios graves"
+      - screen_lacks: "pide un humano"
+      - sent_nothing_matching: ['"to": "000000000101"']
+
+  - id: S15_configuracion_del_servidor
+    title: La app toma la dirección del backend de la configuración del servidor
+    resumen: "El APK no trae la dirección buena del backend: la baja de la configuración del servidor (en producción, del CloudFront del dashboard) y con ella llega a la bandeja."
+    # El APK de prueba trae http://10.0.2.2:9 de respaldo (no responde). Si la bandeja carga, la dirección salió del
+    # config.json del backend de prueba (/__sandbox/mobile/config.json). En producción: <cloudfront>/mobile/config.json,
+    # que publica frontend-deploy con el api_url de Terraform. Así una IP nueva no obliga a publicar otra versión.
+    setup: [reset, clear_app, launch]
+    script:
+      - {expect: "000000000101"}
+      - {expect: "incendios graves"}
+    goal: |
+      Abre la app y di si ves la bandeja «Chats» con conversaciones (por ejemplo la de Laura Prueba) o algún aviso de
+      que no hay conexión.
+    checks:
+      - screen_has: "000000000101"
+      - screen_lacks: "Sin conexión"
+
+  - id: S16_version_minima
+    title: El servidor pide actualizar una versión vieja de la app
+    resumen: "El servidor sube la versión mínima en su configuración: la app instalada no deja entrar y ofrece actualizarla en Google Play."
+    setup: [reset, {inject: "config --min-version 99"}, clear_app, launch]
+    script:
+      - {expect: "Hay una versión nueva"}
+      - {expect: "=Actualizar"}
+      - {shot: actualizar}
+    goal: |
+      Abre la app y di qué pantalla aparece y qué botón ofrece.
+    checks:
+      - screen_has: "Hay una versión nueva"
+      - screen_lacks: "000000000101"
+
+  - id: S17_pantallas_del_servidor
+    title: Pantallas que arma el servidor (pestaña «Más»)
+    resumen: "La pestaña «Más» y sus pantallas no están programadas en la app: son archivos del servidor (android_operator/screens). «Resumen de ventas» calcula sus cifras con los pedidos del backend, el filtro «7 días» los vuelve a pedir y tocar un pedido abre su ficha nativa."
+    setup: *fresh
+    script:
+      - {tap: "=Más"}
+      - {expect: "Resumen de ventas"}
+      - {tap: "Resumen de ventas"}
+      - {expect_all: ["=Vendido", "=Por cobrar", "=Atrasados", "#42 · Daniela Prueba"]}
+      - {tap: "=7 días"}
+      - {expect: "#40 · Juan Prueba"}
+      - {shot: resumen-de-ventas}
+      - {tap: "#40 · Juan Prueba"}
+      - {expect: "Pedido #40"}
+    goal: |
+      Abre la pestaña «Más» (abajo a la derecha) y entra a «Resumen de ventas». Anota las cuatro cifras que ves arriba
+      (Pedidos, Vendido, Por cobrar, Atrasados) y los pedidos de la lista. Toca el filtro «7 días» y di qué cambió.
+      Después toca el pedido de Juan y di qué se abrió.
+    checks:
+      - screen_has: "Pedido #40"
+
+  - id: S18_pantalla_nueva_desde_el_servidor
+    title: Una pantalla nueva y un componente cambiado, sin reinstalar la app
+    resumen: "El servidor cambia el archivo de «Más» (el texto del pie pasa a ser un aviso y aparece un renglón nuevo) y publica una pantalla que la app NO trae: la app los muestra sin reinstalarse; la pantalla nueva lee un endpoint que ya existía y abre el chat nativo."
+    # e2e/screens/mas.json y atencion.json hacen de lo que publicaría frontend-deploy. La app arranca con lo que trae el
+    # APK y, al abrir «Más», baja la versión del servidor: el cambio llega sin publicar otra versión.
+    setup: [reset, {inject: "screen mas.json --from ../screens/mas.json"}, {inject: "screen atencion.json --from ../screens/atencion.json"},
+            clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"}]
+    script:
+      - {tap: "=Más"}
+      - {expect: "Pantalla cambiada desde el servidor"}
+      - {tap: "Quién atiende cada chat"}
+      - {expect_all: ["=Con humano", "=Con el bot", "000000000101"]}
+      - {shot: pantalla-nueva}
+      - {tap: "000000000101"}
+      - {expect: "Tomar la conversación"}
+    goal: |
+      Abre la pestaña «Más». Di qué aviso aparece arriba y qué renglones hay. Entra a «Quién atiende cada chat», anota
+      las dos cifras y cuántos chats lista. Toca el chat 000000000101 y di qué pantalla se abrió.
+    checks:
+      - screen_has: "Tomar la conversación"
+
+  - id: S19_llamada_con_confirmacion
+    title: Una acción del servidor que llama al backend y no miente si falla
+    resumen: "En «Por cobrar», «Confirmar pago» pide confirmación antes de llamar al backend. El pedido #42 todavía es borrador: el backend se niega (200 con success:false) y la app muestra su motivo, en español y con tú, en vez de decir «Pago confirmado»."
+    setup: *fresh
+    script:
+      - {tap: "=Más"}
+      - {tap: "Por cobrar"}
+      - {expect: "#42 · Daniela Prueba"}
+      - {tap: "=Confirmar pago"}
+      - {expect: "¿Confirmar el pago del pedido #42?"}
+      - {shot: confirmacion}
+      - {tap: "=Sí, confirmar"}
+      - {expect: "todavía es un borrador"}
+    goal: |
+      Abre la pestaña «Más» y entra a «Por cobrar». Toca «Confirmar pago» en el pedido de Daniela, lee la pregunta y
+      acepta. Di qué mensaje aparece abajo y si el pedido sigue en la lista.
+    checks:
+      - screen_lacks: "Pago confirmado"
+      - screen_lacks: "Agendá"
+      - screen_has: "#42 · Daniela Prueba"

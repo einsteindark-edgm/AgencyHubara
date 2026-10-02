@@ -53,7 +53,7 @@ _VOSEO_DENYLIST = [
     "esperá", "mirá", "mandá", "llamá", "usá", "empezá", "cerrá", "informá",
     "avisá", "invitá", "continuá", "reasoná", "considerá", "tocá", "recordá",
     "aguantá", "volvé", "poné", "hacé", "andá", "contá", "dejá", "recortá",
-    "fijá", "tomá", "respondé", "contestá", "mencioná", "ofrecé",
+    "fijá", "tomá", "respondé", "contestá", "mencioná", "ofrecé", "agendá", "confirmá",
     # Imperativos con enclítico (voseo)
     "decime", "contame", "mirame", "mostrame", "avisame", "pedile", "mandale",
     "decile", "contale", "preguntale", "fijate", "acordate", "llevate",
@@ -155,3 +155,28 @@ def test_no_voseo_in_chats_agent_markdown_prompts() -> None:
         "Voseo rioplatense en un prompt del agente (REGLA #1 de IDENTITY.md — "
         "tuteo colombiano):\n  " + "\n  ".join(violations)
     )
+
+
+# Textos que el backend le muestra al OPERADOR (dashboard y app Android): títulos
+# de incendios, rechazos de las tools, errores de intervenir y mandar. La app los
+# pinta tal cual, así que el tuteo aplica igual que al cliente.
+_OPERATOR_FACING_FILES = [
+    _HUBARA_ROOT / "src" / "plugins" / "chats" / "api" / "mobile.py",
+    _HUBARA_ROOT / "src" / "plugins" / "chats" / "api" / "operator_tools.py",
+    _HUBARA_ROOT / "src" / "plugins" / "chats" / "api" / "handoff.py",
+    _HUBARA_ROOT / "src" / "plugins" / "chats" / "shared" / "mobile_rules.py",
+    # Los errores de los comandos de pedidos llegan tal cual a la App Operador (pantalla «Por cobrar», ficha del pedido)
+    # y al dashboard: la app mostró «Agendá la entrega… podés confirmar el pago» al confirmar un borrador (S19).
+    _HUBARA_ROOT / "src" / "platform" / "orders" / "medusa_order_command.py",
+]
+
+
+def test_no_voseo_in_operator_facing_api_strings() -> None:
+    violations: list[str] = []
+    for path in _OPERATOR_FACING_FILES:
+        assert path.is_file(), f"archivo listado no existe: {path}"
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for match in _PATTERN.finditer(line):
+                rel = path.relative_to(_HUBARA_ROOT)
+                violations.append(f"{rel}:{lineno}: voseo '{match.group(0)}' → {line.strip()[:100]}")
+    assert not violations, "Voseo en textos para el operador (usa tuteo):\n  " + "\n  ".join(violations)

@@ -660,9 +660,9 @@ class MedusaOrderCommand:
                 order_id=order_id,
                 current_stage=read_stage(current_data.get("metadata") or {}),
                 error_detail=(
-                    "invalid_state: el pedido aún es draft. Agendá la "
-                    "entrega primero (eso lo convierte en una Order real), "
-                    "y después podés confirmar el pago."
+                    "invalid_state: el pedido todavía es un borrador. Agenda la "
+                    "entrega primero (eso lo convierte en un pedido) y después "
+                    "confirma el pago."
                 ),
             )
 
@@ -926,8 +926,8 @@ class MedusaOrderCommand:
                 order_id=order_id,
                 current_stage=stage,
                 error_detail=(
-                    "invalid_state: el pedido aún es draft; no tiene pago "
-                    "registrado que reversar."
+                    "invalid_state: el pedido todavía es un borrador; no tiene "
+                    "pago registrado que reversar."
                 ),
             )
 

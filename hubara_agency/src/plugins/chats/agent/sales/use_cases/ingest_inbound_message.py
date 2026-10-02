@@ -243,6 +243,13 @@ class IngestInboundMessage:
         except Exception:  # noqa: BLE001 — best-effort
             metadata = {}
 
+        # --- 1b. Nombre de perfil de WhatsApp (`contacts[].profile.name`) ---
+        # La bandeja de la app y los incendios muestran quién escribe, no solo
+        # el número. Va por `update()` (lock + lectura fresca) y entra también
+        # a la copia local: las escrituras de más abajo la reescriben entera.
+        if parsed.profile_name:
+            metadata = self._remember_profile_name(session_id, metadata, parsed.profile_name)
+
         # HU web-cart: token `ref:cart_<id>` del texto prellenado que genera
         # la página web. Detección 100% determinista (regex) — jamás del LLM.
         cart_ref = detect_cart_ref(parsed.text)
@@ -1491,6 +1498,24 @@ class IngestInboundMessage:
             label="analytics.record",
             session_id=None,
         )
+
+    def _remember_profile_name(self, session_id: str, metadata: dict[str, Any], name: str) -> dict[str, Any]:
+        """Guarda `profile.name` si cambió; devuelve el metadata a seguir usando. Best-effort: un fallo
+        acá nunca tumba el ingest del mensaje."""
+
+        def _mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            profile = fresh.get("profile") if isinstance(fresh.get("profile"), dict) else {}
+            if profile.get("name") == name:
+                return None
+            fresh["profile"] = {**profile, "name": name}
+            return fresh
+
+        try:
+            updated = self._metadata_store.update(session_id, _mutator)
+        except Exception:  # noqa: BLE001 — best-effort
+            logger.info("profile_name_write_failed_ignored", session=session_id)
+            return metadata
+        return updated if updated is not None else metadata
 
     def _safe_write_metadata(self, session_id: str, data: dict[str, Any]) -> None:
         try:

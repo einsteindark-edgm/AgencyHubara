@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Android 13+: se pide en contexto, con el flujo de tres estados (skill android-permissions-security). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+</manifest>

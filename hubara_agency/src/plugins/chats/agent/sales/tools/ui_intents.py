@@ -36,8 +36,12 @@ Cada tool devuelve un envelope JSON con:
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import json
 import time
+import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -97,8 +101,27 @@ def _image_for_design(product, design: str) -> tuple[str | None, str | None]:
     return (None, None)
 
 
-def _append_intent(session_key: str, intent: dict[str, Any]) -> None:
-    """Persiste un UI intent en `metadata.json[pending_ui_intents]`.
+#: Ids que encolan las tools dentro de `collect_enqueued_intent_ids()`. Es por tarea: lo que encola un turno
+#: del bot en otra tarea o en otro proceso (el worker de Ventas) nunca aparece aquí.
+_enqueued_ids: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar("ui_intents_enqueued", default=None)
+
+
+@contextlib.contextmanager
+def collect_enqueued_intent_ids() -> Iterator[list[str]]:
+    """Junta los ids de los intents que encolan las tools corridas dentro del bloque, y solo esos.
+
+    Lo usa la app del operador para mandar y firmar como humano SOLO lo que produjo su toque. Comparar la
+    cola antes y después no sirve: un turno del bot en otro proceso puede encolar en medio."""
+    ids: list[str] = []
+    token = _enqueued_ids.set(ids)
+    try:
+        yield ids
+    finally:
+        _enqueued_ids.reset(token)
+
+
+def _append_intent(session_key: str, intent: dict[str, Any]) -> str:
+    """Persiste un UI intent en `metadata.json[pending_ui_intents]` y devuelve su id.
 
     El workflow lo consume después de cada iteración LLM y dispara la
     activity correspondiente (ver `workflow_helpers.flush_pending_ui_intents`,
@@ -110,16 +133,28 @@ def _append_intent(session_key: str, intent: dict[str, Any]) -> None:
       * payload: serializable JSON con los args del send_*
       * queued_at_ms
       * analytics: metadata para emitir wa_outbound event tras send_*
+
+    Read-modify-write bajo el lock del store (`update()`), como el ingest del
+    webhook y el flush: leer y reescribir el archivo entero sin lock pisaba lo
+    que otro proceso guardaba en el medio (un mensaje del cliente, otro intent).
     """
-    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
-    data = store.read(session_key)
-    intents = list(data.get("pending_ui_intents") or [])
-    intents.append({
+    entry = {
+        # El id permite flushear SOLO lo que encoló una acción (la app del
+        # operador), sin arrastrar otros intents de la cola.
+        "id": intent.get("id") or f"ui_{uuid.uuid4().hex}",
         **intent,
         "queued_at_ms": int(time.time() * 1000),
-    })
-    data["pending_ui_intents"] = intents
-    store.write(session_key, data)
+    }
+
+    def _enqueue(data: dict[str, Any]) -> dict[str, Any]:
+        data["pending_ui_intents"] = [*(data.get("pending_ui_intents") or []), entry]
+        return data
+
+    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_key, _enqueue)
+    sink = _enqueued_ids.get()
+    if sink is not None:
+        sink.append(entry["id"])
+    return entry["id"]
 
 
 def _meta_retailer_id(product) -> str:

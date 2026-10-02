@@ -1,0 +1,4 @@
+<resources>
+    <!-- Igual a DarkScheme.surface (core/designsystem/Color.kt). -->
+    <color name="operator_surface">#121317</color>
+</resources>
