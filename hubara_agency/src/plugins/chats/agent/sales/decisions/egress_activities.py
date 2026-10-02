@@ -21,6 +21,7 @@ from temporalio import activity
 from src.plugins.chats.agent.sales.decisions import egress
 from src.plugins.chats.agent.sales.decisions.bots import DEFAULT_PROFILE, bot_for_session
 from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
+from src.plugins.chats.agent.sales.decisions.decision_log import SessionDecisionLog
 from src.plugins.chats.agent.sales.decisions.contracts import EgressInput, EgressOutput
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
 from src.plugins.chats.agent.sales.decisions.guards import session_redact_terms
@@ -53,6 +54,8 @@ async def decide_egress_activity(inp: EgressInput) -> EgressOutput:
             # teléfono del borrador) antes de que el texto salga hacia Jev.
             redact=session_redact_terms(inp.session_id, vault) if asks_jev else (),
             metrics=DecisionMetrics(vault) if asks_jev else None,
+            # Calidad LLM las muestra en su turno (2026-10-02).
+            decisions=SessionDecisionLog(vault) if asks_jev else None,
         )
     except Exception as exc:  # noqa: BLE001 — fail-open: decide la regla de hoy
         logger.warning("decisions.egress_unexpected", error=repr(exc)[:200])

@@ -435,29 +435,6 @@ def run_conversations(run: str) -> dict[str, Any]:
     return {"conversations": rows}
 
 
-def _episode_window(episodes: list[dict[str, Any]], episode_id: str) -> tuple[int, int | None] | None:
-    ordered = sorted((e for e in episodes if isinstance(e, dict)), key=lambda e: e.get("started_at_ms") or 0)
-    for i, ep in enumerate(ordered):
-        if ep.get("episode_id") == episode_id:
-            start = int(ep.get("started_at_ms") or 0) - 5_000
-            nxt = ordered[i + 1].get("started_at_ms") if i + 1 < len(ordered) else None
-            return start, int(nxt) if isinstance(nxt, (int, float)) else None
-    return None
-
-
-def _event_ms(event: dict[str, Any]) -> int | None:
-    value = event.get("timestamp")
-    if not isinstance(value, str):
-        return None
-    try:
-        dt = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return int(dt.timestamp() * 1000)
-
-
 @router.get("/lab/runs/{run}/conversations/{sid}")
 def run_thread(run: str, sid: str, episode: str | None = Query(None, max_length=20)) -> dict[str, Any]:
     thread = _json_key(_store(), f"runs/{_run_id(run)}/threads/{_sid(sid)}.json", missing="Conversación sin hilo en esta corrida.")
@@ -465,16 +442,13 @@ def run_thread(run: str, sid: str, episode: str | None = Query(None, max_length=
         return thread
     if not _EPISODE_RE.match(episode):
         raise HTTPException(422, detail="Episodio inválido.")
-    window = _episode_window(thread.get("episodes") or [], episode)
-    if window is None:
+    # El mismo recorte que el hilo de producción de Calidad LLM.
+    from src.plugins.chats.agent.sales_eval.quality_view import episode_slice
+
+    sliced = episode_slice(thread, episode)
+    if sliced is None:
         raise HTTPException(404, detail="Episodio desconocido.")
-    start, end = window
-    messages = [
-        m for m in thread.get("messages") or []
-        if (ts := _event_ms(m)) is not None and ts >= start and (end is None or ts < end)
-    ]
-    turns = [t for t in thread.get("turns") or [] if t.get("episode_id") == episode]
-    return {**thread, "episode_id": episode, "messages": messages, "turns": turns}
+    return sliced
 
 
 @router.get("/lab/runs/{run}/conversations/{sid}/turns/trace")

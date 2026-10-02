@@ -608,3 +608,17 @@ async def test_the_preamble_of_an_admin_turn_never_goes_to_jev(_no_real_oracle) 
     out = await _egress_with("jev", _inp(sanitize_llm_text(UNKNOWN_PREAMBLE).text, raw_text=UNKNOWN_PREAMBLE, admin_turn=True))
 
     assert _no_real_oracle["fake"].calls == [] and out.text == ""
+
+
+async def test_the_egress_decisions_stay_with_their_conversation(_no_real_oracle, tmp_path: Path) -> None:
+    """Calidad LLM muestra en el turno lo que decidió la salida del bot nuevo
+    (2026-10-02): cada decisión de Jev queda en el registro de la conversación."""
+    from src.plugins.chats.agent.sales.decisions.decision_log import SessionDecisionLog, read_decisions
+
+    _no_real_oracle["fake"] = FakePerceptionAdapter({"egreso.destinatario": _choice("egreso.destinatario", "mensaje_al_cliente", 0.97)})
+    inp = _inp(COUPON_FALSE_POSITIVE)
+
+    await _egress_with("jev", inp, decisions=SessionDecisionLog(tmp_path))
+
+    rows = read_decisions(tmp_path, inp.session_id)
+    assert "destinatario" in {r["capability"] for r in rows} and {r["stage"] for r in rows} == {"turno"}

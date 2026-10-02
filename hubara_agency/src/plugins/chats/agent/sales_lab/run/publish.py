@@ -29,7 +29,6 @@ from src.plugins.chats.agent.sales_lab.run.arena import arena_metrics
 from src.sdk.labkit import LabStorePort
 
 CONTROL = "A0"
-_MESSAGE_FIELDS = ("role", "content", "timestamp", "sender", "kind", "component_kind", "wamid")
 _OUTPUT_FIELDS = ("sent_texts", "tools", "guards", "suppressed_reason", "llm_text", "discarded_narration")
 
 
@@ -54,10 +53,10 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _message(event: dict[str, Any]) -> dict[str, Any]:
-    msg = {k: event[k] for k in _MESSAGE_FIELDS if k in event}
-    if event.get("image_url"):
-        msg["has_image"] = True  # la foto vive en el media store de producción
-    return msg
+    # El mismo mensaje que muestra Calidad LLM del hilo de producción.
+    from src.plugins.chats.agent.sales_eval.quality_view import thread_message
+
+    return thread_message(event)
 
 
 def _control_cards(bench_dir: Path, wanted: set[tuple[str, str]]) -> list[dict[str, Any]]:

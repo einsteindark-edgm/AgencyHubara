@@ -376,6 +376,65 @@ def _state_before(prev_any: dict[str, Any] | None, prev_same: dict[str, Any] | N
     return {k: session.get(k) for k in _SESSION_STATE} | {k: episode.get(k) for k in _EPISODE_STATE}
 
 
+@dataclass(frozen=True)
+class TurnBurst:
+    """Un turno de la sesión con su ráfaga (ver «Reglas» arriba). Un turno del
+    sistema (ghosting, complemento) viene sin ráfaga: `indices` vacío."""
+
+    trace: dict[str, Any]
+    prev_any: dict[str, Any] | None
+    prev_same: dict[str, Any] | None
+    started: int
+    indices: tuple[int, ...]
+    dashboard_prefix: int
+    burst: list[dict[str, Any]]
+
+    @property
+    def is_case(self) -> bool:
+        return str(self.trace.get("trigger") or "customer") in _CASE_TRIGGERS
+
+
+def turn_bursts(events: list[dict[str, Any]], traces: list[dict[str, Any]], *, since_ms: int = 0) -> list[TurnBurst]:
+    """Cada turno desde `since_ms`, en orden, con los mensajes del cliente que
+    respondió. Lo usan el armado de casos y el hilo de producción de Calidad
+    LLM (el mismo hilo que muestra el laboratorio)."""
+    ordered = sorted(traces, key=lambda t: (_ms(t.get("turn_started_ms")) or 0, int(t.get("turn") or 0)))
+    previous: list[dict[str, Any]] = []
+    consumed: set[int] = set()
+    out: list[TurnBurst] = []
+    for trace in ordered:
+        prev_any = previous[-1] if previous else None
+        prev_same = next((t for t in reversed(previous) if t.get("episode_id") == trace.get("episode_id")), None)
+        previous.append(trace)
+        started = _ms(trace.get("turn_started_ms"))
+        if started is None or started < since_ms:
+            continue
+        if str(trace.get("trigger") or "customer") not in _CASE_TRIGGERS:
+            out.append(TurnBurst(trace, prev_any, prev_same, started, (), 0, []))
+            continue
+        inbound = trace.get("inbound")
+        v2 = isinstance(inbound, list) and bool(inbound)
+        # Hasta que el turno terminó (lo que absorbió); sin la marca, sin tope:
+        # el texto de la traza y los ya consumidos acotan igual.
+        until = _ms(trace.get("recorded_at_ms")) or _NO_LIMIT
+        indices = (_indices_by_wamid(events, consumed, inbound) if v2 else None) or _indices_by_text(
+            events, consumed, trace.get("inbound_text"), until
+        )
+        if indices:
+            dashboard_prefix = indices[0]
+        else:
+            indices, dashboard_prefix = _burst(events, started)
+            indices = [i for i in indices if i not in consumed]
+        consumed.update(indices)
+        burst = (
+            [_inbound_message(m, events) for m in inbound if isinstance(m, dict)]
+            if v2
+            else [_burst_message(events[i]) for i in indices]
+        )
+        out.append(TurnBurst(trace, prev_any, prev_same, started, tuple(indices), dashboard_prefix, burst))
+    return out
+
+
 def build_cases(bench_dir: Path, *, sales_workspace: str) -> CaseSet:
     manifest = json.loads((bench_dir / "manifest.json").read_text(encoding="utf-8"))
     since_ms = int(manifest.get("since_ms") or 0)
@@ -390,46 +449,17 @@ def build_cases(bench_dir: Path, *, sales_workspace: str) -> CaseSet:
             continue
         events = _jsonl(sdir / "sessions" / f"{sid}.jsonl")
         llm_lines = _jsonl(bench_dir / "agent_state" / sales_workspace / "sessions" / f"{sid}.jsonl")
-        traces = sorted(
-            _jsonl(sdir / "evals" / "turn_traces.jsonl"),
-            key=lambda t: (_ms(t.get("turn_started_ms")) or 0, int(t.get("turn") or 0)),
-        )
-        previous: list[dict[str, Any]] = []
-        consumed: set[int] = set()
-        for trace in traces:
-            prev_any = previous[-1] if previous else None
-            prev_same = next((t for t in reversed(previous) if t.get("episode_id") == trace.get("episode_id")), None)
-            previous.append(trace)
-            started = _ms(trace.get("turn_started_ms"))
-            if started is None or started < since_ms:
-                continue
+        traces = _jsonl(sdir / "evals" / "turn_traces.jsonl")
+        for tb in turn_bursts(events, traces, since_ms=since_ms):
+            trace, started = tb.trace, tb.started
             episode_id = str(trace.get("episode_id") or "")
             turn = int(trace.get("turn") or 0)
             case_id = f"{sid}/{episode_id}/t{turn}"
             trigger = str(trace.get("trigger") or "customer")
-            if trigger not in _CASE_TRIGGERS:
+            if not tb.is_case:
                 exclusions.append((case_id, "turno_del_sistema"))
                 continue
-            inbound = trace.get("inbound")
-            v2 = isinstance(inbound, list) and bool(inbound)
-            # Hasta que el turno terminó (lo que absorbió); sin la marca, sin tope:
-            # el texto de la traza y los ya consumidos acotan igual.
-            until = _ms(trace.get("recorded_at_ms")) or _NO_LIMIT
-            indices = (_indices_by_wamid(events, consumed, inbound) if v2 else None) or _indices_by_text(
-                events, consumed, trace.get("inbound_text"), until
-            )
-            if indices:
-                dashboard_prefix = indices[0]
-            else:
-                indices, dashboard_prefix = _burst(events, started)
-                indices = [i for i in indices if i not in consumed]
-            consumed.update(indices)
-            burst = (
-                [_inbound_message(m, events) for m in inbound if isinstance(m, dict)]
-                if v2
-                else [_burst_message(events[i]) for i in indices]
-            )
-            between = _between(events, dashboard_prefix, set(indices), started)
+            between = _between(events, tb.dashboard_prefix, set(tb.indices), started)
             llm_prefix = _llm_prefix(llm_lines, started)
             cases.append(
                 LabCase(
@@ -440,17 +470,17 @@ def build_cases(bench_dir: Path, *, sales_workspace: str) -> CaseSet:
                     turn_key=str(trace.get("turn_key") or case_id),
                     at_ms=started,
                     trigger=trigger,
-                    burst=burst,
-                    dashboard_prefix=dashboard_prefix,
+                    burst=tb.burst,
+                    dashboard_prefix=tb.dashboard_prefix,
                     llm_prefix=llm_prefix,
                     stage_in=trace.get("stage_in"),
                     draft=dict(trace.get("draft") or {}),
                     state=dict(trace.get("state") or {}),
                     episodes_at=_episodes_at(metadata.get("episodes") or [], started),
                     real={k: trace[k] for k in _REAL_FIELDS if k in trace},
-                    draft_before=dict((prev_same or {}).get("draft") or {}),
-                    state_before=_state_before(prev_any, prev_same),
-                    first_in_episode=prev_same is None,
+                    draft_before=dict((tb.prev_same or {}).get("draft") or {}),
+                    state_before=_state_before(tb.prev_any, tb.prev_same),
+                    first_in_episode=tb.prev_same is None,
                     recorded_tools=recorded_tool_results(llm_lines, llm_prefix),
                     dashboard_between=between,
                 )
