@@ -4,18 +4,20 @@
 # Jev o con duda), constructores de estado (el texto que lee Jev; null = no
 # se pregunta), opciones de la entrada (las de un choice que no se saben al
 # escribir el paquete: `{opción: (etiqueta, valor)}`), vistas (campos que se
-# derivan de la entrada), pisos (lo que nunca se quita), comparadores, las
-# entradas que una condición lee como `inp.campo` y las constantes
-# (`consts.NOMBRE`). Cada builtin existe en código (`decisions/bundled.py:
+# derivan de la entrada), ítems (la lista sobre la que se decide ítem por
+# ítem: oraciones, párrafos, términos, datos), pisos (lo que nunca se quita),
+# comparadores, las entradas que una condición lee como `inp.campo` y las
+# constantes (`consts.NOMBRE`). Un constructor de estado de una capacidad con
+# ítems los recibe (`items=`). Cada builtin existe en código (`decisions/bundled.py:
 # BUILTINS` y `LAZY_BUILTINS`) y cada constante vale lo mismo que en el
 # código: una prueba lo verifica. El certificador lee SOLO este archivo (no
 # importa el plugin).
 #
-#   kind    rule | state | options | view | floor | same
+#   kind    rule | state | options | view | items | floor | same
 #   value   tipo del valor (si está, solo sirve a capacidades de ese tipo)
 #   input   tipo de entrada que lee (si está, debe ser el de la capacidad)
 #   params  parámetros que se pasan con `with:` (str | int | float | bool)
-#   fields  campos que deriva una vista (nombre → tipo)
+#   fields  campos que deriva una vista, o los de cada ítem (nombre → tipo)
 engine_contract: 1
 
 inputs:
@@ -35,6 +37,13 @@ inputs:
   TextoCatalogo: {text: string, aromas: "tuple<string>", colors: "tuple<string>"}
   TextCheck: {text: string, extended: bool}
   GreetingCheck: {first_contact: bool, tools_used: "tuple<string>", client_texts: "tuple<string>"}
+  Frases: {parts: "tuple<string>"}
+  OracionesPrecio: {sentences: "tuple<string>"}
+  DatosDelPedido: {}
+  PedidoDelCliente: {text: string}
+  PreambuloCheck: {text: string}
+  OracionesCheck: {parts: "tuple<string>"}
+  PortavelasCheck: {text: string, order_registered: bool, portavelas_included: "bool?"}
 
 constants:
   # messagingkit: la pausa abierta de «yo les escribo cuando…».
@@ -42,6 +51,9 @@ constants:
   OPEN_DEFERRAL_MS: {type: int, value: 604800000}
   # variant_enumeration: cuántas etiquetas hacen una lista para el selector.
   MIN_ENUMERATED: {type: int, value: 4}
+  # egress: la despedida aprobada si todo el texto hablaba del portavelas.
+  # Dominio (F5): el nombre de la tienda.
+  ORDER_REGISTERED_FALLBACK_FAREWELL: {type: string, value: "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a Hubara."}
 
 builtins:
   # ── reglas ──
@@ -125,6 +137,39 @@ builtins:
     value: bool
     input: GreetingCheck
     doc: "should_send_first_contact_greeting con las entradas del V1."
+  no_items:
+    kind: rule
+    doc: "Siempre (): hoy nada se marca (monto, datos)."
+  breaks_persona:
+    kind: rule
+    value: "tuple<int>"
+    input: Frases
+    doc: "Las oraciones que hoy rompen la persona (breaks_human_persona)."
+  unavailable_terms_rule:
+    kind: rule
+    value: "list<string>"
+    input: PedidoDelCliente
+    doc: "Los términos que el cliente pide y no están en el catálogo (unavailable_terms)."
+  model_preamble:
+    kind: rule
+    value: string
+    input: PreambuloCheck
+    doc: "La muletilla del meta-prefijo de hoy (strip_model_preamble)."
+  admin_leak_per_part:
+    kind: rule
+    value: "tuple<int>"
+    input: OracionesCheck
+    doc: "Las oraciones que huelen a parte interno (looks_like_admin_leak básico, por oración)."
+  salvage:
+    kind: rule
+    value: string
+    input: TextCheck
+    doc: "Lo que queda para el cliente (salvage_customer_text con el set extendido)."
+  portavelas_notice:
+    kind: rule
+    value: string
+    input: PortavelasCheck
+    doc: "En un pedido sin portavelas, borra lo que lo nombra (strip_portavelas_notice) o la despedida aprobada."
   # ── estado ──
   customer_message:
     kind: state
@@ -195,6 +240,53 @@ builtins:
     kind: state
     input: GreetingCheck
     doc: "Los mensajes del primer contacto, solo si el turno le manda algo al cliente (como mucho 8)."
+  numbered_items:
+    kind: state
+    params: {header: str, max: int}
+    doc: "«<header>» y los ítems numerados ([1] …); sin ítems o con más de `max`, no se pregunta."
+  leading_sentences_state:
+    kind: state
+    input: PreambuloCheck
+    doc: "Las primeras oraciones del texto (hasta 5, «[…]» si hay más); con menos de dos, no se pregunta."
+  conversation_for_slots:
+    kind: state
+    input: DatosDelPedido
+    doc: "Lo último de la conversación, si algún dato no está en las palabras del cliente."
+  customer_order_text:
+    kind: state
+    input: PedidoDelCliente
+    doc: "El mensaje del cliente, si la regla propone algún término."
+  # ── ítems ──
+  items_of:
+    kind: items
+    params: {field: str}
+    fields: {text: string}
+    doc: "Un ítem por cada texto del campo `field` de la entrada."
+  paragraphs:
+    kind: items
+    input: TextCheck
+    fields: {text: string}
+    doc: "Los párrafos del texto (corte mecánico por línea en blanco)."
+  sentences:
+    kind: items
+    input: PortavelasCheck
+    fields: {text: string}
+    doc: "Las oraciones del texto (corte mecánico)."
+  leading_sentences:
+    kind: items
+    input: PreambuloCheck
+    fields: {text: string, askable: bool, preamble: string, cut_ok: bool}
+    doc: "Las oraciones con lo que se cae si se corta hasta cada una (preamble) y si lo que queda no empieza a mitad de frase (cut_ok)."
+  order_slot_values:
+    kind: items
+    input: DatosDelPedido
+    fields: {slot: string, value: string, ask: bool, personal: bool, label: string}
+    doc: "Los datos de envío y pago a guardar; ask = no está en las palabras del cliente; personal = Jev lo ve tapado."
+  unavailable_term_items:
+    kind: items
+    input: PedidoDelCliente
+    fields: {term: string}
+    doc: "Un ítem por término que la regla propone."
   # ── opciones de la entrada ──
   catalog_categories:
     kind: options
@@ -255,6 +347,18 @@ builtins:
     kind: floor
     input: TextoCatalogo
     doc: "Las combinaciones «Color · Aroma» de un cupón nunca van al selector."
+  rule_order_subset:
+    kind: floor
+    doc: "Jev solo quita: queda lo de la regla que Jev dejó, en su orden."
+  persona_floor:
+    kind: floor
+    input: Frases
+    doc: "Las frases de la regla que ninguna lectura deja pasar (asistente virtual, humano…) siempre se caen."
+  strong_preamble:
+    kind: floor
+    value: string
+    input: PreambuloCheck
+    doc: "Los prefijos que casi nunca abren una oración legítima («Final answer:») siempre se van."
   # ── comparadores ──
   bool_eq:
     kind: same
@@ -282,6 +386,9 @@ builtins:
   tuple_eq:
     kind: same
     doc: "La misma tupla (null = vacía)."
+  sorted_eq:
+    kind: same
+    doc: "Los mismos elementos ordenados (índices)."
 
 required_floors:
   # La baja explícita es un piso legal: achicarlo es decisión del operador.

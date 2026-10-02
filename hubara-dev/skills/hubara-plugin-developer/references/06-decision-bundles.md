@@ -19,13 +19,11 @@ src/plugins/chats/agent/sales/decisions/bundles/
   ventas/capabilities/*.yaml una capacidad por archivo
 ```
 
-Migradas hoy (F1–F3, 21): acuse, afirmacion, baja, cantidad, categoria,
-cierre, compra, contactar, cortesia, cupon, destinatario,
-destinatario_plantilla, enumeracion, familia_de_color, item_del_pedido,
-producto_nombrado, relevo, retoma, saludo, selector, zona_de_envio. Siguen
-siendo clases hasta F4 (`per_item_select`): datos, fuera_de_catalogo,
-persona, monto y las del egreso parte por parte (preambulo,
-destinatario_oracion, rescate, portavelas).
+Desde F4 las 29 capacidades salen del paquete (una prueba lo exige:
+`test_the_default_bundle_has_every_capability`). Las clases de
+`decisions/capabilities/` y `egress.py` quedan SOLO como oráculo de la
+paridad: no se les agrega comportamiento; el comportamiento nuevo va al
+YAML (y, si hace falta código, a un builtin).
 
 **Nunca nombres una clase de capacidad ni su instancia global** (`Baja()`,
 `PERSONA`): pedila por nombre al resolutor, `capability("baja")` (desde una
@@ -90,6 +88,12 @@ fuera del resolutor.
   enumera) los da una `view:`.
 - **Variante** (la misma decisión preguntada de otra forma, mismo
   interruptor): `control: <capacidad>`.
+- **La misma pregunta por cada oración / párrafo / término / dato:**
+  `items: {builtin: items_of, with: {field: parts}}` + `each:` con
+  plantillas (`id: "persona.{n}"`, `text: "¿La oración [{n}] …?"`, `{campo}`
+  del ítem) y `when: "item.ask"` si solo algunos se preguntan. La tabla lee
+  `items` con `filter`/`map`/`exists`/`all`/`join`; un ítem sin respuesta no
+  trae `p`: `has(i.p)`. Los ejemplos llevan `items: [{text: …, p: 0.9}, …]`.
 - Si necesitás iterar, sumar o leer el catálogo: eso es un **builtin** nuevo
   (función + entrada en `builtins.yaml` + prueba), no una condición larga.
   Si arrastra `use_cases/`, el ingest o el catálogo, va en

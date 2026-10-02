@@ -195,6 +195,7 @@ examples:                            # el certificador los corre
 | `vars` | `map<string,dyn>` | los cálculos intermedios de la capacidad, en orden |
 | `consts` | `map<string,dyn>` | las constantes del catálogo |
 | `opt` | `map<string,map<string,dyn>>` | el valor de cada opción que armó la entrada (F3) |
+| `items` | `list<map<string,dyn>>` | los ítems con su posición y su respuesta (F4, solo con `items:`) |
 
 **Lo que la entrada decide (F3):**
 
@@ -214,10 +215,10 @@ examples:                            # el certificador los corre
 
 **Builtins** (código del motor, catalogados en `builtins.yaml` con su firma):
 reglas (`opt_out_text`, …), constructores de estado, opciones de la entrada
-(`catalog_categories`, …), vistas (`purchase_window`, …), pisos (`jev`,
-`rule_or_jev`, …), comparadores (`bool_eq`, `set_eq`, …) y, desde F4, un
-reductor por ítem (`per_item_select`) para las capacidades que deciden sobre
-una lista.
+(`catalog_categories`, …), vistas (`purchase_window`, …), ítems
+(`items_of`, `paragraphs`, …: la lista de una capacidad que decide ítem por
+ítem, F4), pisos (`jev`, `rule_or_jev`, …) y comparadores (`bool_eq`,
+`set_eq`, …).
 El catálogo es el "header" entre motor y paquetes: el certificador lo lee
 sin importar código de plugins (R-DIP), y una prueba del plugin verifica
 que el catálogo coincide con lo registrado en código.
@@ -329,7 +330,7 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
 | **F1** ✅ | Motor de paquetes: esquema, puerto de expresiones (CEL), catálogo de builtins, certificador + CLI + esquema JSON. Primeras capacidades desde YAML con paridad contra la clase: `baja` (A, piso legal) y `cortesia` (B) | ninguno (paridad) |
 | F2 ✅ | **Resolutor único por nombre** (`capability("baja")`: los lugares dejan de nombrar clases), **paquete activo desde Terraform** (`tenants.<t>.lab.decisions_bundle` → `SALES_DECISIONS_BUNDLE`), tipos de valor del paquete (más allá de bool/string) y las 8 A restantes | ninguno |
 | F3 ✅ | Las 9 B con sus builtins de estado, opciones de la entrada, vistas y preguntas condicionales + las del egreso de una pregunta (destinatario, su variante de plantilla y saludo) | ninguno |
-| F4 | Las 4 C con `per_item_select` + las del egreso parte por parte (preámbulo, destinatario por oración, rescate, portavelas) | ninguno |
+| F4 ✅ | Las 4 C + las del egreso parte por parte (preámbulo, destinatario por oración, rescate, portavelas), con `items:` + `each:` (el `per_item_select` del diseño) | ninguno |
 | F5 | Paquete de dominio: dimensiones, zonas, vocabulario. Quita las 22 reglas de reemplazo de forge | ninguno en Hubara |
 | F6 | Versión de paquete en el laboratorio (un brazo puede fijar paquete) y en el despliegue gradual | — |
 | F7 | El turno dentro del paquete: la ráfaga ① (`rafaga-v5` → `turn.yaml`) y la verificación ③ (`coverage_decision`), con las tablas de la política como filas certificadas | ninguno |
@@ -384,6 +385,29 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
 - Quedan como clases: las 4 C (datos, fuera_de_catalogo, persona, monto) y
   las 4 del egreso parte por parte → F4.
 
+**F4 hecho (2026-10-01).**
+- Motor: `items:` (un builtin arma la lista: oraciones, párrafos, términos,
+  datos) y `each:` (la pregunta de cada ítem, con plantillas `{n}`,
+  `{index}` y `{campo}`, condición `when` y variantes del texto). La tabla
+  lee `items` (cada ítem con sus campos, su posición y, si Jev contestó,
+  `p` o `choice`/`conf`) y lo recorre con `filter`/`map`/`exists`/`all`/
+  `join` (extensión `strings` de CEL). Así queda el `per_item_select` del
+  diseño, sin un reductor especial: cada capacidad escribe su selección en
+  CEL.
+- El certificador revisa las plantillas (`{campo}` que el ítem no trae:
+  DB005), las condiciones por ítem (solo leen `item`, `inp`, `consts`) y
+  los ejemplos con `items:` (cada uno con su respuesta). Una condición que
+  lee un campo (`item.ask`) se evalúa con valores de ejemplo de los tipos
+  declarados para saber si da true o false.
+- Migradas con paridad en grilla completa: persona (piso: las frases que
+  nada deja pasar), monto, datos (texto de la pregunta con variantes: los
+  datos personales nunca van en ella), fuera de catálogo (piso: Jev solo
+  quita), preámbulo (el corte por prefijo en CEL; el corte mecánico del
+  texto en el builtin), destinatario por oración (`control: destinatario`),
+  rescate y portavelas. **Paquete: 29 capacidades; ninguna sale ya de una
+  clase** (una prueba lo exige). Las clases quedan solo como oráculo de la
+  paridad.
+
 **La paridad es la compuerta de cada fase:** para cada capacidad migrada,
 (a) el estado y las preguntas son byte a byte iguales a los de la clase en
 entradas representativas, y (b) la decisión coincide sobre una grilla de
@@ -400,14 +424,14 @@ tocarlos.
 
 | Lugar | Cómo le pregunta a Jev | ¿Lo cubre el paquete? |
 |---|---|---|
-| Ingest (compra, retoma, baja, cortesía, acuse, cupón, fuera de catálogo) | `decide()` | sí (todas desde F3, menos fuera de catálogo → F4) |
+| Ingest (compra, retoma, baja, cortesía, acuse, cupón, fuera de catálogo) | `decide()` | sí (F1–F4) |
 | Antes del turno: cantidad (`build_prompt_stage`) | `decide()` | sí (F2) |
 | Antes del turno: la ráfaga ① (`rafaga-v5` + `turno_v3`) | directo al puerto (`engine.perceive`) | **no → F7** |
 | Dentro de una tool (categoría, color, ítem del pedido, zona de envío) | `decide()` vía `guards` | sí (F2–F3) |
-| Egreso: preámbulo, destinatario, rescate, portavelas, saludo + guardas (persona, monto, enumeración, selector, datos, relevo) | `decide()` | destinatario, saludo, enumeración, selector y relevo sí (F2–F3); el resto en F4 |
+| Egreso: preámbulo, destinatario, rescate, portavelas, saludo + guardas (persona, monto, enumeración, selector, datos, relevo) | `decide()` | sí (F2–F4) |
 | Antes de enviar: la verificación ③ | directo al puerto (`verify_questions` + `coverage_decision`) | **no → F7** |
 | Después de enviar: afirmación (sombra) | `decide()` | sí (F2) |
-| Remarketing (contactar, producto nombrado, fuera de catálogo) | `decide()` vía el enchufe compartido | contactar y producto nombrado sí (F2–F3); fuera de catálogo en F4 |
+| Remarketing (contactar, producto nombrado, fuera de catálogo) | `decide()` vía el enchufe compartido | sí (F2–F4) |
 | Abandono (cierre) | `decide()` | sí (F2) |
 | Order Sentinel | directo al puerto, preguntas y lógica propias | **no → F8** |
 

@@ -1,0 +1,44 @@
+# yaml-language-server: $schema=../../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿Esta oración es una muletilla de presentación del modelo?», para las
+# primeras oraciones del texto (nunca la última). Se corta el prefijo de
+# muletillas seguras hasta la primera que con certeza no lo es; si Jev duda
+# antes de llegar a ella, decide la regla. Nunca corta a mitad de frase.
+# Piso: los prefijos que casi nunca abren una oración legítima siempre se van.
+capability: preambulo
+value: string
+input: PreambuloCheck
+items: {builtin: leading_sentences}
+rule: {builtin: model_preamble}
+state: {builtin: leading_sentences_state}
+each:
+  id: "preambulo.{n}"
+  kind: noul
+  when: "item.askable"
+  text: "¿La oración [{n}] es una muletilla de presentación del modelo (como «Aquí tienes:», «Claro, aquí va mi respuesta:» o «Here's my attempt:»), sin contenido para el cliente?"
+  criteria:
+    "true": "sí"
+    "false": "no"
+thresholds: {"yes": 0.85, "no": 0.15}
+vars:
+  asked: "items.filter(i, i.askable)"
+  # Cuántas oraciones seguidas, desde la primera, son muletilla segura.
+  cut: "size(vars.asked.filter(i, vars.asked.filter(j, j.n <= i.n).all(j, has(j.p) && j.p >= th['yes'])))"
+decide:
+  # La primera que no se corta tiene que ser «no es muletilla» con certeza.
+  - when: "vars.cut < size(vars.asked) && !(has(vars.asked[vars.cut].p) && vars.asked[vars.cut].p <= th['no'])"
+    then: doubt
+  - when: "vars.cut == 0"
+    then: ""
+  - when: "!vars.asked[vars.cut - 1].cut_ok"
+    then: doubt
+  - otherwise: {expr: "vars.asked[vars.cut - 1].preamble"}
+floor: {builtin: strong_preamble}
+same: {builtin: text_eq}
+examples:
+  - items: [{text: "Aquí tienes:", askable: true, preamble: "Aquí tienes:", cut_ok: true, p: 0.9}, {text: "¡Hola!", askable: false}]
+    expect: "Aquí tienes:"
+  - {items: [{text: "Hola.", askable: true, p: 0.1}, {text: "Te cuento.", askable: false}], expect: ""}
+  - {items: [{text: "Hola.", askable: true, p: 0.5}, {text: "Te cuento.", askable: false}], expect: doubt}
+  - items: [{text: "Here's my attempt:", askable: true, preamble: "Here's my attempt:", cut_ok: false, p: 0.9}, {text: "hola", askable: false}]
+    expect: doubt

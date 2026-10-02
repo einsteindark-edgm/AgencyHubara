@@ -59,10 +59,25 @@ bundles/
    una pregunta (se hace solo si la condición sobre `inp`/`consts` se
    cumple), `view:` en la capacidad (campos derivados de la entrada) y
    `control:` (una variante comparte el interruptor de otra capacidad).
-8. **Builtins:** lo que sigue siendo código (reglas de texto, constructores
-   de estado, opciones, vistas, pisos legales, comparadores) lo pone el
-   plugin, registrado en código y declarado en `builtins.yaml`; una prueba
-   exige que coincidan.
+8. **Ítem por ítem** (oraciones, párrafos, términos, datos): `items:` (un
+   builtin arma la lista con los campos que declara el catálogo) y `each:`
+   (la pregunta de cada ítem: `id` y `text` son plantillas con `{n}`,
+   `{index}` y los campos; `when` elige qué ítems se preguntan; el texto
+   puede tener variantes `- {when: …, text: …}` / `- {otherwise: …}`). La
+   tabla lee `items` —cada ítem con sus campos, su posición y, si Jev
+   contestó, `p` o `choice`/`conf`— con `filter`, `map`, `exists`, `all` y
+   `join`:
+
+   ```yaml
+   decide:
+     - when: "!items.exists(i, has(i.p))"
+       then: doubt
+     - otherwise: {expr: "items.filter(i, has(i.p) && i.p >= th['yes']).map(i, i.text)"}
+   ```
+9. **Builtins:** lo que sigue siendo código (reglas de texto, constructores
+   de estado, opciones, vistas, ítems, pisos legales, comparadores) lo pone
+   el plugin, registrado en código y declarado en `builtins.yaml`; una
+   prueba exige que coincidan.
 
 ## Cómo se usa
 
@@ -113,3 +128,6 @@ o, si la capacidad todavía no migró, su clase. El `Verdict` lleva
    pueden cambiar.
 7. Una opción que no está en la lista no pasa: antes de leer
    `opt['q'][choice['q']]`, preguntar `choice['q'] in opt['q']`.
+8. Un ítem sin respuesta no trae `p` (ni `choice`): `has(i.p)` antes de
+   leerla. En un string de YAML con comillas dobles, `\n` es un salto de
+   línea real: para el separador de `join` se escribe `'\\n'`.

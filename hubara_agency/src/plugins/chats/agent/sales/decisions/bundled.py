@@ -7,10 +7,11 @@ opciones de la entrada, vistas, pisos y comparadores— y arma con los dos un
 objeto con la forma de `Capability` (`rule`/`ask`/`decide`/`floor`/`same`),
 que corre igual que las clases por el mismo `decide()` del motor.
 
-Los builtins que arrastran el ingest, `use_cases/` o el catálogo viven en
-`bundled_ingest.py`, `bundled_catalog.py` y `bundled_egress.py` y se cargan
-por nombre (`LAZY_BUILTINS`) solo cuando una capacidad los pide: las tools
-llegan acá por `guards` y no pueden importar Temporal.
+Los builtins que arrastran el ingest, `use_cases/`, el catálogo o el egreso
+viven en `bundled_ingest.py`, `bundled_catalog.py`, `bundled_egress.py` y
+`bundled_parts.py` y se cargan por nombre (`LAZY_BUILTINS`) solo cuando una
+capacidad los pide: las tools llegan acá por `guards` y no pueden importar
+Temporal.
 
 Los builtins que existen están declarados en `bundles/builtins.yaml` (lo
 único que lee el certificador); `test_decisions_bundle_parity.py` verifica
@@ -68,6 +69,10 @@ def _shipping_zone(inp: Any) -> dict[str, str | None]:
 
 def _rule_rejected_titles(inp: Any) -> tuple[str, ...]:
     return tuple(inp.rule_rejected)
+
+
+def _no_items(inp: Any) -> tuple[Any, ...]:
+    return ()  # hoy nada se marca: decide Jev o nadie
 
 
 def _promises_a_handoff(inp: Any) -> bool:
@@ -161,6 +166,23 @@ def _sent_message_with_tools(inp: Any) -> str | None:
     )
 
 
+# ── Ítems: la lista sobre la que se decide ítem por ítem ───────────────────
+
+
+def _items_of(inp: Any, *, field: str) -> list[dict[str, Any]]:
+    """Un ítem `{text}` por cada texto del campo `field` de la entrada."""
+    return [{"text": str(text)} for text in getattr(inp, field)]
+
+
+def _numbered_items(inp: Any, *, header: str, max: int, items: list[dict[str, Any]] | None = None) -> str | None:  # noqa: A002
+    """«<header>» y los ítems numerados ([1] …). Sin ítems, o con más de
+    `max`, no se pregunta (decide la regla)."""
+    parts = [item["text"] for item in items or ()]
+    if not parts or len(parts) > max:
+        return None
+    return header + "\n" + "\n".join(f"[{i}] {part}" for i, part in enumerate(parts, 1))
+
+
 # ── Pisos: lo que nunca se quita ────────────────────────────────────────────
 
 
@@ -206,6 +228,12 @@ def _rule_then_jev(inp: Any, rule: Any, jev: Any) -> tuple[Any, ...]:
     return tuple(dict.fromkeys([*rule, *jev]))
 
 
+def _rule_order_subset(inp: Any, rule: Any, jev: Any) -> list[Any]:
+    """Jev solo quita: queda lo de la regla que Jev dejó, en el orden de la regla."""
+    kept = set(jev or ())
+    return [x for x in rule if x in kept]
+
+
 # ── Comparadores: si dos decisiones coinciden ──────────────────────────────
 
 
@@ -244,6 +272,10 @@ def _tuple_eq(a: Any, b: Any) -> bool:
     return tuple(a or ()) == tuple(b or ())
 
 
+def _sorted_eq(a: Any, b: Any) -> bool:
+    return tuple(sorted(a or ())) == tuple(sorted(b or ()))
+
+
 BUILTINS: dict[str, dict[str, Callable[..., Any]]] = {
     "rule": {
         "constant_false": _constant_false,
@@ -252,6 +284,7 @@ BUILTINS: dict[str, dict[str, Callable[..., Any]]] = {
         "shipping_zone": _shipping_zone,
         "rule_rejected_titles": _rule_rejected_titles,
         "promises_a_handoff": _promises_a_handoff,
+        "no_items": _no_items,
     },
     "state": {
         "customer_message": _customer_message,
@@ -262,6 +295,10 @@ BUILTINS: dict[str, dict[str, Callable[..., Any]]] = {
         "quantity_reply": _quantity_reply,
         "buttons_message": _buttons_message,
         "sent_message_with_tools": _sent_message_with_tools,
+        "numbered_items": _numbered_items,
+    },
+    "items": {
+        "items_of": _items_of,
     },
     "floor": {
         "jev": _floor_jev,
@@ -271,6 +308,7 @@ BUILTINS: dict[str, dict[str, Callable[..., Any]]] = {
         "jev_without_question_mark": _jev_without_question_mark,
         "rule_if_same_key": _rule_if_same_key,
         "rule_then_jev": _rule_then_jev,
+        "rule_order_subset": _rule_order_subset,
     },
     "same": {
         "bool_eq": _bool_eq,
@@ -281,6 +319,7 @@ BUILTINS: dict[str, dict[str, Callable[..., Any]]] = {
         "first_eq": _first_eq,
         "set_eq": _set_eq,
         "tuple_eq": _tuple_eq,
+        "sorted_eq": _sorted_eq,
     },
 }
 
@@ -290,6 +329,7 @@ BUILTINS: dict[str, dict[str, Callable[..., Any]]] = {
 _INGEST = "src.plugins.chats.agent.sales.decisions.bundled_ingest"
 _CATALOG = "src.plugins.chats.agent.sales.decisions.bundled_catalog"
 _EGRESS = "src.plugins.chats.agent.sales.decisions.bundled_egress"
+_PARTS = "src.plugins.chats.agent.sales.decisions.bundled_parts"
 LAZY_BUILTINS: dict[str, dict[str, str]] = {
     "rule": {
         "opt_out_text": _INGEST,
@@ -304,6 +344,12 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
         "enumerated_variants": _CATALOG,
         "admin_leak": _EGRESS,
         "first_contact_greeting": _EGRESS,
+        "breaks_persona": _PARTS,
+        "unavailable_terms_rule": _PARTS,
+        "model_preamble": _PARTS,
+        "admin_leak_per_part": _PARTS,
+        "salvage": _PARTS,
+        "portavelas_notice": _PARTS,
     },
     "state": {
         "purchase_context": _INGEST,
@@ -315,10 +361,20 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
         "chat_and_catalog": _CATALOG,
         "text_with_lists": _CATALOG,
         "greeting_texts": _EGRESS,
+        "leading_sentences_state": _PARTS,
+        "conversation_for_slots": _PARTS,
+        "customer_order_text": _PARTS,
     },
     "view": {
         "purchase_window": _INGEST,
         "enumeration_found": _CATALOG,
+    },
+    "items": {
+        "paragraphs": _PARTS,
+        "sentences": _PARTS,
+        "leading_sentences": _PARTS,
+        "order_slot_values": _PARTS,
+        "unavailable_term_items": _PARTS,
     },
     "options": {
         "catalog_categories": _CATALOG,
@@ -328,6 +384,8 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
     },
     "floor": {
         "no_enumeration_with_combinations": _CATALOG,
+        "persona_floor": _PARTS,
+        "strong_preamble": _PARTS,
     },
 }
 
@@ -382,15 +440,24 @@ class BundledCapability:
             for q in self._spec.questions if q.options is not None
         }
 
+    def _items(self, inp: Any) -> list[dict[str, Any]] | None:
+        """La lista de una capacidad que decide ítem por ítem (None si no lo es)."""
+        if self._spec.items is None:
+            return None
+        return list(self._call("items", self._spec.items, inp))
+
     def rule(self, inp: Any) -> Any:
         return self._call("rule", self._spec.rule, inp)
 
     def ask(self, inp: Any) -> tuple[str, list[TypedQuestion]] | None:
         if self._spec.state is None:
             return None
-        state = self._call("state", self._spec.state, inp)
+        items = self._items(inp)
+        # Con ítems, el estado los recibe (numerarlos, ver si hay qué preguntar).
+        state = self._call("state", self._spec.state, inp, **({} if items is None else {"items": items}))
         if state is None:
             return None
+        fields = self._inp(inp)
         options = self._options(inp)
         questions = [
             TypedQuestion(
@@ -398,18 +465,30 @@ class BundledCapability:
                 # Las de la entrada primero; las fijas (ambiguo, ninguno) al final.
                 criteria={**{key: label for key, (label, _value) in options.get(q.id, {}).items()}, **q.criteria},
             )
-            for q in self._table.questions_for(self._inp(inp))
+            for q in self._table.questions_for(fields)
         ]
+        questions += [
+            TypedQuestion(id=q.id, kind=q.kind, text=q.text, criteria=dict(q.criteria))
+            for q in self._table.each_questions(items or (), fields)
+        ]
+        if not questions:
+            return None  # ningún ítem que preguntar
         return state, questions
 
     def decide(self, inp: Any, result: Any, rule: Any, thresholds: Any) -> Any:
         options = {qid: {key: value for key, (_label, value) in opts.items()} for qid, opts in self._options(inp).items()}
+        fields = self._inp(inp)
+        items = self._items(inp)
+        # Se leen también las respuestas de los ítems que no se preguntaron
+        # (si llegaron, cuentan: igual que las clases).
+        questions = [*self._spec.questions, *self._table.each_questions(items or (), fields, all_items=True)]
         value = self._table.decide(
-            answers=answers_from_result(self._spec.questions, result),
+            answers=answers_from_result(questions, result),
             thresholds=dict(thresholds or {}),
             rule=rule,
-            inp=self._inp(inp),
+            inp=fields,
             options=options,
+            items=items,
         )
         return None if value is DOUBT else value
 

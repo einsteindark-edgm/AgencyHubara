@@ -30,13 +30,16 @@ def _fresh(monkeypatch):
     registry.reset()
 
 
-def test_a_migrated_capability_comes_from_the_bundle_and_the_rest_from_their_class() -> None:
-    from src.plugins.chats.agent.sales.decisions.capabilities.datos import DATOS
-
+def test_every_capability_comes_from_the_bundle() -> None:
     assert capability("baja").bundle == "ventas@1"
     assert capability("compra").bundle == "ventas@1"
-    assert capability("datos") is DATOS  # C: sigue siendo clase hasta F4
-    assert getattr(capability("datos"), "bundle", "") == ""
+    assert capability("datos").bundle == "ventas@1"
+
+
+def test_the_default_bundle_has_every_capability() -> None:
+    """F4: las 29 capacidades salen del paquete; las clases quedan solo como
+    oráculo de la paridad (y se pueden borrar)."""
+    assert set(registry.active_bundle().capabilities) == set(registry._CLASS_PATHS)
 
 
 def test_a_variant_answers_to_the_control_it_shares() -> None:

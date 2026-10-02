@@ -25,11 +25,14 @@ from src.plugins.chats.agent.sales.decisions import registry
 from src.plugins.chats.agent.sales.decisions.bundled import BUNDLES_DIR, CATALOG_PATH, builtin_names
 from src.plugins.chats.agent.sales.decisions.capabilities import decide
 from src.plugins.chats.agent.sales.decisions.capabilities.agente import Abandono, CierrePorAbandono, Contactar, Contacto
+from src.plugins.chats.agent.sales.decisions.capabilities.datos import Datos, DatosDelPedido
 from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Acuse, Baja, Compra, Cortesia, Retoma
 from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import (
     Cantidad,
     Cupon,
     CuponEnJuego,
+    FueraDeCatalogo,
+    PedidoDelCliente,
     RespuestaDeCantidad,
 )
 from src.plugins.chats.agent.sales.decisions.capabilities.mapeos import (
@@ -49,6 +52,10 @@ from src.plugins.chats.agent.sales.decisions.capabilities.texto import (
     AfirmacionSinConsultar,
     Botones,
     Enumeracion,
+    Frases,
+    Monto,
+    OracionesPrecio,
+    Persona,
     Relevo,
     Selector,
     TextoAlCliente,
@@ -57,7 +64,14 @@ from src.plugins.chats.agent.sales.decisions.capabilities.texto import (
 from src.plugins.chats.agent.sales.decisions.egress import (
     Destinatario,
     DestinatarioDePlantilla,
+    DestinatarioPorOracion,
     GreetingCheck,
+    OracionesCheck,
+    Portavelas,
+    PortavelasCheck,
+    Preambulo,
+    PreambuloCheck,
+    Rescate,
     Saludo,
     TextCheck,
 )
@@ -66,6 +80,10 @@ from src.sdk import connectorkit
 from src.sdk.catalogkit import CatalogCategoryDTO
 from src.sdk.connectorkit import PerceptionResult, PromotionDTO, TypedAnswer
 from src.sdk.decisionkit import Catalog, check_bundle
+from tests.plugins.chats.sales.decisions.test_decisions_datos import EVENTS as SLOT_EVENTS
+from tests.plugins.chats.sales.decisions.test_decisions_datos import PACKED, PACKED_VALUES
+from tests.plugins.chats.sales.decisions.test_decisions_lecturas_pedido import CARTAGENA
+from tests.plugins.chats.sales.decisions.test_decisions_lecturas_pedido import CATALOG as PRODUCTS
 
 SID = "wa_573001234567"
 TZ = ZoneInfo("America/Bogota")
@@ -181,6 +199,15 @@ def _mix(*grids: list[list[TypedAnswer]]) -> list[list[TypedAnswer]]:
 
 _QUANTITY = [str(n) for n in range(1, 21)] + ["21", "otra", "ninguna"]
 _COMPRA = ["confirma", "aplaza", "rechaza", "pregunta", "da_datos", "elige", "se_despide", "otro"]
+_PART_CHOICES = ["mensaje_al_cliente", "razonamiento", "otra"]
+
+
+def _choices(*ids: str) -> list[list[TypedAnswer]]:
+    """Una opción por parte, en los bordes del umbral (0,79 / 0,8)."""
+    return _mix(*(_choice(q, _PART_CHOICES, probs=(0.79, 0.8)) for q in ids))
+
+
+DESPEDIDA = "¡Listo! Tu pedido quedó registrado. El portavelas viene en dorado. Gracias por tu compra."
 _WHAT_IS_IT = ["mensaje_al_cliente", "razonamiento", "reporte_interno", "acuse_al_sistema", "deliberacion", "otra"]
 CASES: dict[str, tuple[Any, list[Any], list[list[TypedAnswer]]]] = {
     "baja": (Baja(), INBOUND, _single("baja.pide")),
@@ -306,6 +333,61 @@ CASES: dict[str, tuple[Any, list[Any], list[list[TypedAnswer]]]] = {
          GreetingCheck(True, (), ("  ", "Te cuento los precios"))],
         _single("egreso.saludo"),
     ),
+    # ── F4: ítem por ítem (las C y el egreso por partes) ──
+    "persona": (
+        Persona(),
+        [Frases(("Hola, soy tu asistente virtual 🤖", "Te cuento los precios.")),
+         Frases(("Te paso con una persona del equipo.", "Gracias por escribirnos.", "Un humano te responde ya.")),
+         Frases(()), Frases(tuple(f"Oración {i}." for i in range(13)))],
+        _noul("persona.1", "persona.2", "persona.3"),
+    ),
+    "monto": (
+        Monto(),
+        [OracionesPrecio(("Desde $45.000 tienes el Cubo Love 🤍.", "El envío a Bogotá cuesta $12.900.")),
+         OracionesPrecio(()), OracionesPrecio(tuple(f"Vale ${i}.000." for i in range(13)))],
+        _noul("monto.1", "monto.2"),
+    ),
+    "datos": (
+        Datos(),
+        [DatosDelPedido(PACKED_VALUES, PACKED),
+         DatosDelPedido((("ciudad", "Chía"), ("nombre_recibe", "Carlos Ruiz"), ("telefono", "3009998877")), SLOT_EVENTS),
+         DatosDelPedido((("ciudad", "Medellín"), ("barrio", "  "), ("color", "Rojo"), ("ciudad", "Chía")), SLOT_EVENTS),
+         DatosDelPedido((), SLOT_EVENTS), DatosDelPedido((("ciudad", "Cali"),), ())],
+        _noul("datos.ciudad", "datos.nombre_recibe", "datos.telefono"),
+    ),
+    "fuera_de_catalogo": (
+        FueraDeCatalogo(),
+        [PedidoDelCliente(CARTAGENA, PRODUCTS), PedidoDelCliente("Estás y en vaso también", PRODUCTS),
+         PedidoDelCliente("[el cliente envió una foto: vela rosa con diseño de dragón]", PRODUCTS),
+         PedidoDelCliente("¿El cubo viene en azul?", PRODUCTS), PedidoDelCliente("", PRODUCTS)],
+        _noul("fuera_de_catalogo.termino_1", "fuera_de_catalogo.termino_2", "fuera_de_catalogo.termino_3"),
+    ),
+    "preambulo": (
+        Preambulo(),
+        [PreambuloCheck("Aquí tienes: ¡Hola! Te cuento los precios."),
+         PreambuloCheck("Claro, aquí va el mensaje para el cliente:\nHola, ¿cómo estás?\nTe cuento."),
+         PreambuloCheck("Hola"), PreambuloCheck("Here's my attempt: hola, te cuento"),
+         PreambuloCheck("Uno. Dos. Tres. Cuatro. Cinco. Seis. Siete.")],
+        _noul("preambulo.1", "preambulo.2", "preambulo.3"),
+    ),
+    "destinatario_oracion": (
+        DestinatarioPorOracion(),
+        [OracionesCheck(("Hola, ¿cómo estás?", "ESTADO: etiqueta INTERESADO asignada", "Te cuento los precios.")),
+         OracionesCheck(()), OracionesCheck(tuple(f"Parte {i}." for i in range(9)))],
+        _choices("egreso.oracion.1", "egreso.oracion.2", "egreso.oracion.3"),
+    ),
+    "rescate": (
+        Rescate(),
+        [TextCheck("Hola, te cuento.\n\nESTADO: etiqueta INTERESADO asignada\n\nChao"), TextCheck("Solo un párrafo"),
+         TextCheck(""), TextCheck("\n\n".join(f"Párrafo {i}." for i in range(9)))],
+        _choices("egreso.rescate.1", "egreso.rescate.2", "egreso.rescate.3"),
+    ),
+    "portavelas": (
+        Portavelas(),
+        [PortavelasCheck(DESPEDIDA, True, False), PortavelasCheck(DESPEDIDA, True, True), PortavelasCheck(DESPEDIDA, False),
+         PortavelasCheck("Tu pedido no incluye portavelas. Gracias.", True, None), PortavelasCheck("", True, False)],
+        _noul("egreso.portavelas.1", "egreso.portavelas.2", "egreso.portavelas.3", "egreso.portavelas.4"),
+    ),
 }
 NAMES = sorted(CASES)
 
@@ -397,6 +479,7 @@ def test_the_catalog_and_the_code_declare_the_same_builtins_and_constants() -> N
     constante vale lo mismo que en el código."""
     import yaml
 
+    from src.plugins.chats.agent.sales.decisions.egress import ORDER_REGISTERED_FALLBACK_FAREWELL
     from src.plugins.chats.agent.sales.variant_enumeration import MIN_ENUMERATED
     from src.sdk.messagingkit import DEFERRAL_KIND_OPEN, OPEN_DEFERRAL_MS
 
@@ -409,6 +492,7 @@ def test_the_catalog_and_the_code_declare_the_same_builtins_and_constants() -> N
         "DEFERRAL_KIND_OPEN": DEFERRAL_KIND_OPEN,
         "OPEN_DEFERRAL_MS": OPEN_DEFERRAL_MS,
         "MIN_ENUMERATED": MIN_ENUMERATED,
+        "ORDER_REGISTERED_FALLBACK_FAREWELL": ORDER_REGISTERED_FALLBACK_FAREWELL,
     }
 
 

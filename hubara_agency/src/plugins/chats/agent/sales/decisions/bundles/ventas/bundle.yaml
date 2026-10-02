@@ -18,13 +18,21 @@ capabilities:
   - contactar
   - cortesia
   - cupon
+  - datos
   - destinatario
+  - destinatario_oracion
   - destinatario_plantilla
   - enumeracion
   - familia_de_color
+  - fuera_de_catalogo
   - item_del_pedido
+  - monto
+  - persona
+  - portavelas
+  - preambulo
   - producto_nombrado
   - relevo
+  - rescate
   - retoma
   - saludo
   - selector
