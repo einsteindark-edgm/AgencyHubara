@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 SESSION = "wa_573001234567"
-NOW_MS = int(time.time() * 1000)
 
 
 @pytest.fixture
@@ -30,13 +29,16 @@ def flow_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("META_FLOW_ID_SHIPPING", "951293630651590")
     monkeypatch.setattr(wa_client, "send_flow", AsyncMock(return_value=SimpleNamespace(ok=True, wa_message_id="wamid.flow", error=None)))
     monkeypatch.setattr(wa_client, "send_text", AsyncMock(return_value=SimpleNamespace(ok=True, wa_message_id="wamid.txt", error=None)))
+    # La hora de la prueba, no la de importar el módulo: en la batería completa
+    # pasan más de 10 min (el TTL de un intent) entre una y otra.
+    now_ms = int(time.time() * 1000)
     path = tmp_path / SESSION / "metadata.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "phone_number_id": "pnid-1",
-        "episodes": [{"episode_id": "ep_001", "started_at_ms": NOW_MS - 5000, "closed_at_ms": None}],
+        "episodes": [{"episode_id": "ep_001", "started_at_ms": now_ms - 5000, "closed_at_ms": None}],
         "pending_ui_intents": [{
-            "id": "shipping-1", "kind": "shipping_flow", "queued_at_ms": NOW_MS, "analytics": {},
+            "id": "shipping-1", "kind": "shipping_flow", "queued_at_ms": now_ms, "analytics": {},
             "params": {"flow_id": "FLOW_ID_SHIPPING_PLACEHOLDER", "flow_token": "shipping_x", "flow_cta": "Completar datos",
                        "header_text": "Datos de envío", "body": "Para enviarte necesito unos datos.", "order_total_cop": 21000,
                        "items_summary": "1× Cubo Love", "flow_action": "navigate", "flow_action_screen": "SHIPPING",
