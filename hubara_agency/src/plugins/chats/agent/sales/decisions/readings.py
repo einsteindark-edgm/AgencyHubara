@@ -34,7 +34,8 @@ import structlog
 
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_session
 from src.plugins.chats.agent.sales.decisions.capabilities import BY_RULE, Verdict, decide
-from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Acuse, Baja, Compra, Cortesia, Retoma
+from src.plugins.chats.agent.sales.decisions.bundled import bundled_capability
+from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Acuse, Compra, Retoma
 from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import (
     Cupon,
     CuponEnJuego,
@@ -118,13 +119,15 @@ class EngineReadings:
                 disagreements=log, session_id=inbound.session_id, redact=self._redact, metrics=metrics,
             )
 
-        baja = Baja()
+        # Paquete de decisión (PAQUETES_DE_DECISION.md F1): baja y cortesía
+        # salen del YAML certificado, con paridad exacta con sus clases.
+        baja = bundled_capability("baja")
         marketing = has_recent_marketing_context(dict(inbound.metadata), inbound.now_ms)
         compra_v, retoma_v, baja_v, cortesia_v = await asyncio.gather(
             run(Compra()),
             run(Retoma()),
             run(baja) if marketing else _completed(_rule_verdict_off(baja, inbound)),
-            run(Cortesia()),
+            run(bundled_capability("cortesia")),
         )
         deferral = (retoma_v.value or {}).get("deferral")
         return Readings(
@@ -245,7 +248,10 @@ async def read_catalog_gap(
 
 def _rule_verdict_off(capability: Any, inbound: Inbound) -> Verdict:
     """Sin promoción reciente la baja no se lee (condición de hoy)."""
-    return Verdict(capability=capability.name, value=False, by=BY_RULE, provider="reglas", rule=False, reason="sin_contexto")
+    return Verdict(
+        capability=capability.name, value=False, by=BY_RULE, provider="reglas", rule=False, reason="sin_contexto",
+        bundle=str(getattr(capability, "bundle", "") or ""),
+    )
 
 
 async def _completed(verdict: Verdict) -> Verdict:

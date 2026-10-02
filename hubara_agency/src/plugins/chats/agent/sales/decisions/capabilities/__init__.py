@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 import structlog
@@ -64,6 +64,8 @@ class Verdict:
     model: str = ""
     latency_ms: int = 0
     answers: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    #: `id@versión` del paquete de decisión que la decidió ("" = clase de Python).
+    bundle: str = ""
 
     def to_trace(self) -> dict[str, Any]:
         """JSON para la traza y el laboratorio."""
@@ -79,6 +81,7 @@ class Verdict:
             "model": self.model,
             "latency_ms": self.latency_ms,
             "answers": list(self.answers),
+            "bundle": self.bundle,
         }
 
 
@@ -177,6 +180,9 @@ async def decide(
         capability, inp, provider=provider, profile_id=profile_id, disagreements=disagreements,
         session_id=session_id, redact=redact, metrics=metrics,
     )
+    bundle = getattr(capability, "bundle", "")
+    if bundle:
+        verdict = replace(verdict, bundle=str(bundle))
     if _WATCHERS:
         _tell_watchers(verdict)
     return verdict

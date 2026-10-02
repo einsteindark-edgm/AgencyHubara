@@ -23,6 +23,9 @@ minutos, un comportamiento por vuelta.
 - Antes de editar, qué gate te frena: `references/01-hard-rules.md`.
 - Verificación determinística: el comando `/hubara-gates` (o `references/03-command-panel.md`).
 - Qué NO repetir (lecciones L-0..L-15): `references/04-lessons.md`.
+- Motor de decisiones: las capacidades migradas son YAML + CEL (paquetes de
+  decisión) — `references/06-decision-bundles.md`; certificar con
+  `cd hubara_agency && uv run python -m src.sdk.cli decisions check`.
 - Subagents: `hubara-explorer` (mapear antes de editar), `hubara-tdd-author`
   (escribir el test rojo), `hubara-gate-reviewer` (verificar antes de cerrar).
 

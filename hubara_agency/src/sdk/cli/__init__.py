@@ -35,6 +35,12 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
+def _decisions():  # noqa: ANN202 — import perezoso: el CLI arranca sin cargar CEL
+    from src.sdk.cli import decisions
+
+    return decisions
+
+
 def _all_plugin_ids() -> list[str]:
     from src.platform.plugin_manifest import all_manifests
 
@@ -454,6 +460,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_cp.add_argument("--display-name", default=None)
     p_cp.set_defaults(fn=cmd_create_plugin)
+
+    p_dec = sub.add_parser("decisions", help="paquetes de decisión: certificar y esquema del editor")
+    dec_sub = p_dec.add_subparsers(dest="decisions_command", required=True)
+    p_dc = dec_sub.add_parser("check", help="¿compila? (sin rutas: todos los paquetes del repo)")
+    p_dc.add_argument("bundles", nargs="*", help="carpetas de paquete (con bundle.yaml)")
+    p_dc.add_argument("--catalog", default=None, help="builtins.yaml (default: junto a la carpeta del paquete)")
+    p_dc.set_defaults(fn=lambda a: _decisions().cmd_decisions_check(a, _repo_root()))
+    p_ds = dec_sub.add_parser("schema", help="escribe el esquema JSON para el editor")
+    p_ds.add_argument("--out", default=str(_repo_root() / "hubara_agency" / "schemas"))
+    p_ds.set_defaults(fn=lambda a: _decisions().cmd_decisions_schema(a))
 
     p_pkg = sub.add_parser(
         "package", help="export/install de plugins entre repos (acktospkg/1)"

@@ -67,6 +67,7 @@ te ahorra el ciclo "editar → gate rojo → deshacer". Tabla completa en §3.
 | Los comandos exactos de verificación | `references/03-command-panel.md` (§8) |
 | Si esto ya nos mordió antes (qué NO repetir) | `references/04-lessons.md` (§9, L-0..L-15) |
 | La superficie del SDK (kits, certificación, CLI) | `references/05-sdk-surface.md` (docs/_sdk) |
+| Crear o cambiar una capacidad del motor de decisiones (paquetes YAML + CEL + `decisions check`) | `references/06-decision-bundles.md` (docs/_sdk/17) |
 
 Cuando una de estas referencias contradiga al código vivo, **gana el código
 vivo** — y esa contradicción es una lección nueva para §9 de la semilla.

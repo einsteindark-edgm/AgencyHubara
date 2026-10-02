@@ -1,0 +1,84 @@
+# 17 · `decisionkit` — paquetes de decisión
+
+> Diseño: [PAQUETES_DE_DECISION.md](../../PAQUETES_DE_DECISION.md) ·
+> Decisión: [ADR-2026-10-01-decision-bundles.md](../../ADR-2026-10-01-decision-bundles.md)
+
+## Qué problema soluciona
+
+Las capacidades del motor de decisiones (¿pide la baja?, ¿solo agradece?,
+¿qué zona de envío?) eran clases de Python: la pregunta a Jev, los umbrales y
+la tabla de decisión vivían en código. Cambiar una pregunta exigía desplegar
+y llevar el motor a otra tienda exigía editar código lleno de velas y de
+Colombia. `decisionkit` deja esa "inteligencia" como **datos tipados y
+versionados** (un paquete por tienda) y la **certifica antes de desplegar**:
+si el paquete no compila, no existe.
+
+## Cómo funciona
+
+```
+bundles/
+  builtins.yaml            catálogo del motor: lo que un paquete puede pedir por nombre
+  hubara-ventas/
+    bundle.yaml            id, versión, engine_contract, oráculo, capacidades
+    capabilities/<c>.yaml  regla, estado, preguntas, umbrales, tabla, piso, ejemplos
+```
+
+1. **Estructura:** modelos Pydantic estrictos (`extra="forbid"`): una llave
+   que no existe o un tipo equivocado rechazan el archivo.
+2. **Condiciones:** cada fila `when:` es CEL compilado por
+   `cel-expr-python` (oficial de Google) contra un entorno tipado —
+   `p: map<string,double>` (sí/no), `choice: map<string,string>` y
+   `conf: map<string,double>` (opciones), `th: map<string,double>`
+   (umbrales), `rule` (lo que dijo la regla). Va detrás de `ExpressionPort`:
+   se puede cambiar de implementación sin tocar los paquetes.
+3. **Certificador:** referencias cruzadas que CEL no ve (llaves de mapa,
+   builtins del catálogo, pisos obligatorios) y los ejemplos del paquete.
+   Códigos DB001–DB012 (lista en `src/platform/decisions/checker.py`).
+4. **Tabla:** la primera fila cuya condición se cumple decide; `doubt` =
+   decide la regla. Una condición que falla al evaluarse también es duda.
+5. **Builtins:** lo que sigue siendo código (reglas de texto, constructores
+   de estado, pisos legales, comparadores) lo pone el plugin, registrado en
+   código y declarado en `builtins.yaml`; una prueba exige que coincidan.
+
+## Cómo se usa
+
+Certificar (CI, hooks y antes de promover en el laboratorio):
+
+```bash
+cd hubara_agency && uv run python -m src.sdk.cli decisions check
+```
+
+Esquema para el editor (autocompleta y marca errores en VS Code con
+`# yaml-language-server: $schema=…` al principio del YAML):
+
+```bash
+cd hubara_agency && uv run python -m src.sdk.cli decisions schema
+```
+
+En código (plugin):
+
+```python
+from src.sdk.decisionkit import DOUBT, answers_from_result, load_bundle
+
+bundle = load_bundle(bundle_dir, catalog_path)        # BundleError si no compila
+table = bundle.capability("baja")
+value = table.decide(answers=answers_from_result(table.spec.questions, result), rule=rule_value)
+if value is DOUBT:
+    ...  # decide la regla
+```
+
+El motor de ventas lo envuelve en `decisions/bundled.py`
+(`bundled_capability("baja")`), con la forma de `Capability`, y el `Verdict`
+lleva `bundle: "hubara-ventas@1"` en la traza.
+
+## Reglas al escribir un paquete
+
+1. Correr `decisions check` siempre; un paquete que no pasa no existe.
+2. Un ejemplo por fila de `decide`, más los bordes de cada umbral.
+3. Llaves literales: `p['baja.pide']`, nunca calculadas; antes de leer una
+   respuesta, preguntar si llegó (`'baja.pide' in p`).
+4. Lo que no cabe en una fila es un builtin nuevo (código + prueba + entrada
+   en `builtins.yaml`), no una condición CEL de tres líneas.
+5. Otra pregunta u otro umbral = otra versión del paquete.
+6. Los pisos se piden por nombre; los obligatorios (`required_floors`) no se
+   pueden cambiar.

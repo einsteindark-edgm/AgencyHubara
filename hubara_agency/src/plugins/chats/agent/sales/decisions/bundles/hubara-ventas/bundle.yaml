@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-bundle.schema.json
+#
+# Paquete de decisión de Hubara (velas), ventas. PAQUETES_DE_DECISION.md.
+# Inmutable: otra pregunta u otro umbral = otra versión. Certificar:
+#   cd hubara_agency && uv run python -m src.sdk.cli decisions check
+id: hubara-ventas
+version: 1
+engine_contract: 1
+oracle: jev-1.13
+capabilities:
+  - baja
+  - cortesia

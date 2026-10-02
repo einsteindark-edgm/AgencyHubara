@@ -302,13 +302,27 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
 
 | Fase | Qué | Cambio de comportamiento |
 |---|---|---|
-| **F1** | Motor de paquetes: esquema, puerto de expresiones (CEL), catálogo de builtins, certificador + CLI + esquema JSON. Primeras capacidades desde YAML con paridad contra la clase: `baja` (A, piso legal) y `cortesia` (B) | ninguno (paridad) |
+| **F1** ✅ | Motor de paquetes: esquema, puerto de expresiones (CEL), catálogo de builtins, certificador + CLI + esquema JSON. Primeras capacidades desde YAML con paridad contra la clase: `baja` (A, piso legal) y `cortesia` (B) | ninguno (paridad) |
 | F2 | Las otras 7 A | ninguno |
 | F3 | Las 9 B con sus builtins (`customer_window`, `closed_choice`, …) | ninguno |
 | F4 | Las 4 C con `per_item_select` | ninguno |
 | F5 | Paquete de dominio: dimensiones, zonas, vocabulario. Quita las 22 reglas de reemplazo de forge | ninguno en Hubara |
 | F6 | Versión de paquete en el Verdict, el laboratorio y el despliegue gradual | — |
 | F7 | `turno-v4` declarativo (opcional) | — |
+
+**F1 hecho (2026-10-01).**
+- Motor genérico en `src/platform/decisions/` (modelos, `ExpressionPort` +
+  `CelExpressions`, certificador DB001–DB012, tablas compiladas), fachada
+  `src.sdk.decisionkit`, CLI `decisions check|schema`, esquemas del editor en
+  `hubara_agency/schemas/` (con prueba de que no se desactualizan).
+- Paquete `hubara-ventas@1` con `baja` y `cortesia`; el ingest las lee del
+  paquete (`decisions/bundled.py`) y el `Verdict` lleva `bundle` en la traza.
+  Paridad exacta con las clases: 27 pruebas (estado y preguntas byte a byte,
+  bordes de umbral, piso, veredicto completo con reglas/sombra/jev).
+- Hook del plugin `hubara-dev`: editar un YAML de `decisions/bundles/` corre
+  el certificador en el momento. Skill: `references/06-decision-bundles.md`.
+- Las clases `Baja` y `Cortesia` quedan solo como oráculo de la paridad; se
+  borran cuando su fase cierre.
 
 **La paridad es la compuerta de cada fase:** para cada capacidad migrada,
 (a) el estado y las preguntas son byte a byte iguales a los de la clase en

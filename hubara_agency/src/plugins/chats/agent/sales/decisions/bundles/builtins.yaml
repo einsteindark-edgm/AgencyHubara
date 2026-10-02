@@ -1,0 +1,47 @@
+# Catálogo de builtins del motor de decisiones de ventas (PAQUETES_DE_DECISION.md §5).
+#
+# Lo que un paquete puede pedir por nombre: reglas (lo que decide sin Jev o
+# con duda), constructores de estado (el texto que lee Jev; null = no se
+# pregunta), pisos (lo que nunca se quita) y comparadores. Cada entrada
+# existe en código (`decisions/bundled.py: BUILTINS`); una prueba verifica que
+# coincidan. El certificador lee SOLO este archivo (no importa el plugin).
+#
+#   kind    rule | state | floor | same
+#   value   bool | string — si está, solo sirve a capacidades de ese tipo
+#   input   tipo de entrada que lee — si está, debe ser el de la capacidad
+#   params  parámetros que se pasan con `with:` (str | int | float | bool)
+engine_contract: 1
+inputs: [Inbound]
+builtins:
+  constant_false:
+    kind: rule
+    value: bool
+    doc: "Siempre false: sin Jev, todo sigue como hoy."
+  opt_out_text:
+    kind: rule
+    value: bool
+    input: Inbound
+    doc: "La frase explícita de baja (messagingkit.is_opt_out_text) sobre el texto que escribió el cliente."
+  customer_message:
+    kind: state
+    input: Inbound
+    params: {header: str}
+    doc: "«<header>» y «[1] <mensaje>». Sin texto del cliente (vacío o escrito por la visión), no se pregunta."
+  customer_message_with_window:
+    kind: state
+    input: Inbound
+    doc: "Lo que el cliente vio antes (CONTEXTO) y «MENSAJE DEL CLIENTE [1] …». Sin texto del cliente, no se pregunta."
+  jev:
+    kind: floor
+    doc: "Sin piso: decide lo que dijo Jev."
+  rule_or_jev:
+    kind: floor
+    value: bool
+    doc: "Piso: lo que dijo la regla nunca se quita; Jev solo agrega."
+  bool_eq:
+    kind: same
+    value: bool
+    doc: "Dos decisiones coinciden si son el mismo bool."
+required_floors:
+  # La baja explícita es un piso legal: achicarlo es decisión del operador.
+  baja: rule_or_jev
