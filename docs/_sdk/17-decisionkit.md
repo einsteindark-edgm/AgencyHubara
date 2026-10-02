@@ -16,10 +16,11 @@ si el paquete no compila, no existe.
 ## Cómo funciona
 
 ```
-bundles/
-  builtins.yaml            catálogo del motor: lo que un paquete puede pedir por nombre
+src/plugins/chats/shared/decisions/bundles/
+  builtins.yaml            catálogo del motor: lo que un paquete puede pedir y el dominio que trae
   ventas/
     bundle.yaml            id, versión, engine_contract, oráculo, capacidades
+    domain.yaml            el dominio de la tienda: nombre, despedida, vocabulario del agente
     capabilities/<c>.yaml  regla, estado, preguntas, umbrales, tabla, piso, ejemplos
 ```
 
@@ -74,7 +75,13 @@ bundles/
        then: doubt
      - otherwise: {expr: "items.filter(i, has(i.p) && i.p >= th['yes']).map(i, i.text)"}
    ```
-9. **Builtins:** lo que sigue siendo código (reglas de texto, constructores
+9. **El dominio de la tienda** (`domain.yaml`): lo que es de UNA tienda y
+   no de la inteligencia. El catálogo lo declara (`domain:` campo → tipo,
+   con secciones); el certificador exige que el paquete lo traiga completo,
+   del tipo y sin campos de más (DB014). Las condiciones lo leen como
+   `dom.campo`; el código, con `load_domain(carpeta, catálogo)` (en ventas:
+   `chats/shared/store_pack.py: store_domain()` / `vocabulary()`).
+10. **Builtins:** lo que sigue siendo código (reglas de texto, constructores
    de estado, opciones, vistas, ítems, pisos legales, comparadores) lo pone
    el plugin, registrado en código y declarado en `builtins.yaml`; una
    prueba exige que coincidan.

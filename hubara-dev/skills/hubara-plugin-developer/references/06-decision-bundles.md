@@ -2,8 +2,9 @@
 
 > Diseño: `PAQUETES_DE_DECISION.md` · ADR: `ADR-2026-10-01-decision-bundles.md`
 > · Kit: `docs/_sdk/17-decisionkit.md` · Código: `src/platform/decisions/`
-> (motor genérico) y `src/plugins/chats/agent/sales/decisions/bundled.py` +
-> `decisions/bundles/` (ventas).
+> (motor genérico), `src/plugins/chats/agent/sales/decisions/bundled.py` (los
+> builtins de ventas) y `src/plugins/chats/shared/decisions/bundles/` (los
+> paquetes: uno por tienda).
 
 ## Cuándo aplica
 
@@ -13,10 +14,11 @@ zona de envío…), o a llevar el motor a otra tienda. Desde F1, las capacidades
 migradas viven en YAML:
 
 ```
-src/plugins/chats/agent/sales/decisions/bundles/
-  builtins.yaml                     catálogo: lo que un paquete puede pedir por nombre
-  ventas/bundle.yaml         id, versión, engine_contract, capacidades
-  ventas/capabilities/*.yaml una capacidad por archivo
+src/plugins/chats/shared/decisions/bundles/
+  builtins.yaml                catálogo: lo que un paquete puede pedir y el dominio que trae
+  ventas/bundle.yaml           id, versión, engine_contract, capacidades
+  ventas/domain.yaml           el dominio de la tienda (nombre, despedida, vocabulario del agente)
+  ventas/capabilities/*.yaml   una capacidad por archivo
 ```
 
 Desde F4 las 29 capacidades salen del paquete (una prueba lo exige:
@@ -101,6 +103,17 @@ fuera del resolutor.
   registra en `LAZY_BUILTINS` (las tools no pueden importar Temporal).
   `test_the_catalog_and_the_code_declare_the_same_builtins` exige que
   catálogo y código coincidan.
+
+## Ejemplos de la tienda en el agente (F5)
+
+Un ejemplo que el LLM lee y que es de ESTA tienda («'lavanda', 'el
+morado'», un producto, una frase de gancho) NO va en el código de una tool
+ni de un prompt: va en `domain.yaml: vocabulary` (declarado en
+`builtins.yaml: domain`) y el código lo lee con
+`chats/shared/store_pack.py: vocabulary()`. `test_store_domain.py` frena un
+ejemplo de la tienda que vuelva al código y exige que, para la tienda
+actual, el texto que ve el LLM sea idéntico a la foto congelada (si lo
+cambias a propósito, regenera la foto en el mismo cambio).
 
 ## Lo que NO se hace
 

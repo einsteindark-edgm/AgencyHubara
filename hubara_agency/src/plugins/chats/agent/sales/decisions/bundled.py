@@ -1,6 +1,6 @@
 """Capacidades desde el paquete de decisión (PAQUETES_DE_DECISION.md, fase F1).
 
-El paquete `bundles/ventas/` (YAML certificado) trae las preguntas,
+El paquete `chats/shared/decisions/bundles/ventas/` (YAML certificado) trae las preguntas,
 los umbrales y la tabla de decisión de cada capacidad; este módulo pone lo
 que sigue siendo código —los builtins: reglas, constructores de estado,
 opciones de la entrada, vistas, pisos y comparadores— y arma con los dos un
@@ -24,15 +24,14 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.context import customer_window
+from src.plugins.chats.shared.store_pack import BUNDLES_DIR, CATALOG_PATH
 from src.sdk.connectorkit import TypedQuestion
 from src.sdk.decisionkit import DOUBT, CompiledCapability, answers_from_result
 
-BUNDLES_DIR = Path(__file__).parent / "bundles"
-CATALOG_PATH = BUNDLES_DIR / "builtins.yaml"
+__all__ = ["BUNDLES_DIR", "CATALOG_PATH", "BUILTINS", "LAZY_BUILTINS", "BundledCapability", "builtin", "builtin_names"]
 
 
 def customer_text(inp: Any) -> str | None:

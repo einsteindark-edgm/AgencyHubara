@@ -8,7 +8,7 @@ estado, pisos) los pone el plugin y los declara en su catálogo.
 """
 from __future__ import annotations
 
-from src.platform.decisions.checker import ENGINE_CONTRACT, check_bundle, load_bundle
+from src.platform.decisions.checker import ENGINE_CONTRACT, check_bundle, load_bundle, load_domain
 from src.platform.decisions.engine import (
     DOUBT,
     BundleError,
@@ -38,4 +38,5 @@ __all__ = [
     "answers_from_result",
     "check_bundle",
     "load_bundle",
+    "load_domain",
 ]

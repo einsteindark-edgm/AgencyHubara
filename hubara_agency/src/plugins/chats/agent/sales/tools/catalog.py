@@ -38,7 +38,12 @@ from src.plugins.chats.agent.sales.decisions.guards import (
     decide_for_session,
 )
 from src.sdk.catalogkit import CategoryResolution
+from src.plugins.chats.shared.store_pack import vocabulary
 from src.sdk.mediakit import derive_image_label, fold_for_match
+
+#: Los ejemplos de la tienda que el LLM ve en estas tools salen del dominio
+#: del paquete activo (`domain.yaml: vocabulary`, PAQUETES_DE_DECISION.md F5).
+_V = vocabulary()
 
 
 class SearchProductsTool(ToolBase):
@@ -50,7 +55,7 @@ class SearchProductsTool(ToolBase):
         "y matchea en title, handle, tags, categorías y description del "
         "producto. Pasa `q=\"\"` (string vacío) para LISTAR TODO el catálogo "
         "(útil cuando el cliente pregunta '¿qué tienen?'). Pasa `q=\"<tema>\"` "
-        "para filtrar (ej: 'lavanda', 'religiosa', 'cera de palma'). Retorna "
+        f"para filtrar (ej: {_V['search_examples']}). Retorna "
         "hasta `limit` productos con precio, handle, imagen y tags."
     )
     parameters: dict[str, Any] = {

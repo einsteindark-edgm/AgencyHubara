@@ -74,6 +74,35 @@ from src.plugins.chats.agent.sales.config.payments import (
     get_nequi_number,
 )
 from src.sdk.mediakit import derive_image_label
+from src.plugins.chats.shared.store_pack import vocabulary
+
+#: Los ejemplos de la tienda que el LLM ve en estas tools salen del dominio
+#: del paquete activo (`domain.yaml: vocabulary`, PAQUETES_DE_DECISION.md F5).
+_V = vocabulary()
+
+
+def no_more_photos_message(title: str) -> str:
+    """Lo que la galería le dice al LLM cuando no quedan fotos del producto."""
+    return f"No tengo más fotos de {title}. Continúa en texto — pregúntale al cliente {_V['variant_question']}."
+
+
+#: Lo que la galería le pide al LLM después de mandar las fotos.
+PHOTOS_SENT_NEXT = (
+    " NO le mandes el link a la web — el cliente ya las está viendo en el chat. Tu próximo "
+    f"mensaje: invítalo a elegir {_V['variant_dimensions']} o cerrar la compra."
+)
+
+
+def picker_sent_summary(variant_type: str, total_options: int) -> str:
+    """Lo que el selector de variantes le dice al LLM cuando ya salió."""
+    return (
+        f"Picker de {variant_type} con {total_options} opciones "
+        "enviado como UN solo mensaje de texto con emojis curados. "
+        "Ese mensaje YA incluye el texto introductorio y la invitación "
+        "a elegir — NO escribas texto adicional en este turno; el "
+        "picker es tu mensaje completo. Espera la respuesta libre del "
+        f"cliente (ej: {_V['variant_reply_examples']})."
+    )
 
 
 def _product_designs(product) -> list[str]:
@@ -198,7 +227,7 @@ class PresentProductDetailTool(ToolBase):
                 "description": (
                     "Texto opcional para añadir al caption después del "
                     "título y precio. Mantén breve (<200 chars). "
-                    "Ej: 'aroma lavanda · 40 horas de duración'."
+                    f"Ej: {_V['caption_example']}."
                 ),
                 "maxLength": 400,
             },
@@ -394,8 +423,7 @@ class PresentProductsTool(ToolBase):
                 "description": (
                     "Texto corto que acompaña la lista — es lo ÚNICO que "
                     "el cliente leerá con el menú (el content fuera de la "
-                    "tool no se envía). Ej: 'Estas son "
-                    "nuestras velas religiosas:'. Máx 1024 chars Meta."
+                    f"tool no se envía). Ej: {_V['list_intro_example']}. Máx 1024 chars Meta."
                 ),
             },
             "group_by": {
@@ -964,7 +992,7 @@ class PresentOrderConfirmationTool(ToolBase):
                 "type": "integer",
                 "minimum": 0,
                 "default": 0,
-                "description": "Impuestos en COP. Velas artesanales suelen ser 0.",
+                "description": _V["tax_note"],
             },
             "shipping_address_summary": {
                 "type": "string",
@@ -1789,8 +1817,7 @@ class PresentProductGalleryTool(ToolBase):
                 "queued": False,
                 "error": "no_additional_images",
                 "message": (
-                    f"No tengo más fotos de {product.title}. Continúa en "
-                    "texto — pregúntale al cliente por aroma/color."
+                    no_more_photos_message(product.title)
                 ),
             }, ensure_ascii=False)
         # Cap defensivo
@@ -1843,9 +1870,7 @@ class PresentProductGalleryTool(ToolBase):
                 f"{len(additional)} foto(s) adicionales de {product.title} "
                 "enviadas en secuencia."
                 + designs_note
-                + " NO le mandes el link a la web — el "
-                "cliente ya las está viendo en el chat. Tu próximo "
-                "mensaje: invítalo a elegir aroma/color o cerrar la compra."
+                + PHOTOS_SENT_NEXT
             ),
         }, ensure_ascii=False)
 
@@ -1867,7 +1892,7 @@ class SendQuickRepliesTool(ToolBase):
     + 2-3 botones para guiar la elección.
 
     Caso de uso #2: decisiones binarias durante la conversación. Ej:
-    "¿continúas con el aroma lavanda o cambias?".
+    "¿continúas con la variante elegida o cambias?".
 
     Los IDs de botones deben ser semánticos (catalog.browse, order.cancel,
     etc.) — el LLM los verá de vuelta como "[el cliente tocó el botón:
@@ -2149,10 +2174,10 @@ class PresentVariantPickerTool(ToolBase):
     name = "present_variant_picker"
     description = (
         "Envía un mensaje de texto bonito al cliente con las opciones de "
-        "variante (aromas / colores / tamaños), con un emoji distintivo "
+        f"variante ({_V['variant_kinds']}), con un emoji distintivo "
         "por opción agrupadas por categoría. El cliente lee y **responde "
-        "por texto** la que prefiere (ej: 'lavanda', 'el morado'). Úsala "
-        "cuando vayas a presentar 4 o más opciones de aroma/color de un "
+        f"por texto** la que prefiere (ej: {_V['variant_reply_examples']}). Úsala "
+        f"cuando vayas a presentar 4 o más opciones de {_V['variant_dimensions']} de un "
         "producto. El emoji por opción se asigna automáticamente desde el "
         "registry Hubara — **tú NO pasas emojis, solo el nombre literal "
         "del envelope**. Si el cliente ya eligió la variante, NO uses esta "
@@ -2182,8 +2207,8 @@ class PresentVariantPickerTool(ToolBase):
                             "minLength": 1,
                             "maxLength": 60,
                             "description": (
-                                "Nombre LITERAL del envelope (ej 'Lavanda', "
-                                "'Verde menta', 'rosado'). Closed-list — "
+                                f"Nombre LITERAL del envelope (ej {_V['variant_label_literal_examples']}). "
+                                "Closed-list — "
                                 "no inventes."
                             ),
                         },
@@ -2196,8 +2221,7 @@ class PresentVariantPickerTool(ToolBase):
                 "minLength": 1,
                 "maxLength": 1024,
                 "description": (
-                    "Texto breve que acompaña el picker. Ej: 'Tenemos "
-                    "estos aromas:' o 'Estos son los colores disponibles:'. "
+                    f"Texto breve que acompaña el picker. Ej: {_V['picker_intro_examples']}. "
                     "Sin listar las opciones en el texto — el cliente las "
                     "ve en la lista tappable."
                 ),
@@ -2361,14 +2385,7 @@ class PresentVariantPickerTool(ToolBase):
             "variant_type": variant_type,
             "count": total_options,
             "pages": 1,
-            "summary": (
-                f"Picker de {variant_type} con {total_options} opciones "
-                "enviado como UN solo mensaje de texto con emojis curados. "
-                "Ese mensaje YA incluye el texto introductorio y la invitación "
-                "a elegir — NO escribas texto adicional en este turno; el "
-                "picker es tu mensaje completo. Espera la respuesta libre del "
-                "cliente (ej: 'lavanda', 'el morado')."
-            ),
+            "summary": picker_sent_summary(variant_type, total_options),
         }
         if removed_invalid:
             envelope["removed_invalid_options"] = removed_invalid

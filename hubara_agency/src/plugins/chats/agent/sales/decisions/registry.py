@@ -8,10 +8,11 @@ de enviar, remarketing, abandono— nombran SOLO la decisión:
     verdict = await decide(capability("baja"), inbound, …)
 
 El resolutor la toma del **paquete activo** si la trae; si no, de su clase
-de Python (mientras dure la migración, F2–F4). El paquete activo es
-configuración de la tienda, no código: `SALES_DECISIONS_BUNDLE` (nace en
-Terraform, `tenants.<t>.lab.decisions_bundle`), default `ventas`.
-Cambiar de tienda o de versión de la inteligencia es este único punto.
+de Python (desde F4 el paquete por defecto las trae todas). El paquete
+activo es configuración de la tienda, no código (`chats/shared/store_pack.py`:
+`SALES_DECISIONS_BUNDLE`, nace en Terraform, `tenants.<t>.lab.decisions_bundle`,
+default `ventas`). Cambiar de tienda o de versión de la inteligencia es ese
+único punto.
 
 Un paquete configurado que no existe (o que no compila) falla fuerte con
 `BundleError`: nunca se corre la inteligencia de otra tienda por un error
@@ -23,25 +24,18 @@ Sin Temporal: lo usan el ingest, las tools (vía `guards`) y las activities.
 from __future__ import annotations
 
 import importlib
-import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.bundled import BundledCapability
+from src.plugins.chats.shared import store_pack
+from src.plugins.chats.shared.store_pack import BUNDLE_ENV, BUNDLES_DIR, DEFAULT_BUNDLE, active_bundle_id
 from src.sdk.decisionkit import BundleError, CompiledBundle, Diagnostic, load_bundle
 
-BUNDLES_DIR = Path(__file__).parent / "bundles"
-#: El paquete por defecto (la tienda actual). Una tienda nueva trae el suyo y lo nombra en Terraform.
-DEFAULT_BUNDLE = "ventas"
-BUNDLE_ENV = "SALES_DECISIONS_BUNDLE"
+__all__ = ["BUNDLES_DIR", "BUNDLE_ENV", "DEFAULT_BUNDLE", "active_bundle", "active_bundle_id", "capability", "reset"]
 
 _resolved: dict[tuple[str, str, str], Any] = {}
-
-
-def active_bundle_id() -> str:
-    """El paquete de la tienda (config), o el por defecto."""
-    return (os.getenv(BUNDLE_ENV) or "").strip() or DEFAULT_BUNDLE
 
 
 _CAPS = "src.plugins.chats.agent.sales.decisions.capabilities"
@@ -138,3 +132,4 @@ def reset() -> None:
     """Olvida lo resuelto (pruebas, o tras cambiar la config del proceso)."""
     _resolved.clear()
     _bundle.cache_clear()
+    store_pack.reset()

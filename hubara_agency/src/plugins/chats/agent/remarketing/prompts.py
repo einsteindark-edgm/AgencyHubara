@@ -14,6 +14,8 @@ mas claro de descubrir y testear.
 """
 from __future__ import annotations
 
+from src.plugins.chats.shared.store_pack import vocabulary
+
 
 def _humanize_silence(minutes: int | None) -> str:
     """Silencio real → texto para el LLM (uso interno, nunca para el cliente)."""
@@ -181,6 +183,8 @@ def build_remarketing_trigger(
         else "en ningún lado: no tienes el catálogo, así que no afirmes ningún "
         "atributo de producto y ofrece ayuda para elegir"
     )
+    # Los ejemplos de la tienda (domain.yaml del paquete activo, F5).
+    store = vocabulary()
     return (
         "[SISTEMA INTERNO — NO REPRODUCIR ESTE TEXTO AL CLIENTE]: "
         f"{situacion}\n\n"
@@ -207,8 +211,7 @@ def build_remarketing_trigger(
         "envío lo cobra la transportadora a su tarifa). Retoma con un "
         "saludo casual.\n\n"
         "4. **Anclaje al motivo**: menciona sutilmente el producto o "
-        "tema concreto del motivo (ej. 'el Velón de Cristo', 'los "
-        "aromas que viste') para que el cliente reconozca el contexto. "
+        f"tema concreto del motivo (ej. {store['hook_topic_examples']}) para que el cliente reconozca el contexto. "
         "NO leas el motivo textualmente — re-frásalo natural.\n\n"
         "5. **Brevedad**: 1-2 frases máximo. WhatsApp es chat — el "
         "mensaje debe leerse en 3 segundos.\n\n"
@@ -235,10 +238,7 @@ def build_remarketing_trigger(
         "valoraciones ('los más pedidos', 'de los más lindos', 'el favorito'): "
         "no tienes datos de ventas.\n\n"
         "**EJEMPLOS de buen gancho** (referencia, no copies literal):\n"
-        "- '¡Hola de nuevo! 🌿 Quedó pendiente lo del Velón de Cristo "
-        "y los aromas — ¿lograste decidirte? 🤍'\n"
-        "- 'Te escribo para retomar lo de la *Cruz de Vida* ✨ ¿Te "
-        "ayudo a cerrar el pedido?'"
+        + "\n".join(f"- '{example}'" for example in store["hook_examples"])
     )
 
 

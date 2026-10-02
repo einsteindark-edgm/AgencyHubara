@@ -25,13 +25,13 @@ from src.plugins.chats.agent.sales.decisions.capabilities.datos import (
 from src.plugins.chats.agent.sales.decisions.capabilities.texto import _PERSONA_FLOOR
 from src.plugins.chats.agent.sales.decisions.egress import (
     _MAX_PREAMBLE_SENTENCES,
-    ORDER_REGISTERED_FALLBACK_FAREWELL,
     _leading_sentences,
     _paragraphs,
     _preamble_of,
     _sentences,
 )
 from src.plugins.chats.shared.product_truth import unavailable_terms
+from src.plugins.chats.shared.store_pack import store_domain
 from src.sdk.textkit import (
     breaks_human_persona,
     looks_like_admin_leak,
@@ -79,9 +79,10 @@ def _portavelas_applies(inp: Any) -> bool:
 
 
 def portavelas_notice(inp: Any) -> str:
-    """En un pedido sin portavelas, la regla de hoy borra lo que lo nombra."""
+    """En un pedido sin portavelas, la regla de hoy borra lo que lo nombra; si
+    no queda nada, la despedida aprobada de la tienda (`domain.yaml`)."""
     if _portavelas_applies(inp) and "portavela" in inp.text.lower():
-        return strip_portavelas_notice(inp.text) or ORDER_REGISTERED_FALLBACK_FAREWELL
+        return strip_portavelas_notice(inp.text) or store_domain()["farewell_order_registered"]
     return inp.text
 
 

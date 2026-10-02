@@ -74,7 +74,7 @@ variable "tenants" {
       capabilities_ceiling    = optional(string, "off")    # techo de las capacidades del motor de decisiones: off | shadow | canary | on
       workflow_v2_ceiling     = optional(string, "off")    # techo del workflow de ventas V2: off | canary | on
       order_sentinel_reader   = optional(string, "off")    # lector de Jev del Order Sentinel: off | shadow | on
-      decisions_bundle        = optional(string, "ventas") # paquete de decisión de la tienda (sales/decisions/bundles/<id>, PAQUETES_DE_DECISION.md)
+      decisions_bundle        = optional(string, "ventas") # paquete de decisión de la tienda (chats/shared/decisions/bundles/<id>, PAQUETES_DE_DECISION.md)
     }), {})
   }))
 
@@ -112,7 +112,7 @@ variable "tenants" {
 
   validation {
     condition     = alltrue([for t in values(var.tenants) : can(regex("^[a-z][a-z0-9-]*$", t.lab.decisions_bundle))])
-    error_message = "tenants.*.lab.decisions_bundle: id de paquete de decisión (la carpeta en sales/decisions/bundles/), p.ej. ventas."
+    error_message = "tenants.*.lab.decisions_bundle: id de paquete de decisión (la carpeta en chats/shared/decisions/bundles/), p.ej. ventas."
   }
 
   validation {

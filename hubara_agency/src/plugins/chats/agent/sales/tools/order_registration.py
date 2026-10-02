@@ -116,6 +116,11 @@ from src.sdk.catalogkit import (
     ProductNotFoundError,
     product_includes_portavelas,
 )
+from src.plugins.chats.shared.store_pack import vocabulary
+
+#: Los ejemplos de la tienda que el LLM ve en estas tools salen del dominio
+#: del paquete activo (`domain.yaml: vocabulary`, PAQUETES_DE_DECISION.md F5).
+_V = vocabulary()
 
 
 def _order_reference(raw_payload: dict[str, Any] | None) -> str | None:
@@ -284,7 +289,7 @@ class RegisterOrderTool(ToolBase):
                 "description": (
                     "Items del pedido. Cada item: handle (snapshot), "
                     "quantity, unit_price_cop, opcionalmente "
-                    "variant_label (ej. 'Lavanda', 'Azul')."
+                    f"variant_label (ej. {_V['variant_label_examples']})."
                 ),
                 "items": {
                     "type": "object",

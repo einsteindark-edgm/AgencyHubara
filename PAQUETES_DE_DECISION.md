@@ -130,10 +130,11 @@ cruzadas y semántica). Todo en el mismo proceso de Python.
 ## 5. Forma del paquete
 
 ```
-decisions/bundles/
-  builtins.yaml                      # catálogo del motor: lo que un paquete puede pedir por nombre
-  ventas/
-    bundle.yaml                      # id, versión, engine_contract, oráculo, dominio
+src/plugins/chats/shared/decisions/bundles/   # de chats: lo leen ventas y remarketing (F5)
+  builtins.yaml                      # catálogo del motor: lo que un paquete puede pedir y el dominio que trae
+  ventas/                            # una carpeta por tienda (Terraform la nombra)
+    bundle.yaml                      # id, versión, engine_contract, oráculo, capacidades
+    domain.yaml                      # el dominio de la tienda (F5): nombre, despedida, vocabulario del agente
     capabilities/
       baja.yaml
       cortesia.yaml
@@ -311,6 +312,22 @@ Para zapatos cambiaría: dimensiones `[talla, color, material]`, asunto
 `aroma` → `talla`, `medidas` → horma/tabla de tallas, un asunto nuevo de
 cambios de talla, `material` como atributo de producto, y las zonas del país.
 
+**Dónde quedó cada cosa (F5, 2026-10-01):**
+
+- **Ya es dato de la tienda:** las preguntas y criterios de las 29
+  capacidades (zonas de envío, «elige un producto, color, aroma, diseño»,
+  «un material», las dimensiones del selector) viven en sus YAML (F2–F4); el
+  nombre de la tienda, la despedida aprobada y los 16 ejemplos que el agente
+  ve en sus herramientas y en el gancho de remarketing viven en
+  `domain.yaml` (F5). Una tienda nueva escribe su carpeta; forge le entrega
+  un dominio neutral (`forge/templates/sales_domain.yaml.tpl`) en vez de
+  reemplazar texto en el código.
+- **Sigue en código (pendiente):** los campos del pedido `aroma`/`color`/
+  `diseno` (el modelo de datos de `set_order_slot`, el borrador y el
+  registro), las reglas de hoy con vocabulario de Colombia (la cédula y el
+  barrio de `datos`, `shipping_zone`), las frases del piso de persona (en
+  español) y la ráfaga ① (F7).
+
 ## 9. Versionado y despliegue
 
 - Un paquete es inmutable: `ventas@3` no cambia; otro texto u otro
@@ -331,7 +348,7 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
 | F2 ✅ | **Resolutor único por nombre** (`capability("baja")`: los lugares dejan de nombrar clases), **paquete activo desde Terraform** (`tenants.<t>.lab.decisions_bundle` → `SALES_DECISIONS_BUNDLE`), tipos de valor del paquete (más allá de bool/string) y las 8 A restantes | ninguno |
 | F3 ✅ | Las 9 B con sus builtins de estado, opciones de la entrada, vistas y preguntas condicionales + las del egreso de una pregunta (destinatario, su variante de plantilla y saludo) | ninguno |
 | F4 ✅ | Las 4 C + las del egreso parte por parte (preámbulo, destinatario por oración, rescate, portavelas), con `items:` + `each:` (el `per_item_select` del diseño) | ninguno |
-| F5 | Paquete de dominio: dimensiones, zonas, vocabulario. Quita las 22 reglas de reemplazo de forge | ninguno en Hubara |
+| F5 ✅ | Dominio de la tienda en el paquete (`domain.yaml`, certificado; `dom.x` en CEL): nombre, despedida y el vocabulario del agente. Los paquetes pasan a `chats/shared/decisions/bundles/` (los leen los dos agentes). Quita las 21 reglas de reemplazo de forge | ninguno en Hubara |
 | F6 | Versión de paquete en el laboratorio (un brazo puede fijar paquete) y en el despliegue gradual | — |
 | F7 | El turno dentro del paquete: la ráfaga ① (`rafaga-v5` → `turn.yaml`) y la verificación ③ (`coverage_decision`), con las tablas de la política como filas certificadas | ninguno |
 | F8 | Paquete propio del Order Sentinel («¿qué cambió?» y la evidencia) sobre el mismo motor genérico | ninguno |
@@ -407,6 +424,26 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   rescate y portavelas. **Paquete: 29 capacidades; ninguna sale ya de una
   clase** (una prueba lo exige). Las clases quedan solo como oráculo de la
   paridad.
+
+**F5 hecho (2026-10-01).**
+- Motor: el catálogo declara el dominio que trae cada paquete (`domain:`
+  campo → tipo, con secciones); el certificador exige el `domain.yaml` del
+  paquete completo, del tipo y sin campos de más (DB014); las condiciones
+  lo leen como `dom.campo`; `load_domain` lo lee sin compilar capacidades.
+- Los paquetes viven en `chats/shared/decisions/bundles/` y
+  `chats/shared/store_pack.py` dice cuál es el activo (`SALES_DECISIONS_BUNDLE`)
+  y lee su dominio: lo usan las tools de ventas al importarse y el gancho
+  de remarketing (que no puede importar ventas).
+- Los ejemplos de la tienda («'lavanda', 'el morado'», «el Velón de
+  Cristo», «nuestras velas religiosas»…) salen de `domain.yaml: vocabulary`.
+  Lo que ve el LLM no cambió ni un carácter: una foto congelada de las 16
+  tools, 3 ganchos y 3 resultados de tool lo exige
+  (`tests/plugins/chats/test_store_domain.py`), y otra prueba frena un
+  ejemplo de la tienda que vuelva al código.
+- Portavelas lee la despedida de `dom.farewell_order_registered` (sale del
+  catálogo la constante con la marca).
+- Forge: las 21 reglas `ej-*` se borraron; el clon recibe un dominio
+  neutral desde una plantilla.
 
 **La paridad es la compuerta de cada fase:** para cada capacidad migrada,
 (a) el estado y las preguntas son byte a byte iguales a los de la clase en

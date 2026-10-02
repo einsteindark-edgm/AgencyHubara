@@ -252,6 +252,10 @@ class Catalog(_Strict):
     constants: dict[str, ConstantSpec] = Field(default_factory=dict)
     #: capacidad → piso que el paquete NO puede cambiar (p. ej. la baja legal).
     required_floors: dict[str, str] = Field(default_factory=dict)
+    #: El dominio de la tienda que trae cada paquete (`domain.yaml`): campo →
+    #: tipo, o una sección (campo → tipo). Lo leen las condiciones (`dom.x`)
+    #: y el código del agente (el vocabulario de sus herramientas).
+    domain: dict[str, str | dict[str, str]] = Field(default_factory=dict)
 
     @field_validator("inputs", mode="before")
     @classmethod
@@ -272,4 +276,11 @@ class Catalog(_Strict):
         for name, constant in self.constants.items():
             if not conforms(constant.value, parse_type(constant.type)):
                 raise ValueError(f"constants.{name}: {constant.value!r} no es {constant.type}")
+        for name, declared in self.domain.items():
+            for field_name, text in (declared.items() if isinstance(declared, dict) else [(None, declared)]):
+                try:
+                    parse_type(text)
+                except TypeSyntaxError as exc:
+                    where = f"domain.{name}" + (f".{field_name}" if field_name else "")
+                    raise ValueError(f"{where}: {exc}") from None
         return self

@@ -25,10 +25,11 @@
 #     estado del pedido, actúa el LLM y los desacuerdos van a la cola que califica
 #     Claude Code; on = actúa el veredicto de Jev cuando lo hay (si duda, el LLM).
 #     Es el interruptor mismo (lote diario, sin panel): se cambia solo acá.
-#   SALES_DECISIONS_BUNDLE         paquete de decisión de la tienda: la carpeta en
-#     sales/decisions/bundles/ (PAQUETES_DE_DECISION.md §10.1). Las capacidades
-#     migradas salen de ahí (preguntas, umbrales, tablas); un paquete que no
-#     existe falla fuerte (nunca corre la inteligencia de otra tienda).
+#   SALES_DECISIONS_BUNDLE         paquete de la tienda: la carpeta en
+#     chats/shared/decisions/bundles/ (PAQUETES_DE_DECISION.md §10.1 y F5). De ahí
+#     salen las capacidades (preguntas, umbrales, tablas) y el dominio de la
+#     tienda (los ejemplos que el agente ve en sus herramientas); un paquete
+#     que no existe falla fuerte (nunca corre la inteligencia de otra tienda).
 #   LAB_MAX_USD_PER_RUN / _MONTH   topes de gasto del botón "Nueva corrida" (§3.7).
 #   LAB_INTERNAL_NUMBERS           teléfonos del equipo (E.164, separados por coma):
 #     sus conversaciones no entran al banco (motivo `numero_interno`). Lo leen la

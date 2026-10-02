@@ -21,6 +21,8 @@ código y la ruta exacta (`capabilities/baja.yaml: decide[0].when`).
   DB011 p sobre una pregunta choice, o choice/conf sobre una noul
   DB012 piso obligatorio cambiado (p. ej. la baja legal)
   DB013 el id del paquete no es el nombre de su carpeta (o el paquete no existe)
+  DB014 el dominio de la tienda (`domain.yaml`) no es el que declara el catálogo:
+        falta el archivo o un campo, sobra un campo, o un valor es de otro tipo
 """
 from __future__ import annotations
 
@@ -51,7 +53,7 @@ from src.platform.decisions.types import ValueType, conforms, convert, parse_typ
 ENGINE_CONTRACT = 1
 
 _SLOTS = ("rule", "state", "floor", "same")
-_READABLE = "p|choice|conf|th|inp|vars|consts|opt"
+_READABLE = "p|choice|conf|th|inp|vars|consts|opt|dom"
 #: Lo único que lee la condición de una pregunta (todavía no hay respuestas).
 _CONDITION_READS = ("inp", "consts")
 _INDEX = re.compile(rf"(?<![\w.])({_READABLE})\s*\[")
@@ -225,6 +227,7 @@ class _CapabilityCheck:
             "th": "map<string,double>", "rule": self.type.cel_var,
             "inp": "map<string,dyn>", "vars": "map<string,dyn>", "consts": "map<string,dyn>",
             "opt": "map<string,map<string,dyn>>",
+            "dom": "map<string,dyn>",
             **({"items": "list<map<string,dyn>>"} if self.spec.items is not None else {}),
         }
 
@@ -435,6 +438,10 @@ class _CapabilityCheck:
             if key not in self.catalog.constants:
                 return "DB005", f"constante no declarada {key!r} (hay: {', '.join(self.catalog.constants) or 'ninguna'})"
             return None
+        if var == "dom":
+            if key not in self.catalog.domain:
+                return "DB005", f"campo del dominio no declarado {key!r} (hay: {', '.join(self.catalog.domain) or 'ninguno'})"
+            return None
         if var == "opt":
             with_options = [q.id for q in self.spec.questions if q.options is not None]
             if key not in with_options:
@@ -515,6 +522,48 @@ def _param_ok(value: Any, kind: str) -> bool:
     return checks[kind](value)
 
 
+def _check_domain(bundle_dir: Path, catalog: Catalog, out: list[Diagnostic]) -> dict[str, Any]:
+    """El `domain.yaml` del paquete contra lo que declara el catálogo (DB014)."""
+    if not catalog.domain:
+        return {}
+    path = bundle_dir / "domain.yaml"
+    if not path.is_file():
+        out.append(Diagnostic("DB014", "domain.yaml", f"falta el dominio de la tienda (campos: {', '.join(catalog.domain)})"))
+        return {}
+    data, error = _read_yaml(path)
+    if error is not None or not isinstance(data, dict):
+        out.append(Diagnostic("DB014", "domain.yaml", f"ilegible: {error or 'no es un mapa'}"))
+        return {}
+
+    def check(declared: dict[str, Any], values: Any, prefix: str) -> None:
+        if not isinstance(values, dict):
+            out.append(Diagnostic("DB014", f"domain.yaml: {prefix.rstrip('.')}", "es una sección (un mapa)"))
+            return
+        for name in sorted(set(values) - set(declared)):
+            out.append(Diagnostic("DB014", f"domain.yaml: {prefix}{name}", "campo que el catálogo no declara"))
+        for name, kind in declared.items():
+            if name not in values:
+                out.append(Diagnostic("DB014", f"domain.yaml: {prefix}{name}", "falta"))
+            elif isinstance(kind, dict):
+                check(kind, values[name], f"{prefix}{name}.")
+            elif not conforms(values[name], parse_type(kind)):
+                out.append(Diagnostic("DB014", f"domain.yaml: {prefix}{name}", f"{values[name]!r} no es {kind}"))
+
+    check(dict(catalog.domain), data, "")
+    return data
+
+
+def load_domain(bundle_dir: Path, catalog_path: Path) -> dict[str, Any]:
+    """El dominio de la tienda del paquete, certificado contra el catálogo
+    (sin compilar las capacidades: lo leen el agente y sus herramientas)."""
+    out: list[Diagnostic] = []
+    catalog = _parse(Catalog, Path(catalog_path), Path(catalog_path).name, out)
+    domain = _check_domain(Path(bundle_dir), catalog, out) if catalog is not None else {}
+    if out:
+        raise BundleError(out)
+    return domain
+
+
 def _build(bundle_dir: Path, catalog_path: Path, expressions: ExpressionPort | None) -> tuple[CompiledBundle | None, list[Diagnostic]]:
     expressions = expressions or CelExpressions()
     bundle_dir, catalog_path = Path(bundle_dir), Path(catalog_path)
@@ -530,6 +579,7 @@ def _build(bundle_dir: Path, catalog_path: Path, expressions: ExpressionPort | N
             out.append(Diagnostic("DB002", f"{label}: engine_contract", f"este motor corre el contrato {ENGINE_CONTRACT}, no {contract}"))
     if out:
         return None, out
+    domain = _check_domain(bundle_dir, catalog, out)
     files = {p.stem: p for p in sorted((bundle_dir / "capabilities").glob("*.yaml"))}
     for name in bundle.capabilities:
         if name not in files:
@@ -563,7 +613,7 @@ def _build(bundle_dir: Path, catalog_path: Path, expressions: ExpressionPort | N
                 spec, rows, bundle=f"{bundle.id}@{bundle.version}", value_type=check.type, vars=variables,
                 constants={name: c.value for name, c in catalog.constants.items()},
                 input_fields=tuple(check.fields), conditions=conditions,
-                each_when=each[0], each_texts=each[1],
+                each_when=each[0], each_texts=each[1], domain=domain,
             )
             check.examples(capability)
             if not check.out:
@@ -571,7 +621,7 @@ def _build(bundle_dir: Path, catalog_path: Path, expressions: ExpressionPort | N
         out += check.out
     if out:
         return None, out
-    return CompiledBundle(bundle.id, bundle.version, bundle.oracle, compiled), []
+    return CompiledBundle(bundle.id, bundle.version, bundle.oracle, compiled, domain), []
 
 
 def check_bundle(bundle_dir: Path, catalog_path: Path, *, expressions: ExpressionPort | None = None) -> list[Diagnostic]:
@@ -587,4 +637,4 @@ def load_bundle(bundle_dir: Path, catalog_path: Path, *, expressions: Expression
     return bundle
 
 
-__all__ = ["ENGINE_CONTRACT", "check_bundle", "load_bundle"]
+__all__ = ["ENGINE_CONTRACT", "check_bundle", "load_bundle", "load_domain"]

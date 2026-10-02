@@ -1,0 +1,424 @@
+# Catálogo de builtins del motor de decisiones de ventas (PAQUETES_DE_DECISION.md §5).
+#
+# Lo que un paquete puede pedir por nombre y leer: reglas (lo que decide sin
+# Jev o con duda), constructores de estado (el texto que lee Jev; null = no
+# se pregunta), opciones de la entrada (las de un choice que no se saben al
+# escribir el paquete: `{opción: (etiqueta, valor)}`), vistas (campos que se
+# derivan de la entrada), ítems (la lista sobre la que se decide ítem por
+# ítem: oraciones, párrafos, términos, datos), pisos (lo que nunca se quita),
+# comparadores, las entradas que una condición lee como `inp.campo` y las
+# constantes (`consts.NOMBRE`). Un constructor de estado de una capacidad con
+# ítems los recibe (`items=`). Cada builtin existe en código (`decisions/bundled.py:
+# BUILTINS` y `LAZY_BUILTINS`) y cada constante vale lo mismo que en el
+# código: una prueba lo verifica. El certificador lee SOLO este archivo (no
+# importa el plugin).
+#
+#   kind    rule | state | options | view | items | floor | same
+#   value   tipo del valor (si está, solo sirve a capacidades de ese tipo)
+#   input   tipo de entrada que lee (si está, debe ser el de la capacidad)
+#   params  parámetros que se pasan con `with:` (str | int | float | bool)
+#   fields  campos que deriva una vista, o los de cada ítem (nombre → tipo)
+engine_contract: 1
+
+inputs:
+  Inbound: {text: "string?", now_ms: int, synthetic: bool}
+  Contacto: {transcript: string, touch_number: "int?", silence_minutes: "int?"}
+  Abandono: {transcript: string, purchase_confirmed: bool, order_registered: bool}
+  RespuestaDeCantidad: {last_agent_text: "string?", text: "string?", open_slot: bool}
+  CiudadDeEnvio: {ciudad: "string?"}
+  Botones: {body: string, titles: "tuple<string>", rule_rejected: "tuple<string>", by_id: "tuple<string>"}
+  Afirmacion: {text: string, tools_used: "tuple<string>"}
+  TextoAlCliente: {text: string}
+  CuponEnJuego: {text: "string?"}
+  CategoriaPedida: {query: string}
+  ColorPedido: {color: string, producto: string}
+  DatoDelItem: {actual: int}
+  ProductosDeLaCharla: {text: string, titles: "tuple<string>", named: "tuple<string>"}
+  TextoCatalogo: {text: string, aromas: "tuple<string>", colors: "tuple<string>"}
+  TextCheck: {text: string, extended: bool}
+  GreetingCheck: {first_contact: bool, tools_used: "tuple<string>", client_texts: "tuple<string>"}
+  Frases: {parts: "tuple<string>"}
+  OracionesPrecio: {sentences: "tuple<string>"}
+  DatosDelPedido: {}
+  PedidoDelCliente: {text: string}
+  PreambuloCheck: {text: string}
+  OracionesCheck: {parts: "tuple<string>"}
+  PortavelasCheck: {text: string, order_registered: bool, portavelas_included: "bool?"}
+
+constants:
+  # messagingkit: la pausa abierta de «yo les escribo cuando…».
+  DEFERRAL_KIND_OPEN: {type: string, value: abierto}
+  OPEN_DEFERRAL_MS: {type: int, value: 604800000}
+  # variant_enumeration: cuántas etiquetas hacen una lista para el selector.
+  MIN_ENUMERATED: {type: int, value: 4}
+
+# El dominio de la tienda que trae cada paquete (`<paquete>/domain.yaml`): lo
+# que es de UNA tienda y no de la inteligencia. Las condiciones lo leen como
+# `dom.campo`; el agente, con `chats/shared/store_pack.py` (los ejemplos de
+# sus herramientas y del gancho de remarketing). Un campo nuevo aquí exige
+# el valor en el dominio de cada paquete (DB014).
+domain:
+  store_name: string
+  # La despedida si todo el texto hablaba del portavelas (el cliente que acaba
+  # de dar sus datos nunca recibe silencio). La MISMA del workflow V1.
+  farewell_order_registered: string
+  vocabulary:
+    search_examples: string                   # search_products: «para filtrar (ej: …)»
+    product_example: string                   # set_order_slot.producto
+    scent_example: string                     # set_order_slot.aroma
+    notes_examples: string                    # set_order_slot.notas
+    variant_label_examples: string            # register_order.items[].variant_label
+    caption_example: string                   # present_product_detail.caption_suffix
+    list_intro_example: string                # present_products.body
+    tax_note: string                          # present_order_confirmation.tax
+    variant_question: string                  # sin más fotos: «pregúntale al cliente …»
+    variant_dimensions: string                # «invítalo a elegir …», «4 o más opciones de …»
+    variant_kinds: string                     # present_variant_picker: «variante (…)»
+    variant_reply_examples: string            # lo que responde el cliente al selector
+    variant_label_literal_examples: string    # present_variant_picker.options[].label
+    picker_intro_examples: string             # present_variant_picker.intro_text
+    hook_topic_examples: string               # gancho de remarketing: el anclaje al motivo
+    hook_examples: "list<string>"             # gancho de remarketing: ejemplos de buen gancho
+
+builtins:
+  # ── reglas ──
+  constant_false:
+    kind: rule
+    value: bool
+    doc: "Siempre false: sin Jev, todo sigue como hoy."
+  constant_empty:
+    kind: rule
+    value: string
+    doc: "Siempre \"\": decide el LLM (cierre por abandono)."
+  opt_out_text:
+    kind: rule
+    value: bool
+    input: Inbound
+    doc: "La frase explícita de baja (messagingkit.is_opt_out_text) sobre el texto que escribió el cliente."
+  reengagement:
+    kind: rule
+    input: Inbound
+    doc: "El aplazamiento con fecha y la cortesía de hoy (messagingkit.parse_reengagement_deferral / is_courtesy_text)."
+  reply_quantity:
+    kind: rule
+    input: RespuestaDeCantidad
+    doc: "La cantidad que la regla lee en la respuesta (`read_reply_quantity`)."
+  shipping_zone:
+    kind: rule
+    input: CiudadDeEnvio
+    doc: "«bogota» si la ciudad lo dice; si no, no se sabe (`shipping_zone`)."
+  rule_rejected_titles:
+    kind: rule
+    input: Botones
+    doc: "Los botones que ya rechazó el vocabulario del catálogo."
+  promises_a_handoff:
+    kind: rule
+    value: bool
+    input: TextoAlCliente
+    doc: "Las frases del relevo (un colega te contacta, coordina contigo…)."
+  purchase_signal:
+    kind: rule
+    value: "list<string?>"
+    input: Inbound
+    doc: "[tipo, fuente] de classify_inbound_purchase_signal: carrito y botón «Confirmar» son estructurales; el texto lo lee la regla de hoy."
+  closing_ack:
+    kind: rule
+    value: bool
+    input: Inbound
+    doc: "El acuse de hoy (is_closing_ack) sobre el texto tal como llega."
+  coupon_in_play:
+    kind: rule
+    value: bool
+    input: CuponEnJuego
+    doc: "coupon_in_play: ante la duda dice que sí (cuesta una relectura del cupo, nunca una venta)."
+  category_of_query:
+    kind: rule
+    input: CategoriaPedida
+    doc: "{categoria: slug | null} de resolve_category (exacto → contenido → parecido ≥ 0,80)."
+  color_family:
+    kind: rule
+    input: ColorPedido
+    doc: "La resolución de la tabla de familias del tenant (resolve_color_family)."
+  order_item_for_values:
+    kind: rule
+    input: DatoDelItem
+    doc: "{item, producto}: el ítem en curso, salvo que su producto rechace los datos y otro los acepte."
+  named_titles:
+    kind: rule
+    value: "tuple<string>"
+    input: ProductosDeLaCharla
+    doc: "Los títulos que la charla nombra tal cual."
+  enumerated_variants:
+    kind: rule
+    input: TextoCatalogo
+    doc: "(dimensión, etiquetas) de find_enumerated_variants, o ()."
+  admin_leak:
+    kind: rule
+    value: bool
+    input: TextCheck
+    doc: "Huele a parte interno (looks_like_admin_leak con el set que pide la entrada)."
+  first_contact_greeting:
+    kind: rule
+    value: bool
+    input: GreetingCheck
+    doc: "should_send_first_contact_greeting con las entradas del V1."
+  no_items:
+    kind: rule
+    doc: "Siempre (): hoy nada se marca (monto, datos)."
+  breaks_persona:
+    kind: rule
+    value: "tuple<int>"
+    input: Frases
+    doc: "Las oraciones que hoy rompen la persona (breaks_human_persona)."
+  unavailable_terms_rule:
+    kind: rule
+    value: "list<string>"
+    input: PedidoDelCliente
+    doc: "Los términos que el cliente pide y no están en el catálogo (unavailable_terms)."
+  model_preamble:
+    kind: rule
+    value: string
+    input: PreambuloCheck
+    doc: "La muletilla del meta-prefijo de hoy (strip_model_preamble)."
+  admin_leak_per_part:
+    kind: rule
+    value: "tuple<int>"
+    input: OracionesCheck
+    doc: "Las oraciones que huelen a parte interno (looks_like_admin_leak básico, por oración)."
+  salvage:
+    kind: rule
+    value: string
+    input: TextCheck
+    doc: "Lo que queda para el cliente (salvage_customer_text con el set extendido)."
+  portavelas_notice:
+    kind: rule
+    value: string
+    input: PortavelasCheck
+    doc: "En un pedido sin portavelas, borra lo que lo nombra (strip_portavelas_notice) o la despedida aprobada."
+  # ── estado ──
+  customer_message:
+    kind: state
+    input: Inbound
+    params: {header: str}
+    doc: "«<header>» y «[1] <mensaje>». Sin texto del cliente (vacío o escrito por la visión), no se pregunta."
+  customer_message_with_window:
+    kind: state
+    input: Inbound
+    doc: "Lo que el cliente vio antes (CONTEXTO) y «MENSAJE DEL CLIENTE [1] …». Sin texto del cliente, no se pregunta."
+  text_template:
+    kind: state
+    params: {template: str, required: str}
+    doc: "`template` con {<required>} = ese campo de la entrada sin espacios de más; campo vacío = no se pregunta."
+  proactive_touch:
+    kind: state
+    input: Contacto
+    doc: "La conversación y el toque de la escalera / el silencio, antes de un mensaje proactivo."
+  abandoned_chat:
+    kind: state
+    input: Abandono
+    doc: "La conversación que el cliente dejó y lo que la tienda ya sabe del pedido."
+  quantity_reply:
+    kind: state
+    input: RespuestaDeCantidad
+    doc: "El último mensaje del asesor (recortado por el principio) y la respuesta; sin hueco de cantidad, no se pregunta."
+  buttons_message:
+    kind: state
+    input: Botones
+    doc: "El mensaje y sus botones; sin botones, no se pregunta."
+  sent_message_with_tools:
+    kind: state
+    input: Afirmacion
+    doc: "Lo que el turno envió y las herramientas que consultó."
+  purchase_context:
+    kind: state
+    input: Inbound
+    doc: "CONTEXTO, HECHOS DEL PEDIDO y ESTE MENSAJE; solo si la regla lee el texto (ni carrito ni botón)."
+  message_after_close:
+    kind: state
+    input: Inbound
+    doc: "Lo que el cliente vio (la conversación ya cerrada) y su mensaje; sin contexto a la vista, no se pregunta."
+  coupon_talk:
+    kind: state
+    input: CuponEnJuego
+    doc: "El cupón aplicado y sus productos, el contexto y el mensaje; sin cupón que dependa del texto, no se pregunta."
+  category_request:
+    kind: state
+    input: CategoriaPedida
+    doc: "La categoría que pidió el cliente y las del catálogo; sin pedido o sin categorías, no se pregunta."
+  color_request:
+    kind: state
+    input: ColorPedido
+    doc: "El producto, sus colores y el color que pidió el cliente."
+  order_item_data:
+    kind: state
+    input: DatoDelItem
+    doc: "Los productos que aceptan los datos y lo último de la conversación; con menos de dos, no se pregunta."
+  chat_and_catalog:
+    kind: state
+    input: ProductosDeLaCharla
+    doc: "La charla del gancho y los títulos del catálogo."
+  text_with_lists:
+    kind: state
+    input: TextoCatalogo
+    doc: "El texto para el cliente, solo si enumera una lista de aromas o colores que decidir."
+  greeting_texts:
+    kind: state
+    input: GreetingCheck
+    doc: "Los mensajes del primer contacto, solo si el turno le manda algo al cliente (como mucho 8)."
+  numbered_items:
+    kind: state
+    params: {header: str, max: int}
+    doc: "«<header>» y los ítems numerados ([1] …); sin ítems o con más de `max`, no se pregunta."
+  leading_sentences_state:
+    kind: state
+    input: PreambuloCheck
+    doc: "Las primeras oraciones del texto (hasta 5, «[…]» si hay más); con menos de dos, no se pregunta."
+  conversation_for_slots:
+    kind: state
+    input: DatosDelPedido
+    doc: "Lo último de la conversación, si algún dato no está en las palabras del cliente."
+  customer_order_text:
+    kind: state
+    input: PedidoDelCliente
+    doc: "El mensaje del cliente, si la regla propone algún término."
+  # ── ítems ──
+  items_of:
+    kind: items
+    params: {field: str}
+    fields: {text: string}
+    doc: "Un ítem por cada texto del campo `field` de la entrada."
+  paragraphs:
+    kind: items
+    input: TextCheck
+    fields: {text: string}
+    doc: "Los párrafos del texto (corte mecánico por línea en blanco)."
+  sentences:
+    kind: items
+    input: PortavelasCheck
+    fields: {text: string}
+    doc: "Las oraciones del texto (corte mecánico)."
+  leading_sentences:
+    kind: items
+    input: PreambuloCheck
+    fields: {text: string, askable: bool, preamble: string, cut_ok: bool}
+    doc: "Las oraciones con lo que se cae si se corta hasta cada una (preamble) y si lo que queda no empieza a mitad de frase (cut_ok)."
+  order_slot_values:
+    kind: items
+    input: DatosDelPedido
+    fields: {slot: string, value: string, ask: bool, personal: bool, label: string}
+    doc: "Los datos de envío y pago a guardar; ask = no está en las palabras del cliente; personal = Jev lo ve tapado."
+  unavailable_term_items:
+    kind: items
+    input: PedidoDelCliente
+    fields: {term: string}
+    doc: "Un ítem por término que la regla propone."
+  # ── opciones de la entrada ──
+  catalog_categories:
+    kind: options
+    input: CategoriaPedida
+    doc: "Una opción por categoría: etiqueta = su nombre, valor = su slug."
+  product_colors:
+    kind: options
+    input: ColorPedido
+    doc: "Una opción por color del producto; valor = la resolución (familia del tenant, tono a confirmar)."
+  accepting_items:
+    kind: options
+    input: DatoDelItem
+    doc: "item_<n> por producto del pedido que acepta los datos; valor = {item, producto}."
+  catalog_titles:
+    kind: options
+    input: ProductosDeLaCharla
+    doc: "Una opción por título del catálogo; valor = el título."
+  # ── vistas ──
+  purchase_window:
+    kind: view
+    input: Inbound
+    fields: {context: bool, asked_known: "string?"}
+    doc: "Si el cliente vio algo antes y qué se le preguntó cuando lo último fue una tarjeta (confirmar_compra, …)."
+  enumeration_found:
+    kind: view
+    input: TextoCatalogo
+    fields: {found_scents: "tuple<string>", found_colors: "tuple<string>"}
+    doc: "Los aromas y colores del catálogo que el texto enumera."
+  # ── pisos ──
+  jev:
+    kind: floor
+    doc: "Sin piso: decide lo que dijo Jev."
+  rule_or_jev:
+    kind: floor
+    value: bool
+    doc: "Piso: lo que dijo la regla nunca se quita; Jev solo agrega."
+  closing_invariants:
+    kind: floor
+    value: string
+    input: Abandono
+    doc: "Pedido registrado = COMPRA_EXITOSA; COMPRA_EXITOSA sin pedido no existe; CONFIRMADO_SIN_DATOS sin confirmar = INTERESADO."
+  jev_and_button_ids:
+    kind: floor
+    input: Botones
+    doc: "Lo de Jev más los botones cuyo id delata un selector (product., color.)."
+  jev_without_question_mark:
+    kind: floor
+    value: bool
+    doc: "Lo de Jev, salvo que el mensaje tenga signo de pregunta (nunca se absorbe)."
+  rule_if_same_key:
+    kind: floor
+    params: {key: str}
+    doc: "Si Jev coincide con la regla en `key`, queda el detalle de la regla."
+  rule_then_jev:
+    kind: floor
+    doc: "Lo de la regla nunca se quita; Jev solo suma (sin repetir)."
+  no_enumeration_with_combinations:
+    kind: floor
+    input: TextoCatalogo
+    doc: "Las combinaciones «Color · Aroma» de un cupón nunca van al selector."
+  rule_order_subset:
+    kind: floor
+    doc: "Jev solo quita: queda lo de la regla que Jev dejó, en su orden."
+  persona_floor:
+    kind: floor
+    input: Frases
+    doc: "Las frases de la regla que ninguna lectura deja pasar (asistente virtual, humano…) siempre se caen."
+  strong_preamble:
+    kind: floor
+    value: string
+    input: PreambuloCheck
+    doc: "Los prefijos que casi nunca abren una oración legítima («Final answer:») siempre se van."
+  # ── comparadores ──
+  bool_eq:
+    kind: same
+    value: bool
+    doc: "Dos decisiones coinciden si son el mismo bool."
+  text_eq:
+    kind: same
+    doc: "El mismo texto (null = vacío)."
+  truthy_eq:
+    kind: same
+    doc: "Las dos dicen algo, o las dos nada."
+  key_eq:
+    kind: same
+    params: {key: str}
+    doc: "El mismo valor en la llave `key` del registro."
+  deferral_and_courtesy_eq:
+    kind: same
+    doc: "El mismo tipo de aplazamiento y la misma cortesía."
+  first_eq:
+    kind: same
+    doc: "El mismo primer elemento ([tipo, fuente]: el mismo tipo)."
+  set_eq:
+    kind: same
+    doc: "Los mismos elementos, sin importar el orden."
+  tuple_eq:
+    kind: same
+    doc: "La misma tupla (null = vacía)."
+  sorted_eq:
+    kind: same
+    doc: "Los mismos elementos ordenados (índices)."
+
+required_floors:
+  # La baja explícita es un piso legal: achicarlo es decisión del operador.
+  baja: rule_or_jev
+  # Las frases del relevo son piso: si el texto promete un colega, se escala.
+  relevo: rule_or_jev
+  # Los invariantes del pedido nunca los decide Jev.
+  cierre: closing_invariants

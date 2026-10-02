@@ -479,7 +479,6 @@ def test_the_catalog_and_the_code_declare_the_same_builtins_and_constants() -> N
     constante vale lo mismo que en el código."""
     import yaml
 
-    from src.plugins.chats.agent.sales.decisions.egress import ORDER_REGISTERED_FALLBACK_FAREWELL
     from src.plugins.chats.agent.sales.variant_enumeration import MIN_ENUMERATED
     from src.sdk.messagingkit import DEFERRAL_KIND_OPEN, OPEN_DEFERRAL_MS
 
@@ -492,7 +491,6 @@ def test_the_catalog_and_the_code_declare_the_same_builtins_and_constants() -> N
         "DEFERRAL_KIND_OPEN": DEFERRAL_KIND_OPEN,
         "OPEN_DEFERRAL_MS": OPEN_DEFERRAL_MS,
         "MIN_ENUMERATED": MIN_ENUMERATED,
-        "ORDER_REGISTERED_FALLBACK_FAREWELL": ORDER_REGISTERED_FALLBACK_FAREWELL,
     }
 
 

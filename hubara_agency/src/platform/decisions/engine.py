@@ -149,6 +149,8 @@ class CompiledCapability:
     each_when: CompiledExpression | None = None
     #: Variantes del texto de `each`: (condición o None = otherwise, plantilla).
     each_texts: tuple[tuple[CompiledExpression | None, str], ...] = ()
+    #: El dominio de la tienda del paquete (`dom.campo`).
+    domain: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def name(self) -> str:
@@ -272,6 +274,7 @@ class CompiledCapability:
             "rule": to_cel(default_rule(self.type) if rule is None else rule),
             "inp": to_cel(dict(inp or {})),
             "consts": to_cel(dict(self.constants)),
+            "dom": to_cel(dict(self.domain)),
             # Una pregunta con opciones sin opciones dadas = ninguna (no un error).
             "opt": to_cel({**{qid: {} for qid in self.option_questions},
                            **{qid: dict(values) for qid, values in (options or {}).items()}}),
@@ -320,6 +323,8 @@ class CompiledBundle:
     version: int
     oracle: str
     capabilities: Mapping[str, CompiledCapability] = field(default_factory=dict)
+    #: El dominio de la tienda (`domain.yaml`), ya certificado.
+    domain: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def ref(self) -> str:
