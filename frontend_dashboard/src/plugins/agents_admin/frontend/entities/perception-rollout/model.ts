@@ -2,6 +2,8 @@ import type { z } from "zod";
 
 import type {
   capabilityControlSchema,
+  decisionEngineSchema,
+  engineDecisionAboutSchema,
   perceptionModeSchema,
   rolloutCheckSchema,
   rolloutSchema,
@@ -33,3 +35,7 @@ export interface CapabilityChange {
 export interface WorkflowChange {
   mode: WorkflowMode;
 }
+
+/** El motor de decisiones: su versión y lo que decide (2026-10-02). */
+export type DecisionEngine = z.infer<typeof decisionEngineSchema>;
+export type EngineDecisionAbout = z.infer<typeof engineDecisionAboutSchema>;

@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 
 import { BOT_LABEL, type QualityBot } from "@plugins/agents_admin/frontend/entities/production-quality";
 import { useScorecards } from "@plugins/agents_admin/frontend/entities/scorecard";
+import { DecisionEngineView } from "@plugins/agents_admin/frontend/features/decision-engine";
 import { EpisodeEvals } from "@plugins/agents_admin/frontend/features/episode-evals";
 import { EvalTrendChart } from "@plugins/agents_admin/frontend/features/eval-trend-chart";
 import { GoldenEvalCuration } from "@plugins/agents_admin/frontend/features/golden-eval-curation";
@@ -19,7 +20,7 @@ const STATS_DAYS = WINDOW_DAYS;
 /** Ventana de las métricas legadas (sin cambios respecto de la vista anterior). */
 const LEGACY_WINDOW_DAYS = 30;
 
-type Tab = "resumen" | "conversaciones" | "calibracion" | "legado" | "goldens";
+type Tab = "resumen" | "conversaciones" | "motor" | "calibracion" | "legado" | "goldens";
 
 /** Las mismas vistas separan los episodios de cada bot: el actual o el bot
  *  Jev (el workflow nuevo, decisión del operador del 2026-10-02). */
@@ -32,6 +33,7 @@ const BOT_OPTIONS: ReadonlyArray<{ value: QualityBot | null; label: string }> = 
 const TABS: ReadonlyArray<{ id: Tab; label: string; icon: () => ReactNode }> = [
   { id: "resumen", label: "Resumen", icon: Icon.spark },
   { id: "conversaciones", label: "Conversaciones", icon: Icon.timeline },
+  { id: "motor", label: "Motor de decisiones", icon: Icon.wand },
   { id: "calibracion", label: "Calibración", icon: Icon.tag },
   { id: "legado", label: "Métricas legadas", icon: Icon.archive },
   { id: "goldens", label: "Goldens", icon: Icon.shield },
@@ -50,6 +52,9 @@ const TABS: ReadonlyArray<{ id: Tab; label: string; icon: () => ReactNode }> = [
  *   * **Conversaciones** — cada conversación real como un hilo con cada turno
  *     calificado; la ventana del turno trae el resultado, el paso a paso y
  *     las decisiones de Jev.
+ *   * **Motor de decisiones** — la versión del motor que corre la tienda y
+ *     cada decisión que toma, por la parte del software donde actúa, con lo
+ *     que resuelve y quién la decide hoy.
  *   * **Calibración** — confiabilidad del juez contra etiquetas humanas + cola.
  *   * **Métricas legadas** — la tendencia y los episodios del eval por promedio.
  *   * **Goldens** — curación de candidatos.
@@ -203,6 +208,8 @@ export function AgentsQuality() {
             initialSid={openSid}
           />
         )}
+
+        {tab === "motor" && <DecisionEngineView />}
 
         {tab === "calibracion" && <JudgeCalibration days={WINDOW_DAYS} />}
 

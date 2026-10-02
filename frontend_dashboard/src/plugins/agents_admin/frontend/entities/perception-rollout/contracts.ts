@@ -60,3 +60,55 @@ export const rolloutSchema = z.object({
   capabilities: z.record(z.string(), capabilityControlSchema).catch({}).default({}),
   workflow_v2: workflowControlSchema.catch(WORKFLOW_OFF).default(WORKFLOW_OFF),
 });
+
+// ── El motor de decisiones: su versión y lo que decide (2026-10-02) ─────────
+
+/** Una parte del software donde el motor decide algo (en el orden de la conversación). */
+export const enginePlaceSchema = z.object({
+  id: z.string(),
+  label: z.string().catch("").default(""),
+});
+
+/** Una decisión del motor: dónde actúa, qué resuelve y quién la decide hoy. */
+export const engineDecisionAboutSchema = z.object({
+  capability: z.string(),
+  name: z.string().catch("").default(""),
+  where: z.array(z.string()).catch([]).default([]),
+  solves: z.string().catch("").default(""),
+  /** La decisión de la que es variante (comparte su interruptor), o null. */
+  variant_of: z.string().nullable().catch(null).default(null),
+  mode: perceptionModeSchema,
+});
+
+function tolerantList<T extends z.ZodTypeAny>(item: T) {
+  return z
+    .array(z.unknown())
+    .catch([])
+    .default([])
+    .transform((items) =>
+      items.flatMap((raw) => {
+        const parsed = item.safeParse(raw);
+        return parsed.success ? [parsed.data as z.output<T>] : [];
+      }),
+    );
+}
+
+export const decisionEngineSchema = z.object({
+  bundle: z.object({
+    id: z.string().catch("").default(""),
+    version: z.number().nullable().catch(null).default(null),
+    ref: z.string().catch("").default(""),
+    oracle: z.string().catch("").default(""),
+    engine_contract: z.number().nullable().catch(null).default(null),
+    /** El paquete que trae el código (lo que corre una tienda sin configurar). */
+    code_default: z.string().catch("").default(""),
+  }),
+  profile: z.string().catch("").default(""),
+  places: tolerantList(enginePlaceSchema),
+  decisions: tolerantList(engineDecisionAboutSchema),
+  turn: z
+    .object({ policy: z.string().catch("").default(""), topics: z.number().catch(0).default(0), questions: z.number().catch(0).default(0) })
+    .nullable()
+    .catch(null)
+    .default(null),
+});

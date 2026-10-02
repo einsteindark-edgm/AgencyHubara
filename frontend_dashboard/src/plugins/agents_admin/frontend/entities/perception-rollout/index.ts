@@ -1,4 +1,5 @@
 export {
+  useDecisionEngine,
   usePerceptionRollout,
   useSetCapabilityMode,
   useSetPerceptionRollout,
@@ -8,6 +9,8 @@ export { rolloutKeys } from "./keys";
 export type {
   CapabilityChange,
   CapabilityControl,
+  DecisionEngine,
+  EngineDecisionAbout,
   PerceptionMode,
   Rollout,
   RolloutChange,

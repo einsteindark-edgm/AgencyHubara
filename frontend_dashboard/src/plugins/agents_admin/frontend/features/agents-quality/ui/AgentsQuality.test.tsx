@@ -7,6 +7,7 @@ import calibrationFixture from "@plugins/agents_admin/frontend/entities/eval-lab
 import labelsFixture from "@plugins/agents_admin/frontend/entities/eval-label/fixtures/labels.json";
 import queueFixture from "@plugins/agents_admin/frontend/entities/eval-label/fixtures/labels-queue.json";
 import conversationsFixture from "@plugins/agents_admin/frontend/entities/production-quality/fixtures/conversations.json";
+import engineFixture from "@plugins/agents_admin/frontend/entities/perception-rollout/fixtures/engine.json";
 import evaluationsFixture from "@plugins/agents_admin/frontend/entities/production-quality/fixtures/evaluations.json";
 import jevFixture from "@plugins/agents_admin/frontend/entities/production-quality/fixtures/jev.json";
 import threadFixture from "@plugins/agents_admin/frontend/entities/production-quality/fixtures/thread.json";
@@ -38,6 +39,7 @@ const S1 = "wa_100000000001";
 
 /** Router de fetch por endpoint (orden: rutas más específicas primero). */
 const ROUTES: Array<[string, () => unknown]> = [
+  ["/api/agents/perception/engine", () => engineFixture],
   [`/api/agents/evals/production/conversations/${S1}/turns/trace`, () => traceFixture],
   [`/api/agents/evals/production/conversations/${S1}/evaluations`, () => evaluationsFixture],
   [`/api/agents/evals/production/conversations/${S1}`, () => threadFixture],
@@ -213,6 +215,38 @@ describe("Calidad LLM: el filtro por bot", () => {
     await screen.findByText(/aún no hay episodios calificados/i);
     fireEvent.click(screen.getByRole("radio", { name: "Bot Jev" }));
     expect(await screen.findByText(/aún no hay episodios del bot jev/i)).toBeInTheDocument();
+  });
+});
+
+describe("Calidad LLM: el motor de decisiones", () => {
+  async function openEngine() {
+    fireEvent.click(screen.getByRole("tab", { name: /motor de decisiones/i }));
+    return screen.findByRole("region", { name: /versión del motor de decisiones/i });
+  }
+
+  it("dice qué versión del motor corre la tienda", async () => {
+    renderIt();
+    const version = await openEngine();
+    expect(within(version).getByText(/ventas-2/)).toBeInTheDocument();
+    expect(within(version).getByText(/versión 2/i)).toBeInTheDocument();
+    expect(within(version).getByText(/jev 1\.13/i)).toBeInTheDocument();
+    // El del código es otro: lo eligió la configuración de la tienda.
+    expect(within(version).getByText(/el que trae el código es «ventas»/i)).toBeInTheDocument();
+    await waitFor(() => expect(called("/api/agents/perception/engine")).toBe(true));
+  });
+
+  it("lista cada decisión por la parte del software donde actúa, con lo que resuelve", async () => {
+    renderIt();
+    await openEngine();
+    const ingest = screen.getByRole("region", { name: "Al leer cada mensaje del cliente" });
+    const compra = within(ingest).getByRole("listitem", { name: "Compra confirmada" });
+    expect(within(compra).getByText(/un «sí» que respondía otra cosa/i)).toBeInTheDocument();
+    expect(within(compra).getByText("Jev decide")).toBeInTheDocument();
+    expect(within(within(ingest).getByRole("listitem", { name: "Baja de mensajes" })).getByText(/jev en sombra/i)).toBeInTheDocument();
+    const tools = screen.getByRole("region", { name: "Dentro de las herramientas del bot" });
+    expect(within(tools).getByText(/variante de «para quién es el texto»/i)).toBeInTheDocument();
+    // El turno del bot Jev también es parte del motor.
+    expect(screen.getByText(/12 asuntos/i)).toBeInTheDocument();
   });
 });
 
