@@ -86,3 +86,14 @@ def test_the_engine_controls_forward_to_their_chats_endpoints(monkeypatch) -> No
 
     assert capture["url"] == "http://chats.internal:8000/api/chats/perception/workflow"
     assert capture["json"] == {"mode": "canary"}
+
+
+def test_the_decision_engine_reaches_the_chats_contract(monkeypatch) -> None:
+    """La pestaña «Motor de decisiones» de Calidad LLM (2026-10-02)."""
+    capture: dict[str, Any] = {}
+    client = _client(monkeypatch, result=httpx.Response(200, json={"bundle": {"ref": "ventas@1"}}), capture=capture)
+
+    res = client.get("/api/agents/perception/engine")
+
+    assert res.status_code == 200 and res.json() == {"bundle": {"ref": "ventas@1"}}
+    assert capture["url"] == "http://chats.internal:8000/api/chats/perception/engine"

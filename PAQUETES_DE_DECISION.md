@@ -237,7 +237,7 @@ laboratorio antes de promover una versión.
 |---|---|
 | DB001 | YAML ilegible o estructura inválida (llave desconocida, tipo equivocado, campo faltante) — Pydantic estricto; una llave repetida; `yes:`/`no:` sin comillas como opción de una pregunta de opciones |
 | DB002 | `engine_contract` que el motor no corre (`SUPPORTED_CONTRACTS`: al subir el contrato, el viejo se queda) |
-| DB003 | capacidad listada sin archivo, archivo sin listar, `capability` distinto del nombre del archivo, o una capacidad que el catálogo exige (`capabilities:`) y el paquete no trae |
+| DB003 | capacidad listada sin archivo, archivo sin listar, `capability` distinto del nombre del archivo, o una capacidad que el catálogo exige (`capabilities:`) y el paquete no trae; una capacidad del catálogo sin su `about` (nombre, dónde actúa y qué resuelve), un `about` de una capacidad que el código no pide, o un `where` que `places:` no declara |
 | DB004 | builtin que no existe en el catálogo, o de otro tipo (un piso usado como regla); el estado de una capacidad con ítems que no los recibe (`takes_items`) |
 | DB005 | id de pregunta repetido; llave `p['…']` / `choice['…']` / `th['…']` que no es literal o no está declarada; una lectura sin llave a la vista (`(choice)['x']`, `size(p)`); `dom.seccion.campo` o `i.campo` (dentro de `items.filter(i, …)`) que no existen; una opción mal escrita (`choice['x'] == 'otra'`); el id de cada ítem sin su posición o su llave |
 | DB006 | condición que no compila en CEL (tipos, nombres) o que no devuelve bool |

@@ -314,6 +314,16 @@ class TurnCatalog(_Strict):
         return self
 
 
+class CapabilityAbout(_Strict):
+    """Qué resuelve una decisión y en qué parte del software actúa, en
+    palabras del operador (Calidad LLM → «Motor de decisiones», 2026-10-02)."""
+
+    name: str = Field(min_length=1)
+    #: Las partes del software (`places` del catálogo) donde actúa.
+    where: list[str] = Field(min_length=1)
+    solves: str = Field(min_length=1)
+
+
 class Catalog(_Strict):
     engine_contract: int = Field(ge=1)
     #: Tipos de entrada y sus campos (nombre → tipo), lo que una condición
@@ -340,6 +350,12 @@ class Catalog(_Strict):
     domain: dict[str, str | dict[str, str]] = Field(default_factory=dict)
     #: El vocabulario del turno (F7). Con él, cada paquete trae su `turn.yaml`.
     turn: TurnCatalog | None = None
+    #: Las partes del software donde el motor decide algo (id → nombre en
+    #: palabras del operador), en el orden de una conversación.
+    places: dict[str, str] = Field(default_factory=dict)
+    #: capacidad → qué resuelve y dónde actúa. Cada capacidad que el código
+    #: pide (`capabilities`) trae la suya: Calidad LLM la muestra (DB003).
+    about: dict[str, CapabilityAbout] = Field(default_factory=dict)
 
     @field_validator("inputs", mode="before")
     @classmethod

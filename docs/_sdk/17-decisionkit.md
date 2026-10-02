@@ -55,6 +55,12 @@ src/plugins/chats/shared/decisions/bundles/
    haga cumplir:
    - `capabilities:` las que el código del plugin pide (DB003 si falta una;
      el resolutor no cae a otra implementación);
+   - `places:` (id → la parte del software, en el orden de una conversación)
+     y `about:` (por capacidad: `name`, `where: [lugar]`, `solves`) en
+     español llano: Calidad LLM → «Motor de decisiones» los muestra al
+     operador. DB003 si una capacidad de `capabilities:` no trae su `about`,
+     si un `about` no es de una capacidad pedida o si nombra un lugar que
+     `places:` no declara;
    - `required_rules:` / `required_floors:` la regla o el piso que una
      capacidad no puede cambiar (DB012: la baja legal, el relevo);
    - `takes_items: true` en los builtins de estado que reciben la lista de

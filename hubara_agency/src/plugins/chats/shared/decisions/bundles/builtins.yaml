@@ -487,3 +487,211 @@ turn:
           present_products, present_variant_picker, react_to_message, register_order, request_shipping_details,
           search_products, send_contact_card, send_cta_url, send_quick_replies, send_reply, send_shipping_rates,
           set_order_slot, verify_order_for_checkout]
+
+# Qué resuelve cada decisión y en qué parte del software actúa (Calidad LLM →
+# «Motor de decisiones», 2026-10-02). Lo lee el operador: español llano, sin
+# códigos. `places` va en el orden de una conversación; cada decisión que el
+# código pide (`capabilities`) trae su `about` o el paquete no certifica.
+places:
+  ingest: Al leer cada mensaje del cliente
+  antes_del_turno: Antes de que el bot responda
+  herramientas: Dentro de las herramientas del bot
+  antes_de_enviar: Antes de enviar la respuesta
+  despues_de_enviar: Después de enviar la respuesta
+  remarketing: En los mensajes de seguimiento (remarketing)
+  cierre: Al cerrar una conversación abandonada
+
+about:
+  compra:
+    name: Compra confirmada
+    where: [ingest]
+    solves: >-
+      Decide si el cliente de verdad confirmó la compra. Evita tomar como
+      confirmación un «sí» que respondía otra cosa: el pedido solo avanza
+      cuando el cliente confirma lo que el asesor le preguntó.
+  retoma:
+    name: Retomar después
+    where: [ingest]
+    solves: >-
+      Detecta cuando el cliente dice que escribirá más adelante y pausa los
+      mensajes de seguimiento hasta esa fecha, sin confundir un «más tarde»
+      del mismo día ni un simple gracias con un aplazamiento.
+  baja:
+    name: Baja de mensajes
+    where: [ingest]
+    solves: >-
+      Reconoce cuando el cliente pide no recibir más mensajes o promociones,
+      aunque lo diga con otras palabras («no me escriban», «elimínenme de la
+      lista»). Es un requisito legal: la frase explícita siempre cuenta.
+  cortesia:
+    name: Cortesía sin venta
+    where: [ingest]
+    solves: >-
+      Reconoce cuando el cliente solo agradece o saluda, para responderle
+      breve y cálido en vez de volver a ofrecerle productos.
+  acuse:
+    name: Acuse tras la despedida
+    where: [ingest]
+    solves: >-
+      Cuando el bot ya se despidió y el cliente solo contesta «gracias» o un
+      emoji, evita que el bot vuelva a escribir y reabra la conversación. Un
+      mensaje con una pregunta siempre despierta al bot.
+  cupon:
+    name: Cupón
+    where: [ingest]
+    solves: >-
+      Decide si el mensaje habla del cupón o del descuento, para revisar el
+      cupo y avisarle al bot solo cuando hace falta («código postal» no es el
+      cupón; «¿sigue el beneficio?» sí lo es).
+  fuera_de_catalogo:
+    name: Fuera del catálogo
+    where: [ingest, remarketing]
+    solves: >-
+      Avisa al bot cuando el cliente pide algo que no existe en el catálogo,
+      para que no lo invente ni lo prometa. Jev quita los avisos falsos (una
+      ciudad, una fecha, el nombre de una persona).
+  cantidad:
+    name: Cantidad
+    where: [antes_del_turno]
+    solves: >-
+      Lee cuántas unidades pidió el cliente cuando el asesor se lo preguntó,
+      para anotarlas en el pedido. Solo anota con certeza: una cantidad
+      equivocada es peor que volver a preguntar.
+  categoria:
+    name: Categoría
+    where: [herramientas]
+    solves: >-
+      Entiende a qué categoría del catálogo se refiere el cliente cuando no
+      usa el nombre exacto («velas de santos» son las religiosas), para que
+      el bot busque en el lugar correcto.
+  familia_de_color:
+    name: Color pedido
+    where: [herramientas]
+    solves: >-
+      Lleva el color que dijo el cliente al color real del producto («bordó»
+      es el rojo, «oro» es el dorado) y avisa cuando ese color no existe para
+      ese producto.
+  item_del_pedido:
+    name: Producto del pedido
+    where: [herramientas]
+    solves: >-
+      En un pedido con varios productos, decide a cuál van el aroma, el color
+      o el diseño que dio el cliente, para no anotarlos en el producto
+      equivocado.
+  datos:
+    name: Datos de envío
+    where: [herramientas]
+    solves: >-
+      Antes de guardar un dato de envío o de pago, confirma que el cliente de
+      verdad lo dio. Evita guardar datos que el bot supuso o inventó.
+  zona_de_envio:
+    name: Zona de envío
+    where: [herramientas]
+    solves: >-
+      Decide si la ciudad del envío es Bogotá (con sus municipios cercanos) o
+      envío nacional, para cobrar la tarifa correcta: Chía es cercana y
+      Medellín es nacional.
+  selector:
+    name: Botones para elegir
+    where: [herramientas]
+    solves: >-
+      Revisa los botones que el bot quiere mostrar: los que piden elegir un
+      producto o una variante que no corresponde se quitan, para que el
+      cliente no elija algo que no existe.
+  monto:
+    name: Precios cotizados
+    where: [herramientas]
+    solves: >-
+      Encuentra las oraciones en que el bot cotiza el precio de un producto,
+      para comparar esos montos contra el catálogo antes de cobrar.
+  persona:
+    name: No parecer un bot
+    where: [herramientas]
+    solves: >-
+      En los mensajes de cierre y de escalación, quita las oraciones que dejan
+      ver que atiende un bot o una IA («asistente virtual», «un humano»).
+  destinatario_oracion:
+    name: Para quién es, oración por oración
+    where: [herramientas]
+    solves: >-
+      Lo mismo que «Para quién es el texto», oración por oración, en los
+      mensajes de cierre y de escalación: quita lo que no es para el cliente.
+  preambulo:
+    name: Muletilla del modelo
+    where: [antes_de_enviar]
+    solves: >-
+      Corta las frases de relleno con que el modelo empieza la respuesta
+      («Claro, con gusto te ayudo…») sin cortar nunca a mitad de una frase.
+  destinatario:
+    name: Para quién es el texto
+    where: [antes_de_enviar]
+    solves: >-
+      Decide si el texto es para el cliente o es una nota interna del bot.
+      Frena reportes internos que se colarían al chat y deja pasar textos
+      legítimos que antes se frenaban («Usa el código VELAS_10 al pagar»).
+  rescate:
+    name: Rescate del texto
+    where: [antes_de_enviar]
+    solves: >-
+      Cuando parte del texto no es para el cliente, rescata párrafo por
+      párrafo lo que sí lo es, para que el cliente no se quede sin respuesta.
+  portavelas:
+    name: Portavelas
+    where: [antes_de_enviar]
+    solves: >-
+      En un pedido registrado sin portavelas, quita lo que el bot le promete
+      del portavelas, para no prometer algo que no va en el pedido.
+  saludo:
+    name: Bienvenida
+    where: [antes_de_enviar]
+    solves: >-
+      En el primer contacto, decide si hace falta la burbuja de bienvenida o
+      si la respuesta ya saluda, para no saludar dos veces.
+  enumeracion:
+    name: Lista de opciones
+    where: [antes_de_enviar]
+    solves: >-
+      Detecta cuando el texto le enumera aromas o colores al cliente y los
+      cambia por un selector con las opciones del catálogo, más fácil de
+      elegir.
+  relevo:
+    name: Colega prometido
+    where: [antes_de_enviar]
+    solves: >-
+      Si el bot le promete al cliente que una persona del equipo lo va a
+      atender y nadie escaló la conversación, la escala para que la promesa
+      se cumpla.
+  afirmacion:
+    name: Afirmación sin consultar
+    where: [despues_de_enviar]
+    solves: >-
+      Revisa, después de enviar, si el bot afirmó algo que solo se sabe
+      consultando (el stock, la entrega, el estado del pedido) sin haberlo
+      consultado. Por ahora solo mide: no cambia nada.
+  contactar:
+    name: Escribirle de nuevo
+    where: [remarketing]
+    solves: >-
+      Decide si sobra un mensaje de seguimiento: si la conversación ya
+      terminó (el pedido llegó y el cliente agradeció), no se le vuelve a
+      escribir.
+  producto_nombrado:
+    name: Producto del que habló
+    where: [remarketing]
+    solves: >-
+      Encuentra de qué producto del catálogo habló el cliente aunque lo
+      nombre con otras palabras («la de los corazoncitos»), para que el
+      mensaje de seguimiento hable de ese producto.
+  destinatario_plantilla:
+    name: Para quién es, en una plantilla
+    where: [remarketing]
+    solves: >-
+      Lo mismo que «Para quién es el texto», para el texto que el bot pone
+      dentro de una plantilla de seguimiento.
+  cierre:
+    name: Etiqueta de cierre
+    where: [cierre]
+    solves: >-
+      Cuando el cliente deja de responder, lee la conversación y elige con qué
+      etiqueta se cierra (compra, interesado, rechazo…). Lo que dice el
+      pedido registrado siempre manda.

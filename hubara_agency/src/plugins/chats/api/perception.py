@@ -7,6 +7,8 @@ del bot nuevo (capas con clasificador) por etapas.
   PUT /api/chats/perception/rollout       {mode, canary_percent?, test_numbers?}
   PUT /api/chats/perception/capabilities  {capability, mode}   una capacidad del motor
   PUT /api/chats/perception/workflow      {mode}               la versión del workflow (off/canary/on)
+  GET /api/chats/perception/engine        la versión del motor de decisiones y cada decisión que
+                                          toma: dónde actúa, qué resuelve y quién la decide hoy
 
 El panel de la sección Agents (`agents_admin`) lo consume por cast. El techo
 lo fija Terraform (`SALES_PERCEPTION_MODE_CEILING`); este control mueve el
@@ -186,6 +188,74 @@ def _payload(state: RolloutState) -> dict[str, Any]:
 @router.get("/perception/rollout")
 def get_rollout() -> dict[str, Any]:
     return _payload(read_state(_vault_dir()))
+
+
+def _effective(mode: str, ceiling: str) -> str:
+    """El modo que de verdad corre: el guardado, dentro del techo de Terraform."""
+    order = list(MODES)
+    mode = mode if mode in order else "off"
+    ceiling = ceiling if ceiling in order else "off"
+    return order[min(order.index(mode), order.index(ceiling))]
+
+
+def _turn_summary(bundle: Any) -> dict[str, Any] | None:
+    turn = getattr(bundle, "turn", None)
+    if turn is None:
+        return None
+    questionnaire = turn.questionnaire if isinstance(turn.questionnaire, dict) else {}
+    return {
+        "policy": turn.policy,
+        "topics": len(questionnaire.get("topics") or []),
+        "questions": len(questionnaire.get("questions") or []),
+    }
+
+
+@router.get("/perception/engine")
+def get_engine() -> dict[str, Any]:
+    """Calidad LLM → «Motor de decisiones» (2026-10-02): qué versión del motor
+    corre la tienda (el paquete de decisión, el oráculo, el perfil del turno)
+    y cada decisión que toma, por la parte del software donde actúa, con lo
+    que resuelve (`builtins.yaml: about`) y quién la decide hoy (el modo
+    guardado dentro del techo; una variante, con el interruptor de su
+    decisión)."""
+    from src.plugins.chats.agent.sales.decisions import registry
+    from src.plugins.chats.shared.store_pack import DEFAULT_BUNDLE
+    from src.sdk.decisionkit import ENGINE_CONTRACT, BundleError
+
+    try:
+        bundle = registry.active_bundle()
+    except BundleError as exc:
+        raise HTTPException(status_code=503, detail=f"El paquete de decisión de la tienda no compila: {exc}"[:500]) from None
+    modes = bots.capability_modes(_vault_dir())
+    ceiling = bots.capabilities_ceiling()
+    decisions = []
+    for name, table in bundle.capabilities.items():
+        about = bundle.about.get(name)
+        control = table.control
+        decisions.append(
+            {
+                "capability": name,
+                "name": about.name if about else name,
+                "where": list(about.where) if about else [],
+                "solves": about.solves if about else "",
+                "variant_of": control if control != name else None,
+                "mode": _effective(modes.get(control, "off"), ceiling),
+            }
+        )
+    return {
+        "bundle": {
+            "id": bundle.id,
+            "version": bundle.version,
+            "ref": bundle.ref,
+            "oracle": bundle.oracle,
+            "engine_contract": ENGINE_CONTRACT,
+            "code_default": DEFAULT_BUNDLE,
+        },
+        "profile": (os.getenv("SALES_PERCEPTION_PROFILE") or bots.DEFAULT_PROFILE).strip(),
+        "places": [{"id": place, "label": label} for place, label in bundle.places],
+        "decisions": decisions,
+        "turn": _turn_summary(bundle),
+    }
 
 
 def _actor(request: Request) -> str:

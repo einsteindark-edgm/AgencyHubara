@@ -55,3 +55,23 @@ builtins:
   same_value:
     kind: same
     doc: "El mismo valor."
+
+# Qué resuelve cada decisión y en qué parte del software actúa (2026-10-02):
+# cada decisión que el código pide trae su `about` o el paquete no certifica.
+places:
+  seguimiento: Al revisar cada pedido abierto (Order Sentinel)
+
+about:
+  cambio:
+    name: Qué cambió en el pedido
+    where: [seguimiento]
+    solves: >-
+      Lee la conversación del pedido para saber si el equipo dijo que el
+      pedido cambió (en preparación, listo, en camino, entregado o pago
+      recibido) y la etapa del pedido no lo refleja todavía.
+  evidencia:
+    name: Evidencia del cambio
+    where: [seguimiento]
+    solves: >-
+      Encuentra el mensaje exacto del equipo que prueba ese cambio, para que
+      el aviso al operador cite lo que se dijo y no una suposición.

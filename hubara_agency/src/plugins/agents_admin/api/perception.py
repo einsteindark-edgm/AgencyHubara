@@ -67,3 +67,14 @@ async def put_workflow(request: Request, body: dict[str, Any] = Body(default_fac
         body=body,
     )
 
+
+# Calidad LLM → «Motor de decisiones» (2026-10-02): la versión del motor y
+# cada decisión que toma (solo lectura).
+_ENGINE_PATH = "/api/chats/perception/engine"
+
+
+@router.get("/perception/engine")
+async def get_engine(request: Request) -> dict[str, Any]:
+    return await castkit.forward(
+        request, "GET", _ENGINE_PATH, base_url=_provider_base(), timeout=_TIMEOUT_S, cast_label=_CAST_LABEL
+    )

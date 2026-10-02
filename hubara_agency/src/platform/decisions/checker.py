@@ -45,6 +45,7 @@ from src.platform.decisions.engine import (
     CompiledBundle,
     CompiledCapability,
     CompiledRow,
+    DecisionAbout,
     Diagnostic,
 )
 from src.platform.decisions.expressions import CelExpressions, ExpressionError, ExpressionPort
@@ -597,6 +598,7 @@ def _build(bundle_dir: Path, catalog_path: Path, expressions: ExpressionPort | N
     missing = [name for name in catalog.capabilities if name not in bundle.capabilities]
     if missing:
         out.append(Diagnostic("DB003", "bundle.yaml: capabilities", f"faltan capacidades que el código pide: {missing}"))
+    _check_about(catalog, catalog_path.name, out)
     files = {p.stem: p for p in sorted((bundle_dir / "capabilities").glob("*.yaml"))}
     for name in bundle.capabilities:
         if name not in files:
@@ -639,7 +641,32 @@ def _build(bundle_dir: Path, catalog_path: Path, expressions: ExpressionPort | N
     turn = check_turn(bundle_dir, catalog, expressions, bundle=f"{bundle.id}@{bundle.version}", domain=domain, out=out)
     if out:
         return None, out
-    return CompiledBundle(bundle.id, bundle.version, bundle.oracle, compiled, domain, turn), []
+    about = {
+        name: DecisionAbout(a.name, tuple(a.where), a.solves) for name, a in catalog.about.items() if name in compiled
+    }
+    return (
+        CompiledBundle(
+            bundle.id, bundle.version, bundle.oracle, compiled, domain, turn,
+            places=tuple(catalog.places.items()), about=about,
+        ),
+        [],
+    )
+
+
+def _check_about(catalog: Catalog, label: str, out: list[Diagnostic]) -> None:
+    """Cada decisión que el código pide dice qué resuelve y dónde actúa
+    (Calidad LLM la muestra, 2026-10-02): una decisión nueva nunca llega muda
+    a la pantalla. DB003, como la capacidad que falta."""
+    for name in catalog.capabilities:
+        if name not in catalog.about:
+            out.append(Diagnostic("DB003", f"{label}: about", f"{name}: falta qué resuelve y dónde actúa (`about`)"))
+    for name, about in catalog.about.items():
+        if catalog.capabilities and name not in catalog.capabilities:
+            out.append(Diagnostic("DB003", f"{label}: about.{name}", "no es una capacidad que el código pide (`capabilities`)"))
+        unknown = [where for where in about.where if where not in catalog.places]
+        if unknown:
+            declared = ", ".join(catalog.places) or "ninguna"
+            out.append(Diagnostic("DB003", f"{label}: about.{name}.where", f"partes del software que el catálogo no declara: {unknown} (hay: {declared})"))
 
 
 def check_bundle(bundle_dir: Path, catalog_path: Path, *, expressions: ExpressionPort | None = None) -> list[Diagnostic]:

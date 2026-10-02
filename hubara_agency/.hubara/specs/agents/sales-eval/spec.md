@@ -285,6 +285,25 @@ contrato `evals@v1` (`/api/chats/evals/production/*`, cast
 `/api/agents/evals/production/*`); un episodio sin calificar en modo turno
 SHALL calificarse al vuelo con el código.
 
+### Requirement: Calidad LLM muestra el motor de decisiones
+
+La pestaña «Motor de decisiones» de Calidad LLM SHALL mostrar la versión del
+motor que corre la tienda (paquete de decisión y versión, de dónde sale, el
+oráculo de Jev, el perfil del turno y el contrato del motor) y cada decisión
+que toma, agrupada por la parte del software donde actúa y en el orden de una
+conversación, con qué resuelve en español llano y quién la decide hoy (la
+regla, Jev en sombra, Jev en las conversaciones de prueba o Jev). Lo que se
+muestra SHALL salir del catálogo del plugin (`places:` y `about:` de
+`builtins.yaml`) por el contrato `perception-rollout@v1`
+(`/api/chats/perception/engine`, cast `/api/agents/perception/engine`): una
+capacidad que el código pide sin su `about` NO SHALL certificar (DB003).
+
+#### Scenario: El paquete de la tienda no es el del código
+
+- GIVEN la tienda configurada con `ventas-2` y la capacidad «Baja de mensajes» en sombra
+- WHEN el operador abre «Motor de decisiones»
+- THEN ve «ventas-2, versión 2», que lo eligió la configuración de la tienda y que el código trae «ventas», y «Baja de mensajes» bajo «Al leer cada mensaje del cliente» con «Jev en sombra: mide, decide la regla»
+
 ## Out of scope
 
 - La eval legada por métricas DeepEval (convive durante la transición, plan §3.7).

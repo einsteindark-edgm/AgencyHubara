@@ -467,3 +467,35 @@ def test_a_field_that_the_items_do_not_have_does_not_compile(
     codes = _each_codes(tmp_path, {name: spec})
 
     assert any(c.startswith(f"DB005 capabilities/{name}.yaml: {where}") and (".pp:" in c or ".cnof:" in c) for c in codes), codes
+
+
+# ── cada decisión que el código pide trae su explicación (2026-10-02) ──────
+
+
+_ABOUT_CATALOG = {**CATALOG, "capabilities": ["baja"], "places": {"ingest": "Al leer cada mensaje del cliente"}}
+_ABOUT = {"name": "Baja de mensajes", "where": ["ingest"], "solves": "Reconoce cuando el cliente pide no recibir más mensajes."}
+
+
+def test_a_decision_the_code_asks_for_without_its_explanation_does_not_compile(tmp_path: Path) -> None:
+    """Calidad LLM muestra cada decisión con dónde actúa y qué resuelve: una
+    decisión nueva no puede llegar muda a la pantalla."""
+    codes = _codes(tmp_path, {"baja": BAJA}, catalog=_ABOUT_CATALOG)
+
+    assert any(c.startswith("DB003 builtins.yaml: about") and "baja" in c for c in codes), codes
+
+
+def test_a_decision_placed_somewhere_the_catalog_does_not_declare_does_not_compile(tmp_path: Path) -> None:
+    catalog = {**_ABOUT_CATALOG, "about": {"baja": {**_ABOUT, "where": ["en_otro_lado"]}}}
+
+    codes = _codes(tmp_path, {"baja": BAJA}, catalog=catalog)
+
+    assert any(c.startswith("DB003 builtins.yaml: about.baja.where") for c in codes), codes
+
+
+def test_the_compiled_bundle_carries_where_each_decision_acts(tmp_path: Path) -> None:
+    catalog = {**_ABOUT_CATALOG, "about": {"baja": _ABOUT}}
+
+    bundle = load_bundle(*_write(tmp_path, {"baja": BAJA}, catalog=catalog))
+
+    assert bundle.places == (("ingest", "Al leer cada mensaje del cliente"),)
+    assert bundle.about["baja"].where == ("ingest",) and bundle.about["baja"].solves.startswith("Reconoce")

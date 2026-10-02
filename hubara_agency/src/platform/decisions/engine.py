@@ -367,6 +367,15 @@ def missing_answer(error: str) -> bool:
 
 
 @dataclass(frozen=True)
+class DecisionAbout:
+    """Qué resuelve una decisión y dónde actúa (el `about` del catálogo)."""
+
+    name: str
+    where: tuple[str, ...]
+    solves: str
+
+
+@dataclass(frozen=True)
 class CompiledBundle:
     id: str
     version: int
@@ -377,6 +386,10 @@ class CompiledBundle:
     #: El turno (`turn.yaml`, F7): la ráfaga ①, ③ y las tablas de la política.
     #: None si el catálogo no declara turno.
     turn: CompiledTurn | None = None
+    #: Las partes del software donde el motor decide algo, en orden (id, nombre).
+    places: tuple[tuple[str, str], ...] = ()
+    #: capacidad → qué resuelve y dónde actúa (Calidad LLM → «Motor de decisiones»).
+    about: Mapping[str, DecisionAbout] = field(default_factory=dict)
 
     @property
     def ref(self) -> str:

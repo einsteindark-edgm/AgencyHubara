@@ -33,7 +33,10 @@ YAML (y, si hace falta código, a un builtin).
 tool, vía `guards`). Él elige el paquete activo de la tienda
 (`SALES_DECISIONS_BUNDLE`, nace en Terraform `tenants.<t>.lab.decisions_bundle`);
 si el paquete no trae la capacidad es un error, nunca la clase (el catálogo
-la lista en `capabilities:` y el certificador da DB003). Dos pruebas
+la lista en `capabilities:` y el certificador da DB003). Una capacidad
+nueva en `capabilities:` trae también su `about:` (nombre, `where:` con un
+lugar de `places:`, y qué resuelve, en español llano): Calidad LLM →
+«Motor de decisiones» se lo muestra al operador, y sin él es DB003. Dos pruebas
 (`test_decisions_registry.py`) frenan cualquier instancia o import de clase
 fuera del resolutor.
 
