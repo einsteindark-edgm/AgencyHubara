@@ -21,6 +21,9 @@ from src.plugins.chats.shared import store_pack
 from tests.plugins.chats.store_texts import TOOL_MODULES, agent_texts
 
 FIXTURE = Path(__file__).parents[2] / "fixtures" / "store_domain" / "ventas_agent_texts.json"
+#: La tienda de la foto congelada. En un clon de forge (otra tienda, otro
+#: dominio) la foto no aplica: la prueba se salta.
+FROZEN_STORE = "Hubara"
 SRC = Path(__file__).parents[3]
 PROMPT_MODULES = (*TOOL_MODULES, "src.plugins.chats.agent.remarketing.prompts")
 #: Ejemplos que son de ESTA tienda (velas, sus productos, sus aromas).
@@ -56,6 +59,9 @@ def _code_strings(module: str) -> list[tuple[int, str]]:
 
 
 def test_what_the_agent_reads_for_the_current_store_is_unchanged() -> None:
+    if store_pack.store_domain()["store_name"] != FROZEN_STORE:
+        pytest.skip("la foto congelada es de otra tienda (clon de forge)")
+
     assert agent_texts() == json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
@@ -72,7 +78,7 @@ def test_the_store_domain_is_certified_and_feeds_the_agent() -> None:
     domain = store_pack.store_domain()
     texts = json.dumps(agent_texts(), ensure_ascii=False)
 
-    assert domain["store_name"] == "Hubara"
+    assert domain["store_name"].strip()
     for key, value in domain["vocabulary"].items():
         for piece in value if isinstance(value, list) else [value]:
             assert piece in texts, f"vocabulary.{key} no llega a lo que lee el agente: {piece!r}"
