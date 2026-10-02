@@ -71,3 +71,22 @@ def test_production_and_the_lab_run_the_same_engine_profile() -> None:
 
     assert match, "variables.tf ya no declara el default de perception_profile"
     assert match.group(1) == DEFAULT_PROFILE == bot_for_arm("B").profile
+
+
+def test_the_store_decision_bundle_is_configuration_born_in_terraform() -> None:
+    """El paquete de decisión activo es de la tienda (PAQUETES_DE_DECISION.md
+    §10.1): `tenants.<t>.lab.decisions_bundle` → SSM `SALES_DECISIONS_BUNDLE`
+    → el resolutor. El default de Terraform tiene que existir en el repo: si
+    no, producción arrancaría pidiendo un paquete que no está."""
+    from src.plugins.chats.agent.sales.decisions import registry
+
+    variables = (_TERRAFORM / "platform" / "variables.tf").read_text(encoding="utf-8")
+    lab_config = (_TERRAFORM / "platform" / "modules" / "lab-config" / "main.tf").read_text(encoding="utf-8")
+    default = re.search(r'decisions_bundle\s*=\s*optional\(string,\s*"([^"]+)"\)', variables)
+
+    assert default, "variables.tf no declara tenants.<t>.lab.decisions_bundle"
+    assert default.group(1) == registry.DEFAULT_BUNDLE
+    assert (registry.BUNDLES_DIR / default.group(1) / "bundle.yaml").is_file()
+    assert re.search(rf"^\s*{registry.BUNDLE_ENV}\s*=\s*var\.config\.decisions_bundle", lab_config, re.M), (
+        "lab-config no materializa SALES_DECISIONS_BUNDLE"
+    )

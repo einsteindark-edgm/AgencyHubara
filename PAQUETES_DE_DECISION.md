@@ -303,12 +303,13 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
 | Fase | Qué | Cambio de comportamiento |
 |---|---|---|
 | **F1** ✅ | Motor de paquetes: esquema, puerto de expresiones (CEL), catálogo de builtins, certificador + CLI + esquema JSON. Primeras capacidades desde YAML con paridad contra la clase: `baja` (A, piso legal) y `cortesia` (B) | ninguno (paridad) |
-| F2 | Las otras 7 A | ninguno |
-| F3 | Las 9 B con sus builtins (`customer_window`, `closed_choice`, …) | ninguno |
+| F2 ✅ | **Resolutor único por nombre** (`capability("baja")`: los lugares dejan de nombrar clases), **paquete activo desde Terraform** (`tenants.<t>.lab.decisions_bundle` → `SALES_DECISIONS_BUNDLE`), tipos de valor del paquete (más allá de bool/string) y las 8 A restantes | ninguno |
+| F3 | Las 9 B con sus builtins de estado y de preguntas (`customer_window`, `closed_choice`, …) + las 5 del egreso (preámbulo, destinatario y sus variantes, rescate, portavelas, saludo) | ninguno |
 | F4 | Las 4 C con `per_item_select` | ninguno |
 | F5 | Paquete de dominio: dimensiones, zonas, vocabulario. Quita las 22 reglas de reemplazo de forge | ninguno en Hubara |
-| F6 | Versión de paquete en el Verdict, el laboratorio y el despliegue gradual | — |
-| F7 | `turno-v4` declarativo (opcional) | — |
+| F6 | Versión de paquete en el laboratorio (un brazo puede fijar paquete) y en el despliegue gradual | — |
+| F7 | El turno dentro del paquete: la ráfaga ① (`rafaga-v5` → `turn.yaml`) y la verificación ③ (`coverage_decision`), con las tablas de la política como filas certificadas | ninguno |
+| F8 | Paquete propio del Order Sentinel («¿qué cambió?» y la evidencia) sobre el mismo motor genérico | ninguno |
 
 **F1 hecho (2026-10-01).**
 - Motor genérico en `src/platform/decisions/` (modelos, `ExpressionPort` +
@@ -324,11 +325,63 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
 - Las clases `Baja` y `Cortesia` quedan solo como oráculo de la paridad; se
   borran cuando su fase cierre.
 
+**F2 hecho (2026-10-01).**
+- Resolutor único (`decisions/registry.py: capability(nombre)`): ingest,
+  guardas, tools, activities, egreso, remarketing, abandono y contacto piden
+  la decisión por nombre. Dos pruebas prohíben instanciar o importar clases
+  de capacidad (o sus instancias globales) fuera del resolutor.
+- Paquete activo desde Terraform: `tenants.<t>.lab.decisions_bundle`
+  (default `hubara-ventas`, validado) → SSM `SALES_DECISIONS_BUNDLE`. Un
+  paquete que no existe falla con `DB013`; el id del paquete debe ser su
+  carpeta (DB013 también).
+- Motor: tipos de valor, `then: {expr}`, `vars`, `inp.campo`, `consts.X`,
+  y un arreglo: leer una llave ausente en CEL devuelve un valor de error que
+  antes se trataba como false (la fila siguiente decidía); ahora es duda.
+- Migradas con paridad en grilla completa: contactar, cierre (invariantes
+  del pedido como piso obligatorio), retoma, cantidad, zona_de_envio,
+  selector, afirmacion y relevo (piso obligatorio). Paquete: 10 capacidades.
+
 **La paridad es la compuerta de cada fase:** para cada capacidad migrada,
 (a) el estado y las preguntas son byte a byte iguales a los de la clase en
 entradas representativas, y (b) la decisión coincide sobre una grilla de
 respuestas en los bordes de cada umbral (0,14 / 0,15 / 0,16 …), con y sin
 respuesta, y con los pisos. Mientras haya paridad, la clase se puede borrar.
+
+## 10.1 Dónde se conecta (revisión del 2026-10-01)
+
+El desacople funciona porque casi todos los lugares le preguntan a Jev por un
+**único enchufe**: `decide(capacidad, entrada)` (o `decide_for_session` en las
+guardas). A ese enchufe no le importa si la capacidad es una clase o un YAML:
+migrar una capacidad la vuelve dato en todos los lugares que la usan, sin
+tocarlos.
+
+| Lugar | Cómo le pregunta a Jev | ¿Lo cubre el paquete? |
+|---|---|---|
+| Ingest (compra, retoma, baja, cortesía, acuse, cupón, fuera de catálogo) | `decide()` | sí (baja y cortesía desde F1; las demás al migrarlas) |
+| Antes del turno: cantidad (`build_prompt_stage`) | `decide()` | sí, al migrarla |
+| Antes del turno: la ráfaga ① (`rafaga-v5` + `turno_v3`) | directo al puerto (`engine.perceive`) | **no → F7** |
+| Dentro de una tool (categoría, color, ítem del pedido, zona de envío) | `decide()` vía `guards` | sí, al migrarlas |
+| Egreso: preámbulo, destinatario, rescate, portavelas, saludo + guardas (persona, monto, enumeración, selector, datos, relevo) | `decide()` | sí, al migrarlas (F3–F4) |
+| Antes de enviar: la verificación ③ | directo al puerto (`verify_questions` + `coverage_decision`) | **no → F7** |
+| Después de enviar: afirmación (sombra) | `decide()` | sí, al migrarla |
+| Remarketing (contactar, producto nombrado, fuera de catálogo) | `decide()` vía el enchufe compartido | sí, al migrarlas |
+| Abandono (cierre) | `decide()` | sí, al migrarla |
+| Order Sentinel | directo al puerto, preguntas y lógica propias | **no → F8** |
+
+**Dos huecos que cierra F2:**
+
+1. **Los lugares nombraban la implementación** (`Baja()`,
+   `bundled_capability("baja")`). Desde F2 nombran solo la decisión:
+   `capability("baja")`. Un único resolutor (`decisions/registry.py`) la
+   toma del paquete activo si la trae y, si no, de la clase (mientras dure la
+   migración). Una prueba prohíbe instanciar clases de capacidad fuera del
+   resolutor.
+2. **El paquete activo estaba fijo en el código.** Desde F2 viene de la
+   configuración de la tienda, igual que el perfil de Jev:
+   `tenants.<t>.lab.decisions_bundle` (Terraform, default `hubara-ventas`) →
+   SSM `SALES_DECISIONS_BUNDLE` → el resolutor. Un paquete configurado que no
+   existe falla fuerte (no se corre la inteligencia de otra tienda); una
+   prueba exige que el default de Terraform exista en el repo.
 
 ## 11. Riesgos
 

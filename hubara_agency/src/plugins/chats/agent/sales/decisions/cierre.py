@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_session
-from src.plugins.chats.agent.sales.decisions.capabilities.agente import CIERRE, Abandono
-from src.plugins.chats.agent.sales.decisions.guards import decide_for_session
+from src.plugins.chats.agent.sales.decisions.capabilities.agente import Abandono
+from src.plugins.chats.agent.sales.decisions.guards import capability, decide_for_session
 
 #: Lo último de la conversación que ve Jev.
 MAX_LINES = 16
@@ -58,11 +58,11 @@ def _facts(vault_dir: Path, session_id: str) -> tuple[bool, bool]:
 
 async def decided_close_tag(session_id: str, *, vault_dir: Path) -> str:
     """La etiqueta que decidió el motor, o "" (decide el LLM, como hoy)."""
-    if bot_for_session(session_id, vault_dir=Path(vault_dir)).provider(CIERRE.name) == "reglas":
+    if bot_for_session(session_id, vault_dir=Path(vault_dir)).provider("cierre") == "reglas":
         return ""
     confirmed, registered = _facts(vault_dir, session_id)
     verdict = await decide_for_session(
-        CIERRE,
+        capability("cierre"),
         Abandono(transcript=_transcript(vault_dir, session_id), purchase_confirmed=confirmed, order_registered=registered),
         session_id=session_id,
         vault_dir=vault_dir,

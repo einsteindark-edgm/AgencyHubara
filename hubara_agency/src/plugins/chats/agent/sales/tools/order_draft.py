@@ -57,8 +57,7 @@ from src.platform.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.decisions.guards import (
     ColorPedido,
     DatoDelItem,
-    FamiliaDeColor,
-    ItemDelPedido,
+    capability,
     decide_for_session,
     unconfirmed_order_data,
 )
@@ -390,7 +389,7 @@ class SetOrderSlotTool(ToolBase):
         """La familia de color con la regla de hoy (la tabla del tenant), sin
         preguntarle a nadie: con ella se ve qué productos del pedido aceptan un
         valor antes de elegir a cuál ítem va."""
-        return FamiliaDeColor().rule(self._color_input(token, valid, product))
+        return capability("familia_de_color").rule(self._color_input(token, valid, product))
 
     def _family_by_engine(self, session_key: str) -> _FamilyResolver:
         """La familia de color que decide el motor de decisiones para esta
@@ -398,7 +397,7 @@ class SetOrderSlotTool(ToolBase):
 
         async def resolve(token: str, valid: list[str], product: Any) -> dict[str, Any]:
             verdict = await decide_for_session(
-                FamiliaDeColor(),
+                capability("familia_de_color"),
                 self._color_input(token, valid, product),
                 session_id=session_key,
                 vault_dir=self._vault_dir,
@@ -453,7 +452,7 @@ class SetOrderSlotTool(ToolBase):
             )
             accepts.append(not rejected)
         verdict = await decide_for_session(
-            ItemDelPedido(),
+            capability("item_del_pedido"),
             DatoDelItem(
                 valores={kind: str(provided[kind]) for kind in to_check},
                 items=tuple(str(item.get("producto") or "") for item in items_now),

@@ -55,8 +55,8 @@ from src.plugins.chats.agent.sales.use_cases.order_draft import (
     get_projectable_draft,
 )
 from src.plugins.chats.agent.sales.decisions.guards import (
-    Cantidad,
     RespuestaDeCantidad,
+    capability,
     decide_for_session,
 )
 from src.plugins.chats.agent.sales.use_cases.quantity_capture import (
@@ -108,7 +108,7 @@ async def sales_build_prompt(input: BuildPromptInput) -> list[dict[str, Any]]:
     # por defecto = la regla de hoy, sin Jev). Solo se le pregunta a Jev si
     # hay dónde escribir (`quantity_slot_open`).
     verdict = await decide_for_session(
-        Cantidad(),
+        capability("cantidad"),
         RespuestaDeCantidad(
             last_agent_text=last_agent_text,
             text=input.message,

@@ -19,9 +19,18 @@ src/plugins/chats/agent/sales/decisions/bundles/
   hubara-ventas/capabilities/*.yaml una capacidad por archivo
 ```
 
-Migradas hoy: `baja`, `cortesia`. Las demás siguen siendo clases en
-`decisions/capabilities/` hasta su fase (F2–F4, ver la clasificación A/B/C en
-el diseño §7).
+Migradas hoy (F1–F2): afirmacion, baja, cantidad, cierre, contactar,
+cortesia, relevo, retoma, selector, zona_de_envio. Las demás siguen siendo
+clases en `decisions/capabilities/` hasta su fase (F3–F4, clasificación A/B/C
+en el diseño §7).
+
+**Nunca nombres una clase de capacidad ni su instancia global** (`Baja()`,
+`PERSONA`): pedila por nombre al resolutor, `capability("baja")` (desde una
+tool, vía `guards`). Él elige el paquete activo de la tienda
+(`SALES_DECISIONS_BUNDLE`, nace en Terraform `tenants.<t>.lab.decisions_bundle`)
+o la clase si todavía no migró. Dos pruebas
+(`test_decisions_registry.py`) frenan cualquier instancia o import de clase
+fuera del resolutor.
 
 ## El bucle (TDD también aplica a los datos)
 
@@ -55,7 +64,11 @@ el diseño §7).
 ## Cómo escribir una condición (CEL)
 
 - Variables: `p` (sí/no → probabilidad), `choice` y `conf` (opciones),
-  `th` (umbrales), `rule` (lo que dijo la regla).
+  `th` (umbrales), `rule` (lo que dijo la regla), `inp.campo` (entrada
+  declarada en el catálogo), `vars.nombre` (cálculos intermedios en orden),
+  `consts.NOMBRE` (constantes del catálogo). `let`/`const` están reservadas.
+- El valor tiene tipo (`value: "{cantidad: int?}"`, `tuple<string>`…); un
+  `then` calculado va como `then: {expr: "{'cantidad': int(choice['cantidad.dio'])}"}`.
 - **Antes de leer una respuesta, preguntá si llegó:** `!('baja.pide' in p)` →
   `doubt`. Leer una que no llegó falla al evaluarse y la tabla da duda.
 - Llaves siempre literales entre comillas simples: `p['baja.pide']`.

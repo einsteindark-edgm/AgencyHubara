@@ -57,7 +57,7 @@
     },
     "Example": {
       "additionalProperties": false,
-      "description": "Un caso que el certificador corre: con estas respuestas (y esta regla),\nla tabla debe dar `expect` (o `doubt`).",
+      "description": "Un caso que el certificador corre: con estas respuestas (y esta regla\ny esta entrada), la tabla debe dar `expect` (o `doubt`).",
       "properties": {
         "answers": {
           "additionalProperties": {
@@ -76,6 +76,11 @@
         "rule": {
           "default": null,
           "title": "Rule"
+        },
+        "input": {
+          "additionalProperties": true,
+          "title": "Input",
+          "type": "object"
         },
         "expect": {
           "title": "Expect"
@@ -166,10 +171,6 @@
       "type": "string"
     },
     "value": {
-      "enum": [
-        "bool",
-        "string"
-      ],
       "title": "Value",
       "type": "string"
     },
@@ -219,6 +220,13 @@
         "type": "number"
       },
       "title": "Thresholds",
+      "type": "object"
+    },
+    "vars": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Vars",
       "type": "object"
     },
     "decide": {

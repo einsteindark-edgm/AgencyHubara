@@ -19,8 +19,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from src.plugins.chats.agent.sales.decisions.capabilities.mapeos import PRODUCTO_NOMBRADO, ProductosDeLaCharla
-from src.plugins.chats.agent.sales.decisions.guards import decide_for_session
+from src.plugins.chats.agent.sales.decisions.capabilities.mapeos import ProductosDeLaCharla
+from src.plugins.chats.agent.sales.decisions.guards import capability, decide_for_session
 from src.plugins.chats.agent.sales.decisions.readings import read_catalog_gap
 
 
@@ -36,7 +36,7 @@ async def decide_catalog_context(
 ) -> tuple[list[str], list[str]]:
     titles = tuple(str(getattr(p, "title", "") or "") for p in products if getattr(p, "title", None))
     named_verdict = await decide_for_session(
-        PRODUCTO_NOMBRADO,
+        capability("producto_nombrado"),
         ProductosDeLaCharla(text=text, titles=titles, named=tuple(named)),
         session_id=session_id,
         vault_dir=vault_dir,
@@ -54,10 +54,10 @@ def register_catalog_context_decision() -> None:
 async def decide_template_label(*, session_id: str, text: str, vault_dir: Path) -> bool:
     """¿El motivo que va como variable de una plantilla NO es para el cliente?
     (capacidad `destinatario`, variante de plantilla: hoy no se revisa)."""
-    from src.plugins.chats.agent.sales.decisions.egress import DestinatarioDePlantilla, TextCheck
+    from src.plugins.chats.agent.sales.decisions.egress import TextCheck
 
     verdict = await decide_for_session(
-        DestinatarioDePlantilla(), TextCheck(text), session_id=session_id, vault_dir=vault_dir
+        capability("destinatario_plantilla"), TextCheck(text), session_id=session_id, vault_dir=vault_dir
     )
     return bool(verdict.value)
 

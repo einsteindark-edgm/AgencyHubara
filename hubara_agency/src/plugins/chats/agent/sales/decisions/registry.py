@@ -1,0 +1,140 @@
+"""Un solo punto decide de dónde sale cada capacidad (PAQUETES_DE_DECISION.md §10.1, F2).
+
+Los lugares que preguntan —ingest, antes del turno, tools, egreso, después
+de enviar, remarketing, abandono— nombran SOLO la decisión:
+
+    from src.plugins.chats.agent.sales.decisions.registry import capability
+
+    verdict = await decide(capability("baja"), inbound, …)
+
+El resolutor la toma del **paquete activo** si la trae; si no, de su clase
+de Python (mientras dure la migración, F2–F4). El paquete activo es
+configuración de la tienda, no código: `SALES_DECISIONS_BUNDLE` (nace en
+Terraform, `tenants.<t>.lab.decisions_bundle`), default `hubara-ventas`.
+Cambiar de tienda o de versión de la inteligencia es este único punto.
+
+Un paquete configurado que no existe (o que no compila) falla fuerte con
+`BundleError`: nunca se corre la inteligencia de otra tienda por un error
+de configuración. Una prueba exige que el default de Terraform exista en el
+repo, y CI certifica todos los paquetes (`decisions check`).
+
+Sin Temporal: lo usan el ingest, las tools (vía `guards`) y las activities.
+"""
+from __future__ import annotations
+
+import importlib
+import os
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+from src.plugins.chats.agent.sales.decisions.bundled import BundledCapability
+from src.sdk.decisionkit import BundleError, CompiledBundle, Diagnostic, load_bundle
+
+BUNDLES_DIR = Path(__file__).parent / "bundles"
+#: Paquete de Hubara (velas). Una tienda nueva trae el suyo y lo nombra en Terraform.
+DEFAULT_BUNDLE = "hubara-ventas"
+BUNDLE_ENV = "SALES_DECISIONS_BUNDLE"
+
+_resolved: dict[tuple[str, str, str], Any] = {}
+
+
+def active_bundle_id() -> str:
+    """El paquete de la tienda (config), o el de Hubara."""
+    return (os.getenv(BUNDLE_ENV) or "").strip() or DEFAULT_BUNDLE
+
+
+_CAPS = "src.plugins.chats.agent.sales.decisions.capabilities"
+#: Las capacidades que todavía tienen clase: nombre → "módulo:atributo". Se
+#: importan SOLO cuando alguien las pide (las tools, que llegan acá por
+#: `guards`, no arrastran las del ingest ni lo que ellas importan).
+_CLASS_PATHS: dict[str, str] = {
+    "contactar": f"{_CAPS}.agente:CONTACTAR",
+    "cierre": f"{_CAPS}.agente:CIERRE",
+    "datos": f"{_CAPS}.datos:DATOS",
+    "compra": f"{_CAPS}.lecturas:Compra",
+    "retoma": f"{_CAPS}.lecturas:Retoma",
+    "baja": f"{_CAPS}.lecturas:Baja",
+    "acuse": f"{_CAPS}.lecturas:Acuse",
+    "cortesia": f"{_CAPS}.lecturas:Cortesia",
+    "cupon": f"{_CAPS}.lecturas_pedido:Cupon",
+    "fuera_de_catalogo": f"{_CAPS}.lecturas_pedido:FueraDeCatalogo",
+    "cantidad": f"{_CAPS}.lecturas_pedido:Cantidad",
+    "categoria": f"{_CAPS}.mapeos:Categoria",
+    "familia_de_color": f"{_CAPS}.mapeos:FamiliaDeColor",
+    "item_del_pedido": f"{_CAPS}.mapeos:ItemDelPedido",
+    "zona_de_envio": f"{_CAPS}.mapeos:ZonaDeEnvio",
+    "producto_nombrado": f"{_CAPS}.mapeos:PRODUCTO_NOMBRADO",
+    "persona": f"{_CAPS}.texto:PERSONA",
+    "enumeracion": f"{_CAPS}.texto:ENUMERACION",
+    "monto": f"{_CAPS}.texto:MONTO",
+    "selector": f"{_CAPS}.texto:SELECTOR",
+    "afirmacion": f"{_CAPS}.texto:AFIRMACION",
+    "relevo": f"{_CAPS}.texto:RELEVO",
+    "preambulo": "src.plugins.chats.agent.sales.decisions.egress:Preambulo",
+    "destinatario": "src.plugins.chats.agent.sales.decisions.egress:Destinatario",
+    # Variantes: la MISMA capacidad (mismo control en el panel) preguntada de otra forma.
+    "destinatario_plantilla": "src.plugins.chats.agent.sales.decisions.egress:DestinatarioDePlantilla",
+    "destinatario_oracion": "src.plugins.chats.agent.sales.decisions.egress:DestinatarioPorOracion",
+    "rescate": "src.plugins.chats.agent.sales.decisions.egress:Rescate",
+    "portavelas": "src.plugins.chats.agent.sales.decisions.egress:Portavelas",
+    "saludo": "src.plugins.chats.agent.sales.decisions.egress:Saludo",
+}
+_instances: dict[str, Any] = {}
+
+
+def _class_instance(name: str) -> Any:
+    found = _instances.get(name)
+    if found is None:
+        module, attr = _CLASS_PATHS[name].split(":")
+        value = getattr(importlib.import_module(module), attr)
+        found = value() if isinstance(value, type) else value
+        _instances[name] = found
+    return found
+
+
+def class_capabilities() -> dict[str, Any]:
+    """Las capacidades que todavía tienen clase (nombre → instancia). Importa
+    todas: es para las pruebas y el panel, no para el camino de un turno."""
+    return {name: _class_instance(name) for name in _CLASS_PATHS}
+
+
+@lru_cache(maxsize=8)
+def _bundle(bundle_id: str, root: str) -> CompiledBundle:
+    folder = Path(root) / bundle_id
+    if not (folder / "bundle.yaml").is_file():
+        known = sorted(p.parent.name for p in Path(root).glob("*/bundle.yaml"))
+        raise BundleError([Diagnostic(
+            "DB013", f"bundles/{bundle_id}",
+            f"el paquete configurado {bundle_id!r} ({BUNDLE_ENV}) no existe; hay: {', '.join(known) or 'ninguno'}",
+        )])
+    return load_bundle(folder, Path(root) / "builtins.yaml")
+
+
+def active_bundle() -> CompiledBundle:
+    return _bundle(active_bundle_id(), str(BUNDLES_DIR))
+
+
+def capability(name: str) -> Any:
+    """La capacidad `name`: la del paquete activo si la trae, si no su clase."""
+    bundle_id, root = active_bundle_id(), str(BUNDLES_DIR)
+    key = (root, bundle_id, name)
+    found = _resolved.get(key)
+    if found is not None:
+        return found
+    bundle = _bundle(bundle_id, root)
+    if name in bundle.capabilities:
+        found = BundledCapability(bundle.capability(name))
+    else:
+        if name not in _CLASS_PATHS:
+            known = sorted(set(_CLASS_PATHS) | set(bundle.capabilities))
+            raise KeyError(f"no existe la capacidad {name!r} (hay: {', '.join(known)})")
+        found = _class_instance(name)
+    _resolved[key] = found
+    return found
+
+
+def reset() -> None:
+    """Olvida lo resuelto (pruebas, o tras cambiar la config del proceso)."""
+    _resolved.clear()
+    _bundle.cache_clear()

@@ -33,8 +33,8 @@ from src.platform.catalog import (
     parse_variant_tags,
 )
 from src.plugins.chats.agent.sales.decisions.guards import (
-    Categoria,
     CategoriaPedida,
+    capability,
     decide_for_session,
 )
 from src.sdk.catalogkit import CategoryResolution
@@ -175,7 +175,7 @@ class SearchProductsTool(ToolBase):
         except Exception:  # noqa: BLE001 — sin la lista cerrada queda la búsqueda de hoy
             return result
         verdict = await decide_for_session(
-            Categoria(),
+            capability("categoria"),
             CategoriaPedida(query=category, categories=tuple(known)),
             session_id=ctx.session_key,
             vault_dir=self._vault_dir,

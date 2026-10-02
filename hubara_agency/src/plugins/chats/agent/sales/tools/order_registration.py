@@ -84,7 +84,7 @@ from src.plugins.chats.agent.sales.config.shipping import (
 )
 from src.plugins.chats.agent.sales.decisions.guards import (
     CiudadDeEnvio,
-    ZonaDeEnvio,
+    capability,
     decide_for_session,
 )
 from src.plugins.chats.agent.sales.pricing import (
@@ -676,7 +676,7 @@ class RegisterOrderTool(ToolBase):
         # `zona_de_envio`; regla de hoy: Bogotá si la ciudad lo dice; si no,
         # valen las dos tarifas).
         zone = await decide_for_session(
-            ZonaDeEnvio(),
+            capability("zona_de_envio"),
             CiudadDeEnvio(ciudad=order_shipping.city),
             session_id=ctx.session_key,
             vault_dir=self._vault_dir,

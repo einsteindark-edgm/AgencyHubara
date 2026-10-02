@@ -22,15 +22,17 @@ from src.platform.perception.adapters.fake import FakePerceptionAdapter
 from src.plugins.chats.agent.sales.config.shipping import shipping_zone
 from src.plugins.chats.agent.sales.decisions import bots
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
-from src.plugins.chats.agent.sales.decisions.guards import (
+from src.plugins.chats.agent.sales.decisions.capabilities.mapeos import (
     Categoria,
+    FamiliaDeColor,
+    ItemDelPedido,
+    ZonaDeEnvio,
+)
+from src.plugins.chats.agent.sales.decisions.guards import (
     CategoriaPedida,
     CiudadDeEnvio,
     ColorPedido,
     DatoDelItem,
-    FamiliaDeColor,
-    ItemDelPedido,
-    ZonaDeEnvio,
     decide_for_session,
 )
 from src.plugins.chats.agent.sales.use_cases.order_draft import item_for_values

@@ -13,7 +13,9 @@ from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any, Literal, Protocol
 
-VarType = Literal["bool", "string", "double", "map<string,double>", "map<string,string>"]
+VarType = Literal[
+    "bool", "string", "int", "double", "dyn", "map<string,double>", "map<string,string>", "map<string,dyn>",
+]
 
 
 class ExpressionError(Exception):
@@ -24,6 +26,11 @@ class CompiledExpression(Protocol):
     @property
     def returns_bool(self) -> bool: ...
 
+    @property
+    def returns(self) -> str:
+        """Lo que devuelve: bool | string | int | double | map | list | null | dyn."""
+        ...
+
     def evaluate(self, data: Mapping[str, Any]) -> Any: ...
 
 
@@ -32,19 +39,29 @@ class ExpressionPort(Protocol):
 
 
 class _CelCompiled:
-    def __init__(self, expression: Any, returns_bool: bool) -> None:
+    def __init__(self, expression: Any, returns: str, error_type: Any) -> None:
         self._expression = expression
-        self._returns_bool = returns_bool
+        self._returns = returns
+        self._error_type = error_type
 
     @property
     def returns_bool(self) -> bool:
-        return self._returns_bool
+        return self._returns == "bool"
+
+    @property
+    def returns(self) -> str:
+        return self._returns
 
     def evaluate(self, data: Mapping[str, Any]) -> Any:
         try:
-            return self._expression.eval(data=dict(data)).value()
+            value = self._expression.eval(data=dict(data))
         except Exception as exc:  # noqa: BLE001 — cel-cpp lanza RuntimeError con el motivo
             raise ExpressionError(str(exc).splitlines()[0]) from None
+        # Leer una llave que no está NO lanza: devuelve un valor de error.
+        # Nunca se trata como false (la fila se saltaba y decidía la siguiente).
+        if value.type() == self._error_type:
+            raise ExpressionError(str(value.plain_value()).splitlines()[0])
+        return value.plain_value()
 
 
 def _cel_type(cel: Any, kind: VarType) -> Any:
@@ -52,9 +69,12 @@ def _cel_type(cel: Any, kind: VarType) -> Any:
     return {
         "bool": t.BOOL,
         "string": t.STRING,
+        "int": t.INT,
         "double": t.DOUBLE,
+        "dyn": t.DYN,
         "map<string,double>": t.Map(t.STRING, t.DOUBLE),
         "map<string,string>": t.Map(t.STRING, t.STRING),
+        "map<string,dyn>": t.Map(t.STRING, t.DYN),
     }[kind]
 
 
@@ -78,7 +98,16 @@ class CelExpressions:
             expression = env.compile(source)
         except Exception as exc:  # noqa: BLE001 — el motivo viene en el mensaje
             raise ExpressionError(_compile_message(str(exc))) from None
-        return _CelCompiled(expression, expression.return_type() == cel.Type.BOOL)
+        return _CelCompiled(expression, _returns(str(expression.return_type())), cel.Type.ERROR)
+
+
+def _returns(name: str) -> str:
+    name = name.upper()
+    for prefix, kind in (("BOOL", "bool"), ("STRING", "string"), ("INT", "int"), ("DOUBLE", "double"),
+                         ("MAP", "map"), ("LIST", "list"), ("NULL", "null")):
+        if name.startswith(prefix):
+            return kind
+    return "dyn"
 
 
 def _compile_message(raw: str) -> str:

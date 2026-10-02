@@ -60,7 +60,7 @@ BAJA: dict[str, Any] = {
 
 def _write(root: Path, capabilities: dict[str, dict[str, Any]], *, bundle: dict[str, Any] | None = None,
            catalog: dict[str, Any] | None = None) -> tuple[Path, Path]:
-    bundle_dir = root / "tienda"
+    bundle_dir = root / "tienda-ventas"
     (bundle_dir / "capabilities").mkdir(parents=True)
     head = {"id": "tienda-ventas", "version": 1, "engine_contract": 1, "oracle": "jev-1.13",
             "capabilities": list(capabilities)}
@@ -126,6 +126,12 @@ def test_each_mistake_is_rejected_with_its_code(tmp_path: Path, changes: dict[st
 def test_the_bundle_and_its_files_must_match(tmp_path: Path) -> None:
     assert "DB003" in _codes(tmp_path, {"baja": BAJA}, bundle={"capabilities": ["baja", "cortesia"]})
     assert "DB003" in _codes(tmp_path / "b", {"baja": _baja(capability="bajas")})
+
+
+def test_the_bundle_id_is_its_folder(tmp_path: Path) -> None:
+    """La configuración de la tienda nombra la carpeta: si el id dice otra
+    cosa, la traza mentiría sobre qué paquete decidió."""
+    assert "DB013" in _codes(tmp_path, {"baja": BAJA}, bundle={"id": "otra-tienda"})
 
 
 def test_an_engine_contract_the_engine_cannot_run_is_rejected(tmp_path: Path) -> None:

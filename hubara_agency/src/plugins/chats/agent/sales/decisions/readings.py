@@ -34,16 +34,10 @@ import structlog
 
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_session
 from src.plugins.chats.agent.sales.decisions.capabilities import BY_RULE, Verdict, decide
-from src.plugins.chats.agent.sales.decisions.bundled import bundled_capability
-from src.plugins.chats.agent.sales.decisions.capabilities.lecturas import Acuse, Compra, Retoma
-from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import (
-    Cupon,
-    CuponEnJuego,
-    FueraDeCatalogo,
-    PedidoDelCliente,
-)
+from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import CuponEnJuego, PedidoDelCliente
 from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
+from src.plugins.chats.agent.sales.decisions.registry import capability
 from src.plugins.chats.agent.sales.decisions.guards import decide_for_session
 
 logger = structlog.get_logger()
@@ -119,15 +113,15 @@ class EngineReadings:
                 disagreements=log, session_id=inbound.session_id, redact=self._redact, metrics=metrics,
             )
 
-        # Paquete de decisión (PAQUETES_DE_DECISION.md F1): baja y cortesía
-        # salen del YAML certificado, con paridad exacta con sus clases.
-        baja = bundled_capability("baja")
+        # Cada capacidad por su nombre: el resolutor la toma del paquete de
+        # decisión de la tienda o de su clase (PAQUETES_DE_DECISION.md §10.1).
+        baja = capability("baja")
         marketing = has_recent_marketing_context(dict(inbound.metadata), inbound.now_ms)
         compra_v, retoma_v, baja_v, cortesia_v = await asyncio.gather(
-            run(Compra()),
-            run(Retoma()),
+            run(capability("compra")),
+            run(capability("retoma")),
             run(baja) if marketing else _completed(_rule_verdict_off(baja, inbound)),
-            run(bundled_capability("cortesia")),
+            run(capability("cortesia")),
         )
         deferral = (retoma_v.value or {}).get("deferral")
         return Readings(
@@ -147,13 +141,13 @@ class EngineReadings:
         hacia Jev tapa los datos del borrador del episodio que se despidió
         (`session_redact_terms` solo mira el episodio abierto)."""
         bot = bot_for_session(inbound.session_id, vault_dir=self._vault)
-        capability = Acuse()
-        provider = bot.provider(capability.name)
+        acuse = capability("acuse")
+        provider = bot.provider(acuse.name)
         redact = self._redact
         if provider != "reglas":
             redact = tuple(dict.fromkeys([*redact, *_last_episode_redact_terms(inbound.metadata)]))
         return await decide(
-            capability, inbound, provider=provider, profile_id=bot.profile,
+            acuse, inbound, provider=provider, profile_id=bot.profile,
             disagreements=DisagreementLog(self._vault), session_id=inbound.session_id, redact=redact,
             metrics=DecisionMetrics(self._vault),
         )
@@ -224,7 +218,7 @@ async def read_coupon_talk(
     con el valor si relee el cupo y qué nota arma. `events`: lo que el
     cliente vio ANTES de este mensaje."""
     return await decide_for_session(
-        Cupon(), CuponEnJuego(metadata=metadata, text=text, events=tuple(events)),
+        capability("cupon"), CuponEnJuego(metadata=metadata, text=text, events=tuple(events)),
         session_id=session_id, vault_dir=Path(vault_dir), redact=tuple(redact),
     )
 
@@ -241,7 +235,7 @@ async def read_catalog_gap(
     `fuera_de_catalogo`; regla de hoy: `unavailable_terms`). El valor son los
     términos que quedan: la nota la arma el ingest con el código de hoy."""
     return await decide_for_session(
-        FueraDeCatalogo(), PedidoDelCliente(text=text, products=tuple(products)),
+        capability("fuera_de_catalogo"), PedidoDelCliente(text=text, products=tuple(products)),
         session_id=session_id, vault_dir=Path(vault_dir), redact=tuple(redact),
     )
 

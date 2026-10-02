@@ -11,8 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.plugins.chats.agent.sales.decisions.capabilities.agente import CONTACTAR, Contacto
-from src.plugins.chats.agent.sales.decisions.guards import decide_for_session
+from src.plugins.chats.agent.sales.decisions.capabilities.agente import Contacto
+from src.plugins.chats.agent.sales.decisions.guards import capability, decide_for_session
 
 
 async def decide_contact(
@@ -25,7 +25,7 @@ async def decide_contact(
 ) -> tuple[bool, dict[str, Any]]:
     vault_dir = Path(vault_dir)
     verdict = await decide_for_session(
-        CONTACTAR,
+        capability("contactar"),
         Contacto(transcript=transcript, touch_number=touch_number, silence_minutes=silence_minutes),
         session_id=session_id,
         vault_dir=vault_dir,

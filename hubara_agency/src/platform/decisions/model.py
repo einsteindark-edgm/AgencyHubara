@@ -17,7 +17,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-ValueType = Literal["bool", "string"]
+from src.platform.decisions.types import TypeSyntaxError, parse_type
+
 ParamType = Literal["str", "int", "float", "bool"]
 QuestionKind = Literal["noul", "choice"]
 BuiltinKind = Literal["rule", "state", "floor", "same"]
@@ -77,32 +78,49 @@ class ChoiceAnswer(_Strict):
 
 
 class Example(_Strict):
-    """Un caso que el certificador corre: con estas respuestas (y esta regla),
-    la tabla debe dar `expect` (o `doubt`)."""
+    """Un caso que el certificador corre: con estas respuestas (y esta regla
+    y esta entrada), la tabla debe dar `expect` (o `doubt`)."""
 
     answers: dict[str, float | ChoiceAnswer] = Field(default_factory=dict)
     rule: Any = None
+    input: dict[str, Any] = Field(default_factory=dict)
     expect: Any
+
+
+def _type_text(value: str) -> str:
+    try:
+        parse_type(value)
+    except TypeSyntaxError as exc:
+        raise ValueError(str(exc)) from None
+    return value
 
 
 class Capability(_Strict):
     capability: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
-    value: ValueType
+    #: Tipo del valor (gramática en `types.py`): bool, string, {cantidad: int?}…
+    value: str
     options: list[str] | None = None
     input: str = Field(min_length=1)
     rule: BuiltinRef
     state: BuiltinRef | None
     questions: list[Question] = Field(min_length=1)
     thresholds: dict[str, float] = Field(default_factory=dict)
+    #: Cálculos intermedios en orden (CEL); se leen como `vars.nombre`.
+    vars: dict[str, str] = Field(default_factory=dict)
     decide: list[WhenRow | OtherwiseRow] = Field(min_length=1)
     floor: BuiltinRef
     same: BuiltinRef
     examples: list[Example] = Field(min_length=1)
 
+    @field_validator("value")
+    @classmethod
+    def _value_type(cls, value: str) -> str:
+        return _type_text(value)
+
     @model_validator(mode="after")
     def _options_only_for_strings(self) -> Capability:
-        if self.options is not None and self.value != "string":
-            raise ValueError("options solo aplica a value: string")
+        if self.options is not None and parse_type(self.value).kind != "string":
+            raise ValueError("options solo aplica a un value string")
         return self
 
 
@@ -123,15 +141,50 @@ class Bundle(_Strict):
 
 class BuiltinSpec(_Strict):
     kind: BuiltinKind
-    value: ValueType | None = None
+    value: str | None = None
     input: str | None = None
     params: dict[str, ParamType] = Field(default_factory=dict)
     doc: str = ""
 
 
+class ConstantSpec(_Strict):
+    type: str
+    value: Any
+
+    @field_validator("type")
+    @classmethod
+    def _constant_type(cls, value: str) -> str:
+        return _type_text(value)
+
+
 class Catalog(_Strict):
     engine_contract: int = Field(ge=1)
-    inputs: list[str] = Field(min_length=1)
+    #: Tipos de entrada y sus campos (nombre → tipo), lo que una condición
+    #: puede leer como `inp.campo`.
+    inputs: dict[str, dict[str, str]] = Field(min_length=1)
     builtins: dict[str, BuiltinSpec]
+    #: Constantes del motor que una condición lee como `consts.NOMBRE`.
+    constants: dict[str, ConstantSpec] = Field(default_factory=dict)
     #: capacidad → piso que el paquete NO puede cambiar (p. ej. la baja legal).
     required_floors: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("inputs", mode="before")
+    @classmethod
+    def _inputs_without_fields(cls, value: Any) -> Any:
+        # `inputs: [Inbound]` = tipos sin campos legibles desde las condiciones.
+        return {name: {} for name in value} if isinstance(value, list) else value
+
+    @model_validator(mode="after")
+    def _types_and_constants(self) -> Catalog:
+        for name, fields in self.inputs.items():
+            for field_name, text in fields.items():
+                try:
+                    parse_type(text)
+                except TypeSyntaxError as exc:
+                    raise ValueError(f"inputs.{name}.{field_name}: {exc}") from None
+        from src.platform.decisions.types import conforms
+
+        for name, constant in self.constants.items():
+            if not conforms(constant.value, parse_type(constant.type)):
+                raise ValueError(f"constants.{name}: {constant.value!r} no es {constant.type}")
+        return self

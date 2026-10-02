@@ -1,27 +1,71 @@
 # Catálogo de builtins del motor de decisiones de ventas (PAQUETES_DE_DECISION.md §5).
 #
-# Lo que un paquete puede pedir por nombre: reglas (lo que decide sin Jev o
-# con duda), constructores de estado (el texto que lee Jev; null = no se
-# pregunta), pisos (lo que nunca se quita) y comparadores. Cada entrada
-# existe en código (`decisions/bundled.py: BUILTINS`); una prueba verifica que
-# coincidan. El certificador lee SOLO este archivo (no importa el plugin).
+# Lo que un paquete puede pedir por nombre y leer: reglas (lo que decide sin
+# Jev o con duda), constructores de estado (el texto que lee Jev; null = no
+# se pregunta), pisos (lo que nunca se quita), comparadores, las entradas que
+# una condición lee como `inp.campo` y las constantes (`consts.NOMBRE`). Cada
+# builtin existe en código (`decisions/bundled.py: BUILTINS`) y cada
+# constante vale lo mismo que en el código: una prueba lo verifica. El
+# certificador lee SOLO este archivo (no importa el plugin).
 #
 #   kind    rule | state | floor | same
-#   value   bool | string — si está, solo sirve a capacidades de ese tipo
-#   input   tipo de entrada que lee — si está, debe ser el de la capacidad
+#   value   tipo del valor (si está, solo sirve a capacidades de ese tipo)
+#   input   tipo de entrada que lee (si está, debe ser el de la capacidad)
 #   params  parámetros que se pasan con `with:` (str | int | float | bool)
 engine_contract: 1
-inputs: [Inbound]
+
+inputs:
+  Inbound: {text: "string?", now_ms: int, synthetic: bool}
+  Contacto: {transcript: string, touch_number: "int?", silence_minutes: "int?"}
+  Abandono: {transcript: string, purchase_confirmed: bool, order_registered: bool}
+  RespuestaDeCantidad: {last_agent_text: "string?", text: "string?", open_slot: bool}
+  CiudadDeEnvio: {ciudad: "string?"}
+  Botones: {body: string, titles: "tuple<string>", rule_rejected: "tuple<string>", by_id: "tuple<string>"}
+  Afirmacion: {text: string, tools_used: "tuple<string>"}
+  TextoAlCliente: {text: string}
+
+constants:
+  # messagingkit: la pausa abierta de «yo les escribo cuando…».
+  DEFERRAL_KIND_OPEN: {type: string, value: abierto}
+  OPEN_DEFERRAL_MS: {type: int, value: 604800000}
+
 builtins:
+  # ── reglas ──
   constant_false:
     kind: rule
     value: bool
     doc: "Siempre false: sin Jev, todo sigue como hoy."
+  constant_empty:
+    kind: rule
+    value: string
+    doc: "Siempre \"\": decide el LLM (cierre por abandono)."
   opt_out_text:
     kind: rule
     value: bool
     input: Inbound
     doc: "La frase explícita de baja (messagingkit.is_opt_out_text) sobre el texto que escribió el cliente."
+  reengagement:
+    kind: rule
+    input: Inbound
+    doc: "El aplazamiento con fecha y la cortesía de hoy (messagingkit.parse_reengagement_deferral / is_courtesy_text)."
+  reply_quantity:
+    kind: rule
+    input: RespuestaDeCantidad
+    doc: "La cantidad que la regla lee en la respuesta (`read_reply_quantity`)."
+  shipping_zone:
+    kind: rule
+    input: CiudadDeEnvio
+    doc: "«bogota» si la ciudad lo dice; si no, no se sabe (`shipping_zone`)."
+  rule_rejected_titles:
+    kind: rule
+    input: Botones
+    doc: "Los botones que ya rechazó el vocabulario del catálogo."
+  promises_a_handoff:
+    kind: rule
+    value: bool
+    input: TextoAlCliente
+    doc: "Las frases del relevo (un colega te contacta, coordina contigo…)."
+  # ── estado ──
   customer_message:
     kind: state
     input: Inbound
@@ -31,6 +75,31 @@ builtins:
     kind: state
     input: Inbound
     doc: "Lo que el cliente vio antes (CONTEXTO) y «MENSAJE DEL CLIENTE [1] …». Sin texto del cliente, no se pregunta."
+  text_template:
+    kind: state
+    params: {template: str, required: str}
+    doc: "`template` con {<required>} = ese campo de la entrada sin espacios de más; campo vacío = no se pregunta."
+  proactive_touch:
+    kind: state
+    input: Contacto
+    doc: "La conversación y el toque de la escalera / el silencio, antes de un mensaje proactivo."
+  abandoned_chat:
+    kind: state
+    input: Abandono
+    doc: "La conversación que el cliente dejó y lo que la tienda ya sabe del pedido."
+  quantity_reply:
+    kind: state
+    input: RespuestaDeCantidad
+    doc: "El último mensaje del asesor (recortado por el principio) y la respuesta; sin hueco de cantidad, no se pregunta."
+  buttons_message:
+    kind: state
+    input: Botones
+    doc: "El mensaje y sus botones; sin botones, no se pregunta."
+  sent_message_with_tools:
+    kind: state
+    input: Afirmacion
+    doc: "Lo que el turno envió y las herramientas que consultó."
+  # ── pisos ──
   jev:
     kind: floor
     doc: "Sin piso: decide lo que dijo Jev."
@@ -38,10 +107,38 @@ builtins:
     kind: floor
     value: bool
     doc: "Piso: lo que dijo la regla nunca se quita; Jev solo agrega."
+  closing_invariants:
+    kind: floor
+    value: string
+    input: Abandono
+    doc: "Pedido registrado = COMPRA_EXITOSA; COMPRA_EXITOSA sin pedido no existe; CONFIRMADO_SIN_DATOS sin confirmar = INTERESADO."
+  jev_and_button_ids:
+    kind: floor
+    input: Botones
+    doc: "Lo de Jev más los botones cuyo id delata un selector (product., color.)."
+  # ── comparadores ──
   bool_eq:
     kind: same
     value: bool
     doc: "Dos decisiones coinciden si son el mismo bool."
+  text_eq:
+    kind: same
+    doc: "El mismo texto (null = vacío)."
+  truthy_eq:
+    kind: same
+    doc: "Las dos dicen algo, o las dos nada."
+  key_eq:
+    kind: same
+    params: {key: str}
+    doc: "El mismo valor en la llave `key` del registro."
+  deferral_and_courtesy_eq:
+    kind: same
+    doc: "El mismo tipo de aplazamiento y la misma cortesía."
+
 required_floors:
   # La baja explícita es un piso legal: achicarlo es decisión del operador.
   baja: rule_or_jev
+  # Las frases del relevo son piso: si el texto promete un colega, se escala.
+  relevo: rule_or_jev
+  # Los invariantes del pedido nunca los decide Jev.
+  cierre: closing_invariants

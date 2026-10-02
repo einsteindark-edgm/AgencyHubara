@@ -35,8 +35,21 @@ bundles/
    builtins del catálogo, pisos obligatorios) y los ejemplos del paquete.
    Códigos DB001–DB012 (lista en `src/platform/decisions/checker.py`).
 4. **Tabla:** la primera fila cuya condición se cumple decide; `doubt` =
-   decide la regla. Una condición que falla al evaluarse también es duda.
-5. **Builtins:** lo que sigue siendo código (reglas de texto, constructores
+   decide la regla. Una condición que falla al evaluarse también es duda
+   (leer una llave que no está devuelve un *valor de error* en CEL; el motor
+   lo trata como duda, nunca como false: la fila siguiente no decide).
+5. **Tipos de valor** (`value:`): `bool`, `string`, `int`, `double`, `any`,
+   `list<T>`, `tuple<T>` (tupla de Python), registros `{campo: tipo}` y `?`
+   para null — p. ej. `{cantidad: int?}` o
+   `{deferral: {kind: string, until_ms: int}?, courtesy: bool}`. Un `then`
+   literal tiene que ser del tipo (DB007); `then: {expr: "<CEL>"}` lo calcula
+   (`{'cantidad': int(choice['cantidad.dio'])}`) y se convierte al tipo.
+6. **Variables legibles en CEL:** `p`, `choice`, `conf`, `th`, `rule`,
+   `inp.campo` (los campos de la entrada declarados en el catálogo),
+   `vars.nombre` (cálculos intermedios de la capacidad, en orden) y
+   `consts.NOMBRE` (constantes del catálogo, con su valor). `let` y `const`
+   son palabras reservadas de CEL: por eso `vars` y `consts`.
+7. **Builtins:** lo que sigue siendo código (reglas de texto, constructores
    de estado, pisos legales, comparadores) lo pone el plugin, registrado en
    código y declarado en `builtins.yaml`; una prueba exige que coincidan.
 
@@ -67,9 +80,12 @@ if value is DOUBT:
     ...  # decide la regla
 ```
 
-El motor de ventas lo envuelve en `decisions/bundled.py`
-(`bundled_capability("baja")`), con la forma de `Capability`, y el `Verdict`
-lleva `bundle: "hubara-ventas@1"` en la traza.
+El motor de ventas lo envuelve en `decisions/bundled.py` (`BundledCapability`,
+con la forma de `Capability`) y los lugares lo piden por nombre al resolutor
+(`decisions/registry.py: capability("baja")`), que toma el paquete activo
+de la tienda (`SALES_DECISIONS_BUNDLE`, Terraform `tenants.<t>.lab.decisions_bundle`)
+o, si la capacidad todavía no migró, su clase. El `Verdict` lleva
+`bundle: "hubara-ventas@1"` en la traza.
 
 ## Reglas al escribir un paquete
 

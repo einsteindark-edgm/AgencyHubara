@@ -27,8 +27,8 @@ async def _unconsulted_claims(session_id: str, payload: dict) -> dict:
     nada: devuelve {}."""
     from pathlib import Path
 
-    from src.plugins.chats.agent.sales.decisions.capabilities.texto import AFIRMACION, Afirmacion
-    from src.plugins.chats.agent.sales.decisions.guards import decide_for_session
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import Afirmacion
+    from src.plugins.chats.agent.sales.decisions.guards import capability, decide_for_session
     from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
     text = "\n\n".join(t for t in payload.get("sent_texts") or [] if isinstance(t, str) and t.strip())
@@ -39,7 +39,7 @@ async def _unconsulted_claims(session_id: str, payload: dict) -> dict:
     ) or tuple(str(t.get("name")) for t in payload.get("tools") or [] if isinstance(t, dict) and t.get("name"))
     vault_dir = Path(WORKSPACE_VAULT_DIR)
     verdict = await decide_for_session(
-        AFIRMACION,
+        capability("afirmacion"),
         Afirmacion(text=text, tools_used=used),
         session_id=session_id,
         vault_dir=vault_dir,

@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=../../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿En qué zona de envío queda la ciudad?» {bogota, nacional}. La regla solo
+# sabe Bogotá si la ciudad lo dice; Jev sabe que Chía es un municipio cercano
+# y que Medellín es nacional. La tarifa la valida el código.
+# Dominio (F5): las zonas y sus descripciones son de Colombia.
+capability: zona_de_envio
+value: "{zona: string?}"
+input: CiudadDeEnvio
+rule: {builtin: shipping_zone}
+state:
+  builtin: text_template
+  with: {template: "Ciudad de entrega que dio el cliente: «{ciudad}»", required: ciudad}
+questions:
+  - id: zona.cual
+    kind: choice
+    text: "¿En qué zona de envío queda la ciudad de entrega?"
+    criteria:
+      "bogota": "Bogotá o un municipio cercano a Bogotá"
+      "nacional": "otra ciudad o municipio de Colombia, lejos de Bogotá"
+      "ambiguo": "no se puede saber con lo que dice"
+      "ninguno": "no es una ciudad o municipio de Colombia"
+thresholds: {"choice": 0.85}
+decide:
+  - when: "!('zona.cual' in choice) || conf['zona.cual'] < th['choice'] || choice['zona.cual'] == 'ambiguo'"
+    then: doubt
+  - when: "choice['zona.cual'] == 'ninguno'"
+    then: {zona: null}
+  - when: "choice['zona.cual'] == 'bogota'"
+    then: {zona: bogota}
+  - when: "choice['zona.cual'] == 'nacional'"
+    then: {zona: nacional}
+  - otherwise: doubt
+floor: {builtin: jev}
+same:
+  builtin: key_eq
+  with: {key: zona}
+examples:
+  - {answers: {zona.cual: {choice: bogota, p: 0.9}}, expect: {zona: bogota}}
+  - {answers: {zona.cual: {choice: nacional, p: 0.85}}, expect: {zona: nacional}}
+  - {answers: {zona.cual: {choice: ninguno, p: 0.9}}, expect: {zona: null}}
+  - {answers: {zona.cual: {choice: ambiguo, p: 0.9}}, expect: doubt}
+  - {answers: {zona.cual: {choice: bogota, p: 0.84}}, expect: doubt}

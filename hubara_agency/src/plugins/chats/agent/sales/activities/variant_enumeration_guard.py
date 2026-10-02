@@ -26,8 +26,8 @@ from pathlib import Path
 
 from temporalio import activity
 
-from src.plugins.chats.agent.sales.decisions.capabilities.texto import ENUMERACION, TextoCatalogo
-from src.plugins.chats.agent.sales.decisions.guards import decide_for_session
+from src.plugins.chats.agent.sales.decisions.capabilities.texto import TextoCatalogo
+from src.plugins.chats.agent.sales.decisions.guards import capability, decide_for_session
 from src.plugins.chats.agent.sales.tools.ui_intents import (
     _append_intent,
     build_variant_picker_intent,
@@ -70,7 +70,7 @@ async def apply_variant_enumeration_guard_activity(session_id: str, final_text: 
     # hoy por defecto: idéntico a antes). Las etiquetas salen del catálogo.
     vault_dir = Path(WORKSPACE_VAULT_DIR)
     verdict = await decide_for_session(
-        ENUMERACION,
+        capability("enumeracion"),
         TextoCatalogo(text=final_text, aromas=tuple(aromas), colors=tuple(colors)),
         session_id=session_id,
         vault_dir=vault_dir,

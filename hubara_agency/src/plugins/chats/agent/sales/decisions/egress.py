@@ -505,6 +505,9 @@ async def decide_egress(
 ) -> EgressOutput:
     """Los veredictos del egreso para el texto final del turno (ver el módulo).
     Nunca lanza por Jev: si falla, tarda o duda, decide la regla de hoy."""
+    # Cada capacidad por su nombre (paquete de la tienda o su clase).
+    from src.plugins.chats.agent.sales.decisions.registry import capability
+
     text = inp.final_text or ""
     # Lo que no es texto del LLM para el cliente no se le pregunta a Jev.
     ask_jev = not inp.admin_turn and not is_no_message_abstention(text)
@@ -532,12 +535,12 @@ async def decide_egress(
     sanitizer: dict[str, Any] = {}
     stage = preamble_stage(inp.raw_text) if inp.raw_text is not None else ""
     if stage:
-        preamble, _ = await run(Preambulo(), PreambuloCheck(stage))
+        preamble, _ = await run(capability("preambulo"), PreambuloCheck(stage))
         engine = sanitize_llm_text(inp.raw_text or "", without_preamble=text_without_preamble(stage, str(preamble or "")))
         if engine.text != text:
             sanitizer = {"before": inp.raw_text, "after": engine.text, "actions": list(engine.actions)}
             text = engine.text
-    destinatario, rescate = Destinatario(), Rescate()
+    destinatario, rescate = capability("destinatario"), capability("rescate")
     # 1 · Rescate antes de grabar: el LLM recuerda lo que de verdad sale.
     llm_text, rescued_before_record = text, False
     if text and not inp.admin_turn and not is_no_message_abstention(text):
@@ -554,7 +557,7 @@ async def decide_egress(
     final_text = llm_text
     check = PortavelasCheck(llm_text, order_registered=bool(inp.order_registered), portavelas_included=inp.portavelas_included)
     if Portavelas.applies(check):
-        stripped, _ = await run(Portavelas(), check)
+        stripped, _ = await run(capability("portavelas"), check)
         if stripped != llm_text:
             guards.append({"name": "portavelas_notice_guard", "before": llm_text, "after": stripped})
             final_text = stripped
@@ -572,7 +575,7 @@ async def decide_egress(
     # frenado no cuenta: sin nada que salga no hay bienvenida suelta).
     goes_out = "" if (inp.admin_turn or blocked) else final_text
     greeting_needed, _ = await run(
-        Saludo(),
+        capability("saludo"),
         GreetingCheck(
             first_contact=bool(inp.first_contact),
             tools_used=tuple(inp.tools_used or ()),

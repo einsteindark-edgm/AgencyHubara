@@ -205,3 +205,58 @@ run "un_lector_del_order_sentinel_raro_no_pasa_el_plan" {
   }
   expect_failures = [var.tenants]
 }
+
+# Paquetes de decisión (PAQUETES_DE_DECISION.md §10.1): el paquete activo es
+# configuración de la tienda, igual que el perfil de Jev. Default: Hubara.
+run "el_paquete_de_decision_por_defecto_es_el_de_hubara" {
+  command = plan
+  variables {
+    tenants = {
+      t = {
+        api_url       = "https://x.example"
+        callback_urls = ["https://x.example/callback"]
+        logout_urls   = ["https://x.example/"]
+      }
+    }
+  }
+  assert {
+    condition     = module.lab_config["t"].params["SALES_DECISIONS_BUNDLE"] == "hubara-ventas"
+    error_message = "Sin bloque lab, SALES_DECISIONS_BUNDLE es hubara-ventas."
+  }
+}
+
+run "el_paquete_de_decision_de_la_tienda_viaja_a_ssm" {
+  command = plan
+  module { source = "./modules/lab-config" }
+  variables {
+    tenant = "t1"
+    config = {
+      perception_mode_ceiling = "off"
+      perception_profile      = "jev-v1"
+      signal_inbound_meta     = false
+      max_usd_per_run         = 120
+      max_usd_per_month       = 300
+      internal_numbers        = []
+      decisions_bundle        = "vincenzo-ventas"
+    }
+  }
+  assert {
+    condition     = aws_ssm_parameter.lab["SALES_DECISIONS_BUNDLE"].value == "vincenzo-ventas" && aws_ssm_parameter.lab["SALES_DECISIONS_BUNDLE"].name == "/hubara/t1/SALES_DECISIONS_BUNDLE"
+    error_message = "SALES_DECISIONS_BUNDLE va en /hubara/<tenant>/ con el paquete del tenant."
+  }
+}
+
+run "un_paquete_de_decision_con_nombre_raro_no_pasa_el_plan" {
+  command = plan
+  variables {
+    tenants = {
+      t = {
+        api_url       = "https://x.example"
+        callback_urls = ["https://x.example/callback"]
+        logout_urls   = ["https://x.example/"]
+        lab           = { decisions_bundle = "../velas" }
+      }
+    }
+  }
+  expect_failures = [var.tenants]
+}

@@ -25,6 +25,10 @@
 #     estado del pedido, actúa el LLM y los desacuerdos van a la cola que califica
 #     Claude Code; on = actúa el veredicto de Jev cuando lo hay (si duda, el LLM).
 #     Es el interruptor mismo (lote diario, sin panel): se cambia solo acá.
+#   SALES_DECISIONS_BUNDLE         paquete de decisión de la tienda: la carpeta en
+#     sales/decisions/bundles/ (PAQUETES_DE_DECISION.md §10.1). Las capacidades
+#     migradas salen de ahí (preguntas, umbrales, tablas); un paquete que no
+#     existe falla fuerte (nunca corre la inteligencia de otra tienda).
 #   LAB_MAX_USD_PER_RUN / _MONTH   topes de gasto del botón "Nueva corrida" (§3.7).
 #   LAB_INTERNAL_NUMBERS           teléfonos del equipo (E.164, separados por coma):
 #     sus conversaciones no entran al banco (motivo `numero_interno`). Lo leen la
@@ -47,6 +51,7 @@ variable "config" {
     capabilities_ceiling    = optional(string, "off")
     workflow_v2_ceiling     = optional(string, "off")
     order_sentinel_reader   = optional(string, "off")
+    decisions_bundle        = optional(string, "hubara-ventas")
   })
 }
 
@@ -63,6 +68,7 @@ locals {
     SALES_CAPABILITIES_CEILING    = var.config.capabilities_ceiling
     SALES_WORKFLOW_V2_CEILING     = var.config.workflow_v2_ceiling
     ORDER_SENTINEL_READER         = var.config.order_sentinel_reader
+    SALES_DECISIONS_BUNDLE        = var.config.decisions_bundle
   }
 }
 

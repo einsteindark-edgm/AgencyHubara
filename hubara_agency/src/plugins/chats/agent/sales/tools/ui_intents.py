@@ -60,7 +60,7 @@ from src.plugins.chats.agent.sales.config.shipping import (
 )
 from src.plugins.chats.agent.sales.decisions.guards import (
     CiudadDeEnvio,
-    ZonaDeEnvio,
+    capability,
     decide_for_session,
 )
 from src.plugins.chats.agent.sales.pricing import (
@@ -1166,7 +1166,7 @@ class PresentOrderConfirmationTool(ToolBase):
         # La zona de la ciudad la decide el motor de decisiones (capacidad
         # `zona_de_envio`; regla de hoy: Bogotá si la ciudad lo dice).
         zone = await decide_for_session(
-            ZonaDeEnvio(),
+            capability("zona_de_envio"),
             CiudadDeEnvio(ciudad=draft_city if isinstance(draft_city, str) else None),
             session_id=ctx.session_key,
             vault_dir=WORKSPACE_VAULT_DIR,

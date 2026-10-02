@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=../../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿El texto le afirma algo que solo se sabe consultando, sin haber
+# consultado?» (stock, entrega, estado del pedido). Arranca en SOMBRA: lo
+# pregunta la activity de la traza después de enviar; la regla no marca nada.
+capability: afirmacion
+value: bool
+input: Afirmacion
+rule: {builtin: constant_false}
+state: {builtin: sent_message_with_tools}
+questions:
+  - id: afirmacion.sin_consultar
+    kind: noul
+    text: "¿El mensaje le afirma al cliente algo que solo se sabe consultando (hay stock o está disponible, cuándo llega, en qué va su pedido) sin haber usado la herramienta que lo consulta?"
+    criteria:
+      "true": "sí"
+      "false": "no"
+thresholds: {"yes": 0.85, "no": 0.15}
+decide:
+  - when: "!('afirmacion.sin_consultar' in p)"
+    then: doubt
+  - when: "p['afirmacion.sin_consultar'] >= th['yes']"
+    then: true
+  - when: "p['afirmacion.sin_consultar'] <= th['no']"
+    then: false
+  - otherwise: doubt
+floor: {builtin: jev}
+same: {builtin: bool_eq}
+examples:
+  - {answers: {afirmacion.sin_consultar: 0.9}, expect: true}
+  - {answers: {afirmacion.sin_consultar: 0.15}, expect: false}
+  - {answers: {afirmacion.sin_consultar: 0.5}, expect: doubt}
+  - {answers: {}, expect: doubt}
