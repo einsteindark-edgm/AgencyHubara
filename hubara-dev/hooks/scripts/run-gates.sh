@@ -36,6 +36,9 @@ if [[ "$SCOPE" == "all" || "$SCOPE" == "backend" ]]; then
   if [[ -d "$HUB/src/sdk" ]]; then
     gate "CLI check (compilador rápido)" "$HUB" uv run python -m src.sdk.cli check
   fi
+  if [[ -d "$HUB/src/platform/decisions" ]]; then
+    gate "Paquetes de decisión (decisions check, DB001–DB016)" "$HUB" uv run python -m src.sdk.cli decisions check
+  fi
 fi
 
 if [[ "$SCOPE" == "all" || "$SCOPE" == "frontend" ]]; then

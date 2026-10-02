@@ -50,6 +50,8 @@ git diff main...HEAD --name-only -- 'hubara_agency/docker-compose.local.yml' > /
 git diff main...HEAD --name-only -- 'frontend_dashboard/scripts/plugins-sync.ts' > /tmp/sync-script.txt
 # K8s
 git diff main...HEAD --name-only -- 'hubara_agency/k8s/aws-produccion/worker-*.yaml' > /tmp/k8s-workers.txt
+# Paquetes de decisión + catálogo + Terraform que los elige (categoría H)
+git diff main...HEAD --name-status -- 'hubara_agency/src/plugins/**/decisions/bundles/**' 'infra/terraform/platform/tenants.auto.tfvars' 'forge/manifest.yaml' > /tmp/bundles.txt
 ```
 
 Si todos vacíos → `findings: []` y exit.
@@ -126,6 +128,27 @@ Por cada plugin afectado en §16 del refinement:
   - Verificá que el manifest también lo remueve.
   - Si manifest sigue declarándolo → HIGH `dead_manifest_entry`.
 
+### H. Paquetes de decisión (ADR-2026-10-02)
+
+**Skip si `/tmp/bundles.txt` está vacío.** Guía: `.claude/skills/hubara-architecture-guide/sections/11-decision-engine.md`.
+
+- **Catálogo ↔ código:** una capacidad nueva en `builtins.yaml: capabilities`
+  trae su `about` (`name`, `where` con un id de `places`, `solves` en español
+  llano) — sin él el certificador da DB003. Un `capability("x")` nuevo en el
+  código sin `x` en el catálogo → HIGH `capability_not_in_catalog`.
+- **Builtin nuevo:** función registrada + entrada en `builtins.yaml` con su
+  firma (`test_the_catalog_and_the_code_declare_the_same_builtins`). Uno que
+  arrastra Temporal, el ingest o el catálogo y no está en `LAZY_BUILTINS` →
+  HIGH `builtin_imports_temporal`.
+- **Versión publicada editada** (`M` sobre una carpeta con huella en
+  `test_decision_bundles_published.py`) → CRITICAL `published_bundle_edited`.
+- **Paquete nuevo** sin `id` = nombre de su carpeta (DB013) o sin huella → HIGH.
+- **Experimento de esta tienda** (paquete que no es el default) sin entrada en
+  `deletes` de `forge/manifest.yaml` → MEDIUM `bundle_leaks_to_clone`.
+- **Terraform:** `lab.decisions_bundle` nombra un paquete que no existe en el
+  repo, o se borra del repo un paquete que SSM puede nombrar (rollback) →
+  CRITICAL `bundle_missing_for_ssm`.
+
 ---
 
 ## §5. Phase 4 — Cross-reference con premortem
@@ -148,7 +171,7 @@ files_audited:
 findings:
   - id: CR-PLUGIN-001
     severity: high
-    rule: footgun-F7 | SPEC-MANIFEST-DRIFT | plugin_without_spec
+    rule: footgun-F7 | SPEC-MANIFEST-DRIFT | plugin_without_spec | DECISION-BUNDLE
     location: frontend_dashboard/src/plugins/orders/plugin.yaml:14
     code_excerpt: |
       frontend:

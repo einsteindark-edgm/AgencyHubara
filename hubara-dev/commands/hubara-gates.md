@@ -1,5 +1,5 @@
 ---
-description: Corre el panel determinístico de gates de AgencyHubara (§8) — backend (R-DIP, arquitectura, certificación, CLI) y/o frontend (FSD, íconos, meta-gate). Uso: /hubara-gates [backend|frontend|all].
+description: Corre el panel determinístico de gates de AgencyHubara (§8) — backend (R-DIP, arquitectura, certificación, CLI, paquetes de decisión) y/o frontend (FSD, íconos, meta-gate). Uso: /hubara-gates [backend|frontend|all].
 argument-hint: "[backend|frontend|all]"
 ---
 
@@ -20,6 +20,9 @@ tal cual los emite el script. Si algún gate sale ✗:
   `ARCH_CHANGE_APPROVED=1` y el PR el label `architecture-change` (L-14).
 - Los 3 fallos PRE-existentes en `tests/plugins/chats` (voseo + 2 watchdog) no
   son del cambio; cualquier OTRO rojo sí.
+- Si cae «Paquetes de decisión»: el código DB### y la ruta dicen qué falla
+  (`references/06-decision-bundles.md`). Un DB010 en un ejemplo nuevo es el rojo
+  esperado de un bug de decisión: se arregla en el paquete, no en el lugar (L-34).
 
 No apliques fixes automáticamente desde acá: reportá los hallazgos y, si el
 usuario quiere, abordalos test-first (rojo → verde → refactor).

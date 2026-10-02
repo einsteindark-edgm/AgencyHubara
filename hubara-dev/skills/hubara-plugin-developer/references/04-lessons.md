@@ -1,4 +1,4 @@
-# 04 · Lecciones (qué NO repetir — índice de §9, L-0..L-22)
+# 04 · Lecciones (qué NO repetir — índice de §9, L-0..L-34)
 
 > Índice scannable de `ARCHITECTURE_FINAL_fable.md §9`. Cada lección allá tiene
 > Síntoma → Causa → Fix → Regla-para-el-skill → Guard. Acá, la regla en una
@@ -29,6 +29,18 @@
 | L-20 | acuse tras tool terminal | una tool que termina la conversación lleva el texto del cliente en un PARAM tipado y CORTA el turno — nunca un `llm_chat` "de despedida" tras el tool result (el modelo le acusa recibo al sistema y eso le llega al cliente); un tool result describe hechos, no da órdenes; la regla de VOZ del operador se hace ley con guard sobre los guiones que nosotros dictamos |
 | L-21 | regex = lógica de replay | un predicado (regex, umbral, lista) cuyo veredicto decide commands DENTRO de un workflow se versiona como código: valor nuevo → set nuevo + `workflow.patched` propio; el mejor test es una history REAL saneada con control negativo |
 | L-22 | historial = few-shot | lo que NO salió el LLM no lo recuerda: `record_turn` corre antes de que el caller decida enviar → el helper recibe `admin_turn` y recorta el `assistant` final no enviado; el corte de L-20 se decide por lo que la tool DECLARA (`tag_closure.ends_turn`), no por su nombre; cambio de solo-payload no lleva `patched`; si el corte depende de una clave NUEVA del envelope, la fixture útil es la de versiones mezcladas, con control negativo automatizado |
+| L-23 | id `-preview` en prod | un id de modelo con fecha de apagado (o un `-preview`) en un camino de clientes se cae sin aviso si sus consumidores no lanzan: todo id upstream con revisión fechada (`REVIEWED_UPSTREAM_IDS`) |
+| L-24 | corte por nombre | un corte de turno se decide por lo que la tool DECLARÓ que hizo (su resultado), no por su nombre |
+| L-25 | sandbox con `setdefault` | un sandbox ASIGNA las variables que enrutan su estado (vault, historial, catálogo); `setdefault` no aísla |
+| L-26 | Medusa y promociones | con draft orders Medusa es el libro contable: Hubara calcula el descuento y lo escribe en el precio; nunca `promo_codes` |
+| L-27 | límite que falla abierto | un límite que se lee como «vacío» cuando algo falla se vuelve «sin límite»: falla cerrado |
+| L-28 | conteo derivado | un conteo derivado de lo ya escrito incluye tu propia escritura (el reintento se ve a sí mismo) |
+| L-29 | convención del envelope | una convención nueva del envelope aplica a TODOS sus emisores, también los que otra rama agregó en paralelo |
+| L-30 | fallar cerrado ≠ mentir | «no pude leer el dato» no es «el dato cambió» |
+| L-31 | lista cerrada | validar con lista cerrada un campo que ya viajaba libre rompe a sus emisores; lo que el bot dice tras una tool terminal va DENTRO de esa tool |
+| L-32 | regla en todas las puertas | una regla que cambia qué se vende o a qué precio llega a TODAS las puertas y a todo lo que el bot muestra |
+| L-33 | aviso que dice «sí» | un aviso que confirma algo al LLM enumera TODAS las condiciones del sí y lee el dato vivo |
+| L-34 | decisión regada en código | un bug de decisión se arregla en una versión nueva del paquete (veredicto → ejemplo rojo → cambio mínimo → laboratorio → Terraform), nunca con un `if`/regex en el lugar que decide (`06-decision-bundles.md`) |
 
 ## El patrón que las genera (y cómo contribuís)
 

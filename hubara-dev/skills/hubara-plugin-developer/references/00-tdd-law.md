@@ -39,6 +39,7 @@ antes de una línea de código, o 50 líneas para "un" test, rompiste el paso.
 | Frontend entity | Zod parsea un fixture del shape REAL del backend | `entities/<e>/contracts.test.ts` |
 | Frontend feature | vitest sobre comportamiento (no implementación) | `features/<f>/...test.tsx` |
 | Gate / check nuevo | el caso **NEGATIVO primero**: fabricá el estado roto y probá que el gate lo CAZA | `tests/architecture/test_testkit_selftest.py` |
+| Decisión del bot (capacidad del motor) | un `examples:` en el YAML de la capacidad, en una versión NUEVA del paquete: `decisions check` da **DB010** (es el rojo); si lo que cambia es lo que Jev entiende, la evidencia es el laboratorio `B@paquete` | `…/decisions/bundles/<id>-N/capabilities/<x>.yaml` (ver `06-decision-bundles.md`) |
 
 ## Bug encontrado en producción ⇒ guard ROJO antes del fix
 
@@ -47,6 +48,12 @@ Cuando un run real revela un bug, el **primer** artefacto es un test que
 "Guard" de una lección se escribe ANTES que el "Fix". El guard rojo es la
 definición de "entendí el bug". (R-DET + time-skipping hacen que hasta las
 carreras de workflow se reproduzcan en un test — ver L-13.)
+
+**Si el bug es de una DECISIÓN** (el bot confirmó, absorbió, cobró o frenó
+mal), el guard rojo NO es un pytest en el lugar que decide: es el caso real
+(las `answers` del veredicto, anonimizadas) como `examples:` de la capacidad en
+una versión nueva del paquete. Un pytest que fija un `if`/regex nuevo en una
+tool o en el ingest es el camino de `main` que L-34 prohíbe.
 
 ## No es TDD (rechazá esto)
 

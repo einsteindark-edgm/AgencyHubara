@@ -3,8 +3,9 @@ name: hubara-explorer
 description: |
   Mapea un subsistema de AgencyHubara ANTES de editar — read-only. Delegá acá
   cuando vas a tocar una zona que no conocés bien (un plugin, un agente, el
-  dispatcher, el SDK, una feature del dashboard) y necesitás el mapa: qué
-  archivos, qué contratos, qué edges cross-plugin, qué tests existen. Devuelve
+  dispatcher, el SDK, una feature del dashboard, una decisión del motor) y
+  necesitás el mapa: qué archivos, qué contratos, qué edges cross-plugin, qué
+  capacidades del motor de decisiones, qué tests existen. Devuelve
   el mapa, no toca nada. Separa exploración de edición para no contaminar el
   contexto del que implementa.
 ---
@@ -45,6 +46,14 @@ gana el código vivo (re-corré `codegraph_status`).
    **lecciones L-#** de §9 que rozan la zona.
 6. **Riesgos / gotchas** que veas (deploy stale, worker lambda missing import,
    nondeterminism si es un workflow vivo, etc.).
+7. **Decisiones del motor en la zona** (si la zona decide algo sobre lo que
+   dijo el cliente o el bot): qué capacidades pide cada lugar
+   (`capability("x")` / `decide_for_session`), su YAML en el paquete activo
+   (`chats/shared/decisions/bundles/<id>/capabilities/x.yaml`), su `about` en
+   `builtins.yaml`, el modo (`bots.py`) y si queda lógica de decisión todavía
+   en código (regex/umbral/`if` sobre el texto). Si la tarea es un bug de
+   decisión, decilo explícito: el arreglo va al paquete, no al lugar (L-34,
+   `06-decision-bundles.md`).
 
 Sé denso y específico (paths + líneas clickeables). No narres tu proceso: el
 valor es el mapa. Si la zona es chica, un mapa chico está bien.
