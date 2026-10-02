@@ -92,8 +92,13 @@ def test_rafaga_v5_asks_whether_the_shipping_question_is_about_the_cost() -> Non
     `send_reply`, el turno salió solo con las tarifas: la pregunta del tiempo
     quedó sin respuesta. `rafaga-v5` suma UNA pregunta (¿pregunta el costo?)
     para que el contrato pida la tarjeta solo cuando la preguntan. Todo lo
-    demás es idéntico a v4 (el banco de referencia califica por id)."""
-    v4, v5 = load_questionnaire("rafaga-v4"), load_questionnaire("rafaga-v5")
+    demás es idéntico a v4 (el banco de referencia califica por id).
+
+    Desde F7 `rafaga-v5` vive en el turno del paquete (`ventas/turn.yaml`)."""
+    from src.plugins.chats.agent.sales.decisions.profiles import get_engine_profile
+    from src.plugins.chats.agent.sales.decisions.turn import turn_of
+
+    v4, v5 = load_questionnaire("rafaga-v4"), turn_of(get_engine_profile("jev-v5")).questionnaire
     extra = [q for q in v5.raw["questions"] if q not in v4.raw["questions"]]
 
     assert v5.id == "rafaga-v5"

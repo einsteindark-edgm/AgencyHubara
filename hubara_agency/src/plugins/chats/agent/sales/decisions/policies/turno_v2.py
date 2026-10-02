@@ -19,6 +19,7 @@ from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.plan import TurnOutcome, TurnPlan, answer_of
 from src.plugins.chats.agent.sales.decisions.policies import turno_v1
+from src.plugins.chats.agent.sales.decisions.policies.tables import TurnTables
 
 POLICY_ID = "turno-v2"
 
@@ -100,13 +101,15 @@ def reading_from(result: Any, context: Any, thresholds: dict[str, float]) -> dic
     }
 
 
-def reading_sentence(reading: dict[str, Any], thresholds: dict[str, float]) -> str | None:
+def reading_sentence(reading: dict[str, Any], thresholds: dict[str, float], tables: TurnTables | None = None) -> str | None:
     th = {**DEFAULT_THRESHOLDS, **thresholds}
     answers_p = reading.get("answers_bot")
     if not reading or not isinstance(answers_p, (int, float)) or answers_p < th["answers"]:
         return None
+    notes = _READING_NOTES if tables is None else tables.reading_notes
+    any_answer = _READING_ANY if tables is None else tables.reading_any
     bot_asked, answer = str(reading.get("bot_asked") or ""), str(reading.get("answer") or "")
-    return _READING_NOTES.get((bot_asked, answer)) or _READING_ANY.get(bot_asked)
+    return notes.get((bot_asked, answer)) or any_answer.get(bot_asked)
 
 
 def _checklist_body(plan: TurnPlan, questionnaire: Any) -> str | None:
@@ -119,9 +122,12 @@ def _checklist_body(plan: TurnPlan, questionnaire: Any) -> str | None:
     )
 
 
-def reading_note(plan: TurnPlan, reading: dict[str, Any], questionnaire: Any, thresholds: dict[str, float]) -> str | None:
+def reading_note(
+    plan: TurnPlan, reading: dict[str, Any], questionnaire: Any, thresholds: dict[str, float],
+    tables: TurnTables | None = None,
+) -> str | None:
     """La nota del turno: qué responde el cliente y los asuntos que planteó."""
-    parts = [p for p in (reading_sentence(reading, thresholds), _checklist_body(plan, questionnaire)) if p]
+    parts = [p for p in (reading_sentence(reading, thresholds, tables), _checklist_body(plan, questionnaire)) if p]
     return ("[LECTURA DEL TURNO] " + " ".join(parts)) if parts else None
 
 
@@ -132,6 +138,7 @@ def decide_turn(
     context: Any = None,
     n_messages: int,
     thresholds: dict[str, float] | None = None,
+    tables: TurnTables | None = None,
 ) -> TurnOutcome:
     th = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     plan = turno_v1.plan_from_answers(result, topics=questionnaire.topic_ids, n_messages=n_messages, thresholds=th)
@@ -141,7 +148,7 @@ def decide_turn(
     return TurnOutcome(
         plan=plan,
         topics=topic_rows(plan, questionnaire),
-        note=reading_note(plan, reading, questionnaire, th),
-        coverage=coverage_rules(plan),
+        note=reading_note(plan, reading, questionnaire, th, tables),
+        coverage=coverage_rules(plan, tables),
         reading=reading,
     )

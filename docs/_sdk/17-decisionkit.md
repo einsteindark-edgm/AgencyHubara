@@ -21,6 +21,7 @@ src/plugins/chats/shared/decisions/bundles/
   ventas/
     bundle.yaml            id, versión, engine_contract, oráculo, capacidades
     domain.yaml            el dominio de la tienda: nombre, despedida, vocabulario del agente
+    turn.yaml              el turno: la ráfaga ①, la verificación ③ y las tablas de la política (F7)
     capabilities/<c>.yaml  regla, estado, preguntas, umbrales, tabla, piso, ejemplos
 ```
 
@@ -34,7 +35,8 @@ src/plugins/chats/shared/decisions/bundles/
    se puede cambiar de implementación sin tocar los paquetes.
 3. **Certificador:** referencias cruzadas que CEL no ve (llaves de mapa,
    builtins del catálogo, pisos obligatorios) y los ejemplos del paquete.
-   Códigos DB001–DB013 (lista en `src/platform/decisions/checker.py`).
+   Códigos DB001–DB015 (lista en `src/platform/decisions/checker.py`; los
+   del turno, en `turn_check.py`).
 4. **Tabla:** la primera fila cuya condición se cumple decide; `doubt` =
    decide la regla. Una condición que falla al evaluarse también es duda
    (leer una llave que no está devuelve un *valor de error* en CEL; el motor
@@ -85,6 +87,44 @@ src/plugins/chats/shared/decisions/bundles/
    de estado, opciones, vistas, ítems, pisos legales, comparadores) lo pone
    el plugin, registrado en código y declarado en `builtins.yaml`; una
    prueba exige que coincidan.
+11. **El turno** (`turn.yaml`, F7): lo que Jev contesta antes del turno (la
+   ráfaga ①: qué asuntos plantea el cliente, qué le preguntó el asesor, qué
+   responde) y antes de enviar (③: ¿la respuesta atiende cada asunto?), con
+   las tablas de la política que arma el turno (código del plugin). El
+   catálogo declara su vocabulario (`turn:` — políticas con los umbrales y
+   las preguntas que leen, hechos y sus valores, etapas, datos, tools); lo
+   que no está ahí no compila (DB015). Trae:
+
+   - `policy` y `thresholds` (exactamente los que lee la política);
+   - `questionnaire`: asuntos, preguntas fijas / por asunto (`each_topic`) /
+     por mensaje (`each_message`) con `when` sobre hechos del turno, la
+     pregunta de ③ y los textos del `state` (un `{campo}` que el motor no
+     llena es DB005);
+   - `coverage` (②: tools, palabras o cualquier texto por asunto; todos los
+     asuntos, `{}` si nada lo atiende), `reading` (la nota según lo que
+     preguntó el asesor y lo que responde el cliente) y `guide`;
+   - `contract`: asunto → tools, como **filas**: la primera del asunto que
+     se cumple decide, `any_of: []` = no pide tool. CEL sobre `p` (una
+     respuesta sin probabilidad vale 0), `th`, `inp` y `dom`:
+
+     ```yaml
+     contract:
+       - topic: envio
+         when: "'envio.costo' in p && p['envio.costo'] < th['detect']"
+         any_of: []                      # pregunta cuánto tarda, no el costo
+       - topic: envio
+         any_of: [send_shipping_rates]
+         nudge: "Para el costo del envío usa send_shipping_rates. …"
+     ```
+   - `verify_decide`: ③ por asunto (`item` con `topic`, `msg` y `p` si Jev
+     contestó) → `covered | missing | doubt`; el motor junta: cualquier
+     missing → complemento, cualquier doubt → pendiente, si no, se envía;
+   - `examples` del contrato y de ③ (DB010).
+
+   En código: `bundle.turn` (`CompiledTurn`): `turn.required(asuntos, p=…,
+   inp=…)`, `turn.verify([(asunto, mensaje)…], p=…)` y sus tablas. En ventas,
+   el perfil `jev-v5` dice `turn: bundle` y `decisions/turn.py: turn_of(perfil)`
+   le da al motor el cuestionario, la política y las tablas del paquete activo.
 
 ## Cómo se usa
 
@@ -138,3 +178,6 @@ o, si la capacidad todavía no migró, su clase. El `Verdict` lleva
 8. Un ítem sin respuesta no trae `p` (ni `choice`): `has(i.p)` antes de
    leerla. En un string de YAML con comillas dobles, `\n` es un salto de
    línea real: para el separador de `join` se escribe `'\\n'`.
+9. En el turno, toda fila del contrato que pide tools lleva su `nudge` (la
+   nota que nombra la que falta); una fila sin condición cierra el asunto
+   (las que siguen del mismo asunto nunca se leen: DB008).

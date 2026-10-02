@@ -187,14 +187,21 @@ class Questionnaire:
         return "\n".join(lines)
 
 
+def questionnaire_of(raw: Mapping[str, Any], default_id: str = "") -> Questionnaire:
+    """El cuestionario de un YAML ya leído: un archivo de `questionnaires/` o
+    el `questionnaire:` del turno de un paquete (F7)."""
+    topics = tuple((str(t["id"]), str(t["label"]), str(t.get("hint") or "")) for t in raw.get("topics") or [])
+    return Questionnaire(id=str(raw.get("id") or default_id), topics=topics, raw=raw)
+
+
 @lru_cache(maxsize=16)
 def load_questionnaire(questionnaire_id: str) -> Questionnaire:
+    """Un cuestionario de `questionnaires/` (los perfiles jev-v1…v4). El de
+    `jev-v5` vive en el turno del paquete (`decisions/turn.py`)."""
     path = QUESTIONNAIRES_DIR / f"{questionnaire_id}.yaml"
     if not path.is_file():
         raise KeyError(f"cuestionario desconocido: {questionnaire_id}")
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    topics = tuple((str(t["id"]), str(t["label"]), str(t.get("hint") or "")) for t in raw.get("topics") or [])
-    return Questionnaire(id=str(raw.get("id") or questionnaire_id), topics=topics, raw=raw)
+    return questionnaire_of(yaml.safe_load(path.read_text(encoding="utf-8")) or {}, questionnaire_id)
 
 
 def questionnaire_ids() -> tuple[str, ...]:

@@ -23,6 +23,7 @@ from src.plugins.chats.agent.sales.decisions.plan import (
     TurnPlan,
     answer_of,
 )
+from src.plugins.chats.agent.sales.decisions.policies.tables import TurnTables
 
 POLICY_ID = "turno-v1"
 
@@ -103,11 +104,13 @@ def checklist_note(plan: TurnPlan, questionnaire: Any) -> str | None:
     )
 
 
-def coverage_rules(plan: TurnPlan) -> dict[str, dict[str, Any]]:
-    """② Las reglas de los asuntos del plan, en JSON (viajan grabadas)."""
+def coverage_rules(plan: TurnPlan, tables: TurnTables | None = None) -> dict[str, dict[str, Any]]:
+    """② Las reglas de los asuntos del plan, en JSON (viajan grabadas). Las
+    del paquete (`tables`) o, sin él, las de esta política."""
+    table = _COVERAGE if tables is None else tables.coverage
     rules: dict[str, dict[str, Any]] = {}
     for t in plan.topics:
-        tools, words, any_text = _COVERAGE.get(t.topic, (frozenset(), (), False))
+        tools, words, any_text = table.get(t.topic, (frozenset(), (), False))
         rules[t.topic] = {"tools": sorted(tools), "words": list(words), "any_text": any_text}
     return rules
 
@@ -119,6 +122,7 @@ def decide_turn(
     context: Any = None,
     n_messages: int,
     thresholds: dict[str, float] | None = None,
+    tables: TurnTables | None = None,
 ) -> TurnOutcome:
     """① Todo lo que el turno recibe del motor. v1 no usa contexto."""
     plan = plan_from_answers(result, topics=questionnaire.topic_ids, n_messages=n_messages, thresholds=thresholds)
@@ -126,12 +130,17 @@ def decide_turn(
         plan=plan,
         topics=topic_rows(plan, questionnaire),
         note=checklist_note(plan, questionnaire),
-        coverage=coverage_rules(plan),
+        coverage=coverage_rules(plan, tables),
     )
 
 
-def coverage_decision(plan: TurnPlan, result: Any, *, thresholds: dict[str, float] | None = None) -> CoverageDecision:
-    """③ send | complement | pending, con la probabilidad de cada asunto."""
+def coverage_decision(
+    plan: TurnPlan, result: Any, *, thresholds: dict[str, float] | None = None, tables: TurnTables | None = None
+) -> CoverageDecision:
+    """③ send | complement | pending, con la probabilidad de cada asunto. Con
+    el paquete (`tables`), las bandas de su `verify_decide`."""
+    if tables is not None:
+        return tables.verify(plan, result)
     th = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     if not plan.topics or not getattr(result, "ok", False):
         return CoverageDecision(decision="send")

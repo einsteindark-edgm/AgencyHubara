@@ -12,6 +12,7 @@ from pathlib import Path
 
 CAPABILITY_SCHEMA = "decision-capability.schema.json"
 BUNDLE_SCHEMA = "decision-bundle.schema.json"
+TURN_SCHEMA = "decision-turn.schema.json"
 
 
 def discover_bundles(repo_root: Path) -> list[Path]:
@@ -38,16 +39,17 @@ def cmd_decisions_check(args, repo_root: Path) -> int:  # noqa: ANN001 — argpa
                 print(f"  {d}")
         else:
             count = len(list((bundle_dir / "capabilities").glob("*.yaml")))
-            print(f"OK {name} ({count} {'capacidad' if count == 1 else 'capacidades'})")
+            turn = " y su turno" if (bundle_dir / "turn.yaml").is_file() else ""
+            print(f"OK {name} ({count} {'capacidad' if count == 1 else 'capacidades'}{turn})")
     return 1 if failed else 0
 
 
 def cmd_decisions_schema(args) -> int:  # noqa: ANN001
-    from src.sdk.decisionkit import Bundle, Capability
+    from src.sdk.decisionkit import Bundle, Capability, Turn
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    for filename, model in ((CAPABILITY_SCHEMA, Capability), (BUNDLE_SCHEMA, Bundle)):
+    for filename, model in ((CAPABILITY_SCHEMA, Capability), (BUNDLE_SCHEMA, Bundle), (TURN_SCHEMA, Turn)):
         schema = model.model_json_schema(by_alias=True)
         (out / filename).write_text(json.dumps(schema, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(f"escrito {out / filename}")

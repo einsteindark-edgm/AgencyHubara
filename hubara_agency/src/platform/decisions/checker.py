@@ -23,16 +23,15 @@ código y la ruta exacta (`capabilities/baja.yaml: decide[0].when`).
   DB013 el id del paquete no es el nombre de su carpeta (o el paquete no existe)
   DB014 el dominio de la tienda (`domain.yaml`) no es el que declara el catálogo:
         falta el archivo o un campo, sobra un campo, o un valor es de otro tipo
+  DB015 el turno (`turn.yaml`) nombra algo que el catálogo no declara, o no
+        lee lo que su política lee (`turn_check.py`)
 """
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import yaml
-from pydantic import BaseModel, ValidationError
 
 from src.platform.decisions.engine import (
     DOUBT,
@@ -47,73 +46,21 @@ from src.platform.decisions.engine import (
 )
 from src.platform.decisions.expressions import CelExpressions, ExpressionError, ExpressionPort
 from src.platform.decisions.model import DOUBT_WORD, Bundle, Capability, Catalog, OtherwiseRow, TextOtherwise, WhenRow
+from src.platform.decisions.parsing import (
+    _CONDITION_READS,
+    _ITEM_FIELD,
+    _parse,
+    _read_yaml,
+    _references,
+    _sample,
+)
+from src.platform.decisions.turn_check import check_turn
 from src.platform.decisions.types import ValueType, conforms, convert, parse_type
 
 #: El contrato de paquetes que este motor sabe correr.
 ENGINE_CONTRACT = 1
 
 _SLOTS = ("rule", "state", "floor", "same")
-_READABLE = "p|choice|conf|th|inp|vars|consts|opt|dom"
-#: Lo único que lee la condición de una pregunta (todavía no hay respuestas).
-_CONDITION_READS = ("inp", "consts")
-_INDEX = re.compile(rf"(?<![\w.])({_READABLE})\s*\[")
-_LITERAL = re.compile(r"\s*(['\"])(.*?)\1\s*\]")
-_IN = re.compile(rf"(['\"])([^'\"]*)\1\s+in\s+({_READABLE})\b")
-_FIELD = re.compile(rf"(?<![\w.])({_READABLE})\.([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()")
-_ITEM_FIELD = re.compile(r"(?<![\w.])item\.([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()")
-
-
-def _read_yaml(path: Path) -> tuple[Any, str | None]:
-    try:
-        return yaml.safe_load(path.read_text(encoding="utf-8")), None
-    except (OSError, yaml.YAMLError) as exc:
-        return None, str(exc).splitlines()[0]
-
-
-def _loc(loc: tuple[Any, ...]) -> str:
-    out = ""
-    for part in loc:
-        if isinstance(part, int):
-            out += f"[{part}]"
-        elif part not in ("WhenRow", "OtherwiseRow", "float", "ChoiceAnswer", "str", "int", "bool"):
-            out += f".{part}" if out else str(part)
-    return out
-
-
-def _parse(model: type[BaseModel], path: Path, label: str, out: list[Diagnostic]) -> Any:
-    data, error = _read_yaml(path)
-    if error is not None:
-        out.append(Diagnostic("DB001", label, f"YAML ilegible: {error}"))
-        return None
-    try:
-        return model.model_validate(data)
-    except ValidationError as exc:
-        seen: set[str] = set()
-        for err in exc.errors():
-            where = f"{label}: {_loc(err['loc'])}" if err["loc"] else label
-            if where in seen:
-                continue  # una unión fallida reporta cada rama: basta una vez por lugar
-            seen.add(where)
-            out.append(Diagnostic("DB001", where, err["msg"]))
-        return None
-
-
-def _references(source: str) -> tuple[list[tuple[str, str]], list[str]]:
-    """(variable, llave) de cada lectura de p/choice/conf/th, y las lecturas
-    con llave no literal."""
-    refs: list[tuple[str, str]] = []
-    bad: list[str] = []
-    for match in _INDEX.finditer(source):
-        literal = _LITERAL.match(source, match.end())
-        if literal is None:
-            bad.append(match.group(1))
-        else:
-            refs.append((match.group(1), literal.group(2)))
-    refs += [(m.group(3), m.group(2)) for m in _IN.finditer(source)]
-    refs += [(m.group(1), m.group(2)) for m in _FIELD.finditer(source)]
-    return refs, bad
-
-
 def _value_ok(spec: Capability, value_type: ValueType, value: Any) -> bool:
     if value == DOUBT_WORD:
         return True
@@ -503,15 +450,6 @@ class _CapabilityCheck:
                 self.add("DB010", f"examples[{i}]", f"se esperaba {example.expect!r} y la tabla da {shown!r}")
 
 
-def _sample(text: str) -> Any:
-    """Un valor de ejemplo del tipo declarado (para ver qué da una condición
-    que lee campos `dyn`)."""
-    t = parse_type(text).alternatives[0]
-    if t.kind == "record":
-        return {name: _sample(str(field)) for name, field in t.fields}
-    return {"bool": False, "string": "", "int": 0, "double": 0.0, "list": [], "tuple": [], "fixed": []}.get(t.kind)
-
-
 def _param_ok(value: Any, kind: str) -> bool:
     checks: dict[str, Callable[[Any], bool]] = {
         "str": lambda v: isinstance(v, str),
@@ -619,9 +557,10 @@ def _build(bundle_dir: Path, catalog_path: Path, expressions: ExpressionPort | N
             if not check.out:
                 compiled[name] = capability
         out += check.out
+    turn = check_turn(bundle_dir, catalog, expressions, bundle=f"{bundle.id}@{bundle.version}", domain=domain, out=out)
     if out:
         return None, out
-    return CompiledBundle(bundle.id, bundle.version, bundle.oracle, compiled, domain), []
+    return CompiledBundle(bundle.id, bundle.version, bundle.oracle, compiled, domain, turn), []
 
 
 def check_bundle(bundle_dir: Path, catalog_path: Path, *, expressions: ExpressionPort | None = None) -> list[Diagnostic]:

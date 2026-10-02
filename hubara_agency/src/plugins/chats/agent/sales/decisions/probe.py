@@ -47,7 +47,8 @@ from src.plugins.chats.agent.sales.decisions import engine
 from src.plugins.chats.agent.sales.decisions.context import BOT_ASKED_BY_COMPONENT, TurnContext, Window
 from src.plugins.chats.agent.sales.decisions.contracts import PerceiveInput
 from src.plugins.chats.agent.sales.decisions.profiles import EngineProfile, get_engine_profile
-from src.plugins.chats.agent.sales.decisions.questionnaire import load_questionnaire
+from src.plugins.chats.agent.sales.decisions.turn import turn_of
+from src.sdk.decisionkit import BundleError
 
 STATUS_OK = "ok"
 STATUS_DEGRADED = "degraded"
@@ -189,12 +190,12 @@ def api_key_present() -> bool:
 
 
 def _request(case: ProbeCase) -> tuple[EngineProfile, str, list[Any]] | None:
-    profile = get_engine_profile(case.profile)
-    if profile is None:
-        return None
     try:
-        questionnaire = load_questionnaire(profile.questions)
-    except KeyError:
+        profile = get_engine_profile(case.profile)
+        if profile is None:
+            return None
+        questionnaire = turn_of(profile).questionnaire
+    except (KeyError, BundleError):
         return None
     inp = PerceiveInput(session_id=PROBE_SESSION_ID, profile=case.profile, messages=[dict(m) for m in case.messages])
     state, questions = engine.burst_request(questionnaire, inp, case.context)

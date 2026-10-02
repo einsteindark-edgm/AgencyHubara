@@ -36,7 +36,8 @@ from src.plugins.chats.agent.sales.decisions.context import (
 )
 from src.plugins.chats.agent.sales.decisions.contracts import PerceiveInput
 from src.plugins.chats.agent.sales.decisions.profiles import EngineProfile, get_engine_profile
-from src.plugins.chats.agent.sales.decisions.questionnaire import Questionnaire, load_questionnaire
+from src.plugins.chats.agent.sales.decisions.questionnaire import Questionnaire
+from src.plugins.chats.agent.sales.decisions.turn import turn_of
 from src.plugins.chats.agent.sales.turn_trace import draft_slots
 from src.plugins.chats.agent.sales_lab.cases import LabCase
 from src.plugins.chats.agent.sales_lab.run.arena import calibration
@@ -204,7 +205,7 @@ def _profile(profile_id: str) -> tuple[EngineProfile, Questionnaire]:
     profile = get_engine_profile(profile_id)
     if profile is None:
         raise KeyError(f"perfil del motor desconocido: {profile_id}")
-    return profile, load_questionnaire(profile.questions)
+    return profile, turn_of(profile).questionnaire
 
 
 def _metadata_at_start(case: LabCase) -> dict[str, Any]:

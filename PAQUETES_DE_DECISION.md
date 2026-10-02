@@ -135,6 +135,7 @@ src/plugins/chats/shared/decisions/bundles/   # de chats: lo leen ventas y remar
   ventas/                            # una carpeta por tienda (Terraform la nombra)
     bundle.yaml                      # id, versión, engine_contract, oráculo, capacidades
     domain.yaml                      # el dominio de la tienda (F5): nombre, despedida, vocabulario del agente
+    turn.yaml                        # el turno (F7): la ráfaga ①, ③ y las tablas de la política
     capabilities/
       baja.yaml
       cortesia.yaml
@@ -144,7 +145,7 @@ src/plugins/chats/shared/decisions/bundles/   # de chats: lo leen ventas y remar
 `bundle.yaml`:
 
 ```yaml
-# yaml-language-server: $schema=../../../../../../../../schemas/decision-bundle.schema.json
+# yaml-language-server: $schema=../../../../../../../schemas/decision-bundle.schema.json
 id: ventas
 version: 1
 engine_contract: 1
@@ -243,6 +244,10 @@ laboratorio antes de promover una versión.
 | DB009 | umbral fuera de [0,1] |
 | DB010 | ejemplo que no da lo esperado |
 | DB011 | `p['x']` sobre una pregunta de opciones (o `choice` sobre una sí/no) |
+| DB012 | piso obligatorio cambiado (la baja legal, el relevo, los invariantes del cierre) |
+| DB013 | el id del paquete no es su carpeta, o el paquete configurado no existe |
+| DB014 | el dominio de la tienda (`domain.yaml`) no es el que declara el catálogo |
+| DB015 | el turno (`turn.yaml`) nombra una política, un hecho, un asunto, una tool, una etapa o un dato que el catálogo no declara; un umbral que la política no lee; o el cuestionario no hace una pregunta que la política lee |
 
 Además: el esquema JSON (`decisions schema`) para que el editor autocomplete
 y marque errores mientras se escribe (`# yaml-language-server: $schema=…`).
@@ -326,7 +331,13 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   `diseno` (el modelo de datos de `set_order_slot`, el borrador y el
   registro), las reglas de hoy con vocabulario de Colombia (la cédula y el
   barrio de `datos`, `shipping_zone`), las frases del piso de persona (en
-  español) y la ráfaga ① (F7).
+  español) y la redacción genérica de la guía de etapas («pide solo lo que
+  falta: …», el turno de complemento), que es del embudo y no de la tienda.
+- **Desde F7 también es dato:** la ráfaga ① (los 18 asuntos, sus pistas con
+  «velas religiosas, de Halloween», «aromas»…), qué atiende cada asunto
+  (②), el contrato asunto → tools con sus excepciones, las notas de la
+  lectura del hilo («color, aroma, diseño o cantidad»), la banda de ③ y la
+  guía de etapas: `turn.yaml`.
 
 ## 9. Versionado y despliegue
 
@@ -356,7 +367,7 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
 | F4 ✅ | Las 4 C + las del egreso parte por parte (preámbulo, destinatario por oración, rescate, portavelas), con `items:` + `each:` (el `per_item_select` del diseño) | ninguno |
 | F5 ✅ | Dominio de la tienda en el paquete (`domain.yaml`, certificado; `dom.x` en CEL): nombre, despedida y el vocabulario del agente. Los paquetes pasan a `chats/shared/decisions/bundles/` (los leen los dos agentes). Quita las 21 reglas de reemplazo de forge | ninguno en Hubara |
 | F6 ✅ | Un brazo del laboratorio fija paquete (`B@ventas-2`): se compara contra B (el de la tienda) y contra A1. Producción promueve por Terraform (`decisions_bundle`) | — |
-| F7 | El turno dentro del paquete: la ráfaga ① (`rafaga-v5` → `turn.yaml`) y la verificación ③ (`coverage_decision`), con las tablas de la política como filas certificadas | ninguno |
+| F7 ✅ | El turno dentro del paquete: la ráfaga ① (`rafaga-v5` → `turn.yaml`) y la verificación ③ (`coverage_decision`), con las tablas de la política como filas certificadas | ninguno |
 | F8 | Paquete propio del Order Sentinel («¿qué cambió?» y la evidencia) sobre el mismo motor genérico | ninguno |
 
 **F1 hecho (2026-10-01).**
@@ -467,6 +478,38 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   junto a B; con uno solo, dice cuál corre. Toda la pantalla nombra el brazo
   «Bot nuevo con Jev · paquete ventas-2».
 
+**F7 hecho (2026-10-02).**
+- Motor: cada paquete trae su turno (`turn.yaml`), certificado contra el
+  vocabulario que declara el catálogo (`turn:` — políticas con los umbrales
+  y las preguntas que leen, hechos y sus valores, etapas, datos, tools;
+  DB015). Trae el cuestionario de la ráfaga ①, la regla ② de cada asunto,
+  las notas de la lectura del hilo, el **contrato asunto → tools como
+  filas CEL** (la primera del asunto que se cumple decide; `any_of: []` =
+  no pide tool), la **banda de ③ por asunto** (`covered | missing |
+  doubt`; el motor las junta), la guía de etapas y ejemplos del contrato y
+  de ③. Un `{campo}` de una plantilla que el motor no llena no compila
+  (DB005: fallaba en pleno turno); una fila del contrato que nunca se lee,
+  tampoco (DB008). Esquema del editor: `decision-turn.schema.json`.
+- Ventas: `jev-v5` dice `turn: bundle`; `decisions/turn.py: turn_of(perfil)`
+  da al motor, a la sonda y al banco de referencia el cuestionario, la
+  política y las tablas del paquete activo. `turno-v1..v3` reciben las
+  tablas (`policies/tables.py`); sin ellas (jev-v1…v4) usan sus constantes,
+  que quedan como oráculo de la paridad. La traza lleva `bundle` en
+  `versions`. `questionnaires/rafaga-v5.yaml` se movió al paquete (foto
+  congelada en `tests/fixtures/decisions/rafaga_v5_frozen.json`).
+- Paridad: cuestionario byte a byte (estado y preguntas en seis contextos,
+  ③ y la respuesta), tablas iguales a las constantes, el turno completo
+  (`decide_turn`) igual en más de 8 000 combinaciones de asuntos, etapas,
+  lecturas y respuestas en los bordes, el contrato y ③ en grilla, y el motor
+  corriendo el turno de otro paquete (`ventas-2`).
+- Dos cosas que la certificación dejó a la vista (sin cambiarlas: otra
+  versión del paquete): `confidence` no la leía ninguna política del turno
+  (el paquete no la trae; el certificador rechaza un umbral que nadie lee),
+  y el asunto `promocion` no tiene regla ② desde que llegó (rafaga-v4):
+  nada lo da por atendido dentro del turno, así que en el V1 con motor,
+  cuando una tool corta el turno, cuenta como sin atender y pide la ronda
+  más (una). Queda explícito (`promocion: {}`) y comentado.
+
 **La paridad es la compuerta de cada fase:** para cada capacidad migrada,
 (a) el estado y las preguntas son byte a byte iguales a los de la clase en
 entradas representativas, y (b) la decisión coincide sobre una grilla de
@@ -485,10 +528,10 @@ tocarlos.
 |---|---|---|
 | Ingest (compra, retoma, baja, cortesía, acuse, cupón, fuera de catálogo) | `decide()` | sí (F1–F4) |
 | Antes del turno: cantidad (`build_prompt_stage`) | `decide()` | sí (F2) |
-| Antes del turno: la ráfaga ① (`rafaga-v5` + `turno_v3`) | directo al puerto (`engine.perceive`) | **no → F7** |
+| Antes del turno: la ráfaga ① (`rafaga-v5` + `turno_v3`) | directo al puerto (`engine.perceive`) | sí (F7: `turn.yaml`) |
 | Dentro de una tool (categoría, color, ítem del pedido, zona de envío) | `decide()` vía `guards` | sí (F2–F3) |
 | Egreso: preámbulo, destinatario, rescate, portavelas, saludo + guardas (persona, monto, enumeración, selector, datos, relevo) | `decide()` | sí (F2–F4) |
-| Antes de enviar: la verificación ③ | directo al puerto (`verify_questions` + `coverage_decision`) | **no → F7** |
+| Antes de enviar: la verificación ③ | directo al puerto (`verify_questions` + `coverage_decision`) | sí (F7: `turn.yaml`) |
 | Después de enviar: afirmación (sombra) | `decide()` | sí (F2) |
 | Remarketing (contactar, producto nombrado, fuera de catálogo) | `decide()` vía el enchufe compartido | sí (F2–F4) |
 | Abandono (cierre) | `decide()` | sí (F2) |

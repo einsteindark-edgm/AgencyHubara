@@ -14,7 +14,7 @@ import pytest
 from src.platform.perception.profiles import load_profiles as load_oracle_profiles
 from src.plugins.chats.agent.sales.decisions.policies import get_policy
 from src.plugins.chats.agent.sales.decisions.profiles import get_engine_profile, load_engine_profiles
-from src.plugins.chats.agent.sales.decisions.questionnaire import load_questionnaire
+from src.plugins.chats.agent.sales.decisions.turn import turn_of
 
 
 def test_jev_v1_is_the_classifier_of_today() -> None:
@@ -32,8 +32,10 @@ def test_every_engine_profile_resolves_its_oracle_questionnaire_and_policy() -> 
     assert profiles
     for profile in profiles.values():
         assert profile.oracle in oracles, profile.id
-        assert load_questionnaire(profile.questions).id == profile.questions
-        assert get_policy(profile.policy) is not None, profile.id
+        # Su cuestionario y su política, o los del turno del paquete activo (F7).
+        turn = turn_of(profile)
+        assert turn.questionnaire.id == profile.questions, profile.id
+        assert turn.policy is get_policy(profile.policy), profile.id
         if profile.shadow is not None:
             assert profile.shadow in profiles and profile.shadow != profile.id, profile.id
 
@@ -66,9 +68,13 @@ def test_jev_v5_is_jev_v4_with_the_shipping_cost_question() -> None:
     también en `send_reply`, «¿cuánto se demora el envío?» salió solo con la
     tarjeta de tarifas. `jev-v5` cambia SOLO el cuestionario (`rafaga-v5`: la
     pregunta `envio.costo`), con la misma política y los mismos umbrales: el
-    laboratorio compara v4 contra v5 sabiendo qué se movió."""
+    laboratorio compara v4 contra v5 sabiendo qué se movió.
+
+    Desde F7 (PAQUETES_DE_DECISION.md) su turno sale del paquete activo
+    (`ventas@1`), que no trae `confidence`: ninguna política del turno la lee."""
     v4, v5 = get_engine_profile("jev-v4"), get_engine_profile("jev-v5")
 
     assert v5 is not None and v4 is not None
-    assert (v5.oracle, v5.questions, v5.policy) == ("jev-1.13", "rafaga-v5", "turno-v3")
-    assert (v5.thresholds, v5.shadow, v5.calibrated_model) == (v4.thresholds, v4.shadow, v4.calibrated_model)
+    assert (v5.oracle, v5.questions, v5.policy, v5.bundle) == ("jev-1.13", "rafaga-v5", "turno-v3", "ventas@1")
+    assert v5.thresholds == {k: v for k, v in v4.thresholds.items() if k != "confidence"}
+    assert (v5.shadow, v5.calibrated_model) == (v4.shadow, v4.calibrated_model)

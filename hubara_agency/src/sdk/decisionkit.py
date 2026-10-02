@@ -16,6 +16,10 @@ Uso canónico (motor de decisiones del plugin de ventas)::
     if value is DOUBT:
         ...  # decide la regla
 
+El turno del paquete (`turn.yaml`, F7: la ráfaga ①, ③ y las tablas de la
+política) viaja en ``bundle.turn`` (`CompiledTurn`): ``turn.required(...)``
+(el contrato asunto → tools), ``turn.verify(...)`` (③) y sus tablas.
+
 Certificar desde la terminal: ``uv run python -m src.sdk.cli decisions check``.
 """
 from __future__ import annotations
@@ -51,6 +55,9 @@ from src.platform.decisions import (
     CompiledCapability as CompiledCapability,
 )
 from src.platform.decisions import (
+    CompiledTurn as CompiledTurn,
+)
+from src.platform.decisions import (
     Diagnostic as Diagnostic,
 )
 from src.platform.decisions import (
@@ -61,6 +68,12 @@ from src.platform.decisions import (
 )
 from src.platform.decisions import (
     Question as Question,
+)
+from src.platform.decisions import (
+    Turn as Turn,
+)
+from src.platform.decisions import (
+    TurnVerify as TurnVerify,
 )
 from src.platform.decisions import (
     answers_from_result as answers_from_result,

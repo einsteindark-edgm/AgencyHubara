@@ -143,17 +143,17 @@ def test_the_v2_profile_uses_the_context_questionnaire_and_policy() -> None:
     assert engine.needs_context("jev-v2") and not engine.needs_context("jev-v1")
 
 
-@pytest.mark.parametrize("profile_id", ["jev-v1", "jev-v2"])
+@pytest.mark.parametrize("profile_id", ["jev-v1", "jev-v2", "jev-v5"])
 async def test_the_burst_request_is_exactly_what_jev_receives(ports, profile_id: str) -> None:
     """El banco de referencia del laboratorio arma sus ítems con la MISMA
     función que usa el motor para preguntarle a Jev: el `state` y las
     preguntas (sin anonimizar: eso lo hace el adaptador con `redact`)."""
-    from src.plugins.chats.agent.sales.decisions.questionnaire import load_questionnaire
+    from src.plugins.chats.agent.sales.decisions.turn import turn_of
 
     inp = PerceiveInput(session_id="wa_x", profile=profile_id, messages=MESSAGES, pending=["envio"])
     await engine.perceive(inp, context=CONTEXT)
 
-    questionnaire = load_questionnaire(profiles.get_engine_profile(profile_id).questions)
+    questionnaire = turn_of(profiles.get_engine_profile(profile_id)).questionnaire
     state, questions = engine.burst_request(questionnaire, inp, context=CONTEXT)
 
     assert [state] == ports["jev-1.13"].states

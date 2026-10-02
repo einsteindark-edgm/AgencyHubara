@@ -19,6 +19,7 @@ from src.platform.decisions.engine import (
 )
 from src.platform.decisions.expressions import CelExpressions, ExpressionError, ExpressionPort
 from src.platform.decisions.model import Bundle, BuiltinRef, Capability, Catalog, Question
+from src.platform.decisions.turn import CompiledTurn, Turn, TurnVerify
 
 __all__ = [
     "DOUBT",
@@ -31,10 +32,13 @@ __all__ = [
     "CelExpressions",
     "CompiledBundle",
     "CompiledCapability",
+    "CompiledTurn",
     "Diagnostic",
     "ExpressionError",
     "ExpressionPort",
     "Question",
+    "Turn",
+    "TurnVerify",
     "answers_from_result",
     "check_bundle",
     "load_bundle",

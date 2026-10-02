@@ -422,3 +422,43 @@ required_floors:
   relevo: rule_or_jev
   # Los invariantes del pedido nunca los decide Jev.
   cierre: closing_invariants
+
+# El vocabulario del turno (PAQUETES_DE_DECISION.md F7): lo que el `turn.yaml`
+# de un paquete puede nombrar. Con esto, cada paquete trae su turno: la ráfaga
+# ① (el cuestionario que Jev contesta antes del turno), ③ y las tablas de la
+# política. Cada nombre existe en el código del agente: una prueba lo verifica
+# (`test_decisions_turn_bundle.py`).
+turn:
+  policies:
+    # `decisions/policies/turno_v3.py`: arma el plan, la lectura del hilo, el
+    # contrato y la guía de etapas con las tablas del paquete.
+    turno-v3:
+      thresholds: [detect, covered, answers, purchase_confirm, purchase_retract, given]
+      # Las preguntas fijas que lee el código de la política (las del contrato
+      # las certifica cada fila: `p['…']` tiene que ser una pregunta sí/no).
+      reads:
+        noul: [thread.answers_bot, variantes.elige, etapa.cambia_producto, datos.ciudad, datos.direccion, datos.telefono,
+               datos.nombre_recibe, datos.metodo_pago, cierre.confirma_resumen, cierre.pide_cambio,
+               postcierre.pregunta_pedido, postcierre.comprobante]
+        choice: [thread.bot_asked, thread.answer]
+      topic_question: "topic.{topic}"
+      message_question: "msg.{k}.topic"
+      verify_question: "cover.{topic}"
+      reading: {asked: thread.bot_asked, answer: thread.answer}
+  # Los hechos del turno que filtran las preguntas (`when`): `TurnContext.when_facts`.
+  facts:
+    has_context: [true, false]
+    bot_asked_known: [null, confirmar_compra, confirmar_dato_envio]
+    stage: [null, etapa_descubrimiento, etapa_variantes, etapa_datos_envio, etapa_cierre, etapa_postcierre]
+  # Lo que leen las filas del contrato como `inp.campo`.
+  inputs:
+    stage: "string?"
+  # Las etapas que calcula el código (`context.STAGE_LABELS`) y los datos de envío (`SHIPPING_SLOTS`).
+  stages: [etapa_descubrimiento, etapa_variantes, etapa_datos_envio, etapa_cierre, etapa_postcierre]
+  slots: [ciudad, direccion, telefono, nombre_recibe, metodo_pago]
+  # Las tools del agente de ventas (las que el contrato y la regla ② pueden nombrar).
+  tools: [apply_coupon, check_order_status, escalate_to_human, get_product_by_handle, list_categories, list_promotions,
+          load_skill, manage_conversation_tag, present_order_confirmation, present_product_detail, present_product_gallery,
+          present_products, present_variant_picker, react_to_message, register_order, request_shipping_details,
+          search_products, send_contact_card, send_cta_url, send_quick_replies, send_reply, send_shipping_rates,
+          set_order_slot, verify_order_for_checkout]

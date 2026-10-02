@@ -31,9 +31,11 @@ from typing import Any
 from src.plugins.chats.agent.sales.decisions.bundled import BundledCapability
 from src.plugins.chats.shared import store_pack
 from src.plugins.chats.shared.store_pack import BUNDLE_ENV, BUNDLES_DIR, DEFAULT_BUNDLE, active_bundle_id
-from src.sdk.decisionkit import BundleError, CompiledBundle, Diagnostic, load_bundle
+from src.sdk.decisionkit import BundleError, CompiledBundle, CompiledTurn, Diagnostic, load_bundle
 
-__all__ = ["BUNDLES_DIR", "BUNDLE_ENV", "DEFAULT_BUNDLE", "active_bundle", "active_bundle_id", "capability", "reset"]
+__all__ = [
+    "BUNDLES_DIR", "BUNDLE_ENV", "DEFAULT_BUNDLE", "active_bundle", "active_bundle_id", "active_turn", "capability", "reset",
+]
 
 _resolved: dict[tuple[str, str, str], Any] = {}
 
@@ -107,6 +109,15 @@ def _bundle(bundle_id: str, root: str) -> CompiledBundle:
 
 def active_bundle() -> CompiledBundle:
     return _bundle(active_bundle_id(), str(BUNDLES_DIR))
+
+
+def active_turn() -> CompiledTurn:
+    """El turno del paquete activo (`turn.yaml`, F7): la ráfaga ①, ③ y las
+    tablas de la política. `BundleError` si el paquete no lo trae."""
+    bundle = active_bundle()
+    if bundle.turn is None:
+        raise BundleError([Diagnostic("DB015", f"bundles/{bundle.id}/turn.yaml", "el paquete activo no trae turno")])
+    return bundle.turn
 
 
 def capability(name: str) -> Any:

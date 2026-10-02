@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import re
 
@@ -21,6 +21,9 @@ import structlog
 from src.platform.decisions.expressions import CompiledExpression, ExpressionError
 from src.platform.decisions.model import Capability, ChoiceAnswer, Question
 from src.platform.decisions.types import ValueType, convert, parse_type, to_cel
+
+if TYPE_CHECKING:
+    from src.platform.decisions.turn import CompiledTurn
 
 logger = structlog.get_logger()
 
@@ -325,6 +328,9 @@ class CompiledBundle:
     capabilities: Mapping[str, CompiledCapability] = field(default_factory=dict)
     #: El dominio de la tienda (`domain.yaml`), ya certificado.
     domain: Mapping[str, Any] = field(default_factory=dict)
+    #: El turno (`turn.yaml`, F7): la ráfaga ①, ③ y las tablas de la política.
+    #: None si el catálogo no declara turno.
+    turn: CompiledTurn | None = None
 
     @property
     def ref(self) -> str:

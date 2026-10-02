@@ -4,8 +4,10 @@
 Lo de `turno-v2` (asuntos, lectura del «sí», reglas de ②, verificación ③)
 más:
 
-* Contrato de herramientas: Jev dice qué pide el cliente; este contrato
-  escrito en código dice qué tool lo resuelve. Las requeridas viajan
+* Contrato de herramientas: Jev dice qué pide el cliente; el contrato dice
+  qué tool lo resuelve. Con `jev-v5` el contrato y las demás tablas salen del
+  paquete activo (`turn.yaml`, PAQUETES_DE_DECISION.md F7: `tables`); las
+  constantes de este módulo son las de jev-v3/v4 y el oráculo de la paridad. Las requeridas viajan
   GRABADAS (`tools.required`, con su nota) para la segunda puerta del turno
   (una ronda extra que nombra la tool que falta) y la auditoría antes de
   enviar. Excepciones del diseño: el precio ya visto no pide tool; colores y
@@ -31,6 +33,7 @@ from typing import Any
 from src.plugins.chats.agent.sales.decisions.context import SHIPPING_SLOTS, STAGE_LABELS
 from src.plugins.chats.agent.sales.decisions.plan import TurnOutcome, answer_of
 from src.plugins.chats.agent.sales.decisions.policies import turno_v2
+from src.plugins.chats.agent.sales.decisions.policies.tables import TurnTables
 
 POLICY_ID = "turno-v3"
 
@@ -90,7 +93,10 @@ def _p(result: Any, qid: str) -> float:
     return float(p) if isinstance(p, (int, float)) else 0.0
 
 
-def _chosen(plan: Any, result: Any, reading: dict[str, Any], stage: str | None, th: dict[str, float]) -> list[str]:
+def _chosen(
+    plan: Any, result: Any, reading: dict[str, Any], stage: str | None, th: dict[str, float],
+    tables: TurnTables | None = None,
+) -> list[str]:
     """Colores o aromas que el cliente ELIGE en este turno: responde la
     pregunta de variantes del asesor (lectura del hilo) o Jev dice que elige
     (`variantes.elige`, solo en la etapa de variantes). Un «pregunta por
@@ -106,10 +112,28 @@ def _chosen(plan: Any, result: Any, reading: dict[str, Any], stage: str | None, 
     chooses = stage == "etapa_variantes" and _p(result, "variantes.elige") >= th["given"]
     if not (answering or chooses):
         return []
-    return [t.topic for t in plan.topics if t.topic in _CHOICE_TOPICS and (t.p or 0.0) < th["given"]]
+    choice_topics = _CHOICE_TOPICS if tables is None else tables.choice_topics
+    return [t.topic for t in plan.topics if t.topic in choice_topics and (t.p or 0.0) < th["given"]]
 
 
-def _required(topics: Sequence[str], result: Any, stage: str | None, given: list[str], th: dict[str, float]) -> list[dict[str, Any]]:
+def _required(
+    topics: Sequence[str], result: Any, stage: str | None, given: list[str], th: dict[str, float],
+    tables: TurnTables | None = None,
+) -> list[dict[str, Any]]:
+    """Las tools que pide el turno: el contrato del paquete (sus filas) o, sin
+    él, el de esta política; más `set_order_slot` con los datos que el
+    cliente acaba de dar."""
+    out = _code_contract(topics, result, stage, th) if tables is None else tables.contract(topics, result, stage)
+    if given:
+        fields = ", ".join(_slot_label(g, tables) for g in given)
+        out.append({"topic": "datos_envio", "any_of": ["set_order_slot"], "fields": list(given),
+                    "nudge": f"Guarda con set_order_slot lo que el cliente acaba de dar: {fields}."})
+    return out
+
+
+def _code_contract(topics: Sequence[str], result: Any, stage: str | None, th: dict[str, float]) -> list[dict[str, Any]]:
+    """El contrato de `turno-v3` en código (perfiles jev-v3 y jev-v4): el
+    paquete lo trae como filas (`turn.yaml: contract`)."""
     out: list[dict[str, Any]] = []
     for topic in topics:
         if topic == "precio" and _p(result, "precio.en_contexto") >= th["given"]:
@@ -144,31 +168,32 @@ def _required(topics: Sequence[str], result: Any, stage: str | None, given: list
         if topic in _CONTRACT:
             tools, nudge = _CONTRACT[topic]
             out.append({"topic": topic, "any_of": list(tools), "nudge": nudge})
-    if given:
-        fields = ", ".join(_SLOT_LABELS.get(g, g) for g in given)
-        out.append({"topic": "datos_envio", "any_of": ["set_order_slot"], "fields": list(given),
-                    "nudge": f"Guarda con set_order_slot lo que el cliente acaba de dar: {fields}."})
     return out
 
 
-def _labels(items: Sequence[str]) -> str:
-    names = [_SLOT_LABELS.get(i, i) for i in items]
+def _slot_label(slot: str, tables: TurnTables | None) -> str:
+    return (_SLOT_LABELS if tables is None else tables.slot_labels).get(slot, slot)
+
+
+def _labels(items: Sequence[str], tables: TurnTables | None = None) -> str:
+    names = [_slot_label(i, tables) for i in items]
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " y " + names[-1]
 
 
 def _next_step(
-    stage: str | None, missing: list[str], given: list[str], result: Any, th: dict[str, float], *, chose: bool = False
+    stage: str | None, missing: list[str], given: list[str], result: Any, th: dict[str, float], *, chose: bool = False,
+    tables: TurnTables | None = None,
 ) -> str:
     if stage == "etapa_descubrimiento":
         return "ayúdale a escoger un producto (catálogo o ficha)."
     if stage == "etapa_variantes" and chose:
         save = "guarda con set_order_slot lo que eligió y "
-        return f"{save}pide solo lo que siga faltando: {_labels(missing)}." if missing else f"{save}sigue con los datos de envío."
+        return f"{save}pide solo lo que siga faltando: {_labels(missing, tables)}." if missing else f"{save}sigue con los datos de envío."
     if stage == "etapa_variantes":
-        return f"pide solo lo que falta: {_labels(missing)}." if missing else "confirma la elección y sigue con los datos de envío."
+        return f"pide solo lo que falta: {_labels(missing, tables)}." if missing else "confirma la elección y sigue con los datos de envío."
     if stage == "etapa_datos_envio":
-        save = f"guarda {_labels(given)} con set_order_slot y " if given else ""
-        return f"{save}pide solo {_labels(missing)}." if missing else f"{save}muestra el resumen del pedido para que lo confirme."
+        save = f"guarda {_labels(given, tables)} con set_order_slot y " if given else ""
+        return f"{save}pide solo {_labels(missing, tables)}." if missing else f"{save}muestra el resumen del pedido para que lo confirme."
     if stage == "etapa_cierre":
         if _p(result, "cierre.pide_cambio") >= th["given"]:
             return "haz el cambio que pide y vuelve a mostrar el resumen."
@@ -184,7 +209,7 @@ def _next_step(
 
 
 def _guide(
-    result: Any, context: Any, th: dict[str, float], *, chosen: Sequence[str] = ()
+    result: Any, context: Any, th: dict[str, float], *, chosen: Sequence[str] = (), tables: TurnTables | None = None
 ) -> tuple[dict[str, Any], str | None]:
     stage = getattr(context, "stage", None)
     if not stage:
@@ -198,22 +223,24 @@ def _guide(
     chose = bool(chosen) and stage == "etapa_variantes"
     # Caso del 2026-09-29 («pedido listo» → «Son geniales. Muchas gracias»):
     # sin venta en curso, el que solo agradece no se lleva al catálogo.
-    courtesy = bool(getattr(context, "courtesy", False)) and stage in _NO_SALE_STAGES
-    step = "" if courtesy else _next_step(stage, missing, given, result, th, chose=chose)
+    no_sale = _NO_SALE_STAGES if tables is None else tables.no_sale_stages
+    courtesy = bool(getattr(context, "courtesy", False)) and stage in no_sale
+    step = "" if courtesy else _next_step(stage, missing, given, result, th, chose=chose, tables=tables)
     label = STAGE_LABELS.get(stage, stage)
     parts = [f"[ETAPA] {label[:1].upper() + label[1:]}."]
     if given:
-        parts.append(f"El cliente acaba de dar: {_labels(given)}.")
+        parts.append(f"El cliente acaba de dar: {_labels(given, tables)}.")
     if missing:
-        parts.append(f"{'Antes de este mensaje faltaba' if chose else 'Falta'}: {_labels(missing)}.")
+        parts.append(f"{'Antes de este mensaje faltaba' if chose else 'Falta'}: {_labels(missing, tables)}.")
     if going_back:
         parts.append("El cliente quiere ver otros productos: quita el anterior del pedido (quitar=true) y muéstrale opciones.")
     elif courtesy:
         parts.append(_COURTESY_STEP)
     elif step:
         parts.append(f"Siguiente paso: {step}")
-    if stagnant >= STAGNANT_TURNS and not chose and not courtesy:
-        ask = f"pide de forma concreta {_labels(missing)}" if missing else "lleva al cliente al siguiente paso"
+    stagnant_turns = STAGNANT_TURNS if tables is None else tables.stagnant_turns
+    if stagnant >= stagnant_turns and not chose and not courtesy:
+        ask = f"pide de forma concreta {_labels(missing, tables)}" if missing else "lleva al cliente al siguiente paso"
         parts.append(f"Llevan {stagnant} turnos en esta etapa sin un dato nuevo: {ask}.")
     guide = {"stage": stage, "given_now": given, "missing": missing, "going_back": going_back, "stagnant": stagnant,
              "next": step, "chosen_now": list(chosen), "courtesy": courtesy}
@@ -227,21 +254,24 @@ def decide_turn(
     context: Any = None,
     n_messages: int,
     thresholds: dict[str, float] | None = None,
+    tables: TurnTables | None = None,
 ) -> TurnOutcome:
     th = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
-    base = turno_v2.decide_turn(result, questionnaire=questionnaire, context=context, n_messages=n_messages, thresholds=th)
+    base = turno_v2.decide_turn(
+        result, questionnaire=questionnaire, context=context, n_messages=n_messages, thresholds=th, tables=tables
+    )
     if not base.plan.ok:
         return base
     stage = getattr(context, "stage", None)
-    chosen = _chosen(base.plan, result, base.reading, stage, th)
+    chosen = _chosen(base.plan, result, base.reading, stage, th, tables)
     plan, note, topics, coverage = base.plan, base.note, base.topics, base.coverage
     if chosen:
         plan = replace(base.plan, topics=tuple(t for t in base.plan.topics if t.topic not in chosen))
-        note = turno_v2.reading_note(plan, base.reading, questionnaire, th)
+        note = turno_v2.reading_note(plan, base.reading, questionnaire, th, tables)
         topics = topic_rows(plan, questionnaire)
-        coverage = coverage_rules(plan)
-    guide, stage_note = _guide(result, context, th, chosen=chosen)
-    required = _required([t.topic for t in plan.topics], result, stage, list(guide.get("given_now") or []), th)
+        coverage = coverage_rules(plan, tables)
+    guide, stage_note = _guide(result, context, th, chosen=chosen, tables=tables)
+    required = _required([t.topic for t in plan.topics], result, stage, list(guide.get("given_now") or []), th, tables)
     note_parts = [p for p in (note, stage_note) if p]
     if not note and stage_note:
         note_parts.insert(0, "[LECTURA DEL TURNO]")

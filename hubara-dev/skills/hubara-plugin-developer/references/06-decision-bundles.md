@@ -18,6 +18,7 @@ src/plugins/chats/shared/decisions/bundles/
   builtins.yaml                catálogo: lo que un paquete puede pedir y el dominio que trae
   ventas/bundle.yaml           id, versión, engine_contract, capacidades
   ventas/domain.yaml           el dominio de la tienda (nombre, despedida, vocabulario del agente)
+  ventas/turn.yaml             el turno: la ráfaga ①, ③ y las tablas de la política (F7)
   ventas/capabilities/*.yaml   una capacidad por archivo
 ```
 
@@ -67,6 +68,9 @@ fuera del resolutor.
 | `opt['q']` de una pregunta sin `options:`; una pregunta condicional que lee `p`/`choice` | DB005 |
 | `options:` con un builtin que no es de clase `options`; una `view:` de otra entrada | DB004 |
 | `control:` de una capacidad que no está en el paquete | DB003 |
+| `turn.yaml`: asunto, tool, etapa, dato, hecho o política que el catálogo (`turn:`) no declara; umbral que la política no lee; el cuestionario no hace una pregunta que la política lee | DB015 |
+| `turn.yaml`: `{campo}` de una plantilla del cuestionario que el motor no llena | DB005 |
+| `turn.yaml`: fila del contrato que nunca se lee (una anterior del mismo asunto no tiene condición) | DB008 |
 
 ## Cómo escribir una condición (CEL)
 
@@ -114,6 +118,30 @@ ni de un prompt: va en `domain.yaml: vocabulary` (declarado en
 ejemplo de la tienda que vuelva al código y exige que, para la tienda
 actual, el texto que ve el LLM sea idéntico a la foto congelada (si lo
 cambias a propósito, regenera la foto en el mismo cambio).
+
+## El turno (F7)
+
+Lo que Jev contesta antes del turno (la ráfaga ①) y antes de enviar (③),
+y las tablas con que la política `turno-v3` arma el turno, viven en
+`ventas/turn.yaml` (el perfil `jev-v5` dice `turn: bundle`). Para cambiar
+qué tool pide un asunto, una excepción del contrato, una palabra de ②, una
+nota de la lectura o la banda de ③: **se edita el YAML (en otra versión del
+paquete), no la política**.
+
+- **Contrato** (`contract:`): filas `{topic, when?, any_of, nudge}`; la
+  primera del asunto que se cumple decide; `any_of: []` = no pide tool. CEL
+  sobre `p` (una respuesta sin probabilidad vale 0), `th`, `inp.stage`, `dom`.
+  Antes de leer una respuesta: `'envio.costo' in p && …`.
+- **③** (`verify_decide:`): por asunto, `item.topic`/`item.msg`/`item.p` →
+  `covered | missing | doubt`; `!('p' in item)` = Jev no contestó.
+- **Ejemplos** (`examples.contract` / `examples.verify`): uno por excepción
+  del contrato y por banda, en los bordes.
+- **Una pregunta nueva de la ráfaga** va en `questionnaire.questions` (con
+  `when` sobre los hechos del catálogo); si la va a leer el CÓDIGO de la
+  política, declárala en `builtins.yaml: turn.policies.<política>.reads`.
+- La paridad con las constantes de la política (jev-v1…v4 siguen con ellas)
+  está en `test_decisions_turn_bundle.py`: si cambias `ventas` a propósito,
+  esa prueba falla (y debe: es otra versión).
 
 ## Probar un paquete nuevo (F6)
 

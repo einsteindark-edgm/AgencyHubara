@@ -242,6 +242,51 @@ class ConstantSpec(_Strict):
         return _type_text(value)
 
 
+#: El valor de un hecho del turno (lo que filtra una pregunta de la ráfaga).
+FactValue = str | int | float | bool | None
+
+
+class TurnPolicySpec(_Strict):
+    """Una política del turno (código) que lee un `turn.yaml`: los umbrales y
+    las preguntas que lee. El cuestionario tiene que hacerlas."""
+
+    thresholds: list[str] = Field(min_length=1)
+    #: Preguntas fijas que lee la política, por clase (noul | choice).
+    reads: dict[QuestionKind, list[str]] = Field(default_factory=dict)
+    #: El id de la pregunta de cada asunto (`each_topic`), de cada mensaje
+    #: (`each_message`) y de la verificación ③ (`verify`).
+    topic_question: str = Field(min_length=1)
+    message_question: str = Field(min_length=1)
+    verify_question: str = Field(min_length=1)
+    #: Las preguntas de la lectura del hilo: qué preguntó el asesor y qué
+    #: responde el cliente (las llaves de `reading` son sus opciones).
+    reading: dict[Literal["asked", "answer"], str] = Field(default_factory=dict)
+
+
+class TurnCatalog(_Strict):
+    """El vocabulario del turno (`turn:` del catálogo): lo que un `turn.yaml`
+    puede nombrar. Lo que no está aquí no compila (DB015)."""
+
+    policies: dict[str, TurnPolicySpec] = Field(min_length=1)
+    #: Hechos del turno que filtran las preguntas (`when`) → sus valores posibles.
+    facts: dict[str, list[FactValue]] = Field(default_factory=dict)
+    #: Lo que las filas del contrato leen como `inp.campo` (nombre → tipo).
+    inputs: dict[str, str] = Field(default_factory=dict)
+    stages: list[str] = Field(default_factory=list)
+    slots: list[str] = Field(default_factory=list)
+    #: Las tools del agente que el contrato y la regla ② pueden nombrar.
+    tools: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _input_types(self) -> TurnCatalog:
+        for name, text in self.inputs.items():
+            try:
+                parse_type(text)
+            except TypeSyntaxError as exc:
+                raise ValueError(f"inputs.{name}: {exc}") from None
+        return self
+
+
 class Catalog(_Strict):
     engine_contract: int = Field(ge=1)
     #: Tipos de entrada y sus campos (nombre → tipo), lo que una condición
@@ -256,6 +301,8 @@ class Catalog(_Strict):
     #: tipo, o una sección (campo → tipo). Lo leen las condiciones (`dom.x`)
     #: y el código del agente (el vocabulario de sus herramientas).
     domain: dict[str, str | dict[str, str]] = Field(default_factory=dict)
+    #: El vocabulario del turno (F7). Con él, cada paquete trae su `turn.yaml`.
+    turn: TurnCatalog | None = None
 
     @field_validator("inputs", mode="before")
     @classmethod

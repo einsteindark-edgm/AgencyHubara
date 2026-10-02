@@ -32,9 +32,10 @@ from src.plugins.chats.agent.sales.decisions.contracts import (
     VerifyOutput,
 )
 from src.plugins.chats.agent.sales.decisions.plan import PlanTopic, TurnOutcome, TurnPlan
-from src.plugins.chats.agent.sales.decisions.policies import get_policy
 from src.plugins.chats.agent.sales.decisions.profiles import EngineProfile, get_engine_profile
-from src.plugins.chats.agent.sales.decisions.questionnaire import Questionnaire, load_questionnaire
+from src.plugins.chats.agent.sales.decisions.questionnaire import Questionnaire
+from src.plugins.chats.agent.sales.decisions.turn import Turn, turn_of
+from src.sdk.decisionkit import BundleError
 
 logger = structlog.get_logger()
 
@@ -43,13 +44,15 @@ ERROR_UNKNOWN_PROFILE = "unknown_profile"
 SHADOW_TIMEOUT_S = 1.5
 
 
-def _resolve(profile_id: str) -> tuple[EngineProfile, Questionnaire, Any] | None:
-    profile = get_engine_profile(profile_id)
-    if profile is None:
-        return None
+def _resolve(profile_id: str) -> tuple[EngineProfile, Turn] | None:
+    """El perfil y con qué corre su turno (su cuestionario y su política, o
+    el turno del paquete activo: `decisions/turn.py`)."""
     try:
-        return profile, load_questionnaire(profile.questions), get_policy(profile.policy)
-    except KeyError as exc:  # perfil mal armado: el turno sale como hoy
+        profile = get_engine_profile(profile_id)
+        if profile is None:
+            return None
+        return profile, turn_of(profile)
+    except (KeyError, BundleError) as exc:  # perfil o paquete mal armados: el turno sale como hoy
         logger.warning("decisions.bad_profile", profile=profile_id, error=str(exc))
         return None
 
@@ -63,7 +66,7 @@ def needs_context(profile_id: str) -> bool:
         ids.append(profile.shadow)
     for pid in ids:
         resolved = _resolve(pid)
-        if resolved is not None and resolved[1].uses_context:
+        if resolved is not None and resolved[1].questionnaire.uses_context:
             return True
     return False
 
@@ -89,7 +92,10 @@ def _answers_for_trace(result: Any, *, picked: set[str]) -> list[dict]:
 
 
 def _versions(profile: EngineProfile, model: str) -> dict[str, str]:
-    return {"profile": profile.id, "questions": profile.questions, "policy": profile.policy, "model": model}
+    versions = {"profile": profile.id, "questions": profile.questions, "policy": profile.policy, "model": model}
+    if profile.bundle is not None:  # el turno del paquete activo (F7)
+        versions["bundle"] = profile.bundle
+    return versions
 
 
 def burst_request(questionnaire: Questionnaire, inp: PerceiveInput, context: Any = None) -> tuple[str, list[Any]]:
@@ -108,27 +114,28 @@ def burst_request(questionnaire: Questionnaire, inp: PerceiveInput, context: Any
 
 
 async def _ask(
-    resolved: tuple[EngineProfile, Questionnaire, Any],
+    resolved: tuple[EngineProfile, Turn],
     inp: PerceiveInput,
     *,
     redact: Sequence[str],
     context: Any,
     timeout_s: float | None = None,
 ) -> Any:
-    profile, questionnaire, _ = resolved
+    profile, turn = resolved
     port, oracle_timeout = _oracle(profile)
-    state, questions = burst_request(questionnaire, inp, context)
+    state, questions = burst_request(turn.questionnaire, inp, context)
     return await port.ask(state, questions, timeout_s=timeout_s or oracle_timeout, redact=redact)
 
 
-def _outcome(resolved: tuple[EngineProfile, Questionnaire, Any], result: Any, inp: PerceiveInput, context: Any) -> TurnOutcome:
-    profile, questionnaire, policy = resolved
-    return policy.decide_turn(
+def _outcome(resolved: tuple[EngineProfile, Turn], result: Any, inp: PerceiveInput, context: Any) -> TurnOutcome:
+    _profile, turn = resolved
+    return turn.policy.decide_turn(
         result,
-        questionnaire=questionnaire,
-        context=context if questionnaire.uses_context else None,
+        questionnaire=turn.questionnaire,
+        context=context if turn.questionnaire.uses_context else None,
         n_messages=len(inp.messages),
-        thresholds=profile.thresholds,
+        thresholds=turn.thresholds,
+        tables=turn.tables,
     )
 
 
@@ -228,7 +235,8 @@ async def verify(inp: VerifyInput, *, redact: Sequence[str] = ()) -> VerifyOutpu
     resolved = _resolve(inp.profile)
     if resolved is None:
         return VerifyOutput(ok=False, decision="send", error=ERROR_UNKNOWN_PROFILE)
-    profile, questionnaire, policy = resolved
+    profile, turn = resolved
+    questionnaire = turn.questionnaire
     try:
         port, timeout_s = _oracle(profile)
         result = await port.ask(
@@ -239,11 +247,11 @@ async def verify(inp: VerifyInput, *, redact: Sequence[str] = ()) -> VerifyOutpu
         )
     except Exception as exc:  # noqa: BLE001 — fail-open
         return VerifyOutput(ok=False, decision="send", error=f"unexpected: {exc!r}"[:300])
-    decision = policy.coverage_decision(plan, result, thresholds=profile.thresholds)
+    decision = turn.policy.coverage_decision(plan, result, thresholds=turn.thresholds, tables=turn.tables)
     if result.ok and not _acting(profile, result.model).get("allowed", True):
         # Otra versión de Jev que la calibrada: se mide, pero no actúa.
         decision = type(decision)(decision="send", covered=decision.covered)
-    covered_th = profile.thresholds.get("covered", 0.70)
+    covered_th = turn.thresholds.get("covered", 0.70)
     covered = {f"cover.{k}" for k, p in decision.covered.items() if p >= covered_th}
     return VerifyOutput(
         ok=result.ok,
@@ -255,6 +263,6 @@ async def verify(inp: VerifyInput, *, redact: Sequence[str] = ()) -> VerifyOutpu
         latency_ms=result.latency_ms,
         cost_usd=result.cost_usd,
         complement_note=(
-            policy.complement_note(plan, decision.missing, questionnaire) if decision.decision == "complement" else None
+            turn.policy.complement_note(plan, decision.missing, questionnaire) if decision.decision == "complement" else None
         ),
     )
