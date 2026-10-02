@@ -649,6 +649,11 @@ tocarlos.
    que nunca se cumple, así que el asunto queda siempre sin atender y pide
    otra ronda del LLM (el bug de `promocion` en `ventas@1`). Un asunto lleva
    las tools o las palabras que lo atienden.
+7. Los pisos se piden por nombre; nunca se reescriben en el paquete.
+8. Un bug de decisión en producción sigue el bucle de
+   `docs/motor-de-decisiones/index.html` (§07 y §08): el veredicto dice dónde
+   cae el arreglo (pregunta, umbral, fila, builtin o modo) y nunca es un `if`
+   en el lugar que decide.
 
 ## 13. Premortem del 2026-10-02
 
@@ -685,4 +690,3 @@ es «si compila, corre»; cada hueco quedó con su prueba
 Queda del operador: `tenants.hubara.lab.internal_numbers` (los teléfonos del
 equipo, para que el banco del laboratorio no los incluya) y el `apply` +
 dispatch de la promoción.
-6. Los pisos se piden por nombre; nunca se reescriben en el paquete.

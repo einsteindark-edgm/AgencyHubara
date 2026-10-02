@@ -190,6 +190,47 @@ Ejemplo vivo: `bundles/ventas-2/` es `ventas` con la regla ② de `promocion`
 la prueba de una versión nueva). Un experimento de esta tienda no viaja a un
 clon de forge: agrégalo a `deletes` en `forge/manifest.yaml`.
 
+## Un bug de decisión en producción (2026-10-02)
+
+Guía visual completa: `docs/motor-de-decisiones/index.html` (dónde entra el
+motor, cómo decide, qué cambió frente a `main` y este bucle con diagramas).
+**Regla de oro:** un bug de decisión se arregla en el paquete (pregunta,
+umbral, fila o ejemplo, en una versión nueva), nunca con un `if`, un regex o
+una guarda en el lugar que decide. Código solo si al motor le falta algo
+genérico, y entonces en UN builtin con su prueba.
+
+1. **Ver:** Calidad LLM → Conversaciones → el turno → «Decisiones de Jev»
+   (o `<vault>/<sesión>/evals/decisions.jsonl`). Sin decisión de Jev en el
+   turno = decidió la regla de hoy, o no es una decisión.
+2. **Leer el veredicto:** `capability`, `bundle`, `by`, `provider`,
+   `reason`, `rule` vs `jev`, `answers`.
+3. **Rojo:** en una COPIA nueva del paquete, las `answers` del veredicto
+   (anonimizadas) como `examples:` con el `expect` correcto → DB010. Si lo
+   que falló es que Jev entendió mal, el ejemplo no lo prueba (le da las
+   respuestas a la tabla): la prueba es el laboratorio y la sombra.
+4. **Verde:** el cambio mínimo; `decisions check`; huella en
+   `test_decision_bundles_published.py`; prueba de «es el anterior + este
+   cambio» (como `test_decisions_ventas_2.py`); `deletes` de forge si es
+   experimento de esta tienda.
+5. **Medir:** laboratorio con «Paquete a comparar» (`B@ventas-N`).
+6. **Promover:** Terraform `decisions_bundle` → apply → dispatch de Backend
+   deploy (§ «Probar un paquete nuevo»). El modo es de la capacidad, no de
+   la versión: si estaba encendida, el cambio actúa de inmediato.
+
+| El veredicto dice | Se arregla en | No |
+|---|---|---|
+| `by=jev`, Jev seguro pero al revés | `text`/`criteria`/opciones de la pregunta | regex o palabras en el lugar |
+| `by=jev`, Jev bien pero bajo el umbral | `thresholds`/`decide` + ejemplos en el borde | umbral en código o en el perfil |
+| `reason=duda` muy seguido | partir la pregunta, ajustar la tabla | forzar con un `if` |
+| `reason=bundle_error` | fila `!('x' in p)` → `doubt` primero + ejemplo | atrapar la excepción en el lugar |
+| `reason=no_question` / falta un dato | builtin de estado/vista/opciones (genérico, con prueba y catálogo) | armar el texto para Jev en una tool |
+| `by=reglas` (off o sombra) | subir el modo con la vara, o el builtin de la regla si sigue off | tocar el paquete por Jev |
+| `by=piso` | casi nunca es bug; los obligatorios no cambian (DB012) | quitar el piso |
+| `timeout` / `http_*` / `model_changed` | infraestructura / perfil del oráculo | bajar umbrales |
+| hace falta una decisión nueva | catálogo (`capabilities` + `about`) + YAML + UN `capability("x")`; nace off → sombra | una función nueva en el lugar |
+| el bot redactó mal sin decisión fallida | `turn.yaml: guide`/`nudge`, `domain.yaml`; `SOUL.md` solo si es conducta general | guarda que reescriba el texto |
+| un hecho mal (precio, cupo, stock, envío) | donde vive el dato, una vez (lo verificado manda) | pedirle a Jev un hecho |
+
 ## Lo que NO se hace
 
 - Editar una versión publicada: otra pregunta u otro umbral = `version: N+1`
