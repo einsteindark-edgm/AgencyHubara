@@ -20,6 +20,9 @@ from fastapi.testclient import TestClient
 from src.plugins.chats.agent.sales.decisions import bots, registry
 from src.plugins.chats.api import perception as api
 
+#: forge no viaja a un clon (`copy_exclude`): sin él, esto es otra tienda.
+IN_FORGE_CLONE = not (Path(__file__).resolve().parents[6] / "forge").is_dir()
+
 
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch) -> TestClient:
@@ -67,6 +70,7 @@ def test_each_decision_says_who_decides_it_today(client: TestClient, tmp_path: P
     assert decisions["destinatario_oracion"] == decisions["destinatario"] == "canary"
 
 
+@pytest.mark.skipif(IN_FORGE_CLONE, reason="clon de forge: los paquetes de prueba de esta tienda no viajan")
 def test_a_store_that_chose_another_bundle_shows_it(client: TestClient, monkeypatch) -> None:
     monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-2")
     registry.reset()
