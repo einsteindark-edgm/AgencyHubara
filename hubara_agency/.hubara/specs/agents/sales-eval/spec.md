@@ -222,6 +222,69 @@ laboratorio.
 - WHEN se ordena a la caja solo evaluar (`dispatch.sh <corrida> <imagen> evaluate`)
 - THEN la caja califica de nuevo sin simular, conserva el gasto que la corrida llevaba y el resumen dice cuántas calificaciones siguen pendientes
 
+### Requirement: Producción se califica turno por turno, como el laboratorio
+
+Desde el 2026-10-02 (decisión del operador: Calidad LLM con la vista del
+laboratorio), el scorecard de cada episodio real SHALL calificarse en modo
+turno, igual que el laboratorio califica su bot de producción (A0): cada
+turno del cliente con el prefijo real como contexto y el episodio como
+estaba al empezar ese turno (sin el cierre posterior; la orden, solo si ya
+existía). El registro guardado SHALL traer `mode: turn` y `by_turn` (el
+veredicto de cada turno) y el veredicto del episodio con la misma regla sobre
+la unión de los checks por turno. La fila de la matriz SHALL quedarse, por
+check, con el resultado más fuerte entre turnos (una falla no se esconde
+detrás de un pasa). El cierre, el barrido diario, `ScoreEpisodeWorkflow`, el
+backfill y el recálculo de la API SHALL guardar lo mismo; el recálculo
+conserva el juicio previo en su turno. SigNoz recibe un punto por check y
+episodio.
+
+#### Scenario: Incidente del PR #281 turno por turno
+
+- GIVEN la trayectoria del PR #281 antes del fix
+- WHEN se califica en modo turno
+- THEN fallan los mismos checks en los mismos turnos que calificando el episodio entero, el episodio da `FALLA` y los turnos 5 y 9 dan `FALLA`
+
+### Requirement: El bot Jev es el workflow nuevo
+
+Calidad LLM SHALL separar los episodios por el workflow que respondió los
+turnos del cliente: `workflow: v2` en la traza del turno (lo escribe
+`persist_turn_trace` desde la activity, sin cambiar el workflow) = bot Jev;
+`v1` = bot actual. Las trazas de antes del campo SHALL reconocerse por la
+salida de Jev (`egress`), que el workflow actual nunca deja. Las capas de
+percepción sobre el workflow actual (`mode: on/canary`) NO SHALL contar como
+bot Jev. Un episodio con turnos de los dos es `mixto` y no se le carga a
+ninguno.
+
+### Requirement: Cada decisión de Jev queda con su conversación
+
+Cada decisión de una capacidad en la que Jev participa (proveedor `sombra` o
+`jev`, con algo que preguntarle) SHALL quedar en
+`<vault>/<sesión>/evals/decisions.jsonl` con su hora, su etapa (`ingest` con
+el mensaje que la disparó, `turno`, `remarketing`, `cierre`) y el veredicto
+compacto con lo personal tapado (lo mismo que publica el laboratorio). Con la
+regla de hoy, o sin pregunta para Jev, NO SHALL escribirse nada. Escribirla
+nunca SHALL frenar la decisión.
+
+#### Scenario: Una decisión en la ventana del turno
+
+- GIVEN una lectura del ingest del mensaje `wamid.B` y una decisión del egreso durante el turno 3
+- WHEN el operador abre la ventana del turno 3 en Calidad LLM
+- THEN «Decisiones de Jev» muestra la lectura «Al leer el mensaje 1» y la del egreso «Durante el turno», con quién decidió y por qué
+
+### Requirement: Calidad LLM muestra producción con la vista del laboratorio
+
+La pestaña Calidad LLM de Agents SHALL mostrar, para la ventana y el bot
+elegidos (Todos / Bot actual / Bot Jev): en Resumen, el cumplimiento por
+check semana a semana, dónde terminan los episodios, la matriz episodios ×
+checks y, a pedido, cómo le fue a cada bot y el informe de Jev de los turnos
+reales (tiempos, caídas a la regla con su motivo, costo por turno); en
+Conversaciones, cada conversación real como un hilo con cada turno
+calificado, «Resultado» y «Qué falló» por nombre, y la ventana del turno
+(resultado, paso a paso, decisiones de Jev). Los datos SHALL leerse por el
+contrato `evals@v1` (`/api/chats/evals/production/*`, cast
+`/api/agents/evals/production/*`); un episodio sin calificar en modo turno
+SHALL calificarse al vuelo con el código.
+
 ## Out of scope
 
 - La eval legada por métricas DeepEval (convive durante la transición, plan §3.7).
