@@ -188,12 +188,12 @@ async def get_scorecard(
 ) -> dict[str, Any]:
     _validate_ids(session_id, episode_id)
     vault = get_vault_dir()
-    traj = service.load_trajectory(vault, session_id, episode_id)
+    traj, states = service.episode_inputs(vault, session_id, episode_id)
     found = store.find_latest(store.scorecards_dir(vault), session_id, episode_id)
     if found is not None:
         return _detail(traj, found, stored=True)
     ctx = await catalog_context.build_check_context()
-    record = service.score_trajectory(traj, ctx, calibrated=_calibrated())
+    record = service.score_episode_turns(traj, ctx, states=states, calibrated=_calibrated())
     return _detail(traj, record, stored=False)
 
 
@@ -228,15 +228,17 @@ async def rescore(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str
     _validate_ids(session_id, episode_id)
     vault = get_vault_dir()
     cards_dir = store.scorecards_dir(vault)
-    traj = service.load_trajectory(vault, session_id, episode_id)
+    traj, states = service.episode_inputs(vault, session_id, episode_id)
     previous = store.find_latest(cards_dir, session_id, episode_id)
     ctx = await catalog_context.build_check_context()
-    # Recalcular sin juez conserva los resultados del juez anteriores: un
-    # recálculo de código no debe borrar el juicio ya hecho.
+    # Recalcular sin juez conserva los resultados del juez anteriores (en su
+    # turno): un recálculo de código no debe borrar el juicio ya hecho. Turno
+    # por turno, como lo guarda producción (Calidad LLM, 2026-10-02).
     record = store.append_scorecard(
         cards_dir,
-        service.score_trajectory(
-            traj, ctx, judge_results=_previous_judge_results(previous), calibrated=_calibrated()
+        service.score_episode_turns(
+            traj, ctx, states=states, judge_results=service.judge_by_turn(_previous_judge_results(previous)),
+            calibrated=_calibrated(),
         ),
     )
     detail = _detail(traj, record, stored=True)

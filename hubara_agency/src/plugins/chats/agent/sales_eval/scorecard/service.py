@@ -213,6 +213,122 @@ def score_trajectory(
 
 
 
+# ── Producción en modo turno (Calidad LLM, 2026-10-02) ──────────────────────
+# Calidad LLM muestra producción como el laboratorio: cada respuesta del bot
+# con su veredicto. El episodio real se califica como el laboratorio califica
+# su brazo de producción (A0): cada turno con el prefijo real y el episodio
+# como estaba al empezar ese turno.
+_CLOSING_FIELDS = ("closing_tag", "closing_motivo")
+
+
+def turn_episode_states(
+    metadata: Mapping[str, Any], traces: Iterable[Mapping[str, Any]], episode_id: str
+) -> dict[int, dict[str, Any]]:
+    """El episodio al inicio de cada turno (el `episode_at` del laboratorio):
+    sin el cierre si cerró después de que el turno empezó, y con la orden del
+    estado que dejó el turno anterior del episodio (una orden registrada en el
+    turno no se ve antes de él)."""
+    episode = next(
+        (e for e in metadata.get("episodes") or [] if isinstance(e, Mapping) and e.get("episode_id") == episode_id),
+        None,
+    )
+    if episode is None:
+        return {}
+    ordered = sorted(
+        (t for t in traces if isinstance(t, Mapping) and t.get("episode_id") == episode_id),
+        key=lambda t: (_as_ms(t.get("turn_started_ms")), int(t.get("turn") or 0)),
+    )
+    out: dict[int, dict[str, Any]] = {}
+    previous: Mapping[str, Any] | None = None
+    for trace in ordered:
+        turn, started = trace.get("turn"), _as_ms(trace.get("turn_started_ms"))
+        if isinstance(turn, int) and turn not in out:
+            state = dict(episode)
+            closed = state.get("closed_at_ms")
+            if isinstance(closed, (int, float)) and closed > started:
+                state = {k: v for k, v in state.items() if k not in _CLOSING_FIELDS} | {"closed_at_ms": None}
+            state["order_id"] = ((previous or {}).get("state") or {}).get("order_id")
+            out[turn] = state
+        previous = trace
+    return out
+
+
+def episode_inputs(vault_dir: Path, session_id: str, episode_id: str) -> tuple[Trajectory, dict[int, dict[str, Any]]]:
+    """La trayectoria real del episodio y su estado al inicio de cada turno
+    (lo que necesita `score_episode_turns`)."""
+    traj = load_trajectory(vault_dir, session_id, episode_id)
+    states = turn_episode_states(
+        reconstruct.read_session_metadata(vault_dir, session_id),
+        turn_traces.traces_for_episode(vault_dir, session_id, episode_id),
+        episode_id,
+    )
+    return traj, states
+
+
+def judge_by_turn(results: Iterable[CheckResult]) -> dict[int, list[CheckResult]]:
+    """Resultados del juez ya hechos, por su turno (un recálculo de código los
+    conserva en el turno que juzgaron; sin turno no hay dónde ponerlos)."""
+    out: dict[int, list[CheckResult]] = {}
+    for r in results:
+        if isinstance(r.turn, int):
+            out.setdefault(r.turn, []).append(r)
+    return out
+
+
+def _as_ms(value: Any) -> int:
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+
+def score_episode_turns(
+    traj: Trajectory,
+    ctx: CheckContext,
+    *,
+    states: Mapping[int, dict[str, Any]],
+    judge_results: Mapping[int, Iterable[CheckResult]] | None = None,
+    calibrated: Iterable[str] = frozenset(),
+) -> dict[str, Any]:
+    """El registro del scorecard de un episodio real en modo turno (lo que
+    guarda producción): `score_turns` con los turnos reales como candidatos,
+    más lo que necesitan la lista, la matriz y el embudo."""
+    from src.plugins.chats.agent.sales_eval.scorecard.judge_checks import is_judge_error
+
+    judged = [r for results in (judge_results or {}).values() for r in results]
+    judge_errors = sum(1 for r in judged if is_judge_error(r))
+    record = score_turns(
+        traj, {t.turn: t for t in traj.turns}, ctx,
+        episodes_at=states, judge_results=judge_results, calibrated=calibrated,
+    )
+    record.update(
+        {
+            "fidelity": traj.fidelity,
+            "stage_final": traj.stage_final,
+            "closing_tag": traj.closing_tag,
+            "turns": len(traj.turns),
+            "judge": len(judged) > judge_errors,
+            "judge_errors": judge_errors,
+            "judge_unknown": sum(1 for r in judged if r.verdict == "desconocido" and r.critique and not is_judge_error(r)),
+            "order_id": traj.order_id,
+            "episode_date": episode_date(traj),
+            "catalog_available": ctx.catalog_available,
+        }
+    )
+    return record
+
+
+def strongest_results(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Un resultado por check (el más fuerte entre turnos: falla > desconocido
+    > pasa > sin_senal > no_aplica), en el orden en que aparece cada check."""
+    best: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        check_id = str(row.get("check_id"))
+        current = best.get(check_id)
+        if current is None or _AGGREGATE_RANK.get(str(row.get("verdict")), 9) < _AGGREGATE_RANK.get(
+            str(current.get("verdict")), 9
+        ):
+            best[check_id] = dict(row)
+    return list(best.values())
+
+
 # ── Modo turno (laboratorio, plan §5.2–5.5) ─────────────────────────────────
 # Precedencia al agregar un check sobre varios turnos: la señal más fuerte gana.
 # Un turno sin decidir no se esconde detrás de otro que pasó: el episodio
@@ -279,6 +395,7 @@ def score_turns(
         "counts": episode.counts,
         "first_failure": episode.first_failure,
         "first_critical": episode.first_critical,
+        "compliance": episode.compliance,
         "results": rows,
     }
 

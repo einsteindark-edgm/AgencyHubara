@@ -392,7 +392,7 @@ async def score_episode_scorecard_activity(
         build_check_context,
     )
     from src.plugins.chats.agent.sales_eval.evals.redaction import redact_pii
-    from src.plugins.chats.agent.sales_eval.scorecard.judge_checks import run_judge_checks
+    from src.plugins.chats.agent.sales_eval.scorecard.judge_checks import run_judge_checks_focus
 
     vault = composition.get_vault_dir()
     try:
@@ -403,7 +403,9 @@ async def score_episode_scorecard_activity(
                 "scorecard: la traza del turno de cierre de %s::%s no llegó en %.0fs; se evalúa sin ella",
                 session_id, episode_id, service.CLOSING_TRACE_TIMEOUT_S,
             )
-        traj = service.load_trajectory(vault, session_id, episode_id)
+        # Turno por turno, como el laboratorio califica su brazo de producción
+        # (Calidad LLM muestra cada respuesta con su veredicto, 2026-10-02).
+        traj, states = service.episode_inputs(vault, session_id, episode_id)
         ctx = await build_check_context()
         cards_dir = store.scorecards_dir(vault)
         # Las etiquetas traen el veredicto del juez que vio el humano: sin
@@ -412,13 +414,15 @@ async def score_episode_scorecard_activity(
             calibration.compute_calibration((), store.read_labels(store.labels_path(vault)))
         )
         previous = store.find_latest(cards_dir, session_id, episode_id)
-        judge_results = []
+        judge_results: dict = {}
         judge = _scorecard_judge(f"{session_id}/{episode_id}", with_judge=with_judge, judge_kind=judge_kind)
         if judge is not None and traj.turns:
-            judge_results = await run_judge_checks(traj, ctx, judge)
+            judge_results = await run_judge_checks_focus(
+                traj, {t.turn: t for t in traj.turns}, ctx, judge, episodes_at=states
+            )
         record = store.append_scorecard(
             cards_dir,
-            service.score_trajectory(traj, ctx, judge_results=judge_results, calibrated=calibrated),
+            service.score_episode_turns(traj, ctx, states=states, judge_results=judge_results, calibrated=calibrated),
         )
     except Exception as exc:  # noqa: BLE001 — el scorecard nunca tumba la eval legada
         activity.logger.warning(
@@ -426,7 +430,8 @@ async def score_episode_scorecard_activity(
         )
         return ScorecardSummary(session_id=session_id, episode_id=episode_id, error=repr(exc)[:300])
 
-    for r in record["results"]:
+    # Un punto por check y episodio (el resultado más fuerte entre turnos).
+    for r in service.strongest_results(record["results"]):
         if r["verdict"] not in ("pasa", "falla"):
             continue
         emit_eval_score(

@@ -64,8 +64,9 @@ def backfill_scorecards(
         if limit is not None and scored >= limit:
             break
         try:
-            traj = service.load_trajectory(vault_dir, session_id, episode_id)
-            record = service.score_trajectory(traj, ctx)
+            # Turno por turno, como lo califica producción (Calidad LLM, 2026-10-02).
+            traj, states = service.episode_inputs(vault_dir, session_id, episode_id)
+            record = service.score_episode_turns(traj, ctx, states=states)
             if not dry_run:
                 store.append_scorecard(store.scorecards_dir(vault_dir), record)
             scored += 1

@@ -82,13 +82,18 @@ def latest_by_unit(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def to_row(record: dict[str, Any]) -> dict[str, Any]:
-    """Fila de lista/matriz: el registro sin `results`, con el mapa check → veredicto."""
-    row = {k: v for k, v in record.items() if k != "results"}
-    row["checks"] = {
-        str(r.get("check_id")): r.get("verdict")
-        for r in record.get("results") or []
-        if isinstance(r, dict)
-    }
+    """Fila de lista/matriz: el registro sin `results` (ni `by_turn`), con el
+    mapa check → veredicto. En modo turno un check tiene un resultado por
+    turno: queda el más fuerte (una falla en un turno no se esconde detrás de
+    un pasa en otro)."""
+    row = {k: v for k, v in record.items() if k not in ("results", "by_turn")}
+    results = [r for r in record.get("results") or [] if isinstance(r, dict)]
+    if record.get("mode") == "turn" or "by_turn" in record:
+        from src.plugins.chats.agent.sales_eval.scorecard.service import aggregate_checks
+
+        row["checks"] = aggregate_checks(results)
+    else:
+        row["checks"] = {str(r.get("check_id")): r.get("verdict") for r in results}
     return row
 
 
