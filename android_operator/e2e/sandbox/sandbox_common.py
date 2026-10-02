@@ -39,8 +39,12 @@ MEDUSA_STORE = DATA_DIR / "medusa" / "store.json"
 TEMPORAL_STORE = DATA_DIR / "temporal" / "workflows.json"
 SEED_INFO = DATA_DIR / "seed_info.json"
 MOBILE_CONFIG = DATA_DIR / "mobile_config.json"  # lo que inject.py cambia de la configuración de la app
+# Pantallas del servidor de la App Operador: las del repo (lo que publica frontend-deploy) y, encima, las que un
+# escenario pone con `inject.py screen` (para probar que un cambio en el servidor llega sin reinstalar la app).
+REPO_SCREENS = SANDBOX_DIR.parent.parent / "screens"
+MOBILE_SCREENS = DATA_DIR / "mobile_screens"
 
-PORT = 8010
+PORT = int(os.environ.get("SANDBOX_PORT") or 8010)  # run_api.sh lo exporta (SANDBOX_PORT=8020 si 8010 está ocupado)
 #: Catalog photo URLs. The REAL WhatsApp outbound builder only accepts
 #: ``https://`` image links (``outbound._validate_media_source``), so the default
 #: is an https host under the reserved ``.invalid`` TLD: image tools pass the real

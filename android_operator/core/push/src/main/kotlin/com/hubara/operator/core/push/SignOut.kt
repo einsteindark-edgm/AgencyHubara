@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.core.app.NotificationManagerCompat
 import com.hubara.operator.core.data.auth.AuthRepository
 import com.hubara.operator.core.data.repo.SeenRepository
+import com.hubara.operator.core.data.screens.ScreenDataCache
 import com.hubara.operator.core.database.OperatorDatabase
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -18,11 +19,13 @@ class SignOut @Inject constructor(
     private val seen: SeenRepository,
     private val ambient: AmbientStore,
     private val widget: HotWidgetUpdater,
+    private val screenData: ScreenDataCache,
 ) {
     suspend operator fun invoke() {
         auth.signOut()
         withContext(Dispatchers.IO) { db.clearAllTables() }   // bandeja, mensajes, outbox, borradores, incendios
         seen.clear()
+        withContext(Dispatchers.IO) { screenData.clear() }    // lo último que mostró cada pantalla del servidor
         ambient.clear()                                       // ventas calientes del widget y avisados
         NotificationManagerCompat.from(context).cancelAll()
         widget.update(context)                                // la pantalla de inicio deja de mostrar nombres

@@ -993,7 +993,28 @@ class EventStream @Inject constructor(
   <div class="table-wrap"><table><thead><tr><th>Superficie</th><th>Lo decide el servidor</th><th>Es nativo</th></tr></thead><tbody><tr><td><code>chat.header</code></td><td>Qué mostrar de lo que entendió el bot, en qué orden y el botón del pedido.</td><td>El encabezado y el gesto de tomar la conversación.</td></tr><tr><td><code>chat.suggestions</code></td><td>Cuáles burbujas, en qué orden, su prominencia y sus argumentos.</td><td>Tocar, mantener, deshacer y el outbox.</td></tr><tr><td><code>fires.feed</code> y radar</td><td>Qué tarjetas, en qué orden, sus textos y su acción principal.</td><td>Swipe, foco, animación y el retraso de medio segundo.</td></tr><tr><td><code>order.sheet</code></td><td>Los bloques y las transiciones permitidas.</td><td>El stepper y la captura de foto y guía.</td></tr><tr><td><code>widget.hot</code></td><td>Las filas.</td><td>Glance.</td></tr><tr><td>Timeline, composer y cámara</td><td>Nada.</td><td>Islas nativas completas.</td></tr></tbody></table></div>
   <div class="prose"><p><strong>La Styles API de Compose</strong> encajaría para mapear tokens de estilo del servidor,
   pero el skill <code>styles</code> la marca como experimental (alfa, compileSdk 37). Se evalúa en la fase 4, cuando
-  sea estable; mientras tanto, Material 3 con tokens propios.</p></div>
+  sea estable; mientras tanto, Material 3 con tokens propios.</p>
+  <p><strong>Construido (1 oct 2026): pantallas completas definidas por el servidor.</strong> Cada archivo de
+  <code>android_operator/screens/</code> es una pantalla: sus fuentes de datos (GET a <code>/api/...</code>), su
+  estado, valores calculados, el árbol de componentes y las acciones. <code>frontend-deploy</code> los publica en
+  <code>&lt;cloudfront&gt;/mobile/screens/</code>, junto a <code>config.json</code>: una pantalla nueva o un componente
+  cambiado sale sin publicar la app. Cambio respecto al contrato de arriba: <em>árbol anidado</em> en vez de lista
+  plana, y rutas con puntos (<code>{{pedidos.orders | count}}</code>) en vez de JSON Pointer, porque estas pantallas las
+  escribe una persona; la lista plana sigue siendo la forma para los parches de las superficies generativas. El
+  catálogo es cerrado (23 componentes, 10 acciones, 51 filtros, 43 íconos) y vive en <code>:core:sdui</code>
+  (<code>Catalog.kt</code>), de donde salen la validación de la CI, el esquema JSON del editor y la referencia
+  <code>CATALOGO.md</code>. Guía: <code>android_operator/screens/README.md</code>; escenarios S17–S19.</p>
+  <p><strong>Toda la app migrada (1 oct 2026, noche).</strong> Las pestañas (<code>app.json</code>), la bandeja, Incendios,
+  Órdenes, la ficha del pedido, el chat, la paleta de acciones y las plantillas son archivos de
+  <code>android_operator/screens/</code>; se borraron los módulos nativos <code>:feature:inbox</code>,
+  <code>:feature:fires</code> y <code>:feature:orders</code>. Lo crítico del teléfono entra como <em>piezas nativas</em>
+  del catálogo (<code>chat</code>: historial, deshacer, burbujas y composer; <code>notifications_banner</code>), los datos
+  que viven en el teléfono como <em>fuentes del teléfono</em> (<code>"app": "conversations"</code>: Room al día por el SSE
+  con lo no leído; <code>fires</code>, <code>radar</code>, <code>chat</code>, <code>templates</code>) y lo que toca el
+  outbox o la sesión como <em>acciones nativas</em> (<code>send_tool</code>, <code>take_over</code>,
+  <code>return_to_bot</code>, <code>hide_fire</code>, <code>sign_out</code>). Las claves de navegación de siempre siguen
+  (enlaces, radar, escenas de tablet) y <code>ScreenRoutes</code> dice qué pantalla arma cada una. Nativo solo: login,
+  versión mínima, radar, widget y notificaciones.</p></div>
 </section>
 
 <section id="t9">

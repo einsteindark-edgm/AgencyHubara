@@ -17,6 +17,8 @@ data class ServerConfig(
     val privacyUrl: String? = null,
     /** Si la app instalada tiene un versionCode menor, pide actualizarse. */
     val minVersionCode: Int = 0,
+    /** De dónde bajan las pantallas del servidor. null = junto a config.json (`<…>/mobile/screens/`). */
+    val screensUrl: HttpUrl? = null,
 )
 
 @Serializable
@@ -26,6 +28,7 @@ private data class ServerConfigDto(
     @SerialName("cognito_client_id") val cognitoClientId: String? = null,
     @SerialName("privacy_url") val privacyUrl: String? = null,
     @SerialName("min_version_code") val minVersionCode: Int = 0,
+    @SerialName("screens_url") val screensUrl: String? = null,
 )
 
 /** En debug, la única excepción a https: el backend de prueba en el emulador o la Mac. */
@@ -46,5 +49,8 @@ fun parseServerConfig(json: String, allowCleartext: Boolean): ServerConfig? {
         cognitoRegion = dto.cognitoRegion?.takeIf { it.isNotBlank() } ?: "us-east-1",
         privacyUrl = dto.privacyUrl?.toHttpUrlOrNull()?.takeIf { it.isHttps }?.toString(),
         minVersionCode = dto.minVersionCode.coerceAtLeast(0),
+        // Mismas reglas que el backend: las pantallas dicen a qué endpoints llamar, así que también solo por https.
+        screensUrl = dto.screensUrl?.takeIf { it.isNotBlank() }?.let { if (it.endsWith("/")) it else "$it/" }
+            ?.toHttpUrlOrNull()?.takeIf { it.isTrusted(allowCleartext) },
     )
 }

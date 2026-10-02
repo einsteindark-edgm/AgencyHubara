@@ -1,0 +1,39 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "Las campañas de WhatsApp del plugin de marketing (/api/marketing/campaigns). Tocar una abre su resultado.",
+  "schema": 1,
+  "id": "campanas",
+  "title": "Campañas",
+  "state": { "estados": "draft,scheduled,sending,sent,failed" },
+  "data": {
+    "campanas": { "get": "/api/marketing/campaigns", "refreshOn": ["marketing"] }
+  },
+  "computed": {
+    "visibles": "{{campanas.campaigns | where_in:'status':state.estados | sort_desc:'created_at_ms'}}"
+  },
+  "body": [
+    {
+      "type": "chips", "bind": "state.estados",
+      "options": [
+        { "value": "draft,scheduled,sending,sent,failed", "label": "Todas" },
+        { "value": "sent", "label": "Enviadas" },
+        { "value": "draft,scheduled", "label": "Por enviar" }
+      ]
+    },
+    {
+      "type": "list", "items": "{{visibles}}", "as": "c", "key": "{{c.id}}",
+      "item": {
+        "type": "list_item",
+        "icon": "campaign", "icon_tone": "bot",
+        "title": "{{c.name}}",
+        "subtitle": "{{c.segments | join:', ' | default:'Sin segmentos'}}",
+        "tag": "{{c.status | map:'draft=Borrador;scheduled=Programada;sending=Enviando;sent=Enviada;failed=No salió'}}",
+        "tag_tone": "{{c.status | map:'sent=success;failed=danger;scheduled=primary;sending=primary;*=neutral'}}",
+        "trailing_caption": "{{c.sent_at_ms | default:c.created_at_ms | date}}",
+        "chevron": true,
+        "action": { "type": "navigate", "screen": "campana", "params": { "campaign_id": "{{c.id}}" } }
+      },
+      "empty": { "type": "empty", "icon": "campaign", "title": "No hay campañas aquí", "body": "Las campañas se crean desde el dashboard." }
+    }
+  ]
+}

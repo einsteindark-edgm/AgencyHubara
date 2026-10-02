@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import com.hubara.operator.core.data.config.ServerConfigStore
+import com.hubara.operator.core.data.screens.ScreenStore
+import com.hubara.operator.core.ui.NativeComponent
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -31,6 +33,8 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var auth: AuthRepository
     @Inject lateinit var sync: SyncEngine
     @Inject lateinit var serverConfig: ServerConfigStore
+    @Inject lateinit var screens: ScreenStore
+    @Inject lateinit var natives: Map<String, @JvmSuppressWildcards NativeComponent>
 
     /** Deep link pendiente (notificación o widget), ya validado. */
     private val pendingLink = MutableStateFlow<SyntheticStack?>(null)
@@ -53,8 +57,12 @@ class MainActivity : ComponentActivity() {
         // El SSE solo corre con la app en primer plano y la sesión abierta. En segundo plano manda el push.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                // Cada vez que la app vuelve a primer plano: ¿cambió algo en el servidor (dirección, versión mínima)?
-                launch { serverConfig.refresh() }
+                // Cada vez que la app vuelve a primer plano: ¿cambió algo en el servidor (dirección, versión mínima)? Después,
+                // las pestañas del servidor (`app.json`; se aplican al siguiente arranque).
+                launch {
+                    serverConfig.refresh()
+                    screens.refreshManifest()
+                }
                 auth.state.collectLatest { state ->
                     if (state == AuthState.SignedIn || state == AuthState.DevMode) {
                         try {
@@ -74,6 +82,7 @@ class MainActivity : ComponentActivity() {
                 OperatorApp(
                     installers = installers, auth = auth, server = serverConfig.current,
                     pendingLink = pendingLink, onLinkConsumed = { pendingLink.value = null },
+                    tabs = screens.manifest.tabs, natives = natives,
                 )
             }
         }

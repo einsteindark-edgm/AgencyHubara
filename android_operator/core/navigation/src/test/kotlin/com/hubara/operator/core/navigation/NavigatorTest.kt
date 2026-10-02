@@ -21,6 +21,26 @@ class NavigatorTest {
         return Navigator(state) to state
     }
 
+    @Test fun una_pestana_del_servidor_tiene_su_propia_pila() {
+        val mas = ScreenKey("mas")
+        val state = NavigationState(
+            startRoute = InboxKey,
+            topLevelRoute = mutableStateOf<NavKey>(InboxKey),
+            backStacks = (TopLevel.roots + mas).associateWith { mutableStateListOf(it) },
+        )
+        val nav = Navigator(state)
+        nav.navigate(ScreenKey("mas"))
+        assertThat(state.topLevelRoute).isEqualTo(mas)
+        nav.navigate(ScreenKey("campana", mapOf("campaign_id" to "mkt-1")))
+        nav.navigate(OrderSheetKey(OrderId.parse("order_01")!!))
+        assertThat(state.backStacks.getValue(mas)).containsExactly(
+            mas, ScreenKey("campana", mapOf("campaign_id" to "mkt-1")), OrderSheetKey(OrderId.parse("order_01")!!),
+        ).inOrder()
+        // Otra pantalla del servidor con otros parámetros es otra entrada (no la misma).
+        nav.navigate(ScreenKey("campana", mapOf("campaign_id" to "mkt-2")))
+        assertThat(state.backStacks.getValue(mas)).hasSize(4)
+    }
+
     @Test fun el_radar_lleva_a_incendios_y_volver_a_laura_encuentra_su_chat_intacto() {
         val (nav, state) = navigator()
         nav.navigate(ChatKey(laura))

@@ -8,6 +8,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
+import com.hubara.operator.core.data.screens.FileScreenDataCache
 import com.hubara.operator.core.data.auth.AuthRepository
 import com.hubara.operator.core.data.auth.InMemoryTokenStore
 import com.hubara.operator.core.data.repo.SeenRepository
@@ -53,13 +54,17 @@ class SignOutTest {
             InMemoryTokenStore(),
         ) { 0L }
 
+        val screenData = FileScreenDataCache(context)
+        screenData.write("ventas|pedidos|/api/orders/orders", kotlinx.serialization.json.Json.parseToJsonElement("""{"orders": [{"customer": "Laura Prueba"}]}"""))
+
         var widgetRefreshed = 0
-        SignOut(context, auth, db, seen, ambient, HotWidgetUpdater { widgetRefreshed++ })()
+        SignOut(context, auth, db, seen, ambient, HotWidgetUpdater { widgetRefreshed++ }, screenData)()
 
         assertThat(db.conversations().observeAll().first()).isEmpty()
         assertThat(ambient.hot.first()).isEmpty()
         assertThat(seen.counts.first()).isEqualTo(SeenCounts())
         assertThat(shadowOf(manager).allNotifications).isEmpty()
         assertThat(widgetRefreshed).isEqualTo(1)  // el widget de la pantalla de inicio deja de mostrar nombres
+        assertThat(screenData.read("ventas|pedidos|/api/orders/orders")).isNull()  // ni lo último de las pantallas del servidor
     }
 }

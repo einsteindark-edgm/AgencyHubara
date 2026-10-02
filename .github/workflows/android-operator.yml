@@ -27,8 +27,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Tests locales (JVM + Robolectric)
-        run: ./gradlew testDebugUnitTest :core:model:test --console=plain
+      # :core:sdui:test incluye ScreensRepoTest: cada pantalla del servidor (android_operator/screens/) tiene que poder
+      # pintarse entera con esta versión de la app antes de que frontend-deploy la publique.
+      - name: Tests locales (JVM + Robolectric) y pantallas del servidor
+        run: ./gradlew testDebugUnitTest :core:model:test :core:sdui:test --console=plain
 
       - name: Build de release con R8
         run: ./gradlew :app:assembleRelease --console=plain

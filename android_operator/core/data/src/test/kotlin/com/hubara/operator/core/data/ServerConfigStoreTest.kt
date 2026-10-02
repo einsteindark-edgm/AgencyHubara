@@ -63,6 +63,15 @@ class ServerConfigStoreTest {
         assertThat(s.current.value.apiBaseUrl.port).isEqualTo(8010)
     }
 
+    @Test fun las_pantallas_bajan_junto_a_la_configuracion_salvo_que_el_servidor_diga_otra_cosa() = runTest {
+        assertThat(store(configUrl = "").screensBase()).isNull()
+        val s = store()
+        assertThat(s.screensBase().toString()).isEqualTo(server.url("/mobile/screens/").toString())
+        server.enqueue(config("http://10.0.2.2:8010", extra = ", \"screens_url\": \"http://10.0.2.2:8010/pantallas/\""))
+        s.refresh()
+        assertThat(s.screensBase().toString()).isEqualTo("http://10.0.2.2:8010/pantallas/")
+    }
+
     @Test fun sin_url_de_configuracion_usa_la_del_build_y_no_pide_nada() = runTest {
         val s = store(configUrl = "")
         assertThat(s.refresh()).isFalse()

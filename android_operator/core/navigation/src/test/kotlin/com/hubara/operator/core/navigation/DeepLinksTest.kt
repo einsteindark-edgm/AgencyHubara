@@ -18,6 +18,15 @@ class DeepLinksTest {
             .isEqualTo(SyntheticStack(OrdersKey, listOf(OrderSheetKey(OrderId.parse("order_01HX")!!))))
     }
 
+    @Test fun una_pantalla_del_servidor_con_sus_parametros() {
+        assertThat(DeepLinks.parse("hubara://screen/campana?campaign_id=mkt-1&desde=notificaci%C3%B3n"))
+            .isEqualTo(SyntheticStack(InboxKey, listOf(ScreenKey("campana", mapOf("campaign_id" to "mkt-1", "desde" to "notificación")))))
+        assertThat(DeepLinks.parse("hubara://screen/ventas")).isEqualTo(SyntheticStack(InboxKey, listOf(ScreenKey("ventas"))))
+        assertThat(DeepLinks.screen("campana", mapOf("campaign_id" to "mkt 1"))).isEqualTo("hubara://screen/campana?campaign_id=mkt+1")
+        assertThat(DeepLinks.parse("hubara://screen/Ventas")).isNull()
+        assertThat(DeepLinks.parse("hubara://screen/..")).isNull()
+    }
+
     @Test fun un_link_invalido_no_navega() {
         assertThat(DeepLinks.parse(null)).isNull()
         assertThat(DeepLinks.parse("https://live/wa_test_x")).isNull()

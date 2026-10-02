@@ -1,0 +1,75 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "«+ Más» del chat: las acciones del bot que el operador puede mandar. Van por el outbox (con los 5 s de deshacer). Las que piden elegir un producto esperan al selector del catálogo.",
+  "schema": 1,
+  "id": "acciones",
+  "title": "Acciones",
+  "params": ["session"],
+  "body": [
+    {
+      "type": "section", "title": "Catálogo",
+      "children": [
+        {
+          "type": "list",
+          "children": [
+            {
+              "type": "list_item", "icon": "inventory", "title": "Enviar productos",
+              "action": [
+                { "type": "native", "name": "send_tool", "args": { "session": "{{params.session}}", "tool": "present_products", "label": "Enviar productos" } },
+                { "type": "back" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "section", "title": "Venta",
+      "children": [
+        {
+          "type": "list",
+          "children": [
+            {
+              "type": "list_item", "icon": "shipping", "title": "Pedir datos de envío",
+              "action": [
+                { "type": "native", "name": "send_tool", "args": { "session": "{{params.session}}", "tool": "request_shipping_details", "label": "Pedir datos de envío" } },
+                { "type": "back" }
+              ]
+            },
+            {
+              "type": "list_item", "icon": "shipping", "title": "Tarifas de envío",
+              "action": [
+                { "type": "native", "name": "send_tool", "args": { "session": "{{params.session}}", "tool": "send_shipping_rates", "label": "Tarifas de envío" } },
+                { "type": "back" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "section", "title": "Cierre",
+      "children": [
+        {
+          "type": "list",
+          "children": [
+            {
+              "type": "list_item", "icon": "check", "title": "Resumen para confirmar",
+              "action": [
+                { "type": "native", "name": "send_tool", "args": { "session": "{{params.session}}", "tool": "present_order_confirmation", "label": "Resumen para confirmar" } },
+                { "type": "back" }
+              ]
+            },
+            {
+              "type": "list_item", "icon": "payments", "title": "Medios de pago",
+              "action": [
+                { "type": "native", "name": "send_tool", "args": { "session": "{{params.session}}", "tool": "send_payment_methods", "label": "Medios de pago" } },
+                { "type": "back" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

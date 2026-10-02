@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -60,6 +62,9 @@ class ServerConfigStore @Inject constructor(
         _current.value = parsed.orBuild()
         true
     }
+
+    /** De dónde bajan las pantallas del servidor: lo que diga config.json o, si no, `screens/` junto a él. */
+    fun screensBase(): HttpUrl? = current.value.screensUrl ?: defaults.configUrl.toHttpUrlOrNull()?.resolve("screens/")
 
     private fun saved(): ServerConfig? =
         prefs.getString(KEY, null)?.let { parseServerConfig(it, defaults.allowCleartext) }?.orBuild()

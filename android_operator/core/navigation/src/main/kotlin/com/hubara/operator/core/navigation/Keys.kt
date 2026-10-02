@@ -31,7 +31,15 @@ import kotlinx.serialization.Serializable
 /** Reactivar la conversación con una plantilla (ventana de 24 h cerrada), en una hoja inferior. */
 @Serializable data class TemplateSheetKey(val session: SessionId) : NavKey
 
-/** Los tres destinos de primer nivel, cada uno con su pila. */
+/**
+ * Una pantalla definida por el servidor (`android_operator/screens/<screen>.json`) con sus parámetros. Si es una
+ * pestaña extra del manifiesto, es también la raíz de su pila.
+ */
+@Serializable data class ScreenKey(val screen: String, val params: Map<String, String> = emptyMap()) : NavKey
+
+/** La misma pantalla del servidor, abierta como hoja inferior (`"sheet": true` en la acción `navigate`). */
+@Serializable data class ScreenSheetKey(val screen: String, val params: Map<String, String> = emptyMap()) : NavKey
+
 /**
  * Escena de lista + detalle de cada pila (pantallas ≥ 840 dp). Navigation 3 junta en una escena las entradas seguidas
  * con la misma clave: con una por pila, Incendios nunca muestra al lado un chat de la pestaña Chats.

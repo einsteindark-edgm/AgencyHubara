@@ -69,7 +69,15 @@ import com.hubara.operator.core.ui.RadarFloorState
 import com.hubara.operator.core.ui.RadarIndicatorModel
 import com.hubara.operator.core.ui.RadarLayer
 import com.hubara.operator.feature.auth.LoginScreen
-import com.hubara.operator.feature.fires.destinationFor
+import com.hubara.operator.core.navigation.fireDestination
+import com.hubara.operator.core.navigation.ScreenRoutes
+import com.hubara.operator.core.data.screens.AppSource
+import com.hubara.operator.core.data.screens.ScreenStore
+import com.hubara.operator.core.sdui.screenScope
+import com.hubara.operator.core.ui.LocalNativeComponents
+import com.hubara.operator.core.ui.NativeComponent
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.collections.immutable.ImmutableList
@@ -87,6 +95,8 @@ import androidx.compose.material3.LoadingIndicator
 import androidx.compose.ui.platform.LocalUriHandler
 import com.hubara.operator.core.ui.VersionGate
 import com.hubara.operator.core.network.config.ServerConfig
+import com.hubara.operator.core.navigation.ScreenKey
+import com.hubara.operator.core.sdui.TabSpec
 
 @Composable
 fun OperatorApp(
@@ -95,6 +105,8 @@ fun OperatorApp(
     server: StateFlow<ServerConfig>,
     pendingLink: StateFlow<SyntheticStack?>,
     onLinkConsumed: () -> Unit,
+    tabs: List<TabSpec>,
+    natives: Map<String, NativeComponent> = emptyMap(),
 ) {
     val state by auth.state.collectAsStateWithLifecycle()
     val config by server.collectAsStateWithLifecycle()
@@ -110,11 +122,11 @@ fun OperatorApp(
             appVersionCode = BuildConfig.VERSION_CODE,
             onUpdate = { uriHandler.openUri("https://play.google.com/store/apps/details?id=${BuildConfig.APPLICATION_ID}") },
         ) {
-            CompositionLocalProvider(LocalSessionActions provides session) {
+            CompositionLocalProvider(LocalSessionActions provides session, LocalNativeComponents provides natives) {
                 when (state) {
                     AuthState.Loading -> Box(Modifier.fillMaxSize()) { LoadingIndicator(Modifier.align(Alignment.Center)) }
                     AuthState.SignedOut, is AuthState.NeedsNewPassword -> LoginScreen()
-                    AuthState.SignedIn, AuthState.DevMode -> MainShell(installers, pendingLink, onLinkConsumed)
+                    AuthState.SignedIn, AuthState.DevMode -> MainShell(installers, pendingLink, onLinkConsumed, tabs)
                 }
             }
         }
@@ -125,7 +137,8 @@ fun OperatorApp(
 class ShellViewModel @Inject constructor(
     private val fires: FireRepository,
     conversations: ConversationRepository,
-    private val signOutUseCase: SignOut,
+    screens: ScreenStore,
+    appSources: Map<String, @JvmSuppressWildcards AppSource>,
 ) : ViewModel() {
     val radar: StateFlow<ImmutableList<Fire>> = fires.observeRadar().map { it.toImmutableList() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), persistentListOf())
@@ -133,28 +146,51 @@ class ShellViewModel @Inject constructor(
     val inbox: StateFlow<List<Conversation>> = conversations.observeInbox()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /**
+     * El número de cada pestaña (`"badge": "{{radar | count}}"` en `app.json`), por pantalla. Se calcula con las fuentes
+     * del teléfono que usa cada plantilla; vacío o «0» no se muestra.
+     */
+    val badges: StateFlow<Map<String, String>> = run {
+        val withBadge = screens.manifest.tabs.mapNotNull { tab -> tab.badge?.let { tab.screen to it } }
+        val names = withBadge.flatMap { it.second.roots() }.distinct().filter { it in appSources }
+        if (names.isEmpty()) {
+            MutableStateFlow(emptyMap())
+        } else {
+            combine(names.map { name -> appSources.getValue(name).observe(emptyMap()).map { name to it } }) { pairs ->
+                val scope = screenScope(emptyMap(), emptyMap(), emptyMap(), pairs.toMap(), System.currentTimeMillis())
+                withBadge.associate { (screen, badge) -> screen to badge.text(scope) }
+            }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+        }
+    }
+
     fun find(id: FireId): Fire? = radar.value.firstOrNull { it.id == id }
 
     fun hide(id: FireId) { viewModelScope.launch { fires.hide(id) } }
-
-    /** Al terminar, la sesión queda cerrada y la app vuelve sola al login. */
-    fun signOut() { viewModelScope.launch { signOutUseCase() } }
 }
 
 /** El radar se abre debajo del encabezado (la barra superior mide 64 dp): nunca tapa atrás, título ni acciones. */
 private val RADAR_TOP_OFFSET = 64.dp
 
-private data class Tab(val key: NavKey, val label: String)
-
-private val TABS = listOf(Tab(InboxKey, "Chats"), Tab(FiresKey, "Incendios"), Tab(OrdersKey, "Órdenes"))
+/** Un destino de la barra, de `app.json`: su clave de navegación, su pantalla, su texto y sus íconos del catálogo. */
+private data class Tab(val key: NavKey, val screen: String, val label: String, val icon: String, val iconSelected: String?)
 
 @OptIn(ExperimentalMaterial3AdaptiveApi::class, ExperimentalMaterial3Api::class)
 @Composable
-private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: StateFlow<SyntheticStack?>, onLinkConsumed: () -> Unit) {
-    val state = rememberNavigationState()
+private fun MainShell(
+    installers: Set<EntryProviderInstaller>,
+    pendingLink: StateFlow<SyntheticStack?>,
+    onLinkConsumed: () -> Unit,
+    specs: List<TabSpec>,
+) {
+    // TODAS las pestañas salen de `app.json` (la primera es la de inicio), cada una con su pila. Chats, Incendios y
+    // Órdenes usan las claves de siempre (enlaces, radar, «Volver con …»). El manifiesto se lee al arrancar y no cambia en
+    // caliente: la lista de destinos es estable durante toda la vida del proceso.
+    val tabs = remember(specs) { specs.map { Tab(ScreenRoutes.tab(it.screen), it.screen, it.label, it.icon, it.iconSelected) } }
+    val state = rememberNavigationState(startRoute = tabs.first().key, topLevelRoutes = remember(tabs) { tabs.map { it.key } })
     val navigator = remember(state) { Navigator(state) }
     val shell: ShellViewModel = hiltViewModel()
     val radar by shell.radar.collectAsStateWithLifecycle()
+    val badges by shell.badges.collectAsStateWithLifecycle()
 
     val link by pendingLink.collectAsStateWithLifecycle()
     LaunchedEffect(link) {
@@ -164,8 +200,6 @@ private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: Stat
         }
     }
 
-    val parentSession = LocalSessionActions.current ?: SessionActions()
-    val session = remember(parentSession, shell) { parentSession.copy(signOut = shell::signOut) }
 
     // Radar: desplegado a pedido (chip) o, unos segundos, cuando llegan incendios graves nuevos.
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -179,20 +213,20 @@ private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: Stat
     NavigationSuiteScaffold(
         layoutType = NavigationSuiteScaffoldDefaults.navigationSuiteType(currentWindowAdaptiveInfo()),
         navigationSuiteItems = {
-            TABS.forEach { tab ->
+            tabs.forEach { tab ->
                 val selected = state.topLevelRoute == tab.key
                 item(
                     selected = selected,
                     onClick = { navigator.navigate(tab.key) },
-                    icon = { Icon(tabIcon(tab.key, selected), contentDescription = null) },
+                    icon = { Icon(tabIcon(tab, selected), contentDescription = null) },
                     label = { Text(tab.label) },
-                    badge = if (tab.key == FiresKey && radar.isNotEmpty()) {
+                    badge = badges[tab.screen]?.takeIf { it.isNotBlank() && it != "0" }?.let { count ->
                         {
                             Badge(containerColor = OperatorTheme.colors.grave, contentColor = MaterialTheme.colorScheme.onError) {
-                                Text(radar.size.toString())
+                                Text(count)
                             }
                         }
-                    } else null,
+                    },
                 )
             }
         },
@@ -201,7 +235,6 @@ private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: Stat
             CompositionLocalProvider(
                 LocalRadarIndicator provides RadarIndicatorModel(radar.size) { expanded = true },
                 LocalRadarFloor provides floor,
-                LocalSessionActions provides session,
             ) {
                 NavDisplay(
                     entries = state.toDecoratedEntries(provider),
@@ -221,7 +254,7 @@ private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: Stat
                     shell.find(id)?.let { fire ->
                         expanded = false
                         navigator.navigate(FiresKey)
-                        destinationFor(fire)?.let(navigator::navigate)
+                        fireDestination(fire)?.let(navigator::navigate)
                     }
                 },
                 onHide = shell::hide,
@@ -238,11 +271,8 @@ private fun MainShell(installers: Set<EntryProviderInstaller>, pendingLink: Stat
 }
 
 @Composable
-private fun tabIcon(key: NavKey, selected: Boolean): ImageVector = when (key) {
-    InboxKey -> if (selected) OperatorIcons.ChatFilled else OperatorIcons.Chat
-    FiresKey -> if (selected) OperatorIcons.FireFilled else OperatorIcons.Fire
-    else -> if (selected) OperatorIcons.OrdersFilled else OperatorIcons.Orders
-}
+private fun tabIcon(tab: Tab, selected: Boolean): ImageVector =
+    OperatorIcons.named(if (selected) tab.iconSelected ?: tab.icon else tab.icon) ?: OperatorIcons.named("apps")!!
 
 /**
  * «Volver con …» al chat que el operador dejó para atender un incendio. Lee la bandeja aquí (no en MainShell): así

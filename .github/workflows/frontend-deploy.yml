@@ -11,7 +11,8 @@ name: Frontend deploy
 on:
   push:
     branches: [main]
-    paths: ["frontend_dashboard/**", ".github/workflows/frontend-deploy.yml"]
+    # android_operator/screens/: las pantallas de la App Operador que define el servidor salen con este deploy.
+    paths: ["frontend_dashboard/**", "android_operator/screens/**", ".github/workflows/frontend-deploy.yml"]
   workflow_dispatch:
 
 permissions:
@@ -113,6 +114,21 @@ jobs:
              + (if $privacy == "" then {} else {privacy_url: $privacy} end)' \
             > frontend_dashboard/dist/mobile/config.json
           cat frontend_dashboard/dist/mobile/config.json
+
+      # 2c) Pantallas de la App Operador (Server-Driven UI): los archivos de android_operator/screens/ quedan en
+      #     <cloudfront>/mobile/screens/, junto a config.json, y la app los baja de ahí. Una pantalla nueva o cambiada
+      #     sale con este deploy, SIN publicar otra versión en Google Play. La CI de Android (ScreensRepoTest) ya los
+      #     validó en el PR contra el catálogo de la app; aquí solo se revisa que sean JSON. Los esquemas del editor
+      #     (*.schema.json) no se publican. Guía: android_operator/screens/README.md.
+      - name: Pantallas de la App Operador (mobile/screens/)
+        run: |
+          mkdir -p frontend_dashboard/dist/mobile/screens
+          for f in android_operator/screens/*.json; do
+            case "$f" in *.schema.json) continue ;; esac
+            jq empty "$f"
+            cp "$f" frontend_dashboard/dist/mobile/screens/
+          done
+          ls frontend_dashboard/dist/mobile/screens
 
       # 3) Subir a S3 + invalidar CloudFront (rol angosto de deploy).
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4

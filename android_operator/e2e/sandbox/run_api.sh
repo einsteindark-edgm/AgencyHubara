@@ -15,7 +15,8 @@ set -euo pipefail
 SANDBOX_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="${SANDBOX_REPO:-$(cd "$SANDBOX_DIR/../../.." && pwd)}"   # android_operator/e2e/sandbox → raíz del repo
 DATA_DIR="${SANDBOX_DATA_DIR:-$SANDBOX_DIR/data}"
-PORT=8010
+PORT="${SANDBOX_PORT:-8010}"   # otro puerto si 8010 está ocupado (p. ej. por otra sesión): SANDBOX_PORT=8020
+export SANDBOX_PORT="$PORT"
 LOG="$SANDBOX_DIR/api.log"
 PID_FILE="$SANDBOX_DIR/api.pid"            # written by launcher.py (the python/uvicorn process)
 WRAPPER_PID_FILE="$SANDBOX_DIR/api.wrapper.pid"
@@ -62,6 +63,7 @@ ENV_ARGS=(
   PATH="$(dirname "$UV_BIN"):/usr/bin:/bin:/usr/sbin:/sbin"
   HOME="$HOME" LANG="en_US.UTF-8" LC_ALL="en_US.UTF-8" PYTHONUNBUFFERED=1
   SANDBOX_REPO="$REPO" SANDBOX_DATA_DIR="$DATA_DIR"
+  SANDBOX_PORT="$PORT"                                 # sin esto env -i lo borra y el backend se iba a 8010 igual
   SANDBOX_SEND_DELAY_S="${SANDBOX_SEND_DELAY_S:-0}"   # optional simulated WhatsApp latency (s)
   PYTHONPYCACHEPREFIX="$SANDBOX_DIR/.pycache"          # never write bytecode into the repo
 )

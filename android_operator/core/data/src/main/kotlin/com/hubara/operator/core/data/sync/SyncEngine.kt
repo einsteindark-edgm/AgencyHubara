@@ -16,7 +16,10 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import com.hubara.operator.core.data.screens.ServerChanges
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 
@@ -32,9 +35,17 @@ class SyncEngine @Inject constructor(
     private val suggestions: SuggestionRepository,
     private val fires: FireRepository,
     private val orders: OrderRepository,
-) {
+) : ServerChanges {
     private val watched = ConcurrentHashMap<SessionId, AtomicInteger>()
     private val fireRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    private val _changes = MutableSharedFlow<String>(extraBufferCapacity = 16, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /**
+     * Qué cambió en el servidor, por dominio (`chats`, `fires`, `orders` o el que mande el bus, p. ej. `marketing`): las
+     * pantallas del servidor vuelven a pedir las fuentes atadas a ese dominio con `refreshOn`.
+     */
+    override val changes: SharedFlow<String> = _changes.asSharedFlow()
 
     /** Marca un chat como abierto mientras la pantalla lo muestre. Cerrar el handle deja de vigilarlo. */
     fun watch(sessionId: SessionId): AutoCloseable {
@@ -54,6 +65,7 @@ class SyncEngine @Inject constructor(
     }
 
     suspend fun handle(event: ServerEvent) {
+        domains(event).forEach { _changes.emit(it) }
         when (event) {
             is ServerEvent.SessionsSnapshot -> {
                 conversations.applySnapshot(event.conversations)
@@ -72,6 +84,12 @@ class SyncEngine @Inject constructor(
             }
             is ServerEvent.Unknown -> Unit
         }
+    }
+
+    private fun domains(event: ServerEvent): List<String> = when (event) {
+        is ServerEvent.SessionsSnapshot, is ServerEvent.SessionUpdated -> listOf("chats", "fires")
+        ServerEvent.OrdersChanged -> listOf("orders")
+        is ServerEvent.Unknown -> listOf(event.domain)
     }
 
     companion object {

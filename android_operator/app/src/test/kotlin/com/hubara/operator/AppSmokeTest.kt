@@ -3,6 +3,10 @@ package com.hubara.operator
 import android.content.Context
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollToNode
+import com.hubara.operator.feature.screens.SCREEN_LIST_TAG
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToString
@@ -88,7 +92,10 @@ object FakeBackend {
                         "subject":{"kind":"chat","session_id":"wa_test_sofia"},"severity":"grave","kind":"wants_human",
                         "getting_worse":true,"title":"Sofía pide un humano","subtitle":"12 min sin respuesta",
                         "primary_action":{"name":"open_chat","args":{}},"updated_ms":1}]}""")
-                    path == "/api/orders/orders" -> json("""{"orders":[]}""")
+                    // Un pedido de hoy: lo usa la pantalla del servidor «Resumen de ventas» (y la pestaña Órdenes).
+                    path == "/api/orders/orders" -> json("""{"orders":[{"id":"order_77","display_id":"#77","customer":"Ana Prueba",
+                        "city":"Medellín","status":"new","pay_status":"pending","pay_type":"cod","total_cop":45000,"pieces":2,
+                        "overdue":false,"is_test":false,"created_at_ms":${System.currentTimeMillis()},"updated_at_ms":1}]}""")
                     path == "/api/dashboard/sse-ticket" -> json("""{"ticket":"t"}""")
                     path == "/api/dashboard/events" -> MockResponse.Builder().code(503).build()
                     else -> MockResponse.Builder().code(404).build()
@@ -152,6 +159,26 @@ class AppSmokeTest {
         println("PEDIDOS: " + FakeBackend.paths.joinToString(" | "))
         println("ARBOL: " + compose.onRoot(useUnmergedTree = true).printToString())
         throw e
+    }
+
+    /**
+     * Las pantallas del servidor de punta a punta, sin red de configuración: la pestaña «Más» y sus pantallas salen de
+     * lo que trae el APK (`assets/screens/`) y los datos del backend falso, por el mismo cliente HTTP que el resto.
+     */
+    @Test fun la_pestana_mas_abre_pantallas_del_servidor_con_datos_del_backend() {
+        waitFor("+57 000 000 0000")
+        // El incendio nuevo se ve unos segundos encima de todo: se espera a que se pliegue antes de tocar la barra.
+        waitFor("Sofía pide un humano")
+        compose.waitUntil(10_000) { compose.onAllNodes(hasText("Sofía pide un humano")).fetchSemanticsNodes().isEmpty() }
+        compose.onAllNodes(hasText("Más")).onFirst().performClick()
+        waitFor("Resumen de ventas")
+        compose.onNodeWithText("Resumen de ventas").performClick()
+        waitFor("Vendido")
+        waitFor("$45.000")
+        // El renglón del pedido queda debajo de las cifras (pantalla de 320 px): la lista es perezosa.
+        compose.onNodeWithTag(SCREEN_LIST_TAG).performScrollToNode(hasText("#77 · Ana Prueba"))
+        compose.onNodeWithText("#77 · Ana Prueba").assertExists()
+        assertThat(FakeBackend.paths).contains("GET /api/orders/orders")
     }
 
     @Test fun bandeja_chat_tomar_la_conversacion_y_enviar_una_burbuja() {

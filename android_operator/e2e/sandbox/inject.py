@@ -8,6 +8,9 @@
                                                    #   a backdated unanswered msg → GRAVE fire
     python3 inject.py reply wa_000000000101 "Quiero el de lavanda y el de coco"
     python3 inject.py reset [--image-base URL]     # rebuild the whole seed (timestamps re-based to now)
+    python3 inject.py screen mas.json --from ../screens/mas.json
+                                                   # serve this App Operador screen instead of the repo's one
+                                                   #   (what frontend-deploy would publish); reset removes it
 
 Everything goes through files, exactly where the real ingest writes: the
 session JSONL + metadata.json (atomic write, same ``metadata.json.lock`` flock
@@ -39,6 +42,7 @@ from sandbox_common import (  # noqa: E402
     DEFAULT_IMAGE_BASE,
     MIN_MS,
     MOBILE_CONFIG,
+    MOBILE_SCREENS,
     PHONE_NUMBER_ID,
     SANDBOX_DIR,
     VAULT_DIR,
@@ -189,10 +193,23 @@ def mobile_config(min_version: int) -> None:
     print(f"config: min_version_code={min_version}")
 
 
+def mobile_screen(name: str, source: str) -> None:
+    if not re.fullmatch(r"[a-z0-9_]{1,64}\.json", name):
+        sys.exit(f"invalid screen file {name!r} (expected <id>.json)")
+    src = Path(source)
+    if not src.is_absolute():
+        src = (Path(__file__).resolve().parent / source).resolve()
+    json.loads(src.read_text(encoding="utf-8"))  # que sea JSON (la app igual lo valida)
+    MOBILE_SCREENS.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, MOBILE_SCREENS / name)
+    print(f"screen: {name} ← {src}")
+
+
 def reset(image_base: str) -> None:
     import seed
 
     MOBILE_CONFIG.unlink(missing_ok=True)  # la configuración de la app vuelve a la de siempre
+    shutil.rmtree(MOBILE_SCREENS, ignore_errors=True)  # y las pantallas, las del repo
 
     info = seed.build(image_base=image_base)
     for name in ("sent.log", "temporal.log", "medusa.log"):
@@ -217,6 +234,9 @@ def main() -> None:
     p_reply.add_argument("text")
     p_config = sub.add_parser("config", help="change the App Operador server config (mobile/config.json)")
     p_config.add_argument("--min-version", type=int, required=True)
+    p_screen = sub.add_parser("screen", help="serve an App Operador screen instead of the repo's one")
+    p_screen.add_argument("name", help="<id>.json")
+    p_screen.add_argument("--from", dest="source", required=True, help="JSON file (relative to sandbox/)")
     p_reset = sub.add_parser("reset", help="restore the seed")
     p_reset.add_argument("--image-base", default=DEFAULT_IMAGE_BASE)
     args = parser.parse_args()
@@ -230,6 +250,8 @@ def main() -> None:
         reply(args.session, args.text)
     elif args.cmd == "config":
         mobile_config(args.min_version)
+    elif args.cmd == "screen":
+        mobile_screen(args.name, args.source)
     else:
         reset(args.image_base)
 

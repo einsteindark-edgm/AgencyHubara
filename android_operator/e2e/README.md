@@ -67,7 +67,12 @@ cd ~/tools/artemis && UV_PYTHON_PREFERENCE=only-managed uv sync --python 3.12
 ```bash
 android_operator/e2e/qa.sh                                                   # la compuerta completa, como en CI
 android_operator/e2e/qa.sh --only S14_varios_incendios_mientras_escribes     # un escenario
+QA_SANDBOX_PORT=8020 android_operator/e2e/qa.sh                             # si 8010 está ocupado (otra sesión)
 ```
+
+El backend de prueba va en 8010. Si otra sesión tiene ese puerto (un contenedor de Docker, por ejemplo), no se toca:
+`QA_SANDBOX_PORT` arma el APK y levanta el backend en otro puerto (`run_api.sh` lo pasa por `SANDBOX_PORT`; sin eso,
+`env -i` lo borraba y el backend se iba igual a 8010 a responderle a la otra sesión).
 
 Con Artemis (explorar; gasta tokens de Gemini):
 
@@ -96,6 +101,12 @@ android_operator/e2e/sandbox/run_api.sh stop
   `/__sandbox/mobile/config.json`, como en producción la baja del CloudFront del dashboard. Si un escenario llega a la
   bandeja, la configuración remota funcionó. `inject.py config --min-version N` cambia la versión mínima (S16);
   `reset` la devuelve a la de siempre.
+- **Las pantallas del servidor** (pestaña «Más») salen de `android_operator/screens/`, que el backend de prueba sirve en
+  `/__sandbox/mobile/screens/` (en producción: `<cloudfront>/mobile/screens/`, que publica frontend-deploy).
+  `inject.py screen <id>.json --from ../screens/<archivo>` pone otra versión encima, como haría el servidor: S18 cambia
+  «Más» y publica una pantalla que el APK no trae (`e2e/screens/`), sin reinstalar la app. `reset` las quita.
+  S17 recorre «Resumen de ventas» con los pedidos sembrados y S19 «Por cobrar» (el backend rechaza confirmar el pago
+  del borrador #42 y la app tiene que mostrar su motivo, no «Pago confirmado»).
 - **La cortina de notificaciones se cierra antes de cada escenario** (`collapse_shade`): un escenario que fallaba con
   ella abierta (S12) la dejaba encima de la app y tumbaba todos los siguientes.
 - **El aviso «… isn't responding» del sistema** (sale en un emulador recién arrancado en una máquina
@@ -103,6 +114,11 @@ android_operator/e2e/sandbox/run_api.sh stop
 - **Con la máquina muy cargada, S03 puede fallar por tiempo.** El deshacer dura 5 s. En una Mac con
   Docker y otras sesiones encima, una lectura de pantalla tardó ~3 s y un toque hasta 4 s, así que el
   «Deshacer» llega tarde. En CI no pasa. Si pasa en local, mira la carga (`uptime`) antes de sospechar de la app.
+  Para descartar la app: en esta Mac leer la pantalla de inicio del emulador ya tarda ~2,5 s (`uiautomator dump`)
+  y un `input tap` ~1,5 s; un toque a ciegas en «Deshacer» a 1 s del toque deshace bien (2026-10-01).
+- **`INSTALL_FAILED_UPDATE_INCOMPATIBLE` al instalar**: el emulador ya tenía la app firmada con otra llave de
+  debug. En CI pasa cuando el snapshot del AVD en caché no carga (el emulador del runner cambió de versión) y
+  arranca en frío con el disco que guardó otro runner. `qa.sh` desinstala y vuelve a instalar solo.
 
 ## El backend de prueba (`sandbox/`)
 
@@ -136,4 +152,5 @@ firmado `sender: human`), intervenir / devolver / mensajes / plantillas, el SSE 
 
 `python3 sandbox/inject.py fire` crea a Mateo (`wa_000000000107`) pidiendo un humano: un incendio grave
 nuevo que llega por SSE en 1–2 s (`--name "Lucía Prueba" --session wa_000000000108` para otro cliente).
-`inject.py reply <sesión> "<texto>"` agrega un mensaje del cliente.
+`inject.py reply <sesión> "<texto>"` agrega un mensaje del cliente. Hay una campaña de WhatsApp sintética ya enviada
+(«Velas de octubre (prueba)», `<vault>/_campaigns/`) para la pantalla «Campañas».

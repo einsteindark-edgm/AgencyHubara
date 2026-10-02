@@ -7,7 +7,7 @@
 
 ```bash
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"   # no hay Java del sistema
-cd android_operator && ./gradlew testDebugUnitTest :core:model:test               # todos los tests locales
+cd android_operator && ./gradlew testDebugUnitTest :core:model:test :core:sdui:test   # todos los tests locales
 cd android_operator && ./gradlew :app:assembleDebug                               # APK debug
 cd android_operator && ./gradlew :app:assembleRelease                             # R8 completo (lo corre la CI)
 cd android_operator && ./gradlew :app:bundleRelease \
@@ -21,6 +21,11 @@ cd android_operator && ./gradlew :app:bundleRelease \
   política de privacidad no arma nada. La clave de subida y sus contraseñas viven en
   `~/.gradle/gradle.properties` (`hubara.upload.*`), **nunca** en el repo (es público). Cada subida sube `versionCode`.
 
+- **TODA la app son pantallas del servidor** (Server-Driven UI): `screens/*.json` — pestañas (`app.json`), bandeja,
+  Incendios, Órdenes, ficha, chat, paleta, plantillas y «Más». Un cambio sale con `frontend-deploy.yml` (a
+  `<cloudfront>/mobile/screens/`) sin publicar la app. Guía: `screens/README.md`; referencia generada:
+  `screens/CATALOGO.md`. Si cambias el catálogo: `./gradlew :core:sdui:test -PupdateScreens=true`. Nativo solo: login,
+  versión mínima, radar, widget, notificaciones y las piezas nativas del catálogo (`chat`, `notifications_banner`).
 - E2E en emulador contra el backend real de la rama y datos sintéticos: `e2e/qa.sh` corre los escenarios con
   guion (adb, sin LLM), igual que la compuerta de merge **QA emulador** en CI. Artemis explora a mano
   (`run_suite.py --driver artemis`). Ver `e2e/README.md`.
@@ -45,14 +50,17 @@ cd android_operator && ./gradlew :app:bundleRelease \
 | Módulo | Qué tiene |
 |---|---|
 | `:core:model` | Dominio en Kotlin puro. Los ids (`SessionId`, `OrderId`, `FireId`) solo se construyen validados. |
+| `:core:sdui` | **Motor de pantallas del servidor**, Kotlin puro: contrato (`ScreenDoc`, `Node`, `Action`), lenguaje `{{ … }}` (`Template` + `Filters`), `Catalog` (la ÚNICA lista de componentes, íconos y acciones), validación, rutas seguras, esquema JSON y `ScreensRepoTest` (valida `screens/`). |
 | `:core:network` | DTOs + mapeos (el único lugar que ve JSON), Retrofit, SSE con ticket, login de Cognito. |
 | `:core:database` | Room: bandeja, mensajes, outbox, borradores, burbujas, incendios. |
-| `:core:data` | Repositorios (Room = única fuente de verdad), `AuthRepository`, outbox con deshacer, `SyncEngine`. |
-| `:core:navigation` | TODAS las claves de navegación, `Navigator` (tres pilas), deep links, hoja inferior. |
+| `:core:data` | Repositorios (Room = única fuente de verdad), `AuthRepository`, outbox con deshacer, `SyncEngine`, y para las pantallas: `ScreenStore`, `ScreenDataClient`, las **fuentes del teléfono** (`screens/sources`: bandeja con no leídos, incendios, chat, plantillas) y el contrato `NativeActions`. |
+| `:core:navigation` | TODAS las claves de navegación, `Navigator` (una pila por pestaña), deep links, hoja inferior y `ScreenRoutes` (qué pantalla arma cada clave; `fireDestination`). |
 | `:core:designsystem` | **Material 3 Expressive con la marca**: paleta (`Color.kt`), Google Sans Flex (`Type.kt`), esquinas (`Shape.kt`), `Spacing`, íconos Material Symbols (`OperatorIcons`), `Avatar`, `StatusPill`, `IconTile`, `EmptyState`, `SuggestionBubble`, `segmentedShape`. |
-| `:core:ui` | `RadarOverlay`/`RadarLayer`, `FireCard`, `OrderStepper`, horas (`TimeLabels`), `listContent` (cargando/vacía/error). |
-| `:feature:*` | auth, inbox, chat, fires, orders. Cada una registra sus entradas con `@IntoSet`. |
-| `:app` | `MainActivity`, `OperatorApp` (login o shell), `NavigationSuiteScaffold` + `NavDisplay` + radar. |
+| `:core:ui` | `RadarOverlay`/`RadarLayer`, `FireCard`, horas (`TimeLabels`), `NativeComponent` (contrato de las piezas nativas). |
+| `:feature:auth` | El login (nativo: va antes de la sesión). |
+| `:feature:chat` | La pieza nativa `chat` (`ChatIsland`: lo que entendió el bot, historial, deshacer, burbujas, composer) con su `ChatViewModel`. Sin entradas de navegación. |
+| `:feature:screens` | **Todas las pantallas**: UN `ScreenViewModel` (MVI), el render de cada componente (`Components.kt`) y las entradas de TODAS las claves (`ScreensNavigation`: cada clave se arma con su pantalla según `ScreenRoutes`). `RealScreensTest` prueba los archivos reales del repo. |
+| `:app` | `MainActivity`, `OperatorApp` (login o shell; las pestañas y sus números salen de `app.json`), radar, `AppNativeActions` (outbox, sesión, incendios). |
 
 ## Reglas
 
@@ -73,6 +81,12 @@ cd android_operator && ./gradlew :app:bundleRelease \
   `MaterialTheme.typography` (los `*Emphasized` para lo que se ve primero) y los íconos de `OperatorIcons`. Toda pantalla nueva:
   `XRoute(vm)` que junta el estado + `XScreen(ui, callbacks)` sin ViewModel, con su `@Preview`.
   `ThemeContrastTest` exige 4,5:1 a todo texto: si cambias la paleta, cámbiala en `Color.kt` (ahí dice cómo se generó).
+
+- **Pantallas del servidor**: un componente, filtro, ícono, fuente del teléfono o acción nueva entra a `Catalog.kt` (+ su
+  render o implementación y su test) y sube `Catalog.VERSION`; la pantalla que lo use declara `"requires"`. Nunca una
+  pantalla con código, rutas absolutas o `http://`: la validación lo rechaza y `ScreenDataClient` lo vuelve a revisar.
+- **Una pantalla nueva o un cambio de pantalla no es código**: se edita `screens/*.json`. Código solo para lo que el
+  catálogo no tiene (y entonces sí es una versión nueva de la app).
 
 ## Gotchas que ya nos quemaron
 
@@ -125,6 +139,30 @@ cd android_operator && ./gradlew :app:bundleRelease \
     El APK de prueba trae un respaldo muerto (`10.0.2.2:9`) y la configuración del sandbox (`/__sandbox/mobile/config.json`):
     si un escenario llega a la bandeja, la remota funcionó (S15; S16 = versión mínima).
 
+20. **Pantallas del servidor (SDUI)**: toda la app; la app solo trae fijo el catálogo; las pantallas bajan de `screens_url` de
+    config.json o, si no viene, de `screens/` junto a él (`ServerConfigStore.screensBase()`). `ScreenStore` guarda la
+    última válida (o usa la del APK, `assets/screens/`) y nunca la pisa con un 404 ni con la SPA del CDN; los datos
+    van por `ScreenDataClient` (mismo OkHttp: token solo a nuestro backend) y lo último de cada fuente queda en
+    `FileScreenDataCache` (se borra al cerrar sesión). Las pestañas de `app.json` se aplican al SIGUIENTE arranque
+    (cambiarlas en caliente reiniciaría la navegación); un `app.json` con menos de 2 pestañas se descarta (queda el del APK).
+    Las claves de siempre (`InboxKey`, `ChatKey`, `OrderSheetKey`…) siguen: las usan enlaces, radar y tablet, y
+    `ScreenRoutes` dice qué pantalla arma cada una. S17–S19 en el emulador; S18 cambia una pantalla y publica una nueva
+    con `inject.py screen` sin reinstalar la app. Los 20 escenarios recorren la app entera armada desde JSON.
+21. **Los endpoints de pedidos rechazan con `200` + `"success": false`** (confirm-payment, stage…): `ScreenDataClient`
+    lo trata como error y muestra `error_detail` sin el código (`invalid_state: …`). Sin eso, la pantalla decía
+    «Pago confirmado» al confirmar el pago de un borrador (lo encontró el diseño de S19).
+22. **En Kotlin, «barra + asterisco» DENTRO de un comentario abre otro comentario anidado.** Un glob escrito en la
+    KDoc de una tarea de `app/build.gradle.kts` se tragó en silencio el bloque `dependencies {}`: el classpath de la
+    app quedó sin ningún módulo y KSP decía que no encontraba `HiltWorkerFactory`. No escribas globs en comentarios.
+23. **El sandbox del emulador va en 8010 salvo que esté ocupado**: `QA_SANDBOX_PORT=8020 e2e/qa.sh` (otra sesión puede
+    tener un contenedor en 8010; no se toca).
+24. **Un componente que se toca fuera de la pantalla de prueba no recibe el toque**: en los tests de Compose (320 px)
+    `performClick` sobre algo debajo del borde cae afuera y la acción nunca llega. Desliza primero
+    (`performScrollToNode` sobre `SCREEN_LIST_TAG`), como en `RealScreensTest`.
+25. **La compuerta «QA emulador» roja sin reporte = no llegó a correr escenarios.** Mira el log del paso: el caso
+    visto (run 36925839845) fue `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (AVD en caché con la app firmada por otro
+    runner). `qa.sh` ya desinstala y reinstala; si vuelve, sube la `key` de la caché del AVD en `qa-emulador.yml`.
+
 ## Endpoints
 
 Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/messages`, `/sse-ticket`,
@@ -132,3 +170,5 @@ Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/
 Nuevos: `GET /api/chats/mobile/suggestions/{id}`, `GET /api/chats/mobile/fires`,
 `GET /api/chats/mobile/hot`, `POST /api/chats/mobile/devices`, `GET /api/chats/catalog`,
 `POST /api/chats/session-actions/{id}/tools/{tool}`.
+Pantallas del servidor (las de `screens/`): `/api/orders/orders`, `PATCH /api/orders/orders/{id}/confirm-payment`,
+`/api/marketing/campaigns[/{id}[/stats]]`, `/api/dashboard/sessions`.

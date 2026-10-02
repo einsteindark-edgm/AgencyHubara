@@ -1,0 +1,43 @@
+{
+  "$schema": "../../screens/screen.schema.json",
+  "_nota": "Prueba E2E (S18): «Más» cambiada en el servidor. El texto del pie pasó a ser un aviso y hay un renglón nuevo que lleva a una pantalla que la app no trae.",
+  "schema": 1,
+  "id": "mas",
+  "title": "Más",
+  "body": [
+    {
+      "type": "notice", "tone": "success", "title": "Pantalla cambiada desde el servidor",
+      "text": "Este aviso reemplazó al texto del pie sin publicar otra versión de la app."
+    },
+    {
+      "type": "section", "title": "Nuevo",
+      "children": [
+        {
+          "type": "list",
+          "children": [
+            {
+              "type": "list_item", "icon": "group", "icon_tone": "success", "chevron": true,
+              "title": "Quién atiende cada chat", "subtitle": "Pantalla nueva: solo existe en el servidor",
+              "action": { "type": "navigate", "screen": "atencion" }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "section", "title": "Ventas",
+      "children": [
+        {
+          "type": "list",
+          "children": [
+            {
+              "type": "list_item", "icon": "bar_chart", "icon_tone": "primary", "chevron": true,
+              "title": "Resumen de ventas", "subtitle": "Pedidos y lo vendido hoy, en la semana o en el mes",
+              "action": { "type": "navigate", "screen": "ventas" }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

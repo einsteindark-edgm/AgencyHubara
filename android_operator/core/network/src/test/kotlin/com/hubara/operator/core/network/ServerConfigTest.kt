@@ -35,6 +35,13 @@ class ServerConfigTest {
         assertThat(c.privacyUrl).isNull()
     }
 
+    @Test fun las_pantallas_pueden_bajar_de_otra_direccion_solo_https() {
+        val c = parseServerConfig("""{"api_base_url": "https://api.tienda.example", "screens_url": "https://cdn.tienda.example/pantallas"}""", allowCleartext = false)!!
+        assertThat(c.screensUrl.toString()).isEqualTo("https://cdn.tienda.example/pantallas/")
+        val sinHttps = parseServerConfig("""{"api_base_url": "https://api.tienda.example", "screens_url": "http://cdn.tienda.example/"}""", allowCleartext = false)!!
+        assertThat(sinHttps.screensUrl).isNull()
+    }
+
     @Test fun lo_roto_o_incompleto_no_se_acepta() {
         assertThat(parseServerConfig("no es json", allowCleartext = false)).isNull()
         assertThat(parseServerConfig("""{"version": 1}""", allowCleartext = false)).isNull()

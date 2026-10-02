@@ -575,6 +575,23 @@ def _medusa_store(t: int, image_base: str) -> dict[str, Any]:
     return {"orders": orders, "promotions": [promotion], "seq": {"display_id": 42, "n": 100}}
 
 
+def _campaigns(t: int) -> None:
+    """Una campaña de WhatsApp ya enviada (plugin de marketing, `<vault>/_campaigns/`): la lee la pantalla del servidor
+    «Campañas» de la App Operador. Datos sintéticos, sin teléfonos."""
+    sent_at = t - 2 * DAY_MS
+    atomic_write_json(VAULT_DIR / "_campaigns" / "mkt-sbx0000001.json", {
+        "id": "mkt-sbx0000001", "name": "Velas de octubre (prueba)", "status": "sent", "goal": "reactivar clientes",
+        "percent": 15, "coupon_code": "OCTUBRE15", "valid_until": "2026-10-31", "segments": ["compradores"],
+        "excluded_session_ids": [], "extra_session_ids": [], "imported_contacts": [], "carousel_handles": [],
+        "message": {"header": "Llegaron las velas de octubre", "body": "Hola, tenemos aromas nuevos con 15 % de descuento."},
+        "template_name": "campaign_promo_marketing_v1", "schedule_at_ms": None,
+        "created_at_ms": sent_at - DAY_MS, "updated_at_ms": sent_at, "sent_at_ms": sent_at,
+        "send_result": {"planned": 120, "sent": 118, "failed": [{"reason": "131026"}, {"reason": "131026"}], "skipped": [],
+                        "unit_cost_usd_micros": 12_000, "spent_usd_micros": 1_416_000},
+        "failure_reason": None, "test_sends": [],
+    })
+
+
 def _temporal_state() -> dict[str, Any]:
     # Workflows "vivos" que el fake de Temporal reporta RUNNING: los chats que
     # atiende el bot (intervenir los termina, como en producción).
@@ -607,6 +624,7 @@ def build(*, image_base: str = DEFAULT_IMAGE_BASE) -> dict[str, Any]:
 
     atomic_write_json(MEDUSA_STORE, _medusa_store(t, image_base))
     atomic_write_json(TEMPORAL_STORE, _temporal_state())
+    _campaigns(t)
 
     info = {
         "seeded_at_ms": t,

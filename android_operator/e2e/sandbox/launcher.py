@@ -30,6 +30,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import socket
 import sys
 from pathlib import Path
@@ -42,6 +43,8 @@ from sandbox_common import (  # noqa: E402
     DATA_DIR,
     MEDUSA_STORE,
     MOBILE_CONFIG,
+    MOBILE_SCREENS,
+    REPO_SCREENS,
     PHONE_NUMBER_ID,
     PORT,
     SEED_INFO,
@@ -316,6 +319,21 @@ def _mount_sandbox_extras(app, main_mod, swept: list[str]) -> None:  # noqa: ANN
             "cognito_client_id": "",
             "min_version_code": int(override.get("min_version_code", 0)),
         }
+
+    # Las pantallas del servidor (en producción, <cloudfront>/mobile/screens/<id>.json que publica frontend-deploy desde
+    # android_operator/screens/). La app las busca junto a config.json. `inject.py screen` pone una encima.
+    @app.get("/__sandbox/mobile/screens/{name}", include_in_schema=False)
+    def sandbox_mobile_screen(name: str):  # noqa: ANN202
+        from fastapi import HTTPException
+        from fastapi.responses import FileResponse
+
+        if not re.fullmatch(r"[a-z0-9_]{1,64}\.json", name):
+            raise HTTPException(status_code=404)
+        for folder in (MOBILE_SCREENS, REPO_SCREENS):
+            path = folder / name
+            if path.is_file():
+                return FileResponse(path, media_type="application/json", headers={"Cache-Control": "no-cache"})
+        raise HTTPException(status_code=404)
 
     @app.get("/__sandbox/info", include_in_schema=False)
     def sandbox_info() -> dict:

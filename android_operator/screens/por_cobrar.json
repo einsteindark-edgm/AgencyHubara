@@ -1,0 +1,61 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "Pedidos con el pago pendiente. «Confirmar pago» llama al mismo endpoint que el botón del dashboard (PATCH confirm-payment) y pide confirmación antes.",
+  "schema": 1,
+  "id": "por_cobrar",
+  "title": "Por cobrar",
+  "data": {
+    "pedidos": { "get": "/api/orders/orders", "query": { "limit": "500" }, "refreshOn": ["orders"] }
+  },
+  "computed": {
+    "pendientes": "{{pedidos.orders | where_not:'is_test' | where_not:'status':'cancelled' | where:'pay_status':'pending' | sort:'created_at_ms'}}"
+  },
+  "body": [
+    {
+      "type": "notice", "tone": "warning", "title": "{{pendientes | count | plural:'pedido':'pedidos'}} por cobrar",
+      "text": "Suman {{pendientes | sum:'total_cop' | money}}. Confirma el pago cuando veas el comprobante.",
+      "visible": "{{pendientes | present}}"
+    },
+    {
+      "type": "list", "items": "{{pendientes}}", "as": "p", "key": "{{p.id}}", "style": "cards",
+      "item": {
+        "type": "column", "spacing": 0,
+        "children": [
+          {
+            "type": "list_item",
+            "avatar": "{{p.customer}}",
+            "title": "#{{p.display_id | replace:'#':''}} · {{p.customer}}",
+            "subtitle": "{{p.pay_type | map:'cod=Contra entrega;confirmed=Transferencia;*=Sin método'}} · {{p.created_at_ms | relative}}",
+            "trailing": "{{p.total_cop | money}}"
+          },
+          {
+            "type": "column", "padding": 12, "_por_que": "los botones no quedan pegados al borde de la tarjeta",
+            "children": [
+              {
+                "type": "row", "arrange": "end", "spacing": 8,
+                "children": [
+                  { "type": "button", "style": "text", "text": "Ver pedido", "action": { "type": "open_order", "order": "{{p.id}}" } },
+                  {
+                    "type": "button", "style": "tonal", "icon": "check", "text": "Confirmar pago",
+                    "action": {
+                      "type": "call", "method": "PATCH", "path": "/api/orders/orders/{{p.id}}/confirm-payment",
+                      "body": { "by": "app-operador" },
+                      "confirm": {
+                        "title": "¿Confirmar el pago del pedido #{{p.display_id | replace:'#':''}}?",
+                        "body": "{{p.customer}} · {{p.total_cop | money}}. Hazlo solo si ya viste el comprobante.",
+                        "accept": "Sí, confirmar"
+                      },
+                      "success": "Pago confirmado",
+                      "then": [ { "type": "refresh" } ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "empty": { "type": "empty", "icon": "check_circle", "title": "No hay nada por cobrar", "body": "Todos los pedidos tienen el pago confirmado." }
+    }
+  ]
+}

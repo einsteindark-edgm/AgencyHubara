@@ -1,0 +1,41 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "Incendios de chats y órdenes (graves primero). Un chat se abre «en vivo» (pila de Incendios); una orden con id abre su ficha.",
+  "schema": 1,
+  "id": "incendios",
+  "title": "Incendios",
+  "state": { "filtro": "all" },
+  "data": {
+    "fuegos": { "app": "fires" }
+  },
+  "computed": {
+    "visibles": "{{fuegos | where:state.filtro}}"
+  },
+  "body": [
+    {
+      "type": "chips", "bind": "state.filtro",
+      "options": [
+        { "value": "all", "label": "Todo {{fuegos | count}}" },
+        { "value": "grave", "label": "Graves {{fuegos | where:'grave' | count}}" },
+        { "value": "chat", "label": "Chats {{fuegos | where:'chat' | count}}" },
+        { "value": "order", "label": "Órdenes {{fuegos | where:'order' | count}}" }
+      ]
+    },
+    { "type": "notice", "tone": "danger", "text": "No se pudieron cargar: se reintenta solo.", "visible": ["{{status.fuegos.failed}}", "{{fuegos | empty}}"] },
+    {
+      "type": "list", "items": "{{visibles}}", "as": "f", "key": "{{f.fire_id}}", "style": "cards",
+      "item": {
+        "type": "list_item",
+        "icon": "{{f.kind | map:'order=orders;*=chat'}}", "icon_tone": "{{f.severity | map:'grave=danger;hoy=warning;*=neutral'}}",
+        "overline": "{{f.overline}}", "overline_tone": "{{f.severity | map:'grave=danger;hoy=warning;*=muted'}}",
+        "title": "{{f.title}}", "subtitle": "{{f.subtitle}}",
+        "action": {
+          "type": "if", "condition": "{{f.opens | eq:'order'}}",
+          "then": { "type": "open_order", "order": "{{f.order_id}}" },
+          "else": { "type": "open_chat", "session": "{{f.session_id}}", "live": true }
+        }
+      },
+      "empty": { "type": "empty", "icon": "fire", "title": "No hay incendios", "body": "Todo va bien." }
+    }
+  ]
+}

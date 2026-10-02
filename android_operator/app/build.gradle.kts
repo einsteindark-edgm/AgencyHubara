@@ -81,8 +81,15 @@ val verifyPlayRelease by tasks.registering {
 }
 tasks.matching { it.name == "bundleRelease" }.configureEach { dependsOn(verifyPlayRelease) }
 
+// Las pantallas del servidor del repo viajan en el APK (`assets/screens/`): sirven sin red desde la primera vez. Los
+// esquemas del editor (`*.schema.json`) no viajan. La tarea está en build-logic (ver ahí por qué).
+val bundleServerScreens = tasks.register<BundleServerScreens>("bundleServerScreens") {
+    screens.from(rootProject.fileTree("screens") { include("*.json"); exclude("*.schema.json") })
+}
+
 androidComponents {
     onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(bundleServerScreens, BundleServerScreens::outputDir)
         variant.buildConfigFields?.put("API_URL", BuildConfigField("String", "\"$apiUrl\"", "URL del backend"))
         variant.buildConfigFields?.put("COGNITO_CLIENT_ID", BuildConfigField("String", "\"$cognitoClientId\"", "Vacío = modo dev sin login"))
         variant.buildConfigFields?.put("COGNITO_REGION", BuildConfigField("String", "\"$cognitoRegion\"", "Región del user pool"))
@@ -99,10 +106,9 @@ dependencies {
     implementation(project(":core:designsystem"))
     implementation(project(":core:ui"))
     implementation(project(":feature:auth"))
-    implementation(project(":feature:inbox"))
     implementation(project(":feature:chat"))
-    implementation(project(":feature:fires"))
-    implementation(project(":feature:orders"))
+    implementation(project(":feature:screens"))
+    implementation(project(":core:sdui"))
     implementation(project(":core:push"))
     implementation(project(":widget:hot"))
     implementation(libs.androidx.core.ktx)

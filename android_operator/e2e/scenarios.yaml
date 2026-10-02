@@ -9,6 +9,7 @@
 #   000000000105 Valentina ventana de 24 h cerrada (solo plantillas)
 #   000000000106 Daniela  comprobante de pago por verificar (incendio HOY)
 # Órdenes: #40 Juan (en camino), #41 Andrés (preparando), #42 Daniela (borrador).
+# Pantallas del servidor (pestaña «Más»): android_operator/screens/; las de prueba de S18 en e2e/screens/.
 #
 # Cada escenario:
 #   setup   deja la app en el punto de partida (lo comparten los dos conductores).
@@ -416,3 +417,66 @@ scenarios:
     checks:
       - screen_has: "Hay una versión nueva"
       - screen_lacks: "000000000101"
+
+  - id: S17_pantallas_del_servidor
+    title: Pantallas que arma el servidor (pestaña «Más»)
+    resumen: "La pestaña «Más» y sus pantallas no están programadas en la app: son archivos del servidor (android_operator/screens). «Resumen de ventas» calcula sus cifras con los pedidos del backend, el filtro «7 días» los vuelve a pedir y tocar un pedido abre su ficha nativa."
+    setup: *fresh
+    script:
+      - {tap: "=Más"}
+      - {expect: "Resumen de ventas"}
+      - {tap: "Resumen de ventas"}
+      - {expect_all: ["=Vendido", "=Por cobrar", "=Atrasados", "#42 · Daniela Prueba"]}
+      - {tap: "=7 días"}
+      - {expect: "#40 · Juan Prueba"}
+      - {shot: resumen-de-ventas}
+      - {tap: "#40 · Juan Prueba"}
+      - {expect: "Pedido #40"}
+    goal: |
+      Abre la pestaña «Más» (abajo a la derecha) y entra a «Resumen de ventas». Anota las cuatro cifras que ves arriba
+      (Pedidos, Vendido, Por cobrar, Atrasados) y los pedidos de la lista. Toca el filtro «7 días» y di qué cambió.
+      Después toca el pedido de Juan y di qué se abrió.
+    checks:
+      - screen_has: "Pedido #40"
+
+  - id: S18_pantalla_nueva_desde_el_servidor
+    title: Una pantalla nueva y un componente cambiado, sin reinstalar la app
+    resumen: "El servidor cambia el archivo de «Más» (el texto del pie pasa a ser un aviso y aparece un renglón nuevo) y publica una pantalla que la app NO trae: la app los muestra sin reinstalarse; la pantalla nueva lee un endpoint que ya existía y abre el chat nativo."
+    # e2e/screens/mas.json y atencion.json hacen de lo que publicaría frontend-deploy. La app arranca con lo que trae el
+    # APK y, al abrir «Más», baja la versión del servidor: el cambio llega sin publicar otra versión.
+    setup: [reset, {inject: "screen mas.json --from ../screens/mas.json"}, {inject: "screen atencion.json --from ../screens/atencion.json"},
+            clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"}]
+    script:
+      - {tap: "=Más"}
+      - {expect: "Pantalla cambiada desde el servidor"}
+      - {tap: "Quién atiende cada chat"}
+      - {expect_all: ["=Con humano", "=Con el bot", "000000000101"]}
+      - {shot: pantalla-nueva}
+      - {tap: "000000000101"}
+      - {expect: "Tomar la conversación"}
+    goal: |
+      Abre la pestaña «Más». Di qué aviso aparece arriba y qué renglones hay. Entra a «Quién atiende cada chat», anota
+      las dos cifras y cuántos chats lista. Toca el chat 000000000101 y di qué pantalla se abrió.
+    checks:
+      - screen_has: "Tomar la conversación"
+
+  - id: S19_llamada_con_confirmacion
+    title: Una acción del servidor que llama al backend y no miente si falla
+    resumen: "En «Por cobrar», «Confirmar pago» pide confirmación antes de llamar al backend. El pedido #42 todavía es borrador: el backend se niega (200 con success:false) y la app muestra su motivo, en español y con tú, en vez de decir «Pago confirmado»."
+    setup: *fresh
+    script:
+      - {tap: "=Más"}
+      - {tap: "Por cobrar"}
+      - {expect: "#42 · Daniela Prueba"}
+      - {tap: "=Confirmar pago"}
+      - {expect: "¿Confirmar el pago del pedido #42?"}
+      - {shot: confirmacion}
+      - {tap: "=Sí, confirmar"}
+      - {expect: "todavía es un borrador"}
+    goal: |
+      Abre la pestaña «Más» y entra a «Por cobrar». Toca «Confirmar pago» en el pedido de Daniela, lee la pregunta y
+      acepta. Di qué mensaje aparece abajo y si el pedido sigue en la lista.
+    checks:
+      - screen_lacks: "Pago confirmado"
+      - screen_lacks: "Agendá"
+      - screen_has: "#42 · Daniela Prueba"

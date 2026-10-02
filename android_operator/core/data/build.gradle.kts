@@ -12,6 +12,7 @@ dependencies {
     api(project(":core:model"))
     api(project(":core:network"))
     api(project(":core:database"))
+    api(project(":core:sdui"))
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.tink.android)
     api(libs.androidx.work.runtime)

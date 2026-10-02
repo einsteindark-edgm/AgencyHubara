@@ -23,6 +23,7 @@ import com.hubara.operator.core.network.sse.EventStream
 import com.hubara.operator.core.network.sse.ServerEvent
 import com.hubara.operator.core.network.toDomain
 import com.hubara.operator.core.network.dto.ChatSessionDto
+import app.cash.turbine.test
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -58,6 +59,17 @@ class SyncAndFiresTest {
     }
 
     @After fun tearDown() = db.close()
+
+    @Test fun cada_evento_avisa_su_dominio_a_las_pantallas_del_servidor() = runTest {
+        sync.changes.test {
+            sync.handle(ServerEvent.OrdersChanged)
+            assertThat(awaitItem()).isEqualTo("orders")
+            sync.handle(ServerEvent.SessionUpdated(laura))
+            assertThat(listOf(awaitItem(), awaitItem())).containsExactly("chats", "fires")
+            sync.handle(ServerEvent.Unknown("marketing", "campaign_sent"))
+            assertThat(awaitItem()).isEqualTo("marketing")
+        }
+    }
 
     @Test fun solo_se_refresca_el_chat_que_esta_abierto() = runTest {
         val handle = sync.watch(laura)
