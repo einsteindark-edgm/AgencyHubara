@@ -438,6 +438,23 @@ def coupon_in_play(metadata: dict[str, Any], text: str | None) -> bool:
     }
 
 
+def coupon_talk_subject(metadata: dict[str, Any]) -> tuple[str, list[str]] | None:
+    """(código, productos) del cupón aplicado cuando `coupon_in_play` SÍ lee
+    el texto del mensaje; None cuando su respuesta no depende del texto (sin
+    cupón, snapshot ilegible, cupón de envío o de todo el catálogo). Es lo
+    que el motor de decisiones (capacidad `cupon`) le muestra a Jev."""
+    raw = applied_coupon(metadata)
+    if raw is None:
+        return None
+    try:
+        promotion = promotion_from_snapshot(raw["promotion"])
+    except (TypeError, KeyError):
+        return None
+    if promotion.target_type == "shipping_methods" or is_whole_catalog(promotion):
+        return None
+    return str(raw.get("code")), _coupon_titles(raw)
+
+
 def _join_names(names: list[str]) -> str:
     """"Cubo Love, Vela Buda y Cubo de corazón" ("" sin nombres)."""
     if len(names) <= 1:
@@ -540,6 +557,7 @@ __all__ = [
     "clear_applied_coupon",
     "coupon_discount_for_items",
     "coupon_in_play",
+    "coupon_talk_subject",
     "describe_promotion",
     "discount_line_items",
     "eligible_products",

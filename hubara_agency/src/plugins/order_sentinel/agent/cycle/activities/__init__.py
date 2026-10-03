@@ -1,9 +1,11 @@
 """Activities del ciclo order-sentinel (plugin order_sentinel).
 
 Solo imports `src.sdk` (P-28). El ÚNICO lugar con I/O del plugin (perfil sync,
-P-29) — el plan puro vive en `agent/cycle/use_cases/`. Cuatro seams:
+P-29) — el plan puro vive en `agent/cycle/use_cases/`. Cinco seams:
   * `build_order_sentinel_snapshot_activity` — vault scan (tag HUMANO + orden
-    + watermark) + enriquecimiento stage/pago vía la API de orders.
+    + watermark) + enriquecimiento stage/pago vía la API de orders + (con el
+    lector `ORDER_SENTINEL_READER` en shadow/on) la lectura de Jev del estado
+    del pedido (motor de decisiones F8, `use_cases/readings.py`).
   * `dispatch_order_sentinel_activity` — despierta la caja GraphAgents y
     despacha el run (bridge poll-based, graphagentskit). Worst-case minutos
     (cold start EC2) → heartbeat (R-HEARTBEAT).
@@ -13,6 +15,8 @@ P-29) — el plan puro vive en `agent/cycle/use_cases/`. Cuatro seams:
     agente contra la API HTTP de orders (validación DAG real, SSE dashboard)
     con `notify_customer=false` (el humano ya avisó por chat — la cascada ETA
     duplicaría el mensaje) y cierra los watermarks por sesión.
+  * `record_order_sentinel_shadow_activity` — con el lector de Jev, los
+    desacuerdos LLM ↔ Jev del ciclo a la cola que califica Claude Code.
 """
 from __future__ import annotations
 
@@ -26,12 +30,26 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+import structlog
 from temporalio import activity
 
-from src.plugins.order_sentinel.agent.cycle.composition import get_launcher
+from src.plugins.order_sentinel.agent.cycle.composition import get_launcher, get_reader_port
 from src.plugins.order_sentinel.agent.cycle.use_cases import (
     build_snapshot_from_sessions,
 )
+from src.plugins.order_sentinel.agent.cycle.use_cases.readings import (
+    CAPABILITY,
+    ORACLE_PROFILE,
+    change_request,
+    conversation_state,
+    evidence_request,
+    needs_evidence,
+    reader_mode,
+    reading_from,
+    redact_terms,
+)
+from src.sdk.connectorkit import DecisionMetrics, DisagreementLog, oracle_timeout_s, record_jev_cost
+from src.sdk.decisionkit import BundleError
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, with_heartbeat
 
 #: prefijo de sesiones WhatsApp en el vault (los demás dirs se saltan).
@@ -41,6 +59,9 @@ _SESSION_PREFIX = "wa_"
 #: metadata.json (muchos escritores concurrentes; este archivo es solo nuestro).
 _WATERMARK_FILE = "order_sentinel.json"
 _WATERMARK_KEY = "last_analyzed_at_ms"
+
+#: cuántas conversaciones le pregunta a Jev a la vez (máx. 20 por ciclo).
+_READ_CONCURRENCY = 4
 
 
 def _api_base() -> str:
@@ -144,13 +165,122 @@ async def _fetch_order_state(
     return stage, summary.get("pay_status") == "paid"
 
 
+#: La lectura cuando el paquete del lector no compila (no es una caída de Jev).
+BUNDLE_ERROR = "bundle_error"
+_logged_broken: set[str] = set()
+
+
+def _bundle_broken(error: Exception) -> None:
+    """Un error por motivo (no uno por conversación del ciclo)."""
+    reason = str(error)[:300]
+    if reason not in _logged_broken:
+        _logged_broken.add(reason)
+        structlog.get_logger().error("order_sentinel.bundle_broken", error=reason)
+
+
+async def _read_state(
+    port: Any,
+    convo: dict[str, Any],
+    *,
+    redact: tuple[str, ...],
+    since_ms: int | None,
+    timeout_s: float,
+) -> tuple[dict[str, Any], int]:
+    """La lectura de Jev de UNA conversación: «¿qué cambió?» y, si Jev está
+    seguro de que algo cambió, la evidencia mensaje por mensaje entre lo
+    nuevo desde `since_ms` (el watermark anterior). Devuelve la lectura y lo
+    que tardó Jev (ms). Nunca lanza: si Jev falla, la lectura no trae
+    veredicto y decide el LLM, como hoy."""
+    try:
+        state, questions = change_request(convo)
+        first = await port.ask(state, questions, timeout_s=timeout_s, redact=redact)
+        second = None
+        change = needs_evidence(first)
+        request = evidence_request(convo, change, since_ms=since_ms) if change is not None else None
+        if request is not None:
+            second = await port.ask(request[0], request[1], timeout_s=timeout_s, redact=redact)
+        latency_ms = int(first.latency_ms or 0) + int(getattr(second, "latency_ms", 0) or 0)
+        # Lo que cobró Jev va a la conversación (como en ventas).
+        for result in (first, second):
+            if result is not None:
+                record_jev_cost(str(convo.get("session_id") or ""), getattr(result, "cost_usd", None))
+        return reading_from(convo, first, second, since_ms=since_ms), latency_ms
+    except BundleError as e:
+        # El paquete del lector no compila: no es una caída de Jev (no se mide
+        # como tal) y decide el LLM, como hoy.
+        _bundle_broken(e)
+        return {"verdict": None, "model": "", "error": BUNDLE_ERROR, "answers": []}, 0
+    except Exception as e:  # noqa: BLE001 — el lector nunca tumba el ciclo
+        activity.logger.warning(
+            "order-sentinel: la lectura de Jev de %s falló (%s: %s) — decide el LLM.",
+            convo.get("session_id"),
+            type(e).__name__,
+            e,
+        )
+        return {"verdict": None, "model": "", "error": type(e).__name__, "answers": []}, 0
+
+
+async def _attach_readings(
+    conversations: list[dict[str, Any]],
+    *,
+    reader: str,
+    terms: dict[str, tuple[str, ...]],
+    since: dict[str, int | None],
+) -> None:
+    """Le pone a cada conversación su lectura (`reading`) y deja una métrica
+    por decisión (la vara de producción: caídas, días en sombra, p95)."""
+    port = get_reader_port()
+    timeout_s = oracle_timeout_s(ORACLE_PROFILE)
+    gate = asyncio.Semaphore(_READ_CONCURRENCY)
+
+    async def one(convo: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        async with gate:
+            session_id = str(convo.get("session_id"))
+            return await _read_state(
+                port,
+                convo,
+                redact=terms.get(session_id, ()),
+                since_ms=since.get(session_id),
+                timeout_s=timeout_s,
+            )
+
+    readings = await asyncio.gather(*(one(convo) for convo in conversations))
+    metrics = DecisionMetrics(WORKSPACE_VAULT_DIR)
+    for convo, (reading, latency_ms) in zip(conversations, readings):
+        convo["reading"] = reading
+        if reading.get("error") == BUNDLE_ERROR:
+            continue  # no es Jev: la vara del lector no lo cuenta
+        try:
+            metrics.record(
+                capability=CAPABILITY,
+                provider=reader,
+                ok=reading["error"] is None,
+                latency_ms=latency_ms,
+                agree=None,
+            )
+        except OSError as e:
+            activity.logger.warning("order-sentinel: no pude guardar la métrica del lector (%s)", e)
+    activity.logger.info(
+        "order-sentinel: lector %s — %s conversaciones, %s con veredicto de Jev, %s caídas.",
+        reader,
+        len(conversations),
+        sum(1 for r, _ in readings if r["verdict"] is not None),
+        sum(1 for r, _ in readings if r["error"] is not None),
+    )
+
+
 @activity.defn(name="build_order_sentinel_snapshot")
+# R-HEARTBEAT: hasta 20 GETs a la API y, con el lector encendido, dos
+# preguntas a Jev por conversación — el peor caso pasa de 10 s.
+@with_heartbeat(every=10)
 async def build_order_sentinel_snapshot_activity() -> dict[str, Any]:
     """Escanea el vault y arma el seed del order-sentinel (I/O acá; la
     transformación pura en use_cases.build_snapshot), enriqueciendo cada
     conversación con el estado REAL de su orden vía la API de orders."""
     now_ms = int(time.time() * 1000)
     sessions: list[tuple[str, dict[str, Any], list[dict[str, Any]], int | None]] = []
+    terms: dict[str, tuple[str, ...]] = {}
+    since: dict[str, int | None] = {}
     vault = WORKSPACE_VAULT_DIR
     if vault.exists():
         for session_dir in sorted(vault.iterdir()):
@@ -161,12 +291,15 @@ async def build_order_sentinel_snapshot_activity() -> dict[str, Any]:
             metadata = _read_json(session_dir / "metadata.json")
             if metadata is None:
                 continue
+            watermark = _read_watermark(session_dir)
+            terms[session_dir.name] = redact_terms(metadata)
+            since[session_dir.name] = watermark
             sessions.append(
                 (
                     session_dir.name,
                     metadata,
                     _read_history_events(session_dir),
-                    _read_watermark(session_dir),
+                    watermark,
                 )
             )
     snapshot = build_snapshot_from_sessions(now_ms, sessions)
@@ -185,6 +318,12 @@ async def build_order_sentinel_snapshot_activity() -> dict[str, Any]:
             convo["current_stage"], convo["payment_confirmed"] = state
             enriched.append(convo)
     snapshot["conversations"] = enriched
+    # Motor de decisiones F8: con el lector en sombra o en jev, cada
+    # conversación viaja con la lectura de Jev (sin lector, el snapshot de hoy).
+    reader = reader_mode(os.environ.get("ORDER_SENTINEL_READER"))
+    if reader != "reglas":
+        await _attach_readings(enriched, reader=reader, terms=terms, since=since)
+        snapshot["reader"] = reader
     # PM-009: los recortes viajan en el snapshot (nada de silent caps) — el
     # workflow los loguea y quedan visibles en el history de Temporal.
     snapshot["excluded_orders"] = excluded
@@ -315,3 +454,38 @@ async def execute_order_intents_activity(
         if session_dir.is_dir():
             _write_watermark(session_dir, at_ms)
     return summary
+
+
+@activity.defn(name="record_order_sentinel_shadow")
+async def record_order_sentinel_shadow_activity(
+    shadow: list[dict[str, Any]], conversations: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Motor de decisiones F8: los desacuerdos LLM ↔ Jev del ciclo a la cola
+    que califica Claude Code (`DisagreementLog`, una sola para todo el
+    sistema). Solo los desacuerdos (cuando coinciden no hay nada que revisar)
+    y solo de conversaciones que viajaron en el snapshot. El estado es el
+    MISMO que vio Jev, anonimizado con el borrador del pedido."""
+    by_session = {str(c.get("session_id")): c for c in conversations if isinstance(c, dict)}
+    log = DisagreementLog(WORKSPACE_VAULT_DIR)
+    recorded = 0
+    for row in shadow:
+        if not isinstance(row, dict) or row.get("agree"):
+            continue
+        session_id = str(row.get("session_id"))
+        convo = by_session.get(session_id)
+        if convo is None:
+            continue
+        reading = convo.get("reading") if isinstance(convo.get("reading"), dict) else {}
+        metadata = _read_json(WORKSPACE_VAULT_DIR / session_id / "metadata.json") or {}
+        log.record(
+            capability=CAPABILITY,
+            state=conversation_state(convo),
+            rule=row.get("llm"),
+            jev=row.get("jev"),
+            model=str(reading.get("model") or ""),
+            answers=list(reading.get("answers") or []),
+            session_id=session_id,
+            redact=redact_terms(metadata),
+        )
+        recorded += 1
+    return {"compared": len(shadow), "disagreements": recorded}

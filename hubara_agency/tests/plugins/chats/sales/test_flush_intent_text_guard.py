@@ -30,49 +30,49 @@ from src.platform.whatsapp import dtos as wa_dtos
 # --- Función pura -----------------------------------------------------------
 
 
-def test_poisoned_intro_text_is_replaced_with_neutral() -> None:
+async def test_poisoned_intro_text_is_replaced_with_neutral() -> None:
     params = {
         "intro_text": "Encontré 10 velas religiosas. Las muestro al cliente.",
         "sections": [{"title": "Religiosas", "rows": []}],
     }
-    out = _sanitize_intent_client_text("products_list", params)
+    out = await _sanitize_intent_client_text("products_list", params)
     assert "al cliente" not in out["intro_text"]
     assert out["intro_text"]  # hay un intro neutro, el menú sale igual
     # Los params no-texto quedan intactos.
     assert out["sections"] == params["sections"]
 
 
-def test_poisoned_body_is_replaced_with_neutral() -> None:
+async def test_poisoned_body_is_replaced_with_neutral() -> None:
     params = {
         "body": "Etiqueté como INTERESADO. El control ha sido transferido.",
         "buttons": [{"id": "catalog.browse", "title": "Ver catálogo"}],
     }
-    out = _sanitize_intent_client_text("quick_replies", params)
+    out = await _sanitize_intent_client_text("quick_replies", params)
     assert "INTERESADO" not in out["body"]
     assert out["body"]
     assert out["buttons"] == params["buttons"]
 
 
-def test_clean_text_passes_untouched() -> None:
+async def test_clean_text_passes_untouched() -> None:
     params = {
         "intro_text": "Estas son nuestras velas religiosas:",
         "body": "¿Cuál te llama la atención?",
     }
-    out = _sanitize_intent_client_text("products_list", params)
+    out = await _sanitize_intent_client_text("products_list", params)
     assert out["intro_text"] == "Estas son nuestras velas religiosas:"
     assert out["body"] == "¿Cuál te llama la atención?"
 
 
-def test_wrapping_quotes_are_stripped() -> None:
+async def test_wrapping_quotes_are_stripped() -> None:
     # sanitize_llm_text también corre acá: mismo cleanup que el path de texto.
     params = {"intro_text": '"Estas son nuestras velas:"'}
-    out = _sanitize_intent_client_text("products_list", params)
+    out = await _sanitize_intent_client_text("products_list", params)
     assert out["intro_text"] == "Estas son nuestras velas:"
 
 
-def test_missing_and_none_keys_are_tolerated() -> None:
+async def test_missing_and_none_keys_are_tolerated() -> None:
     params = {"sections": [], "body": None}
-    out = _sanitize_intent_client_text("products_list", params)
+    out = await _sanitize_intent_client_text("products_list", params)
     assert out["sections"] == []
     assert out["body"] is None
 

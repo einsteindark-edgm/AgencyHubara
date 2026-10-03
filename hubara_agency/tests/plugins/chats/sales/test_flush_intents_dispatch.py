@@ -97,7 +97,10 @@ async def test_products_list_uses_mpm_when_env_flag_and_retailer_ids_present(
     payload = call.args[2]
     assert isinstance(payload, wa_dtos.InteractiveProductListOutbound)
     assert payload.catalog_id == "1468134707823015"
-    assert payload.body == "Mirá nuestras velas:"
+    # La guía de los botones de la ficha va debajo del texto (2026-09-30).
+    from src.plugins.chats.agent.sales.activities.flush_ui_intents import CATALOG_CARD_GUIDE
+
+    assert payload.body == f"Mirá nuestras velas:\n\n{CATALOG_CARD_GUIDE}"
     assert len(payload.sections) == 1
     sec = payload.sections[0]
     assert len(sec.product_items) == 2
@@ -859,7 +862,7 @@ async def test_flush_discards_stale_intent_past_ttl_and_logs_warning(
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _TTL_SESSION_ID)
 
-    assert sent == 0
+    assert sum(r["ok"] for r in sent) == 0
     wa_client_mod.send_cta_url.assert_not_awaited()
     assert _read_ttl_metadata(ttl_vault)["pending_ui_intents"] == []
     assert "stale" in caplog.text.lower()
@@ -883,7 +886,7 @@ async def test_flush_dispatches_fresh_intent_normally(ttl_vault):
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _TTL_SESSION_ID)
 
-    assert sent == 1
+    assert sum(r["ok"] for r in sent) == 1
     wa_client_mod.send_cta_url.assert_awaited_once()
     assert _read_ttl_metadata(ttl_vault)["pending_ui_intents"] == []
 
@@ -913,7 +916,7 @@ async def test_flush_mixed_queue_only_dispatches_fresh(ttl_vault):
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _TTL_SESSION_ID)
 
-    assert sent == 1
+    assert sum(r["ok"] for r in sent) == 1
     wa_client_mod.send_cta_url.assert_awaited_once()
     assert _read_ttl_metadata(ttl_vault)["pending_ui_intents"] == []
 
@@ -938,7 +941,7 @@ async def test_flush_discards_intent_without_queued_at_ms(ttl_vault, caplog):
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _TTL_SESSION_ID)
 
-    assert sent == 0
+    assert sum(r["ok"] for r in sent) == 0
     wa_client_mod.send_cta_url.assert_not_awaited()
     assert _read_ttl_metadata(ttl_vault)["pending_ui_intents"] == []
     assert "stale" in caplog.text.lower()

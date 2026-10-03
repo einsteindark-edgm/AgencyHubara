@@ -252,10 +252,25 @@ def _active(metadata: dict[str, Any], now_ms: int) -> dict[str, Any] | None:
     return entry
 
 
-def register_reengagement_deferral(
-    metadata: dict[str, Any], text: str | None, *, now_ms: int, tz: ZoneInfo
+def is_courtesy_text(text: str | None) -> bool:
+    """¿El mensaje es solo una cortesía ("gracias", "ok", un emoji)? Una
+    cortesía no levanta la pausa. Lectura pura (la del motor de decisiones)."""
+    return bool(text) and _is_courtesy(_normalize(text or ""))
+
+
+def apply_reengagement_deferral(
+    metadata: dict[str, Any],
+    text: str | None,
+    parsed: ReengagementDeferral | None,
+    *,
+    courtesy: bool,
+    now_ms: int,
+    tz: ZoneInfo,
 ) -> None:
-    """Estampa / conserva / levanta la pausa según este inbound (muta in place).
+    """ESCRIBE la pausa según la lectura ya hecha de este inbound (muta in
+    place). `parsed` es el aplazamiento leído (o None) y `courtesy` si el
+    mensaje es solo una cortesía; la lectura de hoy es
+    `parse_reengagement_deferral` + `is_courtesy_text`.
 
     * Aplazamiento → estampa la fecha. Uno abierto no pisa una fecha que el
       cliente ya dio ("les escribo la otra semana" + "yo les escribo cuando…").
@@ -267,7 +282,6 @@ def register_reengagement_deferral(
     existing = metadata.get(DEFERRAL_KEY)
     if isinstance(existing, dict) and existing.get("kind") == DEFERRAL_KIND_MANUAL:
         return  # decisión del equipo: solo el operador la quita
-    parsed = parse_reengagement_deferral(text, now_ms, tz)
     current = _active(metadata, now_ms)
     if parsed is not None:
         if (
@@ -286,8 +300,25 @@ def register_reengagement_deferral(
             entry["resume_label"] = _resume_label(parsed.until_ms, tz)
         metadata[DEFERRAL_KEY] = entry
         return
-    if DEFERRAL_KEY in metadata and not _is_courtesy(_normalize(text)):
+    if DEFERRAL_KEY in metadata and not courtesy:
         metadata.pop(DEFERRAL_KEY, None)
+
+
+def register_reengagement_deferral(
+    metadata: dict[str, Any], text: str | None, *, now_ms: int, tz: ZoneInfo
+) -> None:
+    """Estampa / conserva / levanta la pausa según este inbound (muta in
+    place): la lectura de hoy seguida de `apply_reengagement_deferral`."""
+    if not text:
+        return
+    apply_reengagement_deferral(
+        metadata,
+        text,
+        parse_reengagement_deferral(text, now_ms, tz),
+        courtesy=is_courtesy_text(text),
+        now_ms=now_ms,
+        tz=tz,
+    )
 
 
 def reengagement_deferred_until(metadata: dict[str, Any], now_ms: int) -> int | None:

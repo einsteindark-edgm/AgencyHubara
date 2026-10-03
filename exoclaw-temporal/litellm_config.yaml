@@ -100,6 +100,34 @@ model_list:
       model: gemini/gemini-2.5-flash-lite
       api_key: "os.environ/GEMINI_API_KEY"
 
+  # Fotos del cliente contra el catálogo (2026-09-30): cuando la foto no trae
+  # un nombre, un código o un enlace que se lea, se buscan los 5 productos más
+  # parecidos por embedding de imagen y un verificador dice cuál es el mismo
+  # diseño, o ninguno. Consumidos por
+  # hubara_agency/src/platform/vision/{embeddings,photo_match}.py.
+  #
+  # `gemini-embedding-2`: multimodal (imagen → vector de 768), GA desde el
+  # 2026-04-22 y sin fecha de apagado. Probado con este mismo litellm (v1.86.2):
+  # el vector que devuelve es idéntico al de la API de Gemini directa (coseno
+  # 1,0), o sea que la imagen viaja como imagen. Cambiar el modelo de este
+  # alias invalida el índice de fotos guardado: el índice lo nota (vuelve a
+  # medir una imagen de control) y se rehace solo.
+  - model_name: gemini-embedding
+    litellm_params:
+      model: gemini/gemini-embedding-2
+      api_key: "os.environ/GEMINI_API_KEY"
+
+  # Verificador: foto del cliente + hoja con los 5 candidatos → número o null.
+  # `gemini-3.5-flash-lite` (el mismo id estable del fallback): 74 de 74 casos
+  # en dos corridas (capturas, otra foto del mismo diseño, trampas y candidatos
+  # sin el producto verdadero), mediana ~2 s, máximo 5,7 s, ~US$0,0008 por
+  # foto. `gemini-3.1-flash-lite` también acertó pero tuvo esperas de 20–50 s y
+  # se apaga el 2027-05-07.
+  - model_name: gemini-photo-match
+    litellm_params:
+      model: gemini/gemini-3.5-flash-lite
+      api_key: "os.environ/GEMINI_API_KEY"
+
 router_settings:
   # 'simple-shuffle' es la estrategia estándar. 
   # Como cada model_name tiene solo un proveedor, siempre elegirá ese.

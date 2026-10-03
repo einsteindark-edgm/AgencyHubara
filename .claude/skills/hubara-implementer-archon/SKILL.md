@@ -117,6 +117,7 @@ Si ya corriste el smoke test en una iteración previa de la misma sesión (mismo
    | `workspace` (markdown deltas) | `sections/04-backend-agents.md §8` |
    | `manifest` (plugin.yaml) | `references/manifest-schema.md` |
    | `k8s` | `sections/03-backend-plugin.md §4` |
+   | La task cambia cómo decide el bot o toca un lugar que decide (`capability("x")`, `decisions/`, `chats/shared/decisions/bundles/`) | `sections/11-decision-engine.md` — el arreglo va en una versión nueva del paquete, NO en un `if`/regex del lugar |
 
 6. SIEMPRE: `sections/08-tests-and-gates.md`.
 7. Si task tiene entries en `affects_spinal_files`: `sections/07-shared-files.md`

@@ -15,6 +15,7 @@ import json
 import re
 from typing import Any
 
+from src.plugins.chats.agent.sales.decisions.audit import contract_compliance
 from src.plugins.chats.shared.draft_items import draft_items
 
 _ARG_MAX = 160
@@ -61,7 +62,7 @@ def _parse(result: str | None) -> dict[str, Any] | None:
 
 
 def summarize_tool_event(
-    name: str, args: dict[str, Any] | None, result: str | None
+    name: str, args: dict[str, Any] | None, result: str | None, *, arg_max: int = _ARG_MAX
 ) -> dict[str, Any]:
     """Resumen compacto de una tool ejecutada: ok / rechazo + motivo + notas.
 
@@ -107,7 +108,7 @@ def summarize_tool_event(
         if isinstance(payload.get("count"), int):
             notes.append(f"count:{payload['count']}")
     compact_args = {
-        str(k): _short(v) for k, v in (args or {}).items() if v not in (None, "", [])
+        str(k): _short(v, arg_max) for k, v in (args or {}).items() if v not in (None, "", [])
     }
     return {
         "name": name,
@@ -179,16 +180,107 @@ def project_stage(episode: dict[str, Any] | None) -> str:
     return "cierre"
 
 
-TRACE_VERSION = 1
+# v2 (plan del laboratorio §4.1): `steps[]` en orden con su tiempo, `turn_key`,
+# `source` y `mode`. Extiende v1 sin quitar campos: el scorecard no cambia.
+TRACE_VERSION = 2
 TEXT_MAX = 600
+#: Lo que recibió el modelo en cada ronda (`sent`, 2026-09-30): ya viene
+#: acotado por `llm_round_input` (notas 6000, mensaje 4000, resultados 1500).
+SENT_MAX = 6000
+STEPS_MAX = 60
 _MAX_TOOLS = 24
+#: Las respuestas de Jev en un paso (`answers`): el cuestionario de la ráfaga
+#: pasa de 24 preguntas en cuanto hay etapa (27 en variantes, 4567 t22) y el
+#: tope de las listas se comía justo las de la etapa.
+ANSWERS_MAX = 64
 
-TRIGGERS: tuple[str, ...] = ("customer", "ghost", "handoff")
+TRIGGERS: tuple[str, ...] = ("customer", "ghost", "handoff", "complement")
 
 
 def _bound(text: Any, limit: int = TEXT_MAX) -> str:
     value = text if isinstance(text, str) else ""
     return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
+# Notas que el turno inyectó en `plugin_context` (solo el nombre va a la traza).
+_CONTEXT_NOTE_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("[CONTEXTO DE TURNO", "burst_note"),
+    ("[DATOS DEL PEDIDO", "draft"),
+    ("[HANDOFF_REMARKETING]", "handoff"),
+    ("[PLAN DEL TURNO]", "turn_plan"),
+)
+
+
+def context_note_names(plugin_context: list[str] | None) -> list[str]:
+    """Nombres de las notas de contexto del turno, en orden (sin su texto)."""
+    names: list[str] = []
+    for note in plugin_context or []:
+        text = note.lstrip() if isinstance(note, str) else ""
+        names.append(next((n for prefix, n in _CONTEXT_NOTE_PREFIXES if text.startswith(prefix)), "other"))
+    return names
+
+
+def _bound_value(value: Any, limit: int = TEXT_MAX, *, max_items: int = _MAX_TOOLS) -> Any:
+    if isinstance(value, str):
+        return _bound(value, limit)
+    if isinstance(value, list):
+        return [_bound_value(v, limit) for v in value[:max_items]]
+    if isinstance(value, dict):
+        return {str(k): _bound_value(v, limit) for k, v in value.items()}
+    return value
+
+
+def _normalize_steps(
+    steps: list[dict[str, Any]], *, turn_started_ms: int, tools: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Pasos del turno listos para la traza: numerados, con el tiempo relativo
+    al inicio del turno, textos acotados y cada tool con su resultado.
+
+    Los pasos llegan con `at_ms` absoluto (reloj del workflow). Una tool trae
+    `event`, el índice en `tool_events`: de ahí sale ok / error / notas /
+    extracto con el mismo resumen que el campo v1 `tools`."""
+    out: list[dict[str, Any]] = []
+    for raw in steps:
+        if not isinstance(raw, dict):
+            continue
+        if len(out) == STEPS_MAX - 1 and len(steps) > STEPS_MAX:
+            at = raw.get("at_ms")
+            out.append(
+                {
+                    "i": STEPS_MAX,
+                    "at_ms": int(at) - turn_started_ms if isinstance(at, (int, float)) else None,
+                    "kind": "truncated",
+                    "dropped": len(steps) - (STEPS_MAX - 1),
+                }
+            )
+            break
+        step = {
+            k: _bound_value(
+                v, SENT_MAX if k == "sent" else TEXT_MAX, max_items=ANSWERS_MAX if k == "answers" else _MAX_TOOLS
+            )
+            for k, v in raw.items()
+            if k not in ("at_ms", "event") and v is not None
+        }
+        at = raw.get("at_ms")
+        step = {
+            "i": len(out) + 1,
+            "at_ms": int(at) - turn_started_ms if isinstance(at, (int, float)) else None,
+            **step,
+        }
+        event = raw.get("event")
+        if raw.get("kind") == "tool" and isinstance(event, int) and 0 <= event < len(tools):
+            summary = tools[event]
+            step.update(
+                {
+                    "ok": summary["ok"],
+                    "error": summary["error"],
+                    "notes": summary["notes"],
+                    "args": summary["args"],
+                    "excerpt": summary["excerpt"],
+                }
+            )
+        out.append(step)
+    return out
 
 
 def build_turn_payload(
@@ -203,17 +295,41 @@ def build_turn_payload(
     sent_texts: list[str],
     suppressed_reason: str | None,
     guards: list[str],
+    steps: list[dict[str, Any]] | None = None,
+    turn_key: str | None = None,
+    source: str = "prod",
+    mode: str = "off",
+    context_notes: list[str] | None = None,
+    inbound: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Payload del turno armado por el WORKFLOW (solo lo que solo él sabe).
 
     `tool_events` crudos (`{name, args, result}`) se resumen acá para que la
     activity reciba algo acotado (la history de Temporal guarda el input).
+
+    v2: `steps` (llm, tool, cut, guard, restart, outbound…) en el orden en que
+    pasaron, `turn_key` determinista (`run:<run_id>/t:<n>`), `source`
+    (`prod` o `lab:<corrida>:<brazo>:<rep>`) y `mode` de las capas nuevas.
+    Ninguna clave del payload puede llamarse v, session_id, episode_id, turn
+    ni recorded_at_ms: las pone `enrich_turn_trace`.
     """
     tools = [
         summarize_tool_event(
             str(e.get("name") or ""),
             e.get("args") if isinstance(e.get("args"), dict) else None,
             e.get("result") if isinstance(e.get("result"), str) else None,
+        )
+        for e in tool_events[:_MAX_TOOLS]
+    ]
+    # El paso de cada tool lleva sus argumentos más largos que el resumen v1:
+    # el «Paso a paso» muestra el texto que el modelo pidió enviar
+    # (`send_reply`), que casi siempre pasa de 160 caracteres.
+    step_tools = [
+        summarize_tool_event(
+            str(e.get("name") or ""),
+            e.get("args") if isinstance(e.get("args"), dict) else None,
+            e.get("result") if isinstance(e.get("result"), str) else None,
+            arg_max=TEXT_MAX,
         )
         for e in tool_events[:_MAX_TOOLS]
     ]
@@ -228,6 +344,13 @@ def build_turn_payload(
         "sent_texts": [_bound(t) for t in sent_texts if t],
         "suppressed_reason": suppressed_reason,
         "guards": sorted(set(guards)),
+        "turn_key": turn_key,
+        "source": source,
+        "mode": mode,
+        "context_notes": list(context_notes or []),
+        # Mensajes de la ráfaga con su wamid, hora y tipo (PR 3).
+        "inbound": [_bound_value(m) for m in (inbound or [])[:_MAX_TOOLS] if isinstance(m, dict)],
+        "steps": _normalize_steps(steps or [], turn_started_ms=int(turn_started_ms), tools=step_tools),
     }
 
 
@@ -302,7 +425,11 @@ def enrich_turn_trace(
 
     since_ms = int(payload.get("turn_started_ms") or recorded_at_ms)
     draft = (episode or {}).get("order_draft")
+    # Motor de decisiones (F6): las tools que pedía el contrato contra las
+    # usadas («cumplimiento del contrato»). Solo si el turno traía contrato.
+    contract = contract_compliance(payload.get("steps") or [])
     return {
+        **({"contract": contract} if contract is not None else {}),
         "v": TRACE_VERSION,
         "session_id": session_id,
         "episode_id": episode_id,

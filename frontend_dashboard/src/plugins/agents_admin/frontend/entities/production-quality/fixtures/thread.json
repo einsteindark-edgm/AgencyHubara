@@ -1,0 +1,67 @@
+{
+  "session_id": "wa_100000000001",
+  "episodes": [
+    {
+      "episode_id": "ep_007",
+      "started_at_ms": 1790866800000
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "hola",
+      "timestamp": "2026-10-01T15:00:00+00:00",
+      "wamid": "wamid.A",
+      "kind": "text"
+    },
+    {
+      "role": "assistant",
+      "content": "¡Hola! ¿Qué buscas hoy?",
+      "timestamp": "2026-10-01T15:00:05+00:00",
+      "sender": "bot"
+    },
+    {
+      "role": "user",
+      "content": "velas de lavanda",
+      "timestamp": "2026-10-01T15:01:00+00:00",
+      "wamid": "wamid.B",
+      "kind": "text"
+    },
+    {
+      "role": "assistant",
+      "content": "Tenemos la vela de lavanda a $30.000",
+      "timestamp": "2026-10-01T15:01:06+00:00",
+      "sender": "bot"
+    }
+  ],
+  "turns": [
+    {
+      "turn_key": "wa_100000000001/ep_007/t1",
+      "episode_id": "ep_007",
+      "turn": 1,
+      "at_ms": 1790866801000,
+      "dashboard_prefix": 0,
+      "burst": [
+        {
+          "text": "hola",
+          "ts_ms": 1790866800000,
+          "wamid": "wamid.A"
+        }
+      ]
+    },
+    {
+      "turn_key": "wa_100000000001/ep_007/t3",
+      "episode_id": "ep_007",
+      "turn": 3,
+      "at_ms": 1790866861000,
+      "dashboard_prefix": 2,
+      "burst": [
+        {
+          "text": "velas de lavanda",
+          "ts_ms": 1790866860000,
+          "wamid": "wamid.B"
+        }
+      ]
+    }
+  ]
+}

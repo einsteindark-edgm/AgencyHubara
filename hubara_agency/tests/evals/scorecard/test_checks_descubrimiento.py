@@ -225,6 +225,59 @@ def test_des08_customer_names_shown_product_without_slot_fails() -> None:
     assert (r.verdict, r.turn) == ("falla", 2)
 
 
+def test_des08_the_product_a_photo_was_recognized_as_is_not_what_the_customer_wrote() -> None:
+    """Identificación de fotos (2026-09-30): la foto entra nombrando el producto
+    que reconoció el sistema. Eso no lo escribió el cliente: «Me gustan esas ?»
+    con fotos reconocidas no es elegir un producto (laboratorio
+    caso-fotos-0930-r7, 4567 t12). Lo que sí escribe sigue contando."""
+    photo = (
+        "[el cliente envió una foto: vela cúbica roja con la palabra LOVE "
+        "(es nuestro producto «Cubo Love»: se lee su nombre en la imagen)]"
+    )
+    asks = traj(T(1, tools=[tool("present_products")]), T(2, inbound=f"Me gustan esas ?\n{photo}", sent=["Sí, es nuestra"]))
+    chooses = traj(
+        T(1, tools=[tool("present_products")]),
+        T(2, inbound=f"me llevo el cubo love\n{photo}", sent=["¡Qué bonita elección!"]),
+    )
+
+    assert _run("DES-08", asks, CATALOG_CTX).verdict == "no_aplica"
+    assert _run("DES-08", chooses, CATALOG_CTX).verdict == "falla"
+
+
+def _after_catalog(inbound: str):
+    return traj(T(1, tools=[tool("present_products")]), T(2, inbound=inbound, sent=["Sí, ese es"]))
+
+
+def test_des08_naming_a_product_is_not_choosing_it() -> None:
+    """Laboratorio caso-fotos-0930-r7, 4567 t17: «Esa de la mujer con la vasija
+    se llama Luz Serena, la saqué de su catálogo de WhatsApp» le dice al bot
+    CÓMO se llama; no dice que la quiera. El check esperaba set_order_slot
+    («el cliente nunca ha dicho que la quiere agregar»). Preguntar si hay
+    tampoco es elegir."""
+    for said in (
+        "Esa roja con letras se llama Cubo Love, la saqué de su catálogo de WhatsApp",
+        "¿Tienen el Cubo Love en azul?",
+        "Y el cubo love también estaba en el catálogo",
+        "no quiero el cubo love",
+        "quiero ver el cubo love",
+    ):
+        assert _run("DES-08", _after_catalog(said), CATALOG_CTX).verdict == "no_aplica", said
+
+
+def test_des08_saying_they_want_it_or_answering_with_just_its_name_is_choosing() -> None:
+    """4567 t19: «La Luz Serena la quiero en aroma jengibre, esa es la que más
+    me gusta» sí es elegirla (y ahí el producto debía quedar en el pedido)."""
+    for said in (
+        "El Cubo Love lo quiero en lavanda, es el que más me gusta",
+        "me gustaría el cubo love",
+        "cubo love",
+        "el cubo love porfa",
+        "¿Me separas el Cubo Love?",
+    ):
+        result = _run("DES-08", _after_catalog(said), CATALOG_CTX)
+        assert (result.verdict, result.turn) == ("falla", 2), said
+
+
 def test_des08_title_mentioned_before_any_catalog_is_not_a_choice() -> None:
     t = traj(T(1, inbound="¿tienen el Cubo Love?", tools=[tool("search_products")]))
     assert _run("DES-08", t, CATALOG_CTX).verdict == "no_aplica"
@@ -323,6 +376,18 @@ def test_des10_non_catalog_price_in_text_fails() -> None:
 def test_des10_quick_replies_body_is_audited_too() -> None:
     t = traj(T(1, tools=[tool("send_quick_replies", body="Vale $45.000. ¿Lo dejamos así?")]))
     assert _run("DES-10", t, _PRICES_CTX).verdict == "falla"
+
+
+def test_des10_product_detail_text_is_audited_too() -> None:
+    """El texto de la ficha va en `caption_suffix`: DES-10 buscaba `caption`
+    e `intro_text`, que la tool nunca tuvo."""
+    card = tool("present_product_detail", handle="trilogia-del-terror", caption_suffix="Hoy en $45.000")
+    assert _run("DES-10", traj(T(1, tools=[card])), _PRICES_CTX).verdict == "falla"
+
+
+def test_des10_link_button_text_is_audited_too() -> None:
+    card = tool("send_cta_url", url="https://tienda.test/p", button_text="Comprar", body_text="Llévala por $45.000")
+    assert _run("DES-10", traj(T(1, tools=[card])), _PRICES_CTX).verdict == "falla"
 
 
 def test_des10_catalog_price_and_policy_amounts_pass() -> None:

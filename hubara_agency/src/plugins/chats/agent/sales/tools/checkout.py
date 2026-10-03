@@ -60,9 +60,11 @@ from src.plugins.chats.agent.sales.config.shipping import (
     SHIPPING_RATE_BOGOTA_COP,
     SHIPPING_RATE_NATIONAL_COP,
 )
+from src.plugins.chats.agent.sales.decisions.guards import product_quote_sentences
 from src.plugins.chats.agent.sales.price_quotes import (
     UnexplainedAmount,
     find_unexplained_amounts,
+    policy_decided_sentences,
 )
 from src.plugins.chats.agent.sales.pricing import catalog_unit_price, format_cop
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
@@ -170,6 +172,7 @@ class VerifyOrderForCheckoutTool(ToolBase):
         catalog: CatalogPort | None = None,
         metadata_store: MetadataStore | None = None,
         history_reader: HistoryReader | None = None,
+        vault_dir: Path | None = None,
     ) -> None:
         self._workspace = Path(workspace)
         self._verifier = verifier
@@ -180,6 +183,9 @@ class VerifyOrderForCheckoutTool(ToolBase):
         self._metadata_store = metadata_store
         # Sin lector de historial no hay cruzada de montos citados (degradado).
         self._history_reader = history_reader
+        # Vault del motor de decisiones (capacidad `monto`). Sin él, la regla
+        # de palabras de hoy.
+        self._vault_dir = Path(vault_dir) if vault_dir is not None else None
 
     # ------------------------------------------------------------------
     # Ledger + cruzada de montos citados
@@ -246,14 +252,33 @@ class VerifyOrderForCheckoutTool(ToolBase):
         if not texts:
             return []
         allowed = await self._catalog_price_allowlist(unit_prices)
+        product_quotes = await self._product_quotes(session_key, texts, allowed)
         hits: list[UnexplainedAmount] = []
         for text in texts:
             hits.extend(
                 find_unexplained_amounts(
-                    text, catalog_prices=allowed, policy_amounts=_POLICY_AMOUNTS
+                    text,
+                    catalog_prices=allowed,
+                    policy_amounts=_POLICY_AMOUNTS,
+                    product_quotes=product_quotes,
                 )
             )
         return hits
+
+    async def _product_quotes(self, session_key: str, texts: list[str], allowed: set[int]) -> frozenset[str]:
+        """Motor de decisiones (F5, capacidad `monto`): de las oraciones donde
+        las palabras de política aceptan un monto, las que cotizan un
+        producto. Con `reglas` (así nace) ninguna: idéntico a antes."""
+        if self._vault_dir is None:
+            return frozenset()
+        candidates = list(
+            dict.fromkeys(
+                s
+                for text in texts
+                for s in policy_decided_sentences(text, catalog_prices=allowed, policy_amounts=_POLICY_AMOUNTS)
+            )
+        )
+        return await product_quote_sentences(candidates, session_id=session_key, vault_dir=self._vault_dir)
 
     def _persist_ledger(
         self,

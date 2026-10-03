@@ -68,3 +68,34 @@ def test_colleague_wording_and_sales_talk_keep_persona(text: str) -> None:
 @pytest.mark.parametrize("empty", [None, "", "   "])
 def test_empty_text_does_not_break_persona(empty: str | None) -> None:
     assert not breaks_human_persona(empty)
+
+
+# ── Motor de decisiones (F5): las oraciones y a quién quitar lo decide el motor ──
+#
+# El filtro de oraciones sigue siendo UNO (el de plataforma). El motor de
+# decisiones del plugin de ventas decide QUÉ oraciones se caen (la regla de
+# hoy, Jev en sombra o Jev con la regla de respaldo) y le pasa los índices:
+# el corte y la unión no se duplican.
+
+
+def test_customer_sentences_are_the_ones_the_filter_judges() -> None:
+    from src.platform.llm_text_sanitizer import customer_sentences
+
+    text = "Listo, quedó registrado 🤍. Un humano te confirma.\nGracias por elegirnos"
+
+    assert customer_sentences(text) == ["Listo, quedó registrado 🤍.", "Un humano te confirma.", "Gracias por elegirnos"]
+    assert customer_sentences("   ") == [] and customer_sentences(None) == []
+
+
+def test_the_filter_drops_exactly_the_sentences_it_is_told() -> None:
+    from src.platform.llm_text_sanitizer import keep_customer_safe_sentences
+
+    text = "Cada vela lleva un toque humano. Un humano te confirma el pago. Gracias 🤍"
+
+    # El motor decidió que la primera es un mensaje de marca (se queda) y la
+    # segunda delata el relevo (se cae).
+    assert keep_customer_safe_sentences(text, drop={1}) == "Cada vela lleva un toque humano. Gracias 🤍"
+    # Nada que quitar = el texto intacto, con sus saltos de línea.
+    assert keep_customer_safe_sentences("Hola 🤍\nTe cuento", drop=set()) == "Hola 🤍\nTe cuento"
+    # Sin índices, la regla de hoy.
+    assert keep_customer_safe_sentences(text) == "Gracias 🤍"

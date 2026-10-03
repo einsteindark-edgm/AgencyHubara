@@ -13,6 +13,7 @@
 | Agregar un campo al manifest | §4.5 | las 3 patas: schema + código que lo consume + check de conformidad |
 | Extraer/mover código entre plugins | §4.6 | checklist PM-1..PM-13 de `PLUGIN_CONTRACT.md` |
 | Drenar un import `src.platform.*` al SDK | §4.7 | superficie por kit + migrar + regenerar ratchet P-28 + las 3 patas (ej. dashboardkit) |
+| Crear/cambiar una capacidad del motor de decisiones | `06-decision-bundles.md` | ejemplo nuevo en el YAML (rojo DB010) → preguntas/umbrales/filas → `decisions check` 🟢; migrar una clase = agregarla a la prueba de paridad primero |
 | Integrar un plugin con GraphAgents (cross-sistema) | §abajo | adaptador HTTP por execution-id + **declarar la costura en `vscode-hubara/seams.yaml`** |
 
 ## El atajo

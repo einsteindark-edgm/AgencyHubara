@@ -38,7 +38,9 @@ Un futuro PR podria abstraer un `WorkflowDispatcherPort` con
 """
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+import os
+from pathlib import Path
+from typing import Any, Awaitable, Callable
 
 import structlog
 from temporalio.client import Client, WorkflowExecutionStatus
@@ -57,12 +59,53 @@ from src.platform.routing import resolve_route_workflow_id
 from src.plugins.chats.agent.sales.context import build_bogota_context_string
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
-from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
 
 logger = structlog.get_logger()
 
 
 ClientFactory = Callable[[], Awaitable[Client]]
+
+
+def _inbound_meta_enabled() -> bool:
+    return (os.getenv("SALES_SIGNAL_INBOUND_META") or "").strip().lower() in {"on", "1", "true"}
+
+
+_PERCEPTION_MODES = ("shadow", "canary", "on")
+_DEFAULT_PERCEPTION_PROFILE = "jev-v1"
+
+
+def _vault_dir() -> Path:
+    from src.sdk.runtime import WORKSPACE_VAULT_DIR
+
+    return Path(WORKSPACE_VAULT_DIR)
+
+
+def _bot(session_id: str):
+    """El bot de ESTA conversación (registro de bots, motor de decisiones F2):
+    versión del workflow, modo de las capas y perfil de Jev. Un control
+    ilegible es el bot de hoy: nunca frena el mensaje del cliente."""
+    from src.plugins.chats.agent.sales.decisions.bots import Bot, bot_for_session
+
+    try:
+        return bot_for_session(session_id, vault_dir=_vault_dir())
+    except Exception as exc:  # noqa: BLE001 — el control nunca frena el mensaje del cliente
+        logger.warning("decisions.bot_unreadable", error=repr(exc)[:200])
+        return Bot(id="produccion")
+
+
+def _perception_meta(bot) -> dict[str, str]:
+    """Modo y perfil de las capas con clasificador para ESTA conversación
+    (plan del laboratorio, PR 14 y 16): el del control del dashboard
+    (`<vault>/_rollout/perception.json`), nunca por encima del techo de
+    Terraform `SALES_PERCEPTION_MODE_CEILING` (default `off`); lo resuelve el
+    registro de bots.
+
+    `off` viaja EXPLÍCITO: el workflow se queda con el último modo que
+    recibió, así que sin esto un chat en curso seguiría en canary/on después
+    de apagar o de bajar el techo, hasta que su sesión termine."""
+    if bot.layers not in _PERCEPTION_MODES:
+        return {"perception_mode": "off"}
+    return {"perception_mode": bot.layers, "perception_profile": bot.profile or _DEFAULT_PERCEPTION_PROFILE}
 
 
 class LoadOrStartSalesSession:
@@ -76,7 +119,8 @@ class LoadOrStartSalesSession:
       `RemarketingSessionWorkflow` lee identidad / tono / catalogo desde su
       workspace canonico via `ContextBuilder`. Si esta muerto, fallback a Sales.
     * Caso contrario (default `ventas`): reusar `session-{session_id}` o
-      `start_workflow(HubaraSalesSessionWorkflow.run, SalesSessionInput(...))`.
+      arrancar por nombre la versión del workflow de ventas que el registro de
+      bots decide para la conversación (`start_workflow(<nombre>, SalesSessionInput(...))`).
       Se signala con `plugin_context=None` — el tercer arg ya no carga
       identidad/catalogo (vienen del workspace canonico de cada agente).
       Sobrevive en la signature como hueco para datos volatiles del turno
@@ -106,6 +150,25 @@ class LoadOrStartSalesSession:
         # Es el unico canal por el que la identidad / tono / catalogo entran al workflow.
         self._sales_runtime_workspace = sales_runtime_workspace
 
+    async def notify_photo_reading(self, session_id: str, wamid: str, done: bool) -> None:
+        """Le avisa al workflow de ventas que el ingest está leyendo una foto
+        del cliente (`done=False`) o que la foto ya entró (`done=True`): la
+        ráfaga la espera (texto antes de la foto, 2026-09-30). Sin arrancar
+        nada: sin workflow vivo, la foto entra como hoy. El inicio va solo a
+        la ruta de ventas; el final va siempre (solo quita la foto de la
+        espera: un comprobante pasa la conversación a una persona mientras se
+        lee). Nunca lanza."""
+        try:
+            route = self._metadata_store.read(session_id).get("active_route", ROUTE_VENTAS)
+            if not done and route != ROUTE_VENTAS:
+                return
+            client = await self._client_factory()
+            await client.get_workflow_handle(f"session-{session_id}").signal(
+                "photo_reading", args=[wamid, done]
+            )
+        except Exception as exc:  # noqa: BLE001 — sin workflow vivo: la foto entra como hoy
+            logger.info("photo_reading_signal_skipped", session_id=session_id, done=done, error=repr(exc)[:160])
+
     async def execute(
         self,
         session_id: str,
@@ -113,7 +176,13 @@ class LoadOrStartSalesSession:
         phone_number_id: str | None,
         extra_context: list[str] | None = None,
         prefer_sales: bool = False,
+        inbound_meta: dict[str, Any] | None = None,
     ) -> None:
+        # `inbound_meta`: `{wamid, ts_ms, kind}` del mensaje para la traza v2
+        # (plan del laboratorio, PR 3). Viaja como 4.º argumento de la señal
+        # de VENTAS solo con `SALES_SIGNAL_INBOUND_META=on`: se enciende
+        # después de desplegar el worker que acepta ese argumento (un worker
+        # viejo que lo recibe falla la tarea del workflow hasta reiniciarse).
         # `prefer_sales`: el turno TIENE que ir a Ventas aunque la ruta sea
         # remarketing (hoy: respuesta a una campaña — su nota solo viaja por
         # el plugin_context de Sales). Cancela el remarketing vivo y deja la
@@ -284,9 +353,6 @@ class LoadOrStartSalesSession:
         if plugin_route_handle is None and active_route != ROUTE_REMARKETING:
             workflow_id = f"session-{session_id}"
             logger.info("Routing webhook to Sales Agent", workflow_id=workflow_id)
-            # Sales workflow class import is intra-agent (sales/use_cases →
-            # sales/workflows), so we keep `HubaraSalesSessionWorkflow.run` as
-            # a typed reference — that's NOT a R-DIP #10 issue (same agent).
             # PR-B: el plugin_context legacy (shared_brain/*.md) deja de viajar
             # por el signal del path Sales. La identidad/tono/catalogo ahora
             # viven en `workspace/{IDENTITY,SOUL,USER,TOOLS,AGENTS}.md` y
@@ -328,12 +394,19 @@ class LoadOrStartSalesSession:
             # existe, arranca uno nuevo (re-engagement) — el id_reuse_policy
             # default permite el duplicado terminal. Precedente en repo:
             # `eta_session` + `orchestration/dispatcher.py` ya usan signal_with_start.
+            # La versión del workflow (V1 hoy; V2 cuando su control y el techo
+            # de Terraform lo prenden) la decide el registro de bots POR
+            # conversación; se arranca por nombre. Una conversación viva no
+            # cambia de versión: signal-with-start le entrega el mensaje al
+            # workflow que ya corre con este id, sea cual sea su tipo.
+            bot = _bot(session_id)
             logger.info(
-                "signal_with_start HubaraSalesSessionWorkflow",
+                "signal_with_start sales",
                 workflow_id=workflow_id,
+                workflow=bot.workflow,
             )
             await client.start_workflow(
-                HubaraSalesSessionWorkflow.run,
+                bot.workflow,
                 SalesSessionInput(
                     session_id=session_id,
                     runtime_workspace_path=runtime_path,
@@ -341,7 +414,12 @@ class LoadOrStartSalesSession:
                 id=workflow_id,
                 task_queue=get_task_queue("chats", "sales"),
                 start_signal="send_message",
-                start_signal_args=[message, None, plugin_context],
+                start_signal_args=[
+                    message,
+                    None,
+                    plugin_context,
+                    *([{**inbound_meta, **_perception_meta(bot)}] if inbound_meta and _inbound_meta_enabled() else []),
+                ],
                 id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             )
             # El mensaje ya viajó DENTRO del start_workflow (start_signal) — no

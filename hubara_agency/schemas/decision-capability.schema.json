@@ -1,0 +1,471 @@
+{
+  "$defs": {
+    "BuiltinRef": {
+      "additionalProperties": false,
+      "description": "Un builtin del motor pedido por nombre, con sus parámetros (`with`).",
+      "properties": {
+        "builtin": {
+          "minLength": 1,
+          "title": "Builtin",
+          "type": "string"
+        },
+        "with": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "title": "With",
+          "type": "object"
+        }
+      },
+      "required": [
+        "builtin"
+      ],
+      "title": "BuiltinRef",
+      "type": "object"
+    },
+    "ChoiceAnswer": {
+      "additionalProperties": false,
+      "properties": {
+        "choice": {
+          "title": "Choice",
+          "type": "string"
+        },
+        "p": {
+          "title": "P",
+          "type": "number"
+        }
+      },
+      "required": [
+        "choice",
+        "p"
+      ],
+      "title": "ChoiceAnswer",
+      "type": "object"
+    },
+    "Each": {
+      "additionalProperties": false,
+      "description": "La pregunta de cada ítem (`items:`). `id` y `text` son plantillas:\n`{n}` (posición desde 1), `{index}` (desde 0) y los campos del ítem.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_{}]+)+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "noul",
+            "choice"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TextVariant"
+                  },
+                  {
+                    "$ref": "#/$defs/TextOtherwise"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          ],
+          "title": "Text"
+        },
+        "criteria": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Criteria",
+          "type": "object"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "text",
+        "criteria"
+      ],
+      "title": "Each",
+      "type": "object"
+    },
+    "Example": {
+      "additionalProperties": false,
+      "description": "Un caso que el certificador corre: con estas respuestas (y esta regla\ny esta entrada), la tabla debe dar `expect` (o `doubt`).",
+      "properties": {
+        "answers": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "$ref": "#/$defs/ChoiceAnswer"
+              }
+            ]
+          },
+          "title": "Answers",
+          "type": "object"
+        },
+        "rule": {
+          "default": null,
+          "title": "Rule"
+        },
+        "input": {
+          "additionalProperties": true,
+          "title": "Input",
+          "type": "object"
+        },
+        "items": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Items"
+        },
+        "options": {
+          "additionalProperties": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Options",
+          "type": "object"
+        },
+        "expect": {
+          "title": "Expect"
+        }
+      },
+      "required": [
+        "expect"
+      ],
+      "title": "Example",
+      "type": "object"
+    },
+    "OtherwiseRow": {
+      "additionalProperties": false,
+      "properties": {
+        "otherwise": {
+          "title": "Otherwise"
+        }
+      },
+      "required": [
+        "otherwise"
+      ],
+      "title": "OtherwiseRow",
+      "type": "object"
+    },
+    "Question": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "noul",
+            "choice"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "criteria": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Criteria",
+          "type": "object"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BuiltinRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "when": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "text"
+      ],
+      "title": "Question",
+      "type": "object"
+    },
+    "TextOtherwise": {
+      "additionalProperties": false,
+      "properties": {
+        "otherwise": {
+          "minLength": 1,
+          "title": "Otherwise",
+          "type": "string"
+        }
+      },
+      "required": [
+        "otherwise"
+      ],
+      "title": "TextOtherwise",
+      "type": "object"
+    },
+    "TextVariant": {
+      "additionalProperties": false,
+      "properties": {
+        "when": {
+          "minLength": 1,
+          "title": "When",
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "when",
+        "text"
+      ],
+      "title": "TextVariant",
+      "type": "object"
+    },
+    "WhenRow": {
+      "additionalProperties": false,
+      "properties": {
+        "when": {
+          "minLength": 1,
+          "title": "When",
+          "type": "string"
+        },
+        "then": {
+          "title": "Then"
+        }
+      },
+      "required": [
+        "when",
+        "then"
+      ],
+      "title": "WhenRow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "capability": {
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "title": "Capability",
+      "type": "string"
+    },
+    "value": {
+      "title": "Value",
+      "type": "string"
+    },
+    "options": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Options"
+    },
+    "control": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Control"
+    },
+    "input": {
+      "minLength": 1,
+      "title": "Input",
+      "type": "string"
+    },
+    "view": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BuiltinRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "rule": {
+      "$ref": "#/$defs/BuiltinRef"
+    },
+    "state": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BuiltinRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "questions": {
+      "items": {
+        "$ref": "#/$defs/Question"
+      },
+      "title": "Questions",
+      "type": "array"
+    },
+    "items": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BuiltinRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "each": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Each"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "thresholds": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Thresholds",
+      "type": "object"
+    },
+    "vars": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Vars",
+      "type": "object"
+    },
+    "decide": {
+      "items": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/WhenRow"
+          },
+          {
+            "$ref": "#/$defs/OtherwiseRow"
+          }
+        ]
+      },
+      "minItems": 1,
+      "title": "Decide",
+      "type": "array"
+    },
+    "floor": {
+      "$ref": "#/$defs/BuiltinRef"
+    },
+    "same": {
+      "$ref": "#/$defs/BuiltinRef"
+    },
+    "examples": {
+      "items": {
+        "$ref": "#/$defs/Example"
+      },
+      "minItems": 1,
+      "title": "Examples",
+      "type": "array"
+    }
+  },
+  "required": [
+    "capability",
+    "value",
+    "input",
+    "rule",
+    "state",
+    "decide",
+    "floor",
+    "same",
+    "examples"
+  ],
+  "title": "Capability",
+  "type": "object"
+}

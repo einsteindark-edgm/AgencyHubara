@@ -32,6 +32,19 @@ Si te encontrás escribiendo `if plugin ==` en `platform/`, o importando
 | Editar compose generado a mano | drift test + P-20 | `render-compose.py` |
 | Campo de manifest sin código que lo consuma | P-2 / regla de oro §4.5 | las 3 patas (campo+código+check) |
 | Tocar un path PROTECTED sin label | meta-gates | label `architecture-change` + ADR (ver L-14) |
+| Arreglar una decisión del bot con un `if`/regex/lista de palabras en el lugar | `hubara-gate-reviewer` y el revisor DEHA (`DECISION-OUTSIDE-BUNDLE`) | versión nueva del paquete (`06-decision-bundles.md`, L-34) |
+| Editar una versión publicada del paquete | `test_decision_bundles_published.py` (huella sha256) | carpeta nueva `<id>-N` con `version` + 1 |
+| Nombrar/importar una clase de capacidad (`Baja()`, `PERSONA`) | `test_decisions_registry.py` | `capability("baja")` |
+| Capacidad nueva sin `about` o fila sin ejemplo | `decisions check` (DB003 / DB010) | `about` con su `where` + un ejemplo por fila y por borde |
+
+## El invariante del motor de decisiones
+
+Las decisiones del bot son datos: capacidades de un paquete (YAML + CEL) que
+los lugares piden por nombre (`capability("x")`). Si te encontrás escribiendo
+un regex sobre el texto del cliente, un umbral nuevo o un `if` que cambia lo
+que devuelve `decide()` en el ingest, una tool, el egreso o remarketing,
+parate: eso es una pregunta, un umbral o una fila del paquete (o, si falta un
+dato, un builtin genérico). Guía: `docs/motor-de-decisiones/index.html`.
 
 ## La regla de oro (todo lo nuevo lleva 3 patas, en el MISMO PR)
 

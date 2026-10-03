@@ -1,0 +1,53 @@
+# CASO order-sentinel · lector de Jev en `jev` (motor de decisiones de hubara, F8):
+# hubara depositó la lectura de Jev ("ya salió" → shipping, con la cita textual)
+# y el LLM no vio señal. Con el lector en jev actúa el veredicto de Jev, bajo las
+# MISMAS guardas; el desacuerdo queda en `shadow` para la cola que califica
+# Claude Code.
+id: order-sentinel-jev-actua
+title: order-sentinel · lector jev (Jev actúa, ready→shipping)
+target: agent:order-sentinel
+seed:
+  payload:
+    schema_version: 1
+    now_ms: 1720500000000
+    reader: jev
+    conversations:
+      - session_id: wa_573001234567
+        order_id: order_01SALIO
+        current_stage: ready
+        payment_confirmed: true
+        messages:
+          - { who: customer, text: "hola, ¿mi pedido ya salió?", at_ms: 1720495000000, has_media: false }
+          - { who: human_operator, text: "ya salió con el mensajero, llega hoy", at_ms: 1720496000000, has_media: false }
+        reading:
+          verdict:
+            action: transition
+            to_stage: shipping
+            evidence: ["ya salió con el mensajero, llega hoy"]
+            confidence: high
+          model: typesafe/jev-1.13
+          error: null
+          answers: []
+ports:
+  llm: '{"action": "none", "evidence": [], "confidence": "low"}'
+golden:
+  schema_version: 1
+  snapshot_now_ms: 1720500000000
+  dispatch:
+    - kind: order_stage_intent
+      session_id: wa_573001234567
+      order_id: order_01SALIO
+      action: transition
+      to_stage: shipping
+      evidence: ["ya salió con el mensajero, llega hoy"]
+      confidence: high
+      by: jev
+  suppressed: []
+  llm_errors: []
+  reader: jev
+  shadow:
+    - session_id: wa_573001234567
+      order_id: order_01SALIO
+      llm: { action: none }
+      jev: { action: transition, to_stage: shipping }
+      agree: false

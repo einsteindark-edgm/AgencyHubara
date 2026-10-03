@@ -1,0 +1,1061 @@
+{
+ "rafaga": {
+  "0": [
+   {
+    "id": "topic.catalogo",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pide ver el catálogo, los diseños o los modelos?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.precio",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta cuánto vale o cuánto cuesta algo?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.envio",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por el envío o el domicilio (costo o cobertura)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.tiempos",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta cuánto tarda en llegar o cuándo está listo?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.pagos",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta cómo pagar o por un medio de pago?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.medidas",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por el tamaño o las medidas?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.variante",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por colores o variantes?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.aroma",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por los aromas?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.personalizacion",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pide personalizar (nombre, dedicatoria, diseño propio)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.disponibilidad",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta si hay disponible o en stock?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.estado_pedido",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por un pedido que ya hizo?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.datos_envio",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.confirma_compra",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente confirma que quiere comprar?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.aplaza",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente aplaza la compra (luego, otro día, voy en camino)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.queja",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente se queja o reporta un problema?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.foto",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por una foto que envió o citó?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.saludo",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente saluda?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "thread.answers_last_bot_question",
+    "kind": "noul",
+    "text": "¿El cliente está respondiendo la última pregunta del asesor?",
+    "criteria": {
+     "true": "sí, la responde",
+     "false": "no, habla de otra cosa"
+    }
+   },
+   {
+    "id": "thread.repeats_unanswered",
+    "kind": "noul",
+    "text": "¿El cliente repite algo que preguntó antes y quedó sin respuesta?",
+    "criteria": {
+     "true": "sí, lo repite",
+     "false": "no"
+    }
+   },
+   {
+    "id": "stage",
+    "kind": "choice",
+    "text": "¿En qué etapa de la compra está la conversación?",
+    "criteria": {
+     "apertura": "apertura",
+     "descubrimiento": "descubrimiento",
+     "variantes": "variantes",
+     "confirmacion": "confirmacion",
+     "datos_envio": "datos envio",
+     "cierre": "cierre",
+     "postcierre": "postcierre"
+    }
+   }
+  ],
+  "1": [
+   {
+    "id": "topic.catalogo",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pide ver el catálogo, los diseños o los modelos?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.precio",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta cuánto vale o cuánto cuesta algo?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.envio",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por el envío o el domicilio (costo o cobertura)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.tiempos",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta cuánto tarda en llegar o cuándo está listo?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.pagos",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta cómo pagar o por un medio de pago?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.medidas",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por el tamaño o las medidas?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.variante",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por colores o variantes?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.aroma",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por los aromas?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.personalizacion",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pide personalizar (nombre, dedicatoria, diseño propio)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.disponibilidad",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta si hay disponible o en stock?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.estado_pedido",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por un pedido que ya hizo?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.datos_envio",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.confirma_compra",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente confirma que quiere comprar?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.aplaza",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente aplaza la compra (luego, otro día, voy en camino)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.queja",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente se queja o reporta un problema?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.foto",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por una foto que envió o citó?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.saludo",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente saluda?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "thread.answers_last_bot_question",
+    "kind": "noul",
+    "text": "¿El cliente está respondiendo la última pregunta del asesor?",
+    "criteria": {
+     "true": "sí, la responde",
+     "false": "no, habla de otra cosa"
+    }
+   },
+   {
+    "id": "thread.repeats_unanswered",
+    "kind": "noul",
+    "text": "¿El cliente repite algo que preguntó antes y quedó sin respuesta?",
+    "criteria": {
+     "true": "sí, lo repite",
+     "false": "no"
+    }
+   },
+   {
+    "id": "stage",
+    "kind": "choice",
+    "text": "¿En qué etapa de la compra está la conversación?",
+    "criteria": {
+     "apertura": "apertura",
+     "descubrimiento": "descubrimiento",
+     "variantes": "variantes",
+     "confirmacion": "confirmacion",
+     "datos_envio": "datos envio",
+     "cierre": "cierre",
+     "postcierre": "postcierre"
+    }
+   },
+   {
+    "id": "msg.1.topic",
+    "kind": "choice",
+    "text": "¿Cuál es el asunto principal del mensaje [1]?",
+    "criteria": {
+     "catalogo": "catálogo",
+     "precio": "precio",
+     "envio": "envío",
+     "tiempos": "tiempos de entrega",
+     "pagos": "medios de pago",
+     "medidas": "medidas",
+     "variante": "colores o variantes",
+     "aroma": "aromas",
+     "personalizacion": "personalización",
+     "disponibilidad": "disponibilidad",
+     "estado_pedido": "estado del pedido",
+     "datos_envio": "datos de envío",
+     "confirma_compra": "confirmación de compra",
+     "aplaza": "aplazamiento",
+     "queja": "queja",
+     "foto": "la foto",
+     "saludo": "saludo",
+     "ninguno": "ningún asunto de la lista"
+    }
+   }
+  ],
+  "2": [
+   {
+    "id": "topic.catalogo",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pide ver el catálogo, los diseños o los modelos?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.precio",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta cuánto vale o cuánto cuesta algo?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.envio",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por el envío o el domicilio (costo o cobertura)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.tiempos",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta cuánto tarda en llegar o cuándo está listo?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.pagos",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta cómo pagar o por un medio de pago?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.medidas",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por el tamaño o las medidas?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.variante",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por colores o variantes?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.aroma",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por los aromas?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.personalizacion",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pide personalizar (nombre, dedicatoria, diseño propio)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.disponibilidad",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta si hay disponible o en stock?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.estado_pedido",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por un pedido que ya hizo?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.datos_envio",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.confirma_compra",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente confirma que quiere comprar?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.aplaza",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente aplaza la compra (luego, otro día, voy en camino)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.queja",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente se queja o reporta un problema?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.foto",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por una foto que envió o citó?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.saludo",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente saluda?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "thread.answers_last_bot_question",
+    "kind": "noul",
+    "text": "¿El cliente está respondiendo la última pregunta del asesor?",
+    "criteria": {
+     "true": "sí, la responde",
+     "false": "no, habla de otra cosa"
+    }
+   },
+   {
+    "id": "thread.repeats_unanswered",
+    "kind": "noul",
+    "text": "¿El cliente repite algo que preguntó antes y quedó sin respuesta?",
+    "criteria": {
+     "true": "sí, lo repite",
+     "false": "no"
+    }
+   },
+   {
+    "id": "stage",
+    "kind": "choice",
+    "text": "¿En qué etapa de la compra está la conversación?",
+    "criteria": {
+     "apertura": "apertura",
+     "descubrimiento": "descubrimiento",
+     "variantes": "variantes",
+     "confirmacion": "confirmacion",
+     "datos_envio": "datos envio",
+     "cierre": "cierre",
+     "postcierre": "postcierre"
+    }
+   },
+   {
+    "id": "msg.1.topic",
+    "kind": "choice",
+    "text": "¿Cuál es el asunto principal del mensaje [1]?",
+    "criteria": {
+     "catalogo": "catálogo",
+     "precio": "precio",
+     "envio": "envío",
+     "tiempos": "tiempos de entrega",
+     "pagos": "medios de pago",
+     "medidas": "medidas",
+     "variante": "colores o variantes",
+     "aroma": "aromas",
+     "personalizacion": "personalización",
+     "disponibilidad": "disponibilidad",
+     "estado_pedido": "estado del pedido",
+     "datos_envio": "datos de envío",
+     "confirma_compra": "confirmación de compra",
+     "aplaza": "aplazamiento",
+     "queja": "queja",
+     "foto": "la foto",
+     "saludo": "saludo",
+     "ninguno": "ningún asunto de la lista"
+    }
+   },
+   {
+    "id": "msg.2.topic",
+    "kind": "choice",
+    "text": "¿Cuál es el asunto principal del mensaje [2]?",
+    "criteria": {
+     "catalogo": "catálogo",
+     "precio": "precio",
+     "envio": "envío",
+     "tiempos": "tiempos de entrega",
+     "pagos": "medios de pago",
+     "medidas": "medidas",
+     "variante": "colores o variantes",
+     "aroma": "aromas",
+     "personalizacion": "personalización",
+     "disponibilidad": "disponibilidad",
+     "estado_pedido": "estado del pedido",
+     "datos_envio": "datos de envío",
+     "confirma_compra": "confirmación de compra",
+     "aplaza": "aplazamiento",
+     "queja": "queja",
+     "foto": "la foto",
+     "saludo": "saludo",
+     "ninguno": "ningún asunto de la lista"
+    }
+   }
+  ],
+  "3": [
+   {
+    "id": "topic.catalogo",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pide ver el catálogo, los diseños o los modelos?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.precio",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta cuánto vale o cuánto cuesta algo?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.envio",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por el envío o el domicilio (costo o cobertura)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.tiempos",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta cuánto tarda en llegar o cuándo está listo?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.pagos",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta cómo pagar o por un medio de pago?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.medidas",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por el tamaño o las medidas?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.variante",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por colores o variantes?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.aroma",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por los aromas?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.personalizacion",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pide personalizar (nombre, dedicatoria, diseño propio)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.disponibilidad",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta si hay disponible o en stock?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.estado_pedido",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por un pedido que ya hizo?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.datos_envio",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.confirma_compra",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente confirma que quiere comprar?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.aplaza",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente aplaza la compra (luego, otro día, voy en camino)?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.queja",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente se queja o reporta un problema?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.foto",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente pregunta por una foto que envió o citó?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "topic.saludo",
+    "kind": "noul",
+    "text": "¿En estos mensajes el cliente saluda?",
+    "criteria": {
+     "true": "sí, lo plantea en algún mensaje",
+     "false": "no lo plantea"
+    }
+   },
+   {
+    "id": "thread.answers_last_bot_question",
+    "kind": "noul",
+    "text": "¿El cliente está respondiendo la última pregunta del asesor?",
+    "criteria": {
+     "true": "sí, la responde",
+     "false": "no, habla de otra cosa"
+    }
+   },
+   {
+    "id": "thread.repeats_unanswered",
+    "kind": "noul",
+    "text": "¿El cliente repite algo que preguntó antes y quedó sin respuesta?",
+    "criteria": {
+     "true": "sí, lo repite",
+     "false": "no"
+    }
+   },
+   {
+    "id": "stage",
+    "kind": "choice",
+    "text": "¿En qué etapa de la compra está la conversación?",
+    "criteria": {
+     "apertura": "apertura",
+     "descubrimiento": "descubrimiento",
+     "variantes": "variantes",
+     "confirmacion": "confirmacion",
+     "datos_envio": "datos envio",
+     "cierre": "cierre",
+     "postcierre": "postcierre"
+    }
+   },
+   {
+    "id": "msg.1.topic",
+    "kind": "choice",
+    "text": "¿Cuál es el asunto principal del mensaje [1]?",
+    "criteria": {
+     "catalogo": "catálogo",
+     "precio": "precio",
+     "envio": "envío",
+     "tiempos": "tiempos de entrega",
+     "pagos": "medios de pago",
+     "medidas": "medidas",
+     "variante": "colores o variantes",
+     "aroma": "aromas",
+     "personalizacion": "personalización",
+     "disponibilidad": "disponibilidad",
+     "estado_pedido": "estado del pedido",
+     "datos_envio": "datos de envío",
+     "confirma_compra": "confirmación de compra",
+     "aplaza": "aplazamiento",
+     "queja": "queja",
+     "foto": "la foto",
+     "saludo": "saludo",
+     "ninguno": "ningún asunto de la lista"
+    }
+   },
+   {
+    "id": "msg.2.topic",
+    "kind": "choice",
+    "text": "¿Cuál es el asunto principal del mensaje [2]?",
+    "criteria": {
+     "catalogo": "catálogo",
+     "precio": "precio",
+     "envio": "envío",
+     "tiempos": "tiempos de entrega",
+     "pagos": "medios de pago",
+     "medidas": "medidas",
+     "variante": "colores o variantes",
+     "aroma": "aromas",
+     "personalizacion": "personalización",
+     "disponibilidad": "disponibilidad",
+     "estado_pedido": "estado del pedido",
+     "datos_envio": "datos de envío",
+     "confirma_compra": "confirmación de compra",
+     "aplaza": "aplazamiento",
+     "queja": "queja",
+     "foto": "la foto",
+     "saludo": "saludo",
+     "ninguno": "ningún asunto de la lista"
+    }
+   },
+   {
+    "id": "msg.3.topic",
+    "kind": "choice",
+    "text": "¿Cuál es el asunto principal del mensaje [3]?",
+    "criteria": {
+     "catalogo": "catálogo",
+     "precio": "precio",
+     "envio": "envío",
+     "tiempos": "tiempos de entrega",
+     "pagos": "medios de pago",
+     "medidas": "medidas",
+     "variante": "colores o variantes",
+     "aroma": "aromas",
+     "personalizacion": "personalización",
+     "disponibilidad": "disponibilidad",
+     "estado_pedido": "estado del pedido",
+     "datos_envio": "datos de envío",
+     "confirma_compra": "confirmación de compra",
+     "aplaza": "aplazamiento",
+     "queja": "queja",
+     "foto": "la foto",
+     "saludo": "saludo",
+     "ninguno": "ningún asunto de la lista"
+    }
+   }
+  ]
+ },
+ "verify": [
+  {
+   "id": "cover.catalogo",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «catálogo» que planteó el cliente?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.precio",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «precio» que el cliente planteó en el mensaje [1]?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.envio",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «envío» que el cliente planteó en el mensaje [2]?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.tiempos",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «tiempos de entrega» que planteó el cliente?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.pagos",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «medios de pago» que el cliente planteó en el mensaje [1]?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.medidas",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «medidas» que el cliente planteó en el mensaje [2]?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.variante",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «colores o variantes» que planteó el cliente?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.aroma",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «aromas» que el cliente planteó en el mensaje [1]?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.personalizacion",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «personalización» que el cliente planteó en el mensaje [2]?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.disponibilidad",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «disponibilidad» que planteó el cliente?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.estado_pedido",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «estado del pedido» que el cliente planteó en el mensaje [1]?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.datos_envio",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «datos de envío» que el cliente planteó en el mensaje [2]?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.confirma_compra",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «confirmación de compra» que planteó el cliente?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.aplaza",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «aplazamiento» que el cliente planteó en el mensaje [1]?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.queja",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «queja» que el cliente planteó en el mensaje [2]?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.foto",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «la foto» que planteó el cliente?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.saludo",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «saludo» que el cliente planteó en el mensaje [1]?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  }
+ ],
+ "burst_state": "Mensajes del cliente en este turno:\n[1] (+0 s) hola\n[2] (+3 s) precio?\n[3] (+8 s) y envío\nAsuntos que quedaron sin responder en turnos anteriores: pagos\nÚltimo mensaje del asesor antes de este turno: \"¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿Para qué ocasión es?¿\"",
+ "burst_state_plain": "Mensajes del cliente en este turno:\n[1] (+0 s) hola",
+ "reply_state": "Mensajes del cliente en este turno:\n[1] (+0 s) hola\n[2] (+3 s) precio?\n[3] (+8 s) y envío\nRespuesta del asesor:\nTe dejo el catálogo\nTarjetas y componentes que también recibe el cliente: present_products",
+ "reply_state_empty": "Mensajes del cliente en este turno:\n[1] (+0 s) hola\nRespuesta del asesor:\n(sin texto)"
+}

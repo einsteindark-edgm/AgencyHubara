@@ -60,8 +60,32 @@ from src.platform.workflow_helpers import (
     CONVERSATIONAL_TURN_ACTIVITIES as CONVERSATIONAL_TURN_ACTIVITIES,
     PRESENTATIONAL_TOOLS as PRESENTATIONAL_TOOLS,
     TURN_ENDING_TOOLS as TURN_ENDING_TOOLS,
+    # Bandeja de la ráfaga (PR burst-inbox): el workflow arma un `InboxMsg`
+    # por señal y `coalesce_inbox` los junta en UN turno con la nota de ráfaga.
+    InboxMsg as InboxMsg,
     PendingMessage as PendingMessage,
+    # Capa ② del turno con el motor de decisiones: el motor de ventas arma la
+    # política con las reglas que su activity grabó (`decisions/facade.py`).
+    TurnPolicy as TurnPolicy,
     TurnResult as TurnResult,
+    coalesce_inbox as coalesce_inbox,
     coalesce_pending as coalesce_pending,
     run_agent_turn as run_agent_turn,
+)
+
+# Lo que un workflow conversacional necesita alrededor del turno (motor de
+# decisiones F4: el workflow de ventas V2 nace sin importar platform, P-28).
+# Check de identidad: `tests/platform/test_agentkit.py`.
+from src.platform.contracts import (
+    # La tool de etiquetas o la red de seguridad cerraron el episodio: el
+    # workflow lo convierte en `EpisodeClosedEvent` y en el evento de CAPI.
+    EpisodeClosedDecision as EpisodeClosedDecision,
+)
+from src.platform.session_history.activities import (
+    # El lado del agente en el panel del dashboard (lo que el cliente leyó).
+    persist_assistant_message_activity as persist_assistant_message_activity,
+)
+from src.platform.temporal.retry_policies import (
+    # Opciones de una activity que llama al LLM o arma su sesión (bootstrap).
+    LLM_ACTIVITY_OPTIONS as LLM_ACTIVITY_OPTIONS,
 )

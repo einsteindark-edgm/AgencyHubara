@@ -448,6 +448,22 @@ class TestWhatsappCostMerge:
         # El merge no muta los buckets de origen (se reusan para adsets/ads).
         assert b1.wa_cost_by_category["service"] == {"count": 10, "usd_micros": 800}
 
+    def test_suma_el_costo_jev_de_los_anuncios(self):
+        b1 = _bucket(id="AD_1", jev_cost_usd_micros=60, jev_calls=3)
+        b2 = _bucket(id="AD_2", jev_cost_usd_micros=40, jev_calls=2)
+        names = {"AD_1": _names("AD_1"), "AD_2": _names("AD_2")}
+        (row,) = group_buckets_by_campaign([b1, b2], names)
+        assert (row.jev_cost_usd_micros, row.jev_calls) == (100, 5)
+        (none,) = group_buckets_by_campaign([_bucket(id="AD_1"), _bucket(id="AD_2")], names)
+        assert (none.jev_cost_usd_micros, none.jev_calls) == (None, None)
+
+    def test_suma_el_costo_de_las_fotos_de_los_anuncios(self):
+        b1 = _bucket(id="AD_1", vision_cost_usd_micros=940, vision_calls=3)
+        b2 = _bucket(id="AD_2", vision_cost_usd_micros=140, vision_calls=1)
+        names = {"AD_1": _names("AD_1"), "AD_2": _names("AD_2")}
+        (row,) = group_buckets_by_campaign([b1, b2], names)
+        assert (row.vision_cost_usd_micros, row.vision_calls) == (1080, 4)
+
     def test_none_honesto_si_ningun_anuncio_trae_costo(self):
         names = {"AD_1": _names("AD_1"), "AD_2": _names("AD_2")}
         (row,) = group_buckets_by_campaign(

@@ -60,6 +60,22 @@ variable "tenants" {
       episode_boundary_event = optional(bool, false)      # nota de frontera episode_closed (D1.10)
       allow_everyone         = optional(bool, false)      # permite ai_audience=EVERYONE desde la tab (D2.3)
     }), {})
+
+    # Laboratorio de conversaciones y capas del bot con clasificador
+    # (LABORATORIO_CONVERSACIONES_PLAN.md §4.4). Defaults = todo apagado. Se
+    # materializa como SSM String en /hubara/<tenant>/<VAR> (modules/lab-config).
+    lab = optional(object({
+      perception_mode_ceiling = optional(string, "off")    # techo del modo: off | shadow | canary | on
+      perception_profile      = optional(string, "jev-v5") # perfil del motor (sales/decisions/profiles.yaml): el mismo del brazo B del laboratorio
+      signal_inbound_meta     = optional(bool, false)      # 4.º argumento de send_message (se enciende tras desplegar el worker)
+      max_usd_per_run         = optional(number, 120)      # tope de gasto de una corrida del laboratorio
+      max_usd_per_month       = optional(number, 300)      # tope mensual del laboratorio
+      internal_numbers        = optional(list(string), []) # teléfonos del equipo, E.164 (+573001234567): sus conversaciones no entran al banco; [] = ninguno
+      capabilities_ceiling    = optional(string, "off")    # techo de las capacidades del motor de decisiones: off | shadow | canary | on
+      workflow_v2_ceiling     = optional(string, "off")    # techo del workflow de ventas V2: off | canary | on
+      order_sentinel_reader   = optional(string, "off")    # lector de Jev del Order Sentinel: off | shadow | on
+      decisions_bundle        = optional(string, "ventas") # paquete de decisión de la tienda (chats/shared/decisions/bundles/<id>, PAQUETES_DE_DECISION.md)
+    }), {})
   }))
 
   validation {
@@ -72,6 +88,50 @@ variable "tenants" {
       for t in values(var.tenants) : [for p in t.mba.customer_allowlist : can(regex("^\\+[1-9][0-9]{7,14}$", p))]
     ]))
     error_message = "tenants.*.mba.customer_allowlist: cada teléfono debe ser E.164 con '+' (p.ej. +573001234567)."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : contains(["off", "shadow", "canary", "on"], t.lab.perception_mode_ceiling)])
+    error_message = "tenants.*.lab.perception_mode_ceiling: off | shadow | canary | on."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : contains(["off", "shadow", "canary", "on"], t.lab.capabilities_ceiling)])
+    error_message = "tenants.*.lab.capabilities_ceiling: off | shadow | canary | on."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : contains(["off", "canary", "on"], t.lab.workflow_v2_ceiling)])
+    error_message = "tenants.*.lab.workflow_v2_ceiling: off | canary | on (V2 no tiene sombra)."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : contains(["off", "shadow", "on"], t.lab.order_sentinel_reader)])
+    error_message = "tenants.*.lab.order_sentinel_reader: off | shadow | on (el Order Sentinel es un lote diario: no tiene canary)."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : can(regex("^[a-z][a-z0-9-]{0,39}$", t.lab.decisions_bundle))])
+    error_message = "tenants.*.lab.decisions_bundle: id de paquete de decisión (la carpeta en chats/shared/decisions/bundles/, hasta 40 caracteres), p.ej. ventas."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : can(regex("^[a-z0-9][a-z0-9-]*$", t.lab.perception_profile))])
+    error_message = "tenants.*.lab.perception_profile: id de perfil (minúsculas, dígitos y guiones), p.ej. jev-v5."
+  }
+
+  validation {
+    condition = alltrue([
+      for t in values(var.tenants) : t.lab.max_usd_per_run > 0 && t.lab.max_usd_per_run <= t.lab.max_usd_per_month
+    ])
+    error_message = "tenants.*.lab: 0 < max_usd_per_run <= max_usd_per_month."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for t in values(var.tenants) : [for p in t.lab.internal_numbers : can(regex("^\\+[1-9][0-9]{7,14}$", p))]
+    ]))
+    error_message = "tenants.*.lab.internal_numbers: cada teléfono debe ser E.164 con '+' (p.ej. +573001234567)."
   }
 }
 
@@ -136,6 +196,12 @@ variable "secret_keys" {
     "META_APP_SECRET",
     "META_OAUTH_REDIRECT_URI",
     "META_OAUTH_SCOPES",
+    # Jev, el oráculo del motor de decisiones (MOTOR_DECISIONES_PLAN.md; 100 %
+    # Jev desde el 2026-09-28, sin el rival OpenAI). Lo lee el puerto de
+    # percepción, que llama directo a la Decisions API de OpenRouter (no pasa por
+    # el proxy LiteLLM). El operador crea la llave con límite de crédito y la
+    # carga fuera de banda; con el placeholder el puerto no llama a nadie.
+    "OPENROUTER_API_KEY",
   ]
 }
 

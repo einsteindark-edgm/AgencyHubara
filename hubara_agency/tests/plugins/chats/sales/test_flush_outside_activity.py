@@ -58,14 +58,17 @@ async def test_activity_keeps_its_name_and_delegates_to_the_plain_function(monke
 
     called: list[str] = []
 
-    async def fake(session_id: str) -> int:
-        called.append(session_id)
-        return 7
+    report = [{"kind": "quick_replies", "wamid": "wamid.7", "ok": True}]
 
-    monkeypatch.setattr(flush_ui_intents, "flush_pending_ui_intents", fake)
+    async def fake(session_id: str) -> list[dict]:
+        called.append(session_id)
+        return report
+
+    # Traza v2: la activity devuelve el reporte por intent de la función plana.
+    monkeypatch.setattr(flush_ui_intents, "flush_pending_ui_intents_report", fake)
     defn = activity._Definition.from_callable(flush_ui_intents.flush_pending_ui_intents_activity)
     assert defn is not None and defn.name == "flush_pending_ui_intents_activity"
     # sin contexto de activity el heartbeat no puede correr: la activity se
     # ejercita vía su función interna (`__wrapped__` del decorador de heartbeat)
     inner = flush_ui_intents.flush_pending_ui_intents_activity.__wrapped__
-    assert await inner(_SESSION) == 7 and called == [_SESSION]
+    assert await inner(_SESSION) == report and called == [_SESSION]

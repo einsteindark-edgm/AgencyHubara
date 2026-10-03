@@ -35,6 +35,9 @@ on:
         required: false
         type: boolean
         default: false
+      bundle:
+        description: "paquete de decisión (opcional; vacío = el del código, ventas). Para evaluar lo que corre la tienda, el que nombra Terraform (tenants.<t>.lab.decisions_bundle)"
+        required: false
 
 permissions:
   contents: read
@@ -79,7 +82,11 @@ jobs:
           OTEL_SDK_DISABLED: "true"
           GOLDEN_EVAL_VAULT: /tmp/golden_eval_vault
           EVAL_JUDGE_MODEL: litellm_proxy/gemini-pro-judge
+          # El paquete de decisión que evalúa (PAQUETES_DE_DECISION.md §9). Por
+          # env y no en el script: es texto del operador.
+          SALES_DECISIONS_BUNDLE: ${{ inputs.bundle }}
         run: |
+          echo "Paquete de decisión: ${SALES_DECISIONS_BUNDLE:-ventas (el del código)}" >> "$GITHUB_STEP_SUMMARY"
           ARGS=""
           [ -n "${{ inputs.scenario }}" ] && ARGS="$ARGS --scenario ${{ inputs.scenario }}"
           [ -n "${{ inputs.category }}" ] && ARGS="$ARGS --category ${{ inputs.category }}"

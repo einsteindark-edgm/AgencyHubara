@@ -152,4 +152,36 @@ describe("AdsAttributedTable — costo de WhatsApp por conversación (2026-09-18
     );
     expect(getByTestId("wa-cost-cell").textContent).toContain("+2 sin precio");
   });
+  it("columna 'Costo Jev' después de LLM y WA: lo que costó Jev + cuántas preguntas", () => {
+    const { getAllByRole, getByTestId } = render(
+      <AdsAttributedTable rows={[makeRow({ jevCostUsdMicros: 105, jevCalls: 5 })]} />,
+    );
+    const headers = getAllByRole("columnheader").map((h) => h.textContent?.trim());
+    expect(headers.slice(-4)).toEqual(["Costo LLM", "Costo WA", "Costo Jev", "Costo imágenes"]);
+    const cell = getByTestId("jev-cost-cell");
+    expect(cell.textContent).toContain("US$0.000105");
+    expect(cell.textContent).toContain("5 preguntas");
+  });
+
+  it("si la conversación no le preguntó a Jev, lo dice en vez de un 'US$0'", () => {
+    const { getByTestId } = render(<AdsAttributedTable rows={[makeRow({ jevCostUsdMicros: null })]} />);
+    const cell = getByTestId("jev-cost-cell");
+    expect(cell.textContent).not.toContain("US$");
+    expect(cell.querySelector("[title]")?.getAttribute("title")).toBe("Esta conversación no le preguntó a Jev");
+  });
+  it("columna 'Costo imágenes': lo que costó leer las fotos + cuántas lecturas", () => {
+    const { getByTestId } = render(
+      <AdsAttributedTable rows={[makeRow({ visionCostUsdMicros: 940, visionCalls: 3 })]} />,
+    );
+    const cell = getByTestId("vision-cost-cell");
+    expect(cell.textContent).toContain("US$0.00094");
+    expect(cell.textContent).toContain("3 lecturas");
+  });
+
+  it("sin fotos, lo dice en vez de un 'US$0'", () => {
+    const { getByTestId } = render(<AdsAttributedTable rows={[makeRow({ visionCostUsdMicros: null })]} />);
+    const cell = getByTestId("vision-cost-cell");
+    expect(cell.textContent).not.toContain("US$");
+    expect(cell.querySelector("[title]")?.getAttribute("title")).toBe("El cliente no mandó fotos en esta conversación");
+  });
 });

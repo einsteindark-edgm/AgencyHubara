@@ -213,6 +213,22 @@ def test_cie05_forbidden_closing_phrase_fails_on_that_turn() -> None:
     assert "Gracias por tu compra" in r.evidence
 
 
+def test_cie05_names_the_forbidden_phrase_and_why_even_at_the_end_of_a_long_message() -> None:
+    """Laboratorio caso-fotos-0930-r7, 4567 t24: la frase prohibida iba al
+    final de un mensaje largo y la evidencia citaba solo el comienzo, sin la
+    frase ni el porqué («no entiendo la calificación»)."""
+    closing = (
+        "Listo, Laura, tu pedido quedó registrado 🤍 Son 2 Velón Gorrión en Lavanda, una lila y una azul, "
+        "con envío a Chía y pago contra entrega.\n\nGracias por tu compra, cualquier cosa quedo atento por acá."
+    )
+    r = _run("CIE-05", traj(T(1, sent=["Claro"]), T(2, sent=[closing])))
+
+    assert (r.verdict, r.turn) == ("falla", 2)
+    assert "«Gracias por tu compra»" in r.evidence
+    assert "el pago todavía no está verificado" in r.evidence
+    assert "pago contra entrega. Gracias por tu compra, cualquier cosa" in r.evidence
+
+
 def test_cie05_two_messages_on_register_turn_fails() -> None:
     r = _run("CIE-05", _closed(reg_sent=["¡Tu pedido quedó registrado!", "En breve verificamos el pago"]))
     assert (r.verdict, r.turn) == ("falla", 3)

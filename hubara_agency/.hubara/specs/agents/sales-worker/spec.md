@@ -676,6 +676,35 @@ migrarse en la primera escritura.
 - AND `quitar=true` saca un producto del pedido (el cliente lo descartó o lo cambió)
 - AND un `set_order_slot` que no guardó nada se traza como fallo (`slots_rejected`), no en verde
 
+### Requirement: Un producto en varias variantes, una línea por variante (2026-09-30)
+
+Cuando el cliente reparte las unidades de un producto entre variantes, el
+borrador MUST guardar una línea por variante con SU cantidad
+(`set_order_slot(lineas=[{color, aroma, diseno, cantidad}, ...])`), no la
+cantidad total con un color y la otra variante en `notas`. Cada línea MUST
+validarse contra el producto; si una no sirve, no se escribe ninguna. Lo que
+todas las líneas anteriores compartían (el aroma) MUST conservarse, y las
+líneas con la misma variante se juntan. La confirmación y el registro MUST
+llevar una línea por cada una: completan el color y el aroma de cada línea con
+la del borrador cuando el LLM no los manda, y MUST rechazar
+(`split_lines_mismatch`) un pedido que junta las líneas. Un pedido sin
+productos repartidos MUST salir igual que antes.
+
+#### Scenario: «Mejor 2, una lila y otra azul» (laboratorio, caso 4567, turnos 22–23)
+
+- GIVEN un borrador con Velón Gorrión en Lavanda y color Lila
+- WHEN el cliente escribe «Mejor 2, una lila y otra azul» y el LLM invoca `set_order_slot(producto="Velón Gorrión", lineas=[{color: "Lila", cantidad: "1"}, {color: "Azul", cantidad: "1"}])`
+- THEN el borrador queda con dos líneas (1× Lila · Lavanda, 1× Azul · Lavanda) y la nota del turno las lista con «va en 2 líneas… una línea por cada una»
+- AND `present_order_confirmation` con `{velon-gorrion, Lila, quantity 2}` NO encola la tarjeta (`split_lines_mismatch`, con las líneas del borrador)
+- AND con dos líneas de cantidad 1 la tarjeta dice «1× Velón Gorrión (Lila · Lavanda)» y «1× Velón Gorrión (Azul · Lavanda)», y `register_order` registra dos líneas con su color y su aroma
+
+#### Scenario: escribir sobre un producto repartido sin las líneas
+
+- GIVEN Velón Gorrión repartido en 1× Lila y 1× Azul
+- WHEN el LLM manda `set_order_slot(color="Rosado")` o una cantidad distinta de la que suman
+- THEN no se guarda (`split_lines`) y el `summary` le pide `lineas` con TODAS las líneas
+- AND lo que todas comparten (`aroma="Limoncillo"`) se cambia en todas, la cantidad que ya suman no cambia nada y `quitar=true` saca todas sus líneas
+
 ### Requirement: Confirmación de compra antes del cierre
 
 El sistema SHALL registrar de forma determinista la confirmación de compra del
@@ -716,40 +745,267 @@ para que ventas no avance el cierre.
 - THEN el handoff empieza con `[EL CLIENTE APLAZÓ]` y prohíbe pedir datos de envío
 - AND ventas responde texto y no manda el formulario
 
-### Requirement: Lo que no existe en el catálogo se dice (2026-09-23)
+### Requirement: Lo que no existe en el catálogo se dice (2026-09-23, revisado 2026-09-29)
 
 Cuando el mensaje del cliente (incluida la descripción de una foto) pide o
-muestra un producto, forma, envase, diseño o presentación que no aparece en el
-catálogo, el ingest SHALL detectarlo sin LLM (`unavailable_terms` de
-`chats/shared/product_truth`, el mismo detector de la guarda del remarketing)
-e inyectar al `plugin_context` una nota que NOMBRA esos términos como
-inexistentes. El agente MUST decirle al cliente que no los manejamos y ofrecer
-la alternativa real más cercana; MUST NOT responder solo con el catálogo. Sin
-catálogo o con el catálogo caído no hay nota y el turno sigue (nunca bloquea).
-Con la conversación en manos de un humano no se calcula.
+muestra un producto, forma, envase, diseño o presentación que no aparece por
+nombre en el catálogo, el ingest SHALL detectarlo sin LLM (`unavailable_terms`
+de `chats/shared/product_truth`, el mismo detector de la guarda del
+remarketing) e inyectar al `plugin_context` una nota que NOMBRA esos términos.
+El detector es literal: la nota MUST NOT afirmar que el producto no existe.
+El agente MUST buscarlo con `search_products` (por el nombre y por lo que
+describe) antes de responder; si aparece algo que puede ser, MUST mostrarlo y
+preguntar si es ese, sin decir que no lo manejamos. Solo si no aparece nada
+parecido MUST decirle al cliente que no lo manejamos y ofrecer la alternativa
+real más cercana; MUST NOT responder solo con el catálogo. Sin catálogo o con
+el catálogo caído no hay nota y el turno sigue (nunca bloquea). Con la
+conversación en manos de un humano no se calcula.
 
 #### Scenario: Foto con una vela de dragón y «¿y en vaso también?»
 
 - GIVEN ningún producto del catálogo viene en vaso ni tiene diseño de dragón
 - WHEN el cliente manda la foto y escribe «Estás y en vaso también»
 - THEN el turno lleva la nota con «dragón» y «vaso»
-- AND la respuesta dice que eso no lo manejamos y ofrece lo más parecido (Cubo Love, Cilindro Love, Cubo de corazón)
+- AND tras buscar sin encontrar nada parecido, la respuesta dice que eso no lo manejamos y ofrece lo más parecido (Cubo Love, Cilindro Love, Cubo de corazón)
+
+#### Scenario: Foto de un producto nuestro descrito con otras palabras (caso 6543, laboratorio 2026-09-29)
+
+- GIVEN la foto es una captura del Sacrificio de Amor y la visión la describe como «vela gris con detalles dorados en forma de cruz y rostro de Jesús»
+- AND «jesús» no aparece escrito en el catálogo
+- WHEN el cliente pregunta «tienes esta?»
+- THEN la nota nombra «jesús» sin afirmar que no existe y pide buscarlo antes de responder
+- AND la respuesta no dice que no lo manejamos antes de buscar en el catálogo
 
 #### Scenario: Pregunta por un producto real
 
 - WHEN el cliente pregunta «¿El cubo de corazón viene en azul?» y el catálogo tiene azul
 - THEN el turno no lleva la nota
 
+#### Scenario: Foto ya reconocida como un producto nuestro (2026-09-30)
+
+- GIVEN la foto se reconoció como el Sacrificio de Amor (ver «La foto del cliente se reconoce contra el catálogo»)
+- WHEN el cliente pregunta «tienes esta?»
+- THEN la descripción de esa foto no propone términos («jesús») y el turno no lleva la nota por ella
+- AND lo que el cliente escribió en la foto se sigue leyendo («¿y en vaso?» sí lleva la nota)
+
+### Requirement: La foto del cliente se reconoce contra el catálogo (2026-09-30)
+
+Cuando llega una foto que no es un comprobante, el ingest SHALL intentar
+reconocer qué producto NUESTRO es, sin que el LLM empareje texto contra texto:
+
+1. Texto visible: la visión devuelve por campo el texto que se lee (nombre,
+   precio, URL, código). Un código (SKU) de una variante, un enlace de NUESTRA
+   tienda (`/products/<handle>`, aunque venga cortado; un enlace de otra
+   tienda nunca cuenta) o el nombre exacto o casi exacto (≥ 0,90 y 0,08 por
+   encima del segundo) identifican el producto. El precio MUST NOT decidir;
+   si se lee un precio que no es el nuestro, la imagen confirma.
+2. Imagen, solo en fotos de producto y si el texto no decidió: los 5
+   productos más parecidos por embedding de imagen (índice de fotos del
+   catálogo junto al snapshot) y un verificador que dice cuál es el mismo
+   diseño o ninguno, con tiempo máximo. MUST preferir «ninguno» a un producto
+   equivocado.
+3. Sin identificación, la foto entra como hoy (con su descripción).
+
+Si se reconoce, la foto SHALL entrar a la conversación nombrando el producto y
+cómo se supo (`… (es nuestro producto «X»: se lee su nombre en la imagen)]`;
+queda en el historial y en el dashboard) y el turno SHALL llevar la nota
+`[FOTO DEL CLIENTE, metadata…]` que prohíbe negarlo; si fue por la imagen, la
+nota pide mostrarlo y preguntar si es ese. El reconocimiento MUST NOT frenar
+el ingest: cualquier falla deja la foto como hoy. El índice de fotos se
+completa en segundo plano.
+
+#### Scenario: Captura del catálogo con el nombre (caso 6543)
+
+- GIVEN la foto es una captura de nuestro catálogo donde se lee «Sacrificio de Amor» y COP 20,000
+- WHEN llega con el texto «tienes esta?»
+- THEN entra como «[el cliente envió una foto: … (es nuestro producto «Sacrificio de Amor»: se lee su nombre en la imagen)]»
+- AND el turno lleva la nota con «Sacrificio de Amor» (handle sacrificio-de-amor) y la orden de no negarlo
+
+#### Scenario: Foto sin texto de un producto nuestro
+
+- GIVEN la foto muestra dos velas lila y azul con pájaros en una rama, sin texto
+- WHEN la visión no lee nombre, enlace ni código
+- THEN el verificador elige el Velón Gorrión entre los 5 más parecidos
+- AND la nota pide mostrarlo y preguntar si es ese
+
+#### Scenario: Captura de otra tienda
+
+- GIVEN la captura muestra «Vela Aurora Boreal» y un enlace de otra tienda que termina en `/products/angel`
+- WHEN se busca el producto
+- THEN no se reconoce ninguno (ni por el enlace ni por la imagen) y la foto entra como hoy
+
+### Requirement: Lo verificado de las fotos vale el resto del episodio (2026-09-30)
+
+La foto reconocida SHALL quedar en `recent_image_descriptions` con su episodio y
+el producto (handle, cómo se supo y nombre). Cada mensaje del cliente que NO es
+una foto SHALL llevar la nota `[FOTOS DEL CLIENTE YA RECONOCIDAS, metadata…]`
+con las fotos reconocidas del episodio activo: es un hecho verificado, el bot
+MUST NOT decir que no los tenemos, corrige con amabilidad si antes se dijo lo
+contrario y, si el cliente dice que falta alguno, revisa lo que ya le mostró.
+Las fotos no reconocidas no entran (no son un hecho).
+
+La nota sola perdió contra el historial (r8: el bot ya lo había negado antes y
+lo repitió). Por eso `send_reply` SHALL retener UNA vez por mensaje del
+cliente una respuesta que diga que no tenemos un producto («no la tenemos»,
+«la única que manejamos», «no están en el catálogo») cuando el episodio tiene
+fotos verificadas, y devolverle al modelo la lista de lo verificado; el
+segundo intento MUST salir (si habla de otro producto, lo reenvía igual). Una
+oración sobre un cupón, un código, un descuento, un color, un aroma, el envío
+o el pago no niega un producto.
+
+#### Scenario: «No están todas» (laboratorio caso-fotos-0930-r7, 4567 t13)
+
+- GIVEN las cuatro fotos del cliente se reconocieron como Velón Gorrión, Luz de Belén, Luz Serena y Sacrificio de Amor
+- WHEN el cliente escribe «me gustaría esas, pero no están todas»
+- THEN el turno lleva la nota con las cuatro y la orden de no negarlas
+- AND si el bot igual responde «la única que manejamos es el Velón Gorrión», `send_reply` la retiene con la lista de lo verificado y el bot la corrige
+
+### Requirement: No promete revisar y responder después (2026-09-30)
+
+El bot no puede volver a escribir por su cuenta (AGENTS.md). `send_reply` SHALL
+retener UNA vez por mensaje del cliente una respuesta que prometa revisar o
+confirmar después («dame un momento y te confirmo», «déjame revisar», «voy a
+consultar», «ahora vuelvo») y pedirle al modelo que lo revise AHORA con las
+herramientas; el segundo intento MUST salir. «Te confirmo que sí la tenemos» o
+«ya te muestro las opciones» no son promesas.
+
+#### Scenario: «Dame un momento y te confirmo» (laboratorio caso-fotos-0930-r9, 4567 t13)
+
+- WHEN el bot responde «Déjame revisar bien las cuatro que me enviaste… Dame un momento y te confirmo»
+- THEN no sale y el modelo revisa con las herramientas y responde en el mismo turno
+
+### Requirement: El mensaje que sigue a una foto espera a la foto (2026-09-30)
+
+Mientras la visión lee una foto del cliente (1,5 a ~4,5 s), cualquier otro
+mensaje suyo SHALL esperar a que la foto entre al bot antes de pasar al
+workflow, con tope de 10 s: así la foto y el «¿tienes esta?» van en la misma
+ráfaga y en orden. Las fotos no se esperan entre sí y otro cliente no espera.
+
+#### Scenario: Foto y enseguida «¿tienes esta?»
+
+- GIVEN el cliente manda una foto y 1 s después «¿tienes esta?»
+- WHEN la visión tarda 3 s
+- THEN el workflow recibe primero la foto y después el texto, en la misma ráfaga
+
+### Requirement: La ráfaga espera la foto que se está leyendo (texto antes de la foto, 2026-09-30)
+
+Cuando el texto llega ANTES que la foto, el texto ya está en el workflow. El
+ingest SHALL avisarle al workflow de ventas (señal `photo_reading(wamid)`) que
+empezó a leer una foto del cliente y, después de que la foto entró como mensaje,
+que terminó (`done=True`). Sin arrancar nada: sin workflow vivo, la foto entra
+como hoy. El inicio va solo a la ruta de ventas; el fin va siempre (un
+comprobante pasa la conversación a una persona mientras se lee). El workflow
+(V1 y V2):
+- SHALL esperar la foto cuando la ráfaga iba a cerrar con una foto leyéndose
+  (tope 15 s; una foto que no llega se da por perdida y no se vuelve a esperar);
+- SHALL tratar la foto que empieza a leerse mientras el modelo piensa como algo
+  nuevo del cliente: si el turno todavía no le mostró nada, vuelve a empezar y
+  espera la foto (una sola respuesta que ve las dos cosas). La traza marca el
+  reinicio con `photo: true`.
+Las histories sin la señal re-juegan igual (patch `burst-waits-for-photo-v1`,
+consultado solo cuando hay una foto leyéndose).
+
+#### Scenario: «¿tienes esta en azul?» y la foto 1 s después
+
+- GIVEN el cliente escribe «¿tienes esta en azul?» y enseguida manda una foto
+- WHEN la visión tarda 6 s (más que el silencio de 1,5 s de la ráfaga)
+- THEN el bot responde UNA vez, con el texto y la foto en el mismo turno
+
+#### Scenario: La foto empieza a leerse mientras el modelo piensa
+
+- GIVEN la ráfaga ya cerró con el texto y el modelo está en su primera ronda
+- WHEN el ingest avisa que está leyendo una foto del cliente
+- THEN la respuesta sin la foto no sale, el turno espera la foto y responde con las dos cosas
+
+### Requirement: El carrito llega con los nombres del catálogo (2026-09-30)
+
+Cada ítem del carrito de WhatsApp (`product_retailer_id`: SKU o id de variante)
+SHALL resolverse contra el catálogo: `2× Trilogía del Terror a $95.900 c/u
+(HUB-TRILOGIA)`, con la variante si el producto tiene variantes reales y el
+precio del catálogo (nunca el `item_price` de Meta). El turno SHALL llevar la
+nota `[CARRITO DEL CLIENTE…]` con el handle de cada producto. Un ítem que el
+catálogo no tiene sale `(no está en el catálogo)`; sin catálogo, el carrito
+sale con sus códigos como antes.
+
+#### Scenario: Carrito con una variante
+
+- GIVEN el carrito trae `1× variant_leo` del Duo Zodiacal
+- WHEN llega al ingest
+- THEN el bot y el operador leen `1× Duo Zodiacal · Leo a $49.500 c/u (variant_leo)`
+
 ### Requirement: Variantes siempre en formato picker
 
 Si el texto final del turno enumera 4 o más aromas o colores del catálogo y el
 turno no emitió `present_variant_picker`, el workflow SHALL encolar el picker
-(mismo intent que la tool) y suprimir el texto plano (run 9bd495be).
+(mismo intent que la tool) y suprimir el texto plano (run 9bd495be). La guarda
+solo cambia el FORMATO de la lista (2026-09-30): lo que el bot escribió antes
+de la lista SHALL encabezar el selector y lo que escribió después SHALL
+cerrarlo (en vez de la línea por defecto). La traza guarda el texto que recibió
+el cliente.
 
 #### Scenario: Lista de 11 aromas en texto
 
 - WHEN el LLM responde "Tenemos 11 aromas disponibles: Caballero de la noche, …" sin picker
 - THEN el cliente recibe el picker curado con los 11 aromas y no la lista plana
+
+#### Scenario: La respuesta va antes de la lista (laboratorio 4567 t19)
+
+- WHEN el LLM responde «Jengibre no está entre los aromas de la Luz Serena. Los que maneja son: <11 aromas>. ¿Alguno de esos te llama la atención?»
+- THEN el cliente recibe «Jengibre no está entre los aromas de la Luz Serena. Los que maneja son:», el selector y «¿Alguno de esos te llama la atención?»
+
+### Requirement: La lista de opciones vuelve al modelo antes de salir (2026-09-30)
+
+La protección de arriba decide DESPUÉS del turno. Antes, `send_reply` SHALL
+preguntarle al motor si el texto es una lista de aromas o colores para escoger
+(capacidad `enumeracion`: la regla en el bot actual, Jev en el nuevo, con las
+etiquetas del catálogo) y, si lo es, devolverlo UNA vez por mensaje del cliente
+(`option_list`) con lo que tiene que hacer: `present_variant_picker` con el
+tipo, las opciones, el handle del producto y en `intro_text` lo que iba a decir
+antes de la lista. El segundo intento MUST salir (la protección sigue como red).
+Sin catálogo, sin vault o con cualquier falla, el texto sale como siempre. Las
+tools llegan al motor por su fachada (`decisions/guards.option_list`).
+
+El contrato del turno (`turno-v3`) SHALL aceptar `present_variant_picker` para
+el asunto «variante» en cualquier etapa (antes pedía la ficha fuera de la etapa
+de variantes): el selector trae las opciones del catálogo.
+
+#### Scenario: «mejor la de los pajaritos / en lila» (laboratorio caso-fotos-0930-r10, 4567 t20)
+
+- GIVEN el bot anotó el Velón Gorrión en lila
+- WHEN responde con `send_reply` «¿Qué aroma quieres? Maneja Caballero de la noche, Limoncillo, …»
+- THEN el texto no sale y el modelo manda `present_variant_picker` con los aromas del Velón Gorrión
+- AND la protección no tiene que actuar (r11: los dos bots, t19 y t20)
+
+#### Scenario: Una lista que no es para escoger
+
+- WHEN el bot escribe «Ese color no lo manejamos, pero sí el lila» o nombra dos opciones
+- THEN el texto sale como está
+
+### Requirement: «Enviar mensaje a la empresa» dice de qué producto le escriben (2026-09-30)
+
+Cuando el cliente escribe desde la ficha de un producto del catálogo de
+WhatsApp, Meta manda el producto en `context.referred_product` (el SKU de la
+variante, o su id si no tiene SKU). El ingest SHALL leer solo un código de
+catálogo válido, resolverlo contra el catálogo como el carrito (nombre y
+variante; SKU, id de la variante o del producto) y guardarlo en el mismo estado
+del botón de la web (`web_product_ref`, por episodio, `origin:
+catalogo_whatsapp`). Mientras el episodio no tenga pedido, el turno SHALL llevar
+la nota `[PRODUCTO DE LA FICHA DEL CATÁLOGO…]` con el producto; un producto que
+el catálogo no tiene MUST NOT llegar al prompt. Una conversación en manos de una
+persona no se toca. El dashboard SHALL mostrar la cita con el producto
+(«Ficha del catálogo · Luz Serena»).
+
+El texto del catálogo (lista nativa de productos, primera página) SHALL decir
+cómo se usan los dos botones de la ficha, que no se pueden cambiar: «Añadir a la
+solicitud de pedido» para pedirla y «Enviar mensaje a la empresa» para preguntar
+por ella.
+
+#### Scenario: «Hola, ¿la tienen disponible?» desde la ficha de la Luz Serena
+
+- GIVEN el cliente toca «Enviar mensaje a la empresa» en la ficha de la Luz Serena
+- WHEN el ingest recibe el texto con `referred_product.product_retailer_id = HUB-SERENA`
+- THEN el bot recibe la nota de que escribió desde la ficha de la Luz Serena (handle `luz-serena`)
+- AND el operador ve en Chats la cita «Ficha del catálogo · Luz Serena»
 
 ### Requirement: El formulario de envío extiende el ghosting
 
@@ -795,6 +1051,296 @@ La traza SHALL atribuirse al episodio abierto cuando ARRANCÓ el turno (el
 - WHEN se persiste la traza del turno
 - THEN la traza es de `ep_007` (el episodio abierto al arrancar el turno) y encadena su numeración
 - AND `ep_008` no recibe un turno fantasma
+
+### Requirement: La traza guarda los pasos del turno en orden (traza v2, 2026-09-23)
+
+La traza (versión 2) SHALL registrar, además de los campos v1, los `steps` del
+turno en el orden en que pasaron, con su tiempo relativo al inicio del turno:
+cada `llm_chat` (ronda, motivo de fin, tools pedidas, tokens y qué pasó con su
+texto), cada `execute_tool` (con su resultado), cada corte del turno (cliente
+esperando, escalación, `send_reply`, cierre de tag, Checkpoints A y B), cada
+guarda con el texto antes y después, cada reinicio por corrientazo y cada
+burbuja o componente que salió, con su wamid. SHALL traer también un
+`turn_key` determinista (`run:<run_id>/t:<n>`), `source` (`prod` o
+`lab:<corrida>:<brazo>:<rep>`) y `mode`. El campo v1 `guards` SHALL seguir igual
+(ordenado y sin nombres nuevos), para que el scorecard no cambie. El registro
+SHALL armarse en memoria del workflow, sin agregar commands a la history; las
+activities de envío SHALL seguir aceptando el resultado que grabaron las
+histories anteriores (`None` del envío, un entero del flush). Plan del
+laboratorio de conversaciones, §4.1.
+
+#### Scenario: Turno con una búsqueda
+
+- WHEN el LLM pide `search_products`, lee el resultado y responde
+- THEN `steps` es `llm → tool → llm → outbound`, la narración junto a la tool figura como descartada y la burbuja trae su wamid
+
+#### Scenario: Corrientazo
+
+- WHEN el cliente escribe mientras el LLM piensa y el turno se reinicia
+- THEN `steps` muestra el intento abortado, el corte `checkpoint_a`, el `restart` y el intento que respondió
+
+#### Scenario: Ráfaga con los ids de cada mensaje
+
+- GIVEN `SALES_SIGNAL_INBOUND_META=on` en la API y el worker que acepta el 4.º argumento de `send_message`
+- WHEN el cliente manda dos mensajes seguidos
+- THEN la traza trae `inbound[]` con el `wamid`, la hora (`ts_ms`) y el tipo de cada mensaje, en orden
+- AND una señal de 3 argumentos (history anterior o variable apagada) sigue funcionando, con `wamid` y `ts_ms` en null
+- AND un 4.º argumento con otra forma se ignora: nunca se descarta el mensaje del cliente
+
+#### Scenario: Lo que recibe el modelo en cada ronda (2026-09-30)
+
+- WHEN el turno llama al modelo dos veces
+- THEN el paso de la primera ronda guarda `sent` con el tamaño de cada parte de las instrucciones, las notas del turno, el historial por rol y el mensaje del cliente como lo lee el modelo (el `Chat ID` enmascarado)
+- AND el de la segunda guarda solo lo nuevo: los resultados de las herramientas y las notas del bot
+- AND los textos van acotados (notas 6000, mensaje 4000, cada resultado 1500) y el paso de cada tool guarda sus argumentos hasta 600 caracteres (el resumen v1 sigue en 160)
+
+#### Scenario: History anterior a la traza v2
+
+- GIVEN una history que grabó `None` como resultado del envío y un entero como resultado del flush
+- WHEN el worker nuevo la re-juega
+- THEN no diverge y la burbuja queda con `delivered: null`
+
+### Requirement: Capas del turno con clasificador detrás del modo (laboratorio, PR 14)
+
+El turno de ventas SHALL poder usar el motor de decisiones con Jev (Decisions API de OpenRouter; 100 % Jev desde el 2026-09-28, sin rival OpenAI) en tres capas, SOLO cuando la señal del cliente trae un modo activo (`inbound_meta.perception_mode` = `shadow`, `canary` u `on`), acotado por el techo de Terraform `SALES_PERCEPTION_MODE_CEILING` (default `off`). Sin modo o con `off`, el turno MUST ser el de hoy: no se consulta `workflow.patched("perception-v1")` ni se agenda ninguna activity nueva. El clasificador MUST fallar abierto: un error o timeout deja el turno como hoy.
+
+#### Scenario: Modo apagado — el turno de hoy
+
+- GIVEN una señal sin `perception_mode` (o con `off`)
+- WHEN corre el turno
+- THEN no corre `perceive_burst` ni `verify_coverage`, la traza dice `mode: off` y las histories anteriores re-juegan sin divergir
+
+#### Scenario: Sombra — se mide sin cambiar la respuesta
+
+- GIVEN modo `shadow`
+- WHEN el cliente manda una ráfaga
+- THEN la percepción corre en paralelo al LLM y la verificación después de enviar
+- AND la respuesta al cliente es la misma que sin modo; la traza guarda `perception`, `plan` y `verify` con `applied: false`
+
+#### Scenario: Encendido — plan, ronda extra y complemento
+
+- GIVEN modo `on` y una ráfaga "¿me mandas el catálogo?" + "¿y el envío a Bogotá?"
+- WHEN el clasificador detecta los dos asuntos
+- THEN el LLM recibe la nota `[PLAN DEL TURNO]` con cada asunto y su mensaje
+- AND si una tool que espera al cliente (ej. `send_shipping_rates`) cortaría el turno sin atender el catálogo, hay UNA ronda más con esa nota (`turn_policy`)
+- AND si la verificación dice con claridad que un asunto quedó sin atender, se envía UN complemento como turno de sistema (`trigger: complement`); si hay duda, el asunto queda pendiente para la percepción del turno siguiente
+- AND si el cliente escribe antes del complemento, su mensaje manda y el complemento se descarta
+- AND la verificación en la traza guarda su costo (`cost_usd`) y `complement_scheduled: true` solo si este turno agendó el complemento (el laboratorio espera ese segundo turno sin adivinar)
+
+#### Scenario: La verificación juzga lo que el cliente recibe en el turno
+
+- GIVEN modo `on` en el primer contacto: el workflow manda el saludo (Burbuja 1) y después el texto del `send_reply`
+- WHEN la verificación corre antes de enviar el texto final
+- THEN juzga el saludo y el texto final juntos, tal como los recibe el cliente (lo ya enviado en el turno + el texto final si sale, después de las guardas); un texto que una guarda retiene no cuenta como respuesta
+- AND en `shadow` juzga exactamente el mismo texto, leído de lo enviado: la vara es la misma en los dos modos
+
+#### Scenario: Las reglas del turno viajan grabadas (motor de decisiones)
+
+- GIVEN modo `on` y el motor detecta asuntos
+- WHEN el workflow aplica la capa ①②③
+- THEN la nota del turno, las reglas de la ronda extra (qué tool o qué texto atiende cada asunto) y el texto del complemento salen del resultado GRABADO de las activities del motor (`perceive_burst`, `verify_coverage`); el workflow no conoce preguntas, umbrales ni cuestionarios
+- AND cambiar una regla del motor solo afecta a los turnos nuevos: una conversación en vuelo re-juega con lo que quedó grabado
+
+#### Scenario: La ronda extra juzga lo que el cliente ve
+
+- GIVEN modo `on` y el LLM corta el turno con una tool que espera al cliente, con narración junto a la tool ("Te comparto el catálogo")
+- WHEN la capa ② decide si falta un asunto
+- THEN juzga solo lo que el cliente ve (lo validado por `send_reply` y los textos de las tools que no se negaron), nunca la narración que el default-deny descarta
+- AND un aplazamiento del cliente queda atendido solo con un texto que le llegue
+- AND la verificación ③ cuenta como tarjetas solo las tools que le llegan al cliente (sin `send_reply` ni las que respondieron `queued: false`)
+
+#### Scenario: Clasificador caído
+
+- GIVEN modo `on` y el clasificador responde error o timeout
+- WHEN corre el turno
+- THEN el turno sale como hoy (sin nota, sin ronda extra, sin complemento) y la traza guarda el motivo en `perception.fallback`
+
+#### Scenario: Bajar el modo llega a la conversación en curso
+
+- GIVEN `SALES_SIGNAL_INBOUND_META=on` y una conversación viva cuyo workflow quedó en `on`
+- WHEN el techo baja a `off` (o el control lo apaga) y el cliente escribe
+- THEN la señal lleva `perception_mode: off` EXPLÍCITO (el workflow se queda con el último modo recibido) y el siguiente turno corre sin capas, sin esperar a que la sesión termine
+
+#### Scenario: Ningún dato personal sale hacia el clasificador
+
+- GIVEN modo `shadow`, `canary` u `on`
+- WHEN la ráfaga y la respuesta del asesor salen hacia OpenRouter o TypeSafe
+- THEN van sin teléfonos, correos, direcciones (también sin `#`: "cra 7 45-12"), nombres anunciados ("me llamo …", "a nombre de …"), valores personales del formulario de envío, ni el nombre de quien recibe, la dirección y el barrio del borrador del episodio
+- AND el clasificador lee lo que escribió el cliente (`inbound_meta.text`), no la campaña citada ni el resumen del episodio anterior que el turno le agrega al LLM
+
+#### Scenario: La traza mide al clasificador, no al turno
+
+- GIVEN modo `shadow` (la percepción se lee después de enviar)
+- WHEN se guarda el paso `perception`
+- THEN `latency_ms` y `dur_ms` son la latencia del clasificador (la vara del canary, p95 < 1500 ms, se mide con este valor)
+
+### Requirement: Encendido del bot nuevo por etapas desde Agents (laboratorio, PR 16)
+
+El modo de cada conversación SHALL salir del estado `<vault>/_rollout/perception.json`, que escribe el panel "Bot nuevo" de la sección Agents (contrato `perception-rollout@v1` de chats, consumido por cast `/api/agents/perception/rollout`). El ingest lo lee en cada mensaje y MUST acotarlo al techo de Terraform `SALES_PERCEPTION_MODE_CEILING`. En `canary`, el modo `on` aplica a los números de prueba y a un porcentaje estable de conversaciones (bucket por hash del `session_id`); el resto queda en `shadow`. Apagar y bajar MUST pasar siempre: escriben sin recorrer el vault ni revalidar lo guardado, y el panel muestra Apagar aunque no pueda leer el estado o haya otro cambio en vuelo. Subir MUST exigir los chequeos: `SALES_SIGNAL_INBOUND_META` encendido, dentro del techo, llave presente (el placeholder de Terraform no cuenta), y para `canary`/`on` la vara de la sombra medida con el perfil vigente en las últimas dos semanas y sin la suite golden: 7 días distintos con turnos, al menos 150 turnos, caídas < 1 % y p95 de la latencia del clasificador < 1500 ms. Cada cambio MUST quedar firmado (`updated_by`, el usuario del token) y en el log (`perception.rollout_changed`).
+
+#### Scenario: Apagar es inmediato
+
+- GIVEN modo `on` en el estado
+- WHEN el operador pulsa "Apagar" en Agents
+- THEN el PUT con `{mode: off}` pasa sin chequeos y el siguiente mensaje de cada conversación, también de las que están en curso, viaja con `perception_mode: off` (turno de hoy)
+
+#### Scenario: Subir sin la vara de la sombra
+
+- GIVEN 3 días de sombra medida
+- WHEN el operador pide `on`
+- THEN el botón está deshabilitado y el panel dice qué chequeo falla; un PUT directo da 422 `not_ready` con los chequeos que fallan
+
+#### Scenario: Calidad LLM separa los bots durante el encendido (PR 18)
+
+- GIVEN episodios de producción en canary, unos respondidos por el bot nuevo (algún turno con modo `on`/`canary` en la traza) y otros por el actual (sin modo o en `shadow`)
+- WHEN el operador elige "Bot nuevo" o "Bot actual" en Calidad LLM
+- THEN el resumen y la matriz muestran solo los episodios de ese bot (`?bot=nuevo|actual` en `/evals/checks/stats` y `/evals/scorecards`)
+
+#### Scenario: El techo manda
+
+- GIVEN estado `on` y techo `shadow` en Terraform
+- WHEN llega un mensaje
+- THEN la conversación corre en `shadow` y el panel dice "Encendido (corre en sombra por el techo)"
+
+#### Scenario: Una subida lenta no pisa un apagado
+
+- GIVEN un operador pide `canary` y las métricas de la sombra tardan
+- WHEN mientras tanto otro operador pulsa Apagar
+- THEN el apagado se escribe de inmediato y la subida responde 409 `changed` sin tocar el estado
+
+### Requirement: El bot nuevo no tiene reglas de texto fuera del motor (revisión 2026-09-29)
+
+En una conversación del workflow V2 (`HubaraSalesSessionWorkflowV2`), toda lectura semántica del texto del cliente o del LLM SHALL decidirse en el motor de decisiones: una capacidad con su pregunta a Jev, su política y la regla de hoy como respaldo DENTRO del motor. Ninguna regla de texto MUST volver a juzgar después lo que el motor decidió. V1, remarketing y ETA MUST seguir byte a byte como hoy. El laboratorio (brazo B) y el perfil por defecto de producción MUST correr el MISMO perfil del bot nuevo (`jev-v3`).
+
+#### Scenario: El envío respeta lo que decidió el motor
+
+- GIVEN una conversación V2 con `destinatario` en Jev y un texto «Usa el código VELAS_10 al pagar» que el egreso aprobó
+- WHEN el workflow lo envía
+- THEN `send_whatsapp_message_activity` recibe el 3.er argumento `decided_by_engine=True`, no vuelve a pasar el detector de fugas y el texto sale; el panel y el historial del LLM guardan lo que salió
+- AND en V1 (dos argumentos) el mismo texto sigue frenado en el envío
+
+#### Scenario: El acuse tras la despedida lo decide el motor (capacidad `acuse`)
+
+- GIVEN un episodio cerrado y el cliente escribe una cortesía larga que la regla no conoce
+- WHEN el ingest lee el mensaje con el bot de la sesión en Jev
+- THEN solo se absorbe (no abre episodio ni despierta al bot) si Jev está seguro (p ≥ 0,90); con duda, error o un «?» en el mensaje, el bot despierta
+
+#### Scenario: La muletilla del modelo la decide el motor (capacidad `preambulo`)
+
+- GIVEN el LLM empieza su respuesta con una frase de presentación («Aquí tienes:»)
+- WHEN el egreso de V2 (o la tool) decide el texto con el bot en Jev
+- THEN Jev decide oración por oración (corta con p ≥ 0,85, deja con p ≤ 0,15); si duda, decide la regla de hoy; nunca deja el texto vacío
+
+#### Scenario: El laboratorio mide el bot nuevo completo
+
+- GIVEN una corrida con el brazo B
+- WHEN el sandbox corre cada turno real
+- THEN usa `jev-v3`, deja la ráfaga en el historial antes del turno, decide cupón y fuera de catálogo con el motor, le da a las lecturas solo lo que escribió el cliente (el texto de la foto, el botón, el carrito) y publica con cada turno las decisiones del motor y las caídas de Jev a la regla
+
+### Requirement: El desglose de datos del LLM se guarda si salió del cliente (2026-09-30)
+
+En V2, `set_order_slot` SHALL guardar cada dato de envío o de pago que el LLM desglosó cuando el valor está en lo que escribió el cliente (en lo último de la conversación, sin tildes, mayúsculas ni signos; teléfono y cédula por sus dígitos), sin preguntarle a Jev, igual que producción. Solo lo que no está en sus palabras SHALL preguntarse a Jev (capacidad `datos`), y la pregunta MUST NOT llevar el valor de un dato personal (quien recibe, dirección, barrio, teléfono, cédula): Jev los ve tapados en la conversación. Un dato que ya estaba guardado con el mismo valor MUST NOT revisarse otra vez. V1 (`reglas`) sigue guardando todo sin revisar.
+
+#### Scenario: Todo en un mensaje (laboratorio caso-fotos-0930, 4567 t22)
+
+- GIVEN el asesor preguntó cuántas quería y el cliente contestó «Mejor 2, una lila y otra azul. Me las mandas a Chía, calle 10 # 5-20 casa 3, recibe <nombre>, cuánto vale el envío? pago contra entrega»
+- WHEN el LLM llama `set_order_slot` con ciudad, dirección, quien recibe y método de pago
+- THEN se guardan los cuatro sin preguntarle a Jev (antes Jev contestaba 0,08 al nombre porque lo veía como «recibe [nombre]», y el complemento se lo volvía a pedir)
+
+#### Scenario: Un dato que el cliente no escribió
+
+- GIVEN el LLM manda un teléfono que no está en lo que escribió el cliente
+- WHEN la capacidad `datos` le pregunta a Jev si el cliente dio o confirmó ese dato (sin el número en la pregunta)
+- THEN solo se descarta con p ≤ 0,15 y el LLM se lo pide al cliente; si Jev duda o cae, se guarda
+
+### Requirement: Lo que el cliente elige no es una pregunta (2026-09-30)
+
+En V2 (política `turno-v3`), cuando el cliente responde la pregunta de variantes del asesor (lectura del hilo, respuesta ≥ 0,70) o Jev dice que elige (`variantes.elige` ≥ 0,85, etapa de variantes), un «pregunta por colores o aromas» por debajo de 0,85 SHALL tratarse como la elección: MUST NOT pedir el selector en el contrato ni entrar a la revisión final (no hay complemento por eso), y la guía de etapa SHALL decir que guarde lo que eligió con `set_order_slot` y pida solo lo que siga faltando. Una pregunta clara (≥ 0,85) sigue pidiendo el selector.
+
+#### Scenario: La elección junto con los datos de envío (4567 t22)
+
+- GIVEN Jev leyó que el cliente responde la pregunta de variantes (0,82) y «pregunta por colores» 0,73
+- WHEN el motor arma el turno
+- THEN el plan solo trae el envío, el contrato solo pide las tarifas y no sale el complemento «Sobre los colores…»
+
+#### Scenario: Responde y además pregunta
+
+- GIVEN «Lila. ¿Y la tienen en rojo?», con «pregunta por colores» 0,95
+- WHEN el motor arma el turno
+- THEN el contrato sigue pidiendo `present_variant_picker`
+
+### Requirement: Una cortesía no abre venta (2026-09-30)
+
+La capacidad `cortesia` del ingest le pregunta a Jev, con lo que el cliente vio antes: «¿El cliente solo agradece, saluda o comenta algo amable (por ejemplo, que ya recibió el pedido o que le gustó), sin preguntar ni pedir nada y sin responder una pregunta de la tienda?». Sí con p ≥ 0,85; con duda, no. La regla de hoy siempre dice que no: con `reglas` todo sigue igual. Cuando dice que sí:
+
+- la nota del episodio nuevo SHALL pedir una respuesta breve y cálida, sin abrir una venta, sin ofrecer productos y sin preguntar en qué más puede ayudar;
+- el resumen del traspaso desde remarketing SHALL decirlo, si la marca `last_inbound_courtesy` es del último mensaje del cliente;
+- la guía del bot nuevo MUST NOT empujar la venta en descubrimiento ni en postcierre; a mitad de una venta sigue el siguiente paso.
+
+El sandbox del laboratorio SHALL armar la misma nota del episodio nuevo en el primer turno del episodio, y el scorecard la mide con EST-09 «Cortesía sin empujón de venta».
+
+#### Scenario: Respuesta al «pedido listo» (caso de producción del 2026-09-29)
+
+- GIVEN la conversación anterior terminó en una compra y el ETA avisó «tu pedido ya está listo… ¿Nos confirmas para coordinar la entrega?»
+- WHEN el cliente contesta «Hola cómo están? Son geniales. Muchas gracias» y Jev dice que solo agradece (0,92 con Jev real)
+- THEN el turno no le pide al LLM «pregunta en qué puedes ayudar hoy», y EST-09 falla si la respuesta lo pregunta
+
+#### Scenario: Un «ok» que confirma no es cortesía
+
+- GIVEN el mismo aviso con «¿Nos confirmas…?»
+- WHEN el cliente contesta «ok» (0,04 con Jev real) o «Sí, las puedo recibir hoy en la portería»
+- THEN el turno es el de siempre
+
+### Requirement: Remarketing no le escribe a una conversación que terminó (2026-09-30)
+
+Antes de redactar el gancho, la decisión `contactar` SHALL ver, además del episodio activo, cómo terminó la conversación anterior y lo que la tienda le escribió desde el último mensaje del cliente, cuando el episodio abrió tras otro que se cerró. SHALL preguntar «¿Sobra un mensaje proactivo ahora?» y «¿La conversación ya terminó?»; cualquiera de las dos segura (p ≥ 0,85) salta el toque sin redactar nada. El gancho sigue viendo solo el episodio. Con `reglas` no se consulta y decide el LLM, como hoy.
+
+#### Scenario: Ya recibió el pedido y agradeció
+
+- GIVEN la conversación anterior terminó en una compra, el ETA avisó la entrega y el cliente contestó «Ya lo recibí. Muchas gracias»
+- WHEN la reactivación le va a escribir
+- THEN Jev ve «(Antes de esto, la conversación anterior terminó en una compra.)» y el aviso, dice que la conversación terminó (0,91 con Jev real) y el toque se salta
+
+#### Scenario: Venta abierta
+
+- GIVEN el cliente preguntó el precio y se quedó callado después de la respuesta
+- WHEN la reactivación le va a escribir
+- THEN la conversación no terminó (0,05 con Jev real) y el gancho se redacta como siempre
+
+### Requirement: Después de una compra, remarketing cierra el ciclo y nunca vende (2026-10-01)
+
+Si la conversación justo anterior terminó en una compra (COMPRA_EXITOSA, CONFIRMADO_PAGO_PENDIENTE, CONFIRMADO_SIN_DATOS) y no hay un pedido nuevo en curso, el gancho MUST usar una instrucción de posventa en lugar de la del gancho de venta:
+- si el último mensaje del cliente quedó sin respuesta (`closing`), un cierre breve y cálido que retome lo que dijo, sin ofrecer productos ni preguntar qué más quiere; la decisión `contactar` no lo corta;
+- si ya le respondimos (`answered`), NO_MESSAGE, salvo que quedara algo abierto (una pregunta o un producto que pidió).
+En los demás casos la instrucción del gancho no cambia.
+
+#### Scenario: La clienta ya recibió su pedido y su gracias quedó sin respuesta (conversación real ···4148)
+
+- GIVEN la conversación anterior terminó en una compra y los últimos mensajes del cliente («Listo.. gracias por los datos..», «te enviaremos fotos») no tienen respuesta
+- WHEN la reactivación le va a escribir
+- THEN la instrucción dice que ya compró y que se le debe un cierre, nunca «miró productos pero no eligió ninguno», y el mensaje es un cierre sin productos
+
+#### Scenario: Ya le respondimos
+
+- GIVEN la misma conversación, con la respuesta de la tienda al final
+- WHEN la reactivación le va a escribir
+- THEN no se envía nada (NO_MESSAGE, o el corte de `contactar` con Jev)
+
+### Requirement: Si el bot promete un colega, el humano queda avisado (2026-09-30)
+
+Antes de enviar el texto final de un turno que no escaló, V1 y V2 SHALL preguntarle a la red de seguridad (`ensure_promised_handoff_activity`) si ese texto le promete al cliente que una persona del equipo lo va a contactar, coordinar o confirmar algo (capacidad `relevo`: las frases del relevo son PISO, también con `reglas`; Jev suma paráfrasis). Si lo promete, la red MUST escalar como `escalate_to_human` (ruta humano, HUMANO, motivo con la promesa). El texto sale igual (la promesa ya es cierta) y el workflow termina como cualquier escalación. Un turno que ya escaló no se revisa. En V1 va con el parche `promised-handoff-escalation-v1`. La nota del episodio nuevo, si el anterior cerró con un pedido, SHALL decir que lo que el cliente pida de ese pedido se escala con `escalate_to_human`, sin prometerlo antes. El scorecard lo mide con TAG-08 (y TAG-06 cuando tuvo que actuar la red).
+
+#### Scenario: «Un colega coordina contigo la entrega» (laboratorio caso-cortesia-1001)
+
+- GIVEN la conversación anterior cerró con un pedido y el cliente pide que se lo lleven hoy a la portería
+- WHEN el bot cierra el turno con «…un colega del equipo coordina contigo la entrega…» sin `escalate_to_human`
+- THEN la red escala antes de enviar, la protección queda en el paso a paso y la conversación pasa a la bandeja humana
+
+#### Scenario: Escaló el LLM
+
+- GIVEN el LLM llamó `escalate_to_human` y su despedida dice «Un colega del equipo te responde en este mismo chat»
+- WHEN el workflow envía la despedida
+- THEN la red no se consulta
 
 ## Out of scope
 

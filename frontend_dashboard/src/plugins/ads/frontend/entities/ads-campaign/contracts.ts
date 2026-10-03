@@ -48,6 +48,23 @@ const backendWaCostFields = {
   wa_msgs_pending: z.number().int().default(0),
 };
 
+/** Costo de Jev (2026-10-01): lo que cobra el clasificador del motor de
+ *  decisiones por las preguntas de la conversación (USD micros) + cuántas
+ *  preguntas. `null` = no le preguntó a Jev; `.default(null)` tolera un
+ *  backend viejo. */
+const backendJevCostFields = {
+  jev_cost_usd_micros: z.number().int().nullable().default(null),
+  jev_calls: z.number().int().nullable().default(null),
+};
+
+/** Costo de leer las fotos del cliente (2026-10-01): Gemini por el proxy —
+ *  describir, huella y comparar contra el catálogo (USD micros + llamadas).
+ *  `null` = no mandó fotos; `.default(null)` tolera un backend viejo. */
+const backendVisionCostFields = {
+  vision_cost_usd_micros: z.number().int().nullable().default(null),
+  vision_calls: z.number().int().nullable().default(null),
+};
+
 /** Envío de una campaña de WhatsApp (sección Marketing), 2026-09-25: lo que
  *  para una campaña de Meta son gasto/impresiones/clicks. Solo lo trae una fila
  *  `hubara_campaign`; `.default(null)` tolera un backend viejo. Gasto en USD
@@ -87,6 +104,9 @@ export const backendAdsCampaignSchema = z.object({
   llm_tokens: z.number().int().nullable(),
   // Costo de WhatsApp acumulado de la campaña (suma de `episode.cost_summary`).
   ...backendWaCostFields,
+  // Costo de Jev acumulado de la campaña (suma de `episode.jev_usage`).
+  ...backendJevCostFields,
+  ...backendVisionCostFields,
   avg_episode_duration_ms: z.number().int().nullable(),
 
   // Faltantes — backend serializa null hasta integrar Meta Ads API / orders
@@ -212,6 +232,9 @@ export const backendAttributedConversationSchema = z.object({
 
   // Costo de WhatsApp del episodio + categorías de Meta que usó la conversación.
   ...backendWaCostFields,
+  // Costo de Jev del episodio (`episode.jev_usage`).
+  ...backendJevCostFields,
+  ...backendVisionCostFields,
 
   // Evento CAPI reportado a Meta para este episodio: "LeadSubmitted" |
   // "Purchase" | "OrderCanceled" | null (no reportado). `.default(null)`

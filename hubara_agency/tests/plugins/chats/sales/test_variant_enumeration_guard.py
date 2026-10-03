@@ -98,7 +98,9 @@ async def test_activity_queues_picker_for_enumerated_aromas(guard_env: Path) -> 
         apply_variant_enumeration_guard_activity,
     )
 
-    assert await apply_variant_enumeration_guard_activity("wa_test_enum", ENUMERATION) is True
+    sent = await apply_variant_enumeration_guard_activity("wa_test_enum", ENUMERATION)
+    assert isinstance(sent, str), "devuelve el texto que recibe el cliente"
+    assert sent.startswith("Tenemos 11 aromas disponibles")
     intents = _intents(guard_env)
     assert [i["kind"] for i in intents] == ["variant_picker"]
     params = intents[0]["params"]
@@ -116,7 +118,7 @@ async def test_activity_is_noop_without_enumeration(guard_env: Path) -> None:
         apply_variant_enumeration_guard_activity,
     )
 
-    assert await apply_variant_enumeration_guard_activity("wa_test_enum", "Buena elección, el café es de los que más rotan.") is False
+    assert await apply_variant_enumeration_guard_activity("wa_test_enum", "Buena elección, el café es de los que más rotan.") == ""
     assert _intents(guard_env) == []
 
 
@@ -129,7 +131,7 @@ async def test_activity_degrades_when_catalog_is_down(guard_env: Path, monkeypat
             raise RuntimeError("snapshot down")
 
     monkeypatch.setattr(mod, "get_catalog_client", lambda: _Broken())
-    assert await mod.apply_variant_enumeration_guard_activity("wa_test_enum", ENUMERATION) is False
+    assert await mod.apply_variant_enumeration_guard_activity("wa_test_enum", ENUMERATION) == ""
     assert _intents(guard_env) == []
 
 
@@ -155,3 +157,71 @@ def test_one_combination_among_a_plain_list_still_counts_as_enumeration() -> Non
     text = "Lo tenemos en azul, morado, rosado, blanco y negro; el más pedido es Lila · Lavanda."
     hit = find_enumerated_variants(text, aromas=AROMAS, colors=COLORS)
     assert hit is not None and hit[0] == "color"
+
+
+@pytest.mark.asyncio
+async def test_with_jev_a_description_that_names_aromas_keeps_its_text(guard_env: Path, monkeypatch) -> None:
+    """Motor de decisiones (F5): con el bot B, Jev decide qué enumera el
+    texto. Si dice que describe un producto (no una lista para escoger), no se
+    encola el selector y el texto sale como lo escribió el LLM."""
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.plugins.chats.agent.sales.activities.variant_enumeration_guard import (
+        apply_variant_enumeration_guard_activity,
+    )
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    answer = TypedAnswer(id="enumeracion.que", kind="choice", choice="productos", probs=(("productos", 0.93),),
+                         confidence=0.93)
+    fake = FakePerceptionAdapter({"enumeracion.que": answer})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+
+    assert await apply_variant_enumeration_guard_activity("wa_test_enum", ENUMERATION) == ""
+    assert _intents(guard_env) == []
+    assert fake.calls, "con el bot B, la enumeración se le pregunta a Jev"
+
+
+# Laboratorio caso-fotos-0930-r7, 4567 t19: «La Luz Serena la quiero en aroma
+# jengibre». El LLM contestó «Jengibre no está entre los aromas de la Luz
+# Serena. Los que maneja son: <11 aromas>. ¿Alguno de esos te llama la
+# atención?» y la protección cambió la lista por el selector. La respuesta
+# («Jengibre no está…») tiene que llegar, y después el selector: la protección
+# solo cambia el formato de la lista; no se lleva nada de lo que el bot dijo.
+JENGIBRE = (
+    "Jengibre no está entre los aromas de la Luz Serena. Los que maneja son: Caballero de la noche, "
+    "Limoncillo, Lavanda, Café, Sándalo, Ylang Ylang, Coco cremoso, Frutos rojos, Verde menta, Drakar y "
+    "Chanel.\n\n¿Alguno de esos te llama la atención?"
+)
+
+
+@pytest.mark.asyncio
+async def test_the_protection_keeps_the_answer_and_the_question_around_the_list(guard_env: Path) -> None:
+    from src.plugins.chats.agent.sales.activities.variant_enumeration_guard import (
+        apply_variant_enumeration_guard_activity,
+    )
+
+    sent = await apply_variant_enumeration_guard_activity("wa_test_enum", JENGIBRE)
+
+    assert isinstance(sent, str), "devuelve el texto que recibe el cliente"
+    assert sent.startswith("Jengibre no está entre los aromas de la Luz Serena. Los que maneja son:\n")
+    assert sent.endswith("¿Alguno de esos te llama la atención?")
+    assert "Dime cuál te gusta y seguimos" not in sent
+    assert sent.count("Lavanda") == 1  # la lista va una vez, ya como selector
+    params = _intents(guard_env)[0]["params"]
+    assert params["closing_text"] == "¿Alguno de esos te llama la atención?"
+
+
+@pytest.mark.asyncio
+async def test_a_list_with_nothing_after_it_ends_with_the_usual_line(guard_env: Path) -> None:
+    from src.plugins.chats.agent.sales.activities.variant_enumeration_guard import (
+        apply_variant_enumeration_guard_activity,
+    )
+
+    sent = await apply_variant_enumeration_guard_activity(
+        "wa_test_enum", "Los aromas son Lavanda, Café, Sándalo, Drakar y Chanel."
+    )
+
+    assert isinstance(sent, str), "devuelve el texto que recibe el cliente"
+    assert sent.startswith("Los aromas son:\n")
+    assert sent.endswith("Dime cuál te gusta y seguimos 🤍")

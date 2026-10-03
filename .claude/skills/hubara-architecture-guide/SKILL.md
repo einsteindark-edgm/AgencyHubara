@@ -63,6 +63,7 @@ Read(".claude/skills/hubara-architecture-guide/sections/04-backend-agents.md")
 | Diagnosticar fallas de architecture gate / invariants | `sections/08-tests-and-gates.md` |
 | Saber qué env vars / secrets / K8s hints declarar | `sections/09-conventions.md` |
 | Patrones recurrentes ("agregar tool nuevo", "agregar webhook", …) | `sections/10-cookbook.md` |
+| Cambiar cómo decide el bot, o un bug de decisión (compra, baja, zona, destinatario…): el motor de decisiones y sus paquetes | `sections/11-decision-engine.md` |
 | Schema completo del `plugin.yaml` | `references/manifest-schema.md` |
 | Las 5 R-rules de DEHA en detalle (con tests + ejemplos válidos/inválidos) | `references/deha-rules.md` |
 | Las 4 import rules + 14 anti-patterns de FSD | `references/fsd-rules.md` |

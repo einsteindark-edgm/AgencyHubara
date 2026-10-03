@@ -1,0 +1,39 @@
+{
+  "session_id": "wa_573001234567",
+  "episodes": [
+    { "episode_id": "ep_1", "started_at_ms": 1790177880000, "status": "closed" }
+  ],
+  "messages": [
+    { "role": "user", "content": "Buenas tardes", "timestamp": "2026-09-23T15:38:00+00:00", "wamid": "wamid.A" },
+    { "role": "assistant", "content": "¡Buenas tardes! Te damos la bienvenida a Hubara 🤍", "timestamp": "2026-09-23T15:38:05+00:00" },
+    { "role": "user", "content": "vi que también hacen velas con otros diseños, ¿me mandas el catálogo?", "timestamp": "2026-09-23T15:41:02+00:00", "wamid": "wamid.B" },
+    { "role": "user", "content": "y el envío a Bogotá cuánto sale?", "timestamp": "2026-09-23T15:41:09+00:00", "wamid": "wamid.C" },
+    { "role": "assistant", "content": "📦 Tarifas de envío\nBogotá: $X.XXX · 2 a 3 días hábiles", "timestamp": "2026-09-23T15:41:12+00:00", "kind": "component", "component_kind": "shipping_rates" },
+    { "role": "user", "content": "", "timestamp": "2026-09-23T15:44:00+00:00", "has_image": true }
+  ],
+  "turns": [
+    {
+      "case_id": "wa_573001234567/ep_1/t1",
+      "turn_key": "run:019f/t:1",
+      "episode_id": "ep_1",
+      "turn": 1,
+      "at_ms": 1790177880000,
+      "burst": [{ "text": "Buenas tardes", "ts_ms": 1790177880000, "wamid": "wamid.A" }],
+      "dashboard_prefix": 0,
+      "outputs": { "A0": { "sent_texts": ["¡Buenas tardes! Te damos la bienvenida a Hubara 🤍"], "tools": [], "guards": [] } }
+    },
+    {
+      "case_id": "wa_573001234567/ep_1/t2",
+      "turn_key": "run:019f/t:2",
+      "episode_id": "ep_1",
+      "turn": 2,
+      "at_ms": 1790178069000,
+      "burst": [
+        { "text": "vi que también hacen velas con otros diseños, ¿me mandas el catálogo?", "ts_ms": 1790178062000, "wamid": "wamid.B" },
+        { "text": "y el envío a Bogotá cuánto sale?", "ts_ms": 1790178069000, "wamid": "wamid.C" }
+      ],
+      "dashboard_prefix": 2,
+      "outputs": { "A0": { "sent_texts": [], "tools": [{ "name": "send_shipping_rates", "ok": true }], "guards": [], "discarded_narration": ["¡Claro! te comparto el catálogo"] } }
+    }
+  ]
+}

@@ -111,6 +111,11 @@ REVIEWED_UPSTREAM_IDS: dict[str, UpstreamReview] = {
     "gemini/gemini-2.5-flash-lite": UpstreamReview(
         reviewed_on=dt.date(2026, 9, 18), source=_LIFECYCLE_GOOGLE
     ),
+    # Embeddings de imagen de la identificación de fotos: GA 2026-04-22, sin
+    # fecha de apagado en la tabla (mirada 2026-09-30).
+    "gemini/gemini-embedding-2": UpstreamReview(
+        reviewed_on=dt.date(2026, 9, 30), source=_LIFECYCLE_GOOGLE
+    ),
     "gemini/gemini-3.1-pro-preview": UpstreamReview(
         reviewed_on=dt.date(2026, 9, 18),
         source=_LIFECYCLE_GOOGLE,
@@ -511,6 +516,16 @@ def test_gemini_backup_is_priced_at_the_official_list_price() -> None:
         "promptPrice": 0.0003,
         "completionPrice": 0.0025,
     }
+
+
+def test_no_openai_perception_alias_left() -> None:
+    """El rival OpenAI del laboratorio (alias `openrouter-perception`, brazo C)
+    se quitó el 2026-09-28: 100 % Jev, que entra por la Decisions API y no
+    pasa por el proxy. Ni el alias ni su precio vuelven sin decisión."""
+    config = _proxy_config(_COMPOSE)
+
+    assert "openrouter-perception" not in {e["model_name"] for e in config["model_list"]}
+    assert "openrouter-perception" not in _pricing_chat_table()
 
 
 # ── el chequeo mismo (un guard que nunca se vio fallar no protege nada) ────────

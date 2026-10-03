@@ -264,3 +264,131 @@ async def test_an_ack_to_a_campaign_still_reaches_the_agent() -> None:
 
     assert len(loader.calls) == 1
     assert loader.calls[0]["prefer_sales"] is True
+
+
+# --- el texto lo lee el motor (capacidad `acuse`, proveedor de lecturas) -----
+#
+# Lo estructural lo sigue decidiendo el código (episodio cerrado, reacción o
+# sticker, plantilla posterior, respuesta a campaña); si el mensaje es texto,
+# el ingest le pregunta al MISMO proveedor de lecturas que lee compra, retoma
+# y baja (sin proveedor, el del motor: `reglas` → `is_closing_ack`).
+
+_LONG_COURTESY = "Muchas gracias, que Dios le bendiga mucho y feliz día 🙏"
+
+
+class _AckReader:
+    """Proveedor de lecturas falso: el acuse lo dice `ack`; lo demás, nada."""
+
+    def __init__(self, ack: bool) -> None:
+        self.ack = ack
+        self.seen: list = []
+        self.episodes_seen: list[int] = []
+
+    async def read(self, inbound):
+        from src.plugins.chats.agent.sales.decisions.readings import Readings
+
+        return Readings(purchase=(None, "text"), deferral=None, courtesy=False, opt_out=False)
+
+    async def read_ack(self, inbound):
+        from src.plugins.chats.agent.sales.decisions.capabilities import Verdict
+
+        self.seen.append(inbound)
+        self.episodes_seen.append(len(inbound.metadata.get("episodes") or []))
+        return Verdict(capability="acuse", value=self.ack, by="jev", provider="jev", rule=None)
+
+
+def _with_reader(store: _Store, loader: _Loader, history: _History, reader: _AckReader):
+    return IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=store,  # type: ignore[arg-type]
+        readings=reader,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_readings_provider_decides_whether_the_text_is_an_ack() -> None:
+    """Una cortesía larga que la regla no conoce: si el motor la lee como
+    acuse, el mensaje queda en el chat y el agente no despierta."""
+    now = int(time.time() * 1000)
+    store = _Store(_after_farewell(now))
+    loader = _Loader()
+    history = _farewell_history()
+    reader = _AckReader(ack=True)
+
+    await _with_reader(store, loader, history, reader).execute(_message(_LONG_COURTESY))
+
+    assert loader.calls == []
+    assert [ep["episode_id"] for ep in store.data[_SESSION]["episodes"]] == ["ep_001", "ep_002"]
+    [inbound] = reader.seen
+    assert (inbound.session_id, inbound.text, inbound.message_id) == (_SESSION, _LONG_COURTESY, "wamid.CAMP")
+    assert list(inbound.events) == _farewell_history().events  # lo que el cliente vio ANTES de este mensaje
+    assert reader.episodes_seen == [2]  # antes del ciclo de episodios
+    assert inbound.synthetic is False
+
+
+@pytest.mark.asyncio
+async def test_when_the_provider_reads_no_ack_the_agent_wakes() -> None:
+    """La regla absorbía «ok»; si el motor dice que no es solo un acuse (la
+    despedida le preguntó algo), el agente despierta con episodio nuevo."""
+    now = int(time.time() * 1000)
+    store = _Store(_after_farewell(now))
+    loader = _Loader()
+
+    await _with_reader(store, loader, _farewell_history(), _AckReader(ack=False)).execute(_message("ok"))
+
+    assert len(loader.calls) == 1
+    assert store.data[_SESSION]["episodes"][-1]["episode_id"] == "ep_003"
+
+
+@pytest.mark.asyncio
+async def test_an_open_episode_never_asks_for_the_ack() -> None:
+    now = int(time.time() * 1000)
+    data = _after_farewell(now)
+    data["episodes"][-1].update(closed_at_ms=None, closing_tag=None)
+    reader = _AckReader(ack=True)
+    loader = _Loader()
+
+    await _with_reader(_Store(data), loader, _farewell_history(), reader).execute(_message("ok"))
+
+    assert reader.seen == [] and len(loader.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_reaction_is_an_ack_without_asking_the_engine() -> None:
+    now = int(time.time() * 1000)
+    reader = _AckReader(ack=False)
+    loader = _Loader()
+
+    await _with_reader(_Store(_after_farewell(now)), loader, _farewell_history(), reader).execute(_reaction("👍"))
+
+    assert reader.seen == [] and loader.calls == []
+
+
+@pytest.mark.asyncio
+async def test_an_ack_to_a_later_template_wakes_the_agent_whatever_the_engine_reads() -> None:
+    now = int(time.time() * 1000)
+    history = _farewell_history()
+    history.events.append(
+        {"role": "assistant", "kind": "template", "content": "Tu pedido está listo. ¿Te lo enviamos hoy?"}
+    )
+    loader = _Loader()
+
+    await _with_reader(
+        _Store(_after_farewell(now, closed_ago_ms=3 * 24 * 3600 * 1000)), loader, history, _AckReader(ack=True)
+    ).execute(_message("ok"))
+
+    assert len(loader.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_campaign_reply_never_asks_for_the_ack() -> None:
+    now = int(time.time() * 1000)
+    data = _after_farewell(now, closed_ago_ms=2 * 24 * 3600 * 1000)
+    data["campaign_touches"] = [_touch(now - 60_000)]
+    reader = _AckReader(ack=True)
+    loader = _Loader()
+
+    await _with_reader(_Store(data), loader, _farewell_history(), reader).execute(_message("👍"))
+
+    assert reader.seen == [] and len(loader.calls) == 1

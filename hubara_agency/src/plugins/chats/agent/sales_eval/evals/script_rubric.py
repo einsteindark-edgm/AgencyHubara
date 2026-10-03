@@ -72,6 +72,32 @@ FORBIDDEN_CLOSINGS = [
     re.compile(r"pedido transferido", re.IGNORECASE),
 ]
 
+_NOT_VERIFIED = "da la compra por hecha y el pago todavía no está verificado"
+_SOUNDS_LIKE_A_TICKET = "suena a sistema: se cierra con calidez, sin anunciar que se cierra"
+#: Por qué el guion prohíbe cada frase (skills etapa_cierre y etapa_datos_envio,
+#: AGENTS.md): la evidencia del check lo dice en palabras.
+FORBIDDEN_CLOSING_REASONS: dict[str, str] = {
+    "gracias por tu compra": _NOT_VERIFIED,
+    "compra realizada": _NOT_VERIFIED,
+    "compra exitosa": _NOT_VERIFIED,
+    "tu pago fue procesado": "da el pago por recibido y todavía no está verificado",
+    "pago procesado": "da el pago por recibido y todavía no está verificado",
+    "te confirmo en un rato": "promete escribir después y el bot no escribe solo: resuelve ahora o pasa a un humano",
+    "te cuadro el pedido": "es una muletilla que el guion prohíbe al pedir los datos",
+    "ah[ií] te dej[oé]": "es una muletilla que el guion prohíbe al pedir los datos",
+    r"conversaci[óo]n\s+(queda\s+)?cerrada": _SOUNDS_LIKE_A_TICKET,
+    "caso cerrado": _SOUNDS_LIKE_A_TICKET,
+    "pedido transferido": _SOUNDS_LIKE_A_TICKET,
+}
+
+
+def forbidden_closing(text: str) -> tuple[re.Match[str], str] | None:
+    """La primera frase prohibida del texto y por qué se prohíbe, o None."""
+    for rx in FORBIDDEN_CLOSINGS:
+        if match := rx.search(text or ""):
+            return match, FORBIDDEN_CLOSING_REASONS.get(rx.pattern, "el guion la prohíbe")
+    return None
+
 
 def find_emojis(text: str) -> list[str]:
     """Lista de emojis presentes en `text` (para chequear allowlist + conteo)."""

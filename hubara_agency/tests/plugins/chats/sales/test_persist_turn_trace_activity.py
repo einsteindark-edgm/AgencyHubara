@@ -104,3 +104,48 @@ def test_last_trace_reads_a_record_bigger_than_a_small_tail_window(tmp_path: Pat
     last = turn_traces.last_trace(tmp_path, SESSION)
 
     assert last is not None and last["turn"] == 2
+
+
+async def test_the_backup_question_on_unconsulted_claims_runs_in_shadow(_isolate_vault_dir: Path, monkeypatch) -> None:
+    """Motor de decisiones (F6): con un bot que la pregunta, la traza guarda
+    si el texto enviado afirma algo que solo se sabe consultando (stock,
+    entrega) sin haber consultado. Arranca en sombra: nunca actúa, solo se
+    mide. Con el bot de hoy no se pregunta nada."""
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    _write_metadata(_isolate_vault_dir, {})
+    claim = _payload(sent_texts=["¡Sí hay stock! Te llega mañana 🤍"], llm_text="¡Sí hay stock! Te llega mañana 🤍")
+
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    assert await ActivityEnvironment().run(persist_turn_trace_activity, SESSION, claim) is True
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    fake = FakePerceptionAdapter({"afirmacion.sin_consultar": TypedAnswer(id="afirmacion.sin_consultar", kind="noul", p=0.92)})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+    assert await ActivityEnvironment().run(persist_turn_trace_activity, SESSION, claim) is True
+
+    today, with_jev = turn_traces.read_traces(_isolate_vault_dir, SESSION)
+    assert "claims" not in today
+    assert with_jev["claims"]["jev"] is True and with_jev["claims"]["capability"] == "afirmacion"
+
+
+import dataclasses  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("workflow_type", "expected"),
+    [("HubaraSalesSessionWorkflowV2", "v2"), ("HubaraSalesSessionWorkflow", "v1"), ("OtroWorkflow", None)],
+)
+async def test_the_trace_says_which_workflow_answered(_isolate_vault_dir: Path, workflow_type: str, expected) -> None:
+    """Calidad LLM separa el bot Jev (el workflow nuevo) del actual: la traza
+    lo dice (antes solo se deducía por la salida de Jev, que el V1 no trae)."""
+    env = ActivityEnvironment()
+    env.info = dataclasses.replace(env.info, workflow_type=workflow_type)
+
+    assert await env.run(persist_turn_trace_activity, SESSION, _payload()) is True
+
+    [trace] = turn_traces.read_traces(_isolate_vault_dir, SESSION)
+    assert trace.get("workflow") == expected

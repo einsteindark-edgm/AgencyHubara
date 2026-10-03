@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "pattern": "^[a-z][a-z0-9-]{0,39}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "engine_contract": {
+      "minimum": 1,
+      "title": "Engine Contract",
+      "type": "integer"
+    },
+    "oracle": {
+      "minLength": 1,
+      "title": "Oracle",
+      "type": "string"
+    },
+    "capabilities": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Capabilities",
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "version",
+    "engine_contract",
+    "oracle",
+    "capabilities"
+  ],
+  "title": "Bundle",
+  "type": "object"
+}

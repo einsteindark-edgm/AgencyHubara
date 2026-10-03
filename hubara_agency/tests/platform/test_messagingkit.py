@@ -77,3 +77,17 @@ def test_messagingkit_reexports_standby_ear_helpers():
     assert kit.OutboundLogEntry is cost.OutboundLogEntry
     assert kit.record_outbound_in_active_episode is activities.record_outbound_in_active_episode
     assert kit.compute_service_window_expiry is window.compute_service_window_expiry
+
+
+def test_messagingkit_reexports_the_sales_turn_sends():
+    # Motor de decisiones F4: el workflow de ventas V2 manda el texto, el
+    # "escribiendo…" y los eventos de Meta (CAPI) vía SDK — P-28 le prohíbe
+    # `src.platform.whatsapp.{activities,capi_activity}` directo.
+    import src.platform.whatsapp.activities as activities
+    import src.platform.whatsapp.capi_activity as capi
+    import src.sdk.messagingkit as kit
+
+    assert getattr(kit, "send_whatsapp_message_activity", None) is activities.send_whatsapp_message_activity
+    assert getattr(kit, "send_typing_indicator_activity", None) is activities.send_typing_indicator_activity
+    assert getattr(kit, "send_capi_event_activity", None) is capi.send_capi_event_activity
+    assert getattr(kit, "flush_capi_outbox_activity", None) is capi.flush_capi_outbox_activity

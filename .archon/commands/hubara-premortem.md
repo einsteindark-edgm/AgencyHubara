@@ -1,5 +1,5 @@
 ---
-description: Premortem skill del pipeline hubara. Corre DESPUÉS de final-validation (gates duros OK) y ANTES de evaluate-pre-pr. Imagina cómo este código va a fallar en producción y emite $ARTIFACTS_DIR/premortem.yaml con failure_modes[] + suggested_fix por cada uno. NO aplica fixes — eso lo hace el implementer en el ciclo loop-implementer-resolves-premortem. Stance escéptico explícito (similar al evaluator). Recorre 11 categorías de modos de fallo específicas al stack DEHA + FSD + Temporal de AgencyHubara, incluyendo §4.11 spec / behavior contract consistency (Fase 12 OpenSpec integration). Triggers — invocación via Archon workflow skills field (nodo premortem-self-review); NO usar como subagent directo, NO como user-facing slash command.
+description: Premortem skill del pipeline hubara. Corre DESPUÉS de final-validation (gates duros OK) y ANTES de evaluate-pre-pr. Imagina cómo este código va a fallar en producción y emite $ARTIFACTS_DIR/premortem.yaml con failure_modes[] + suggested_fix por cada uno. NO aplica fixes — eso lo hace el implementer en el ciclo loop-implementer-resolves-premortem. Stance escéptico explícito (similar al evaluator). Recorre 12 categorías de modos de fallo específicas al stack DEHA + FSD + Temporal de AgencyHubara, incluyendo §4.11 spec / behavior contract consistency (Fase 12 OpenSpec integration) y §4.12 motor de decisiones (ADR-2026-10-02). Triggers — invocación via Archon workflow skills field (nodo premortem-self-review); NO usar como subagent directo, NO como user-facing slash command.
 argument-hint: (none — reads from $ARTIFACTS_DIR)
 ---
 
@@ -82,9 +82,9 @@ Identificá:
 
 ---
 
-## §4. Las 11 categorías de modos de fallo
+## §4. Las 12 categorías de modos de fallo
 
-Por **cada una** de las 11 categorías, generá **3-5 hipótesis específicas al diff**. NO inventes hipótesis genéricas (e.g., "podría haber bugs"). Cada hipótesis debe citar `archivo:línea` específica del diff.
+Por **cada una** de las 12 categorías (la §4.12 solo si el diff toca el motor de decisiones), generá **3-5 hipótesis específicas al diff**. NO inventes hipótesis genéricas (e.g., "podría haber bugs"). Cada hipótesis debe citar `archivo:línea` específica del diff.
 
 ### §4.1 Runtime failures (input edge cases)
 
@@ -202,6 +202,34 @@ Preguntas-guía (cross-ref `$ARTIFACTS_DIR/spec-deltas/<cap>/spec.md` + diff):
 **Severidad típica**: `high` o `critical` — un Scenario sin test es deuda
 que va a explotar en producción la primera vez que llegue el input que
 imaginaste.
+
+### §4.12 Motor de decisiones (paquetes + Jev — ADR-2026-10-02)
+
+**OBLIGATORIA si el diff toca `**/decisions/bundles/**`, un lugar que llama
+`capability("x")` / `decide_for_session`, o cambia cómo decide el bot.** Guía:
+`.claude/skills/hubara-architecture-guide/sections/11-decision-engine.md`.
+Usá `category: decision_engine`.
+
+Preguntas-guía:
+- ¿La HU arregla una decisión con un `if`/regex/lista de palabras en el lugar
+  en vez de en el paquete? → failure mode `decisión regada en código: el
+  próximo caso parecido vuelve a fallar y nadie lo ve en el veredicto`.
+- ¿Se editó una versión publicada del paquete? → `rollback de imagen o SSM
+  apuntan a un paquete que ya no es el que se midió`.
+- ¿La capacidad cambiada estaba en `on`/`canary`? El modo es de la capacidad,
+  no de la versión: el cambio actúa apenas entra el paquete, sin pasar por
+  sombra → `cambio sin medir en producción`.
+- ¿Una fila nueva lee una respuesta (`p['x']`) sin preguntar antes si llegó? →
+  `bundle_error en producción: decide la regla en silencio`.
+- ¿El cambio de pregunta/criterios se probó solo con `examples:`? Los ejemplos
+  le dan las respuestas a la tabla; no prueban lo que Jev entiende →
+  `Jev lee la pregunta nueva distinto y nadie lo midió` (laboratorio `B@paquete`).
+- ¿El estado que ve Jev (builtin de estado) lleva datos personales sin tapar? →
+  `PII al oráculo`.
+- ¿Jev cae (timeout, 429, otro modelo)? ¿La regla de respaldo hace algo
+  razonable para ESTE caso, o el bug vuelve en cuanto Jev falla?
+- ¿Terraform nombra un paquete que la imagen no trae (o se borró uno que un
+  rollback puede pedir)? → `API y worker de ventas sin paquete al arrancar`.
 
 ---
 

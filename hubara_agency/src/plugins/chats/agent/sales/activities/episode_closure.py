@@ -271,3 +271,63 @@ async def ensure_closing_escalation_activity(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     return escalated
+
+
+#: Motivo con el que la red deja la conversación en la bandeja humana.
+_PROMISED_HANDOFF_REASON = "OTHER"
+_PROMISE_IN_MOTIVO = 300
+
+
+@activity.defn(name="ensure_promised_handoff")
+async def ensure_promised_handoff_activity(session_id: str, text: str) -> bool:
+    """Red de seguridad del relevo prometido (laboratorio caso-cortesia-1001,
+    2026-09-30): el bot le dijo al cliente «un colega del equipo coordina
+    contigo la entrega» sin llamar `escalate_to_human`, y la conversación
+    siguió en la ruta del bot. Nadie la veía en la bandeja humana.
+
+    Antes de enviar el texto final del turno: si promete el relevo (capacidad
+    `relevo`, con el bot de la conversación) y la sesión no está escalada, la
+    escala como `escalate_to_human`, con la promesa en el motivo para el
+    colega. Idempotente: una sesión ya escalada no se toca y no se le
+    pregunta a nadie. Devuelve True si escaló.
+
+    DEHA: R-STATELESS / R-JSON (in str×2, out bool) / R-DIP (no temporal
+    client). Timestamp idempotente entre retries vía `scheduled_time`.
+    """
+    from src.plugins.chats.agent.sales.decisions.guards import promised_handoff
+
+    if not (text or "").strip():
+        return False
+    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
+    if not metadata_file.exists():
+        return False
+    try:
+        data: dict[str, Any] = json.loads(metadata_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        activity.logger.error(
+            "ensure_promised_handoff: metadata corrupto — no-op",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+        return False
+    if data.get("active_route") == ROUTE_HUMANO:
+        return False
+    if not await promised_handoff(text, session_id=session_id, vault_dir=WORKSPACE_VAULT_DIR):
+        return False
+    try:
+        now_ms = int(activity.info().scheduled_time.timestamp() * 1000)
+    except RuntimeError:
+        now_ms = int(time.time() * 1000)
+    promise = " ".join(text.split())[:_PROMISE_IN_MOTIVO]
+    escalated = _apply_human_escalation(
+        data,
+        reason_category=_PROMISED_HANDOFF_REASON,
+        motivo=f"El asesor le dijo al cliente que alguien del equipo lo atiende y no escaló: «{promise}»",
+        now_ms=now_ms,
+    )
+    if escalated:
+        activity.logger.warning(
+            "ensure_promised_handoff: el texto prometía el relevo sin escalar — escalado (red de seguridad)",
+            extra={"session_id": session_id},
+        )
+        metadata_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return escalated

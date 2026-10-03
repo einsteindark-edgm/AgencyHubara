@@ -120,35 +120,49 @@ def _is_cart(order: dict[str, Any] | None) -> bool:
     return isinstance(order, dict) and bool(order.get("product_items"))
 
 
-def register_inbound_purchase_signals(
-    metadata: dict[str, Any],
+def classify_inbound_purchase_signal(
     text: str | None,
+    *,
+    interactive: dict[str, Any] | None = None,
+    order: dict[str, Any] | None = None,
+) -> tuple[str | None, str]:
+    """LEE el inbound (sin escribir): `(tipo, fuente)`.
+
+    `tipo` ∈ ``"affirmation"`` / ``"deferral"`` / ``None``; `fuente` ∈
+    ``"cart"`` / ``"button"`` / ``"text"``. Es la regla de hoy de la capacidad
+    «compra» del motor de decisiones: el motor puede poner a Jev en esta
+    lectura sin tocar la escritura (`apply_inbound_purchase_signal`).
+
+    El carrito del catálogo (run 01a0cb16) y el botón "Confirmar" son
+    estructurales: no dependen del texto.
+    """
+    if _is_cart(order):
+        return "affirmation", "cart"
+    if _is_confirm_button(interactive):
+        return "affirmation", "button"
+    if detect_deferral(text):
+        return "deferral", "text"
+    if detect_purchase_affirmation(text):
+        return "affirmation", "text"
+    return None, "text"
+
+
+def apply_inbound_purchase_signal(
+    metadata: dict[str, Any],
+    kind: str | None,
+    confirmed_by: str,
     *,
     now_ms: int,
     message_id: str | None,
-    interactive: dict[str, Any] | None = None,
-    order: dict[str, Any] | None = None,
+    text: str | None,
 ) -> str | None:
-    """Clasifica el inbound y persiste la señal en `metadata` (mutación).
+    """ESCRIBE la señal ya leída en `metadata` (mutación) y la devuelve.
 
-    Returns ``"deferral"`` / ``"affirmation"`` / ``None``. Una afirmación con
-    producto ya elegido en el draft del episodio activo marca la confirmación
-    de compra (`order_draft.confirmed_at_ms` + `confirmed_by`).
-
-    El carrito del catálogo (run 01a0cb16) confirma SIEMPRE: nombra producto y
-    cantidad por sí mismo, no depende de que el draft ya tenga `producto`.
+    Una afirmación con producto ya elegido en el draft del episodio activo
+    marca la confirmación de compra (`order_draft.confirmed_at_ms` +
+    `confirmed_by`). El carrito confirma SIEMPRE: nombra producto y cantidad
+    por sí mismo, no depende de que el draft ya tenga `producto`.
     """
-    kind: str | None = None
-    confirmed_by = "text"
-    if _is_cart(order):
-        kind, confirmed_by = "affirmation", "cart"
-    elif _is_confirm_button(interactive):
-        kind, confirmed_by = "affirmation", "button"
-    elif detect_deferral(text):
-        kind = "deferral"
-    elif detect_purchase_affirmation(text):
-        kind = "affirmation"
-
     if kind is None:
         metadata.pop(SIGNAL_KEY, None)
         return None
@@ -172,6 +186,27 @@ def register_inbound_purchase_signals(
             draft["confirmed_at_ms"] = now_ms
             draft["confirmed_by"] = confirmed_by
     return kind
+
+
+def register_inbound_purchase_signals(
+    metadata: dict[str, Any],
+    text: str | None,
+    *,
+    now_ms: int,
+    message_id: str | None,
+    interactive: dict[str, Any] | None = None,
+    order: dict[str, Any] | None = None,
+) -> str | None:
+    """Clasifica el inbound y persiste la señal en `metadata` (mutación).
+
+    Returns ``"deferral"`` / ``"affirmation"`` / ``None``: la lectura de hoy
+    (`classify_inbound_purchase_signal`) seguida de la escritura
+    (`apply_inbound_purchase_signal`).
+    """
+    kind, confirmed_by = classify_inbound_purchase_signal(text, interactive=interactive, order=order)
+    return apply_inbound_purchase_signal(
+        metadata, kind, confirmed_by, now_ms=now_ms, message_id=message_id, text=text
+    )
 
 
 def has_purchase_confirmation(metadata: dict[str, Any]) -> bool:
@@ -229,7 +264,9 @@ def build_deferral_note(
 
 __all__ = [
     "SIGNAL_KEY",
+    "apply_inbound_purchase_signal",
     "build_deferral_note",
+    "classify_inbound_purchase_signal",
     "current_signal",
     "detect_deferral",
     "detect_purchase_affirmation",

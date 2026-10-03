@@ -50,6 +50,7 @@ async def _forward(
     *,
     params: dict[str, Any] | None = None,
     body: dict[str, Any] | None = None,
+    timeout: float = _TIMEOUT_S,
 ) -> dict[str, Any]:
     """Reenvía al contrato `evals@v1` de chats portando la identidad del edge."""
     return await castkit.forward(
@@ -57,7 +58,7 @@ async def _forward(
         method,
         path,
         base_url=_provider_base(),
-        timeout=_TIMEOUT_S,
+        timeout=timeout,
         cast_label=_CAST_LABEL,
         params=params,
         body=body,
@@ -154,14 +155,23 @@ async def scorecard_checks(request: Request) -> dict[str, Any]:
     return await _forward(request, "GET", "/api/chats/evals/checks")
 
 
+#: Filtro de Calidad LLM durante el encendido del bot nuevo (lab PR 18).
+_BOT_PATTERN = "^(actual|nuevo)$"
+
+
+def _with_bot(params: dict[str, Any], bot: str | None) -> dict[str, Any]:
+    return {**params, "bot": bot} if bot else params
+
+
 @router.get("/evals/scorecards")
 async def list_scorecards(
     request: Request,
     days: int = Query(default=30, ge=1, le=180),
+    bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
 ) -> dict[str, Any]:
     """Último scorecard por episodio (lista y matriz de cumplimiento)."""
     return await _forward(
-        request, "GET", "/api/chats/evals/scorecards", params={"days": days}
+        request, "GET", "/api/chats/evals/scorecards", params=_with_bot({"days": days}, bot)
     )
 
 
@@ -192,10 +202,11 @@ async def rescore_scorecard(
 async def scorecard_stats(
     request: Request,
     days: int = Query(default=56, ge=7, le=365),
+    bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
 ) -> dict[str, Any]:
     """Pareto, tendencia semanal por check y embudo de etapa final."""
     return await _forward(
-        request, "GET", "/api/chats/evals/checks/stats", params={"days": days}
+        request, "GET", "/api/chats/evals/checks/stats", params=_with_bot({"days": days}, bot)
     )
 
 
@@ -236,3 +247,87 @@ async def label_queue(
 async def judge_calibration(request: Request) -> dict[str, Any]:
     """Acuerdo juez vs humano por check de juez (TPR, TNR, kappa)."""
     return await _forward(request, "GET", "/api/chats/evals/calibration")
+
+
+# ── Calidad LLM con la vista del laboratorio, sobre producción (2026-10-02) ──
+# El operador reemplazó la vista de Calidad LLM por la del laboratorio: el
+# hilo de cada conversación real con cada turno calificado, la ventana del
+# turno (con las decisiones de Jev) y el informe de Jev. Mismo contrato
+# evals@v1. Lo que puede calificar al vuelo (las evaluaciones de una
+# conversación arman el contexto del catálogo; el informe recorre la ventana)
+# espera más (L-1).
+_SLOW_TIMEOUT_S = 45.0
+_SESSION_PATTERN = r"^wa_[A-Za-z0-9+]+$"
+_EPISODE_PATTERN = r"^ep_[0-9]{1,6}$"
+
+
+@router.get("/evals/production/conversations")
+async def production_conversations(
+    request: Request,
+    days: int = Query(default=56, ge=1, le=180),
+    bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
+) -> dict[str, Any]:
+    """Las conversaciones calificadas de la ventana, con veredicto y bot por episodio."""
+    return await _forward(
+        request, "GET", "/api/chats/evals/production/conversations", params=_with_bot({"days": days}, bot)
+    )
+
+
+@router.get("/evals/production/conversations/{session_id}")
+async def production_thread(
+    request: Request,
+    session_id: str = Path(..., pattern=_SESSION_PATTERN, max_length=120),
+    episode: str | None = Query(default=None, pattern=_EPISODE_PATTERN),
+) -> dict[str, Any]:
+    """El hilo de la conversación (o de un episodio): mensajes y turnos."""
+    return await _forward(
+        request,
+        "GET",
+        f"/api/chats/evals/production/conversations/{session_id}",
+        params={"episode": episode} if episode else None,
+    )
+
+
+@router.get("/evals/production/conversations/{session_id}/turns/trace")
+async def production_turn_trace(
+    request: Request,
+    session_id: str = Path(..., pattern=_SESSION_PATTERN, max_length=120),
+    turn_key: str = Query(..., min_length=1, max_length=200),
+) -> dict[str, Any]:
+    """La ventana del turno: paso a paso y decisiones de Jev."""
+    return await _forward(
+        request,
+        "GET",
+        f"/api/chats/evals/production/conversations/{session_id}/turns/trace",
+        params={"turn_key": turn_key},
+    )
+
+
+@router.get("/evals/production/conversations/{session_id}/evaluations")
+async def production_evaluations(
+    request: Request,
+    session_id: str = Path(..., pattern=_SESSION_PATTERN, max_length=120),
+) -> dict[str, Any]:
+    """Cada episodio de la conversación, calificado turno por turno."""
+    return await _forward(
+        request,
+        "GET",
+        f"/api/chats/evals/production/conversations/{session_id}/evaluations",
+        timeout=_SLOW_TIMEOUT_S,
+    )
+
+
+@router.get("/evals/production/jev")
+async def production_jev(
+    request: Request,
+    days: int = Query(default=56, ge=1, le=180),
+    bot: str = Query(default="nuevo", pattern=_BOT_PATTERN),
+) -> dict[str, Any]:
+    """El informe de Jev de los turnos reales de la ventana."""
+    return await _forward(
+        request,
+        "GET",
+        "/api/chats/evals/production/jev",
+        params={"days": days, "bot": bot},
+        timeout=_SLOW_TIMEOUT_S,
+    )

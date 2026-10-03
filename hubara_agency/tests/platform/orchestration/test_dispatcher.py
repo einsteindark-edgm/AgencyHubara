@@ -658,3 +658,31 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if item.get_closest_marker("asyncio") is None:
             item.add_marker(pytest.mark.asyncio)
+
+
+class TestWorkflowRouting:
+    """Motor de decisiones F2/F7: la versión del workflow la decide el plugin
+    por conversación (`workflow_routing`); sin enrutador, el del manifiesto."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_routers(self):
+        from src.platform.workflow_routing import clear_workflow_routers
+
+        clear_workflow_routers()
+        yield
+        clear_workflow_routers()
+
+    async def test_ensure_running_starts_the_version_the_plugin_routes(self, fake_client_factory, patch_manifest):
+        from src.platform.workflow_routing import register_workflow_router
+
+        client = _FakeClient(existing_status=None)
+        fake_client_factory(client)
+        patch_manifest(
+            [_make_transition(via="ensure_running", target_worker="sales", input_mapping={"session_id": "$.session_id"})]
+        )
+        register_workflow_router("chats", "sales", lambda sid: "TargetWorkflowV2" if sid == "wa_2" else None)
+
+        await dispatch_event_activity(envelope_for(_Event(session_id="wa_2"), source_plugin="chats", source_worker="sales"))
+        await dispatch_event_activity(envelope_for(_Event(session_id="wa_1"), source_plugin="chats", source_worker="sales"))
+
+        assert [s["workflow"] for s in client.started] == ["TargetWorkflowV2", "TargetWorkflow"]

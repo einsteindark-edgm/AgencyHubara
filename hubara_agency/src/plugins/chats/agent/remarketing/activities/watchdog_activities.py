@@ -223,8 +223,12 @@ def _watchdog_order_id(metadata: dict) -> str | None:
     return oid if isinstance(oid, str) and oid else None
 
 
+#: Variables de plantilla que se llenan con el `motivo` (prosa del LLM).
+_MOTIVO_VARIABLES = frozenset({"product_or_quote_label", "product_label"})
+
+
 def _resolve_template_variables(
-    spec: TemplateSpec, metadata: dict, order_facts: Any = None
+    spec: TemplateSpec, metadata: dict, order_facts: Any = None, *, motivo_ok: bool = True
 ) -> dict[str, str]:
     """Fill the variable slots a TemplateSpec declares, from metadata fields.
 
@@ -247,7 +251,10 @@ def _resolve_template_variables(
 
     Any variable not in the heuristics gets the literal string "—".
     """
-    motivo = (metadata.get("motivo") or "").strip() or "tu consulta"
+    # `motivo_ok=False`: el motor de decisiones leyó que el motivo es un
+    # resumen interno (no un texto para el cliente): va el genérico.
+    motivo = ((metadata.get("motivo") or "").strip() if motivo_ok else "") or "tu consulta"
+    product = motivo if motivo_ok else "el producto"
     registered = metadata.get("registered_order") or {}
     order_id = registered.get("order_id") or "tu pedido"
 
@@ -263,7 +270,7 @@ def _resolve_template_variables(
         "order_reference": str(order_id),
         "amount_currency": amount,
         "status_label": "en proceso",
-        "product_label": motivo,
+        "product_label": product,
     }
 
     out: dict[str, str] = {}
@@ -468,7 +475,18 @@ async def check_watchdog_eligibility_activity(
             eligible=False, reason="no_template_for_stage"
         )
 
-    variables = _resolve_template_variables(spec, metadata, order_facts)
+    # Motor de decisiones (familia C, «resumen interno en una plantilla»): el
+    # motivo es prosa del LLM; si no es un texto para el cliente, la plantilla
+    # lleva el genérico. Sin el motor conectado, o con `reglas`, como hoy.
+    motivo_ok = True
+    motivo_text = (metadata.get("motivo") or "").strip()
+    if motivo_text and any(v.name in _MOTIVO_VARIABLES for v in spec.variables):
+        from src.plugins.chats.shared.agent_decisions import label_is_internal
+
+        motivo_ok = not await label_is_internal(
+            session_id=session_id, text=motivo_text, vault_dir=Path(WORKSPACE_VAULT_DIR)
+        )
+    variables = _resolve_template_variables(spec, metadata, order_facts, motivo_ok=motivo_ok)
     log.info(
         "watchdog_eligibility_pass",
         session_id=session_id,

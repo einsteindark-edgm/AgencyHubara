@@ -94,6 +94,10 @@ _META_PREFIX_RE = re.compile(
     "|".join(_META_PREFIX_STRONG_PATTERNS + _META_PREFIX_WEAK_PATTERNS),
     flags=re.IGNORECASE,
 )
+# Solo los STRONG: el piso del motor de decisiones (capacidad `preambulo`).
+# Van primero en el patrón combinado, así que cuando uno calza el corte es el
+# mismo en los dos.
+_META_PREFIX_STRONG_RE = re.compile("|".join(_META_PREFIX_STRONG_PATTERNS), flags=re.IGNORECASE)
 
 # Escapes literales: el modelo a veces emite `\n` como DOS caracteres
 # (backslash + 'n') en vez del newline real (incidente saludo apertura:
@@ -133,22 +137,8 @@ class SanitizeResult:
         return bool(self.actions)
 
 
-def sanitize_llm_text(raw: str) -> SanitizeResult:
-    """Sanitiza el texto antes de enviarlo al cliente.
-
-    Pipeline (en orden):
-      1. Strip leading/trailing whitespace.
-      2. Remove meta-prefijos conocidos ("Here's my attempt:", etc.).
-      3. Strip comillas envolventes globales si abarcan todo el texto.
-      4. Detectar duplicación back-to-back y colapsar a una sola copia.
-      5. Strip whitespace de nuevo (los pasos anteriores pueden dejar
-         espacios huérfanos).
-
-    Idempotente: `sanitize(sanitize(x).text).text == sanitize(x).text`.
-    """
-    if not raw:
-        return SanitizeResult("", ())
-
+def _sanitize_head(raw: str) -> tuple[str, list[str]]:
+    """Pasos 1 y 1.5 (mecánicos): lo que el paso del meta-prefijo lee."""
     text = raw
     actions: list[str] = []
 
@@ -164,9 +154,66 @@ def sanitize_llm_text(raw: str) -> SanitizeResult:
     if removed:
         text = cleaned
         actions.append("literal_escapes_normalized")
+    return text, actions
+
+
+def preamble_stage(raw: str | None) -> str:
+    """El texto tal como lo lee el paso del meta-prefijo (paso 2 de
+    `sanitize_llm_text`): recortado y con los escapes literales normalizados.
+    Sobre ESTE texto decide el motor de decisiones del plugin qué muletilla
+    de presentación del modelo se cae (capacidad `preambulo`). Puro."""
+    if not raw:
+        return ""
+    return _sanitize_head(raw)[0]
+
+
+def strip_model_preamble(text: str, *, strong_only: bool = False) -> str:
+    """La regla de hoy del paso 2: `text` (el de `preamble_stage`) sin el
+    meta-prefijo conocido ("Here's my attempt:", "Aquí tienes:"…); el mismo
+    texto si no hay, si quedaría vacío o si cortaría a mitad de frase.
+    `strong_only`: solo los prefijos que casi nunca abren una oración
+    legítima (el piso de la capacidad `preambulo`). Puro."""
+    return _strip_meta_prefix(text, strong_only=strong_only)[0]
+
+
+def _is_preamble_cut(text: str, kept: str) -> bool:
+    """¿`kept` es un corte válido de `text` en el paso 2? Un sufijo no vacío
+    que no arranca a mitad de frase (o el texto entero: nada que cortar)."""
+    if kept == text:
+        return True
+    return bool(kept.strip()) and text.endswith(kept) and not kept[0].islower()
+
+
+def sanitize_llm_text(raw: str, *, without_preamble: str | None = None) -> SanitizeResult:
+    """Sanitiza el texto antes de enviarlo al cliente.
+
+    Pipeline (en orden):
+      1. Strip leading/trailing whitespace.
+      2. Remove meta-prefijos conocidos ("Here's my attempt:", etc.).
+      3. Strip comillas envolventes globales si abarcan todo el texto.
+      4. Detectar duplicación back-to-back y colapsar a una sola copia.
+      5. Strip whitespace de nuevo (los pasos anteriores pueden dejar
+         espacios huérfanos).
+
+    `without_preamble`: la decisión del paso 2 tomada afuera (el motor de
+    decisiones del plugin, capacidad `preambulo`): el texto de
+    `preamble_stage(raw)` sin la muletilla del modelo, o entero si no hay
+    nada que cortar. Si no es un corte válido de ese texto (un sufijo no
+    vacío que no arranca a mitad de frase), decide la regla de hoy. None =
+    la regla de hoy. Los demás pasos corren igual, en su orden.
+
+    Idempotente: `sanitize(sanitize(x).text).text == sanitize(x).text`.
+    """
+    if not raw:
+        return SanitizeResult("", ())
+
+    text, actions = _sanitize_head(raw)
 
     # 2. Meta-prefijo.
-    cleaned, removed = _strip_meta_prefix(text)
+    if without_preamble is not None and _is_preamble_cut(text, without_preamble):
+        cleaned, removed = without_preamble, without_preamble != text
+    else:
+        cleaned, removed = _strip_meta_prefix(text)
     if removed:
         text = cleaned
         actions.append("meta_prefix_stripped")
@@ -228,10 +275,10 @@ def _normalize_literal_escapes(text: str) -> tuple[str, bool]:
     return out, out != text
 
 
-def _strip_meta_prefix(text: str) -> tuple[str, bool]:
+def _strip_meta_prefix(text: str, *, strong_only: bool = False) -> tuple[str, bool]:
     """Elimina prefijos meta conocidos. Si tras strip queda vacío,
     devuelve el original (defensivo — no destruyas todo el mensaje)."""
-    match = _META_PREFIX_RE.match(text)
+    match = (_META_PREFIX_STRONG_RE if strong_only else _META_PREFIX_RE).match(text)
     if not match:
         return text, False
     stripped = text[match.end():].lstrip()
@@ -601,22 +648,37 @@ def breaks_human_persona(raw: str | None) -> bool:
     return any(p.search(raw) for p in _PERSONA_BREAK_PATTERNS)
 
 
-def keep_customer_safe_sentences(raw: str | None) -> str:
+def customer_sentences(raw: str | None) -> list[str]:
+    """Las oraciones del texto para el cliente, tal como las juzga
+    `keep_customer_safe_sentences` (un solo corte: el motor de decisiones del
+    plugin decide sobre estas mismas oraciones). Puro, stdlib-only."""
+    if not raw or not raw.strip():
+        return []
+    return [p.strip() for p in _SENTENCE_SPLIT_RE.split(raw.strip()) if p and p.strip()]
+
+
+def keep_customer_safe_sentences(raw: str | None, *, drop: set[int] | frozenset[int] | None = None) -> str:
     """Quita SOLO las oraciones que rompen la persona o huelen a reporte interno.
 
     Reemplazar el texto entero por una palabra marcada botaba lo que SÍ servía
     (el aviso del portavelas en la despedida de cierre) y agrandaba el costo de
     un falso positivo ("toque humano", "mensaje automático"). Si nada se cae,
     devuelve el texto intacto (con sus saltos de línea). Puro, stdlib-only.
+
+    `drop` (índices de `customer_sentences`): las oraciones que decidió quitar
+    el motor de decisiones del plugin (la regla de hoy, o Jev con la regla de
+    respaldo). Sin `drop`, decide la regla de hoy.
     """
     if not raw or not raw.strip():
         return ""
     text = raw.strip()
-    parts = [p.strip() for p in _SENTENCE_SPLIT_RE.split(text) if p and p.strip()]
-    kept = [
-        p for p in parts
-        if not breaks_human_persona(p) and not looks_like_admin_leak(p)
-    ]
+    parts = customer_sentences(text)
+    if drop is None:
+        drop = {
+            i for i, p in enumerate(parts)
+            if breaks_human_persona(p) or looks_like_admin_leak(p)
+        }
+    kept = [p for i, p in enumerate(parts) if i not in drop]
     if len(kept) == len(parts):
         return text
     return " ".join(kept)

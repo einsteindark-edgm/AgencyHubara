@@ -1,0 +1,391 @@
+"""Arma el sandbox de UN turno desde el banco (plan §3.4 y §3.6, PR 11).
+
+"Teacher forcing": el bot simulado ve exactamente lo que había ANTES del turno
+real y nada de después.
+
+  <dest>/vault/<sim>/metadata.json               como estaba al empezar el turno
+  <dest>/vault/<sim>/sessions/<sim>.jsonl        historial del dashboard, cortado
+  <dest>/vault/<sim>/evals/turn_traces.jsonl     trazas de los turnos anteriores
+  <dest>/agent_state/<ws>/sessions/<sim>.jsonl   historial del LLM, cortado
+  <dest>/catalog/                                copia del snapshot del banco
+
+`<sim>` es un número ficticio con la forma del real (`wa_570…`: el 570 no
+existe en Colombia) y el número real se reemplaza en TODO lo que se escribe.
+El banco no se toca: se lee y se copia.
+
+Reglas del estado del inicio (`metadata_as_of`), con la traza anterior como
+fuente (`case.draft_before` / `case.state_before`, ver `cases.py`):
+  * tag, ruta y escalación: los de la traza anterior; si no hay, sin valor;
+  * episodio del turno: el borrador si no cambió después del inicio (si
+    cambió, las casillas de la traza anterior), la orden y el cierre de la
+    traza anterior del mismo episodio, el cupón si se aplicó antes;
+  * el reset del historial del LLM queda pendiente en el primer turno del
+    episodio (en producción se aplicó justo ahí) y aplicado en los demás;
+  * nada pendiente que dispare efectos o dedupe (intents de UI, CAPI, envíos
+    recientes, señal del cliente, handoff): el turno de handoff siembra su
+    propio resumen;
+  * `status_history` y la espera del formulario de envío, hasta el inicio;
+  * el seguimiento de entrega (`eta_tracking`), hasta el inicio: sin los
+    pedidos cuyo seguimiento empezó después y con la etapa del último aviso
+    anterior (`check_order_status` lo lee: si no, el bot simulado veía un
+    pedido "entregado" que al momento del turno iba en camino);
+  * `phone_number_id` ficticio: el envío simulado nunca apunta al negocio.
+
+La ráfaga del turno NO va en el historial del dashboard que se escribe acá:
+en producción el ingest la guarda mensaje por mensaje, después de las
+lecturas de cada uno. `burst_records` trae cada mensaje como lo escribió el
+ingest y el sandbox los agrega en ese mismo orden (`sandbox/readings.py`).
+"""
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+import shutil
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from src.plugins.chats.agent.sales.decisions.context import real_wamid
+from src.plugins.chats.agent.sales_lab.sandbox.photos import bench_reads, photo_rewrites, photos_as_of, rewrite_photos
+
+_DROP_KEYS = (
+    "pending_ui_intents",
+    "recent_freeform_sends",
+    "capi_outbox",
+    "capi_terminal_event",
+    "last_inbound_signal",
+    "pending_handoff_summary",
+)
+_ORDER_LEDGERS = ("registered_order", "checkout_verification")
+#: El envío del sandbox (sin llave de WhatsApp: simulado) necesita un
+#: phone_number_id; nunca el del negocio.
+SANDBOX_PHONE_NUMBER_ID = "lab-sandbox"
+_SESSION_STATE = (("tag", "tag"), ("active_route", "route"), ("escalation_reason", "escalation_reason"))
+
+
+@dataclass(frozen=True)
+class SandboxPaths:
+    session_id: str
+    root: Path
+    vault_dir: Path
+    state_dir: Path
+    catalog_dir: Path
+    # Un evento del dashboard por mensaje de `case["burst"]` (mismo orden),
+    # con el número ficticio: lo que el sandbox agrega antes del turno.
+    burst_records: tuple[dict[str, Any], ...] = ()
+    # `dashboard_between` del caso (con el número ficticio): el ingest del
+    # sandbox los intercala por hora con la ráfaga.
+    between_records: tuple[dict[str, Any], ...] = ()
+
+
+def sim_session_id(session_id: str) -> str:
+    """Número ficticio estable con la forma del real: `wa_570` + dígitos."""
+    digits = session_id.removeprefix("wa_")
+    width = max(len(digits) - 3, 1)
+    h = int(hashlib.sha256(session_id.encode()).hexdigest(), 16)
+    return f"wa_570{h % 10**width:0{width}d}"
+
+
+def _ms(value: Any) -> int | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(value)
+    if isinstance(value, str) and value:
+        try:
+            dt = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp() * 1000)
+    return None
+
+
+def draft_from_trace(draft: dict[str, Any]) -> dict[str, Any]:
+    """El `order_draft` que dejó una traza. La traza guarda `draft_slots`, que
+    mete los ítems de un pedido de varios productos DENTRO de las casillas:
+    vuelven a `order_draft.items`, donde los leen la etapa, los hechos y las
+    tools."""
+    slots = dict(draft)
+    items = slots.pop("items", None)
+    if isinstance(items, list):
+        return {"slots": slots, "items": [dict(i) for i in items if isinstance(i, dict)]}
+    return {"slots": slots}
+
+
+def _episode_as_of(ep: dict[str, Any], case: dict[str, Any], *, sales_workspace_path: str) -> dict[str, Any]:
+    at = int(case["at_ms"])
+    before = case.get("state_before") or {}
+    out = copy.deepcopy(ep)
+    for key, value in list(out.items()):
+        if key.endswith("_at_ms") and key != "started_at_ms" and isinstance(value, (int, float)) and value > at:
+            out.pop(key)
+    draft = out.get("order_draft")
+    updated = draft.get("updated_at_ms") if isinstance(draft, dict) else None
+    if not (isinstance(updated, (int, float)) and updated <= at):
+        out.pop("order_draft", None)
+        if case.get("draft_before"):
+            out["order_draft"] = draft_from_trace(case["draft_before"])
+    for key in ("order_id", "closing_tag"):
+        if before.get(key):
+            out[key] = before[key]
+        else:
+            out.pop(key, None)
+    coupon = out.get("applied_coupon")
+    applied_at = coupon.get("applied_at_ms") if isinstance(coupon, dict) else None
+    if not (isinstance(applied_at, (int, float)) and applied_at <= at):
+        out.pop("applied_coupon", None)
+    reset = out.get("llm_history_reset")
+    if isinstance(reset, dict):
+        applied = [p for p in reset.get("applied") or [] if p != sales_workspace_path]
+        if not case.get("first_in_episode"):
+            applied.append(sales_workspace_path)  # ya se aplicó en un turno anterior del episodio
+        reset["applied"] = applied
+    return out
+
+
+def _tracking_entry_as_of(entry: dict[str, Any], at: int) -> dict[str, Any] | None:
+    started = _ms(entry.get("started_at_ms"))
+    if started is not None and started > at:
+        return None
+    events = [e for e in entry.get("events") or [] if isinstance(e, dict) and (_ms(e.get("at_ms")) or 0) <= at]
+    stages: list[str] = []
+    for event in events:
+        stage = event.get("stage")
+        if isinstance(stage, str) and stage not in stages:
+            stages.append(stage)
+    last = events[-1].get("stage") if events else None
+    return {**entry, "events": events, "notified_stages": stages, "current_stage": last if isinstance(last, str) else None}
+
+
+def tracking_as_of(tracking: Any, at: int) -> Any:
+    """El seguimiento de entrega (ETA) como estaba en `at`: shape v2 (mapa
+    por pedido) o v1 (un pedido en la raíz). None = todavía no había."""
+    if not isinstance(tracking, dict):
+        return tracking
+    orders = tracking.get("orders")
+    if isinstance(orders, dict):
+        kept = {
+            oid: cut
+            for oid, entry in orders.items()
+            if isinstance(entry, dict) and (cut := _tracking_entry_as_of(entry, at)) is not None
+        }
+        return {**tracking, "orders": kept} if kept else None
+    if tracking.get("order_id"):
+        return _tracking_entry_as_of(tracking, at)
+    return tracking
+
+
+def metadata_as_of(metadata: dict[str, Any], case: dict[str, Any], *, sales_workspace_path: str) -> dict[str, Any]:
+    """La metadata como estaba al EMPEZAR el turno del caso (ver docstring)."""
+    at = int(case["at_ms"])
+    before = case.get("state_before") or {}
+    meta = {k: copy.deepcopy(v) for k, v in metadata.items() if k not in _DROP_KEYS}
+    for key, field in _SESSION_STATE:
+        if before.get(field) is None:
+            meta.pop(key, None)
+        else:
+            meta[key] = before[field]
+    if not before.get("order_id"):
+        for key in _ORDER_LEDGERS:
+            meta.pop(key, None)
+    if "status_history" in meta:
+        meta["status_history"] = [
+            h for h in meta["status_history"] or []
+            if isinstance(h, dict) and isinstance(h.get("timestamp"), (int, float)) and h["timestamp"] * 1000 <= at
+        ]
+    waiting = meta.get("shipping_flow_awaiting_reply_since_ms")
+    if isinstance(waiting, (int, float)) and waiting > at:
+        meta.pop("shipping_flow_awaiting_reply_since_ms")
+    if "eta_tracking" in meta:
+        tracking = tracking_as_of(meta["eta_tracking"], at)
+        if tracking is None:
+            meta.pop("eta_tracking")
+        else:
+            meta["eta_tracking"] = tracking
+    episodes = [dict(e) for e in case.get("episodes_at") or [] if isinstance(e, dict)]
+    for i, ep in enumerate(episodes):
+        if ep.get("episode_id") == case.get("episode_id"):
+            episodes[i] = _episode_as_of(ep, case, sales_workspace_path=sales_workspace_path)
+    meta["episodes"] = episodes
+    meta["phone_number_id"] = SANDBOX_PHONE_NUMBER_ID
+    if case.get("trigger") == "handoff":
+        meta["pending_handoff_summary"] = str((case.get("real") or {}).get("inbound_text") or "")
+    return meta
+
+
+def _jsonl(path: Path) -> list[dict[str, Any]]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(item, dict):
+            out.append(item)
+    return out
+
+
+def _llm_lines(lines: list[dict[str, Any]], case: dict[str, Any]) -> list[dict[str, Any]]:
+    """Metadatos de exoclaw + los mensajes del prefijo. `last_consolidated`
+    y `summary` que se movieron DESPUÉS del turno no se conocen al inicio:
+    el corte vuelve al inicio del episodio (si tuvo reset) o al principio (la
+    ventana de memoria del loader acota lo que ve el LLM)."""
+    head = next((dict(line) for line in lines if line.get("_type") == "metadata"), None)
+    messages = [line for line in lines if line.get("_type") != "metadata"][: int(case.get("llm_prefix") or 0)]
+    if head is None:
+        return messages
+    prefix = len(messages)
+    consolidated = head.get("last_consolidated")
+    if not (isinstance(consolidated, int) and consolidated <= prefix):
+        episode = next((e for e in case.get("episodes_at") or [] if e.get("episode_id") == case.get("episode_id")), {})
+        start = _ms(episode.get("started_at_ms"))
+        reset_at = 0
+        if episode.get("llm_history_reset") and start is not None:
+            reset_at = sum(1 for m in messages if (_ms(m.get("timestamp")) or 0) < start)
+        head["last_consolidated"] = reset_at
+        head.pop("summary", None)
+    return [head, *messages]
+
+
+def _with_photos(line: dict[str, Any], rewrites: dict[str, str]) -> dict[str, Any]:
+    """Un mensaje del cliente con sus fotos como entrarían hoy (nombrando el
+    producto si se reconoce)."""
+    if not rewrites or line.get("role") != "user" or not isinstance(line.get("content"), str):
+        return line
+    return {**line, "content": rewrite_photos(line["content"], rewrites)}
+
+
+def _iso(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
+
+
+def burst_record(message: dict[str, Any], *, at_ms: int) -> dict[str, Any]:
+    """El evento del dashboard de un mensaje de la ráfaga con la forma que
+    escribe el ingest (`append_user_event`): el texto efectivo (lo que el
+    cliente escribió, o el audio o la foto ya leídos; sin la campaña citada
+    ni el episodio anterior que el ingest le agrega al turno), la hora y el
+    wamid real (sin el sufijo de los reentries). Solo cuando el banco no lo
+    tiene (`burst_records`)."""
+    wamid = real_wamid(str(message["wamid"])) if message.get("wamid") else None
+    ts = message.get("ts_ms")
+    at = int(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else int(at_ms)
+    record: dict[str, Any] = {
+        "role": "user",
+        "content": str(message.get("raw_text") or message.get("text") or ""),
+        "timestamp": _iso(at),
+    }
+    if wamid:
+        record["wamid"] = wamid
+    return record
+
+
+def _same_message(event: dict[str, Any], record: dict[str, Any]) -> bool:
+    theirs, ours = event.get("wamid"), record.get("wamid")
+    if theirs and ours:
+        return theirs == ours
+    return str(event.get("content") or "") == record["content"]
+
+
+def burst_records(events: list[dict[str, Any]], case: dict[str, Any]) -> list[dict[str, Any]]:
+    """Un evento del dashboard por mensaje de `case["burst"]`, en su orden: el
+    que escribió el ingest de producción (con la cita, la foto o el documento
+    que traía), buscado después del prefijo por wamid o, sin wamid, por el
+    texto; si el banco no lo tiene, uno con la misma forma (`burst_record`)."""
+    tail = [e for e in events[int(case.get("dashboard_prefix") or 0):] if e.get("role") == "user"]
+    used: set[int] = set()
+    out: list[dict[str, Any]] = []
+    for message in case.get("burst") or []:
+        own = burst_record(message if isinstance(message, dict) else {}, at_ms=int(case["at_ms"]))
+        found = next((i for i, e in enumerate(tail) if i not in used and _same_message(e, own)), None)
+        if found is None:
+            out.append(own)
+            continue
+        used.add(found)
+        out.append(dict(tail[found]))
+    return out
+
+
+def scrub_text(text: str, real_sid: str, sim_sid: str) -> str:
+    """El número real → el ficticio del sandbox (también sus últimos 10 dígitos)."""
+    real, sim = real_sid.removeprefix("wa_"), sim_sid.removeprefix("wa_")
+    text = text.replace(real, sim)
+    if len(real) > 10:
+        text = text.replace(real[-10:], sim[-10:])
+    return text
+
+
+def _write_json(path: Path, value: Any, real: str, sim: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(scrub_text(json.dumps(value, ensure_ascii=False), real, sim), encoding="utf-8")
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]], real: str, sim: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+    path.write_text(scrub_text(body, real, sim), encoding="utf-8")
+
+
+def materialize_case(
+    bench_dir: Path,
+    case: dict[str, Any],
+    dest: Path,
+    *,
+    bench_workspace: str,
+    sales_workspace: str,
+    sales_workspace_path: str,
+) -> SandboxPaths:
+    """`bench_workspace`: slug del historial del LLM en el banco (el de
+    producción); `sales_workspace`: el slug local (sale del path absoluto del
+    workspace de código, como en exoclaw); `sales_workspace_path`: ese path."""
+    real = str(case["session_id"])
+    sim = sim_session_id(real)
+    at = int(case["at_ms"])
+    src = bench_dir / "vault" / real
+    events = _jsonl(src / "sessions" / f"{real}.jsonl")
+    paths = SandboxPaths(
+        session_id=sim,
+        root=dest,
+        vault_dir=dest / "vault",
+        state_dir=dest / "agent_state",
+        catalog_dir=dest / "catalog",
+        burst_records=tuple(json.loads(scrub_text(json.dumps(r, ensure_ascii=False), real, sim)) for r in burst_records(events, case)),
+        between_records=tuple(
+            json.loads(scrub_text(json.dumps(e, ensure_ascii=False), real, sim))
+            for e in case.get("dashboard_between") or []
+            if isinstance(e, dict)
+        ),
+    )
+    metadata = json.loads((src / "metadata.json").read_text(encoding="utf-8"))
+    box = paths.vault_dir / sim
+    as_of = metadata_as_of(metadata, case, sales_workspace_path=sales_workspace_path)
+    # Las fotos de turnos anteriores, como las habría dejado el ingest de hoy
+    # (reconocidas con la visión de hoy; sin las que llegaron después).
+    reads = bench_reads(bench_dir, real)
+    if "recent_image_descriptions" in metadata:
+        as_of["recent_image_descriptions"] = photos_as_of(metadata, case, reads)
+    rewrites = photo_rewrites(metadata, case, reads)
+    _write_json(box / "metadata.json", as_of, real, sim)
+    _write_jsonl(
+        box / "sessions" / f"{sim}.jsonl",
+        [_with_photos(e, rewrites) for e in events[: int(case.get("dashboard_prefix") or 0)]],
+        real, sim,
+    )
+    traces = [t for t in _jsonl(src / "evals" / "turn_traces.jsonl") if (_ms(t.get("turn_started_ms")) or 0) < at]
+    _write_jsonl(box / "evals" / "turn_traces.jsonl", traces, real, sim)
+    llm = _jsonl(bench_dir / "agent_state" / bench_workspace / "sessions" / f"{real}.jsonl")
+    _write_jsonl(
+        paths.state_dir / sales_workspace / "sessions" / f"{sim}.jsonl",
+        [_with_photos(line, rewrites) for line in _llm_lines(llm, case)],
+        real, sim,
+    )
+    if (bench_dir / "catalog").is_dir():
+        shutil.copytree(bench_dir / "catalog", paths.catalog_dir, dirs_exist_ok=True)
+    else:
+        paths.catalog_dir.mkdir(parents=True, exist_ok=True)
+    return paths

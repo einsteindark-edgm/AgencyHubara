@@ -44,7 +44,9 @@ from src.platform.catalog.composition import (
     get_checkout_verification_port as get_checkout_verification_port,
 )
 from src.platform.catalog.identity import (
+    has_real_variants as has_real_variants,
     product_retailer_id as product_retailer_id,
+    variant_retailer_id as variant_retailer_id,
 )
 from src.platform.catalog.errors import (
     CatalogUnavailableError as CatalogUnavailableError,
@@ -179,8 +181,59 @@ from src.platform.promotions.rules import (
     resolve_coupon as resolve_coupon,
 )
 from src.platform.vision.composition import (
+    get_image_embedding_port as get_image_embedding_port,
     get_image_vision_port as get_image_vision_port,
+    get_photo_match_port as get_photo_match_port,
+)
+from src.platform.vision.dtos import (
+    VISION_KIND_OTHER as VISION_KIND_OTHER,
+    VISION_KIND_PAYMENT_RECEIPT as VISION_KIND_PAYMENT_RECEIPT,
+    VISION_KIND_PRODUCT_PHOTO as VISION_KIND_PRODUCT_PHOTO,
+    VisibleText as VisibleText,
+    VisionResult as VisionResult,
+)
+from src.platform.vision.embeddings import (
+    FakeImageEmbeddingAdapter as FakeImageEmbeddingAdapter,
+    ImageEmbeddingPort as ImageEmbeddingPort,
+    NullImageEmbeddingAdapter as NullImageEmbeddingAdapter,
+)
+from src.platform.vision.photo_match import (
+    FakePhotoMatchAdapter as FakePhotoMatchAdapter,
+    NullPhotoMatchAdapter as NullPhotoMatchAdapter,
+    PhotoMatchPort as PhotoMatchPort,
+    PhotoPick as PhotoPick,
 )
 from src.platform.vision.port import (
     ImageVisionPort as ImageVisionPort,
+)
+from src.platform.perception.adapters.fake import (
+    FakePerceptionAdapter as FakePerceptionAdapter,
+)
+from src.platform.perception.adapters.null import (
+    NullPerceptionAdapter as NullPerceptionAdapter,
+)
+from src.platform.perception.anonymize import (
+    anonymize_text as anonymize_text,
+)
+from src.platform.perception.composition import (
+    get_perception_port as get_perception_port,
+    oracle_timeout_s as oracle_timeout_s,
+)
+from src.platform.perception.costs import (
+    record_jev_cost as record_jev_cost,
+)
+from src.platform.vision.costs import (
+    record_vision_cost as record_vision_cost,
+)
+from src.platform.perception.disagreements import (
+    DisagreementLog as DisagreementLog,
+)
+from src.platform.perception.metrics import (
+    DecisionMetrics as DecisionMetrics,
+)
+from src.platform.perception.ports import (
+    PerceptionPort as PerceptionPort,
+    PerceptionResult as PerceptionResult,
+    TypedAnswer as TypedAnswer,
+    TypedQuestion as TypedQuestion,
 )

@@ -112,15 +112,40 @@ SHIPPING_COP_PARAM_DESCRIPTION = (
 )
 
 
+#: Zonas de envío (la tarifa mínima publicada de cada una). La regla de hoy
+#: solo sabe "bogota"; "nacional" llega únicamente si la decide el motor de
+#: decisiones (capacidad `zona_de_envio`), que conoce los municipios cercanos.
+SHIPPING_ZONE_BOGOTA = "bogota"
+SHIPPING_ZONE_NATIONAL = "nacional"
+
+
 def is_published_shipping_rate(shipping_cop: int, city: str | None = None) -> bool:
     """¿``shipping_cop`` es una tarifa mínima publicada para esta ciudad?
 
     Bogotá paga la de Bogotá. Fuera de Bogotá valen las dos: no hay lista de
     "municipios cercanos" y esa decisión la toma el bot con la política
-    publicada. Nunca $0 ni un monto inventado.
+    publicada. Nunca $0 ni un monto inventado. Es LEER la zona
+    (`shipping_zone`) y validar la tarifa de esa zona
+    (`is_published_rate_for_zone`); las tools le piden la zona al motor.
     """
+    return is_published_rate_for_zone(shipping_cop, shipping_zone(city))
+
+
+def shipping_zone(city: str | None) -> str | None:
+    """LECTURA de la regla de hoy: "bogota" si la ciudad dice Bogotá; None si
+    no se sabe (no hay lista de municipios cercanos)."""
+    if city is not None and "bogota" in _fold(city):
+        return SHIPPING_ZONE_BOGOTA
+    return None
+
+
+def is_published_rate_for_zone(shipping_cop: int, zone: str | None) -> bool:
+    """¿``shipping_cop`` es la tarifa mínima publicada de la zona? Sin zona
+    (None) valen las dos; nunca $0 ni un monto inventado."""
     if shipping_cop not in (SHIPPING_RATE_BOGOTA_COP, SHIPPING_RATE_NATIONAL_COP):
         return False
-    if city is not None and "bogota" in _fold(city):
+    if zone == SHIPPING_ZONE_BOGOTA:
         return shipping_cop == SHIPPING_RATE_BOGOTA_COP
+    if zone == SHIPPING_ZONE_NATIONAL:
+        return shipping_cop == SHIPPING_RATE_NATIONAL_COP
     return True

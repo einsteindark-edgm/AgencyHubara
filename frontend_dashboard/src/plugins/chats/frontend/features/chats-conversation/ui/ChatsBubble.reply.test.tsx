@@ -45,6 +45,20 @@ describe("ChatsBubble — cita de un mensaje", () => {
     expect(screen.queryByRole("img", { name: /imagen citada/i })).toBeNull();
   });
 
+  it("«Enviar mensaje a la empresa» desde la ficha → la cita dice el producto", () => {
+    // 2026-09-30: Meta manda el producto de la ficha (`referred_product`); el
+    // backend lo resuelve y la cita lo muestra.
+    const m: ChatMessageItem = {
+      kind: "in",
+      text: "Hola, ¿la tienen disponible?",
+      replyTo: { author: "catalog", text: "Luz Serena" },
+    };
+    render(<ChatsBubble message={m} />);
+    const quote = screen.getByRole("figure", { name: /respondiendo a/i });
+    expect(quote).toHaveTextContent("Ficha del catálogo");
+    expect(quote).toHaveTextContent("Luz Serena");
+  });
+
   it("cita no resuelta → aviso de mensaje no disponible", () => {
     const m: ChatMessageItem = {
       kind: "in",

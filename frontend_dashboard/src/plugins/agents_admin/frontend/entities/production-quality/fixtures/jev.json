@@ -1,0 +1,45 @@
+{
+  "days": 56,
+  "bot": "nuevo",
+  "episodes": 1,
+  "turns": 2,
+  "errors": 0,
+  "perception": {
+    "turns": 2,
+    "fallbacks": 1,
+    "fallback_rate": 0.5,
+    "p50_ms": 400,
+    "p95_ms": 1600
+  },
+  "verify": {
+    "turns": 1,
+    "decisions": {
+      "send": 1
+    },
+    "p95_ms": 300
+  },
+  "complement_rate": 0.5,
+  "extra_round_rate": 0.0,
+  "extra_rounds": {
+    "turn_policy_extra_round": 0,
+    "contract_extra_round": 0
+  },
+  "decisions": {
+    "total": 2,
+    "by": {
+      "jev": 1,
+      "respaldo": 1
+    },
+    "asked_jev": 2,
+    "jev_failed": 1,
+    "jev_failed_rate": 0.5,
+    "jev_failed_by_reason": {
+      "timeout": 1
+    },
+    "jev_failed_by_capability": {
+      "monto": 1
+    }
+  },
+  "cost_per_turn_usd": 0.0022,
+  "perception_cost_per_turn_usd": 0.0002
+}

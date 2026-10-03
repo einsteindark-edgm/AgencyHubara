@@ -27,17 +27,29 @@ from src.platform.registries import (
 from src.platform.state import FilesystemMetadataStore
 from src.platform.tool_extensions import apply_tool_extensions
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
-from src.plugins.chats.agent.sales.prompts import build_ghosting_prompt
+from src.plugins.chats.agent.sales.prompts import build_decided_ghosting_prompt, build_ghosting_prompt
 
 
 @activity.defn(name="decide_ghosting_action")
-async def decide_ghosting_action() -> str:
+async def decide_ghosting_action(session_id: str = "") -> str:
     """Devuelve el prompt inyectado cuando se detecta ghosting.
 
-    No tiene side effects ni I/O. Existe como activity (no como llamada directa
-    en el workflow) para mantener los strings de negocio fuera del workflow code.
+    Existe como activity (no como llamada directa en el workflow) para
+    mantener los strings de negocio fuera del workflow code. El V1 la llama
+    sin sesión: el aviso de hoy, sin I/O. El V2 le pasa la sesión: si el
+    motor de decisiones ya eligió la etiqueta (capacidad `cierre`, F8), el
+    aviso le dice al LLM cuál usar; si no (el bot de hoy, o Jev duda), el
+    aviso de hoy.
     """
-    return build_ghosting_prompt()
+    if not session_id:
+        return build_ghosting_prompt()
+    from pathlib import Path
+
+    from src.plugins.chats.agent.sales.decisions.cierre import decided_close_tag
+    from src.sdk.runtime import WORKSPACE_VAULT_DIR
+
+    tag = await decided_close_tag(session_id, vault_dir=Path(WORKSPACE_VAULT_DIR))
+    return build_decided_ghosting_prompt(tag) if tag else build_ghosting_prompt()
 
 
 @activity.defn(name="bootstrap_sales_session_activity")
@@ -240,7 +252,21 @@ async def read_and_clear_pending_handoff_activity(session_id: str) -> str | None
             "read_and_clear_pending_handoff: handoff consumido session=%s",
             session_id,
         )
+    from src.plugins.chats.agent.sales.decisions.readings import last_inbound_is_courtesy
+
+    if summary and last_inbound_is_courtesy(data):
+        summary = f"{summary}\n{_COURTESY_HANDOFF_LINE}"
     return summary if summary else None
+
+
+#: Lo que el framing del traspaso agrega cuando el cliente solo agradeció o
+#: saludó al gancho (capacidad `cortesia`): el framing pide «si solo saludó,
+#: saluda breve y pregunta en qué puedes ayudar», y así nacía el empujón.
+_COURTESY_HANDOFF_LINE = (
+    "[El cliente solo agradece o saluda: contéstale breve y cálido a lo que dijo; "
+    "no ofrezcas productos y no preguntes en qué más puedes ayudar.]"
+)
+
 
 
 @activity.defn(name="read_order_draft_note")

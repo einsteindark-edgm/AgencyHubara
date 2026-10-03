@@ -1,0 +1,2272 @@
+{
+ "raw": {
+  "id": "rafaga-v5",
+  "topics": [
+   {
+    "id": "catalogo",
+    "label": "catálogo",
+    "hint": "pide ver el catálogo o pregunta por un tipo, estilo o colección de velas (p. ej. religiosas, de Halloween, para regalo), o por los diseños o modelos"
+   },
+   {
+    "id": "precio",
+    "label": "precio",
+    "hint": "pregunta cuánto vale o cuánto cuesta algo"
+   },
+   {
+    "id": "envio",
+    "label": "envío",
+    "hint": "pregunta por el envío o el domicilio (costo o cobertura)"
+   },
+   {
+    "id": "tiempos",
+    "label": "tiempos de entrega",
+    "hint": "pregunta cuánto tarda en llegar o cuándo está listo"
+   },
+   {
+    "id": "pagos",
+    "label": "medios de pago",
+    "hint": "pregunta cómo pagar o por un medio de pago"
+   },
+   {
+    "id": "medidas",
+    "label": "medidas",
+    "hint": "pregunta por el tamaño o las medidas"
+   },
+   {
+    "id": "variante",
+    "label": "colores o variantes",
+    "hint": "pregunta por colores o variantes"
+   },
+   {
+    "id": "aroma",
+    "label": "aromas",
+    "hint": "pregunta por los aromas"
+   },
+   {
+    "id": "personalizacion",
+    "label": "personalización",
+    "hint": "pide personalizar (nombre, dedicatoria, diseño propio)"
+   },
+   {
+    "id": "disponibilidad",
+    "label": "disponibilidad",
+    "hint": "pregunta si tienen o venden algo (un producto, un tipo de vela o un diseño) o si hay disponible"
+   },
+   {
+    "id": "estado_pedido",
+    "label": "estado del pedido",
+    "hint": "pregunta por un pedido que ya hizo"
+   },
+   {
+    "id": "datos_envio",
+    "label": "datos de envío",
+    "hint": "entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)"
+   },
+   {
+    "id": "confirma_compra",
+    "label": "confirmación de compra",
+    "hint": "confirma que quiere comprar"
+   },
+   {
+    "id": "aplaza",
+    "label": "aplazamiento",
+    "hint": "aplaza la compra (luego, otro día, voy en camino)"
+   },
+   {
+    "id": "queja",
+    "label": "queja",
+    "hint": "se queja o reporta un problema"
+   },
+   {
+    "id": "foto",
+    "label": "la foto",
+    "hint": "pregunta por una foto que envió o citó"
+   },
+   {
+    "id": "saludo",
+    "label": "saludo",
+    "hint": "saluda"
+   },
+   {
+    "id": "promocion",
+    "label": "promociones o cupones",
+    "hint": "pregunta por promociones, descuentos o un cupón"
+   }
+  ],
+  "questions": [
+   {
+    "each_topic": {
+     "id": "topic.{topic}",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente {hint}?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    }
+   },
+   {
+    "id": "thread.bot_asked",
+    "kind": "choice",
+    "when": {
+     "has_context": true,
+     "bot_asked_known": null
+    },
+    "text": "¿Qué le preguntó el asesor al cliente en su ÚLTIMO mensaje del CONTEXTO?",
+    "criteria": {
+     "confirmar_compra": "si confirma la compra o el pedido",
+     "confirmar_dato_envio": "si confirma un dato de envío (dirección, ciudad, teléfono, quien recibe o pago)",
+     "elegir_variante": "que elija una variante (color, aroma, diseño o cantidad)",
+     "ver_opciones": "si quiere ver opciones (catálogo, aromas, colores o fotos)",
+     "otra_si_no": "otra pregunta de sí o no",
+     "pregunta_abierta": "una pregunta abierta",
+     "nada": "no le preguntó nada"
+    }
+   },
+   {
+    "id": "thread.answers_bot",
+    "kind": "noul",
+    "when": {
+     "has_context": true
+    },
+    "text": "¿En ESTE TURNO el cliente responde la última pregunta del asesor?",
+    "criteria": {
+     "true": "sí, la responde",
+     "false": "no, habla de otra cosa"
+    }
+   },
+   {
+    "id": "thread.answer",
+    "kind": "choice",
+    "when": {
+     "has_context": true
+    },
+    "text": "¿Qué responde el cliente en ESTE TURNO a la última pregunta del asesor?",
+    "criteria": {
+     "si": "sí",
+     "no": "no",
+     "otra": "otra cosa (elige algo, pregunta o no la responde)"
+    }
+   },
+   {
+    "id": "precio.en_contexto",
+    "kind": "noul",
+    "when": {
+     "has_context": true
+    },
+    "text": "¿El precio de lo que el cliente pregunta ya aparece en lo que vio antes (CONTEXTO)?",
+    "criteria": {
+     "true": "sí, ya lo vio",
+     "false": "no aparece"
+    }
+   },
+   {
+    "id": "envio.costo",
+    "kind": "noul",
+    "text": "¿En ESTE TURNO el cliente pregunta cuánto cuesta o cuánto vale el envío o el domicilio?",
+    "criteria": {
+     "true": "sí, pregunta el costo del envío",
+     "false": "no (pregunta otra cosa del envío, como si llega o cuánto tarda, o no habla del envío)"
+    }
+   },
+   {
+    "id": "queja.pedido_hecho",
+    "kind": "noul",
+    "text": "¿En ESTE TURNO el cliente reclama por un pedido que ya hizo?",
+    "criteria": {
+     "true": "sí, reclama por un pedido hecho",
+     "false": "no"
+    }
+   },
+   {
+    "id": "variantes.elige",
+    "kind": "noul",
+    "when": {
+     "stage": "etapa_variantes"
+    },
+    "text": "¿En ESTE TURNO el cliente elige aroma, color, diseño o cantidad?",
+    "criteria": {
+     "true": "sí, elige",
+     "false": "no"
+    }
+   },
+   {
+    "id": "etapa.cambia_producto",
+    "kind": "noul",
+    "when": {
+     "stage": [
+      "etapa_variantes",
+      "etapa_datos_envio",
+      "etapa_cierre"
+     ]
+    },
+    "text": "¿En ESTE TURNO el cliente quiere ver otros productos o cambiar el que eligió?",
+    "criteria": {
+     "true": "sí, quiere cambiar o ver otros",
+     "false": "no"
+    }
+   },
+   {
+    "id": "datos.ciudad",
+    "kind": "noul",
+    "when": {
+     "stage": "etapa_datos_envio"
+    },
+    "text": "¿En ESTE TURNO el cliente da la ciudad de envío?",
+    "criteria": {
+     "true": "sí",
+     "false": "no"
+    }
+   },
+   {
+    "id": "datos.direccion",
+    "kind": "noul",
+    "when": {
+     "stage": "etapa_datos_envio"
+    },
+    "text": "¿En ESTE TURNO el cliente da la dirección de envío?",
+    "criteria": {
+     "true": "sí",
+     "false": "no"
+    }
+   },
+   {
+    "id": "datos.telefono",
+    "kind": "noul",
+    "when": {
+     "stage": "etapa_datos_envio"
+    },
+    "text": "¿En ESTE TURNO el cliente da un teléfono de contacto?",
+    "criteria": {
+     "true": "sí",
+     "false": "no"
+    }
+   },
+   {
+    "id": "datos.nombre_recibe",
+    "kind": "noul",
+    "when": {
+     "stage": "etapa_datos_envio"
+    },
+    "text": "¿En ESTE TURNO el cliente dice quién recibe el pedido?",
+    "criteria": {
+     "true": "sí",
+     "false": "no"
+    }
+   },
+   {
+    "id": "datos.metodo_pago",
+    "kind": "noul",
+    "when": {
+     "stage": "etapa_datos_envio"
+    },
+    "text": "¿En ESTE TURNO el cliente dice cómo va a pagar?",
+    "criteria": {
+     "true": "sí",
+     "false": "no"
+    }
+   },
+   {
+    "id": "cierre.confirma_resumen",
+    "kind": "noul",
+    "when": {
+     "stage": "etapa_cierre"
+    },
+    "text": "¿En ESTE TURNO el cliente confirma el resumen del pedido?",
+    "criteria": {
+     "true": "sí, lo confirma",
+     "false": "no"
+    }
+   },
+   {
+    "id": "cierre.pide_cambio",
+    "kind": "noul",
+    "when": {
+     "stage": "etapa_cierre"
+    },
+    "text": "¿En ESTE TURNO el cliente pide cambiar algo del pedido?",
+    "criteria": {
+     "true": "sí",
+     "false": "no"
+    }
+   },
+   {
+    "id": "postcierre.pregunta_pedido",
+    "kind": "noul",
+    "when": {
+     "stage": "etapa_postcierre"
+    },
+    "text": "¿En ESTE TURNO el cliente pregunta por su pedido (estado, envío, entrega)?",
+    "criteria": {
+     "true": "sí",
+     "false": "no"
+    }
+   },
+   {
+    "id": "postcierre.comprobante",
+    "kind": "noul",
+    "when": {
+     "stage": "etapa_postcierre"
+    },
+    "text": "¿En ESTE TURNO el cliente manda o menciona un comprobante de pago?",
+    "criteria": {
+     "true": "sí",
+     "false": "no"
+    }
+   },
+   {
+    "each_message": {
+     "id": "msg.{k}.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [{k}] de este turno?",
+     "criteria": {
+      "from_topics": "label",
+      "extra": {
+       "ninguno": "ningún asunto de la lista"
+      }
+     }
+    }
+   }
+  ],
+  "verify": {
+   "id": "cover.{topic}",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «{label}»{where}",
+   "where_msg": " que el cliente planteó en el mensaje [{msg}]?",
+   "where_none": " que planteó el cliente?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  "state": {
+   "sections": {
+    "context": "CONTEXTO — lo que el cliente vio antes de este turno (no es de este turno)",
+    "facts": "HECHOS DEL PEDIDO",
+    "turn": "ESTE TURNO — mensajes del cliente",
+    "quoted": "(el cliente cita este mensaje: «{text}»)"
+   },
+   "message": "[{k}] ({offset}) {text}",
+   "pending": "Asuntos que quedaron sin responder en turnos anteriores: {pending}"
+  },
+  "reply_state": {
+   "header": "Respuesta del asesor:",
+   "empty": "(sin texto)",
+   "components": "Tarjetas y componentes que también recibe el cliente: {components}"
+  }
+ },
+ "requests": {
+  "sin_contexto": {
+   "state": "ESTE TURNO — mensajes del cliente\n[1] (+0 s) hola\n[2] (+3 s) ¿cuánto vale el envío a Medellín?\n[3] (+8 s) y cuánto tarda\nAsuntos que quedaron sin responder en turnos anteriores: pagos",
+   "questions": [
+    {
+     "id": "topic.catalogo",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pide ver el catálogo o pregunta por un tipo, estilo o colección de velas (p. ej. religiosas, de Halloween, para regalo), o por los diseños o modelos?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.precio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cuánto vale o cuánto cuesta algo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.envio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por el envío o el domicilio (costo o cobertura)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.tiempos",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cuánto tarda en llegar o cuándo está listo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.pagos",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cómo pagar o por un medio de pago?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.medidas",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por el tamaño o las medidas?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.variante",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por colores o variantes?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.aroma",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por los aromas?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.personalizacion",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pide personalizar (nombre, dedicatoria, diseño propio)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.disponibilidad",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta si tienen o venden algo (un producto, un tipo de vela o un diseño) o si hay disponible?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.estado_pedido",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por un pedido que ya hizo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.datos_envio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.confirma_compra",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente confirma que quiere comprar?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.aplaza",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente aplaza la compra (luego, otro día, voy en camino)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.queja",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente se queja o reporta un problema?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.foto",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por una foto que envió o citó?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.saludo",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente saluda?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.promocion",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por promociones, descuentos o un cupón?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "envio.costo",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente pregunta cuánto cuesta o cuánto vale el envío o el domicilio?",
+     "criteria": {
+      "true": "sí, pregunta el costo del envío",
+      "false": "no (pregunta otra cosa del envío, como si llega o cuánto tarda, o no habla del envío)"
+     }
+    },
+    {
+     "id": "queja.pedido_hecho",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente reclama por un pedido que ya hizo?",
+     "criteria": {
+      "true": "sí, reclama por un pedido hecho",
+      "false": "no"
+     }
+    },
+    {
+     "id": "msg.1.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [1] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    },
+    {
+     "id": "msg.2.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [2] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    },
+    {
+     "id": "msg.3.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [3] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    }
+   ]
+  },
+  "descubrimiento": {
+   "state": "CONTEXTO — lo que el cliente vio antes de este turno (no es de este turno)\n[asesor] ¿Qué color quieres?\nHECHOS DEL PEDIDO\nEtapa: descubrimiento\nESTE TURNO — mensajes del cliente\n[1] (+0 s) hola\n[2] (+3 s) ¿cuánto vale el envío a Medellín?\n[3] (+8 s) y cuánto tarda\n(el cliente cita este mensaje: «¿Qué color quieres?»)\nAsuntos que quedaron sin responder en turnos anteriores: pagos",
+   "questions": [
+    {
+     "id": "topic.catalogo",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pide ver el catálogo o pregunta por un tipo, estilo o colección de velas (p. ej. religiosas, de Halloween, para regalo), o por los diseños o modelos?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.precio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cuánto vale o cuánto cuesta algo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.envio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por el envío o el domicilio (costo o cobertura)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.tiempos",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cuánto tarda en llegar o cuándo está listo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.pagos",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cómo pagar o por un medio de pago?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.medidas",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por el tamaño o las medidas?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.variante",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por colores o variantes?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.aroma",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por los aromas?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.personalizacion",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pide personalizar (nombre, dedicatoria, diseño propio)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.disponibilidad",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta si tienen o venden algo (un producto, un tipo de vela o un diseño) o si hay disponible?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.estado_pedido",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por un pedido que ya hizo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.datos_envio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.confirma_compra",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente confirma que quiere comprar?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.aplaza",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente aplaza la compra (luego, otro día, voy en camino)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.queja",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente se queja o reporta un problema?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.foto",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por una foto que envió o citó?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.saludo",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente saluda?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.promocion",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por promociones, descuentos o un cupón?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "thread.bot_asked",
+     "kind": "choice",
+     "text": "¿Qué le preguntó el asesor al cliente en su ÚLTIMO mensaje del CONTEXTO?",
+     "criteria": {
+      "confirmar_compra": "si confirma la compra o el pedido",
+      "confirmar_dato_envio": "si confirma un dato de envío (dirección, ciudad, teléfono, quien recibe o pago)",
+      "elegir_variante": "que elija una variante (color, aroma, diseño o cantidad)",
+      "ver_opciones": "si quiere ver opciones (catálogo, aromas, colores o fotos)",
+      "otra_si_no": "otra pregunta de sí o no",
+      "pregunta_abierta": "una pregunta abierta",
+      "nada": "no le preguntó nada"
+     }
+    },
+    {
+     "id": "thread.answers_bot",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente responde la última pregunta del asesor?",
+     "criteria": {
+      "true": "sí, la responde",
+      "false": "no, habla de otra cosa"
+     }
+    },
+    {
+     "id": "thread.answer",
+     "kind": "choice",
+     "text": "¿Qué responde el cliente en ESTE TURNO a la última pregunta del asesor?",
+     "criteria": {
+      "si": "sí",
+      "no": "no",
+      "otra": "otra cosa (elige algo, pregunta o no la responde)"
+     }
+    },
+    {
+     "id": "precio.en_contexto",
+     "kind": "noul",
+     "text": "¿El precio de lo que el cliente pregunta ya aparece en lo que vio antes (CONTEXTO)?",
+     "criteria": {
+      "true": "sí, ya lo vio",
+      "false": "no aparece"
+     }
+    },
+    {
+     "id": "envio.costo",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente pregunta cuánto cuesta o cuánto vale el envío o el domicilio?",
+     "criteria": {
+      "true": "sí, pregunta el costo del envío",
+      "false": "no (pregunta otra cosa del envío, como si llega o cuánto tarda, o no habla del envío)"
+     }
+    },
+    {
+     "id": "queja.pedido_hecho",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente reclama por un pedido que ya hizo?",
+     "criteria": {
+      "true": "sí, reclama por un pedido hecho",
+      "false": "no"
+     }
+    },
+    {
+     "id": "msg.1.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [1] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    },
+    {
+     "id": "msg.2.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [2] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    },
+    {
+     "id": "msg.3.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [3] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    }
+   ]
+  },
+  "variantes": {
+   "state": "CONTEXTO — lo que el cliente vio antes de este turno (no es de este turno)\n[asesor] ¿Qué color quieres?\nHECHOS DEL PEDIDO\nEtapa: variantes\nÍtem 1: Vela, lavanda\nESTE TURNO — mensajes del cliente\n[1] (+0 s) hola\n[2] (+3 s) ¿cuánto vale el envío a Medellín?\n[3] (+8 s) y cuánto tarda\n(el cliente cita este mensaje: «¿Qué color quieres?»)\nAsuntos que quedaron sin responder en turnos anteriores: pagos",
+   "questions": [
+    {
+     "id": "topic.catalogo",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pide ver el catálogo o pregunta por un tipo, estilo o colección de velas (p. ej. religiosas, de Halloween, para regalo), o por los diseños o modelos?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.precio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cuánto vale o cuánto cuesta algo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.envio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por el envío o el domicilio (costo o cobertura)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.tiempos",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cuánto tarda en llegar o cuándo está listo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.pagos",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cómo pagar o por un medio de pago?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.medidas",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por el tamaño o las medidas?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.variante",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por colores o variantes?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.aroma",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por los aromas?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.personalizacion",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pide personalizar (nombre, dedicatoria, diseño propio)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.disponibilidad",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta si tienen o venden algo (un producto, un tipo de vela o un diseño) o si hay disponible?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.estado_pedido",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por un pedido que ya hizo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.datos_envio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.confirma_compra",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente confirma que quiere comprar?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.aplaza",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente aplaza la compra (luego, otro día, voy en camino)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.queja",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente se queja o reporta un problema?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.foto",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por una foto que envió o citó?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.saludo",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente saluda?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.promocion",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por promociones, descuentos o un cupón?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "thread.bot_asked",
+     "kind": "choice",
+     "text": "¿Qué le preguntó el asesor al cliente en su ÚLTIMO mensaje del CONTEXTO?",
+     "criteria": {
+      "confirmar_compra": "si confirma la compra o el pedido",
+      "confirmar_dato_envio": "si confirma un dato de envío (dirección, ciudad, teléfono, quien recibe o pago)",
+      "elegir_variante": "que elija una variante (color, aroma, diseño o cantidad)",
+      "ver_opciones": "si quiere ver opciones (catálogo, aromas, colores o fotos)",
+      "otra_si_no": "otra pregunta de sí o no",
+      "pregunta_abierta": "una pregunta abierta",
+      "nada": "no le preguntó nada"
+     }
+    },
+    {
+     "id": "thread.answers_bot",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente responde la última pregunta del asesor?",
+     "criteria": {
+      "true": "sí, la responde",
+      "false": "no, habla de otra cosa"
+     }
+    },
+    {
+     "id": "thread.answer",
+     "kind": "choice",
+     "text": "¿Qué responde el cliente en ESTE TURNO a la última pregunta del asesor?",
+     "criteria": {
+      "si": "sí",
+      "no": "no",
+      "otra": "otra cosa (elige algo, pregunta o no la responde)"
+     }
+    },
+    {
+     "id": "precio.en_contexto",
+     "kind": "noul",
+     "text": "¿El precio de lo que el cliente pregunta ya aparece en lo que vio antes (CONTEXTO)?",
+     "criteria": {
+      "true": "sí, ya lo vio",
+      "false": "no aparece"
+     }
+    },
+    {
+     "id": "envio.costo",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente pregunta cuánto cuesta o cuánto vale el envío o el domicilio?",
+     "criteria": {
+      "true": "sí, pregunta el costo del envío",
+      "false": "no (pregunta otra cosa del envío, como si llega o cuánto tarda, o no habla del envío)"
+     }
+    },
+    {
+     "id": "queja.pedido_hecho",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente reclama por un pedido que ya hizo?",
+     "criteria": {
+      "true": "sí, reclama por un pedido hecho",
+      "false": "no"
+     }
+    },
+    {
+     "id": "variantes.elige",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente elige aroma, color, diseño o cantidad?",
+     "criteria": {
+      "true": "sí, elige",
+      "false": "no"
+     }
+    },
+    {
+     "id": "etapa.cambia_producto",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente quiere ver otros productos o cambiar el que eligió?",
+     "criteria": {
+      "true": "sí, quiere cambiar o ver otros",
+      "false": "no"
+     }
+    },
+    {
+     "id": "msg.1.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [1] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    },
+    {
+     "id": "msg.2.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [2] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    },
+    {
+     "id": "msg.3.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [3] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    }
+   ]
+  },
+  "datos_envio": {
+   "state": "CONTEXTO — lo que el cliente vio antes de este turno (no es de este turno)\n[asesor] ¿Qué color quieres?\nHECHOS DEL PEDIDO\nEtapa: datos de envío\nESTE TURNO — mensajes del cliente\n[1] (+0 s) hola\n[2] (+3 s) ¿cuánto vale el envío a Medellín?\n[3] (+8 s) y cuánto tarda\n(el cliente cita este mensaje: «¿Qué color quieres?»)\nAsuntos que quedaron sin responder en turnos anteriores: pagos",
+   "questions": [
+    {
+     "id": "topic.catalogo",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pide ver el catálogo o pregunta por un tipo, estilo o colección de velas (p. ej. religiosas, de Halloween, para regalo), o por los diseños o modelos?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.precio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cuánto vale o cuánto cuesta algo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.envio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por el envío o el domicilio (costo o cobertura)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.tiempos",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cuánto tarda en llegar o cuándo está listo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.pagos",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cómo pagar o por un medio de pago?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.medidas",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por el tamaño o las medidas?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.variante",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por colores o variantes?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.aroma",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por los aromas?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.personalizacion",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pide personalizar (nombre, dedicatoria, diseño propio)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.disponibilidad",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta si tienen o venden algo (un producto, un tipo de vela o un diseño) o si hay disponible?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.estado_pedido",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por un pedido que ya hizo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.datos_envio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.confirma_compra",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente confirma que quiere comprar?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.aplaza",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente aplaza la compra (luego, otro día, voy en camino)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.queja",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente se queja o reporta un problema?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.foto",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por una foto que envió o citó?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.saludo",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente saluda?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.promocion",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por promociones, descuentos o un cupón?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "thread.bot_asked",
+     "kind": "choice",
+     "text": "¿Qué le preguntó el asesor al cliente en su ÚLTIMO mensaje del CONTEXTO?",
+     "criteria": {
+      "confirmar_compra": "si confirma la compra o el pedido",
+      "confirmar_dato_envio": "si confirma un dato de envío (dirección, ciudad, teléfono, quien recibe o pago)",
+      "elegir_variante": "que elija una variante (color, aroma, diseño o cantidad)",
+      "ver_opciones": "si quiere ver opciones (catálogo, aromas, colores o fotos)",
+      "otra_si_no": "otra pregunta de sí o no",
+      "pregunta_abierta": "una pregunta abierta",
+      "nada": "no le preguntó nada"
+     }
+    },
+    {
+     "id": "thread.answers_bot",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente responde la última pregunta del asesor?",
+     "criteria": {
+      "true": "sí, la responde",
+      "false": "no, habla de otra cosa"
+     }
+    },
+    {
+     "id": "thread.answer",
+     "kind": "choice",
+     "text": "¿Qué responde el cliente en ESTE TURNO a la última pregunta del asesor?",
+     "criteria": {
+      "si": "sí",
+      "no": "no",
+      "otra": "otra cosa (elige algo, pregunta o no la responde)"
+     }
+    },
+    {
+     "id": "precio.en_contexto",
+     "kind": "noul",
+     "text": "¿El precio de lo que el cliente pregunta ya aparece en lo que vio antes (CONTEXTO)?",
+     "criteria": {
+      "true": "sí, ya lo vio",
+      "false": "no aparece"
+     }
+    },
+    {
+     "id": "envio.costo",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente pregunta cuánto cuesta o cuánto vale el envío o el domicilio?",
+     "criteria": {
+      "true": "sí, pregunta el costo del envío",
+      "false": "no (pregunta otra cosa del envío, como si llega o cuánto tarda, o no habla del envío)"
+     }
+    },
+    {
+     "id": "queja.pedido_hecho",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente reclama por un pedido que ya hizo?",
+     "criteria": {
+      "true": "sí, reclama por un pedido hecho",
+      "false": "no"
+     }
+    },
+    {
+     "id": "etapa.cambia_producto",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente quiere ver otros productos o cambiar el que eligió?",
+     "criteria": {
+      "true": "sí, quiere cambiar o ver otros",
+      "false": "no"
+     }
+    },
+    {
+     "id": "datos.ciudad",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente da la ciudad de envío?",
+     "criteria": {
+      "true": "sí",
+      "false": "no"
+     }
+    },
+    {
+     "id": "datos.direccion",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente da la dirección de envío?",
+     "criteria": {
+      "true": "sí",
+      "false": "no"
+     }
+    },
+    {
+     "id": "datos.telefono",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente da un teléfono de contacto?",
+     "criteria": {
+      "true": "sí",
+      "false": "no"
+     }
+    },
+    {
+     "id": "datos.nombre_recibe",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente dice quién recibe el pedido?",
+     "criteria": {
+      "true": "sí",
+      "false": "no"
+     }
+    },
+    {
+     "id": "datos.metodo_pago",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente dice cómo va a pagar?",
+     "criteria": {
+      "true": "sí",
+      "false": "no"
+     }
+    },
+    {
+     "id": "msg.1.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [1] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    },
+    {
+     "id": "msg.2.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [2] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    },
+    {
+     "id": "msg.3.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [3] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    }
+   ]
+  },
+  "cierre_tarjeta": {
+   "state": "CONTEXTO — lo que el cliente vio antes de este turno (no es de este turno)\n[asesor] (tarjeta de confirmación)\nHECHOS DEL PEDIDO\nEtapa: cierre\nESTE TURNO — mensajes del cliente\n[1] (+0 s) hola\n[2] (+3 s) ¿cuánto vale el envío a Medellín?\n[3] (+8 s) y cuánto tarda\nAsuntos que quedaron sin responder en turnos anteriores: pagos",
+   "questions": [
+    {
+     "id": "topic.catalogo",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pide ver el catálogo o pregunta por un tipo, estilo o colección de velas (p. ej. religiosas, de Halloween, para regalo), o por los diseños o modelos?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.precio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cuánto vale o cuánto cuesta algo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.envio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por el envío o el domicilio (costo o cobertura)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.tiempos",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cuánto tarda en llegar o cuándo está listo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.pagos",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cómo pagar o por un medio de pago?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.medidas",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por el tamaño o las medidas?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.variante",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por colores o variantes?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.aroma",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por los aromas?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.personalizacion",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pide personalizar (nombre, dedicatoria, diseño propio)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.disponibilidad",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta si tienen o venden algo (un producto, un tipo de vela o un diseño) o si hay disponible?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.estado_pedido",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por un pedido que ya hizo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.datos_envio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.confirma_compra",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente confirma que quiere comprar?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.aplaza",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente aplaza la compra (luego, otro día, voy en camino)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.queja",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente se queja o reporta un problema?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.foto",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por una foto que envió o citó?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.saludo",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente saluda?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.promocion",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por promociones, descuentos o un cupón?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "thread.answers_bot",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente responde la última pregunta del asesor?",
+     "criteria": {
+      "true": "sí, la responde",
+      "false": "no, habla de otra cosa"
+     }
+    },
+    {
+     "id": "thread.answer",
+     "kind": "choice",
+     "text": "¿Qué responde el cliente en ESTE TURNO a la última pregunta del asesor?",
+     "criteria": {
+      "si": "sí",
+      "no": "no",
+      "otra": "otra cosa (elige algo, pregunta o no la responde)"
+     }
+    },
+    {
+     "id": "precio.en_contexto",
+     "kind": "noul",
+     "text": "¿El precio de lo que el cliente pregunta ya aparece en lo que vio antes (CONTEXTO)?",
+     "criteria": {
+      "true": "sí, ya lo vio",
+      "false": "no aparece"
+     }
+    },
+    {
+     "id": "envio.costo",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente pregunta cuánto cuesta o cuánto vale el envío o el domicilio?",
+     "criteria": {
+      "true": "sí, pregunta el costo del envío",
+      "false": "no (pregunta otra cosa del envío, como si llega o cuánto tarda, o no habla del envío)"
+     }
+    },
+    {
+     "id": "queja.pedido_hecho",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente reclama por un pedido que ya hizo?",
+     "criteria": {
+      "true": "sí, reclama por un pedido hecho",
+      "false": "no"
+     }
+    },
+    {
+     "id": "etapa.cambia_producto",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente quiere ver otros productos o cambiar el que eligió?",
+     "criteria": {
+      "true": "sí, quiere cambiar o ver otros",
+      "false": "no"
+     }
+    },
+    {
+     "id": "cierre.confirma_resumen",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente confirma el resumen del pedido?",
+     "criteria": {
+      "true": "sí, lo confirma",
+      "false": "no"
+     }
+    },
+    {
+     "id": "cierre.pide_cambio",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente pide cambiar algo del pedido?",
+     "criteria": {
+      "true": "sí",
+      "false": "no"
+     }
+    },
+    {
+     "id": "msg.1.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [1] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    },
+    {
+     "id": "msg.2.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [2] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    },
+    {
+     "id": "msg.3.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [3] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    }
+   ]
+  },
+  "postcierre": {
+   "state": "CONTEXTO — lo que el cliente vio antes de este turno (no es de este turno)\n[asesor] ¿Qué color quieres?\nHECHOS DEL PEDIDO\nEtapa: postcierre\nESTE TURNO — mensajes del cliente\n[1] (+0 s) hola\n[2] (+3 s) ¿cuánto vale el envío a Medellín?\n[3] (+8 s) y cuánto tarda\n(el cliente cita este mensaje: «¿Qué color quieres?»)\nAsuntos que quedaron sin responder en turnos anteriores: pagos",
+   "questions": [
+    {
+     "id": "topic.catalogo",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pide ver el catálogo o pregunta por un tipo, estilo o colección de velas (p. ej. religiosas, de Halloween, para regalo), o por los diseños o modelos?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.precio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cuánto vale o cuánto cuesta algo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.envio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por el envío o el domicilio (costo o cobertura)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.tiempos",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cuánto tarda en llegar o cuándo está listo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.pagos",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta cómo pagar o por un medio de pago?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.medidas",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por el tamaño o las medidas?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.variante",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por colores o variantes?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.aroma",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por los aromas?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.personalizacion",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pide personalizar (nombre, dedicatoria, diseño propio)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.disponibilidad",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta si tienen o venden algo (un producto, un tipo de vela o un diseño) o si hay disponible?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.estado_pedido",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por un pedido que ya hizo?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.datos_envio",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.confirma_compra",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente confirma que quiere comprar?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.aplaza",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente aplaza la compra (luego, otro día, voy en camino)?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.queja",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente se queja o reporta un problema?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.foto",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por una foto que envió o citó?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.saludo",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente saluda?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "topic.promocion",
+     "kind": "noul",
+     "text": "¿En los mensajes de ESTE TURNO el cliente pregunta por promociones, descuentos o un cupón?",
+     "criteria": {
+      "true": "sí, lo plantea en un mensaje de este turno",
+      "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+     }
+    },
+    {
+     "id": "thread.bot_asked",
+     "kind": "choice",
+     "text": "¿Qué le preguntó el asesor al cliente en su ÚLTIMO mensaje del CONTEXTO?",
+     "criteria": {
+      "confirmar_compra": "si confirma la compra o el pedido",
+      "confirmar_dato_envio": "si confirma un dato de envío (dirección, ciudad, teléfono, quien recibe o pago)",
+      "elegir_variante": "que elija una variante (color, aroma, diseño o cantidad)",
+      "ver_opciones": "si quiere ver opciones (catálogo, aromas, colores o fotos)",
+      "otra_si_no": "otra pregunta de sí o no",
+      "pregunta_abierta": "una pregunta abierta",
+      "nada": "no le preguntó nada"
+     }
+    },
+    {
+     "id": "thread.answers_bot",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente responde la última pregunta del asesor?",
+     "criteria": {
+      "true": "sí, la responde",
+      "false": "no, habla de otra cosa"
+     }
+    },
+    {
+     "id": "thread.answer",
+     "kind": "choice",
+     "text": "¿Qué responde el cliente en ESTE TURNO a la última pregunta del asesor?",
+     "criteria": {
+      "si": "sí",
+      "no": "no",
+      "otra": "otra cosa (elige algo, pregunta o no la responde)"
+     }
+    },
+    {
+     "id": "precio.en_contexto",
+     "kind": "noul",
+     "text": "¿El precio de lo que el cliente pregunta ya aparece en lo que vio antes (CONTEXTO)?",
+     "criteria": {
+      "true": "sí, ya lo vio",
+      "false": "no aparece"
+     }
+    },
+    {
+     "id": "envio.costo",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente pregunta cuánto cuesta o cuánto vale el envío o el domicilio?",
+     "criteria": {
+      "true": "sí, pregunta el costo del envío",
+      "false": "no (pregunta otra cosa del envío, como si llega o cuánto tarda, o no habla del envío)"
+     }
+    },
+    {
+     "id": "queja.pedido_hecho",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente reclama por un pedido que ya hizo?",
+     "criteria": {
+      "true": "sí, reclama por un pedido hecho",
+      "false": "no"
+     }
+    },
+    {
+     "id": "postcierre.pregunta_pedido",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente pregunta por su pedido (estado, envío, entrega)?",
+     "criteria": {
+      "true": "sí",
+      "false": "no"
+     }
+    },
+    {
+     "id": "postcierre.comprobante",
+     "kind": "noul",
+     "text": "¿En ESTE TURNO el cliente manda o menciona un comprobante de pago?",
+     "criteria": {
+      "true": "sí",
+      "false": "no"
+     }
+    },
+    {
+     "id": "msg.1.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [1] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    },
+    {
+     "id": "msg.2.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [2] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    },
+    {
+     "id": "msg.3.topic",
+     "kind": "choice",
+     "text": "¿Cuál es el asunto principal del mensaje [3] de este turno?",
+     "criteria": {
+      "catalogo": "catálogo",
+      "precio": "precio",
+      "envio": "envío",
+      "tiempos": "tiempos de entrega",
+      "pagos": "medios de pago",
+      "medidas": "medidas",
+      "variante": "colores o variantes",
+      "aroma": "aromas",
+      "personalizacion": "personalización",
+      "disponibilidad": "disponibilidad",
+      "estado_pedido": "estado del pedido",
+      "datos_envio": "datos de envío",
+      "confirma_compra": "confirmación de compra",
+      "aplaza": "aplazamiento",
+      "queja": "queja",
+      "foto": "la foto",
+      "saludo": "saludo",
+      "promocion": "promociones o cupones",
+      "ninguno": "ningún asunto de la lista"
+     }
+    }
+   ]
+  }
+ },
+ "verify": [
+  {
+   "id": "cover.envio",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «envío» que el cliente planteó en el mensaje [2]?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  },
+  {
+   "id": "cover.tiempos",
+   "kind": "noul",
+   "text": "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «tiempos de entrega» que planteó el cliente?",
+   "criteria": {
+    "true": "sí, lo atiende",
+    "false": "no lo atiende"
+   }
+  }
+ ],
+ "reply_state": "ESTE TURNO — mensajes del cliente\n[1] (+0 s) hola\n[2] (+3 s) ¿cuánto vale el envío a Medellín?\n[3] (+8 s) y cuánto tarda\nRespuesta del asesor:\nEl envío a Medellín cuesta $15.000\nTarjetas y componentes que también recibe el cliente: send_shipping_rates"
+}

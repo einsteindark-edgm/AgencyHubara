@@ -144,6 +144,7 @@ class _Loader:
         phone_number_id,
         extra_context=None,
         prefer_sales=False,
+        inbound_meta=None,
     ) -> None:
         self.calls.append(
             {

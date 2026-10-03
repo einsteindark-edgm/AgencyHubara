@@ -1,0 +1,377 @@
+"""Marco de capacidades del motor (diseño v2 §07, fase F2).
+
+Cada pieza de código quemado pasa a ser una CAPACIDAD: una o dos preguntas
+cerradas a Jev, una política que convierte la respuesta en decisión y la regla
+de hoy como respaldo. El consumidor (tool, activity, ingest) le pide la
+decisión al motor y no sabe quién contestó. Tres proveedores:
+
+* `reglas` — decide la regla; Jev no se consulta (así nace todo: el turno es
+  el de hoy).
+* `sombra` — decide la regla; Jev contesta al lado y cada desacuerdo va a la
+  cola que califica Claude Code.
+* `jev` — decide Jev; si falla, tarda, duda o viene otra versión que la
+  calibrada, decide la regla. Los pisos (p. ej. la baja explícita) nunca se
+  quitan.
+"""
+from __future__ import annotations
+
+import asyncio
+import dataclasses
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+import pytest
+
+from src.platform.perception.adapters.fake import FakePerceptionAdapter
+from src.plugins.chats.agent.sales.decisions import capabilities as caps
+from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
+from src.sdk.connectorkit import PerceptionResult, TypedAnswer, TypedQuestion
+
+
+@dataclass(frozen=True)
+class Ask:
+    text: str
+
+
+class Unsubscribe:
+    """Capacidad de juguete: ¿el cliente pide no recibir más mensajes?"""
+
+    name = "juguete"
+
+    def rule(self, inp: Ask) -> bool:
+        return "no más" in inp.text
+
+    def ask(self, inp: Ask):
+        return f"Mensaje del cliente: {inp.text}", [
+            TypedQuestion(id="baja", kind="noul", text="¿Pide dejar de recibir mensajes?", criteria={"true": "sí", "false": "no"})
+        ]
+
+    def decide(self, inp: Ask, result, rule: bool, thresholds) -> bool | None:
+        p = next((a.p for a in result.answers if a.id == "baja"), None)
+        if p is None:
+            return None
+        if p >= 0.85:
+            return True
+        if p <= 0.15:
+            return False
+        return None
+
+    def floor(self, inp: Ask, rule: bool, jev: bool) -> bool:
+        return rule or jev  # la frase explícita nunca se quita
+
+    def same(self, a: bool, b: bool) -> bool:
+        return a == b
+
+
+class _Port:
+    def __init__(self, p: float | None, *, model: str = "typesafe/jev-1.13-20260917", error: str | None = None,
+                 delay_s: float = 0.0) -> None:
+        answers = {} if p is None else {"baja": TypedAnswer(id="baja", kind="noul", p=p)}
+        self.fake = FakePerceptionAdapter(answers, error=error)
+        self.model, self.delay_s, self.calls = model, delay_s, 0
+        self.timeouts: list[float] = []
+        # Fallas que devuelve antes de contestar (una por llamada).
+        self.errors: list[str] = []
+
+    async def ask(self, state, questions, *, timeout_s, redact=()):
+        self.calls += 1
+        self.timeouts.append(timeout_s)
+        if self.errors:
+            return PerceptionResult(ok=False, error=self.errors.pop(0), provider="fake", model=self.model)
+        if self.delay_s:
+            try:
+                await asyncio.wait_for(asyncio.sleep(self.delay_s), timeout=timeout_s)
+            except TimeoutError:
+                return PerceptionResult(ok=False, error="timeout", provider="fake", model=self.model)
+        result = await self.fake.ask(state, questions, timeout_s=timeout_s, redact=redact)
+        return dataclasses.replace(result, model=self.model if result.ok else result.model)
+
+
+@pytest.fixture
+def port(monkeypatch):
+    from src.sdk import connectorkit
+
+    holder: dict[str, _Port] = {"port": _Port(0.95)}
+
+    def _get(_oracle: str) -> _Port:
+        return holder["port"]
+
+    _get.cache_clear = lambda: None
+    monkeypatch.setattr(connectorkit, "get_perception_port", _get)
+    return holder
+
+
+async def test_reglas_is_todays_rule_and_never_asks_jev(port) -> None:
+    verdict = await caps.decide(Unsubscribe(), Ask("gracias"), provider="reglas", profile_id="jev-v1")
+
+    assert (verdict.value, verdict.by, verdict.provider) == (False, "reglas", "reglas")
+    assert port["port"].calls == 0
+
+
+async def test_sombra_keeps_the_rule_and_queues_the_disagreement(port, tmp_path: Path) -> None:
+    log = DisagreementLog(tmp_path)
+
+    verdict = await caps.decide(
+        Unsubscribe(), Ask("no me escriban más"), provider="sombra", profile_id="jev-v1",
+        disagreements=log, session_id="wa_573001234567",
+    )
+
+    assert (verdict.value, verdict.by, verdict.rule, verdict.jev, verdict.agree) == (False, "reglas", False, True, False)
+    [item] = log.pending()
+    assert item["capability"] == "juguete" and (item["rule"], item["jev"]) == (False, True)
+    assert "no me escriban más" in item["state"] and item["session_id"] == "wa_573001234567"
+
+
+async def test_sombra_with_agreement_queues_nothing(port, tmp_path: Path) -> None:
+    log = DisagreementLog(tmp_path)
+
+    await caps.decide(Unsubscribe(), Ask("no más mensajes"), provider="sombra", profile_id="jev-v1", disagreements=log)
+
+    assert log.pending() == []
+
+
+async def test_jev_decides_with_the_floor_on_top(port) -> None:
+    port["port"] = _Port(0.05)
+
+    explicit = await caps.decide(Unsubscribe(), Ask("no más"), provider="jev", profile_id="jev-v1")
+    doubtful = await caps.decide(Unsubscribe(), Ask("quiero saber no más el precio"), provider="jev", profile_id="jev-v1")
+
+    assert (explicit.value, explicit.by) == (True, "piso")  # la frase explícita nunca se quita
+    assert (doubtful.value, doubtful.by) == (True, "piso")
+    port["port"] = _Port(0.95)
+    new = await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1")
+    assert (new.value, new.by) == (True, "jev")
+
+
+@pytest.fixture
+def short_wait(monkeypatch):
+    """La espera de Jev, corta para el test (en producción: la del perfil)."""
+    from src.sdk import connectorkit
+
+    monkeypatch.setattr(connectorkit, "oracle_timeout_s", lambda _oracle, default=3.0: 0.2)
+
+
+@pytest.mark.parametrize(
+    ("oracle", "reason"),
+    [(_Port(None, error="http_503"), "http_503"), (_Port(0.5), "duda"), (_Port(0.95, delay_s=5), "timeout")],
+)
+async def test_jev_falls_back_to_the_rule_when_it_fails_doubts_or_is_late(port, short_wait, oracle, reason: str) -> None:
+    port["port"] = oracle
+
+    verdict = await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1")
+
+    assert (verdict.value, verdict.by, verdict.reason) == (False, "respaldo", reason)
+
+
+async def test_another_jev_version_than_the_calibrated_one_does_not_act(port, monkeypatch) -> None:
+    from src.plugins.chats.agent.sales.decisions import profiles
+
+    v1 = profiles.get_engine_profile("jev-v1")
+    table = dict(profiles.load_engine_profiles()) | {"jev-v1": dataclasses.replace(v1, calibrated_model="typesafe/jev-1.12-x")}
+    monkeypatch.setattr(profiles, "load_engine_profiles", lambda: table)
+
+    verdict = await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1")
+
+    assert (verdict.value, verdict.by, verdict.reason) == (False, "respaldo", "model_changed")
+    assert verdict.jev is True  # lo que dijo Jev queda para medir
+
+
+async def test_the_verdict_travels_as_json(port) -> None:
+    verdict = await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1")
+
+    trace = verdict.to_trace()
+    assert json.loads(json.dumps(trace)) == trace
+    assert trace["capability"] == "juguete" and trace["by"] == "jev" and trace["model"] == "typesafe/jev-1.13-20260917"
+
+
+async def test_the_lab_can_watch_every_decision_of_its_process(port) -> None:
+    """El sandbox del laboratorio publica con cada turno qué capacidad decidió
+    qué y quién (Jev, la regla, el piso o el respaldo): mira las decisiones de
+    su proceso mientras corre el caso. Fuera de ese bloque nadie mira; un
+    observador que falla nunca frena la decisión."""
+    seen: list = []
+
+    def broken(_verdict) -> None:
+        raise RuntimeError("observador roto")
+
+    with caps.watching_verdicts(seen.append), caps.watching_verdicts(broken):
+        by_rule = await caps.decide(Unsubscribe(), Ask("gracias"), provider="reglas", profile_id="jev-v1")
+        by_jev = await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1")
+    await caps.decide(Unsubscribe(), Ask("hola"), provider="reglas", profile_id="jev-v1")
+
+    assert seen == [by_rule, by_jev]
+    assert (by_rule.by, by_jev.by) == ("reglas", "jev")
+
+
+async def test_an_unknown_profile_is_the_rule(port) -> None:
+    verdict = await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="no-existe")
+
+    assert (verdict.value, verdict.by, verdict.reason) == (False, "respaldo", "unknown_profile")
+
+
+def test_claude_code_labels_a_disagreement_and_the_log_counts_who_won(tmp_path: Path) -> None:
+    log = DisagreementLog(tmp_path)
+    first = log.record(capability="juguete", state="a", rule=False, jev=True, model="m", answers=[], session_id="wa_1")
+    second = log.record(capability="juguete", state="b", rule=True, jev=False, model="m", answers=[], session_id="wa_2")
+
+    log.label(first, True, note="pide la baja con otras palabras")
+    log.label(second, True)
+
+    assert log.pending() == []
+    assert log.score("juguete") == {"labeled": 2, "jev": 1, "rule": 1, "neither": 0}
+    with pytest.raises(KeyError):
+        log.label("no-existe", True)
+
+
+async def test_every_decision_that_asks_jev_is_measured(port, tmp_path: Path) -> None:
+    """La vara de cada capacidad (días, volumen, caídas, p95) sale de lo que el
+    motor midió: una línea por decisión en sombra o en jev; con reglas, nada."""
+    from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
+
+    metrics = DecisionMetrics(tmp_path)
+    await caps.decide(Unsubscribe(), Ask("hola"), provider="reglas", profile_id="jev-v1", metrics=metrics)
+    await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="sombra", profile_id="jev-v1", metrics=metrics)
+    port["port"] = _Port(None, error="timeout")
+    await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1", metrics=metrics)
+
+    rows = metrics.rows("juguete", since_ms=0)
+    assert [(r["provider"], r["ok"], r["agree"]) for r in rows] == [("sombra", True, False), ("jev", False, None)]
+
+
+# ── La espera de Jev (revisión 2026-09-29: «es indispensable que siempre
+# funcione con Jev, es lo que estamos probando») ─────────────────────────────
+
+
+async def test_jev_gets_the_whole_wait_of_its_profile(port) -> None:
+    """Antes cada capacidad cortaba a Jev a 1,5 o 2 s y en el laboratorio el
+    11,6 % de las preguntas caía a la regla por tiempo. La espera es UNA: la
+    del perfil del oráculo (10 s), para toda capacidad."""
+    from src.sdk.connectorkit import oracle_timeout_s
+
+    await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1")
+
+    assert port["port"].timeouts == [oracle_timeout_s("jev-1.13")]
+    assert oracle_timeout_s("jev-1.13") == 10.0
+
+
+async def test_a_passing_provider_failure_is_retried_once(port) -> None:
+    """Un 429, un 5xx o un error de red son pasajeros: una segunda vuelta y
+    decide Jev, no la regla."""
+    port["port"] = _Port(0.95)
+    port["port"].errors = ["http_429"]
+
+    verdict = await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1")
+
+    assert (verdict.value, verdict.by) == (True, "jev")
+    assert port["port"].calls == 2
+
+
+async def test_a_timeout_is_not_retried(port, short_wait) -> None:
+    """Esperar otra vez toda la espera demoraría el turno: tras el tiempo
+    máximo decide la regla (y la traza dice `timeout`)."""
+    port["port"] = _Port(0.95, delay_s=5)
+
+    verdict = await caps.decide(Unsubscribe(), Ask("no me escriban"), provider="jev", profile_id="jev-v1")
+
+    assert (verdict.by, verdict.reason) == ("respaldo", "timeout")
+    assert port["port"].calls == 1
+
+
+def test_the_activities_that_ask_jev_leave_room_for_its_whole_wait() -> None:
+    """La percepción y la verificación hacen UNA pregunta; el egreso hasta
+    siete en serie (preámbulo, destinatario, rescate, saludo, portavelas y el
+    destinatario y rescate de lo que quedó). Con la espera nueva, las
+    activities no pueden vencerse antes que Jev."""
+    from src.plugins.chats.agent.sales.workflows.sales_session import _PERCEPTION_OPTIONS
+    from src.plugins.chats.agent.sales.workflows.sales_session_v2 import _EGRESS_OPTIONS
+    from src.sdk.connectorkit import oracle_timeout_s
+
+    wait = oracle_timeout_s("jev-1.13")
+    assert _PERCEPTION_OPTIONS["start_to_close_timeout"].total_seconds() >= 2 * wait
+    assert _EGRESS_OPTIONS["start_to_close_timeout"].total_seconds() >= 7 * wait
+
+
+async def test_the_metric_and_the_disagreement_say_which_bundle_decided(port, tmp_path: Path) -> None:
+    """Premortem 2026-10-02: tras promover un paquete, el acuerdo por capacidad
+    y la cola que califica Claude Code mezclaban versiones. Cada fila dice con
+    qué paquete se decidió."""
+    from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
+
+    class FromBundle(Unsubscribe):
+        bundle = "ventas-2@2"
+
+    metrics, log = DecisionMetrics(tmp_path), DisagreementLog(tmp_path)
+    await caps.decide(FromBundle(), Ask("no me escriban"), provider="sombra", profile_id="jev-v1", metrics=metrics,
+                      disagreements=log, session_id="wa_573001234567")
+
+    [row] = metrics.rows("juguete", since_ms=0)
+    [item] = log.items()
+    assert row["bundle"] == "ventas-2@2" and item["bundle"] == "ventas-2@2"
+
+
+@pytest.mark.parametrize(
+    ("table", "reason"),
+    [
+        ("error", "bundle_error"),     # una fila con un error de tipos (CEL)
+        ("raises", "bundle_error"),    # un builtin o la tabla lanzan
+        ("doubt", "duda"),             # la duda legítima de Jev sigue siendo duda
+    ],
+)
+async def test_a_bundle_bug_is_not_a_doubt_of_jev(port, monkeypatch, table: str, reason: str) -> None:
+    """Premortem 2026-10-02: un error de la tabla quedaba como `reason=duda`,
+    igual que una duda real de Jev: en modo jev un bug del paquete degradaba la
+    capacidad a la regla el 100 % del tiempo sin que la traza lo dijera."""
+    from src.plugins.chats.agent.sales.decisions import registry
+    from src.plugins.chats.agent.sales.decisions.readings import Inbound
+    from src.sdk.decisionkit import DOUBT, Decision
+
+    monkeypatch.delenv("SALES_DECISIONS_BUNDLE", raising=False)
+    registry.reset()
+    baja = registry.capability("baja")
+
+    def decide_explained(self, **_kw):
+        if table == "raises":
+            raise RuntimeError("boom")
+        return Decision(DOUBT, error="No matching overloads found : !_" if table == "error" else None)
+
+    monkeypatch.setattr(type(baja._table), "decide_explained", decide_explained)
+
+    verdict = await caps.decide(baja, Inbound(session_id="wa_573001234567", text="hola", now_ms=1),
+                                provider="jev", profile_id="jev-v1")
+
+    assert (verdict.by, verdict.reason) == ("respaldo", reason)
+    registry.reset()
+
+
+async def test_the_metric_and_the_disagreement_say_which_variant_decided(port, tmp_path: Path) -> None:
+    """Premortem 2026-10-02: las variantes de `destinatario` (oración,
+    plantilla) se registraban con el nombre del control: el acuerdo por
+    variante no se podía medir."""
+    from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
+
+    class Variant(Unsubscribe):
+        bundle = "ventas@1"
+        variant = "juguete_oracion"
+
+    metrics, log = DecisionMetrics(tmp_path), DisagreementLog(tmp_path)
+    await caps.decide(Variant(), Ask("no me escriban"), provider="sombra", profile_id="jev-v1", metrics=metrics,
+                      disagreements=log, session_id="wa_573001234567")
+
+    [row] = metrics.rows("juguete", since_ms=0)
+    [item] = log.items()
+    assert (row.get("variant"), item.get("variant")) == ("juguete_oracion", "juguete_oracion")
+
+
+def test_a_bundled_variant_knows_its_own_name(monkeypatch) -> None:
+    from src.plugins.chats.agent.sales.decisions import registry
+
+    monkeypatch.delenv("SALES_DECISIONS_BUNDLE", raising=False)
+    registry.reset()
+
+    variants = {name: getattr(registry.capability(name), "variant", None)
+                for name in ("destinatario", "destinatario_oracion", "destinatario_plantilla")}
+
+    assert variants == {"destinatario": "", "destinatario_oracion": "destinatario_oracion",
+                        "destinatario_plantilla": "destinatario_plantilla"}
+    registry.reset()

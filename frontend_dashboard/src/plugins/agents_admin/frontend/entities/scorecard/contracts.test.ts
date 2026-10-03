@@ -5,8 +5,10 @@ import detailFixture from "./fixtures/scorecard-detail.json";
 import listFixture from "./fixtures/scorecards.json";
 import {
   checkRegistrySchema,
+  checkResultSchema,
   scorecardDetailSchema,
   scorecardListSchema,
+  scorecardRowSchema,
 } from "./contracts";
 
 /**
@@ -110,5 +112,37 @@ describe("scorecardDetailSchema", () => {
     expect(t.state.changes).toEqual([]);
     expect(t.tools[0].ok).toBeNull();
     expect(t.sent_texts).toEqual([]);
+  });
+});
+
+describe("checkResultSchema — EST-08 v2", () => {
+  it("parsea la cobertura por asunto que devuelve el juez", () => {
+    const r = checkResultSchema.parse({
+      check_id: "EST-08",
+      verdict: "falla",
+      level: "mayor",
+      turn: 2,
+      source: "judge",
+      topics: [
+        { topic: "catálogo", turn: 2, msg: 1, covered: false, evidence: "me mandas el catálogo" },
+        { topic: "envío", turn: 2, msg: null, covered: true },
+      ],
+    });
+    expect(r.topics).toEqual([
+      { topic: "catálogo", turn: 2, msg: 1, covered: false, evidence: "me mandas el catálogo" },
+      { topic: "envío", turn: 2, msg: null, covered: true, evidence: "" },
+    ]);
+  });
+
+  it("un resultado sin asuntos (registro v2) queda con la lista vacía", () => {
+    const r = checkResultSchema.parse({ check_id: "CON-01", verdict: "pasa", level: "critico", source: "code" });
+    expect(r.topics).toEqual([]);
+  });
+});
+
+describe("scorecard turno por turno (Calidad LLM con la vista del laboratorio, 2026-10-02)", () => {
+  it("un check que depende de lo que vino después queda «sin señal», no desconocido", () => {
+    const row = scorecardRowSchema.parse({ session_id: "wa_100000000001", episode_id: "ep_001", verdict: "PASA", checks: { "DES-03": "sin_senal" } });
+    expect(row.checks["DES-03"]).toBe("sin_senal");
   });
 });

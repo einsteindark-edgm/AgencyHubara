@@ -222,6 +222,33 @@ async def test_unsafe_sentences_are_dropped_from_the_customer_message(
 
 
 @pytest.mark.asyncio
+async def test_with_jev_the_persona_of_each_sentence_is_decided_by_the_engine(
+    ctx: ToolContext, tmp_path: Path, monkeypatch
+) -> None:
+    """Motor de decisiones (F5): la capacidad `persona` decide qué oración se
+    cae con el proveedor del bot de la conversación. Con Jev, una frase de
+    marca que la regla bota se queda; el relevo «un humano» se cae igual."""
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    # Con el bot B también se pregunta por la muletilla del modelo: no hay.
+    answers = {"persona.1": 0.03, "persona.2": 0.97, "persona.3": 0.01, "preambulo.1": 0.02, "preambulo.2": 0.02}
+    fake = FakePerceptionAdapter({q: TypedAnswer(id=q, kind="noul", p=p) for q, p in answers.items()})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+    _seed(tmp_path, {"episodes": [_active_episode()]})
+
+    result = await _tag(
+        tmp_path, ctx, tag="RECHAZO", motivo="dijo que no",
+        customer_message="Cada vela lleva un toque humano. Un humano te escribe si hace falta. Gracias 🤍",
+    )
+
+    assert result["tag_closure"]["customer_message"] == "Cada vela lleva un toque humano. Gracias 🤍"
+    assert fake.calls, "con el bot B, persona se le pregunta a Jev"
+
+
+@pytest.mark.asyncio
 async def test_customer_message_with_nothing_safe_is_declared_empty(
     ctx: ToolContext, tmp_path: Path
 ) -> None:

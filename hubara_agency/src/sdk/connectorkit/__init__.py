@@ -63,8 +63,26 @@ _LAZY_EXPORTS: dict[str, str] = {
     "deslugify": "src.platform.catalog.categories",
     # Identidad estable (2026-09-14): retailer_id de Meta = SKU, no id de Medusa.
     "product_retailer_id": "src.platform.catalog.identity",
+    # El carrito de WhatsApp (2026-09-30): cada ítem llega con el retailer_id
+    # de una variante; el bot lo resuelve a nombre, variante y precio.
+    "variant_retailer_id": "src.platform.catalog.identity",
+    "has_real_variants": "src.platform.catalog.identity",
     "CustomerScoringPort": "src.platform.customer_scoring.port",
     "ImageVisionPort": "src.platform.vision.port",
+    # Visión de fotos del cliente (2026-09-30): el texto que se lee en la foto,
+    # los embeddings de imagen y el verificador contra el catálogo.
+    "VisionResult": "src.platform.vision.dtos",
+    "VisibleText": "src.platform.vision.dtos",
+    "VISION_KIND_OTHER": "src.platform.vision.dtos",
+    "VISION_KIND_PAYMENT_RECEIPT": "src.platform.vision.dtos",
+    "VISION_KIND_PRODUCT_PHOTO": "src.platform.vision.dtos",
+    "ImageEmbeddingPort": "src.platform.vision.embeddings",
+    "FakeImageEmbeddingAdapter": "src.platform.vision.embeddings",
+    "NullImageEmbeddingAdapter": "src.platform.vision.embeddings",
+    "PhotoMatchPort": "src.platform.vision.photo_match",
+    "PhotoPick": "src.platform.vision.photo_match",
+    "FakePhotoMatchAdapter": "src.platform.vision.photo_match",
+    "NullPhotoMatchAdapter": "src.platform.vision.photo_match",
     "MetaCatalogPort": "src.platform.meta_catalog.port",
     # Central de la Graph API (host + versión únicos) — stdlib-pura, sin vendor:
     "META_GRAPH_API_VERSION": "src.platform.meta.graph",
@@ -155,6 +173,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_checkout_verification_port": "src.platform.catalog.composition",
     "get_customer_scoring_port": "src.platform.customer_scoring.composition",
     "get_image_vision_port": "src.platform.vision.composition",
+    "get_image_embedding_port": "src.platform.vision.composition",
+    "get_photo_match_port": "src.platform.vision.composition",
     "get_order_command_port": "src.platform.orders.composition",
     "get_order_query_port": "src.platform.orders.composition",
     "get_order_facts_port": "src.platform.orders.composition",
@@ -166,6 +186,28 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_coupon_sales_reader": "src.platform.promotions.composition",
     "get_quota_lock": "src.platform.promotions.composition",
     "get_web_cart_reader": "src.platform.carts.composition",
+    # Percepción (plan del laboratorio §4.2): el oráculo del motor de
+    # decisiones — preguntas tipadas a Jev por OpenRouter, con fake y nulo
+    # oficiales. `oracle_timeout_s`: el tiempo máximo del perfil del oráculo.
+    "PerceptionPort": "src.platform.perception.ports",
+    "PerceptionResult": "src.platform.perception.ports",
+    "TypedAnswer": "src.platform.perception.ports",
+    "TypedQuestion": "src.platform.perception.ports",
+    "FakePerceptionAdapter": "src.platform.perception.adapters.fake",
+    "NullPerceptionAdapter": "src.platform.perception.adapters.null",
+    "anonymize_text": "src.platform.perception.anonymize",
+    # Lo que cobra cada pregunta a Jev, sumado a la conversación (como el
+    # costo del LLM y el de WhatsApp): `episodes[].jev_usage`.
+    "record_jev_cost": "src.platform.perception.costs",
+    # Lo que cuesta leer las fotos del cliente (describir, huella, comparar),
+    # sumado a la conversación: `episodes[].vision_usage`.
+    "record_vision_cost": "src.platform.vision.costs",
+    # La cola de desacuerdos regla ↔ Jev y las métricas de cada decisión (una
+    # sola de cada una: ventas y el Order Sentinel).
+    "DisagreementLog": "src.platform.perception.disagreements",
+    "DecisionMetrics": "src.platform.perception.metrics",
+    "get_perception_port": "src.platform.perception.composition",
+    "oracle_timeout_s": "src.platform.perception.composition",
 }
 
 

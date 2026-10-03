@@ -22,7 +22,14 @@ minutos, un comportamiento por vuelta.
   skill `hubara-plugin-developer` → `references/00-tdd-law.md`.
 - Antes de editar, qué gate te frena: `references/01-hard-rules.md`.
 - Verificación determinística: el comando `/hubara-gates` (o `references/03-command-panel.md`).
-- Qué NO repetir (lecciones L-0..L-15): `references/04-lessons.md`.
+- Qué NO repetir (lecciones L-0..L-34): `references/04-lessons.md`.
+- Motor de decisiones (L-34): cómo decide el bot (compra, baja, cortesía, zona,
+  para quién es un texto…) son capacidades YAML + CEL de un paquete versionado.
+  Un bug de decisión se arregla en una versión NUEVA del paquete (veredicto →
+  ejemplo rojo DB010 → pregunta/umbral/fila), NUNCA con un `if`/regex en el
+  lugar que decide; código solo en UN builtin genérico con su prueba.
+  `references/06-decision-bundles.md` · `docs/motor-de-decisiones/index.html` ·
+  certificar: `cd hubara_agency && uv run python -m src.sdk.cli decisions check`.
 - Subagents: `hubara-explorer` (mapear antes de editar), `hubara-tdd-author`
   (escribir el test rojo), `hubara-gate-reviewer` (verificar antes de cerrar).
 

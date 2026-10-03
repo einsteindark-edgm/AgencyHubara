@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from src.plugins.chats.agent.sales_eval.scorecard.checks import CODE_CHECKS
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext
+from src.plugins.chats.agent.sales_eval.scorecard.trajectory import build_trajectory
 from tests.evals.scorecard.dsl import T, tool, traj
 
 _GREETING = "¡Buenos días! Bienvenido a *Hubara*, velas artesanales."
@@ -80,6 +81,56 @@ def test_ape02_returning_customer_is_not_applicable() -> None:
 def test_ape02_unknown_first_contact_is_unknown() -> None:
     t = _without_first_contact(traj(T(1, sent=["¡Hola!"]), fidelity="legacy"))
     assert _run("APE-02", t).verdict == "desconocido"
+
+
+# ── APE-01/02 juzgan lo primero que LEYÓ el cliente ───────────────────────
+# Caso 4567 del laboratorio (caso-fotos-0929-r3, turno 1 del bot nuevo): el
+# turno fue solo la lista y el saludo con la marca iba en su texto. APE-01
+# falló «primer texto sin marca Hubara «Buenas tardes 🤍»», leyendo el
+# complemento que salió DESPUÉS de la lista. En un turno sale primero el
+# texto y después las tarjetas; el complemento, al final.
+_LIST_GREETING = "Buenos días, bienvenido a *Hubara*, velas artesanales.\n\nEsta es nuestra colección de Halloween:"
+
+
+def test_ape01_reads_the_greeting_inside_the_first_list() -> None:
+    t = traj(T(1, tools=[tool("search_products", q="halloween"), tool("present_products", intro_text=_LIST_GREETING)]))
+    r = _run("APE-01", t)
+    assert (r.verdict, r.turn) == ("pasa", 1)
+    assert "Buenos días" in r.evidence
+
+
+def test_ape01_the_complement_is_read_after_the_cards_of_its_turn() -> None:
+    records = [
+        {"turn": 1, "trigger": "customer", "first_contact": True, "sent_texts": [],
+         "tools": [{"name": "present_products", "ok": True, "args": {"intro_text": _LIST_GREETING}}]},
+        {"turn": 1, "trigger": "complement", "sent_texts": ["Buenas tardes 🤍"],
+         "tools": [{"name": "send_reply", "ok": True, "args": {"text": "Buenas tardes 🤍"}}]},
+    ]
+    t = build_trajectory(records, session_id="wa_573001234567", episode={"episode_id": "ep_001"})
+    r = _run("APE-01", t)
+    assert (r.verdict, r.turn) == ("pasa", 1)
+    assert "Buenos días" in r.evidence
+
+
+def test_ape01_a_text_of_the_same_turn_is_read_before_its_cards() -> None:
+    t = traj(T(1, sent=["¿Buscas algo en especial?"], tools=[tool("present_products", intro_text=_LIST_GREETING)]))
+    r = _run("APE-01", t)
+    assert (r.verdict, r.turn) == ("falla", 1)
+    assert "Buscas algo" in r.evidence
+
+
+def test_ape01_a_card_that_did_not_go_out_is_not_read() -> None:
+    refused = tool("present_products", ok=False, error="no_valid_handles", intro_text=_LIST_GREETING)
+    t = traj(T(1, tools=[refused]), T(2, sent=["Claro, aquí tienes el catálogo de Hubara"]))
+    r = _run("APE-01", t)
+    assert (r.verdict, r.turn) == ("falla", 2)
+
+
+def test_ape02_reads_the_opening_of_the_first_list() -> None:
+    t = traj(T(1, tools=[tool("present_products", intro_text="¡Hola! Estas son nuestras velas de Halloween:")]))
+    r = _run("APE-02", t)
+    assert (r.verdict, r.turn) == ("falla", 1)
+    assert "Hola" in r.evidence
 
 
 # ── APE-03 ────────────────────────────────────────────────────────────────

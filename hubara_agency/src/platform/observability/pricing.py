@@ -59,3 +59,25 @@ def compute_llm_cost_usd(
         completion_tokens / 1000.0
     ) * completion_price
     return round(cost, 8)
+
+
+def response_cost_usd(response: Any, model: str) -> float | None:
+    """Lo que costó UNA respuesta de litellm: primero el costo que calculó el
+    proxy (cabecera ``x-litellm-response-cost`` → ``_hidden_params``); si no
+    viene, ``usage`` × la tabla de precios. ``None`` = no se sabe (respuesta
+    sin costo ni tokens, o modelo sin precio). Nunca lanza."""
+    hidden = getattr(response, "_hidden_params", None)
+    if isinstance(hidden, dict):
+        cost = hidden.get("response_cost")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost > 0:
+            return float(cost)
+    usage = getattr(response, "usage", None)
+    prompt = getattr(usage, "prompt_tokens", None) if usage is not None else None
+    completion = getattr(usage, "completion_tokens", None) if usage is not None else None
+    if not isinstance(prompt, int) and not isinstance(completion, int):
+        return None
+    cost = compute_llm_cost_usd(
+        model, prompt if isinstance(prompt, int) else 0, completion if isinstance(completion, int) else 0,
+        load_pricing_table(),
+    )
+    return cost if cost > 0 else None

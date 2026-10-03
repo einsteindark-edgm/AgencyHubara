@@ -24,6 +24,8 @@ cd hubara_agency && uv run python -m src.sdk.cli <verbo>
 | `explain <código>` | el diagnóstico completo de una regla (`P-27`, `C1-DEPS`, …) | 2 si el código no existe |
 | `graph [--format=mermaid\|json]` | grafo del sistema derivado de los manifests: nodos con arquetipo + edges `depends_on` y `event:*` | 0 |
 | `create plugin <id> --archetype <a>` | scaffold completo que **nace C2** + corre el TCK del recién nacido + imprime próximos pasos | 1 si no nace C2 · 2 input inválido |
+| `decisions check [<carpeta>...] [--catalog]` | certifica paquetes de decisión (sin rutas: todos los del repo); cada error con su código DB0xx y ruta (docs/_sdk/17) | 0 ok · 1 algún paquete no compila |
+| `decisions schema [--out]` | escribe el esquema JSON del editor (`hubara_agency/schemas/`) | 0 |
 
 Ejemplo de sesión:
 

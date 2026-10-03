@@ -1,0 +1,98 @@
+# Perfiles del MOTOR de decisiones (diseño v2 §03). Un perfil junta lo que
+# cambia seguido: cuestionario, política, umbrales, el perfil que corre en
+# sombra doble y el snapshot de Jev con el que se calibró. El ORÁCULO
+# (proveedor, modelo fijo, tiempo máximo, anonimización) es de la plataforma:
+# `src/platform/perception/profiles.yaml`.
+#
+# El id del perfil viaja en la señal y en Terraform
+# (`tenants.*.lab.perception_profile`). Versionados: otro cuestionario, otra
+# política u otros umbrales = un perfil NUEVO (jev-v2…), para que el
+# laboratorio y la traza digan con qué se midió.
+#
+# Un perfil trae SOLO umbrales que su política lee (una prueba lo exige):
+# `confidence: 0.60` estuvo desde jev-v1 y nadie lo leía; se quitó el
+# 2026-10-02 sin cambiar nada (PAQUETES_DE_DECISION.md §1 y F7).
+#
+#   oracle            perfil del oráculo (platform/perception/profiles.yaml)
+#   questions         cuestionario (decisions/questionnaires/<id>.yaml)
+#   policy            política (decisions/policies/)
+#   thresholds        umbrales de la política
+#   turn: bundle      en vez de questions/policy/thresholds: el turno del
+#                     paquete activo (`turn.yaml`, PAQUETES_DE_DECISION.md F7)
+#   shadow            perfil que corre en sombra dentro de la misma activity
+#                     (solo va a la traza); null = sin sombra
+#   calibrated_model  snapshot de Jev con el que se calibró; si Jev responde
+#                     con otro, lo que actúa baja a sombra. null = sin calibrar
+
+jev-v1:
+  oracle: jev-1.13
+  questions: rafaga-v1
+  policy: turno-v1
+  thresholds: {detect: 0.70, covered: 0.70}
+  shadow: null
+  calibrated_model: null
+
+# F1 (diseño v2 §01): el «Si» con contexto. Jev ve lo que el cliente vio antes
+# del turno y los hechos del pedido; la nota lleva la lectura del hilo y la
+# evidencia de compra. Umbrales según lo que cuesta cada error (§02).
+jev-v2:
+  oracle: jev-1.13
+  questions: rafaga-v2
+  policy: turno-v2
+  thresholds:
+    detect: 0.70
+    covered: 0.70
+    answers: 0.70
+    purchase_confirm: 0.85
+    purchase_retract: 0.20
+  shadow: null
+  calibrated_model: null
+
+# F6 (diseño v2 §04 y §05): contrato de herramientas y guía de etapas. Las
+# preguntas de etapa solo se hacen en la etapa que calcula el código.
+jev-v3:
+  oracle: jev-1.13
+  questions: rafaga-v3
+  policy: turno-v3
+  thresholds:
+    detect: 0.70
+    covered: 0.70
+    answers: 0.70
+    purchase_confirm: 0.85
+    purchase_retract: 0.20
+    given: 0.85
+  shadow: null
+  calibrated_model: null
+
+# Revisión 2026-09-29: jev-v3 con el cuestionario rafaga-v4 (catálogo y
+# disponibilidad más amplios: el pedido de un tipo o colección de velas entra al
+# plan). Misma política y mismos umbrales que jev-v3.
+jev-v4:
+  oracle: jev-1.13
+  questions: rafaga-v4
+  policy: turno-v3
+  thresholds:
+    detect: 0.70
+    covered: 0.70
+    answers: 0.70
+    purchase_confirm: 0.85
+    purchase_retract: 0.20
+    given: 0.85
+  shadow: null
+  calibrated_model: null
+
+# Revisión 2026-09-29 (noche): jev-v4 con el cuestionario rafaga-v5 (la pregunta
+# `envio.costo`: el contrato pide la tarjeta de tarifas solo si preguntan el
+# costo; «¿cuánto tarda?» ya no se responde con las tarifas). Misma política y
+# mismos umbrales que jev-v4.
+#
+# F7 (PAQUETES_DE_DECISION.md, 2026-10-02): el turno sale del PAQUETE ACTIVO
+# (`chats/shared/decisions/bundles/<paquete>/turn.yaml`): el cuestionario
+# rafaga-v5, la política turno-v3, sus umbrales (sin `confidence`, que ninguna
+# política leía) y sus tablas. Otra tienda u otra versión de la inteligencia =
+# otro paquete (Terraform `decisions_bundle`), no otro perfil.
+jev-v5:
+  oracle: jev-1.13
+  turn: bundle
+  shadow: null
+  calibrated_model: null
