@@ -100,6 +100,23 @@ model_list:
       model: gemini/gemini-2.5-flash-lite
       api_key: "os.environ/GEMINI_API_KEY"
 
+  # SUCESOR de gemini-multimodal (2026-10-05), en el failover de abajo. 2.5
+  # Flash-Lite no tiene fecha de apagado, pero Google ya lo limita a cuentas
+  # que lo usaban ("we are limiting access to the 2.5 models to users who have
+  # actively used them in the past", tabla de deprecations del 2026-10-01): una
+  # cuenta o un proyecto nuevo (el silo de un cliente) recibe 403/404. Sin
+  # sucesor, cada foto y cada nota de voz fallaría en silencio. 3.5 Flash-Lite
+  # es el reemplazo que recomienda Google: estable, sin fecha de apagado, lee
+  # imagen y audio. Cuesta más ($0.30/$2.50 por 1M contra $0.10/$0.40; el audio
+  # cuesta lo mismo, $0.30) y piensa en "minimal" por defecto: por eso es
+  # sucesor y no reemplazo, hasta medir en el laboratorio cuál sigue. Alias
+  # propio (no reusar gemini-backup ni gemini-photo-match: otro propósito).
+  # Guard: test_an_alias_on_an_access_limited_id_falls_over_to_a_successor.
+  - model_name: gemini-multimodal-successor
+    litellm_params:
+      model: gemini/gemini-3.5-flash-lite
+      api_key: "os.environ/GEMINI_API_KEY"
+
   # Fotos del cliente contra el catálogo (2026-09-30): cuando la foto no trae
   # un nombre, un código o un enlace que se lea, se buscan los 5 productos más
   # parecidos por embedding de imagen y un verificador dice cuál es el mismo
@@ -133,6 +150,7 @@ router_settings:
   # Como cada model_name tiene solo un proveedor, siempre elegirá ese.
   routing_strategy: simple-shuffle
   num_retries: 1
-  # El failover se activa aquí: si falla 'deepseek-v4-flash', salta a 'gemini-backup'
-  fallbacks: [{"deepseek-v4-flash": ["gemini-backup"]}, {"deepseek-v4-flash-thinking": ["gemini-backup"]}]
+  # El failover se activa aquí: si falla 'deepseek-v4-flash', salta a 'gemini-backup';
+  # si Google niega 2.5 Flash-Lite a 'gemini-multimodal', atiende su sucesor.
+  fallbacks: [{"deepseek-v4-flash": ["gemini-backup"]}, {"deepseek-v4-flash-thinking": ["gemini-backup"]}, {"gemini-multimodal": ["gemini-multimodal-successor"]}]
   drop_params: True

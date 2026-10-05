@@ -328,7 +328,7 @@ imágenes», junto a «Costo LLM» y «Costo WA»).
 | Símbolo | Qué es |
 |---|---|
 | `record_jev_cost(session_id, cost_usd)` | suma una pregunta a Jev (`PerceptionResult.cost_usd`, de OpenRouter `usage.cost`) a `jev_usage`. Lo llaman las capacidades del motor (también en sombra), la lectura del turno, la revisión antes de enviar y el lector del Order Sentinel. Sin costo no cuenta |
-| `record_vision_cost(session_id, cost_usd, calls=, store=)` | suma las llamadas a Gemini de una foto (describirla, su huella y la comparación contra el catálogo) a `vision_usage`. El costo sale del proxy (`_hidden_params.response_cost`) o de tokens × `OPENLIT_PRICING_JSON`; una llamada sin precio conocido se cuenta sin inventar el costo. `store`: el metadata store del ingest (con `update`) |
+| `record_vision_cost(session_id, cost_usd, calls=, store=)` | suma las llamadas a Gemini de una foto (describirla, su huella y la comparación contra el catálogo) a `vision_usage`. El costo sale del proxy (`_hidden_params.response_cost`) o de tokens × `OPENLIT_PRICING_JSON`, al precio del modelo que contestó (si el failover atendió con el sucesor, el del sucesor); la huella se cobra por imagen (`imagePrice`), porque el proxy reporta 0 tokens para una imagen; una llamada sin precio conocido se cuenta sin inventar el costo. `store`: el metadata store del ingest (con `update`) |
 | `ImageEmbeddingPort.embed_measured(bytes, mime)` | el vector y lo que costó la llamada (el ingest lo cobra a la conversación; el índice del catálogo, un costo de la tienda, usa `embed`). `PhotoPick.cost_usd` y `VisionResult.cost_usd_estimate` dicen lo mismo para la comparación y la descripción |
 
 Los dos van al episodio abierto o, si no hay, al último (remarketing pregunta

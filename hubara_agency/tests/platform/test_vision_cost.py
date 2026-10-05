@@ -101,6 +101,47 @@ async def test_the_photo_fingerprint_reports_its_cost(monkeypatch) -> None:
     assert vector == [0.1] * 4 and cost == pytest.approx(0.00003)
 
 
+@pytest.mark.asyncio
+async def test_the_photo_fingerprint_is_charged_per_image_when_the_proxy_counts_no_tokens(monkeypatch) -> None:
+    """El proxy (litellm 1.86.2, `batch_embed_content_transformation.py`) deja
+    `prompt_tokens=0` cuando la entrada es una imagen y no calcula costo: tokens
+    × tabla daría 0 aunque la tabla tuviera precio. Google cobra
+    gemini-embedding-2 por imagen: US$0,00012 (ai.google.dev/gemini-api/docs/pricing,
+    revisado 2026-10-05)."""
+    from PIL import Image
+    import io
+
+    monkeypatch.setenv("OPENLIT_PRICING_JSON", str(PRICING))
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (200, 100, 100)).save(buf, format="JPEG")
+
+    async def fake(**kwargs: Any) -> Any:
+        return SimpleNamespace(
+            data=[{"embedding": [0.1] * 4}], usage=SimpleNamespace(prompt_tokens=0, total_tokens=0)
+        )
+
+    monkeypatch.setattr(embeddings.litellm, "aembedding", fake)
+    adapter = LiteLLMImageEmbeddingAdapter(api_base="http://proxy", api_key="k", dimensions=4)
+
+    _vector, cost = await adapter.embed_measured(buf.getvalue(), "image/jpeg")
+
+    assert cost == pytest.approx(0.00012)
+
+
+@pytest.mark.asyncio
+async def test_a_photo_read_by_the_successor_is_priced_as_the_successor(monkeypatch) -> None:
+    """Si Google corta el acceso a 2.5 Flash-Lite, el proxy contesta con el
+    sucesor (3.5 Flash-Lite: 3x la entrada y 6x la salida). El costo es el del
+    modelo que contestó, no el del alias que se pidió."""
+    monkeypatch.setenv("OPENLIT_PRICING_JSON", str(PRICING))
+    response = _response(_ANSWER, usage=(600, 200))
+    response.model = "gemini-3.5-flash-lite"
+
+    result = await _describe(monkeypatch, response)
+
+    assert result.cost_usd_estimate == pytest.approx(600 * 0.30 / 1e6 + 200 * 2.50 / 1e6)
+
+
 def _seed(vault: Path) -> Path:
     path = vault / SID / "metadata.json"
     path.parent.mkdir(parents=True)
@@ -119,8 +160,8 @@ def test_the_cost_of_a_photo_goes_to_the_conversation(tmp_path: Path) -> None:
 
 
 def test_a_read_without_a_known_price_still_counts(tmp_path: Path) -> None:
-    """La huella (gemini-embedding-2) no tiene precio en la tabla: si el proxy
-    no lo dice, la llamada se cuenta igual, sin inventar el costo."""
+    """Un modelo sin precio en la tabla: si el proxy no lo dice, la llamada se
+    cuenta igual, sin inventar el costo."""
     path = _seed(tmp_path)
 
     record_vision_cost(SID, None, calls=1, vault_dir=tmp_path)

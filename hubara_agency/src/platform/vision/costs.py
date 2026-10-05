@@ -4,8 +4,9 @@ Por foto, hasta tres llamadas a Gemini por el proxy: describirla (también lee
 los comprobantes de pago), su huella (embedding) para buscarla en el catálogo
 y la comparación contra las candidatas. El ingest las suma al episodio:
 `episodes[].vision_usage = {calls, cost_usd_micros}` (ver
-`platform/observability/episode_usage.py`). Una llamada sin precio conocido
-(la huella, si el proxy no lo dice) se cuenta igual, sin inventar el costo.
+`platform/observability/episode_usage.py`). La huella se cobra por imagen
+(`imagePrice` de la tabla: el proxy reporta 0 tokens para una imagen). Una
+llamada sin precio conocido se cuenta igual, sin inventar el costo.
 
 Fuera de una conversación no se registra: el índice de fotos del catálogo
 es un costo de la tienda, y el laboratorio lee su banco.

@@ -29,7 +29,11 @@ import litellm
 import structlog
 
 from src.platform.config import API_BASE_LLMLITE
-from src.platform.observability.pricing import response_cost_usd
+from src.platform.observability.pricing import (
+    image_price_usd,
+    load_pricing_table,
+    proxy_reported_cost_usd,
+)
 from src.platform.vision.images import to_jpeg
 
 logger = structlog.get_logger()
@@ -135,7 +139,12 @@ class LiteLLMImageEmbeddingAdapter:
         except Exception as exc:  # noqa: BLE001 — el puerto nunca lanza
             logger.warning("image_embedding.error", model=self._model, error_type=type(exc).__name__)
             return None, None
-        cost = response_cost_usd(response, self._model)
+        # Google cobra este embedding POR IMAGEN, y el proxy (litellm 1.86.2)
+        # reporta prompt_tokens=0 cuando la entrada es una imagen: tokens ×
+        # tabla daría 0. Si el proxy no manda su costo, una imagen × imagePrice.
+        cost = proxy_reported_cost_usd(response)
+        if cost is None:
+            cost = image_price_usd(self._model, load_pricing_table())
         vector = _vector(value, self._dimensions)
         if vector is None:
             logger.warning("image_embedding.bad_response", model=self._model)
