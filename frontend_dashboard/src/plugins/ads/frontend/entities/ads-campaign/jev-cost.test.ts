@@ -69,4 +69,13 @@ describe("costo de Jev", () => {
     const old = mapBackendConversation(backendAttributedConversationSchema.parse(conversation));
     expect(old.visionCostUsdMicros).toBeNull();
   });
+  it("la conversación trae lo que costó transcribir sus notas de voz", () => {
+    const row = mapBackendConversation(
+      backendAttributedConversationSchema.parse({ ...conversation, audio_cost_usd_micros: 512, audio_calls: 2 }),
+    );
+    expect(row.audioCostUsdMicros).toBe(512);
+    expect(row.audioCalls).toBe(2);
+    const old = mapBackendConversation(backendAttributedConversationSchema.parse(conversation));
+    expect(old.audioCostUsdMicros).toBeNull();
+  });
 });

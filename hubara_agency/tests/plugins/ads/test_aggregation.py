@@ -1112,6 +1112,7 @@ def _ep(
     cost_summary: dict | None = None,
     jev_usage: dict | None = None,
     vision_usage: dict | None = None,
+    audio_usage: dict | None = None,
 ) -> dict:
     """Construye un episodio con shape de `episode_lifecycle._make_empty_episode`.
     `referral_snapshot=None` → la atribución cae al `origin` de la sesión.
@@ -1144,6 +1145,8 @@ def _ep(
         ep["jev_usage"] = jev_usage
     if vision_usage is not None:
         ep["vision_usage"] = vision_usage
+    if audio_usage is not None:
+        ep["audio_usage"] = audio_usage
     return ep
 
 
@@ -1320,6 +1323,29 @@ def test_aggregates_the_cost_of_reading_photos(_isolate_vault_dir: Path):
     assert (_only(camps, "AD_Y").vision_cost_usd_micros, _only(camps, "AD_Y").vision_calls) == (None, None)
     convs = {c.episode_id: c for c in list_attributed_conversations(_isolate_vault_dir, "AD_X")}
     assert (convs["ep_001"].vision_cost_usd_micros, convs["ep_001"].vision_calls) == (940, 3)
+
+
+def test_aggregates_the_cost_of_transcribing_voice_notes(_isolate_vault_dir: Path):
+    """«Costo audio»: suma `episode.audio_usage` (transcribir las notas de voz
+    con Gemini). Sin notas de voz → None (≠ "costó 0")."""
+    _write_episodic_session(
+        _isolate_vault_dir,
+        phone="111",
+        source_id="AD_X",
+        episodes=[
+            _ep("ep_001", started_at_ms=1, closed_at_ms=2, audio_usage={"calls": 2, "cost_usd_micros": 512}),
+            _ep("ep_002", started_at_ms=3, audio_usage={"calls": 1, "cost_usd_micros": 200}),
+        ],
+    )
+    _write_episodic_session(
+        _isolate_vault_dir, phone="222", source_id="AD_Y", episodes=[_ep("ep_001", started_at_ms=1)],
+    )
+
+    camps = list_ads_campaigns(_isolate_vault_dir)
+    assert (_only(camps, "AD_X").audio_cost_usd_micros, _only(camps, "AD_X").audio_calls) == (712, 3)
+    assert (_only(camps, "AD_Y").audio_cost_usd_micros, _only(camps, "AD_Y").audio_calls) == (None, None)
+    convs = {c.episode_id: c for c in list_attributed_conversations(_isolate_vault_dir, "AD_X")}
+    assert (convs["ep_001"].audio_cost_usd_micros, convs["ep_001"].audio_calls) == (512, 2)
 
 
 def test_campaign_without_llm_usage_has_none(_isolate_vault_dir: Path):

@@ -7,6 +7,7 @@ los demás costos de una conversación se suman acá, con la MISMA forma:
 
   * `jev_usage`     las preguntas a Jev (platform/perception/costs.py)
   * `vision_usage`  leer las fotos del cliente (platform/vision/costs.py)
+  * `audio_usage`   transcribir las notas de voz (platform/audio/costs.py)
 
 Micro-USD enteros (lección cost-unit: son fracciones de centavo). Va al
 episodio abierto o, si no hay, al último (remarketing pregunta sobre una

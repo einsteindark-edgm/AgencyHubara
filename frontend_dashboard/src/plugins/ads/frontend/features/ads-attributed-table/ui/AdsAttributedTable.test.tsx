@@ -157,7 +157,7 @@ describe("AdsAttributedTable — costo de WhatsApp por conversación (2026-09-18
       <AdsAttributedTable rows={[makeRow({ jevCostUsdMicros: 105, jevCalls: 5 })]} />,
     );
     const headers = getAllByRole("columnheader").map((h) => h.textContent?.trim());
-    expect(headers.slice(-4)).toEqual(["Costo LLM", "Costo WA", "Costo Jev", "Costo imágenes"]);
+    expect(headers.slice(-5)).toEqual(["Costo LLM", "Costo WA", "Costo Jev", "Costo imágenes", "Costo audio"]);
     const cell = getByTestId("jev-cost-cell");
     expect(cell.textContent).toContain("US$0.000105");
     expect(cell.textContent).toContain("5 preguntas");
@@ -183,5 +183,21 @@ describe("AdsAttributedTable — costo de WhatsApp por conversación (2026-09-18
     const cell = getByTestId("vision-cost-cell");
     expect(cell.textContent).not.toContain("US$");
     expect(cell.querySelector("[title]")?.getAttribute("title")).toBe("El cliente no mandó fotos en esta conversación");
+  });
+
+  it("columna 'Costo audio': lo que costó transcribir las notas de voz + cuántas", () => {
+    const { getByTestId } = render(
+      <AdsAttributedTable rows={[makeRow({ audioCostUsdMicros: 512, audioCalls: 2 })]} />,
+    );
+    const cell = getByTestId("audio-cost-cell");
+    expect(cell.textContent).toContain("US$0.00051");
+    expect(cell.textContent).toContain("2 notas de voz");
+  });
+
+  it("sin notas de voz, lo dice en vez de un 'US$0'", () => {
+    const { getByTestId } = render(<AdsAttributedTable rows={[makeRow({ audioCostUsdMicros: null })]} />);
+    const cell = getByTestId("audio-cost-cell");
+    expect(cell.textContent).not.toContain("US$");
+    expect(cell.querySelector("[title]")?.getAttribute("title")).toBe("El cliente no mandó notas de voz en esta conversación");
   });
 });

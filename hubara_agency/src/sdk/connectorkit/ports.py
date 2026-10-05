@@ -225,6 +225,9 @@ from src.platform.perception.costs import (
 from src.platform.vision.costs import (
     record_vision_cost as record_vision_cost,
 )
+from src.platform.audio.costs import (
+    record_audio_cost as record_audio_cost,
+)
 from src.platform.perception.disagreements import (
     DisagreementLog as DisagreementLog,
 )

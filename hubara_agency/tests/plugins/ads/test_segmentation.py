@@ -464,6 +464,15 @@ class TestWhatsappCostMerge:
         (row,) = group_buckets_by_campaign([b1, b2], names)
         assert (row.vision_cost_usd_micros, row.vision_calls) == (1080, 4)
 
+    def test_suma_el_costo_de_los_audios_de_los_anuncios(self):
+        b1 = _bucket(id="AD_1", audio_cost_usd_micros=512, audio_calls=2)
+        b2 = _bucket(id="AD_2", audio_cost_usd_micros=200, audio_calls=1)
+        names = {"AD_1": _names("AD_1"), "AD_2": _names("AD_2")}
+        (row,) = group_buckets_by_campaign([b1, b2], names)
+        assert (row.audio_cost_usd_micros, row.audio_calls) == (712, 3)
+        (none,) = group_buckets_by_campaign([_bucket(id="AD_1"), _bucket(id="AD_2")], names)
+        assert (none.audio_cost_usd_micros, none.audio_calls) == (None, None)
+
     def test_none_honesto_si_ningun_anuncio_trae_costo(self):
         names = {"AD_1": _names("AD_1"), "AD_2": _names("AD_2")}
         (row,) = group_buckets_by_campaign(

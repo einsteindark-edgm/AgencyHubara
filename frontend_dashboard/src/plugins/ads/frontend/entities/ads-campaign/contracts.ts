@@ -65,6 +65,14 @@ const backendVisionCostFields = {
   vision_calls: z.number().int().nullable().default(null),
 };
 
+/** Costo de transcribir las notas de voz del cliente (2026-10-05): Gemini por
+ *  el proxy (USD micros + llamadas). `null` = no mandó notas de voz;
+ *  `.default(null)` tolera un backend viejo. */
+const backendAudioCostFields = {
+  audio_cost_usd_micros: z.number().int().nullable().default(null),
+  audio_calls: z.number().int().nullable().default(null),
+};
+
 /** Envío de una campaña de WhatsApp (sección Marketing), 2026-09-25: lo que
  *  para una campaña de Meta son gasto/impresiones/clicks. Solo lo trae una fila
  *  `hubara_campaign`; `.default(null)` tolera un backend viejo. Gasto en USD
@@ -107,6 +115,7 @@ export const backendAdsCampaignSchema = z.object({
   // Costo de Jev acumulado de la campaña (suma de `episode.jev_usage`).
   ...backendJevCostFields,
   ...backendVisionCostFields,
+  ...backendAudioCostFields,
   avg_episode_duration_ms: z.number().int().nullable(),
 
   // Faltantes — backend serializa null hasta integrar Meta Ads API / orders
@@ -235,6 +244,7 @@ export const backendAttributedConversationSchema = z.object({
   // Costo de Jev del episodio (`episode.jev_usage`).
   ...backendJevCostFields,
   ...backendVisionCostFields,
+  ...backendAudioCostFields,
 
   // Evento CAPI reportado a Meta para este episodio: "LeadSubmitted" |
   // "Purchase" | "OrderCanceled" | null (no reportado). `.default(null)`

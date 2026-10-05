@@ -38,6 +38,8 @@ const sample: BackendAttributedConversation = {
   jev_calls: null,
   vision_cost_usd_micros: null,
   vision_calls: null,
+  audio_cost_usd_micros: null,
+  audio_calls: null,
   capi_event: null,
   state_reason: null,
 };

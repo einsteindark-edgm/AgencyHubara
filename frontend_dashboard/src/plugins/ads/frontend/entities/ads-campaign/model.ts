@@ -276,6 +276,11 @@ export interface AdsCampaign {
   visionCostUsdMicros?: number | null;
   /** Llamadas a Gemini para leer esas fotos. */
   visionCalls?: number | null;
+  /** Costo de transcribir las notas de voz de los clientes de la campaña (USD
+   *  micros, suma de `episode.audio_usage`). null = nadie mandó notas de voz. */
+  audioCostUsdMicros?: number | null;
+  /** Llamadas a Gemini para transcribirlas. */
+  audioCalls?: number | null;
   /** Duración media de los episodios CERRADOS del bucket (ms) — el "tiempo"
    *  del embudo. null si no hay episodios cerrados con timestamps válidos. */
   avgEpisodeDurationMs: number | null;
@@ -375,6 +380,12 @@ export interface AttributedConversation {
   visionCostUsdMicros?: number | null;
   /** Llamadas a Gemini para leerlas. */
   visionCalls?: number | null;
+
+  // --- Costo de transcribir las notas de voz (2026-10-05) ---
+  /** USD micros. null = no mandó notas de voz. */
+  audioCostUsdMicros?: number | null;
+  /** Llamadas a Gemini para transcribirlas. */
+  audioCalls?: number | null;
 
   /** Evento CAPI reportado a Meta para este episodio (`LeadSubmitted` |
    *  `Purchase` | `OrderCanceled`). `OrderCanceled` pisa a `Purchase`: Meta no

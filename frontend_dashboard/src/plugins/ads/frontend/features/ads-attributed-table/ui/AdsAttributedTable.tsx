@@ -107,6 +107,9 @@ export function AdsAttributedTable({ rows }: Props) {
               <th className="num" title="Lo que cuesta leer las fotos del cliente: describirlas y buscarlas en el catálogo">
                 Costo imágenes
               </th>
+              <th className="num" title="Lo que cuesta transcribir las notas de voz del cliente">
+                Costo audio
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -260,12 +263,30 @@ export function AdsAttributedTable({ rows }: Props) {
                       </span>
                     )}
                   </td>
+                  {/* Costo de transcribir sus notas de voz + cuántas. null =
+                      no mandó notas de voz. */}
+                  <td className="num" data-testid="audio-cost-cell">
+                    {c.audioCostUsdMicros != null ? (
+                      <div>
+                        <div>{fmtUsdMicrosFine(c.audioCostUsdMicros)}</div>
+                        {c.audioCalls != null && (
+                          <div style={{ fontSize: 11, color: "var(--fg-mute)" }}>
+                            {fmtN(c.audioCalls)} {c.audioCalls === 1 ? "nota de voz" : "notas de voz"}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span title="El cliente no mandó notas de voz en esta conversación" style={{ color: "var(--fg-faint)" }}>
+                        —
+                      </span>
+                    )}
+                  </td>
                 </tr>
               );
             })}
             {list.length === 0 && (
               <tr>
-                <td colSpan={13} className="att-empty">
+                <td colSpan={14} className="att-empty">
                   Sin chats que coincidan con el filtro.
                 </td>
               </tr>

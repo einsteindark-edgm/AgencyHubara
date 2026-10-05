@@ -205,6 +205,11 @@ _CAMPAIGN_COUPON_TIMEOUT_S = 5.0
 _CATALOG_GAP_LIMIT = 200
 _CATALOG_GAP_TIMEOUT_S = 2.0
 
+#: Errores de transcripción en los que la nota de voz nunca llegó a Google
+#: (no se bajó de Meta, o el proveedor falló o limitó): no se cobran a la
+#: conversación. Cualquier otro (vacío, inaudible, muy larga) sí: Google la oyó.
+_AUDIO_NOT_BILLED = ("media_fetch_failed", "rate_limit", "provider_error")
+
 #: Cap de descarga para documentos PDF inbound (comprobantes). La restricción
 #: de subida la impone WhatsApp (100 MB); de nuestro lado, por encima de este
 #: cap NO se descarga (el fetcher corta con el `file_size` declarado, antes de
@@ -1886,6 +1891,8 @@ class IngestInboundMessage:
             )
             return
 
+        self._charge_audio(session_id, result)
+
         # Limpiar pending_transcription
         try:
             metadata = self._metadata_store.read(session_id)
@@ -2198,6 +2205,16 @@ class IngestInboundMessage:
             ),
             from_photo=True,
         )
+
+    def _charge_audio(self, session_id: str, result: Any) -> None:
+        """Lo que costó transcribir la nota de voz, al episodio de la
+        conversación (`audio_usage`). Google cobra toda llamada que contestó,
+        aunque no saliera texto útil; no la que nunca llegó al modelo."""
+        from src.sdk.connectorkit import record_audio_cost
+
+        if (result.error or "").startswith(_AUDIO_NOT_BILLED):
+            return
+        record_audio_cost(session_id, result.cost_usd_estimate, calls=1, store=self._metadata_store)
 
     def _charge_vision(self, session_id: str, cost_usd: float | None, *, calls: int) -> None:
         """Lo que costó leer la foto, al episodio de la conversación

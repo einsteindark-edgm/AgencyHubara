@@ -94,6 +94,9 @@ def merge_bucket_group(members: list[AdsCampaignSummary]) -> AdsCampaignSummary:
     vision_members = [m for m in members if m.vision_cost_usd_micros is not None]
     vision_cost = sum(m.vision_cost_usd_micros or 0 for m in vision_members) if vision_members else None
     vision_calls = sum(m.vision_calls or 0 for m in vision_members) if vision_members else None
+    audio_members = [m for m in members if m.audio_cost_usd_micros is not None]
+    audio_cost = sum(m.audio_cost_usd_micros or 0 for m in audio_members) if audio_members else None
+    audio_calls = sum(m.audio_calls or 0 for m in audio_members) if audio_members else None
 
     firsts = [m.first_seen_ms for m in members if m.first_seen_ms is not None]
     lasts = [m.last_seen_ms for m in members if m.last_seen_ms is not None]
@@ -117,6 +120,8 @@ def merge_bucket_group(members: list[AdsCampaignSummary]) -> AdsCampaignSummary:
         jev_calls=jev_calls,
         vision_cost_usd_micros=vision_cost,
         vision_calls=vision_calls,
+        audio_cost_usd_micros=audio_cost,
+        audio_calls=audio_calls,
         avg_episode_duration_ms=avg_duration,
         revenue_count=revenue_count,
         duration_count=dur_count,
