@@ -33,6 +33,7 @@ from typing import Any
 
 import structlog
 
+from src.plugins.chats.agent.sales.decisions import retiro
 from src.plugins.chats.agent.sales.decisions.bundled import BundledCapability
 from src.plugins.chats.shared import store_pack
 from src.plugins.chats.shared.store_pack import BUNDLE_ENV, BUNDLES_DIR, DEFAULT_BUNDLE, active_bundle_id
@@ -137,7 +138,10 @@ def warm_up() -> None:
     """Compila el paquete de la tienda al arrancar (la API y los workers):
     la primera decisión no paga la compilación y el log dice qué paquete
     corre. Uno roto no tumba el arranque: queda el error (el ingest sigue
-    con las reglas del código y el deploy ya lo frena antes del `up`)."""
+    con las reglas del código y el deploy ya lo frena antes del `up`).
+    También anota desde cuándo se observan las piezas en retiro
+    (`retiro.yaml`)."""
+    retiro.observar()
     try:
         bundle = active_bundle()
     except BundleError:

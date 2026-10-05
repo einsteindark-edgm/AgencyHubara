@@ -56,6 +56,7 @@ from src.sdk.textkit import (
     strip_model_preamble,
     strip_portavelas_notice,
 )
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 # Despedida mínima si todo el texto hablaba del portavelas: el cliente que
 # acaba de dar sus datos NUNCA recibe silencio. La MISMA línea que el V1
@@ -187,6 +188,7 @@ def text_without_preamble(text: str, preamble: str) -> str:
     return text
 
 
+@en_retiro("clase:preambulo")
 class Preambulo:
     """«¿Esta oración es una muletilla de presentación del modelo, sin
     contenido para el cliente?», para las primeras oraciones del texto (nunca
@@ -256,6 +258,7 @@ class Preambulo:
         return (a or "") == (b or "")
 
 
+@en_retiro("clase:destinatario")
 class Destinatario:
     """¿El texto es para el cliente? Valor: True = NO es para el cliente (la
     regla de hoy: huele a parte interno). Jev decide en los dos sentidos: puede
@@ -288,6 +291,7 @@ class Destinatario:
         return bool(a) == bool(b)
 
 
+@en_retiro("clase:destinatario_plantilla")
 class DestinatarioDePlantilla(Destinatario):
     """El mismo «¿qué es este texto?» para un texto del LLM que viaja como
     variable de una plantilla (el `motivo` en el watchdog de remarketing).
@@ -297,6 +301,7 @@ class DestinatarioDePlantilla(Destinatario):
         return False
 
 
+@en_retiro("clase:destinatario_oracion")
 class DestinatarioPorOracion:
     """El mismo «¿qué es?», oración por oración, para el filtro de oraciones
     de las tools de cierre y de escalación (misma capacidad: mismo
@@ -344,6 +349,7 @@ class DestinatarioPorOracion:
         return tuple(sorted(a)) == tuple(sorted(b))
 
 
+@en_retiro("clase:rescate")
 class Rescate:
     """Lo que sí es para el cliente, párrafo por párrafo (valor: el texto que
     queda; "" = nada). Jev contesta el «¿qué es?» de cada párrafo; si duda de
@@ -383,6 +389,7 @@ class Rescate:
         return (a or "") == (b or "")
 
 
+@en_retiro("clase:portavelas")
 class Portavelas:
     """En un pedido registrado SIN portavelas (lo decide la tool contra el
     catálogo), las oraciones que le afirman algo del portavelas se quitan; si
@@ -440,6 +447,7 @@ class Portavelas:
         return (a or "") == (b or "")
 
 
+@en_retiro("clase:saludo")
 class Saludo:
     """¿Hace falta la burbuja de bienvenida? Solo en el primer contacto y si el
     turno le manda algo al cliente — una tool que le escribe o un texto (eso

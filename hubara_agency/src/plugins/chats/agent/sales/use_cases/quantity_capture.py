@@ -45,6 +45,7 @@ from src.plugins.chats.agent.sales.use_cases.order_draft import (
     update_order_draft,
 )
 from src.plugins.chats.shared.draft_items import draft_items
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 _WORD_NUMBERS: dict[str, int] = {
     "un": 1, "una": 1, "uno": 1,
@@ -140,6 +141,7 @@ def parse_leading_quantity(text: str | None) -> int | None:
     return value
 
 
+@en_retiro("funcion:capture_quantity_from_reply")
 def capture_quantity_from_reply(
     metadata: dict[str, Any],
     *,

@@ -33,6 +33,7 @@ from src.plugins.chats.agent.sales.decisions.capabilities.respuestas import (
 from src.plugins.chats.agent.sales.decisions.context import customer_window
 from src.sdk.catalogkit import family_of_color, normalize_label, resolve_category, resolve_color_family
 from src.sdk.connectorkit import TypedQuestion
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 # --- categoría pedida ---------------------------------------------------------
 
@@ -46,6 +47,7 @@ class CategoriaPedida:
     categories: Sequence[Any] = ()  # CatalogCategoryDTO
 
 
+@en_retiro("clase:categoria")
 class Categoria:
     """«¿A cuál categoría del catálogo se refiere el cliente?». Regla:
     `resolve_category` (exacto → contenido → parecido de texto ≥ 0,80). Jev
@@ -128,6 +130,7 @@ def _resolution(res: Any) -> dict[str, Any]:
     }
 
 
+@en_retiro("clase:familia_de_color")
 class FamiliaDeColor:
     """«¿A cuál color del producto corresponde lo que pidió el cliente?».
     Regla: la tabla de familias del tenant (`resolve_color_family`; el
@@ -203,6 +206,7 @@ class DatoDelItem:
     events: Sequence[Mapping[str, Any]] = ()
 
 
+@en_retiro("clase:item_del_pedido")
 class ItemDelPedido:
     """«¿A cuál producto del pedido van estos datos?». Regla: `item_for_values`
     (el ítem en curso, salvo que su producto los rechace y otro los acepte).
@@ -267,6 +271,7 @@ class CiudadDeEnvio:
     ciudad: str | None
 
 
+@en_retiro("clase:zona_de_envio")
 class ZonaDeEnvio:
     """«¿En qué zona de envío queda la ciudad?» {bogota, nacional}. Regla:
     `shipping_zone` («bogota» si la ciudad lo dice; si no, no se sabe y valen
@@ -331,6 +336,7 @@ class ProductosDeLaCharla:
     named: tuple[str, ...] = ()
 
 
+@en_retiro("clase:producto_nombrado")
 class ProductoNombrado:
     """«¿De qué producto del catálogo habla la charla?» (qué ficha ve el gancho
     de remarketing). Regla: los títulos que la charla nombra tal cual. Jev

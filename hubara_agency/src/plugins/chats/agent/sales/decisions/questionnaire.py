@@ -20,6 +20,7 @@ from typing import Any
 import yaml
 
 from src.sdk.connectorkit import TypedQuestion
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 QUESTIONNAIRES_DIR = Path(__file__).with_name("questionnaires")
 
@@ -204,5 +205,6 @@ def load_questionnaire(questionnaire_id: str) -> Questionnaire:
     return questionnaire_of(yaml.safe_load(path.read_text(encoding="utf-8")) or {}, questionnaire_id)
 
 
+@en_retiro("funcion:questionnaire_ids")
 def questionnaire_ids() -> tuple[str, ...]:
     return tuple(sorted(p.stem for p in QUESTIONNAIRES_DIR.glob("*.yaml")))

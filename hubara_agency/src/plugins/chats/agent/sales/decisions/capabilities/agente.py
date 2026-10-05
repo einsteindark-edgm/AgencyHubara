@@ -22,6 +22,7 @@ from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.plan import answer_of
 from src.sdk.connectorkit import TypedQuestion
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 _YES_NO = {"true": "sí", "false": "no"}
 
@@ -42,6 +43,7 @@ class Contacto:
     silence_minutes: int | None = None
 
 
+@en_retiro("clase:contactar")
 class Contactar:
     """«¿Sobra un mensaje proactivo ahora?» (ver el módulo) y «¿la
     conversación ya terminó?» (operador, 2026-09-30: remarketing no reconoce
@@ -138,6 +140,7 @@ def _choice(result: Any, qid: str) -> tuple[str | None, float]:
     return choice, float(p) if isinstance(p, (int, float)) else 0.0
 
 
+@en_retiro("clase:cierre")
 class CierrePorAbandono:
     """La etiqueta del cierre por ghosting (F8). Hoy la elige el LLM con el
     aviso de ghosting (regla = "": decide el LLM). Con Jev, la lectura de la

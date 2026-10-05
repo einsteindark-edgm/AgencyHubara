@@ -21,6 +21,8 @@ el cliente sale de estas constantes.
 """
 from __future__ import annotations
 
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
+
 SHIPPING_RATE_BOGOTA_COP = 7_900
 SHIPPING_RATE_NATIONAL_COP = 16_940
 
@@ -119,6 +121,7 @@ SHIPPING_ZONE_BOGOTA = "bogota"
 SHIPPING_ZONE_NATIONAL = "nacional"
 
 
+@en_retiro("funcion:is_published_shipping_rate")
 def is_published_shipping_rate(shipping_cop: int, city: str | None = None) -> bool:
     """¿``shipping_cop`` es una tarifa mínima publicada para esta ciudad?
 

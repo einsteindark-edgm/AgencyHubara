@@ -30,6 +30,7 @@ from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.plan import answer_of
 from src.sdk.connectorkit import TypedQuestion
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 _YES_NO = {"true": "sí", "false": "no"}
 
@@ -136,6 +137,7 @@ def _question_text(slot: str, value: str) -> str:
     )
 
 
+@en_retiro("clase:datos")
 class Datos:
     """«¿El cliente dio este dato?» (ver el módulo)."""
 

@@ -16,6 +16,7 @@ from src.plugins.chats.agent.sales.decisions.context import customer_window, ord
 from src.plugins.chats.agent.sales.decisions.plan import answer_of
 from src.plugins.chats.shared.purchase_signals import classify_inbound_purchase_signal
 from src.sdk.connectorkit import TypedQuestion
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 _YES_NO = {"true": "sí", "false": "no"}
 
@@ -54,6 +55,7 @@ def _context_state(inp: Any, header: str) -> tuple[str, Any]:
     return "\n".join(lines), window
 
 
+@en_retiro("clase:compra")
 class Compra:
     """«¿Qué hace el cliente con la compra?», con lo que le preguntó el asesor
     a la vista. Queda una sola definición de «compra confirmada»: la de esta
@@ -139,6 +141,7 @@ class Compra:
         return (a or [None])[0] == (b or [None])[0]
 
 
+@en_retiro("clase:retoma")
 class Retoma:
     """«¿Dice que retomará más adelante?» y «¿es solo una cortesía?». La fecha
     la sigue calculando el código (`parse_reengagement_deferral`); Jev decide
@@ -213,6 +216,7 @@ class Retoma:
         return kind(a) == kind(b) and bool((a or {}).get("courtesy")) == bool((b or {}).get("courtesy"))
 
 
+@en_retiro("clase:baja")
 class Baja:
     """«¿Pide dejar de recibir mensajes o promociones?» (piso legal). Solo se
     pregunta con una promoción reciente (la condición de hoy). La frase
@@ -259,6 +263,7 @@ class Baja:
         return bool(a) == bool(b)
 
 
+@en_retiro("clase:acuse")
 class Acuse:
     """«¿Es solo un acuse o una cortesía a la despedida?» (run 4cb3a34f,
     #379). El agente ya se despidió y cerró el episodio; un acuse («☺️👍»,
@@ -324,6 +329,7 @@ class Acuse:
         return bool(a) == bool(b)
 
 
+@en_retiro("clase:cortesia")
 class Cortesia:
     """«¿El cliente solo agradece o saluda?» (caso del 2026-09-29): el ETA
     avisó «tu pedido ya está listo… ¿Nos confirmas para coordinar la

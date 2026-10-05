@@ -21,6 +21,7 @@ from src.plugins.chats.agent.sales.decisions.capabilities.respuestas import YES_
 from src.plugins.chats.agent.sales.decisions.context import customer_window
 from src.plugins.chats.shared.product_truth import unavailable_terms
 from src.sdk.connectorkit import TypedQuestion
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 _MAX_AGENT_CHARS = 500
 
@@ -44,6 +45,7 @@ class CuponEnJuego:
     events: Sequence[Mapping[str, Any]] = ()
 
 
+@en_retiro("clase:cupon")
 class Cupon:
     """«¿Habla del cupón o de sus productos?». Regla: `coupon_in_play` (ante
     la duda dice que sí: cuesta una relectura del cupo y una nota más larga,
@@ -111,6 +113,7 @@ class PedidoDelCliente:
     products: Sequence[Any] = ()
 
 
+@en_retiro("clase:fuera_de_catalogo")
 class FueraDeCatalogo:
     """El regex de hoy (`unavailable_terms`) propone los términos que el
     cliente pide y no existen; por cada uno, «¿es algo que el cliente pide o
@@ -178,6 +181,7 @@ class RespuestaDeCantidad:
     open_slot: bool = True
 
 
+@en_retiro("clase:cantidad")
 class Cantidad:
     """«¿El asesor preguntó cuántas?» y «¿Qué cantidad dio?» {1…20, otra,
     ninguna}. Regla: `agent_asked_quantity` + `parse_leading_quantity`

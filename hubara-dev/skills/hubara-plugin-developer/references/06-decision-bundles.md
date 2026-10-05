@@ -242,3 +242,7 @@ genérico, y entonces en UN builtin con su prueba.
   obligatorios (`required_floors`) no se pueden cambiar.
 - Importar `src.platform.decisions` desde un plugin: se usa `src.sdk.decisionkit` (P-28).
 - Cargar paquetes en código de workflow (R-DET): solo en ingest, tools y activities.
+- Borrar a ciegas lo que el motor dejó sin uso: va primero a
+  `decisions/retiro.yaml` con su testigo (`@en_retiro`), y se borra cuando el
+  informe (`python -m src.plugins.chats.agent.sales.decisions.retiro`) lo da
+  «se puede borrar» (PAQUETES_DE_DECISION.md §14).

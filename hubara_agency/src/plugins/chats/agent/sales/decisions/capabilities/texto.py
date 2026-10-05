@@ -41,6 +41,7 @@ from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.plan import answer_of, plain
 from src.sdk.connectorkit import TypedQuestion
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 _YES_NO = {"true": "sí", "false": "no"}
 #: Más oraciones que esto no se le preguntan a Jev: decide la regla.
@@ -74,6 +75,7 @@ _PERSONA_FLOOR: tuple[re.Pattern[str], ...] = (
 )
 
 
+@en_retiro("clase:persona")
 class Persona:
     """«¿Deja ver que quien atiende es un bot o una IA?» (ver el módulo).
     Valor: los índices de las oraciones que se caen."""
@@ -155,6 +157,7 @@ def _choice(result: Any, qid: str) -> tuple[str | None, float]:
     return choice, float(p) if isinstance(p, (int, float)) else 0.0
 
 
+@en_retiro("clase:enumeracion")
 class Enumeracion:
     """«¿Qué le enumera el texto al cliente?» (activity de enumeración).
     Valor: `("scent" | "color", etiquetas)` si va el selector, `()` si no.
@@ -232,6 +235,7 @@ class OracionesPrecio:
     sentences: tuple[str, ...]
 
 
+@en_retiro("clase:monto")
 class Monto:
     """«¿La oración cotiza el precio de un producto?» (tool del checkout).
     Valor: las oraciones que cotizan un producto; pierden el contexto de
@@ -300,6 +304,7 @@ class Botones:
     by_id: tuple[str, ...] = ()
 
 
+@en_retiro("clase:selector")
 class Selector:
     """«¿Estos botones le piden al cliente elegir un producto o una
     variante?» (tool de quick replies). Valor: los títulos rechazados (vacío
@@ -359,6 +364,7 @@ class Afirmacion:
     tools_used: tuple[str, ...] = ()
 
 
+@en_retiro("clase:afirmacion")
 class AfirmacionSinConsultar:
     """Pregunta de respaldo (F6): «¿El texto le afirma algo que solo se sabe
     consultando, sin haber consultado?» (stock, disponibilidad, entrega,
@@ -466,6 +472,7 @@ def promises_a_handoff(text: str | None) -> bool:
     return bool(_RELEVO_RE.search(plain(" ".join(str(text or "").split()))))
 
 
+@en_retiro("clase:relevo")
 class Relevo:
     """«¿El texto le promete al cliente que una persona del equipo lo va a
     atender?» (laboratorio caso-cortesia-1001, 2026-09-30: los dos bots

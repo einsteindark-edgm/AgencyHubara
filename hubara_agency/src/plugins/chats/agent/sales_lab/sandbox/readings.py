@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from src.plugins.chats.agent.sales_lab.cases import without_referral_banner
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 #: La ruta de la persona del equipo (`active_route`): con ella el ingest no
 #: arma la nota de fuera de catálogo.
@@ -360,6 +361,7 @@ async def ingest_burst(
     return out
 
 
+@en_retiro("funcion:apply_burst_readings")
 async def apply_burst_readings(
     metadata: dict[str, Any],
     messages: Sequence[dict[str, Any]],

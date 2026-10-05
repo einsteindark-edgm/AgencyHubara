@@ -38,6 +38,7 @@ from src.plugins.chats.agent.sales_eval.scorecard.trajectory import (
     Turn,
     focus_trajectory,
 )
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 SAMPLES = 2
 _CONCURRENCY = 4
@@ -564,6 +565,7 @@ async def _judge_one(
     return parsed[0]
 
 
+@en_retiro("funcion:run_judge_checks")
 async def run_judge_checks(
     traj: Trajectory,
     ctx: CheckContext,

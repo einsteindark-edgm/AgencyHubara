@@ -690,3 +690,37 @@ es «si compila, corre»; cada hueco quedó con su prueba
 Queda del operador: `tenants.hubara.lab.internal_numbers` (los teléfonos del
 equipo, para que el banco del laboratorio no los incluya) y el `apply` +
 dispatch de la promoción.
+
+## 14. Piezas en retiro (2026-10-05)
+
+El motor dejó código que producción ya no corre: las 29 capacidades escritas
+como clases de Python (el resolutor nunca las toma; solo la paridad y sus
+pruebas), dos funciones con las que `main` decidía en el lugar
+(`capture_quantity_from_reply`, `is_published_shipping_rate`), tres sin
+ninguna llamada, el turno de los perfiles jev-v1…v4 y dos piezas que el
+laboratorio dejó atrás. No se borran a ciegas.
+
+La clasificación es dato: `chats/agent/sales/decisions/retiro.yaml`, por
+grupo, con qué lo reemplazó, cuándo se borra y qué más se va o se queda al
+borrarlo (`al_borrar`). También lista lo que parece viejo y se queda a
+propósito (`no_se_borra`): las reglas de hoy son el respaldo del motor, las
+políticas `turno-v1/v2` sostienen a `turno-v3`, el workflow V1 sigue en
+producción.
+
+Cada pieza lleva un testigo (`retiro.py`: `@en_retiro("id")` o
+`usado("id")`). Si algo la corre, deja una línea por pieza, proceso y día en
+`<vault>/_retiro/usos.jsonl` (con quién la llamó, nunca los argumentos) y el
+evento `decisions.retiro_usado`. La API y los workers de ventas anotan al
+arrancar desde cuándo se observa cada pieza (`_retiro/observando.json`). El
+informe:
+
+```bash
+cd hubara_agency && uv run python -m src.plugins.chats.agent.sales.decisions.retiro
+```
+
+Una pieza «se puede borrar» con cero usos y 30 días observada. Se borra un
+grupo entero en un PR propio, siguiendo su `al_borrar`, y sale del catálogo en
+ese PR. `test_decisions_retiro.py` cuida que el catálogo no se desactualice:
+cada pieza existe y lleva su testigo, toda clase de capacidad está
+clasificada y ningún código de producción llama una pieza en retiro (si una
+vuelve a usarse, sale del catálogo con su testigo).

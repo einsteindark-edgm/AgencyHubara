@@ -1,0 +1,202 @@
+# Piezas en retiro: lo que el motor de decisiones (#372) y su laboratorio
+# dejaron sin uso en producción. Nada de esto se borra todavía.
+#
+# Cada pieza lleva un testigo (`retiro.py`: `@en_retiro("id")` o
+# `usado("id")`). Si algo la corre de verdad, queda una línea en
+# `<vault>/_retiro/usos.jsonl` (una por pieza, por proceso y por día, con
+# quién la llamó) y el evento `decisions.retiro_usado` en el log. La API y
+# los workers de ventas anotan al arrancar desde qué día se observa cada pieza
+# (`<vault>/_retiro/observando.json`).
+#
+# El informe dice cuáles ya se pueden borrar (cero usos y `observar_dias`
+# observada):
+#
+#   cd hubara_agency && uv run python -m src.plugins.chats.agent.sales.decisions.retiro
+#   (producción: docker exec <contenedor de la API> python -m src.plugins.chats.agent.sales.decisions.retiro)
+#
+# Reglas:
+# - Se borra un GRUPO completo, con lo que dice `al_borrar`, en un PR propio;
+#   el grupo sale de este archivo en ese mismo PR.
+# - Si una pieza vuelve a usarse, sale de aquí junto con su testigo.
+# - Una pieza nueva entra con su testigo (las pruebas lo exigen) y empieza a
+#   contar sus días desde el primer arranque que la ve.
+# - `no_se_borra` es lo que parece viejo y se queda a propósito.
+
+observar_dias: 30
+
+grupos:
+  clases-de-capacidad:
+    que_es: >-
+      Las capacidades escritas como clases de Python (F2 y F3). El paquete de
+      decisión (YAML + CEL) las reemplazó: el resolutor `registry.capability()`
+      toma la capacidad del paquete activo y nunca la clase. Hoy solo las
+      corren las pruebas: la paridad (`test_decisions_bundle_parity.py`
+      comprueba que `ventas@1` decide igual que ellas) y sus pruebas por clase.
+    lo_reemplaza: >-
+      `chats/shared/decisions/bundles/<paquete>/capabilities/<capacidad>.yaml`
+      y los builtins de `bundles/builtins.yaml`.
+    borrar_cuando: Cero usos en 30 días de producción con el motor desplegado.
+    al_borrar:
+      - >-
+        `Portavelas.applies` sigue vivo (lo llama `decide_egress`): pasarlo a
+        una función de `egress.py` antes de borrar la clase.
+      - >-
+        Se quedan las entradas (`CiudadDeEnvio`, `TextoCatalogo`,
+        `DatosDelPedido`, `Contacto`, `Abandono`…) y los ayudantes que usan
+        los builtins y las guardas (`same_value`, `in_customer_words`,
+        `promises_a_handoff`, `_clip_end`, `option_keys`…).
+      - >-
+        Mueren con ellas sus ayudantes privados: `_choice`, `_YES_NO` y `_p`
+        de cada módulo; `_context_state` y `_customer_text` (lecturas.py),
+        `_question_text` (datos.py), `_resolution` (mapeos.py),
+        `MAX_SENTENCES` y `_numbered` (texto.py); `_FOR_CUSTOMER`,
+        `_MAX_PARTS`, `_WHAT_IS_IT`, `_numbered` y
+        `ORDER_REGISTERED_FALLBACK_FAREWELL` (egress.py); y de respuestas.py
+        `YES_NO`, `choice_of`, `closed_criteria` y `noul_p` (queda
+        `option_keys`).
+      - >-
+        registry.py: `_CLASS_PATHS`, `_class_instance` y
+        `class_capabilities`; los nombres conocidos salen del catálogo
+        (`builtins.yaml: capabilities`).
+      - >-
+        Pruebas: la paridad se va (los `examples:` de cada paquete quedan
+        como su especificación); las pruebas por clase pasan a ejemplos del
+        paquete o se borran; `test_decisions_registry.py` deja de comparar
+        con `_CLASS_PATHS`.
+    piezas:
+      clase:contactar: src.plugins.chats.agent.sales.decisions.capabilities.agente:Contactar
+      clase:cierre: src.plugins.chats.agent.sales.decisions.capabilities.agente:CierrePorAbandono
+      clase:datos: src.plugins.chats.agent.sales.decisions.capabilities.datos:Datos
+      clase:compra: src.plugins.chats.agent.sales.decisions.capabilities.lecturas:Compra
+      clase:retoma: src.plugins.chats.agent.sales.decisions.capabilities.lecturas:Retoma
+      clase:baja: src.plugins.chats.agent.sales.decisions.capabilities.lecturas:Baja
+      clase:acuse: src.plugins.chats.agent.sales.decisions.capabilities.lecturas:Acuse
+      clase:cortesia: src.plugins.chats.agent.sales.decisions.capabilities.lecturas:Cortesia
+      clase:cupon: src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido:Cupon
+      clase:fuera_de_catalogo: src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido:FueraDeCatalogo
+      clase:cantidad: src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido:Cantidad
+      clase:categoria: src.plugins.chats.agent.sales.decisions.capabilities.mapeos:Categoria
+      clase:familia_de_color: src.plugins.chats.agent.sales.decisions.capabilities.mapeos:FamiliaDeColor
+      clase:item_del_pedido: src.plugins.chats.agent.sales.decisions.capabilities.mapeos:ItemDelPedido
+      clase:zona_de_envio: src.plugins.chats.agent.sales.decisions.capabilities.mapeos:ZonaDeEnvio
+      clase:producto_nombrado: src.plugins.chats.agent.sales.decisions.capabilities.mapeos:ProductoNombrado
+      clase:persona: src.plugins.chats.agent.sales.decisions.capabilities.texto:Persona
+      clase:enumeracion: src.plugins.chats.agent.sales.decisions.capabilities.texto:Enumeracion
+      clase:monto: src.plugins.chats.agent.sales.decisions.capabilities.texto:Monto
+      clase:selector: src.plugins.chats.agent.sales.decisions.capabilities.texto:Selector
+      clase:afirmacion: src.plugins.chats.agent.sales.decisions.capabilities.texto:AfirmacionSinConsultar
+      clase:relevo: src.plugins.chats.agent.sales.decisions.capabilities.texto:Relevo
+      clase:preambulo: src.plugins.chats.agent.sales.decisions.egress:Preambulo
+      clase:destinatario: src.plugins.chats.agent.sales.decisions.egress:Destinatario
+      clase:destinatario_plantilla: src.plugins.chats.agent.sales.decisions.egress:DestinatarioDePlantilla
+      clase:destinatario_oracion: src.plugins.chats.agent.sales.decisions.egress:DestinatarioPorOracion
+      clase:rescate: src.plugins.chats.agent.sales.decisions.egress:Rescate
+      clase:portavelas: src.plugins.chats.agent.sales.decisions.egress:Portavelas
+      clase:saludo: src.plugins.chats.agent.sales.decisions.egress:Saludo
+
+  camino-viejo-de-main:
+    que_es: >-
+      Funciones con las que `main` decidía en el lugar (una tool, una
+      activity). En esta rama ese lugar le pide la decisión al motor y la
+      función quedó solo con sus pruebas.
+    lo_reemplaza: >-
+      `capture_quantity_from_reply` → `capability("cantidad")` (su regla es
+      `read_reply_quantity`, que se queda). `is_published_shipping_rate` →
+      `capability("zona_de_envio")` + `is_published_rate_for_zone`.
+    borrar_cuando: Cero usos en 30 días de producción con el motor desplegado.
+    al_borrar:
+      - >-
+        `tests/plugins/chats/sales/test_quantity_capture.py`: quitar los
+        casos de `capture_quantity_from_reply` (los de `read_reply_quantity`
+        se quedan).
+      - >-
+        `tests/plugins/chats/sales/decisions/test_decisions_pedido_rules.py`:
+        quitar la paridad con `is_published_shipping_rate` y el comentario
+        que la nombra en `config/shipping.py`.
+    piezas:
+      funcion:capture_quantity_from_reply: src.plugins.chats.agent.sales.use_cases.quantity_capture:capture_quantity_from_reply
+      funcion:is_published_shipping_rate: src.plugins.chats.agent.sales.config.shipping:is_published_shipping_rate
+
+  sin-llamadas:
+    que_es: >-
+      Funciones del motor que nadie llama, ni las pruebas: quedaron de una
+      fase anterior.
+    lo_reemplaza: Nada; no se usan.
+    borrar_cuando: Cero usos en 30 días de producción con el motor desplegado.
+    al_borrar:
+      - Borrar la función; no hay pruebas que tocar.
+    piezas:
+      funcion:_rule_verdict: src.plugins.chats.agent.sales.decisions.readings:_rule_verdict
+      funcion:policy_ids: src.plugins.chats.agent.sales.decisions.policies:policy_ids
+      funcion:questionnaire_ids: src.plugins.chats.agent.sales.decisions.questionnaire:questionnaire_ids
+
+  turno-por-perfil:
+    que_es: >-
+      Los perfiles jev-v1…jev-v4 arman el turno con un cuestionario suelto
+      (`questionnaires/rafaga-v1…v4.yaml`) y umbrales propios. Desde F7 el
+      perfil de producción es jev-v5 (`turn: bundle`): el turno sale del
+      `turn.yaml` del paquete. Solo los toma una conversación o una corrida
+      del laboratorio que pida uno de esos perfiles, o el default de
+      respaldo `jev-v1` si la señal llega sin perfil.
+    lo_reemplaza: El `turn.yaml` del paquete activo (perfil jev-v5).
+    borrar_cuando: >-
+      Cero usos en 30 días y el laboratorio ya no compara contra
+      jev-v1…jev-v4 (sus corridas viejas quedan guardadas con su resultado).
+    al_borrar:
+      - >-
+        Primero el default: `_DEFAULT_PERCEPTION_PROFILE = "jev-v1"` pasa a
+        jev-v5 en `use_cases/load_or_start_sales_session.py` y en
+        `workflows/sales_session.py` (este es código de workflow: su propio
+        PR con prueba de replay).
+      - >-
+        Después: jev-v1…jev-v4 de `profiles.yaml`,
+        `questionnaires/rafaga-v1…v4.yaml`, `load_questionnaire` y la rama
+        sin paquete de `turn_of`.
+      - >-
+        Las políticas `turno-v1`, `turno-v2` y `turno-v3` se quedan: la del
+        paquete (`turno-v3`) se arma sobre las otras dos.
+    piezas:
+      turno:perfil-sin-paquete:
+        simbolo: src.plugins.chats.agent.sales.decisions.turn:turn_of
+        marca: en_linea
+
+  laboratorio-y-calificacion:
+    que_es: >-
+      Piezas de esta rama que el laboratorio y la calificación turno por
+      turno dejaron atrás.
+    lo_reemplaza: >-
+      `run_judge_checks` → `run_judge_checks_focus` (producción se califica
+      turno por turno, como el laboratorio). `apply_burst_readings` →
+      `ingest_burst` (era una envoltura).
+    borrar_cuando: Cero usos en 30 días de producción con el motor desplegado.
+    al_borrar:
+      - >-
+        `tests/evals/scorecard/test_claude_code_judge.py` y
+        `tests/evals/test_llm_judge_switch.py` pasan a `run_judge_checks_focus`.
+      - >-
+        `tests/plugins/chats/lab/test_lab_sandbox_readings.py` pasa a
+        `ingest_burst`.
+    piezas:
+      funcion:run_judge_checks: src.plugins.chats.agent.sales_eval.scorecard.judge_checks:run_judge_checks
+      funcion:apply_burst_readings: src.plugins.chats.agent.sales_lab.sandbox.readings:apply_burst_readings
+
+no_se_borra:
+  - que: Las reglas de hoy (los builtins de regla y lo que llaman, p. ej. `shipping_zone`, `read_reply_quantity`, las lecturas del ingest).
+    por_que: >-
+      Son el respaldo del motor: deciden cuando la capacidad está en off o en
+      sombra y cuando Jev no contesta o duda (`by=reglas` / `by=respaldo`).
+  - que: Las entradas y los ayudantes vivos de `decisions/capabilities/` y `egress.py`.
+    por_que: Los usan las guardas, las tools, el egreso y los builtins.
+  - que: Las políticas `turno-v1`, `turno-v2` y `turno-v3`.
+    por_que: El `turn.yaml` de los paquetes usa `turno-v3`, que se arma sobre las otras dos.
+  - que: El workflow V1 (`HubaraSalesSessionWorkflow`).
+    por_que: >-
+      Atiende producción mientras `SALES_WORKFLOW_V2_CEILING` esté en off. Se
+      retira con su propio plan (las historias de Temporal lo necesitan para
+      el replay) cuando V2 quede encendido para todos.
+  - que: El lector viejo del Order Sentinel.
+    por_que: >-
+      Decide con `ORDER_SENTINEL_READER` en off y en sombra, y es el respaldo
+      cuando está en on.
+  - que: "`Capability`, `decide()` y `Verdict`."
+    por_que: Son el motor; `BundledCapability` corre por ahí.

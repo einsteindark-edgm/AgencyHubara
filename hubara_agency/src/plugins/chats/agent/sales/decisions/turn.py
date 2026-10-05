@@ -20,7 +20,7 @@ from functools import partial
 from types import ModuleType
 from typing import Any
 
-from src.plugins.chats.agent.sales.decisions import registry
+from src.plugins.chats.agent.sales.decisions import registry, retiro
 from src.plugins.chats.agent.sales.decisions.plan import CoverageDecision
 from src.plugins.chats.agent.sales.decisions.policies import get_policy
 from src.plugins.chats.agent.sales.decisions.policies.tables import TurnTables
@@ -45,6 +45,8 @@ def turn_of(profile: EngineProfile) -> Turn:
     cuestionario y su política. `KeyError` si un nombre no existe;
     `BundleError` si el paquete no compila."""
     if profile.bundle is None:
+        # jev-v1…v4: en retiro desde jev-v5 (`retiro.yaml: turno-por-perfil`).
+        retiro.usado("turno:perfil-sin-paquete", detalle=profile.id)
         return Turn(load_questionnaire(profile.questions), get_policy(profile.policy), dict(profile.thresholds))
     compiled = registry.active_turn()
     return Turn(

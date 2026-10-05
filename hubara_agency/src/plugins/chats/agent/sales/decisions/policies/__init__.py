@@ -6,6 +6,7 @@ from __future__ import annotations
 from types import ModuleType
 
 from src.plugins.chats.agent.sales.decisions.policies import turno_v1, turno_v2, turno_v3
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 _POLICIES: dict[str, ModuleType] = {
     turno_v1.POLICY_ID: turno_v1,
@@ -21,5 +22,6 @@ def get_policy(policy_id: str) -> ModuleType:
         raise KeyError(f"política desconocida: {policy_id}") from None
 
 
+@en_retiro("funcion:policy_ids")
 def policy_ids() -> tuple[str, ...]:
     return tuple(sorted(_POLICIES))

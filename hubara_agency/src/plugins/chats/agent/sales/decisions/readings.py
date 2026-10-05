@@ -40,6 +40,7 @@ from src.plugins.chats.agent.sales.decisions.decision_log import SessionDecision
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
 from src.plugins.chats.agent.sales.decisions.registry import capability
 from src.plugins.chats.agent.sales.decisions.guards import decide_for_session
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 logger = structlog.get_logger()
 
@@ -89,6 +90,7 @@ class Readings:
     courtesy_only: bool = False
 
 
+@en_retiro("funcion:_rule_verdict")
 def _rule_verdict(capability: Any, inp: Inbound) -> Verdict:
     rule = capability.rule(inp)
     return Verdict(capability=capability.name, value=rule, by=BY_RULE, provider="reglas", rule=rule)
