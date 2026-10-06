@@ -10,11 +10,10 @@
 #   infra/scripts/bot_control.sh --por ana percepcion off      # apagar siempre pasa
 #
 # Cada cambio exige --por (queda firmado como comando:<quien>). La caja:
-# BOT_INSTANCE_ID (por defecto la de app de hubara). Pide credenciales de AWS
-# con ssm:SendCommand sobre esa caja.
+# BOT_INSTANCE_ID, o la caja de app del tenant buscada por su tag Name. Pide
+# credenciales de AWS con ec2:DescribeInstances y ssm:SendCommand.
 set -euo pipefail
 
-INSTANCE="${BOT_INSTANCE_ID:-i-042d95076277b40fa}"
 REGION="${AWS_REGION:-us-east-1}"
 
 if [ $# -eq 0 ]; then
@@ -32,6 +31,18 @@ for a in "$@"; do
   fi
   args+=" $a"
 done
+
+INSTANCE="${BOT_INSTANCE_ID:-}"
+if [ -z "$INSTANCE" ]; then
+  # La caja de app del tenant, por su tag Name (forge lo traduce al cliente nuevo).
+  INSTANCE="$(aws ec2 describe-instances --region "$REGION" \
+    --filters "Name=tag:Name,Values=agencyhubara-hubara-app" "Name=instance-state-name,Values=running" \
+    --query 'Reservations[0].Instances[0].InstanceId' --output text)"
+  if [[ ! "$INSTANCE" =~ ^i-[0-9a-f]+$ ]]; then
+    echo "no encontré la caja de app prendida; pasa BOT_INSTANCE_ID=i-…" >&2
+    exit 3
+  fi
+fi
 
 cmd="cd /opt/hubara && docker compose exec -T -w /app/hubara_agency api python -m src.plugins.chats.agent.sales.decisions.control$args"
 params="$(python3 -c 'import json, sys; print(json.dumps({"commands": [sys.argv[1]]}))' "$cmd")"

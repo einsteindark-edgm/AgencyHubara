@@ -6,6 +6,7 @@ blanca: nada llega a la caja como shell. Se prueba con un `aws` falso.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -16,6 +17,7 @@ _SCRIPT = Path(__file__).resolve().parents[3] / "infra" / "scripts" / "bot_contr
 _FAKE_AWS = """#!/bin/bash
 printf '%s\\n' "$*" >> "$CALLS"
 case "$*" in
+  *describe-instances*) echo "i-0cafe000000000001" ;;
   *send-command*) echo "cmd-123" ;;
   *"--query Status"*) echo "$STATUS" ;;
   *StandardOutputContent*) echo "Listo." ;;
@@ -54,6 +56,21 @@ def test_it_runs_the_control_command_inside_the_api_container_by_ssm(box: dict) 
     assert "AWS-RunShellScript" in send
     assert "docker compose exec -T -w /app/hubara_agency api python -m src.plugins.chats.agent.sales.decisions.control" in send
     assert "--por ana numeros agregar wa_573001234567" in send
+    # La caja se busca por su tag Name (forge lo traduce al cliente nuevo).
+    [find] = [c for c in _calls(box) if "describe-instances" in c]
+    assert re.search(r"Name=tag:Name,Values=[a-z0-9-]+-app\b", find), find
+    assert "--instance-ids i-0cafe000000000001" in send
+
+
+def test_a_given_box_skips_the_lookup(box: dict) -> None:
+    box["env"]["BOT_INSTANCE_ID"] = "i-0beef000000000002"
+
+    out = _run(box, "estado")
+
+    assert out.returncode == 0, out.stderr
+    assert not [c for c in _calls(box) if "describe-instances" in c]
+    [send] = [c for c in _calls(box) if "send-command" in c]
+    assert "--instance-ids i-0beef000000000002" in send
 
 
 @pytest.mark.parametrize("bad", ["ana; rm -rf /", "$(id)", "a b", "`id`", "x|y", "<quien>"])

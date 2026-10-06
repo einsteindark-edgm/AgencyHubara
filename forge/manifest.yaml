@@ -82,8 +82,8 @@ replacements:
     files: ["infra/robotocore/**", "infra/scripts/**"]
     from: "/hubara/hubara/"
     to: "{{ssm_prefix}}/{{slug}}/"
-  - id: opt-hubara
-    files: ["infra/compose/**", "infra/terraform/compute/**", ".github/workflows/*.yml"]
+  - id: opt-hubara                      # + infra/scripts: bot_control.sh corre en la caja (2026-10-06)
+    files: ["infra/compose/**", "infra/terraform/compute/**", ".github/workflows/*.yml", "infra/scripts/**"]
     from: "/opt/hubara"
     to: "/opt/{{slug}}"
   - id: tmp-deploy
