@@ -37,6 +37,7 @@ DEHA:
 """
 from __future__ import annotations
 
+import copy
 import json
 import time
 from typing import Any
@@ -46,6 +47,7 @@ from temporalio import activity
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.constants import ROUTE_HUMANO, ROUTE_VENTAS
 from src.platform.contracts import PaymentPendingClosureResult
+from src.sdk.runtime import FilesystemMetadataStore
 
 _PAYMENT_PENDING_TAG = "CONFIRMADO_PAGO_PENDIENTE"
 _PAYMENT_VERIFICATION_REASON = "PAYMENT_VERIFICATION_PENDING"
@@ -124,6 +126,7 @@ async def ensure_payment_pending_closure_activity(
             extra={"session_id": session_id, "error": str(exc)},
         )
         return PaymentPendingClosureResult(acted=False, escalated=False)
+    base = copy.deepcopy(data)
 
     # Timestamp idempotente entre retries: un retry de esta activity NO debe
     # mover el `closed_at_ms` del episodio. `scheduled_time` es estable entre
@@ -198,9 +201,7 @@ async def ensure_payment_pending_closure_activity(
         )
 
     if acted or escalated:
-        metadata_file.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        _write_own_changes(session_id, base, data)
 
     return PaymentPendingClosureResult(
         acted=acted,
@@ -248,6 +249,7 @@ async def ensure_closing_escalation_activity(
             extra={"session_id": session_id, "error": str(exc)},
         )
         return False
+    base = copy.deepcopy(data)
 
     try:
         now_ms = int(activity.info().scheduled_time.timestamp() * 1000)
@@ -267,9 +269,7 @@ async def ensure_closing_escalation_activity(
             reason_category,
             extra={"session_id": session_id},
         )
-        metadata_file.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        _write_own_changes(session_id, base, data)
     return escalated
 
 
@@ -309,6 +309,7 @@ async def ensure_promised_handoff_activity(session_id: str, text: str) -> bool:
             extra={"session_id": session_id, "error": str(exc)},
         )
         return False
+    base = copy.deepcopy(data)
     if data.get("active_route") == ROUTE_HUMANO:
         return False
     if not await promised_handoff(text, session_id=session_id, vault_dir=WORKSPACE_VAULT_DIR):
@@ -329,5 +330,13 @@ async def ensure_promised_handoff_activity(session_id: str, text: str) -> bool:
             "ensure_promised_handoff: el texto prometía el relevo sin escalar — escalado (red de seguridad)",
             extra={"session_id": session_id},
         )
-        metadata_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_own_changes(session_id, base, data)
     return escalated
+
+
+def _write_own_changes(session_id: str, base: dict[str, Any], data: dict[str, Any]) -> None:
+    """Escribe SOLO lo que la red de seguridad cambió en `data` frente a lo
+    que leyó (`base`), sobre lo que hay en disco ahora y bajo el candado del
+    store (incidente 2026-10-06: la copia entera pisaba lo que otro escritor
+    puso entre la lectura y la escritura — acá media una consulta al motor)."""
+    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).write_merged(session_id, base=base, ours=data)

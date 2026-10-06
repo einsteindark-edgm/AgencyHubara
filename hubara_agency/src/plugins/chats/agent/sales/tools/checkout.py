@@ -83,11 +83,16 @@ HistoryReader = Callable[[str], list[dict[str, Any]]]
 
 
 class MetadataStore(Protocol):
-    """Lo que la tool necesita del store de metadata de sesión (duck-typed)."""
+    """Lo que la tool necesita del store de metadata de sesión (duck-typed).
+    Escribe con `update` (solo su llave, sobre la lectura fresca)."""
 
     def read(self, session_id: str) -> dict[str, Any]: ...
 
-    def write(self, session_id: str, data: dict[str, Any]) -> None: ...
+    def update(
+        self,
+        session_id: str,
+        mutator: Callable[[dict[str, Any]], dict[str, Any] | None],
+    ) -> dict[str, Any] | None: ...
 
 
 def _price_to_int(raw: str | None) -> int | None:
@@ -296,24 +301,25 @@ class VerifyOrderForCheckoutTool(ToolBase):
                 "🧾 [TOOL verify_order_for_checkout] sin metadata_store: ledger no persistido"
             )
             return
+        ledger = {
+            "verified_at_ms": int(time.time() * 1000),
+            "items": {
+                vi.handle: {
+                    "snapshot_price_cop": _price_to_int(vi.snapshot_price),
+                    "live_price_cop": _price_to_int(vi.live_price),
+                    "unit_price_cop": unit_prices.get(vi.handle),
+                    "quantity": qty_by_handle.get(vi.handle, 1),
+                    "in_stock": vi.in_stock,
+                }
+                for vi in verified
+            },
+            "quoted_amounts_mismatch": quoted_amounts,
+        }
         try:
-            store = self._metadata_store
-            data = store.read(session_key) or {}
-            data["checkout_verification"] = {
-                "verified_at_ms": int(time.time() * 1000),
-                "items": {
-                    vi.handle: {
-                        "snapshot_price_cop": _price_to_int(vi.snapshot_price),
-                        "live_price_cop": _price_to_int(vi.live_price),
-                        "unit_price_cop": unit_prices.get(vi.handle),
-                        "quantity": qty_by_handle.get(vi.handle, 1),
-                        "in_stock": vi.in_stock,
-                    }
-                    for vi in verified
-                },
-                "quoted_amounts_mismatch": quoted_amounts,
-            }
-            store.write(session_key, data)
+            # Solo el ledger, sobre la lectura fresca (candado del store).
+            self._metadata_store.update(
+                session_key, lambda fresh: {**fresh, "checkout_verification": ledger}
+            )
         except Exception as exc:  # noqa: BLE001 — el ledger es best-effort
             logger.warning(
                 "🧾 [TOOL verify_order_for_checkout] no pude persistir el ledger: {}", exc

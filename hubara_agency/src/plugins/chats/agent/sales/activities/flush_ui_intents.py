@@ -14,10 +14,24 @@ DEHA:
     activity (90s) no nos pille.
   * R-DIP: no importa workflow/client de Temporal — solo `@activity.defn`.
 
-El idempotency-key efectivo es `intent.id` (uuid generado en la tool). Si
-Temporal reintenta esta activity tras un fallo parcial, los intents YA
-enviados quedaron limpiados (limpieza pre-envío de cada item), evitando
-duplicados al cliente.
+Tarjetas exactamente una vez (incidente 2026-10-06): el turno 4 mandó la foto
+de un producto y el turno 5 la volvió a mandar sin que el bot la pidiera — una
+escritura vieja de `metadata.json` la devolvió a la cola. Desde entonces:
+
+  * cada intent tiene identidad (`ui_intent_id`: el `id` que pone quien lo
+    encola, o uno estable derivado de qué es y cuándo se encoló en los
+    encolados antes de que hubiera id);
+  * cada intent despachado queda anotado en un registro de solo-agregar FUERA
+    de `metadata.json` (`ui_intents_delivered.jsonl` de la sesión), y antes de
+    mandar se descarta sin enviar todo intent que ya figure ahí;
+  * sacar el intent de la cola y anotar sus fotos en `outbound_media_index` es
+    un `update()` sobre la lectura fresca, por id (con el candado del store):
+    lo que otro escritor puso mientras se enviaba no se pisa.
+
+Si Temporal reintenta tras un fallo parcial, los intents ya despachados están
+en el registro y fuera de la cola: no se repiten. Queda la ventana de un crash
+ENTRE el envío y la anotación (milisegundos): ahí el intent sale otra vez
+(al menos una vez, como siempre).
 
 Resilencia: cada intent va dentro de try/except aislado. Un intent con
 payload corrupto NO bloquea a los siguientes. Errores se loguean + se
@@ -26,6 +40,7 @@ emite analytics `error.flush_intent`.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import time
@@ -330,7 +345,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
 
     Devuelve un registro por intent intentado, en orden: `{kind, wamid, ok}`
     (`wamid` de Meta si salió; `None` si falló o no se despachó). Los intents
-    vencidos que se descartan sin intentar no aparecen.
+    vencidos o ya entregados que se descartan sin intentar no aparecen.
 
     Función PLANA (sin `activity.info()` ni heartbeat): la invoca la activity
     de arriba desde el workflow Sales y, desde D1.2b, el endpoint
@@ -338,6 +353,11 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
     por Meta Business Agent (no hay turno del bot que flushee las
     instrucciones de pago). `activity.logger` es seguro fuera de un activity:
     sin contexto solo omite el sufijo con los datos del activity.
+
+    `metadata.json` se lee UNA vez (qué mandar, a qué número) y NUNCA se
+    escribe con esa copia: cada cambio (sacar de la cola, el índice de fotos,
+    CAPI, los fallos) es un `update()` con SOLO sus llaves sobre la lectura
+    fresca (incidente 2026-10-06, ver el docstring del módulo).
     """
     # Imports tardíos para evitar tocar httpx/Temporal-imports en module load
     from src.platform.analytics import (
@@ -347,8 +367,10 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
     from src.platform.config import WORKSPACE_VAULT_DIR
     from src.platform.whatsapp import client as wa_client
     from src.platform.whatsapp import dtos as wa_dtos
+    from src.sdk.runtime import FilesystemMetadataStore
 
-    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
+    session_dir = WORKSPACE_VAULT_DIR / session_id
+    metadata_file = session_dir / "metadata.json"
     if not metadata_file.exists():
         return []
     try:
@@ -360,7 +382,28 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
         )
         return []
 
-    intents = list(data.get("pending_ui_intents") or [])
+    intents = [it for it in (data.get("pending_ui_intents") or []) if isinstance(it, dict)]
+    if not intents:
+        return []
+    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+
+    # Exactamente una vez (incidente 2026-10-06): un intent que ya figura en
+    # el registro de entregas volvió a la cola por una escritura vieja — se
+    # descarta sin mandarlo (la foto del turno 4 salió otra vez en el turno 5).
+    delivered = _delivered_intent_ids(session_dir)
+    repeated = [it for it in intents if ui_intent_id(it) in delivered]
+    if repeated:
+        activity.logger.warning(
+            "flush_ui_intents.already_delivered_discarded",
+            extra={
+                "session_id": session_id,
+                "discarded": [
+                    {"id": ui_intent_id(it), "kind": it.get("kind")} for it in repeated
+                ],
+            },
+        )
+        _settle_intents(store, session_id, {ui_intent_id(it) for it in repeated})
+        intents = [it for it in intents if ui_intent_id(it) not in delivered]
     if not intents:
         return []
 
@@ -397,8 +440,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
                 ],
             },
         )
-        data["pending_ui_intents"] = fresh_intents
-        _safe_write_metadata(metadata_file, data)
+        _settle_intents(store, session_id, {ui_intent_id(it) for it in stale_intents})
     intents = fresh_intents
     if not intents:
         return []
@@ -414,8 +456,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
             extra={"session_id": session_id, "intents_count": len(intents)},
         )
         # Limpiar igual — no podemos enviar, mejor no acumular forever
-        data["pending_ui_intents"] = []
-        _safe_write_metadata(metadata_file, data)
+        _settle_intents(store, session_id, {ui_intent_id(it) for it in intents})
         return []
 
     last_inbound_msg_id = data.get("last_inbound_message_id")
@@ -425,24 +466,27 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
     report: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
 
-    # PREMORTEM #1: idempotency on Temporal retry.
-    # ANTES (bug): leíamos N intents, dispatch todos, limpiábamos al final.
-    # Si crash post-dispatch del 3er intent: Temporal reintenta, lee los
-    # MISMOS 5 intents (no se limpiaron), dispatch otra vez los 3 que ya
-    # se enviaron → cliente recibe duplicados + billing Meta x2.
-    # AHORA (fix): por cada intent exitoso, lo removemos del array Y
-    # escribimos metadata. Si crash en el 3er intent, al retry quedan
-    # 2+1=3 pendientes (los 2 enviados ya se limpiaron, el que falló se
-    # reintenta o se descarta según política abajo).
-    #
-    # Hacemos una copia de la lista para iterar — `pending_ui_intents`
-    # se va vaciando in-place.
-    intents_pending = list(intents)
-    data["pending_ui_intents"] = intents_pending
-
-    while intents_pending:
-        intent = intents_pending[0]
+    # PREMORTEM #1 (idempotencia ante el retry de Temporal): cada intent
+    # despachado se anota en el registro de entregas y sale de la cola ANTES
+    # de cualquier otra operación (analytics es best-effort y NO bloquea la
+    # idempotencia). Si crashea en el 3er intent, al retry los 2 enviados ya
+    # no están en la cola y figuran en el registro. Salir de la cola es un
+    # `update()` por id sobre la lectura fresca: lo que otro escritor puso
+    # mientras se enviaba (otro intent, el aviso de entrega) no se pisa.
+    for intent in intents:
+        intent_id = ui_intent_id(intent)
         kind = intent.get("kind")
+        if intent_id in _delivered_intent_ids(session_dir):
+            # Otro flush lo despachó mientras este enviaba los anteriores.
+            activity.logger.warning(
+                "flush_ui_intents.already_delivered_discarded",
+                extra={
+                    "session_id": session_id,
+                    "discarded": [{"id": intent_id, "kind": kind}],
+                },
+            )
+            _settle_intents(store, session_id, {intent_id})
+            continue
         params = intent.get("params") or {}
         analytics_meta = intent.get("analytics") or {}
         # Fotos enviadas en ESTE intent (wamid → producto/diseño). Se
@@ -480,18 +524,18 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
             )
             failed.append({"kind": kind, "error": str(e)})
             report.append({"kind": kind, "wamid": None, "ok": False})
-            # Pop el intent fallido (NO retry automático — el LLM puede
-            # decidir reemitir en próxima iteración) y persistir.
-            intents_pending.pop(0)
-            _safe_write_metadata(metadata_file, data)
+            # Fuera de la cola (NO retry automático — el LLM puede decidir
+            # reemitir en próxima iteración).
+            _record_delivery(session_dir, intent_id, kind=kind, ok=False, wamid=None)
+            _settle_intents(store, session_id, {intent_id})
             continue
 
         if result is None:
             # kind desconocido o intent inválido (sin imagen, etc)
             failed.append({"kind": kind, "error": "no_dispatch"})
             report.append({"kind": kind, "wamid": None, "ok": False})
-            intents_pending.pop(0)
-            _safe_write_metadata(metadata_file, data)
+            _record_delivery(session_dir, intent_id, kind=kind, ok=False, wamid=None)
+            _settle_intents(store, session_id, {intent_id})
             continue
 
         if not result.ok:
@@ -505,39 +549,23 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
             )
             failed.append({"kind": kind, "error": result.error})
             report.append({"kind": kind, "wamid": None, "ok": False})
-            intents_pending.pop(0)
-            _safe_write_metadata(metadata_file, data)
+            _record_delivery(session_dir, intent_id, kind=kind, ok=False, wamid=None)
+            _settle_intents(store, session_id, {intent_id})
             continue
 
-        # ENVÍO EXITOSO — pop e inmediatamente persistir antes de
-        # cualquier otra operación (analytics es best-effort y NO debe
-        # bloquear la idempotencia).
-        intents_pending.pop(0)
-        if media_log:
-            _merge_media_index(data, media_log)
-        if kind == "shipping_flow":
-            # Run 01a0a0f1 (2026-09-14): `_mark_flow_awaiting_reply` escribe
-            # el flag del Flow releyendo el archivo, y esta escritura lo
-            # pisaba con la copia vieja de `data` → el timeout extendido de
-            # ghosting (10 min) nunca aplicaba. Se trae el flag fresco antes
-            # de persistir.
-            _reload_flow_awaiting_flag(metadata_file, data)
-        _safe_write_metadata(metadata_file, data)
+        # ENVÍO EXITOSO — anotar la entrega y sacarlo de la cola (con sus
+        # fotos en el índice) antes de cualquier otra operación.
+        _record_delivery(session_dir, intent_id, kind=kind, ok=True, wamid=result.wa_message_id)
+        _settle_intents(store, session_id, {intent_id}, media_log=media_log)
         report.append({"kind": kind, "wamid": result.wa_message_id, "ok": True})
 
         # Auditoría CAPI 2026-09-08: lo que el cliente acaba de VER es la
         # señal de embudo para Meta (ViewContent / AddToCart /
         # InitiateCheckout). Se encola acá y lo manda el flusher del turno.
-        try:
-            if _enqueue_capi_for_sent_intent(
-                data, session_id=session_id, kind=kind, params=params, now_ms=now_ms
-            ):
-                _safe_write_metadata(metadata_file, data)
-        except Exception:  # noqa: BLE001 - atribución nunca bloquea el envío
-            pass
+        _enqueue_capi_after_send(store, session_id, kind=kind, params=params, now_ms=now_ms)
 
-        # Marker al histórico del dashboard (post-pop, post-write —
-        # best-effort: si crashea, el intent NO se reenvía y el flush sigue).
+        # Marker al histórico del dashboard (post-envío — best-effort: si
+        # crashea, el intent NO se reenvía y el flush sigue).
         try:
             history_event = _build_history_event(kind, params)
             if history_event is not None:
@@ -550,8 +578,8 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
         except Exception:  # noqa: BLE001 - observability nunca bloquea
             pass
 
-        # Analytics outbound (post-pop, post-write — si esto crashea, el
-        # intent NO se reenvía).
+        # Analytics outbound (post-envío — si esto crashea, el intent NO se
+        # reenvía).
         try:
             ev = make_outbound_sent(
                 session_id=session_id,
@@ -571,12 +599,183 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
 
     # Persistir failures finales (histórico, último N).
     if failed:
-        history = list(data.get("ui_intents_failures") or [])
-        history.extend(failed)
-        data["ui_intents_failures"] = history[-50:]
-        _safe_write_metadata(metadata_file, data)
+        _append_failures(store, session_id, failed)
 
     return report
+
+
+def ui_intent_id(intent: dict[str, Any]) -> str:
+    """La identidad de un intent encolado.
+
+    El `id` que le puso quien lo encoló (`_append_intent`, `register_order`).
+    Los encolados antes de que hubiera id (o por un camino que no lo pone)
+    reciben uno estable derivado de qué son y cuándo se encolaron: el mismo en
+    cada lectura, así el flush los reconoce aunque una escritura vieja los
+    devuelva a la cola.
+    """
+    raw = intent.get("id")
+    if isinstance(raw, str) and raw:
+        return raw
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return str(raw)
+    material = json.dumps(
+        {
+            "kind": intent.get("kind"),
+            "params": intent.get("params"),
+            "queued_at_ms": intent.get("queued_at_ms"),
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+    return "sin-id-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+
+
+#: Registro de entregas de la sesión (solo-agregar, FUERA de `metadata.json`):
+#: una línea JSON por intent despachado — `{id, kind, ok, wamid, at_ms}` —,
+#: también los fallidos (un fallido no se reintenta solo: el LLM decide
+#: reemitir). Antes de mandar, el flush descarta todo intent que figure acá.
+_DELIVERED_LOG = "ui_intents_delivered.jsonl"
+
+#: Cuánto del final del registro se lee: un intent vence a los
+#: `_UI_INTENT_TTL_MS` (10 min), así que solo importan las entregas recientes;
+#: 64 KiB son cientos de líneas.
+_DELIVERED_TAIL_BYTES = 64 * 1024
+
+
+def _delivered_intent_ids(session_dir: Path) -> set[str]:
+    """Los ids del final del registro de entregas (vacío si no hay registro)."""
+    path = session_dir / _DELIVERED_LOG
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            start = max(0, size - _DELIVERED_TAIL_BYTES)
+            fh.seek(start)
+            chunk = fh.read()
+    except FileNotFoundError:
+        return set()
+    except OSError:
+        activity.logger.warning(
+            "flush_ui_intents.delivered_log_unreadable", extra={"path": str(path)}
+        )
+        return set()
+    lines = chunk.splitlines()
+    if start > 0 and lines:
+        lines = lines[1:]  # la primera puede venir cortada
+    ids: set[str] = set()
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and isinstance(row.get("id"), str):
+            ids.add(row["id"])
+    return ids
+
+
+def _record_delivery(
+    session_dir: Path,
+    intent_id: str,
+    *,
+    kind: str | None,
+    ok: bool,
+    wamid: str | None,
+) -> None:
+    """Agrega el intent despachado al registro de entregas. Best-effort: si
+    no se puede escribir, el intent igual sale de la cola."""
+    row = {
+        "id": intent_id,
+        "kind": kind,
+        "ok": ok,
+        "wamid": wamid,
+        "at_ms": int(time.time() * 1000),
+    }
+    try:
+        session_dir.mkdir(parents=True, exist_ok=True)
+        with (session_dir / _DELIVERED_LOG).open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        activity.logger.warning(
+            "flush_ui_intents.delivered_log_write_failed",
+            extra={"intent_id": intent_id},
+        )
+
+
+def _settle_intents(
+    store: Any,
+    session_id: str,
+    intent_ids: set[str],
+    *,
+    media_log: list[dict[str, Any]] | None = None,
+) -> None:
+    """Saca de la cola, por id y sobre la lectura FRESCA, los intents ya
+    resueltos (enviados, fallidos, vencidos o repetidos) y anota en
+    `outbound_media_index` las fotos que salieron. Lo demás de la cola (lo que
+    una tool encoló mientras tanto) queda como está."""
+
+    def _settle(fresh: dict[str, Any]) -> dict[str, Any] | None:
+        pending = fresh.get("pending_ui_intents")
+        queue = pending if isinstance(pending, list) else []
+        kept = [
+            it
+            for it in queue
+            if not (isinstance(it, dict) and ui_intent_id(it) in intent_ids)
+        ]
+        if len(kept) == len(queue) and not media_log:
+            return None  # ya no estaban: nada que escribir
+        fresh["pending_ui_intents"] = kept
+        if media_log:
+            _merge_media_index(fresh, media_log)
+        return fresh
+
+    _safe_update(store, session_id, _settle)
+
+
+def _enqueue_capi_after_send(
+    store: Any,
+    session_id: str,
+    *,
+    kind: str | None,
+    params: dict[str, Any],
+    now_ms: int,
+) -> None:
+    """Encola (sobre la lectura fresca) el evento CAPI del intent recién
+    enviado. Best-effort: la atribución nunca bloquea el envío."""
+
+    def _enqueue(fresh: dict[str, Any]) -> dict[str, Any] | None:
+        enqueued = _enqueue_capi_for_sent_intent(
+            fresh, session_id=session_id, kind=kind, params=params, now_ms=now_ms
+        )
+        return fresh if enqueued else None
+
+    try:
+        store.update(session_id, _enqueue)
+    except Exception:  # noqa: BLE001 - atribución nunca bloquea el envío
+        pass
+
+
+def _append_failures(store: Any, session_id: str, failed: list[dict[str, Any]]) -> None:
+    """Agrega los fallos del flush al histórico (`ui_intents_failures`, últimos 50)."""
+
+    def _append(fresh: dict[str, Any]) -> dict[str, Any]:
+        history = list(fresh.get("ui_intents_failures") or [])
+        history.extend(failed)
+        fresh["ui_intents_failures"] = history[-50:]
+        return fresh
+
+    _safe_update(store, session_id, _append)
+
+
+def _safe_update(store: Any, session_id: str, mutator: Any) -> None:
+    """`store.update` que no tumba el flush por un error de disco (el envío ya
+    ocurrió): se loguea y sigue, como antes."""
+    try:
+        store.update(session_id, mutator)
+    except OSError:
+        activity.logger.warning(
+            "flush_ui_intents.write_failed", extra={"session_id": session_id}
+        )
 
 
 async def _dispatch_intent(
@@ -1443,30 +1642,6 @@ def _append_history_event(session_id: str, event: dict[str, Any]) -> None:
         )
 
 
-def _safe_write_metadata(path, data: dict) -> None:
-    try:
-        path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    except OSError:
-        activity.logger.warning(
-            "flush_ui_intents.write_failed", extra={"path": str(path)}
-        )
-
-
-def _reload_flow_awaiting_flag(metadata_file: Path, data: dict[str, Any]) -> None:
-    """Copia a `data` el `shipping_flow_awaiting_reply_since_ms` que
-    `_mark_flow_awaiting_reply` acaba de escribir en disco (lost update)."""
-    try:
-        fresh = json.loads(metadata_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-    flag = fresh.get("shipping_flow_awaiting_reply_since_ms")
-    if isinstance(flag, int) and not isinstance(flag, bool):
-        data["shipping_flow_awaiting_reply_since_ms"] = flag
-
-
 def _mark_flow_awaiting_reply(to_number: str) -> None:
     """Escribe `shipping_flow_awaiting_reply_since_ms` en metadata.json para
     que el workflow Sales extienda su timeout de ghosting (sesión c4e3416f).
@@ -1486,15 +1661,20 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
     envío del Flow. Fallback a `time.time()` solo defensivo por si la helper se
     llamara desde fuera de un activity context en el futuro (no es el caso hoy
     — todos los call-sites están dentro de `flush_pending_ui_intents_activity`).
+
+    Escribe SOLO el flag, con `update()` sobre la lectura fresca: el flush lo
+    respeta al sacar el Flow de la cola (run 01a0a0f1, 2026-09-14: la copia
+    vieja del flush lo pisaba y el ghosting cerraba a los 5 min).
     """
     from src.platform.config import WORKSPACE_VAULT_DIR
+    from src.sdk.runtime import FilesystemMetadataStore
 
     session_id = f"{WHATSAPP_SESSION_PREFIX}{to_number}"
     metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
     if not metadata_file.exists():
         return
     try:
-        data = json.loads(metadata_file.read_text(encoding="utf-8"))
+        json.loads(metadata_file.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
         activity.logger.warning(
             "flush_ui_intents.flow_awaiting_flag_read_failed",
@@ -1510,8 +1690,11 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
         # activity context en el futuro. Wall-clock se acerca lo suficiente.
         ts_ms = int(time.time() * 1000)
 
-    data["shipping_flow_awaiting_reply_since_ms"] = ts_ms
-    _safe_write_metadata(metadata_file, data)
+    def _mark(fresh: dict[str, Any]) -> dict[str, Any]:
+        fresh["shipping_flow_awaiting_reply_since_ms"] = ts_ms
+        return fresh
+
+    _safe_update(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), session_id, _mark)
 
 
 def _humanize_payment(code: str | None) -> str:

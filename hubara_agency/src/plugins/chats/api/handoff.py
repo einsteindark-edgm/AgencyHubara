@@ -317,21 +317,25 @@ async def intervene(
     re-intenta terminar workflows zombies.
     """
     require_valid_session_id(session_id)
-    data = metadata_store.read(session_id)
     motivo = payload.motivo or "Humano tomó el control desde el dashboard"
 
     # 1. Marcar metadata como humano PRIMERO. Esto es lo crítico: si esto
     # falla, el endpoint 500 y el operador reintenta. Si tiene éxito, la
     # próxima webhook del cliente ya queda filtrada por LoadOrStartSalesSession
-    # (route=humano → no dispatch).
-    _append_status(
-        data,
-        tag="HUMANO",
-        motivo=motivo,
-        active_route=ROUTE_HUMANO,
-        extra={"source": "dashboard_intervene"},
-    )
-    metadata_store.write(session_id, data)
+    # (route=humano → no dispatch). Solo la ruta y su historial, sobre la
+    # lectura fresca (incidente 2026-10-06: la copia entera pisaba lo que
+    # otro escritor ponía en medio).
+    def _take_over(fresh: dict) -> dict:
+        _append_status(
+            fresh,
+            tag="HUMANO",
+            motivo=motivo,
+            active_route=ROUTE_HUMANO,
+            extra={"source": "dashboard_intervene"},
+        )
+        return fresh
+
+    data = metadata_store.update(session_id, _take_over) or {}
 
     # 2. Termination de workflows en vuelo: BEST-EFFORT. Si Temporal está caído
     # o devuelve error, NO 500-amos el endpoint — la metadata ya está marcada,
@@ -1045,14 +1049,18 @@ async def return_to_bot(
         tag = "RETOMA_VENTA"
         target = ROUTE_VENTAS
 
-    _append_status(
-        data,
-        tag=tag,
-        motivo=motivo,
-        active_route=target,
-        extra={"source": "dashboard_return_to_bot"},
-    )
-    metadata_store.write(session_id, data)
+    def _return(fresh: dict) -> dict:
+        # Solo la ruta y su historial, sobre la lectura fresca.
+        _append_status(
+            fresh,
+            tag=tag,
+            motivo=motivo,
+            active_route=target,
+            extra={"source": "dashboard_return_to_bot"},
+        )
+        return fresh
+
+    metadata_store.update(session_id, _return)
 
     if payload.target_route == "remarketing":
         client = await get_temporal_client()

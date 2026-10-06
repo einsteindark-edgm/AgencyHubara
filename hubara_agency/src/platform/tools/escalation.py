@@ -249,34 +249,30 @@ class EscalateToHumanTool(ToolBase):
         summary: str,
         customer_message: str = "",
     ) -> str:
-        metadata_file = self._vault_dir / ctx.session_key / "metadata.json"
-        metadata_file.parent.mkdir(parents=True, exist_ok=True)
-        data: dict[str, Any] = {}
-        if metadata_file.exists():
-            try:
-                data = json.loads(metadata_file.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                data = {}
+        from src.platform.state import FilesystemMetadataStore
 
-        data["active_route"] = ROUTE_HUMANO
-        data["tag"] = "HUMANO"
-        data["motivo"] = summary
-        data["escalation_reason"] = reason_category
+        def _escalate(data: dict[str, Any]) -> dict[str, Any]:
+            # Sobre la lectura fresca y solo la ruta, la etiqueta y su
+            # historial (incidente 2026-10-06: la copia entera pisaba otras
+            # escrituras). Un metadata ilegible se reescribe, como siempre.
+            data["active_route"] = ROUTE_HUMANO
+            data["tag"] = "HUMANO"
+            data["motivo"] = summary
+            data["escalation_reason"] = reason_category
 
-        history = data.setdefault("status_history", [])
-        history.append(
-            {
-                "tag": "HUMANO",
-                "motivo": summary,
-                "active_route": ROUTE_HUMANO,
-                "reason_category": reason_category,
-                "timestamp": time.time(),
-            }
-        )
+            history = data.setdefault("status_history", [])
+            history.append(
+                {
+                    "tag": "HUMANO",
+                    "motivo": summary,
+                    "active_route": ROUTE_HUMANO,
+                    "reason_category": reason_category,
+                    "timestamp": time.time(),
+                }
+            )
+            return data
 
-        metadata_file.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        FilesystemMetadataStore(self._vault_dir).update(ctx.session_key, _escalate)
 
         decision_payload = {
             "escalation_decision": {

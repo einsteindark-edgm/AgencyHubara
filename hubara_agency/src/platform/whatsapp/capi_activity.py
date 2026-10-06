@@ -30,6 +30,7 @@ Runbook humano: ``.hubara/runbooks/meta_template_approval.md`` §11–§22.
 """
 from __future__ import annotations
 
+import copy
 import time
 from pathlib import Path
 from typing import Any
@@ -59,7 +60,7 @@ from src.platform.whatsapp.capi_outbox import (
     _metadata_path,
     _read_metadata,
     _record,
-    _write_metadata,
+    _save_changes,
     enqueue_capi_event,
     flush_capi_outbox,
     resolve_ctwa_attribution,
@@ -171,6 +172,9 @@ async def send_capi_event_activity(
     if not metadata:
         log.warning("capi_skipped_no_metadata", session_id=session_id, event_name=event_name)
         return CapiEventResult(status="skipped_no_metadata", event_id="", event_name=event_name)
+    # Lo leído: cada escritura de abajo lleva solo lo que esta activity
+    # cambió (incidente 2026-10-06: la copia entera pisaba otras escrituras).
+    base = copy.deepcopy(metadata)
 
     now_ms = _now_ms()
     clid, _captured = resolve_ctwa_attribution(metadata)
@@ -179,7 +183,7 @@ async def send_capi_event_activity(
         # este skip vivía solo en logs — hallazgo "Alto" de la auditoría).
         stub = {"event_id": "", "event_name": event_name, "source": "episode_close"}
         _record(metadata, stub, status="skipped_no_ctwa_clid", now_ms=now_ms)
-        _write_metadata(path, metadata)
+        _save_changes(path, base, metadata)
         log.info("capi_skipped_no_ctwa_clid", session_id=session_id, event_name=event_name)
         return CapiEventResult(status="skipped_no_ctwa_clid", event_id="", event_name=event_name)
 
@@ -191,7 +195,7 @@ async def send_capi_event_activity(
         if order_id is None or value is None:
             stub = {"event_id": "", "event_name": event_name, "source": "episode_close"}
             _record(metadata, stub, status="skipped_no_registered_order", now_ms=now_ms)
-            _write_metadata(path, metadata)
+            _save_changes(path, base, metadata)
             log.warning("capi_skipped_no_registered_order", session_id=session_id, event_name=event_name)
             return CapiEventResult(status="skipped_no_registered_order", event_id="", event_name=event_name)
 
@@ -199,7 +203,7 @@ async def send_capi_event_activity(
     if _already_finalized(metadata, event_id):
         if event_name == "Purchase" and metadata.get("capi_terminal_event") != "Purchase":
             metadata["capi_terminal_event"] = "Purchase"
-            _write_metadata(path, metadata)
+            _save_changes(path, base, metadata)
         log.info("capi_skipped_already_sent", session_id=session_id, event_id=event_id, event_name=event_name)
         return CapiEventResult(status="skipped_already_sent", event_id=event_id, event_name=event_name)
 
@@ -217,7 +221,7 @@ async def send_capi_event_activity(
         source="episode_close",
         now_ms=now_ms,
     )
-    _write_metadata(path, metadata)
+    _save_changes(path, base, metadata)
 
     flushed = await flush_capi_outbox(session_id, config=cfg, now_ms=now_ms)
     outcome = flushed.outcome_for(event_id)

@@ -10,6 +10,8 @@ con el handle de cada producto para seguir la venta sin buscarlo.
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 from typing import Any
 
 import pytest
@@ -120,7 +122,7 @@ class _Loader:
         self.calls.append(kw)
 
 
-class _Metadata:
+class _Metadata(MergingMetadataStoreMixin):
     def __init__(self) -> None:
         self.data: dict[str, dict[str, Any]] = {}
 

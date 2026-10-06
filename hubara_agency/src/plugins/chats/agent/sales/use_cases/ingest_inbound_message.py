@@ -24,6 +24,7 @@ isinstance check).
 """
 from __future__ import annotations
 
+import copy
 from typing import Any, Awaitable, Callable, Protocol, TYPE_CHECKING
 
 import structlog
@@ -382,6 +383,13 @@ class IngestInboundMessage:
             metadata = self._metadata_store.read(session_id)
         except Exception:  # noqa: BLE001 — best-effort
             metadata = {}
+        # Lo que había en disco al leer (incidente 2026-10-06): cada escritura
+        # de este `execute` lleva SOLO lo que cambió desde acá (o desde su
+        # escritura anterior), no la copia entera. Entre la lectura y la
+        # escritura grande se espera a Jev varios segundos; en ese rato el
+        # flush del turno anterior saca de la cola la foto que ya mandó, y la
+        # copia entera la devolvía (salía otra vez en el turno siguiente).
+        base = copy.deepcopy(metadata)
 
         # HU web-cart: token `ref:cart_<id>` del texto prellenado que genera
         # la página web. Detección 100% determinista (regex) — jamás del LLM.
@@ -394,6 +402,7 @@ class IngestInboundMessage:
         self._handle_origin(
             session_id=session_id,
             metadata=metadata,
+            base=base,
             referral=parsed.referral,
             inbound_message_id=parsed.message_id,
             cart_ref=cart_ref,
@@ -408,6 +417,7 @@ class IngestInboundMessage:
             referral_already_seen = self._handle_referral(
                 session_id=session_id,
                 metadata=metadata,
+                base=base,
                 referral=parsed.referral,
                 inbound_message_id=parsed.message_id,
             )
@@ -665,7 +675,7 @@ class IngestInboundMessage:
                 }
             )
 
-        self._safe_write_metadata(session_id, metadata)
+        self._safe_write_metadata(session_id, metadata, base)
 
         # Punto 2 (escala Window Strategist): mantener el índice liviano de
         # reactivación en el mismo momento del estampado — el snapshot builder
@@ -708,6 +718,7 @@ class IngestInboundMessage:
             )
             if fresh_after_capture is not None:
                 metadata = fresh_after_capture
+                _rebase(base, metadata)
 
             if captured["new"]:
                 episodes = metadata.get("episodes") or []
@@ -747,6 +758,7 @@ class IngestInboundMessage:
                 updated = self._metadata_store.update(session_id, _apply_mutator)
                 if updated is not None:
                     metadata = updated
+                    _rebase(base, metadata)
                 self._emit_web_cart_events(
                     session_id=session_id, metadata=metadata, cart_id=cart_ref
                 )
@@ -773,6 +785,7 @@ class IngestInboundMessage:
             logged = self._metadata_store.update(session_id, _referral_mutator)
             if logged is not None:
                 metadata = logged
+                _rebase(base, metadata)
 
         if product_ref and metadata.get("active_route") != ROUTE_HUMANO:
             captured_ref = {"new": False}
@@ -790,6 +803,7 @@ class IngestInboundMessage:
             )
             if fresh_after_ref is not None:
                 metadata = fresh_after_ref
+                _rebase(base, metadata)
 
             if captured_ref["new"]:
                 product, reason = await self._resolve_product_ref(product_ref)
@@ -809,6 +823,7 @@ class IngestInboundMessage:
                 updated_ref = self._metadata_store.update(session_id, _apply_ref_mutator)
                 if updated_ref is not None:
                     metadata = updated_ref
+                    _rebase(base, metadata)
 
         # --- 2f-bis. «Enviar mensaje a la empresa» desde la ficha del catálogo ---
         # Meta manda el producto exacto (`context.referred_product`); hasta el
@@ -831,6 +846,7 @@ class IngestInboundMessage:
             fresh_after_card = self._metadata_store.update(session_id, _capture_card_mutator)
             if fresh_after_card is not None:
                 metadata = fresh_after_card
+                _rebase(base, metadata)
 
             if captured_card["new"]:
                 card_lines = await self._catalog_lines([{"product_retailer_id": referred}])
@@ -852,6 +868,7 @@ class IngestInboundMessage:
                 updated_card = self._metadata_store.update(session_id, _apply_card_mutator)
                 if updated_card is not None:
                     metadata = updated_card
+                    _rebase(base, metadata)
 
         # --- 2g. Cupón de la campaña: se aplica solo ---
         # Conversación de prueba del 2026-09-24 (AMOR2026 con cupo por
@@ -884,6 +901,7 @@ class IngestInboundMessage:
                     stored = self._metadata_store.update(session_id, _coupon_mutator)
                     if stored is not None:
                         metadata = stored
+                        _rebase(base, metadata)
                 campaign_reply_note = build_campaign_reply_note(
                     campaign_reply_touch, coupon=application
                 )
@@ -941,7 +959,7 @@ class IngestInboundMessage:
                 "mime_type": (parsed.audio or {}).get("mime_type"),
                 "voice": (parsed.audio or {}).get("voice", False),
             }
-            self._safe_write_metadata(session_id, metadata)
+            self._safe_write_metadata(session_id, metadata, base)
             # HU-002 / A.5: spawn background transcription task. El HTTP layer
             # tiene permiso de I/O (ya llama Temporal client), así que la
             # transcripción puede correr ahí — más simple que un workflow
@@ -982,7 +1000,7 @@ class IngestInboundMessage:
                 "inbound_message_id": parsed.message_id,
                 "mime_type": effective.image_mime_type,
             }
-            self._safe_write_metadata(session_id, metadata)
+            self._safe_write_metadata(session_id, metadata, base)
             self._photo_reads.begin(session_id)
             # Texto ANTES de la foto: el bot ya tiene el texto; que espere la foto.
             await self._notify_photo(session_id, parsed.message_id, done=False)
@@ -1005,7 +1023,7 @@ class IngestInboundMessage:
             # indicator pueda referenciar este msg si el cliente reintenta.
             if parsed.message_id:
                 metadata["last_inbound_message_id"] = parsed.message_id
-                self._safe_write_metadata(session_id, metadata)
+                self._safe_write_metadata(session_id, metadata, base)
             return
 
         logger.info(
@@ -1063,7 +1081,7 @@ class IngestInboundMessage:
                 metadata_dirty = True
                 notify_client = True
             if metadata_dirty:
-                self._safe_write_metadata(session_id, metadata)
+                self._safe_write_metadata(session_id, metadata, base)
             if notify_client:
                 try:
                     from src.platform.whatsapp import client as wa_client
@@ -1122,11 +1140,11 @@ class IngestInboundMessage:
         # --- 7. Persistir last_inbound_message_id para typing indicator ---
         if parsed.message_id:
             metadata["last_inbound_message_id"] = parsed.message_id
-            self._safe_write_metadata(session_id, metadata)
+            self._safe_write_metadata(session_id, metadata, base)
         elif cleared_flow_flag:
             # No hay message_id PERO limpiamos el flag arriba — persistimos
             # el pop para que no quede zombie en metadata.
-            self._safe_write_metadata(session_id, metadata)
+            self._safe_write_metadata(session_id, metadata, base)
 
         # Acuse de la despedida (ver 2c): ya quedó en el chat; el agente no
         # tiene nada que contestar.
@@ -1168,6 +1186,7 @@ class IngestInboundMessage:
             reread = await self._reread_coupon_units(session_id, metadata, now_ms)
             if reread is not None:
                 metadata = reread
+                _rebase(base, metadata)
         elif not coupon_talk and applied_coupon(metadata) is not None:
             logger.info("coupon_not_in_play", session_id=session_id)
 
@@ -1649,6 +1668,7 @@ class IngestInboundMessage:
         *,
         session_id: str,
         metadata: dict[str, Any],
+        base: dict[str, Any],
         referral: dict[str, Any] | None,
         inbound_message_id: str | None,
         cart_ref: str | None = None,
@@ -1715,13 +1735,14 @@ class IngestInboundMessage:
         # más writes con `_safe_write_metadata`, pero queremos que
         # origin/last_touch queden grabados aunque el flujo posterior
         # crashee.
-        self._safe_write_metadata(session_id, metadata)
+        self._safe_write_metadata(session_id, metadata, base)
 
     def _handle_referral(
         self,
         *,
         session_id: str,
         metadata: dict[str, Any],
+        base: dict[str, Any],
         referral: dict[str, Any],
         inbound_message_id: str | None,
     ) -> bool:
@@ -1756,7 +1777,7 @@ class IngestInboundMessage:
         metadata["ctwa_clids_seen"] = clids_seen
 
         # Persistir inmediatamente (el bus es async y puede demorar)
-        self._safe_write_metadata(session_id, metadata)
+        self._safe_write_metadata(session_id, metadata, base)
 
         # Emitir analytics. Fire-and-forget — si el bus falla, NO bloquea.
         # PREMORTEM #2: spawn safe.
@@ -1841,11 +1862,28 @@ class IngestInboundMessage:
             session_id=None,
         )
 
-    def _safe_write_metadata(self, session_id: str, data: dict[str, Any]) -> None:
+    def _safe_write_metadata(
+        self, session_id: str, data: dict[str, Any], base: dict[str, Any]
+    ) -> None:
+        """Escribe SOLO lo que este ingest cambió en `data` desde `base` (lo que
+        leyó, o lo que escribió la vez anterior), sobre lo que hay en disco
+        AHORA (`write_merged`, merge de tres vías). Incidente 2026-10-06: la
+        copia entera, escrita tras esperar a Jev, devolvía a la cola la foto
+        que el flush ya había mandado y borraba su entrega del índice.
+
+        Si escribe, `base` pasa a ser `data`: lo ya escrito deja de contar como
+        cambio en la escritura siguiente. Best-effort: un fallo se loguea y el
+        mensaje del cliente sigue su camino."""
         try:
-            self._metadata_store.write(session_id, data)
-        except Exception:  # noqa: BLE001 — best-effort
-            logger.info("metadata_write_failed_ignored", session=session_id)
+            self._metadata_store.write_merged(session_id, base=base, ours=data)
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.info(
+                "metadata_write_failed_ignored",
+                session=session_id,
+                error=f"{type(exc).__name__}: {exc}"[:200],
+            )
+            return
+        _rebase(base, data)
 
     async def _emit_watchdog_events(
         self,
@@ -1896,6 +1934,7 @@ class IngestInboundMessage:
         # Limpiar pending_transcription
         try:
             metadata = self._metadata_store.read(session_id)
+            base = copy.deepcopy(metadata)
             metadata.pop("pending_transcription", None)
             if result.ok and result.text:
                 recent = list(metadata.get("recent_transcriptions") or [])
@@ -1915,7 +1954,7 @@ class IngestInboundMessage:
                     "provider": result.provider,
                 })
                 metadata["transcription_failures"] = errors[-20:]
-            self._metadata_store.write(session_id, metadata)
+            self._safe_write_metadata(session_id, metadata, base)
         except Exception:  # noqa: BLE001
             pass
 
@@ -2067,6 +2106,7 @@ class IngestInboundMessage:
             metadata = self._metadata_store.read(session_id)
         except Exception:  # noqa: BLE001
             metadata = {}
+        base = copy.deepcopy(metadata)
         metadata.pop("pending_vision", None)
         if result.ok:
             recent = list(metadata.get("recent_image_descriptions") or [])
@@ -2106,7 +2146,7 @@ class IngestInboundMessage:
                 filename=persisted[1],
                 kind=result.kind if result.ok else "unknown",
             )
-        self._safe_write_metadata(session_id, metadata)
+        self._safe_write_metadata(session_id, metadata, base)
         # Lo que costó describirla (también un comprobante) va a la conversación.
         if result.ok:
             self._charge_vision(session_id, result.cost_usd_estimate, calls=1)
@@ -2513,15 +2553,24 @@ class IngestInboundMessage:
             data = self._metadata_store.read(session_id)
         except Exception:  # noqa: BLE001
             data = {}
+        base = copy.deepcopy(data)
         self._apply_human_route(
             data, motivo=motivo, reason_category=reason_category
         )
-        self._safe_write_metadata(session_id, data)
+        self._safe_write_metadata(session_id, data, base)
 
 
 def _now_ms() -> int:
     import time
     return int(time.time() * 1000)
+
+
+def _rebase(base: dict[str, Any], data: dict[str, Any]) -> None:
+    """`base` pasa a ser una copia de `data` (en el lugar: quien la tiene la
+    ve): lo que el ingest ya escribió, o lo que acaba de releer del disco, deja
+    de contar como cambio suyo en la próxima `write_merged`."""
+    base.clear()
+    base.update(copy.deepcopy(data))
 
 
 def build_episode_boundary_note(prev_episode: dict[str, Any], *, courtesy: bool = False) -> str:

@@ -13,6 +13,7 @@ preserva el import path publico.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from temporalio import activity
 
@@ -244,10 +245,19 @@ async def read_and_clear_pending_handoff_activity(session_id: str) -> str | None
     re-aplica el resultado guardado en history sin re-ejecutar la activity.
     """
     store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
-    data = store.read(session_id)
-    summary = data.pop("pending_handoff_summary", None)
+    seen: dict[str, Any] = {"data": {}, "summary": None}
+
+    def _pop_summary(fresh: dict[str, Any]) -> dict[str, Any] | None:
+        # Leer y limpiar en UNA operación bajo el candado: un handoff que
+        # llega en medio no se pierde, y nada más del metadata se toca.
+        seen["data"] = fresh
+        seen["summary"] = fresh.pop("pending_handoff_summary", None)
+        return fresh if seen["summary"] is not None else None
+
+    store.update(session_id, _pop_summary)
+    data: dict[str, Any] = seen["data"]
+    summary = seen["summary"]
     if summary is not None:
-        store.write(session_id, data)
         activity.logger.info(
             "read_and_clear_pending_handoff: handoff consumido session=%s",
             session_id,

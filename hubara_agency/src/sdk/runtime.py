@@ -19,9 +19,17 @@ Uso canónico::
 
 Notas de diseño:
 - ``FilesystemMetadataStore`` es el acceso al metadata de sesión del vault.
-  Estado process-wide NUEVO exige ``clear()`` + fixture autouse (lección L-2).
+  Se escribe SOLO con ``update(session_id, mutator)`` (tus llaves, sobre la
+  lectura fresca y con el candado de la sesión) o, si acumulas cambios entre
+  esperas, ``write_merged(session_id, base=<copia de lo leído>, ours=<tu
+  dict>)`` (merge de tres vías). Nunca ``write`` ni ``atomic_write_json`` sobre
+  ``metadata.json``: una copia vieja escrita entera devolvió a la cola una foto
+  ya entregada (incidente 2026-10-06; gate
+  ``tests/platform/test_metadata_json_single_writer.py``). Estado process-wide
+  NUEVO exige ``clear()`` + fixture autouse (lección L-2).
 - ``atomic_write_json`` es la única forma sancionada de escribir JSON al
-  vault (write-rename, sin archivos a medio escribir).
+  vault (write-rename, sin archivos a medio escribir) — para los demás
+  archivos; ``metadata.json`` va por el store.
 - ``is_vault_session_id`` es el PISO anti path-traversal de todo id de sesión
   que llega de afuera (URL, body) y termina en un ``Path`` bajo el vault: un
   router lo chequea ANTES de tocar el filesystem y responde 400. ``..`` es el

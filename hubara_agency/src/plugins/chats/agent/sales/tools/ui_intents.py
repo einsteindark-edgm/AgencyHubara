@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -140,21 +141,28 @@ def _append_intent(session_key: str, intent: dict[str, Any]) -> None:
     a integrar en follow-up).
 
     Cada intent lleva:
-      * id: uuid (para idempotencia en delivery + analytics correlation)
+      * id: uuid (el del caller si trae uno) — el flush lo anota al entregarlo
+        y no lo vuelve a mandar aunque una escritura vieja lo devuelva a la
+        cola (incidente 2026-10-06); también correlaciona analytics
       * kind: discriminador
       * payload: serializable JSON con los args del send_*
       * queued_at_ms
       * analytics: metadata para emitir wa_outbound event tras send_*
+
+    Agrega con `update()` sobre la lectura fresca (candado del store): solo
+    toca la cola, nunca el resto de `metadata.json`.
     """
-    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
-    data = store.read(session_key)
-    intents = list(data.get("pending_ui_intents") or [])
-    intents.append({
+    queued = {
         **intent,
+        "id": intent.get("id") or uuid.uuid4().hex,
         "queued_at_ms": int(time.time() * 1000),
-    })
-    data["pending_ui_intents"] = intents
-    store.write(session_key, data)
+    }
+
+    def _enqueue(fresh: dict[str, Any]) -> dict[str, Any]:
+        fresh["pending_ui_intents"] = [*(fresh.get("pending_ui_intents") or []), queued]
+        return fresh
+
+    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_key, _enqueue)
 
 
 def _meta_retailer_id(product) -> str:

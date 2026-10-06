@@ -140,6 +140,18 @@ jobs:
           OTEL_SDK_DISABLED: "true"
         run: uv run pytest tests/architecture -q
 
+      - name: Una sola forma de escribir metadata.json (ratchet, incidente 2026-10-06)
+        # Una copia vieja de metadata.json devolvió a la cola una foto ya
+        # entregada y salió dos veces. Este gate falla si un módulo de src/
+        # escribe metadata.json sin FilesystemMetadataStore (update /
+        # write_merged). Es AST puro: vive en tests/platform/ porque
+        # tests/architecture/ es protected y no corre la suite entera de platform.
+        if: needs.changes.outputs.central == 'true'
+        working-directory: hubara_agency
+        env:
+          OTEL_SDK_DISABLED: "true"
+        run: uv run pytest tests/platform/test_metadata_json_single_writer.py -q
+
       - name: Premortem invariants (compose drift + paridad k8s + colas únicas)
         # Complementa el modo `strict: false` de la branch protection. Dos PRs de
         # plugins distintos igual regeneran docker-compose.local.yml (se genera de

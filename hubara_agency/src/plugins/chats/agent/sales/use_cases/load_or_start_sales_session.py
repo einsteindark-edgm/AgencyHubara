@@ -134,7 +134,8 @@ class LoadOrStartSalesSession:
     PR-E: ``metadata_store`` ahora se type-hints como la concreta
     ``FilesystemMetadataStore`` (no ``MetadataStorePort``). Los fakes en tests
     siguen funcionando porque Python es duck-typed; un fake con
-    ``read(...)`` / ``write(...)`` se acepta sin problemas.
+    ``read(...)`` / ``update(...)`` se acepta sin problemas (las escrituras
+    van por ``update``: solo la llave que cambia, sobre la lectura fresca).
     """
 
     def __init__(
@@ -224,7 +225,11 @@ class LoadOrStartSalesSession:
 
         if phone_number_id:
             data["phone_number_id"] = phone_number_id
-            self._metadata_store.write(session_id, data)
+            # Solo esta llave, sobre la lectura fresca (incidente 2026-10-06:
+            # la copia entera pisaba lo que otro escritor puso mientras tanto).
+            self._metadata_store.update(
+                session_id, lambda fresh: {**fresh, "phone_number_id": phone_number_id}
+            )
 
         # 1.5. Ruta humano: cliente esta en el inbox humano (escalation previa).
         # El mensaje del cliente ya quedo persistido en el JSONL (lo hace
@@ -285,7 +290,11 @@ class LoadOrStartSalesSession:
             except Exception:  # noqa: BLE001 — no existe / ya terminó / race
                 pass
             data["active_route"] = ROUTE_VENTAS
-            self._metadata_store.write(session_id, data)
+            # Solo la ruta, sobre la lectura fresca: entre la lectura de
+            # arriba y acá hubo un `terminate` a Temporal.
+            self._metadata_store.update(
+                session_id, lambda fresh: {**fresh, "active_route": ROUTE_VENTAS}
+            )
             active_route = ROUTE_VENTAS
 
         # 3. Si la ruta activa es remarketing, intentamos reusar; si murio, fallback.

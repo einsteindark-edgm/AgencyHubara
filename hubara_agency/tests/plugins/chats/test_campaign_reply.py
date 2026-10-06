@@ -16,6 +16,8 @@ Contrato:
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 import time
 
 import pytest
@@ -155,7 +157,7 @@ class _Loader:
         )
 
 
-class _Store:
+class _Store(MergingMetadataStoreMixin):
     def __init__(self, data: dict) -> None:
         self.data = {_SESSION: data}
 

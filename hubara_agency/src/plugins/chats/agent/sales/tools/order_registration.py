@@ -1058,90 +1058,48 @@ class RegisterOrderTool(ToolBase):
             "capi_contents": await self._capi_contents(items),
         }
 
-        metadata_file = self._vault_dir / ctx.session_key / "metadata.json"
-        metadata_file.parent.mkdir(parents=True, exist_ok=True)
-        data: dict[str, Any] = {}
-        if metadata_file.exists():
-            try:
-                data = json.loads(metadata_file.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                data = {}
-
-        if result.success:
-            data["registered_order"] = registered_record
-            # Episode lifecycle: anotar order_id en el episodio activo (NO
-            # cerrar — el cierre lo hace manage_conversation_tag(COMPRA_EXITOSA)
-            # que el agente invoca justo después). Defensivo: si no hay
-            # episodio activo, attach_order_to_active_episode crea uno.
-            attach_order_to_active_episode(
-                data,
-                order_id=registered_record["order_id"],
-                now_ms=registered_record["registered_at_ms"],
-                # Congela el ingreso de la venta en el episodio (major units
-                # COP) — lo agrega `list_ads_campaigns` como `revenue` por
-                # campaña sin tener que consultar Medusa en read-time (R-DIP).
-                order_total_cop=total_cop,
-                currency=currency,
-            )
-            # Auditoría CAPI 2026-09-08: pedido creado en Medusa =
-            # OrderCreated (con valor) para el embudo de Meta. Lo envía el
-            # flusher después del turno.
-            try:
-                enqueue_capi_event(
-                    data,
-                    event_name="OrderCreated",
-                    session_id=ctx.session_key,
-                    order_id=registered_record["order_id"],
-                    value=total_cop,
-                    currency=currency,
-                    contents=registered_record["capi_contents"],
-                    source="register_order",
-                    now_ms=registered_record["registered_at_ms"],
-                )
-            except ValueError:
-                pass
-            # Pago anticipado (transfer) → el SISTEMA manda la llave Nequi y
-            # los datos bancarios, no el LLM (caso wa_573125671604: el LLM
-            # alucinó cuenta y NIT). Link de pago → el SISTEMA avisa el link
-            # y su recargo (el link real lo genera el humano tras la
-            # escalación). Encolamos el intent acá — determinista, pasa
-            # aunque el LLM no emita ninguna tool más. El flush renderiza la
-            # plantilla fija según `method`; los params NO llevan datos
-            # bancarios (nunca pasan por el LLM ni por metadata).
-            if payment_method in ("transfer", "payment_link"):
-                intents = data.setdefault("pending_ui_intents", [])
-                # Referencia humana ("#22 (Plegaria de Luz)") — el display_id
-                # ya existe acá: Medusa lo asigna al crear el draft. El
-                # order_id interno sigue viajando (idempotency key + audit).
-                # Desglose productos + envío = total (requisito 2026-09-07,
-                # run 943e6bff): los tres montos ya pasaron el chequeo
-                # SEC-07 de arriba (subtotal = Σ ítems, total = subtotal +
-                # envío), así que el flush los muestra sin recalcular nada.
-                params: dict[str, Any] = {
-                    "order_id": registered_record["order_id"],
-                    "subtotal_cop": subtotal_cop,
-                    "shipping_cop": shipping_cop,
-                    "total_cop": total_cop,
-                    "currency": currency,
-                    "method": payment_method,
-                }
-                if coupon_code:
-                    params["discount_cop"] = discount_cop
-                    params["coupon_code"] = coupon_code
-                reference = _order_reference(result.raw_payload)
-                if reference:
-                    params["order_reference"] = reference
-                intents.append({
-                    "id": f"payinstr-{registered_record['order_id']}",
-                    "kind": "payment_instructions",
-                    "params": params,
-                    "analytics": {
-                        "component_id": "payment_instructions",
-                        "component_kind": "text",
-                    },
-                    "queued_at_ms": registered_record["registered_at_ms"],
-                })
-        else:
+        # Pago anticipado (transfer) → el SISTEMA manda la llave Nequi y
+        # los datos bancarios, no el LLM (caso wa_573125671604: el LLM
+        # alucinó cuenta y NIT). Link de pago → el SISTEMA avisa el link
+        # y su recargo (el link real lo genera el humano tras la
+        # escalación). Encolamos el intent acá — determinista, pasa
+        # aunque el LLM no emita ninguna tool más. El flush renderiza la
+        # plantilla fija según `method`; los params NO llevan datos
+        # bancarios (nunca pasan por el LLM ni por metadata).
+        payment_intent: dict[str, Any] | None = None
+        if result.success and payment_method in ("transfer", "payment_link"):
+            # Referencia humana ("#22 (Plegaria de Luz)") — el display_id
+            # ya existe acá: Medusa lo asigna al crear el draft. El
+            # order_id interno sigue viajando (idempotency key + audit).
+            # Desglose productos + envío = total (requisito 2026-09-07,
+            # run 943e6bff): los tres montos ya pasaron el chequeo
+            # SEC-07 de arriba (subtotal = Σ ítems, total = subtotal +
+            # envío), así que el flush los muestra sin recalcular nada.
+            params: dict[str, Any] = {
+                "order_id": registered_record["order_id"],
+                "subtotal_cop": subtotal_cop,
+                "shipping_cop": shipping_cop,
+                "total_cop": total_cop,
+                "currency": currency,
+                "method": payment_method,
+            }
+            if coupon_code:
+                params["discount_cop"] = discount_cop
+                params["coupon_code"] = coupon_code
+            reference = _order_reference(result.raw_payload)
+            if reference:
+                params["order_reference"] = reference
+            payment_intent = {
+                "id": f"payinstr-{registered_record['order_id']}",
+                "kind": "payment_instructions",
+                "params": params,
+                "analytics": {
+                    "component_id": "payment_instructions",
+                    "component_kind": "text",
+                },
+                "queued_at_ms": registered_record["registered_at_ms"],
+            }
+        if not result.success:
             # Falla: NO sobrescribimos `registered_order` (preserva exitosos
             # previos) pero apendiamos a `failed_order_registrations[]` para
             # que el humano sepa que hubo intento + tenga el payload completo.
@@ -1149,19 +1107,61 @@ class RegisterOrderTool(ToolBase):
             # (platform/orders/reconciliation.py): un reintento automático
             # (script/cron) o manual (dashboard) lo marcará resolved/abandoned.
             registered_record["status"] = STATUS_PENDING
-            failed_log = data.setdefault("failed_order_registrations", [])
-            failed_log.append(registered_record)
-        history = data.setdefault("registered_orders_history", [])
-        history.append({
+        history_entry = {
             "order_id": registered_record["order_id"],
             "provider": result.provider,
             "success": result.success,
             "ts_ms": registered_record["registered_at_ms"],
-        })
+        }
 
-        metadata_file.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        def _record(data: dict[str, Any]) -> dict[str, Any]:
+            if result.success:
+                data["registered_order"] = registered_record
+                # Episode lifecycle: anotar order_id en el episodio activo (NO
+                # cerrar — el cierre lo hace manage_conversation_tag(COMPRA_EXITOSA)
+                # que el agente invoca justo después). Defensivo: si no hay
+                # episodio activo, attach_order_to_active_episode crea uno.
+                attach_order_to_active_episode(
+                    data,
+                    order_id=registered_record["order_id"],
+                    now_ms=registered_record["registered_at_ms"],
+                    # Congela el ingreso de la venta en el episodio (major units
+                    # COP) — lo agrega `list_ads_campaigns` como `revenue` por
+                    # campaña sin tener que consultar Medusa en read-time (R-DIP).
+                    order_total_cop=total_cop,
+                    currency=currency,
+                )
+                # Auditoría CAPI 2026-09-08: pedido creado en Medusa =
+                # OrderCreated (con valor) para el embudo de Meta. Lo envía el
+                # flusher después del turno.
+                try:
+                    enqueue_capi_event(
+                        data,
+                        event_name="OrderCreated",
+                        session_id=ctx.session_key,
+                        order_id=registered_record["order_id"],
+                        value=total_cop,
+                        currency=currency,
+                        contents=registered_record["capi_contents"],
+                        source="register_order",
+                        now_ms=registered_record["registered_at_ms"],
+                    )
+                except ValueError:
+                    pass
+                if payment_intent is not None:
+                    data.setdefault("pending_ui_intents", []).append(payment_intent)
+            else:
+                data.setdefault("failed_order_registrations", []).append(registered_record)
+            data.setdefault("registered_orders_history", []).append(history_entry)
+            return data
+
+        # Sobre la lectura FRESCA y bajo el candado del store (incidente
+        # 2026-10-06): entre la lectura del principio y acá se habló con
+        # Medusa; lo que otro escritor puso mientras tanto no se pisa. El shim
+        # de ventas (no `src.sdk.runtime`: arrastra temporalio, R-DIP #7).
+        from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+
+        FilesystemMetadataStore(self._vault_dir).update(ctx.session_key, _record)
 
         # ------------------------------------------------------------
         # Envelope para el LLM.
