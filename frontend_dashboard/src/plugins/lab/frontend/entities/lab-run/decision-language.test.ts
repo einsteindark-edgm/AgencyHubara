@@ -103,6 +103,21 @@ describe("afirmación y cantidad del paquete ventas-3 (2026-10-06)", () => {
     expect(claim("nada")).toEqual(["¿Qué le afirma el mensaje al cliente? nada (90 %)"]);
   });
 
+  it("si el mensaje que abre el episodio es solo un saludo", () => {
+    expect(
+      jevAnswers(
+        decision({
+          capability: "cortesia",
+          value: false,
+          answers: [
+            { q: "cortesia.solo", p: 0.94 },
+            { q: "cortesia.saludo_solo", p: 0.95 },
+          ],
+        }),
+      ),
+    ).toEqual(["¿Solo agradece o saluda, sin pedir nada? sí (94 %)", "¿Es solo un saludo, sin agradecer ni contar nada? sí (95 %)"]);
+  });
+
   it("la cantidad que el cliente dice sin que se la pregunten", () => {
     expect(
       jevAnswers(
