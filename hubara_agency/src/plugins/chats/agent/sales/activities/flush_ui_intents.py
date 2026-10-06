@@ -1296,9 +1296,9 @@ def _enqueue_capi_for_sent_intent(
 
 def _capi_contents_for_intent(kind: str | None, params: dict[str, Any]) -> list[dict[str, Any]]:
     """Identidad de producto (``retailer_id`` = SKU en Meta) del intent que el
-    cliente acaba de VER, en la forma ``contents`` de CAPI. Es lo que hace que
-    Commerce Manager cruce el evento con el catálogo (2026-09-14: 0% de
-    coincidencia porque ningún evento la traía).
+    cliente acaba de VER, en la forma ``contents`` de CAPI: le dice a Meta qué
+    producto vio. No cuenta para la "coincidencia de catálogo" (solo eventos
+    web/app, verificado 2026-09-21).
 
       * product_detail / product_gallery / variant_picker → el producto
         (``params.retailer_id``, precio unitario si viene).

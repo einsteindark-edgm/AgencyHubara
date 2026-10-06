@@ -170,12 +170,12 @@ class CapiCustomData:
     For Lead: leave both as None — Meta accepts the event without monetary
     context for lead conversions.
 
-    ``contents`` (2026-09-14): identidad de producto. Commerce Manager cruza
-    ``content_ids`` contra el ``retailer_id`` del catálogo (= SKU desde PR
-    #277); sin ese campo la "coincidencia de catálogo" es 0% aunque Meta
-    acepte el evento, y los anuncios de catálogo no pueden usar el embudo del
-    bot. ``content_ids`` se deriva de ``contents`` y ``content_type`` es
-    siempre ``product`` (cada ítem de Meta es una variante concreta).
+    ``contents`` (2026-09-14): identidad de producto, ``content_ids`` =
+    ``retailer_id`` del catálogo (= SKU desde PR #277). NO mueve la
+    "coincidencia de catálogo" de Commerce Manager: esa solo cuenta eventos de
+    sitio web o app (verificado 2026-09-21); la alimenta el píxel de la web.
+    ``content_ids`` se deriva de ``contents`` y ``content_type`` es siempre
+    ``product`` (cada ítem de Meta es una variante concreta).
     """
 
     value: int | None = None

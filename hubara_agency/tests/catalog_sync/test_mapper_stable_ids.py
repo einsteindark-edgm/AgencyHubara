@@ -90,3 +90,17 @@ def test_single_variant_product_without_sku_keeps_the_product_id_and_warns(caplo
 
     assert [i.retailer_id for i in items] == ["prod_legacy"]
     assert any("sin SKU" in r.getMessage() for r in caplog.records)
+
+
+def test_item_link_is_the_canonical_product_url_with_trailing_slash():
+    # The storefront serves every product at `/products/<handle>/` (Astro
+    # trailingSlash 'always'; the page's canonical carries the slash). A link
+    # without it answers with a redirect, and Meta's catalog quality check
+    # flags link/page mismatches. Every variant shares the product page.
+    items, _ = map_products_batch([_duo(), _legacy()])
+
+    assert {i.retailer_id: i.url for i in items} == {
+        "HUB-DUOZOD-LEO": "https://hubara.com.co/products/duo-zodiacal/",
+        "HUB-DUOZOD-ESCORPIO": "https://hubara.com.co/products/duo-zodiacal/",
+        "HUB-SACRIFICIO": "https://hubara.com.co/products/sacrificio-de-amor/",
+    }

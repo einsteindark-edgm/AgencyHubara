@@ -1052,8 +1052,8 @@ class RegisterOrderTool(ToolBase):
             "registered_at_ms": int(time.time() * 1000),
             "raw_provider_payload": result.raw_payload,
             # Identidad Meta (SKU = retailer_id) de cada línea, ya en la
-            # forma `contents` de CAPI: Purchase/OrderCreated la llevan para
-            # la coincidencia de catálogo. Best-effort (catálogo caído →
+            # forma `contents` de CAPI: Purchase/OrderCreated dicen qué se
+            # compró. Best-effort (catálogo caído →
             # []), nunca bloquea el registro.
             "capi_contents": await self._capi_contents(items),
         }

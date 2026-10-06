@@ -38,7 +38,7 @@ async def _order_payload(
 
     Total y moneda salen de ``OrderFacts`` (Medusa vivo, gotcha 13); la copia
     ``registered_order`` del chat solo es respaldo si Medusa no responde. Los
-    ``contents`` (SKUs para la coincidencia de catálogo) solo viven en esa
+    ``contents`` (SKUs de cada línea) solo viven en esa
     copia. Best-effort: Medusa caído nunca bloquea el evento.
 
     ``None`` = pedido marcado "prueba" en Órdenes: no se emite nada a Meta."""
