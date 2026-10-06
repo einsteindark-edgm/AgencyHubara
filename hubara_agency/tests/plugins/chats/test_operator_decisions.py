@@ -4,8 +4,9 @@ Qué burbuja va primero en el chat (`burbuja`) y cómo se clasifica cada incendi
 de chat (`incendio`) son capacidades del paquete `operador`
 (`chats/shared/operator/decisions/`), resueltas como las de ventas
 (`BundledCapability`) y decididas por `decide_for_session`: el modo de cada
-conversación sale del panel «Motor de decisiones» (`_rollout/decisions.json`,
-dentro del techo `SALES_CAPABILITIES_CEILING`), y el motor deja la decisión en
+conversación sale del control del motor (`_rollout/decisions.json`, que se mueve
+por comando con `decisions/control.py`, dentro del techo
+`SALES_CAPABILITIES_CEILING`), y el motor deja la decisión en
 la conversación, sus métricas, la cola de desacuerdos y el costo de Jev. Las
 reglas de `mobile_rules` arman lo legal y son el respaldo.
 
@@ -112,10 +113,10 @@ def _bubbles() -> dict[str, Any]:
     ))
 
 
-# ── el panel manda ───────────────────────────────────────────────────────────
+# ── el control del motor manda ───────────────────────────────────────────────────────────
 
 
-def test_the_panel_has_a_switch_for_each_app_decision() -> None:
+def test_the_engine_control_has_a_switch_for_each_app_decision() -> None:
     assert {"burbuja", "incendio"} <= set(bots.CAPABILITIES)
 
 
@@ -192,7 +193,7 @@ async def test_in_shadow_the_engine_records_everything_and_the_app_sees_the_rule
     await engine.drain()
 
     assert got == _bubbles()
-    # La conversación (Calidad LLM), la cola de desacuerdos, las métricas del panel y el costo: el motor oficial.
+    # La conversación (Calidad LLM), la cola de desacuerdos, las métricas (la vara para subir) y el costo: el motor oficial.
     [row] = _rows(vault / LAURA / "evals" / "decisions.jsonl")
     assert (row["stage"], row["capability"], row["provider"], row["jev"], row["bundle"]) == (
         "operador", "burbuja", "sombra", "1", "operador@1"

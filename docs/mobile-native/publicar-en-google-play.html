@@ -217,10 +217,10 @@ hubara.upload.keyPassword=LA_CONTRASEÑA</code></pre>
           <div class="tags"><span class="tag you">Lo apruebas tú</span><span class="tag time">30 minutos de deploy</span></div></div></div>
       <ol>
         <li>Cuando el check «QA emulador — App Operador» esté verde, mergea el <a href="https://github.com/einsteindark-edgm/AgencyHubara/pull/385">PR #385</a>. El workflow de deploy del backend arranca solo y reconstruye la API y los workers.</li>
-        <li>Al terminar, comprueba que la ruta existe y pide login (debe responder <b>401</b>; un 404 quiere decir que el deploy no llegó):
-          <pre><code>curl -s -o /dev/null -w "%{http_code}\n" https://98-88-237-207.sslip.io/api/chats/mobile/fires</code></pre></li>
-        <li>Ese mismo merge corre el deploy del dashboard, que publica la configuración de la app. Comprueba que muestre la dirección de la API:
-          <pre><code>curl -s https://d1hvhzkh01tri0.cloudfront.net/mobile/config.json</code></pre></li>
+        <li>Al terminar, comprueba que la ruta existe y pide login (debe responder <b>401</b>; un 404 quiere decir que el deploy no llegó). <code>TU_API</code> es el <code>api_url</code> de la tienda en <code>infra/terraform/platform/tenants.auto.tfvars</code>:
+          <pre><code>curl -s -o /dev/null -w "%{http_code}\n" https://TU_API/api/chats/mobile/fires</code></pre></li>
+        <li>Ese mismo merge corre el deploy del dashboard, que publica la configuración de la app. Comprueba que muestre la dirección de la API. <code>TU_DASHBOARD</code> es el dominio del dashboard en CloudFront (el que abres en el navegador):
+          <pre><code>curl -s https://TU_DASHBOARD/mobile/config.json</code></pre></li>
       </ol>
       <div class="callout info"><b>Si algún día cambia la IP del servidor:</b> cambia <code>api_url</code> en <code>infra/terraform/platform/tenants.auto.tfvars</code>, aplica Terraform y corre el deploy del dashboard (workflow «frontend-deploy»). El dashboard y la app pasan solos al servidor nuevo; la app lo nota la próxima vez que se abre. No hay que publicar otra versión. Un dominio propio para la API sigue siendo recomendable, pero ya no bloquea.</div>
     </article>
@@ -299,7 +299,7 @@ hubara.upload.keyPassword=LA_CONTRASEÑA</code></pre>
         <li>Desde la carpeta del repositorio, arma el paquete. Lo único fijo que lleva es la dirección de la configuración del servidor; la dirección de la API y Cognito los baja de ahí. La política de privacidad va como respaldo:
           <pre><code>export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 cd android_operator && ./gradlew :app:bundleRelease \
-  -Phubara.configUrl=https://d1hvhzkh01tri0.cloudfront.net/mobile/config.json \
+  -Phubara.configUrl=https://TU_DASHBOARD/mobile/config.json \
   -Phubara.privacyUrl=https://LA_URL_DE_LA_POLITICA</code></pre></li>
         <li>El archivo queda en <code>android_operator/app/build/outputs/bundle/release/app-release.aab</code>.</li>
       </ol>

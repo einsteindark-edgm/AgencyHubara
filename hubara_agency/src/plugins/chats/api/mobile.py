@@ -4,8 +4,8 @@ Rutas delgadas: juntan los hechos (metadata del vault, catálogo, ``OrderFacts``
 y arman lo legal las reglas puras de ``chats/shared/mobile_rules``. Qué burbuja
 va primero y cómo se clasifica un incendio de chat lo decide el motor de
 decisiones oficial (paquete ``operador``, ``mobile_decisions.py``), con el modo
-que el panel «Motor de decisiones» le da a cada conversación; las reglas son
-su respaldo.
+que el control del motor (por comando) le da a cada conversación; las reglas
+son su respaldo.
 
     GET  /api/chats/mobile/suggestions/{session_id}   burbujas por etapa
     GET  /api/chats/mobile/fires                      incendios (chats + pedidos)

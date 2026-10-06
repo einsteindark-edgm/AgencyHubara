@@ -592,11 +592,11 @@ def test_catalog_is_503_without_a_snapshot(h: _Harness) -> None:
     assert (r.status_code, r.json()) == (503, {"error": "catalog_unavailable"})
 
 
-# ── El motor de decisiones (paquete `operador`, panel «Motor de decisiones») ───────────────────────────────
+# ── El motor de decisiones (paquete `operador`, control por comando) ───────────────────────────────
 
 
 def _jev_on(h: _Harness, answers: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Las dos decisiones de la app en «on» desde el panel (motor oficial) y un Jev falso."""
+    """Las dos decisiones de la app en «on» en el control del motor y un Jev falso."""
     from src.plugins.chats.agent.sales.decisions import bots
     from src.plugins.chats.api.mobile_decisions import OperatorDecisions
     from src.sdk import connectorkit

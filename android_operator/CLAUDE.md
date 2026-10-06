@@ -11,7 +11,7 @@ cd android_operator && ./gradlew testDebugUnitTest :core:model:test :core:sdui:t
 cd android_operator && ./gradlew :app:assembleDebug                               # APK debug
 cd android_operator && ./gradlew :app:assembleRelease                             # R8 completo (lo corre la CI)
 cd android_operator && ./gradlew :app:bundleRelease \
-  -Phubara.configUrl=https://d1hvhzkh01tri0.cloudfront.net/mobile/config.json \
+  -Phubara.configUrl=https://<dominio del dashboard>/mobile/config.json \
   -Phubara.privacyUrl=https://…                                                    # .aab para Google Play
 ```
 
@@ -70,8 +70,9 @@ cd android_operator && ./gradlew :app:bundleRelease \
   primero (`burbuja`) y cómo se clasifica un incendio de chat (`incendio`) lo decide el **motor de decisiones
   oficial** (PR #372) con el paquete `operador` (`chats/shared/operator/decisions/`): el resolutor
   `registry.foreign_capability` (`BundledCapability` con los builtins del paquete) + `decide_for_session`
-  (`chats/api/mobile_decisions.py`). Se encienden en el panel «Motor de
-  decisiones» (off | shadow | canary | on, dentro del techo `SALES_CAPABILITIES_CEILING`), como las de ventas.
+  (`chats/api/mobile_decisions.py`). Se encienden como las de ventas: POR COMANDO (`infra/scripts/bot_control.sh`
+  → `decisions/control.py capacidad burbuja shadow`; off | shadow | canary | on dentro del techo
+  `SALES_CAPABILITIES_CEILING`, con la vara al subir). El panel «Motor de decisiones» solo las muestra.
   Cambiar una pregunta o un umbral = versión nueva del paquete (`decisions check` + huella en
   `test_decision_bundles_published.py`), nunca un `if` en la ruta ni un interruptor propio.
 - **El radar no le quita el foco al teclado.** Capa en la misma ventana, `focusProperties { canFocus = false }`,
@@ -171,10 +172,10 @@ cd android_operator && ./gradlew :app:bundleRelease \
     visto (run 36925839845) fue `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (AVD en caché con la app firmada por otro
     runner). `qa.sh` ya desinstala y reinstala; si vuelve, sube la `key` de la caché del AVD en `qa-emulador.yml`.
 26. **La app nunca espera a Jev**: la burbuja lo espera 2,5 s como mucho y los incendios nada; lo que no llegó sale por
-    reglas y el veredicto queda en la caché del proceso para la MISMA versión del chat y el mismo modo del panel (la
+    reglas y el veredicto queda en la caché del proceso para la MISMA versión del chat y el mismo modo (la
     siguiente consulta lo usa; un deploy la vacía). Los incendios de PEDIDOS (retraso, pago sin verificar) son hechos:
     no son una decisión. El motor deja cada decisión en `<vault>/<sid>/evals/decisions.jsonl` (`stage: "operador"`),
-    sus métricas (la vara del panel), los desacuerdos y el costo (`jev_usage`). El backend de prueba del emulador
+    sus métricas (la vara para subir), los desacuerdos y el costo (`jev_usage`). El backend de prueba del emulador
     corre Jev falso (`PERCEPTION_PROVIDER=fake`, sin red) con las dos decisiones en sombra (`seed.py` escribe
     `_rollout/decisions.json`; techo `shadow`): cada escenario recorre el motor sin cambiar lo que ve la app.
 

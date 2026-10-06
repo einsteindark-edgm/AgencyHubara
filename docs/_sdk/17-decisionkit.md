@@ -208,7 +208,7 @@ para no heredar el catálogo de ventas (DB003 pediría sus 29 capacidades). Y
 corre por el `decide()` de ventas: el resolutor
 `registry.foreign_capability(nombre, bundle=…, builtins=…)` arma un
 `BundledCapability` con los builtins de ese paquete, así que una capacidad de
-otro catálogo tiene el mismo panel, métricas, desacuerdos y registro.
+otro catálogo tiene el mismo control, métricas, desacuerdos y registro.
 
 El motor de ventas lo envuelve en `decisions/bundled.py` (`BundledCapability`,
 con la forma de `Capability`) y los lugares lo piden por nombre al resolutor

@@ -11,7 +11,7 @@ opciones (las jugadas legales de las reglas), las reglas de respaldo y el piso.
 Sin Temporal ni I/O de red. Corre por el motor oficial: la API móvil
 (`chats/api/mobile_decisions.py`) envuelve cada capacidad en `BundledCapability`
 con `builtin` de acá y la decide con `decide_for_session` (el modo de cada
-conversación sale del panel «Motor de decisiones»).
+conversación sale del control del motor, que se mueve por comando).
 """
 from __future__ import annotations
 

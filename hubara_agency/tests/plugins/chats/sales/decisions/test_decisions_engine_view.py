@@ -107,10 +107,13 @@ def test_the_operator_app_decisions_show_up_with_their_own_bundle(client: TestCl
     assert (decisions["burbuja"]["mode"], decisions["incendio"]["mode"]) == ("off", "shadow")
 
 
-def test_the_panel_moves_an_operator_app_decision(client: TestClient) -> None:
-    r = client.put("/api/chats/perception/capabilities", json={"capability": "burbuja", "mode": "shadow"})
+def test_the_command_moves_an_operator_app_decision(client: TestClient, tmp_path: Path) -> None:
+    """Como las de la tienda, por comando (`decisions/control.py`, desde el 2026-10-06 el
+    panel es de solo lectura): la pestaña muestra el modo nuevo."""
+    from src.plugins.chats.agent.sales.decisions import control
 
-    assert r.status_code == 200, r.text
-    assert r.json()["capabilities"]["burbuja"]["mode"] == "shadow"
+    out = control.set_capability(tmp_path, "burbuja", "shadow", actor="prueba")
+
+    assert out["capabilities"]["burbuja"]["mode"] == "shadow"
     decisions = {d["capability"]: d["mode"] for d in client.get("/api/chats/perception/engine").json()["decisions"]}
     assert decisions["burbuja"] == "shadow"

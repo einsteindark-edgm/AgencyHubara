@@ -5,9 +5,9 @@ de chat (`incendio`) son capacidades del paquete `operador`
 (`chats/shared/operator/decisions/`). Se resuelven como las de ventas (el
 resolutor `registry.foreign_capability`: `BundledCapability` con los builtins
 de ese paquete) y se deciden con
-`decide_for_session`: el modo de cada conversación sale del panel «Motor de
-decisiones» (`_rollout/decisions.json`, dentro del techo
-`SALES_CAPABILITIES_CEILING`) y el motor deja la decisión en la conversación
+`decide_for_session`: el modo de cada conversación sale del control del motor
+(`_rollout/decisions.json`, que se mueve por comando con `decisions/control.py`,
+dentro del techo `SALES_CAPABILITIES_CEILING`) y el motor deja la decisión en la conversación
 (`stage: "operador"`), sus métricas, la cola de desacuerdos y el costo de Jev.
 Las reglas de `mobile_rules` arman lo legal y son la regla de cada capacidad.
 
@@ -191,7 +191,7 @@ class OperatorDecisions:
             return None
 
     def _provider(self, name: str, session_id: str) -> str:
-        """El proveedor que el panel le da a la capacidad en esta conversación
+        """El proveedor que el control le da a la capacidad en esta conversación
         (reglas | sombra | jev): parte de la llave de la caché, para que mover
         el control valga en la siguiente consulta."""
         return bot_for_session(session_id, vault_dir=self._vault).provider(name)

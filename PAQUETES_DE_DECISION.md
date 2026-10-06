@@ -563,8 +563,8 @@ en canary/on, y el techo de producción es `off`.
   sin registrar siguen graves). Corren por el MISMO `decide()`: el resolutor
   `registry.foreign_capability(nombre, bundle=…, builtins=…)` (un
   `BundledCapability` con los builtins de su paquete) + `decide_for_session` (`chats/api/mobile_decisions.py`), así que el modo
-  sale del panel «Motor de decisiones» (`bots.CAPABILITIES` las trae; techo
-  `SALES_CAPABILITIES_CEILING`) y quedan las métricas, los desacuerdos, el
+  sale del control del motor (`bots.CAPABILITIES` las trae; se mueven por
+  comando con `decisions/control.py`, techo `SALES_CAPABILITIES_CEILING`) y quedan las métricas, los desacuerdos, el
   costo y la decisión en la conversación (`stage: "operador"`). La pestaña
   muestra el paquete junto al de la tienda (`bundles`). Lo único propio de
   la app es la latencia: la burbuja espera 2,5 s como mucho, los incendios
