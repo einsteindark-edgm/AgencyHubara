@@ -1410,32 +1410,152 @@ def _answers_while_the_trace_is_saved(box: dict, text: str, traces: list[dict]):
     return persist_turn_trace
 
 
-@pytest.mark.parametrize("window", ["outbox de Meta", "traza"])
+def _egress_that_greets_first():
+    """El egreso deja salir el texto tal cual y, solo en su primera llamada,
+    pide la bienvenida del primer contacto (`greeting_needed`)."""
+    calls = {"n": 0}
+
+    @activity.defn(name="decide_egress")
+    async def decide_egress(inp: EgressInput) -> EgressOutput:
+        calls["n"] += 1
+        return EgressOutput(
+            text=inp.final_text, llm_text=inp.final_text, final_text=inp.final_text, greeting_needed=calls["n"] == 1
+        )
+
+    return decide_egress
+
+
+def _answers_during_a_send(box: dict, text: str, *, at_call: int, sent: list[str]):
+    """El cliente contesta mientras sale el envío número `at_call` del turno
+    (el saludo o el texto)."""
+
+    @activity.defn(name="send_whatsapp_message_activity")
+    async def send_whatsapp_message_activity(
+        session_id: str, message: str, decided_by_engine: bool = False
+    ) -> list[dict]:
+        sent.append(message)
+        if len(sent) == at_call:
+            await _writes(box, text)()
+        return [{"wamid": f"wamid.out{len(sent)}", "text": message}]
+
+    return send_whatsapp_message_activity
+
+
+def _answers_while_the_panel_saves(box: dict, text: str, *, at_call: int):
+    """El cliente contesta mientras el panel guarda el mensaje número
+    `at_call` del turno (el del saludo: entre el saludo y el texto)."""
+    calls = {"n": 0}
+
+    @activity.defn(name="persist_assistant_message_activity")
+    async def persist_assistant_message_activity(
+        session_id: str, message: str, tools_used: list[str] | None = None
+    ) -> None:
+        calls["n"] += 1
+        if calls["n"] == at_call:
+            await _writes(box, text)()
+
+    return persist_assistant_message_activity
+
+
+def _answers_during_the_components_flush(box: dict, text: str, *, report: list[dict]):
+    """El cliente contesta mientras el flush le entrega los componentes del
+    turno (la primera salida si no hubo saludo ni texto)."""
+    calls = {"n": 0}
+
+    @activity.defn(name="flush_pending_ui_intents_activity")
+    async def flush_pending_ui_intents_activity(session_id: str) -> list[dict]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            await _writes(box, text)()
+            return list(report)
+        return []
+
+    return flush_pending_ui_intents_activity
+
+
+def _window_after_the_first_output(window: str, box: dict, answer: str) -> dict[str, Any]:
+    """Los fakes de `_run` para que el cliente conteste en `window`, siempre
+    DESPUÉS de que empezó la primera salida del turno."""
+    if window == "outbox de Meta":
+        return {"replace": [_answers_during_the_capi_flush(box, answer)]}
+    if window == "traza":
+        return {"replace": [_answers_while_the_trace_is_saved(box, answer, [])]}
+    if window == "envío del saludo":
+        return {
+            "prior_history": None,
+            "replace": [_egress_that_greets_first(), _answers_during_a_send(box, answer, at_call=1, sent=[])],
+        }
+    if window == "entre el saludo y el texto":
+        return {
+            "prior_history": None,
+            "replace": [_egress_that_greets_first(), _answers_while_the_panel_saves(box, answer, at_call=1)],
+        }
+    if window == "envío del texto":
+        return {"replace": [_answers_during_a_send(box, answer, at_call=1, sent=[])]}
+    if window == "flush de componentes":
+        return {
+            "responses": [_tool_resp("present_products"), _final("La tercera es la Vela Pino 🤍")],
+            "tool_results": {"present_products": json.dumps({"queued": True})},
+            "replace": [_answers_during_the_components_flush(box, answer, report=_CATALOG_DELIVERED)],
+        }
+    raise AssertionError(window)
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        "outbox de Meta",
+        "traza",
+        # Revisión 2 del PR #391: la frontera de «primera salida» en cada
+        # camino (cada una mata una mutación: sin marca en el saludo, la marca
+        # del texto o del flush después de enviar).
+        "envío del saludo",
+        "entre el saludo y el texto",
+        "envío del texto",
+        "flush de componentes",
+    ],
+)
 async def test_an_answer_after_the_reply_went_out_is_not_a_continuation(tmp_path: Path, window: str) -> None:
-    """El cliente ya leyó «¿Me confirmas el teléfono?» y contesta mientras el
-    turno termina (el outbox de Meta, la traza): es su respuesta, no la
-    continuación de la ráfaga. La nota le diría al modelo lo contrario («no los
-    tomes como la respuesta a tu última pregunta»). Revisión del PR #391."""
+    """El cliente ya tiene delante algo de este turno (el saludo, el texto, el
+    catálogo) y contesta: es su respuesta, no la continuación de la ráfaga. La
+    nota le diría al modelo lo contrario («no los tomes como la respuesta a tu
+    última pregunta»). Revisión del PR #391."""
     box: dict = {}
     answer = "Es el mismo de este chat"
-    fake = (
-        _answers_during_the_capi_flush(box, answer)
-        if window == "outbox de Meta"
-        else _answers_while_the_trace_is_saved(box, answer, [])
-    )
+    kwargs: dict[str, Any] = {
+        "customer_text": "Te paso la dirección: Carrera 7 # 12-34, Barrio Centro",
+        "responses": [_final("¿Me confirmas el teléfono?"), _final("Listo, quedó el teléfono 🤍")],
+        **_window_after_the_first_output(window, box, answer),
+    }
 
-    tracker = await _run(
-        HubaraSalesSessionWorkflowV2, tmp_path,
-        customer_text="Te paso la dirección: Carrera 7 # 12-34, Barrio Centro",
-        responses=[_final("¿Me confirmas el teléfono?"), _final("Listo, quedó el teléfono 🤍")],
-        replace=[fake],
-        box=box,
-    )
+    tracker = await _run(HubaraSalesSessionWorkflowV2, tmp_path, box=box, **kwargs)
 
-    assert _sent(tracker) == ["¿Me confirmas el teléfono?", "Listo, quedó el teléfono 🤍"]
     second = _customer_prompts(tracker)[1]
     assert second.message == answer
     assert not any(n.startswith("[CONTINUACIÓN") for n in second.plugin_context or [])
+
+
+async def test_when_nothing_reached_the_customer_a_later_message_still_continues(tmp_path: Path) -> None:
+    """Control (revisión 2 del PR #391): el catálogo no se entregó (el flush
+    lo reporta con `ok: false`) y no hubo texto. Al cliente no le llegó nada de
+    este turno, así que lo que escribe al final sigue siendo continuación: un
+    flush sin entregas no es una salida."""
+    box: dict = {}
+
+    tracker = await _run(
+        HubaraSalesSessionWorkflowV2, tmp_path,
+        customer_text="¿me mandas el catálogo?",
+        responses=[_tool_resp("present_products"), _final("Aquí está el catálogo 🤍")],
+        tool_results={"present_products": json.dumps({"queued": True})},
+        flush_results=[{"kind": "products_list", "wamid": None, "ok": False}],
+        replace=[_answers_during_the_capi_flush(box, "no me llegó nada")],
+        box=box,
+    )
+
+    second = _customer_prompts(tracker)[1]
+    assert second.message == "no me llegó nada"
+    [note] = [n for n in second.plugin_context or [] if n.startswith("[CONTINUACIÓN")]
+    assert "«¿me mandas el catálogo?»" in note
 
 
 async def test_leftover_messages_get_one_note_without_since_your_last_reply(tmp_path: Path) -> None:
@@ -1480,4 +1600,7 @@ async def test_a_mixed_batch_says_which_message_came_before_the_reply_and_which_
     before, after = note.split("Después de que esa respuesta salió")
     assert '"y de navidad?"' in before and "me gusta la tercera" not in before
     assert '"me gusta la tercera"' in after
+    # Con un mensaje antes y otros después, la nota no pierde lo que pedía la
+    # nota de ráfaga (revisión 2 del PR #391).
+    assert "Responde al conjunto, sin ignorar ninguno ni contestar solo el último." in after
 

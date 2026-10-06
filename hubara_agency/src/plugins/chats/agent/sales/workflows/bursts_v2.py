@@ -131,9 +131,12 @@ def continuation_note(previous: Sequence[str], current: Sequence[str], later: Se
             "tomes como la respuesta a tu última pregunta si no lo es."
         )
     after = list(later)
+    # Con mensajes antes y después, lo que pedía la nota de ráfaga que esta
+    # reemplaza (revisión 2 del PR #391: con uno solo antes, se perdía).
     tail = (
         f"\nDespués de que esa respuesta salió, el cliente escribió:\n{_listed(after)}\n"
-        "Eso sí puede ser su respuesta."
+        "Eso sí puede ser su respuesta. Responde al conjunto, sin ignorar ninguno ni "
+        "contestar solo el último."
         if after
         else ""
     )
