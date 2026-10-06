@@ -160,6 +160,27 @@ describe("TraceStepDetail", () => {
     expect(screen.getByText("typesafe/jev-1.13")).toBeInTheDocument();
   });
 
+  it("el corte antes de grabar dice que la respuesta no salió y que el turno vuelve a empezar (ráfagas, 2026-10-06)", () => {
+    show([{ i: 1, at_ms: 0, kind: "cut", reason: "before_record", text: "¿Me confirmas el barrio?" }], 0);
+
+    expect(screen.getByText(/siguió escribiendo antes de que saliera la respuesta: no se envía/)).toBeInTheDocument();
+    expect(screen.getByText("¿Me confirmas el barrio?")).toBeInTheDocument();
+  });
+
+  it("el corte del cierre no promete que el turno vuelve a empezar: el mensaje nuevo va al turno siguiente", () => {
+    show([{ i: 1, at_ms: 0, kind: "cut", reason: "checkpoint_b", text: "¿Cuál te gusta más?" }], 0);
+
+    expect(screen.getByText(/se responde en el turno siguiente/)).toBeInTheDocument();
+    expect(screen.queryByText(/vuelve a empezar/)).not.toBeInTheDocument();
+  });
+
+  it("el reinicio dice cuánto esperó a que el cliente terminara de escribir", () => {
+    show([{ i: 1, at_ms: 0, kind: "restart", attempt: 3, drained: 2, reason: "before_record", settle_ms: 1500 }], 0);
+
+    expect(screen.getByText("Esperó a que terminara de escribir")).toBeInTheDocument();
+    expect(screen.getByText("1,5 s")).toBeInTheDocument();
+  });
+
   it("el envío dice qué burbuja salió, cuál no y cuál no tiene confirmación", () => {
     show([{ i: 1, at_ms: 0, kind: "outbound", bubbles: [
       { kind: "text", text: "Hola", delivered: true, wamid: "wamid.X" },
