@@ -104,9 +104,19 @@ def last_visible_agent_text(history: list[dict[str, Any]]) -> str | None:
     deseas?»). La narración que acompaña una llamada nunca se envía (PR
     #213) y un `send_reply` retenido o rechazado (`sent: false`) no salió.
     Un assistant con contenido y sin `tool_calls` es la burbuja de los
-    historiales de antes."""
+    historiales de antes.
+
+    Solo cuenta lo que el asesor dijo JUSTO ANTES del mensaje del cliente: la
+    búsqueda no cruza el mensaje anterior del cliente (revisión del PR #390:
+    una pregunta de cantidad de turnos viejos se volvía a capturar). Si el
+    mensaje de ahora ya viene al final del historial, se salta."""
     held = _replies_not_sent(history)
-    for msg in reversed(history):
+    end = len(history)
+    while end > 0 and history[end - 1].get("role") == "user":
+        end -= 1
+    for msg in reversed(history[:end]):
+        if msg.get("role") == "user":
+            return None
         if msg.get("role") != "assistant":
             continue
         calls = msg.get("tool_calls")

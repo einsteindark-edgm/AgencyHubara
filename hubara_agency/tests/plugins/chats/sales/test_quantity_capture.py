@@ -192,14 +192,10 @@ def test_last_visible_agent_text_takes_the_last_reply_of_the_message() -> None:
     assert last_visible_agent_text(history) == _AGENT_ASKED
 
 
-def test_last_visible_agent_text_skips_a_reply_that_did_not_go_out() -> None:
-    """Un `send_reply` retenido o rechazado (`sent: false`) no le llegó al
-    cliente: la última burbuja que vio es la anterior."""
-    listed = "Tenemos estos aromas: Lavanda, Vainilla, Canela y Sándalo"
-    history = [
-        {"role": "assistant", "content": "", "tool_calls": [_reply_call("r1", _AGENT_ASKED)]},
-        _reply_result("r1", _AGENT_ASKED),
-        {"role": "user", "content": "¿Qué aromas tienen?"},
+def _picker_after_a_held_list(listed: str) -> list[dict]:
+    """El turno del asesor: su lista en texto quedó retenida (`sent: false`) y
+    el turno terminó con el selector (una tarjeta, sin texto)."""
+    return [
         {"role": "assistant", "content": "", "tool_calls": [_reply_call("r2", listed)]},
         {
             "role": "tool",
@@ -214,7 +210,35 @@ def test_last_visible_agent_text_skips_a_reply_that_did_not_go_out() -> None:
         {"role": "tool", "content": "{\"queued\": true}", "tool_call_id": "p1"},
     ]
 
-    assert last_visible_agent_text(history) == _AGENT_ASKED
+
+def test_last_visible_agent_text_skips_a_reply_that_did_not_go_out() -> None:
+    """Un `send_reply` retenido o rechazado (`sent: false`) no le llegó al
+    cliente: no es la última burbuja que vio (vio el selector)."""
+    listed = "¿Cuántas unidades deseas? Tenemos Lavanda, Vainilla, Canela y Sándalo"
+    history = [{"role": "user", "content": "¿Qué aromas tienen?"}, *_picker_after_a_held_list(listed)]
+
+    assert last_visible_agent_text(history) is None
+
+
+def test_only_what_the_agent_said_right_before_this_message_counts() -> None:
+    """Revisión del PR #390: la búsqueda hacia atrás cruzaba el mensaje
+    anterior del cliente y tomaba una pregunta de cantidad de turnos viejos
+    (la regla de hoy la volvía a capturar en TODOS los clientes, con sus
+    falsos positivos: «1 roja y 1 negra» → 1, «15 de octubre» → 15). Solo
+    cuenta lo que el asesor dijo justo antes de este mensaje del cliente."""
+    old_turn = [
+        {"role": "assistant", "content": "", "tool_calls": [_reply_call("r1", _AGENT_ASKED)]},
+        _reply_result("r1", _AGENT_ASKED),
+    ]
+    history = [*old_turn, {"role": "user", "content": "¿Qué aromas tienen?"}, *_picker_after_a_held_list("Tenemos estos")]
+    legacy = [{"role": "assistant", "content": _AGENT_ASKED}, {"role": "user", "content": "2"},
+              {"role": "assistant", "content": "", "tool_calls": [{"id": "s1", "type": "function",
+                                                                   "function": {"name": "set_order_slot"}}]}]
+
+    assert last_visible_agent_text(history) is None
+    assert last_visible_agent_text(legacy) is None
+    # El mensaje de ahora puede venir ya al final del historial: no corta.
+    assert last_visible_agent_text([*old_turn, {"role": "user", "content": "15 de octubre"}]) == _AGENT_ASKED
 
 
 # ---------------------------------------------------------------------------
