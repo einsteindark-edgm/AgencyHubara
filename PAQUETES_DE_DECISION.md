@@ -552,6 +552,19 @@ en canary/on, y el techo de producción es `off`.
     (render del `.env` desde SSM); volver atrás = `"ventas"`. `ventas-2` no
     viaja a un clon de forge (`deletes`).
 
+**App Operador (2026-10-05).**
+- La app nativa del operador (PR #385) tiene su paquete,
+  `chats/shared/operator/decisions/bundles/operador/` (catálogo propio: no
+  hereda el de ventas, que exigiría sus 29 capacidades). Dos capacidades:
+  `burbuja` (choice entre las jugadas legales que ya arman las reglas de
+  `mobile_rules` + «ninguna»; ≥ 0,6 esa burbuja va primero y resaltada) e
+  `incendio` (gravedad, tipo y, si ya hubo una lectura, «¿empeoró?»; cada
+  parte con certeza es de Jev, la otra de las reglas; piso: salud o pedido
+  sin registrar siguen graves). Interruptor `OPERATOR_APP_JEV` (Terraform
+  `lab.operator_app_jev`, off | shadow | on). La app nunca espera a Jev: la
+  burbuja 2,5 s como mucho, los incendios nada (caché por versión del chat).
+  Decisiones en `decisions.jsonl` con `stage: "operador"`; costo en `jev_usage`.
+
 **F8 hecho (2026-10-02).**
 - El lector de Jev del Order Sentinel tiene su paquete,
   `order_sentinel/agent/decisions/bundles/centinela/` (su propio catálogo
@@ -605,6 +618,7 @@ tocarlos.
 | Remarketing (contactar, producto nombrado, fuera de catálogo) | `decide()` vía el enchufe compartido | sí (F2–F4) |
 | Abandono (cierre) | `decide()` | sí (F2) |
 | Order Sentinel | directo al puerto, con las tablas de su paquete (`centinela`) | sí (F8) |
+| App Operador: burbuja principal e incendios de chat (`chats/api/mobile_jev.py`) | directo al puerto, con las tablas de su paquete (`operador`) | sí (2026-10-05) |
 
 **Dos huecos que cierra F2:**
 

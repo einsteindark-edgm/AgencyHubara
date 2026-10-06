@@ -1,0 +1,115 @@
+# yaml-language-server: $schema=../../../../../../../../../schemas/decision-capability.schema.json
+#
+# Un chat que espera la respuesta de una persona (lo detectan las reglas: humano
+# al mando y mensajes del cliente sin responder). Jev lee la conversación y
+# decide qué tan urgente es, qué plantea el cliente y, si ya lo había leído, si
+# la situación empeoró. Cada parte con certeza (≥ choice / ≥ yes) es de Jev; la
+# que no, la de las reglas. Sin gravedad ni tipo confiables, duda: las reglas.
+# Piso: un tema de salud o un pedido que no se pudo registrar sigue grave.
+capability: incendio
+value: "{severity: string, kind: string, getting_worse: bool}"
+input: Incendio
+rule: {builtin: rules_fire}
+state: {builtin: fire_board, with: {max_messages: 10, max_chars: 300}}
+questions:
+  - id: incendio.gravedad
+    kind: choice
+    text: "¿Qué tan urgente es que alguien de la tienda le responda a este cliente?"
+    criteria:
+      "grave": "Grave: hay que responder ya (está molesto, amenaza con irse o con reclamar, tiene un problema de salud, un pago o un pedido trabado, o insiste sin respuesta)."
+      "hoy": "Hoy: necesita respuesta pronto, pero puede esperar unos minutos."
+      "puede_esperar": "Puede esperar: no hay nada pendiente que urja (agradece, se despide o ya se le respondió)."
+  - id: incendio.tipo
+    kind: choice
+    text: "¿Qué plantea el cliente en lo que sigue sin respuesta?"
+    criteria:
+      "pide_humano": "pide hablar con una persona"
+      "queja": "se queja o está molesto"
+      "estado_pedido": "pregunta cómo va su pedido o cuándo le llega"
+      "comprobante": "manda o menciona un comprobante de pago"
+      "problema_pedido": "tiene un problema con su pedido o con el envío"
+      "salud": "menciona un tema de salud o de seguridad"
+      "felicitacion": "felicita o agradece"
+      "compra": "quiere comprar o pregunta por productos"
+      "otro": "otra cosa"
+  - id: incendio.empeora
+    kind: noul
+    when: "inp.previous != null"
+    text: "Comparado con la evaluación anterior de este chat, ¿la situación del cliente empeoró?"
+    criteria:
+      "true": "sí"
+      "false": "no"
+thresholds: {"choice": 0.6, "yes": 0.7}
+vars:
+  grave_ok: "'incendio.gravedad' in choice && conf['incendio.gravedad'] >= th['choice']"
+  tipo_ok: "'incendio.tipo' in choice && conf['incendio.tipo'] >= th['choice']"
+  severity: >-
+    !vars.grave_ok ? rule.severity :
+    choice['incendio.gravedad'] == 'grave' ? 'grave' :
+    choice['incendio.gravedad'] == 'hoy' ? 'hoy' :
+    choice['incendio.gravedad'] == 'puede_esperar' ? 'espera' : rule.severity
+  kind: >-
+    !vars.tipo_ok ? rule.kind :
+    choice['incendio.tipo'] == 'pide_humano' ? 'wants_human' :
+    choice['incendio.tipo'] == 'queja' ? 'angry' :
+    choice['incendio.tipo'] == 'estado_pedido' ? 'asking_status' :
+    choice['incendio.tipo'] == 'comprobante' ? 'payment_proof' :
+    choice['incendio.tipo'] == 'problema_pedido' ? 'order_problem' :
+    choice['incendio.tipo'] == 'salud' ? 'health' :
+    choice['incendio.tipo'] == 'felicitacion' ? 'praise' :
+    choice['incendio.tipo'] == 'compra' ? 'sale_at_risk' :
+    choice['incendio.tipo'] == 'otro' ? 'other' : rule.kind
+  worse: "'incendio.empeora' in p ? p['incendio.empeora'] >= th['yes'] : rule.getting_worse"
+decide:
+  - when: "!vars.grave_ok && !vars.tipo_ok"
+    then: doubt
+  - otherwise: {expr: "{'severity': vars.severity, 'kind': vars.kind, 'getting_worse': vars.worse}"}
+floor: {builtin: safety_stays_grave}
+same: {builtin: same_value}
+examples:
+  - answers: {incendio.gravedad: {choice: grave, p: 0.9}, incendio.tipo: {choice: queja, p: 0.9}}
+    rule: {severity: hoy, kind: other, getting_worse: false}
+    input: {previous: null, reason: null}
+    expect: {severity: grave, kind: angry, getting_worse: false}
+  - answers: {incendio.gravedad: {choice: puede_esperar, p: 0.6}, incendio.tipo: {choice: felicitacion, p: 0.6}}
+    rule: {severity: hoy, kind: other, getting_worse: false}
+    input: {previous: null, reason: null}
+    expect: {severity: espera, kind: praise, getting_worse: false}
+  - answers: {incendio.gravedad: {choice: grave, p: 0.59}, incendio.tipo: {choice: queja, p: 0.59}}
+    rule: {severity: hoy, kind: other, getting_worse: false}
+    input: {previous: null, reason: null}
+    expect: doubt
+  # Solo el tipo es confiable: la gravedad es la de las reglas.
+  - answers: {incendio.tipo: {choice: estado_pedido, p: 0.9}}
+    rule: {severity: hoy, kind: other, getting_worse: false}
+    input: {previous: null, reason: null}
+    expect: {severity: hoy, kind: asking_status, getting_worse: false}
+  - answers: {incendio.gravedad: {choice: hoy, p: 0.9}, incendio.tipo: {choice: compra, p: 0.9}, incendio.empeora: 0.9}
+    rule: {severity: espera, kind: other, getting_worse: false}
+    input: {previous: "hoy, pregunta por su pedido", reason: null}
+    expect: {severity: hoy, kind: sale_at_risk, getting_worse: true}
+  - answers: {incendio.gravedad: {choice: hoy, p: 0.9}, incendio.tipo: {choice: comprobante, p: 0.9}, incendio.empeora: 0.69}
+    rule: {severity: espera, kind: other, getting_worse: true}
+    input: {previous: "hoy, comprobante", reason: null}
+    expect: {severity: hoy, kind: payment_proof, getting_worse: false}
+  # Una opción que no es de la lista no decide esa parte.
+  - answers: {incendio.gravedad: {choice: otra, p: 0.9}, incendio.tipo: {choice: problema_pedido, p: 0.9}}
+    rule: {severity: hoy, kind: other, getting_worse: false}
+    input: {previous: null, reason: null}
+    expect: {severity: hoy, kind: order_problem, getting_worse: false}
+  - answers: {incendio.gravedad: {choice: grave, p: 0.9}, incendio.tipo: {choice: pide_humano, p: 0.9}}
+    rule: {severity: hoy, kind: wants_human, getting_worse: false}
+    input: {previous: null, reason: EXPLICIT_REQUEST}
+    expect: {severity: grave, kind: wants_human, getting_worse: false}
+  - answers: {incendio.gravedad: {choice: grave, p: 0.9}, incendio.tipo: {choice: salud, p: 0.9}}
+    rule: {severity: grave, kind: health, getting_worse: false}
+    input: {previous: null, reason: HEALTH_SAFETY}
+    expect: {severity: grave, kind: health, getting_worse: false}
+  - answers: {incendio.gravedad: {choice: hoy, p: 0.9}, incendio.tipo: {choice: otro, p: 0.9}}
+    rule: {severity: espera, kind: other, getting_worse: false}
+    input: {previous: null, reason: null}
+    expect: {severity: hoy, kind: other, getting_worse: false}
+  - answers: {}
+    rule: {severity: hoy, kind: other, getting_worse: false}
+    input: {previous: null, reason: null}
+    expect: doubt

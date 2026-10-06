@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=../../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿Qué acción le conviene enviar ahora al operador?», entre las burbujas que
+# ya permiten las reglas de la etapa (`mobile_rules.suggest_actions`): Jev no
+# inventa acciones, elige una de la lista. Con certeza (≥ choice) esa burbuja
+# va primero y resaltada; «ninguna» = no se resalta ninguna (el cliente necesita
+# una respuesta escrita). Si duda, quedan el orden y el resaltado de las reglas.
+capability: burbuja
+value: string
+input: Burbujas
+rule: {builtin: rules_first}
+state: {builtin: chat_board, with: {max_messages: 12, max_chars: 300}}
+questions:
+  - id: burbuja.cual
+    kind: choice
+    text: "¿Cuál de estas acciones le conviene enviar ahora al operador de la tienda, según lo que pide el cliente?"
+    options: {builtin: legal_bubbles}
+    criteria:
+      "ninguna": "Ninguna: lo que el cliente necesita ahora es una respuesta escrita del operador, no una de estas acciones."
+thresholds: {"choice": 0.6}
+decide:
+  - when: "!('burbuja.cual' in choice) || conf['burbuja.cual'] < th['choice']"
+    then: doubt
+  - when: "choice['burbuja.cual'] == 'ninguna'"
+    then: ""
+  - when: "choice['burbuja.cual'] in opt['burbuja.cual']"
+    then: {expr: "opt['burbuja.cual'][choice['burbuja.cual']]"}
+  - otherwise: doubt
+floor: {builtin: jev}
+same: {builtin: same_value}
+examples:
+  - {answers: {burbuja.cual: {choice: mas_fotos, p: 0.9}}, options: {burbuja.cual: {enviar_aromas: "0", mas_fotos: "1"}}, expect: "1"}
+  - {answers: {burbuja.cual: {choice: mas_fotos, p: 0.6}}, options: {burbuja.cual: {enviar_aromas: "0", mas_fotos: "1"}}, expect: "1"}
+  - {answers: {burbuja.cual: {choice: mas_fotos, p: 0.59}}, options: {burbuja.cual: {enviar_aromas: "0", mas_fotos: "1"}}, expect: doubt}
+  - {answers: {burbuja.cual: {choice: ninguna, p: 0.9}}, expect: ""}
+  - {answers: {burbuja.cual: {choice: inventada, p: 0.9}}, options: {burbuja.cual: {enviar_aromas: "0"}}, expect: doubt}
+  - {answers: {}, expect: doubt}

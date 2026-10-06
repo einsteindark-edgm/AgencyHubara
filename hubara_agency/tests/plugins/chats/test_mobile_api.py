@@ -590,3 +590,62 @@ def test_catalog_is_503_without_a_snapshot(h: _Harness) -> None:
     h.deps.catalog = None
     r = h.client.get("/api/chats/catalog")
     assert (r.status_code, r.json()) == (503, {"error": "catalog_unavailable"})
+
+
+# ── Jev (paquete `operador`, OPERATOR_APP_JEV) ───────────────────────────────
+
+
+def _jev_on(h: _Harness, answers: dict[str, Any]) -> Any:
+    from src.plugins.chats.api.mobile_jev import OperatorJev
+    from src.sdk.connectorkit import FakePerceptionAdapter
+
+    h.deps.jev = OperatorJev(port=FakePerceptionAdapter(answers), vault_dir=h.vault, now_ms=lambda: NOW,
+                             mode=lambda: "on")
+    return h.deps.jev
+
+
+def _choice(qid: str, option: str, p: float) -> Any:
+    from src.sdk.connectorkit import TypedAnswer
+
+    return TypedAnswer(id=qid, kind="choice", choice=option, probs=((option, p),), confidence=p)
+
+
+def test_with_jev_on_its_bubble_goes_first(h: _Harness) -> None:
+    h.seed(_LAURA, {
+        **_open_window(),
+        "active_route": "humano",
+        "episodes": [_episode({"producto": "Dúo Zodiacal", "cantidad": "2"})],
+    }, events=[{"role": "user", "content": "¿me muestras más fotos del dúo?", "timestamp": _iso(NOW - 5 * _MIN)}])
+    rules = h.client.get(f"/api/chats/mobile/suggestions/{_LAURA}").json()
+    assert rules["decided_by"] == "rules" and len(rules["suggestions"]) >= 2
+    last = rules["suggestions"][-1]
+    _jev_on(h, {"burbuja.cual": _choice("burbuja.cual", "mas_fotos", 0.9)})
+
+    body = h.client.get(f"/api/chats/mobile/suggestions/{_LAURA}").json()
+
+    assert last["label"] == "Más fotos"
+    assert body["decided_by"] == "jev"
+    assert (body["suggestions"][0]["label"], body["suggestions"][0]["prominence"]) == ("Más fotos", "primary")
+    assert sorted(s["label"] for s in body["suggestions"]) == sorted(s["label"] for s in rules["suggestions"])
+
+
+def test_with_jev_on_a_fire_is_classified_from_the_next_look(h: _Harness) -> None:
+    h.seed("wa_test_sofia", {
+        "active_route": "humano", "profile": {"name": "Sofía Pérez"}, "last_inbound_at_ms": NOW - 3 * _MIN,
+    }, events=[
+        {"role": "assistant", "sender": "human", "content": "¡Hola! Ya te ayudo", "timestamp": _iso(NOW - 10 * _MIN)},
+        {"role": "user", "content": "esto es una falta de respeto, llevo días esperando", "timestamp": _iso(NOW - 3 * _MIN)},
+    ])
+    jev = _jev_on(h, {
+        "incendio.gravedad": _choice("incendio.gravedad", "grave", 0.9),
+        "incendio.tipo": _choice("incendio.tipo", "queja", 0.9),
+    })
+
+    with h.client as client:
+        first = client.get("/api/chats/mobile/fires").json()
+        client.portal.call(jev.drain)
+        second = client.get("/api/chats/mobile/fires").json()
+
+    assert first["decided_by"] == "rules" and first["fires"][0]["severity"] == "hoy"
+    assert second["decided_by"] == "jev"
+    assert (second["fires"][0]["severity"], second["fires"][0]["kind"]) == ("grave", "angry")

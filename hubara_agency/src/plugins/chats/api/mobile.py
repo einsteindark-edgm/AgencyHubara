@@ -1,7 +1,10 @@
 """Contrato HTTP de la app móvil del operador (Android).
 
 Rutas delgadas: juntan los hechos (metadata del vault, catálogo, ``OrderFacts``)
-y deciden las reglas puras de ``chats/shared/mobile_rules`` — nada de LLM.
+y deciden las reglas puras de ``chats/shared/mobile_rules``. Con
+``OPERATOR_APP_JEV`` en shadow/on, Jev (paquete ``operador``, ``mobile_jev.py``)
+elige la burbuja principal y clasifica los incendios de chat; las reglas son lo
+legal y el respaldo.
 
     GET  /api/chats/mobile/suggestions/{session_id}   burbujas por etapa
     GET  /api/chats/mobile/fires                      incendios (chats + pedidos)
@@ -42,6 +45,8 @@ from src.plugins.chats.api.dashboard import (
     _compute_pending_payment_order_id,
     _order_ref_candidate_ids,
 )
+from src.plugins.chats.api.mobile_jev import ORACLE as JEV_ORACLE
+from src.plugins.chats.api.mobile_jev import OperatorJev
 from src.plugins.chats.api.order_intake import _read_events
 from src.plugins.chats.shared.draft_items import draft_items, product_key
 from src.plugins.chats.shared.mobile_rules import (
@@ -69,6 +74,7 @@ from src.sdk.connectorkit import (
     OrderFactsSnapshot,
     get_catalog_client,
     get_order_facts_port,
+    get_perception_port,
     parse_variant_tags,
 )
 from src.sdk.castkit import current_actor
@@ -107,6 +113,8 @@ class MobileDeps:
     now_ms: Callable[[], int]
     #: Texto fijo de medios de pago (o None si no hay datos de pago configurados).
     payment_instructions_text: Callable[[], str | None]
+    #: Jev con el paquete `operador` (`mobile_jev.OperatorJev`); None = solo reglas.
+    jev: Any = None
 
 
 def _try(name: str, factory: Callable[[], Any]) -> Any | None:
@@ -136,6 +144,7 @@ def get_mobile_deps() -> MobileDeps:
         order_facts=_try("order_facts", get_order_facts_port) or InMemoryOrderFacts(available=False),
         now_ms=_now_ms,
         payment_instructions_text=_payment_text,
+        jev=OperatorJev(port=lambda: get_perception_port(JEV_ORACLE), vault_dir=WORKSPACE_VAULT_DIR, now_ms=_now_ms),
     )
 
 
@@ -311,6 +320,7 @@ async def suggestions(session_id: str, deps: Deps) -> Any:
     slots = draft.get("slots") if isinstance(draft.get("slots"), dict) else {}
     products = await _catalog_products(deps) if window_open else None
     last_inbound = metadata.get("last_inbound_at_ms")
+    events = _read_events(deps.vault_dir, session_id)
     facts = SuggestionFacts(
         session_id=session_id,
         version=_version_ms(session_dir, session_id),
@@ -328,11 +338,15 @@ async def suggestions(session_id: str, deps: Deps) -> Any:
         payment_pending=(
             window_open and stage == STAGE_POSTCIERRE and await _payment_pending(deps, metadata, episode)
         ),
-        last_action=last_sent_action(_read_events(deps.vault_dir, session_id)),
+        last_action=last_sent_action(events),
         operator_moves=_operator_moves(metadata),
         last_inbound_ms=last_inbound if isinstance(last_inbound, int) else None,
     )
-    return suggest_actions(facts)
+    payload = suggest_actions(facts)
+    if deps.jev is None:
+        return payload
+    # Jev elige cuál de las jugadas legales va primero (OPERATOR_APP_JEV; reglas si duda o tarda).
+    return await deps.jev.suggestions(payload, events=events, metadata=metadata)
 
 
 # ── GET /mobile/fires ────────────────────────────────────────────────────────
@@ -438,10 +452,15 @@ async def fires(deps: Deps) -> dict[str, Any]:
     links = [(sid, md, oid) for sid, md in sessions for oid in sorted(_order_ref_candidate_ids(md))]
     snapshot = await _facts_for(deps, {oid for _sid, _md, oid in links})
     orders = [o for sid, md, oid in links if (o := _order_fire_facts(sid, md, oid, snapshot)) is not None]
-    return {
-        "decided_by": "rules",
-        "fires": detect_fires(chats, orders, now_ms=now_ms, today_iso=_orders_day(now_ms)),
-    }
+    cards = detect_fires(chats, orders, now_ms=now_ms, today_iso=_orders_day(now_ms))
+    used_jev = False
+    if deps.jev is not None:
+        # Jev clasifica los incendios de chat (gravedad, tipo, si empeora) sin hacer esperar a la app.
+        cards, used_jev = await deps.jev.fires(
+            cards, chats={c.session_id: c for c in chats},
+            events_for=lambda sid: _read_events(deps.vault_dir, sid),
+        )
+    return {"decided_by": "jev" if used_jev else "rules", "fires": cards}
 
 
 # ── GET /mobile/hot ──────────────────────────────────────────────────────────

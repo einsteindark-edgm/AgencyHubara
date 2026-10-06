@@ -82,6 +82,7 @@ variable "tenants" {
       workflow_v2_ceiling     = optional(string, "off")    # techo del workflow de ventas V2: off | canary | on
       order_sentinel_reader   = optional(string, "off")    # lector de Jev del Order Sentinel: off | shadow | on
       decisions_bundle        = optional(string, "ventas") # paquete de decisión de la tienda (chats/shared/decisions/bundles/<id>, PAQUETES_DE_DECISION.md)
+      operator_app_jev        = optional(string, "off")    # Jev en la App Operador (paquete operador: burbuja principal, incendios): off | shadow | on
     }), {})
   }))
 
@@ -120,6 +121,11 @@ variable "tenants" {
   validation {
     condition     = alltrue([for t in values(var.tenants) : contains(["off", "shadow", "on"], t.lab.order_sentinel_reader)])
     error_message = "tenants.*.lab.order_sentinel_reader: off | shadow | on (el Order Sentinel es un lote diario: no tiene canary)."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : contains(["off", "shadow", "on"], t.lab.operator_app_jev)])
+    error_message = "tenants.*.lab.operator_app_jev: off | shadow | on (la App Operador no tiene canary: es un solo operador)."
   }
 
   validation {

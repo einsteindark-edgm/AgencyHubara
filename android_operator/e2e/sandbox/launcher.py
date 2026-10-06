@@ -98,6 +98,10 @@ SANDBOX_ENV = {
     "TEMPORAL_URL": f"{HOST}:9",
     "TEMPORAL_ADDRESS": f"{HOST}:9",
     "OTEL_SDK_DISABLED": "true",
+    # Jev: el adaptador falso (sin red; responde siempre igual) y la App Operador en sombra: cada
+    # escenario recorre las preguntas a Jev (paquete `operador`) sin que cambie lo que ve la app.
+    "PERCEPTION_PROVIDER": "fake",
+    "OPERATOR_APP_JEV": "shadow",
     "LITELLM_LOCAL_MODEL_COST_MAP": "True",
     "RATE_LIMIT_PER_MINUTE": "0",
 }

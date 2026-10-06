@@ -1,0 +1,84 @@
+# Catálogo de builtins del paquete de la App Operador (`operador`).
+#
+# Lo que el paquete puede pedir por nombre: el texto que ve Jev (la
+# conversación, la etapa de la venta, cuánto lleva esperando el cliente), las
+# burbujas legales que ya armaron las reglas (`chats/shared/mobile_rules.py`),
+# lo que dicen esas reglas cuando Jev duda y el piso. Cada builtin existe en
+# código (`chats/shared/operator/decisions: BUILTINS`, una prueba lo verifica).
+# El certificador lee SOLO este archivo.
+#
+#   kind    rule | state | options | floor | same
+#   value   tipo del valor (si está, solo sirve a capacidades de ese tipo)
+#   input   tipo de entrada que lee
+#   params  parámetros que se pasan con `with:`
+engine_contract: 1
+
+inputs:
+  # Un chat con sus burbujas legales (en el orden de las reglas).
+  Burbujas: {stage: string}
+  # Un incendio de chat: lo que Jev leyó la vez anterior y el motivo del relevo.
+  Incendio: {previous: "string?", reason: "string?"}
+
+# Las capacidades que pide el código de la app (`chats/api/mobile_jev.py`): todas en el paquete (DB003).
+capabilities: [burbuja, incendio]
+
+builtins:
+  rules_first:
+    kind: rule
+    value: string
+    input: Burbujas
+    doc: "Las reglas: la primera burbuja de su lista (\"0\"), o \"\" si no hay."
+  chat_board:
+    kind: state
+    input: Burbujas
+    params: {max_messages: int, max_chars: int}
+    doc: "La conversación en orden, en qué va la venta y las acciones que el operador puede enviar; nada si no hay burbujas."
+  legal_bubbles:
+    kind: options
+    input: Burbujas
+    doc: "Una opción por burbuja legal: etiqueta = su texto (y el producto), valor = su posición en la lista de las reglas."
+  rules_fire:
+    kind: rule
+    value: "{severity: string, kind: string, getting_worse: bool}"
+    input: Incendio
+    doc: "Las reglas: la gravedad, el tipo y si empeora de la tarjeta (espera, motivo del relevo, mensajes seguidos)."
+  fire_board:
+    kind: state
+    input: Incendio
+    params: {max_messages: int, max_chars: int}
+    doc: "Cuánto lleva esperando, el motivo del relevo, la evaluación anterior y la conversación en orden."
+  jev:
+    kind: floor
+    doc: "Lo que dijo Jev (la burbuja no tiene piso: si duda, deciden las reglas)."
+  safety_stays_grave:
+    kind: floor
+    value: "{severity: string, kind: string, getting_worse: bool}"
+    input: Incendio
+    doc: "Un tema de salud o un pedido que no se pudo registrar sigue grave diga lo que diga Jev."
+  same_value:
+    kind: same
+    doc: "El mismo valor."
+
+# Qué resuelve cada decisión y en qué parte del software actúa: cada decisión
+# que el código pide trae su `about` o el paquete no certifica.
+places:
+  chat_operador: En el chat de la App Operador, cuando atiende una persona
+  incendios: En la pestaña Incendios y el radar de la App Operador
+
+about:
+  burbuja:
+    name: Qué acción va primero en el chat
+    where: [chat_operador]
+    solves: >-
+      Lee la conversación y elige, entre las acciones que el operador puede
+      enviar con un toque (las que permiten las reglas de la etapa), la que le
+      conviene enviar ahora; esa burbuja sale primero y resaltada. Si ninguna
+      ayuda, no resalta ninguna.
+  incendio:
+    name: Qué tan grave es un chat que espera
+    where: [incendios]
+    solves: >-
+      Lee un chat que espera la respuesta de una persona y decide qué tan
+      urgente es (grave, hoy o puede esperar), qué plantea el cliente (queja,
+      pregunta por su pedido, comprobante, salud…) y si la situación empeoró
+      desde la última lectura. Los grave suben al radar.

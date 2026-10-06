@@ -260,3 +260,56 @@ run "un_paquete_de_decision_con_nombre_raro_no_pasa_el_plan" {
   }
   expect_failures = [var.tenants]
 }
+
+run "jev_en_la_app_operador_nace_apagado" {
+  command = plan
+  variables {
+    tenants = {
+      t = {
+        api_url       = "https://x.example"
+        callback_urls = ["https://x.example/callback"]
+        logout_urls   = ["https://x.example/"]
+      }
+    }
+  }
+  assert {
+    condition     = module.lab_config["t"].params["OPERATOR_APP_JEV"] == "off"
+    error_message = "Sin bloque lab, Jev en la App Operador queda en off (solo reglas)."
+  }
+}
+
+run "jev_en_la_app_operador_viaja_a_ssm" {
+  command = plan
+  module { source = "./modules/lab-config" }
+  variables {
+    tenant = "t1"
+    config = {
+      perception_mode_ceiling = "off"
+      perception_profile      = "jev-v1"
+      signal_inbound_meta     = false
+      max_usd_per_run         = 120
+      max_usd_per_month       = 300
+      internal_numbers        = []
+      operator_app_jev        = "shadow"
+    }
+  }
+  assert {
+    condition     = aws_ssm_parameter.lab["OPERATOR_APP_JEV"].value == "shadow" && aws_ssm_parameter.lab["OPERATOR_APP_JEV"].name == "/hubara/t1/OPERATOR_APP_JEV"
+    error_message = "OPERATOR_APP_JEV va en /hubara/<tenant>/ con el valor del tenant."
+  }
+}
+
+run "un_modo_raro_de_jev_en_la_app_no_pasa_el_plan" {
+  command = plan
+  variables {
+    tenants = {
+      t = {
+        api_url       = "https://x.example"
+        callback_urls = ["https://x.example/callback"]
+        logout_urls   = ["https://x.example/"]
+        lab           = { operator_app_jev = "canary" }
+      }
+    }
+  }
+  expect_failures = [var.tenants]
+}
