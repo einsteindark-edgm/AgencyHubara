@@ -44,6 +44,9 @@ from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 SAMPLES = 2
 _CONCURRENCY = 4
 _EVIDENCE_MAX = 280
+#: El texto de cada tarjeta en el transcript del juez (un resumen de pedido
+#: largo no llena el prompt).
+_CARD_TEXT_MAX = 300
 
 # Límite por minuto del proveedor (Gemini): primer informe 9-15 sep, 71 de 76
 # llamadas cayeron en 429 por ráfaga. Se reintenta con espera creciente; un
@@ -292,7 +295,8 @@ def _reply_lines(t: Any, text_limit: int | None) -> list[str]:
     # Lo que el cliente leyó con las tarjetas: el texto de la lista o de los
     # botones y el que arma el código (el mensaje del formulario, el resumen).
     for c in t.card_read_texts:
-        lines.extend(_quoted(p, "bot envió con la tarjeta", c if text_limit is None else _clip(c, text_limit)))
+        card = c if len(c) <= _CARD_TEXT_MAX else c[: _CARD_TEXT_MAX - 1].rstrip() + "…"
+        lines.extend(_quoted(p, "bot envió con la tarjeta", card if text_limit is None else _clip(card, text_limit)))
     if t.suppressed_reason and t.llm_text:
         lines.extend(_quoted(p, f"texto suprimido ({t.suppressed_reason}), el cliente NO lo vio", t.llm_text))
     # Solo la que el cliente no leyó: la igual a un texto que salió no se

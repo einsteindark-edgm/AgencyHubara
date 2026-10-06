@@ -20,6 +20,7 @@ Temporal: lo importan las tools (contrato `tools-no-temporal`).
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -34,6 +35,7 @@ from src.plugins.chats.agent.sales.config.shipping import (
 )
 from src.plugins.chats.agent.sales.pricing import format_cop
 from src.plugins.chats.shared.draft_items import product_key
+from src.sdk.textkit import looks_like_admin_leak
 
 #: Máximo del cuerpo de un mensaje interactivo de WhatsApp (botones, Flow).
 MAX_CARD_BODY = 1024
@@ -44,10 +46,17 @@ SHIPPING_FORM_CTA = "Completar datos"
 #: Las variantes de una línea del borrador, en el orden en que se nombran.
 _VARIANT_FIELDS = ("color", "aroma", "diseno")
 
-#: Cómo queda la dirección del cliente en lo que se REGISTRA de su resumen del
-#: pedido (envelope, traza, verificación ③, marcador del historial): el
-#: cliente la lee en su tarjeta; los registros y Jev no la necesitan.
-ADDRESS_MASK = "[dirección del cliente]"
+#: Un valor del borrador que va en el mensaje (color, aroma, diseño): lo
+#: guarda `set_order_slot` como lo escribió el LLM y el mensaje del formulario
+#: ya no pasa por el saneador. Corto, sin corchetes, enlaces ni números largos.
+_MAX_VALUE_CHARS = 40
+_UNSAFE_VALUE_RE = re.compile(
+    r"[\[\]{}<>]|https?://|www\.|\.(?:com|co|net|org|shop|store)\b|\d(?:[ .-]?\d){5,}", re.IGNORECASE
+)
+
+#: Un renglón de producto del mensaje del formulario: «• *2× Título* (variantes)».
+_FORM_ROW_RE = re.compile(r"^•\s*\*\d+×\s*(?P<title>[^*\n]+?)\*(?:\s*\((?P<variants>[^)\n]*)\))?", re.MULTILINE)
+_LINE_COUNT_RE = re.compile(r"^\d+×\s*")
 
 
 # ── Formulario de envío ─────────────────────────────────────────────────────
@@ -130,8 +139,33 @@ def _variant_label(product: Mapping[str, Any], draft: Sequence[Mapping[str, Any]
 
 
 def _variant(item: Mapping[str, Any]) -> str:
-    values = (" ".join(str(item.get(field) or "").split()) for field in _VARIANT_FIELDS)
+    values = (_variant_value(item.get(field)) for field in _VARIANT_FIELDS)
     return ", ".join(value for value in values if value)
+
+
+def _variant_value(raw: Any) -> str:
+    """Un valor del borrador apto para el mensaje, o "" si no lo es: más de
+    `_MAX_VALUE_CHARS`, corchetes, un enlace, 6 o más dígitos seguidos (un
+    teléfono) o texto que huele a interno (`looks_like_admin_leak`)."""
+    value = " ".join(str(raw or "").split())
+    if not value or len(value) > _MAX_VALUE_CHARS or _UNSAFE_VALUE_RE.search(value):
+        return ""
+    return "" if looks_like_admin_leak(value) else value
+
+
+def named_in_form(text: str) -> tuple[str, ...]:
+    """Los productos y las variantes que nombra un mensaje de formulario
+    (`shipping_form_text`), en orden y sin repetir: lo que ENV-02 cuenta como
+    cubierto si el cliente lo nombra. Un texto sin renglones de producto (la
+    lista de campos, otra tarjeta) no nombra nada."""
+    named: list[str] = []
+    for row in _FORM_ROW_RE.finditer(text or ""):
+        parts = [row["title"], *re.split(r"[;,]", row["variants"] or "")]
+        for part in parts:
+            value = _LINE_COUNT_RE.sub("", part.strip()).strip()
+            if value and value not in named:
+                named.append(value)
+    return tuple(named)
 
 
 def _quantity(raw: Any) -> int | None:
@@ -264,10 +298,11 @@ def order_card_text(params: Mapping[str, Any]) -> str:
 
 
 def order_card_record(params: Mapping[str, Any]) -> str:
-    """El resumen del pedido como queda en los REGISTROS (envelope, traza,
-    verificación ③ hacia Jev, marcador del historial): el mismo que leyó el
-    cliente, con su dirección tapada (`ADDRESS_MASK`). El anonimizador no
-    reconoce direcciones como «Calle 59b sur 38». Lo que recibe el cliente no
+    """El resumen del pedido como queda en los REGISTROS (envelope que lee el
+    LLM, traza, verificación ③ hacia Jev, marcador del historial): el mismo
+    que leyó el cliente SIN la línea de su dirección. El anonimizador no
+    reconoce direcciones como «Calle 59b sur 38», y un texto que la tape
+    podría copiarlo un LLM que lee el historial. Lo que recibe el cliente no
     cambia (`order_card_text`)."""
     line = f"📍 Dirección: {params.get('shipping_address_summary', '')}"
-    return order_card_text(params).replace(line, f"📍 Dirección: {ADDRESS_MASK}", 1)
+    return order_card_text(params).replace(f"\n\n{line}", "", 1)

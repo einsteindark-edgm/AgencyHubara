@@ -190,12 +190,18 @@ CHECKS: tuple[CheckSpec, ...] = (
        "Se envió el formulario de envío.",
        "El formulario sale una sola vez por episodio.",
        ("guion:sales_script regla máxima 2",)),
+    # ENV-02 falla cerrada (revisión del PR #392): el mensaje que arma el código
+    # con el formulario responde solo si a cada mensaje del cliente no le queda
+    # nada al quitarle un sí, una cantidad, el producto y las variantes que el
+    # propio formulario nombra (no el catálogo) y las cortesías. Límite: es una
+    # regla de palabras; ante la duda pide texto (un sí poco común falla de más).
+    # Detalle y casos: `checks/envio.py` y el trinquete de `test_checks_envio.py`.
     _c("ENV-02", "Formulario sin responder al cliente", "envio", "mayor", "code",
        "Se envió el formulario en respuesta a un mensaje escrito del cliente.",
-       "Ante una pregunta, un aplazamiento, una queja o un traspaso el bot responde con su propio texto; "
-       "el mensaje del formulario (producto, variantes, cantidad y subtotal) basta solo cuando el cliente "
-       "dio una cantidad, dijo que sí o eligió una variante.",
-       ("PR #281", "incidente 2026-10-06: el cliente leyó el mensaje del formulario")),
+       "El mensaje del formulario responde solo si, al quitarle a cada mensaje del cliente un sí, una "
+       "cantidad, el producto o las variantes que el formulario nombra y las cortesías, no queda nada; ante "
+       "una pregunta, una condición, otra variante o un traspaso, el bot responde con su propio texto.",
+       ("PR #281", "incidente 2026-10-06: el cliente leyó el mensaje del formulario", "revisión del PR #392")),
     _c("ENV-03", "Datos del formulario quedan en el pedido", "envio", "mayor", "code",
        "El cliente envió el formulario.",
        "En ese turno sus datos quedan anotados en el pedido.",

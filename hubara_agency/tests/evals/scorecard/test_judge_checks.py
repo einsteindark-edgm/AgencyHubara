@@ -63,6 +63,18 @@ def test_transcript_shows_what_the_customer_read_with_the_cards() -> None:
     assert 'T1 · bot envió con la tarjeta: "¿Seguimos?"' in lines
 
 
+def test_transcript_clips_a_long_card_text() -> None:
+    """Un resumen de pedido largo no llena el prompt del juez: cada tarjeta va
+    recortada (~300 caracteres)."""
+    card = "Resumen de tu pedido " + "x" * 2000
+    t = traj(T(1, inbound="sí", tools=[tool("request_shipping_details", card_text=card)]))
+
+    [line] = [x for x in jc.render_transcript(t).splitlines() if "bot envió con la tarjeta" in x]
+
+    assert len(line) <= 360
+    assert line.endswith('…"')
+
+
 def test_prompt_is_isolated_per_check_and_distrusts_system_state() -> None:
     prompt = jc.build_prompt("CON-04", pr281_before_fix(), CATALOG_CTX)
 

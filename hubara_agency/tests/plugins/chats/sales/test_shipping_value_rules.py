@@ -197,7 +197,8 @@ async def test_the_order_summary_marker_shows_the_card_the_customer_read():
     """Incidente 2026-10-06: el marcador del historial decía solo «envió el
     resumen del pedido»; el operador, Jev y Calidad LLM no veían la tarjeta.
     La dirección del cliente no va en el registro: la lee el cliente en su
-    tarjeta, el marcador la lleva tapada."""
+    tarjeta; el marcador omite esa línea (ni tapada: un LLM que lee el
+    historial podría copiar el texto que la tapa)."""
     body = await _order_summary_body()
 
     ev = _build_history_event("order_confirmation", dict(_ORDER_PARAMS))
@@ -207,7 +208,8 @@ async def test_the_order_summary_marker_shows_the_card_the_customer_read():
     assert "Subtotal productos: $112.500 COP" in ev["content"]
     assert "Calle 59b sur 38" in body
     assert "Calle 59b sur 38" not in ev["content"] and "Medellín" not in ev["content"]
-    assert "📍 Dirección: [dirección del cliente]" in ev["content"]
+    assert "Dirección" not in ev["content"] and "[dirección" not in ev["content"]
+    assert "💳 Medio de pago: Contra entrega" in ev["content"]
 
 
 _LONG_ORDER_PARAMS = {
@@ -433,7 +435,7 @@ async def test_order_confirmation_envelope_carries_the_card_the_customer_reads(t
     sent = wa_client.send_interactive_buttons.await_args.args[2].body
     address = "📍 Dirección: Calle 59b sur 38, Poblado, Medellín"
     assert address in sent  # el cliente lee su dirección en la tarjeta
-    assert result["customer_text"] == sent.replace(address, "📍 Dirección: [dirección del cliente]")
+    assert result["customer_text"] == sent.replace("\n\n" + address, "")
     assert sent.startswith("*Resumen de tu pedido*\n• 2× Velón Amor Eterno")
 
 
@@ -465,7 +467,17 @@ async def test_the_customer_address_never_reaches_the_records_of_the_card(tmp_pa
     assert len(records) == 3
     for text in records:
         assert "Calle 59b" not in text and "Poblado" not in text and "Medellín" not in text
-        assert "[dirección del cliente]" in text
+        assert "Dirección" not in text and "[dirección" not in text
+        assert "💳 Medio de pago" in text
+
+
+def test_without_an_address_the_record_adds_no_address_line():
+    from src.plugins.chats.agent.sales.card_messages import order_card_record
+
+    record = order_card_record({**_ORDER_PARAMS, "shipping_address_summary": ""})
+
+    assert "Dirección" not in record and "[dirección" not in record
+    assert "\n\n\n" not in record
 
 
 @pytest.mark.asyncio

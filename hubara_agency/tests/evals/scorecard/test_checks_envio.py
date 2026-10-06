@@ -155,6 +155,7 @@ def test_env02_reads_what_the_customer_read_and_the_registry_says_so() -> None:
     assert REGISTRY_VERSION >= 7
     rule = SPECS_BY_ID["ENV-02"].rule.lower()
     assert "mensaje" in rule and "pregunta" in rule
+    assert "no queda nada" in rule  # la regla falla cerrada (revisión del PR #392)
 
 
 def test_env02_form_after_confirm_button_is_not_applicable() -> None:
@@ -169,6 +170,7 @@ def test_env02_without_form_is_not_applicable() -> None:
 def test_env02_legacy_bare_form_fails() -> None:
     t = traj(T(1, inbound="sí", intents=["shipping_flow"]), fidelity="legacy")
     assert (_run("ENV-02", t).verdict, _run("ENV-02", t).turn) == ("falla", 1)
+
 
 
 # ── ENV-03 ────────────────────────────────────────────────────────────────
