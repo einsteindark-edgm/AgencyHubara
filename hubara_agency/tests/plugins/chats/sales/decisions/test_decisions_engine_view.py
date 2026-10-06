@@ -117,3 +117,19 @@ def test_the_command_moves_an_operator_app_decision(client: TestClient, tmp_path
     assert out["capabilities"]["burbuja"]["mode"] == "shadow"
     decisions = {d["capability"]: d["mode"] for d in client.get("/api/chats/perception/engine").json()["decisions"]}
     assert decisions["burbuja"] == "shadow"
+
+
+def test_a_broken_operator_bundle_never_hides_the_store_engine(client: TestClient, monkeypatch) -> None:
+    """Si el paquete de la App Operador no compila, la pestaña sigue mostrando el de la tienda."""
+    from src.plugins.chats.shared.operator import decisions as operator
+    from src.sdk.decisionkit import BundleError, Diagnostic
+
+    def broken():
+        raise BundleError([Diagnostic("DB001", "bundles/operador", "roto a propósito")])
+
+    monkeypatch.setattr(operator, "active_bundle", broken)
+
+    r = client.get("/api/chats/perception/engine")
+
+    assert r.status_code == 200, r.text
+    assert [b["ref"] for b in r.json()["bundles"]] == ["ventas@1"]

@@ -25,6 +25,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, HTTPException
 
 from src.plugins.chats.agent.sales.decisions import bots
@@ -33,6 +34,7 @@ from src.plugins.chats.agent.sales.decisions.rollout import MODES
 from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
 router = APIRouter()
+logger = structlog.get_logger()
 
 #: El comando que reemplaza a los PUT (dentro del contenedor de la API; desde
 #: una máquina del equipo, `infra/scripts/bot_control.sh` lo corre por SSM).
