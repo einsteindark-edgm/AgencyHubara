@@ -289,6 +289,8 @@ async def test_without_meta_the_list_goes_in_pages_of_ten_and_no_product_is_lost
 
 @pytest.mark.asyncio
 async def test_a_failed_page_does_not_stop_the_rest_of_the_list(monkeypatch):
+    """Las demás páginas salen; la que falló queda anotada y las citas del
+    cliente apuntan a la PRIMERA página (la que tiene el texto del asesor)."""
     monkeypatch.delenv("META_CATALOG_ID", raising=False)
     wa_client = _make_wa_client_mock()
     wa_client.send_interactive_list = AsyncMock(
@@ -298,11 +300,23 @@ async def test_a_failed_page_does_not_stop_the_rest_of_the_list(monkeypatch):
             SimpleNamespace(ok=True, wa_message_id="wamid.3"),
         ]
     )
+    failures: list[dict] = []
 
-    result = await _dispatch_products(wa_client, _params_with_rows([12, 8, 5]))
+    result = await _dispatch_intent(
+        wa_client=wa_client,
+        wa_dtos=wa_dtos,
+        kind="products_list",
+        params=_params_with_rows([12, 8, 5]),
+        fallback={"prefer_native_product_list": True},
+        phone_number_id="phone-1",
+        to_number="573000000000",
+        last_inbound_message_id=None,
+        failures=failures,
+    )
 
     assert wa_client.send_interactive_list.await_count == 3
-    assert result.ok is True and result.wa_message_id == "wamid.3"
+    assert result.ok is True and result.wa_message_id == "wamid.1"
+    assert failures == [{"kind": "products_list", "error": "(#131000) boom", "page": 2, "pages": 3}]
 
 
 @pytest.mark.asyncio

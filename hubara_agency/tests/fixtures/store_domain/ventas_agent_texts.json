@@ -422,7 +422,7 @@
    "parameters": {
     "properties": {
      "category": {
-      "description": "Categoría cuyos productos quieres mostrar: el `category` que trae '[el cliente eligió la categoría: …]' o el nombre tal cual lo escribió el cliente. Úsala sin handles.",
+      "description": "Categoría cuyos productos quieres mostrar: el `category` que trae '[el cliente eligió la categoría: …]', tal cual («categoria:…»), o el nombre como lo escribió el cliente. Úsala sin handles.",
       "maxLength": 100,
       "type": "string"
      },

@@ -4,8 +4,10 @@ Cuando el catálogo completo no cabe en un mensaje (la lista de productos de
 WhatsApp acepta hasta 30), `present_products` le manda al cliente sus
 categorías en una lista: una fila por categoría, con el id
 `categoria:<slug>`. Cuando el cliente toca una, la traducción del inbound
-(`translate.py`) se lo dice al LLM con ese slug, y el LLM le pide a
-`present_products(category=…)` los productos de esa categoría.
+(`translate.py`) se lo dice al LLM con ese id, y el LLM se lo pasa a
+`present_products(category=…)`: con el id de una fila, la tool no le pregunta
+al motor de decisiones (el id ya dice cuál es); con lo que escribió el
+cliente, sí (capacidad `categoria`).
 
 Determinístico de punta a punta: el id de la fila decide, nunca el texto del
 cliente. Puro (stdlib): lo usan la tool, el flush, la traducción del inbound
@@ -19,7 +21,8 @@ from collections.abc import Sequence
 #: producto nunca lleva «:», así que una fila de producto no se confunde).
 CATEGORY_ROW_PREFIX = "categoria:"
 
-#: La «categoría» de los productos que no tienen ninguna: la fila «Otros».
+#: La «categoría» de los productos que no tienen ninguna (y de una categoría
+#: «Otros» real, si también hay productos sin categoría): la fila «Otros».
 #: Empieza con guion bajo porque ningún slug de categoría empieza así.
 UNCATEGORIZED = "_sin_categoria"
 UNCATEGORIZED_LABEL = "Otros"
@@ -30,6 +33,7 @@ CATEGORY_MENU_GUIDE = "Elige una categoría y te muestro sus productos."
 _CHOICE_OPEN = "[el cliente eligió la categoría: "
 _CHOICE_ID = ' (category="'
 _CHOICE_CLOSE = '")]'
+_SEPARATOR = "\n\n"
 
 
 def category_row_id(slug: str) -> str:
@@ -47,25 +51,52 @@ def category_from_row_id(row_id: object) -> str | None:
 
 def category_choice_text(title: str, slug: str) -> str:
     """Lo que lee el LLM cuando el cliente elige una categoría del menú: el
-    nombre que vio y el `category` que se le pasa a `present_products`."""
-    return f"{_CHOICE_OPEN}{title.strip() or slug}{_CHOICE_ID}{slug}{_CHOICE_CLOSE}"
+    nombre que vio y el `category` que le pasa tal cual a `present_products`
+    (el id de la fila)."""
+    return f"{_CHOICE_OPEN}{title.strip() or slug}{_CHOICE_ID}{category_row_id(slug)}{_CHOICE_CLOSE}"
 
 
 def parse_category_choice(text: str) -> tuple[str, str] | None:
     """`(nombre, slug)` de un texto armado por `category_choice_text`, o None."""
     if not (text.startswith(_CHOICE_OPEN) and text.endswith(_CHOICE_CLOSE)):
         return None
-    title, found, slug = text[len(_CHOICE_OPEN):-len(_CHOICE_CLOSE)].rpartition(_CHOICE_ID)
+    title, found, row_id = text[len(_CHOICE_OPEN):-len(_CHOICE_CLOSE)].rpartition(_CHOICE_ID)
+    slug = category_from_row_id(row_id)
     return (title, slug) if found and slug else None
 
 
-def category_menu_body(intro: str, more: Sequence[str] = ()) -> str:
-    """El texto del menú: el del asesor, la guía y, si hay más categorías de
-    las que caben en la lista (10), las demás por su nombre: el cliente puede
-    escribir cualquiera."""
-    parts = [part for part in (intro.strip(), CATEGORY_MENU_GUIDE) if part]
+def category_menu_body(intro: str, more: Sequence[str] = (), *, max_len: int) -> str:
+    """El texto del menú, de hasta `max_len` caracteres: el del asesor, la
+    guía y, si hay más categorías de las que caben en la lista (10), las
+    demás por su nombre (el cliente puede escribir cualquiera). WhatsApp
+    corta el cuerpo por el FINAL: el espacio de la guía y de esos nombres se
+    reserva y lo que se recorta, si hace falta, es el texto del asesor."""
     names = [name for name in more if name]
+    tail = CATEGORY_MENU_GUIDE
     if names:
-        listed = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} y {names[-1]}"
-        parts.append(f"También tenemos: {listed}. Escríbeme la que quieras ver.")
-    return "\n\n".join(parts)
+        tail += _SEPARATOR + _more_line(names, max_len - len(tail) - len(_SEPARATOR))
+    intro = intro.strip()
+    room = max_len - len(tail) - len(_SEPARATOR)
+    if not intro or room <= 1:
+        return tail[:max_len]
+    if len(intro) > room:
+        intro = intro[: room - 1].rstrip() + "…"
+    return f"{intro}{_SEPARATOR}{tail}"
+
+
+def _more_line(names: list[str], room: int) -> str:
+    """«También tenemos: A, B y C. …», con tantos nombres como quepan en
+    `room` (los demás se cuentan: «y 4 más»)."""
+    for shown in range(len(names), 0, -1):
+        rest = len(names) - shown
+        listed = names[:shown]
+        if rest:
+            joined = f"{', '.join(listed)} y {rest} más"
+        elif len(listed) == 1:
+            joined = listed[0]
+        else:
+            joined = f"{', '.join(listed[:-1])} y {listed[-1]}"
+        line = f"También tenemos: {joined}. Escríbeme la que quieras ver."
+        if len(line) <= room:
+            return line
+    return f"Tenemos {len(names)} categorías más: escríbeme la que quieras ver."

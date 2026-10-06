@@ -246,7 +246,7 @@ def test_a_category_chosen_from_the_menu_is_the_row_the_customer_tapped() -> Non
     con su id (el código lo lee por el id, no por el texto)."""
     from src.plugins.chats.agent.sales_lab.cases import ingest_fields
 
-    assert ingest_fields('[el cliente eligió la categoría: Velones (category="velones")]') == {
+    assert ingest_fields('[el cliente eligió la categoría: Velones (category="categoria:velones")]') == {
         "kind": "interactive",
         "interactive": {"type": "list_reply", "id": "categoria:velones", "title": "Velones"},
     }

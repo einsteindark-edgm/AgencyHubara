@@ -14,7 +14,7 @@ Tabla de traducción:
 | `text`             | (passthrough)                                               |
 | `interactive.button_reply`  | `[el cliente tocó el botón: <title>]`              |
 | `interactive.list_reply`    | `[el cliente seleccionó: <title del producto>]`    |
-| `list_reply` del menú de categorías (id `categoria:<slug>`) | `[el cliente eligió la categoría: <nombre> (category="<slug>")]` |
+| `list_reply` del menú de categorías (id `categoria:<slug>`) | `[el cliente eligió la categoría: <nombre> (category="categoria:<slug>")]` |
 | `interactive.nfm_reply` (Flow) | `[datos de envío recibidos] ciudad=...; barrio=...` |
 | `location`         | `[el cliente compartió su ubicación] lat=X lng=Y (ciudad)`  |
 | `audio`            | `<texto transcrito>` (post-transcripción, ver A.5)          |

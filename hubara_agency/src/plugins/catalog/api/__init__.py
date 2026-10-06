@@ -37,7 +37,7 @@ from pydantic import BaseModel
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.service import RPCError, RPCStatusCode
 
-from src.platform.catalog.paths import get_max_age_minutes, get_snapshot_dir, is_stale
+from src.platform.catalog.paths import get_max_age_minutes, get_snapshot_dir, is_stale, snapshot_age
 from src.platform.plugin_manifest import get_task_queue
 from src.sdk.dashboardkit import get_dashboard_event_bus
 from src.platform.temporal.client import get_temporal_client
@@ -397,17 +397,12 @@ async def get_snapshot() -> dict[str, Any]:
         }
 
     fetched_at = manifest.get("fetched_at")
-    age_minutes: int | None = None
-    stale = False
-    if isinstance(fetched_at, str):
-        try:
-            dt = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
-            delta = datetime.now(timezone.utc) - dt
-            age_minutes = int(delta.total_seconds() // 60)
-            # La misma regla que el cliente del agente (`paths.is_stale`).
-            stale = is_stale(delta, max_age)
-        except ValueError:
-            age_minutes = None
+    # La misma lectura de la fecha y la misma regla que el cliente del agente
+    # (`paths.snapshot_age` / `paths.is_stale`): una fecha ilegible cuenta como
+    # vieja y una sin zona horaria se lee como UTC.
+    age = snapshot_age(fetched_at, datetime.now(timezone.utc))
+    age_minutes = int(age.total_seconds() // 60) if age is not None else None
+    stale = is_stale(age, max_age)
 
     return {
         "exists": True,

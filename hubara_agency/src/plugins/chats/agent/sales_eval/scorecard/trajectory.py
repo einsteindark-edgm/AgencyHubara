@@ -39,8 +39,11 @@ INTENT_BY_TOOL: dict[str, str] = {
     "react_to_message": "reaction",
 }
 
+# `categories`: el menú de categorías con que `present_products` contesta
+# cuando el catálogo no cabe en un mensaje (PR #394). En una conversación sin
+# traza solo queda ese componente: también atiende el pedido del catálogo.
 CATALOG_DISPLAY_INTENTS = frozenset(
-    {"products_list", "product_detail", "product_gallery", "variant_picker"}
+    {"products_list", "product_detail", "product_gallery", "variant_picker", "categories"}
 )
 
 _CONFIRM_BUTTON_MARKERS = ("[el cliente tocó el botón: ✅ confirmar", "[el cliente tocó el botón: confirmar")

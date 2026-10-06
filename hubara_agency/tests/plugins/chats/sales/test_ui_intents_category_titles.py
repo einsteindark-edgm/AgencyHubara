@@ -26,6 +26,8 @@ def _product(handle: str, slug: str, label: str | None) -> CatalogProductDTO:
         handle=handle,
         title=handle.replace("-", " ").title(),
         status="published",
+        # Con foto y precio: lo que el catálogo de WhatsApp (Meta) tiene.
+        thumbnail=f"https://img.test/{handle}.webp",
         categories=[slug],
         category_labels={slug: label} if label else None,
         variants=[
@@ -146,9 +148,11 @@ async def test_29_products_in_3_categories_go_out_in_one_message(tmp_path: Path,
     # La categoría de 12 conserva sus 12 (antes se cortaba en 10).
     assert _rows_by_section(tmp_path) == {"Velones": 12, "Velas Religiosas": 10, "Aromáticas": 7}
     assert out["count"] == 29
-    # Lo que se le dice al LLM es la verdad: un mensaje, no «(en 3 mensajes)».
+    # Lo que se le dice al LLM es la verdad: con el catálogo de Meta, un
+    # mensaje (no «(en 3 mensajes)»); si WhatsApp lo rechaza, la lista.
     assert out["pages"] == 1
-    assert "mensajes" not in out["summary"]
+    assert "en un mensaje" in out["summary"]
+    assert "(en 3 mensajes)" not in out["summary"]
 
 
 @pytest.mark.asyncio
@@ -164,7 +168,7 @@ async def test_without_the_meta_catalog_the_llm_hears_how_many_lists_the_custome
 
     assert len(_intents(tmp_path)) == 1
     assert out["pages"] == 3
-    assert "(en 3 mensajes)" in out["summary"]
+    assert "3 mensajes" in out["summary"]
 
 
 @pytest.mark.asyncio
