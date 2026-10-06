@@ -435,6 +435,18 @@ La decisión es pura (`first_contact_greeting.should_send_first_contact_greeting
 y la hora vive en la activity `build_first_contact_greeting` (R-DET). Gated por
 `workflow.patched("first-contact-greeting-v1")`.
 
+Primer contacto = el cliente nunca había hablado con la tienda (`ep_001`).
+Delta 2026-10-06 (PR #390): un cliente que VUELVE (episodio nuevo después de
+otro; el historial del LLM se corta al empezarlo y su primer mensaje llega con
+«[Conversación anterior con este cliente, ya cerrada: …]» adelante, así que
+PARECE nuevo) NO es primer contacto. El workflow no le inyecta la Burbuja 1
+(`returning-customer-no-welcome-v1`) y el guion (`SOUL.md`,
+`etapa_descubrimiento`) le dice al LLM que no dé la bienvenida de marca ni la
+propuesta de valor y que siga la nota del turno: episodio nuevo, cortesía o
+respuesta a campaña. El guion no le ordena saludar ni preguntar en qué ayudar:
+la nota de la campaña dice «No vuelvas a saludar» y la de cortesía «no
+preguntes en qué más puedes ayudar».
+
 #### Scenario: primer contacto que sale por present_products sin saludo
 
 - GIVEN el historial no tiene mensajes del agente (primer contacto)
@@ -449,6 +461,14 @@ y la hora vive en la activity `build_first_contact_greeting` (R-DET). Gated por
 - GIVEN el historial ya tiene mensajes del agente
 - WHEN un turno termina con `present_products`
 - THEN NO se inyecta ninguna burbuja de saludo (regla del guion: retomar el hilo)
+
+#### Scenario: cliente que vuelve con un saludo (2026-10-06)
+
+- GIVEN el cliente cerró un episodio hace 11 días y escribe «Buenas»
+- AND su primer mensaje del episodio nuevo llega con «[Conversación anterior…]» adelante
+- WHEN el LLM responde ese turno y los siguientes
+- THEN ningún texto del episodio trae «Bienvenido a *Hubara*» ni la propuesta de valor (APE-04)
+- AND el turno sigue la nota que trae (con `ventas-3`: si Jev dice que es solo un saludo, `cortesia` no lo marca y la nota es la del episodio nuevo, no la de cortesía)
 
 #### Scenario: el saludo ya viajó en el canal legítimo
 

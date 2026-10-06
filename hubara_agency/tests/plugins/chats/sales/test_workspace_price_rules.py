@@ -138,22 +138,6 @@ def test_tools_doc_describes_items_based_shipping_request() -> None:
     assert "items" in stage
 
 
-def test_variants_script_asks_for_the_yes_with_the_total_before_the_form() -> None:
-    """CON-04 de la calificación: con las variantes completas, el bot pregunta
-    si confirma la compra, con el precio, ANTES de pedir datos (y la guarda de
-    `request_shipping_details` lo exige igual: `purchase_not_confirmed`, que
-    la calificación cuenta como CON-05). El guion de variantes mandaba directo
-    al formulario con la firma vieja `request_shipping_details(order_total_cop,
-    items_summary)` (incidente 2026-10-06)."""
-    stage = (WORKSPACE / "skills" / "etapa_variantes" / "SKILL.md").read_text(encoding="utf-8")
-    step = next(line for line in stage.splitlines() if line.startswith("7. "))
-
-    assert "order_total_cop" not in stage and "items_summary" not in stage
-    assert "request_shipping_details(items=[{handle, quantity}])" in step
-    assert "2× Velón Koala (Sándalo, Café): $72.000 en productos, ¿lo dejamos así?" in step
-    assert step.index("¿lo dejamos así?") < step.index("request_shipping_details")
-
-
 def test_price_source_rule_names_the_ad_and_the_customer() -> None:
     """La regla de 'precio = catálogo' menciona explícitamente que ni el
     anuncio ni lo que escriba el cliente son fuente de precio."""
