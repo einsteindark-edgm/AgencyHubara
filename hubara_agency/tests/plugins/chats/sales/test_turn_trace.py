@@ -412,10 +412,14 @@ def test_only_the_real_burst_note_is_named_burst_note() -> None:
 
 
 def test_the_continuation_note_has_its_own_name() -> None:
-    """La nota del turno que sigue a una ráfaga que no alcanzó (bot nuevo)."""
-    from src.plugins.chats.agent.sales.workflows.sales_session import _continuation_note
+    """La nota del turno que sigue a una ráfaga que no alcanzó (bot nuevo), con
+    uno o con varios mensajes nuevos."""
+    from src.plugins.chats.agent.sales.workflows.bursts_v2 import continuation_note
 
-    assert tt.context_note_names([_continuation_note(["Te paso la dirección"])]) == ["continuation_note"]
+    one = continuation_note(["Te paso la dirección"], ["Carrera 7"])
+    two = continuation_note(["Te paso la dirección"], ["Carrera 7", "# 12-34"])
+
+    assert tt.context_note_names([one, two]) == ["continuation_note", "continuation_note"]
 
 
 def test_every_answer_of_jev_reaches_the_step() -> None:

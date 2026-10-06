@@ -18,6 +18,7 @@ from datetime import timedelta
 from typing import Any
 
 from temporalio import activity, workflow
+from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
@@ -90,6 +91,12 @@ async def _record_usage(inp: RecordEpisodeLLMUsageInput) -> None:
     STATE.usage.append((inp.episode_id, inp.prompt_tokens, inp.completion_tokens))
 
 
+@activity.defn(name="record_episode_llm_usage")
+async def _usage_that_fails(inp: RecordEpisodeLLMUsageInput) -> None:
+    """El registro del costo agotó sus intentos (p. ej. el disco del vault)."""
+    raise ApplicationError("no se pudo escribir el costo", non_retryable=True)
+
+
 @workflow.defn(name="EgressProbeWorkflow")
 class _EgressProbeWorkflow:
     def __init__(self) -> None:
@@ -152,18 +159,20 @@ async def _turn(
     tool_results: dict[str, str] | None = None,
     writes: str = "",
     opt_in: bool = False,
+    usage_fails: bool = False,
 ) -> dict:
     STATE.__init__()
     STATE.llm_text = llm_text
     STATE.egress_out = egress_out
     STATE.responses = list(responses or [])
     STATE.tool_results = dict(tool_results or {})
+    usage = _usage_that_fails if usage_fails else _record_usage
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
             env.client,
             task_queue=QUEUE,
             workflows=[_EgressProbeWorkflow],
-            activities=[_build_prompt, _llm_chat, _execute_tool, _record_turn, _probe_egress, _record_usage],
+            activities=[_build_prompt, _llm_chat, _execute_tool, _record_turn, _probe_egress, usage],
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
             return await env.client.execute_workflow(
@@ -433,3 +442,49 @@ async def test_without_the_opt_in_a_cut_attempt_records_nothing_as_today() -> No
     early = await _turn(responses=[_said(ANSWER, usage=_USAGE)], writes="start")
 
     assert early["cuts"] == ["checkpoint_a"] and STATE.usage == []
+
+
+async def test_a_cut_whose_cost_cannot_be_recorded_still_restarts() -> None:
+    """El costo de un intento cortado es contabilidad: si su activity agota
+    los intentos, el turno igual se corta y el caller lo recompone. Antes la
+    excepción salía de `run_agent_turn` y tumbaba la sesión del V2 (revisión
+    del PR #391)."""
+    cut = await _turn(
+        responses=[_said(ANSWER, usage=_USAGE)], egress_out={"text": ANSWER, "llm_text": ANSWER},
+        writes="egress", opt_in=True, usage_fails=True,
+    )
+    assert (cut["interrupted"], cut["cuts"]) == (True, ["before_record"])
+
+    early = await _turn(responses=[_said(ANSWER, usage=_USAGE)], writes="start", opt_in=True, usage_fails=True)
+    assert (early["interrupted"], early["cuts"]) == (True, ["checkpoint_a"])
+
+
+async def test_a_reaction_already_queued_for_the_customer_blocks_the_cut() -> None:
+    """`react_to_message` no tiene prefijo de salida, pero deja la reacción
+    encolada (`queued: true`): el flush la envía aunque el turno se corte y el
+    reintento reaccionaría otra vez (revisión del PR #391). Lo que una tool
+    dejó encolado para el cliente cuenta como algo que le llegó."""
+    result = await _turn(
+        responses=[_calls(("react_to_message", {"emoji": "🤍"})), _said(ANSWER)],
+        tool_results={"react_to_message": '{"queued": true, "kind": "reaction", "emoji": "🤍"}'},
+        egress_out={"text": ANSWER, "llm_text": ANSWER},
+        writes="egress",
+        opt_in=True,
+    )
+
+    assert result["interrupted"] is False and "before_record" not in result["cuts"]
+    assert len(STATE.recorded) == 1
+
+
+async def test_a_tool_that_queued_nothing_does_not_block_the_cut() -> None:
+    """Control: una tool interna sin nada encolado (`queued: false` o sin
+    sobre) no le mostró nada al cliente; el corte sigue."""
+    result = await _turn(
+        responses=[_calls(("set_order_slot", {"direccion": "Carrera 7 # 12-34"})), _said(ANSWER)],
+        tool_results={"set_order_slot": '{"updated": true, "queued": false}'},
+        egress_out={"text": ANSWER, "llm_text": ANSWER},
+        writes="egress",
+        opt_in=True,
+    )
+
+    assert result["interrupted"] is True and result["cuts"] == ["before_record"]

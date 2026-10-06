@@ -925,23 +925,34 @@ en 14 s; el turno se recompuso 2 veces (el tope), respondió a mitad y los 3
 leyó como respuesta a su pregunta («No te entendí bien, ¿me confirmas el
 teléfono?»). El bot nuevo (`HubaraSalesSessionWorkflowV2`):
 - SHALL seguir recomponiendo el turno, pasado el tope de 2 reinicios, mientras
-  la ráfaga no pase 30 s desde su primer mensaje y sin pasar de 6 reinicios
-  (techo de costo);
+  la ráfaga no pase 30 s y sin pasar de 6 reinicios (7 intentos: techo de
+  costo). Los 30 s cuentan desde que el turno empieza a juntar la ráfaga; si
+  son mensajes que sobraron del turno anterior, desde el fin de ese turno;
 - SHALL esperar, antes de relanzar un turno cortado, a que el cliente termine
   de escribir (1,5 s de silencio, dentro de lo que quede de los 30 s); la
   traza lo dice en el paso `restart` (`settle_ms`);
-- SHALL revisar la bandeja justo antes de grabar y enviar la respuesta: si el
-  cliente escribió y el turno todavía no le mostró nada (ninguna herramienta
-  que le llega; el texto de `send_reply` aún no salió) ni tomó una decisión
-  (pedido, cierre, escalación), la respuesta no sale, el modelo no la recuerda
-  y el turno vuelve a empezar con todo (corte `before_record`);
-- SHALL registrar al episodio el costo de cada intento cortado;
+- SHALL revisar la bandeja justo antes de grabar la respuesta: si el cliente
+  escribió y el turno todavía no le mostró nada (ninguna herramienta que le
+  llega ni nada encolado para él, como una reacción; el texto de
+  `send_reply` aún no salió) ni tomó una decisión (pedido, cierre,
+  escalación), la respuesta no sale, el modelo no la recuerda y el turno
+  vuelve a empezar con todo (corte `before_record`). Lo que llega después de
+  grabar y antes de enviar (la guarda de variantes, la verificación ③, la red
+  del relevo) ya no corta: la respuesta sale y esos mensajes van al turno
+  siguiente, con la nota de continuación;
+- SHALL registrar al episodio el costo de cada intento cortado, sin tumbar la
+  sesión si ese registro falla;
 - SHALL avisarle al turno siguiente, cuando lo que el cliente escribió no
-  alcanzó a entrar (techo, presupuesto o un turno que ya le mostró algo), que
-  esos mensajes llegaron mientras preparaba la respuesta anterior y pueden
-  continuarla: la nota `[CONTINUACIÓN DE RÁFAGA…]` cita lo anterior y pide no
-  tomarlos como respuesta a su última pregunta (en la traza,
-  `continuation_note`).
+  alcanzó a entrar (techo, presupuesto, un turno que ya le mostró algo, o
+  llegó entre grabar y enviar), que esos mensajes llegaron mientras preparaba
+  la respuesta anterior y pueden continuarla: la nota
+  `[CONTINUACIÓN DE RÁFAGA…]` cita lo anterior, enumera los mensajes nuevos si
+  son varios, pide no tomarlos como respuesta a su última pregunta y
+  reemplaza a la nota de ráfaga («…desde tu última respuesta», falsa aquí);
+  en la traza, `continuation_note`. Solo cuenta lo que llegó ANTES de la
+  primera salida del turno (saludo, texto o componentes): lo que llega
+  después pudo ser una respuesta a eso y la nota no lo da por continuación
+  (si llegan juntos, la nota dice cuál es cuál).
 El V1 no cambia. Las sesiones vivas del V2 re-juegan igual (gates
 `burst-time-budget-v1`, `turn-interrupt-before-record-v1` y
 `turn-interrupt-cost-v1`, protegidos por una historia congelada con control
@@ -968,9 +979,15 @@ hora de Bogotá es `clock`; las demás notas del turno, `turn_context`).
 
 #### Scenario: El turno ya le mostró algo al cliente
 
-- GIVEN el turno ya mandó el catálogo
+- GIVEN el turno ya pidió el catálogo
 - WHEN el cliente escribe mientras se decide el envío
 - THEN el turno no se corta y el mensaje va al turno siguiente, con la nota de continuación
+
+#### Scenario: El cliente contesta después de que la respuesta salió
+
+- GIVEN el bot ya envió «¿Me confirmas el teléfono?»
+- WHEN el cliente contesta mientras el turno termina (el outbox de Meta, la traza)
+- THEN su mensaje forma el turno siguiente SIN la nota de continuación: es su respuesta
 
 ### Requirement: El carrito llega con los nombres del catálogo (2026-09-30)
 

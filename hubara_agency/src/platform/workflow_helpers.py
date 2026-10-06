@@ -974,19 +974,27 @@ async def _record_cut_attempt_cost(
     """El costo de un intento cortado también va al episodio: el modelo se
     pagó aunque la respuesta no saliera (antes se perdía: el corte volvía antes
     del registro del final del turno). Gate propio; `patched()` va al final.
-    La activity es idempotente por `run_id:activity_id`: cada intento suma."""
+    La activity es idempotente por `run_id:activity_id`: cada intento suma.
+    Es contabilidad: si agota sus intentos, el turno sigue (el caller lo
+    recompone) en vez de tumbar la sesión. El comando es el mismo con o sin
+    falla: el replay no cambia."""
     if episode_id and (prompt_tokens or completion_tokens) and workflow.patched("turn-interrupt-cost-v1"):
-        await workflow.execute_activity(
-            record_episode_llm_usage_activity,
-            RecordEpisodeLLMUsageInput(
-                session_id=session.session_id,
-                episode_id=episode_id,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                model=session.llm.model,
-            ),
-            **_CONV_OPTIONS,  # type: ignore[arg-type]
-        )
+        try:
+            await workflow.execute_activity(
+                record_episode_llm_usage_activity,
+                RecordEpisodeLLMUsageInput(
+                    session_id=session.session_id,
+                    episode_id=episode_id,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    model=session.llm.model,
+                ),
+                **_CONV_OPTIONS,  # type: ignore[arg-type]
+            )
+        except Exception as exc:  # noqa: BLE001 — contabilidad: nunca tumba el turno
+            workflow.logger.warning(
+                f"costo del intento cortado no registrado (non-blocking): session={session.session_id} err={exc!r}"
+            )
 
 
 async def _run_agent_turn_impl(
@@ -1111,8 +1119,9 @@ async def _run_agent_turn_impl(
     # True apenas un batch tocó al cliente (send directo o UI intent
     # encolado): desde ahí no hay restart limpio — solo supresión del cierre.
     outbound_started = False
-    # Lo mismo sin `send_reply` (su texto sale después del turno): lo lee solo
-    # la revisión antes de grabar (`interrupt_before_record`). En memoria.
+    # Lo mismo sin `send_reply` (su texto sale después del turno), más lo que
+    # una tool dejó encolado (`queued: true`): lo lee solo la revisión antes
+    # de grabar (`interrupt_before_record`). En memoria.
     client_touched = False
     transfer_decision: TransferDecision | None = None
     schedule_remarketing: ScheduleRemarketingDecision | None = None
@@ -1292,6 +1301,12 @@ async def _run_agent_turn_impl(
 
                 # Intentar extraer decisiones del payload JSON (ADR-001).
                 payload = _try_parse_decision_payload(result)
+                # Lo que una tool dejó encolado para el cliente (`queued:
+                # true`) sale con el flush aunque el turno se corte; p. ej.
+                # `react_to_message`, sin prefijo de salida: el reintento
+                # reaccionaría otra vez (revisión del PR #391). En memoria.
+                if payload is not None and payload.get("queued") is True:
+                    client_touched = True
                 if not _rejected_by_tool(payload) and _ends_turn(
                     [tc.name], version=ends_turn_version
                 ):

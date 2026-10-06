@@ -1,8 +1,11 @@
 """Workflow de ventas V2 (motor de decisiones, F4 — diseño v2 §08).
 
-`HubaraSalesSessionWorkflowV2` es un tipo NUEVO: nace sin historia, así que no
-necesita `workflow.patched` (toma cada rama del V1 en su camino más nuevo y
-deja las ramas que solo existían para re-jugar historias viejas). No tiene
+`HubaraSalesSessionWorkflowV2` es un tipo NUEVO: nació sin historia, así que su
+archivo no llama `workflow.patched` (toma cada rama del V1 en su camino más
+nuevo y deja las ramas que solo existían para re-jugar historias viejas). Pero
+ya tiene sesiones vivas (los números de prueba): lo que cambia sus comandos usa
+helpers con gates, los del turno compartido (`run_agent_turn`) y los de las
+ráfagas (`workflows/bursts_v2.py`). No tiene
 reglas de texto: aplica los veredictos que el motor dejó grabados (la activity
 `decide_egress`). El V1 queda congelado.
 
@@ -339,6 +342,17 @@ def test_the_v1_helpers_v2_reuses_read_no_text() -> None:
     assert {"_reply_as_sent", "_text_outbound", "_note_guard"} <= reused
     assert not _detectors_reached(v1, _V2_PACKAGE, reused)
     assert _detectors_reached(v1, _V2_PACKAGE, {"HubaraSalesSessionWorkflow"})  # control
+
+
+def test_the_burst_helpers_v2_uses_read_no_text() -> None:
+    """Los helpers de las ráfagas sin cortes (solo del V2, con su gate, fuera
+    del V1 congelado) tampoco leen el texto: la nota de continuación cita lo
+    que escribió el cliente, no lo juzga."""
+    reused = _names_v2_imports_from(f"{_V2_PACKAGE}.bursts_v2")
+    source = V2_FILE.with_name("bursts_v2.py").read_text(encoding="utf-8")
+
+    assert {"restart_allowed", "settle_burst", "continuation_note"} <= reused
+    assert not _detectors_reached(source, _V2_PACKAGE, reused)
 
 
 def test_the_facade_functions_v2_applies_read_no_text() -> None:
@@ -1177,15 +1191,17 @@ def _writes(box: dict, text: str):
     return hook
 
 
-def _egress_while_the_customer_writes(box: dict, *, at_call: int, text: str, seen: list[str]):
+def _egress_while_the_customer_writes(box: dict, *, at_call: int, text: str | tuple[str, ...], seen: list[str]):
     """El egreso deja salir el texto tal cual; en su llamada `at_call` el
-    cliente escribe mientras corre."""
+    cliente escribe (uno o varios mensajes) mientras corre."""
+    texts = (text,) if isinstance(text, str) else text
 
     @activity.defn(name="decide_egress")
     async def decide_egress(inp: EgressInput) -> EgressOutput:
         seen.append(inp.final_text)
         if len(seen) == at_call:
-            await _writes(box, text)()
+            for message in texts:
+                await _writes(box, message)()
         return EgressOutput(text=inp.final_text, llm_text=inp.final_text, final_text=inp.final_text)
 
     return decide_egress
@@ -1267,9 +1283,9 @@ async def test_with_the_burst_budget_spent_the_turn_answers_like_before(
     y lo que siga llegando va al turno siguiente."""
     from datetime import timedelta
 
-    from src.plugins.chats.agent.sales.workflows import sales_session
+    from src.plugins.chats.agent.sales.workflows import bursts_v2
 
-    monkeypatch.setattr(sales_session, "_BURST_TURN_BUDGET", timedelta(0))
+    monkeypatch.setattr(bursts_v2, "BURST_TURN_BUDGET", timedelta(0))
     box: dict = {}
 
     tracker = await _run(
@@ -1316,16 +1332,23 @@ async def test_a_message_during_the_egress_holds_the_answer_and_the_turn_starts_
     assert tracker.episode_llm_usage == [("ep_001", 1200)] * 2
 
 
-async def _catalog_then_a_message_during_the_egress(tmp_path: Path) -> Tracker:
-    """El turno ya le mostró el catálogo al cliente cuando este escribe otra
-    cosa mientras corre el egreso."""
+#: El flush del turno entrega el catálogo (la primera salida del turno).
+_CATALOG_DELIVERED = [{"kind": "products_list", "wamid": "wamid.cat", "ok": True}]
+
+
+async def _catalog_then_a_message_during_the_egress(
+    tmp_path: Path, text: str | tuple[str, ...] = "y de navidad?"
+) -> Tracker:
+    """El turno ya pidió el catálogo cuando el cliente escribe otra cosa
+    mientras corre el egreso (antes de que el catálogo le llegue)."""
     box: dict = {}
     return await _run(
         HubaraSalesSessionWorkflowV2, tmp_path,
         customer_text="¿me mandas el catálogo?",
         responses=[_tool_resp("present_products"), _final("De navidad tenemos la Vela Pino 🤍")],
         tool_results={"present_products": json.dumps({"queued": True})},
-        replace=[_egress_while_the_customer_writes(box, at_call=1, text="y de navidad?", seen=[])],
+        flush_results=_CATALOG_DELIVERED,
+        replace=[_egress_while_the_customer_writes(box, at_call=1, text=text, seen=[])],
         box=box,
     )
 
@@ -1356,4 +1379,105 @@ async def test_the_turn_after_an_unfinished_burst_knows_it_continues(tmp_path: P
     first, second = _customer_traces(tracker)
     assert "continuation_note" in second["context_notes"]
     assert "continuation_note" not in first["context_notes"]
+
+
+def _answers_during_the_capi_flush(box: dict, text: str):
+    """El outbox de Meta se vacía al final del turno, ya con la respuesta
+    enviada: el cliente contesta mientras tanto (una vez)."""
+    calls = {"n": 0}
+
+    @activity.defn(name="flush_capi_outbox_activity")
+    async def flush_capi_outbox(session_id: str) -> dict:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            await _writes(box, text)()
+        return {"session_id": session_id, "sent": 0, "skipped": 0, "failed": 0, "pending": 0}
+
+    return flush_capi_outbox
+
+
+def _answers_while_the_trace_is_saved(box: dict, text: str, traces: list[dict]):
+    """La traza se guarda al final del turno, ya con la respuesta enviada: el
+    cliente contesta mientras tanto (una vez)."""
+
+    @activity.defn(name="persist_turn_trace")
+    async def persist_turn_trace(session_id: str, payload_json: str) -> bool:
+        traces.append(json.loads(payload_json))
+        if len(traces) == 1:
+            await _writes(box, text)()
+        return True
+
+    return persist_turn_trace
+
+
+@pytest.mark.parametrize("window", ["outbox de Meta", "traza"])
+async def test_an_answer_after_the_reply_went_out_is_not_a_continuation(tmp_path: Path, window: str) -> None:
+    """El cliente ya leyó «¿Me confirmas el teléfono?» y contesta mientras el
+    turno termina (el outbox de Meta, la traza): es su respuesta, no la
+    continuación de la ráfaga. La nota le diría al modelo lo contrario («no los
+    tomes como la respuesta a tu última pregunta»). Revisión del PR #391."""
+    box: dict = {}
+    answer = "Es el mismo de este chat"
+    fake = (
+        _answers_during_the_capi_flush(box, answer)
+        if window == "outbox de Meta"
+        else _answers_while_the_trace_is_saved(box, answer, [])
+    )
+
+    tracker = await _run(
+        HubaraSalesSessionWorkflowV2, tmp_path,
+        customer_text="Te paso la dirección: Carrera 7 # 12-34, Barrio Centro",
+        responses=[_final("¿Me confirmas el teléfono?"), _final("Listo, quedó el teléfono 🤍")],
+        replace=[fake],
+        box=box,
+    )
+
+    assert _sent(tracker) == ["¿Me confirmas el teléfono?", "Listo, quedó el teléfono 🤍"]
+    second = _customer_prompts(tracker)[1]
+    assert second.message == answer
+    assert not any(n.startswith("[CONTINUACIÓN") for n in second.plugin_context or [])
+
+
+async def test_leftover_messages_get_one_note_without_since_your_last_reply(tmp_path: Path) -> None:
+    """Dos mensajes que no alcanzaron: la nota de ráfaga de siempre («…desde
+    tu última respuesta») contradecía a la de continuación. Queda una sola
+    nota, que los enumera. Revisión del PR #391."""
+    tracker = await _catalog_then_a_message_during_the_egress(tmp_path, text=("y de navidad?", "algo rojo"))
+
+    second = _customer_prompts(tracker)[1]
+    notes = second.plugin_context or []
+    assert "desde tu última respuesta" not in "\n".join(notes)
+    [note] = [n for n in notes if n.startswith("[CONTINUACIÓN")]
+    assert '1) "y de navidad?"' in note and '2) "algo rojo"' in note
+    assert "«¿me mandas el catálogo?»" in note
+    _first, trace = _customer_traces(tracker)
+    assert "burst_note" not in trace["context_notes"]
+    assert "continuation_note" in trace["context_notes"]
+
+
+async def test_a_mixed_batch_says_which_message_came_before_the_reply_and_which_after(tmp_path: Path) -> None:
+    """Uno llegó mientras se preparaba la respuesta (antes de que saliera el
+    catálogo) y otro después: la nota dice cuál continúa lo anterior y cuál
+    pudo ser la respuesta, sin afirmar de los dos que «llegaron mientras
+    preparabas tu respuesta»."""
+    box: dict = {}
+    tracker = await _run(
+        HubaraSalesSessionWorkflowV2, tmp_path,
+        customer_text="¿me mandas el catálogo?",
+        responses=[_tool_resp("present_products"), _final("La tercera es la Vela Pino 🤍")],
+        tool_results={"present_products": json.dumps({"queued": True})},
+        flush_results=_CATALOG_DELIVERED,
+        replace=[
+            _egress_while_the_customer_writes(box, at_call=1, text="y de navidad?", seen=[]),
+            _answers_during_the_capi_flush(box, "me gusta la tercera"),
+        ],
+        box=box,
+    )
+
+    second = _customer_prompts(tracker)[1]
+    assert second.message == "y de navidad?\nme gusta la tercera"
+    [note] = [n for n in second.plugin_context or [] if n.startswith("[CONTINUACIÓN")]
+    before, after = note.split("Después de que esa respuesta salió")
+    assert '"y de navidad?"' in before and "me gusta la tercera" not in before
+    assert '"me gusta la tercera"' in after
 
