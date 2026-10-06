@@ -25,6 +25,7 @@ DEHA:
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -76,6 +77,9 @@ class RecordEpisodeLLMUsageInput:
     prompt_tokens: int
     completion_tokens: int
     model: str
+    # Parte de `prompt_tokens` que el proveedor sirvió desde su caché (DeepSeek:
+    # US$0,003/M vs US$0,15/M). Default 0 = el input de histories viejas.
+    cached_prompt_tokens: int = 0
 
 
 def _apply_episode_llm_usage(
@@ -87,6 +91,8 @@ def _apply_episode_llm_usage(
     model: str,
     dedup_key: str,
     pricing_table: dict[str, dict[str, Any]],
+    cached_prompt_tokens: int = 0,
+    at_ms: int | None = None,
 ) -> bool:
     """Suma tokens+costo al episodio ``episode_id`` dentro de ``metadata`` (mutates).
 
@@ -117,7 +123,16 @@ def _apply_episode_llm_usage(
     if dedup_key:
         counted.append(dedup_key)
 
-    cost = compute_llm_cost_usd(model, prompt_tokens, completion_tokens, pricing_table)
+    # Costo real: el input cacheado a su precio y el recargo de hora pico del
+    # proveedor en `at_ms` (el momento del turno).
+    cost = compute_llm_cost_usd(
+        model,
+        prompt_tokens,
+        completion_tokens,
+        pricing_table,
+        cached_prompt_tokens=cached_prompt_tokens,
+        at_ms=at_ms,
+    )
     usage = ep.setdefault(
         "llm_usage",
         {
@@ -130,6 +145,7 @@ def _apply_episode_llm_usage(
     usage["prompt_tokens"] += prompt_tokens
     usage["completion_tokens"] += completion_tokens
     usage["total_tokens"] += prompt_tokens + completion_tokens
+    usage["cached_tokens"] = usage.get("cached_tokens", 0) + max(0, cached_prompt_tokens)
     usage["cost_usd"] = round(usage["cost_usd"] + cost, 8)
     return True
 
@@ -175,6 +191,8 @@ async def record_episode_llm_usage_activity(
         model=input.model,
         dedup_key=dedup_key,
         pricing_table=load_pricing_table(),
+        cached_prompt_tokens=input.cached_prompt_tokens,
+        at_ms=int(time.time() * 1000),
     )
     if applied:
         store.write(input.session_id, metadata)

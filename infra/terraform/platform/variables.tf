@@ -75,6 +75,7 @@ variable "tenants" {
       workflow_v2_ceiling     = optional(string, "off")    # techo del workflow de ventas V2: off | canary | on
       order_sentinel_reader   = optional(string, "off")    # lector de Jev del Order Sentinel: off | shadow | on
       decisions_bundle        = optional(string, "ventas") # paquete de decisión de la tienda (chats/shared/decisions/bundles/<id>, PAQUETES_DE_DECISION.md)
+      prompt_turn_context     = optional(string, "off")    # notas del turno (hora, pedido) en el mensaje del turno y no en las instrucciones (caché de DeepSeek): off | team | on
     }), {})
   }))
 
@@ -108,6 +109,11 @@ variable "tenants" {
   validation {
     condition     = alltrue([for t in values(var.tenants) : contains(["off", "shadow", "on"], t.lab.order_sentinel_reader)])
     error_message = "tenants.*.lab.order_sentinel_reader: off | shadow | on (el Order Sentinel es un lote diario: no tiene canary)."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : contains(["off", "team", "on"], t.lab.prompt_turn_context)])
+    error_message = "tenants.*.lab.prompt_turn_context: off | team (solo internal_numbers) | on."
   }
 
   validation {

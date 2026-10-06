@@ -1079,6 +1079,8 @@ async def _run_agent_turn_impl(
     # tool-loop; se persiste al episodio tras el loop (record_episode_llm_usage).
     turn_prompt_tokens = 0
     turn_completion_tokens = 0
+    # Parte del prompt que el proveedor sirvió desde su caché (costo real).
+    turn_cached_tokens = 0
     # Hasta dónde llegaba `messages` en la ronda anterior (0 = primera).
     sent_until = 0
 
@@ -1108,6 +1110,7 @@ async def _run_agent_turn_impl(
             turn_completion_tokens += int(
                 response.usage.get("completion_tokens", 0) or 0
             )
+            turn_cached_tokens += int(response.usage.get("cached_tokens", 0) or 0)
         llm_step: dict[str, Any] = {
             "kind": "llm",
             "at_ms": llm_started_ms,
@@ -1927,6 +1930,8 @@ async def _run_agent_turn_impl(
                 prompt_tokens=turn_prompt_tokens,
                 completion_tokens=turn_completion_tokens,
                 model=session.llm.model,
+                # Solo contenido del input (L-9): el replay no compara inputs.
+                cached_prompt_tokens=turn_cached_tokens,
             ),
             **_CONV_OPTIONS,  # type: ignore[arg-type]
         )

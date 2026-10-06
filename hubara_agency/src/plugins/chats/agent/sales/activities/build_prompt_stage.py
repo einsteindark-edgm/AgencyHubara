@@ -37,6 +37,8 @@ temporalio.client ni workflows).
 """
 from __future__ import annotations
 
+import os
+import re
 import time
 from typing import Any
 
@@ -46,7 +48,7 @@ from exoclaw_temporal.activities.conversation import _build_conversation
 from exoclaw_temporal.config import BuildPromptInput
 
 # P-28: los plugins importan la fachada `src.sdk`, no `src.platform` directo.
-from src.sdk.runtime import FilesystemMetadataStore
+from src.sdk.runtime import FilesystemMetadataStore, notes_into_turn_message
 from src.plugins.chats.agent.sales.use_cases.funnel_stage import (
     resolve_funnel_stage,
 )
@@ -144,6 +146,27 @@ async def sales_build_prompt(input: BuildPromptInput) -> list[dict[str, Any]]:
     stage = resolve_funnel_stage(metadata)
     plugin_context = _refresh_order_draft_note(input.plugin_context, metadata)
 
+    if plugin_context and _turn_notes_in_message(input.session_id):
+        # Instrucciones idénticas turno a turno (caché de prefijo de DeepSeek):
+        # las notas del turno viajan con el mensaje del turno.
+        messages = await conv.build_prompt(
+            input.session_id,
+            input.message,
+            channel=input.channel,
+            chat_id=input.chat_id,
+            media=input.media,
+            plugin_context=None,
+            skills=[stage],
+        )
+        moved = notes_into_turn_message(messages, plugin_context)
+        if moved is not None:
+            return moved
+        activity.logger.warning(
+            "build_prompt: sin bloque de contexto en el mensaje del turno; "
+            "las notas van en las instrucciones session=%s",
+            input.session_id,
+        )
+
     return await conv.build_prompt(  # type: ignore[return-value]
         input.session_id,
         input.message,
@@ -153,3 +176,19 @@ async def sales_build_prompt(input: BuildPromptInput) -> list[dict[str, Any]]:
         plugin_context=plugin_context,
         skills=[stage],
     )
+
+
+def _turn_notes_in_message(session_id: str) -> bool:
+    """¿Las notas del turno van en el mensaje del turno? `SALES_PROMPT_TURN_CONTEXT`
+    (Terraform, lab-config): `on` = todas las conversaciones; `team` = solo los
+    teléfonos del equipo (`LAB_INTERNAL_NUMBERS`, E.164, por dígitos); `off` o
+    cualquier otro valor = en las instrucciones, como antes. Leído en cada
+    llamada (R-STATELESS)."""
+    mode = (os.getenv("SALES_PROMPT_TURN_CONTEXT") or "off").strip().lower()
+    if mode == "on":
+        return True
+    if mode != "team":
+        return False
+    team = {re.sub(r"\D", "", n) for n in (os.getenv("LAB_INTERNAL_NUMBERS") or "").split(",")}
+    team.discard("")
+    return re.sub(r"\D", "", session_id) in team

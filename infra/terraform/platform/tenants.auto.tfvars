@@ -48,6 +48,12 @@ tenants = {
     # (7 días en sombra, etc.). `signal_inbound_meta`: el 4.º argumento de la
     # señal; se aplica DESPUÉS del primer deploy de #372 (worker antes que la
     # API). Volver atrás = "off" + apply + Backend deploy.
+    #
+    # `prompt_turn_context` (2026-10-06): las notas del turno (hora, DATOS DEL
+    # PEDIDO) salen de las instrucciones para que el caché de DeepSeek cubra
+    # instrucciones + tools. Piloto `team` (solo internal_numbers); con la
+    # calidad vista en Calidad LLM → "on". Volver atrás = "off" + apply + Backend
+    # deploy.
     lab = {
       decisions_bundle        = "ventas-2"
       internal_numbers        = ["+573125671604"]
@@ -55,6 +61,7 @@ tenants = {
       capabilities_ceiling    = "canary"
       workflow_v2_ceiling     = "canary"
       signal_inbound_meta     = true
+      prompt_turn_context     = "team"
     }
   }
 

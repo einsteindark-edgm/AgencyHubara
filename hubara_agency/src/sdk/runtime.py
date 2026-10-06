@@ -44,6 +44,11 @@ Notas de diseño:
   valores de ``metadata.control_owner`` de una sesión de WhatsApp — quién
   responde al cliente según el webhook ``messaging_handovers`` de Meta
   Business Agent (chats lo escribe, mba lo lee).
+- ``notes_into_turn_message(messages, notes)``: las notas del turno (hora,
+  datos del pedido) dentro del bloque ``[Runtime Context]`` del mensaje del
+  turno en vez de las instrucciones — así el caché de prefijo del proveedor
+  cubre instrucciones + tools, y exoclaw las recorta al grabar el historial.
+  None = no hay dónde ponerlas (el caller las deja en las instrucciones).
 """
 from __future__ import annotations
 
@@ -63,6 +68,9 @@ from src.platform.constants import (
 )
 from src.platform.logging import (
     setup_logging as setup_logging,
+)
+from src.platform.prompt_layout import (
+    notes_into_turn_message as notes_into_turn_message,
 )
 from src.platform.rate_limit import (
     client_ip as client_ip,
