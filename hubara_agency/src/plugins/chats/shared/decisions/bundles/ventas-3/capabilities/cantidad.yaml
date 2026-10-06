@@ -4,6 +4,14 @@
 # Capturar exige certeza (una cantidad equivocada en el pedido es peor que
 # volver a preguntar); «otra» o la duda dejan la regla. El valor lo escribe el
 # código con sus compuertas (`apply_reply_quantity`).
+#
+# ventas-3 (decisión del operador, 2026-10-06): si el cliente dice
+# explícitamente cuántas unidades quiere del producto («quiero uno», «dame
+# dos», «me llevo 3»), se anota aunque el asesor no lo haya preguntado
+# (turno 5 del incidente: «¿Te cuento los aromas y colores?» → «Si, quiero uno
+# para mi mamá»). Solo Jev, con certeza alta (`said`): la regla sigue
+# exigiendo la pregunta del asesor, y si el asesor sí preguntó todo decide
+# como antes.
 capability: cantidad
 value: "{cantidad: int?}"
 input: RespuestaDeCantidad
@@ -42,10 +50,23 @@ questions:
       "20": "20 unidades"
       "otra": "otra cantidad (más de 20, o no dice cuántas exactamente)"
       "ninguna": "no dice una cantidad de unidades"
-thresholds: {"asked": 0.85, "not_asked": 0.15, "quantity": 0.85, "none": 0.7}
+  - id: cantidad.dice
+    kind: noul
+    text: >-
+      ¿En este mensaje el cliente dice cuántas unidades quiere del producto
+      (por ejemplo «quiero uno», «dame dos», «me llevo 3»)? No cuenta un número
+      o un «un/una» que habla de otra cosa: «un regalo para mi mamá», «tengo 2
+      hijos», un tamaño, una fecha o las mechas.
+    criteria:
+      "true": "sí, dice cuántas unidades quiere"
+      "false": "no: no dice cuántas, o el número habla de otra cosa"
+thresholds: {"asked": 0.85, "not_asked": 0.15, "quantity": 0.85, "none": 0.7, "said": 0.9}
 decide:
   - when: "!('cantidad.pregunto' in p)"
     then: doubt
+  # ventas-3: el asesor no preguntó (o no se sabe) y el cliente dice cuántas quiere.
+  - when: "p['cantidad.pregunto'] < th['asked'] && 'cantidad.dice' in p && p['cantidad.dice'] >= th['said'] && 'cantidad.dio' in choice && choice['cantidad.dio'].matches('^[0-9]+$') && int(choice['cantidad.dio']) >= 1 && int(choice['cantidad.dio']) <= 20 && conf['cantidad.dio'] >= th['quantity']"
+    then: {expr: "{'cantidad': int(choice['cantidad.dio'])}"}
   - when: "p['cantidad.pregunto'] <= th['not_asked']"
     then: {cantidad: null}
   - when: "p['cantidad.pregunto'] < th['asked'] || !('cantidad.dio' in choice)"
@@ -68,3 +89,22 @@ examples:
   - {answers: {cantidad.pregunto: 0.84, cantidad.dio: {choice: "2", p: 0.95}}, expect: doubt}
   # Sin la respuesta de si preguntó (premortem 2026-10-02: un ejemplo por fila).
   - {answers: {}, expect: doubt}
+  # ventas-3 (decisión del operador, 2026-10-06): el cliente dice cuántas quiere
+  # sin que el asesor lo pregunte. Turno 5 del incidente: «¿Te cuento los aromas
+  # y colores?» → «Si, quiero uno para mi mamá, le gusta la naturaleza».
+  - {answers: {cantidad.pregunto: 0.05, cantidad.dice: 0.95, cantidad.dio: {choice: "1", p: 0.9}}, expect: {cantidad: 1}}
+  # «Un regalo para mi mamá», «tengo 2 hijos»: no dice cuántas quiere.
+  - {answers: {cantidad.pregunto: 0.05, cantidad.dice: 0.08, cantidad.dio: {choice: ninguna, p: 0.9}}, expect: {cantidad: null}}
+  - {answers: {cantidad.pregunto: 0.05, cantidad.dice: 0.2, cantidad.dio: {choice: "2", p: 0.9}}, expect: {cantidad: null}}
+  # Bordes: «dice» 0,9 anota; 0,89 no. La cantidad, con la misma certeza de siempre (0,85).
+  - {answers: {cantidad.pregunto: 0.05, cantidad.dice: 0.9, cantidad.dio: {choice: "3", p: 0.85}}, expect: {cantidad: 3}}
+  - {answers: {cantidad.pregunto: 0.05, cantidad.dice: 0.89, cantidad.dio: {choice: "3", p: 0.95}}, expect: {cantidad: null}}
+  - {answers: {cantidad.pregunto: 0.05, cantidad.dice: 0.95, cantidad.dio: {choice: "3", p: 0.84}}, expect: {cantidad: null}}
+  # Solo de 1 a 20: «otra» (más de 20, o no dice cuántas exactas) no se anota.
+  - {answers: {cantidad.pregunto: 0.05, cantidad.dice: 0.95, cantidad.dio: {choice: otra, p: 0.95}}, expect: {cantidad: null}}
+  - {answers: {cantidad.pregunto: 0.05, cantidad.dice: 0.95, cantidad.dio: {choice: "21", p: 0.95}}, expect: {cantidad: null}}
+  # Sin saber si el asesor preguntó (0,5), lo que el cliente dice con certeza se anota.
+  - {answers: {cantidad.pregunto: 0.5, cantidad.dice: 0.95, cantidad.dio: {choice: "2", p: 0.9}}, expect: {cantidad: 2}}
+  # Si el asesor sí preguntó, decide lo de siempre (la pregunta nueva no cambia nada).
+  - {answers: {cantidad.pregunto: 0.9, cantidad.dice: 0.1, cantidad.dio: {choice: "3", p: 0.9}}, expect: {cantidad: 3}}
+  - {answers: {cantidad.pregunto: 0.9, cantidad.dice: 0.95, cantidad.dio: {choice: ninguna, p: 0.7}}, expect: {cantidad: null}}

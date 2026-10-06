@@ -26,6 +26,11 @@ más (esta prueba lo exige, como `test_decisions_ventas_2.py`):
 * **Turno** (`rafaga-v6`): `confirma_compra` ya no se lee en «sí, quiero
   ver»; asunto nuevo `gusto` (dice qué le gusta o para quién es) que se
   atiende recomendando una o dos opciones, no listando 11 aromas.
+* **Cantidad** (decisión del operador, 2026-10-06): si el cliente dice
+  explícitamente cuántas unidades quiere («quiero uno», «dame dos»), se
+  anota aunque el asesor no lo haya preguntado. Solo Jev (pregunta nueva
+  `cantidad.dice`, umbral 0,9): la regla sigue exigiendo la pregunta del
+  asesor y el camino «el asesor sí preguntó» no cambia.
 
 En un clon de forge `ventas-3` no viaja (experimento de esta tienda): se salta.
 """
@@ -64,6 +69,7 @@ CHANGED = {
     "capabilities/cortesia.yaml": {"view", "questions", "decide", "examples"},
     "capabilities/compra.yaml": {"decide", "examples"},
     "capabilities/afirmacion.yaml": {"questions", "thresholds", "decide", "examples"},
+    "capabilities/cantidad.yaml": {"questions", "thresholds", "decide", "examples"},
     "turn.yaml": {"questionnaire", "coverage", "reading", "examples"},
 }
 
@@ -171,6 +177,23 @@ def test_afirmacion_asks_what_the_text_claims_and_crosses_it_with_the_tools() ->
     assert list(question["criteria"]) == ["stock", "entrega", "estado_pedido", "nada"]
     rows = " ".join(row.get("when", "") + str(row.get("then", "")) for row in new["decide"])
     assert "inp.tools_used.exists(" in rows and "check_order_status" in rows and "search_products" in rows
+
+
+def test_cantidad_adds_the_unprompted_question_and_one_row_and_keeps_the_rest() -> None:
+    """La pregunta del asesor, la regla y el camino «sí preguntó» no cambian:
+    una pregunta más (`cantidad.dice`), su umbral y UNA fila, después de la
+    que exige la respuesta de si preguntó."""
+    _need_v3()
+    old, new = _load(V2 / "capabilities/cantidad.yaml"), _load(V3 / "capabilities/cantidad.yaml")
+
+    *kept, said = new["questions"]
+    assert kept == old["questions"]
+    assert (said["id"], said["kind"]) == ("cantidad.dice", "noul")
+    assert "«un regalo para mi mamá»" in said["text"] and "«tengo 2 hijos»" in said["text"]
+    assert new["thresholds"] == {**old["thresholds"], "said": 0.9}
+    assert new["decide"][:1] == old["decide"][:1] and new["decide"][2:] == old["decide"][1:]
+    assert "p['cantidad.pregunto'] < th['asked']" in new["decide"][1]["when"]
+    assert new["examples"][: len(old["examples"])] == old["examples"]
 
 
 def test_the_turn_changes_only_the_purchase_hint_the_new_topic_its_rule_and_one_note() -> None:
@@ -326,6 +349,83 @@ async def test_jev_reading_a_deferral_is_never_retracted_by_the_new_row(monkeypa
     verdict = await _decide("compra", _yes_to_see_options())
 
     assert verdict.value == ["deferral", "text"]
+
+
+# ── cantidad: la que el cliente dice sin que el asesor la pregunte ──────────
+
+
+@pytest.fixture
+def quantity_on(monkeypatch: pytest.MonkeyPatch, _isolate_vault_dir: Path) -> Path:
+    """`cantidad` encendida (con Jev) en todas las conversaciones."""
+    from src.plugins.chats.agent.sales.decisions import bots
+
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    monkeypatch.setenv("SALES_CAPABILITIES_CEILING", "on")
+    bots.write_capability_modes(_isolate_vault_dir, {"cantidad": "on"})
+    return _isolate_vault_dir
+
+
+async def _quantity_turn(workspace_root: Path, vault: Path, sid: str, message: str) -> dict[str, Any]:
+    """El turno del incidente por `build_prompt` (donde decide `cantidad`): el
+    producto ya está elegido y sin cantidad (hay hueco) y lo último que vio el
+    cliente es «¿Te cuento los aromas y colores?», que salió por `send_reply`.
+    Devuelve las casillas del borrador después del turno."""
+    import json
+
+    from src.plugins.chats.agent.sales.activities.build_prompt_stage import sales_build_prompt
+    from tests.plugins.chats.sales.test_quantity_capture import _input, _make_workspace, _seed_history, _seed_metadata
+
+    ws = _make_workspace(workspace_root)
+    _seed_metadata(vault, sid, {"producto": "Velón Koala"})
+    _seed_history(ws, sid, ASKED_TO_SHOW, via_send_reply=True)
+    await sales_build_prompt(_input(ws, sid, message, None))
+    meta = json.loads((vault / sid / "metadata.json").read_text("utf-8"))
+    return meta["episodes"][-1]["order_draft"]["slots"]
+
+
+#: Jev en el turno 5 del incidente: el asesor no preguntó la cantidad, pero
+#: el cliente dice cuántas quiere («quiero uno»).
+SAYS_ONE = (_noul("cantidad.pregunto", 0.05), _noul("cantidad.dice", 0.95), _choice("cantidad.dio", "1", 0.9))
+
+
+async def test_a_quantity_the_customer_says_unasked_is_pinned_by_jev(monkeypatch, tmp_path: Path, quantity_on: Path) -> None:
+    """Decisión del operador (2026-10-06): «Si, quiero uno para mi mamá» con el
+    producto elegido anota 1 aunque el asesor no haya preguntado. El caso SÍ
+    llega a Jev (hay hueco, y el texto del asesor y el del cliente)."""
+    _need_v3()
+    fake = _jev(monkeypatch, *SAYS_ONE)
+    _use(monkeypatch, "ventas-3")
+
+    slots = await _quantity_turn(tmp_path, quantity_on, SID, "Si, quiero uno para mi mamá, le gusta la naturaleza")
+
+    assert slots.get("cantidad") == "1"
+    [(state, asked)] = fake.calls
+    assert "¿Te cuento los aromas y colores?" in state and "Si, quiero uno para mi mamá" in state
+    assert {"cantidad.pregunto", "cantidad.dice", "cantidad.dio"} <= set(asked)
+
+
+async def test_with_ventas_2_the_unasked_quantity_was_not_pinned(monkeypatch, tmp_path: Path, quantity_on: Path) -> None:
+    _need_v3()
+    _jev(monkeypatch, *SAYS_ONE)
+    _use(monkeypatch, "ventas-2")
+
+    slots = await _quantity_turn(tmp_path, quantity_on, SID, "Si, quiero uno para mi mamá, le gusta la naturaleza")
+
+    assert "cantidad" not in slots
+
+
+async def test_a_gift_for_mom_is_not_a_quantity(monkeypatch, tmp_path: Path, quantity_on: Path) -> None:
+    _need_v3()
+    fake = _jev(
+        monkeypatch,
+        _noul("cantidad.pregunto", 0.05), _noul("cantidad.dice", 0.08), _choice("cantidad.dio", "ninguna", 0.9),
+    )
+    _use(monkeypatch, "ventas-3")
+
+    slots = await _quantity_turn(tmp_path, quantity_on, SID, "Un regalo para mi mamá")
+
+    assert "cantidad" not in slots
+    assert len(fake.calls) == 1
 
 
 # ── afirmación: qué afirma el texto × qué consultó el turno ─────────────────

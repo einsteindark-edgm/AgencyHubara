@@ -11,6 +11,8 @@
 #     regla leyó en el texto se retira (salvo un aplazamiento).
 #   - afirmacion: Jev dice qué afirma el texto; la tabla lo cruza con las
 #     herramientas del turno.
+#   - cantidad (decisión del operador): si el cliente dice cuántas unidades
+#     quiere, se anota aunque el asesor no lo haya preguntado (solo Jev).
 #   - turn.yaml (rafaga-v6): `confirma_compra` más estrecha y el asunto `gusto`.
 # Se promueve nombrándolo en Terraform (`tenants.<t>.lab.decisions_bundle =
 # "ventas-3"`), después de medirlo en el laboratorio (`B@ventas-3`).
