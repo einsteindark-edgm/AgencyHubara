@@ -110,7 +110,7 @@ async def test_gallery_captions_every_photo_with_its_label(vault):
 
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
-    assert sent == 1
+    assert sum(r["ok"] for r in sent) == 1
 
     calls = wa_client.send_image.await_args_list
     captions = [c.args[2].caption for c in calls]

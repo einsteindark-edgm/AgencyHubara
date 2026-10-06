@@ -6,6 +6,9 @@ de adivinar "existe un test que falla").
 
 - `.py` bajo hubara_agency/.../src/ → corre `tests/**/test_<stem>.py` si existe.
 - `.ts`/`.tsx` bajo frontend_dashboard/.../src/ → corre `vitest related <file>`.
+- `.yaml` de un paquete de decisión (`decisions/bundles/`) → corre el
+  certificador `decisions check` sobre ESE paquete (docs/_sdk/17): una llave
+  inventada o un tipo equivocado salen en el momento, con código y ruta.
 - Sin test afectado → empuja suave (TDD: ¿escribiste el test?).
 
 Time-boxed y best-effort: ante cualquier error/timeout, no estorba (exit 0).
@@ -87,6 +90,27 @@ def _frontend(file_path: str, root: Path) -> None:
         _emit(f"🔴 TDD (hubara-dev): vitest related FALLA — {rel}.\n{tail}")
 
 
+def _bundle(file_path: str, root: Path) -> None:
+    path = Path(file_path)
+    parts = path.parts
+    at = len(parts) - 1 - parts[::-1].index("bundles")
+    if len(parts) - at > 2:  # bundles/<paquete>/…: ese paquete
+        target = [str(Path(*parts[: at + 2]))]
+    else:  # bundles/builtins.yaml: el catálogo afecta a todos los paquetes de esa carpeta
+        target = [str(p.parent) for p in path.parent.glob("*/bundle.yaml")]
+    code, out = _run(["uv", "run", "python", "-m", "src.sdk.cli", "decisions", "check", *target], root / "hubara_agency")
+    report = out.strip()[-1100:]
+    if code == 0:
+        _emit(f"🟢 paquete de decisión certificado (decisions check):\n{report}")
+    elif code in (124, 125):
+        _emit(f"paquete de decisión: no pude correr decisions check ({report[:120]}).")
+    else:
+        _emit(
+            f"🔴 el paquete de decisión NO compila (decisions check):\n{report}\n"
+            "Corregí cada error por su código (docs/_sdk/17-decisionkit.md); un paquete que no pasa no existe."
+        )
+
+
 def main() -> None:
     try:
         data = json.load(sys.stdin)
@@ -94,6 +118,13 @@ def main() -> None:
         sys.exit(0)
 
     file_path = (data.get("tool_input") or {}).get("file_path", "") or ""
+    if file_path.endswith((".yaml", ".yml")) and "/decisions/bundles/" in file_path:
+        root = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+        try:
+            _bundle(file_path, root)
+        except Exception:
+            pass  # nunca romper el flujo del usuario
+        sys.exit(0)
     if not file_path or _TEST.search(file_path) or "/src/" not in file_path:
         sys.exit(0)
 

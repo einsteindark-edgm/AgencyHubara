@@ -9,11 +9,12 @@ la run a15bb71c (CTWA "velas aromáticas") el LLM respondió solo
 texto y el saludo sí salió.
 
 Contrato: si es el PRIMER contacto de la conversación (sin ningún mensaje
-del agente en el historial) y el turno toca al cliente vía una tool
-presentacional sin que ninguna burbuja de texto lleve el saludo, el
-workflow manda la Burbuja 1 del guion de apertura (saludo por hora +
-propuesta de valor) ANTES de flushear el menú. Puro y determinista: la
-decisión no depende del LLM.
+del agente en el historial) y el turno le manda algo al cliente (una tool
+presentacional o un texto) sin que nada de lo que recibe lleve el saludo,
+el workflow manda la Burbuja 1 del guion de apertura (saludo por hora +
+propuesta de valor) ANTES que todo lo demás. Puro y determinista: la
+decisión no depende del LLM. Desde 2026-09-29 también en turnos de texto
+(caso de Halloween del laboratorio).
 """
 from __future__ import annotations
 
@@ -72,18 +73,52 @@ def test_skips_when_not_first_contact() -> None:
     )
 
 
-def test_skips_when_turn_has_no_outbound_tool() -> None:
-    # Texto solo (run a15bb71c): el LLM saluda en su propio texto y el
-    # workflow lo manda como siempre — nada que inyectar.
+def test_skips_when_the_text_turn_already_greets() -> None:
+    # Texto solo (run a15bb71c): el LLM saludó en su propio texto — nada que
+    # inyectar.
     assert not should_send_first_contact_greeting(
         first_contact=True,
         tools_used=[],
         client_texts=["¡Buenas tardes! Bienvenido a *Hubara*..."],
     )
-    assert not should_send_first_contact_greeting(
+
+
+def test_sends_when_a_text_turn_does_not_greet() -> None:
+    """Caso real del laboratorio (2026-09-28, CTWA de Halloween): el LLM
+    saludó JUNTO a `search_products` (el default-deny lo descartó) y cerró
+    con un texto sin saludo («Tenemos 4 piezas de la colección…»). La regla
+    de antes suponía que en un turno de texto el LLM saluda en su texto: no
+    siempre. Primer contacto sin saludo en nada de lo que sale → Burbuja 1."""
+    assert should_send_first_contact_greeting(
+        first_contact=True,
+        tools_used=["search_products"],
+        client_texts=["Tenemos 4 piezas de la colección de Halloween, todas con aroma a frutos rojos."],
+    )
+    assert should_send_first_contact_greeting(
         first_contact=True,
         tools_used=["search_products", "set_order_slot"],
         client_texts=["¿Cuál te gusta más?"],
+    )
+    assert should_send_first_contact_greeting(
+        first_contact=True, tools_used=[], client_texts=["Con gusto te cuento. ¿Buscas algo en particular?"]
+    )
+
+
+def test_in_flight_histories_keep_the_old_rule() -> None:
+    """Las histories en vuelo de antes del cambio se reproducen con la regla
+    vieja (el workflow la pide con `workflow.patched`): un turno de texto sin
+    tool que le escriba al cliente no pedía saludo."""
+    assert not should_send_first_contact_greeting(
+        first_contact=True,
+        tools_used=["search_products"],
+        client_texts=["Tenemos 4 piezas de la colección de Halloween."],
+        text_turns=False,
+    )
+    assert should_send_first_contact_greeting(
+        first_contact=True,
+        tools_used=["present_products"],
+        client_texts=["Estas son nuestras piezas:"],
+        text_turns=False,
     )
 
 

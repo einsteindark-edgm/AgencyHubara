@@ -30,3 +30,11 @@ output "graphagents_host" {
     explorer      = "http://${module.graphagents.public_ip}:8900"
   }
 }
+
+output "lab_host" {
+  description = "Caja del laboratorio (null si var.lab.enabled = false). Sin IP: se opera por SSM."
+  value = length(module.lab) == 0 ? null : {
+    instance_id = module.lab[0].instance_id
+    bucket      = module.lab[0].bucket
+  }
+}

@@ -27,6 +27,9 @@ no el LLM.
 | `get_catalog_client` | `platform/catalog/composition` | factory singleton (snapshot local) |
 | `product_includes_portavelas` / `order_includes_portavelas` | `platform/catalog/portavelas` | ¿el producto / algún ítem del pedido trae portavela? |
 | `PORTAVELAS_METADATA_KEY` | `platform/catalog/portavelas` | `"portavelas"` — flag explícito en `metadata` de Medusa |
+| `CatalogCategoryDTO` / `CategoryResolution` / `resolve_category` | `platform/catalog/categories` | lista cerrada de categorías y su resolver (regla de hoy de la capacidad `categoria` del motor de decisiones) |
+| `ColorFamilies` / `resolve_color_family` / `family_of_color` | `platform/catalog/color_families` | tabla de familias de color del tenant y su resolver (regla de hoy de la capacidad `familia_de_color`) |
+| `normalize_label` | `platform/catalog/variant_attrs` | normalización para comparar etiquetas (sin tildes, casefold) |
 
 ## `product_includes_portavelas` — cómo decide
 

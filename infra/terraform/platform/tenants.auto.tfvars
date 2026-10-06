@@ -27,6 +27,35 @@ tenants = {
       standby_enabled    = true
       customer_allowlist = ["+573125671604"]
     }
+
+    # Paquete de decisión de la tienda (PAQUETES_DE_DECISION.md §9): promover
+    # una versión (ya desplegada) = nombrarla aquí + `terraform apply` de
+    # platform + dispatch de Backend deploy, que no se dispara con Terraform
+    # (render del .env desde SSM → SALES_DECISIONS_BUNDLE; certifica el paquete
+    # en la imagen antes de cambiar containers). `ventas-2` (2026-10-02) es
+    # `ventas` con la regla ② de `promocion`. El resto de `lab` queda en sus
+    # defaults (todo apagado). Volver atrás = "ventas".
+    #
+    # `internal_numbers`: teléfonos del equipo; sus conversaciones no entran al
+    # banco del laboratorio. El del operador (2026-10-05) es el número con el
+    # que se prueba el bot nuevo: sus pruebas no deben volverse casos del banco.
+    #
+    # Techos en `canary` (decisión del operador, 2026-10-05) para probar el bot
+    # nuevo con ese número. Un techo NO enciende nada: el modo lo pone el
+    # control del dashboard (vault `_rollout/`), que nace en `off`, y en canary
+    # solo actúa sobre los números de prueba y el porcentaje que fije el
+    # control. Subir percepción o capacidades a canary exige además la vara
+    # (7 días en sombra, etc.). `signal_inbound_meta`: el 4.º argumento de la
+    # señal; se aplica DESPUÉS del primer deploy de #372 (worker antes que la
+    # API). Volver atrás = "off" + apply + Backend deploy.
+    lab = {
+      decisions_bundle        = "ventas-2"
+      internal_numbers        = ["+573125671604"]
+      perception_mode_ceiling = "canary"
+      capabilities_ceiling    = "canary"
+      workflow_v2_ceiling     = "canary"
+      signal_inbound_meta     = true
+    }
   }
 
   vincenzo = {

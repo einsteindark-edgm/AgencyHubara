@@ -465,3 +465,153 @@ def test_snapshot_sin_conversaciones_emite_listas_vacias() -> None:
         "llm_errors": [],
     }
     assert recorder.calls == []
+
+
+# ── Lector de Jev (motor de decisiones de hubara, F8) ─────────────────────────
+# Con el lector `sombra` o `jev`, hubara deposita en cada conversación la
+# lectura de Jev (`reading.verdict`, con la MISMA forma que el veredicto del
+# LLM, o None si Jev dudó, cayó o tardó). El LLM se sigue llamando como hoy
+# (es la regla de hoy y la vara compara contra él). En `sombra` actúa el LLM;
+# en `jev` actúa el veredicto de Jev cuando lo hay. Las guardas son las MISMAS
+# para las dos fuentes. `shadow` trae la comparación de lo que cada uno haría
+# despachar (después de las guardas), para la cola de desacuerdos.
+
+_SALIO = "ya salió con el mensajero"
+_JEV_SALIO = {"action": "transition", "to_stage": "shipping", "evidence": [_SALIO], "confidence": "high"}
+_SHIPPING = {"action": "transition", "to_stage": "shipping"}
+
+
+def _llm(verdict: dict) -> FixtureLLM:
+    return FixtureLLM(json.dumps(verdict, ensure_ascii=False))
+
+
+_LLM_NADA = {"action": "none", "evidence": [], "confidence": "low"}
+_LLM_SALIO = {**_JEV_SALIO}
+
+
+def _leido(reader: str | None, verdict: dict | None, *, current_stage: str = "ready") -> dict:
+    payload = _payload_one(order_id="order_01SALIO", current_stage=current_stage, text=_SALIO)
+    if reader is not None:
+        payload["reader"] = reader
+    payload["conversations"][0]["reading"] = {
+        "verdict": verdict,
+        "model": "typesafe/jev-1.13",
+        "error": None,
+        "answers": [],
+    }
+    return payload
+
+
+def _intent(by: str, verdict: dict = _JEV_SALIO) -> dict:
+    return {
+        "kind": "order_stage_intent",
+        "session_id": "wa_573009998877",
+        "order_id": "order_01SALIO",
+        "action": "transition",
+        "to_stage": verdict["to_stage"],
+        "evidence": list(verdict["evidence"]),
+        "confidence": "high",
+        "by": by,
+    }
+
+
+def _shadow(llm: dict, jev: dict) -> list[dict]:
+    return [
+        {
+            "session_id": "wa_573009998877",
+            "order_id": "order_01SALIO",
+            "llm": llm,
+            "jev": jev,
+            "agree": llm == jev,
+        }
+    ]
+
+
+@pytest.mark.parametrize("reader", [None, "reglas", "otro"])
+def test_sin_lector_la_lectura_se_ignora_y_la_salida_es_la_de_hoy(reader) -> None:
+    out = _run({"payload": _leido(reader, _JEV_SALIO)}, ports={"llm": _llm(_LLM_NADA)})
+    assert out == {
+        "schema_version": 1,
+        "snapshot_now_ms": NOW_MS,
+        "dispatch": [],
+        "suppressed": [],
+        "llm_errors": [],
+    }
+
+
+def test_en_sombra_actua_el_llm_y_el_desacuerdo_queda_en_la_sombra() -> None:
+    out = _run({"payload": _leido("sombra", _JEV_SALIO)}, ports={"llm": _llm(_LLM_NADA)})
+    assert out == {
+        "schema_version": 1,
+        "snapshot_now_ms": NOW_MS,
+        "dispatch": [],
+        "suppressed": [],
+        "llm_errors": [],
+        "reader": "sombra",
+        "shadow": _shadow({"action": "none"}, _SHIPPING),
+    }
+
+
+def test_en_sombra_cuando_coinciden_el_intent_dice_quien_actuo() -> None:
+    out = _run({"payload": _leido("sombra", _JEV_SALIO)}, ports={"llm": _llm(_LLM_SALIO)})
+    assert out["dispatch"] == [_intent("llm", _LLM_SALIO)]
+    assert out["shadow"] == _shadow(_SHIPPING, _SHIPPING)
+
+
+def test_con_jev_actua_su_veredicto() -> None:
+    out = _run({"payload": _leido("jev", _JEV_SALIO)}, ports={"llm": _llm(_LLM_NADA)})
+    assert out["reader"] == "jev"
+    assert out["dispatch"] == [_intent("jev")]
+    assert out["shadow"] == _shadow({"action": "none"}, _SHIPPING)
+
+
+def test_con_jev_seguro_de_que_nada_cambio_no_se_despacha_lo_del_llm() -> None:
+    nada = {"action": "none", "evidence": [], "confidence": "high"}
+    out = _run({"payload": _leido("jev", nada)}, ports={"llm": _llm(_LLM_SALIO)})
+    assert out["dispatch"] == []
+    assert out["suppressed"] == []
+    assert out["shadow"] == _shadow(_SHIPPING, {"action": "none"})
+
+
+def test_con_jev_dudando_decide_el_llm_como_hoy() -> None:
+    out = _run({"payload": _leido("jev", None)}, ports={"llm": _llm(_LLM_SALIO)})
+    assert out["dispatch"] == [_intent("llm", _LLM_SALIO)]
+    assert out["shadow"] == [], "sin veredicto de Jev no hay nada que comparar"
+
+
+def test_con_jev_las_guardas_tambien_frenan_su_veredicto() -> None:
+    salto = {"action": "transition", "to_stage": "delivered", "evidence": [_SALIO], "confidence": "high"}
+    inventada = {**_JEV_SALIO, "evidence": ["ya te lo entregamos"]}
+
+    out_salto = _run({"payload": _leido("jev", salto)}, ports={"llm": _llm(_LLM_NADA)})
+    out_inventada = _run({"payload": _leido("jev", inventada)}, ports={"llm": _llm(_LLM_NADA)})
+
+    assert out_salto["dispatch"] == []
+    assert out_salto["suppressed"] == [
+        {"session_id": "wa_573009998877", "order_id": "order_01SALIO", "reason": "invalid_transition", "by": "jev"}
+    ]
+    assert out_salto["shadow"] == _shadow({"action": "none"}, {"action": "none"}), (
+        "lo que se compara es lo que cada uno haría despachar: el salto no despacha"
+    )
+    assert out_inventada["suppressed"][0]["reason"] == "evidence_not_found"
+
+
+def test_con_jev_una_conversacion_que_jev_leyo_no_queda_sin_analizar_si_el_llm_cae() -> None:
+    out = _run({"payload": _leido("jev", _JEV_SALIO)}, ports={"llm": _UnreachableLLM()})
+    assert out["dispatch"] == [_intent("jev")]
+    assert out["llm_errors"] == [], "Jev la leyó: su watermark cierra"
+    assert out["shadow"] == []
+
+
+def test_en_sombra_si_el_llm_cae_la_conversacion_queda_sin_analizar_como_hoy() -> None:
+    out = _run({"payload": _leido("sombra", _JEV_SALIO)}, ports={"llm": _UnreachableLLM()})
+    assert out["dispatch"] == []
+    assert [e["session_id"] for e in out["llm_errors"]] == ["wa_573009998877"]
+    assert out["shadow"] == []
+
+
+def test_una_lectura_con_otra_forma_cuenta_como_jev_dudando() -> None:
+    rara = {"action": "cancelar", "evidence": [_SALIO], "confidence": "high"}
+    out = _run({"payload": _leido("jev", rara)}, ports={"llm": _llm(_LLM_SALIO)})
+    assert out["dispatch"] == [_intent("llm", _LLM_SALIO)]
+    assert out["shadow"] == []

@@ -1,35 +1,56 @@
-"""Nota de turno: lo que el cliente pidió o mostró y NO existe en el catálogo.
+"""Nota de turno: lo que el cliente pidió o mostró y no aparece por nombre en
+el catálogo.
 
 Incidente 2026-09-23: el cliente mandó la foto de una vela de dragón y
 preguntó «¿y en vaso también?»; nada de eso existe y Ventas respondió solo con
 otra tarjeta de catálogo, sin aclararlo. El cliente siguió creyendo que había
 velas en vaso y el remarketing terminó afirmándolo. El detector es el mismo de
 la guarda del remarketing (`chats/shared/product_truth`); acá se le NOMBRA al
-LLM lo que no existe — en el A/B del remarketing la regla sola no alcanzó,
-nombrar el término sí. Qué hacer con la nota lo dice SOUL.md.
+LLM el término — en el A/B del remarketing la regla sola no alcanzó, nombrar
+el término sí. Qué hacer con la nota lo dice SOUL.md.
+
+Revisión 2026-09-29 (caso 6543 del laboratorio): el detector es LITERAL, así
+que un producto nuestro descrito con otras palabras («rostro de Jesús» para el
+Sacrificio de Amor) también cae. La nota ya no afirma que no existe: pide
+buscarlo antes de responder y negarlo solo si no aparece nada parecido.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from src.plugins.chats.shared.product_truth import unavailable_terms
 
 
 def build_catalog_gap_note(customer_text: str, products: list[Any]) -> str | None:
-    """(mensaje del cliente, productos del catálogo) → nota del turno o None."""
-    terms = unavailable_terms(customer_text, products)
+    """(mensaje del cliente, productos del catálogo) → nota del turno o None.
+
+    La lectura (`unavailable_terms`) y la nota (`catalog_gap_note`) van por
+    separado: el motor de decisiones (capacidad `fuera_de_catalogo`) puede
+    quitar candidatos falsos entre las dos; esta función es la de siempre."""
+    return catalog_gap_note(unavailable_terms(customer_text, products))
+
+
+def catalog_gap_note(terms: Sequence[str]) -> str | None:
+    """La nota del turno con los términos que NO existen en el catálogo; None
+    sin términos. Los términos los propone `unavailable_terms` y el motor de
+    decisiones solo puede quitar alguno, nunca inventarlo."""
     if not terms:
         return None
     named = ", ".join(f"«{term}»" for term in terms)
     return (
-        f"Lo que el cliente pidió o mostró y NO existe en el catálogo: {named}. "
-        "Díselo claro en tu respuesta, nombrándolo (eso no lo manejamos), y "
-        "ofrécele la alternativa real más cercana del catálogo; no le respondas "
-        "con solo el catálogo como si existiera: si le muestras productos, dilo "
-        "en el `intro_text`. Si alguna de esas palabras no es un producto, "
-        "forma, envase ni diseño que pide (una ciudad, un medio de pago, un material "
-        "o ingrediente), ignórala y responde con lo que ya sabes."
+        f"Lo que el cliente pidió o mostró y no aparece por nombre en el catálogo: {named}. "
+        "Antes de responder, búscalo con search_products por su nombre y por lo "
+        "que describe (forma, figura, diseño): puede estar en el catálogo con otras "
+        "palabras. Si aparece algo que puede ser eso, muéstraselo y pregúntale si es "
+        "ese; no le digas que no lo manejamos. Si no aparece nada parecido, díselo "
+        "claro, nombrándolo (eso no lo manejamos), y ofrécele la alternativa real "
+        "más cercana del catálogo; no le respondas con solo el catálogo como si "
+        "existiera: si le muestras productos, dilo en el `intro_text`. Si alguna de "
+        "esas palabras no es un producto, forma, envase ni diseño que pide (una "
+        "ciudad, un medio de pago, un material o ingrediente), ignórala y responde "
+        "con lo que ya sabes."
     )
 
 
-__all__ = ["build_catalog_gap_note"]
+__all__ = ["build_catalog_gap_note", "catalog_gap_note"]

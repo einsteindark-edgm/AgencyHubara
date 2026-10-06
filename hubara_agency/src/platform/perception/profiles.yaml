@@ -1,0 +1,28 @@
+# Perfiles del ORÁCULO (Jev por la Decisions API de OpenRouter). Casi nunca
+# cambian: proveedor, modelo fijo, tiempo máximo y anonimización. Lo que cambia
+# seguido (cuestionario, política, umbrales, sombra, calibración) es del MOTOR:
+# `src/plugins/chats/agent/sales/decisions/profiles.yaml`.
+#
+# Ids de modelo FIJOS (L-23): nunca "latest", que cambia de versión sin avisar.
+# 100 % Jev desde el 2026-09-28: el rival OpenAI (`openai-lp-v1`) se quitó.
+#
+# `timeout_s` es LA espera de Jev: la del turno y la de cada capacidad del motor
+# (revisión 2026-09-29). Con 1,5 s por capacidad, en el laboratorio el 11,6 %
+# de las preguntas caía a la regla por tiempo (p99 de lo que sí llegó: 3,1 s).
+#
+# `resend_after_s`: si no llega respuesta, un reenvío a los 1,5 s, 3 s, 5 s y
+# 7,5 s, todos adentro de la misma espera. Gana la primera respuesta válida.
+# Esperar más no basta: ~1 de cada 10 llamadas se cuelga y no responde nunca
+# (corrida caso-fotos-0929-r3, ya con 10 s y sin reenvío: 24 de 322 se
+# cayeron). Con dos reenvíos (2 s y 5 s), r4 bajó a 1 de 330; cada reenvío
+# salva ~80 % de las que siguen colgadas. En 200 llamadas reales intercaladas,
+# [2, 5] perdió 1 y [1,5, 3, 5, 7,5] ninguna (p99 4,2 s contra 5,4 s). Una
+# respuesta normal llega en ~0,5 s (la más lenta vista sin colgarse: 1,6 s).
+
+jev-1.13:
+  provider: openrouter_decisions              # POST https://openrouter.ai/api/alpha/decisions
+  model: typesafe/jev-1.13
+  timeout_s: 10
+  resend_after_s: [1.5, 3, 5, 7.5]
+  anonymize: true
+  provider_prefs: {data_collection: deny}

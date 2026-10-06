@@ -1,0 +1,354 @@
+# yaml-language-server: $schema=../../../../../../../schemas/decision-turn.schema.json
+#
+# El turno del paquete `ventas-2`: el de `ventas@1` con la regla ② de
+# `promocion` (abajo, en `coverage`). PAQUETES_DE_DECISION.md F7.
+#
+# El turno del paquete `ventas` (PAQUETES_DE_DECISION.md F7). Lo lee el perfil
+# `jev-v5` (el bot B del laboratorio y el default de producción): la ráfaga ①
+# que Jev contesta antes del turno, la verificación ③ antes de enviar y las
+# tablas de la política `turno-v3` (código: arma el plan, la lectura del hilo y
+# la guía de etapas CON estas tablas). Lo certifica `decisions check` contra el
+# `turn:` del catálogo (`../builtins.yaml`): un asunto, una tool, una etapa o
+# un hecho que no existen no compilan (DB015).
+#
+# Pasar el turno al paquete no cambió nada (paridad en grilla contra las
+# constantes del código: tests/plugins/chats/sales/decisions/test_decisions_turn_bundle.py).
+# Otro texto, otro umbral u otra fila = otra versión del paquete.
+
+policy: turno-v3
+
+# `confidence` ya no está: ninguna política del turno la leía (§1 del diseño).
+thresholds:
+  detect: 0.70            # un asunto entra al plan del turno
+  covered: 0.70           # ③: lo atiende (≤ 1 − covered: falta con claridad)
+  answers: 0.70           # el cliente responde la pregunta del asesor
+  purchase_confirm: 0.85  # un «sí» claro a la pregunta de compra
+  purchase_retract: 0.20  # el «sí» respondía otra cosa
+  given: 0.85             # evidencia del turno: dio un dato, elige, reclama, ya vio el precio
+
+# La ráfaga ① (antes `questionnaires/rafaga-v5.yaml`, movido sin cambiar un
+# carácter). Revisión del 2026-09-29 (noche): el de v4 con UNA pregunta más,
+# «¿pregunta cuánto cuesta el envío?» (`envio.costo`). Caso del laboratorio
+# (caso-fotos-0929-r5, 6543, turno 6): «¿cuánto se demora el envío a Medellín?»
+# dio «envío» 0,95 y «tiempos» 0,98; el contrato pedía la tarjeta de tarifas y
+# el tiempo quedó sin respuesta. Con esta pregunta el contrato pide la tarjeta
+# solo cuando preguntan el costo (el banco de referencia califica por id).
+questionnaire:
+  id: rafaga-v5
+
+  topics:
+    - {id: catalogo, label: "catálogo", hint: "pide ver el catálogo o pregunta por un tipo, estilo o colección de velas (p. ej. religiosas, de Halloween, para regalo), o por los diseños o modelos"}
+    - {id: precio, label: "precio", hint: "pregunta cuánto vale o cuánto cuesta algo"}
+    - {id: envio, label: "envío", hint: "pregunta por el envío o el domicilio (costo o cobertura)"}
+    - {id: tiempos, label: "tiempos de entrega", hint: "pregunta cuánto tarda en llegar o cuándo está listo"}
+    - {id: pagos, label: "medios de pago", hint: "pregunta cómo pagar o por un medio de pago"}
+    - {id: medidas, label: "medidas", hint: "pregunta por el tamaño o las medidas"}
+    - {id: variante, label: "colores o variantes", hint: "pregunta por colores o variantes"}
+    - {id: aroma, label: "aromas", hint: "pregunta por los aromas"}
+    - {id: personalizacion, label: "personalización", hint: "pide personalizar (nombre, dedicatoria, diseño propio)"}
+    - {id: disponibilidad, label: "disponibilidad", hint: "pregunta si tienen o venden algo (un producto, un tipo de vela o un diseño) o si hay disponible"}
+    - {id: estado_pedido, label: "estado del pedido", hint: "pregunta por un pedido que ya hizo"}
+    - {id: datos_envio, label: "datos de envío", hint: "entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)"}
+    - {id: confirma_compra, label: "confirmación de compra", hint: "confirma que quiere comprar"}
+    - {id: aplaza, label: "aplazamiento", hint: "aplaza la compra (luego, otro día, voy en camino)"}
+    - {id: queja, label: "queja", hint: "se queja o reporta un problema"}
+    - {id: foto, label: "la foto", hint: "pregunta por una foto que envió o citó"}
+    - {id: saludo, label: "saludo", hint: "saluda"}
+    - {id: promocion, label: "promociones o cupones", hint: "pregunta por promociones, descuentos o un cupón"}
+
+  questions:
+    - each_topic:
+        id: "topic.{topic}"
+        kind: noul
+        text: "¿En los mensajes de ESTE TURNO el cliente {hint}?"
+        criteria:
+          "true": "sí, lo plantea en un mensaje de este turno"
+          "false": "no lo plantea en este turno (aunque aparezca en el contexto)"
+    - id: thread.bot_asked
+      kind: choice
+      when: {has_context: true, bot_asked_known: null}
+      text: "¿Qué le preguntó el asesor al cliente en su ÚLTIMO mensaje del CONTEXTO?"
+      criteria:
+        confirmar_compra: "si confirma la compra o el pedido"
+        confirmar_dato_envio: "si confirma un dato de envío (dirección, ciudad, teléfono, quien recibe o pago)"
+        elegir_variante: "que elija una variante (color, aroma, diseño o cantidad)"
+        ver_opciones: "si quiere ver opciones (catálogo, aromas, colores o fotos)"
+        otra_si_no: "otra pregunta de sí o no"
+        pregunta_abierta: "una pregunta abierta"
+        nada: "no le preguntó nada"
+    - id: thread.answers_bot
+      kind: noul
+      when: {has_context: true}
+      text: "¿En ESTE TURNO el cliente responde la última pregunta del asesor?"
+      criteria: {"true": "sí, la responde", "false": "no, habla de otra cosa"}
+    - id: thread.answer
+      kind: choice
+      when: {has_context: true}
+      text: "¿Qué responde el cliente en ESTE TURNO a la última pregunta del asesor?"
+      criteria:
+        si: "sí"
+        "no": "no"
+        otra: "otra cosa (elige algo, pregunta o no la responde)"
+    - id: precio.en_contexto
+      kind: noul
+      when: {has_context: true}
+      text: "¿El precio de lo que el cliente pregunta ya aparece en lo que vio antes (CONTEXTO)?"
+      criteria: {"true": "sí, ya lo vio", "false": "no aparece"}
+    - id: envio.costo
+      kind: noul
+      text: "¿En ESTE TURNO el cliente pregunta cuánto cuesta o cuánto vale el envío o el domicilio?"
+      criteria: {"true": "sí, pregunta el costo del envío", "false": "no (pregunta otra cosa del envío, como si llega o cuánto tarda, o no habla del envío)"}
+    - id: queja.pedido_hecho
+      kind: noul
+      text: "¿En ESTE TURNO el cliente reclama por un pedido que ya hizo?"
+      criteria: {"true": "sí, reclama por un pedido hecho", "false": "no"}
+    - id: variantes.elige
+      kind: noul
+      when: {stage: etapa_variantes}
+      text: "¿En ESTE TURNO el cliente elige aroma, color, diseño o cantidad?"
+      criteria: {"true": "sí, elige", "false": "no"}
+    - id: etapa.cambia_producto
+      kind: noul
+      when: {stage: [etapa_variantes, etapa_datos_envio, etapa_cierre]}
+      text: "¿En ESTE TURNO el cliente quiere ver otros productos o cambiar el que eligió?"
+      criteria: {"true": "sí, quiere cambiar o ver otros", "false": "no"}
+    - id: datos.ciudad
+      kind: noul
+      when: {stage: etapa_datos_envio}
+      text: "¿En ESTE TURNO el cliente da la ciudad de envío?"
+      criteria: {"true": "sí", "false": "no"}
+    - id: datos.direccion
+      kind: noul
+      when: {stage: etapa_datos_envio}
+      text: "¿En ESTE TURNO el cliente da la dirección de envío?"
+      criteria: {"true": "sí", "false": "no"}
+    - id: datos.telefono
+      kind: noul
+      when: {stage: etapa_datos_envio}
+      text: "¿En ESTE TURNO el cliente da un teléfono de contacto?"
+      criteria: {"true": "sí", "false": "no"}
+    - id: datos.nombre_recibe
+      kind: noul
+      when: {stage: etapa_datos_envio}
+      text: "¿En ESTE TURNO el cliente dice quién recibe el pedido?"
+      criteria: {"true": "sí", "false": "no"}
+    - id: datos.metodo_pago
+      kind: noul
+      when: {stage: etapa_datos_envio}
+      text: "¿En ESTE TURNO el cliente dice cómo va a pagar?"
+      criteria: {"true": "sí", "false": "no"}
+    - id: cierre.confirma_resumen
+      kind: noul
+      when: {stage: etapa_cierre}
+      text: "¿En ESTE TURNO el cliente confirma el resumen del pedido?"
+      criteria: {"true": "sí, lo confirma", "false": "no"}
+    - id: cierre.pide_cambio
+      kind: noul
+      when: {stage: etapa_cierre}
+      text: "¿En ESTE TURNO el cliente pide cambiar algo del pedido?"
+      criteria: {"true": "sí", "false": "no"}
+    - id: postcierre.pregunta_pedido
+      kind: noul
+      when: {stage: etapa_postcierre}
+      text: "¿En ESTE TURNO el cliente pregunta por su pedido (estado, envío, entrega)?"
+      criteria: {"true": "sí", "false": "no"}
+    - id: postcierre.comprobante
+      kind: noul
+      when: {stage: etapa_postcierre}
+      text: "¿En ESTE TURNO el cliente manda o menciona un comprobante de pago?"
+      criteria: {"true": "sí", "false": "no"}
+    - each_message:
+        id: "msg.{k}.topic"
+        kind: choice
+        text: "¿Cuál es el asunto principal del mensaje [{k}] de este turno?"
+        criteria: {from_topics: label, extra: {ninguno: "ningún asunto de la lista"}}
+
+  verify:
+    id: "cover.{topic}"
+    kind: noul
+    text: "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «{label}»{where}"
+    where_msg: " que el cliente planteó en el mensaje [{msg}]?"
+    where_none: " que planteó el cliente?"
+    criteria: {"true": "sí, lo atiende", "false": "no lo atiende"}
+
+  state:
+    sections:
+      context: "CONTEXTO — lo que el cliente vio antes de este turno (no es de este turno)"
+      facts: "HECHOS DEL PEDIDO"
+      turn: "ESTE TURNO — mensajes del cliente"
+      quoted: "(el cliente cita este mensaje: «{text}»)"
+    message: "[{k}] ({offset}) {text}"
+    pending: "Asuntos que quedaron sin responder en turnos anteriores: {pending}"
+
+  reply_state:
+    header: "Respuesta del asesor:"
+    empty: "(sin texto)"
+    components: "Tarjetas y componentes que también recibe el cliente: {components}"
+
+# ② Qué atiende cada asunto DENTRO del turno (la ronda extra del V1 con motor):
+# tools que lo atienden, palabras del texto que ve el cliente (sin tildes) o
+# cualquier texto. Conservador: sin nada de esto el asunto cuenta como no
+# atendido y el turno tiene una ronda más.
+coverage:
+  catalogo: {tools: [list_categories, present_product_detail, present_product_gallery, present_products], words: ["catalogo", "disenos", "modelos"]}
+  precio: {tools: [get_product_by_handle, present_product_detail, present_products, search_products], words: ["$", "precio", "vale", "cuesta"]}
+  envio: {tools: [request_shipping_details, send_shipping_rates], words: ["envio", "domicilio"]}
+  tiempos: {words: ["dias", "habiles", "llega", "entrega", "listo"]}
+  pagos: {words: ["nequi", "transferencia", "pago", "contra entrega", "contraentrega"]}
+  medidas: {tools: [present_product_detail], words: ["cm", "medida", "tamano", "alto", "ancho"]}
+  variante: {tools: [present_variant_picker], words: ["color"]}
+  aroma: {tools: [present_variant_picker], words: ["aroma"]}
+  personalizacion: {words: ["personaliz", "dedicatoria", "nombre", "grabad"]}
+  disponibilidad: {tools: [get_product_by_handle, present_products, search_products], words: ["disponible", "stock", "agotad"]}
+  estado_pedido: {tools: [check_order_status], words: ["pedido"]}
+  datos_envio: {tools: [present_order_confirmation, request_shipping_details, set_order_slot]}
+  confirma_compra: {tools: [present_order_confirmation, register_order, verify_order_for_checkout]}
+  aplaza: {any_text: true}   # una frase basta (antes la palabra vacía lo daba siempre por cubierto: 2026-09-28)
+  queja: {tools: [escalate_to_human], words: ["disculp", "lament", "sentimos"]}
+  foto: {tools: [present_product_detail, search_products], words: ["foto"]}
+  saludo: {words: ["hola", "buen", "bienvenid"]}
+  # ventas-2: en ventas@1 no tenía regla (desde rafaga-v4) y nada lo daba por
+  # atendido: si una tool cortaba el turno, «¿tienen promociones?» pedía una
+  # ronda más aunque el bot ya las hubiera mostrado. Lo atienden las tools de
+  # promociones y cupones, o un texto que hable de promociones, descuentos o
+  # cupones (también «no tenemos promociones activas»).
+  promocion: {tools: [apply_coupon, list_promotions], words: ["promocion", "descuento", "cupon"]}
+
+# La nota según lo que el asesor le preguntó al cliente (`thread.bot_asked`,
+# o el código si lo último que vio fue la tarjeta o el formulario) y lo que
+# este responde (`thread.answer`).
+reading:
+  answered:
+    confirmar_compra:
+      si: "El cliente responde que SÍ a tu pregunta de compra: confirma el pedido."
+      "no": "El cliente responde que NO a tu pregunta de compra: todavía no confirma el pedido."
+    confirmar_dato_envio:
+      si: "El cliente responde que sí a tu pregunta sobre un dato de envío: confirma ese dato. No es una compra nueva."
+      "no": "El cliente responde que no al dato de envío que le preguntaste: pídele el dato correcto."
+    ver_opciones:
+      si: "El cliente quiere ver las opciones que le ofreciste: muéstraselas con la herramienta que corresponde."
+      "no": "El cliente no quiere ver esas opciones."
+    otra_si_no:
+      si: "El cliente responde que sí a tu última pregunta."
+      "no": "El cliente responde que no a tu última pregunta."
+  any:
+    elegir_variante: "El cliente responde tu pregunta de variantes (color, aroma, diseño o cantidad)."
+    pregunta_abierta: "El cliente responde tu última pregunta."
+
+# El contrato del turno: asunto → tools que lo resuelven (cualquiera de ellas).
+# Viaja grabado (`tools.required`) para la segunda puerta del turno (una ronda
+# más que nombra la que falta) y la auditoría antes de enviar. La PRIMERA fila
+# del asunto que se cumple decide; `any_of: []` = no pide tool. Lee `p` (la
+# probabilidad de cada pregunta sí/no; una respuesta sin probabilidad vale 0),
+# `th` y `inp.stage` (la etapa que calcula el código). Los datos que el cliente
+# acaba de dar piden `set_order_slot` con esos campos (lo agrega la política).
+contract:
+  - topic: catalogo
+    any_of: [present_products, present_product_gallery, list_categories]
+    nudge: "Para mostrarle el catálogo usa present_products (o list_categories)."
+  # El precio ya está en lo que vio: no hace falta consultarlo.
+  - topic: precio
+    when: "'precio.en_contexto' in p && p['precio.en_contexto'] >= th['given']"
+    any_of: []
+  - topic: precio
+    any_of: [search_products, get_product_by_handle, present_product_detail, present_products]
+    nudge: "El precio sale del catálogo: consúltalo con search_products o get_product_by_handle antes de darlo."
+  # Pregunta si llega o cuánto tarda, no el costo (rafaga-v5): la tarjeta de
+  # tarifas no es la respuesta. Sin la pregunta del costo, la fila de siempre.
+  - topic: envio
+    when: "'envio.costo' in p && p['envio.costo'] < th['detect']"
+    any_of: []
+  # La tarjeta de tarifas trae solo costos y termina el turno: lo demás que
+  # preguntó va con `send_reply` en el mismo paso (6543 t6, r5, 2026-09-29).
+  - topic: envio
+    any_of: [send_shipping_rates]
+    nudge: "Para el costo del envío usa send_shipping_rates. La tarjeta termina el turno: si además preguntó otra cosa (por ejemplo, cuánto tarda), respóndela con send_reply en el mismo paso."
+  # `search_products` ya trae las medidas de cada producto (2026-09-29).
+  - topic: medidas
+    any_of: [present_product_detail, get_product_by_handle, search_products]
+    nudge: "Las medidas salen del catálogo: consúltalas con search_products o get_product_by_handle."
+  # El selector trae las opciones del catálogo: en la etapa de variantes basta
+  # él; antes, el selector o la ficha (4567 t20, r10: el bot ya había anotado
+  # el producto y el contrato pedía la ficha).
+  - topic: variante
+    when: "inp.stage == 'etapa_variantes'"
+    any_of: [present_variant_picker]
+    nudge: "Para que escoja color o aroma usa present_variant_picker."
+  - topic: variante
+    any_of: [present_variant_picker, present_product_detail, get_product_by_handle]
+    nudge: "Los colores y aromas salen del catálogo: para que escoja uno usa present_variant_picker con el handle del producto; para mostrarle el producto, present_product_detail."
+  - topic: aroma
+    when: "inp.stage == 'etapa_variantes'"
+    any_of: [present_variant_picker]
+    nudge: "Para que escoja color o aroma usa present_variant_picker."
+  - topic: aroma
+    any_of: [present_variant_picker, present_product_detail, get_product_by_handle]
+    nudge: "Los colores y aromas salen del catálogo: para que escoja uno usa present_variant_picker con el handle del producto; para mostrarle el producto, present_product_detail."
+  - topic: disponibilidad
+    any_of: [search_products, get_product_by_handle]
+    nudge: "La disponibilidad sale del catálogo: consúltala con search_products o get_product_by_handle."
+  - topic: estado_pedido
+    any_of: [check_order_status]
+    nudge: "Para el estado del pedido usa check_order_status."
+  # Una queja pide un humano solo si reclama por un pedido ya hecho.
+  - topic: queja
+    when: "'queja.pedido_hecho' in p && p['queja.pedido_hecho'] >= th['given']"
+    any_of: [escalate_to_human]
+    nudge: "Es un reclamo sobre un pedido ya hecho: escala con escalate_to_human."
+  - topic: promocion
+    any_of: [list_promotions, apply_coupon]
+    nudge: "Para promociones o cupones usa list_promotions (o apply_coupon si ya dio el código)."
+
+# ③ Por asunto, con la respuesta de `cover.<asunto>`: covered (la respuesta lo
+# atiende), missing (falta con claridad) o doubt. El motor junta: cualquier
+# missing → complemento (una burbuja más con lo que faltó); si no, cualquier
+# doubt → pendiente (se envía y el asunto queda pendiente); si no, se envía.
+verify_decide:
+  - when: "!('p' in item)"
+    then: doubt
+  - when: "item.p >= th['covered']"
+    then: covered
+  - when: "item.p <= 1.0 - th['covered']"
+    then: missing
+  - otherwise: doubt
+
+# La guía de etapas (la etapa la calcula el código; Jev aporta la evidencia).
+guide:
+  # Lo que el cliente ELIGE no es una pregunta: si responde la pregunta de
+  # variantes del asesor (o Jev dice que elige), un «pregunta por colores o
+  # aromas» dudoso (< given) es la elección leída como pregunta (4567 t22).
+  choice_topics: [variante, aroma]
+  # Sin una venta en curso, el que solo agradece o saluda no se empuja a
+  # comprar (caso del 2026-09-29: «pedido listo» → «Son geniales. Muchas gracias»).
+  no_sale_stages: [etapa_descubrimiento, etapa_postcierre]
+  stagnant_turns: 3
+  slot_labels:
+    ciudad: ciudad
+    direccion: dirección
+    telefono: teléfono
+    nombre_recibe: quien recibe
+    metodo_pago: método de pago
+
+examples:
+  contract:
+    - {topics: [catalogo], expect: [{topic: catalogo, any_of: [present_products, present_product_gallery, list_categories]}]}
+    # El precio ya visto no pide tool; el que no vio, sí.
+    - {topics: [precio], answers: {precio.en_contexto: 0.85}, expect: []}
+    - {topics: [precio], answers: {precio.en_contexto: 0.84}, expect: [{topic: precio, any_of: [search_products, get_product_by_handle, present_product_detail, present_products]}]}
+    # «¿cuánto tarda el envío?» no pide tarifas; «¿cuánto cuesta?» o sin la pregunta, sí.
+    - {topics: [envio], answers: {envio.costo: 0.69}, expect: []}
+    - {topics: [envio], answers: {envio.costo: 0.70}, expect: [{topic: envio, any_of: [send_shipping_rates]}]}
+    - {topics: [envio], expect: [{topic: envio, any_of: [send_shipping_rates]}]}
+    # El selector según la etapa.
+    - {topics: [variante, aroma], input: {stage: etapa_variantes}, expect: [{topic: variante, any_of: [present_variant_picker]}, {topic: aroma, any_of: [present_variant_picker]}]}
+    - {topics: [aroma], input: {stage: etapa_descubrimiento}, expect: [{topic: aroma, any_of: [present_variant_picker, present_product_detail, get_product_by_handle]}]}
+    # La queja de un pedido hecho escala; otra queja, no.
+    - {topics: [queja], answers: {queja.pedido_hecho: 0.85}, expect: [{topic: queja, any_of: [escalate_to_human]}]}
+    - {topics: [queja], answers: {queja.pedido_hecho: 0.84}, expect: []}
+    # Asuntos sin tool (tiempos, saludo) no piden nada; el orden es el de los asuntos.
+    - {topics: [tiempos, estado_pedido, saludo, promocion], expect: [{topic: estado_pedido, any_of: [check_order_status]}, {topic: promocion, any_of: [list_promotions, apply_coupon]}]}
+  verify:
+    - {topics: [precio, envio], answers: {cover.precio: 0.70, cover.envio: 0.95}, expect: {decision: send}}
+    - {topics: [precio, envio], answers: {cover.precio: 0.30000000000000004, cover.envio: 0.5}, expect: {decision: complement, missing: [precio]}}
+    - {topics: [precio, envio], answers: {cover.precio: 0.31, cover.envio: 0.9}, expect: {decision: pending, missing: [precio]}}
+    - {topics: [precio, {topic: envio, msg: 2}], answers: {cover.precio: 0.9}, expect: {decision: pending, missing: [envio]}}

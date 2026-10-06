@@ -14,11 +14,12 @@ deployment.**
 
 ## Cómo funciona
 
-- **`src.sdk.connectorkit`** re-exporta los 10 ports + sus factories de
+- **`src.sdk.connectorkit`** re-exporta los ports + sus factories de
   composición: `OrderQueryPort`/`OrderCommandPort`/`OrderRegistrationPort`
   (commerce), `CatalogPort`/`CheckoutVerificationPort`, `MetaCatalogPort`,
   `AudioTranscriptionPort`, `ImageVisionPort`, `CustomerScoringPort`,
-  `AttributionReadPort` — y el nuevo **`WebCartReaderPort`**.
+  `AttributionReadPort`, **`WebCartReaderPort`** y **`PerceptionPort`**
+  (sección "Percepción", abajo).
 - **`WebCartReaderPort`** (HU web-cart hot lead, `src/platform/carts/`):
   lee un carrito de la **Store API** de Medusa v2 (`GET /store/carts/{id}`
   con `x-publishable-api-key` — env `MEDUSA_PUBLISHABLE_API_KEY`; sin ella
@@ -265,6 +266,77 @@ Quién lo usa:
 - `src/plugins/marketing/api/coupons.py`: la central (CRUD, unidades, resultados).
 - `apply_coupon` / `list_promotions`: unidades que quedan, agotado y falla cerrada.
 - `present_order_confirmation` / `register_order` y "Crear pedido" (`chats/api/session_actions.py`, `order_intake.py`): reparto por unidad, `quota_changed` y `coupon_quota_id` en la línea.
+
+## Percepción: `PerceptionPort` (el oráculo del motor de decisiones)
+
+Preguntas **cerradas y tipadas** sobre una conversación, respondidas por Jev
+(TypeSafe) con probabilidad. Es el ORÁCULO del motor de decisiones de ventas
+(`MOTOR_DECISIONES_PLAN.md`): casi nunca cambia. Cuestionarios, políticas,
+umbrales y perfiles del motor viven en el plugin
+(`src/plugins/chats/agent/sales/decisions/`). 100 % Jev desde el 2026-09-28
+(el rival OpenAI del laboratorio se quitó). Las preguntas tienen la forma
+nativa de Jev:
+
+| Tipo | `criteria` | Respuesta (`TypedAnswer`) |
+|---|---|---|
+| `noul` | `{"true": …, "false": …}` | `p` = probabilidad de sí |
+| `choice` | `{opción: descripción}` | `choice`, `probs` por opción y `confidence` |
+| `score` | `(nivel0, nivel1, …)`, en orden | `score` (0..n-1, fraccionario) y `probs` por nivel |
+
+| Símbolo | Qué es |
+|---|---|
+| `PerceptionPort.ask(state, questions, *, timeout_s, redact=())` | contrato; **nunca lanza**: timeout, error del proveedor, llave ausente o respuesta con otra forma → `PerceptionResult(ok=False, error=…)` y el llamador sigue sin clasificador (fail-open) |
+| `get_perception_port(perfil_del_oráculo)` | factory por perfil de `platform/perception/profiles.yaml` (`jev-1.13`; ids de modelo FIJOS, L-23). `PERCEPTION_PROVIDER=fake` o `off` fuerza el fake o el nulo en todo el proceso |
+| `oracle_timeout_s(perfil_del_oráculo)` | el tiempo máximo del perfil (el motor corta ahí) |
+| `openrouter_decisions` | Jev (`typesafe/jev-1.13`) por la Decisions API de OpenRouter (`POST /api/alpha/decisions`, alpha); no pasa por LiteLLM. Llave `OPENROUTER_API_KEY`. La respuesta dice qué snapshot la sirvió (`PerceptionResult.model`) |
+| `FakePerceptionAdapter` / `NullPerceptionAdapter` | dobles oficiales; contract suite en `tests/platform/perception/test_perception_contract.py` (respuestas grabadas de Jev) |
+| `anonymize_text(text, redact=())` | quita teléfonos, correos, direcciones y los nombres de `redact`; los perfiles que salen de la caja la aplican siempre |
+| `DisagreementLog(vault)` | la cola de desacuerdos regla ↔ Jev (`<vault>/_decisions/disagreements.jsonl` + `labels.jsonl`), UNA para todo el sistema: la llenan el motor de ventas y el Order Sentinel; Claude Code la califica con `scripts/decisions_queue.py`. El estado se guarda anonimizado |
+| `DecisionMetrics(vault)` | una línea por decisión de una capacidad en sombra o en jev (`_decisions/metrics/<día>.jsonl`: ok, latencia, acuerdo): de acá sale la vara de producción (días en sombra, caídas < 1 %, p95) |
+
+Los cuestionarios (p. ej. `rafaga-v1`) son dominio de cada agente y viven en
+su plugin como datos, no en platform: el perfil del motor nombra el
+cuestionario, la política y el perfil del oráculo, para que la traza y el
+laboratorio digan con qué se midió.
+
+## Fotos del cliente contra el catálogo: visión, embeddings y verificador
+
+Caso del 2026-09-28: el cliente mandó capturas de NUESTRO catálogo y el bot
+negó productos que sí tenemos. La visión ahora devuelve el texto que se lee en
+la foto, y dos ports nuevos buscan la foto en el catálogo cuando el texto no
+alcanza. La decisión (qué producto es) vive en el plugin de ventas
+(`chats/agent/sales/use_cases/photo_product.py`); acá, solo el transporte.
+
+| Símbolo | Qué es |
+|---|---|
+| `ImageVisionPort.describe_image(bytes, mime)` | lo mismo que `describe` con la imagen ya en memoria (el laboratorio describe las fotos de su banco). `VisionResult.visible_text` (`VisibleText`: nombre, precio, URL, código y otras líneas, copiados tal cual) y `is_screenshot` salen del prompt JSON |
+| `ImageEmbeddingPort.embed(bytes, mime)` | una foto → vector de 768 (`gemini-embedding-2`, alias `gemini-embedding` del proxy; convierte a JPEG porque el modelo solo acepta PNG/JPEG). Nunca lanza: una falla es None. `model` y `dimensions` dicen con qué se midió |
+| `PhotoMatchPort.pick_same_design(foto, mime, candidatos)` | la foto del cliente + una hoja con una fila numerada por candidato (hasta dos fotos cada uno) → `PhotoPick(number=1..N o None)`. Alias `gemini-photo-match` (`gemini-3.5-flash-lite`: 74/74 en la investigación, ~2 s). Nunca lanza; un número fuera de la lista es `ok=False` |
+| `get_image_embedding_port()` / `get_photo_match_port()` | factories; siguen el MISMO interruptor que la visión (`IMAGE_VISION_PROVIDER=fake` → dobles sin red, `off` → nulos) |
+| `FakeImageEmbeddingAdapter` / `NullImageEmbeddingAdapter`, `FakePhotoMatchAdapter` / `NullPhotoMatchAdapter` | dobles oficiales; contract suites en `tests/platform/test_image_embedding_contract.py` y `tests/platform/test_photo_match_contract.py` |
+| `CatalogPhotoIndex` / `get_catalog_photo_index()` (en `catalogkit`) | el índice de fotos del catálogo junto al snapshot (`<snapshot>/photo_index/`: vector + miniatura de cada foto). `refresh` mide solo lo que falta y rehace todo si el modelo de embeddings cambió (vuelve a medir una imagen de control); `nearest` solo devuelve productos y fotos del catálogo de HOY |
+
+## Costos por conversación que no pasan por el agente: Jev y las fotos
+
+El costo LLM del agente (`episodes[].llm_usage`) y el de WhatsApp
+(`cost_summary`) tienen sus escritores. Lo que cobra Jev y lo que cuesta leer
+las fotos del cliente se suman al episodio con la MISMA forma:
+`{"calls": <llamadas>, "cost_usd_micros": <micro-USD>}` (micro-USD enteros:
+son fracciones de centavo). Ads los lee del vault («Costo Jev» y «Costo
+imágenes», junto a «Costo LLM» y «Costo WA»).
+
+| Símbolo | Qué es |
+|---|---|
+| `record_jev_cost(session_id, cost_usd)` | suma una pregunta a Jev (`PerceptionResult.cost_usd`, de OpenRouter `usage.cost`) a `jev_usage`. Lo llaman las capacidades del motor (también en sombra), la lectura del turno, la revisión antes de enviar y el lector del Order Sentinel. Sin costo no cuenta |
+| `record_vision_cost(session_id, cost_usd, calls=, store=)` | suma las llamadas a Gemini de una foto (describirla, su huella y la comparación contra el catálogo) a `vision_usage`. El costo sale del proxy (`_hidden_params.response_cost`) o de tokens × `OPENLIT_PRICING_JSON`, al precio del modelo que contestó (si el failover atendió con el sucesor, el del sucesor); la huella se cobra por imagen (`imagePrice`), porque el proxy reporta 0 tokens para una imagen; una llamada sin precio conocido se cuenta sin inventar el costo. `store`: el metadata store del ingest (con `update`) |
+| `record_audio_cost(session_id, cost_usd, calls=, store=)` | suma la transcripción de una nota de voz (Gemini, alias `gemini-multimodal`) a `audio_usage`. Se cobra toda llamada que Google contestó, también si no salió texto útil; no la que nunca llegó al modelo (`media_fetch_failed`, `rate_limit`, `provider_error`). El costo sale del proxy o de tokens × `OPENLIT_PRICING_JSON` a la tarifa de audio (`audioPromptPrice`). `store`: el metadata store del ingest (con `update`) |
+| `ImageEmbeddingPort.embed_measured(bytes, mime)` | el vector y lo que costó la llamada (el ingest lo cobra a la conversación; el índice del catálogo, un costo de la tienda, usa `embed`). `PhotoPick.cost_usd` y `VisionResult.cost_usd_estimate` dicen lo mismo para la comparación y la descripción |
+
+Los dos van al episodio abierto o, si no hay, al último (remarketing pregunta
+sobre una conversación cerrada; un comprobante llega con la conversación en
+manos de una persona). Nunca crean la sesión, escriben con `update` (lock por
+sesión) y nunca lanzan: registrar un costo no frena a quien lo registra.
+Implementación común: `platform/observability/episode_usage.py`.
 
 ## Reglas al agregar un port (regla de oro del kit)
 

@@ -267,3 +267,132 @@ def test_enrich_attributes_the_turn_to_the_episode_open_when_it_started() -> Non
     assert trace["turn"] == 7
     assert trace["state"]["closing_tag"] == "INTERESADO"
     assert trace["stage_out"] == "confirmacion"
+
+
+# ---------------------------------------------------------------------------
+# Traza v2 (plan del laboratorio §4.1): pasos en orden con su tiempo
+# ---------------------------------------------------------------------------
+
+_T0 = 2_000_000
+
+
+def _steps() -> list[dict]:
+    return [
+        {"kind": "llm", "at_ms": _T0 + 100, "dur_ms": 1900, "round": 1, "finish": "tool_calls",
+         "tool_calls": ["request_shipping_details"], "tokens_in": 38412, "tokens_out": 96,
+         "text_fate": "discarded_default_deny", "text": "Perfecto, ya casi llegas a casa"},
+        {"kind": "tool", "at_ms": _T0 + 2050, "dur_ms": 300, "name": "request_shipping_details",
+         "call_id": "call_1", "args": {"order_total_cop": 89000}, "event": 0},
+        {"kind": "cut", "at_ms": _T0 + 2400, "reason": "awaits_customer", "tools": ["request_shipping_details"]},
+        {"kind": "guard", "at_ms": _T0 + 2500, "name": "variant_enumeration_guard", "before": "Tenemos 11 aromas", "after": ""},
+        {"kind": "outbound", "at_ms": _T0 + 2600, "bubbles": [{"kind": "text", "text": "Listo", "wamid": "wamid.A", "delivered": True}]},
+    ]
+
+
+def test_trace_version_is_2() -> None:
+    assert tt.TRACE_VERSION == 2
+
+
+def test_payload_v2_numbers_the_steps_with_time_relative_to_the_turn() -> None:
+    payload = _payload(steps=_steps(), turn_key="run:abc/t:7")
+
+    assert [s["i"] for s in payload["steps"]] == [1, 2, 3, 4, 5]
+    assert [s["kind"] for s in payload["steps"]] == ["llm", "tool", "cut", "guard", "outbound"]
+    assert [s["at_ms"] for s in payload["steps"]] == [100, 2050, 2400, 2500, 2600]
+    assert payload["turn_key"] == "run:abc/t:7"
+    assert (payload["source"], payload["mode"]) == ("prod", "off")
+
+
+def test_payload_v2_tool_step_carries_the_outcome_of_its_event() -> None:
+    payload = _payload(steps=_steps())
+
+    tool = payload["steps"][1]
+    assert (tool["ok"], tool["error"]) == (False, "customer_deferred")
+    assert tool["args"] == {"order_total_cop": 89000}
+    assert "customer_deferred" in tool["excerpt"]
+    assert "event" not in tool
+
+
+def test_payload_v2_bounds_texts_and_step_count() -> None:
+    many = [{"kind": "guard", "at_ms": _T0 + i, "name": "g", "before": "x" * 5000} for i in range(80)]
+
+    payload = _payload(steps=many)
+
+    assert len(payload["steps"]) == tt.STEPS_MAX
+    assert payload["steps"][-1] == {"i": tt.STEPS_MAX, "at_ms": 59, "kind": "truncated", "dropped": 21}
+    assert all(len(s.get("before", "")) <= tt.TEXT_MAX for s in payload["steps"])
+
+
+def test_what_the_model_received_keeps_its_own_bounds() -> None:
+    """El «Paso a paso» muestra lo que recibió el modelo (2026-09-30): las
+    notas del turno y el mensaje del cliente pasan de 600 caracteres a
+    menudo. `llm_round_input` ya los acota; la traza no los recorta otra vez
+    a `TEXT_MAX`."""
+    notes = "[NOTA] " + "n" * 3000
+    step = {"kind": "llm", "at_ms": _T0, "round": 1,
+            "sent": {"notes": notes, "new": [{"role": "user", "text": "u" * 2000}]}}
+
+    [llm] = _payload(steps=[step])["steps"]
+
+    assert llm["sent"]["notes"] == notes
+    assert len(llm["sent"]["new"][0]["text"]) == 2000
+
+
+def test_a_tool_step_keeps_the_text_the_model_asked_to_send() -> None:
+    """«Pidió: responder al cliente» no decía qué: el detalle del paso muestra
+    el texto de `send_reply`, que casi siempre pasa de los 160 caracteres del
+    resumen v1 (ese sigue igual para el scorecard)."""
+    text = "Listo, el Velón Gorrión en lila 🌿\n\n" + "¿Qué aroma quieres? " * 12
+    events = [{"name": "send_reply", "args": {"text": text}, "result": json.dumps({"reply": {"text": text}})}]
+    steps = [{"kind": "tool", "at_ms": _T0, "name": "send_reply", "call_id": "c1", "event": 0}]
+
+    payload = _payload(tool_events=events, steps=steps)
+
+    assert payload["steps"][0]["args"]["text"] == text
+    assert len(payload["tools"][0]["args"]["text"]) <= 160
+
+
+def test_payload_v2_keeps_the_v1_guards_field_sorted() -> None:
+    payload = _payload(guards=["b_guard", "a_guard", "b_guard"], steps=_steps())
+
+    assert payload["guards"] == ["a_guard", "b_guard"]
+
+
+def test_payload_without_steps_is_still_valid_v2() -> None:
+    payload = _payload()
+
+    assert payload["steps"] == []
+    assert payload["turn_key"] is None
+
+
+def test_payload_never_uses_the_keys_that_enrich_owns() -> None:
+    """`enrich_turn_trace` pone v, session_id, episode_id, turn y
+    recorded_at_ms ANTES del payload: si el payload trajera una de esas claves
+    la pisaría (el turno 7 pasaría a llamarse como el contador del workflow)."""
+    payload = _payload(steps=_steps(), turn_key="run:abc/t:7", context_notes=["burst_note"])
+
+    assert not {"v", "session_id", "episode_id", "turn", "recorded_at_ms"} & set(payload)
+
+
+def test_context_note_names_classifies_the_injected_notes() -> None:
+    notes = [
+        "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\nEl cliente te escribió 2 mensajes",
+        "[DATOS DEL PEDIDO YA CONFIRMADOS] producto: cubo-love",
+        "[HANDOFF_REMARKETING]: el cliente respondió",
+        "otra cosa",
+    ]
+
+    assert tt.context_note_names(notes) == ["burst_note", "draft", "handoff", "other"]
+    assert tt.context_note_names(None) == []
+
+
+def test_every_answer_of_jev_reaches_the_step() -> None:
+    """El paso «Jev lee el mensaje» se cortaba en 24 respuestas (el tope de
+    las listas): en la etapa de variantes se perdían justo las de la etapa
+    («¿elige?», «¿cambia de producto?») y el asunto de cada mensaje (4567
+    t22, r11: 27 preguntas)."""
+    answers = [{"q": f"topic.t{i}", "type": "noul", "p": 0.1} for i in range(31)]
+
+    [perception] = _payload(steps=[{"kind": "perception", "at_ms": _T0, "answers": answers}])["steps"]
+
+    assert len(perception["answers"]) == 31

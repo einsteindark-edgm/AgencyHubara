@@ -112,7 +112,7 @@ async def test_quick_replies_success_appends_ui_component_note(vault):
 
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
-    assert sent == 1
+    assert sum(r["ok"] for r in sent) == 1
 
     events = _read_history(vault)
     assert len(events) == 1
@@ -147,7 +147,7 @@ async def test_shipping_flow_appends_form_note(vault, monkeypatch):
 
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
-    assert sent == 1
+    assert sum(r["ok"] for r in sent) == 1
 
     events = _read_history(vault)
     assert len(events) == 1
@@ -187,7 +187,7 @@ async def test_variant_picker_persists_rendered_text_as_plain_message(vault):
 
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
-    assert sent == 1
+    assert sum(r["ok"] for r in sent) == 1
 
     events = _read_history(vault)
     assert len(events) == 1
@@ -231,7 +231,7 @@ async def test_failed_send_appends_no_history_event(vault, monkeypatch):
 
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
-    assert sent == 0
+    assert sum(r["ok"] for r in sent) == 0
     assert _read_history(vault) == []
 
 
@@ -262,7 +262,7 @@ async def test_multiple_intents_append_in_send_order(vault):
 
     env = ActivityEnvironment()
     sent = await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
-    assert sent == 2
+    assert sum(r["ok"] for r in sent) == 2
 
     events = _read_history(vault)
     assert [e["component_kind"] for e in events] == [
@@ -270,6 +270,50 @@ async def test_multiple_intents_append_in_send_order(vault):
         "quick_replies",
     ]
     assert "Vela Luz Serena" in events[0]["content"]
+
+
+# Motor de decisiones (capacidad `destinatario`, F5): el flush le pregunta al
+# motor si cada texto del LLM es para el cliente; si no, sale el neutro. El
+# panel muestra lo que salió, nunca el texto que el motor rechazó.
+_INTERNAL = "Encontré 2 aromas. Se los muestro al cliente."
+
+
+@pytest.mark.asyncio
+async def test_the_buttons_note_shows_the_body_that_went_out_not_the_rejected_one(vault, monkeypatch):
+    import src.platform.whatsapp.client as wa_client
+
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)  # la regla de hoy
+    _seed_metadata(
+        vault,
+        [{"id": "i-7", "kind": "quick_replies",
+          "params": {"body": _INTERNAL, "buttons": [{"id": "b1", "title": "Ver aromas"}]}}],
+    )
+
+    await ActivityEnvironment().run(flush_pending_ui_intents_activity, _SESSION_ID)
+
+    went_out = wa_client.send_interactive_buttons.call_args.args[2].body
+    [event] = _read_history(vault)
+    assert went_out != _INTERNAL
+    assert went_out in event["content"] and _INTERNAL not in event["content"]
+
+
+@pytest.mark.asyncio
+async def test_the_picker_message_in_the_panel_is_the_one_the_customer_read(vault, monkeypatch):
+    import src.platform.whatsapp.client as wa_client
+
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    _seed_metadata(
+        vault,
+        [{"id": "i-8", "kind": "variant_picker",
+          "params": {"variant_type": "scent", "intro_text": _INTERNAL,
+                     "sections": [{"title": "Frescos", "rows": [{"id": "scent.lavanda", "title": "💜 Lavanda"}]}]}}],
+    )
+
+    await ActivityEnvironment().run(flush_pending_ui_intents_activity, _SESSION_ID)
+
+    [event] = _read_history(vault)
+    assert event["content"] == wa_client.send_text.call_args.args[2]
+    assert _INTERNAL not in event["content"]
 
 
 # ── Unit: descripciones por kind (sin activity, sin I/O) ────────────────
@@ -390,7 +434,8 @@ async def test_sent_component_event_carries_its_wamid(vault):
     )
 
     env = ActivityEnvironment()
-    assert await env.run(flush_pending_ui_intents_activity, _SESSION_ID) == 1
+    report = await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
+    assert [r["wamid"] for r in report if r["ok"]] == ["wamid.test.1"]
 
     (ev,) = _read_history(vault)
     assert ev["wamid"] == "wamid.test.1"

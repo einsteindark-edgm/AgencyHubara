@@ -90,3 +90,32 @@ _GHOSTING_PROMPT = (
 def build_ghosting_prompt() -> str:
     """Trigger inyectado al LLM cuando el usuario lleva mucho rato sin responder."""
     return _GHOSTING_PROMPT
+
+
+_DECIDED_GHOSTING_PROMPT = (
+    "[SISTEMA]: El usuario dejó de responder (ghosting). La lectura de la "
+    "conversación ya decidió cómo cerrarla: usa OBLIGATORIAMENTE "
+    "`manage_conversation_tag` con tag=`{tag}` y un motivo breve de una línea "
+    "que diga qué pasó en la conversación."
+)
+_DECIDED_CONFIRMADO_SIN_DATOS = (
+    " Después llama también `escalate_to_human(reason_category="
+    "'ORDER_PENDING_SHIPPING_DETAILS', summary='Cliente confirmó pedido X por "
+    "valor $Y pero no completó los datos de envío')` para que un colega del "
+    "equipo termine el pedido."
+)
+_GHOSTING_GOLDEN_RULE = (
+    "\n\n**REGLA DE ORO**: NO generes ninguna respuesta visible al usuario. SOLO "
+    "llama la(s) herramienta(s) en silencio y termina. No mandes "
+    "`customer_message`: el cliente ya no está en la conversación."
+)
+
+
+def build_decided_ghosting_prompt(tag: str) -> str:
+    """Aviso de ghosting cuando el motor de decisiones ya eligió la etiqueta
+    (F8, workflow V2): el LLM solo ejecuta las tools del cierre."""
+    prompt = _DECIDED_GHOSTING_PROMPT.format(tag=tag)
+    if tag == "CONFIRMADO_SIN_DATOS":
+        prompt += _DECIDED_CONFIRMADO_SIN_DATOS
+    return prompt + _GHOSTING_GOLDEN_RULE
+

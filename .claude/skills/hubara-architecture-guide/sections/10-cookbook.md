@@ -603,5 +603,50 @@ notes: |
 
 ---
 
+## §16. Arreglar o cambiar una decisión del bot (motor de decisiones)
+
+**Aplica cuando:** el bot decide mal (confirma una compra que no fue, no ve una
+baja, reabre una conversación cerrada, cobra la zona equivocada…) o una HU
+cambia cómo decide. **Pre-req:** `sections/11-decision-engine.md`.
+
+**Regla:** se arregla en el paquete, nunca con un `if`/regex/guarda en el
+lugar que decide (eso era `main`).
+
+### Files
+
+| Path | Acción |
+|---|---|
+| `hubara_agency/src/plugins/chats/shared/decisions/bundles/<id>-N/` | NEW (copia de la versión activa, `id` = carpeta, `version` + 1) |
+| `…/bundles/<id>-N/capabilities/<capacidad>.yaml` | MODIFY (ejemplo rojo + pregunta / umbral / fila) |
+| `hubara_agency/tests/plugins/test_decision_bundles_published.py` | MODIFY (huella de la versión nueva) |
+| `hubara_agency/tests/plugins/chats/sales/decisions/test_decisions_<id>_N.py` | NEW («es la anterior + este cambio y nada más») |
+| `forge/manifest.yaml` | MODIFY (`deletes`, si es experimento de esta tienda) |
+| `infra/terraform/platform/tenants.auto.tfvars` | MODIFY al promover (`lab.decisions_bundle`) |
+
+Solo si falta un dato o un cálculo genérico: UN builtin en
+`chats/agent/sales/decisions/bundled*.py` + su entrada en `bundles/builtins.yaml`
++ su prueba.
+
+### Snippet (el ejemplo rojo sale del veredicto)
+
+```yaml
+examples:
+  # caso real (run/turno anonimizado, nunca el teléfono): las `answers` del
+  # veredicto y el valor que DEBIÓ salir; con la tabla vieja da otro → DB010
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.9}, compra.pregunta_compra: 0.2}, input: {context: true}, expect: [null, text]}
+```
+
+### Verificación
+
+```bash
+cd hubara_agency && uv run python -m src.sdk.cli decisions check
+cd hubara_agency && uv run pytest -q tests/platform/decisions tests/plugins/chats/sales/decisions tests/plugins/test_decision_bundles_published.py
+```
+
+Después: laboratorio con «Paquete a comparar» (`B@<id>-N`) y, si gana, la
+promoción por Terraform (`sections/11` §6).
+
+---
+
 **Fin sección 10.** Estos son los patrones recurrentes. Si tu task no
 encaja en ninguno, revisá si está sobre-engineered.

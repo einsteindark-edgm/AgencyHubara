@@ -1,0 +1,43 @@
+# CASO order-sentinel · lector de Jev en `sombra` (motor de decisiones de hubara,
+# F8): Jev leyó que el pedido se entregó ("ya me llegó"); el LLM no vio señal.
+# En sombra actúa el LLM (como hoy: nada que despachar) y el desacuerdo queda en
+# `shadow` para la cola que califica Claude Code.
+id: order-sentinel-sombra-desacuerdo
+title: order-sentinel · lector sombra (actúa el LLM, desacuerdo registrado)
+target: agent:order-sentinel
+seed:
+  payload:
+    schema_version: 1
+    now_ms: 1720500000000
+    reader: sombra
+    conversations:
+      - session_id: wa_573009876543
+        order_id: order_01LLEGO
+        current_stage: shipping
+        payment_confirmed: true
+        messages:
+          - { who: customer, text: "ya me llegó, gracias!", at_ms: 1720495000000, has_media: false }
+        reading:
+          verdict:
+            action: transition
+            to_stage: delivered
+            evidence: ["ya me llegó, gracias!"]
+            confidence: high
+          model: typesafe/jev-1.13
+          error: null
+          answers: []
+ports:
+  llm: '{"action": "none", "evidence": [], "confidence": "medium"}'
+golden:
+  schema_version: 1
+  snapshot_now_ms: 1720500000000
+  dispatch: []
+  suppressed: []
+  llm_errors: []
+  reader: sombra
+  shadow:
+    - session_id: wa_573009876543
+      order_id: order_01LLEGO
+      llm: { action: none }
+      jev: { action: transition, to_stage: delivered }
+      agree: false

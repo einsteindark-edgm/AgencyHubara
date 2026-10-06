@@ -39,6 +39,7 @@ class _Call:
     message: str
     phone_number_id: str | None
     extra_context: list[str] | None = None
+    inbound_meta: dict | None = None
 
 
 class FakeLoadOrStart:
@@ -51,9 +52,10 @@ class FakeLoadOrStart:
         message: str,
         phone_number_id: str | None,
         extra_context: list[str] | None = None,
+        inbound_meta: dict | None = None,
     ) -> None:
         self.calls.append(
-            _Call(session_id, message, phone_number_id, extra_context)
+            _Call(session_id, message, phone_number_id, extra_context, inbound_meta)
         )
 
 
@@ -443,7 +445,7 @@ async def test_history_is_appended_before_routing():
 
     class TrackingLoader:
         async def execute(
-            self, session_id, message, phone_number_id, extra_context=None
+            self, session_id, message, phone_number_id, extra_context=None, inbound_meta=None
         ) -> None:
             order.append("load_session")
 
@@ -1471,3 +1473,24 @@ async def test_agent_referral_is_counted_even_when_a_human_owns_the_conversation
     assert [r["source"] for r in meta["agent_referrals"]] == ["chatgpt"]
     assert "web_product_ref" not in meta
     assert not meta.get("episodes")
+
+
+@pytest.mark.asyncio
+async def test_inbound_ids_go_with_the_message_for_the_trace():
+    """Traza v2 (plan del laboratorio, PR 3): el turno sabe el wamid, la hora
+    y el tipo de cada mensaje de la ráfaga."""
+    loader = FakeLoadOrStart()
+    use_case = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=FakeMetadataStore(),  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_make_text_message(text="me mandas el catálogo"))
+
+    # `text` es lo que escribió el cliente, sin la cita de campaña, la plantilla
+    # ni el resumen del episodio anterior que el turno le agrega al LLM: es lo
+    # que lee el clasificador de las capas nuevas (PR 14).
+    assert loader.calls[0].inbound_meta == {
+        "wamid": "wamid.X", "ts_ms": 1714312345000, "kind": "text", "text": "me mandas el catálogo",
+    }

@@ -1,0 +1,77 @@
+# Catálogo de builtins del lector de Jev del Order Sentinel (PAQUETES_DE_DECISION.md F8).
+#
+# Lo que el paquete del lector puede pedir por nombre: el texto que ve Jev
+# (la conversación numerada y lo que el sistema ya sabe del pedido), los
+# mensajes que pueden ser evidencia de un cambio y las reglas, pisos y
+# comparadores. Cada builtin existe en código (`order_sentinel/agent/decisions:
+# BUILTINS`, una prueba lo verifica). El certificador lee SOLO este archivo.
+#
+#   kind    rule | state | items | floor | same
+#   value   tipo del valor (si está, solo sirve a capacidades de ese tipo)
+#   input   tipo de entrada que lee
+#   params  parámetros que se pasan con `with:`
+#   fields  los campos de cada ítem
+#   keys    los campos que identifican un ítem (los que puede llevar el id de su pregunta)
+engine_contract: 1
+
+inputs:
+  # Una conversación del snapshot y, para la evidencia, el cambio que Jev leyó.
+  Conversacion: {change: "string?"}
+
+# Las capacidades que lee el código del lector (`readings.py`): todas en el paquete (DB003).
+capabilities: [cambio, evidencia]
+
+builtins:
+  no_reading:
+    kind: rule
+    value: "string?"
+    input: Conversacion
+    doc: "Sin lectura de Jev (el lector en reglas, o Jev duda): decide el LLM, como hoy."
+  no_evidence:
+    kind: rule
+    value: "tuple<string>"
+    input: Conversacion
+    doc: "Ningún mensaje lo prueba."
+  order_conversation:
+    kind: state
+    input: Conversacion
+    params: {max_chars: int}
+    doc: "Lo que el sistema ya sabe del pedido (etapa, pago) y la conversación numerada ([n] quién: texto), cada mensaje hasta max_chars."
+  evidence_candidates:
+    kind: items
+    input: Conversacion
+    params: {limit: int, quote_chars: int}
+    fields: {number: int, text: string, quote: string}
+    keys: [number]              # su número en la conversación (el id de su pregunta)
+    doc: >-
+      Los mensajes NUEVOS desde el último análisis que podrían probar el
+      cambio, los últimos `limit`: del equipo o del cliente; el pago, SOLO del
+      equipo (que el cliente diga que pagó no basta). `number` es su número
+      en la conversación, `text` el texto exacto (la evidencia) y `quote` el
+      texto en una línea hasta quote_chars (lo que lee Jev).
+  jev:
+    kind: floor
+    doc: "Lo que dijo Jev (el lector no tiene piso: si duda, decide el LLM)."
+  same_value:
+    kind: same
+    doc: "El mismo valor."
+
+# Qué resuelve cada decisión y en qué parte del software actúa (2026-10-02):
+# cada decisión que el código pide trae su `about` o el paquete no certifica.
+places:
+  seguimiento: Al revisar cada pedido abierto (Order Sentinel)
+
+about:
+  cambio:
+    name: Qué cambió en el pedido
+    where: [seguimiento]
+    solves: >-
+      Lee la conversación del pedido para saber si el equipo dijo que el
+      pedido cambió (en preparación, listo, en camino, entregado o pago
+      recibido) y la etapa del pedido no lo refleja todavía.
+  evidencia:
+    name: Evidencia del cambio
+    where: [seguimiento]
+    solves: >-
+      Encuentra el mensaje exacto del equipo que prueba ese cambio, para que
+      el aviso al operador cite lo que se dijo y no una suposición.

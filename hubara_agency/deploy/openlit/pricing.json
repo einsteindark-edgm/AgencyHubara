@@ -1,5 +1,5 @@
 {
-  "_README": "HU-003 A7 - tarifas para que OpenLIT calcule gen_ai.usage.cost (costo USD por peticion LLM). promptPrice/completionPrice = USD POR 1000 TOKENS. Valores = precio de lista publico al 2026-09-10 (api-docs.deepseek.com/quick_start/pricing) - VERIFICAR contra tu contrato real. MODELO: DeepSeek V4.1 Flash (id upstream `deepseek-flash`, alias `deepseek-v4-flash` en litellm_config.yaml). OFF-PEAK $0.15/1M in cache-miss, $0.003/1M in cache-hit, $0.60/1M out. PICO = el DOBLE. HISTORIA DEL PRECIO (para no comparar contra un baseline muerto): hasta 2026-08-16 V4 Flash fue FLAT $0.14 in / $0.28 out; el 2026-08-16 DeepSeek introdujo pico/valle y SUBIO a $0.22/$0.66 valle ($0.44/$1.32 pico); el 2026-09-10 V4.1 Flash BAJO a $0.15/$0.60 valle. O sea: vs lo que veniamos pagando el ultimo mes esto es -32% input, -9% output, -57% cache-hit (medido con el system prompt real de Sales, 16.3k tokens: -37% por conversacion). Vs el flat de julio es mas caro, pero ese tramo ya no existe. PICO = lun-vie 01:00-04:00 y 06:00-10:00 UTC = 20:00-23:00 y 01:00-05:00 Bogota. OJO: las quiet hours 21:30-08:00 NO protegen de esto - solo suprimen toques PROACTIVOS (reengagement/watchdog/campanas); las conversaciones INBOUND de Sales se atienden 24/7 en la caja app, asi que el trafico de 20:00-23:00 Bogota se factura al DOBLE. La tarifa valle cargada aca es por lo tanto un PISO, no el costo exacto (OpenLIT no sabe de pico/valle). NOTA cache: OpenLIT NO distingue tokens cacheados - usa promptPrice para TODO el input, o sea tarifa cache-MISS (sobreestima fuerte: medimos 98.8% de cache-hit en turnos warm). Los dos sesgos van en sentidos opuestos y no se cancelan de forma predecible - para plata fina, mirar la factura de DeepSeek, no este dato. OpenLIT busca por nombre exacto y por la parte tras '/'. GEMINI-BACKUP (fallback del agente + resumen de cliente) = gemini-3.5-flash-lite desde 2026-09-18: lista publica $0.30/1M in, $2.50/1M out, y el output INCLUYE los thinking tokens (ai.google.dev/gemini-api/docs/pricing, pagina del 2026-09-16). Antes apuntaba al preview 3.1 ($0.25/$1.50). Al re-apuntar un alias hay que mover SUS DOS claves (alias + id upstream): lo exige tests/platform/test_litellm_model_ids_stable.py.",
+  "_README": "HU-003 A7 - tarifas para que OpenLIT calcule gen_ai.usage.cost (costo USD por peticion LLM). promptPrice/completionPrice = USD POR 1000 TOKENS. Valores = precio de lista publico al 2026-09-10 (api-docs.deepseek.com/quick_start/pricing) - VERIFICAR contra tu contrato real. MODELO: DeepSeek V4.1 Flash (id upstream `deepseek-flash`, alias `deepseek-v4-flash` en litellm_config.yaml). OFF-PEAK $0.15/1M in cache-miss, $0.003/1M in cache-hit, $0.60/1M out. PICO = el DOBLE. HISTORIA DEL PRECIO (para no comparar contra un baseline muerto): hasta 2026-08-16 V4 Flash fue FLAT $0.14 in / $0.28 out; el 2026-08-16 DeepSeek introdujo pico/valle y SUBIO a $0.22/$0.66 valle ($0.44/$1.32 pico); el 2026-09-10 V4.1 Flash BAJO a $0.15/$0.60 valle. O sea: vs lo que veniamos pagando el ultimo mes esto es -32% input, -9% output, -57% cache-hit (medido con el system prompt real de Sales, 16.3k tokens: -37% por conversacion). Vs el flat de julio es mas caro, pero ese tramo ya no existe. PICO = lun-vie 01:00-04:00 y 06:00-10:00 UTC = 20:00-23:00 y 01:00-05:00 Bogota. OJO: las quiet hours 21:30-08:00 NO protegen de esto - solo suprimen toques PROACTIVOS (reengagement/watchdog/campanas); las conversaciones INBOUND de Sales se atienden 24/7 en la caja app, asi que el trafico de 20:00-23:00 Bogota se factura al DOBLE. La tarifa valle cargada aca es por lo tanto un PISO, no el costo exacto (OpenLIT no sabe de pico/valle). NOTA cache: OpenLIT NO distingue tokens cacheados - usa promptPrice para TODO el input, o sea tarifa cache-MISS (sobreestima fuerte: medimos 98.8% de cache-hit en turnos warm). Los dos sesgos van en sentidos opuestos y no se cancelan de forma predecible - para plata fina, mirar la factura de DeepSeek, no este dato. OpenLIT busca por nombre exacto y por la parte tras '/'. GEMINI-BACKUP (fallback del agente + resumen de cliente) = gemini-3.5-flash-lite desde 2026-09-18: lista publica $0.30/1M in, $2.50/1M out, y el output INCLUYE los thinking tokens (ai.google.dev/gemini-api/docs/pricing, pagina del 2026-09-16). Antes apuntaba al preview 3.1 ($0.25/$1.50). Al re-apuntar un alias hay que mover SUS DOS claves (alias + id upstream): lo exige tests/platform/test_litellm_model_ids_stable.py. VISION (2026-10-01): las fotos del cliente se cobran a la conversacion (episodes[].vision_usage); si el proxy no manda su costo, tokens x esta tabla. gemini-multimodal = gemini-2.5-flash-lite, lista publica $0.10/1M in (texto e imagen) y $0.40/1M out. gemini-photo-match = gemini-3.5-flash-lite (mismo precio que gemini-backup). AUDIO (2026-10-05): gemini-2.5-flash-lite cobra el AUDIO de entrada a $0.30/1M (3x el texto): audioPromptPrice; las notas de voz usan esa tarifa (un modelo sin audioPromptPrice cobra el audio como promptPrice, p. ej. 3.5 Flash-Lite = $0.30 para todo). EMBEDDING (2026-10-05): gemini-embedding = gemini-embedding-2, lista publica $0.20/1M texto y $0.00012 POR IMAGEN (imagePrice, USD por imagen). Se cobra por imagen porque el proxy (litellm 1.86.2) reporta prompt_tokens=0 cuando la entrada es una imagen: tokens x tabla daria 0. SUCESOR (2026-10-05): Google limita gemini-2.5-flash-lite a cuentas que ya lo usaban (tabla de deprecations del 2026-10-01); gemini-multimodal-successor = gemini-3.5-flash-lite atiende si Google lo niega (failover del proxy). Cada llamada se cobra al modelo que CONTESTO (response.model) si tiene precio aca; si no, al alias pedido.",
   "chat": {
     "deepseek-v4-flash": {
       "promptPrice": 0.00015,
@@ -24,6 +24,34 @@
     "gemini-3.5-flash-lite": {
       "promptPrice": 0.0003,
       "completionPrice": 0.0025
+    },
+    "gemini-multimodal": {
+      "promptPrice": 0.0001,
+      "audioPromptPrice": 0.0003,
+      "completionPrice": 0.0004
+    },
+    "gemini-2.5-flash-lite": {
+      "promptPrice": 0.0001,
+      "audioPromptPrice": 0.0003,
+      "completionPrice": 0.0004
+    },
+    "gemini-multimodal-successor": {
+      "promptPrice": 0.0003,
+      "completionPrice": 0.0025
+    },
+    "gemini-photo-match": {
+      "promptPrice": 0.0003,
+      "completionPrice": 0.0025
+    },
+    "gemini-embedding": {
+      "promptPrice": 0.0002,
+      "completionPrice": 0.0,
+      "imagePrice": 0.00012
+    },
+    "gemini-embedding-2": {
+      "promptPrice": 0.0002,
+      "completionPrice": 0.0,
+      "imagePrice": 0.00012
     }
   }
 }

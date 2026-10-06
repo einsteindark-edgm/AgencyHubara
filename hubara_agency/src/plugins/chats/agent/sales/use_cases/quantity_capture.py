@@ -45,6 +45,7 @@ from src.plugins.chats.agent.sales.use_cases.order_draft import (
     update_order_draft,
 )
 from src.plugins.chats.shared.draft_items import draft_items
+from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 _WORD_NUMBERS: dict[str, int] = {
     "un": 1, "una": 1, "uno": 1,
@@ -140,6 +141,7 @@ def parse_leading_quantity(text: str | None) -> int | None:
     return value
 
 
+@en_retiro("funcion:capture_quantity_from_reply")
 def capture_quantity_from_reply(
     metadata: dict[str, Any],
     *,
@@ -151,13 +153,25 @@ def capture_quantity_from_reply(
 
     Mutates `metadata` (solo cuando captura). Devuelve la cantidad capturada
     (también cuando ya estaba fijada al mismo valor — idempotente) o None.
+    Es LEER (`read_reply_quantity`) y ESCRIBIR (`apply_reply_quantity`): el
+    motor de decisiones (capacidad `cantidad`) decide la lectura en medio.
     """
+    return apply_reply_quantity(
+        metadata, read_reply_quantity(last_agent_text, inbound_text), now_ms=now_ms
+    )
+
+
+def read_reply_quantity(last_agent_text: str | None, inbound_text: str | None) -> int | None:
+    """LECTURA de la regla de hoy, sin escribir (gates 1 y 4): la cantidad con
+    la que arranca la respuesta del cliente, solo si el agente acaba de
+    preguntarla."""
     if not agent_asked_quantity(last_agent_text):
         return None
-    quantity = parse_leading_quantity(inbound_text)
-    if quantity is None:
-        return None
+    return parse_leading_quantity(inbound_text)
 
+
+def _open_item(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    """El ítem en curso de un pedido abierto (gate 2), o None."""
     episode = get_active_episode(metadata)
     if episode is None or episode.get("order_id"):
         return None
@@ -165,11 +179,31 @@ def capture_quantity_from_reply(
     slots = draft.get("slots") if isinstance(draft, dict) else None
     if not isinstance(slots, dict) or not slots.get("producto"):
         return None
+    return current_item(draft, draft_items(draft)) or {}
+
+
+def quantity_slot_open(metadata: dict[str, Any]) -> bool:
+    """¿Hay dónde escribir una cantidad nueva? Pedido en curso con producto y el
+    ítem en curso todavía sin cantidad (gates 2 y 3). Si no, ninguna lectura
+    escribiría nada: el motor no le pregunta a Jev."""
+    item = _open_item(metadata)
+    return item is not None and not str(item.get("cantidad") or "").strip()
+
+
+def apply_reply_quantity(metadata: dict[str, Any], quantity: int | None, *, now_ms: int) -> int | None:
+    """ESCRITURA (gates 2 y 3): fija la cantidad leída en el ítem en curso.
+
+    Mutates `metadata` (solo cuando captura). Devuelve la cantidad (también
+    si ya estaba fijada al mismo valor — idempotente) o None."""
+    if quantity is None:
+        return None
+    item = _open_item(metadata)
+    if item is None:
+        return None
 
     # La cantidad es del producto del que se está hablando (el ítem en
     # curso); si ese ya tiene una, el número podría ser de otro — no se
     # adivina, lo resuelve el LLM.
-    item = current_item(draft, draft_items(draft)) or {}
     existing = str(item.get("cantidad") or "").strip()
     if existing == str(quantity):
         return quantity

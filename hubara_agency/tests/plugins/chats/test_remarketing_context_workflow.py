@@ -197,3 +197,14 @@ async def test_trigger_receives_the_real_catalog_facts(tmp_path) -> None:
     await _run_workflow(tracker, RemarketingContext(tag_motivo=TAG_MOTIVO, catalog_facts=facts), tmp_path)
     (inp,) = tracker.trigger_v2_inputs
     assert inp.catalog_facts == facts
+
+
+@pytest.mark.asyncio
+async def test_trigger_receives_the_post_purchase_situation(tmp_path) -> None:
+    """Caso real ···4148: el gancho sabe que el cliente ya compró y si su
+    último mensaje quedó sin respuesta (ver test_remarketing_post_purchase)."""
+    tracker = Tracker()
+    await _run_workflow(tracker, RemarketingContext(tag_motivo=TAG_MOTIVO, post_purchase="closing"), tmp_path)
+    [inp] = tracker.trigger_v2_inputs
+    assert inp.post_purchase == "closing"
+

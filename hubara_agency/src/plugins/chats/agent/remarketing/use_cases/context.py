@@ -15,10 +15,13 @@ Acá se digiere lo que el gancho necesita:
     transcript del vault (`<vault>/<sid>/sessions/<sid>.jsonl`, el log que lee
     el dashboard) — no de toda la sesión (runs edbb0d8b / 8e73b7dc).
   * `campaign_context`: la campaña que abrió el episodio, si la hubo.
+  * `contact_transcript`: lo que ve la decisión `contactar` (el episodio y,
+    si abrió tras otro que se cerró, cómo terminó ese).
 """
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Sequence
 from typing import Any
 
 from src.plugins.chats.agent.remarketing.contracts import RemarketingContext
@@ -85,6 +88,81 @@ def episode_events(
     if isinstance(start, int) and 0 <= start <= len(events):
         return events[start:]
     return events
+
+
+#: Lo que la tienda le escribió al cliente desde su último mensaje, antes de
+#: la conversación nueva (la confirmación, los avisos del ETA): hasta 3.
+CONTACT_NOTICE_LINES = 3
+
+_PREVIOUS_OUTCOME = {
+    "COMPRA_EXITOSA": "la conversación anterior terminó en una compra",
+    "CONFIRMADO_PAGO_PENDIENTE": "la conversación anterior terminó con un pedido registrado",
+    "CONFIRMADO_SIN_DATOS": "la conversación anterior terminó con una compra confirmada",
+    "RECHAZO": "en la conversación anterior el cliente decidió no comprar",
+}
+
+
+def contact_transcript(meta: dict[str, Any], events: list[dict[str, Any]]) -> str:
+    """Lo que ve `contactar` («¿sobra el gancho?») antes de redactar.
+
+    El operador (2026-09-30): remarketing no reconoce que la conversación ya
+    terminó. Si el episodio activo lo abrió un mensaje tras otro que se cerró
+    (un «Ya lo recibí. Muchas gracias» al aviso de entrega del ETA), el
+    gancho solo ve ese episodio. Acá van además cómo terminó la conversación
+    anterior y lo que la tienda le escribió desde su último mensaje. Sin
+    conversación anterior, la misma transcripción del gancho. El gancho no
+    cambia: esto es solo para la decisión.
+    """
+    episode = _active_episode(meta)
+    current = render_transcript(episode_events(events, episode))
+    episodes = meta.get("episodes") if isinstance(meta.get("episodes"), list) else []
+    previous = episodes[-2] if episode is not None and len(episodes) >= 2 else None
+    start = (episode or {}).get("msgs_count_at_start")
+    if (
+        not isinstance(previous, dict)
+        or previous.get("closed_at_ms") is None
+        or not isinstance(start, int)
+        or not 0 <= start <= len(events)
+    ):
+        return current
+    before = events[:start]
+    last_customer = max((i for i, e in enumerate(before) if e.get("role") == "user"), default=-1)
+    notices = render_transcript(before[last_customer + 1 :], limit=CONTACT_NOTICE_LINES)
+    outcome = _PREVIOUS_OUTCOME.get(str(previous.get("closing_tag") or ""), "la conversación anterior se cerró")
+    return "\n".join(part for part in (f"(Antes de esto, {outcome}.)", notices, current) if part)
+
+
+#: Cierres de la conversación anterior que cuentan como compra.
+_BOUGHT = frozenset({"COMPRA_EXITOSA", "CONFIRMADO_PAGO_PENDIENTE", "CONFIRMADO_SIN_DATOS"})
+
+
+def post_purchase_state(meta: dict[str, Any], events: list[dict[str, Any]]) -> str:
+    """Si el cliente ya compró: la conversación justo anterior terminó en una
+    compra y no hay un pedido nuevo en curso (simulación de la conversación
+    real ···4148, 2026-10-01). `closing` si su último mensaje quedó sin
+    respuesta (se le debe un cierre), `answered` si ya le respondimos, `""`
+    si no aplica."""
+    episodes = [e for e in meta.get("episodes") or [] if isinstance(e, dict)]
+    if not episodes:
+        return ""
+    if _active_episode(meta) is not None:
+        previous = episodes[-2] if len(episodes) >= 2 else None
+    else:
+        previous = episodes[-1]
+    if (
+        not isinstance(previous, dict)
+        or previous.get("closed_at_ms") is None
+        or str(previous.get("closing_tag") or "") not in _BOUGHT
+    ):
+        return ""
+    last = next(
+        (
+            e for e in reversed(events)
+            if e.get("role") in _LABELS and isinstance(e.get("content"), str) and e["content"].strip()
+        ),
+        None,
+    )
+    return "closing" if last is not None and last.get("role") == "user" else "answered"
 
 
 def campaign_context_for(episode: dict[str, Any] | None) -> str:
@@ -166,7 +244,14 @@ def _ficha(product: Any) -> str:
     return " | ".join(parts)
 
 
-def catalog_facts_for(products: list[Any], *, mentioned: str) -> str:
+def named_products(products: list[Any], *, mentioned: str) -> list[Any]:
+    """Los productos del catálogo que la charla nombra tal cual (sin tildes ni
+    mayúsculas): la regla de hoy de «producto nombrado»."""
+    text = _fold(mentioned)
+    return [p for p in products if _fold(p.title) and _fold(p.title) in text]
+
+
+def catalog_facts_for(products: list[Any], *, mentioned: str, named: Sequence[str] | None = None) -> str:
     """(productos del snapshot, texto de la charla) → ficha para el gancho.
 
     Incidente 2026-09-25: el cliente preguntó por velas «en vaso» y mandó la
@@ -178,16 +263,21 @@ def catalog_facts_for(products: list[Any], *, mentioned: str) -> str:
     """
     if not products:
         return ""
-    text = _fold(mentioned)
-    named = [p for p in products if _fold(p.title) and _fold(p.title) in text]
+    # `named` (títulos): los que decidió el motor de decisiones (F3, «producto
+    # nombrado»); sin él, los que la charla nombra tal cual.
+    shown = (
+        [p for p in products if p.title in set(named)]
+        if named is not None
+        else named_products(products, mentioned=mentioned)
+    )
     lines = [
         f"Productos que existen ({len(products)}): "
         + ", ".join(p.title for p in products)
         + ". Cualquier otro producto, forma, envase o presentación NO existe."
     ]
-    if named:
+    if shown:
         lines.append("Ficha de los productos de esta charla:")
-        lines.extend(_ficha(p) for p in named)
+        lines.extend(_ficha(p) for p in shown)
     return "\n".join(lines)
 
 
@@ -241,4 +331,6 @@ def context_from_metadata(
         touch_number=touch_number,
         silence_minutes=silence_minutes,
         campaign_context=campaign_context_for(episode),
+        # Un pedido nuevo en curso manda: es una venta, no una posventa.
+        post_purchase="" if lead.has_order_draft else post_purchase_state(meta, events),
     )

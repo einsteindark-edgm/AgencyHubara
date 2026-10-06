@@ -69,6 +69,7 @@ class FakeLoadOrStart:
         message: str,
         phone_number_id: str | None,
         extra_context: list[str] | None = None,
+        inbound_meta: dict | None = None,
     ) -> None:
         self.messages.append(message)
 

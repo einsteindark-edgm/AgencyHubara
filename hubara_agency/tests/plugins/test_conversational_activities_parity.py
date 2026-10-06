@@ -69,16 +69,16 @@ def test_conversational_workers_spread_the_shared_tuple() -> None:
         source = worker_path.read_text(encoding="utf-8")
         if "*CONVERSATIONAL_TURN_ACTIVITIES" in source:
             continue
-        # Excepción BLESSED (dieta de prompt, Sales): spread FILTRADO de la
-        # misma tupla que reemplaza `build_prompt` por un override del MISMO
-        # nombre de activity (`sales_build_prompt`, guion por etapa). Sigue
-        # siendo la tupla como fuente (nada listado a mano) — solo se permite
-        # sustituir UNA activity por otra homónima. Cualquier otro desvío
-        # reabre la clase L-3.
+        # Excepción BLESSED (motor de decisiones F2): spread de la misma
+        # tupla a través de una TABLA DE SUSTITUCIONES DECLARADAS
+        # (`ACTIVITY_SUBSTITUTIONS`: nombre de activity → override homónimo;
+        # hoy `build_prompt` → `sales_build_prompt`, guion por etapa). Sigue
+        # siendo la tupla como fuente (nada listado a mano); cada sustitución
+        # la valida `test_declared_substitutions_keep_names_and_replace_one_to_one`.
+        # Cualquier otro desvío reabre la clase L-3.
         assert (
             "for a in CONVERSATIONAL_TURN_ACTIVITIES" in source
-            and "generic_build_prompt" in source
-            and "sales_build_prompt" in source
+            and "ACTIVITY_SUBSTITUTIONS" in source
         ), (
             f"{worker_path.name} no spread-ea CONVERSATIONAL_TURN_ACTIVITIES "
             f"en su activities=[...] (ni usa el patrón blessed de override de "
@@ -103,3 +103,23 @@ def test_sales_build_prompt_override_keeps_activity_name() -> None:
         "sales_build_prompt debe declararse @activity.defn(name=\"build_prompt\") "
         "— con otro nombre el workflow no la encuentra (NotFoundError runtime)."
     )
+
+
+def test_declared_substitutions_keep_names_and_replace_one_to_one() -> None:
+    """Motor de decisiones F2 (enchufe 2): las activities se sustituyen por
+    NOMBRE desde una tabla declarada en el worker. Cada sustituta se registra
+    con el mismo nombre que la del turno compartido (si no, el workflow no la
+    encuentra: NotFoundError en runtime, L-3), reemplaza exactamente a UNA y
+    el worker no registra dos activities con el mismo nombre."""
+    import src.plugins.chats.workers.sales as sales_worker
+
+    shared = {a.__temporal_activity_definition.name: a for a in CONVERSATIONAL_TURN_ACTIVITIES}
+    registered = [a.__temporal_activity_definition.name for a in sales_worker.SALES_ACTIVITIES]
+
+    assert sales_worker.ACTIVITY_SUBSTITUTIONS, "sin sustituciones declaradas"
+    for name, substitute in sales_worker.ACTIVITY_SUBSTITUTIONS.items():
+        assert name in shared, f"{name} no es una activity del turno compartido"
+        assert substitute.__temporal_activity_definition.name == name
+        assert substitute in sales_worker.SALES_ACTIVITIES and shared[name] not in sales_worker.SALES_ACTIVITIES
+    assert len(registered) == len(set(registered)), "nombres de activity duplicados en el worker"
+

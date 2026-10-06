@@ -9,6 +9,7 @@ import asyncio
 # importarse; si OpenLIT no parcheó litellm todavía, esa referencia queda sin
 # instrumentar → el span gen_ai se crea pero gen_ai.usage.* (tokens/cost) sale 0.
 # Por eso setup_logging + init_otel van acá arriba, antes de exoclaw_temporal.*
+from src.plugins.chats.agent.sales.decisions import registry as decisions_registry
 from src.platform.logging import setup_logging
 from src.platform.observability import init_otel, otel_workflow_runner
 
@@ -39,9 +40,6 @@ from src.platform.temporal.dispatcher import (
     write_pending_handoff_activity,
 )
 
-from exoclaw_temporal.activities.conversation import (
-    build_prompt as generic_build_prompt,
-)
 
 from src.platform.tool_extensions import register_tool_extension
 from src.platform.tools.escalation import EscalateToHumanTool
@@ -66,6 +64,7 @@ from src.plugins.chats.agent.sales.activities import (
     decide_ghosting_action,
     ensure_closing_escalation_activity,
     ensure_payment_pending_closure_activity,
+    ensure_promised_handoff_activity,
     flush_pending_ui_intents_activity,
     persist_turn_trace_activity,
     read_and_clear_pending_handoff_activity,
@@ -81,6 +80,7 @@ from src.plugins.chats.agent.sales.tools.catalog import (
 from src.plugins.chats.agent.sales.composition import (
     build_session_history_reader,
     build_session_metadata_store,
+    build_vault_dir,
 )
 from src.plugins.chats.agent.sales.tools.checkout import VerifyOrderForCheckoutTool
 from src.plugins.chats.agent.sales.tools.coupons import (
@@ -115,6 +115,21 @@ from src.plugins.chats.agent.sales.tools.ui_intents import (
 from src.plugins.chats.agent.sales.workflows.sales_session import (
     HubaraSalesSessionWorkflow,
 )
+from src.plugins.chats.agent.sales.workflows.sales_session_v2 import (
+    HubaraSalesSessionWorkflowV2,
+)
+from src.plugins.chats.agent.sales.decisions.routing import register_sales_workflow_router
+from src.plugins.chats.agent.sales.decisions.activities import (
+    PERCEPTION_ACTIVITIES,
+)
+from src.plugins.chats.agent.sales.decisions.egress_activities import (
+    EGRESS_ACTIVITIES,
+)
+
+# Workflows del worker de ventas (motor de decisiones F4): el V1 congelado y el
+# V2 al lado; el registro de bots arranca uno u otro POR NOMBRE. Constante de
+# módulo para que el sandbox del laboratorio registre las mismas clases.
+SALES_WORKFLOWS = [HubaraSalesSessionWorkflow, HubaraSalesSessionWorkflowV2]
 
 # HU-002: analytics bus singleton — filesystem siempre, Meta CAPI si hay
 # token. El bus es global para todo el proceso del worker; las activities
@@ -144,7 +159,13 @@ register_tool_extension(
 # y devuelve `reply.text`; `run_agent_turn` lo envía y termina el turno.
 register_tool_extension(
     "sales.send_reply",
-    lambda workspace: SendReplyTool(workspace=str(workspace)),
+    # Motor de decisiones (F5, `destinatario` y `rescate`): el vault del
+    # registro de bots y de la cola de desacuerdos. El catálogo (aromas y
+    # colores): una lista para escoger vuelve al modelo para que la mande con
+    # el selector (laboratorio caso-fotos-0930-r10, 4567 t20).
+    lambda workspace: SendReplyTool(
+        workspace=str(workspace), vault_dir=build_vault_dir(), catalog=get_catalog_client()
+    ),
 )
 
 # HU-04: tools de catalogo. Leen del snapshot mantenido por catalog_sync (HU-03)
@@ -190,9 +211,13 @@ register_tool_extension(
     ),
 )
 
+# Motor de decisiones (F3): la categoría pedida es una capacidad; el vault
+# trae su control del despliegue y su cola de desacuerdos.
 register_tool_extension(
     "sales.search_products",
-    lambda workspace: SearchProductsTool(workspace=str(workspace), catalog=_catalog),
+    lambda workspace: SearchProductsTool(
+        workspace=str(workspace), catalog=_catalog, vault_dir=build_vault_dir()
+    ),
 )
 register_tool_extension(
     "sales.get_product_by_handle",
@@ -261,6 +286,9 @@ register_tool_extension(
         catalog=_catalog,
         metadata_store=build_session_metadata_store(),
         history_reader=build_session_history_reader(),
+        # Motor de decisiones (F5, capacidad `monto`): el vault del registro
+        # de bots y de la cola de desacuerdos.
+        vault_dir=build_vault_dir(),
     ),
 )
 
@@ -296,9 +324,15 @@ register_tool_extension(
 # sigue siendo la fuente de verdad de la orden. `catalog`: valida aroma/color
 # contra la lista cerrada del producto (caso ep_010: "Melocotón" no existe y
 # entró al draft → a la orden real).
+# Motor de decisiones (F3): a cuál producto del pedido va un dato sin
+# producto lo decide una capacidad que lee lo último de la conversación.
 register_tool_extension(
     "sales.set_order_slot",
-    lambda workspace: SetOrderSlotTool(workspace=str(workspace), catalog=_catalog),
+    lambda workspace: SetOrderSlotTool(
+        workspace=str(workspace),
+        catalog=_catalog,
+        history_reader=build_session_history_reader(),
+    ),
 )
 
 # HU-002: decision tools de UI rica. Emiten "intents" a
@@ -396,9 +430,112 @@ register_tool_extension(
 )
 
 
+def register_decisions_routing() -> None:
+    """Motor de decisiones F2/F7: cuando la plataforma arranca Ventas desde
+    este worker (orquestación o activity de arranque), la versión del workflow
+    la decide el registro de bots por conversación."""
+    register_sales_workflow_router()
+
+
+register_decisions_routing()
+
+
+# Activities del worker de ventas. Constante de módulo (no inline en `main`)
+# para que el sandbox del laboratorio (sales_lab/sandbox) arme SU lista desde
+# esta: las mismas activities, con fakes solo donde hay efectos. Una activity
+# nueva acá que el sandbox no clasifique hace fallar la corrida (y su test).
+# Sustituciones DECLARADAS del turno compartido (motor de decisiones F2,
+# enchufe 2): nombre de activity → override con el MISMO nombre y el mismo
+# contrato, así el workflow no cambia (cero implicaciones de replay) y el
+# laboratorio sustituye por el mismo mecanismo. Hoy: `build_prompt` → el
+# guion por etapa `sales_build_prompt` (dieta de prompt). Registrar las dos
+# rompería el Worker (nombre duplicado): la tabla reemplaza una por una.
+# `test_conversational_activities_parity` valida cada entrada.
+ACTIVITY_SUBSTITUTIONS = {
+    "build_prompt": sales_build_prompt,
+}
+
+
+SALES_ACTIVITIES = [
+    # Set conversacional compartido — TODO worker que corra
+    # run_agent_turn lo spread-ea desde workflow_helpers (fuente
+    # única, L-3). Nunca listar esas activities a mano; un override
+    # entra por `ACTIVITY_SUBSTITUTIONS`.
+    *(
+        ACTIVITY_SUBSTITUTIONS.get(a.__temporal_activity_definition.name, a)
+        for a in CONVERSATIONAL_TURN_ACTIVITIES
+    ),
+    send_whatsapp_message_activity,
+    send_typing_indicator_activity,
+    persist_assistant_message_activity,
+    decide_ghosting_action,
+    bootstrap_sales_session_activity,
+    read_and_clear_pending_handoff_activity,
+    # Draft del pedido al turno de handoff (run 019f6db3): sin esto
+    # el LLM arranca ciego y re-pregunta/pisa lo ya elegido.
+    read_order_draft_note_activity,
+    # Dynamic ghosting timeout (sesión c4e3416f): extiende el wait
+    # cuando hay un WhatsApp Flow pendiente esperando nfm_reply.
+    read_idle_timeout_seconds_activity,
+    start_or_signal_sales_workflow_activity,
+    schedule_remarketing_workflow_activity,
+    # ADR-2026-05-20: declarative orchestration activities.
+    write_pending_handoff_activity,
+    dispatch_event_activity,
+    # HU-002: render UI intents emitidos por decision tools (post-LLM).
+    flush_pending_ui_intents_activity,
+    # Saludo de primer contacto cuando el turno sale por tool (menú)
+    # sin saludo — runs dc32f7fe / 3ce50ef3.
+    build_first_contact_greeting_activity,
+    # Guarda de enumeración de variantes (run 9bd495be): 4+ aromas o
+    # colores listados en texto plano → picker curado.
+    apply_variant_enumeration_guard_activity,
+    # HU-SC-0: traza por turno para el scorecard por etapa.
+    persist_turn_trace_activity,
+    # Fix integridad orden↔tag: red de seguridad determinística que
+    # garantiza el cierre "pago pendiente" + escalación tras un
+    # register_order exitoso aunque el LLM no emita el tag/escalación.
+    ensure_payment_pending_closure_activity,
+    # Patrón A (CONFIRMADO_SIN_DATOS): garantiza la escalación a humano
+    # cuando el LLM marca un closing tag que la exige pero no escala.
+    ensure_closing_escalation_activity,
+    # El texto final promete que un colega lo atiende y nadie escaló
+    # (laboratorio caso-cortesia-1001, 2026-09-30): la red escala.
+    ensure_promised_handoff_activity,
+    # HU-002 / A.5: transcripción de audio inbound (Groq/OpenAI).
+    transcribe_audio_activity,
+    # HU dialecto colombiano: hora de Bogotá + saludo apropiado
+    # inyectado al plugin_context. Disponible para uso desde el
+    # workflow si se requiere recomputar la hora mid-session
+    # (ghosting trigger, handoff resume). El path normal del
+    # cliente entrante usa el helper puro `context.py` desde
+    # `load_or_start_sales_session.py`.
+    compute_bogota_context_activity,
+    # HU-WA24H-001 Sprint CAPI: Meta Conversions API event
+    # dispatch (Lead / Purchase) en cierre de episode. Disparado
+    # por el workflow vía `_map_closing_tag_to_capi_event`. Tiene
+    # guards internos completos — skip silencioso si no aplica.
+    send_capi_event_activity,
+    # Auditoría CAPI 2026-09-08: flush del outbox tras cada turno
+    # (ViewContent / AddToCart / InitiateCheckout / OrderCreated /
+    # QualifiedLead / Purchase encolados por tools + UI intents).
+    flush_capi_outbox_activity,
+    # Plan del laboratorio, PR 14: capas ① y ③ del turno con
+    # clasificador (`perceive_burst`, `verify_coverage`). Solo corren
+    # con un modo activo en la señal; registrarlas no cambia nada (L-3).
+    *PERCEPTION_ACTIVITIES,
+    # Motor de decisiones F4: el egreso del workflow V2 (`decide_egress`:
+    # destinatario, rescate, portavelas y saludo). El V1 no la llama.
+    *EGRESS_ACTIVITIES,
+]
+
+
 async def main() -> None:
     """Worker Exclusivo para el Dominio de Ventas de WhatsApp."""
     ensure_plugin_enabled("chats")  # P-21: self-gate del toggle (INV-2)
+    # El paquete de decisión de la tienda compila AL ARRANCAR (no en la primera
+    # activity) y el log dice cuál corre (PAQUETES_DE_DECISION.md, premortem).
+    await asyncio.to_thread(decisions_registry.warm_up)
     logger.info("Conectando Especialista (Ventas) al clúster Temporal mTLS...")
     client = await get_temporal_client()
 
@@ -406,75 +543,8 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=task_queue,
-        workflows=[HubaraSalesSessionWorkflow],
-        activities=[
-            # Set conversacional compartido — TODO worker que corra
-            # run_agent_turn lo spread-ea desde workflow_helpers (fuente
-            # única, L-3). Nunca listar esas activities a mano.
-            # EXCEPCIÓN Sales (dieta de prompt): `build_prompt` se reemplaza
-            # por el override por-etapa `sales_build_prompt` — MISMO nombre
-            # de activity, mismo contrato → el workflow no cambia (cero
-            # replay implications). Registrar ambas rompería el Worker
-            # (nombre duplicado), por eso se filtra la genérica.
-            *(
-                a
-                for a in CONVERSATIONAL_TURN_ACTIVITIES
-                if a is not generic_build_prompt
-            ),
-            sales_build_prompt,
-            send_whatsapp_message_activity,
-            send_typing_indicator_activity,
-            persist_assistant_message_activity,
-            decide_ghosting_action,
-            bootstrap_sales_session_activity,
-            read_and_clear_pending_handoff_activity,
-            # Draft del pedido al turno de handoff (run 019f6db3): sin esto
-            # el LLM arranca ciego y re-pregunta/pisa lo ya elegido.
-            read_order_draft_note_activity,
-            # Dynamic ghosting timeout (sesión c4e3416f): extiende el wait
-            # cuando hay un WhatsApp Flow pendiente esperando nfm_reply.
-            read_idle_timeout_seconds_activity,
-            start_or_signal_sales_workflow_activity,
-            schedule_remarketing_workflow_activity,
-            # ADR-2026-05-20: declarative orchestration activities.
-            write_pending_handoff_activity,
-            dispatch_event_activity,
-            # HU-002: render UI intents emitidos por decision tools (post-LLM).
-            flush_pending_ui_intents_activity,
-            # Saludo de primer contacto cuando el turno sale por tool (menú)
-            # sin saludo — runs dc32f7fe / 3ce50ef3.
-            build_first_contact_greeting_activity,
-            # Guarda de enumeración de variantes (run 9bd495be): 4+ aromas o
-            # colores listados en texto plano → picker curado.
-            apply_variant_enumeration_guard_activity,
-            # HU-SC-0: traza por turno para el scorecard por etapa.
-            persist_turn_trace_activity,
-            # Fix integridad orden↔tag: red de seguridad determinística que
-            # garantiza el cierre "pago pendiente" + escalación tras un
-            # register_order exitoso aunque el LLM no emita el tag/escalación.
-            ensure_payment_pending_closure_activity,
-            # Patrón A (CONFIRMADO_SIN_DATOS): garantiza la escalación a humano
-            # cuando el LLM marca un closing tag que la exige pero no escala.
-            ensure_closing_escalation_activity,
-            # HU-002 / A.5: transcripción de audio inbound (Groq/OpenAI).
-            transcribe_audio_activity,
-            # HU dialecto colombiano: hora de Bogotá + saludo apropiado
-            # inyectado al plugin_context. Disponible para uso desde el
-            # workflow si se requiere recomputar la hora mid-session
-            # (ghosting trigger, handoff resume). El path normal del
-            # cliente entrante usa el helper puro `context.py` desde
-            # `load_or_start_sales_session.py`.
-            compute_bogota_context_activity,
-            # HU-WA24H-001 Sprint CAPI: Meta Conversions API event
-            # dispatch (Lead / Purchase) en cierre de episode. Disparado
-            # por el workflow vía `_map_closing_tag_to_capi_event`. Tiene
-            # guards internos completos — skip silencioso si no aplica.
-            send_capi_event_activity,
-            # Auditoría CAPI 2026-09-08: flush del outbox tras cada turno
-            # (ViewContent / AddToCart / InitiateCheckout / OrderCreated /
-            # QualifiedLead / Purchase encolados por tools + UI intents).
-            flush_capi_outbox_activity,
-        ],
+        workflows=SALES_WORKFLOWS,
+        activities=SALES_ACTIVITIES,
         # OTel obs: el TracingInterceptor (en get_temporal_client) crea spans
         # dentro del workflow sandbox → necesita opentelemetry como passthrough
         # o rompe con RestrictedWorkflowAccessError. Ver otel_workflow_runner.

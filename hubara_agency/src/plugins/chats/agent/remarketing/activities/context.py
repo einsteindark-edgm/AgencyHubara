@@ -23,9 +23,12 @@ from src.plugins.chats.agent.remarketing.contracts import (
 from src.plugins.chats.agent.remarketing.prompts import build_remarketing_trigger
 from src.plugins.chats.agent.remarketing.use_cases.context import (
     catalog_facts_for,
+    contact_transcript,
     context_from_metadata,
     customer_text_for,
+    named_products,
 )
+from src.plugins.chats.shared.agent_decisions import decide_catalog_context, decide_contact
 from src.plugins.chats.shared.product_truth import (
     unavailable_terms,
 )
@@ -73,14 +76,42 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
     metadata = _read_json(session_dir / "metadata.json")
     events = _read_jsonl(session_dir / "sessions" / f"{session_id}.jsonl")
     context = context_from_metadata(metadata, events, now_ms=int(time.time() * 1000))
+    # Motor de decisiones (F8, capacidad `contactar`): ¿el gancho sobra? Se
+    # decide ANTES de redactar; con el bot de hoy (o sin el motor conectado)
+    # no hay decisión y el LLM decide como siempre.
+    skip, trace = await decide_contact(
+        session_id=session_id,
+        # Con cómo terminó la conversación anterior a la vista (2026-09-30).
+        transcript=contact_transcript(metadata or {}, events),
+        touch_number=context.touch_number,
+        silence_minutes=context.silence_minutes,
+        vault_dir=Path(WORKSPACE_VAULT_DIR),
+    )
+    # Ya compró y su cortesía quedó sin respuesta: el cierre se le debe
+    # (operador, 2026-10-01: un NO_MESSAGE ahí queda frío). Jev decide el
+    # resto; esto solo le quita el corte a ese caso.
+    context = replace(context, skip_touch=skip and context.post_purchase != "closing", contact=trace)
     products = await _catalog_products()
     if not products:
         return context
     mentioned = f"{context.tag_motivo}\n{context.transcript}"
+    customer_text = customer_text_for(metadata, events)
+    # Motor de decisiones (F3): qué ficha ve el gancho («producto nombrado») y
+    # qué pidió el cliente que no existe («fuera de catálogo»). Con el bot de
+    # hoy (o sin el motor conectado), las reglas de siempre.
+    named, terms = await decide_catalog_context(
+        session_id=session_id,
+        text=mentioned,
+        customer_text=customer_text,
+        products=products,
+        named=[p.title for p in named_products(products, mentioned=mentioned)],
+        terms=unavailable_terms(customer_text, products),
+        vault_dir=Path(WORKSPACE_VAULT_DIR),
+    )
     return replace(
         context,
-        catalog_facts=catalog_facts_for(products, mentioned=mentioned),
-        unavailable_terms=unavailable_terms(customer_text_for(metadata, events), products),
+        catalog_facts=catalog_facts_for(products, mentioned=mentioned, named=named),
+        unavailable_terms=terms,
     )
 
 
@@ -111,4 +142,5 @@ async def build_remarketing_trigger_v2_activity(input: RemarketingTriggerInput) 
         campaign_context=input.campaign_context,
         catalog_facts=input.catalog_facts,
         unavailable_terms=input.unavailable_terms,
+        post_purchase=input.post_purchase,
     )

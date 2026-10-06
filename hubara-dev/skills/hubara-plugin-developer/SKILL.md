@@ -57,6 +57,28 @@ plugins, FSD, DEHA, manifests). Si vas a tocar imports cross-plugin, entities,
 manifests, workers o deploy, leé **`references/01-hard-rules.md`** primero —
 te ahorra el ciclo "editar → gate rojo → deshacer". Tabla completa en §3.
 
+## Si la tarea toca cómo DECIDE el bot: el motor de decisiones manda
+
+Confirmar una compra, ver una baja, una cortesía, un acuse, la zona de envío,
+si un texto es para el cliente, si escribirle de nuevo, la etiqueta de cierre…
+son **capacidades de un paquete de decisión** (YAML + CEL, versionado,
+certificado), no código del lugar que decide. Un bug de decisión («el bot
+decidió mal») o un cambio de cómo decide **se arregla en el paquete**:
+
+1. Leé el veredicto (Calidad LLM → el turno → «Decisiones de Jev»: `by`,
+   `reason`, `answers`, `bundle`) y ubicá el arreglo con la tabla de triage de
+   **`references/06-decision-bundles.md`** (§ «Un bug de decisión en producción»).
+2. ROJO = el caso real como `examples:` en una versión NUEVA del paquete →
+   `decisions check` da DB010. VERDE = el cambio mínimo de pregunta, umbral o
+   fila. Huella + prueba de versión. Laboratorio `B@paquete`. Terraform.
+3. Código solo si al motor le falta algo genérico: UN builtin con su prueba y
+   su entrada en el catálogo. **Nunca** un `if`, un regex, una lista de
+   palabras o una guarda nueva en el ingest, una tool, el egreso o remarketing
+   (eso era `main`; el operador lo prohibió — L-34).
+
+Guía con diagramas: `docs/motor-de-decisiones/index.html`. Arquitectura:
+`.claude/skills/hubara-architecture-guide/sections/11-decision-engine.md`.
+
 ## Cuándo leer cada referencia
 
 | Necesitás… | Leé |
@@ -65,8 +87,9 @@ te ahorra el ciclo "editar → gate rojo → deshacer". Tabla completa en §3.
 | Saber qué gate te va a frenar y el fix | `references/01-hard-rules.md` (§3) |
 | La receta paso-a-paso de un cambio típico | `references/02-recipes.md` (§4) |
 | Los comandos exactos de verificación | `references/03-command-panel.md` (§8) |
-| Si esto ya nos mordió antes (qué NO repetir) | `references/04-lessons.md` (§9, L-0..L-15) |
+| Si esto ya nos mordió antes (qué NO repetir) | `references/04-lessons.md` (§9, L-0..L-34) |
 | La superficie del SDK (kits, certificación, CLI) | `references/05-sdk-surface.md` (docs/_sdk) |
+| Crear o cambiar una capacidad del motor de decisiones, o arreglar un bug de decisión (paquetes YAML + CEL + `decisions check` + triage por veredicto) | `references/06-decision-bundles.md` (docs/_sdk/17) |
 
 Cuando una de estas referencias contradiga al código vivo, **gana el código
 vivo** — y esa contradicción es una lección nueva para §9 de la semilla.
@@ -78,8 +101,9 @@ vivo** — y esa contradicción es una lección nueva para §9 de la semilla.
 - **`hubara-tdd-author`** — escribe el test que falla primero (fase roja) para
   un incremento que vos definís. Usalo cuando el test no es obvio o querés
   presión de diseño antes de implementar.
-- **`hubara-gate-reviewer`** — corre el panel §8 y audita el diff contra las
-  reglas duras (§3) y las lecciones (§9). Usalo antes de cerrar/PR.
+- **`hubara-gate-reviewer`** — corre el panel §8 (incluye `decisions check`) y
+  audita el diff contra las reglas duras (§3), las lecciones (§9) y la regla
+  del motor de decisiones. Usalo antes de cerrar/PR.
 
 Delegar te ahorra contexto y trae una perspectiva fresca. No delegues lo
 trivial; sí lo que requiere barrer muchos archivos o una mirada independiente.

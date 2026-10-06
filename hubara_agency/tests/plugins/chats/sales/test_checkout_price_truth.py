@@ -255,3 +255,45 @@ async def test_without_history_reader_prices_still_work(ctx, _isolate_vault_dir:
     result = await _verify(tool, ctx)
     assert result["items"][0]["unit_price_cop"] == 49500
     assert result["quoted_price_mismatch"] is False
+
+
+_DESDE_TEXT = "Desde $45.000 tienes el set de la Trilogía del Terror 🤍. ¿Te lo separo?"
+
+
+@pytest.mark.asyncio
+async def test_by_default_a_quote_with_a_policy_word_passes_like_today(ctx, _isolate_vault_dir: Path, monkeypatch) -> None:
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    _seed(_isolate_vault_dir, [_DESDE_TEXT])
+    tool = VerifyOrderForCheckoutTool(
+        workspace=str(_isolate_vault_dir), verifier=FakeVerifier(), catalog=FakeCatalog(),
+        metadata_store=FilesystemMetadataStore(_isolate_vault_dir), history_reader=_reader(_isolate_vault_dir),
+        vault_dir=_isolate_vault_dir,
+    )
+
+    result = await _verify(tool, ctx)
+
+    assert result.get("quoted_price_mismatch") is not True
+
+
+@pytest.mark.asyncio
+async def test_with_jev_a_product_quote_with_a_policy_word_is_caught(ctx, _isolate_vault_dir: Path, monkeypatch) -> None:
+    """Motor de decisiones (F5, capacidad `monto`): con el bot B, Jev lee que
+    la oración cotiza el precio del producto; el «desde» ya no la salva."""
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    fake = FakePerceptionAdapter({"monto.1": TypedAnswer(id="monto.1", kind="noul", p=0.95)})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+    _seed(_isolate_vault_dir, [_DESDE_TEXT])
+    tool = VerifyOrderForCheckoutTool(
+        workspace=str(_isolate_vault_dir), verifier=FakeVerifier(), catalog=FakeCatalog(),
+        metadata_store=FilesystemMetadataStore(_isolate_vault_dir), history_reader=_reader(_isolate_vault_dir),
+        vault_dir=_isolate_vault_dir,
+    )
+
+    result = await _verify(tool, ctx)
+
+    assert result["quoted_price_mismatch"] is True
+    assert result["quoted_amounts"] == [45000]

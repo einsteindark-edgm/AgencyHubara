@@ -44,6 +44,8 @@ def tag_turn(traj: Trajectory, tags: tuple[str, ...]) -> tuple[Turn, str] | None
         for call in t.tools_named("manage_conversation_tag"):
             if call.ok is True and call.args.get("tag") in tags and call.note("degraded_from") is None:
                 return t, str(call.args["tag"])
-    if traj.closing_tag in tags and traj.turns:
+    # La etiqueta del cierre del episodio (sin turno que la ponga) cae en el
+    # último turno. En modo turno el cierre es futuro: no se usa.
+    if traj.focus_turn is None and traj.closing_tag in tags and traj.turns:
         return traj.turns[-1], str(traj.closing_tag)
     return None

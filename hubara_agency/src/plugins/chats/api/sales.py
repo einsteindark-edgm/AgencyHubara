@@ -9,6 +9,8 @@ preservar el import path que usa `src/main.py`. Mover a
 """
 from __future__ import annotations
 
+import asyncio
+
 import functools
 
 import hmac
@@ -48,6 +50,24 @@ from src.plugins.chats.agent.sales.use_cases.inbound_ledger import (
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+#: `on_event` puede dispararse más de una vez (router del plugin y de la app).
+_decisions_warmed = False
+
+
+@router.on_event("startup")
+async def _warm_decisions() -> None:
+    """Compila el paquete de decisión de la tienda al arrancar, FUERA del event
+    loop (el webhook no espera): el primer mensaje no paga la compilación y el
+    log dice qué paquete corre. Uno roto no tumba la API (el ingest sigue con
+    las reglas del código; el deploy ya lo frena antes del `up`)."""
+    global _decisions_warmed
+    if _decisions_warmed:
+        return
+    _decisions_warmed = True
+    from src.plugins.chats.agent.sales.decisions import registry as decisions_registry
+
+    asyncio.get_running_loop().run_in_executor(None, decisions_registry.warm_up)
 
 # Router PÚBLICO (sin JWT de Cognito): lo llama Meta, no el dashboard. Trae su
 # propia auth — `hub.verify_token` (GET) + HMAC `X-Hub-Signature-256` (POST, via

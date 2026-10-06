@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { addDaysBogotaIso } from "@/shared/lib";
 import type { ChatInboxItem } from "@plugins/chats/frontend/entities/chat";
 import { ChatsInspector } from "./ChatsInspector";
 
@@ -31,6 +32,9 @@ vi.mock("@plugins/chats/frontend/entities/session-postpone", () => ({
 }));
 
 const ID = "wa_573001234567";
+// Relativa a hoy: el campo no acepta fechas pasadas (`min` = hoy en Bogotá);
+// una fecha fija se vuelve pasado y el test se rompe solo.
+const RESUME_ON = addDaysBogotaIso(7);
 
 beforeEach(() => {
   inbox.current = [{ id: ID, tag: "HUMANO", postponed: null }];
@@ -43,12 +47,12 @@ describe("Posponer desde el inspector", () => {
     const user = userEvent.setup();
     render(<ChatsInspector chatId={ID} />);
     await user.click(screen.getByText("Posponer"));
-    await user.type(screen.getByLabelText("Retomar el"), "2026-09-28");
+    await user.type(screen.getByLabelText("Retomar el"), RESUME_ON);
     await user.type(screen.getByLabelText("Qué hay que retomar"), "Llamar para cerrar el pedido");
     await user.click(screen.getByText("Posponer hasta esa fecha"));
     expect(postponeMock).toHaveBeenCalledTimes(1);
     expect(postponeMock.mock.calls[0][0]).toEqual({
-      date: "2026-09-28",
+      date: RESUME_ON,
       note: "Llamar para cerrar el pedido",
     });
   });

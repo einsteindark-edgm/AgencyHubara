@@ -293,7 +293,7 @@ function toUnixSeconds(ts: ChatMessage["timestamp"]): number {
   return 0;
 }
 
-const QUOTE_AUTHORS: readonly QuoteAuthor[] = ["user", "agent", "human"];
+const QUOTE_AUTHORS: readonly QuoteAuthor[] = ["user", "agent", "human", "catalog"];
 
 function adaptQuote(q: ChatMessage["reply_to"]): ChatQuote | undefined {
   if (!q) return undefined;
@@ -323,6 +323,7 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
         dayIso,
         status: "read",
         event: m.event,
+        turnKey: m.turn_key,
       };
     }
     return {
@@ -331,6 +332,7 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
       time: formatBogotaHourMinute(unix) || undefined,
       dayIso,
       event: m.event,
+      turnKey: m.turn_key,
     };
   }
   const sender = getMessageSender(m);
@@ -351,6 +353,7 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
     documentName: m.document_filename ?? undefined,
     replyTo: adaptQuote(m.reply_to),
     event: m.event,
+    turnKey: m.turn_key,
   };
 }
 

@@ -1,0 +1,673 @@
+{
+ "remarketing": {
+  "basico": "[SISTEMA INTERNO — NO REPRODUCIR ESTE TEXTO AL CLIENTE]: El cliente miró productos pero NO eligió ninguno ni dejó un pedido a medias. NO hables de 'tu pedido', NO ofrezcas 'cerrarlo': no existe. Retoma el tema que sí miró y vas a re-abrir la conversación con UN único gancho cálido y breve.\n\nMOTIVO REGISTRADO DE CIERRE (uso interno): 'x'.\nMEMORIA DE EVENTOS PASADOS (uso interno):\n\nREGLAS DEL GANCHO (todas obligatorias):\n\n1. **Identidad**: eres el MISMO Asesor de Hubara que ya conversó con el cliente antes. NO te presentes con un nombre nuevo, NO digas 'soy del equipo de recuperación', NO sugieras ser una persona distinta. Retoma como continuación natural.\n\n2. **Tiempo**: NO conoces el tiempo real transcurrido desde el último mensaje (pueden haber sido minutos o días — no lo sabes). PROHIBIDO usar frases temporales específicas: 'hace unos días', 'hace 48 horas', 'ayer', 'la otra vez', 'hace tiempo'. Usa frases neutras como 'te escribo de nuevo', 'pasaba a preguntarte', 'quedó pendiente lo de…', 'te recordé y quería…'.\n\n3. **Descuentos** (AGENTS.md → Prohibición absoluta de descuentos): NUNCA ofrezcas envío gratis, descuentos ni beneficios extra, tampoco si el motivo menciona 'caro' o una queja de precio (el envío lo cobra la transportadora a su tarifa). Retoma con un saludo casual.\n\n4. **Anclaje al motivo**: menciona sutilmente el producto o tema concreto del motivo (ej. 'el Velón de Cristo', 'los aromas que viste') para que el cliente reconozca el contexto. NO leas el motivo textualmente — re-frásalo natural.\n\n5. **Brevedad**: 1-2 frases máximo. WhatsApp es chat — el mensaje debe leerse en 3 segundos.\n\n6. **PROHIBIDO ABSOLUTO**: NO expliques tu razonamiento, NO menciones archivos internos (AGENTS.md, MEMORY.md, etc.), NO hables del cliente en tercera persona ('Cliente preguntó…'). Escribe SOLO el mensaje final que verá el cliente por WhatsApp. Detente al terminar el gancho.\n\n7. **Abstención**: si el historial o los últimos mensajes muestran que este gancho YA NO corresponde (el cliente ya respondió a un gancho anterior, ya compró, la conversación ya está activa con el asesor, pidió algo que NO vendemos y ya se le aclaró, se despidió con la duda resuelta sin producto en juego, o por cualquier otra razón un mensaje proactivo sobra), responde EXACTAMENTE `NO_MESSAGE` — una sola palabra, sin explicación ni nada más. Eso suprime el envío y el cliente no verá nada. NUNCA escribas tu decisión de no enviar como texto ('no genero un nuevo mensaje…'): eso le llegaría al cliente. La palabra sola.\n\n8. **Veracidad del producto**: solo puedes afirmar datos de producto (presentaciones, formas, envases, tamaños, colores, aromas, precios) que estén en ningún lado: no tienes el catálogo, así que no afirmes ningún atributo de producto y ofrece ayuda para elegir. El historial sirve para saber qué le interesó al cliente, pero tus ganchos anteriores NO son fuente de datos: pudieron equivocarse. Si el cliente pidió o mostró algo que no está en el catálogo (otro producto, una foto de otra vela, otra presentación), no lo ofrezcas, no lo confirmes y no lo menciones: eso lo aclara Ventas cuando responda. PROHIBIDO inventar popularidad o valoraciones ('los más pedidos', 'de los más lindos', 'el favorito'): no tienes datos de ventas.\n\n**EJEMPLOS de buen gancho** (referencia, no copies literal):\n- '¡Hola de nuevo! 🌿 Quedó pendiente lo del Velón de Cristo y los aromas — ¿lograste decidirte? 🤍'\n- 'Te escribo para retomar lo de la *Cruz de Vida* ✨ ¿Te ayudo a cerrar el pedido?'",
+  "escalera": "[SISTEMA INTERNO — NO REPRODUCIR ESTE TEXTO AL CLIENTE]: El cliente quedó pendiente de cerrar una compra y vas a re-abrir la conversación con UN único gancho cálido y breve.\n\nMOTIVO REGISTRADO DE CIERRE (uso interno): 'preguntó por el Cubo Love y no eligió'.\nMEMORIA DE EVENTOS PASADOS (uso interno):\n\nÚLTIMOS MENSAJES DE LA CONVERSACIÓN (uso interno, del más viejo al más nuevo):\ncliente: hola\ntienda: ¡Hola! ¿En qué te ayudo?\n\nCATÁLOGO REAL (uso interno — la única fuente de datos de producto):\nCubo Love: $45.000\n\nSEGUIMIENTO (uso interno): este es el toque 2 de 5 de la secuencia de seguimiento. El sistema YA verificó que el cliente lleva 2 h sin escribir y que la conversación NO está viva: nadie lo está atendiendo ahora. Que en el historial ya exista un gancho anterior —respondido o no— NO es motivo de abstención: este mensaje es el siguiente paso planificado.\nEscribe un mensaje DISTINTO a los ganchos anteriores que ves en el historial: otro ángulo (una duda típica que puedas resolverle, un detalle concreto que esté en el CATÁLOGO REAL del producto que miró, ofrecerle ayuda para elegir). NUNCA repitas la misma frase ni le reproches que no respondió.\n\nREGLAS DEL GANCHO (todas obligatorias):\n\n1. **Identidad**: eres el MISMO Asesor de Hubara que ya conversó con el cliente antes. NO te presentes con un nombre nuevo, NO digas 'soy del equipo de recuperación', NO sugieras ser una persona distinta. Retoma como continuación natural.\n\n2. **Tiempo**: NO conoces el tiempo real transcurrido desde el último mensaje (pueden haber sido minutos o días — no lo sabes). PROHIBIDO usar frases temporales específicas: 'hace unos días', 'hace 48 horas', 'ayer', 'la otra vez', 'hace tiempo'. Usa frases neutras como 'te escribo de nuevo', 'pasaba a preguntarte', 'quedó pendiente lo de…', 'te recordé y quería…'.\n\n3. **Descuentos** (AGENTS.md → Prohibición absoluta de descuentos): NUNCA ofrezcas envío gratis, descuentos ni beneficios extra, tampoco si el motivo menciona 'caro' o una queja de precio (el envío lo cobra la transportadora a su tarifa). Retoma con un saludo casual.\n\n4. **Anclaje al motivo**: menciona sutilmente el producto o tema concreto del motivo (ej. 'el Velón de Cristo', 'los aromas que viste') para que el cliente reconozca el contexto. NO leas el motivo textualmente — re-frásalo natural.\n\n5. **Brevedad**: 1-2 frases máximo. WhatsApp es chat — el mensaje debe leerse en 3 segundos.\n\n6. **PROHIBIDO ABSOLUTO**: NO expliques tu razonamiento, NO menciones archivos internos (AGENTS.md, MEMORY.md, etc.), NO hables del cliente en tercera persona ('Cliente preguntó…'). Escribe SOLO el mensaje final que verá el cliente por WhatsApp. Detente al terminar el gancho.\n\n7. **Abstención**: si el historial o los últimos mensajes muestran que este gancho YA NO corresponde (el cliente ya compró, pidió algo que NO vendemos y ya se le aclaró, se despidió con la duda resuelta sin producto en juego, o pidió expresamente que no le escriban más), responde EXACTAMENTE `NO_MESSAGE` — una sola palabra, sin explicación ni nada más. Eso suprime el envío y el cliente no verá nada. NUNCA escribas tu decisión de no enviar como texto ('no genero un nuevo mensaje…'): eso le llegaría al cliente. La palabra sola.\n\n8. **Veracidad del producto**: solo puedes afirmar datos de producto (presentaciones, formas, envases, tamaños, colores, aromas, precios) que estén en el CATÁLOGO REAL de arriba. El historial sirve para saber qué le interesó al cliente, pero tus ganchos anteriores NO son fuente de datos: pudieron equivocarse. Si el cliente pidió o mostró algo que no está en el catálogo (otro producto, una foto de otra vela, otra presentación), no lo ofrezcas, no lo confirmes y no lo menciones: eso lo aclara Ventas cuando responda. PROHIBIDO inventar popularidad o valoraciones ('los más pedidos', 'de los más lindos', 'el favorito'): no tienes datos de ventas.\n\n**EJEMPLOS de buen gancho** (referencia, no copies literal):\n- '¡Hola de nuevo! 🌿 Quedó pendiente lo del Velón de Cristo y los aromas — ¿lograste decidirte? 🤍'\n- 'Te escribo para retomar lo de la *Cruz de Vida* ✨ ¿Te ayudo a cerrar el pedido?'",
+  "post_compra": "[SISTEMA INTERNO — NO REPRODUCIR ESTE TEXTO AL CLIENTE]: El cliente YA COMPRÓ (la conversación anterior terminó en una compra) y su último mensaje quedó sin respuesta: es una cortesía (agradece, felicita, cuenta que le llegó o que le gustó, promete fotos). Respóndele UNA sola vez, breve y cálido, retomando lo que dijo. Si en ese mensaje pidió o preguntó algo, respóndelo.\n\nREGLAS (todas obligatorias):\n\n1. **Identidad**: eres el MISMO Asesor de Hubara que ya conversó con el cliente. NO te presentes ni sugieras ser otra persona.\n\n2. **Sin venta**: NO ofrezcas productos, el catálogo, descuentos ni envío gratis; NO preguntes qué más quiere ni si quiere volver a comprar. Es un cierre de atención, no un gancho.\n\n3. **Personal y breve**: 1-2 frases, cálidas, sobre lo que dijo (si prometió fotos, que quedamos atentos; si le gustó, que nos alegra). Sin frases de tiempo ('hace unos días', 'ayer').\n\n4. **PROHIBIDO ABSOLUTO**: NO expliques tu razonamiento ni menciones archivos internos. Escribe SOLO el mensaje que verá el cliente.\n\n5. **Abstención**: si ya le respondimos y no quedó nada abierto, o pidió que no le escriban más, responde EXACTAMENTE `NO_MESSAGE` — una sola palabra, sin explicación.\n\n6. **Veracidad**: si respondes una pregunta de producto, solo con datos del CATÁLOGO REAL; si no lo tienes, no afirmes atributos.\n\n**EJEMPLOS de buen cierre** (referencia, no copies literal):\n- '¡Qué alegría que te hayan gustado! 🤍 Quedamos atentos a esas fotos.'\n- 'Gracias a ti por la confianza 🤍 Que las disfrutes mucho.'"
+ },
+ "tool_results": {
+  "no_more_photos": "No tengo más fotos de Cubo Love. Continúa en texto — pregúntale al cliente por aroma/color.",
+  "photos_sent_next": " NO le mandes el link a la web — el cliente ya las está viendo en el chat. Tu próximo mensaje: invítalo a elegir aroma/color o cerrar la compra.",
+  "picker_sent": "Picker de scent con 5 opciones enviado como UN solo mensaje de texto con emojis curados. Ese mensaje YA incluye el texto introductorio y la invitación a elegir — NO escribas texto adicional en este turno; el picker es tu mensaje completo. Espera la respuesta libre del cliente (ej: 'lavanda', 'el morado')."
+ },
+ "tools": {
+  "catalog.GetProductByHandleTool": {
+   "description": "Devuelve el detalle completo de UN producto cuyo handle ya conoces (visto en search_products). Úsalo para confirmar precio, descripción y variantes ANTES de cerrar venta. NO inventes handles — si el cliente menciona un producto, primero busca con search_products.",
+   "name": "get_product_by_handle",
+   "parameters": {
+    "properties": {
+     "handle": {
+      "description": "Handle (slug) exacto del producto. Solo handles vistos en search_products.",
+      "maxLength": 200,
+      "minLength": 1,
+      "type": "string"
+     }
+    },
+    "required": [
+     "handle"
+    ],
+    "type": "object"
+   }
+  },
+  "catalog.ListCategoriesTool": {
+   "description": "Devuelve las categorías REALES del catálogo con cuántos productos tiene cada una. Úsala cuando el cliente pregunta '¿qué categorías tienen?' o cuando `search_products` no reconoció la categoría que pidió. Es una lista CERRADA: cualquier categoría fuera de ella no existe, y ninguna de ella puede negarse.",
+   "name": "list_categories",
+   "parameters": {
+    "properties": {},
+    "type": "object"
+   }
+  },
+  "catalog.SearchProductsTool": {
+   "description": "Busca productos del catálogo de Hubara. El search es case-insensitive y matchea en title, handle, tags, categorías y description del producto. Pasa `q=\"\"` (string vacío) para LISTAR TODO el catálogo (útil cuando el cliente pregunta '¿qué tienen?'). Pasa `q=\"<tema>\"` para filtrar (ej: 'lavanda', 'religiosa', 'cera de palma'). Retorna hasta `limit` productos con precio, handle, imagen y tags.",
+   "name": "search_products",
+   "parameters": {
+    "properties": {
+     "category": {
+      "description": "Categoría pedida por el cliente, TAL CUAL la escribió (ej: 'religiosas', 'velas religosas', 'difusor'). El sistema la resuelve contra las categorías reales tolerando typos, plurales y nombres parciales, y filtra SOLO los productos que pertenecen a ella. Úsalo SIEMPRE que el cliente pida 'las X' o 'productos de X' en vez de meter la categoría en `q`.",
+      "maxLength": 100,
+      "type": "string"
+     },
+     "limit": {
+      "default": 10,
+      "description": "Máximo de productos a retornar (default 10, máximo 30 para listar todo el catálogo).",
+      "maximum": 30,
+      "minimum": 1,
+      "type": "integer"
+     },
+     "q": {
+      "description": "Texto de búsqueda. Substring case-insensitive contra title, handle, tags, categorías y description. Pasa string vacío (\"\") para LISTAR TODO el catálogo.",
+      "maxLength": 100,
+      "type": "string"
+     }
+    },
+    "required": [
+     "q"
+    ],
+    "type": "object"
+   }
+  },
+  "order_draft.SetOrderSlotTool": {
+   "description": "Guarda de forma persistente un dato del pedido que el cliente YA confirmo (color, aroma, cantidad, ciudad, barrio, direccion, telefono, metodo de pago, producto). Llamala APENAS el cliente lo dice -- estos datos se te re-inyectan automaticamente cada turno para que NO los vuelvas a preguntar. Podes mandar varios campos juntos en una sola llamada. Si el cliente cambia un dato, volve a llamarla con el nuevo valor (sobreescribe). Para borrar un dato que el cliente dejo indefinido, mandalo como string vacio. NO reemplaza a `register_order` (esta tool es solo memoria de la conversacion; la orden formal la cierra `register_order`). Pedido con VARIOS productos: cada uno es un ítem con sus propias variantes — manda `producto` junto con su aroma/color/diseno/cantidad (sin `producto`, el dato va al producto al que pertenece). Si el cliente cambia de producto, quita el anterior con `quitar=true`. Un mismo producto en varias variantes (el cliente reparte las unidades: «2, una lila y otra azul») → `lineas`, una línea por variante con su cantidad. Texto libre que no entra en los campos → `notas`.",
+   "name": "set_order_slot",
+   "parameters": {
+    "additionalProperties": false,
+    "properties": {
+     "aroma": {
+      "description": "Aroma elegido (ej. 'Lavanda').",
+      "type": "string"
+     },
+     "barrio": {
+      "description": "Barrio de envio.",
+      "type": "string"
+     },
+     "cantidad": {
+      "description": "Cantidad de unidades (ej. '2').",
+      "type": "string"
+     },
+     "cedula": {
+      "description": "Numero de cedula de quien recibe (OPCIONAL — no insistas si el cliente no lo quiere dar).",
+      "type": "string"
+     },
+     "ciudad": {
+      "description": "Ciudad de envio.",
+      "type": "string"
+     },
+     "color": {
+      "description": "Color elegido, con las PALABRAS DEL CLIENTE (ej. 'Blanco', 'azul clarito', 'celeste'). El sistema lo resuelve a la familia de color del catálogo y te lo cuenta en `color_family` — no lo traduzcas tú.",
+      "type": "string"
+     },
+     "direccion": {
+      "description": "Direccion de envio.",
+      "type": "string"
+     },
+     "diseno": {
+      "description": "Diseño/signo elegido para productos con variantes por diseño (ej. 'Leo' o 'Leo, Libra' si lleva varios). Closed-list: solo valores de `options`/`designs` del producto.",
+      "type": "string"
+     },
+     "lineas": {
+      "description": "Un mismo producto en VARIAS variantes, cada una con SU cantidad (el cliente reparte las unidades: «2, una lila y otra azul»): una línea por variante, ej. [{\"color\": \"Lila\", \"cantidad\": \"1\"}, {\"color\": \"Azul\", \"cantidad\": \"1\"}]. Va con `producto` (sin él, al producto en curso) y reemplaza las líneas que ese producto tenía; lo que no cambia entre líneas (el aroma) se conserva. Para cambiar el color o la cantidad de una línea, vuelve a mandar TODAS sus líneas. Nunca pongas la cantidad total con un solo color y la otra variante en `notas`.",
+      "items": {
+       "additionalProperties": false,
+       "properties": {
+        "aroma": {
+         "description": "Aroma de esta línea.",
+         "type": "string"
+        },
+        "cantidad": {
+         "description": "Unidades de esta línea (ej. '1').",
+         "type": "string"
+        },
+        "color": {
+         "description": "Color de esta línea.",
+         "type": "string"
+        },
+        "diseno": {
+         "description": "Diseño/signo de esta línea.",
+         "type": "string"
+        }
+       },
+       "required": [
+        "cantidad"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "metodo_pago": {
+      "description": "Metodo de pago elegido (ej. 'pago anticipado', 'link de pago', 'contraentrega').",
+      "type": "string"
+     },
+     "nombre_recibe": {
+      "description": "Nombre completo de quien recibe el pedido (obligatorio para la transportadora; puede ser distinto del cliente).",
+      "type": "string"
+     },
+     "notas": {
+      "description": "Texto libre para datos que no entran en los campos fijos (ej. 'Plato: Leo', 'es para regalo').",
+      "type": "string"
+     },
+     "producto": {
+      "description": "Producto al que pertenecen los datos de esta llamada (ej. 'Luz Serena'). Si el pedido ya tiene otro producto, este se AGREGA como un ítem aparte con sus propias variantes.",
+      "type": "string"
+     },
+     "quitar": {
+      "description": "true = QUITA del pedido el `producto` indicado (el cliente lo descartó o lo cambió por otro; el nuevo se agrega con otra llamada).",
+      "type": "boolean"
+     },
+     "telefono": {
+      "description": "Telefono de contacto del cliente.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   }
+  },
+  "order_registration.RegisterOrderTool": {
+   "description": "Registra formalmente el pedido del cliente en Medusa cuando la venta cerró exitosamente. Llámala SOLO después de que el cliente confirmó el pedido (vía `present_order_confirmation`) Y ya tienes todos los datos de envío (ciudad, barrio, dirección, teléfono, nombre de quien recibe, método de pago; cédula opcional). Esta tool crea un Draft Order en Medusa para que el equipo de Hubara lo procese. Lee el campo `registered` de la respuesta y sigue el `summary` del envelope: si es `true`, tag `CONFIRMADO_PAGO_PENDIENTE` + `escalate_to_human(reason_category='PAYMENT_VERIFICATION_PENDING')` con la despedida en su `customer_message` (NUNCA `COMPRA_EXITOSA`). Si es `false` con `error` (`shipping_mismatch`, `amount_mismatch`, `price_mismatch`, `missing_receiver_name`, `invalid_variant_attribute`, `quota_changed`, `quota_busy`), el pedido no se registró por un dato de la llamada o del cupo: haz lo que dice el `summary` y vuelve a intentarlo, sin escalar. Si es `false` sin `error` (Medusa caído / config rota), llama `escalate_to_human(reason_category='ORDER_REGISTRATION_FAILED')` para que un colega registre manualmente — los datos quedan persistidos en metadata para que el equipo los reconstruya. Si el cliente confirmó pero NO completó los datos de envío, NO uses esta tool — usa `escalate_to_human(reason_category='ORDER_PENDING_SHIPPING_DETAILS')`.",
+   "name": "register_order",
+   "parameters": {
+    "properties": {
+     "currency": {
+      "default": "COP",
+      "description": "Por ahora siempre 'COP'.",
+      "type": "string"
+     },
+     "items": {
+      "description": "Items del pedido. Cada item: handle (snapshot), quantity, unit_price_cop, opcionalmente variant_label (ej. 'Lavanda', 'Azul').",
+      "items": {
+       "properties": {
+        "aroma": {
+         "description": "Aroma elegido (de la lista del producto), si tiene.",
+         "maxLength": 60,
+         "type": "string"
+        },
+        "color": {
+         "description": "Color elegido (de la lista del producto), si tiene.",
+         "maxLength": 60,
+         "type": "string"
+        },
+        "handle": {
+         "minLength": 1,
+         "type": "string"
+        },
+        "quantity": {
+         "minimum": 1,
+         "type": "integer"
+        },
+        "unit_price_cop": {
+         "minimum": 0,
+         "type": "integer"
+        },
+        "variant_label": {
+         "maxLength": 80,
+         "type": "string"
+        }
+       },
+       "required": [
+        "handle",
+        "quantity",
+        "unit_price_cop"
+       ],
+       "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+     },
+     "payment_method": {
+      "description": "Método de pago elegido por el cliente: 'transfer' = pago anticipado (Nequi/llave), 'payment_link' = link de pago (con recargo), 'cash_on_delivery' = contra entrega (pedidos desde $45.000 COP en productos, inclusive).",
+      "enum": [
+       "transfer",
+       "payment_link",
+       "cash_on_delivery"
+      ],
+      "type": "string"
+     },
+     "shipping": {
+      "description": "Datos de envío completos.",
+      "properties": {
+       "address": {
+        "minLength": 1,
+        "type": "string"
+       },
+       "city": {
+        "minLength": 1,
+        "type": "string"
+       },
+       "national_id": {
+        "description": "Cédula de quien recibe (OPCIONAL — solo si el cliente la dio; no insistas).",
+        "type": "string"
+       },
+       "neighborhood": {
+        "minLength": 1,
+        "type": "string"
+       },
+       "phone": {
+        "minLength": 7,
+        "type": "string"
+       },
+       "receiver_name": {
+        "description": "Nombre completo de quien recibe el pedido (obligatorio — lo exige la transportadora).",
+        "minLength": 1,
+        "type": "string"
+       }
+      },
+      "required": [
+       "city",
+       "neighborhood",
+       "address",
+       "phone",
+       "receiver_name"
+      ],
+      "type": "object"
+     },
+     "shipping_cop": {
+      "description": "Tarifa MÍNIMA publicada de envío en COP: 7900 ($7.900) para Bogotá y municipios cercanos, 16940 ($16.940) a nivel nacional. No existe envío gratis: nunca 0. También con contra entrega (el resumen igual dice \"Por confirmar\" y el total a registrar es subtotal + envío − cupón).",
+      "minimum": 0,
+      "type": "integer"
+     },
+     "subtotal_cop": {
+      "minimum": 0,
+      "type": "integer"
+     },
+     "total_cop": {
+      "minimum": 1,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "items",
+     "shipping",
+     "payment_method",
+     "subtotal_cop",
+     "shipping_cop",
+     "total_cop"
+    ],
+    "type": "object"
+   }
+  },
+  "ui_intents.PresentOrderConfirmationTool": {
+   "description": "Envía la confirmación formal del pedido al cliente: items, precios, subtotal de productos, envío, dirección, medio de pago y botón para confirmar/pagar. Con contra entrega el envío figura 'Por confirmar' (lo recalcula la transportadora antes de despachar) y NO se muestra total; con pago anticipado o link se muestra el envío como tarifa mínima + total. `shipping_cop` es la tarifa mínima (Bogotá y cercanos $7.900 / nacional $16.940). Llámala SOLO después de que `verify_order_for_checkout` retornó verified=True y discrepancy=False. Si hay discrepancia, primero informa al cliente honestamente y pídele confirmación con el precio nuevo, recién después usas esta tool.",
+   "name": "present_order_confirmation",
+   "parameters": {
+    "properties": {
+     "items": {
+      "items": {
+       "properties": {
+        "aroma": {
+         "description": "Aroma elegido, de la lista del producto (si tiene).",
+         "maxLength": 60,
+         "type": "string"
+        },
+        "color": {
+         "description": "Color elegido, de la lista del producto (si tiene).",
+         "maxLength": 60,
+         "type": "string"
+        },
+        "handle": {
+         "type": "string"
+        },
+        "quantity": {
+         "minimum": 1,
+         "type": "integer"
+        },
+        "unit_price_cop": {
+         "minimum": 0,
+         "type": "integer"
+        }
+       },
+       "required": [
+        "handle",
+        "quantity",
+        "unit_price_cop"
+       ],
+       "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+     },
+     "payment_method": {
+      "description": "Método de pago elegido por el cliente.",
+      "enum": [
+       "transfer",
+       "payment_link",
+       "cash_on_delivery"
+      ],
+      "type": "string"
+     },
+     "shipping_address_summary": {
+      "description": "Resumen de dirección, ej: 'Cl 100 #15-20, Chapinero, Bogotá'.",
+      "maxLength": 400,
+      "type": "string"
+     },
+     "shipping_cop": {
+      "description": "Tarifa MÍNIMA publicada de envío en COP: 7900 ($7.900) para Bogotá y municipios cercanos, 16940 ($16.940) a nivel nacional. No existe envío gratis: nunca 0. También con contra entrega (el resumen igual dice \"Por confirmar\" y el total a registrar es subtotal + envío − cupón).",
+      "minimum": 0,
+      "type": "integer"
+     },
+     "tax_cop": {
+      "default": 0,
+      "description": "Impuestos en COP. Velas artesanales suelen ser 0.",
+      "minimum": 0,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "items",
+     "shipping_cop",
+     "shipping_address_summary",
+     "payment_method"
+    ],
+    "type": "object"
+   }
+  },
+  "ui_intents.PresentProductDetailTool": {
+   "description": "Envía UN producto al cliente con foto + título + precio. Usa esto cuando el cliente pide ver un producto específico O cuando queremos enfocar su atención en una opción concreta. El handle debe ser EXACTAMENTE el que devolvió search_products / get_product_by_handle — closed-list strict. Después de llamar esta tool, NO repitas el precio en texto: ya se mostró al cliente en la imagen. Continúa con tu mensaje (ej: '¿Te interesa esta?') como respuesta natural.",
+   "name": "present_product_detail",
+   "parameters": {
+    "properties": {
+     "caption_suffix": {
+      "description": "Texto opcional para añadir al caption después del título y precio. Mantén breve (<200 chars). Ej: 'aroma lavanda · 40 horas de duración'.",
+      "maxLength": 400,
+      "type": "string"
+     },
+     "design": {
+      "description": "Diseño específico a mostrar (closed-list: SOLO valores de `designs` del producto en search_products / get_product_by_handle). Manda LA foto de ese diseño en vez de la portada. Ej: cliente pide 'una de leo' y 'Leo' está en designs → design='Leo'.",
+      "maxLength": 80,
+      "type": "string"
+     },
+     "handle": {
+      "description": "Handle exacto del producto en el snapshot. Closed-list — solo handles vistos en search_products.",
+      "maxLength": 200,
+      "minLength": 1,
+      "type": "string"
+     }
+    },
+    "required": [
+     "handle"
+    ],
+    "type": "object"
+   }
+  },
+  "ui_intents.PresentProductGalleryTool": {
+   "description": "Envía varias fotos adicionales del MISMO producto al cliente, como una secuencia de imágenes dentro de WhatsApp. Úsala cuando el cliente pide 'más fotos', 'otra imagen', 'cómo se ve por atrás', 'más ángulos', etc. NUNCA mandes al cliente a la web (ni con send_cta_url ni con texto) para ver fotos — esta tool es la única forma correcta. El handle debe ser EXACTAMENTE el que devolvió search_products / get_product_by_handle.",
+   "name": "present_product_gallery",
+   "parameters": {
+    "properties": {
+     "handle": {
+      "description": "Handle exacto del producto (closed-list desde search_products / get_product_by_handle).",
+      "maxLength": 200,
+      "minLength": 1,
+      "type": "string"
+     },
+     "max_images": {
+      "default": 3,
+      "description": "Cuántas fotos adicionales mandar (1-4). Default 3.",
+      "maximum": 4,
+      "minimum": 1,
+      "type": "integer"
+     },
+     "skip_first": {
+      "default": true,
+      "description": "Si True (default), salta la primera imagen — asume que ya se mostró en present_product_detail. Pone False solo si NUNCA mostraste el producto.",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "handle"
+    ],
+    "type": "object"
+   }
+  },
+  "ui_intents.PresentProductsTool": {
+   "description": "Envía una lista tappable de hasta 30 productos al cliente — el cliente la ve como un menú dentro del chat y puede tocar uno para elegirlo. Úsala cuando vayas a mostrar 4 o más productos. Para 1-3 productos, mejor descríbelos en texto. Para UN producto con foto, usa present_product_detail. Los handles deben venir de search_products (closed-list strict).",
+   "name": "present_products",
+   "parameters": {
+    "properties": {
+     "group_by": {
+      "default": "categories",
+      "description": "Cómo agrupar los productos en sections. 'categories' agrupa por categories[] real del producto. 'tags' usa tags[]. 'none' los pone todos en una sección.",
+      "enum": [
+       "categories",
+       "tags",
+       "none"
+      ],
+      "type": "string"
+     },
+     "handles": {
+      "description": "Handles de los productos a mostrar, en el orden que quieres que aparezcan. Solo handles vistos en search_products.",
+      "items": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      },
+      "maxItems": 30,
+      "minItems": 1,
+      "type": "array"
+     },
+     "intro_text": {
+      "description": "Texto corto que acompaña la lista — es lo ÚNICO que el cliente leerá con el menú (el content fuera de la tool no se envía). Ej: 'Estas son nuestras velas religiosas:'. Máx 1024 chars Meta.",
+      "maxLength": 400,
+      "type": "string"
+     }
+    },
+    "required": [
+     "handles",
+     "intro_text"
+    ],
+    "type": "object"
+   }
+  },
+  "ui_intents.PresentVariantPickerTool": {
+   "description": "Envía un mensaje de texto bonito al cliente con las opciones de variante (aromas / colores / tamaños), con un emoji distintivo por opción agrupadas por categoría. El cliente lee y **responde por texto** la que prefiere (ej: 'lavanda', 'el morado'). Úsala cuando vayas a presentar 4 o más opciones de aroma/color de un producto. El emoji por opción se asigna automáticamente desde el registry Hubara — **tú NO pasas emojis, solo el nombre literal del envelope**. Si el cliente ya eligió la variante, NO uses esta tool — continúa hacia el cierre.",
+   "name": "present_variant_picker",
+   "parameters": {
+    "properties": {
+     "handle": {
+      "description": "Handle del producto al que pertenecen estas variantes. PÁSALO SIEMPRE que el picker sea de un producto: la tool valida las opciones contra el catálogo real de ese producto y elimina cualquier opción que no exista.",
+      "maxLength": 200,
+      "type": "string"
+     },
+     "intro_text": {
+      "description": "Texto breve que acompaña el picker. Ej: 'Tenemos estos aromas:' o 'Estos son los colores disponibles:'. Sin listar las opciones en el texto — el cliente las ve en la lista tappable.",
+      "maxLength": 1024,
+      "minLength": 1,
+      "type": "string"
+     },
+     "options": {
+      "items": {
+       "properties": {
+        "label": {
+         "description": "Nombre LITERAL del envelope (ej 'Lavanda', 'Verde menta', 'rosado'). Closed-list — no inventes.",
+         "maxLength": 60,
+         "minLength": 1,
+         "type": "string"
+        }
+       },
+       "required": [
+        "label"
+       ],
+       "type": "object"
+      },
+      "maxItems": 50,
+      "minItems": 2,
+      "type": "array"
+     },
+     "variant_type": {
+      "description": "Tipo de variante: 'scent' para aromas, 'color' para colores, 'size' para tamaños (este último sin emoji automático).",
+      "enum": [
+       "scent",
+       "color",
+       "size"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "variant_type",
+     "options",
+     "intro_text"
+    ],
+    "type": "object"
+   }
+  },
+  "ui_intents.ReactToMessageTool": {
+   "description": "Reacciona al último mensaje del cliente con un emoji. Úsalo como ack visual breve, no como reemplazo de una respuesta de texto. Emojis permitidos: 🤍 ✨ 👍 🎉 ❤️ 🙏. Una sola reacción por turno.",
+   "name": "react_to_message",
+   "parameters": {
+    "properties": {
+     "emoji": {
+      "description": "Emoji a usar. De la allowlist Hubara.",
+      "enum": [
+       "🤍",
+       "✨",
+       "👍",
+       "🎉",
+       "❤️",
+       "🙏"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "emoji"
+    ],
+    "type": "object"
+   }
+  },
+  "ui_intents.RequestShippingDetailsTool": {
+   "description": "Pide al cliente los datos de envío (ciudad, barrio, dirección, teléfono, nombre de quien recibe, cédula opcional, método de pago). Llámala UNA SOLA VEZ por sesión, después de que el cliente confirmó qué quiere comprar. Pasa los `items` del pedido (handle EXACTO visto en search_products / get_product_by_handle + cantidad): el sistema toma precio y nombre del CATÁLOGO, calcula el total y decide las formas de pago — tú NUNCA mandas montos. El sistema le manda un mensaje de texto enumerando los campos — el cliente responde libremente por chat y tú vas armando los datos hasta tenerlos completos. NO repitas la lista en tu propio texto: la tool ya manda el mensaje formateado.",
+   "name": "request_shipping_details",
+   "parameters": {
+    "properties": {
+     "items": {
+      "description": "Ítems del pedido confirmado: {handle, quantity}. Los handles deben ser EXACTAMENTE los vistos en search_products / get_product_by_handle — NO los inventes. El precio lo pone el sistema desde el catálogo.",
+      "items": {
+       "properties": {
+        "handle": {
+         "maxLength": 200,
+         "minLength": 1,
+         "type": "string"
+        },
+        "quantity": {
+         "maximum": 999,
+         "minimum": 1,
+         "type": "integer"
+        }
+       },
+       "required": [
+        "handle",
+        "quantity"
+       ],
+       "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+     }
+    },
+    "required": [
+     "items"
+    ],
+    "type": "object"
+   }
+  },
+  "ui_intents.SendCTAUrlTool": {
+   "description": "Envía un botón con URL al cliente. Úsalo SOLO si el cliente lo pide explícitamente (ej: 'ver Instagram'). NO lo uses como atajo para no responder en el chat — el cierre de venta debe ser dentro de WhatsApp. Dominios permitidos: hubara.com.co, instagram.com/hubara.com.co. URLs fuera de esa lista se rechazan.",
+   "name": "send_cta_url",
+   "parameters": {
+    "properties": {
+     "body_text": {
+      "description": "Texto que acompaña el botón.",
+      "maxLength": 400,
+      "type": "string"
+     },
+     "button_text": {
+      "description": "Texto del botón. ≤20 chars Meta.",
+      "maxLength": 20,
+      "type": "string"
+     },
+     "url": {
+      "description": "URL HTTPS dentro de la whitelist Hubara.",
+      "format": "uri",
+      "pattern": "^https://.*",
+      "type": "string"
+     }
+    },
+    "required": [
+     "url",
+     "button_text",
+     "body_text"
+    ],
+    "type": "object"
+   }
+  },
+  "ui_intents.SendContactCardTool": {
+   "description": "Comparte la tarjeta de contacto de un asesor humano de Hubara (nombre + número). Úsala SOLO cuando el cliente lo pide explícitamente o como parte de una escalación con consentimiento. NO lo uses como sustituto de seguir la conversación — el cliente espera que tú sigas atendiéndolo.",
+   "name": "send_contact_card",
+   "parameters": {
+    "properties": {
+     "reason": {
+      "description": "Por qué compartes el contacto. Aparece como nota al cliente. Ej: 'para que coordines la entrega manualmente'.",
+      "maxLength": 200,
+      "type": "string"
+     }
+    },
+    "required": [
+     "reason"
+    ],
+    "type": "object"
+   }
+  },
+  "ui_intents.SendQuickRepliesTool": {
+   "description": "Envía 1-3 botones de respuesta rápida al cliente. Úsala en el SALUDO inicial cuando la intención del cliente no está clara (ej: 'hola', 'buenas'), Y en decisiones binarias durante la conversación. TODO el texto que el cliente debe leer (saludo incluido) va en `body` — lo que escribas fuera de la tool NO se envía. NO repitas las opciones en texto — el cliente las ve como botones tappables.",
+   "name": "send_quick_replies",
+   "parameters": {
+    "properties": {
+     "body": {
+      "description": "TODO el texto que el cliente debe leer junto a los botones (saludo incluido). Es lo único que verá en esta burbuja — el content fuera de la tool no se envía.",
+      "maxLength": 1024,
+      "minLength": 1,
+      "type": "string"
+     },
+     "buttons": {
+      "description": "Hasta 3 botones tappables.",
+      "items": {
+       "properties": {
+        "id": {
+         "description": "ID semántico del botón (snake_case con namespace). Ej: 'catalog.browse', 'catalog.by_scent', 'help.advice'.",
+         "maxLength": 256,
+         "minLength": 1,
+         "type": "string"
+        },
+        "title": {
+         "description": "Texto del botón visible al cliente. ≤20 chars (límite Meta).",
+         "maxLength": 20,
+         "minLength": 1,
+         "type": "string"
+        }
+       },
+       "required": [
+        "id",
+        "title"
+       ],
+       "type": "object"
+      },
+      "maxItems": 3,
+      "minItems": 1,
+      "type": "array"
+     }
+    },
+    "required": [
+     "body",
+     "buttons"
+    ],
+    "type": "object"
+   }
+  },
+  "ui_intents.SendShippingRatesTool": {
+   "description": "Envía al cliente el mensaje estándar con las tarifas mínimas de envío (Bogotá y municipios cercanos / nivel nacional) y la aclaración de que el valor definitivo se confirma al despachar. Úsala SIEMPRE que el cliente pregunte cuánto vale, cuánto cuesta o cuánto cobran el envío/domicilio — en vez de escribir las tarifas tú. Sin parámetros; el mensaje es fijo y ES tu respuesta (tu turno termina). Nunca des un valor de envío como definitivo ni sumes el envío a un total.",
+   "name": "send_shipping_rates",
+   "parameters": {
+    "properties": {},
+    "type": "object"
+   }
+  }
+ }
+}

@@ -95,6 +95,10 @@ class UpstreamReview:
     allowed_aliases: frozenset[str] = frozenset()
     review_by: dt.date | None = None
     reason: str = ""
+    # El proveedor dejó de darle el id a cuentas nuevas (sin fecha de apagado):
+    # el alias que lo use necesita un sucesor en el failover. Ver
+    # test_an_alias_on_an_access_limited_id_falls_over_to_a_successor.
+    access_limited_since: dt.date | None = None
 
 
 # Un id nuevo entra acá DESPUÉS de mirar su tabla. Para renovar un permiso de
@@ -108,8 +112,19 @@ REVIEWED_UPSTREAM_IDS: dict[str, UpstreamReview] = {
     "gemini/gemini-3.5-flash-lite": UpstreamReview(
         reviewed_on=dt.date(2026, 9, 18), source=_LIFECYCLE_GOOGLE
     ),
+    # Sin fecha de apagado, pero la tabla (actualizada 2026-10-01) dice: "we are
+    # limiting access to the 2.5 models to users who have actively used them in
+    # the past" — una cuenta o un proyecto nuevo (p. ej. el silo de un cliente)
+    # no lo recibe. Sucesor recomendado por Google: 3.5 Flash-Lite.
     "gemini/gemini-2.5-flash-lite": UpstreamReview(
-        reviewed_on=dt.date(2026, 9, 18), source=_LIFECYCLE_GOOGLE
+        reviewed_on=dt.date(2026, 10, 5),
+        source=_LIFECYCLE_GOOGLE,
+        access_limited_since=dt.date(2026, 10, 1),
+    ),
+    # Embeddings de imagen de la identificación de fotos: GA 2026-04-22, sin
+    # fecha de apagado en la tabla (mirada 2026-09-30).
+    "gemini/gemini-embedding-2": UpstreamReview(
+        reviewed_on=dt.date(2026, 9, 30), source=_LIFECYCLE_GOOGLE
     ),
     "gemini/gemini-3.1-pro-preview": UpstreamReview(
         reviewed_on=dt.date(2026, 9, 18),
@@ -468,6 +483,134 @@ async def test_when_the_primary_fails_the_request_leaves_for_a_stable_gemini_id(
     assert {f"gemini/{requested.group(1)}"} == backups
 
 
+# ── sucesor de un id con acceso limitado ───────────────────────────────────────
+
+
+def _fallback_backups(config: dict[str, Any], alias: str) -> list[str]:
+    settings = config.get("router_settings") or {}
+    return [
+        backup
+        for rule in settings.get("fallbacks") or []
+        for primary, backups in rule.items()
+        if primary == alias
+        for backup in backups
+    ]
+
+
+def test_an_alias_on_an_access_limited_id_falls_over_to_a_successor() -> None:
+    """Un id que el proveedor ya no le da a cuentas nuevas falla el día que el
+    proyecto cambie de cuenta (o un cliente nuevo arranque su propio silo): el
+    alias necesita un sucesor ESTABLE y SIN restricción en el failover.
+    Solo compose: el ConfigMap k8s no es prod (ver infra_eks_vs_vps_trap)."""
+    config = _proxy_config(_COMPOSE)
+    deployments = _deployments(config)
+    without_successor: dict[str, str] = {}
+    for alias, upstream in deployments:
+        review = REVIEWED_UPSTREAM_IDS.get(upstream)
+        if review is None or review.access_limited_since is None:
+            continue
+        successors = [
+            successor
+            for backup in _fallback_backups(config, alias)
+            for name, successor in deployments
+            if name == backup
+        ]
+        usable = [
+            successor
+            for successor in successors
+            if successor in REVIEWED_UPSTREAM_IDS
+            and REVIEWED_UPSTREAM_IDS[successor].access_limited_since is None
+            and not _is_short_lived(successor)
+        ]
+        if not usable:
+            without_successor[alias] = upstream
+    assert without_successor == {}
+
+
+class _GoogleWithoutAccessTo:
+    """Google falso: niega UN modelo (403/404, como a una cuenta nueva) y
+    contesta bien a los demás. Registra la ruta de cada pedido."""
+
+    def __init__(self, denied_model: str, status: int) -> None:
+        self.paths: list[str] = []
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 — API de BaseHTTPRequestHandler
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                outer.paths.append(self.path)
+                denied = f"/models/{denied_model}:" in self.path
+                payload = (
+                    {"error": {"code": status, "message": "model not available for this project (test)"}}
+                    if denied
+                    else _GEMINI_OK
+                )
+                body = json.dumps(payload).encode()
+                self.send_response(status if denied else 200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args: Any) -> None:  # silencio en pytest
+                pass
+
+        self._server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.base_url = f"http://127.0.0.1:{self._server.server_port}"
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+
+    def shutdown(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+@pytest.mark.parametrize("status", [403, 404])
+async def test_when_google_denies_flash_lite_2_5_the_photo_is_read_by_the_successor(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """El failover REAL del YAML: `gemini-multimodal` (fotos y notas de voz) pide
+    2.5 Flash-Lite, Google lo niega y contesta el sucesor. La respuesta dice qué
+    modelo contestó, y ese modelo tiene precio (así se cobra lo que costó)."""
+    import litellm
+    from litellm import Router
+
+    monkeypatch.setattr(litellm, "drop_params", True)
+    monkeypatch.setattr(litellm, "suppress_debug_info", True)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+
+    config = _proxy_config(_COMPOSE)
+    google = _GoogleWithoutAccessTo("gemini-2.5-flash-lite", status)
+    model_list = []
+    for entry in config["model_list"]:
+        params = dict(entry["litellm_params"])
+        params["api_key"] = "sk-fake-para-el-upstream-falso"
+        params["api_base"] = google.base_url
+        model_list.append({"model_name": entry["model_name"], "litellm_params": params})
+    try:
+        router = Router(
+            model_list=model_list,
+            fallbacks=config["router_settings"]["fallbacks"],
+            num_retries=0,
+            timeout=20,
+        )
+        response = await router.acompletion(
+            model="gemini-multimodal", messages=[{"role": "user", "content": "describe la foto"}]
+        )
+    finally:
+        google.shutdown()
+
+    asked = [m.group(1) for p in google.paths if (m := re.search(r"/models/([^:/?]+):generateContent", p))]
+    assert asked and asked[0] == "gemini-2.5-flash-lite", f"el primario nunca se intentó: {asked}"
+    assert asked[-1] == "gemini-3.5-flash-lite"
+    assert response.choices[0].message.content == "respuesta del fallback"
+    served = str(response.model).split("/")[-1]
+    assert _pricing_chat_table().get(served) == _pricing_chat_table()["gemini-3.5-flash-lite"], (
+        f"la respuesta dice que contestó `{response.model}`: sin precio para ese nombre, "
+        "el costo se cobraría a la tarifa del alias pedido"
+    )
+
+
 # ── precios: la tabla describe al modelo que el alias sirve HOY ────────────────
 
 
@@ -511,6 +654,16 @@ def test_gemini_backup_is_priced_at_the_official_list_price() -> None:
         "promptPrice": 0.0003,
         "completionPrice": 0.0025,
     }
+
+
+def test_no_openai_perception_alias_left() -> None:
+    """El rival OpenAI del laboratorio (alias `openrouter-perception`, brazo C)
+    se quitó el 2026-09-28: 100 % Jev, que entra por la Decisions API y no
+    pasa por el proxy. Ni el alias ni su precio vuelven sin decisión."""
+    config = _proxy_config(_COMPOSE)
+
+    assert "openrouter-perception" not in {e["model_name"] for e in config["model_list"]}
+    assert "openrouter-perception" not in _pricing_chat_table()
 
 
 # ── el chequeo mismo (un guard que nunca se vio fallar no protege nada) ────────

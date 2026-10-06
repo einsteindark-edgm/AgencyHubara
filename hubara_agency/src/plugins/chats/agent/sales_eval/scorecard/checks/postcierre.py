@@ -7,7 +7,9 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     failed,
     is_legacy,
+    judged,
     not_applicable,
+    not_judged,
     passed,
     quote,
     unknown,
@@ -47,9 +49,9 @@ def check_payment_claimed_only_when_verified(traj: Trajectory, ctx: CheckContext
         if not traj.order_id and not any(t.state.get("order_id") for t in traj.turns):
             return not_applicable("POS-01", "el episodio no tiene orden")
         scope = _post_order_turns_trace(traj)
-    scope = [t for t in scope if t.sent_texts]
+    scope = [t for t in scope if t.sent_texts and judged(traj, t)]
     if not scope:
-        return not_applicable("POS-01", "sin textos después de registrar la orden")
+        return not_judged("POS-01", traj, "sin textos después de registrar la orden")
     for turn in scope:
         for text in turn.sent_texts:
             if not _PAYMENT_CLAIM_RE.search(text):

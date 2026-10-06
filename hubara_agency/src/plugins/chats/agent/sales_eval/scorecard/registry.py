@@ -9,12 +9,16 @@ que salvar al cliente: el check principal pasa, pero el LLM lo intentó.
 
 Regla de crecimiento (plan §6): ningún incidente cierra sin su check. Subir
 `REGISTRY_VERSION` al agregar, quitar o reformular un check.
+
+Modo turno (laboratorio, v4): `focus="future"` marca los checks que dependen de
+turnos posteriores al que se juzga (cierre, pedido registrado, ghosting). En el
+laboratorio solo pasan con la evidencia en el turno foco; si no, `sin_senal`.
 """
 from __future__ import annotations
 
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckSpec
 
-REGISTRY_VERSION = 2
+REGISTRY_VERSION = 6
 
 LEVELS = ("critico", "mayor", "menor")
 KINDS = ("code", "judge")
@@ -49,7 +53,16 @@ def _c(
     return CheckSpec(
         id=id, name=name, family=family, level=level, kind=kind, applies=applies,
         rule=rule, origin=origin, golden_behaviors=golden, twin_of=twin_of,
+        focus="future" if id in FUTURE_CHECKS else "turn",
     )
+
+
+# Dependen de turnos posteriores al turno foco (plan del laboratorio §5.5): la
+# etiqueta de pago pendiente y la orden se sostienen entre turnos (CIE-03), la
+# red de seguridad, la escalación y el aviso de portavelas cuelgan de un
+# registro que puede llegar después (CIE-03b/04/08), el ghosting llega después
+# del formulario (GHO-02) y RECHAZO/INTERESADO se juzgan con el cierre (TAG-07).
+FUTURE_CHECKS = frozenset({"CIE-03", "CIE-03b", "CIE-04", "CIE-08", "GHO-02", "TAG-07"})
 
 
 CHECKS: tuple[CheckSpec, ...] = (
@@ -101,8 +114,9 @@ CHECKS: tuple[CheckSpec, ...] = (
        "El bot lo dice con claridad y ofrece lo que sí hay o escala CATALOG_GAP; no inventa ni presiona.",
        ("memoria:remarketing_no_fit_lead",), ("proactive_offering_back_to_catalog",)),
     _c("DES-08", "Producto elegido queda en el pedido", "descubrimiento", "mayor", "code",
-       "El cliente eligió un producto de un catálogo mostrado.",
-       "En ese turno se llama set_order_slot con el producto.",
+       "El cliente dijo que quiere un producto del catálogo que ya vio, o contestó solo con su nombre "
+       "(nombrarlo o preguntar si hay no es elegirlo).",
+       "En ese turno el producto queda anotado en el pedido.",
        ("guion:etapa_descubrimiento paso 5",)),
     _c("DES-09", "Diseño antes que aroma", "descubrimiento", "menor", "code",
        "Turnos sin producto elegido.",
@@ -118,9 +132,9 @@ CHECKS: tuple[CheckSpec, ...] = (
        "El bot envió texto.",
        "Ningún texto enviado enumera cuatro o más aromas o colores del catálogo.",
        ("PR #281", "spec:sales-worker/Variantes siempre en formato picker")),
-    _c("VAR-01b", "La guarda de variantes tuvo que actuar", "variantes", "mayor", "code",
+    _c("VAR-01b", "La protección tuvo que cambiar una lista por el selector", "variantes", "mayor", "code",
        "Siempre (trazas).",
-       "La guarda de enumeración no reemplazó texto por picker en el episodio.",
+       "El bot manda el selector de opciones él mismo; la protección no tiene que cambiarle una lista escrita.",
        ("PR #281",), twin_of="VAR-01"),
     _c("VAR-02", "Picker con opciones válidas", "variantes", "mayor", "code",
        "El bot usó present_variant_picker.",
@@ -132,7 +146,7 @@ CHECKS: tuple[CheckSpec, ...] = (
        ("guion:etapa_variantes",)),
     _c("VAR-04", "Elección de variante queda en el pedido", "variantes", "mayor", "code",
        "El cliente eligió de un picker.",
-       "En ese turno se llama set_order_slot.",
+       "En ese turno su elección queda anotada en el pedido.",
        ("guion:etapa_variantes",)),
     _c("VAR-05", "No elige variantes por el cliente", "variantes", "mayor", "judge",
        "El bot guio variantes.",
@@ -182,7 +196,7 @@ CHECKS: tuple[CheckSpec, ...] = (
        ("PR #281",)),
     _c("ENV-03", "Datos del formulario quedan en el pedido", "envio", "mayor", "code",
        "El cliente envió el formulario.",
-       "En ese turno se llama set_order_slot.",
+       "En ese turno sus datos quedan anotados en el pedido.",
        ("guion:etapa_datos_envio",)),
     _c("ENV-04", "No vuelve a pedir datos de envío ya dados", "envio", "mayor", "code",
        "El pedido ya tiene ciudad, dirección, teléfono o nombre de quien recibe.",
@@ -273,8 +287,12 @@ CHECKS: tuple[CheckSpec, ...] = (
        ("memoria:human_handoff_tag_invariant",)),
     _c("TAG-06", "La red de escalación tuvo que actuar", "estado", "mayor", "code",
        "Siempre (trazas).",
-       "La escalación de cierre la hizo el LLM, no la red de seguridad.",
-       ("patrón A ensure-closing-escalation",)),
+       "Las escalaciones las hizo el LLM, no una red de seguridad (la del cierre o la del colega prometido).",
+       ("patrón A ensure-closing-escalation", "red del relevo prometido (2026-09-30)")),
+    _c("TAG-08", "Promete un colega solo si escala", "estado", "mayor", "code",
+       "El bot le dijo al cliente que un colega o alguien del equipo lo atiende.",
+       "Ese turno escaló (el LLM con escalate_to_human o la red de seguridad): el colega queda avisado.",
+       ("laboratorio caso-cortesia-1001: «un colega coordina la entrega» sin escalar (2026-09-30)",)),
     _c("TAG-07", "RECHAZO o INTERESADO sostenidos por la conversación", "estado", "mayor", "judge",
        "El episodio cerró con RECHAZO o quedó en INTERESADO.",
        "La conversación sostiene la etiqueta (el cliente rechazó, o mostró interés sin comprar).",
@@ -313,9 +331,14 @@ CHECKS: tuple[CheckSpec, ...] = (
        "El bot no pregunta ni contradice datos que el cliente ya dio.",
        ("métrica legada knowledge_retention",)),
     _c("EST-08", "Responde lo que el cliente preguntó", "estilo", "mayor", "judge",
-       "El cliente hizo preguntas.",
-       "Cada pregunta del cliente recibe respuesta antes de avanzar la venta.",
-       ("operador 2026-09-14",)),
+       "El cliente escribió al bot (un mensaje o una ráfaga de varios).",
+       "Cada asunto que el cliente plantea, sea pregunta o pedido y lleve o no \"?\", recibe respuesta en ese "
+       "turno o el siguiente antes de avanzar la venta; en una ráfaga cuenta cada mensaje.",
+       ("operador 2026-09-14", "plan del laboratorio §5.1: EST-08 v2")),
+    _c("EST-09", "Cortesía sin empujón de venta", "estilo", "mayor", "code",
+       "El cliente solo agradece, felicita o saluda, sin preguntar ni pedir nada (también al volver de remarketing).",
+       "La respuesta es breve y cálida: no pregunta en qué más puede ayudar ni ofrece productos o el catálogo.",
+       ("operador 2026-09-30: respuesta al aviso de «pedido listo» del ETA y a remarketing",)),
     # ── Ghosting ───────────────────────────────────────────────────────────
     _c("GHO-01", "El turno de ghosting no le escribe al cliente", "ghosting", "critico", "code",
        "Hubo turno de ghosting.",
@@ -346,6 +369,7 @@ def specs_payload() -> list[dict[str, object]]:
             "origin": list(c.origin),
             "golden_behaviors": list(c.golden_behaviors),
             "twin_of": c.twin_of,
+            "focus": c.focus,
         }
         for c in CHECKS
     ]

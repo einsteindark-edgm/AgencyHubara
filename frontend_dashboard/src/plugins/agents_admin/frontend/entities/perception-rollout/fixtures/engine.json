@@ -1,0 +1,86 @@
+{
+  "bundle": {
+    "id": "ventas-2",
+    "version": 2,
+    "ref": "ventas-2@2",
+    "oracle": "jev-1.13",
+    "engine_contract": 1,
+    "code_default": "ventas"
+  },
+  "profile": "jev-v5",
+  "places": [
+    {
+      "id": "ingest",
+      "label": "Al leer cada mensaje del cliente"
+    },
+    {
+      "id": "antes_del_turno",
+      "label": "Antes de que el bot responda"
+    },
+    {
+      "id": "herramientas",
+      "label": "Dentro de las herramientas del bot"
+    },
+    {
+      "id": "antes_de_enviar",
+      "label": "Antes de enviar la respuesta"
+    }
+  ],
+  "decisions": [
+    {
+      "capability": "compra",
+      "name": "Compra confirmada",
+      "where": [
+        "ingest"
+      ],
+      "variant_of": null,
+      "mode": "on",
+      "solves": "Decide si el cliente de verdad confirmó la compra. Evita tomar como confirmación un «sí» que respondía otra cosa."
+    },
+    {
+      "capability": "baja",
+      "name": "Baja de mensajes",
+      "where": [
+        "ingest"
+      ],
+      "variant_of": null,
+      "mode": "shadow",
+      "solves": "Reconoce cuando el cliente pide no recibir más mensajes, aunque lo diga con otras palabras."
+    },
+    {
+      "capability": "cantidad",
+      "name": "Cantidad",
+      "where": [
+        "antes_del_turno"
+      ],
+      "variant_of": null,
+      "mode": "off",
+      "solves": "Lee cuántas unidades pidió el cliente para anotarlas en el pedido."
+    },
+    {
+      "capability": "destinatario",
+      "name": "Para quién es el texto",
+      "where": [
+        "antes_de_enviar"
+      ],
+      "variant_of": null,
+      "mode": "canary",
+      "solves": "Decide si el texto es para el cliente o es una nota interna del bot."
+    },
+    {
+      "capability": "destinatario_oracion",
+      "name": "Para quién es, oración por oración",
+      "where": [
+        "herramientas"
+      ],
+      "variant_of": "destinatario",
+      "mode": "canary",
+      "solves": "Lo mismo que «Para quién es el texto», oración por oración, en los mensajes de cierre y de escalación."
+    }
+  ],
+  "turn": {
+    "policy": "turno-v3",
+    "topics": 12,
+    "questions": 31
+  }
+}

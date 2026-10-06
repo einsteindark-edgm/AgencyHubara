@@ -11,18 +11,21 @@ Un acuse — emojis, una reacción, un sticker, "gracias", "ok", "igualmente" �
 no pide nada: queda en el chat para el operador y no despierta al agente. Un
 saludo solo ("Buenas tardes"), una pregunta o un "sí" sí abren conversación.
 
+Lo estructural lo decide el código (`ack_shape`): el agente ya se despidió,
+una reacción o un sticker son acuse por sí solos, una foto o un botón nunca.
+Lo que dice un TEXTO lo decide el motor de decisiones (capacidad `acuse`,
+con el proveedor de lecturas del ingest); `is_closing_ack` es su regla de
+hoy (el respaldo `reglas`).
+
 Funciones puras: el ingest lee el veredicto y persiste.
 """
 from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any, Callable
+from typing import Any
 
 from src.plugins.chats.agent.sales.parsers import WhatsAppMessage
-from src.plugins.chats.agent.sales.use_cases.episode_memory import (
-    unseen_template_text,
-)
 
 #: Palabras de un acuse que no pide nada ("gracias 🙏", "ok, igualmente").
 #: Sin "sí", "dale" ni "claro": esos le contestan algo al bot.
@@ -74,10 +77,29 @@ def is_closing_ack(text: str | None) -> bool:
     return True
 
 
-def _is_ack_message(message: WhatsAppMessage) -> bool:
+#: Formas de un posible acuse de la despedida (`ack_shape`).
+ACK_REACTION = "reaccion"  # una reacción o un sticker: acuse por sí solo
+ACK_TEXT = "texto"  # un texto: lo lee el motor (capacidad `acuse`)
+
+
+def ack_shape(metadata: dict[str, Any], message: WhatsAppMessage) -> str | None:
+    """Lo estructural del acuse de la despedida, sin leer el texto.
+
+    None si no puede ser un acuse: el último episodio sigue abierto (el
+    agente no se ha despedido) o el mensaje trae foto, audio, botones,
+    ubicación, pedido o contactos. `ACK_REACTION` si es una reacción o un
+    sticker; `ACK_TEXT` si es un texto, que decide el motor. Falta una
+    condición que el ingest mira con el historial: lo último que le mandamos
+    no puede ser una plantilla posterior (un "ok" a "tu pedido está listo,
+    ¿te lo enviamos hoy?" contesta esa pregunta). La respuesta a una campaña
+    la descarta el ingest antes de preguntar acá.
+    """
+    episodes = metadata.get("episodes") or []
+    if not episodes or episodes[-1].get("closed_at_ms") is None:
+        return None
     media_kind = (message.media or {}).get("type")
     if message.msg_type in _ACK_MEDIA_KINDS or media_kind in _ACK_MEDIA_KINDS:
-        return True
+        return ACK_REACTION
     if (
         message.media
         or message.interactive
@@ -86,27 +108,5 @@ def _is_ack_message(message: WhatsAppMessage) -> bool:
         or message.order
         or message.contacts
     ):
-        return False
-    return is_closing_ack(message.text)
-
-
-def is_ack_after_farewell(
-    metadata: dict[str, Any],
-    message: WhatsAppMessage,
-    read_events: Callable[[], list[dict[str, Any]]],
-) -> bool:
-    """True si el cliente solo le acusa recibo a la despedida del agente.
-
-    El último episodio tiene que estar cerrado (el agente ya se despidió) y lo
-    último que le mandamos no puede ser una plantilla posterior: un "ok" a
-    "tu pedido está listo, ¿te lo enviamos hoy?" contesta esa pregunta. La
-    respuesta a una campaña la descarta el ingest antes de preguntar acá.
-    `read_events` da el JSONL de la sesión ANTES de persistir este mensaje;
-    se lee solo si lo demás ya dice que es un acuse.
-    """
-    episodes = metadata.get("episodes") or []
-    if not episodes or episodes[-1].get("closed_at_ms") is None:
-        return False
-    if not _is_ack_message(message):
-        return False
-    return unseen_template_text(read_events()) is None
+        return None
+    return ACK_TEXT

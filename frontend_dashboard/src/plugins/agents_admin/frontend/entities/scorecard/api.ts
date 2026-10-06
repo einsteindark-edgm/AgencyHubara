@@ -18,8 +18,12 @@ async function fetchRegistry(signal?: AbortSignal): Promise<CheckRegistry> {
   return checkRegistrySchema.parse(raw);
 }
 
-async function fetchScorecards(days: number, signal?: AbortSignal): Promise<ScorecardList> {
-  const raw = await apiClient.get<unknown>(`${BASE}/scorecards?days=${days}`, { signal });
+/** Qué bot respondió los episodios (encendido del bot nuevo, lab PR 18). */
+export type ScorecardBot = "actual" | "nuevo";
+
+async function fetchScorecards(days: number, bot: ScorecardBot | null, signal?: AbortSignal): Promise<ScorecardList> {
+  const query = bot ? `days=${days}&bot=${bot}` : `days=${days}`;
+  const raw = await apiClient.get<unknown>(`${BASE}/scorecards?${query}`, { signal });
   return scorecardListSchema.parse(raw);
 }
 
@@ -54,10 +58,10 @@ export function useCheckRegistry() {
 }
 
 /** Scorecards de los últimos `days` días (FALLA → ALERTA → PASA → SIN_DATOS, recientes primero). */
-export function useScorecards(days = 30) {
+export function useScorecards(days = 30, bot: ScorecardBot | null = null) {
   return useQuery({
-    queryKey: scorecardKeys.list(days),
-    queryFn: ({ signal }) => fetchScorecards(days, signal),
+    queryKey: scorecardKeys.list(days, bot),
+    queryFn: ({ signal }) => fetchScorecards(days, bot, signal),
     // Lista pesada (semanas de episodios × checks): no se recarga con cada foco.
     staleTime: 60_000,
   });

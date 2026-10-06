@@ -7,6 +7,7 @@ import asyncio
 # provider litellm (`from litellm import acompletion`). Sino esa referencia queda
 # sin instrumentar por OpenLIT → el span gen_ai se crea pero gen_ai.usage.*
 # (tokens/cost) sale 0. Ver la nota más detallada en el worker `sales`.
+from src.plugins.chats.agent.sales.decisions import registry as decisions_registry
 from src.platform.logging import setup_logging
 from src.platform.observability import init_otel, otel_workflow_runner
 
@@ -57,6 +58,12 @@ from src.plugins.chats.agent.remarketing.workflows.watchdog import (
 )
 from src.platform.tools.routing import TransferToSalesAgentTool
 from src.plugins.chats.agent.remarketing.tools import deferral_aware_transfer_tool
+from src.plugins.chats.agent.sales.decisions.contact import register_contact_decision
+from src.plugins.chats.agent.sales.decisions.remarketing_context import (
+    register_catalog_context_decision,
+    register_label_decision,
+)
+from src.plugins.chats.agent.sales.decisions.routing import register_sales_workflow_router
 
 # NEW-5 cerrado: el worker de Remarketing tambien necesita la tool de
 # transferencia (es la unica forma de que el agente vuelva a Ventas).
@@ -67,9 +74,28 @@ register_tool_extension(
 )
 
 
+def register_decisions_routing() -> None:
+    """Motor de decisiones F2/F7: cuando la plataforma arranca Ventas desde
+    este worker (orquestación o activity de arranque), la versión del workflow
+    la decide el registro de bots por conversación. F8: el gancho pregunta al
+    motor si el toque sobra antes de redactar (capacidad `contactar`)."""
+    register_sales_workflow_router()
+    register_contact_decision()
+    # F3: producto nombrado y fuera de catálogo en el contexto del gancho.
+    register_catalog_context_decision()
+    # Familia C: el motivo que el watchdog manda como variable de plantilla.
+    register_label_decision()
+
+
+register_decisions_routing()
+
+
 async def main() -> None:
     """Worker Exclusivo para el Dominio de Remarketing."""
     ensure_plugin_enabled("chats")  # P-21: self-gate del toggle (INV-2)
+    # El paquete de decisión de la tienda compila AL ARRANCAR (no en la primera
+    # activity) y el log dice cuál corre (PAQUETES_DE_DECISION.md, premortem).
+    await asyncio.to_thread(decisions_registry.warm_up)
     logger.info("Conectando Especialista (Remarketing) al clúster Temporal mTLS...")
     client = await get_temporal_client()
 

@@ -10,4 +10,4 @@ export type {
 } from "./model";
 export { checkStatsKeys } from "./keys";
 export { funnelTotal, hasFailures, paretoWithCumulative, sortFunnel, weeklyDelta } from "./lib";
-export { useCheckStats } from "./api";
+export { useCheckStats, type StatsBot } from "./api";

@@ -253,6 +253,28 @@ def test_order_created_by_the_human_turns_on_schedule_and_confirm_payment(h: _Ha
     assert _compute_pending_payment_order_id(m) == body["order_id"]
 
 
+def test_order_from_the_panel_is_not_held_by_the_bot_split_lines(h: _Harness) -> None:
+    """El borrador repartido en variantes (`set_order_slot(lineas=...)`) es
+    memoria del bot: el operador que registra desde el panel manda lo que
+    acordó con el cliente, aunque no coincida con esas líneas
+    (`split_lines_mismatch` es solo para el bot)."""
+    path = h.vault / _A / "metadata.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        {"producto": "Luz Serena", "aroma": "Lavanda", "color": "Blanco", "cantidad": "1"},
+        {"producto": "Luz Serena", "aroma": "Lavanda", "color": "Azul", "cantidad": "1"},
+    ]
+    path.write_text(json.dumps({"episodes": [{
+        "episode_id": "ep_001", "started_at_ms": 1, "closed_at_ms": None,
+        "order_draft": {"slots": {"producto": "Luz Serena"}, "items": lines},
+    }]}), encoding="utf-8")
+
+    body = h.client.post(_url("order"), json=_ORDER).json()
+
+    assert body["registered"] is True, body
+    assert len(h.port.calls) == 1
+
+
 def test_order_is_idempotent_for_the_same_content(h: _Harness) -> None:
     first = h.client.post(_url("order"), json=_ORDER).json()
     second = h.client.post(_url("order"), json=_ORDER).json()

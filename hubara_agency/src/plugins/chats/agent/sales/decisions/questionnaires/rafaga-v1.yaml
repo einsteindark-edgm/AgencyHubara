@@ -1,0 +1,93 @@
+# Cuestionario de la ráfaga, versión 1: el que usa el turno con clasificador
+# desde el PR 14 del laboratorio, pasado a datos el 2026-09-28 SIN cambiar una
+# palabra (test_decisions_questionnaire lo compara con la lista congelada).
+#
+# Un cuestionario es la unidad que se versiona: una pregunta nueva, otro texto
+# u otras opciones = un archivo nuevo (rafaga-v2…) y un perfil que lo use. Así
+# el laboratorio y la traza dicen con qué preguntas se midió.
+#
+# Forma:
+#   topics      asuntos del cliente, en orden (orden de las preguntas y del plan)
+#   questions   las preguntas de la ráfaga, en orden:
+#                 each_topic   una por asunto ({topic}, {hint}, {label})
+#                 each_message una por mensaje ({k}); criteria.from_topics = las
+#                              etiquetas de los asuntos + criteria.extra
+#                 id/kind/text/criteria  una pregunta fija
+#               `when` (opcional): solo se hace si los hechos del turno coinciden.
+#   verify      la pregunta de la verificación, una por asunto del plan
+#   state       cómo se arma el `state` de la ráfaga
+#   reply_state cómo se arma el `state` de la verificación
+id: rafaga-v1
+
+topics:
+  - {id: catalogo, label: "catálogo", hint: "pide ver el catálogo, los diseños o los modelos"}
+  - {id: precio, label: "precio", hint: "pregunta cuánto vale o cuánto cuesta algo"}
+  - {id: envio, label: "envío", hint: "pregunta por el envío o el domicilio (costo o cobertura)"}
+  - {id: tiempos, label: "tiempos de entrega", hint: "pregunta cuánto tarda en llegar o cuándo está listo"}
+  - {id: pagos, label: "medios de pago", hint: "pregunta cómo pagar o por un medio de pago"}
+  - {id: medidas, label: "medidas", hint: "pregunta por el tamaño o las medidas"}
+  - {id: variante, label: "colores o variantes", hint: "pregunta por colores o variantes"}
+  - {id: aroma, label: "aromas", hint: "pregunta por los aromas"}
+  - {id: personalizacion, label: "personalización", hint: "pide personalizar (nombre, dedicatoria, diseño propio)"}
+  - {id: disponibilidad, label: "disponibilidad", hint: "pregunta si hay disponible o en stock"}
+  - {id: estado_pedido, label: "estado del pedido", hint: "pregunta por un pedido que ya hizo"}
+  - {id: datos_envio, label: "datos de envío", hint: "entrega sus datos de envío (ciudad, dirección, teléfono, quién recibe)"}
+  - {id: confirma_compra, label: "confirmación de compra", hint: "confirma que quiere comprar"}
+  - {id: aplaza, label: "aplazamiento", hint: "aplaza la compra (luego, otro día, voy en camino)"}
+  - {id: queja, label: "queja", hint: "se queja o reporta un problema"}
+  - {id: foto, label: "la foto", hint: "pregunta por una foto que envió o citó"}
+  - {id: saludo, label: "saludo", hint: "saluda"}
+
+questions:
+  - each_topic:
+      id: "topic.{topic}"
+      kind: noul
+      text: "¿En estos mensajes el cliente {hint}?"
+      criteria: {"true": "sí, lo plantea en algún mensaje", "false": "no lo plantea"}
+  - id: thread.answers_last_bot_question
+    kind: noul
+    text: "¿El cliente está respondiendo la última pregunta del asesor?"
+    criteria: {"true": "sí, la responde", "false": "no, habla de otra cosa"}
+  - id: thread.repeats_unanswered
+    kind: noul
+    text: "¿El cliente repite algo que preguntó antes y quedó sin respuesta?"
+    criteria: {"true": "sí, lo repite", "false": "no"}
+  - id: stage
+    kind: choice
+    text: "¿En qué etapa de la compra está la conversación?"
+    criteria:
+      apertura: "apertura"
+      descubrimiento: "descubrimiento"
+      variantes: "variantes"
+      confirmacion: "confirmacion"
+      datos_envio: "datos envio"
+      cierre: "cierre"
+      postcierre: "postcierre"
+  - each_message:
+      id: "msg.{k}.topic"
+      kind: choice
+      text: "¿Cuál es el asunto principal del mensaje [{k}]?"
+      criteria: {from_topics: label, extra: {ninguno: "ningún asunto de la lista"}}
+
+verify:
+  id: "cover.{topic}"
+  kind: noul
+  text: "¿La respuesta del asesor (texto y tarjetas) atiende el asunto «{label}»{where}"
+  where_msg: " que el cliente planteó en el mensaje [{msg}]?"
+  where_none: " que planteó el cliente?"
+  criteria: {"true": "sí, lo atiende", "false": "no lo atiende"}
+
+state:
+  header: "Mensajes del cliente en este turno:"
+  message: "[{k}] ({offset}) {text}"
+  pending: "Asuntos que quedaron sin responder en turnos anteriores: {pending}"
+  last_bot: "Último mensaje del asesor antes de este turno: \"{text}\""
+  # v1 se quedaba con los PRIMEROS 400 caracteres (la pregunta del bot suele
+  # ir al final: v2 lo corta por el principio).
+  last_bot_max_chars: 400
+  last_bot_keep: start
+
+reply_state:
+  header: "Respuesta del asesor:"
+  empty: "(sin texto)"
+  components: "Tarjetas y componentes que también recibe el cliente: {components}"

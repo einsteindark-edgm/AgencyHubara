@@ -19,6 +19,17 @@ de intents. Hubara la ejecuta re-validando contra el DAG real del API de orders
 (`invalid_transition` benigno) con `notify_customer=false` (el humano ya avisó
 por chat — la cascada ETA duplicaría el mensaje).
 
+LECTOR DE JEV (motor de decisiones de hubara, F8): con `payload.reader` en
+`sombra` o `jev`, cada conversación trae la lectura de Jev que depositó hubara
+(`reading.verdict`: la MISMA forma que el veredicto del LLM, o None si Jev
+dudó, cayó o tardó — el agente sigue sin pegar red). El LLM se llama igual que
+hoy (es la regla de hoy). En `sombra` actúa el LLM; en `jev` actúa el
+veredicto de Jev cuando lo hay, y si no, el LLM. Las guardas son las MISMAS
+para las dos fuentes. El result suma `reader`, `by` en cada intent/suppressed
+y `shadow`: lo que cada uno haría despachar (después de las guardas) para la
+cola de desacuerdos que califica Claude Code. Sin lector (o con otro valor),
+la lectura se ignora y el run es el de hoy.
+
 - run(input, *, ports, tools) — PURA salvo el port llm (G-RUN-SIG).
 - build(*, llm=None)          — el StateGraph LangGraph, reusa la lógica (L-11).
 """
@@ -122,105 +133,148 @@ def _classify(conversations: list[dict], llm) -> list[dict]:
     return out
 
 
+#: los lectores del motor de decisiones de hubara (F8). Cualquier otro valor
+#: (o ninguno) = el run de hoy: la lectura de Jev se ignora.
+_READERS = frozenset({"sombra", "jev"})
+
+
+def _reading_verdict(convo: dict) -> dict | None:
+    """El veredicto de Jev que depositó hubara (misma forma que el del LLM), o
+    None si Jev dudó, cayó o tardó, o si la lectura tiene otra forma."""
+    reading = convo.get("reading")
+    verdict = reading.get("verdict") if isinstance(reading, dict) else None
+    if not isinstance(verdict, dict):
+        return None
+    if verdict.get("action") not in ("transition", "confirm_payment", "none"):
+        return None
+    return verdict
+
+
+def _guard(convo: dict, verdict: dict) -> str | None:
+    """Las guardas DETERMINISTAS de UN veredicto (del LLM o de Jev), en orden de
+    precedencia: evidencia textual (PM-008) → stage permitido (1) → adyacencia
+    del DAG (2) → confidence high (3) → orden cancelada y pago ya confirmado
+    (5, PM-012). None = despachable (falta solo el dedup por order_id, 4)."""
+    # Anti-alucinación determinista (PM-008): la evidencia debe ser cita
+    # TEXTUAL de la conversación — si ninguna cita aparece en un mensaje,
+    # el verdict se descarta (el LLM inventó la prueba).
+    texts = [m.get("text") or "" for m in convo.get("messages") or []]
+    evidence = [e for e in (verdict.get("evidence") or []) if isinstance(e, str)]
+    if not any(e and any(e in t for t in texts) for e in evidence):
+        return "evidence_not_found"
+    confidence = verdict.get("confidence")
+    if verdict["action"] == "transition":
+        to_stage = verdict.get("to_stage")
+        if to_stage not in _ALLOWED_STAGES:
+            return "stage_not_allowed"
+        if _NEXT_STAGE.get(convo.get("current_stage")) != to_stage:
+            return "invalid_transition"
+        if confidence != "high":
+            return "low_confidence"
+        return None
+    # confirm_payment
+    if confidence != "high":
+        return "low_confidence"
+    if convo.get("current_stage") == "cancelled":
+        # PM-012: pagada+cancelada es un estado contradictorio.
+        return "order_cancelled"
+    if convo.get("payment_confirmed") is not False:
+        return "payment_already_confirmed"
+    return None
+
+
+def _proposal(convo: dict, verdict: dict) -> dict:
+    """Lo que un veredicto haría despachar después de las guardas (lo que la
+    sombra compara entre el LLM y Jev)."""
+    action = verdict.get("action")
+    if action == "none" or _guard(convo, verdict) is not None:
+        return {"action": "none"}
+    out = {"action": action}
+    if action == "transition":
+        out["to_stage"] = verdict.get("to_stage")
+    return out
+
+
 def _plan(payload: dict, classified: list[dict]) -> dict:
     """Los guardrails DETERMINISTAS post-LLM, en orden de precedencia:
     stage permitido (1) → adyacencia del DAG (2) → confidence high (3) →
-    idempotencia del pago (5) → dedup por order_id (4)."""
+    idempotencia del pago (5) → dedup por order_id (4). Con lector de Jev,
+    el veredicto que actúa sale del lector (ver el docstring del módulo)."""
     dispatch: list[dict] = []
     suppressed: list[dict] = []
     llm_errors: list[dict] = []
+    shadow: list[dict] = []
     seen_transition: set = set()
     seen_payment: set = set()
+    reader = payload.get("reader") if payload.get("reader") in _READERS else None
 
     by_index = payload.get("conversations") or []
     for convo, entry in zip(by_index, classified):
         sid = convo.get("session_id")
         oid = convo.get("order_id")
-        if entry["error"] is not None:
-            llm_errors.append({"session_id": sid, "error": entry["error"]})
-            continue
-        verdict = entry["verdict"]
-        if verdict is None:
-            suppressed.append(
-                {"session_id": sid, "order_id": oid, "reason": "unparseable_llm_output"}
+        jev = _reading_verdict(convo) if reader else None
+        llm = entry["verdict"] if entry["error"] is None else None
+        if jev is not None and llm is not None:
+            llm_wants, jev_wants = _proposal(convo, llm), _proposal(convo, jev)
+            shadow.append(
+                {
+                    "session_id": sid,
+                    "order_id": oid,
+                    "llm": llm_wants,
+                    "jev": jev_wants,
+                    "agree": llm_wants == jev_wants,
+                }
             )
-            continue
+
+        def _suppress(reason: str, by: str) -> None:
+            row = {"session_id": sid, "order_id": oid, "reason": reason}
+            if reader:
+                row["by"] = by
+            suppressed.append(row)
+
+        if reader == "jev" and jev is not None:
+            verdict, by = jev, "jev"
+        else:
+            if entry["error"] is not None:
+                llm_errors.append({"session_id": sid, "error": entry["error"]})
+                continue
+            verdict, by = entry["verdict"], "llm"
+            if verdict is None:
+                _suppress("unparseable_llm_output", by)
+                continue
         action = verdict["action"]
         if action == "none":
             continue  # silencio normal: ni dispatch ni suppressed
 
-        def _suppress(reason: str) -> None:
-            suppressed.append({"session_id": sid, "order_id": oid, "reason": reason})
-
-        # Anti-alucinación determinista (PM-008): la evidencia debe ser cita
-        # TEXTUAL de la conversación — si ninguna cita aparece en un mensaje,
-        # el verdict se descarta (el LLM inventó la prueba).
-        texts = [m.get("text") or "" for m in convo.get("messages") or []]
-        evidence = [e for e in (verdict.get("evidence") or []) if isinstance(e, str)]
-        if not any(e and any(e in t for t in texts) for e in evidence):
-            _suppress("evidence_not_found")
+        reason = _guard(convo, verdict)
+        if reason is not None:
+            _suppress(reason, by)
             continue
-
-        confidence = verdict.get("confidence")
+        seen = seen_transition if action == "transition" else seen_payment
+        if oid in seen:
+            _suppress("duplicate_order_intent", by)
+            continue
+        seen.add(oid)
+        intent = {"kind": "order_stage_intent", "session_id": sid, "order_id": oid, "action": action}
         if action == "transition":
-            to_stage = verdict.get("to_stage")
-            if to_stage not in _ALLOWED_STAGES:
-                _suppress("stage_not_allowed")
-                continue
-            if _NEXT_STAGE.get(convo.get("current_stage")) != to_stage:
-                _suppress("invalid_transition")
-                continue
-            if confidence != "high":
-                _suppress("low_confidence")
-                continue
-            if oid in seen_transition:
-                _suppress("duplicate_order_intent")
-                continue
-            seen_transition.add(oid)
-            dispatch.append(
-                {
-                    "kind": "order_stage_intent",
-                    "session_id": sid,
-                    "order_id": oid,
-                    "action": "transition",
-                    "to_stage": to_stage,
-                    "evidence": list(verdict.get("evidence") or []),
-                    "confidence": confidence,
-                }
-            )
-        else:  # confirm_payment
-            if confidence != "high":
-                _suppress("low_confidence")
-                continue
-            if convo.get("current_stage") == "cancelled":
-                # PM-012: pagada+cancelada es un estado contradictorio.
-                _suppress("order_cancelled")
-                continue
-            if convo.get("payment_confirmed") is not False:
-                _suppress("payment_already_confirmed")
-                continue
-            if oid in seen_payment:
-                _suppress("duplicate_order_intent")
-                continue
-            seen_payment.add(oid)
-            dispatch.append(
-                {
-                    "kind": "order_stage_intent",
-                    "session_id": sid,
-                    "order_id": oid,
-                    "action": "confirm_payment",
-                    "evidence": list(verdict.get("evidence") or []),
-                    "confidence": confidence,
-                }
-            )
+            intent["to_stage"] = verdict.get("to_stage")
+        intent["evidence"] = list(verdict.get("evidence") or [])
+        intent["confidence"] = verdict.get("confidence")
+        if reader:
+            intent["by"] = by
+        dispatch.append(intent)
 
-    return {
+    result = {
         "schema_version": 1,
         "snapshot_now_ms": payload.get("now_ms"),
         "dispatch": dispatch,
         "suppressed": suppressed,
         "llm_errors": llm_errors,
     }
+    if reader:
+        result["reader"] = reader
+        result["shadow"] = shadow
+    return result
 
 
 def _require_payload(input: dict) -> dict:

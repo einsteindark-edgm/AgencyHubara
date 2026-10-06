@@ -36,9 +36,15 @@ from src.plugins.chats.agent.sales.workflows.sales_session import (
     HubaraSalesSessionWorkflow,
 )
 
+from tests.sales_workflow_versions import sales_workflow_versions
 from tests.test_sales_workflow_debounce import Tracker, _make_fake_activities
 
 SALES_QUEUE = get_task_queue("chats", "sales")
+
+#: Tests que NO corren contra el workflow V2 (motor de decisiones F4), con su
+#: motivo (ver `tests/sales_workflow_versions.py`).
+V2_EXCLUDED: dict[str, str] = {}
+_sales_workflow_version = sales_workflow_versions(__name__, V2_EXCLUDED)
 
 
 # --- Fakes extra (no viven en el harness del debounce) ----------------------

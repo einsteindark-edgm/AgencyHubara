@@ -1,5 +1,5 @@
 ---
-description: Audita el diff por violaciones de las 5 R-rules DEHA + R-DIP #10 cross-worker + ADR-2026-05-20 §10 footguns. Read-only. Output a $ARTIFACTS_DIR/review-findings-deha.yaml.
+description: Audita el diff por violaciones de las 5 R-rules DEHA + R-DIP #10 cross-worker + ADR-2026-05-20 §10 footguns + lógica de decisión fuera del paquete (ADR-2026-10-02). Read-only. Output a $ARTIFACTS_DIR/review-findings-deha.yaml.
 argument-hint: (none — reads from $ARTIFACTS_DIR and git diff main...HEAD)
 ---
 
@@ -15,7 +15,7 @@ Solo identificás violaciones con `archivo:línea` + cita textual del problema e
 
 ## §1. Stance escéptica
 
-> Asumí que el código tiene violaciones. Si encontrás solo 1-2 findings por categoría (A-G abajo), no buscaste suficiente. Sé pesimista — los R-rules se violan más en casos sutiles (Optional[Decimal] que no se ve obvio, signal handler con random, etc.) que en casos obvios.
+> Asumí que el código tiene violaciones. Si encontrás solo 1-2 findings por categoría (A-I abajo), no buscaste suficiente. Sé pesimista — los R-rules se violan más en casos sutiles (Optional[Decimal] que no se ve obvio, signal handler con random, etc.) que en casos obvios.
 
 ---
 
@@ -37,6 +37,7 @@ Cargá del guide (Read tool):
 .claude/skills/hubara-architecture-guide/sections/02-backend-platform.md
 .claude/skills/hubara-architecture-guide/sections/04-backend-agents.md
 .claude/skills/hubara-architecture-guide/references/temporal-patterns.md
+.claude/skills/hubara-architecture-guide/sections/11-decision-engine.md   # categoría I
 ```
 
 ---
@@ -46,10 +47,12 @@ Cargá del guide (Read tool):
 ```bash
 git diff main...HEAD --name-only -- 'hubara_agency/src/**/*.py' > /tmp/deha-files.txt
 git diff main...HEAD -- 'hubara_agency/src/**/*.py' > /tmp/deha-diff.patch
-cat /tmp/deha-files.txt
+# Paquetes de decisión (categoría I): YAML de capacidades, turno, dominio y catálogo
+git diff main...HEAD --name-status -- 'hubara_agency/src/plugins/**/decisions/bundles/**' > /tmp/deha-bundles.txt
+cat /tmp/deha-files.txt /tmp/deha-bundles.txt
 ```
 
-Si `/tmp/deha-files.txt` está vacío → no hay cambios backend → emitir output con `findings: []` y exit.
+Si `/tmp/deha-files.txt` Y `/tmp/deha-bundles.txt` están vacíos → no hay cambios backend → emitir output con `findings: []` y exit. Si solo cambió `bundles/`, auditá únicamente la categoría I.
 
 ---
 
@@ -133,6 +136,44 @@ Por cada capability listada en §16 del refinement con `spec-deltas/<cap>/spec.m
 
 Reportar como findings con `rule: SPEC-CONSISTENCY`.
 
+### I. Motor de decisiones (ADR-2026-10-02 — la decisión vive en el paquete)
+
+Las decisiones del bot (compra, baja, cortesía, acuse, cupón, fuera de catálogo,
+cantidad, zona de envío, para quién es un texto, escribirle de nuevo, cierre…)
+son capacidades de un paquete YAML + CEL que los lugares piden por nombre
+(`capability("x")`). Un bug de decisión se arregla en una versión nueva del
+paquete; el camino de `main` (un `if`/regex/guarda más en el lugar) está
+prohibido por el operador. Ver `sections/11-decision-engine.md` §1, §5 y §7.
+
+- **`DECISION-OUTSIDE-BUNDLE` (HIGH; CRITICAL si duplica o pisa una capacidad
+  existente):** en los lugares que deciden (`decisions/readings.py`,
+  `decisions/guards.py`, `decisions/egress.py`, `decisions/remarketing_context.py`,
+  `decisions/contact.py`, `decisions/cierre.py`, `tools/*.py`,
+  `activities/build_prompt_stage.py`, `activities/variant_enumeration_guard.py`,
+  `activities/turn_trace.py`, `use_cases/ingest_inbound_message.py`, los
+  workflows y activities de remarketing) el diff agrega lógica que JUZGA lo que
+  dijo el cliente o el bot: un regex o una lista de palabras sobre el texto, un
+  umbral numérico nuevo, un `if` que cambia el valor que devuelve
+  `decide()`/`decide_for_session()`, o que lo ignora. `suggested_fix`: la
+  capacidad, su pregunta/umbral/fila y el ejemplo que lo exige, en una versión
+  nueva del paquete (o una capacidad nueva con su `about` en el catálogo).
+  NO es finding: leer un hecho verificado (precio, cupo, stock, etapa del
+  pedido) en el lugar donde vive ese dato.
+- **`PUBLISHED-BUNDLE-EDITED` (CRITICAL):** `/tmp/deha-bundles.txt` modifica (`M`)
+  un archivo de un paquete ya publicado (su huella está en
+  `hubara_agency/tests/plugins/test_decision_bundles_published.py`) en vez de
+  agregar una carpeta nueva (`A`). Un paquete publicado es inmutable.
+- **`CAPABILITY-CLASS-REFERENCED` (HIGH):** el diff instancia o importa una clase
+  de capacidad (`Baja()`, `Cortesia()`, `PERSONA`, `from …decisions.capabilities.baja import`)
+  fuera de `decisions/registry.py`. Se pide `capability("baja")`.
+- **R-DET con paquetes (CRITICAL):** `load_bundle`, `active_bundle()`,
+  `capability(...)` o lectura de `bundles/` dentro de un workflow.
+- **P-28 (HIGH):** un plugin importa `src.platform.decisions` en vez de
+  `src.sdk.decisionkit`.
+- **Capacidad nueva incompleta (HIGH):** una capacidad nueva en
+  `builtins.yaml: capabilities` sin `about` (con `where` de `places`), o un
+  `capability("x")` nuevo cuyo nombre no está en el catálogo.
+
 ---
 
 ## §5. Phase 4 — Cross-reference con premortem
@@ -158,7 +199,7 @@ files_audited: <count>
 findings:
   - id: CR-DEHA-001
     severity: critical | high | medium | low
-    rule: R-DET | R-JSON | R-STATELESS | R-HEARTBEAT | R-DIP | R-DIP-10 | ADR-2026-05-20 | SPEC-CONSISTENCY
+    rule: R-DET | R-JSON | R-STATELESS | R-HEARTBEAT | R-DIP | R-DIP-10 | ADR-2026-05-20 | SPEC-CONSISTENCY | DECISION-OUTSIDE-BUNDLE | PUBLISHED-BUNDLE-EDITED | CAPABILITY-CLASS-REFERENCED
     location: hubara_agency/src/plugins/chats/agent/sales/workflows/session.py:142
     code_excerpt: |
       from src.plugins.remarketing.agent.workflows import RemarketingWorkflow

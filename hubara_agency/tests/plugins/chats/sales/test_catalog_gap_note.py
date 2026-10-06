@@ -79,7 +79,7 @@ def test_photo_of_a_dragon_candle_names_dragon_as_not_in_catalog() -> None:
 
     assert note is not None
     assert "«dragón»" in note
-    assert "NO existe" in note
+    assert "no aparece por nombre en el catálogo" in note
     # lo que sí vendemos (cubo, cilindro, corazones) no se marca
     for real in ("cubo", "cilindro", "corazones", "love"):
         assert f"«{real}»" not in note.lower()
@@ -92,6 +92,55 @@ def test_asking_for_a_glass_version_names_vaso_and_asks_for_the_real_alternative
     assert "«vaso»" in note
     assert "alternativa" in note
     assert "solo el catálogo" in note  # no basta con reenviar el catálogo
+
+
+SACRIFICIO = _product(
+    "Sacrificio de Amor",
+    "sacrificio-de-amor",
+    "Enmarcada en una estructura geométrica pura en forma de cruz, esta vela en relieve simboliza "
+    "la entrega. El contraste entre el marco sólido y el detallado rostro interior crea un juego "
+    "visual único.",
+)
+PHOTO_OF_OUR_CATALOG = (
+    "[el cliente envió una foto: vela gris con detalles dorados en forma de cruz y rostro de Jesús]"
+    ' con el texto: "tienes esta?"'
+)
+
+
+def test_the_note_never_denies_before_searching_the_catalog() -> None:
+    """Caso 6543 del laboratorio (caso-fotos-0929-r4, turno 2): la foto era una
+    captura de nuestro catálogo («Sacrificio de Amor»); la visión la describió
+    como «vela gris… rostro de Jesús» y «jesús» no aparece escrito en el
+    catálogo. La nota decía «NO existe… díselo claro (eso no lo manejamos)» y el
+    bot lo negó sin buscar. Lo que no aparece por nombre puede estar descrito
+    con otras palabras: primero se busca, y solo se niega si no hay nada parecido."""
+    note = build_catalog_gap_note(PHOTO_OF_OUR_CATALOG, [*CATALOG, SACRIFICIO])
+
+    assert note is not None and "«jesús»" in note
+    assert "NO existe" not in note
+    assert "Antes de responder, búscalo con search_products" in note
+    assert "no le digas que no lo manejamos" in note
+    assert note.index("search_products") < note.index("(eso no lo manejamos)"), "negar es el último recurso"
+
+
+def test_a_photo_already_identified_as_ours_names_nothing_as_missing() -> None:
+    """Identificación de fotos (2026-09-30): si la foto ya se reconoció como un
+    producto nuestro (por lo que se lee en ella o por la imagen), lo que la
+    visión describió con otras palabras («rostro de Jesús») existe: la foto no
+    alimenta la nota. Lo que el cliente escribió sí se sigue leyendo."""
+    from src.plugins.chats.agent.sales.use_cases.photo_product import PhotoProduct, photo_reentry_text
+
+    description = "vela gris con detalles dorados en forma de cruz y rostro de Jesús"
+    by_name = PhotoProduct(handle="sacrificio-de-amor", title="Sacrificio de Amor", how="nombre")
+    by_image = PhotoProduct(handle="sacrificio-de-amor", title="Sacrificio de Amor", how="imagen")
+    catalog = [*CATALOG, SACRIFICIO]
+
+    for product in (by_name, by_image):
+        text = photo_reentry_text(description, product) + ' con el texto: "tienes esta?"'
+        assert build_catalog_gap_note(text, catalog) is None, product.how
+        asks_vaso = photo_reentry_text(description, product) + ' con el texto: "y en vaso?"'
+        note = build_catalog_gap_note(asks_vaso, catalog)
+        assert note is not None and "«vaso»" in note and "jesús" not in note.lower()
 
 
 def test_question_about_a_real_product_has_no_note() -> None:
@@ -153,7 +202,7 @@ async def test_sales_turn_carries_the_gap_note_when_the_customer_asks_for_a_vaso
 
     assert len(loader.calls) == 1
     notes = loader.calls[0].extra_context or []
-    assert any("«vaso»" in n and "NO existe" in n for n in notes), notes
+    assert any("«vaso»" in n and "no aparece por nombre en el catálogo" in n for n in notes), notes
 
 
 @pytest.mark.asyncio
@@ -182,14 +231,16 @@ async def test_catalog_down_never_blocks_the_turn() -> None:
 SOUL = Path("src/plugins/chats/agent/sales/workspace/SOUL.md")
 
 
-def test_soul_says_to_state_the_gap_and_offer_the_closest_real_alternative() -> None:
+def test_soul_says_to_search_first_then_state_the_gap_and_offer_the_closest_real_alternative() -> None:
     soul = SOUL.read_text(encoding="utf-8")
     rule = next(
-        (line for line in soul.splitlines() if "no existe en el catálogo" in line.lower()),
+        (line for line in soul.splitlines() if "no aparece por nombre en el catálogo" in line.lower()),
         None,
     )
 
-    assert rule is not None, "SOUL.md no tiene la regla de lo que no existe en el catálogo"
+    assert rule is not None, "SOUL.md no tiene la regla de lo que no aparece por nombre en el catálogo"
+    assert "búscalo con search_products" in rule, rule
+    assert rule.index("search_products") < rule.index("manejamos"), "negar es el último recurso"
     assert re.search(r"no (lo|la|los|las) manejamos", rule), rule
     assert "alternativa real más cercana" in rule, rule
     assert "solo el catálogo" in rule, rule

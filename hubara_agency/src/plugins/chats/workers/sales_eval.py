@@ -5,9 +5,12 @@
 """Worker del harness de evaluación del Asesor de Ventas.
 
 Hace dos cosas al boot (igual que `orders/workers/reconcile.py`):
-  1. **Asegura un Temporal Schedule** que dispara `SalesEvalWorkflow` en cron
-     (default 08:00 / 14:00 / 20:00 hora de Colombia) — la evaluación asíncrona
-     "en ciertos momentos del día" sobre tráfico real.
+  1. **Asegura sus Temporal Schedules**: el que dispara `SalesEvalWorkflow` en
+     cron (default 08:00 / 14:00 / 20:00 hora de Colombia) — la evaluación
+     asíncrona "en ciertos momentos del día" sobre tráfico real —, el del
+     golden (opt-in) y el de la sonda diaria de Jev (`DecisionsProbeWorkflow`,
+     07:00 Bogotá: 20 ráfagas sintéticas con respuesta conocida contra el
+     clasificador del motor de decisiones).
   2. **Corre el worker loop** que ejecuta los workflows + activities de eval.
 
 Idempotente: re-arrancar NO duplica el Schedule (`ScheduleAlreadyRunningError`).
@@ -21,6 +24,10 @@ Env:
   * `SALES_EVAL_LOOKBACK_HOURS` (default 8), `SALES_EVAL_MAX_CONVERSATIONS` (50).
   * `EVAL_JUDGE_MODEL` — alias del juez (default `gemini-pro-judge`, EL MISMO que el
     golden del GitHub Action: el eval online y el de CI tienen idéntico criterio).
+  * `DECISIONS_PROBE_SCHEDULE_ENABLED` (default "true") /
+    `DECISIONS_PROBE_SCHEDULE_CRON` (default "0 7 * * *", tz America/Bogota) —
+    la sonda diaria de Jev. Necesita `OPENROUTER_API_KEY`: sin ella (o con el
+    placeholder de Terraform) no llama a nadie y el reporte dice `sin_llave`.
 
 R-DIP: importa `platform/` + el propio plugin `chats`; no plugins siblings.
 """
@@ -50,6 +57,9 @@ from temporalio.worker import Worker
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.plugin_runtime import ensure_plugin_enabled
 from src.platform.temporal.client import get_temporal_client
+from src.plugins.chats.agent.sales_eval.activities.decisions_probe import (
+    run_decisions_probe_activity,
+)
 from src.plugins.chats.agent.sales_eval.activities.eval_activities import (
     evaluate_sales_conversation_activity,
     run_golden_suite_activity,
@@ -61,12 +71,17 @@ from src.plugins.chats.agent.sales_eval.evals.contracts import (
     EvalWindowInput,
     GoldenEvalInput,
 )
+from src.plugins.chats.agent.sales_eval.workflows.decisions_probe import (
+    DecisionsProbeWorkflow,
+)
 from src.plugins.chats.agent.sales_eval.workflows.evaluate_episode import (
     EvaluateEpisodeWorkflow,
 )
 from src.plugins.chats.agent.sales_eval.workflows.golden_eval import GoldenEvalWorkflow
 from src.plugins.chats.agent.sales_eval.workflows.score_episode import ScoreEpisodeWorkflow
 from src.plugins.chats.agent.sales_eval.workflows.sales_eval import SalesEvalWorkflow
+from src.plugins.chats.agent.sales_lab.launch.activities import LAB_LAUNCH_ACTIVITIES
+from src.plugins.chats.agent.sales_eval.workflows.lab_launch import LabLaunchWorkflow
 
 _SCHEDULE_ID = "sales-eval-schedule"
 _WORKFLOW_ID = "sales-eval"
@@ -82,6 +97,14 @@ _DEFAULT_TZ = "America/Bogota"
 _GOLDEN_SCHEDULE_ID = "golden-eval-schedule"
 _GOLDEN_WORKFLOW_ID = "golden-eval"
 _GOLDEN_DEFAULT_CRON = "0 6 * * *"  # 06:00 (solo si se habilita)
+
+# Sonda diaria de Jev (motor de decisiones, diseño v2): 20 ráfagas sintéticas
+# con respuesta conocida, sin datos de clientes. Detecta si la API alpha cambia
+# de forma o si Jev empieza a responder distinto; el control «Bot nuevo» exige
+# la última sonda `ok` y de 48 h o menos para subir a canary o encendido.
+_PROBE_SCHEDULE_ID = "decisions-probe-schedule"
+_PROBE_WORKFLOW_ID = "decisions-probe"
+_PROBE_DEFAULT_CRON = "0 7 * * *"  # 07:00 Bogotá
 
 
 def _env_int(name: str, default: int) -> int:
@@ -203,6 +226,53 @@ async def _ensure_golden_schedule(client: Client, task_queue: str) -> None:
                     _GOLDEN_SCHEDULE_ID, cron, _DEFAULT_TZ)
 
 
+async def _ensure_probe_schedule(client: Client, task_queue: str) -> None:
+    """Sincroniza el Schedule diario de la sonda de Jev con su toggle
+    `DECISIONS_PROBE_SCHEDULE_ENABLED` (default "true").
+
+    El mismo patrón idempotente de `_ensure_schedule`: crear; si ya existe,
+    converger el cron al de config (`DECISIONS_PROBE_SCHEDULE_CRON`, default
+    07:00 Bogotá) sin tocar su estado ni su pausa; con el toggle en "false",
+    BORRAR el existente (toggle real, INV-2). Re-arrancar no lo duplica.
+    """
+    if os.environ.get("DECISIONS_PROBE_SCHEDULE_ENABLED", "true").strip().lower() == "false":
+        try:
+            await client.get_schedule_handle(_PROBE_SCHEDULE_ID).delete()
+            logger.info(
+                "📅 Schedule '{}' BORRADO (DECISIONS_PROBE_SCHEDULE_ENABLED=false)",
+                _PROBE_SCHEDULE_ID,
+            )
+        except Exception:  # noqa: BLE001 — no existía / ya borrado: idempotente
+            logger.info("📅 Sonda de Jev deshabilitada (no había schedule activo)")
+        return
+    cron = os.environ.get("DECISIONS_PROBE_SCHEDULE_CRON", "").strip() or _PROBE_DEFAULT_CRON
+    desired_spec = ScheduleSpec(cron_expressions=[cron], time_zone_name=_DEFAULT_TZ)
+    try:
+        await client.create_schedule(
+            _PROBE_SCHEDULE_ID,
+            Schedule(
+                action=ScheduleActionStartWorkflow(
+                    DecisionsProbeWorkflow.run,
+                    id=_PROBE_WORKFLOW_ID,
+                    task_queue=task_queue,
+                ),
+                spec=desired_spec,
+                policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
+            ),
+        )
+        logger.info("📅 Schedule '{}' creado — sonda de Jev cron '{}' ({})",
+                    _PROBE_SCHEDULE_ID, cron, _DEFAULT_TZ)
+    except ScheduleAlreadyRunningError:
+        # Converge el cron al valor de config (mismo motivo que el online).
+        def _converge(inp: ScheduleUpdateInput) -> ScheduleUpdate:
+            inp.description.schedule.spec = desired_spec
+            return ScheduleUpdate(schedule=inp.description.schedule)
+
+        await client.get_schedule_handle(_PROBE_SCHEDULE_ID).update(_converge)
+        logger.info("📅 Schedule '{}' actualizado — sonda de Jev cron '{}' ({})",
+                    _PROBE_SCHEDULE_ID, cron, _DEFAULT_TZ)
+
+
 async def main() -> None:
     ensure_plugin_enabled("chats")  # P-21: self-gate del toggle (INV-2)
     logger.info("Conectando sales-eval al clúster Temporal...")
@@ -211,11 +281,21 @@ async def main() -> None:
 
     await _ensure_schedule(client, task_queue)
     await _ensure_golden_schedule(client, task_queue)
+    await _ensure_probe_schedule(client, task_queue)
 
     worker = Worker(
         client,
         task_queue=task_queue,
-        workflows=[SalesEvalWorkflow, GoldenEvalWorkflow, EvaluateEpisodeWorkflow, ScoreEpisodeWorkflow],
+        workflows=[
+            SalesEvalWorkflow,
+            GoldenEvalWorkflow,
+            EvaluateEpisodeWorkflow,
+            ScoreEpisodeWorkflow,
+            # Laboratorio de conversaciones (plan §3.7): el botón "Nueva corrida".
+            LabLaunchWorkflow,
+            # Motor de decisiones: la sonda diaria de Jev (Schedule 07:00 Bogotá).
+            DecisionsProbeWorkflow,
+        ],
         activities=[
             select_conversations_to_eval_activity,
             evaluate_sales_conversation_activity,
@@ -224,10 +304,14 @@ async def main() -> None:
             score_episode_scorecard_activity,
             # HU-SC-8: selección del scorecard en el barrido diario.
             select_scorecard_units_activity,
+            # Lanzador de corridas del laboratorio: exportar, orden, caja, SSM, avance.
+            *LAB_LAUNCH_ACTIVITIES,
+            # Sonda diaria de Jev: 20 ráfagas sintéticas, reporte en el vault.
+            run_decisions_probe_activity,
         ],
         workflow_runner=otel_workflow_runner(),
     )
-    logger.info("🧪 sales-eval worker arriba (online + golden). Cola: '{}'", task_queue)
+    logger.info("🧪 sales-eval worker arriba (online + golden + sonda de Jev). Cola: '{}'", task_queue)
     await worker.run()
 
 

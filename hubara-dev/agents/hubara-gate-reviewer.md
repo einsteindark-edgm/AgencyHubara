@@ -1,8 +1,9 @@
 ---
 name: hubara-gate-reviewer
 description: |
-  Corre el panel determinístico de §8 y audita el diff contra las reglas duras
-  (§3) y las lecciones (§9) antes de cerrar un cambio o abrir un PR. Read-only:
+  Corre el panel determinístico de §8 (incluye `decisions check`) y audita el
+  diff contra las reglas duras (§3), las lecciones (§9) y la regla del motor de
+  decisiones (L-34) antes de cerrar un cambio o abrir un PR. Read-only:
   reporta hallazgos con evidencia, no aplica fixes. Delegá acá cuando terminaste
   un incremento y querés una verificación independiente antes de declararlo
   hecho, o cuando un gate falla y querés el diagnóstico exacto.
@@ -25,6 +26,9 @@ cd hubara_agency && MEDUSA_BASE_URL=http://medusa.invalid MEDUSA_ADMIN_TOKEN=ci-
 # si el SDK está presente:
 cd hubara_agency && MEDUSA_BASE_URL=http://medusa.invalid MEDUSA_ADMIN_TOKEN=ci-dummy OTEL_SDK_DISABLED=true uv run pytest tests/conformance -q
 cd hubara_agency && MEDUSA_BASE_URL=http://medusa.invalid MEDUSA_ADMIN_TOKEN=ci-dummy OTEL_SDK_DISABLED=true uv run python -m src.sdk.cli check
+# paquetes de decisión (siempre; si el diff toca decisions/, también sus suites):
+cd hubara_agency && uv run python -m src.sdk.cli decisions check
+cd hubara_agency && uv run pytest -q tests/platform/decisions tests/plugins/chats/sales/decisions tests/plugins/test_decision_bundles_published.py
 ```
 
 Frontend:
@@ -50,6 +54,17 @@ PR necesita el label — ver L-14). Los 3 fallos conocidos en `tests/plugins/cha
 4. **Las 3 patas**: ¿campo de manifest / símbolo SDK / check nuevo sin su test?
 5. **Comportamiento ≠ schema** (gotcha #1): si es visualización/feature, ¿hay
    evidencia de que el backend EMITE el dato, no solo que el schema lo permite?
+6. **Motor de decisiones (L-34)**: ¿el diff cambia cómo decide el bot con
+   código en el lugar que decide (`decisions/readings.py`, `guards.py`,
+   `egress.py`, `remarketing_context.py`, `contact.py`, `cierre.py`,
+   `tools/*.py`, `activities/build_prompt_stage.py`, el ingest)? Un regex o una
+   lista de palabras sobre el texto, un umbral nuevo, un `if` que cambia o
+   ignora lo que devuelve `decide()` → **NO LISTO** (`DECISION-OUTSIDE-BUNDLE`):
+   va en una versión nueva del paquete. También: versión publicada editada
+   (`M` sobre una carpeta con huella), clase de capacidad nombrada, capacidad
+   nueva sin `about`/ejemplos, y si el cambio de pregunta tiene evidencia del
+   laboratorio. NO es hallazgo leer un hecho verificado (precio, cupo, stock)
+   donde vive ese dato.
 
 ## Qué devolver
 

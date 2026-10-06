@@ -30,10 +30,25 @@ sentido.
 | Frontend entity | Zod parsea un fixture del shape REAL del backend | `entities/<e>/contracts.test.ts` |
 | Frontend feature | vitest sobre comportamiento | `features/<f>/...test.tsx` |
 | Gate nuevo | el caso NEGATIVO: fabricá el estado roto, probá que el gate lo CAZA | `tests/architecture/test_testkit_selftest.py` |
+| Decisión del bot (capacidad del motor) | `examples:` en el YAML, en una versión NUEVA del paquete; el rojo es `decisions check` con **DB010** | `…/decisions/bundles/<id>-N/capabilities/<x>.yaml` |
 
 Si es un **bug de producción**, reproducí el incidente: el test debe fallar
 mostrando EXACTAMENTE el síntoma reportado (el "Dame 2" que se perdió, la
 burbuja de jerga, etc.). Ese es el guard rojo de la futura lección L-#.
+
+Si es un **bug de una decisión del bot** (confirmó, absorbió, frenó o cobró
+mal): NO escribas un pytest que fije un `if`/regex en el lugar que decide (es el
+camino que L-34 prohíbe). El rojo es el caso real en el paquete:
+
+1. Copiá la carpeta del paquete activo a una nueva (`bundles/ventas-2/` →
+   `bundles/ventas-3/`, `id` = carpeta, `version` + 1).
+2. En `capabilities/<x>.yaml` agregá a `examples:` las `answers` del veredicto
+   (anonimizadas, nunca un teléfono) con el `expect` correcto.
+3. `cd hubara_agency && uv run python -m src.sdk.cli decisions check <carpeta>`
+   debe fallar con **DB010** en ese ejemplo (otro código = falso rojo: un typo).
+4. Devolvé el ejemplo, la salida del rojo y qué fila/umbral/pregunta lo pondría
+   verde. Si lo que falló es lo que Jev ENTIENDE, avisá que el ejemplo no lo
+   prueba: hace falta la corrida del laboratorio `B@<paquete>`.
 
 ## El procedimiento
 

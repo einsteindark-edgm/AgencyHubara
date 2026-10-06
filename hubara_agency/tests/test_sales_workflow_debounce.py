@@ -37,10 +37,19 @@ from exoclaw_temporal.config import (
 from src.platform.contracts import PaymentPendingClosureResult
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.llm_history_reset import ResetLLMHistoryInput
+from src.platform.observability.cost_attribution import RecordEpisodeLLMUsageInput
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
+from src.plugins.chats.agent.sales.decisions.egress_activities import decide_egress_activity
+from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
+from tests.sales_workflow_versions import sales_workflow_versions
 
 SALES_QUEUE = get_task_queue("chats", "sales")
-from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
+
+#: Tests que NO corren contra el workflow V2 (motor de decisiones F4), con su
+#: motivo: solo patches/replay/ramas legacy del V1 o diferencias a propósito
+#: del V2 (ver `tests/sales_workflow_versions.py`).
+V2_EXCLUDED: dict[str, str] = {}
+_sales_workflow_version = sales_workflow_versions(__name__, V2_EXCLUDED)
 
 
 # --- Fake activities con contadores ----------------------------------------
@@ -53,11 +62,15 @@ class Tracker:
         self.build_prompt_calls: list[BuildPromptInput] = []
         self.llm_calls: int = 0
         self.send_whatsapp_calls: list[tuple[str, str]] = []
+        # Por envío: si el workflow dijo que el texto lo decidió el motor (V2).
+        self.send_decided_by_engine: list[bool] = []
         self.typing_calls: list[str] = []
         self.persist_calls: list[tuple[str, str]] = []
         self.record_turn_calls: int = 0
         self.record_turn_new_messages: list[list[dict]] = []
         self.ghosting_calls: int = 0
+        # Con qué sesión llamó el workflow al aviso de ghosting ("" = V1).
+        self.ghosting_sessions: list[str] = []
         # Auditoría CAPI 2026-09-08: sesiones cuyo outbox flusheó el workflow.
         self.capi_flush_calls: list[str] = []
         self.start_sales_calls: int = 0
@@ -65,6 +78,8 @@ class Tracker:
         self.flush_calls: int = 0
         self.ensure_closure_calls: list[tuple[str, str, str]] = []
         self.closing_escalation_calls: list[tuple[str, str, str]] = []
+        # Red del relevo prometido: (sesión, texto final) de cada consulta.
+        self.promised_handoff_calls: list[tuple[str, str]] = []
         # Orden client-visible del turno: "send:<texto>" y "flush" en el orden
         # en que el workflow los ejecutó (el flush entrega los UI intents, ej.
         # el menú de present_products).
@@ -100,7 +115,10 @@ def _make_fake_activities(
     order_draft_note: str | None = None,
     payment_closure_result: PaymentPendingClosureResult | None = None,
     closing_escalation_result: bool = False,
+    promised_handoff_result: bool = False,
     variant_guard_result: bool = False,
+    send_returns_none: bool = False,
+    flush_results: list[dict] | None = None,
 ):
     """Crea las activities fakes con `tracker` cerrado en closure.
 
@@ -146,11 +164,13 @@ def _make_fake_activities(
     async def fake_read_idle_timeout(session_id: str) -> int:
         return 60
 
+    # Traza v2: el flush devuelve lo que entregó (`[{kind, wamid, ok}]`). Las
+    # histories viejas traen un int: el workflow acepta las dos formas.
     @activity.defn(name="flush_pending_ui_intents_activity")
-    async def fake_flush_ui_intents(session_id: str) -> int:
+    async def fake_flush_ui_intents(session_id: str) -> list[dict]:
         tracker.flush_calls += 1
         tracker.timeline.append("flush")
-        return 0
+        return list(flush_results or [])
 
     @activity.defn(name="flush_capi_outbox_activity")
     async def fake_flush_capi_outbox(session_id: str) -> dict:
@@ -218,10 +238,20 @@ def _make_fake_activities(
         tracker.record_turn_calls += 1
         tracker.record_turn_new_messages.append(list(input.new_messages))
 
+    # Traza v2: el envío devuelve las burbujas entregadas con su wamid. Con
+    # `send_returns_none` se simula la forma vieja (histories previas: None).
+    # `decided_by_engine` (3.er argumento opcional): lo pasa el V2 (el texto
+    # ya lo decidió el motor); el V1 envía con dos. Queda en el tracker.
     @activity.defn(name="send_whatsapp_message_activity")
-    async def fake_send_whatsapp(session_id: str, message: str) -> None:
+    async def fake_send_whatsapp(
+        session_id: str, message: str, decided_by_engine: bool = False
+    ) -> list[dict] | None:
         tracker.send_whatsapp_calls.append((session_id, message))
+        tracker.send_decided_by_engine.append(decided_by_engine)
         tracker.timeline.append(f"send:{message}")
+        if send_returns_none:
+            return None
+        return [{"wamid": f"wamid.out{len(tracker.send_whatsapp_calls)}", "text": message}]
 
     @activity.defn(name="persist_assistant_message_activity")
     async def fake_persist(
@@ -230,8 +260,9 @@ def _make_fake_activities(
         tracker.persist_calls.append((session_id, message))
 
     @activity.defn(name="decide_ghosting_action")
-    async def fake_ghosting() -> str:
+    async def fake_ghosting(session_id: str = "") -> str:
         tracker.ghosting_calls += 1
+        tracker.ghosting_sessions.append(session_id)
         # Hook por número de ciclo ghost (1-based): permite signalear el
         # workflow MIENTRAS corre esta activity — el mensaje queda en
         # `_pending` ANTES de que el workflow appendée el trigger (orden
@@ -262,6 +293,13 @@ def _make_fake_activities(
             (session_id, reason_category, motivo)
         )
         return closing_escalation_result
+
+    # Red de seguridad del relevo prometido (el texto final promete un colega
+    # y nadie escaló).
+    @activity.defn(name="ensure_promised_handoff")
+    async def fake_ensure_promised_handoff(session_id: str, text: str) -> bool:
+        tracker.promised_handoff_calls.append((session_id, text))
+        return promised_handoff_result
 
     # Dispatcher activities — registradas para que el worker las acepte aun
     # cuando el workflow las ignore en este test.
@@ -307,7 +345,17 @@ def _make_fake_activities(
         tracker.turn_traces.append(json.loads(payload_json))
         return True
 
+    # Costo del turno al episodio: solo corre cuando el LLM reporta `usage`.
+    @activity.defn(name="record_episode_llm_usage")
+    async def fake_record_episode_llm_usage(input: RecordEpisodeLLMUsageInput) -> None:
+        return None
+
     return [
+        # El egreso del workflow V2 (motor de decisiones F4) es la activity
+        # REAL: con el bot de hoy decide con las reglas del V1, así las suites
+        # del V1 corridas contra el V2 prueban B0 = A1. El V1 no la llama.
+        decide_egress_activity,
+        fake_record_episode_llm_usage,
         fake_persist_turn_trace,
         fake_variant_guard,
         fake_first_contact_greeting,
@@ -327,6 +375,7 @@ def _make_fake_activities(
         fake_ghosting,
         fake_ensure_payment_pending_closure,
         fake_ensure_closing_escalation,
+        fake_ensure_promised_handoff,
         fake_start_sales,
         fake_schedule_remarketing,
         fake_get_active_episode_id,
@@ -383,9 +432,12 @@ async def test_two_signals_coalesce_into_single_turn(tmp_path: Path) -> None:
     #
     # En el path coalesce: 1 turno user (envia WhatsApp) + 1 turno ghost
     # (NO envia WhatsApp porque _force_shutdown=True bloquea el send_whatsapp).
-    assert len(tracker.send_whatsapp_calls) == 1, (
+    # Primer contacto: la Burbuja 1 del guion va antes de la respuesta
+    # (2026-09-29, también en turnos de texto); el coalesce se mide sin ella.
+    replies = [m for (_s, m) in tracker.send_whatsapp_calls if m != FIRST_CONTACT_GREETING]
+    assert len(replies) == 1, (
         f"Coalesce roto: deberia haber 1 sola respuesta del bot, "
-        f"hubo {len(tracker.send_whatsapp_calls)}: {tracker.send_whatsapp_calls}"
+        f"hubo {len(replies)}: {tracker.send_whatsapp_calls}"
     )
 
     # build_prompt recibio AMBOS mensajes concatenados en una sola llamada
@@ -2185,6 +2237,39 @@ async def test_first_contact_greeting_not_duplicated_when_intro_text_greets(
     assert tracker.first_contact_greeting_calls == 0
 
 
+@pytest.mark.asyncio
+async def test_first_contact_text_turn_greets_before_the_text(
+    tmp_path: Path,
+) -> None:
+    """Caso del laboratorio (CTWA de Halloween, 2026-09-28): el LLM saludó
+    JUNTO a `search_products` (el default-deny lo descartó) y cerró el turno
+    con un TEXTO sin saludo. La regla vieja solo saludaba si el turno salía
+    por una tool que le escribe al cliente → el cliente recibió la lista sin
+    bienvenida. Contrato: la Burbuja 1 del guion va ANTES del texto."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    halloween = "Tenemos 4 piezas de la colección de Halloween, todas con aroma a frutos rojos."
+
+    await _run_ctwa_first_message(
+        tracker,
+        workspace,
+        responses=[_greeting_then_search_resp(), _final_resp(halloween)],
+    )
+
+    sent = [m for (_s, m) in tracker.send_whatsapp_calls]
+    assert FIRST_CONTACT_GREETING in sent, (
+        f"El primer contacto de texto salió sin saludo: sends={sent} "
+        f"timeline={tracker.timeline}"
+    )
+    assert halloween in sent, f"El texto del turno no salió: {sent}"
+    assert sent.index(FIRST_CONTACT_GREETING) < sent.index(halloween), (
+        f"El saludo no precede al texto: {sent}"
+    )
+    assert sent.count(FIRST_CONTACT_GREETING) == 1
+    assert tracker.first_contact_greeting_calls == 1
+
+
 # =============================================================================
 # Guarda de enumeración de variantes (run 9bd495be, 2026-09-14)
 # =============================================================================
@@ -3396,7 +3481,8 @@ async def test_the_llm_remembers_exactly_the_salvaged_answer_it_sent(
             await handle.result()
 
     sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
-    assert sent == [answer], sent
+    # Primer contacto sin saludo en el texto: la Burbuja 1 va antes (2026-09-29).
+    assert sent == [FIRST_CONTACT_GREETING, answer], sent
     customer_turn = tracker.record_turn_new_messages[0]
     remembered = [
         m.get("content") for m in customer_turn if m.get("role") == "assistant"

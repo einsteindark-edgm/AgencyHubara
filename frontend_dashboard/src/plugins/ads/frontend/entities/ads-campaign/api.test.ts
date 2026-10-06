@@ -34,6 +34,12 @@ const sample: BackendAttributedConversation = {
   wa_cost_usd_micros: null,
   wa_cost_by_category: null,
   wa_msgs_pending: 0,
+  jev_cost_usd_micros: null,
+  jev_calls: null,
+  vision_cost_usd_micros: null,
+  vision_calls: null,
+  audio_cost_usd_micros: null,
+  audio_calls: null,
   capi_event: null,
   state_reason: null,
 };

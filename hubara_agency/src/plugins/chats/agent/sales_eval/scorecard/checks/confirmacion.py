@@ -16,7 +16,8 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks._evidence import (
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     failed,
     is_legacy,
-    not_applicable,
+    judged_turns,
+    not_judged,
     passed,
     quote,
     sent_texts,
@@ -45,9 +46,9 @@ def _last_signal_text(traj: Trajectory, upto: int) -> str:
 
 @code_check("CON-01")
 def con_01(traj: Trajectory, ctx: CheckContext) -> CheckResult:
-    forms = [t for t in traj.turns if "shipping_flow" in t.intents]
+    forms = [t for t in judged_turns(traj) if "shipping_flow" in t.intents]
     if not forms:
-        return not_applicable("CON-01", "no se envió el formulario de envío")
+        return not_judged("CON-01", traj, "no se envió el formulario de envío")
     for form in forms:
         if confirmed_by(traj, form.turn) is None:
             return failed(
@@ -75,9 +76,9 @@ def _advanced(t: Turn, legacy: bool) -> str | None:
 
 @code_check("CON-02")
 def con_02(traj: Trajectory, ctx: CheckContext) -> CheckResult:
-    deferrals = [t for t in traj.turns if t.signal == "deferral"]
+    deferrals = [t for t in judged_turns(traj) if t.signal == "deferral"]
     if not deferrals:
-        return not_applicable("CON-02", "el cliente no aplazó")
+        return not_judged("CON-02", traj, "el cliente no aplazó")
     legacy = is_legacy(traj)
     for t in deferrals:
         advance = _advanced(t, legacy)
@@ -94,7 +95,7 @@ def con_02(traj: Trajectory, ctx: CheckContext) -> CheckResult:
 def con_03(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     claims = [(t, text) for t, text in sent_texts(traj) if _CLAIM_RE.search(text)]
     if not claims:
-        return not_applicable("CON-03", "el bot no afirmó un pedido confirmado o registrado")
+        return not_judged("CON-03", traj, "el bot no afirmó un pedido confirmado o registrado")
     legacy = is_legacy(traj)
     for t, text in claims:
         has_order = registered_order_turn(traj, t.turn) is not None or (
@@ -109,7 +110,7 @@ def con_03(traj: Trajectory, ctx: CheckContext) -> CheckResult:
 def con_05(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if is_legacy(traj):
         return unknown("CON-05", "sin trazas: no se ven los rechazos de las guardas")
-    for t in traj.turns:
+    for t in judged_turns(traj):
         for call in t.tools:
             if call.error in _GUARD_ERRORS:
                 return failed(

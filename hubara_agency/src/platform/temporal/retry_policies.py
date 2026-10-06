@@ -26,3 +26,10 @@ _CONV_OPTIONS = {
     "start_to_close_timeout": timedelta(minutes=2),
     "retry_policy": RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1)),
 }
+
+#: Perfil público de una activity que llama al LLM (o que arma la sesión que
+#: lo va a llamar, como el bootstrap del agente de ventas). Es el MISMO dict
+#: que `_LLM_OPTIONS`: lo re-exporta `src.sdk.agentkit` para los workflows de
+#: plugins, que no importan platform (P-28). Check:
+#: `tests/platform/test_agentkit.py`.
+LLM_ACTIVITY_OPTIONS = _LLM_OPTIONS
