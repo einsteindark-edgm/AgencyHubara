@@ -465,9 +465,11 @@ AGREGÓ o COMPRÓ (ViewContent, AddToCart, OrderCreated, Purchase) SHALL llevar
 en `custom_data` la identidad VIGENTE del ítem en Meta Catalog:
 `content_type="product"`, `content_ids=[retailer_id…]` y
 `contents=[{id, quantity, item_price}]`, donde `retailer_id` es el SKU de la
-variante (o el id de Medusa mientras no haya SKU). Es lo que Commerce Manager
-cruza contra el catálogo ("coincidencia de catálogo"); sin ese campo la
-coincidencia es 0% aunque Meta acepte el evento. Purchase y OrderCreated
+variante (o el id de Medusa mientras no haya SKU): así Meta sabe qué producto
+vio, agregó o compró el cliente del chat. Esa identidad NO alimenta la
+"coincidencia de catálogo" de Commerce Manager: Meta la calcula solo con eventos
+de sitio web o app (píxel/SDK) y los `business_messaging` no cuentan (verificado
+2026-09-21); la reporta el píxel de hubara.com.co. Purchase y OrderCreated
 SHALL llevar además `order_id`. Un evento sin identidad resoluble SHALL salir
 igual (sin `contents`): la identidad enriquece, nunca bloquea.
 

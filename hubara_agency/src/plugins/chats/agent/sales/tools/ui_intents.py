@@ -306,7 +306,7 @@ class PresentProductDetailTool(ToolBase):
                 "currency": currency,
                 "product_id": product.id,
                 # Identidad VIGENTE en Meta (SKU): el flush la usa como
-                # `content_ids` del ViewContent (coincidencia de catálogo).
+                # `content_ids` del ViewContent de CAPI.
                 "retailer_id": _meta_retailer_id(product),
                 # Label del diseño mostrado (o derivado del filename de la
                 # portada) — el dispatch lo persiste en outbound_media_index

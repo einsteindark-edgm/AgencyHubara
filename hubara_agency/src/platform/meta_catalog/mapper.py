@@ -132,7 +132,9 @@ def map_product_to_meta(
         retailer_id=product_retailer_id(product),
         name=product.title[:200],  # Meta limit
         description=description[:9999],
-        url=f"{site_base_url.rstrip('/')}/products/{product.handle}",
+        # Trailing slash: the storefront's canonical URL (Astro trailingSlash
+        # 'always'); without it the link redirects and Meta flags the mismatch.
+        url=f"{site_base_url.rstrip('/')}/products/{product.handle}/",
         image_url=image_url,
         additional_image_urls=additional_images,
         price=price,
