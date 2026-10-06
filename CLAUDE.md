@@ -61,6 +61,7 @@ Monorepo con backend Python (Temporal + DEHA hexagonal architecture) + frontend 
     **QA emulador** (`.github/workflows/qa-emulador.yml`, runners de GitHub, sin secretos) corre todos los escenarios y
     deja un comentario con una captura y qué probó cada uno. Es check requerido de `main`. Nunca un runner en la Mac:
     el repo es público y ahí están las credenciales de prod. Receta: `android_operator/e2e/README.md`.
+15. **El bot nuevo se controla SOLO por comando.** Desde el 2026-10-06 (decisión del operador: «para evitar que alguien jugando dañe producción») los paneles «Bot nuevo» y «Motor de decisiones» de Agents son de solo lectura y los `PUT /api/chats/perception/*` responden 403. Los cambios (modo, números de prueba, capacidades, workflow V2, «los números de prueba deciden con Jev») van por `infra/scripts/bot_control.sh` → `decisions/control.py`, con las mismas garantías (techos de Terraform, la vara al subir, apagar siempre pasa, firma `comando:<quien>`). No vuelvas a poner botones que cambien el bot en el dashboard. Guía: `docs/motor-de-decisiones/control-por-comando.md`.
 
 ## Hooks activos (`.claude/settings.json`)
 

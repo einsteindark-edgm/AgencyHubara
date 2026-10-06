@@ -233,6 +233,10 @@ genérico, y entonces en UN builtin con su prueba.
 
 ## Lo que NO se hace
 
+- Poner en el dashboard un botón que cambie el bot nuevo (modo, números de
+  prueba, capacidades, workflow V2): el control va SOLO por comando
+  (`decisions/control.py`, `infra/scripts/bot_control.sh`; decisión del
+  operador 2026-10-06). Los `PUT /api/chats/perception/*` responden 403.
 - Editar una versión publicada: otra pregunta u otro umbral = `version: N+1`
   (su huella sha256 está congelada en `test_decision_bundles_published.py`).
 - Borrar un paquete que SSM nombra (o que un rollback puede pedir).

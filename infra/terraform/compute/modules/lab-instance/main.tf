@@ -58,8 +58,10 @@ locals {
   ghcr_owner = split("/", var.image_repo)[1]
   lab_dir    = "${path.module}/../../../../compose/lab"
   # Secretos del laboratorio: placeholder; el operador los carga fuera de banda.
-  # La llave de OpenRouter es OTRA (con su propio límite de crédito), no la de prod.
-  secret_keys = ["DEEPSEEK_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "GHCR_PULL_TOKEN"]
+  # Las llaves de LLM son OTRAS (con su propio límite de crédito), nunca las de
+  # prod: por eso se llaman `*_LAB` y el guard del worker no arranca sin ellas.
+  # `dispatch.sh` se las da al proxy con el nombre que lee su config.
+  secret_keys = ["DEEPSEEK_API_KEY_LAB", "GEMINI_API_KEY_LAB", "OPENROUTER_API_KEY_LAB", "GHCR_PULL_TOKEN"]
 }
 
 # ── S3 privado: bench/ (el banco, 30 días), orders/ (la orden de cada corrida:

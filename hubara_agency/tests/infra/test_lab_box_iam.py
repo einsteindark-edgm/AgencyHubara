@@ -97,3 +97,15 @@ def test_only_the_lab_tenants_can_launch_runs_or_read_the_bench() -> None:
     roles = re.search(r"app_role_names\s*=\s*(.+)", module).group(1)
     assert "var.lab.tenants" in roles
     assert re.search(r"tenants\s*=\s*var\.lab\.tenants", module)
+
+
+def test_the_lab_llm_keys_have_their_own_names_in_ssm() -> None:
+    """`/hubara-lab/*_LAB`: el operador crea llaves NUEVAS para el laboratorio
+    (con su tope) y el guard del worker no arranca sin ellas. El token de GHCR
+    no es de un LLM: conserva su nombre (va directo a `docker login`)."""
+    module = _MODULE.read_text(encoding="utf-8")
+    keys = re.search(r"secret_keys\s*=\s*\[([^\]]*)\]", module).group(1)
+
+    assert re.findall(r'"([A-Z0-9_]+)"', keys) == [
+        "DEEPSEEK_API_KEY_LAB", "GEMINI_API_KEY_LAB", "OPENROUTER_API_KEY_LAB", "GHCR_PULL_TOKEN",
+    ]

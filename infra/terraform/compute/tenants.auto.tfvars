@@ -22,7 +22,12 @@ observability = {
 }
 
 # Laboratorio de conversaciones (LABORATORIO_CONVERSACIONES_PLAN.md §3, PR 6).
+# APAGADO (decisión del operador, 2026-10-05): las corridas van en local
+# (docs/laboratorio/README.md); la caja en AWS gastaba recursos sin necesidad.
+# Con `false` ningún apply de compute la crea, y en producción la sección
+# Laboratorio responde «apagado» (sin LAB_BUCKET). Prenderla: `true` + apply de
+# compute + los 4 secretos `/hubara-lab/*` (las llaves de LLM, `*_LAB`).
 lab = {
-  enabled = true
+  enabled = false
   tenants = ["hubara"] # solo sus cajas de app lanzan corridas y leen el banco
 }
