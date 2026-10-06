@@ -100,6 +100,16 @@ describe("DecisionsControlPanel", () => {
     expect(within(screen.getByRole("group", { name: "Workflow de ventas" })).getByText("Ahora: V1")).toBeInTheDocument();
   });
 
+  it("nombra las decisiones de la App Operador con su pregunta", async () => {
+    state = payload({ burbuja: "off", incendio: "shadow" });
+    renderPanel();
+
+    const burbuja = await screen.findByRole("group", { name: "Burbuja principal (App Operador)" });
+    expect(within(burbuja).getByText("¿qué acción del chat le conviene enviar al operador?")).toBeInTheDocument();
+    const incendio = screen.getByRole("group", { name: "Incendio de chat (App Operador)" });
+    expect(within(incendio).getByText("Ahora: Sombra")).toBeInTheDocument();
+  });
+
   it("nombra el acuse tras la despedida con su pregunta", async () => {
     state = payload({ acuse: "off" });
     renderPanel();

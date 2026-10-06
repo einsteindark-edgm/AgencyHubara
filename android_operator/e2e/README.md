@@ -138,7 +138,7 @@ firmado `sender: human`), intervenir / devolver / mensajes / plantillas, el SSE 
 | WhatsApp | `WHATSAPP_ACCESS_TOKEN` vacío → corre el FakeSend del repo; cada envío queda en `sent.log` con un wamid único. |
 | Medusa | Subclase del cliente real que responde las llamadas Admin sobre `data/medusa/store.json`. |
 | Temporal | Cliente falso que anota en `temporal.log` (intervenir sí «termina» el workflow de la sesión). |
-| Jev | `PERCEPTION_PROVIDER=fake` (sin red: elige siempre la primera opción) y `OPERATOR_APP_JEV=shadow`: cada escenario recorre las preguntas del paquete `operador` (burbuja e incendio) y su registro en `evals/decisions.jsonl`, sin cambiar lo que ve la app. Lo de Jev «encendido» lo prueban `test_operator_jev.py` y `test_mobile_api.py`. |
+| Jev | `PERCEPTION_PROVIDER=fake` (sin red: elige siempre la primera opción) y las decisiones `burbuja` e `incendio` en sombra (techo `SALES_CAPABILITIES_CEILING=shadow` + `_rollout/decisions.json` que siembra `seed.py`): cada escenario recorre el motor de decisiones oficial y su registro en `evals/decisions.jsonl`, sin cambiar lo que ve la app. Lo de Jev «encendido» lo prueban `test_operator_decisions.py` y `test_mobile_api.py`. |
 
 **Datos** (todo sintético; los chats se ven por número en la bandeja):
 

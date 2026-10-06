@@ -1,7 +1,8 @@
 /**
  * Pestaña «Motor de decisiones» de Calidad LLM (pedido del operador,
  * 2026-10-02): qué versión del motor corre la tienda (el paquete de decisión
- * y su versión, el oráculo, el perfil del turno) y cada decisión que toma,
+ * y su versión, el oráculo, el perfil del turno; desde 2026-10-06 también el
+ * paquete de la App Operador) y cada decisión que toma,
  * agrupada por la parte del software donde actúa — en el orden de la
  * conversación —, con lo que resuelve y quién la decide hoy (la regla de hoy,
  * Jev en sombra, Jev en las conversaciones de prueba o Jev).
@@ -64,6 +65,19 @@ function Version({ engine }: { engine: DecisionEngine }) {
     ["Perfil del turno", engine.profile || "—"],
     ["Contrato del motor", bundle.engine_contract !== null ? String(bundle.engine_contract) : "—"],
   ];
+  if (engine.bundles.length > 1) {
+    rows.push([
+      "Paquetes en el motor",
+      <ul className="m-0 grid list-none gap-0.5 p-0">
+        {engine.bundles.map((b) => (
+          <li key={b.ref}>
+            <b className="font-semibold text-fg">{b.ref}</b>
+            {b.name ? ` — ${b.name}` : ""}
+          </li>
+        ))}
+      </ul>,
+    ]);
+  }
   return (
     <section aria-label="Versión del motor de decisiones" className={CARD}>
       <h3 className={H3}>Versión del motor de decisiones</h3>
@@ -83,13 +97,24 @@ function Version({ engine }: { engine: DecisionEngine }) {
   );
 }
 
-function Decision({ decision, nameOf }: { decision: EngineDecisionAbout; nameOf: (id: string) => string }) {
+function Decision({
+  decision,
+  nameOf,
+  storeBundle,
+}: {
+  decision: EngineDecisionAbout;
+  nameOf: (id: string) => string;
+  storeBundle: string;
+}) {
   const name = decision.name || decision.capability;
+  // El paquete se dice solo si no es el de la tienda (el de arriba).
+  const otherBundle = decision.bundle && decision.bundle !== storeBundle ? decision.bundle : null;
   return (
     <li aria-label={name} className="grid gap-1 rounded-lg border border-line bg-white/[0.02] px-3 py-2.5 text-[12.5px]">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <b className="font-semibold text-fg">{name}</b>
         {decision.variant_of ? <span className="text-[11px] text-fg-faint">{`variante de «${nameOf(decision.variant_of)}»`}</span> : null}
+        {otherBundle ? <span className="text-[11px] text-fg-faint">{`paquete ${otherBundle}`}</span> : null}
         <span
           className={
             "ml-auto inline-flex items-center whitespace-nowrap rounded-full border px-2 py-[4px] text-[11px] font-medium leading-none " +
@@ -117,7 +142,7 @@ function Places({ engine }: { engine: DecisionEngine }) {
             <h3 className={H3}>{place.label}</h3>
             <ul className="m-0 mt-2 grid list-none gap-1.5 p-0">
               {decisions.map((d) => (
-                <Decision key={d.capability} decision={d} nameOf={nameOf} />
+                <Decision key={d.capability} decision={d} nameOf={nameOf} storeBundle={engine.bundle.ref} />
               ))}
             </ul>
           </section>

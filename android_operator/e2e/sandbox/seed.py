@@ -625,6 +625,10 @@ def build(*, image_base: str = DEFAULT_IMAGE_BASE) -> dict[str, Any]:
     atomic_write_json(MEDUSA_STORE, _medusa_store(t, image_base))
     atomic_write_json(TEMPORAL_STORE, _temporal_state())
     _campaigns(t)
+    # El panel «Motor de decisiones» con las dos decisiones de la App Operador en sombra (dentro del techo
+    # `shadow` de launcher.py): cada escenario recorre el motor oficial y la app sigue viendo las reglas.
+    atomic_write_json(VAULT_DIR / "_rollout" / "decisions.json",
+                      {"capabilities": {"burbuja": "shadow", "incendio": "shadow"}})
 
     info = {
         "seeded_at_ms": t,

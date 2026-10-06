@@ -8,7 +8,10 @@ de las capacidades de ventas (`src.sdk.decisionkit`), con su propio catálogo
 siendo código son los builtins (`builtins.py`): el texto que ve Jev, las
 opciones (las jugadas legales de las reglas), las reglas de respaldo y el piso.
 
-Sin Temporal ni I/O de red: lo usa la API móvil (`chats/api/mobile_jev.py`).
+Sin Temporal ni I/O de red. Corre por el motor oficial: la API móvil
+(`chats/api/mobile_decisions.py`) envuelve cada capacidad en `BundledCapability`
+con `builtin` de acá y la decide con `decide_for_session` (el modo de cada
+conversación sale del panel «Motor de decisiones»).
 """
 from __future__ import annotations
 
@@ -47,10 +50,13 @@ def active_bundle() -> CompiledBundle:
     return _bundle(str(BUNDLES_DIR / BUNDLE_ID), str(CATALOG_PATH))
 
 
-def call(ref: Any, *args: Any, **kwargs: Any) -> Any:
-    """Corre el builtin que pide el paquete (`state:`, `rule:`…) con sus `with:`."""
-    _kind, fn = BUILTINS[ref.builtin]
-    return fn(*args, **{**dict(ref.params), **kwargs})
+def builtin(kind: str, name: str) -> Callable[..., Any]:
+    """La implementación del builtin `name` de clase `kind` (lo que pide
+    `BundledCapability` para correr este paquete por el motor oficial)."""
+    found = BUILTINS.get(name)
+    if found is None or found[0] != kind:
+        raise KeyError(f"builtin {kind} desconocido en el paquete {BUNDLE_ID}: {name!r}")
+    return found[1]
 
 
 def reset() -> None:
@@ -58,4 +64,4 @@ def reset() -> None:
     _bundle.cache_clear()
 
 
-__all__ = ["BUILTINS", "BUNDLES_DIR", "BUNDLE_ID", "CATALOG_PATH", "active_bundle", "call", "reset"]
+__all__ = ["BUILTINS", "BUNDLES_DIR", "BUNDLE_ID", "CATALOG_PATH", "active_bundle", "builtin", "reset"]

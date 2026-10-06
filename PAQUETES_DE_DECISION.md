@@ -560,10 +560,15 @@ en canary/on, y el techo de producción es `off`.
   `mobile_rules` + «ninguna»; ≥ 0,6 esa burbuja va primero y resaltada) e
   `incendio` (gravedad, tipo y, si ya hubo una lectura, «¿empeoró?»; cada
   parte con certeza es de Jev, la otra de las reglas; piso: salud o pedido
-  sin registrar siguen graves). Interruptor `OPERATOR_APP_JEV` (Terraform
-  `lab.operator_app_jev`, off | shadow | on). La app nunca espera a Jev: la
-  burbuja 2,5 s como mucho, los incendios nada (caché por versión del chat).
-  Decisiones en `decisions.jsonl` con `stage: "operador"`; costo en `jev_usage`.
+  sin registrar siguen graves). Corren por el MISMO `decide()`: el resolutor
+  `registry.foreign_capability(nombre, bundle=…, builtins=…)` (un
+  `BundledCapability` con los builtins de su paquete) + `decide_for_session` (`chats/api/mobile_decisions.py`), así que el modo
+  sale del panel «Motor de decisiones» (`bots.CAPABILITIES` las trae; techo
+  `SALES_CAPABILITIES_CEILING`) y quedan las métricas, los desacuerdos, el
+  costo y la decisión en la conversación (`stage: "operador"`). La pestaña
+  muestra el paquete junto al de la tienda (`bundles`). Lo único propio de
+  la app es la latencia: la burbuja espera 2,5 s como mucho, los incendios
+  nada (caché por versión del chat y modo).
 
 **F8 hecho (2026-10-02).**
 - El lector de Jev del Order Sentinel tiene su paquete,
@@ -618,7 +623,7 @@ tocarlos.
 | Remarketing (contactar, producto nombrado, fuera de catálogo) | `decide()` vía el enchufe compartido | sí (F2–F4) |
 | Abandono (cierre) | `decide()` | sí (F2) |
 | Order Sentinel | directo al puerto, con las tablas de su paquete (`centinela`) | sí (F8) |
-| App Operador: burbuja principal e incendios de chat (`chats/api/mobile_jev.py`) | directo al puerto, con las tablas de su paquete (`operador`) | sí (2026-10-05) |
+| App Operador: burbuja principal e incendios de chat (`chats/api/mobile_decisions.py`) | `decide_for_session` (paquete `operador`) | sí (2026-10-06) |
 
 **Dos huecos que cierra F2:**
 

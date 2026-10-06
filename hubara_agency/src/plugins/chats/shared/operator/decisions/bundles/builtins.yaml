@@ -19,7 +19,7 @@ inputs:
   # Un incendio de chat: lo que Jev leyó la vez anterior y el motivo del relevo.
   Incendio: {previous: "string?", reason: "string?"}
 
-# Las capacidades que pide el código de la app (`chats/api/mobile_jev.py`): todas en el paquete (DB003).
+# Las capacidades que pide el código de la app (`chats/api/mobile_decisions.py`): todas en el paquete (DB003).
 capabilities: [burbuja, incendio]
 
 builtins:

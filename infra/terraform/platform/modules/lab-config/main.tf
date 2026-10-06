@@ -25,12 +25,6 @@
 #     estado del pedido, actúa el LLM y los desacuerdos van a la cola que califica
 #     Claude Code; on = actúa el veredicto de Jev cuando lo hay (si duda, el LLM).
 #     Es el interruptor mismo (lote diario, sin panel): se cambia solo acá.
-#   OPERATOR_APP_JEV               off | shadow | on. Jev en la App Operador (paquete
-#     `operador`, chats/shared/operator/decisions): qué burbuja va primero en el
-#     chat y la gravedad, el tipo y si empeora de cada incendio de chat. off =
-#     reglas; shadow = Jev contesta y queda en el registro de decisiones de la
-#     conversación, la app ve las reglas; on = la app ve lo de Jev (si duda o
-#     tarda, las reglas). Es el interruptor mismo (sin panel): se cambia solo acá.
 #   SALES_DECISIONS_BUNDLE         paquete de la tienda: la carpeta en
 #     chats/shared/decisions/bundles/ (PAQUETES_DE_DECISION.md §10.1 y F5). De ahí
 #     salen las capacidades (preguntas, umbrales, tablas) y el dominio de la
@@ -59,7 +53,6 @@ variable "config" {
     workflow_v2_ceiling     = optional(string, "off")
     order_sentinel_reader   = optional(string, "off")
     decisions_bundle        = optional(string, "ventas")
-    operator_app_jev        = optional(string, "off")
   })
 }
 
@@ -77,7 +70,6 @@ locals {
     SALES_WORKFLOW_V2_CEILING     = var.config.workflow_v2_ceiling
     ORDER_SENTINEL_READER         = var.config.order_sentinel_reader
     SALES_DECISIONS_BUNDLE        = var.config.decisions_bundle
-    OPERATOR_APP_JEV              = var.config.operator_app_jev
   }
 }
 

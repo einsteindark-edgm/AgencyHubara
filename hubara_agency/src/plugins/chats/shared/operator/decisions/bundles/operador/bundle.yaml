@@ -2,8 +2,9 @@
 #
 # El paquete de la App Operador: qué burbuja va primero en el chat y cómo se
 # clasifica cada incendio de chat, sobre el mismo motor de las capacidades de
-# ventas. Lo enciende Terraform (`lab.operator_app_jev` → `OPERATOR_APP_JEV`):
-# off | shadow | on.
+# ventas (`BundledCapability` + `decide_for_session`). Cada capacidad se
+# enciende en el panel «Motor de decisiones» (off | shadow | canary | on), dentro
+# del techo de Terraform `SALES_CAPABILITIES_CEILING`.
 id: operador
 version: 1
 engine_contract: 1

@@ -204,7 +204,11 @@ corre sus builtins con los `with:` del paquete (`call(table.spec.state, convo)`)
 `decisions check` lo encuentra junto a los de ventas. La App Operador hace lo
 mismo dentro de `chats` (`chats/shared/operator/decisions/`, paquete
 `operador`): una carpeta `decisions/bundles/` con su propio `builtins.yaml`,
-para no heredar el catálogo de ventas (DB003 pediría sus 29 capacidades).
+para no heredar el catálogo de ventas (DB003 pediría sus 29 capacidades). Y
+corre por el `decide()` de ventas: el resolutor
+`registry.foreign_capability(nombre, bundle=…, builtins=…)` arma un
+`BundledCapability` con los builtins de ese paquete, así que una capacidad de
+otro catálogo tiene el mismo panel, métricas, desacuerdos y registro.
 
 El motor de ventas lo envuelve en `decisions/bundled.py` (`BundledCapability`,
 con la forma de `Capability`) y los lugares lo piden por nombre al resolutor

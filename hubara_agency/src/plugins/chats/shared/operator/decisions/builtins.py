@@ -52,6 +52,21 @@ _REASONS = {
 #: Motivos que siguen graves aunque Jev diga otra cosa (los mismos que las reglas).
 SAFETY_REASONS = frozenset({"HEALTH_SAFETY", "ORDER_REGISTRATION_FAILED"})
 
+#: La lectura anterior de un incendio, en palabras (la «evaluación anterior» que ve Jev).
+_SEVERITY_WORDS = {"grave": "grave", "hoy": "hoy", "espera": "puede esperar"}
+_KIND_WORDS = {
+    "wants_human": "pide una persona",
+    "angry": "queja o molestia",
+    "asking_status": "pregunta por su pedido",
+    "payment_proof": "comprobante de pago",
+    "order_problem": "problema con el pedido o el envío",
+    "health": "tema de salud",
+    "praise": "felicita o agradece",
+    "sale_at_risk": "quiere comprar",
+    "bot_stuck": "el bot no pudo seguir",
+    "other": "otra cosa",
+}
+
 
 @dataclass(frozen=True)
 class BubbleInput:
@@ -174,6 +189,12 @@ def fire_board(inp: FireInput, *, max_messages: int, max_chars: int) -> str:
         lines.append(f"Evaluación anterior de este chat: {inp.previous}.")
     lines += _lines(inp.events, max_messages=max_messages, max_chars=max_chars)
     return "\n".join(lines)
+
+
+def reading_words(value: Mapping[str, Any]) -> str:
+    """Lo que Jev leyó de un incendio, en palabras: la `previous` de la próxima vez."""
+    severity = _SEVERITY_WORDS.get(str(value.get("severity")), str(value.get("severity")))
+    return f"{severity}, {_KIND_WORDS.get(str(value.get('kind')), 'otra cosa')}"
 
 
 def rules_fire(inp: FireInput) -> dict[str, Any]:

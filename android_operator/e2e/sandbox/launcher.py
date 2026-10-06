@@ -98,10 +98,11 @@ SANDBOX_ENV = {
     "TEMPORAL_URL": f"{HOST}:9",
     "TEMPORAL_ADDRESS": f"{HOST}:9",
     "OTEL_SDK_DISABLED": "true",
-    # Jev: el adaptador falso (sin red; responde siempre igual) y la App Operador en sombra: cada
-    # escenario recorre las preguntas a Jev (paquete `operador`) sin que cambie lo que ve la app.
+    # Jev: el adaptador falso (sin red; responde siempre igual) y las decisiones de la App Operador
+    # en sombra (techo `shadow` + `_rollout/decisions.json` que siembra seed.py): cada escenario
+    # recorre el motor oficial (paquete `operador`) sin que cambie lo que ve la app.
     "PERCEPTION_PROVIDER": "fake",
-    "OPERATOR_APP_JEV": "shadow",
+    "SALES_CAPABILITIES_CEILING": "shadow",
     "LITELLM_LOCAL_MODEL_COST_MAP": "True",
     "RATE_LIMIT_PER_MINUTE": "0",
 }

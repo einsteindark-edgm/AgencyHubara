@@ -219,6 +219,7 @@ def get_engine() -> dict[str, Any]:
     guardado dentro del techo; una variante, con el interruptor de su
     decisión)."""
     from src.plugins.chats.agent.sales.decisions import registry
+    from src.plugins.chats.shared.operator import decisions as operator
     from src.plugins.chats.shared.store_pack import DEFAULT_BUNDLE
     from src.sdk.decisionkit import ENGINE_CONTRACT, BundleError
 
@@ -226,22 +227,32 @@ def get_engine() -> dict[str, Any]:
         bundle = registry.active_bundle()
     except BundleError as exc:
         raise HTTPException(status_code=503, detail=f"El paquete de decisión de la tienda no compila: {exc}"[:500]) from None
+    # Los paquetes que corren en el motor: el de la tienda y el de la App Operador.
+    bundles = [(bundle, "La tienda: el bot de ventas y remarketing")]
+    try:
+        bundles.append((operator.active_bundle(), "App Operador: el chat y los incendios del teléfono"))
+    except BundleError as exc:
+        logger.error("decisions.operator_bundle_broken", error=str(exc)[:300])
     modes = bots.capability_modes(_vault_dir())
     ceiling = bots.capabilities_ceiling()
+    places: list[dict[str, str]] = []
     decisions = []
-    for name, table in bundle.capabilities.items():
-        about = bundle.about.get(name)
-        control = table.control
-        decisions.append(
-            {
-                "capability": name,
-                "name": about.name if about else name,
-                "where": list(about.where) if about else [],
-                "solves": about.solves if about else "",
-                "variant_of": control if control != name else None,
-                "mode": _effective(modes.get(control, "off"), ceiling),
-            }
-        )
+    for each, _label in bundles:
+        places += [{"id": place, "label": label} for place, label in each.places]
+        for name, table in each.capabilities.items():
+            about = each.about.get(name)
+            control = table.control
+            decisions.append(
+                {
+                    "capability": name,
+                    "name": about.name if about else name,
+                    "where": list(about.where) if about else [],
+                    "solves": about.solves if about else "",
+                    "variant_of": control if control != name else None,
+                    "mode": _effective(modes.get(control, "off"), ceiling),
+                    "bundle": each.ref,
+                }
+            )
     return {
         "bundle": {
             "id": bundle.id,
@@ -251,8 +262,12 @@ def get_engine() -> dict[str, Any]:
             "engine_contract": ENGINE_CONTRACT,
             "code_default": DEFAULT_BUNDLE,
         },
+        "bundles": [
+            {"id": each.id, "version": each.version, "ref": each.ref, "oracle": each.oracle, "name": label}
+            for each, label in bundles
+        ],
         "profile": (os.getenv("SALES_PERCEPTION_PROFILE") or bots.DEFAULT_PROFILE).strip(),
-        "places": [{"id": place, "label": label} for place, label in bundle.places],
+        "places": places,
         "decisions": decisions,
         "turn": _turn_summary(bundle),
     }

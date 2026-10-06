@@ -1,10 +1,11 @@
 """Contrato HTTP de la app móvil del operador (Android).
 
 Rutas delgadas: juntan los hechos (metadata del vault, catálogo, ``OrderFacts``)
-y deciden las reglas puras de ``chats/shared/mobile_rules``. Con
-``OPERATOR_APP_JEV`` en shadow/on, Jev (paquete ``operador``, ``mobile_jev.py``)
-elige la burbuja principal y clasifica los incendios de chat; las reglas son lo
-legal y el respaldo.
+y arman lo legal las reglas puras de ``chats/shared/mobile_rules``. Qué burbuja
+va primero y cómo se clasifica un incendio de chat lo decide el motor de
+decisiones oficial (paquete ``operador``, ``mobile_decisions.py``), con el modo
+que el panel «Motor de decisiones» le da a cada conversación; las reglas son
+su respaldo.
 
     GET  /api/chats/mobile/suggestions/{session_id}   burbujas por etapa
     GET  /api/chats/mobile/fires                      incendios (chats + pedidos)
@@ -45,8 +46,7 @@ from src.plugins.chats.api.dashboard import (
     _compute_pending_payment_order_id,
     _order_ref_candidate_ids,
 )
-from src.plugins.chats.api.mobile_jev import ORACLE as JEV_ORACLE
-from src.plugins.chats.api.mobile_jev import OperatorJev
+from src.plugins.chats.api.mobile_decisions import OperatorDecisions
 from src.plugins.chats.api.order_intake import _read_events
 from src.plugins.chats.shared.draft_items import draft_items, product_key
 from src.plugins.chats.shared.mobile_rules import (
@@ -74,7 +74,6 @@ from src.sdk.connectorkit import (
     OrderFactsSnapshot,
     get_catalog_client,
     get_order_facts_port,
-    get_perception_port,
     parse_variant_tags,
 )
 from src.sdk.castkit import current_actor
@@ -113,8 +112,8 @@ class MobileDeps:
     now_ms: Callable[[], int]
     #: Texto fijo de medios de pago (o None si no hay datos de pago configurados).
     payment_instructions_text: Callable[[], str | None]
-    #: Jev con el paquete `operador` (`mobile_jev.OperatorJev`); None = solo reglas.
-    jev: Any = None
+    #: El motor de decisiones para la app (`mobile_decisions.OperatorDecisions`); None = solo reglas.
+    decisions: Any = None
 
 
 def _try(name: str, factory: Callable[[], Any]) -> Any | None:
@@ -144,7 +143,7 @@ def get_mobile_deps() -> MobileDeps:
         order_facts=_try("order_facts", get_order_facts_port) or InMemoryOrderFacts(available=False),
         now_ms=_now_ms,
         payment_instructions_text=_payment_text,
-        jev=OperatorJev(port=lambda: get_perception_port(JEV_ORACLE), vault_dir=WORKSPACE_VAULT_DIR, now_ms=_now_ms),
+        decisions=OperatorDecisions(vault_dir=WORKSPACE_VAULT_DIR, now_ms=_now_ms),
     )
 
 
@@ -343,10 +342,10 @@ async def suggestions(session_id: str, deps: Deps) -> Any:
         last_inbound_ms=last_inbound if isinstance(last_inbound, int) else None,
     )
     payload = suggest_actions(facts)
-    if deps.jev is None:
+    if deps.decisions is None:
         return payload
-    # Jev elige cuál de las jugadas legales va primero (OPERATOR_APP_JEV; reglas si duda o tarda).
-    return await deps.jev.suggestions(payload, events=events, metadata=metadata)
+    # El motor decide cuál de las jugadas legales va primero (capacidad `burbuja`).
+    return await deps.decisions.suggestions(payload, events=events, metadata=metadata)
 
 
 # ── GET /mobile/fires ────────────────────────────────────────────────────────
@@ -454,9 +453,9 @@ async def fires(deps: Deps) -> dict[str, Any]:
     orders = [o for sid, md, oid in links if (o := _order_fire_facts(sid, md, oid, snapshot)) is not None]
     cards = detect_fires(chats, orders, now_ms=now_ms, today_iso=_orders_day(now_ms))
     used_jev = False
-    if deps.jev is not None:
-        # Jev clasifica los incendios de chat (gravedad, tipo, si empeora) sin hacer esperar a la app.
-        cards, used_jev = await deps.jev.fires(
+    if deps.decisions is not None:
+        # El motor clasifica los incendios de chat (capacidad `incendio`) sin hacer esperar a la app.
+        cards, used_jev = await deps.decisions.fires(
             cards, chats={c.session_id: c for c in chats},
             events_for=lambda sid: _read_events(deps.vault_dir, sid),
         )

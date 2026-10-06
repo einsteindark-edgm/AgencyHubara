@@ -592,16 +592,23 @@ def test_catalog_is_503_without_a_snapshot(h: _Harness) -> None:
     assert (r.status_code, r.json()) == (503, {"error": "catalog_unavailable"})
 
 
-# ── Jev (paquete `operador`, OPERATOR_APP_JEV) ───────────────────────────────
+# ── El motor de decisiones (paquete `operador`, panel «Motor de decisiones») ───────────────────────────────
 
 
-def _jev_on(h: _Harness, answers: dict[str, Any]) -> Any:
-    from src.plugins.chats.api.mobile_jev import OperatorJev
+def _jev_on(h: _Harness, answers: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Las dos decisiones de la app en «on» desde el panel (motor oficial) y un Jev falso."""
+    from src.plugins.chats.agent.sales.decisions import bots
+    from src.plugins.chats.api.mobile_decisions import OperatorDecisions
+    from src.sdk import connectorkit
     from src.sdk.connectorkit import FakePerceptionAdapter
 
-    h.deps.jev = OperatorJev(port=FakePerceptionAdapter(answers), vault_dir=h.vault, now_ms=lambda: NOW,
-                             mode=lambda: "on")
-    return h.deps.jev
+    monkeypatch.setenv("SALES_CAPABILITIES_CEILING", "on")
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    bots.write_capability_modes(h.vault, {"burbuja": "on", "incendio": "on"})
+    fake = FakePerceptionAdapter(answers)
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+    h.deps.decisions = OperatorDecisions(vault_dir=h.vault, now_ms=lambda: NOW)
+    return h.deps.decisions
 
 
 def _choice(qid: str, option: str, p: float) -> Any:
@@ -610,7 +617,7 @@ def _choice(qid: str, option: str, p: float) -> Any:
     return TypedAnswer(id=qid, kind="choice", choice=option, probs=((option, p),), confidence=p)
 
 
-def test_with_jev_on_its_bubble_goes_first(h: _Harness) -> None:
+def test_with_jev_on_its_bubble_goes_first(h: _Harness, monkeypatch: pytest.MonkeyPatch) -> None:
     h.seed(_LAURA, {
         **_open_window(),
         "active_route": "humano",
@@ -619,7 +626,7 @@ def test_with_jev_on_its_bubble_goes_first(h: _Harness) -> None:
     rules = h.client.get(f"/api/chats/mobile/suggestions/{_LAURA}").json()
     assert rules["decided_by"] == "rules" and len(rules["suggestions"]) >= 2
     last = rules["suggestions"][-1]
-    _jev_on(h, {"burbuja.cual": _choice("burbuja.cual", "mas_fotos", 0.9)})
+    _jev_on(h, {"burbuja.cual": _choice("burbuja.cual", "mas_fotos", 0.9)}, monkeypatch)
 
     body = h.client.get(f"/api/chats/mobile/suggestions/{_LAURA}").json()
 
@@ -629,7 +636,7 @@ def test_with_jev_on_its_bubble_goes_first(h: _Harness) -> None:
     assert sorted(s["label"] for s in body["suggestions"]) == sorted(s["label"] for s in rules["suggestions"])
 
 
-def test_with_jev_on_a_fire_is_classified_from_the_next_look(h: _Harness) -> None:
+def test_with_jev_on_a_fire_is_classified_from_the_next_look(h: _Harness, monkeypatch: pytest.MonkeyPatch) -> None:
     h.seed("wa_test_sofia", {
         "active_route": "humano", "profile": {"name": "Sofía Pérez"}, "last_inbound_at_ms": NOW - 3 * _MIN,
     }, events=[
@@ -639,7 +646,7 @@ def test_with_jev_on_a_fire_is_classified_from_the_next_look(h: _Harness) -> Non
     jev = _jev_on(h, {
         "incendio.gravedad": _choice("incendio.gravedad", "grave", 0.9),
         "incendio.tipo": _choice("incendio.tipo", "queja", 0.9),
-    })
+    }, monkeypatch)
 
     with h.client as client:
         first = client.get("/api/chats/mobile/fires").json()

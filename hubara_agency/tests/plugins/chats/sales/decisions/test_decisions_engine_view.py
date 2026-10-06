@@ -52,7 +52,9 @@ def test_every_decision_says_where_it_acts_and_what_it_solves(client: TestClient
     places = [p["id"] for p in body["places"]]
     assert places[0] == "ingest" and all(p["label"] for p in body["places"])
     decisions = {d["capability"]: d for d in body["decisions"]}
-    assert set(decisions) == set(registry.active_bundle().capabilities)
+    # Las de la tienda y las de la App Operador (paquete `operador`), cada una con su paquete.
+    assert set(decisions) == set(registry.active_bundle().capabilities) | {"burbuja", "incendio"}
+    assert {d["bundle"] for d in body["decisions"]} == {"ventas@1", "operador@1"}
     for d in decisions.values():
         assert d["name"] and len(d["solves"]) > 40 and d["where"] and set(d["where"]) <= set(places), d
     assert decisions["compra"]["where"] == ["ingest"]
@@ -87,3 +89,28 @@ def test_a_bundle_that_does_not_compile_says_so(client: TestClient, monkeypatch)
     res = client.get("/api/chats/perception/engine")
 
     assert res.status_code == 503 and "no-existe" in res.json()["detail"]
+
+
+def test_the_operator_app_decisions_show_up_with_their_own_bundle(client: TestClient, tmp_path: Path) -> None:
+    """La App Operador decide con el motor oficial y su paquete `operador`: la
+    pestaña lo nombra junto al de la tienda y pone sus decisiones donde actúan."""
+    bots.write_capability_modes(tmp_path, {"incendio": "shadow"})
+
+    body = client.get("/api/chats/perception/engine").json()
+
+    assert [b["ref"] for b in body["bundles"]] == ["ventas@1", "operador@1"]
+    assert all(b["name"] for b in body["bundles"])
+    places = {p["id"]: p["label"] for p in body["places"]}
+    decisions = {d["capability"]: d for d in body["decisions"]}
+    assert decisions["burbuja"]["where"] == ["chat_operador"] and places["chat_operador"]
+    assert decisions["incendio"]["where"] == ["incendios"] and places["incendios"]
+    assert (decisions["burbuja"]["mode"], decisions["incendio"]["mode"]) == ("off", "shadow")
+
+
+def test_the_panel_moves_an_operator_app_decision(client: TestClient) -> None:
+    r = client.put("/api/chats/perception/capabilities", json={"capability": "burbuja", "mode": "shadow"})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["capabilities"]["burbuja"]["mode"] == "shadow"
+    decisions = {d["capability"]: d["mode"] for d in client.get("/api/chats/perception/engine").json()["decisions"]}
+    assert decisions["burbuja"] == "shadow"
