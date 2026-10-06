@@ -46,6 +46,11 @@ tasks.withType<Test>().configureEach {
         "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED",
         "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
     )
+    // En CI solo queda el log: una falla tiene que traer su mensaje entero (no solo «IllegalStateException at…»).
+    testLogging {
+        events(org.gradle.api.tasks.testing.logging.TestLogEvent.FAILED)
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
 }
 
 

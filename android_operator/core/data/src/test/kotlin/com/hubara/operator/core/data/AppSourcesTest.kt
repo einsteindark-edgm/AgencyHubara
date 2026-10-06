@@ -14,6 +14,7 @@ import com.hubara.operator.core.model.Route
 import com.hubara.operator.core.model.SessionId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -40,7 +41,10 @@ class AppSourcesTest {
     @Before fun setUp() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         db = Room.inMemoryDatabaseBuilder(context, OperatorDatabase::class.java).allowMainThreadQueries().build()
-        source = ConversationsSource(ConversationRepository(FakeOperatorApi(), db.conversations()), SeenRepository(context, db.conversations()))
+        val seen = SeenRepository(context, db.conversations())
+        // El DataStore «seen» es uno por proceso: cada prueba arranca sin lo que dejó otra (la línea base es lo que se prueba).
+        runBlocking { seen.clear() }
+        source = ConversationsSource(ConversationRepository(FakeOperatorApi(), db.conversations()), seen)
     }
 
     @After fun tearDown() = db.close()

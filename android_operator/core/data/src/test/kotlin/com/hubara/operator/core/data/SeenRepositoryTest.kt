@@ -14,6 +14,7 @@ import com.hubara.operator.core.model.SessionId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -34,6 +35,9 @@ class SeenRepositoryTest {
         db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), OperatorDatabase::class.java)
             .allowMainThreadQueries().build()
         seen = SeenRepository(ApplicationProvider.getApplicationContext(), db.conversations())
+        // El DataStore «seen» es uno por proceso: sin limpiarlo, esta prueba hereda lo que dejó otra clase del mismo
+        // JVM con el mismo chat (AppSourcesTest escribe la línea base de wa_test_laura). Falló así en CI el 6-oct-2026.
+        runBlocking { seen.clear() }
     }
 
     @After fun tearDown() = db.close()
