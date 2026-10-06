@@ -15,6 +15,7 @@ Funciones puras (sin I/O): el caller lee el vault.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
@@ -215,6 +216,28 @@ def _intents_for(tools: tuple[ToolCall, ...], guards: tuple[str, ...]) -> tuple[
     return tuple(intents)
 
 
+#: El envelope de `present_products` empieza por `queued` y `kind`, y la traza
+#: guarda el comienzo del resultado de cada tool (`excerpt`): con el menú de
+#: categorías (PR #394) el `kind` es `categories`.
+_CATEGORY_MENU_ENVELOPE = re.compile(r'"kind"\s*:\s*"categories"')
+
+
+def _with_category_menu(intents: tuple[str, ...], raw_tools: Any) -> tuple[str, ...]:
+    """Si `present_products` mandó el menú de categorías, el cliente vio
+    categorías, no productos con su precio: el componente es `categories`
+    (VAR-07 no cuenta un precio que no se vio). `products_list` queda solo si
+    otra llamada del turno sí mandó productos."""
+    kinds = [
+        "categories" if _CATEGORY_MENU_ENVELOPE.search(str(t.get("excerpt") or "")) else "products_list"
+        for t in raw_tools or []
+        if isinstance(t, dict) and t.get("name") == "present_products" and t.get("ok") is True
+    ]
+    if "categories" not in kinds:
+        return intents
+    out = [i for i in intents if i != "products_list" or "products_list" in kinds]
+    return tuple(out) if "categories" in out else (*out, "categories")
+
+
 def _episode_fields(episode: dict[str, Any]) -> dict[str, Any]:
     return {
         "closing_tag": episode.get("closing_tag"),
@@ -243,7 +266,7 @@ def turn_from_trace(raw: dict[str, Any], default_turn: int = 1) -> Turn:
         suppressed_reason=raw.get("suppressed_reason"),
         discarded_narration=tuple(str(x) for x in raw.get("discarded_narration") or []),
         tools=tools,
-        intents=_intents_for(tools, guards),
+        intents=_with_category_menu(_intents_for(tools, guards), raw.get("tools")),
         guards=guards,
         stage_in=raw.get("stage_in"),
         stage_out=raw.get("stage_out"),

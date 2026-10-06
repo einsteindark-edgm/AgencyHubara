@@ -65,16 +65,25 @@ def parse_category_choice(text: str) -> tuple[str, str] | None:
     return (title, slug) if found and slug else None
 
 
-def category_menu_body(intro: str, more: Sequence[str] = (), *, max_len: int) -> str:
-    """El texto del menú, de hasta `max_len` caracteres: el del asesor, la
-    guía y, si hay más categorías de las que caben en la lista (10), las
-    demás por su nombre (el cliente puede escribir cualquiera). WhatsApp
-    corta el cuerpo por el FINAL: el espacio de la guía y de esos nombres se
-    reserva y lo que se recorta, si hace falta, es el texto del asesor."""
+def category_menu_tail(more: Sequence[str] = (), *, max_len: int) -> str:
+    """Lo que el código escribe en el menú (sin el texto del asesor): la guía
+    y, si hay más categorías de las que caben en la lista (10), las demás por
+    su nombre (el cliente puede escribir cualquiera). Es el `customer_text`
+    del envelope: el texto del asesor ya lo leen de los argumentos de la tool,
+    y el flush puede cambiarlo por el neutro."""
     names = [name for name in more if name]
     tail = CATEGORY_MENU_GUIDE
     if names:
         tail += _SEPARATOR + _more_line(names, max_len - len(tail) - len(_SEPARATOR))
+    return tail
+
+
+def category_menu_body(intro: str, more: Sequence[str] = (), *, max_len: int) -> str:
+    """El texto del menú, de hasta `max_len` caracteres: el del asesor y la
+    cola que arma el código (`category_menu_tail`). WhatsApp corta el cuerpo
+    por el FINAL: el espacio de la cola se reserva y lo que se recorta, si
+    hace falta, es el texto del asesor."""
+    tail = category_menu_tail(more, max_len=max_len)
     intro = intro.strip()
     room = max_len - len(tail) - len(_SEPARATOR)
     if not intro or room <= 1:

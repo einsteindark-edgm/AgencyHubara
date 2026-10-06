@@ -513,3 +513,98 @@ async def test_without_the_meta_catalog_the_llm_hears_it_is_a_list_and_how_many_
     assert out["pages"] == 4
     assert "4 mensajes" in out["summary"] and "[el cliente seleccionó: <título>]" in out["summary"]
     assert "carrito" not in out["summary"]
+
+
+# ── Segunda revisión del PR #394 ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_without_the_meta_catalog_a_product_without_photo_still_goes_in_the_list(
+    tmp_path: Path, monkeypatch, _isolate_vault_dir: Path
+):
+    """La foto la pide el catálogo de Meta; la lista de respaldo (texto) no.
+    Sin `META_CATALOG_ID` un producto con precio y sin foto se muestra."""
+    monkeypatch.delenv("META_CATALOG_ID", raising=False)
+    raw = [_raw(f"vela-{i}", "velas", "Velas", photo=False) for i in range(5)] + _group(2, "velas", "Velas")
+
+    out = await _call(_tool(tmp_path, raw), intro_text="Este es nuestro catálogo:")
+
+    [intent] = _intents(_isolate_vault_dir)
+    assert len(_rows(intent)) == 7
+    assert out["queued"] is True and "incomplete" not in out
+
+
+@pytest.mark.asyncio
+async def test_without_the_meta_catalog_a_catalog_without_photos_is_shown(
+    tmp_path: Path, monkeypatch, _isolate_vault_dir: Path
+):
+    monkeypatch.delenv("META_CATALOG_ID", raising=False)
+    raw = [_raw(f"vela-{i}", "velas", "Velas", photo=False) for i in range(5)]
+
+    out = await _call(_tool(tmp_path, raw), intro_text="Este es nuestro catálogo:")
+
+    assert out["queued"] is True and out["count"] == 5
+
+
+@pytest.mark.asyncio
+async def test_with_the_meta_catalog_a_product_without_photo_stays_out(
+    tmp_path: Path, monkeypatch, _isolate_vault_dir: Path
+):
+    monkeypatch.setenv("META_CATALOG_ID", "CAT_TEST")
+    raw = _group(2, "velas", "Velas") + [_raw("sin-foto", "velas", "Velas", photo=False)]
+
+    out = await _call(_tool(tmp_path, raw), intro_text="Este es nuestro catálogo:")
+
+    [intent] = _intents(_isolate_vault_dir)
+    assert [r["id"] for r in _rows(intent)] == ["velas-00", "velas-01"]
+    assert out["incomplete"] == [{"handle": "sin-foto", "title": "Sin Foto", "lacks": "foto"}]
+
+
+@pytest.mark.asyncio
+async def test_a_category_whose_products_are_all_incomplete_says_they_exist(
+    tmp_path: Path, _isolate_vault_dir: Path
+):
+    """Antes: `category_empty` sin lista, y el bot podía decir «no tenemos»
+    de algo que existe. Ahora dice cuáles y qué les falta."""
+    raw = _group(20, "velones", "Velones") + [
+        _raw(f"religiosa-{i:02d}", "religiosas", "Religiosas", price=False) for i in range(12)
+    ]
+
+    out = await _call(_tool(tmp_path, raw), intro_text="Estas son:", category="categoria:religiosas")
+
+    assert _intents(_isolate_vault_dir) == []
+    assert out["queued"] is False and out["error"] == "incomplete_products"
+    assert [x["handle"] for x in out["incomplete"]] == [f"religiosa-{i:02d}" for i in range(12)]
+    assert {x["lacks"] for x in out["incomplete"]} == {"precio"}
+    assert "Religiosas" in out["message"]
+
+
+@pytest.mark.asyncio
+async def test_a_catalog_without_categories_keeps_the_typed_text_out_of_the_message(
+    tmp_path: Path, _isolate_vault_dir: Path
+):
+    """Sin categorías cargadas, lo que pasó el LLM (o escribió el cliente) no
+    va de encabezado ni de título de sección: no pasaría por la guarda."""
+    raw = [_raw(f"vela-religiosa-{i}", None, None) for i in range(3)]
+
+    out = await _call(_tool(tmp_path, raw), intro_text="Estas son:", category="religiosa")
+
+    [intent] = _intents(_isolate_vault_dir)
+    assert "category" not in intent["params"] and "header_text" not in intent["params"]
+    assert [s["title"] for s in intent["params"]["sections"]] == ["Productos"]
+    assert out["queued"] is True and out["count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_if_the_engine_fails_the_rule_of_today_decides(
+    tmp_path: Path, monkeypatch, _isolate_vault_dir: Path
+):
+    """Una falla del motor no es «catálogo no disponible»: decide la regla de hoy."""
+    async def _broken(*_args, **_kwargs):
+        raise RuntimeError("motor caído")
+
+    monkeypatch.setattr(ui_intents, "decided_category", _broken)
+
+    out = await _call(_tool(tmp_path, CATALOG_31), intro_text="Nuestros velones:", category="Velones")
+
+    assert out["queued"] is True and out["category"] == "Velones" and out["count"] == 12

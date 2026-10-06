@@ -779,9 +779,7 @@ async def _dispatch_intent(
         pages = wa_limits.paginate_list_rows(sections_payload, wa_limits.MAX_LIST_ROWS_TOTAL)
         first = None
         for page_idx, page_sections in enumerate(pages):
-            result = await wa_client.send_interactive_list(
-                phone_number_id,
-                to_number,
+            outbound_page = (
                 wa_dtos.InteractiveListOutbound(
                     body=(
                         (params.get("intro_text") or "Mira las opciones:")
@@ -803,14 +801,25 @@ async def _dispatch_intent(
                         )
                         for s in page_sections
                     ],
-                ),
+                )
             )
             if page_idx == 0:
+                # Nada llegó todavía: un fallo (o una excepción) es del intent.
+                result = await wa_client.send_interactive_list(phone_number_id, to_number, outbound_page)
                 if result is None or not result.ok:
                     return result
                 first = result
-            elif result is None or not result.ok:
-                error = result.error if result is not None else "no_result"
+                continue
+            # La página 1 ya llegó: lo que falle de acá en adelante (respuesta
+            # o excepción) se anota y se sigue.
+            try:
+                result = await wa_client.send_interactive_list(phone_number_id, to_number, outbound_page)
+                error = None if result is not None and result.ok else (
+                    result.error if result is not None else "no_result"
+                )
+            except Exception as e:  # noqa: BLE001 — la primera página ya llegó
+                error = f"{type(e).__name__}: {e}"
+            if error is not None:
                 activity.logger.warning(
                     "products_list.page_send_failed",
                     extra={"page": page_idx + 1, "pages": len(pages), "error": error},
@@ -1517,9 +1526,9 @@ def _categories_note(params: dict[str, Any]) -> str:
     """El menú de categorías en el historial: sus filas, cuántos productos
     tiene cada una y el texto que leyó el cliente. Jev lee cada línea del
     historial hasta 500 caracteres y una más larga la corta por el PRINCIPIO
-    (se perdería qué se ofreció): el texto del menú se recorta para que la
-    nota entera quepa."""
-    from src.platform.whatsapp import limits as wa_limits
+    (se perdería qué se ofreció): el texto del menú se arma para el espacio
+    que queda, con la misma regla del mensaje (se recorta el texto del
+    asesor; la guía y las categorías nombradas quedan)."""
     from src.plugins.chats.agent.sales.catalog_menu import category_menu_body
     from src.plugins.chats.agent.sales.decisions.context import MAX_LINE_CHARS
 
@@ -1535,17 +1544,17 @@ def _categories_note(params: dict[str, Any]) -> str:
         for r in rows
     )
     head = f"🗂️ El bot envió el menú de categorías: {listed}."
+    room = MAX_LINE_CHARS - len(head) - len(" Mensaje: «»")
+    if room < 20:
+        return head[:MAX_LINE_CHARS]
     body = " ".join(
         category_menu_body(
             str(params.get("intro_text") or ""),
             params.get("more_categories") or [],
-            max_len=wa_limits.MAX_LIST_BODY,
+            max_len=room,
         ).split()
     )
-    room = MAX_LINE_CHARS - len(head) - len(" Mensaje: «»")
-    if room < 20:
-        return head[:MAX_LINE_CHARS]
-    return f"{head} Mensaje: «{_trunc(body, room)}»"
+    return f"{head} Mensaje: «{body}»"
 
 
 def _append_history_event(session_id: str, event: dict[str, Any]) -> None:

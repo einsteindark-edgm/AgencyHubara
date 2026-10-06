@@ -79,7 +79,7 @@ from src.plugins.chats.agent.sales.catalog_menu import (
     UNCATEGORIZED,
     UNCATEGORIZED_LABEL,
     category_from_row_id,
-    category_menu_body,
+    category_menu_tail,
     category_row_id,
 )
 from src.plugins.chats.agent.sales.tools.catalog import decided_category
@@ -408,12 +408,13 @@ class PresentProductsTool(ToolBase):
         de categorías (`catalog_menu.py`) y elige una. Con una sola
         categoría el menú sobra: salen sus primeros 30.
 
-    Lo que el catálogo de WhatsApp (Meta) no tiene no entra al mensaje, ni a
-    la lista de respaldo: sin foto o sin precio, el criterio del push
-    (`map_products_batch`). Meta rechazaría el mensaje (y saldría la lista
-    de respaldo, el síntoma del incidente) o lo descartaría en silencio, y el
-    bot no puede mostrarlo ni cotizarlo. Queda un warning en el log y el LLM
-    sabe cuál quedó afuera (`incomplete`).
+    Un producto sin precio no entra al mensaje (no se cotiza ni se vende).
+    Con el catálogo de WhatsApp conectado (`META_CATALOG_ID`) tampoco entra
+    uno sin foto: es el criterio del push (`map_products_batch`), y Meta
+    rechazaría el mensaje (saldría la lista de respaldo, el síntoma del
+    incidente) o lo descartaría en silencio. La lista de respaldo, que es
+    texto, no necesita foto. Queda un warning en el log y el LLM sabe cuál
+    quedó afuera y por qué (`incomplete`).
     """
 
     name = "present_products"
@@ -561,6 +562,8 @@ class PresentProductsTool(ToolBase):
         except Exception as e:  # noqa: BLE001 — la copia del catálogo no se pudo leer
             return _catalog_unavailable(e)
         products, incomplete = _complete_and_incomplete(everything)
+        if not products and incomplete:
+            return _nothing_complete(incomplete)
         if not products:
             return json.dumps({
                 "queued": False,
@@ -612,6 +615,7 @@ class PresentProductsTool(ToolBase):
         search_products (`decided_category`): la regla de hoy resuelve typos,
         plurales, nombre o slug, y Jev, lo que el texto no dice («velas de
         santos» son las religiosas)."""
+        from_catalog = True
         try:
             everything = await self._all_products()
             categories = list(await self._catalog.list_categories())
@@ -623,10 +627,17 @@ class PresentProductsTool(ToolBase):
                 label, members = picked
             else:
                 found = await self._catalog.search(q="", limit=_WHOLE_CATALOG, category=category)
-                found = await decided_category(
-                    self._catalog, q="", limit=_WHOLE_CATALOG, category=category, result=found,
-                    session_id=ctx.session_key, vault_dir=Path(WORKSPACE_VAULT_DIR),
-                )
+                try:
+                    found = await decided_category(
+                        self._catalog, q="", limit=_WHOLE_CATALOG, category=category, result=found,
+                        session_id=ctx.session_key, vault_dir=Path(WORKSPACE_VAULT_DIR),
+                    )
+                except Exception as e:  # noqa: BLE001 — sin el motor decide la regla de hoy
+                    logger.warning(
+                        "📋 [TOOL present_products] el motor no decidió la categoría {!r} ({}): "
+                        "queda la regla de hoy",
+                        category, e,
+                    )
                 resolution = found.category
                 matched = resolution.matched if resolution is not None else None
                 if matched is not None and not (
@@ -637,12 +648,16 @@ class PresentProductsTool(ToolBase):
                     # «Otros» es una sola fila: con los productos sin categoría.
                     label, members = UNCATEGORIZED_LABEL, _others(everything, categories)
                 elif resolution is not None and resolution.confidence == "no_categories":
-                    label, members = category, list(found.results)
+                    # Sin categorías cargadas: lo que pasó el LLM no va al
+                    # mensaje (no es texto del código ni pasa por la guarda).
+                    label, members, from_catalog = category, list(found.results), False
                 else:
                     return _category_not_found(category, resolution, [c.label for c in categories])
         except Exception as e:  # noqa: BLE001 — la copia del catálogo no se pudo leer
             return _catalog_unavailable(e)
         products, incomplete = _complete_and_incomplete(members)
+        if not products and incomplete:
+            return _nothing_complete(incomplete, category=label)
         if not products:
             return json.dumps({
                 "queued": False,
@@ -652,7 +667,7 @@ class PresentProductsTool(ToolBase):
                     "no se mostró nada al cliente."
                 ),
             }, ensure_ascii=False)
-        return self._present_group(ctx, label, products, intro_text, incomplete)
+        return self._present_group(ctx, label, products, intro_text, incomplete, from_catalog=from_catalog)
 
     def _present_group(
         self,
@@ -661,12 +676,18 @@ class PresentProductsTool(ToolBase):
         products: list[Any],
         intro_text: str,
         incomplete: list[tuple[Any, str]],
+        *,
+        from_catalog: bool = True,
     ) -> str:
         """Los primeros 30 productos de una categoría, en una sección con su
-        nombre (que también va de encabezado del mensaje)."""
+        nombre (que también va de encabezado del mensaje). Sin categorías
+        cargadas (`from_catalog` False) el nombre es lo que pasó el LLM: no
+        va al mensaje, que sale con la sección «Productos»."""
         shown = products[:_MAX_ROWS]
-        sections = [{"title": label, "rows": [_product_row(p) for p in shown]}]
-        messages = self._enqueue_products(ctx, sections, intro_text, category=label)
+        sections = [{"title": label if from_catalog else "Productos", "rows": [_product_row(p) for p in shown]}]
+        messages = self._enqueue_products(
+            ctx, sections, intro_text, category=label if from_catalog else None
+        )
         summary = (
             f"Productos de la categoría {label} enviados al cliente: {len(shown)}."
             f"{_delivery_note(sections)}"
@@ -778,10 +799,11 @@ class PresentProductsTool(ToolBase):
             "queued": True,
             "kind": "categories",
             "count": len(products),
-            # Lo que leyó el cliente con el menú (la convención de las
-            # tarjetas que arma el código: la traza, la calificación y la
-            # verificación lo leen de acá).
-            "customer_text": category_menu_body(intro, more, max_len=wa_limits.MAX_LIST_BODY),
+            # Lo que el CÓDIGO escribió en el menú (la guía y las categorías
+            # nombradas): la convención de las tarjetas que arma el código. El
+            # texto del asesor no va acá: ya lo leen de los argumentos de la
+            # tool (`card_texts`) y el flush puede cambiarlo por el neutro.
+            "customer_text": category_menu_tail(more, max_len=wa_limits.MAX_LIST_BODY),
             "summary": (
                 f"El catálogo tiene {len(products)} productos y no cabe en un solo "
                 f"mensaje (lleva hasta {_MAX_ROWS}): le envié al cliente un menú con "
@@ -862,12 +884,17 @@ def _shown_products(sections: list[dict[str, Any]]) -> list[dict[str, str]]:
     return [{"handle": r["id"], "title": r["title"]} for s in sections for r in s["rows"]]
 
 
+def _meta_catalog_configured() -> bool:
+    """Hay catálogo de WhatsApp (Meta) conectado: `META_CATALOG_ID`."""
+    import os
+
+    return bool((os.environ.get("META_CATALOG_ID") or "").strip())
+
+
 def _meta_catalog_expected(sections: list[dict[str, Any]]) -> bool:
     """La misma condición del flush para mandar el catálogo de Meta:
     `META_CATALOG_ID` y todas las filas con su id de Meta."""
-    import os
-
-    return bool((os.environ.get("META_CATALOG_ID") or "").strip()) and all(
+    return _meta_catalog_configured() and all(
         r.get("product_retailer_id") for s in sections for r in s["rows"]
     )
 
@@ -916,13 +943,15 @@ def _meta_price(prices: list[Any]) -> bool:
     return bool(chosen.amount and chosen.currency_code)
 
 
-def _lacks(product: Any) -> str | None:
-    """Lo que le falta al producto para estar en el catálogo de WhatsApp
-    (Meta), con el criterio del push (`map_products_batch`): foto principal
-    y precio; con variantes reales, la fila es la primera variante, que
-    necesita su propio precio. None si está completo. Una prueba lo compara
-    con el push para que no se separen."""
-    if not (product.thumbnail or (product.images and product.images[0].url)):
+def _lacks(product: Any, *, meta: bool = True) -> str | None:
+    """Lo que le falta al producto para salir en el mensaje del catálogo; None
+    si nada. El precio, siempre: sin precio no se cotiza ni se vende. La foto,
+    solo para el catálogo de WhatsApp (`meta`): la lista de respaldo es texto.
+    Con `meta` es el criterio del push (`map_products_batch`): foto principal
+    y precio; con variantes reales la fila es la primera variante, que
+    necesita su propio precio. Una prueba lo compara con el push para que no
+    se separen."""
+    if meta and not (product.thumbnail or (product.images and product.images[0].url)):
         return "foto"
     variants = product.variants or []
     if has_real_variants(product):
@@ -932,19 +961,21 @@ def _lacks(product: Any) -> str | None:
 
 def _complete_and_incomplete(products: list[Any]) -> tuple[list[Any], list[tuple[Any, str]]]:
     """`(completos, [(incompleto, lo que le falta)])`, con un warning para el
-    operador: un producto incompleto se arregla en Medusa."""
+    operador: un producto incompleto se arregla en Medusa. La foto cuenta solo
+    si hay catálogo de WhatsApp conectado (`META_CATALOG_ID`)."""
+    meta = _meta_catalog_configured()
     complete: list[Any] = []
     incomplete: list[tuple[Any, str]] = []
     for p in products:
-        lacks = _lacks(p)
+        lacks = _lacks(p, meta=meta)
         if lacks is None:
             complete.append(p)
         else:
             incomplete.append((p, lacks))
     if incomplete:
         logger.warning(
-            "📋 [TOOL present_products] fuera del mensaje del catálogo (el catálogo de "
-            "WhatsApp no los tiene): {}",
+            "📋 [TOOL present_products] fuera del mensaje del catálogo (sin precio, o sin "
+            "foto con el catálogo de WhatsApp): {}",
             [f"{p.handle} (sin {lacks})" for p, lacks in incomplete],
         )
     return complete, incomplete
@@ -958,21 +989,28 @@ def _note_incomplete(envelope: dict[str, Any], incomplete: list[tuple[Any, str]]
     ]
     envelope["summary"] += (
         f" No van {len(incomplete)} producto(s) incompleto(s) "
-        f"({', '.join(p.title for p, _ in incomplete)}): les falta foto o precio "
-        "en el catálogo."
+        f"({', '.join(p.title for p, _ in incomplete)}): en `incomplete` está qué le "
+        "falta a cada uno."
     )
 
 
-def _nothing_complete(incomplete: list[tuple[Any, str]]) -> str:
+def _nothing_complete(incomplete: list[tuple[Any, str]], *, category: str | None = None) -> str:
+    """Ninguno puede ir en el mensaje: el LLM sabe que existen y qué les falta
+    (para no decir «no tenemos» de algo que existe)."""
+    where = f"Los productos de la categoría {category}" if category else "Esos productos"
     return json.dumps({
         "queued": False,
         "error": "incomplete_products",
+        **({"category": category} if category else {}),
         "incomplete": [
             {"handle": p.handle, "title": p.title, "lacks": lacks} for p, lacks in incomplete
         ],
         "message": (
-            "Esos productos no pueden ir en el catálogo de WhatsApp (les falta foto "
-            "o precio): no se mostró nada al cliente."
+            f"{where} existen, pero no pueden ir en el mensaje del catálogo: en "
+            "`incomplete` está qué le falta a cada uno (sin precio no se puede vender; "
+            "sin foto no van al catálogo de WhatsApp). No se mostró nada al cliente. "
+            "No digas que no los tenemos: los que tienen precio los puedes ofrecer en "
+            "texto (búscalos con search_products)."
         ),
     }, ensure_ascii=False)
 

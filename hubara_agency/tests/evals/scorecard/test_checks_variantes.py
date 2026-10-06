@@ -113,6 +113,33 @@ def test_var07_price_in_text_or_catalog_before_passes() -> None:
     assert run("VAR-07", traj(T(1))).verdict == "no_aplica"
 
 
+def _traced(first_excerpt: str):
+    """Trayectoria desde la traza (fidelidad completa): `present_products`
+    con el comienzo de su envelope (`excerpt`) y después el formulario."""
+    from src.plugins.chats.agent.sales_eval.scorecard.trajectory import build_trajectory
+
+    traces = [
+        {"turn": 1, "trigger": "customer", "inbound_text": "¿qué tienen?", "stage_in": "descubrimiento",
+         "tools": [{"name": "present_products", "ok": True, "error": None, "notes": ["count:31"],
+                    "args": {"intro_text": "Con gusto"}, "excerpt": first_excerpt}]},
+        {"turn": 2, "trigger": "customer", "inbound_text": "quiero el de lavanda", "stage_in": "descubrimiento",
+         "tools": [{"name": "request_shipping_details", "ok": True, "error": None, "notes": [], "args": {}}]},
+    ]
+    return build_trajectory(traces, session_id="wa_100000000001", episode={"episode_id": "ep_007"})
+
+
+def test_var07_the_category_menu_is_not_a_price_the_customer_saw() -> None:
+    """Catálogo que no cabe (PR #394): `present_products` mandó el menú de
+    categorías. En la traza eso es `categories`, no una lista con precios."""
+    menu = _traced('{"queued": true, "kind": "categories", "count": 31, "customer_text": "Elige una')
+    products = _traced('{"queued": true, "kind": "products_list", "count": 29, "pages": 1, "summary": "Catá')
+
+    assert menu.turns[0].intents == ("categories",)
+    assert (run("VAR-07", menu).verdict, run("VAR-07", menu).turn) == ("falla", 2)
+    assert products.turns[0].intents == ("products_list",)
+    assert run("VAR-07", products).verdict == "pasa"
+
+
 # VAR-09 ─────────────────────────────────────────────────────────────────────
 def test_var09_rejected_selector_buttons_fail() -> None:
     t = traj(T(1, tools=[tool("send_quick_replies", ok=False, error="catalog_choice_not_allowed")]))

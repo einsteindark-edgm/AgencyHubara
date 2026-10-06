@@ -87,3 +87,15 @@ async def test_an_unreadable_or_zoneless_date_reads_the_same_for_both(
     _copy(tmp_path, fetched_at)
 
     assert await _both(tmp_path, monkeypatch) == (old, old)
+
+
+@pytest.mark.asyncio
+async def test_a_manifest_without_its_date_is_old_for_both(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sin `fetched_at` no se sabe la edad de la copia: vieja para los dos.
+    (Antes el dashboard la daba por nueva; ahora rige la regla unificada.)"""
+    _copy(tmp_path, NOW)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"version": "v", "product_count": 1}), encoding="utf-8")
+
+    assert await _both(tmp_path, monkeypatch) == (True, True)
+    assert (await catalog_api.get_snapshot())["age_minutes"] is None
