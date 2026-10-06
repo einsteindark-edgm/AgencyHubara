@@ -10,10 +10,11 @@
 #     aceptar ver opciones no es confirmar;
 #   - asunto nuevo `gusto` (dice qué le gusta o para quién es): sin fila del
 #     contrato (no pide tool), su regla ② son las palabras de recomendar y ③
-#     pide el complemento si solo listó. Su etiqueta es una descripción neutra
-#     (también es una opción del clasificador de Jev, `msg.{k}.topic`): la
-#     instrucción de recomendar una o dos opciones vive en el guion de la
-#     etapa (revisión del PR #390);
+#     pide el complemento si solo listó. Su etiqueta es descriptiva y sin
+#     imperativo, porque también es una opción del clasificador de Jev
+#     (`msg.{k}.topic`), pero dice que espera una recomendación para que ③
+#     no dé por atendido un listado; la instrucción de recomendar una o dos
+#     opciones vive en el guion de la etapa (revisiones del PR #390);
 #   - la nota de «quiere ver opciones» pide recomendar si dijo para quién es.
 #
 # El turno del paquete `ventas-2`: el de `ventas@1` con la regla ② de
@@ -71,9 +72,9 @@ questionnaire:
     - {id: foto, label: "la foto", hint: "pregunta por una foto que envió o citó"}
     - {id: saludo, label: "saludo", hint: "saluda"}
     - {id: promocion, label: "promociones o cupones", hint: "pregunta por promociones, descuentos o un cupón"}
-    # ventas-3: etiqueta neutra (es una opción del clasificador); la instrucción
-    # de recomendar una o dos opciones está en el guion de la etapa.
-    - {id: gusto, label: "lo que le gusta o para quién es", hint: "dice qué le gusta o para quién es (un gusto, un regalo, una persona o una ocasión)"}
+    # ventas-3: etiqueta descriptiva sin imperativo (es una opción del
+    # clasificador y la lee ③); la instrucción de recomendar está en el guion.
+    - {id: gusto, label: "lo que le gusta o para quién es (espera una recomendación)", hint: "dice qué le gusta o para quién es (un gusto, un regalo, una persona o una ocasión)"}
 
   questions:
     - each_topic:

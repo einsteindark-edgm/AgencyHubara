@@ -309,7 +309,7 @@ const QUESTIONS: Record<string, string> = {
   "contactar.sobra": "¿Sobra escribirle?",
   "contactar.terminada": "¿La conversación ya terminó?",
   "cortesia.solo": "¿Solo agradece o saluda, sin pedir nada?",
-  // ventas-3: se pregunta cuando el mensaje abre el episodio tras un día o más sin escribirle.
+  // ventas-3: se pregunta cuando la tienda no le escribe hace un día o más (o nunca le escribió).
   "cortesia.saludo_solo": "¿Es solo un saludo, sin agradecer ni contar nada?",
   "relevo.promete": "¿El mensaje promete que un colega lo atiende?",
   "cierre.etiqueta": "¿Con qué etiqueta cierra?",

@@ -39,12 +39,37 @@ def test_variants_script_asks_for_the_yes_with_the_total_before_the_form() -> No
     assert step.index("¿lo dejamos así?") < step.index("request_shipping_details")
 
 
-def test_the_form_is_not_introduced_by_the_agent() -> None:
-    """El formulario trae su propio mensaje (PR #392): el paso 7 no le pone
-    una frase delante."""
-    step = next(line for line in _stage("etapa_variantes").splitlines() if line.startswith("7. "))
+WORKSPACE = STAGES.parent
+#: El formulario trae su propio mensaje (PR #392): ningún guion le pone una
+#: frase delante. Con las variantes completas la etapa ya es
+#: `etapa_datos_envio` (`funnel_stage.py`), así que no basta con el paso 7:
+#: lo que está cargado en ese turno (el núcleo `sales_script`) también la
+#: ordenaba (segunda revisión del PR #390).
+FORM_INTRO = "Para coordinar tu envío"
+#: Excepción temporal: `etapa_datos_envio/SKILL.md` lo corrige el PR #392, que
+#: se mergea ANTES que este. Al actualizar con main, si ya no trae la frase,
+#: esta excepción se quita.
+NOT_YET = {"skills/etapa_datos_envio/SKILL.md"}
 
-    assert "Para coordinar tu envío" not in step
+
+def test_the_form_is_not_introduced_by_the_agent() -> None:
+    offenders = [
+        str(path.relative_to(WORKSPACE))
+        for path in sorted(WORKSPACE.rglob("*.md"))
+        if str(path.relative_to(WORKSPACE)) not in NOT_YET and FORM_INTRO in path.read_text(encoding="utf-8")
+    ]
+
+    assert offenders == []
+
+
+def test_the_core_script_asks_for_the_yes_with_the_total_before_the_form() -> None:
+    """El ejemplo del núcleo («Sí, la quiero» sin color) se saltaba el sí con
+    el total y mandaba directo al formulario."""
+    core = (STAGES / "sales_script" / "SKILL.md").read_text(encoding="utf-8")
+    example = next(line for line in core.splitlines() if '"Sí, la quiero"' in line)
+
+    assert "en productos, ¿lo dejamos así?" in example
+    assert example.index("¿lo dejamos así?") < example.index("request_shipping_details")
 
 
 @pytest.mark.parametrize("name", ["etapa_descubrimiento", "etapa_variantes"])

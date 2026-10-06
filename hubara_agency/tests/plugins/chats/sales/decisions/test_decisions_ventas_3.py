@@ -9,8 +9,8 @@ más (esta prueba lo exige, como `test_decisions_ventas_2.py`):
   dio 0,94 a «solo cortesía» y el turno contestó «Buenos días 🤍» sin invitar
   a seguir; en el turno 2 el bot dio la bienvenida de marca. Un saludo solo
   con el que el cliente abre la conversación no es cortesía (la pregunta lo
-  dice ahora). Cuando el mensaje abre el episodio y la tienda no escribe
-  hace 24 horas o más (o nunca escribió), Jev contesta además si es SOLO un
+  dice ahora). Cuando la tienda no le escribe hace 24 horas o más (o nunca
+  le escribió), abra o no un episodio, Jev contesta además si es SOLO un
   saludo (`cortesia.saludo_solo`, con la vista genérica `reply_gap`): si lo
   es, no es cortesía aunque `cortesia.solo` diga que sí. Un «gracias» tardío
   («Gracias, me llegó y está divina» a las 48 h, «Muchas gracias» a una
@@ -149,14 +149,16 @@ def test_ventas_3_is_ventas_2_with_these_changes_and_nothing_else() -> None:
     assert {**_load(V3 / "bundle.yaml"), "id": "ventas-2", "version": 2} == _load(V2 / "bundle.yaml")
 
 
-#: Abre el episodio y la tienda no escribe hace un día o más (o nunca).
-OPENS_AFTER_A_DAY = "inp.opens_episode == true && (inp.hours_since_store == null || inp.hours_since_store >= 24)"
+#: La tienda no le escribe hace un día o más (o nunca le escribió). No exige
+#: que el mensaje abra el episodio: uno puede seguir abierto hasta 14 días y
+#: un «Buenas» dentro de él tampoco es cortesía (segunda revisión del PR #390).
+QUIET_FOR_A_DAY = "inp.hours_since_store == null || inp.hours_since_store >= 24"
 
 
 def test_cortesia_adds_the_view_the_greeting_question_and_a_row_and_keeps_the_rest() -> None:
     """La fila nueva no decide sola por la hora: exige que Jev diga que el
     mensaje es SOLO un saludo (revisión del PR #390). La pregunta nueva se
-    hace solo cuando importa (abre el episodio tras un día o más)."""
+    hace solo cuando importa (la tienda no escribe hace un día o más)."""
     _need_v3()
     old, new = _load(V2 / "capabilities/cortesia.yaml"), _load(V3 / "capabilities/cortesia.yaml")
 
@@ -164,10 +166,10 @@ def test_cortesia_adds_the_view_the_greeting_question_and_a_row_and_keeps_the_re
     solo, greeting = new["questions"]
     assert solo["id"] == "cortesia.solo" and solo["kind"] == "noul"
     assert "«buenas»" in solo["text"] and "NO es cortesía" in solo["text"]
-    assert (greeting["id"], greeting["kind"], greeting["when"]) == ("cortesia.saludo_solo", "noul", OPENS_AFTER_A_DAY)
+    assert (greeting["id"], greeting["kind"], greeting["when"]) == ("cortesia.saludo_solo", "noul", QUIET_FOR_A_DAY)
     assert "sin agradecer, elogiar, contar algo ni despedirse" in greeting["text"]
     assert new["decide"][0] == {
-        "when": f"{OPENS_AFTER_A_DAY} && 'cortesia.saludo_solo' in p && p['cortesia.saludo_solo'] >= th['yes']",
+        "when": f"({QUIET_FOR_A_DAY}) && 'cortesia.saludo_solo' in p && p['cortesia.saludo_solo'] >= th['yes']",
         "then": False,
     }
     assert new["decide"][1:] == old["decide"]
@@ -226,9 +228,9 @@ def test_the_turn_changes_only_the_purchase_hint_the_new_topic_its_rule_and_one_
         "id": "confirma_compra", "label": "confirmación de compra",
         "hint": "confirma la compra o el pedido que el asesor le propuso (pedir algo, elegir o aceptar ver opciones no es confirmar)",
     }]
-    # La etiqueta es una opción del clasificador de Jev: descripción neutra,
-    # sin instrucciones para el LLM (revisión del PR #390).
-    assert (gusto["id"], gusto["label"]) == ("gusto", "lo que le gusta o para quién es")
+    # La etiqueta es una opción del clasificador de Jev y la lee ③: descriptiva
+    # y sin imperativo, pero dice qué se espera (revisiones del PR #390).
+    assert (gusto["id"], gusto["label"]) == ("gusto", "lo que le gusta o para quién es (espera una recomendación)")
     assert new["coverage"] == {**old["coverage"], "gusto": new["coverage"]["gusto"]}
     assert new["reading"]["any"] == old["reading"]["any"]
     answered = {k: v for k, v in new["reading"]["answered"].items() if k != "ver_opciones"}
@@ -343,16 +345,51 @@ async def test_the_thanks_to_a_recent_notice_is_still_decided_by_jev(monkeypatch
     """Caso del 2026-09-29: el ETA avisó «¿Nos confirmas…?» hace una hora y el
     cliente contestó «Hola… Muchas gracias»: abre el episodio, pero la tienda
     acaba de escribir. Decide Jev, como en `ventas-2`, y la pregunta del
-    saludo solo ni se hace (tampoco dentro del episodio)."""
+    saludo solo ni se hace (el costo es el mismo: una llamada, una pregunta)."""
     _need_v3()
     fake = _jev(monkeypatch, _noul("cortesia.solo", 0.9), _noul("cortesia.saludo_solo", 0.95))
     _use(monkeypatch, "ventas-3")
 
     recent = await _decide("cortesia", _returning("Hola cómo están? Son geniales. Muchas gracias", store_hours_ago=1))
-    inside = await _decide("cortesia", _returning("Muchas gracias", store_hours_ago=264, opens=False))
 
-    assert (recent.value, inside.value) == (True, True)
-    assert [asked for _state, asked in fake.calls] == [("cortesia.solo",), ("cortesia.solo",)]
+    assert recent.value is True
+    assert [asked for _state, asked in fake.calls] == [("cortesia.solo",)]
+
+
+async def test_a_bare_greeting_inside_an_open_episode_is_not_courtesy_either(monkeypatch) -> None:
+    """Segunda revisión del PR #390: un episodio puede seguir abierto hasta 14
+    días. «Buenas» dentro de él, a las 264 h del último mensaje de la tienda,
+    tampoco es cortesía (antes la fila exigía que el mensaje abriera el
+    episodio y salía el «Buenos días» a secas). La pregunta del saludo solo va
+    en la misma llamada."""
+    _need_v3()
+    fake = _jev(monkeypatch, *ONLY_A_GREETING)
+    _use(monkeypatch, "ventas-3")
+
+    verdict = await _decide("cortesia", _returning("Buenas", store_hours_ago=264, opens=False))
+
+    assert verdict.value is False
+    assert [asked for _state, asked in fake.calls] == [("cortesia.solo", "cortesia.saludo_solo")]
+
+
+@pytest.mark.parametrize(("text", "hours", "solo", "expected"), [
+    ("Hola, gracias", 2, 0.9, True),  # la tienda escribió hace 2 h: decide `cortesia.solo`
+    ("Muchas gracias", 264, 0.9, True),  # un agradecimiento tardío dentro del episodio sigue siendo cortesía
+])
+async def test_inside_an_open_episode_a_thanks_is_decided_by_cortesia_solo(
+    monkeypatch, text: str, hours: int, solo: float, expected: bool,
+) -> None:
+    _need_v3()
+    fake = _jev(monkeypatch, _noul("cortesia.solo", solo), _noul("cortesia.saludo_solo", 0.05))
+    _use(monkeypatch, "ventas-3")
+
+    verdict = await _decide("cortesia", _returning(text, store_hours_ago=hours, opens=False))
+
+    assert verdict.value is expected
+    asked_greeting = hours >= 24
+    assert [asked for _state, asked in fake.calls] == [
+        ("cortesia.solo", "cortesia.saludo_solo") if asked_greeting else ("cortesia.solo",)
+    ]
 
 
 # ── cortesía de punta a punta por el ingest (gotcha 1: verificar comportamiento) ──
