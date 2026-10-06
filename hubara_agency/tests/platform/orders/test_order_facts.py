@@ -11,6 +11,7 @@ fake oficial (`InMemoryOrderFacts`) deben comportarse igual.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 
