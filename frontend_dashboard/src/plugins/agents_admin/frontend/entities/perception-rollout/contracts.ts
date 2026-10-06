@@ -59,6 +59,8 @@ export const rolloutSchema = z.object({
   // Motor de decisiones (F7). Una API vieja no los trae: todo en reglas y V1.
   capabilities: z.record(z.string(), capabilityControlSchema).catch({}).default({}),
   workflow_v2: workflowControlSchema.catch(WORKFLOW_OFF).default(WORKFLOW_OFF),
+  // ¿Los números de prueba deciden con Jev? (2026-10-06; una API vieja no lo trae: no).
+  test_numbers_jev: z.boolean().catch(false).default(false),
 });
 
 // ── El motor de decisiones: su versión y lo que decide (2026-10-02) ─────────

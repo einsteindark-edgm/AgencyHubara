@@ -1,7 +1,8 @@
 """Cast agents_admin→chats del encendido del bot nuevo (plan del laboratorio
 PR 16): el panel de Agents solo habla con `/api/agents/perception/rollout`;
 el cast reenvía al contrato `perception-rollout@v1` de chats con el
-Authorization del operador y con los fallos honestos de castkit (L-1)."""
+Authorization del operador y con los fallos honestos de castkit (L-1). Solo
+lee: los cambios van por comando (2026-10-06)."""
 from __future__ import annotations
 
 from typing import Any
@@ -51,41 +52,26 @@ def test_get_forwards_to_the_chats_contract(monkeypatch) -> None:
     assert capture["headers"]["Authorization"] == "Bearer operador"
 
 
-def test_put_forwards_the_body_and_a_422_passes_through(monkeypatch) -> None:
+def test_the_cast_only_reads_changes_go_by_command(monkeypatch) -> None:
+    """Desde el 2026-10-06 el bot nuevo se cambia solo por comando
+    (`decisions/control.py`): el cast no tiene PUT y nada llega a chats."""
     capture: dict[str, Any] = {}
-    client = _client(monkeypatch, result=httpx.Response(422, json={"detail": {"reason": "not_ready", "failing": ["shadow_days"]}}),
-                     capture=capture)
+    client = _client(monkeypatch, result=httpx.Response(200, json={}), capture=capture)
 
-    res = client.put("/api/agents/perception/rollout", json={"mode": "on"})
+    for path, body in (
+        ("rollout", {"mode": "on"}),
+        ("capabilities", {"capability": "baja", "mode": "shadow"}),
+        ("workflow", {"mode": "canary"}),
+    ):
+        assert client.put(f"/api/agents/perception/{path}", json=body).status_code in (404, 405)
 
-    assert capture["method"] == "PUT" and capture["json"] == {"mode": "on"}
-    assert res.status_code == 422 and res.json()["detail"]["failing"] == ["shadow_days"]
+    assert capture == {}
 
 
-def test_a_timeout_is_504_outcome_unknown(monkeypatch) -> None:
+def test_a_timeout_is_504(monkeypatch) -> None:
     client = _client(monkeypatch, exc=httpx.ReadTimeout("read"))
 
-    res = client.put("/api/agents/perception/rollout", json={"mode": "off"})
-
-    assert res.status_code == 504 and "PUEDE haberse aplicado" in res.json()["detail"]
-
-
-def test_the_engine_controls_forward_to_their_chats_endpoints(monkeypatch) -> None:
-    """Motor de decisiones (F7): el interruptor de cada capacidad y la versión
-    del workflow viajan por el mismo cast."""
-    capture: dict[str, Any] = {}
-    client = _client(monkeypatch, result=httpx.Response(200, json={"capabilities": {}}), capture=capture)
-
-    res = client.put("/api/agents/perception/capabilities", json={"capability": "baja", "mode": "shadow"})
-
-    assert res.status_code == 200
-    assert capture["url"] == "http://chats.internal:8000/api/chats/perception/capabilities"
-    assert capture["json"] == {"capability": "baja", "mode": "shadow"}
-
-    client.put("/api/agents/perception/workflow", json={"mode": "canary"})
-
-    assert capture["url"] == "http://chats.internal:8000/api/chats/perception/workflow"
-    assert capture["json"] == {"mode": "canary"}
+    assert client.get("/api/agents/perception/rollout").status_code == 504
 
 
 def test_the_decision_engine_reaches_the_chats_contract(monkeypatch) -> None:

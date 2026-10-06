@@ -158,6 +158,24 @@ def write_workflow_mode(vault_dir: Path, mode: str) -> None:
     _write(vault_dir, {**read_decisions_state(vault_dir), "workflow_v2": str(mode)})
 
 
+def write_test_numbers_jev(vault_dir: Path, enabled: bool) -> None:
+    """Guarda si los números de prueba deciden con Jev (ver `bot_for_session`)."""
+    _write(vault_dir, {**read_decisions_state(vault_dir), "test_numbers_jev": bool(enabled)})
+
+
+def jev_for_test_numbers(vault_dir: Path) -> bool:
+    """¿Los números de prueba deciden con Jev? Sin guardar o raro = no."""
+    return read_decisions_state(Path(vault_dir)).get("test_numbers_jev") is True
+
+
+def _capped(mode: str, ceiling: str) -> str:
+    """`mode` sin pasar el techo de Terraform."""
+    order = list(MODES)
+    mode = mode if mode in order else "off"
+    ceiling = ceiling if ceiling in order else "off"
+    return order[min(order.index(mode), order.index(ceiling))]
+
+
 def _ceiling(name: str) -> str:
     value = (os.getenv(name) or "off").strip().lower()
     return value if value in MODES else "off"
@@ -216,10 +234,22 @@ def bot_for_session(session_id: str, *, vault_dir: Path | None) -> Bot:
     workflow_mode = _effective(
         data.get("workflow_v2"), base, ceiling=_ceiling("SALES_WORKFLOW_V2_CEILING"), session_id=session_id
     )
+    layers = _effective(base.mode, base, ceiling=_ceiling("SALES_PERCEPTION_MODE_CEILING"), session_id=session_id)
+    default_provider = "reglas"
+    if data.get("test_numbers_jev") is True and session_id in base.test_numbers:
+        # Los números de prueba deciden con Jev (decisión del operador,
+        # 2026-10-06): todas las capacidades y las capas en canary, sin pasar
+        # los techos de Terraform. Solo esos números: los clientes siguen con
+        # su modo (sin la espera de la sombra de las capacidades) y la vara
+        # sigue exigida para todo lo que les llega a ellos.
+        providers = {}
+        default_provider = _PROVIDER_OF_MODE[_capped("canary", cap_ceiling)]
+        layers = _capped("canary", _ceiling("SALES_PERCEPTION_MODE_CEILING"))
     return Bot(
         id="produccion",
         workflow=WORKFLOW_V2 if workflow_mode in ("canary", "on") else WORKFLOW_V1,
         profile=(os.getenv("SALES_PERCEPTION_PROFILE") or "").strip() or DEFAULT_PROFILE,
-        layers=_effective(base.mode, base, ceiling=_ceiling("SALES_PERCEPTION_MODE_CEILING"), session_id=session_id),
+        layers=layers,
         providers=providers,
+        default_provider=default_provider,
     )
