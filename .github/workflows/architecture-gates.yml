@@ -171,9 +171,13 @@ jobs:
           tests/plugins/chats/test_ingest_keeps_concurrent_writes.py
           tests/plugins/chats/test_ingest_damaged_metadata.py
           tests/plugins/orders/test_emit_stage_keeps_concurrent_changes.py
+          tests/plugins/chats/test_dashboard_damaged_metadata.py
           tests/plugins/chats/test_session_actions_api.py::test_escalate_over_a_damaged_document_still_routes_to_a_human
           tests/plugins/chats/test_session_actions_api.py::test_a_tag_over_a_damaged_document_is_applied_over_the_last_good_copy
           tests/plugins/chats/sales/test_register_order_tool.py::test_register_order_handles_corrupted_metadata_gracefully
+          tests/plugins/chats/sales/test_payment_pending_closure.py::test_safety_net_acts_over_a_damaged_document_from_the_last_good_copy
+          tests/plugins/chats/sales/test_payment_pending_closure.py::test_closing_escalation_acts_over_a_damaged_document_from_the_last_good_copy
+          tests/plugins/orders/test_emit_stage_capi_value.py::test_a_stage_event_is_queued_over_a_damaged_chat_from_its_last_good_copy
 
       - name: Premortem invariants (compose drift + paridad k8s + colas únicas)
         # Complementa el modo `strict: false` de la branch protection. Dos PRs de

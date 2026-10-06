@@ -161,7 +161,9 @@ def test_the_medusa_sync_never_creates_a_chat_that_does_not_exist(tmp_path: Path
     assert not path.exists()
 
 
-def test_the_medusa_sync_never_writes_over_an_unreadable_chat(tmp_path: Path) -> None:
+def test_the_medusa_sync_does_not_invent_a_damaged_chat_without_a_good_copy(tmp_path: Path) -> None:
+    """Dañado y sin copia buena (`metadata.json.prev`): no hay chat sobre el
+    cual aplicar el pago, así que no se escribe nada."""
     from src.platform.orders.medusa_order_command import _apply_to_chat_metadata
 
     path = tmp_path / SESSION / "metadata.json"
@@ -171,3 +173,26 @@ def test_the_medusa_sync_never_writes_over_an_unreadable_chat(tmp_path: Path) ->
 
     assert _apply_to_chat_metadata(path, _mark_paid) is False
     assert path.read_bytes() == before
+
+
+@pytest.mark.asyncio
+async def test_the_route_claim_works_over_a_damaged_chat_from_its_last_good_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`claim_conversation_routing` leía el archivo directo y LANZABA ante un
+    daño («no se reescribe una sesión que no se pudo leer»), contra la
+    decisión del operador: se recupera de la última copia buena."""
+    import src.platform.temporal.activities as temporal_activities
+
+    monkeypatch.setattr(temporal_activities, "WORKSPACE_VAULT_DIR", tmp_path)
+    path = _seed(tmp_path, _chat())
+    path.with_name("metadata.json.prev").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    path.write_text('{"active_route": "ventas", "episodes": [', encoding="utf-8")
+
+    try:
+        await temporal_activities.claim_conversation_routing(SESSION, "remarketing")
+    except ValueError as exc:
+        pytest.fail(f"claim_conversation_routing lanzó ante un archivo dañado: {exc!r}")
+
+    data = _read(path)
+    assert (data["active_route"], data["phone_number_id"]) == ("remarketing", "PHONE_TEST")

@@ -239,3 +239,37 @@ async def test_closing_escalation_missing_metadata_is_noop(_isolate_vault_dir: P
         ensure_closing_escalation_activity, "wa_nope", "ORDER_PENDING_SHIPPING_DETAILS", "x"
     )
     assert escalated is False
+
+
+# --- metadata.json dañado (PR #393) ---------------------------------------------
+# Las redes leían el archivo directo y no hacían nada ante un daño; la decisión
+# del operador es recuperar con la última copia buena (`metadata.json.prev`).
+
+
+def _damage_with_last_good(vault: Path, last_good: dict) -> Path:
+    md = _write_metadata(vault, last_good)
+    md.with_name("metadata.json.prev").write_text(json.dumps(last_good), encoding="utf-8")
+    md.write_text('{"active_route": "ventas", "episodes": [', encoding="utf-8")
+    return md
+
+
+async def test_safety_net_acts_over_a_damaged_document_from_the_last_good_copy(_isolate_vault_dir: Path):
+    md = _damage_with_last_good(_isolate_vault_dir, _active_episode_metadata())
+
+    result = await _run()
+
+    assert (result.acted, result.escalated) == (True, True), "la red no hizo nada ante un archivo dañado"
+    data = json.loads(md.read_text(encoding="utf-8"))
+    assert data["active_route"] == "humano"
+    assert data["episodes"][-1]["closing_tag"] == "CONFIRMADO_PAGO_PENDIENTE"
+
+
+async def test_closing_escalation_acts_over_a_damaged_document_from_the_last_good_copy(_isolate_vault_dir: Path):
+    data = _active_episode_metadata()
+    data["episodes"][-1]["closed_at_ms"] = _FIXED_MS - 5_000
+    data["episodes"][-1]["closing_tag"] = "CONFIRMADO_SIN_DATOS"
+    data["tag"] = "CONFIRMADO_SIN_DATOS"
+    md = _damage_with_last_good(_isolate_vault_dir, data)
+
+    assert await _run_escalation() is True, "la red no escaló ante un archivo dañado"
+    assert json.loads(md.read_text(encoding="utf-8"))["active_route"] == "humano"

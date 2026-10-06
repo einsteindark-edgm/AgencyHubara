@@ -22,7 +22,7 @@ from src.plugins.chats.shared.turn_view import annotate_turn_keys
 from src.sdk.connectorkit import fetch_meta_ad_names, meta_marketing_token
 from src.sdk.dashboardkit import DashboardEvent, get_dashboard_event_bus
 from src.sdk.messagingkit import postponed_view
-from src.sdk.runtime import BoundedTTLCache
+from src.sdk.runtime import BoundedTTLCache, FilesystemMetadataStore
 
 router = APIRouter()
 
@@ -565,11 +565,11 @@ async def list_dashboard_sessions():
     # `metadata.json` por sesion candidata - el estado real de esos pedidos se
     # resuelve DESPUES, en una sola lectura de OrderFacts (no N por sesion).
     session_data: dict[str, dict] = {}
+    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
 
     for entry in os.listdir(WORKSPACE_VAULT_DIR):
         session_path = WORKSPACE_VAULT_DIR / entry
         if session_path.is_dir() and entry.startswith("wa_"):
-            metadata_file = session_path / "metadata.json"
             tag = "NO_ETIQUETADO"
             motivo = "Sin diagnóstico todavía"
             active_route = "ventas"
@@ -579,23 +579,23 @@ async def list_dashboard_sessions():
             origin = None
             postponed = None
 
-            if metadata_file.exists():
-                try:
-                    data = json.loads(metadata_file.read_text(encoding="utf-8"))
-                    tag = data.get("tag", tag)
-                    motivo = data.get("motivo", motivo)
-                    active_route = data.get("active_route", active_route)
-                    phone_number_id = data.get("phone_number_id")
-                    pending_payment_order_id = (
-                        _pending_payment_order_id_from_metadata(data)
-                    )
-                    session_data[entry] = data
-                    origin = session_origin(data)
-                    # Filtro "Pospuestos": dijo cuándo retoma y aún no quedó
-                    # SIN_RESPUESTA (la regla vive en messagingkit).
-                    postponed = postponed_view(data, int(time.time() * 1000))
-                except json.JSONDecodeError:
-                    pass
+            # Por el store: un archivo dañado se lee de su última copia buena
+            # (antes: con JSON roto una conversación humana salía como del bot,
+            # y con UTF-8 inválido o sin permiso la lista entera fallaba).
+            data = metadata_store.read(entry)
+            if data:
+                tag = data.get("tag", tag)
+                motivo = data.get("motivo", motivo)
+                active_route = data.get("active_route", active_route)
+                phone_number_id = data.get("phone_number_id")
+                pending_payment_order_id = (
+                    _pending_payment_order_id_from_metadata(data)
+                )
+                session_data[entry] = data
+                origin = session_origin(data)
+                # Filtro "Pospuestos": dijo cuándo retoma y aún no quedó
+                # SIN_RESPUESTA (la regla vive en messagingkit).
+                postponed = postponed_view(data, int(time.time() * 1000))
             
             # Buscamos el timestamp de la ultima conversacion
             last_updated = 0
@@ -787,15 +787,10 @@ async def get_session_history(session_id: str):
     service_window_expires_at_ms = None
 
     # El metadata se lee ANTES de resolver las citas: el índice de burbujas
-    # salientes del bot/operador (`outbound_text_index`) vive ahí.
-    data: dict = {}
-    metadata_file = session_path / "metadata.json"
-    if metadata_file.exists():
-        try:
-            parsed = json.loads(metadata_file.read_text(encoding="utf-8"))
-            data = parsed if isinstance(parsed, dict) else {}
-        except json.JSONDecodeError:
-            data = {}
+    # salientes del bot/operador (`outbound_text_index`) vive ahí. Con el
+    # store, como la bandeja: un archivo dañado se muestra desde su última
+    # copia buena (antes, del bot con un JSON roto y un 500 sin permiso).
+    data: dict = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
 
     _resolve_reply_quotes(messages, data.get("outbound_text_index"))
     # Cada burbuja con el turno del bot que la produjo: el panel pone un botón

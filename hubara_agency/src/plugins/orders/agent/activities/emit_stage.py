@@ -74,19 +74,15 @@ async def _emit_stage_capi(session_id: str, order_id: str, to_stage: str) -> Non
     Corre dentro de la activity (durable). Best-effort: nunca bloquea la
     notificación ETA. Dedupe extra contra el cierre humano (cancelación),
     que puede haber encolado ``OrderCanceled`` con el id del draft."""
-    import json
-
     from src.sdk.connectorkit import enqueue_capi_event, flush_capi_outbox
 
     event_name = capi_event_for_stage(to_stage)
     if event_name is None:
         return
-    path = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
-    try:
-        metadata = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return
-    if not isinstance(metadata, dict):
+    # Por el store: un chat dañado se lee de la última copia buena (decisión
+    # del operador, 2026-10-06), así Meta no se queda sin el evento.
+    metadata = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
+    if not metadata:
         return
     known = [
         *(metadata.get("capi_outbox") or []),

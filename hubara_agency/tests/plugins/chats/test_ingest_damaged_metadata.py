@@ -3,11 +3,18 @@
 
 Un archivo dañado es un problema técnico: no pasa nada al equipo humano ni se
 traban las escrituras. El store se recupera solo con la última copia buena
-(`metadata.json.prev`) y deja una alerta; la conversación sigue como estaba
-(en humano, si estaba en humano; el bot no se despierta).
+(`metadata.json.prev`) y deja una alerta: la conversación sigue como estaba en
+ESA copia, que va una escritura atrás (N-1). Si lo último que se escribió fue
+la toma del operador, un daño justo después la PIERDE (el bot puede contestar
+hasta que el operador la tome otra vez); acá la copia buena ya tiene la ruta
+humana.
+
+Un error de lectura PASAJERO (EMFILE, EIO…) no es daño: la escritura del
+ingest falla, no toca nada y lo suyo queda pendiente para la siguiente.
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import time
@@ -161,26 +168,32 @@ async def test_a_pdf_receipt_goes_to_a_human_even_if_the_metadata_gets_damaged(
     assert metadata["registered_order"] == {"order_id": "order_1"}
 
 
-class _SkipsTheFirstWrite(FilesystemMetadataStore):
-    """Un store que no escribió la primera vez (devolvió None)."""
+def _failing_reads(monkeypatch: pytest.MonkeyPatch, name: str, times: int) -> None:
+    real_read_text = Path.read_text
+    left = {"n": times}
 
-    def __init__(self, vault: Path) -> None:
-        super().__init__(vault)
-        self.calls = 0
+    def read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self.name == name and left["n"] > 0:
+            left["n"] -= 1
+            raise OSError(errno.EMFILE, os.strerror(errno.EMFILE))
+        return real_read_text(self, *args, **kwargs)
 
-    def write_merged(self, session_id: str, **kw: Any) -> Any:
-        self.calls += 1
-        if self.calls == 1:
-            return None
-        return super().write_merged(session_id, **kw)
+    monkeypatch.setattr(Path, "read_text", read_text)
 
 
-def test_a_write_that_did_not_happen_is_still_pending(_isolate_vault_dir: Path) -> None:
-    """Segunda revisión del PR #393: tras una escritura que no se hizo, el
-    ingest daba lo suyo por escrito (`base` = sus cambios) y la escritura
-    siguiente ya no los llevaba. Solo cuenta como escrito lo que se escribió."""
-    store = _SkipsTheFirstWrite(_isolate_vault_dir)
-    store.write(SID, {"active_route": "humano", "tag": "HUMANO"})
+def test_a_write_that_failed_is_still_pending_and_the_session_untouched(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Revisión de la recuperación (1b6f9b83): tres EMFILE seguidos sobre un
+    documento SANO lo daban por dañado, lo apartaban y escribían la copia
+    vieja: la toma del humano (la última escritura) quedaba en el apartado y
+    en disco `ventas`. Ahora la escritura falla, la sesión no se toca y lo del
+    ingest sigue pendiente para la escritura siguiente (no se da por escrito)."""
+    store = FilesystemMetadataStore(_isolate_vault_dir)
+    store.write(SID, {"active_route": "ventas", "tag": "NO_ETIQUETADO"})
+    store.update(SID, lambda d: {**d, "active_route": "humano", "tag": "HUMANO"})  # la toma: última escritura
+    path = _isolate_vault_dir / SID / "metadata.json"
+    before = path.read_bytes()
     ingest = IngestInboundMessage(
         history_store=None,  # type: ignore[arg-type]
         load_session=None,  # type: ignore[arg-type]
@@ -189,10 +202,16 @@ def test_a_write_that_did_not_happen_is_still_pending(_isolate_vault_dir: Path) 
     base: dict[str, Any] = {"active_route": "humano", "tag": "HUMANO"}
     metadata: dict[str, Any] = {**base, "first_touch_origin": "direct"}
 
-    ingest._safe_write_metadata(SID, metadata, base)  # no se escribió
+    _failing_reads(monkeypatch, "metadata.json", 3)
+    ingest._safe_write_metadata(SID, metadata, base)  # falla (error pasajero)
+
+    assert path.read_bytes() == before, "un error pasajero pisó la toma del humano"
+    assert not list(path.parent.glob("metadata.json.damaged-*"))
     metadata["last_inbound_message_id"] = "wamid.2"
     ingest._safe_write_metadata(SID, metadata, base)
-
     on_disk = store.read(SID)
-    assert on_disk.get("first_touch_origin") == "direct", "se perdió lo de la escritura que no se hizo"
-    assert on_disk["last_inbound_message_id"] == "wamid.2"
+    assert (on_disk["active_route"], on_disk.get("first_touch_origin"), on_disk["last_inbound_message_id"]) == (
+        "humano",
+        "direct",
+        "wamid.2",
+    ), "se perdió lo de la escritura que falló"

@@ -379,22 +379,15 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
     from src.sdk.runtime import FilesystemMetadataStore
 
     session_dir = WORKSPACE_VAULT_DIR / session_id
-    metadata_file = session_dir / "metadata.json"
-    if not metadata_file.exists():
-        return []
-    try:
-        data = json.loads(metadata_file.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        activity.logger.warning(
-            "flush_ui_intents.bad_metadata",
-            extra={"session_id": session_id},
-        )
-        return []
+    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    # Por el store: un metadata dañado se lee de la última copia buena
+    # (decisión del operador, 2026-10-06). Esa copia va una escritura atrás:
+    # si trae una tarjeta ya entregada, el registro de entregas la frena.
+    data = store.read(session_id)
 
     intents = [it for it in (data.get("pending_ui_intents") or []) if isinstance(it, dict)]
     if not intents:
         return []
-    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
 
     # Una tarjeta entregada no vuelve a salir (incidente 2026-10-06): un
     # intent que ya figura en el registro de entregas volvió a la cola por una
@@ -1719,14 +1712,8 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
     metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
     if not metadata_file.exists():
         return
-    try:
-        json.loads(metadata_file.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
-        activity.logger.warning(
-            "flush_ui_intents.flow_awaiting_flag_read_failed",
-            extra={"session_id": session_id, "error": str(e)},
-        )
-        return
+    # Un metadata dañado ya no aborta: `update()` lo recupera con la última
+    # copia buena (decisión del operador, 2026-10-06).
 
     try:
         # SDK-native: estable entre retries de esta activity attempt.

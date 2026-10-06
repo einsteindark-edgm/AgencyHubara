@@ -184,3 +184,16 @@ def _decisions_bundle_from_the_test(monkeypatch: pytest.MonkeyPatch) -> None:
     suites de paridad y del texto que ve el LLM medían otro paquete
     (premortem 2026-10-02)."""
     monkeypatch.delenv("SALES_DECISIONS_BUNDLE", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _metadata_damage_tracking_per_test() -> Iterator[None]:
+    """La recuperación de un `metadata.json` dañado alerta una vez por episodio
+    y repara en un hilo aparte (`src.platform.state`): estado del proceso. Cada
+    prueba arranca sin episodios vistos y espera las reparaciones que dejó
+    en curso antes de que otra empiece."""
+    from src.platform import state
+
+    state.reset_damage_tracking()
+    yield
+    state.reset_damage_tracking()

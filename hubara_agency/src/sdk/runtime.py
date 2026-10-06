@@ -26,12 +26,16 @@ Notas de diseño:
   ``metadata.json``: una copia vieja escrita entera devolvió a la cola una foto
   ya entregada (incidente 2026-10-06; gate
   ``tests/platform/test_metadata_json_single_writer.py``). Un ``metadata.json``
-  dañado se recupera solo, sin que el llamador haga nada: la lectura devuelve
-  la última copia buena (``metadata.json.prev``, que el store rota en cada
-  escritura sana) con un ERROR en el log, y la escritura aparta el dañado una
-  vez (``metadata.json.damaged-<ms>``) y escribe sobre esa copia; nada pasa al
-  equipo humano por eso. Estado process-wide NUEVO exige ``clear()`` +
-  fixture autouse (lección L-2).
+  dañado se recupera solo, sin que el llamador haga nada: ``read()`` (sin
+  esperar) devuelve la última copia buena (``metadata.json.prev``, que el store
+  rota después de cada escritura sana; va una escritura atrás: lo que cambió la
+  última escritura antes del daño se pierde) y repara en un
+  hilo aparte con una alerta por episodio; la escritura aparta el dañado una
+  vez (``metadata.json.damaged-<ms>``) y escribe sobre esa copia. Nada pasa al
+  equipo humano por eso. Un error de lectura PASAJERO (EMFILE, EIO…) no es
+  daño: la escritura lanza y no toca nada. Lee siempre con ``read()``, nunca
+  el archivo directo. Estado process-wide NUEVO exige ``clear()`` + fixture
+  autouse (lección L-2).
 - ``atomic_write_json`` es la única forma sancionada de escribir JSON al
   vault (write-rename, sin archivos a medio escribir) — para los demás
   archivos; ``metadata.json`` va por el store.

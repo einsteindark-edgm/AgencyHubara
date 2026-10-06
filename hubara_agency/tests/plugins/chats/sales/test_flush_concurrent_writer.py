@@ -166,6 +166,50 @@ async def test_intent_already_delivered_is_not_sent_again(
 
 
 @pytest.mark.asyncio
+async def test_a_photo_sent_right_before_the_file_got_damaged_is_not_sent_again(
+    vault: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La copia buena va una escritura atrás (N-1): si `metadata.json` se daña
+    justo después de que el flush sacó la foto de la cola, la recuperación la
+    devuelve a la cola. El registro de entregas (fuera de `metadata.json`) la
+    frena: no sale dos veces y se vuelve a sacar."""
+    import src.platform.state as state
+    from src.platform.state import FilesystemMetadataStore
+    from src.platform.whatsapp import client as wa_client
+    from src.plugins.chats.agent.sales.activities import flush_ui_intents
+
+    monkeypatch.setattr(state, "_run_in_background", lambda job: job(), raising=False)
+    path = _seed(vault, [_photo_intent()])
+    send_image = AsyncMock(return_value=SimpleNamespace(ok=True, wa_message_id=PHOTO_WAMID, error=None))
+    monkeypatch.setattr(wa_client, "send_image", send_image)
+
+    assert await flush_ui_intents.flush_pending_ui_intents(SESSION) == 1
+    path.write_text('{"pending_ui_intents": [', encoding="utf-8")  # se daña justo después
+
+    recovered = FilesystemMetadataStore(vault).read(SESSION)
+    assert [i["id"] for i in recovered["pending_ui_intents"]] == ["foto-t4"], "N-1: la foto vuelve a la cola"
+    assert await flush_ui_intents.flush_pending_ui_intents(SESSION) == 0
+    assert send_image.await_count == 1, "la foto salió dos veces"
+    assert FilesystemMetadataStore(vault).read(SESSION)["pending_ui_intents"] == [], "quedó en la cola"
+
+
+def test_the_flow_flag_is_written_over_a_damaged_document(vault: Path) -> None:
+    """`_mark_flow_awaiting_reply` leía el archivo directo y no marcaba nada
+    ante un daño (el ghosting cerraba a los 5 min): lee con la recuperación."""
+    from src.platform.state import FilesystemMetadataStore
+    from src.plugins.chats.agent.sales.activities import flush_ui_intents
+
+    path = _seed(vault, [])
+    path.with_name("metadata.json.prev").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    path.write_text('{"pending_ui_intents": [', encoding="utf-8")
+
+    flush_ui_intents._mark_flow_awaiting_reply("573001234567")
+
+    flag = FilesystemMetadataStore(vault).read(SESSION).get("shipping_flow_awaiting_reply_since_ms")
+    assert isinstance(flag, int), "no se marcó el Flow pendiente sobre un archivo dañado"
+
+
+@pytest.mark.asyncio
 async def test_a_new_intent_queued_during_the_flush_is_kept(vault: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Lo que una tool encola mientras el flush envía no se pierde: el flush
     saca SOLO lo que mandó."""

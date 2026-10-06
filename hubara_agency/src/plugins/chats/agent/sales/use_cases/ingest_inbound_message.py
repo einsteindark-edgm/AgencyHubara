@@ -1892,12 +1892,13 @@ class IngestInboundMessage:
         `before_merge`: ver `FilesystemMetadataStore.write_merged`.
 
         Solo si escribió, `base` pasa a ser `data`: lo ya escrito deja de
-        contar como cambio en la escritura siguiente. Una escritura que no se
-        hizo NO cuenta como hecha: sus cambios siguen pendientes para la
-        siguiente (segunda revisión del PR #393). Best-effort: un fallo se
+        contar como cambio en la escritura siguiente. Una escritura que falló
+        (p. ej. un error de lectura pasajero bajo el candado: el store lanza y
+        no toca nada) NO cuenta como hecha: sus cambios siguen pendientes para
+        la siguiente (segunda revisión del PR #393). Best-effort: un fallo se
         loguea y el mensaje del cliente sigue su camino."""
         try:
-            written = self._metadata_store.write_merged(
+            self._metadata_store.write_merged(
                 session_id,
                 base=base,
                 ours=data,
@@ -1909,9 +1910,6 @@ class IngestInboundMessage:
                 session=session_id,
                 error=f"{type(exc).__name__}: {exc}"[:200],
             )
-            return
-        if written is None:
-            logger.info("metadata_write_not_done", session=session_id)
             return
         _rebase(base, data)
 

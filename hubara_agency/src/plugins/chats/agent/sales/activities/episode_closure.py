@@ -38,7 +38,6 @@ DEHA:
 from __future__ import annotations
 
 import copy
-import json
 import time
 from typing import Any
 
@@ -106,8 +105,7 @@ async def ensure_payment_pending_closure_activity(
         get_active_episode,
     )
 
-    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
-    if not metadata_file.exists():
+    if not (WORKSPACE_VAULT_DIR / session_id / "metadata.json").exists():
         # Sin metadata no hay episodio que cerrar coherentemente. No debería
         # pasar (register_order escribe metadata antes de devolver). No-op.
         activity.logger.warning(
@@ -115,17 +113,9 @@ async def ensure_payment_pending_closure_activity(
             extra={"session_id": session_id, "order_id": order_id},
         )
         return PaymentPendingClosureResult(acted=False, escalated=False)
-
-    try:
-        data: dict[str, Any] = json.loads(
-            metadata_file.read_text(encoding="utf-8")
-        )
-    except (json.JSONDecodeError, OSError) as exc:
-        activity.logger.error(
-            "ensure_payment_pending_closure: metadata corrupto — no-op",
-            extra={"session_id": session_id, "error": str(exc)},
-        )
-        return PaymentPendingClosureResult(acted=False, escalated=False)
+    # Por el store: un metadata dañado se lee de la última copia buena
+    # (decisión del operador, 2026-10-06), así la red no se calla por eso.
+    data: dict[str, Any] = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
     base = copy.deepcopy(data)
 
     # Timestamp idempotente entre retries: un retry de esta activity NO debe
@@ -231,24 +221,14 @@ async def ensure_closing_escalation_activity(
     DEHA: R-STATELESS / R-JSON (in str×3, out bool) / R-DIP (no temporal
     client). Timestamp idempotente entre retries vía `scheduled_time`.
     """
-    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
-    if not metadata_file.exists():
+    if not (WORKSPACE_VAULT_DIR / session_id / "metadata.json").exists():
         activity.logger.warning(
             "ensure_closing_escalation: metadata ausente — no-op",
             extra={"session_id": session_id},
         )
         return False
-
-    try:
-        data: dict[str, Any] = json.loads(
-            metadata_file.read_text(encoding="utf-8")
-        )
-    except (json.JSONDecodeError, OSError) as exc:
-        activity.logger.error(
-            "ensure_closing_escalation: metadata corrupto — no-op",
-            extra={"session_id": session_id, "error": str(exc)},
-        )
-        return False
+    # Por el store: un metadata dañado se lee de la última copia buena.
+    data: dict[str, Any] = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
     base = copy.deepcopy(data)
 
     try:
@@ -298,17 +278,10 @@ async def ensure_promised_handoff_activity(session_id: str, text: str) -> bool:
 
     if not (text or "").strip():
         return False
-    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
-    if not metadata_file.exists():
+    if not (WORKSPACE_VAULT_DIR / session_id / "metadata.json").exists():
         return False
-    try:
-        data: dict[str, Any] = json.loads(metadata_file.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        activity.logger.error(
-            "ensure_promised_handoff: metadata corrupto — no-op",
-            extra={"session_id": session_id, "error": str(exc)},
-        )
-        return False
+    # Por el store: un metadata dañado se lee de la última copia buena.
+    data: dict[str, Any] = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
     base = copy.deepcopy(data)
     if data.get("active_route") == ROUTE_HUMANO:
         return False

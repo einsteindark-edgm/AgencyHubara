@@ -115,6 +115,28 @@ async def test_promised_handoff_escalation_keeps_what_the_flush_wrote_meanwhile(
     assert "wamid.foto" in metadata["outbound_media_index"]
 
 
+@pytest.mark.asyncio
+async def test_promised_handoff_escalates_over_a_damaged_document_from_the_last_good_copy(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La red leía el archivo directo y no hacía nada ante un daño: el bot
+    prometía un colega y nadie tenía el caso. Se recupera de `.prev`."""
+    import src.plugins.chats.agent.sales.decisions.guards as guards
+    from src.plugins.chats.agent.sales.activities.episode_closure import ensure_promised_handoff_activity
+
+    path = _seed(_isolate_vault_dir)
+    path.with_name("metadata.json.prev").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    path.write_text('{"active_route": "ventas", "episodes": [', encoding="utf-8")
+
+    async def promised_handoff(text: str, **kwargs: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(guards, "promised_handoff", promised_handoff)
+
+    assert await ensure_promised_handoff_activity(SID, "Un colega del equipo te escribe enseguida.") is True
+    assert _read(path)["active_route"] == "humano"
+
+
 # --- revisión del PR #393 (M7) -------------------------------------------------
 
 

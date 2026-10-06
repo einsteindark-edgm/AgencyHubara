@@ -82,12 +82,9 @@ async def claim_conversation_routing(session_id: str, new_route: str) -> None:
     """
     from src.platform.state import FilesystemMetadataStore
 
-    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
-    if metadata_file.exists():
-        # Un metadata corrupto falla la activity (Temporal reintenta), como
-        # siempre: no se reescribe una sesión que no se pudo leer.
-        json.loads(metadata_file.read_text(encoding="utf-8"))
-
+    # Un metadata dañado se recupera con la última copia buena dentro del
+    # store (decisión del operador, 2026-10-06); un error pasajero de lectura
+    # falla la activity y Temporal reintenta.
     def _claim(data: dict) -> dict:
         # Sobre la lectura fresca y solo la ruta + su historial (incidente
         # 2026-10-06: la copia entera pisaba otras escrituras).

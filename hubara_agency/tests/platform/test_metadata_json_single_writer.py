@@ -34,11 +34,17 @@ como `modulo.funcion`), con la ruta armada a mano, en una constante (del mismo
 módulo o importada), devuelta por otra función o guardada en `self.<attr>`.
 No marca `zipfile`/`tarfile` (`.write` LEE el archivo) ni «Meta» la empresa.
 
-Límites conocidos (no se detectan; hacerlos es más caro que su riesgo):
-`shutil.move`/`copy`/`copyfile` hacia `metadata.json`; el nombre armado con
-f-string, `+`, `%` o `format`; despacho dinámico (`getattr(store, "write")`,
-`importlib`); `os.write` sobre un descriptor abierto en otro lado;
-`subprocess` (`cp`, `mv`); escritores fuera de `src/` (scripts de operador).
+También ve lo que crea, mueve o BORRA el documento o sus copias mirando sus
+operandos: `Path.rename`, `hardlink_to`/`symlink_to`, `shutil.copy`/`copy2`/
+`copyfile`/`move` hacia ellos, y `unlink`/`os.remove` (borrar `metadata.json`
+sin su `.prev` haría que la recuperación resucite la sesión).
+
+Límites conocidos (no se detectan; hacerlos es más caro que su riesgo): el
+nombre armado con f-string, `+`, `%` o `format` (p. ej.
+`path.with_name(f"{path.name}.prev")`); despacho dinámico
+(`getattr(store, "write")`, `importlib`); `os.write` sobre un descriptor
+abierto en otro lado; `subprocess` (`cp`, `mv`); escritores fuera de `src/`
+(scripts de operador).
 
 Vive en `tests/platform/` y no en `tests/architecture/` porque esa carpeta es
 `protected: true` en `.hubara/spinal-files.yaml` (sumarle un archivo exige un
@@ -88,6 +94,10 @@ _STORE_RECEIVER = re.compile(r"store|metadata|(?:^|[._])meta$", re.IGNORECASE)
 _WRITE_MODE = re.compile(r"[wax+]")
 _STORE_WRITE_KWARGS = {"session_id", "data"}
 _OS_WRITE_FLAGS = {"O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND"}
+#: El documento o sus copias de la recuperación (no otro archivo que solo
+#: contenga el nombre, como un respaldo `metadata.json.bak`).
+_STORE_FILE = re.compile(r"metadata\.json(?:\.prev|\.damaged[\w.-]*)?$")
+_SHUTIL_COPIES = {"copy", "copy2", "copyfile", "move"}
 #: Archivos comprimidos: su `.write(ruta, nombre)` LEE la ruta.
 _ARCHIVE_TYPE = re.compile(r"\b(?:ZipFile|TarFile)\b|\btarfile\.open\b")
 _ARCHIVE_NAME = re.compile(r"^(?:zf|zipf|zip|zip_?file|tf|tar|tar_?file|archive)$", re.IGNORECASE)
@@ -186,6 +196,9 @@ class _Module:
     json_mods: set[str] = field(default_factory=lambda: {"json"})
     json_dumps: set[str] = field(default_factory=set)
     os_mods: set[str] = field(default_factory=lambda: {"os"})
+    #: alias locales del módulo `shutil` y de sus funciones de copia.
+    shutil_mods: set[str] = field(default_factory=lambda: {"shutil"})
+    shutil_funcs: set[str] = field(default_factory=set)
     #: `from <módulo> import <nombre> [as alias]` → alias: (módulo, nombre).
     imported: dict[str, tuple[str, str]] = field(default_factory=dict)
     #: `import a.b as c` → c: "a.b".
@@ -211,6 +224,8 @@ def _analyze(source: str, rel: str) -> _Module:
                     module.json_mods.add(local)
                 elif alias.name == "os":
                     module.os_mods.add(local)
+                elif alias.name == "shutil":
+                    module.shutil_mods.add(local)
                 elif alias.asname:
                     module.import_aliases[alias.asname] = alias.name
         elif isinstance(node, ast.ImportFrom):
@@ -220,6 +235,8 @@ def _analyze(source: str, rel: str) -> _Module:
                     module.awj.add(local)
                 elif node.module == "json" and alias.name == "dump":
                     module.json_dumps.add(local)
+                elif node.module == "shutil" and alias.name in _SHUTIL_COPIES:
+                    module.shutil_funcs.add(local)
                 elif node.module:
                     module.imported[local] = (node.module, alias.name)
     for stmt in tree.body:
@@ -401,6 +418,54 @@ def _is_store_like_write(call: ast.Call, module: _Module) -> bool:
     return len(positional) == 2 or bool(keywords & _STORE_WRITE_KWARGS)
 
 
+def _names_store_file(expr: ast.AST, module: _Module, self_attrs: set[str]) -> bool:
+    """¿`expr` es la ruta del documento o de sus copias (`.prev`,
+    `.damaged-*`)? Un respaldo con otro nombre (`metadata.json.bak`) no."""
+    for node in ast.walk(expr):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in module.docs:
+            if _STORE_FILE.search(node.value):
+                return True
+        elif isinstance(node, ast.Name):
+            if node.id in module.consts or _META_NAME.search(node.id):
+                return True
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self":
+            if node.attr in self_attrs:
+                return True
+        elif isinstance(node, ast.Call) and _calls_path_helper(node, module):
+            return True
+    return False
+
+
+def _store_file_operation(call: ast.Call, module: _Module, self_attrs: set[str]) -> str | None:
+    """Operaciones que crean, mueven o BORRAN el documento o sus copias
+    mirando sus operandos (no todo el ámbito): `Path.rename`, `hardlink_to`,
+    `symlink_to`, `shutil.copy*`/`move` HACIA ellos, y `unlink`/`os.remove`
+    (borrar `metadata.json` sin su `.prev` haría que la recuperación resucite
+    la sesión). Revisión de la recuperación (1b6f9b83)."""
+    func = call.func
+    if isinstance(func, ast.Name):
+        if func.id in module.shutil_funcs and len(call.args) >= 2:
+            return f"{func.id} hacia metadata" if _names_store_file(call.args[1], module, self_attrs) else None
+        return None
+    if not isinstance(func, ast.Attribute):
+        return None
+    owner = func.value.id if isinstance(func.value, ast.Name) else None
+    attr = func.attr
+    if attr in ("remove", "unlink") and owner in module.os_mods:
+        target = call.args[0] if call.args else None
+        return f"os.{attr} de metadata" if target is not None and _names_store_file(target, module, self_attrs) else None
+    if attr == "unlink":
+        return "Path.unlink de metadata" if _names_store_file(func.value, module, self_attrs) else None
+    if attr in ("hardlink_to", "symlink_to"):
+        return f"Path.{attr}" if _names_store_file(func.value, module, self_attrs) else None
+    if attr == "rename" and owner not in module.os_mods and len(call.args) == 1 and not call.keywords:
+        operands = (func.value, call.args[0])
+        return "Path.rename" if any(_names_store_file(o, module, self_attrs) for o in operands) else None
+    if attr in _SHUTIL_COPIES and owner in module.shutil_mods and len(call.args) >= 2:
+        return f"shutil.{attr} hacia metadata" if _names_store_file(call.args[1], module, self_attrs) else None
+    return None
+
+
 def _archives(scope: ast.AST, nodes: list[ast.AST]) -> set[str]:
     """Nombres que en esta función son un zip/tar (anotados, abiertos en un
     `with` o asignados desde `ZipFile(...)`/`tarfile.open(...)`): su `.write`
@@ -500,6 +565,9 @@ def _scan_module(module: _Module) -> set[str]:
             primitive = _write_primitive(node, module)
             if primitive and mentions:
                 found.add(f"{rel}::{name} ({primitive})")
+            operation = _store_file_operation(node, module, self_attrs)
+            if operation:
+                found.add(f"{rel}::{name} ({operation})")
             callee = _callee_name(node)
             writes = (
                 primitive is not None
@@ -834,12 +902,86 @@ import os
 def keep_last_good(session_dir):
     os.link(session_dir / "metadata.json", session_dir / "metadata.json.prev")
 ''',
+    # Revisión de la recuperación (1b6f9b83): más formas de escribir las copias
+    # y de BORRAR el documento (borrar `metadata.json` sin su `.prev` haría que
+    # la recuperación resucite la sesión).
+    "path_rename_a_damaged": '''
+def set_aside(session_dir):
+    (session_dir / "metadata.json").rename(session_dir / "metadata.json.damaged-1")
+''',
+    "hardlink_to_prev": '''
+def keep_last_good(session_dir):
+    (session_dir / "metadata.json.prev").hardlink_to(session_dir / "metadata.json")
+''',
+    "symlink_to_prev": '''
+def keep_last_good(session_dir):
+    (session_dir / "metadata.json.prev").symlink_to(session_dir / "metadata.json")
+''',
+    "shutil_copy2_a_prev": '''
+import shutil
+
+def keep_last_good(session_dir):
+    shutil.copy2(session_dir / "metadata.json", session_dir / "metadata.json.prev")
+''',
+    "shutil_copyfile_a_metadata": '''
+import shutil
+
+def restore(session_dir):
+    shutil.copyfile(session_dir / "metadata.json.damaged-1", session_dir / "metadata.json")
+''',
+    "unlink_prev": '''
+def forget(session_dir):
+    (session_dir / "metadata.json.prev").unlink()
+''',
+    "unlink_metadata": '''
+def reset(session_dir):
+    (session_dir / "metadata.json").unlink(missing_ok=True)
+''',
+    "os_remove_metadata": '''
+import os
+
+def reset(metadata_path):
+    os.remove(metadata_path)
+''',
 }
 
 
 def test_the_copies_of_metadata_are_written_only_by_the_store() -> None:
     for label, source in _COPY_SAMPLES.items():
         assert scan_source(source, f"src/sample_{label}.py"), f"el gate no ve el patrón {label!r}"
+
+
+_READS_OF_THE_COPIES = {
+    "leer_prev": '''
+import json
+
+def last_good(session_dir):
+    return json.loads((session_dir / "metadata.json.prev").read_text())
+''',
+    "listar_damaged": '''
+def set_asides(session_dir):
+    return sorted(session_dir.glob("metadata.json.damaged-*"))
+''',
+    "abrir_el_candado_para_leer": '''
+def lock_text(session_dir):
+    return open(session_dir / "metadata.json.lock").read()
+''',
+    "stat_prev": '''
+def prev_size(session_dir):
+    return (session_dir / "metadata.json.prev").stat().st_size
+''',
+    "copia_de_respaldo_a_otro_nombre": '''
+import shutil
+
+def backup(session_dir, dest):
+    shutil.copy(session_dir / "metadata.json", dest / "metadata.json.bak")
+''',
+}
+
+
+def test_reading_the_copies_is_not_writing_them() -> None:
+    for label, source in _READS_OF_THE_COPIES.items():
+        assert scan_source(source, f"src/ok_{label}.py") == set(), f"falso positivo: {label!r}"
 
 
 def test_the_gate_scans_the_real_tree() -> None:
