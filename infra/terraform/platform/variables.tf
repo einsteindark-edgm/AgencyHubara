@@ -166,6 +166,7 @@ variable "secret_keys" {
     # MBA_CUSTOMER_ALLOWLIST, MBA_EPISODE_BOUNDARY_EVENT, MBA_ALLOW_EVERYONE) NO
     # son secretos: los gestiona modules/mba-config desde tenants.<t>.mba (git es
     # la fuente de verdad). Acá solo quedan los secretos de MBA.
+
     # App id de NUESTRA app de Meta suscrita al WABA (el APP_ID del CLI de
     # provisioning de WhatsApp). D1.5: decide si un `messaging_handovers` nos
     # da el hilo a nosotros o a Business Agent. Placeholder/vacío = no se

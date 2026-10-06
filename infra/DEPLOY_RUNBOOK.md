@@ -153,19 +153,26 @@ apply accidental. **Verificás:** el environment aparece en Settings.
 
 ## FASE 2 — Cargar los secretos reales en SSM
 
-Terraform creó las CLAVES con placeholders; ahora poné los VALORES reales (NO van en
+Terraform creó las CLAVES con placeholders (la lista es `secret_keys` en
+`terraform/platform/variables.tf`); ahora se cargan los VALORES reales (NO van en
 git ni en el state):
 
 ```bash
 cd scripts
-cp secrets.example.env secrets.hubara.env       # editá con los valores REALES
+cp secrets.example.env secrets.hubara.env       # llena los valores REALES (git lo ignora)
 python3 aws_bootstrap.py secrets --tenant hubara --file secrets.hubara.env
-# repetí por tenant (secrets.vincenzo.env, --tenant vincenzo)
+python3 aws_bootstrap.py verify --bucket <bucket del state> --tenant hubara
+# repite por tenant (secrets.vincenzo.env, --tenant vincenzo)
 ```
-**Qué hace:** sube cada `KEY=VALUE` a SSM como `SecureString` en
-`/hubara/<tenant>/<KEY>`. La caja EC2 los lee con su instance profile al deployar.
-`TEMPORAL_*` y `GHCR_PULL_TOKEN` salen de §Pendientes. **Verificás:**
-`aws ssm get-parameters-by-path --path /hubara/hubara --with-decryption --query 'Parameters[].Name'`.
+**Qué hace:** `secrets.example.env` se GENERA desde `secret_keys` (trae cada llave
+vacía, con la explicación de Terraform encima): una llave nueva va primero a
+`secret_keys`, después `python3 aws_bootstrap.py template` la suma a la plantilla
+(una prueba en CI exige que estén al día). `secrets` sube cada `KEY=VALUE` con valor
+a SSM como `SecureString` en `/hubara/<tenant>/<KEY>`, no sube las vacías y rechaza
+una llave que Terraform no declara. `verify --tenant` lista las llaves que faltan
+(sin apply) o siguen en placeholder (sin valor), sin leer ningún valor: el filtro
+corre dentro del CLI de AWS. La caja EC2 los lee con su instance profile al deployar.
+`TEMPORAL_*` y `GHCR_PULL_TOKEN` salen de §Pendientes.
 
 > Los **knobs de scheduler** (crons/intervalos) NO los cargás acá: Terraform ya los
 > creó con defaults en `/hubara/<tenant>/scheduler/`. Cambiarlos = `put-parameter
