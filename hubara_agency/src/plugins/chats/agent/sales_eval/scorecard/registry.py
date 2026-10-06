@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckSpec
 
-REGISTRY_VERSION = 6
+REGISTRY_VERSION = 7
 
 LEVELS = ("critico", "mayor", "menor")
 KINDS = ("code", "judge")
@@ -192,8 +192,9 @@ CHECKS: tuple[CheckSpec, ...] = (
        ("guion:sales_script regla máxima 2",)),
     _c("ENV-02", "Formulario sin responder al cliente", "envio", "mayor", "code",
        "Se envió el formulario en respuesta a un mensaje escrito del cliente.",
-       "El bot también le responde con texto; no manda el formulario pelado.",
-       ("PR #281",)),
+       "El cliente lee un texto con el formulario: su mensaje (producto, variantes, cantidad y subtotal) "
+       "o un texto del bot; no le llega el formulario pelado.",
+       ("PR #281", "incidente 2026-10-06: el cliente leyó el mensaje del formulario")),
     _c("ENV-03", "Datos del formulario quedan en el pedido", "envio", "mayor", "code",
        "El cliente envió el formulario.",
        "En ese turno sus datos quedan anotados en el pedido.",
@@ -324,8 +325,9 @@ CHECKS: tuple[CheckSpec, ...] = (
        ("guion:sales_script regla 8",)),
     _c("EST-06", "Sin narración descartada", "estilo", "menor", "code",
        "Siempre (trazas).",
-       "El LLM no escribió texto para el cliente junto a tool calls (se descarta).",
-       ("memoria:pre_tool_narration_default_deny",)),
+       "El LLM no escribió junto a tool calls un texto para el cliente que se perdió: no cuenta la "
+       "narración igual a un texto que el cliente sí leyó en ese turno.",
+       ("memoria:pre_tool_narration_default_deny", "incidente 2026-10-06: «Buenos días 🤍» también salió")),
     _c("EST-07", "Retiene lo que el cliente ya dijo", "estilo", "mayor", "judge",
        "El episodio tiene más de un turno.",
        "El bot no pregunta ni contradice datos que el cliente ya dio.",

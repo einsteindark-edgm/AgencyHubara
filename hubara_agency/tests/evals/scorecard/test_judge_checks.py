@@ -37,6 +37,18 @@ def test_transcript_shows_what_the_old_judge_could_not_see() -> None:
     assert "T10 · estado: HUMANO" in text
 
 
+def test_transcript_does_not_call_discarded_a_narration_the_customer_read() -> None:
+    """Incidente 2026-10-06 (turno 1): «Buenos días 🤍» quedó como narración
+    descartada y también salió por `send_reply`; el juez leía que el cliente
+    no lo había visto."""
+    t = traj(T(1, inbound="hola", sent=["Buenos días 🤍"], narration=["Buenos días 🤍", "Busco el catálogo."]))
+
+    text = jc.render_transcript(t)
+
+    assert 'T1 · narración descartada: "Busco el catálogo."' in text
+    assert 'narración descartada: "Buenos días' not in text
+
+
 def test_prompt_is_isolated_per_check_and_distrusts_system_state() -> None:
     prompt = jc.build_prompt("CON-04", pr281_before_fix(), CATALOG_CTX)
 

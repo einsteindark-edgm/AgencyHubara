@@ -37,14 +37,13 @@ from temporalio import activity
 
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
 from src.platform.temporal.heartbeat import with_heartbeat
+from src.plugins.chats.agent.sales.card_messages import order_card_text
 from src.plugins.chats.agent.sales.config.payments import (
     PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA,
     PAYMENT_LINK_SURCHARGE_OTHER_BANKS,
     get_nequi_number,
 )
 from src.plugins.chats.agent.sales.config.shipping import (
-    ORDER_SUMMARY_SHIPPING_LINE,
-    ORDER_SUMMARY_SHIPPING_NOTE,
     SHIPPING_RATES_MESSAGE,
     cash_on_delivery_available,
 )
@@ -135,10 +134,6 @@ async def _sanitize_intent_client_text(
         else:
             out[key] = cleaned
     return out
-
-
-#: Máximo del cuerpo de un mensaje con botones en WhatsApp.
-_MAX_ORDER_BODY = 1024
 
 
 def _format_cop(amount: int, currency: str) -> str:
@@ -893,73 +888,10 @@ async def _dispatch_intent(
     if kind == "order_confirmation":
         # Por ahora: fallback transparente a interactive.buttons con resumen
         # textual completo. A.12 nativo (interactive.order_details) requiere
-        # Meta Catalog + gateway approved — se activará por feature flag.
-        items = params.get("items") or []
-        # La variante va cuando el producto se repite en varias líneas
-        # («1× Velón Gorrión (Lila · Lavanda)»); si no, la línea de siempre.
-        lines = [
-            (
-                f"• {it.get('quantity', 1)}× {it.get('title') or it.get('handle')}"
-                + (f" ({it['variant']})" if it.get("variant") else "")
-                + f" — ${it.get('unit_price_cop', 0):,}"
-            ).replace(",", ".")
-            for it in items
-        ]
-        items_summary = "\n".join(lines)
-        subtotal = int(params.get("subtotal_cop", 0))
-        shipping = int(params.get("shipping_cop", 0))
-        total = int(params.get("total_cop", 0))
-        currency = params.get("currency", "COP")
-        payment_method = params.get("payment_method")
-        body_lines = [
-            "*Resumen de tu pedido*",
-            items_summary,
-            "",
-            f"Subtotal productos: {_format_cop(subtotal, currency)}",
-        ]
-        discount_cop = params.get("discount_cop")
-        if isinstance(discount_cop, int) and discount_cop > 0:
-            coupon = params.get("coupon_code")
-            body_lines.append(
-                f"Descuento{f' ({coupon})' if coupon else ''}: −{_format_cop(discount_cop, currency)}"
-            )
-        if payment_method == "cash_on_delivery":
-            # Regla del operador (2026-09-07, `config/shipping.py`): con
-            # contra entrega el envío se paga al recibir y la transportadora
-            # lo recalcula antes de despachar → NO se muestra valor de envío
-            # ni total (sería subtotal + un envío que no es definitivo); va
-            # "Por confirmar" + la nota. `shipping_cop`/`total_cop` siguen en
-            # el intent (analytics), no se renderizan.
-            body_lines.extend(["", ORDER_SUMMARY_SHIPPING_LINE])
-        else:
-            # Pago anticipado / link: el cliente paga el envío AHORA con la
-            # tarifa mínima (misma que valida SEC-07 en register_order y que
-            # muestra payment_instructions, #236) → se aclara que es mínima y
-            # se da el total. Envío 0 = "sin costo", nunca se inventa reparto.
-            shipping_line = (
-                f"Envío (tarifa mínima): {_format_cop(shipping, currency)}"
-                if shipping > 0
-                else "Envío: sin costo"
-            )
-            body_lines.extend([shipping_line, f"Total: {_format_cop(total, currency)}"])
-        body_lines.extend([
-            "",
-            f"📍 Dirección: {params.get('shipping_address_summary', '')}",
-            "",
-            f"💳 Medio de pago: {_humanize_payment(payment_method)}",
-        ])
-        if payment_method == "cash_on_delivery":
-            body_lines.extend(["", ORDER_SUMMARY_SHIPPING_NOTE])
-        body = "\n".join(body_lines)
-        # Cupo por unidad (premortem B4): qué unidades llevan el descuento, o
-        # por qué no — la tarjeta termina el turno del bot, así que el cliente
-        # lo lee acá. Va al final y cabe en el cuerpo (máx. de WhatsApp).
-        note = params.get("coupon_note")
-        if isinstance(note, str) and note.strip():
-            room = _MAX_ORDER_BODY - len(body) - len("\n\n🎟️ ")
-            if room >= 40:
-                text = note.strip()
-                body += "\n\n🎟️ " + (text if len(text) <= room else text[: room - 1].rstrip() + "…")
+        # Meta Catalog + gateway approved — se activará por feature flag. El
+        # texto lo arma `card_messages.order_card_text`: el mismo que devuelve
+        # la tool en `customer_text` y que lleva el marcador del historial.
+        body = order_card_text(params)
         ref = params.get("reference_id", "HUB")
         return await wa_client.send_interactive_buttons(
             phone_number_id,
@@ -1380,9 +1312,18 @@ def _build_history_event(
         )
         content = f"🛍️ El bot envió el catálogo con {total} productos"
     elif kind == "shipping_flow":
+        # El mensaje del formulario y el resumen del pedido los arma el
+        # código: van enteros, como los leyó el cliente (incidente
+        # 2026-10-06: el operador, Jev y Calidad LLM no los veían).
         content = "📋 El bot pidió los datos de envío (formulario)"
+        body = str(params.get("body") or "").strip()
+        if body:
+            content += f" — con el mensaje: «{body}»"
     elif kind == "order_confirmation":
-        content = "🧾 El bot envió el resumen del pedido con botones para confirmar"
+        content = (
+            "🧾 El bot envió el resumen del pedido con botones para confirmar"
+            f" — con el mensaje: «{order_card_text(params)}»"
+        )
     elif kind == "reaction":
         content = f"El bot reaccionó con {params.get('emoji', '🤍')} a un mensaje del cliente"
     elif kind == "contact_card":
@@ -1512,14 +1453,3 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
 
     data["shipping_flow_awaiting_reply_since_ms"] = ts_ms
     _safe_write_metadata(metadata_file, data)
-
-
-def _humanize_payment(code: str | None) -> str:
-    # `card` es legacy (órdenes registradas antes del requisito 2026-08-31);
-    # las 3 formas vigentes son transfer / payment_link / cash_on_delivery.
-    return {
-        "card": "Tarjeta",
-        "transfer": "Pago anticipado (Nequi)",
-        "payment_link": "Link de pago",
-        "cash_on_delivery": "Contra entrega",
-    }.get(code or "", code or "Por confirmar")

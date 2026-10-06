@@ -110,7 +110,8 @@ def traces_from(t) -> list[dict]:
             "v": 1, "session_id": t.session_id, "episode_id": t.episode_id, "turn": turn.turn,
             "recorded_at_ms": (turn.at_ms or 0) + 5_000, "turn_started_ms": turn.at_ms,
             "trigger": turn.trigger, "inbound_text": turn.inbound_text, "first_contact": turn.first_contact,
-            "tools": [{"name": c.name, "ok": c.ok, "error": c.error, "notes": list(c.notes), "args": dict(c.args)}
+            "tools": [{"name": c.name, "ok": c.ok, "error": c.error, "notes": list(c.notes), "args": dict(c.args),
+                       **({"card_text": c.card_text} if c.card_text else {})}
                       for c in turn.tools],
             "discarded_narration": list(turn.discarded_narration), "llm_text": turn.llm_text,
             "sent_texts": list(turn.sent_texts), "suppressed_reason": turn.suppressed_reason,

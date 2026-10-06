@@ -370,6 +370,50 @@ def test_build_history_event_order_confirmation_mentions_summary():
     assert "pedido" in ev["content"].lower()
 
 
+_FORM_MESSAGE = (
+    "Para enviarte tu pedido necesito unos datos 🤍\n\n• *2× Velón Koala* (Blanco · Lavanda)\n"
+    "Subtotal en productos: $70.000\n\nEl envío va aparte y lo verás en el resumen del pedido. "
+    "Toca «Completar datos» para llenar el formulario (toma 30 segundos)."
+)
+
+
+def test_build_history_event_shipping_flow_shows_the_form_message():
+    """Incidente 2026-10-06: el marcador decía solo «pidió los datos de envío
+    (formulario)»; el operador, Jev y Calidad LLM no veían lo que leyó el
+    cliente con el formulario."""
+    ev = _build_history_event("shipping_flow", {"body": _FORM_MESSAGE, "flow_cta": "Completar datos"})
+
+    assert ev is not None and ev["component_kind"] == "shipping_flow"
+    assert ev["content"] == f"📋 El bot pidió los datos de envío (formulario) — con el mensaje: «{_FORM_MESSAGE}»"
+
+
+@pytest.mark.asyncio
+async def test_the_form_message_in_the_panel_is_the_one_the_customer_read(vault, monkeypatch):
+    """De punta a punta con el Flow nativo: el marcador lleva el mismo cuerpo
+    que salió con `send_flow`."""
+    import src.platform.whatsapp.client as wa_client
+
+    monkeypatch.setenv("META_FLOW_ID_SHIPPING", "flow-123")
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    _seed_metadata(
+        vault,
+        [{"id": "i-f", "kind": "shipping_flow",
+          "params": {"flow_id": "FLOW_ID_SHIPPING_PLACEHOLDER", "flow_token": "shipping_x_1",
+                     "flow_cta": "Completar datos", "flow_action": "navigate",
+                     "flow_action_screen": "SHIPPING_DETAILS",
+                     "flow_action_data": {"order_total_cop": 70000, "items_summary": "2× Velón Koala",
+                                          "show_cash_on_delivery": True, "payment_options": []},
+                     "body": _FORM_MESSAGE, "header_text": "Datos de envío", "order_total_cop": 70000}}],
+    )
+
+    await ActivityEnvironment().run(flush_pending_ui_intents_activity, _SESSION_ID)
+
+    sent = wa_client.send_flow.call_args.args[2].body
+    [event] = _read_history(vault)
+    assert sent == _FORM_MESSAGE
+    assert event["content"].endswith(f" — con el mensaje: «{sent}»")
+
+
 def test_build_history_event_reaction_includes_emoji():
     ev = _build_history_event("reaction", {"emoji": "🤍"})
     assert ev is not None

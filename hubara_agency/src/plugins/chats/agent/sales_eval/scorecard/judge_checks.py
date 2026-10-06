@@ -29,6 +29,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import replace
 from typing import Any, Protocol
 
+from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import lost_narration
 from src.plugins.chats.agent.sales_eval.scorecard.claude_judge import PENDING_CRITIQUE, JudgePending
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext, CheckResult
 from src.plugins.chats.agent.sales_eval.scorecard.registry import CHECKS, SPECS_BY_ID
@@ -290,7 +291,9 @@ def _reply_lines(t: Any, text_limit: int | None) -> list[str]:
         lines.extend(_quoted(p, "bot envió", s if text_limit is None else _clip(s, text_limit)))
     if t.suppressed_reason and t.llm_text:
         lines.extend(_quoted(p, f"texto suprimido ({t.suppressed_reason}), el cliente NO lo vio", t.llm_text))
-    for n in t.discarded_narration:
+    # Solo la que el cliente no leyó: la igual a un texto que salió no se
+    # perdió (incidente 2026-10-06, turno 1).
+    for n in lost_narration(t):
         lines.append(f'{p} narración descartada: "{_clip(n, 200)}"')
     if t.intents:
         lines.append(f"{p} componentes enviados: {', '.join(t.intents)}")

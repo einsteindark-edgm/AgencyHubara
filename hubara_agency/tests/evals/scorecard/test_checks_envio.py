@@ -59,6 +59,32 @@ def test_env02_bare_form_after_handoff_fails_with_discarded_narration() -> None:
     assert "te dejo el formulario" in r.evidence
 
 
+_FORM_MESSAGE = (
+    "Para enviarte tu pedido necesito unos datos 🤍\n\n• *2× Velón Koala* (Blanco · Lavanda)\n"
+    "Subtotal en productos: $70.000\n\nEl envío va aparte y lo verás en el resumen del pedido. "
+    "Toca «Completar datos» para llenar el formulario (toma 30 segundos)."
+)
+
+
+def test_env02_form_with_its_summary_passes() -> None:
+    """Incidente 2026-10-06 (bot V2, turno 9): el cliente dijo «2» y el bot
+    mandó solo el formulario. El cliente SÍ leyó su mensaje (lo arma el
+    código: producto, variantes, cantidad y subtotal), pero el check solo
+    miraba `sent_texts` y lo marcó «formulario sin texto»."""
+    t = traj(T(1, inbound="2", tools=[tool(_FORM, card_text=_FORM_MESSAGE)]))
+
+    r = _run("ENV-02", t)
+
+    assert r.verdict == "pasa", r.evidence
+
+
+def test_env02_reads_what_the_customer_read_and_the_registry_says_so() -> None:
+    from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION, SPECS_BY_ID
+
+    assert REGISTRY_VERSION >= 7
+    assert "mensaje" in SPECS_BY_ID["ENV-02"].rule.lower()
+
+
 def test_env02_form_after_confirm_button_is_not_applicable() -> None:
     t = traj(T(1, inbound="[el cliente tocó el botón: ✅ Confirmar]", tools=[tool(_FORM)]))
     assert _run("ENV-02", t).verdict == "no_aplica"

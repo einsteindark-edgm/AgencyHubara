@@ -133,6 +133,47 @@ def test_est06_legacy_is_unknown() -> None:
     assert _run("EST-06", traj(T(1, sent=["Claro"]), fidelity="legacy")).verdict == "desconocido"
 
 
+def test_est06_narration_that_also_went_out_is_not_lost() -> None:
+    """Incidente 2026-10-06 (bot V2, turno 1): «Buenos días 🤍» quedó como
+    narración descartada y ese mismo texto SÍ salió por `send_reply`. El
+    cliente lo leyó: no hay narración perdida (falsa alarma)."""
+    t = traj(T(1, sent=["Buenos días 🤍"], narration=["Buenos días 🤍"], tools=[tool("send_reply")]))
+
+    assert _run("EST-06", t).verdict == "pasa"
+
+
+def test_est06_same_narration_with_other_spaces_or_case_is_not_lost() -> None:
+    t = traj(T(1, sent=["Buenos días 🤍\n\n¿En qué te ayudo?"], narration=["  buenos   DÍAS 🤍 ¿en qué te ayudo? "]))
+
+    assert _run("EST-06", t).verdict == "pasa"
+
+
+def test_est06_narration_read_in_a_card_is_not_lost() -> None:
+    t = traj(T(1, narration=["¿Seguimos?"], tools=[tool("send_quick_replies", body="¿Seguimos?")]))
+
+    assert _run("EST-06", t).verdict == "pasa"
+
+
+def test_est06_narration_different_from_what_went_out_still_fails() -> None:
+    t = traj(
+        T(1, sent=["Claro"]),
+        T(2, sent=["Buenos días 🤍"], narration=["Buenos días 🤍", "Ya te muestro el catálogo."], tools=[tool("send_reply")]),
+    )
+
+    r = _run("EST-06", t)
+
+    assert (r.verdict, r.turn) == ("falla", 2)
+    assert "Ya te muestro el catálogo" in r.evidence
+    assert "Buenos días" not in r.evidence
+
+
+def test_est06_the_registry_counts_only_the_narration_the_customer_did_not_read() -> None:
+    from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION, SPECS_BY_ID
+
+    assert REGISTRY_VERSION >= 7
+    assert "leyó" in SPECS_BY_ID["EST-06"].rule
+
+
 # ── EST-09 · cortesía sin empujón de venta ───────────────────────────────
 # Caso de producción del 2026-09-29: el ETA avisó «tu pedido ya está listo», el
 # cliente contestó con un agradecimiento y el bot cerró con «Cuéntame, ¿en qué

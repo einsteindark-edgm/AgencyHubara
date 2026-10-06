@@ -11,6 +11,7 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     is_legacy,
     judged,
     judged_turns,
+    lost_narration,
     not_applicable,
     not_judged,
     passed,
@@ -88,8 +89,12 @@ def check_form_with_reply(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if not applicable:
         return not_judged("ENV-02", traj, "ningún formulario respondió a un mensaje escrito del cliente")
     for turn in applicable:
-        if not turn.sent_texts:
-            detail = f"; narración descartada {quote(turn.discarded_narration[0])}" if turn.discarded_narration else ""
+        # Lo que el cliente LEYÓ: los textos y el de las tarjetas, también el
+        # mensaje que el código arma con el formulario (incidente 2026-10-06,
+        # turno 9: lo leyó y el check lo daba por «sin texto»).
+        if not turn.read_texts:
+            lost = lost_narration(turn)
+            detail = f"; narración descartada {quote(lost[0])}" if lost else ""
             return failed(
                 "ENV-02", turn.turn,
                 f"turno {turn.turn}: formulario sin texto ante {quote(turn.inbound_text)}{detail}",

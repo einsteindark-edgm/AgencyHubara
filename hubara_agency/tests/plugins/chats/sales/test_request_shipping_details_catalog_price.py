@@ -61,8 +61,8 @@ def ctx() -> ToolContext:
     return ToolContext(session_key=KEY, channel="whatsapp", chat_id=KEY)
 
 
-def _seed(vault: Path, *, confirmed: bool) -> Path:
-    draft = {"slots": {"producto": "Trilogía del Terror", "cantidad": "1"}, "updated_at_ms": 1}
+def _seed(vault: Path, *, confirmed: bool, draft: dict | None = None) -> Path:
+    draft = {**(draft or {"slots": {"producto": "Trilogía del Terror", "cantidad": "1"}}), "updated_at_ms": 1}
     if confirmed:
         draft.update({"confirmed_at_ms": 2, "confirmed_by": "text"})
     path = vault / KEY / "metadata.json"
@@ -123,6 +123,37 @@ async def test_multi_item_subtotal_and_summary(ctx, _isolate_vault_dir: Path) ->
     flow = intent["params"]["flow_action_data"]
     assert flow["order_total_cop"] == 2 * 49500 + 16000
     assert flow["items_summary"] == "2× Trilogía del Terror, 1× Calabaza"
+
+
+@pytest.mark.asyncio
+async def test_multi_item_form_message_lists_each_product_with_its_variant_and_subtotal(
+    ctx, _isolate_vault_dir: Path
+) -> None:
+    """Varios productos: el mensaje del formulario dice cada uno con su
+    cantidad, sus variantes del borrador y su subtotal, y el subtotal en
+    productos. Todo del catálogo: el monto que mande el LLM no aparece."""
+    draft = {
+        "slots": {"producto": "Trilogía del Terror + Calabaza"},
+        "items": [
+            {"producto": "Trilogía del Terror", "aroma": "Frutos rojos", "cantidad": "2"},
+            {"producto": "Calabaza", "color": "Naranja", "cantidad": "1"},
+        ],
+    }
+    path = _seed(_isolate_vault_dir, confirmed=True, draft=draft)
+    tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir), catalog=FakeCatalog())
+
+    result = json.loads(await tool.execute_with_context(ctx, items=[
+        {"handle": "trilogia-del-terror", "quantity": 2},
+        {"handle": "calabaza", "quantity": 1},
+    ], order_total_cop=45000))
+
+    (intent,) = _intents(path)
+    body = intent["params"]["body"]
+    assert "2× Trilogía del Terror" in body and "(Frutos rojos)" in body and "$99.000" in body
+    assert "1× Calabaza" in body and "(Naranja)" in body and "$16.000" in body
+    assert "Subtotal en productos: $115.000" in body
+    assert "45.000" not in body
+    assert result["customer_text"] == body
 
 
 @pytest.mark.asyncio
