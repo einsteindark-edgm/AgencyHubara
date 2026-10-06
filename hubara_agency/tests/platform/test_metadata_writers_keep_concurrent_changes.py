@@ -140,3 +140,34 @@ async def test_capi_flush_keeps_an_event_queued_during_the_post(tmp_path: Path) 
     metadata = _read(path)
     assert [e["event_id"] for e in metadata["capi_outbox"]] == ["addtocart_1"], "se perdió el evento encolado"
     assert [(e["event_id"], e["status"]) for e in metadata["capi_events_sent"]] == [("viewcontent_1", "sent")]
+
+
+# --- revisión del PR #393 (M7) -------------------------------------------------
+
+
+def _mark_paid(fresh: dict[str, Any]) -> bool:
+    fresh["tag"] = "COMPRA_EXITOSA"
+    return True
+
+
+def test_the_medusa_sync_never_creates_a_chat_that_does_not_exist(tmp_path: Path) -> None:
+    """La confirmación de pago desde Órdenes sincroniza el chat SOLO si existe:
+    si el archivo desapareció entre la revisión y el candado, no lo crea."""
+    from src.platform.orders.medusa_order_command import _apply_to_chat_metadata
+
+    path = tmp_path / SESSION / "metadata.json"
+
+    assert _apply_to_chat_metadata(path, _mark_paid) is False
+    assert not path.exists()
+
+
+def test_the_medusa_sync_never_writes_over_an_unreadable_chat(tmp_path: Path) -> None:
+    from src.platform.orders.medusa_order_command import _apply_to_chat_metadata
+
+    path = tmp_path / SESSION / "metadata.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"active_route": "humano", "episodes": [', encoding="utf-8")
+    before = path.read_bytes()
+
+    assert _apply_to_chat_metadata(path, _mark_paid) is False
+    assert path.read_bytes() == before

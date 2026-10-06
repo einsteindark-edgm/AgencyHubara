@@ -447,6 +447,37 @@ def test_escalate_validates_inputs(h: _Harness) -> None:
     assert h.client.post(_url("escalate"), json={"reason_category": "BULK_ORDER", "summary": ""}).status_code == 422
 
 
+# ── metadata.json ilegible (revisión del PR #393, D1) ─────────────────────────
+# El store ya no escribe sobre un documento que existe y no se pudo leer. Sacar
+# al bot sí se escribe (como la tool de escalación); lo demás se rechaza claro,
+# sin escribir y sin decir que se aplicó.
+
+_BROKEN_JSON = '{"active_route": "ventas", "episodes": ['
+
+
+def _break_metadata(h: _Harness, session: str = _A) -> Path:
+    path = h.vault / session / "metadata.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_BROKEN_JSON, encoding="utf-8")
+    return path
+
+
+def test_escalate_over_an_unreadable_document_still_routes_to_a_human(h: _Harness) -> None:
+    _break_metadata(h)
+    r = h.client.post(_url("escalate"), json={"reason_category": "BULK_ORDER", "summary": "pide 30 unidades"})
+    assert r.status_code == 200, r.text
+    assert r.json()["escalated"] is True, "MBA oiría «ya estaba en humano» y el bot seguiría"
+    assert h.meta()["active_route"] == ROUTE_HUMANO
+
+
+@pytest.mark.parametrize("action", ["tag", "operator-tag"])
+def test_a_tag_over_an_unreadable_document_is_refused_without_writing(h: _Harness, action: str) -> None:
+    path = _break_metadata(h)
+    r = h.client.post(_url(action), json={"tag": "INTERESADO", "motivo": "lo piensa"})
+    assert r.status_code == 503, r.text
+    assert path.read_text(encoding="utf-8") == _BROKEN_JSON
+
+
 # ── scoping ───────────────────────────────────────────────────────────────────
 
 

@@ -8,8 +8,14 @@ incluido → el bot revive en medio de la intervención).
 """
 from __future__ import annotations
 
+import asyncio
 import copy
+import json
+import logging
+import os
 import threading
+
+import pytest
 
 from src.platform.state import FilesystemMetadataStore
 
@@ -194,3 +200,182 @@ def test_a_nested_write_in_the_same_thread_does_not_hang(tmp_path):
 
     assert not worker.is_alive(), "una escritura anidada en el mismo hilo colgó el candado"
     assert store.read("wa_1") == {"n": 1}
+
+
+# --- revisión del PR #393 ------------------------------------------------------
+# D1: una lectura fallida NO es una sesión vacía. `read()` devuelve `{}` ante
+# OSError/JSON roto, y `update()` le pasaba ese `{}` al mutator y escribía un
+# documento casi vacío: con `active_route=humano`, episodios y pedido, el flush
+# dejaba `{"ui_intents_failures": [...]}` y el bot revivía.
+
+_SESSION = {
+    "active_route": "humano",
+    "tag": "HUMANO",
+    "episodes": [{"episode_id": "ep_001", "closed_at_ms": None}],
+    "registered_order": {"order_id": "order_1"},
+}
+
+
+def _unreadable_by_broken_json(path):
+    path.write_text('{"active_route": "humano", "episodes": [', encoding="utf-8")
+
+
+def _unreadable_by_permissions(path):
+    os.chmod(path, 0)
+
+
+_UNREADABLE = [
+    pytest.param(_unreadable_by_broken_json, id="json-roto"),
+    pytest.param(
+        _unreadable_by_permissions,
+        id="sin-permiso",
+        marks=pytest.mark.skipif(os.geteuid() == 0, reason="root lee archivos 000"),
+    ),
+]
+
+
+def _disk_bytes(path) -> bytes:
+    os.chmod(path, 0o644)
+    return path.read_bytes()
+
+
+@pytest.mark.parametrize("break_it", _UNREADABLE)
+def test_update_never_writes_over_a_document_it_could_not_read(tmp_path, break_it):
+    store = FilesystemMetadataStore(tmp_path)
+    store.write("wa_1", _SESSION)
+    path = tmp_path / "wa_1" / "metadata.json"
+    break_it(path)
+    calls = []
+
+    def mutator(data):
+        calls.append(dict(data))
+        data["ui_intents_failures"] = [{"kind": "product_detail", "error": "x"}]
+        return data
+
+    assert store.update("wa_1", mutator) is None
+    assert calls == [], "el mutator no puede recibir un {} en lugar de la sesión"
+    assert b"ui_intents_failures" not in _disk_bytes(path)
+
+
+@pytest.mark.parametrize("break_it", _UNREADABLE)
+def test_the_flush_failure_history_does_not_revive_the_bot(tmp_path, break_it):
+    """La reproducción de la revisión: el histórico de fallos del flush sobre
+    una sesión humana con `metadata.json` ilegible."""
+    from src.plugins.chats.agent.sales.activities import flush_ui_intents
+
+    store = FilesystemMetadataStore(tmp_path)
+    store.write("wa_1", _SESSION)
+    path = tmp_path / "wa_1" / "metadata.json"
+    break_it(path)
+
+    flush_ui_intents._append_failures(store, "wa_1", [{"kind": "product_detail", "error": "x"}])
+
+    after = _disk_bytes(path)
+    assert b"ui_intents_failures" not in after
+    assert b'"active_route": "humano"' in after
+
+
+def test_update_retries_a_transient_read_failure_once(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    store = FilesystemMetadataStore(tmp_path)
+    store.write("wa_1", _SESSION)
+    real_read_text = Path.read_text
+    failures = {"left": 1}
+
+    def flaky_read_text(self, *args, **kwargs):
+        if self.name == "metadata.json" and failures["left"]:
+            failures["left"] -= 1
+            raise OSError(5, "Input/output error")  # EIO transitorio
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", flaky_read_text)
+
+    written = store.update("wa_1", lambda d: {**d, "n": 1})
+
+    assert written == {**_SESSION, "n": 1}
+    assert store.read("wa_1") == {**_SESSION, "n": 1}
+
+
+def test_update_of_a_missing_document_still_creates_it(tmp_path):
+    store = FilesystemMetadataStore(tmp_path)
+
+    written = store.update("wa_nueva", lambda d: {**d, "phone_number_id": "pnid"})
+
+    assert written == {"phone_number_id": "pnid"}
+    assert store.read("wa_nueva") == {"phone_number_id": "pnid"}
+
+
+@pytest.mark.parametrize("break_it", _UNREADABLE)
+def test_who_must_write_anyway_asks_for_it_explicitly(tmp_path, break_it):
+    """La escalación a humano reescribe a propósito un documento ilegible
+    (sin ella el cliente queda con el bot): lo pide con `overwrite_unreadable`."""
+    store = FilesystemMetadataStore(tmp_path)
+    store.write("wa_1", _SESSION)
+    path = tmp_path / "wa_1" / "metadata.json"
+    break_it(path)
+
+    written = store.update(
+        "wa_1", lambda d: {**d, "active_route": "humano"}, overwrite_unreadable=True
+    )
+
+    assert written == {"active_route": "humano"}
+    assert json.loads(_disk_bytes(path)) == {"active_route": "humano"}
+
+
+@pytest.mark.parametrize("break_it", _UNREADABLE)
+def test_write_merged_does_not_write_when_neither_side_could_read(tmp_path, break_it):
+    """Sin nada leído (`base` vacío) y el disco ilegible, escribir `ours` sería
+    dejar solo las llaves del escritor: no se escribe."""
+    store = FilesystemMetadataStore(tmp_path)
+    store.write("wa_1", _SESSION)
+    path = tmp_path / "wa_1" / "metadata.json"
+    break_it(path)
+
+    assert store.write_merged("wa_1", base={}, ours={"active_route": "ventas", "tag": "NO_ETIQUETADO"}) is None
+    assert b"NO_ETIQUETADO" not in _disk_bytes(path)
+
+
+def test_the_escalation_tool_still_escalates_over_an_unreadable_document(tmp_path):
+    from exoclaw.agent.tools import ToolContext
+
+    from src.platform.tools.escalation import EscalateToHumanTool
+
+    path = tmp_path / "wa_1" / "metadata.json"
+    path.parent.mkdir(parents=True)
+    _unreadable_by_broken_json(path)
+    tool = EscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+    ctx = ToolContext(session_key="wa_1", channel="whatsapp", chat_id="wa_1")
+
+    asyncio.run(tool.execute_with_context(ctx, reason_category="OTHER", summary="El cliente pide hablar con alguien"))
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert (data["active_route"], data["tag"]) == ("humano", "HUMANO")
+
+
+# M5: la reentrancia del candado reconoce el MISMO archivo por cualquier ruta
+# (symlink) y avisa cuando una escritura anidada se resuelve así.
+
+
+def test_a_nested_write_through_another_path_to_the_same_file_does_not_hang(tmp_path, caplog):
+    real = tmp_path / "vault"
+    real.mkdir()
+    link = tmp_path / "vault_link"
+    link.symlink_to(real, target_is_directory=True)
+    store = FilesystemMetadataStore(real)
+    same_file = FilesystemMetadataStore(link)
+    store.write("wa_1", {"n": 0})
+
+    def mutator(data):
+        same_file.write("wa_1", {"n": 99})
+        data["n"] = 1
+        return data
+
+    caplog.set_level(logging.WARNING)
+    worker = threading.Thread(target=store.update, args=("wa_1", mutator), daemon=True)
+    worker.start()
+    worker.join(5)
+
+    assert not worker.is_alive(), "una escritura anidada por otra ruta al mismo archivo colgó el candado"
+    assert store.read("wa_1") == {"n": 1}
+    assert "metadata_nested_write" in caplog.text

@@ -1159,9 +1159,13 @@ class RegisterOrderTool(ToolBase):
         # 2026-10-06): entre la lectura del principio y acá se habló con
         # Medusa; lo que otro escritor puso mientras tanto no se pisa. El shim
         # de ventas (no `src.sdk.runtime`: arrastra temporalio, R-DIP #7).
+        # Con el documento ilegible también se escribe, a propósito: el pedido
+        # ya existe en Medusa y perder su vínculo lo dejaría huérfano.
         from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 
-        FilesystemMetadataStore(self._vault_dir).update(ctx.session_key, _record)
+        FilesystemMetadataStore(self._vault_dir).update(
+            ctx.session_key, _record, overwrite_unreadable=True
+        )
 
         # ------------------------------------------------------------
         # Envelope para el LLM.

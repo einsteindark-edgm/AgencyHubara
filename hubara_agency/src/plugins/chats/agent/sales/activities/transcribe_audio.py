@@ -167,8 +167,7 @@ def _record_transcription(session_id: str, key: str, entry: dict[str, Any]) -> N
     (últimos 20), con `update()` sobre la lectura fresca: la transcripción
     tarda segundos y la copia leída antes ya no es la de disco (incidente
     2026-10-06). Si mientras tanto llegó otro audio, su pendiente queda."""
-    from src.platform.config import WORKSPACE_VAULT_DIR
-    from src.sdk.runtime import FilesystemMetadataStore
+    from src.sdk.runtime import WORKSPACE_VAULT_DIR, FilesystemMetadataStore
 
     def _apply(fresh: dict[str, Any]) -> dict[str, Any]:
         pending = fresh.get("pending_transcription")

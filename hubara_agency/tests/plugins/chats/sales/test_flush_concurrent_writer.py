@@ -186,3 +186,63 @@ async def test_a_new_intent_queued_during_the_flush_is_kept(vault: Path, monkeyp
 
     assert await flush_ui_intents.flush_pending_ui_intents(SESSION) == 1
     assert _read(path)["pending_ui_intents"] == [picker]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_send_does_not_block_a_legit_requeue_with_the_same_id(
+    vault: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Revisión del PR #393 (M1): las instrucciones de pago llevan un id fijo
+    por pedido (`payinstr-<order_id>`). Si el primer envío falla, un reencolado
+    legítimo (mismo id, otro `queued_at_ms`) sale; el MISMO intent fallido
+    devuelto por una escritura vieja, no."""
+    from src.platform.state import FilesystemMetadataStore
+    from src.platform.whatsapp import client as wa_client
+    from src.plugins.chats.agent.sales.activities import flush_ui_intents
+
+    first = _photo_intent("payinstr-order_1")
+    path = _seed(vault, [first])
+    send_image = AsyncMock(
+        side_effect=[
+            SimpleNamespace(ok=False, wa_message_id=None, error="http_500"),
+            SimpleNamespace(ok=True, wa_message_id=PHOTO_WAMID, error=None),
+        ]
+    )
+    monkeypatch.setattr(wa_client, "send_image", send_image)
+
+    assert await flush_ui_intents.flush_pending_ui_intents(SESSION) == 0
+    store = FilesystemMetadataStore(vault)
+
+    # Una escritura vieja devuelve el MISMO intent fallido: no se reintenta solo.
+    store.update(SESSION, lambda fresh: {**fresh, "pending_ui_intents": [first]})
+    assert await flush_ui_intents.flush_pending_ui_intents(SESSION) == 0
+    assert send_image.await_count == 1
+
+    # Reencolado legítimo: mismo id, otro momento.
+    requeued = {**first, "queued_at_ms": first["queued_at_ms"] + 1_000}
+    store.update(SESSION, lambda fresh: {**fresh, "pending_ui_intents": [requeued]})
+    assert await flush_ui_intents.flush_pending_ui_intents(SESSION) == 1
+    assert send_image.await_count == 2
+    assert _read(path)["pending_ui_intents"] == []
+
+
+def test_the_delivery_log_is_read_bounded_to_its_tail(tmp_path: Path) -> None:
+    """M7: el registro crece con la sesión; se leen solo los últimos 64 KiB
+    (un intent vence a los 10 min) y la primera línea, cortada, se ignora."""
+    from src.plugins.chats.agent.sales.activities import flush_ui_intents
+
+    session_dir = tmp_path / SESSION
+    session_dir.mkdir()
+
+    def row(intent_id: str) -> str:
+        return json.dumps({"id": intent_id, "kind": "product_detail", "ok": True, "queued_at_ms": 1}) + "\n"
+
+    filler = "".join(row(f"relleno-{n:05d}") for n in range(1_500))
+    (session_dir / "ui_intents_delivered.jsonl").write_text(row("viejo") + filler + row("reciente"), encoding="utf-8")
+    assert (session_dir / "ui_intents_delivered.jsonl").stat().st_size > 64 * 1024
+
+    log = flush_ui_intents._delivery_log(session_dir)
+
+    assert "reciente" in log.delivered
+    assert "viejo" not in log.delivered, "se leyó el registro entero"
+    assert all(i == "reciente" or i.startswith("relleno-") for i in log.delivered)

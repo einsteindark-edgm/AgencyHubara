@@ -14,24 +14,32 @@ DEHA:
     activity (90s) no nos pille.
   * R-DIP: no importa workflow/client de Temporal — solo `@activity.defn`.
 
-Tarjetas exactamente una vez (incidente 2026-10-06): el turno 4 mandó la foto
-de un producto y el turno 5 la volvió a mandar sin que el bot la pidiera — una
-escritura vieja de `metadata.json` la devolvió a la cola. Desde entonces:
+Una tarjeta entregada no vuelve a salir (incidente 2026-10-06): el turno 4
+mandó la foto de un producto y el turno 5 la volvió a mandar sin que el bot la
+pidiera — una escritura vieja de `metadata.json` la devolvió a la cola. Desde
+entonces:
 
   * cada intent tiene identidad (`ui_intent_id`: el `id` que pone quien lo
     encola, o uno estable derivado de qué es y cuándo se encoló en los
     encolados antes de que hubiera id);
   * cada intent despachado queda anotado en un registro de solo-agregar FUERA
     de `metadata.json` (`ui_intents_delivered.jsonl` de la sesión), y antes de
-    mandar se descarta sin enviar todo intent que ya figure ahí;
+    mandar se descarta sin enviar todo intent ya entregado con ese id (y el
+    mismo intent fallido; ver `_DELIVERED_LOG`);
   * sacar el intent de la cola y anotar sus fotos en `outbound_media_index` es
     un `update()` sobre la lectura fresca, por id (con el candado del store):
     lo que otro escritor puso mientras se enviaba no se pisa.
 
 Si Temporal reintenta tras un fallo parcial, los intents ya despachados están
-en el registro y fuera de la cola: no se repiten. Queda la ventana de un crash
-ENTRE el envío y la anotación (milisegundos): ahí el intent sale otra vez
-(al menos una vez, como siempre).
+en el registro y fuera de la cola: no se repiten. Un intent ya ENTREGADO no
+sale otra vez aunque una escritura vieja lo devuelva a la cola.
+
+La garantía es «al menos una vez», no «exactamente una vez»: un intent puede
+repetirse si el worker cae ENTRE el envío a Meta y la anotación en el registro
+(milisegundos; el reintento lo manda de nuevo), o si dos flushes de la MISMA
+sesión corren a la vez (el del turno y el del endpoint `/order`): los dos lo
+leen pendiente antes de que cualquiera lo anote. Se revisa el registro justo
+antes de cada envío para achicar esa ventana, no para cerrarla.
 
 Resilencia: cada intent va dentro de try/except aislado. Un intent con
 payload corrupto NO bloquea a los siguientes. Errores se loguean + se
@@ -44,6 +52,7 @@ import hashlib
 import json
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -387,11 +396,12 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
         return []
     store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
 
-    # Exactamente una vez (incidente 2026-10-06): un intent que ya figura en
-    # el registro de entregas volvió a la cola por una escritura vieja — se
-    # descarta sin mandarlo (la foto del turno 4 salió otra vez en el turno 5).
-    delivered = _delivered_intent_ids(session_dir)
-    repeated = [it for it in intents if ui_intent_id(it) in delivered]
+    # Una tarjeta entregada no vuelve a salir (incidente 2026-10-06): un
+    # intent que ya figura en el registro de entregas volvió a la cola por una
+    # escritura vieja — se descarta sin mandarlo (la foto del turno 4 salió
+    # otra vez en el turno 5).
+    delivery_log = _delivery_log(session_dir)
+    repeated = [it for it in intents if delivery_log.blocks(it)]
     if repeated:
         activity.logger.warning(
             "flush_ui_intents.already_delivered_discarded",
@@ -403,7 +413,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
             },
         )
         _settle_intents(store, session_id, {ui_intent_id(it) for it in repeated})
-        intents = [it for it in intents if ui_intent_id(it) not in delivered]
+        intents = [it for it in intents if not delivery_log.blocks(it)]
     if not intents:
         return []
 
@@ -476,7 +486,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
     for intent in intents:
         intent_id = ui_intent_id(intent)
         kind = intent.get("kind")
-        if intent_id in _delivered_intent_ids(session_dir):
+        if _delivery_log(session_dir).blocks(intent):
             # Otro flush lo despachó mientras este enviaba los anteriores.
             activity.logger.warning(
                 "flush_ui_intents.already_delivered_discarded",
@@ -526,7 +536,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
             report.append({"kind": kind, "wamid": None, "ok": False})
             # Fuera de la cola (NO retry automático — el LLM puede decidir
             # reemitir en próxima iteración).
-            _record_delivery(session_dir, intent_id, kind=kind, ok=False, wamid=None)
+            _record_delivery(session_dir, intent, ok=False, wamid=None)
             _settle_intents(store, session_id, {intent_id})
             continue
 
@@ -534,7 +544,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
             # kind desconocido o intent inválido (sin imagen, etc)
             failed.append({"kind": kind, "error": "no_dispatch"})
             report.append({"kind": kind, "wamid": None, "ok": False})
-            _record_delivery(session_dir, intent_id, kind=kind, ok=False, wamid=None)
+            _record_delivery(session_dir, intent, ok=False, wamid=None)
             _settle_intents(store, session_id, {intent_id})
             continue
 
@@ -549,13 +559,13 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
             )
             failed.append({"kind": kind, "error": result.error})
             report.append({"kind": kind, "wamid": None, "ok": False})
-            _record_delivery(session_dir, intent_id, kind=kind, ok=False, wamid=None)
+            _record_delivery(session_dir, intent, ok=False, wamid=None)
             _settle_intents(store, session_id, {intent_id})
             continue
 
         # ENVÍO EXITOSO — anotar la entrega y sacarlo de la cola (con sus
         # fotos en el índice) antes de cualquier otra operación.
-        _record_delivery(session_dir, intent_id, kind=kind, ok=True, wamid=result.wa_message_id)
+        _record_delivery(session_dir, intent, ok=True, wamid=result.wa_message_id)
         _settle_intents(store, session_id, {intent_id}, media_log=media_log)
         report.append({"kind": kind, "wamid": result.wa_message_id, "ok": True})
 
@@ -632,9 +642,12 @@ def ui_intent_id(intent: dict[str, Any]) -> str:
 
 
 #: Registro de entregas de la sesión (solo-agregar, FUERA de `metadata.json`):
-#: una línea JSON por intent despachado — `{id, kind, ok, wamid, at_ms}` —,
-#: también los fallidos (un fallido no se reintenta solo: el LLM decide
-#: reemitir). Antes de mandar, el flush descarta todo intent que figure acá.
+#: una línea JSON por intent despachado — `{id, kind, ok, wamid, queued_at_ms,
+#: at_ms}` —, también los fallidos. Antes de mandar, el flush descarta todo
+#: intent ENTREGADO (`ok`) con el mismo id, y el MISMO intent fallido (mismo id
+#: y mismo `queued_at_ms`: un fallido no se reintenta solo, el LLM decide
+#: reemitir). Un reencolado legítimo con el id de un fallido sí sale: las
+#: instrucciones de pago llevan un id fijo por pedido (`payinstr-<order_id>`).
 _DELIVERED_LOG = "ui_intents_delivered.jsonl"
 
 #: Cuánto del final del registro se lee: un intent vence a los
@@ -643,8 +656,26 @@ _DELIVERED_LOG = "ui_intents_delivered.jsonl"
 _DELIVERED_TAIL_BYTES = 64 * 1024
 
 
-def _delivered_intent_ids(session_dir: Path) -> set[str]:
-    """Los ids del final del registro de entregas (vacío si no hay registro)."""
+@dataclass(frozen=True)
+class _DeliveryLog:
+    """Lo que dice el final del registro de entregas."""
+
+    #: ids entregados: bloquean cualquier intent con ese id.
+    delivered: frozenset[str] = frozenset()
+    #: `(id, queued_at_ms)` fallidos: bloquean solo ESE intent.
+    failed: frozenset[tuple[str, str]] = frozenset()
+
+    def blocks(self, intent: dict[str, Any]) -> bool:
+        intent_id = ui_intent_id(intent)
+        return intent_id in self.delivered or (intent_id, _queued_key(intent)) in self.failed
+
+
+def _queued_key(intent: dict[str, Any]) -> str:
+    return json.dumps(intent.get("queued_at_ms"))
+
+
+def _delivery_log(session_dir: Path) -> _DeliveryLog:
+    """El final del registro de entregas (vacío si no hay registro)."""
     path = session_dir / _DELIVERED_LOG
     try:
         with path.open("rb") as fh:
@@ -654,41 +685,47 @@ def _delivered_intent_ids(session_dir: Path) -> set[str]:
             fh.seek(start)
             chunk = fh.read()
     except FileNotFoundError:
-        return set()
+        return _DeliveryLog()
     except OSError:
         activity.logger.warning(
             "flush_ui_intents.delivered_log_unreadable", extra={"path": str(path)}
         )
-        return set()
+        return _DeliveryLog()
     lines = chunk.splitlines()
     if start > 0 and lines:
         lines = lines[1:]  # la primera puede venir cortada
-    ids: set[str] = set()
+    delivered: set[str] = set()
+    failed: set[tuple[str, str]] = set()
     for line in lines:
         try:
             row = json.loads(line)
         except ValueError:
             continue
-        if isinstance(row, dict) and isinstance(row.get("id"), str):
-            ids.add(row["id"])
-    return ids
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+            continue
+        if row.get("ok") is True:
+            delivered.add(row["id"])
+        else:
+            failed.add((row["id"], _queued_key(row)))
+    return _DeliveryLog(frozenset(delivered), frozenset(failed))
 
 
 def _record_delivery(
     session_dir: Path,
-    intent_id: str,
+    intent: dict[str, Any],
     *,
-    kind: str | None,
     ok: bool,
     wamid: str | None,
 ) -> None:
     """Agrega el intent despachado al registro de entregas. Best-effort: si
     no se puede escribir, el intent igual sale de la cola."""
+    intent_id = ui_intent_id(intent)
     row = {
         "id": intent_id,
-        "kind": kind,
+        "kind": intent.get("kind"),
         "ok": ok,
         "wamid": wamid,
+        "queued_at_ms": intent.get("queued_at_ms"),
         "at_ms": int(time.time() * 1000),
     }
     try:

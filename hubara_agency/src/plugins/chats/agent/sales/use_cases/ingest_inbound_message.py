@@ -675,6 +675,14 @@ class IngestInboundMessage:
                 }
             )
 
+        # Un humano tomó la conversación mientras se esperaba a Jev (revisión
+        # del PR #393): el ciclo del bot que este mensaje iba a mover (episodio
+        # nuevo, etiqueta reiniciada) se descarta. Sin esto el merge dejaba
+        # `tag=NO_ETIQUETADO` y un episodio abierto bajo el humano (la
+        # etiqueta del escritor gana el conflicto). Mismo principio que la
+        # guarda de arriba con la ruta humana ya leída.
+        if self._human_took_over(session_id, base):
+            _yield_to_human(metadata, base)
         self._safe_write_metadata(session_id, metadata, base)
 
         # Punto 2 (escala Window Strategist): mantener el índice liviano de
@@ -1863,7 +1871,12 @@ class IngestInboundMessage:
         )
 
     def _safe_write_metadata(
-        self, session_id: str, data: dict[str, Any], base: dict[str, Any]
+        self,
+        session_id: str,
+        data: dict[str, Any],
+        base: dict[str, Any],
+        *,
+        overwrite_unreadable: bool = False,
     ) -> None:
         """Escribe SOLO lo que este ingest cambió en `data` desde `base` (lo que
         leyó, o lo que escribió la vez anterior), sobre lo que hay en disco
@@ -1871,11 +1884,16 @@ class IngestInboundMessage:
         copia entera, escrita tras esperar a Jev, devolvía a la cola la foto
         que el flush ya había mandado y borraba su entrega del índice.
 
+        Sobre un documento ilegible no escribe, salvo `overwrite_unreadable`
+        (pasar la conversación al humano tiene que quedar escrito).
+
         Si escribe, `base` pasa a ser `data`: lo ya escrito deja de contar como
         cambio en la escritura siguiente. Best-effort: un fallo se loguea y el
         mensaje del cliente sigue su camino."""
         try:
-            self._metadata_store.write_merged(session_id, base=base, ours=data)
+            self._metadata_store.write_merged(
+                session_id, base=base, ours=data, overwrite_unreadable=overwrite_unreadable
+            )
         except Exception as exc:  # noqa: BLE001 — best-effort
             logger.info(
                 "metadata_write_failed_ignored",
@@ -1884,6 +1902,18 @@ class IngestInboundMessage:
             )
             return
         _rebase(base, data)
+
+    def _human_took_over(self, session_id: str, base: dict[str, Any]) -> bool:
+        """¿Un humano tomó la conversación DESPUÉS de que este ingest la leyó?
+        (`base` sin la ruta humana, lo de disco con ella). Si no se puede leer,
+        no: se sigue como siempre."""
+        if base.get("active_route") == ROUTE_HUMANO:
+            return False
+        try:
+            fresh = self._metadata_store.read(session_id)
+        except Exception:  # noqa: BLE001 — lectura best-effort
+            return False
+        return fresh.get("active_route") == ROUTE_HUMANO
 
     async def _emit_watchdog_events(
         self,
@@ -2557,7 +2587,7 @@ class IngestInboundMessage:
         self._apply_human_route(
             data, motivo=motivo, reason_category=reason_category
         )
-        self._safe_write_metadata(session_id, data, base)
+        self._safe_write_metadata(session_id, data, base, overwrite_unreadable=True)
 
 
 def _now_ms() -> int:
@@ -2571,6 +2601,38 @@ def _rebase(base: dict[str, Any], data: dict[str, Any]) -> None:
     de contar como cambio suyo en la próxima `write_merged`."""
     base.clear()
     base.update(copy.deepcopy(data))
+
+
+#: Lo que el ingest mueve del ciclo del bot y un humano que tomó la
+#: conversación manda sobre ello: la etiqueta y su historial.
+_HUMAN_OWNED_KEYS = ("tag", "motivo", "status_history")
+#: Lo que solo se descarta si este mensaje rotó el episodio (cerró el anterior
+#: o abrió uno nuevo): si no rotó, lo que las lecturas escribieron en el
+#: episodio activo se queda.
+_ROTATION_KEYS = ("episodes", "capi_outbox")
+
+
+def _episode_marks(metadata: dict[str, Any]) -> list[tuple[Any, Any]]:
+    return [
+        (episode.get("episode_id"), episode.get("closed_at_ms"))
+        for episode in metadata.get("episodes") or []
+        if isinstance(episode, dict)
+    ]
+
+
+def _yield_to_human(metadata: dict[str, Any], base: dict[str, Any]) -> None:
+    """Un humano tomó la conversación mientras el ingest esperaba: lo que
+    iba a mover del ciclo del bot vuelve a como lo leyó (`base`), así el merge
+    se queda con lo del humano. Rota el episodio (episodio nuevo, cierre del
+    anterior, `CartAbandoned` del cierre por inactividad) → también se descarta."""
+    keys = list(_HUMAN_OWNED_KEYS)
+    if _episode_marks(metadata) != _episode_marks(base):
+        keys.extend(_ROTATION_KEYS)
+    for key in keys:
+        if key in base:
+            metadata[key] = copy.deepcopy(base[key])
+        else:
+            metadata.pop(key, None)
 
 
 def build_episode_boundary_note(prev_episode: dict[str, Any], *, courtesy: bool = False) -> str:

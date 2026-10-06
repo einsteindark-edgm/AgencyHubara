@@ -325,6 +325,32 @@ def test_lists_both_appended_keep_both_tails() -> None:
     }
 
 
+def test_second_write_after_a_rebase_keeps_what_the_other_writer_appended() -> None:
+    """Revisión del PR #393 (D2): el ingest escribe dos veces en un mismo
+    `execute`. Tras la primera, su `base` es SU vista (sin la entrada que otro
+    escritor agregó antes); en disco esa entrada quedó EN MEDIO. `base` ya no
+    es prefijo de lo de disco, pero sí subsecuencia: no es un conflicto."""
+    h0 = {"tag": "SIN_RESPUESTA", "timestamp": 1.0}
+    other = {"tag": "INTERESADO", "timestamp": 2.0, "source": "otro_escritor"}
+    returned = {"tag": "NO_ETIQUETADO", "timestamp": 3.0, "source": "ingest:customer_returned"}
+    pdf = {"tag": "HUMANO", "timestamp": 4.0, "source": "ingest:pdf"}
+    base = {"status_history": [h0, returned]}
+    ours = {"status_history": [h0, returned, pdf]}
+    fresh = {"status_history": [h0, other, returned]}
+
+    assert _merge(base, ours, fresh) == {"status_history": [h0, other, returned, pdf]}
+
+
+def test_base_missing_an_item_on_disk_is_still_a_conflict() -> None:
+    """Si a lo de disco le falta algo de `base` (otro lo sacó), no es solo
+    agregar: conflicto, gana el escritor."""
+    base = {"q": [1, 2, 3]}
+    ours = {"q": [1, 2, 3, 4]}
+    fresh = {"q": [1, 3, 5]}
+
+    assert _merge(base, ours, fresh) == {"q": [1, 2, 3, 4]}
+
+
 def test_append_already_on_disk_is_not_duplicated() -> None:
     base = {"ctwa_clids_seen": ["c1"]}
     ours = {"ctwa_clids_seen": ["c1", "c2"]}

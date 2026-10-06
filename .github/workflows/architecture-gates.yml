@@ -140,17 +140,33 @@ jobs:
           OTEL_SDK_DISABLED: "true"
         run: uv run pytest tests/architecture -q
 
-      - name: Una sola forma de escribir metadata.json (ratchet, incidente 2026-10-06)
+      - name: Una sola forma de escribir metadata.json (ratchet + comportamiento, incidente 2026-10-06)
         # Una copia vieja de metadata.json devolvió a la cola una foto ya
-        # entregada y salió dos veces. Este gate falla si un módulo de src/
+        # entregada y salió dos veces. El gate (AST) falla si un módulo de src/
         # escribe metadata.json sin FilesystemMetadataStore (update /
-        # write_merged). Es AST puro: vive en tests/platform/ porque
-        # tests/architecture/ es protected y no corre la suite entera de platform.
+        # write_merged); las pruebas de comportamiento cubren el merge de tres
+        # vías, el candado, la lectura ilegible, el flush (una tarjeta
+        # entregada no sale dos veces), el ingest y los escritores que esperan
+        # algo entre leer y escribir. Viven en tests/platform/ y
+        # tests/plugins/ (tests/architecture/ es protected y tests/platform no
+        # corre completo acá), por eso se nombran una por una.
         if: needs.changes.outputs.central == 'true'
         working-directory: hubara_agency
         env:
+          MEDUSA_BASE_URL: http://medusa.invalid
+          MEDUSA_ADMIN_TOKEN: ci-dummy
           OTEL_SDK_DISABLED: "true"
-        run: uv run pytest tests/platform/test_metadata_json_single_writer.py -q
+        run: >-
+          uv run pytest -q
+          tests/platform/test_metadata_json_single_writer.py
+          tests/platform/test_metadata_merge_changes.py
+          tests/platform/test_metadata_store_update.py
+          tests/platform/test_metadata_writers_keep_concurrent_changes.py
+          tests/plugins/chats/sales/test_flush_concurrent_writer.py
+          tests/plugins/chats/sales/test_ui_intent_ids.py
+          tests/plugins/chats/sales/test_writers_keep_concurrent_changes.py
+          tests/plugins/chats/test_ingest_keeps_concurrent_writes.py
+          tests/plugins/orders/test_emit_stage_keeps_concurrent_changes.py
 
       - name: Premortem invariants (compose drift + paridad k8s + colas únicas)
         # Complementa el modo `strict: false` de la branch protection. Dos PRs de

@@ -107,3 +107,121 @@ async def test_ingest_does_not_bring_back_the_photo_the_flush_already_sent(_isol
     # …y lo suyo sí quedó escrito.
     assert metadata["last_inbound_message_id"] == "wamid.in.t5"
     assert isinstance(metadata["last_inbound_at_ms"], int)
+
+
+# --- revisión del PR #393 ------------------------------------------------------
+
+
+class _WhileWaitingForJev:
+    """Proveedor de lecturas que, mientras «espera a Jev», deja que otro
+    escritor haga lo suyo (con el candado)."""
+
+    def __init__(self, store: FilesystemMetadataStore, mutator: Any) -> None:
+        self._store = store
+        self._mutator = mutator
+
+    async def read(self, inbound: Inbound) -> Readings:
+        self._store.update(inbound.session_id, self._mutator)
+        return Readings(purchase=(None, "text"), deferral=None, courtesy=False, opt_out=False)
+
+
+def _ingest(store: FilesystemMetadataStore, mutator: Any) -> IngestInboundMessage:
+    return IngestInboundMessage(
+        history_store=_History(),  # type: ignore[arg-type]
+        load_session=_Loader(),  # type: ignore[arg-type]
+        metadata_store=store,
+        readings=_WhileWaitingForJev(store, mutator),
+    )
+
+
+@pytest.mark.asyncio
+async def test_two_writes_in_one_execute_keep_the_history_entry_of_another_writer(
+    _isolate_vault_dir, monkeypatch
+) -> None:
+    """D2: el cliente vuelve tras agotar la escalera (escritura 1 del ingest:
+    `ingest:customer_returned`) y manda un PDF (escritura 2: la ruta humana).
+    Mientras el ingest esperaba a Jev, otro escritor agregó su entrada al
+    historial: tiene que sobrevivir a las DOS escrituras."""
+    from unittest.mock import AsyncMock
+
+    import src.platform.whatsapp.client as wa_client
+
+    monkeypatch.setattr(
+        "src.platform.audio.meta_media_fetcher.fetch_media_bytes",
+        AsyncMock(return_value=(b"%PDF-1.4 comprobante", "application/pdf")),
+    )
+    monkeypatch.setattr(wa_client, "send_message", AsyncMock(return_value=None))
+    store = FilesystemMetadataStore(_isolate_vault_dir)
+    now_ms = int(time.time() * 1000)
+    store.write(
+        SID,
+        {
+            "phone_number_id": "pnid-1",
+            "active_route": "ventas",
+            "tag": "SIN_RESPUESTA",
+            "status_history": [{"tag": "SIN_RESPUESTA", "timestamp": 1.0}],
+            "episodes": [{"episode_id": "ep_001", "started_at_ms": now_ms - 60_000, "closed_at_ms": None}],
+        },
+    )
+
+    def other_writer_appends(fresh: dict[str, Any]) -> dict[str, Any]:
+        fresh["status_history"] = [
+            *fresh["status_history"],
+            {"tag": "INTERESADO", "timestamp": 2.0, "source": "otro_escritor"},
+        ]
+        return fresh
+
+    message = WhatsAppMessage(
+        message_id="wamid.doc",
+        from_number="573001234567",
+        phone_number_id="pnid-1",
+        text=None,
+        media={"type": "document", "id": "doc-1", "mime_type": "application/pdf", "filename": "comprobante.pdf"},
+        timestamp=str(int(time.time())),
+    )
+
+    await _ingest(store, other_writer_appends).execute(message)
+
+    sources = [e.get("source") or e["tag"] for e in store.read(SID)["status_history"]]
+    assert "otro_escritor" in sources, sources
+    assert sources[-2:] == ["ingest:customer_returned", "HUMANO"], sources
+
+
+@pytest.mark.asyncio
+async def test_a_human_who_took_over_during_the_wait_keeps_the_conversation(_isolate_vault_dir) -> None:
+    """M3: el mensaje reabría un episodio (el anterior cerró con compra), pero
+    mientras el ingest esperaba a Jev el operador tomó la conversación. Ni
+    `tag=NO_ETIQUETADO` ni un episodio nuevo abierto: manda el humano."""
+    store = FilesystemMetadataStore(_isolate_vault_dir)
+    now_ms = int(time.time() * 1000)
+    closed = {
+        "episode_id": "ep_001",
+        "started_at_ms": now_ms - 3 * 86_400_000,
+        "closed_at_ms": now_ms - 2 * 86_400_000,
+        "closing_tag": "COMPRA_EXITOSA",
+    }
+    store.write(
+        SID,
+        {"phone_number_id": "pnid-1", "active_route": "ventas", "tag": "COMPRA_EXITOSA", "episodes": [closed]},
+    )
+
+    def operator_takes_over(fresh: dict[str, Any]) -> dict[str, Any]:
+        return {**fresh, "active_route": "humano", "tag": "HUMANO", "motivo": "Humano tomó el control"}
+
+    message = WhatsAppMessage(
+        message_id="wamid.in",
+        from_number="573001234567",
+        phone_number_id="pnid-1",
+        text="hola, una pregunta",
+        media=None,
+        timestamp=str(int(time.time())),
+    )
+
+    await _ingest(store, operator_takes_over).execute(message)
+
+    metadata = store.read(SID)
+    assert (metadata["active_route"], metadata["tag"]) == ("humano", "HUMANO")
+    assert metadata["motivo"] == "Humano tomó el control"
+    assert metadata["episodes"] == [closed], "quedó un episodio nuevo abierto bajo el humano"
+    # Lo demás del mensaje sí quedó escrito.
+    assert metadata["last_inbound_message_id"] == "wamid.in"

@@ -211,6 +211,14 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _metadata_unreadable(session_key: str) -> HTTPException:
+    """El mutator no corrió: ``metadata.json`` existe y no se pudo leer, y el
+    store no escribe encima (revisión del PR #393). Un error claro en vez de
+    decir que se aplicó."""
+    logger.warning("[chats.session_actions] metadata ilegible session={} — no se escribió", session_key)
+    return HTTPException(status_code=503, detail="metadata de la sesión ilegible: no se aplicó")
+
+
 # ── bodies ────────────────────────────────────────────────────────────────────
 
 
@@ -773,6 +781,8 @@ async def tag(session_key: SessionKey, body: TagBody, deps: Deps) -> dict[str, A
     finally:
         _release_session_lock(session)
 
+    if not outcome:
+        raise _metadata_unreadable(session)
     if outcome.get("already_human"):
         raise HTTPException(status_code=409, detail="already_human: un colega tiene la conversación; no se etiqueta")
     decision: TagDecision = outcome["decision"]
@@ -827,6 +837,8 @@ async def operator_tag(session_key: SessionKey, body: OperatorTagBody, deps: Dep
     finally:
         _release_session_lock(session)
 
+    if not outcome:
+        raise _metadata_unreadable(session)
     closed_id = outcome.get("closed_id")
     await _notify(deps, session, closed_id, body.tag)
     logger.info("[chats.session_actions] operator-tag session={} tag={} closed={}", session, body.tag, closed_id)
@@ -908,7 +920,9 @@ async def escalate(session_key: SessionKey, body: EscalateBody, deps: Deps) -> d
         )
         return data
 
-    store.update(session, _mutate)
+    # Con el documento ilegible también se escribe, como la tool de escalación:
+    # si no, MBA oiría «ya estaba en humano» y el bot seguiría contestando.
+    store.update(session, _mutate, overwrite_unreadable=True)
     escalated = bool(outcome.get("escalated"))
     logger.info("[chats.session_actions] escalate session={} reason={} applied={}", session, body.reason_category, escalated)
     return {"escalated": escalated, "already_human": not escalated, "active_route": ROUTE_HUMANO, "tag": "HUMANO"}

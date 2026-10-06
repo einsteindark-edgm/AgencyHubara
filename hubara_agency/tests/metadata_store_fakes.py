@@ -19,7 +19,11 @@ class MergingMetadataStoreMixin:
     """`update` / `write_merged` sobre el `read` / `write` del fake."""
 
     def update(
-        self, session_id: str, mutator: Callable[[dict[str, Any]], dict[str, Any] | None]
+        self,
+        session_id: str,
+        mutator: Callable[[dict[str, Any]], dict[str, Any] | None],
+        *,
+        overwrite_unreadable: bool = False,
     ) -> dict[str, Any] | None:
         result = mutator(self.read(session_id))  # type: ignore[attr-defined]
         if result is None:
@@ -28,7 +32,12 @@ class MergingMetadataStoreMixin:
         return result
 
     def write_merged(
-        self, session_id: str, *, base: dict[str, Any], ours: dict[str, Any]
+        self,
+        session_id: str,
+        *,
+        base: dict[str, Any],
+        ours: dict[str, Any],
+        overwrite_unreadable: bool = False,
     ) -> dict[str, Any]:
         fresh = self.read(session_id)  # type: ignore[attr-defined]
         if not fresh and base:

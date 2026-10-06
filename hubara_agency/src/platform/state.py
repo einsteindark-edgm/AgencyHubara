@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import re
 import tempfile
@@ -197,11 +198,20 @@ def _merge_lists(base: list[Any], ours: list[Any], fresh: list[Any]) -> list[Any
     if key is not None:
         return _merge_keyed(key, base, ours, fresh)
     size = len(base)
-    if ours[:size] == base and fresh[:size] == base:
-        # Los dos solo agregaron al final: van las dos colas.
-        fresh_tail = fresh[size:]
-        return [*fresh, *(item for item in ours[size:] if item not in fresh_tail)]
+    if ours[:size] == base and _is_subsequence(base, fresh):
+        # El escritor solo agregó al final y en disco sigue todo lo de `base`
+        # (en orden), con lo que otros agregaron al final o EN MEDIO: tras una
+        # escritura, la `base` del ingest es SU vista, sin lo que otro escritor
+        # metió antes (revisión del PR #393). Van los dos agregados, sin
+        # repetir lo que ya está en disco.
+        return [*fresh, *(item for item in ours[size:] if item not in fresh)]
     return None
+
+
+def _is_subsequence(items: list[Any], within: list[Any]) -> bool:
+    """¿Están todos los `items`, en el mismo orden, dentro de `within`?"""
+    remaining = iter(within)
+    return all(item in remaining for item in items)
 
 
 def _identity_key(*lists: list[Any]) -> str | None:
@@ -247,23 +257,44 @@ def _merge_keyed(key: str, base: list[dict[str, Any]], ours: list[dict[str, Any]
 # el store
 # =============================================================================
 
-# Candados que el hilo actual ya tiene (por archivo). `flock` no es reentrante
+log = logging.getLogger(__name__)
+
+# Candados que el hilo actual ya tiene (por archivo REAL: `realpath`, así el
+# mismo archivo por un symlink es el mismo candado). `flock` no es reentrante
 # entre descriptores del mismo proceso: un mutator que escribiera la misma
 # sesión colgaría el worker para siempre. Dentro del mismo hilo se reusa el
 # candado (no hay `await` dentro de un mutator, así que otra corrutina no puede
-# colarse); otros hilos y otros procesos esperan como siempre.
+# colarse) y se avisa: una escritura anidada pisa lo que el mutator de afuera
+# escriba después. Otros hilos y otros procesos esperan como siempre.
 _held = threading.local()
+
+
+def _read_document(path: Path) -> dict[str, Any] | None:
+    """El documento de `path`: ``{}`` si no existe (sesión nueva); ``None`` si
+    existe y NO se pudo leer (OSError, JSON roto o no es un objeto). Una
+    lectura fallida no es una sesión vacía (revisión del PR #393)."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 class FilesystemMetadataStore:
     """Adapter filesystem del documento de metadatos por sesion.
 
-    Cada sesion mapea a ``<vault_dir>/<session_id>/metadata.json``. La lectura
-    es tolerante a archivos corruptos (retorna ``{}`` ante ``JSONDecodeError``);
-    TODA escritura es **atomica** (temp file + ``os.replace`` via
-    ``atomic_write_json``) y va bajo el MISMO candado por sesion (``flock``
-    sobre ``metadata.json.lock``): ninguna escritura cae entre la lectura y la
-    escritura de otra.
+    Cada sesion mapea a ``<vault_dir>/<session_id>/metadata.json``. ``read()``
+    es tolerante (``{}`` si no existe o no se puede leer: para quien solo
+    mira); TODA escritura es **atomica** (temp file + ``os.replace`` via
+    ``atomic_write_json``), va bajo el MISMO candado por sesion (``flock`` sobre
+    ``metadata.json.lock``) y NUNCA escribe sobre un documento que existe y no
+    se pudo leer (se reintenta una vez; si sigue ilegible, no se escribe).
 
     Formas de escribir (ver el docstring del módulo):
       * ``update(session_id, mutator)`` — solo las llaves del escritor sobre la
@@ -287,11 +318,12 @@ class FilesystemMetadataStore:
     @contextmanager
     def _locked(self, path: Path) -> Iterator[None]:
         """El candado de la sesión (`flock` sobre el sidecar `.lock`),
-        reentrante dentro del mismo hilo."""
+        reentrante dentro del mismo hilo (por archivo real)."""
         held: set[str] = getattr(_held, "paths", None) or set()
         _held.paths = held
-        key = str(path)
+        key = os.path.realpath(path)
         if key in held:
+            log.warning("metadata_nested_write_reentrant", extra={"path": key})
             yield
             return
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -305,17 +337,18 @@ class FilesystemMetadataStore:
                 held.discard(key)
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
+    @staticmethod
+    def _read_fresh(path: Path) -> dict[str, Any] | None:
+        """La lectura fresca bajo el candado: un reintento si falla (EIO,
+        EMFILE suelen ser transitorios); ``None`` si sigue ilegible."""
+        document = _read_document(path)
+        if document is None:
+            document = _read_document(path)
+        return document
+
     def read(self, session_id: str) -> dict[str, Any]:
-        path = self._path_for(session_id)
-        if not path.exists():
-            return {}
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        if not isinstance(data, dict):
-            return {}
-        return data
+        document = _read_document(self._path_for(session_id))
+        return document if document is not None else {}
 
     def write(self, session_id: str, data: dict[str, Any]) -> None:
         """Reemplaza el documento ENTERO (bajo el candado). Pisa lo que otro
@@ -329,6 +362,8 @@ class FilesystemMetadataStore:
         self,
         session_id: str,
         mutator: Callable[[dict[str, Any]], dict[str, Any] | None],
+        *,
+        overwrite_unreadable: bool = False,
     ) -> dict[str, Any] | None:
         """Read-modify-write ATOMICO bajo el candado por sesion (fcntl.flock).
 
@@ -338,26 +373,42 @@ class FilesystemMetadataStore:
         adentro, aplica `mutator` y escribe — dos escrituras concurrentes se
         serializan (``write`` y ``write_merged`` toman el mismo candado).
 
-        `mutator` recibe el dict fresco y devuelve el dict a escribir, o
-        ``None`` para ABORTAR sin escribir (p.ej. si la lectura fresca vino
-        vacia por un error transitorio y escribir el dict mutado pisaria el
-        estado real de la sesion — el modo de fallo "el bot revive en medio de
-        la intervencion humana"). El mutator no hace I/O lento ni ``await``:
-        corre con el candado tomado.
+        `mutator` recibe el dict fresco (``{}`` si la sesión no existe todavía)
+        y devuelve el dict a escribir, o ``None`` para ABORTAR sin escribir. El
+        mutator no hace I/O lento ni ``await``: corre con el candado tomado.
 
-        Devuelve el dict escrito, o ``None`` si el mutator aborto.
+        Documento que existe y no se pudo leer (tras un reintento): NO se llama
+        al mutator ni se escribe — sería dejar un documento casi vacío sobre la
+        sesión (revisión del PR #393: con ``active_route=humano``, el bot
+        revivía). Quien tiene que escribir igual (sacar al bot: la escalación
+        a humano, la toma del operador) lo pide con
+        ``overwrite_unreadable=True``: el mutator recibe ``{}``.
+
+        Devuelve el dict escrito, o ``None`` si no se escribió.
         """
         path = self._path_for(session_id)
         with self._locked(path):
-            result = mutator(self.read(session_id))
+            fresh = self._read_fresh(path)
+            if fresh is None:
+                if not overwrite_unreadable:
+                    log.warning("metadata_unreadable_update_skipped", extra={"path": str(path)})
+                    return None
+                log.warning("metadata_unreadable_overwritten", extra={"path": str(path)})
+                fresh = {}
+            result = mutator(fresh)
             if result is None:
                 return None
             atomic_write_json(path, result)
             return result
 
     def write_merged(
-        self, session_id: str, *, base: dict[str, Any], ours: dict[str, Any]
-    ) -> dict[str, Any]:
+        self,
+        session_id: str,
+        *,
+        base: dict[str, Any],
+        ours: dict[str, Any],
+        overwrite_unreadable: bool = False,
+    ) -> dict[str, Any] | None:
         """Escribe SOLO lo que el escritor cambió frente a lo que leyó.
 
         Para escritores que acumulan cambios entre esperas (el ingest esperando
@@ -366,14 +417,24 @@ class FilesystemMetadataStore:
         candado se relee FRESCO y se escribe ``merge_changes(base, ours,
         fresh)``: lo que otro escritor puso mientras tanto no se revierte.
 
-        Lectura fresca vacía para una sesión que tenía datos (ilegible): no se
-        mezcla sobre la nada — quedarían solo las llaves del escritor —; se
-        escribe ``ours`` entero, como antes. Devuelve lo escrito.
+        Sin lectura fresca útil (el documento desapareció, o existe y sigue
+        ilegible tras un reintento) no se mezcla sobre la nada — quedarían
+        solo las llaves del escritor —: si el escritor sí había leído la sesión
+        (``base`` con datos) se escribe ``ours`` entero, como antes; si tampoco
+        (``base`` vacío), no se escribe, salvo ``overwrite_unreadable=True``
+        (sacar al bot: la ruta humana tiene que quedar escrita). Devuelve lo
+        escrito, o ``None``.
         """
         path = self._path_for(session_id)
         with self._locked(path):
-            fresh = self.read(session_id)
-            if not fresh and base:
+            fresh = self._read_fresh(path)
+            if fresh is None:
+                if not base and not overwrite_unreadable:
+                    log.warning("metadata_unreadable_merge_skipped", extra={"path": str(path)})
+                    return None
+                log.warning("metadata_unreadable_writer_view_written", extra={"path": str(path)})
+                merged = ours
+            elif not fresh and base:
                 merged = ours
             else:
                 merged = merge_changes(base, ours, fresh)
