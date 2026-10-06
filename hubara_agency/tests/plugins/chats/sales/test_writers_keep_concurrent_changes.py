@@ -224,14 +224,15 @@ async def test_operator_takeover_waits_for_a_write_in_progress(
     assert metadata["last_delivery_status"] == "delivered"
 
 
-# D1: quien saca al bot de la conversación escribe aunque el documento esté
-# ilegible (como la escalación); si no, el operador ve «tomado» y el bot sigue.
+# Sacar al bot de la conversación queda escrito aunque el documento esté
+# dañado: el store se recupera solo (última copia buena o vacío) y escribe;
+# si no, el operador vería «tomado» y el bot seguiría.
 
 _BROKEN_JSON = '{"active_route": "ventas", "episodes": ['
 
 
 @pytest.mark.asyncio
-async def test_operator_takeover_over_an_unreadable_document_still_stops_the_bot(
+async def test_operator_takeover_over_a_damaged_document_still_stops_the_bot(
     _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from unittest.mock import AsyncMock
@@ -248,7 +249,7 @@ async def test_operator_takeover_over_an_unreadable_document_still_stops_the_bot
     assert _read(path)["active_route"] == "humano"
 
 
-def test_a_payment_receipt_routes_to_human_over_an_unreadable_document(_isolate_vault_dir: Path) -> None:
+def test_a_payment_receipt_routes_to_human_over_a_damaged_document(_isolate_vault_dir: Path) -> None:
     from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import IngestInboundMessage
 
     path = _isolate_vault_dir / SID / "metadata.json"

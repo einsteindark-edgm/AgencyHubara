@@ -20,9 +20,15 @@ temp+rename propios). La regla desde entonces:
 Este gate falla si un módulo de `src/` escribe `metadata.json` por otro camino.
 La lista permitida lleva SIEMPRE su razón y solo puede achicarse.
 
+Lo mismo vale para las copias de la recuperación automática del store
+(decisión del operador, 2026-10-06): `metadata.json.prev` (la última copia
+buena) y `metadata.json.damaged-<ms>` (un dañado apartado) los escribe solo
+`state.py`.
+
 Qué ve (análisis estático, AST): `write_text`/`write_bytes`, `open('w')`,
 `os.open` con banderas de escritura, `json.dump`, `atomic_write_json` (y sus
-alias), `os.replace`/`Path.replace`, `.write(session_id, data)` de un store, y
+alias), `os.replace`/`os.rename`/`os.link`/`Path.replace`,
+`.write(session_id, data)` de un store, y
 helpers que escriben (también importados de otro módulo de `src/`, o llamados
 como `modulo.funcion`), con la ruta armada a mano, en una constante (del mismo
 módulo o importada), devuelta por otra función o guardada en `self.<attr>`.
@@ -340,7 +346,7 @@ def _write_primitive(call: ast.Call, module: _Module) -> str | None:
             return func.attr
         if func.attr == "dump" and owner in module.json_mods:
             return "json.dump"
-        if func.attr in ("replace", "rename") and owner in module.os_mods:
+        if func.attr in ("replace", "rename", "link", "symlink") and owner in module.os_mods:
             return f"os.{func.attr}"
         if func.attr == "open" and owner in module.os_mods:
             flags = {
@@ -806,6 +812,34 @@ def clean(df, metadata_file):
 def test_the_scanner_does_not_flag_what_only_reads_or_is_not_metadata() -> None:
     for label, source in _NOT_WRITES.items():
         assert scan_source(source, f"src/ok_{label}.py") == set(), f"falso positivo: {label!r}"
+
+
+#: La recuperación automática (decisión del operador, 2026-10-06) guarda la
+#: última copia buena en `metadata.json.prev` y aparta un dañado como
+#: `metadata.json.damaged-<ms>`: esas copias también las escribe SOLO el store.
+_COPY_SAMPLES = {
+    "prev_a_mano": '''
+def keep_last_good(session_dir, data):
+    (session_dir / "metadata.json.prev").write_text(json.dumps(data))
+''',
+    "damaged_a_mano": '''
+import os
+
+def set_aside(session_dir):
+    os.replace(session_dir / "metadata.json", session_dir / "metadata.json.damaged-1")
+''',
+    "enlace_a_prev": '''
+import os
+
+def keep_last_good(session_dir):
+    os.link(session_dir / "metadata.json", session_dir / "metadata.json.prev")
+''',
+}
+
+
+def test_the_copies_of_metadata_are_written_only_by_the_store() -> None:
+    for label, source in _COPY_SAMPLES.items():
+        assert scan_source(source, f"src/sample_{label}.py"), f"el gate no ve el patrón {label!r}"
 
 
 def test_the_gate_scans_the_real_tree() -> None:

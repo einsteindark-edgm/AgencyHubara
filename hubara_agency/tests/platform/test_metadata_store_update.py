@@ -167,23 +167,6 @@ def test_write_merged_waits_for_an_update_in_progress(tmp_path):
     assert store.read("wa_1") == {"n": 1, "delivery": "sent"}
 
 
-def test_write_merged_does_not_write_a_stale_view_over_an_unreadable_document(tmp_path):
-    """Segunda revisión del PR #393: lectura fresca ilegible para una sesión
-    que el escritor sí había leído. Escribir su copia (`ours`) revertiría lo
-    que pasó desde que la leyó —p. ej. la toma de un humano—: misma regla que
-    `update()`, no se escribe (salvo `overwrite_unreadable=True`)."""
-    store = FilesystemMetadataStore(tmp_path)
-    store.write("wa_1", {"active_route": "ventas", "tag": "NO_ETIQUETADO"})
-    base = store.read("wa_1")
-    ours = {**base, "last_inbound_message_id": "wamid.x"}
-    path = tmp_path / "wa_1" / "metadata.json"
-    path.write_text('{"active_route": "humano", "tag": "HUMANO", "motivo": "lo', encoding="utf-8")
-    on_disk = path.read_bytes()
-
-    assert store.write_merged("wa_1", base=base, ours=ours) is None
-    assert path.read_bytes() == on_disk, "escribió su vista vieja sobre la toma del humano"
-
-
 def test_a_nested_write_in_the_same_thread_does_not_hang(tmp_path):
     """Un mutator que (por error) escribe la misma sesión no cuelga el worker:
     el candado es reentrante dentro del mismo hilo."""
@@ -205,10 +188,10 @@ def test_a_nested_write_in_the_same_thread_does_not_hang(tmp_path):
 
 
 # --- revisión del PR #393 ------------------------------------------------------
-# D1: una lectura fallida NO es una sesión vacía. `read()` devuelve `{}` ante
-# OSError/JSON roto, y `update()` le pasaba ese `{}` al mutator y escribía un
-# documento casi vacío: con `active_route=humano`, episodios y pedido, el flush
-# dejaba `{"ui_intents_failures": [...]}` y el bot revivía.
+# Un `metadata.json` dañado se recupera solo con la última copia buena
+# (`metadata.json.prev`): decisión del operador, 2026-10-06. Las pruebas de la
+# recuperación están en `test_metadata_store_recovery.py`; acá, las que vienen
+# de la revisión y siguen valiendo.
 
 _SESSION = {
     "active_route": "humano",
@@ -218,18 +201,18 @@ _SESSION = {
 }
 
 
-def _unreadable_by_broken_json(path):
+def _damaged_by_broken_json(path):
     path.write_text('{"active_route": "humano", "episodes": [', encoding="utf-8")
 
 
-def _unreadable_by_permissions(path):
+def _damaged_by_permissions(path):
     os.chmod(path, 0)
 
 
-_UNREADABLE = [
-    pytest.param(_unreadable_by_broken_json, id="json-roto"),
+_DAMAGED = [
+    pytest.param(_damaged_by_broken_json, id="json-roto"),
     pytest.param(
-        _unreadable_by_permissions,
+        _damaged_by_permissions,
         id="sin-permiso",
         marks=pytest.mark.skipif(os.geteuid() == 0, reason="root lee archivos 000"),
     ),
@@ -241,43 +224,28 @@ def _disk_bytes(path) -> bytes:
     return path.read_bytes()
 
 
-@pytest.mark.parametrize("break_it", _UNREADABLE)
-def test_update_never_writes_over_a_document_it_could_not_read(tmp_path, break_it):
-    store = FilesystemMetadataStore(tmp_path)
-    store.write("wa_1", _SESSION)
-    path = tmp_path / "wa_1" / "metadata.json"
-    break_it(path)
-    calls = []
-
-    def mutator(data):
-        calls.append(dict(data))
-        data["ui_intents_failures"] = [{"kind": "product_detail", "error": "x"}]
-        return data
-
-    assert store.update("wa_1", mutator) is None
-    assert calls == [], "el mutator no puede recibir un {} en lugar de la sesión"
-    assert b"ui_intents_failures" not in _disk_bytes(path)
-
-
-@pytest.mark.parametrize("break_it", _UNREADABLE)
-def test_the_flush_failure_history_does_not_revive_the_bot(tmp_path, break_it):
+@pytest.mark.parametrize("damage", _DAMAGED)
+def test_the_flush_failure_history_does_not_revive_the_bot(tmp_path, damage):
     """La reproducción de la revisión: el histórico de fallos del flush sobre
-    una sesión humana con `metadata.json` ilegible."""
+    una sesión humana con `metadata.json` dañado. Antes quedaba solo
+    `{"ui_intents_failures": [...]}` y el bot revivía; ahora el fallo se anota
+    sobre la última copia buena y la sesión sigue en humano."""
     from src.plugins.chats.agent.sales.activities import flush_ui_intents
 
     store = FilesystemMetadataStore(tmp_path)
     store.write("wa_1", _SESSION)
+    store.write("wa_1", _SESSION)  # la segunda escritura deja la copia buena
     path = tmp_path / "wa_1" / "metadata.json"
-    break_it(path)
+    damage(path)
 
     flush_ui_intents._append_failures(store, "wa_1", [{"kind": "product_detail", "error": "x"}])
 
-    after = _disk_bytes(path)
-    assert b"ui_intents_failures" not in after
-    assert b'"active_route": "humano"' in after
+    after = json.loads(_disk_bytes(path))
+    assert (after["active_route"], after["registered_order"]) == ("humano", {"order_id": "order_1"})
+    assert after["ui_intents_failures"][-1]["kind"] == "product_detail"
 
 
-def test_update_retries_a_transient_read_failure_once(tmp_path, monkeypatch):
+def test_update_retries_a_transient_read_failure(tmp_path, monkeypatch):
     from pathlib import Path
 
     store = FilesystemMetadataStore(tmp_path)
@@ -308,44 +276,14 @@ def test_update_of_a_missing_document_still_creates_it(tmp_path):
     assert store.read("wa_nueva") == {"phone_number_id": "pnid"}
 
 
-@pytest.mark.parametrize("break_it", _UNREADABLE)
-def test_who_must_write_anyway_asks_for_it_explicitly(tmp_path, break_it):
-    """La escalación a humano reescribe a propósito un documento ilegible
-    (sin ella el cliente queda con el bot): lo pide con `overwrite_unreadable`."""
-    store = FilesystemMetadataStore(tmp_path)
-    store.write("wa_1", _SESSION)
-    path = tmp_path / "wa_1" / "metadata.json"
-    break_it(path)
-
-    written = store.update(
-        "wa_1", lambda d: {**d, "active_route": "humano"}, overwrite_unreadable=True
-    )
-
-    assert written == {"active_route": "humano"}
-    assert json.loads(_disk_bytes(path)) == {"active_route": "humano"}
-
-
-@pytest.mark.parametrize("break_it", _UNREADABLE)
-def test_write_merged_does_not_write_when_neither_side_could_read(tmp_path, break_it):
-    """Sin nada leído (`base` vacío) y el disco ilegible, escribir `ours` sería
-    dejar solo las llaves del escritor: no se escribe."""
-    store = FilesystemMetadataStore(tmp_path)
-    store.write("wa_1", _SESSION)
-    path = tmp_path / "wa_1" / "metadata.json"
-    break_it(path)
-
-    assert store.write_merged("wa_1", base={}, ours={"active_route": "ventas", "tag": "NO_ETIQUETADO"}) is None
-    assert b"NO_ETIQUETADO" not in _disk_bytes(path)
-
-
-def test_the_escalation_tool_still_escalates_over_an_unreadable_document(tmp_path):
+def test_the_escalation_tool_still_escalates_over_a_damaged_document(tmp_path):
     from exoclaw.agent.tools import ToolContext
 
     from src.platform.tools.escalation import EscalateToHumanTool
 
     path = tmp_path / "wa_1" / "metadata.json"
     path.parent.mkdir(parents=True)
-    _unreadable_by_broken_json(path)
+    _damaged_by_broken_json(path)
     tool = EscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
     ctx = ToolContext(session_key="wa_1", channel="whatsapp", chat_id="wa_1")
 
@@ -381,78 +319,3 @@ def test_a_nested_write_through_another_path_to_the_same_file_does_not_hang(tmp_
     assert not worker.is_alive(), "una escritura anidada por otra ruta al mismo archivo colgó el candado"
     assert store.read("wa_1") == {"n": 1}
     assert "metadata_nested_write" in caplog.text
-
-
-# --- segunda revisión del PR #393 ------------------------------------------------
-# Quien reescribe a propósito un documento ilegible (`overwrite_unreadable`) no
-# lo destruye: un JSON truncado se repara a mano. El original queda al lado,
-# tal cual, en `metadata.json.unreadable-<ms>`, y el log dice dónde.
-
-
-def _backups(path) -> list:
-    return sorted(path.parent.glob(f"{path.name}.unreadable-*"))
-
-
-@pytest.mark.parametrize("break_it", _UNREADABLE)
-def test_overwriting_an_unreadable_document_keeps_the_original_aside(tmp_path, break_it, caplog):
-    store = FilesystemMetadataStore(tmp_path)
-    store.write("wa_1", _SESSION)
-    path = tmp_path / "wa_1" / "metadata.json"
-    break_it(path)
-    original = _disk_bytes(path)
-    break_it(path)  # `_disk_bytes` le devuelve el permiso de lectura
-    caplog.set_level(logging.WARNING)
-
-    store.update("wa_1", lambda d: {**d, "active_route": "humano", "tag": "HUMANO"}, overwrite_unreadable=True)
-
-    backups = _backups(path)
-    assert len(backups) == 1, "se reescribió sin guardar el original"
-    assert _disk_bytes(backups[0]) == original
-    assert str(backups[0]) in caplog.text, "el log no dice dónde quedó el original"
-    assert json.loads(_disk_bytes(path)) == {"active_route": "humano", "tag": "HUMANO"}
-
-
-def test_write_merged_that_overwrites_also_keeps_the_original_aside(tmp_path):
-    store = FilesystemMetadataStore(tmp_path)
-    path = tmp_path / "wa_1" / "metadata.json"
-    path.parent.mkdir(parents=True)
-    _unreadable_by_broken_json(path)
-    original = path.read_bytes()
-
-    store.write_merged("wa_1", base={}, ours={"active_route": "humano"}, overwrite_unreadable=True)
-
-    backups = _backups(path)
-    assert len(backups) == 1 and backups[0].read_bytes() == original
-    assert json.loads(path.read_text(encoding="utf-8")) == {"active_route": "humano"}
-
-
-def test_a_document_that_is_not_utf8_is_unreadable_not_an_exception(tmp_path):
-    """Un byte `\\xff` hacía lanzar `UnicodeDecodeError` a `read()`/`update()`:
-    es un documento ilegible como cualquier otro."""
-    store = FilesystemMetadataStore(tmp_path)
-    store.write("wa_1", _SESSION)
-    path = tmp_path / "wa_1" / "metadata.json"
-    path.write_bytes(b'{"active_route": "humano", "x": "\xff\xfe"}')
-    on_disk = path.read_bytes()
-
-    assert store.read("wa_1") == {}
-    assert store.update("wa_1", lambda d: {**d, "n": 1}) is None
-    assert path.read_bytes() == on_disk
-    assert store.update("wa_1", lambda d: {**d, "active_route": "humano"}, overwrite_unreadable=True) == {
-        "active_route": "humano"
-    }
-    assert [b.read_bytes() for b in _backups(path)] == [on_disk]
-
-
-def test_is_unreadable_tells_a_new_session_from_an_unreadable_one(tmp_path):
-    """`read()` devuelve `{}` en los dos casos; quien tiene que distinguirlos
-    (el ingest, una API que responde) pregunta."""
-    store = FilesystemMetadataStore(tmp_path)
-    store.write("wa_ok", _SESSION)
-    path = tmp_path / "wa_roto" / "metadata.json"
-    path.parent.mkdir(parents=True)
-    _unreadable_by_broken_json(path)
-
-    assert store.is_unreadable("wa_nueva") is False
-    assert store.is_unreadable("wa_ok") is False
-    assert store.is_unreadable("wa_roto") is True

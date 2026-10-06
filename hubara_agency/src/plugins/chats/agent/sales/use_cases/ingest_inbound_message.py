@@ -383,10 +383,6 @@ class IngestInboundMessage:
             metadata = self._metadata_store.read(session_id)
         except Exception:  # noqa: BLE001 — best-effort
             metadata = {}
-        if not metadata:
-            # ¿Sesión nueva o `metadata.json` ilegible? Ilegible → a un humano,
-            # con el original guardado (segunda revisión del PR #393).
-            metadata = self._hand_unreadable_metadata_to_human(session_id)
         # Lo que había en disco al leer (incidente 2026-10-06): cada escritura
         # de este `execute` lleva SOLO lo que cambió desde acá (o desde su
         # escritura anterior), no la copia entera. Entre la lectura y la
@@ -1099,12 +1095,7 @@ class IngestInboundMessage:
                 metadata_dirty = True
                 notify_client = True
             if metadata_dirty:
-                # Pasar a humano tiene que quedar escrito aunque el documento
-                # se haya vuelto ilegible (como `_route_to_human`): si no, al
-                # cliente se le dice «un colega lo revisa» y nadie tiene el caso.
-                self._safe_write_metadata(
-                    session_id, metadata, base, overwrite_unreadable=notify_client
-                )
+                self._safe_write_metadata(session_id, metadata, base)
             if notify_client:
                 try:
                     from src.platform.whatsapp import client as wa_client
@@ -1891,7 +1882,6 @@ class IngestInboundMessage:
         data: dict[str, Any],
         base: dict[str, Any],
         *,
-        overwrite_unreadable: bool = False,
         before_merge: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         """Escribe SOLO lo que este ingest cambió en `data` desde `base` (lo que
@@ -1899,24 +1889,18 @@ class IngestInboundMessage:
         AHORA (`write_merged`, merge de tres vías). Incidente 2026-10-06: la
         copia entera, escrita tras esperar a Jev, devolvía a la cola la foto
         que el flush ya había mandado y borraba su entrega del índice.
-
-        Sobre un documento ilegible no escribe, salvo `overwrite_unreadable`
-        (pasar la conversación al humano tiene que quedar escrito).
         `before_merge`: ver `FilesystemMetadataStore.write_merged`.
 
         Solo si escribió, `base` pasa a ser `data`: lo ya escrito deja de
         contar como cambio en la escritura siguiente. Una escritura que no se
-        hizo (documento ilegible) NO cuenta como hecha: sus cambios siguen
-        pendientes (segunda revisión del PR #393: con `base` = `data` tras un
-        salto, la escritura siguiente escribía la vista mínima del ingest y se
-        perdían la ruta humana, la etiqueta y el pedido). Best-effort: un fallo
-        se loguea y el mensaje del cliente sigue su camino."""
+        hizo NO cuenta como hecha: sus cambios siguen pendientes para la
+        siguiente (segunda revisión del PR #393). Best-effort: un fallo se
+        loguea y el mensaje del cliente sigue su camino."""
         try:
             written = self._metadata_store.write_merged(
                 session_id,
                 base=base,
                 ours=data,
-                overwrite_unreadable=overwrite_unreadable,
                 before_merge=before_merge,
             )
         except Exception as exc:  # noqa: BLE001 — best-effort
@@ -1927,38 +1911,9 @@ class IngestInboundMessage:
             )
             return
         if written is None:
-            logger.info("metadata_write_skipped_unreadable", session=session_id)
+            logger.info("metadata_write_not_done", session=session_id)
             return
         _rebase(base, data)
-
-    def _hand_unreadable_metadata_to_human(self, session_id: str) -> dict[str, Any]:
-        """`read()` devolvió `{}`: ¿sesión nueva o `metadata.json` ilegible?
-        Ilegible → la conversación pasa a un humano con el original guardado
-        al lado (`overwrite_unreadable`): aparece en la bandeja y el bot no le
-        contesta sin memoria (segunda revisión del PR #393). Devuelve lo que
-        quedó escrito (o `{}` si era una sesión nueva o no se pudo)."""
-        try:
-            if not self._metadata_store.is_unreadable(session_id):
-                return {}
-        except Exception:  # noqa: BLE001 — sin poder preguntar, como siempre
-            return {}
-
-        def _hand_over(fresh: dict[str, Any]) -> dict[str, Any] | None:
-            if fresh:  # la repararon en medio: nada que rescatar
-                return None
-            self._apply_human_route(
-                fresh, motivo=METADATA_UNREADABLE_MOTIVO, reason_category="METADATA_UNREADABLE"
-            )
-            return fresh
-
-        try:
-            written = self._metadata_store.update(session_id, _hand_over, overwrite_unreadable=True)
-            if written is None:  # la repararon en medio, o no se pudo guardar el original
-                return self._metadata_store.read(session_id)
-        except Exception:  # noqa: BLE001 — best-effort
-            return {}
-        logger.warning("metadata_unreadable_handed_to_human", session=session_id)
-        return written
 
     async def _emit_watchdog_events(
         self,
@@ -2632,7 +2587,7 @@ class IngestInboundMessage:
         self._apply_human_route(
             data, motivo=motivo, reason_category=reason_category
         )
-        self._safe_write_metadata(session_id, data, base, overwrite_unreadable=True)
+        self._safe_write_metadata(session_id, data, base)
 
 
 def _now_ms() -> int:
@@ -2647,14 +2602,6 @@ def _rebase(base: dict[str, Any], data: dict[str, Any]) -> None:
     base.clear()
     base.update(copy.deepcopy(data))
 
-
-#: Motivo con el que una conversación de `metadata.json` ilegible pasa a la
-#: bandeja humana (segunda revisión del PR #393).
-METADATA_UNREADABLE_MOTIVO = (
-    "Metadata ilegible: no se pudo leer el archivo de la conversación. El "
-    "original quedó guardado al lado (metadata.json.unreadable-…) y la "
-    "conversación pasa a una persona para que el bot no conteste sin memoria."
-)
 
 #: Lo que el ingest mueve del ciclo del bot y un humano que tomó la
 #: conversación manda sobre ello: la etiqueta y su historial.

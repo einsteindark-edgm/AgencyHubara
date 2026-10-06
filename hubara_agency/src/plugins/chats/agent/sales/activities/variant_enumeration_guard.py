@@ -91,11 +91,7 @@ async def apply_variant_enumeration_guard_activity(session_id: str, final_text: 
     )
     if intent is None:
         return ""
-    if not _append_intent(session_id, intent):
-        # `metadata.json` ilegible: el selector no entró a la cola. El texto
-        # del bot sale como está (si no, el workflow lo callaría y el cliente
-        # no recibiría nada).
-        return ""
+    _append_intent(session_id, intent)
     activity.logger.info(
         "variant_enumeration_guard: %d %s enumerados en texto → picker encolado (session=%s)",
         len(labels),

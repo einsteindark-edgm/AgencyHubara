@@ -325,30 +325,6 @@ async def test_apply_coupon_medusa_caido_es_honesto(ctx, _isolate_vault_dir):
     assert env["reason"] == "unavailable"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("code", ["MAMA15", ""], ids=["aplicar", "quitar"])
-async def test_apply_coupon_does_not_claim_what_it_could_not_save(ctx, _isolate_vault_dir, code):
-    """Segunda revisión del PR #393: con `metadata.json` ilegible el store no
-    escribe; la tool respondía «aplicado» (o «no había cupón») igual, y el bot
-    le prometía al cliente un descuento que el pedido no iba a tener."""
-    path = _isolate_vault_dir / KEY / "metadata.json"
-    path.parent.mkdir(parents=True)
-    path.write_text('{"episodes": [{"episode_id": "ep_001", "applied_coupon": {"code": "PAPA', encoding="utf-8")
-    on_disk = path.read_bytes()
-    tool = ApplyCouponTool(
-        workspace=str(_isolate_vault_dir),
-        metadata_store=FilesystemMetadataStore(_isolate_vault_dir),
-        promotions=FakePromotionsPort([_promo()]),
-        catalog=FakeCatalog(),
-    )
-
-    env = json.loads(await tool.execute_with_context(ctx, code=code))
-
-    assert env["applied"] is False, env
-    assert env["reason"] == "unavailable", env
-    assert path.read_bytes() == on_disk
-
-
 # --- use case: descuento desde el snapshot ---------------------------------
 
 

@@ -25,15 +25,12 @@ Notas de diseño:
   dict>)`` (merge de tres vías). Nunca ``write`` ni ``atomic_write_json`` sobre
   ``metadata.json``: una copia vieja escrita entera devolvió a la cola una foto
   ya entregada (incidente 2026-10-06; gate
-  ``tests/platform/test_metadata_json_single_writer.py``). Una lectura que
-  falla no es una sesión vacía: ``update()`` no escribe sobre un documento que
-  existe y no se pudo leer (devuelve ``None``) salvo ``overwrite_unreadable=True``
-  (quien saca al bot de la conversación: la escalación a humano, la toma del
-  operador), y entonces el original queda al lado en
-  ``metadata.json.unreadable-<ms>``. ``read()`` devuelve ``{}`` también para
-  una sesión nueva: quien tiene que decir la verdad (una API que responde, una
-  tool que dice «enviado») pregunta ``is_unreadable(session_id)``. Estado
-  process-wide NUEVO exige ``clear()`` +
+  ``tests/platform/test_metadata_json_single_writer.py``). Un ``metadata.json``
+  dañado se recupera solo, sin que el llamador haga nada: la lectura devuelve
+  la última copia buena (``metadata.json.prev``, que el store rota en cada
+  escritura sana) con un ERROR en el log, y la escritura aparta el dañado una
+  vez (``metadata.json.damaged-<ms>``) y escribe sobre esa copia; nada pasa al
+  equipo humano por eso. Estado process-wide NUEVO exige ``clear()`` +
   fixture autouse (lección L-2).
 - ``atomic_write_json`` es la única forma sancionada de escribir JSON al
   vault (write-rename, sin archivos a medio escribir) — para los demás

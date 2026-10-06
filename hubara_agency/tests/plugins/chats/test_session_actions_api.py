@@ -447,48 +447,42 @@ def test_escalate_validates_inputs(h: _Harness) -> None:
     assert h.client.post(_url("escalate"), json={"reason_category": "BULK_ORDER", "summary": ""}).status_code == 422
 
 
-# ── metadata.json ilegible (revisión del PR #393, D1) ─────────────────────────
-# El store ya no escribe sobre un documento que existe y no se pudo leer. Sacar
-# al bot sí se escribe (como la tool de escalación); lo demás se rechaza claro,
-# sin escribir y sin decir que se aplicó.
+# ── metadata.json dañado (PR #393) ────────────────────────────────────────────
+# Un archivo dañado se recupera solo con la última copia buena (decisión del
+# operador, 2026-10-06): las acciones se aplican sobre esa copia, sin 503 ni
+# `KeyError`.
 
 _BROKEN_JSON = '{"active_route": "ventas", "episodes": ['
 
 
-def _break_metadata(h: _Harness, session: str = _A) -> Path:
+def _damage_metadata(h: _Harness, last_good: dict[str, Any] | None = None, session: str = _A) -> Path:
     path = h.vault / session / "metadata.json"
     path.parent.mkdir(parents=True, exist_ok=True)
+    if last_good is not None:
+        path.with_name("metadata.json.prev").write_text(json.dumps(last_good), encoding="utf-8")
     path.write_text(_BROKEN_JSON, encoding="utf-8")
     return path
 
 
-def test_escalate_over_an_unreadable_document_still_routes_to_a_human(h: _Harness) -> None:
-    _break_metadata(h)
+def test_escalate_over_a_damaged_document_still_routes_to_a_human(h: _Harness) -> None:
+    _damage_metadata(h)
     r = h.client.post(_url("escalate"), json={"reason_category": "BULK_ORDER", "summary": "pide 30 unidades"})
     assert r.status_code == 200, r.text
-    assert r.json()["escalated"] is True, "MBA oiría «ya estaba en humano» y el bot seguiría"
+    assert r.json()["escalated"] is True
     assert h.meta()["active_route"] == ROUTE_HUMANO
 
 
 @pytest.mark.parametrize("action", ["tag", "operator-tag"])
-def test_a_tag_over_an_unreadable_document_is_refused_without_writing(h: _Harness, action: str) -> None:
-    path = _break_metadata(h)
+def test_a_tag_over_a_damaged_document_is_applied_over_the_last_good_copy(h: _Harness, action: str) -> None:
+    episode = {"episode_id": "ep_001", "started_at_ms": 1, "closed_at_ms": None}
+    _damage_metadata(h, last_good={"active_route": "ventas", "episodes": [episode]})
+
     r = h.client.post(_url(action), json={"tag": "INTERESADO", "motivo": "lo piensa"})
-    assert r.status_code == 503, r.text
-    assert path.read_text(encoding="utf-8") == _BROKEN_JSON
 
-
-@pytest.mark.parametrize("method", ["post", "delete"], ids=["posponer", "quitar-pospuesto"])
-def test_postponing_over_an_unreadable_document_is_not_a_missing_session(h: _Harness, method: str) -> None:
-    """Segunda revisión del PR #393: respondía 404 «sesión no encontrada» con
-    la sesión ahí, solo ilegible. Como `/tag`: 503, sin escribir."""
-    import datetime as dt
-
-    path = _break_metadata(h)
-    body = {"date": (dt.date.today() + dt.timedelta(days=3)).isoformat()} if method == "post" else None
-    r = h.client.request(method.upper(), _url("postpone"), json=body)
-    assert r.status_code == 503, r.text
-    assert path.read_text(encoding="utf-8") == _BROKEN_JSON
+    assert r.status_code == 200, r.text
+    m = h.meta()
+    assert m["tag"] == "INTERESADO"
+    assert [e["episode_id"] for e in m["episodes"]] == ["ep_001"]
 
 
 # ── scoping ───────────────────────────────────────────────────────────────────

@@ -254,9 +254,7 @@ class EscalateToHumanTool(ToolBase):
         def _escalate(data: dict[str, Any]) -> dict[str, Any]:
             # Sobre la lectura fresca y solo la ruta, la etiqueta y su
             # historial (incidente 2026-10-06: la copia entera pisaba otras
-            # escrituras). Un metadata ilegible se reescribe A PROPÓSITO, como
-            # siempre: sin la escalación el cliente se queda con el bot
-            # (`overwrite_unreadable`, revisión del PR #393).
+            # escrituras). Un metadata ilegible se reescribe, como siempre.
             data["active_route"] = ROUTE_HUMANO
             data["tag"] = "HUMANO"
             data["motivo"] = summary
@@ -274,9 +272,7 @@ class EscalateToHumanTool(ToolBase):
             )
             return data
 
-        FilesystemMetadataStore(self._vault_dir).update(
-            ctx.session_key, _escalate, overwrite_unreadable=True
-        )
+        FilesystemMetadataStore(self._vault_dir).update(ctx.session_key, _escalate)
 
         decision_payload = {
             "escalation_decision": {

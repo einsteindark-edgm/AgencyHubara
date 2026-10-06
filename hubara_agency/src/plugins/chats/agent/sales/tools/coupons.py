@@ -68,23 +68,6 @@ def _promotion_summary(p: dict[str, Any]) -> str:
     return f"{p['code']} ({p['discount']}, {scope})"
 
 
-def _not_saved(session_key: str, code: str | None) -> str:
-    """El store no escribió (`metadata.json` ilegible): no decir «aplicado»
-    ni «no había cupón» (segunda revisión del PR #393). Se responde como un
-    sistema caído: el bot no promete un descuento que el pedido no tendría."""
-    logger.warning("🎟️ [TOOL apply_coupon] not saved (metadata ilegible) session={}", session_key)
-    return json.dumps(
-        {
-            "applied": False,
-            "code": code,
-            "reason": "unavailable",
-            "summary": "No pude guardar el cambio del cupón ahora mismo. Pídele al cliente "
-            "que lo intente en un momento; no prometas ningún descuento.",
-        },
-        ensure_ascii=False,
-    )
-
-
 class ListPromotionsTool(ToolBase):
     name = "list_promotions"
     description = (
@@ -232,8 +215,7 @@ class ApplyCouponTool(ToolBase):
                 removed["removed"] = clear_applied_coupon(md)
                 return md
 
-            if store.update(ctx.session_key, _clear) is None:
-                return _not_saved(ctx.session_key, None)
+            store.update(ctx.session_key, _clear)
             return json.dumps(
                 {
                     "applied": False,
@@ -282,12 +264,10 @@ class ApplyCouponTool(ToolBase):
             )
 
         promotion = application.promotion
-        saved = store.update(
+        store.update(
             ctx.session_key,
             lambda md: store_coupon_application(md, application, now_ms=now_ms),
         )
-        if saved is None:
-            return _not_saved(ctx.session_key, promotion.code)
         if application.quota:
             return self._applied_with_quota(promotion, application)
         whole_catalog = is_whole_catalog(promotion)

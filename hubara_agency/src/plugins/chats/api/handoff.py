@@ -335,9 +335,7 @@ async def intervene(
         )
         return fresh
 
-    # Con el documento ilegible también se escribe (como la escalación): si
-    # no, el operador vería «tomado» y el bot seguiría contestando.
-    data = metadata_store.update(session_id, _take_over, overwrite_unreadable=True) or {}
+    data = metadata_store.update(session_id, _take_over) or {}
 
     # 2. Termination de workflows en vuelo: BEST-EFFORT. Si Temporal está caído
     # o devuelve error, NO 500-amos el endpoint — la metadata ya está marcada,

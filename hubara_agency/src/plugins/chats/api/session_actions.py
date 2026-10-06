@@ -211,22 +211,6 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _metadata_unreadable(session_key: str) -> HTTPException:
-    """El mutator no corrió: ``metadata.json`` existe y no se pudo leer, y el
-    store no escribe encima (revisión del PR #393). Un error claro en vez de
-    decir que se aplicó."""
-    logger.warning("[chats.session_actions] metadata ilegible session={} — no se escribió", session_key)
-    return HTTPException(status_code=503, detail="metadata de la sesión ilegible: no se aplicó")
-
-
-def _not_written(store: FilesystemMetadataStore, session_key: str) -> HTTPException:
-    """El store no escribió: 503 si `metadata.json` está ilegible (la sesión
-    existe), 404 si la sesión no existe (segunda revisión del PR #393)."""
-    if store.is_unreadable(session_key):
-        return _metadata_unreadable(session_key)
-    return HTTPException(status_code=404, detail="sesión no encontrada")
-
-
 # ── bodies ────────────────────────────────────────────────────────────────────
 
 
@@ -789,8 +773,6 @@ async def tag(session_key: SessionKey, body: TagBody, deps: Deps) -> dict[str, A
     finally:
         _release_session_lock(session)
 
-    if not outcome:
-        raise _metadata_unreadable(session)
     if outcome.get("already_human"):
         raise HTTPException(status_code=409, detail="already_human: un colega tiene la conversación; no se etiqueta")
     decision: TagDecision = outcome["decision"]
@@ -845,8 +827,6 @@ async def operator_tag(session_key: SessionKey, body: OperatorTagBody, deps: Dep
     finally:
         _release_session_lock(session)
 
-    if not outcome:
-        raise _metadata_unreadable(session)
     closed_id = outcome.get("closed_id")
     await _notify(deps, session, closed_id, body.tag)
     logger.info("[chats.session_actions] operator-tag session={} tag={} closed={}", session, body.tag, closed_id)
@@ -880,14 +860,13 @@ async def postpone(session_key: SessionKey, body: PostponeBody, deps: Deps) -> d
         )
         return data
 
-    store = FilesystemMetadataStore(deps.vault_dir)
     try:
         async with _session_lock(session):
-            updated = store.update(session, _mutate)
+            updated = FilesystemMetadataStore(deps.vault_dir).update(session, _mutate)
     finally:
         _release_session_lock(session)
     if not updated:
-        raise _not_written(store, session)
+        raise HTTPException(status_code=404, detail="sesión no encontrada")
     logger.info("[chats.session_actions] postpone session={} until_ms={}", session, until_ms)
     return {"postponed": postponed_view(updated, now_ms)}
 
@@ -904,14 +883,13 @@ async def clear_postpone(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
         clear_postponement(data)
         return data
 
-    store = FilesystemMetadataStore(deps.vault_dir)
     try:
         async with _session_lock(session):
-            updated = store.update(session, _mutate)
+            updated = FilesystemMetadataStore(deps.vault_dir).update(session, _mutate)
     finally:
         _release_session_lock(session)
     if not updated:
-        raise _not_written(store, session)
+        raise HTTPException(status_code=404, detail="sesión no encontrada")
     logger.info("[chats.session_actions] clear-postpone session={}", session)
     return {"postponed": None}
 
@@ -930,9 +908,7 @@ async def escalate(session_key: SessionKey, body: EscalateBody, deps: Deps) -> d
         )
         return data
 
-    # Con el documento ilegible también se escribe, como la tool de escalación:
-    # si no, MBA oiría «ya estaba en humano» y el bot seguiría contestando.
-    store.update(session, _mutate, overwrite_unreadable=True)
+    store.update(session, _mutate)
     escalated = bool(outcome.get("escalated"))
     logger.info("[chats.session_actions] escalate session={} reason={} applied={}", session, body.reason_category, escalated)
     return {"escalated": escalated, "already_human": not escalated, "active_route": ROUTE_HUMANO, "tag": "HUMANO"}

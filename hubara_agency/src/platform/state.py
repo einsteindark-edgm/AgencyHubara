@@ -31,6 +31,11 @@ con el candado por sesión y atómica, y cada escritor toca SOLO lo suyo:
 El gate `tests/platform/test_metadata_json_single_writer.py` (marca
 `architecture`, paso propio en el CI de arquitectura) impide que vuelva otro
 camino.
+
+Un `metadata.json` dañado se recupera solo, dentro del store (ver
+`FilesystemMetadataStore`): la última copia buena queda en
+`metadata.json.prev`, la lectura la usa con una alerta y la escritura aparta
+el dañado y sigue. Nada pasa al equipo humano por un archivo dañado.
 """
 from __future__ import annotations
 
@@ -39,11 +44,13 @@ import json
 import logging
 import os
 import re
+import shutil
 import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -269,15 +276,38 @@ log = logging.getLogger(__name__)
 _held = threading.local()
 
 
-def _read_document(path: Path) -> dict[str, Any] | None:
-    """El documento de `path`: ``{}`` si no existe (sesión nueva); ``None`` si
-    existe y NO se pudo leer (OSError, bytes que no son UTF-8, JSON roto o no
-    es un objeto). Una lectura fallida no es una sesión vacía (revisión del PR
-    #393)."""
+#: Un `metadata.json` dañado se relee unas veces antes de darlo por dañado: un
+#: escritor de afuera que no escribe atómico (scripts viejos) lo deja a medias
+#: unos milisegundos.
+_READ_ATTEMPTS = 3
+_READ_RETRY_S = 0.03
+
+#: La última copia buena (se rota en cada escritura sobre un documento sano).
+PREV_SUFFIX = ".prev"
+#: Un documento dañado, apartado una vez antes de reescribirlo.
+DAMAGED_SUFFIX = ".damaged"
+
+
+class _Absent:
+    """El archivo no existe."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - solo para depurar
+        return "<no existe>"
+
+
+_ABSENT: Any = _Absent()
+
+
+def _load(path: Path) -> Any:
+    """`path` tal cual está en disco: el dict, `_ABSENT` si no existe, o
+    ``None`` si existe y está dañado (OSError —p. ej. sin permiso—, bytes que
+    no son UTF-8, JSON roto o vacío, o algo que no es un objeto)."""
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return {}
+        return _ABSENT
     except (OSError, UnicodeDecodeError):
         return None
     try:
@@ -287,47 +317,177 @@ def _read_document(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def _set_aside_unreadable(path: Path) -> Path | None:
-    """Guarda el original ilegible al lado, tal cual, antes de reescribirlo
-    (segunda revisión del PR #393: un JSON truncado se repara a mano). Primero
-    un enlace duro —no necesita permiso de lectura y el original sigue en su
-    lugar hasta el reemplazo atómico—; si el filesystem no lo permite, se
-    mueve. Devuelve la ruta del respaldo, o None si no se pudo (y entonces no
-    se reescribe)."""
+def _load_patiently(path: Path) -> Any:
+    """`_load`, con unos reintentos cortos si sale dañado (un escritor de
+    afuera a medias se resuelve solo en milisegundos)."""
+    document = _load(path)
+    for _ in range(_READ_ATTEMPTS - 1):
+        if document is not None:
+            break
+        time.sleep(_READ_RETRY_S)
+        document = _load(path)
+    return document
+
+
+@dataclass(frozen=True)
+class _Snapshot:
+    """El documento de una sesión listo para usar, y de dónde salió."""
+
+    data: dict[str, Any]
+    #: ``ok`` (se leyó bien) · ``new`` (no existe ni hay copia: sesión nueva) ·
+    #: ``damaged`` (existe y está dañado: ``data`` es la última copia buena, o
+    #: ``{}`` si no hay) · ``missing`` (no existe pero hay copia: ``data`` es
+    #: esa copia).
+    state: str
+
+
+def _prev_of(path: Path) -> Path:
+    return path.with_name(path.name + PREV_SUFFIX)
+
+
+def _snapshot(path: Path) -> _Snapshot:
+    current = _load_patiently(path)
+    if isinstance(current, dict):
+        return _Snapshot(current, "ok")
+    prev = _load(_prev_of(path))
+    if current is _ABSENT and prev is _ABSENT:
+        return _Snapshot({}, "new")
+    recovered = prev if isinstance(prev, dict) else {}
+    return _Snapshot(recovered, "missing" if current is _ABSENT else "damaged")
+
+
+def _alert(path: Path, snapshot: _Snapshot) -> None:
+    """Un documento dañado (o que desapareció dejando su copia) es un problema
+    técnico: se avisa con un ERROR y se sigue con la copia recuperada."""
+    if snapshot.state not in ("damaged", "missing"):
+        return
+    what = "no existe pero quedó su copia" if snapshot.state == "missing" else "no se puede leer"
+    used = "uso la última copia buena" if snapshot.data else "no hay copia buena: sigo desde vacío"
+    log.error(
+        "metadata dañado en %s (%s): %s",
+        path.parent.name,
+        what,
+        used,
+        extra={"path": str(path), "metadata_state": snapshot.state},
+    )
+
+
+def _keep_previous(path: Path) -> None:
+    """La versión sana que se va a reemplazar queda como `metadata.json.prev`
+    (la última copia buena): enlace duro a un nombre temporal y `os.replace`
+    (la copia cambia de una vez); si el filesystem no tiene enlaces, se copia.
+    Si no se puede, se avisa y se escribe igual (la copia nunca traba)."""
+    tmp = path.with_name(f".{path.name}{PREV_SUFFIX}.{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        try:
+            os.link(path, tmp)
+        except OSError:
+            shutil.copy2(path, tmp)
+        os.replace(tmp, _prev_of(path))
+    except OSError as exc:
+        log.warning("metadata_prev_not_kept", extra={"path": str(path), "error": repr(exc)[:200]})
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+@dataclass(frozen=True)
+class _SetAside:
+    path: Path
+    #: True: se movió (el lugar quedó vacío hasta escribir); False: enlace
+    #: (el dañado sigue en su lugar hasta el reemplazo atómico).
+    moved: bool
+
+
+def _set_aside_damaged(path: Path) -> _SetAside | None:
+    """Aparta el documento dañado UNA vez, tal cual, como
+    `metadata.json.damaged-<ms>` (para repararlo a mano si hace falta). Si no
+    se puede, se sigue igual: nunca traba la escritura."""
     stamp = time.time_ns() // 1_000_000
-    backup = path.with_name(f"{path.name}.unreadable-{stamp}")
+    target = path.with_name(f"{path.name}{DAMAGED_SUFFIX}-{stamp}")
     suffix = 1
-    while os.path.lexists(backup):
-        backup = path.with_name(f"{path.name}.unreadable-{stamp}-{suffix}")
+    while os.path.lexists(target):
+        target = path.with_name(f"{path.name}{DAMAGED_SUFFIX}-{stamp}-{suffix}")
         suffix += 1
     try:
-        os.link(path, backup)
+        os.link(path, target)
+        return _SetAside(target, moved=False)
+    except FileNotFoundError:
+        return None
     except OSError:
-        try:
-            os.replace(path, backup)
-        except OSError:
-            log.error("metadata_unreadable_not_set_aside: no se reescribe %s", path)
-            return None
-    log.warning(
-        "metadata_unreadable_overwritten: el original quedó en %s",
-        backup,
-        extra={"path": str(path), "backup": str(backup)},
-    )
-    return backup
+        pass
+    try:
+        os.replace(path, target)
+        return _SetAside(target, moved=True)
+    except OSError as exc:
+        log.error("metadata_damaged_not_set_aside", extra={"path": str(path), "error": repr(exc)[:200]})
+        return None
+
+
+def _put_back(path: Path, aside: _SetAside) -> None:
+    """La escritura falló: lo apartado vuelve a como estaba (`metadata.json`
+    nunca queda ausente; la próxima escritura lo aparta otra vez)."""
+    try:
+        if aside.moved:
+            os.replace(aside.path, path)
+        else:
+            os.unlink(aside.path)
+    except OSError as exc:
+        log.error("metadata_damaged_not_put_back", extra={"path": str(path), "error": repr(exc)[:200]})
+
+
+def _replace_document(path: Path, data: dict[str, Any], snapshot: _Snapshot) -> None:
+    """Escribe `data` (atómico) cuidando las copias: desde un documento sano
+    rota `.prev`; uno dañado lo aparta (y lo devuelve a su lugar si la
+    escritura falla); a la copia buena no la toca un dañado."""
+    aside: _SetAside | None = None
+    if snapshot.state == "ok":
+        _keep_previous(path)
+    elif snapshot.state == "damaged":
+        aside = _set_aside_damaged(path)
+    try:
+        atomic_write_json(path, data)
+    except BaseException:
+        if aside is not None:
+            _put_back(path, aside)
+        raise
 
 
 class FilesystemMetadataStore:
     """Adapter filesystem del documento de metadatos por sesion.
 
-    Cada sesion mapea a ``<vault_dir>/<session_id>/metadata.json``. ``read()``
-    es tolerante (``{}`` si no existe o no se puede leer: para quien solo
-    mira; ``is_unreadable()`` distingue los dos casos); TODA escritura es
-    **atomica** (temp file + ``os.replace`` via ``atomic_write_json``), va bajo
-    el MISMO candado por sesion (``flock`` sobre ``metadata.json.lock``) y
-    NUNCA escribe sobre un documento que existe y no se pudo leer (se reintenta
-    una vez; si sigue ilegible, no se escribe). Quien tiene que escribir igual
-    lo pide con ``overwrite_unreadable=True`` y el original queda al lado, tal
-    cual, en ``metadata.json.unreadable-<ms>``.
+    Cada sesion mapea a ``<vault_dir>/<session_id>/metadata.json``. TODA
+    escritura es **atomica** (temp file + ``os.replace`` via
+    ``atomic_write_json``) y va bajo el MISMO candado por sesion (``flock``
+    sobre ``metadata.json.lock``).
+
+    Recuperación automática (decisión del operador, 2026-10-06): un
+    ``metadata.json`` dañado es un problema técnico; NO pasa la conversación al
+    equipo humano ni traba escrituras, y ningún llamador tiene que saberlo:
+
+      * **Copia buena**: cada escritura sobre un documento que se leyó bien
+        deja la versión que reemplaza como ``metadata.json.prev`` (enlace duro
+        a un temporal + ``os.replace``; si no hay enlaces, copia). Desde un
+        documento dañado NO se rota: la copia buena no se pisa con la dañada.
+        Una sola copia por sesión: no se acumulan respaldos por mensaje.
+      * **Lectura**: dañado (sin permiso, vacío, bytes que no son UTF-8, JSON
+        roto o algo que no es un objeto) se relee unas veces con una espera
+        corta (un escritor de afuera a medias); si sigue dañado, ``read()``
+        devuelve ``.prev`` con un log de ERROR («metadata dañado en <sesión>»),
+        o ``{}`` si no hay copia buena. «No existe y no hay ``.prev``» es una
+        sesión nueva (``{}``, sin alerta); «no existe pero hay ``.prev``» es
+        que algo lo borró: se recupera de ``.prev`` con la alerta. Nadie en
+        ``src/`` borra ``metadata.json`` a propósito (revisado); quien lo
+        haga, que borre también ``.prev``.
+      * **Escritura sobre un documento dañado** (``update``, ``write_merged``,
+        ``write``): lo aparta UNA vez como ``metadata.json.damaged-<ms>`` (si
+        no se puede, sigue igual), aplica el cambio sobre la copia recuperada
+        (``.prev`` o ``{}``) y escribe. Nunca devuelve ``None`` por daño ni
+        deja de escribir; si la escritura falla, lo apartado vuelve a su lugar
+        (``metadata.json`` nunca queda ausente).
+      * ``.prev`` y ``.damaged-*`` los escribe solo este módulo (el gate de un
+        solo escritor lo vigila).
 
     Formas de escribir (ver el docstring del módulo):
       * ``update(session_id, mutator)`` — solo las llaves del escritor sobre la
@@ -370,24 +530,15 @@ class FilesystemMetadataStore:
                 held.discard(key)
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
-    @staticmethod
-    def _read_fresh(path: Path) -> dict[str, Any] | None:
-        """La lectura fresca bajo el candado: un reintento si falla (EIO,
-        EMFILE suelen ser transitorios); ``None`` si sigue ilegible."""
-        document = _read_document(path)
-        if document is None:
-            document = _read_document(path)
-        return document
+    def _snapshot(self, path: Path) -> _Snapshot:
+        snapshot = _snapshot(path)
+        _alert(path, snapshot)
+        return snapshot
 
     def read(self, session_id: str) -> dict[str, Any]:
-        document = _read_document(self._path_for(session_id))
-        return document if document is not None else {}
-
-    def is_unreadable(self, session_id: str) -> bool:
-        """¿El documento existe y no se pudo leer (tras un reintento)? `read()`
-        devuelve ``{}`` también para una sesión nueva: quien tiene que decir la
-        verdad (una API, el ingest) pregunta acá."""
-        return self._read_fresh(self._path_for(session_id)) is None
+        """El documento de la sesión (``{}`` si es nueva). Dañado → la última
+        copia buena (o ``{}``), con un ERROR en el log."""
+        return self._snapshot(self._path_for(session_id)).data
 
     def write(self, session_id: str, data: dict[str, Any]) -> None:
         """Reemplaza el documento ENTERO (bajo el candado). Pisa lo que otro
@@ -395,14 +546,12 @@ class FilesystemMetadataStore:
         ``update`` o ``write_merged``."""
         path = self._path_for(session_id)
         with self._locked(path):
-            atomic_write_json(path, data)
+            _replace_document(path, data, self._snapshot(path))
 
     def update(
         self,
         session_id: str,
         mutator: Callable[[dict[str, Any]], dict[str, Any] | None],
-        *,
-        overwrite_unreadable: bool = False,
     ) -> dict[str, Any] | None:
         """Read-modify-write ATOMICO bajo el candado por sesion (fcntl.flock).
 
@@ -412,33 +561,20 @@ class FilesystemMetadataStore:
         adentro, aplica `mutator` y escribe — dos escrituras concurrentes se
         serializan (``write`` y ``write_merged`` toman el mismo candado).
 
-        `mutator` recibe el dict fresco (``{}`` si la sesión no existe todavía)
-        y devuelve el dict a escribir, o ``None`` para ABORTAR sin escribir. El
-        mutator no hace I/O lento ni ``await``: corre con el candado tomado.
+        `mutator` recibe el dict fresco (``{}`` si la sesión no existe todavía;
+        la última copia buena si el documento está dañado) y devuelve el dict a
+        escribir, o ``None`` para ABORTAR sin escribir. El mutator no hace I/O
+        lento ni ``await``: corre con el candado tomado.
 
-        Documento que existe y no se pudo leer (tras un reintento): NO se llama
-        al mutator ni se escribe — sería dejar un documento casi vacío sobre la
-        sesión (revisión del PR #393: con ``active_route=humano``, el bot
-        revivía). Quien tiene que escribir igual (sacar al bot: la escalación
-        a humano, la toma del operador) lo pide con
-        ``overwrite_unreadable=True``: el mutator recibe ``{}`` y el original
-        queda al lado (``metadata.json.unreadable-<ms>``); si no se puede
-        guardar, no se escribe.
-
-        Devuelve el dict escrito, o ``None`` si no se escribió.
+        Devuelve el dict escrito, o ``None`` si el mutator abortó.
         """
         path = self._path_for(session_id)
         with self._locked(path):
-            fresh = self._read_fresh(path)
-            if fresh is None and not overwrite_unreadable:
-                log.warning("metadata_unreadable_update_skipped", extra={"path": str(path)})
-                return None
-            result = mutator({} if fresh is None else fresh)
+            snapshot = self._snapshot(path)
+            result = mutator(snapshot.data)
             if result is None:
                 return None
-            if fresh is None and _set_aside_unreadable(path) is None:
-                return None
-            atomic_write_json(path, result)
+            _replace_document(path, result, snapshot)
             return result
 
     def write_merged(
@@ -447,9 +583,8 @@ class FilesystemMetadataStore:
         *,
         base: dict[str, Any],
         ours: dict[str, Any],
-        overwrite_unreadable: bool = False,
         before_merge: Callable[[dict[str, Any]], None] | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> dict[str, Any]:
         """Escribe SOLO lo que el escritor cambió frente a lo que leyó.
 
         Para escritores que acumulan cambios entre esperas (el ingest esperando
@@ -463,30 +598,22 @@ class FilesystemMetadataStore:
         suyo si un humano tomó la conversación mientras esperaba — decidido
         acá y no con una lectura previa, que deja una ventana).
 
-        Documento ilegible (tras un reintento): misma regla que ``update()``
-        — no se escribe, ni siquiera la copia del escritor (revertiría lo que
-        pasó desde que la leyó, p. ej. la toma de un humano) —, salvo
-        ``overwrite_unreadable=True``: se escribe ``ours`` y el original queda
-        al lado. Documento que desapareció con ``base`` con datos: se escribe
-        ``ours`` entero, como antes. Devuelve lo escrito, o ``None``.
+        Documento dañado: ``fresh`` es la última copia buena (ver la clase).
+        Sin nada fresco (sesión que desapareció, o dañada sin copia buena) y
+        con ``base`` con datos, se escribe ``ours`` entero: lo que el escritor
+        leyó es lo más completo que hay. Devuelve lo escrito.
         """
         path = self._path_for(session_id)
         with self._locked(path):
-            fresh = self._read_fresh(path)
-            if fresh is None:
-                if not overwrite_unreadable:
-                    log.warning("metadata_unreadable_merge_skipped", extra={"path": str(path)})
-                    return None
-                if _set_aside_unreadable(path) is None:
-                    return None
-                merged = ours
-            elif not fresh and base:
+            snapshot = self._snapshot(path)
+            fresh = snapshot.data
+            if not fresh and base:
                 merged = ours
             else:
                 if before_merge is not None:
                     before_merge(fresh)
                 merged = merge_changes(base, ours, fresh)
-                if merged is fresh:
+                if merged is fresh and snapshot.state in ("ok", "new"):
                     return fresh  # el escritor no cambió nada
-            atomic_write_json(path, merged)
+            _replace_document(path, merged, snapshot)
             return merged
