@@ -137,6 +137,86 @@ def test_last_visible_agent_text_skips_tool_narration() -> None:
     assert last_visible_agent_text([]) is None
 
 
+def _reply_call(call_id: str, text: str, *, as_dict: bool = False) -> dict:
+    """Una llamada a `send_reply` como la graba el historial del LLM."""
+    args = {"text": text}
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": "send_reply", "arguments": args if as_dict else json.dumps(args, ensure_ascii=False)},
+    }
+
+
+def _reply_result(call_id: str, text: str) -> dict:
+    """El resultado de un `send_reply` que salió (`tools/reply.py`)."""
+    payload = {"reply": {"text": text}, "summary": "Mensaje listo para el cliente. Tu turno termina aquí: espera su respuesta."}
+    return {"role": "tool", "content": json.dumps(payload, ensure_ascii=False), "tool_call_id": call_id}
+
+
+def test_last_visible_agent_text_reads_the_text_that_went_out_by_send_reply() -> None:
+    """Desde el 2026-09-23 el texto al cliente sale SOLO por `send_reply`: el
+    historial lo guarda en `tool_calls[send_reply].arguments.text` con
+    `content: ""` (`workflow_helpers._history_view`). Saltar todo mensaje con
+    `tool_calls` dejaba ciega la captura: cero decisiones de cantidad en la
+    conversación del 2026-10-06, ni siquiera tras «¿Cuántas unidades deseas?»."""
+    history = [
+        {"role": "user", "content": "Velón amor eterno"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "s1", "type": "function", "function": {"name": "set_order_slot", "arguments": "{}"}}],
+        },
+        {"role": "tool", "content": "{\"updated\": true}", "tool_call_id": "s1"},
+        {"role": "assistant", "content": "", "tool_calls": [_reply_call("r1", _AGENT_ASKED)]},
+        _reply_result("r1", _AGENT_ASKED),
+        {"role": "user", "content": "Una que colores tienes?"},
+    ]
+
+    assert last_visible_agent_text(history) == _AGENT_ASKED
+
+
+def test_last_visible_agent_text_takes_the_last_reply_of_the_message() -> None:
+    """Varias burbujas en un paso: la última es la que el cliente vio al
+    final. La narración que acompaña la llamada nunca salió. Los argumentos
+    pueden venir ya como objeto."""
+    history = [
+        {
+            "role": "assistant",
+            "content": "Le confirmo el aroma y le pregunto la cantidad.",
+            "tool_calls": [_reply_call("r1", "Anotado, aroma *Lavanda* 🤍"), _reply_call("r2", _AGENT_ASKED, as_dict=True)],
+        },
+        _reply_result("r1", "Anotado, aroma *Lavanda* 🤍"),
+        _reply_result("r2", _AGENT_ASKED),
+    ]
+
+    assert last_visible_agent_text(history) == _AGENT_ASKED
+
+
+def test_last_visible_agent_text_skips_a_reply_that_did_not_go_out() -> None:
+    """Un `send_reply` retenido o rechazado (`sent: false`) no le llegó al
+    cliente: la última burbuja que vio es la anterior."""
+    listed = "Tenemos estos aromas: Lavanda, Vainilla, Canela y Sándalo"
+    history = [
+        {"role": "assistant", "content": "", "tool_calls": [_reply_call("r1", _AGENT_ASKED)]},
+        _reply_result("r1", _AGENT_ASKED),
+        {"role": "user", "content": "¿Qué aromas tienen?"},
+        {"role": "assistant", "content": "", "tool_calls": [_reply_call("r2", listed)]},
+        {
+            "role": "tool",
+            "content": json.dumps({"sent": False, "error": "option_list", "message": "Usa el selector."}),
+            "tool_call_id": "r2",
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "p1", "type": "function", "function": {"name": "present_variant_picker", "arguments": "{}"}}],
+        },
+        {"role": "tool", "content": "{\"queued\": true}", "tool_call_id": "p1"},
+    ]
+
+    assert last_visible_agent_text(history) == _AGENT_ASKED
+
+
 # ---------------------------------------------------------------------------
 # Use case puro sobre metadata
 # ---------------------------------------------------------------------------
@@ -239,8 +319,10 @@ def _seed_metadata(vault: Path, session_id: str, slots: dict) -> None:
     )
 
 
-def _seed_history(ws: Path, session_id: str, last_agent_text: str) -> None:
-    """Historial como lo deja `record_turn` tras el turno anterior."""
+def _seed_history(ws: Path, session_id: str, last_agent_text: str, *, via_send_reply: bool = False) -> None:
+    """Historial como lo deja `record_turn` tras el turno anterior. Con
+    `via_send_reply`, como hoy: el texto salió por `send_reply` y el mensaje
+    del asistente no tiene `content` (desde el 2026-09-23)."""
     conv = _build_conversation(LLMConfig(model="fake"), WorkspaceConfig(path=str(ws)))
     session = conv.history.get_or_create(session_id)
     session.add_message("user", "Velón amor eterno")
@@ -250,7 +332,12 @@ def _seed_history(ws: Path, session_id: str, last_agent_text: str) -> None:
         tool_calls=[{"id": "t1", "type": "function", "function": {"name": "set_order_slot", "arguments": "{}"}}],
     )
     session.add_message("tool", "{\"updated\": true}", tool_call_id="t1")
-    session.add_message("assistant", last_agent_text)
+    if via_send_reply:
+        session.add_message("assistant", "", tool_calls=[_reply_call("r1", last_agent_text)])
+        result = _reply_result("r1", last_agent_text)
+        session.add_message("tool", result["content"], tool_call_id="r1")
+    else:
+        session.add_message("assistant", last_agent_text)
     conv.history.save(session)
 
 
@@ -293,6 +380,24 @@ async def test_run_943e6bff_quantity_in_compound_reply_is_pinned(
     assert "[CONTEXTO DE TURNO] hora" in system  # el resto del contexto sigue
     # 3. sigue en variantes (falta color) — la etapa se resuelve POST captura
     assert "MARKER_VARIANTES" in system
+
+
+@pytest.mark.asyncio
+async def test_the_quantity_question_that_went_out_by_send_reply_is_seen(
+    tmp_path: Path, _isolate_vault_dir: Path
+) -> None:
+    """El historial de hoy: la pregunta salió por `send_reply` (sin
+    `content`). La captura la ve igual que antes del 2026-09-23."""
+    ws = _make_workspace(tmp_path)
+    sid = "wa_573001234567"
+    _seed_metadata(_isolate_vault_dir, sid, {"producto": "Velón Amor Eterno", "aroma": "Lavanda"})
+    _seed_history(ws, sid, _AGENT_ASKED, via_send_reply=True)
+
+    messages = await sales_build_prompt(_input(ws, sid, "Una que colores tienes?", None))
+
+    meta = json.loads((_isolate_vault_dir / sid / "metadata.json").read_text("utf-8"))
+    assert meta["episodes"][-1]["order_draft"]["slots"]["cantidad"] == "1"
+    assert "Cantidad: 1" in messages[0]["content"]
 
 
 @pytest.mark.asyncio
