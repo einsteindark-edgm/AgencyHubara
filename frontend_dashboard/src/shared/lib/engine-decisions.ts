@@ -297,6 +297,7 @@ const QUESTIONS: Record<string, string> = {
   "acuse.solo_cortesia": "¿Es solo un acuse a la despedida?",
   "cupon.habla": "¿Habla del cupón o del descuento?",
   "cantidad.pregunto": "¿El asesor preguntó cuántas unidades?",
+  "cantidad.dice": "¿El cliente dice cuántas unidades quiere?",
   "cantidad.dio": "¿Qué cantidad dio?",
   "categoria.cual": "¿Qué categoría busca?",
   "color.cual": "¿Qué color pide?",
@@ -311,6 +312,8 @@ const QUESTIONS: Record<string, string> = {
   "relevo.promete": "¿El mensaje promete que un colega lo atiende?",
   "cierre.etiqueta": "¿Con qué etiqueta cierra?",
   "afirmacion.sin_consultar": "¿Afirma algo que requiere consultar, sin haber consultado?",
+  // ventas-3 (2026-10-06): Jev dice qué afirma; la tabla lo cruza con las herramientas del turno.
+  "afirmacion.que_afirma": "¿Qué le afirma el mensaje al cliente?",
   "egreso.destinatario": "¿Para quién es el texto?",
   "egreso.saludo": "¿Algún mensaje ya saluda?",
 };
@@ -349,6 +352,9 @@ const CHOICES: Record<string, string> = {
   combinaciones_cupon: "combinaciones del cupón",
   productos: "productos",
   nada: "nada",
+  stock: "que algo está disponible o agotado",
+  entrega: "cuándo le llega su pedido",
+  estado_pedido: "en qué va su pedido",
   mensaje_al_cliente: "para el cliente",
   razonamiento: "razonamiento del modelo",
   reporte_interno: "reporte interno",
