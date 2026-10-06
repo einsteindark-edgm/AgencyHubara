@@ -167,3 +167,80 @@ async def test_the_classifier_history_breaks_without_its_gate(monkeypatch) -> No
     replayer = Replayer(workflows=[HubaraSalesSessionWorkflow])
     with pytest.raises(workflow.NondeterminismError):
         await replayer.replay_workflow(_perception_history())
+
+
+# History SINTÉTICA del bot nuevo (`HubaraSalesSessionWorkflowV2`) con una
+# ráfaga, con la forma ANTERIOR a las ráfagas sin cortes (incidente
+# 2026-10-06: el cliente mandó la dirección en 6 mensajes y el bot respondió a
+# mitad). Hay sesiones vivas del V2 (los números de prueba): sin sus gates, el
+# deploy las rompe. Cubre los tres: el tope viejo de 2 reinicios
+# (`burst-time-budget-v1`), un mensaje durante el egreso que igual se graba y
+# se envía (`turn-interrupt-before-record-v1`) y los intentos cortados sin
+# registrar su costo (`turn-interrupt-cost-v1`). Generada con el código de
+# `main` en f83d51b4. CONGELADA — no se regenera (procedencia en
+# `fixtures/generate_sales_v2_burst_prepatch_fixture.py`); se borra junto con
+# el `workflow.deprecate_patch(...)` de los tres gates.
+PREPATCH_V2_BURST_FIXTURE = Path(__file__).parent / "fixtures" / "history_sales_v2_burst_prepatch_v1.json"
+
+
+def _prepatch_v2_burst_history() -> WorkflowHistory:
+    return WorkflowHistory.from_json(
+        "test-sales-v2-burst-prepatch", PREPATCH_V2_BURST_FIXTURE.read_text(encoding="utf-8")
+    )
+
+
+async def test_prepatch_v2_burst_history_still_replays() -> None:
+    from src.plugins.chats.agent.sales.workflows.sales_session_v2 import HubaraSalesSessionWorkflowV2
+
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflowV2])
+    await replayer.replay_workflow(_prepatch_v2_burst_history())
+
+
+@pytest.mark.parametrize(
+    ("gate", "ungated_at", "clash"),
+    [
+        # Turno 1, primer corte: la history relanzó el turno enseguida; sin el
+        # gate, el turno espera el silencio de la ráfaga (un timer que la
+        # history no tiene) antes de relanzar.
+        ("burst-time-budget-v1", 1, "Timer machine does not handle this event"),
+        # Turno 1, 3.er intento (3.ª consulta: las dos primeras son las pausas
+        # de los reinicios 1 y 2): la history respondió con el tope viejo; sin
+        # el gate, el turno se recompone otra vez en vez de pedir el egreso.
+        ("burst-time-budget-v1", 3, "'decide_egress' does not match .*'get_active_episode_id'"),
+        # Turno 2: llegó un mensaje durante el egreso y la history grabó el
+        # turno; sin el gate, el turno se corta antes de grabarlo y se relanza.
+        ("turn-interrupt-before-record-v1", None, "'record_turn' does not match .*'get_active_episode_id'"),
+        # Turno 1, primer corte: la history relanzó el turno; sin el gate, el
+        # corte registra antes su costo.
+        ("turn-interrupt-cost-v1", None, "'get_active_episode_id' does not match .*'record_episode_llm_usage'"),
+    ],
+)
+async def test_prepatch_v2_burst_history_breaks_without_each_gate(
+    monkeypatch, gate: str, ungated_at: int | None, clash: str
+) -> None:
+    """Control negativo: la fixture PROTEGE cada gate, en cada sitio (un
+    replay que no puede fallar no prueba nada). Se simula la rama nueva SIN su
+    `workflow.patched` (en todas las consultas, o solo en la `ungated_at`, para
+    que un sitio no enmascare al otro) y el replay choca con lo que la history
+    sí grabó."""
+    from temporalio import workflow
+
+    from src.plugins.chats.agent.sales.workflows.sales_session_v2 import HubaraSalesSessionWorkflowV2
+
+    real_patched = workflow.patched
+    consulted = {"n": 0}
+
+    def ungated(patch_id: str) -> bool:
+        if patch_id != gate:
+            return real_patched(patch_id)
+        consulted["n"] += 1
+        # Como si la rama nueva no estuviera detrás del gate; en las demás
+        # consultas, lo que devuelve el gate real al re-jugar esta history.
+        return ungated_at is None or consulted["n"] == ungated_at
+
+    monkeypatch.setattr(workflow, "patched", ungated)
+
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflowV2])
+    with pytest.raises(workflow.NondeterminismError, match=clash):
+        await replayer.replay_workflow(_prepatch_v2_burst_history())
+    assert consulted["n"] >= (ungated_at or 1), f"el gate {gate} se consultó {consulted['n']} veces"

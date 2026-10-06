@@ -16,7 +16,13 @@ Diferencias con el V1, todas a propósito (y solo estas):
      grabar el turno: el LLM recuerda lo que de verdad salió (también por
      `send_reply`);
   5. el envío respeta lo que decidió el motor: no lo vuelve a juzgar con el
-     detector de hoy (V1, remarketing y ETA sí).
+     detector de hoy (V1, remarketing y ETA sí);
+  6. ráfagas sin cortes (incidente 2026-10-06): pasado el tope de 2
+     reinicios, el turno se sigue recomponiendo mientras la ráfaga no pase su
+     presupuesto de tiempo (con techo de costo), espera a que el cliente
+     termine de escribir, se revisa antes de grabar y enviar, registra el
+     costo de cada intento cortado y el turno siguiente a una ráfaga que no
+     alcanzó lleva la nota de continuación (el V1 no cambia).
 
 La paridad con el V1 (B0 = A1) la prueban las suites del V1 corridas contra
 el V2 (`tests/sales_workflow_versions.py`) y la comparación de abajo.
@@ -87,9 +93,12 @@ async def _run(
     meta: dict | None = None,
     replace: list[Any] | None = None,
     extra: list[Any] | None = None,
+    box: dict | None = None,
     **fakes: Any,
 ) -> Tracker:
-    """Un mensaje del cliente y después silencio (el idle cierra la sesión)."""
+    """Un mensaje del cliente y después silencio (el idle cierra la sesión).
+    `box["handle"]`: el handle del workflow, para que las activities falsas le
+    escriban como el cliente (`_writes`)."""
     tracker = Tracker()
     workspace = tmp_path / workflow_cls.__name__
     workspace.mkdir()
@@ -119,6 +128,8 @@ async def _run(
                 id="session-wa_v2",
                 task_queue=SALES_QUEUE,
             )
+            if box is not None:
+                box["handle"] = handle
             args: list[Any] = [customer_text, None, None]
             if meta is not None:
                 args.append(meta)
@@ -1133,4 +1144,216 @@ async def test_a_send_reply_the_escalation_replaced_is_not_remembered_as_said(tm
 
     assert _sent(tracker) == _persisted(tracker) == [farewell]
     assert (_said(tracker), _replied(tracker)) == ([farewell], [])
+
+
+# ── 6 · Ráfagas sin cortes (incidente 2026-10-06) ───────────────────────────
+#
+# El cliente mandó la dirección en 6 mensajes a +0, +5, +9, +10, +12 y +14 s.
+# El turno arrancó con el primero, se recompuso 2 veces (el tope), respondió a
+# mitad y los 3 últimos formaron otro turno con la nota «desde tu última
+# respuesta»: «No te entendí bien, ¿me confirmas el teléfono?». El V2 sigue
+# recomponiendo mientras la ráfaga no pase su presupuesto de tiempo (con un
+# techo de costo), revisa antes de grabar y enviar, y el turno que sigue a una
+# ráfaga que no alcanzó sabe que esos mensajes continúan lo anterior.
+
+_ADDRESS = (
+    "Te paso la dirección",
+    "Carrera 7 # 12-34",
+    "Barrio Centro",
+    "Torre 2",
+    "Apto 201",
+    "Frente al parque",
+    "Casa esquinera",
+    "Portón verde",
+)
+
+
+def _writes(box: dict, text: str):
+    """El cliente escribe `text` mientras corre la activity que lo llama."""
+
+    async def hook() -> None:
+        await box["handle"].signal(HubaraSalesSessionWorkflowV2.send_message, args=[text, None, None])
+
+    return hook
+
+
+def _egress_while_the_customer_writes(box: dict, *, at_call: int, text: str, seen: list[str]):
+    """El egreso deja salir el texto tal cual; en su llamada `at_call` el
+    cliente escribe mientras corre."""
+
+    @activity.defn(name="decide_egress")
+    async def decide_egress(inp: EgressInput) -> EgressOutput:
+        seen.append(inp.final_text)
+        if len(seen) == at_call:
+            await _writes(box, text)()
+        return EgressOutput(text=inp.final_text, llm_text=inp.final_text, final_text=inp.final_text)
+
+    return decide_egress
+
+
+def _customer_traces(tracker: Tracker) -> list[dict]:
+    return [t for t in tracker.turn_traces if t["trigger"] == "customer"]
+
+
+def _restarts(trace: dict) -> list[dict]:
+    return [s for s in trace["steps"] if s["kind"] == "restart"]
+
+
+def _customer_prompts(tracker: Tracker) -> list[Any]:
+    return [c for c in tracker.build_prompt_calls if "GHOST" not in c.message]
+
+
+def _counted(text: str) -> LLMResponseData:
+    return LLMResponseData(
+        content=text, finish_reason="stop", has_tool_calls=False, tool_calls=[],
+        usage={"prompt_tokens": 1200, "completion_tokens": 30},
+    )
+
+
+async def test_a_burst_that_keeps_coming_gets_one_answer_with_every_fragment(tmp_path: Path) -> None:
+    """El caso del incidente: el cliente sigue escribiendo mientras el modelo
+    piensa (llamadas 1 a 4). Pasado el tope viejo de 2 reinicios, el turno se
+    sigue recomponiendo: UNA respuesta que lee toda la dirección. Antes de
+    relanzar espera a que el cliente termine de escribir (`settle_ms`)."""
+    box: dict = {}
+    answer = "Listo, ya tengo la dirección completa 🤍"
+
+    tracker = await _run(
+        HubaraSalesSessionWorkflowV2, tmp_path,
+        customer_text=_ADDRESS[0],
+        responses=[*[_counted(f"Respuesta del intento {n}") for n in range(1, 5)], _counted(answer)],
+        llm_call_hooks={n: _writes(box, _ADDRESS[n]) for n in range(1, 5)},
+        box=box,
+    )
+
+    assert _sent(tracker) == [answer]
+    last = _customer_prompts(tracker)[-1].message
+    assert all(fragment in last for fragment in _ADDRESS[:5]), last
+    [trace] = _customer_traces(tracker)
+    assert [(s["attempt"], s["reason"]) for s in _restarts(trace)] == [(n, "checkpoint_a") for n in range(1, 5)]
+    assert all(s["settle_ms"] >= 1500 for s in _restarts(trace))
+    # El costo de cada intento llega al episodio, también el de los cortados.
+    assert tracker.episode_llm_usage == [("ep_001", 1200)] * 5
+
+
+async def test_the_burst_stops_restarting_at_the_hard_cap(tmp_path: Path) -> None:
+    """Techo de costo: un cliente que no para de escribir no recompone el
+    turno más de 6 veces; el 7.º intento responde y lo que llegó mientras
+    tanto va al turno siguiente."""
+    box: dict = {}
+
+    tracker = await _run(
+        HubaraSalesSessionWorkflowV2, tmp_path,
+        customer_text=_ADDRESS[0],
+        responses=[
+            *[_final(f"Respuesta del intento {n}") for n in range(1, 7)],
+            _final("Respuesta del séptimo intento"),
+            _final("Respuesta al último mensaje"),
+        ],
+        llm_call_hooks={n: _writes(box, _ADDRESS[n]) for n in range(1, 8)},
+        box=box,
+    )
+
+    first, second = _customer_traces(tracker)
+    assert [s["attempt"] for s in _restarts(first)] == [1, 2, 3, 4, 5, 6]
+    assert _sent(tracker) == ["Respuesta del séptimo intento", "Respuesta al último mensaje"]
+    assert second["inbound_text"] == _ADDRESS[7]
+
+
+async def test_with_the_burst_budget_spent_the_turn_answers_like_before(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sin presupuesto de tiempo, el turno de siempre: 2 reinicios sin pausa
+    y lo que siga llegando va al turno siguiente."""
+    from datetime import timedelta
+
+    from src.plugins.chats.agent.sales.workflows import sales_session
+
+    monkeypatch.setattr(sales_session, "_BURST_TURN_BUDGET", timedelta(0))
+    box: dict = {}
+
+    tracker = await _run(
+        HubaraSalesSessionWorkflowV2, tmp_path,
+        customer_text=_ADDRESS[0],
+        responses=[_final("Respuesta del intento 1"), _final("Respuesta del intento 2"),
+                   _final("Respuesta con tres mensajes"), _final("Respuesta al cuarto")],
+        llm_call_hooks={n: _writes(box, _ADDRESS[n]) for n in range(1, 4)},
+        box=box,
+    )
+
+    first, second = _customer_traces(tracker)
+    assert [s["attempt"] for s in _restarts(first)] == [1, 2]
+    assert not any(s.get("settle_ms") for s in _restarts(first))
+    assert _sent(tracker) == ["Respuesta con tres mensajes", "Respuesta al cuarto"]
+    assert second["inbound_text"] == _ADDRESS[3]
+
+
+async def test_a_message_during_the_egress_holds_the_answer_and_the_turn_starts_over(tmp_path: Path) -> None:
+    """El cliente escribe mientras el motor decide el egreso: la respuesta
+    todavía no salió ni se grabó, así que no sale, el LLM no la recuerda y el
+    turno vuelve a empezar con los dos mensajes."""
+    box: dict = {}
+    seen: list[str] = []
+    stale, answer = "¿Me confirmas el barrio?", "Listo, Barrio Centro 🤍"
+
+    tracker = await _run(
+        HubaraSalesSessionWorkflowV2, tmp_path,
+        customer_text="Te paso la dirección: Carrera 7 # 12-34",
+        responses=[_counted(stale), _counted(answer)],
+        replace=[_egress_while_the_customer_writes(box, at_call=1, text="Barrio Centro", seen=seen)],
+        box=box,
+    )
+
+    assert seen[:2] == [stale, answer]
+    assert _sent(tracker) == _persisted(tracker) == [answer]
+    said = [m.get("content") for turn in tracker.record_turn_new_messages for m in turn if m.get("role") == "assistant"]
+    assert stale not in said
+    assert "Barrio Centro" in _customer_prompts(tracker)[-1].message
+    [trace] = _customer_traces(tracker)
+    cut = next(s for s in trace["steps"] if s["kind"] == "cut")
+    assert (cut["reason"], cut["text"]) == ("before_record", stale)
+    assert [(s["reason"], s["attempt"]) for s in _restarts(trace)] == [("before_record", 1)]
+    assert tracker.episode_llm_usage == [("ep_001", 1200)] * 2
+
+
+async def _catalog_then_a_message_during_the_egress(tmp_path: Path) -> Tracker:
+    """El turno ya le mostró el catálogo al cliente cuando este escribe otra
+    cosa mientras corre el egreso."""
+    box: dict = {}
+    return await _run(
+        HubaraSalesSessionWorkflowV2, tmp_path,
+        customer_text="¿me mandas el catálogo?",
+        responses=[_tool_resp("present_products"), _final("De navidad tenemos la Vela Pino 🤍")],
+        tool_results={"present_products": json.dumps({"queued": True})},
+        replace=[_egress_while_the_customer_writes(box, at_call=1, text="y de navidad?", seen=[])],
+        box=box,
+    )
+
+
+async def test_a_turn_that_already_showed_something_is_not_cut_before_recording(tmp_path: Path) -> None:
+    tracker = await _catalog_then_a_message_during_the_egress(tmp_path)
+
+    first, second = _customer_traces(tracker)
+    assert not any(s["kind"] == "cut" and s.get("reason") == "before_record" for s in first["steps"])
+    assert not _restarts(first)
+    assert tracker.flush_calls >= 1
+    assert second["inbound_text"] == "y de navidad?"
+
+
+async def test_the_turn_after_an_unfinished_burst_knows_it_continues(tmp_path: Path) -> None:
+    """Lo que llegó mientras se preparaba la respuesta forma el turno
+    siguiente con la nota de continuación: cita lo anterior y le dice al
+    modelo que no lo tome como respuesta a su última pregunta."""
+    tracker = await _catalog_then_a_message_during_the_egress(tmp_path)
+
+    first_prompt, second_prompt = _customer_prompts(tracker)[:2]
+    note = next(n for n in second_prompt.plugin_context or [] if n.startswith("[CONTINUACIÓN DE RÁFAGA"))
+    assert "¿me mandas el catálogo?" in note
+    assert "última pregunta" in note
+    assert not any(n.startswith("[CONTINUACIÓN") for n in first_prompt.plugin_context or [])
+    ghost = next(c for c in tracker.build_prompt_calls if "GHOST" in c.message)
+    assert not any(n.startswith("[CONTINUACIÓN") for n in ghost.plugin_context or [])
+    first, second = _customer_traces(tracker)
+    assert "continuation_note" in second["context_notes"]
+    assert "continuation_note" not in first["context_notes"]
 

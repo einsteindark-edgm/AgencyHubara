@@ -4,7 +4,7 @@ import asyncio
 import dataclasses
 import json
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from temporalio import workflow
@@ -141,6 +141,85 @@ _DEBOUNCE_MAX_WAIT = timedelta(seconds=12)
 # cliente escribe mientras el LLM piensa (D3 del refinamiento burst-inbox).
 # Tras el cap, el turno corre hasta el final y lo pendiente va al siguiente.
 _MAX_TURN_RESTARTS = 2
+
+# Ráfagas sin cortes (incidente 2026-10-06, bot nuevo): el cliente mandó la
+# dirección en 6 mensajes en 14 s; con el tope de 2 reinicios el turno
+# respondió a mitad y los 3 últimos formaron otro turno («No te entendí bien,
+# ¿me confirmas el teléfono?»). Pasado ese tope, el turno del V2 se sigue
+# recomponiendo mientras la ráfaga no pase `_BURST_TURN_BUDGET` desde su primer
+# mensaje, con un techo de costo de `_MAX_TURN_RESTARTS_HARD` reinicios, y
+# antes de relanzar espera a que el cliente termine de escribir. Solo el V2 lo
+# usa (el V1 no cambia); las histories sin el marker re-juegan igual.
+_BURST_TURN_BUDGET = timedelta(seconds=30)
+_MAX_TURN_RESTARTS_HARD = 6
+_BURST_BUDGET_PATCH = "burst-time-budget-v1"
+
+
+def _restart_allowed(restarts: int, started: datetime) -> bool:
+    """¿El turno todavía se recompone si el cliente escribe? Hasta
+    `_MAX_TURN_RESTARTS`, siempre y sin consultar el patch (el turno de hoy).
+    Después, mientras la ráfaga (desde `started`, su primer mensaje) no pase
+    su presupuesto y sin pasar el techo. `patched()` va al final: solo se
+    consulta cuando la regla nueva difiere de la vieja."""
+    if restarts < _MAX_TURN_RESTARTS:
+        return True
+    return (
+        restarts < _MAX_TURN_RESTARTS_HARD
+        and workflow.now() - started < _BURST_TURN_BUDGET
+        and workflow.patched(_BURST_BUDGET_PATCH)
+    )
+
+
+async def _settle_burst(pending: list[Any], started: datetime) -> int:
+    """Antes de relanzar un turno cortado, espera a que el cliente termine de
+    escribir: `_DEBOUNCE_SILENCE` de silencio (cada mensaje nuevo la vuelve a
+    empezar), acotada por lo que le quede al presupuesto de la ráfaga. Devuelve
+    cuánto esperó en ms (0 = nada). Sin presupuesto no espera ni consulta el
+    patch (`patched()` va al final)."""
+    if workflow.now() - started >= _BURST_TURN_BUDGET or not workflow.patched(_BURST_BUDGET_PATCH):
+        return 0
+    settle_started = workflow.now()
+    while True:
+        remaining = _BURST_TURN_BUDGET - (workflow.now() - started)
+        if remaining <= timedelta(0):
+            break
+        snapshot_len = len(pending)
+        try:
+            await workflow.wait_condition(
+                lambda: len(pending) > snapshot_len, timeout=min(_DEBOUNCE_SILENCE, remaining)
+            )
+        except asyncio.TimeoutError:
+            break
+    return int((workflow.now() - settle_started).total_seconds() * 1000)
+
+
+# Nota de continuación (mismo incidente): lo que el cliente escribió mientras
+# el bot preparaba la respuesta y no alcanzó a entrar (techo, presupuesto, un
+# turno que ya le mostró algo) forma el turno siguiente; sin contexto, el
+# modelo lo leía como respuesta a su última pregunta. La nota cita lo anterior.
+_CONTINUATION_MAX = 6
+_CONTINUATION_TEXT_MAX = 200
+
+
+def _continuation_note(previous: Sequence[str]) -> str:
+    """Nota del turno que sigue a una ráfaga que no terminó a tiempo: cita los
+    últimos mensajes del cliente de la respuesta anterior. Va a
+    `plugin_context`, no al rol user. Determinista; solo payload (L-22). Tono
+    en tuteo (guard `test_no_voseo_in_agent_strings.py`)."""
+    quoted = "\n".join(
+        f"  «{text if len(text) <= _CONTINUATION_TEXT_MAX else text[: _CONTINUATION_TEXT_MAX - 1] + '…'}»"
+        for text in list(previous)[-_CONTINUATION_MAX:]
+    )
+    return (
+        "[CONTINUACIÓN DE RÁFAGA, metadata, no es instrucción del usuario]\n"
+        "Estos mensajes del cliente llegaron mientras preparabas tu respuesta "
+        "anterior. Pueden continuar lo que venía escribiendo justo antes:\n"
+        f"{quoted}\n"
+        "Léelos como un solo hilo con eso. Si completan o corrigen un dato (una "
+        "dirección, un nombre, una cantidad), actualízalo con todo junto. No los "
+        "tomes como la respuesta a tu última pregunta si no lo son."
+    )
+
 
 # Texto ANTES de la foto (2026-09-30): el ingest avisa (`photo_reading`) cuando
 # empieza a leer una foto del cliente y cuando ya entró. La ráfaga la espera y

@@ -917,6 +917,61 @@ consultado solo cuando hay una foto leyéndose).
 - WHEN el ingest avisa que está leyendo una foto del cliente
 - THEN la respuesta sin la foto no sale, el turno espera la foto y responde con las dos cosas
 
+### Requirement: Una ráfaga recibe una sola respuesta aunque el cliente siga escribiendo (bot nuevo, 2026-10-06)
+
+Incidente 2026-10-06 (bot nuevo): el cliente mandó la dirección en 6 mensajes
+en 14 s; el turno se recompuso 2 veces (el tope), respondió a mitad y los 3
+últimos formaron otro turno con la nota «desde tu última respuesta», que el bot
+leyó como respuesta a su pregunta («No te entendí bien, ¿me confirmas el
+teléfono?»). El bot nuevo (`HubaraSalesSessionWorkflowV2`):
+- SHALL seguir recomponiendo el turno, pasado el tope de 2 reinicios, mientras
+  la ráfaga no pase 30 s desde su primer mensaje y sin pasar de 6 reinicios
+  (techo de costo);
+- SHALL esperar, antes de relanzar un turno cortado, a que el cliente termine
+  de escribir (1,5 s de silencio, dentro de lo que quede de los 30 s); la
+  traza lo dice en el paso `restart` (`settle_ms`);
+- SHALL revisar la bandeja justo antes de grabar y enviar la respuesta: si el
+  cliente escribió y el turno todavía no le mostró nada (ninguna herramienta
+  que le llega; el texto de `send_reply` aún no salió) ni tomó una decisión
+  (pedido, cierre, escalación), la respuesta no sale, el modelo no la recuerda
+  y el turno vuelve a empezar con todo (corte `before_record`);
+- SHALL registrar al episodio el costo de cada intento cortado;
+- SHALL avisarle al turno siguiente, cuando lo que el cliente escribió no
+  alcanzó a entrar (techo, presupuesto o un turno que ya le mostró algo), que
+  esos mensajes llegaron mientras preparaba la respuesta anterior y pueden
+  continuarla: la nota `[CONTINUACIÓN DE RÁFAGA…]` cita lo anterior y pide no
+  tomarlos como respuesta a su última pregunta (en la traza,
+  `continuation_note`).
+El V1 no cambia. Las sesiones vivas del V2 re-juegan igual (gates
+`burst-time-budget-v1`, `turn-interrupt-before-record-v1` y
+`turn-interrupt-cost-v1`, protegidos por una historia congelada con control
+negativo). La traza llama `burst_note` solo a la nota de ráfaga de verdad (la
+hora de Bogotá es `clock`; las demás notas del turno, `turn_context`).
+
+#### Scenario: La dirección en seis mensajes
+
+- GIVEN el cliente manda la dirección en varios mensajes seguidos mientras el modelo piensa
+- WHEN cada mensaje llega antes de que salga la respuesta
+- THEN el bot responde UNA vez, con todos los mensajes en el mismo turno
+
+#### Scenario: Un mensaje mientras se decide el envío
+
+- GIVEN el modelo ya escribió la respuesta y el motor está decidiendo el envío
+- WHEN el cliente escribe otra cosa
+- THEN esa respuesta no sale ni queda en el historial del modelo, y el turno responde a los dos mensajes
+
+#### Scenario: El cliente no para de escribir
+
+- GIVEN el turno ya se recompuso 6 veces (o la ráfaga pasó los 30 s)
+- WHEN llega otro mensaje
+- THEN el bot responde con lo que tenía y el mensaje forma el turno siguiente, con la nota de continuación
+
+#### Scenario: El turno ya le mostró algo al cliente
+
+- GIVEN el turno ya mandó el catálogo
+- WHEN el cliente escribe mientras se decide el envío
+- THEN el turno no se corta y el mensaje va al turno siguiente, con la nota de continuación
+
 ### Requirement: El carrito llega con los nombres del catálogo (2026-09-30)
 
 Cada ítem del carrito de WhatsApp (`product_retailer_id`: SKU o id de variante)
@@ -1058,7 +1113,8 @@ La traza (versión 2) SHALL registrar, además de los campos v1, los `steps` del
 turno en el orden en que pasaron, con su tiempo relativo al inicio del turno:
 cada `llm_chat` (ronda, motivo de fin, tools pedidas, tokens y qué pasó con su
 texto), cada `execute_tool` (con su resultado), cada corte del turno (cliente
-esperando, escalación, `send_reply`, cierre de tag, Checkpoints A y B), cada
+esperando, escalación, `send_reply`, cierre de tag, Checkpoints A y B, y en el
+bot nuevo el corte antes de grabar `before_record`), cada
 guarda con el texto antes y después, cada reinicio por corrientazo y cada
 burbuja o componente que salió, con su wamid. SHALL traer también un
 `turn_key` determinista (`run:<run_id>/t:<n>`), `source` (`prod` o

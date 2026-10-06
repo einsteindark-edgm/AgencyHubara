@@ -7,10 +7,12 @@ queda congelado. Lo arranca por nombre el registro de bots
 
 Por qué un tipo nuevo y no parches al V1: lo que el V1 decide por dentro (la
 fuga en el texto final, el saludo, el portavelas, el rescate, la cobertura ②)
-solo se cambia con un `workflow.patched` por regla. Este tipo nace sin
+solo se cambia con un `workflow.patched` por regla. Este tipo nació sin
 historia: toma cada rama del V1 en su camino MÁS NUEVO, deja las que solo
 existían para re-jugar historias viejas y no necesita ni un `patched` propio
-(los del turno compartido `run_agent_turn` siguen adentro del helper).
+(los del turno compartido `run_agent_turn` siguen adentro del helper). Ya hay
+sesiones vivas del V2 (los números de prueba): lo que cambie sus comandos va
+detrás de un `patched` en un helper compartido (como las ráfagas sin cortes).
 
 No tiene reglas de texto (un test lo exige por AST): el egreso lo decide el
 motor en la activity `decide_egress`, que corre DENTRO del turno, antes de
@@ -30,7 +32,16 @@ Diferencias con el V1, a propósito (cada una con su test en
      historial del LLM guarda el texto que salió (también el de `send_reply`);
   5. el envío no vuelve a juzgar el texto (3.er argumento `True` de
      `send_whatsapp_message_activity`): lo decidió el motor. El detector del
-     envío tiraba en silencio textos que Jev aprobó.
+     envío tiraba en silencio textos que Jev aprobó;
+  6. ráfagas sin cortes (incidente 2026-10-06: la dirección en 6 mensajes,
+     respondida a mitad): pasado el tope de 2 reinicios, el turno se sigue
+     recomponiendo mientras la ráfaga no pase 30 s desde su primer mensaje
+     (techo de 6), espera a que el cliente termine de escribir antes de
+     relanzar, se revisa justo antes de grabar y enviar (corte
+     `before_record`), registra el costo de cada intento cortado y el turno
+     que sigue a una ráfaga que no alcanzó lleva la nota de continuación.
+     Gates `burst-time-budget-v1`, `turn-interrupt-before-record-v1` y
+     `turn-interrupt-cost-v1` (en los helpers compartidos).
 
 Ramas del V1 que no pasan (solo existían para re-jugar historias viejas): el
 turno de a un mensaje sin debounce, las notas de ráfaga v1 y previas, el
@@ -95,21 +106,23 @@ with workflow.unsafe.imports_passed_through():
         context_note_names,
     )
 
-    # Funciones puras del V1 (sin copiar): traza, capas ①③, debounce y CAPI.
+    # Funciones puras del V1 (sin copiar): traza, capas ①③, debounce, ráfagas
+    # y CAPI.
     from src.plugins.chats.agent.sales.workflows.sales_session import (
         _ACTING_MODES,
         _CLOSING_TAGS_REQUIRING_ESCALATION,
+        _CONTINUATION_MAX,
         _CONTINUE_AS_NEW_AFTER_TURNS,
         _DEBOUNCE_MAX_WAIT,
         _DEBOUNCE_SILENCE,
         _DEFAULT_PERCEPTION_PROFILE,
         _LAYER_MODES,
-        _MAX_TURN_RESTARTS,
         _PERCEPTION_OPTIONS,
         _await_photo,
         _await_photos_done,
         _burst_messages,
         _clean_inbound_meta,
+        _continuation_note,
         _ensure_promised_handoff,
         _flush_outbound,
         _inbound_trace,
@@ -120,6 +133,8 @@ with workflow.unsafe.imports_passed_through():
         _perception_step,
         _photo_arriving,
         _reply_as_sent,
+        _restart_allowed,
+        _settle_burst,
         _text_outbound,
         _verify_step,
     )
@@ -174,6 +189,10 @@ class HubaraSalesSessionWorkflowV2:
         # Fotos del cliente que el ingest está leyendo (wamid): la ráfaga las
         # espera (texto antes de la foto, 2026-09-30).
         self._photos_reading: set[str] = set()
+        # Ráfagas sin cortes (2026-10-06): lo que escribió el cliente en el
+        # lote recién respondido, si mientras tanto siguió escribiendo. El
+        # turno siguiente lo cita en la nota de continuación (solo payload).
+        self._continues: list[str] = []
 
     @workflow.signal
     async def photo_reading(self, wamid: Any = None, done: Any = False) -> None:
@@ -281,7 +300,10 @@ class HubaraSalesSessionWorkflowV2:
 
     def _coalesce_batch(self, batch: list[PendingMessage]) -> PendingMessage:
         """Una ráfaga → un turno, con la nota de ráfaga (v2: solo mensajes con
-        texto y sin contexto repetido). Preserva `is_handoff` (L-12)."""
+        texto y sin contexto repetido). Preserva `is_handoff` (L-12). Si el
+        lote trae mensajes del cliente que llegaron mientras se preparaba la
+        respuesta anterior (`_continues`), la nota de continuación va primero
+        (ráfagas sin cortes, 2026-10-06; solo payload)."""
         inbox_batch = [
             InboxMsg(
                 seq=i,
@@ -294,7 +316,12 @@ class HubaraSalesSessionWorkflowV2:
             )
             for i, p in enumerate(batch, 1)
         ]
-        return coalesce_inbox(inbox_batch, version=2)
+        msg = coalesce_inbox(inbox_batch, version=2)
+        if self._continues and _burst_messages(batch):
+            msg = dataclasses.replace(
+                msg, plugin_context=[_continuation_note(self._continues), *(msg.plugin_context or [])]
+            )
+        return msg
 
     @workflow.run
     async def run(self, input: SalesSessionInput) -> None:
@@ -492,11 +519,13 @@ class HubaraSalesSessionWorkflowV2:
                                     msg, plugin_context=[*(msg.plugin_context or []), perceived.note]
                                 )
                     # Corrientazo (run eda8d460): si el cliente escribe mientras
-                    # el LLM piensa, el turno se recompone (con tope).
-                    # Una foto que empieza a leerse también es algo nuevo.
+                    # el LLM piensa, el turno se recompone. Una foto que empieza
+                    # a leerse también es algo nuevo. Ráfagas sin cortes
+                    # (2026-10-06): pasado el tope viejo, mientras la ráfaga no
+                    # pase su presupuesto de tiempo (con techo de costo).
                     hni = (
                         (lambda: bool(self._pending) or _photo_arriving(self._photos_reading))
-                        if restarts < _MAX_TURN_RESTARTS
+                        if _restart_allowed(restarts, debounce_start)
                         else None
                     )
                     result = await run_agent_turn(
@@ -509,17 +538,31 @@ class HubaraSalesSessionWorkflowV2:
                         # Segunda puerta (F6): solo con el contrato de tools
                         # GRABADO por el motor; sin él, el turno de hoy.
                         turn_policy=contract_policy_of(decided),
+                        # Revisión antes de grabar y enviar: si el cliente
+                        # escribió y el turno todavía no le mostró nada, se
+                        # recompone en vez de responder a medias.
+                        interrupt_before_record=True,
                     )
                     trace_steps.extend(result.steps or [])
                     if result.interrupted:
                         restarts += 1
+                        # El motivo es el del corte (Checkpoint A o antes de
+                        # grabar); solo payload de la traza.
+                        cut_reason = next(
+                            (str(s["reason"]) for s in reversed(result.steps or []) if s.get("kind") == "cut"),
+                            "checkpoint_a",
+                        )
+                        restart_ms = _now_ms()
                         # Si lo nuevo es una foto, el turno la espera.
                         waited_photo = await _await_photos_done(self._photos_reading)
+                        # Y espera a que el cliente termine de escribir.
+                        settle_ms = await _settle_burst(self._pending, debounce_start)
                         drained = list(self._pending)
                         self._pending.clear()
                         trace_steps.append(
-                            {"kind": "restart", "at_ms": _now_ms(), "reason": "checkpoint_a", "attempt": restarts,
-                             "drained": len(drained), **({"photo": True} if waited_photo else {})}
+                            {"kind": "restart", "at_ms": restart_ms, "reason": cut_reason, "attempt": restarts,
+                             "drained": len(drained), **({"photo": True} if waited_photo else {}),
+                             **({"settle_ms": settle_ms} if settle_ms else {})}
                         )
                         raw_batch = [p for p in [*raw_batch, *drained] if not p.is_complement_trigger]
                         msg = self._coalesce_batch(raw_batch)
@@ -766,7 +809,7 @@ class HubaraSalesSessionWorkflowV2:
                         # lo vuelve a juzgar con el detector de hoy (el caso
                         # «Usa el código VELAS_10 al pagar» que Jev aprobó
                         # moría ahí mientras el panel y el LLM lo daban por
-                        # enviado). Payload: V2 no tiene historias vivas.
+                        # enviado). Solo payload: no agrega comandos.
                         # El texto promete que un colega lo atiende y nadie
                         # escaló: la red escala antes de enviarlo (2026-09-30).
                         if (
@@ -937,6 +980,17 @@ class HubaraSalesSessionWorkflowV2:
                         f"turn-trace: no se persistió la traza (non-blocking): session={session.session_id} "
                         f"err={exc!r}"
                     )
+
+                # Ráfagas sin cortes (2026-10-06): si el cliente siguió
+                # escribiendo y eso no alcanzó a entrar a esta respuesta (techo
+                # de reinicios, presupuesto, un turno que ya le mostró algo),
+                # el turno siguiente lo sabe: la nota cita lo que escribió en
+                # este lote. Solo payload del turno siguiente.
+                self._continues = (
+                    [m["text"] for m in _burst_messages(raw_batch)][-_CONTINUATION_MAX:]
+                    if _burst_messages(self._pending)
+                    else []
+                )
 
                 # Escalación a humano: la despedida ya salió; se cierra el
                 # workflow (humano y remarketing son excluyentes).
