@@ -14,7 +14,7 @@ sus desacuerdos en la cola del vault (`_decisions/`), nunca en la sesión.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -53,10 +53,11 @@ class SearchProductsTool(ToolBase):
     description = (
         "Busca productos del catálogo de Hubara. El search es case-insensitive "
         "y matchea en title, handle, tags, categorías y description del "
-        "producto. Pasa `q=\"\"` (string vacío) para LISTAR TODO el catálogo "
-        "(útil cuando el cliente pregunta '¿qué tienen?'). Pasa `q=\"<tema>\"` "
-        f"para filtrar (ej: {_V['search_examples']}). Retorna "
-        "hasta `limit` productos con precio, handle, imagen y tags."
+        "producto. Pasa `q=\"<tema>\"` para filtrar (ej: "
+        f"{_V['search_examples']}). Para mostrarle al cliente qué tienen o el "
+        "catálogo NO busques: usa present_products sin handles (manda el "
+        "catálogo completo o sus categorías). Retorna hasta `limit` productos "
+        "con precio, handle, imagen y tags."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -66,15 +67,15 @@ class SearchProductsTool(ToolBase):
                 "description": (
                     "Texto de búsqueda. Substring case-insensitive contra "
                     "title, handle, tags, categorías y description. "
-                    "Pasa string vacío (\"\") para LISTAR TODO el catálogo."
+                    "String vacío (\"\") = sin filtro de texto (con "
+                    "`category`, todos los de esa categoría)."
                 ),
                 "maxLength": 100,
             },
             "limit": {
                 "type": "integer",
                 "description": (
-                    "Máximo de productos a retornar (default 10, máximo 30 "
-                    "para listar todo el catálogo)."
+                    "Máximo de productos a retornar (default 10, máximo 30)."
                 ),
                 "minimum": 1,
                 "maximum": 30,
@@ -143,10 +144,14 @@ class SearchProductsTool(ToolBase):
                 ensure_ascii=False,
             )
 
+        # La edad de la copia local (`stale`, `manifest`) queda en este log y
+        # en el dashboard, no en lo que lee el LLM: la copia se refresca a mano
+        # (botón Sync del dashboard) y para el bot es la verdad de la
+        # conversación (incidente 2026-10-06: le llegaba `stale: true`).
         logger.info(
             "🔍 [TOOL search_products] → count={} truncated={} stale={} "
-            "category={} handles={}",
-            result.count, result.truncated, result.stale,
+            "fetched_at={} category={} handles={}",
+            result.count, result.truncated, result.stale, result.manifest.fetched_at,
             (result.category.matched.slug
              if result.category and result.category.matched else None),
             [p.handle for p in result.results],
@@ -155,8 +160,6 @@ class SearchProductsTool(ToolBase):
             "query": result.query,
             "count": result.count,
             "truncated": result.truncated,
-            "stale": result.stale,
-            "manifest": asdict(result.manifest),
             "results": [_product_summary(p) for p in result.results],
         }
         if result.category is not None:

@@ -1,6 +1,6 @@
 """Plugin `catalog` — sincronización del catálogo de productos.
 
-Pull periódico (Schedule de Temporal o disparo manual) → snapshot atómico en
+Pull a pedido (botón Sync del dashboard o script; NO hay Schedule) → snapshot atómico en
 filesystem (`/var/lib/hubara/catalog`) → consumido por el plugin chats
 (sales tools `search_products` / `get_product_by_handle` leen el snapshot
 con cache mtime-aware).

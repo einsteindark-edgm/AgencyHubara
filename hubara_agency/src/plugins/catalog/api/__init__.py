@@ -37,7 +37,7 @@ from pydantic import BaseModel
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.service import RPCError, RPCStatusCode
 
-from src.platform.catalog.paths import get_max_age_minutes, get_snapshot_dir
+from src.platform.catalog.paths import get_max_age_minutes, get_snapshot_dir, is_stale
 from src.platform.plugin_manifest import get_task_queue
 from src.sdk.dashboardkit import get_dashboard_event_bus
 from src.platform.temporal.client import get_temporal_client
@@ -404,7 +404,8 @@ async def get_snapshot() -> dict[str, Any]:
             dt = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
             delta = datetime.now(timezone.utc) - dt
             age_minutes = int(delta.total_seconds() // 60)
-            stale = age_minutes >= max_age
+            # La misma regla que el cliente del agente (`paths.is_stale`).
+            stale = is_stale(delta, max_age)
         except ValueError:
             age_minutes = None
 

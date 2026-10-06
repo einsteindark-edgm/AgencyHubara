@@ -6,6 +6,7 @@ de `src/platform/config.py:9-25`.
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 # Default = <repo>/hubara_agency/catalog_workspace/. Override en prod via env.
@@ -29,3 +30,11 @@ def get_max_age_minutes() -> int:
         return int(raw)
     except ValueError:
         return 30
+
+
+def is_stale(age: timedelta, max_age_minutes: int) -> bool:
+    """La copia local está vieja desde que cumple `max_age_minutes`
+    (inclusive). Una sola regla para el agente (su log) y el dashboard
+    (`GET /api/catalog/snapshot`): antes el uno usaba `>` y el otro `>=`.
+    El refresco de la copia es manual (botón Sync del dashboard)."""
+    return age >= timedelta(minutes=max_age_minutes)

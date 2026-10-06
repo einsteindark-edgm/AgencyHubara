@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.platform.catalog.categories import (
@@ -29,6 +29,7 @@ from src.platform.catalog.errors import (
     CatalogUnavailableError,
     ProductNotFoundError,
 )
+from src.platform.catalog.paths import is_stale
 
 log = logging.getLogger(__name__)
 
@@ -208,8 +209,7 @@ class LocalSnapshotCatalogClient:
             return True
         if fetched.tzinfo is None:
             fetched = fetched.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        return (now - fetched) > timedelta(minutes=self._max_age)
+        return is_stale(datetime.now(timezone.utc) - fetched, self._max_age)
 
 
 # ---------- search matcher ----------

@@ -75,6 +75,11 @@ from src.plugins.chats.agent.sales.config.payments import (
 )
 from src.sdk.mediakit import derive_image_label
 from src.plugins.chats.shared.store_pack import vocabulary
+from src.plugins.chats.agent.sales.catalog_menu import (
+    UNCATEGORIZED,
+    UNCATEGORIZED_LABEL,
+    category_row_id,
+)
 
 #: Los ejemplos de la tienda que el LLM ve en estas tools salen del dominio
 #: del paquete activo (`domain.yaml: vocabulary`, PAQUETES_DE_DECISION.md F5).
@@ -384,24 +389,32 @@ class PresentProductDetailTool(ToolBase):
 
 
 class PresentProductsTool(ToolBase):
-    """Envía una lista de productos al cliente como list message o product_list.
+    """Envía productos al cliente en UN mensaje: la lista de productos de
+    Meta (`interactive.product_list`, A.11) acepta hasta 30 productos en
+    hasta 10 secciones. Sin el catálogo de Meta, el flush manda la lista de
+    respaldo (`interactive.list`, A.3) en páginas de a 10 filas.
 
-    Cuando todos los handles están en Meta Catalog (Parte B activo),
-    workflow renderiza `interactive.product_list` (A.11). Si no, fallback
-    a `interactive.list` (A.3) con un row por producto.
-
-    Hasta 30 productos. Si recibes más, recorta tú los más relevantes y
-    el cliente puede pedir "ver más" para paginar.
+    Tres formas (incidente 2026-10-06, decisión del operador):
+      * `handles`: esos productos (closed-list de search_products).
+      * `category`: los de esa categoría (la que el cliente eligió en el menú
+        de categorías o pidió por su nombre), hasta 30.
+      * nada: el catálogo completo de la copia local. Si cabe en un mensaje
+        sale entero, por categoría; si no, el cliente recibe primero el menú
+        de categorías (`catalog_menu.py`) y elige una.
     """
 
     name = "present_products"
     description = (
-        "Envía una lista tappable de hasta 30 productos al cliente — el "
-        "cliente la ve como un menú dentro del chat y puede tocar uno para "
-        "elegirlo. Úsala cuando vayas a mostrar 4 o más productos. Para "
-        "1-3 productos, mejor descríbelos en texto. Para UN producto con "
-        "foto, usa present_product_detail. Los handles deben venir de "
-        "search_products (closed-list strict)."
+        "Envía productos al cliente en UN mensaje del catálogo de WhatsApp "
+        "(hasta 30, agrupados por categoría): los ve dentro del chat y elige "
+        "ahí. Tres usos: (1) pide ver qué tienen o el catálogo: llámala SIN "
+        "handles y sin search_products antes; si todo el catálogo cabe, sale "
+        "entero, y si no, el cliente recibe primero sus categorías para "
+        "elegir una. (2) Eligió o pidió una categoría: `category`, sin "
+        "handles. (3) 4 o más productos puntuales: `handles` de "
+        "search_products (closed-list strict). Para 1-3 productos, mejor "
+        "descríbelos en texto. Para UN producto con foto, usa "
+        "present_product_detail."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -414,7 +427,17 @@ class PresentProductsTool(ToolBase):
                 "description": (
                     "Handles de los productos a mostrar, en el orden que "
                     "quieres que aparezcan. Solo handles vistos en "
-                    "search_products."
+                    "search_products. Sin handles (ni category) se muestra "
+                    "el catálogo completo."
+                ),
+            },
+            "category": {
+                "type": "string",
+                "maxLength": 100,
+                "description": (
+                    "Categoría cuyos productos quieres mostrar: el `category` "
+                    "que trae '[el cliente eligió la categoría: …]' o el "
+                    "nombre tal cual lo escribió el cliente. Úsala sin handles."
                 ),
             },
             "intro_text": {
@@ -437,7 +460,7 @@ class PresentProductsTool(ToolBase):
                 ),
             },
         },
-        "required": ["handles", "intro_text"],
+        "required": ["intro_text"],
     }
 
     def __init__(self, workspace: str | Path, catalog: CatalogPort) -> None:
@@ -447,16 +470,27 @@ class PresentProductsTool(ToolBase):
     async def execute_with_context(
         self,
         ctx: ToolContext,
-        handles: list[str],
-        intro_text: str,
+        handles: list[str] | None = None,
+        intro_text: str = "",
         group_by: str = "categories",
+        category: str | None = None,
     ) -> str:
+        # Un handle repetido sería una fila repetida: WhatsApp rechaza la lista.
+        wanted = list(dict.fromkeys(handles or []))
         logger.info(
-            "📋 [TOOL present_products] session={} count={} group_by={}",
-            ctx.session_key, len(handles), group_by,
+            "📋 [TOOL present_products] session={} count={} group_by={} category={!r}",
+            ctx.session_key, len(wanted), group_by, category,
         )
+        if wanted:
+            return await self._present_handles(ctx, wanted, intro_text, group_by)
+        if category and category.strip():
+            return await self._present_category(ctx, category.strip(), intro_text)
+        return await self._present_catalog(ctx, intro_text, group_by)
 
-        # Resolver productos del snapshot, validar closed-list
+    async def _present_handles(
+        self, ctx: ToolContext, handles: list[str], intro_text: str, group_by: str
+    ) -> str:
+        """Los productos que eligió el LLM (closed-list de search_products)."""
         products = []
         missing = []
         for h in handles:
@@ -476,100 +510,383 @@ class PresentProductsTool(ToolBase):
                 "message": "Ningún handle resolvió. Llama search_products primero.",
             }, ensure_ascii=False)
 
-        # Agrupar
-        groups: dict[str, list[Any]] = {}
-        if group_by == "categories":
-            for p in products:
-                # Nombre real de la categoría — el título de sección lo LEE el
-                # cliente; el slug ("velas-religiosas") no es texto de venta.
-                key = (
-                    _category_label(p, p.categories[0])
-                    if p.categories
-                    else "Otros"
-                )
-                groups.setdefault(key, []).append(p)
-        elif group_by == "tags":
-            for p in products:
-                key = (p.tags[0] if p.tags else "Otros")
-                groups.setdefault(key, []).append(p)
-        else:
-            groups["Productos"] = list(products)
-
-        # Sections para la list (cada section ≤10 rows, máx 10 sections)
-        sections_payload = []
-        for sec_title, prods in list(groups.items())[: wa_limits.MAX_LIST_SECTIONS]:
-            rows = []
-            for p in prods[: wa_limits.MAX_LIST_ROWS_PER_SECTION]:
-                price, currency = _first_price(p)
-                desc = None
-                if price and currency:
-                    try:
-                        price_int = int(float(price))
-                        desc = f"${price_int:,} {currency}".replace(",", ".")
-                    except (ValueError, TypeError):
-                        desc = f"{price} {currency}"
-                rows.append({
-                    "id": p.handle,  # closed-list: row id = handle
-                    "title": p.title,
-                    "description": desc,
-                    # Para A.11 product_list — id del item VIGENTE en Meta
-                    # (variante para productos con options, ver helper).
-                    "product_retailer_id": _meta_retailer_id(p),
-                })
-            sections_payload.append({"title": sec_title, "rows": rows})
-
-        # Paginación (bug 10d8bd21): Meta limita TOTAL de rows a 10. Si
-        # el catálogo crece a 11+ productos, dividimos en N mensajes.
-        # Hubara hoy tiene 9 → 1 sola página. Futuro-proof.
-        pages = wa_limits.paginate_list_rows(
-            sections_payload, wa_limits.MAX_LIST_ROWS_TOTAL
-        )
-
-        total_pages = len(pages)
-        for page_idx, page_sections in enumerate(pages):
-            is_first = page_idx == 0
-            body = (
-                wa_limits.truncate(intro_text, wa_limits.MAX_LIST_BODY)
-                if is_first
-                else "Más productos del catálogo:"
+        sections = _product_sections(products, group_by)
+        messages = self._enqueue_products(ctx, sections, intro_text)
+        shown = sum(len(s["rows"]) for s in sections)
+        envelope: dict[str, Any] = {
+            "queued": True,
+            "kind": "products_list",
+            "count": shown,
+            "pages": messages,
+            "missing": missing,
+            "summary": (
+                f"Lista de {shown} productos enviada al cliente como menú "
+                f"tappable{_messages_note(messages)}. Espera su selección: "
+                "cuando toque uno, recibirás '[el cliente seleccionó: <título>]'."
+            ),
+        }
+        if shown < len(products):
+            envelope["left_out"] = [p.handle for p in products[shown:]]
+            envelope["summary"] += (
+                f" No salieron {len(products) - shown} (un mensaje lleva hasta "
+                f"{_MAX_ROWS}): son los de `left_out`."
             )
-            intent = {
-                "kind": "products_list",
-                "params": {
-                    "intro_text": body,
-                    "sections": page_sections,
-                    "button_label": "Ver opciones",
-                    "page": page_idx + 1,
-                    "total_pages": total_pages,
-                },
-                "analytics": {
-                    "component_id": "catalog_browse",
-                    "component_kind": "list",
-                    "handles": [
-                        r["id"] for s in page_sections for r in s["rows"]
-                    ],
-                    "page": page_idx + 1,
-                    "total_pages": total_pages,
-                },
-                "fallback": {"prefer_native_product_list": True},
-            }
-            _append_intent(ctx.session_key, intent)
+        return json.dumps(envelope, ensure_ascii=False)
 
-        paging_note = (
-            f" (en {total_pages} mensajes)" if total_pages > 1 else ""
+    async def _present_catalog(self, ctx: ToolContext, intro_text: str, group_by: str) -> str:
+        """Sin handles ni category: el catálogo completo de la copia local. Si
+        cabe, en UN mensaje; si no, el menú de categorías."""
+        try:
+            products = await self._all_products()
+            categories = (
+                list(await self._catalog.list_categories())
+                if len(products) > _MAX_ROWS
+                else []
+            )
+        except Exception as e:  # noqa: BLE001 — la copia del catálogo no se pudo leer
+            return _catalog_unavailable(e)
+        if not products:
+            return json.dumps({
+                "queued": False,
+                "error": "empty_catalog",
+                "message": "El catálogo está vacío: no se mostró nada al cliente.",
+            }, ensure_ascii=False)
+        if len(products) > _MAX_ROWS and categories:
+            return self._enqueue_category_menu(ctx, intro_text, products, categories)
+
+        # Cabe en un mensaje (o el catálogo no tiene categorías para armar un
+        # menú: salen los primeros 30 y se dice que hay más).
+        sections = _product_sections(products, group_by)
+        messages = self._enqueue_products(ctx, sections, intro_text)
+        shown = sum(len(s["rows"]) for s in sections)
+        summary = (
+            f"Catálogo completo enviado al cliente como menú tappable"
+            f"{_messages_note(messages)}: {shown} productos en "
+            f"{', '.join(s['title'] for s in sections)}. Ya lo está viendo: no se "
+            "lo repitas en texto. Espera su selección: cuando toque uno, "
+            "recibirás '[el cliente seleccionó: <título>]'."
+        )
+        if shown < len(products):
+            summary += (
+                f" Hay {len(products) - shown} productos más que no caben (un "
+                f"mensaje lleva hasta {_MAX_ROWS}): si busca uno que no vio, "
+                "búscalo con search_products."
+            )
+        return json.dumps({
+            "queued": True,
+            "kind": "products_list",
+            "count": shown,
+            "total": len(products),
+            "pages": messages,
+            "summary": summary,
+            "products": _shown_products(sections),
+        }, ensure_ascii=False)
+
+    async def _present_category(self, ctx: ToolContext, category: str, intro_text: str) -> str:
+        """Los productos de UNA categoría (la que el cliente eligió en el menú
+        o pidió por su nombre), hasta 30. La categoría la resuelve el mismo
+        filtro de search_products (typos, plurales, slug o nombre)."""
+        try:
+            if category == UNCATEGORIZED:
+                label, products = UNCATEGORIZED_LABEL, await self._uncategorized()
+            else:
+                found = await self._catalog.search(q="", limit=_WHOLE_CATALOG, category=category)
+                resolution = found.category
+                if resolution is not None and (
+                    resolution.matched is not None or resolution.confidence == "no_categories"
+                ):
+                    label = resolution.matched.label if resolution.matched else category
+                    products = list(found.results)
+                elif category.casefold() == UNCATEGORIZED_LABEL.casefold():
+                    label, products = UNCATEGORIZED_LABEL, await self._uncategorized()
+                else:
+                    available = [c.label for c in await self._catalog.list_categories()]
+                    return _category_not_found(category, resolution, available)
+        except Exception as e:  # noqa: BLE001 — la copia del catálogo no se pudo leer
+            return _catalog_unavailable(e)
+        if not products:
+            return json.dumps({
+                "queued": False,
+                "error": "category_empty",
+                "message": f"La categoría {label} no tiene productos: no se mostró nada al cliente.",
+            }, ensure_ascii=False)
+
+        shown = products[:_MAX_ROWS]
+        sections = [{"title": label, "rows": [_product_row(p) for p in shown]}]
+        messages = self._enqueue_products(ctx, sections, intro_text, header_text=label)
+        summary = (
+            f"Productos de la categoría {label} enviados al cliente como menú "
+            f"tappable{_messages_note(messages)}: {len(shown)}."
+        )
+        if len(products) > len(shown):
+            summary += (
+                f" Se mostraron los primeros {len(shown)} de {len(products)}: hay "
+                f"{len(products) - len(shown)} más. Si busca uno que no vio, "
+                "búscalo con search_products."
+            )
+        summary += (
+            " Espera su selección: cuando toque uno, recibirás "
+            "'[el cliente seleccionó: <título>]'."
         )
         return json.dumps({
             "queued": True,
             "kind": "products_list",
+            "count": len(shown),
+            "category": label,
+            "total": len(products),
+            "pages": messages,
+            "summary": summary,
+            "products": _shown_products(sections),
+        }, ensure_ascii=False)
+
+    async def _all_products(self) -> list[Any]:
+        """El catálogo completo de la copia local: el mismo cliente que
+        search_products (`q=""` lista todo)."""
+        return list((await self._catalog.search(q="", limit=_WHOLE_CATALOG)).results)
+
+    async def _uncategorized(self) -> list[Any]:
+        return [p for p in await self._all_products() if not p.categories]
+
+    def _enqueue_products(
+        self,
+        ctx: ToolContext,
+        sections: list[dict[str, Any]],
+        intro_text: str,
+        *,
+        header_text: str | None = None,
+    ) -> int:
+        """UN intent con todas las secciones (el flush lo manda en un mensaje,
+        o en páginas de a 10 si cae a la lista de respaldo). Devuelve cuántos
+        mensajes le llegan al cliente."""
+        params: dict[str, Any] = {
+            "intro_text": wa_limits.truncate(intro_text, wa_limits.MAX_LIST_BODY),
+            "sections": sections,
+            "button_label": "Ver opciones",
+            "page": 1,
+            "total_pages": 1,
+        }
+        if header_text:
+            params["header_text"] = header_text
+        _append_intent(ctx.session_key, {
+            "kind": "products_list",
+            "params": params,
+            "analytics": {
+                "component_id": "catalog_browse",
+                "component_kind": "list",
+                "handles": [r["id"] for s in sections for r in s["rows"]],
+                "page": 1,
+                "total_pages": 1,
+            },
+            "fallback": {"prefer_native_product_list": True},
+        })
+        return _messages_for(sections)
+
+    def _enqueue_category_menu(
+        self,
+        ctx: ToolContext,
+        intro_text: str,
+        products: list[Any],
+        categories: list[Any],
+    ) -> str:
+        """El catálogo no cabe en un mensaje: el cliente recibe primero sus
+        categorías, una fila por categoría con cuántos productos tiene."""
+        entries = [(c.slug, c.label, c.product_count) for c in categories]
+        uncategorized = sum(1 for p in products if not p.categories)
+        if uncategorized:
+            entries.append((UNCATEGORIZED, UNCATEGORIZED_LABEL, uncategorized))
+        in_menu, in_text = _menu_entries(entries)
+        _append_intent(ctx.session_key, {
+            "kind": "categories",
+            "params": {
+                "intro_text": wa_limits.truncate(intro_text, wa_limits.MAX_LIST_BODY),
+                "sections": [{
+                    "title": "Categorías",
+                    "rows": [
+                        {
+                            "id": category_row_id(slug),
+                            "title": wa_limits.truncate(label, wa_limits.MAX_LIST_ROW_TITLE),
+                            "description": _products_count(count),
+                        }
+                        for slug, label, count in in_menu
+                    ],
+                }],
+                "button_label": "Ver categorías",
+                "more_categories": [label for _, label, _ in in_text],
+            },
+            "analytics": {
+                "component_id": "catalog_categories",
+                "component_kind": "list",
+                "categories": [slug for slug, _, _ in in_menu],
+            },
+        })
+        named = (
+            " (las que no caben en el menú van nombradas en su texto: "
+            f"{', '.join(label for _, label, _ in in_text)})"
+            if in_text
+            else ""
+        )
+        return json.dumps({
+            "queued": True,
+            "kind": "categories",
             "count": len(products),
-            "pages": total_pages,
-            "missing": missing,
             "summary": (
-                f"Lista de {len(products)} productos enviada al cliente "
-                f"como menú tappable{paging_note}. Espera su selección — "
-                "cuando toque uno, recibirás '[el cliente seleccionó: <título>]'."
+                f"El catálogo tiene {len(products)} productos y no cabe en un solo "
+                f"mensaje (lleva hasta {_MAX_ROWS}): le envié al cliente un menú con "
+                f"sus categorías para que elija una{named}. Cuando la elija recibirás "
+                "'[el cliente eligió la categoría: <nombre> (category=\"<id>\")]': "
+                "llama present_products(category=\"<id>\") para mostrarle sus "
+                "productos. Si escribe el nombre de una categoría, pásalo tal cual "
+                "en category. No le repitas las categorías en texto."
+            ),
+            "categories": [
+                {"name": label, "category": slug, "products": count}
+                for slug, label, count in entries
+            ],
+        }, ensure_ascii=False)
+
+
+#: Lo que cabe en UN mensaje del catálogo de WhatsApp (la lista de productos
+#: de Meta): hasta 30 productos en hasta 10 secciones.
+_MAX_ROWS = wa_limits.MAX_PRODUCT_LIST_ITEMS_TOTAL
+_MAX_SECTIONS = wa_limits.MAX_PRODUCT_LIST_SECTIONS
+#: Tope de la lectura del catálogo completo de la copia local.
+_WHOLE_CATALOG = 10_000
+
+
+def _group_title(product: Any, group_by: str) -> str:
+    if group_by == "categories":
+        # Nombre real de la categoría: el título de sección lo LEE el cliente;
+        # el slug ("velas-religiosas") no es texto de venta.
+        if product.categories:
+            return _category_label(product, product.categories[0])
+        return UNCATEGORIZED_LABEL
+    if group_by == "tags":
+        return product.tags[0] if product.tags else UNCATEGORIZED_LABEL
+    return "Productos"
+
+
+def _product_sections(products: list[Any], group_by: str) -> list[dict[str, Any]]:
+    """Las secciones de UN mensaje: los primeros 30 productos, agrupados, en
+    hasta 10 secciones (los topes de la lista de productos de Meta). No hay
+    tope por sección; de la décima sección en adelante van juntas en «Otros»,
+    así ningún producto se pierde en silencio."""
+    groups: dict[str, list[Any]] = {}
+    for p in products[:_MAX_ROWS]:
+        groups.setdefault(_group_title(p, group_by), []).append(p)
+    if len(groups) > _MAX_SECTIONS:
+        overflow = list(groups)[_MAX_SECTIONS - 1:]
+        merged = [p for title in overflow for p in groups.pop(title)]
+        groups.setdefault(UNCATEGORIZED_LABEL, []).extend(merged)
+    return [
+        {"title": title, "rows": [_product_row(p) for p in prods]}
+        for title, prods in groups.items()
+    ]
+
+
+def _product_row(product: Any) -> dict[str, Any]:
+    price, currency = _first_price(product)
+    desc = None
+    if price and currency:
+        try:
+            price_int = int(float(price))
+            desc = f"${price_int:,} {currency}".replace(",", ".")
+        except (ValueError, TypeError):
+            desc = f"{price} {currency}"
+    return {
+        "id": product.handle,  # closed-list: row id = handle
+        "title": product.title,
+        "description": desc,
+        # Para A.11 product_list: id del item VIGENTE en Meta (variante para
+        # productos con options, ver helper).
+        "product_retailer_id": _meta_retailer_id(product),
+    }
+
+
+def _shown_products(sections: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Lo que vio el cliente, en su orden: con esto el LLM anota con su handle
+    el producto que el cliente elija."""
+    return [{"handle": r["id"], "title": r["title"]} for s in sections for r in s["rows"]]
+
+
+def _messages_for(sections: list[dict[str, Any]]) -> int:
+    """Cuántos mensajes le llegan al cliente: UNO con el catálogo de Meta (la
+    misma condición del flush: `META_CATALOG_ID` y todas las filas con su id de
+    Meta); sin él, la lista de respaldo va en páginas de a 10 filas."""
+    import os
+
+    native = bool((os.environ.get("META_CATALOG_ID") or "").strip()) and all(
+        r.get("product_retailer_id") for s in sections for r in s["rows"]
+    )
+    if native:
+        return 1
+    return len(wa_limits.paginate_list_rows(sections, wa_limits.MAX_LIST_ROWS_TOTAL))
+
+
+def _messages_note(messages: int) -> str:
+    return f" (en {messages} mensajes)" if messages > 1 else " en un solo mensaje"
+
+
+def _products_count(count: int) -> str:
+    return "1 producto" if count == 1 else f"{count} productos"
+
+
+def _menu_entries(
+    entries: list[tuple[str, str, int]],
+) -> tuple[list[tuple[str, str, int]], list[tuple[str, str, int]]]:
+    """`(en el menú, nombradas en el texto)`. La lista de WhatsApp acepta 10
+    filas: con más categorías van las que tienen más productos (en su orden
+    de siempre, y «Otros» siempre: no es una categoría del catálogo) y las
+    demás quedan nombradas en el texto del menú: el cliente puede escribir
+    cualquiera y present_products(category=…) la resuelve."""
+    cap = wa_limits.MAX_LIST_ROWS_TOTAL
+    if len(entries) <= cap:
+        return entries, []
+    others = [e for e in entries if e[0] == UNCATEGORIZED]
+    named = [e for e in entries if e[0] != UNCATEGORIZED]
+    biggest = {e[0] for e in sorted(named, key=lambda e: -e[2])[: cap - len(others)]}
+    return (
+        [e for e in named if e[0] in biggest] + others,
+        [e for e in named if e[0] not in biggest],
+    )
+
+
+def _category_not_found(
+    category: str, resolution: Any, available: list[str]
+) -> str:
+    candidates = [c.label for c in getattr(resolution, "candidates", None) or []]
+    if candidates:
+        return json.dumps({
+            "queued": False,
+            "error": "category_ambiguous",
+            "candidates": candidates,
+            "message": (
+                f"«{category}» puede ser varias categorías: pregúntale al cliente "
+                f"cuál quiere ({', '.join(candidates)}). No se mostró nada al cliente."
             ),
         }, ensure_ascii=False)
+    return json.dumps({
+        "queued": False,
+        "error": "category_not_found",
+        "available": available,
+        "message": (
+            f"No reconocí la categoría «{category}». Las que existen: "
+            f"{', '.join(available)}. Ofrécele esas, o llama present_products "
+            "sin category para mandarle el menú. No se mostró nada al cliente."
+        ),
+    }, ensure_ascii=False)
+
+
+def _catalog_unavailable(error: Exception) -> str:
+    logger.error("📋 [TOOL present_products] catalog_unavailable: {}", error)
+    return json.dumps({
+        "queued": False,
+        "error": "catalog_unavailable",
+        "message": (
+            "El catálogo no está disponible en este momento. Pídele al cliente "
+            "unos minutos y reintenta. No se mostró nada al cliente."
+        ),
+        "detail": str(error),
+    }, ensure_ascii=False)
 
 
 # =============================================================================

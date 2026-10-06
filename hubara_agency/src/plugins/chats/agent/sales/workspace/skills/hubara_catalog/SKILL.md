@@ -5,7 +5,7 @@ metadata: {"exoclaw": {"always": false}}
 
 # Conocimiento Central de la Empresa
 
-> ⚠️ **Esta skill NO contiene el catálogo de productos.** Para precios, nombres, descripciones e imágenes de productos usa **siempre** la tool `search_products` (búsqueda) o `get_product_by_handle` (detalle exacto). NO inventes precios ni nombres desde tu memoria — el catálogo es dinámico y se actualiza cada 5 minutos desde Medusa. **Los precios que aparezcan en un anuncio o que mencione el cliente NO son fuente**: si difieren, el vigente es el del catálogo y lo dices en una línea.
+> ⚠️ **Esta skill NO contiene el catálogo de productos.** Para precios, nombres, descripciones e imágenes de productos usa **siempre** la tool `search_products` (búsqueda) o `get_product_by_handle` (detalle exacto). NO inventes precios ni nombres desde tu memoria — el catálogo es dinámico: es una copia del de Medusa que el equipo actualiza a mano. **Los precios que aparezcan en un anuncio o que mencione el cliente NO son fuente**: si difieren, el vigente es el del catálogo y lo dices en una línea.
 
 ## IDENTIDAD DE MARCA
 
@@ -31,6 +31,7 @@ metadata: {"exoclaw": {"always": false}}
 
 | Necesitas | Tool a usar |
 |---|---|
+| Mostrarle al cliente qué tienen (el catálogo) | `present_products` sin handles: todo en un mensaje o, si no cabe, sus categorías |
 | Listar productos por nombre/aroma | `search_products(q="lavanda")` |
 | Filtrar por categoría (aunque venga con typo) | `search_products(q="", category="religosas")` |
 | Saber qué categorías existen | `list_categories()` |

@@ -744,23 +744,65 @@ async def _dispatch_intent(
                     },
                 )
 
-        # Fallback: interactive.list (sin Meta Catalog — cap 10 total).
-        sections_payload = wa_limits.cap_list_rows_total(
-            sections_payload, wa_limits.MAX_LIST_ROWS_TOTAL
-        )
+        # Respaldo: interactive.list (sin el catálogo de Meta). WhatsApp acepta
+        # 10 filas por lista y el intent trae hasta 30 (incidente 2026-10-06):
+        # va en páginas de a 10, en vez de recortar las demás en silencio.
+        # Como la galería: si la primera página falla no se sigue; si falla
+        # otra, las demás igual salen y se devuelve la última que llegó.
+        pages = wa_limits.paginate_list_rows(sections_payload, wa_limits.MAX_LIST_ROWS_TOTAL)
+        delivered = None
+        for page_idx, page_sections in enumerate(pages):
+            result = await wa_client.send_interactive_list(
+                phone_number_id,
+                to_number,
+                wa_dtos.InteractiveListOutbound(
+                    body=(
+                        (params.get("intro_text") or "Mira las opciones:")
+                        if page_idx == 0
+                        else "Más productos del catálogo:"
+                    ),
+                    button_label=params.get("button_label", "Ver opciones"),
+                    sections=[
+                        wa_dtos.ListSection(
+                            title=s.get("title", "Opciones"),
+                            rows=[
+                                wa_dtos.ListRow(
+                                    id=r["id"],
+                                    title=r["title"],
+                                    description=r.get("description"),
+                                )
+                                for r in s["rows"]
+                            ],
+                        )
+                        for s in page_sections
+                    ],
+                ),
+            )
+            if result is not None and result.ok:
+                delivered = result
+            elif page_idx == 0:
+                return result
+        return delivered
+
+    if kind == "categories":
+        # El catálogo no cabe en un mensaje: el cliente recibe sus categorías
+        # en UNA lista (`present_products`, menú de `catalog_menu.py`). Nunca
+        # es el catálogo de Meta: las filas son categorías, no productos.
+        from src.plugins.chats.agent.sales.catalog_menu import category_menu_body
+
         sections = [
             wa_dtos.ListSection(
-                title=s.get("title", "Opciones"),
+                title=s.get("title") or "Categorías",
                 rows=[
                     wa_dtos.ListRow(
                         id=r["id"],
                         title=r["title"],
                         description=r.get("description"),
                     )
-                    for r in (s.get("rows") or [])
+                    for r in s["rows"]
                 ],
             )
-            for s in sections_payload
+            for s in (params.get("sections") or [])
             if s.get("rows")
         ]
         if not sections:
@@ -769,8 +811,11 @@ async def _dispatch_intent(
             phone_number_id,
             to_number,
             wa_dtos.InteractiveListOutbound(
-                body=params.get("intro_text", "Mira las opciones:"),
-                button_label=params.get("button_label", "Ver opciones"),
+                body=category_menu_body(
+                    params.get("intro_text") or "",
+                    params.get("more_categories") or [],
+                ),
+                button_label=params.get("button_label") or "Ver categorías",
                 sections=sections,
             ),
         )

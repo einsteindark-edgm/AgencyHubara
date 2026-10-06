@@ -14,6 +14,7 @@ Tabla de traducción:
 | `text`             | (passthrough)                                               |
 | `interactive.button_reply`  | `[el cliente tocó el botón: <title>]`              |
 | `interactive.list_reply`    | `[el cliente seleccionó: <title del producto>]`    |
+| `list_reply` del menú de categorías (id `categoria:<slug>`) | `[el cliente eligió la categoría: <nombre> (category="<slug>")]` |
 | `interactive.nfm_reply` (Flow) | `[datos de envío recibidos] ciudad=...; barrio=...` |
 | `location`         | `[el cliente compartió su ubicación] lat=X lng=Y (ciudad)`  |
 | `audio`            | `<texto transcrito>` (post-transcripción, ver A.5)          |
@@ -36,6 +37,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from src.plugins.chats.agent.sales.catalog_menu import category_choice_text, category_from_row_id
 from src.plugins.chats.agent.sales.parsers import WhatsAppMessage
 from src.plugins.chats.agent.sales.price_quotes import PRICE_MASK, mask_prices
 
@@ -164,9 +166,17 @@ async def translate_to_effective_text(
         if sub == "list_reply":
             row_id = msg.interactive.get("id") or ""
             row_title = msg.interactive.get("title") or ""
-            resolved_title = await _resolve_handle_title(catalog, row_id) if catalog else row_title
-            display = resolved_title or row_title or row_id
-            text = f"[el cliente seleccionó: {display}]"
+            # Fila del menú de categorías (catálogo que no cabe en un mensaje,
+            # 2026-10-06): el id dice que es una categoría, y el LLM la recibe
+            # con el `category` que le pasa a present_products.
+            category = category_from_row_id(row_id)
+            if category is not None:
+                resolved_title = None
+                text = category_choice_text(row_title, category)
+            else:
+                resolved_title = await _resolve_handle_title(catalog, row_id) if catalog else row_title
+                display = resolved_title or row_title or row_id
+                text = f"[el cliente seleccionó: {display}]"
             structured = {
                 "kind": "list_reply",
                 "id": row_id,
