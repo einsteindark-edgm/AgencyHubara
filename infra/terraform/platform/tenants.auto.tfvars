@@ -35,8 +35,13 @@ tenants = {
     # en la imagen antes de cambiar containers). `ventas-2` (2026-10-02) es
     # `ventas` con la regla ② de `promocion`. El resto de `lab` queda en sus
     # defaults (todo apagado). Volver atrás = "ventas".
+    #
+    # `internal_numbers`: teléfonos del equipo; sus conversaciones no entran al
+    # banco del laboratorio. El del operador (2026-10-05) es el número con el
+    # que se prueba el bot nuevo: sus pruebas no deben volverse casos del banco.
     lab = {
       decisions_bundle = "ventas-2"
+      internal_numbers = ["+573125671604"]
     }
   }
 
