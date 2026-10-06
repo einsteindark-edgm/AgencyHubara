@@ -39,7 +39,7 @@ RUN = "run-20260923-a1"
 _FAKE_AWS = """#!/bin/bash
 echo "aws $*" >> "$CALLS"
 if [[ "$*" == *"get-parameters-by-path"* ]]; then
-  printf '/hubara-lab/DEEPSEEK_API_KEY\\tsk-deepseek\\n/hubara-lab/OPENROUTER_API_KEY\\tsk-or-lab\\n/hubara-lab/GHCR_PULL_TOKEN\\tghp_x\\n'
+  printf '/hubara-lab/DEEPSEEK_API_KEY_LAB\\tsk-deepseek\\n/hubara-lab/GEMINI_API_KEY_LAB\\tsk-gemini\\n/hubara-lab/OPENROUTER_API_KEY_LAB\\tsk-or-lab\\n/hubara-lab/GHCR_PULL_TOKEN\\tghp_x\\n'
   exit 0
 fi
 exit 0
@@ -226,12 +226,19 @@ def test_lab_keys_come_only_from_the_lab_path_and_each_service_gets_its_own(box:
     litellm = (box["home"] / "litellm.env").read_text()
     worker = (box["home"] / "sales_lab.env").read_text()
     compose = (box["home"] / "compose.env").read_text()
-    assert "DEEPSEEK_API_KEY=sk-deepseek" in litellm
+    # Las llaves del laboratorio se llaman `*_LAB` en SSM (nunca la de
+    # producción por accidente). El proxy las recibe con el nombre que lee su
+    # config (`os.environ/DEEPSEEK_API_KEY`); el worker, con el nombre propio
+    # (su guard se las pasa a la app).
+    assert "DEEPSEEK_API_KEY=sk-deepseek" in litellm.splitlines()
+    assert "GEMINI_API_KEY=sk-gemini" in litellm.splitlines()
+    assert "_LAB=" not in litellm
     # Sin el rival OpenAI (2026-09-28) el proxy no llama a OpenRouter: la llave
     # solo la tiene el worker (Jev va directo a la Decisions API).
     assert "OPENROUTER_API_KEY" not in litellm
     assert "LAB_BUCKET" not in litellm and "HUBARA_IMAGE" not in litellm
-    assert "OPENROUTER_API_KEY=sk-or-lab" in worker  # Jev va directo a OpenRouter
+    assert "OPENROUTER_API_KEY_LAB=sk-or-lab" in worker.splitlines()  # Jev va directo a OpenRouter
+    assert "GHCR_PULL_TOKEN" not in worker
     assert "LAB_BUCKET=agencyhubara-lab-000000000000" in worker
     assert compose.strip() == f"HUBARA_IMAGE={IMAGE}"
     for name in ("litellm.env", "sales_lab.env", "compose.env"):

@@ -93,9 +93,13 @@ _write_env() {  # destino, contenido: escribe 0600 y reemplaza de una vez
   mv "$tmp" "$1"
 }
 keys="$(grep -v '^GHCR_PULL_TOKEN=' "$params" || true)"
-# El proxy LiteLLM no llama a OpenRouter (Jev va directo a la Decisions API
-# desde el worker; el rival OpenAI se quitó el 2026-09-28): su llave no entra.
-_write_env "$LAB_HOME/litellm.env" "$(printf '%s\n' "$keys" | grep -v '^OPENROUTER_API_KEY=' || true)"
+# Las llaves de LLM del laboratorio se llaman `*_LAB` en SSM (nunca la de
+# producción por accidente). El proxy las recibe con el nombre que lee su
+# config (`os.environ/DEEPSEEK_API_KEY`); el worker, con el nombre propio (su
+# guard se las pasa a la app). El proxy no llama a OpenRouter (Jev va directo a
+# la Decisions API desde el worker; el rival OpenAI se quitó el 2026-09-28): su
+# llave no entra.
+_write_env "$LAB_HOME/litellm.env" "$(printf '%s\n' "$keys" | grep -v '^OPENROUTER_API_KEY_LAB=' | sed -E 's/^([A-Z0-9_]+)_LAB=/\1=/' || true)"
 _write_env "$LAB_HOME/sales_lab.env" "$keys
 LAB_BUCKET=$LAB_BUCKET"
 _write_env "$LAB_HOME/compose.env" "HUBARA_IMAGE=$IMAGE"

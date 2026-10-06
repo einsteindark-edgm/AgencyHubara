@@ -31,6 +31,9 @@ def test_every_folder_points_inside_the_case_sandbox(tmp_path: Path) -> None:
 def test_the_prepared_case_env_passes_the_lab_guard(tmp_path: Path) -> None:
     root = tmp_path / "lab"
     env = {"LAB_ROOT": str(root), "TEMPORAL_URL": "temporal:7233", "TEMPORAL_NAMESPACE": "hubara-lab", "HUBARA_ENV": "lab"}
+    # El proceso del caso hereda el entorno del worker (`env=dict(os.environ)`),
+    # que ya trae las llaves propias del laboratorio.
+    env.update({"OPENROUTER_API_KEY_LAB": "sk-or-lab", "DEEPSEEK_API_KEY_LAB": "sk-ds-lab", "GEMINI_API_KEY_LAB": "sk-g-lab"})
 
     prepare_case_env(env, root / "runs" / "run-x" / "A1" / "0" / "case-1")
 

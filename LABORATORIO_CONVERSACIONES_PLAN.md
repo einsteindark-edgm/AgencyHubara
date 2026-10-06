@@ -616,6 +616,11 @@ Formato de cada PR: objetivo, archivos, tests rojos primero, "lista cuando" y no
 
 ## 7. Runbooks
 
+> **Estado 2026-10-05:** la caja del laboratorio está apagada
+> (`lab.enabled = false`) y las corridas van en local, con llaves propias
+> (`*_LAB`). Cómo se corre hoy y lo que falta: `docs/laboratorio/README.md`. Lo
+> de abajo sobre la caja sigue valiendo si se vuelve a prender.
+
 - **Cambios de workflow:** replay con historias reales en CI; desplegar primero el worker y después la API cuando cambia una señal; desplegar en horas de poco tráfico. El idle de 1 minuto en ventas drena lo que estaba en vuelo.
 - **Terraform:** `plan` revisado a mano; cero cambios en `app-instance`; nunca `apply` con reemplazos; el módulo nuevo va con `count`.
 - **Lanzar una corrida:** botón **Nueva corrida** en Laboratorio → elegir bots, repeticiones y banco → confirmar el costo estimado → seguir el avance en la misma sección. **Cancelar** la detiene y la caja se apaga sola a los 10 minutos sin trabajo. Solo hay una corrida a la vez. Antes del PR 9, que trae el botón, la misma corrida se lanza con `POST /api/chats/lab/runs` y la sesión del dashboard.
