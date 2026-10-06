@@ -12,9 +12,22 @@ Sirve contra AWS REAL o contra robotocore (réplica local): pasá
 Subcomandos
 -----------
   state    Crea el bucket S3 + tabla DynamoDB del state de Terraform (huevo-gallina).
+  template Regenera secrets.example.env desde `secret_keys` de Terraform (la lista
+           de llaves de un tenant; `--check` solo compara).
   secrets  Sube los SECRETOS de un archivo .env a SSM (/hubara/<tenant>/<KEY>, SecureString).
+           Rechaza llaves que Terraform no declara y no sube las vacías.
   github   Setea las GH variables (role ARNs, region, state) + el secret EC2_SSH_KEY.
-  verify   Chequea que el bootstrap esté completo.
+  verify   Chequea que el bootstrap esté completo. Con `--tenant <t>`, además lista
+           las llaves de `secret_keys` que faltan o siguen en placeholder (sin leer
+           ningún valor: el filtro corre dentro del CLI de AWS).
+
+Secretos de un tenant nuevo
+---------------------------
+  Terraform crea los NOMBRES (`secret_keys`, con placeholder); los VALORES se
+  cargan aquí, nunca en git ni en el state:
+    cp secrets.example.env secrets.<tenant>.env        # git lo ignora; llena los valores
+    python3 aws_bootstrap.py secrets --tenant <tenant> --file secrets.<tenant>.env
+    python3 aws_bootstrap.py verify  --tenant <tenant> # lo que falta antes del deploy
 
 Ejemplos
 --------
@@ -30,16 +43,89 @@ Ejemplos
 
   # Probar TODO contra robotocore (sin tocar AWS real):
   python3 aws_bootstrap.py state   --endpoint-url http://localhost:4566
-  python3 aws_bootstrap.py secrets --tenant hubara --file secrets.example.env \\
-      --endpoint-url http://localhost:4566
+  python3 aws_bootstrap.py secrets --tenant hubara --file secrets.prueba.env \\
+      --endpoint-url http://localhost:4566     # una copia de la plantilla con valores falsos
 """
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
+import textwrap
+from pathlib import Path
 
 REGION_DEFAULT = "us-east-1"
+_HERE = Path(__file__).resolve().parent
+#: Fuente de los NOMBRES de los secretos de un tenant: `variable "secret_keys"`.
+VARIABLES_TF = _HERE.parent / "terraform" / "platform" / "variables.tf"
+#: La plantilla que se copia para un tenant nuevo (generada, no se edita a mano).
+TEMPLATE = _HERE / "secrets.example.env"
+#: El valor con que Terraform crea cada secreto (modules/secrets): el real se
+#: carga fuera de banda y `ignore_changes` evita que un apply lo pise.
+PLACEHOLDER = "PLACEHOLDER_set_out_of_band"
+
+
+# ── secret_keys: la lista de Terraform ──────────────────────────────────────
+def secret_keys(variables_tf=VARIABLES_TF):
+    """[(LLAVE, explicación)] de `variable "secret_keys"`, en el orden de
+    Terraform. La explicación son los comentarios `#` escritos justo encima de
+    la llave ("" si no tiene)."""
+    text = Path(variables_tf).read_text(encoding="utf-8")
+    start = text.index('variable "secret_keys"')
+    block = text[start:text.index("\n}\n", start)]
+    keys, notes = [], []
+    for line in block.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            notes.append(stripped.lstrip("#").strip())
+            continue
+        found = re.fullmatch(r'"([A-Z0-9_]+)",?', stripped)
+        if found:
+            keys.append((found.group(1), " ".join(notes)))
+        notes = []
+    return keys
+
+
+def render_template(keys):
+    """La plantilla de secretos de un tenant: cada llave vacía, con su
+    explicación de Terraform encima. Nunca lleva un valor."""
+    lines = [
+        "# Secretos de UN tenant: /hubara/<tenant>/<LLAVE> en SSM (SecureString).",
+        "#",
+        "# GENERADO desde `secret_keys` (infra/terraform/platform/variables.tf) con",
+        "#   python3 infra/scripts/aws_bootstrap.py template",
+        "# No se edita a mano: una llave nueva va primero a Terraform (y al apply).",
+        "#",
+        "# Uso: copia este archivo a secrets.<tenant>.env (git lo ignora), llena los",
+        "# valores y súbelos con",
+        "#   python3 infra/scripts/aws_bootstrap.py secrets --tenant <tenant> --file secrets.<tenant>.env",
+        "# Lo que quede vacío no se sube. Antes del deploy, lo que falta:",
+        "#   python3 infra/scripts/aws_bootstrap.py verify --tenant <tenant>",
+        "",
+    ]
+    for key, note in keys:
+        lines += ["# " + part for part in textwrap.wrap(note, 76, break_on_hyphens=False, break_long_words=False)]
+        lines += [f"{key}=", ""]
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def plan_upload(pairs, known):
+    """(a subir, vacías, desconocidas). Una llave que Terraform no declara no se
+    crea a mano (quedaría fuera del state y el próximo tenant no la tendría);
+    una vacía no pisa lo que ya haya en SSM."""
+    upload = [(k, v) for k, v in pairs if k in known and v]
+    empty = [k for k, v in pairs if k in known and not v]
+    unknown = [k for k, _ in pairs if k not in known]
+    return upload, empty, unknown
+
+
+def pending(expected, *, present, placeholders):
+    """(faltan, en placeholder) en el orden de `expected`. Faltan = no hubo
+    apply de platform para el tenant; placeholder = nadie cargó el valor."""
+    missing = [k for k in expected if k not in present]
+    placeholder = [k for k in expected if k in present and k in placeholders]
+    return missing, placeholder
 
 
 def run(cmd, *, env=None, capture=False, mask=None):
@@ -133,14 +219,21 @@ def cmd_secrets(a):
     pairs = parse_env_file(a.file)
     if not pairs:
         sys.exit(f"✗ {a.file} no tiene pares KEY=VALUE")
+    upload, empty, unknown = plan_upload(pairs, {k for k, _ in secret_keys(a.variables)})
+    if unknown:
+        sys.exit("✗ Terraform no conoce: " + ", ".join(unknown) + ". Una llave nueva va primero a "
+                 "`secret_keys` (infra/terraform/platform/variables.tf) y al apply; nunca se crea a mano. "
+                 "No se subió nada.")
+    if empty:
+        print(f"  • sin valor, no se suben ({len(empty)}): {', '.join(empty)}", file=sys.stderr)
 
-    print(f"▶ Subiendo {len(pairs)} parámetros a SSM bajo {prefix}/ (type {a.type})", file=sys.stderr)
-    for k, v in pairs:
+    print(f"▶ Subiendo {len(upload)} parámetros a SSM bajo {prefix}/ (type {a.type})", file=sys.stderr)
+    for k, v in upload:
         name = f"{prefix}/{k}"
         run(base + ["ssm", "put-parameter", "--overwrite", "--name", name,
                     "--type", a.type, "--value", v], env=env, mask=v)
-    print(f"✓ {len(pairs)} secretos en {prefix}/. Verificá con: "
-          f"aws ssm get-parameters-by-path --path {prefix} --with-decryption", file=sys.stderr)
+    print(f"✓ {len(upload)} secretos en {prefix}/. Lo que falta: "
+          f"python3 aws_bootstrap.py verify --tenant {a.tenant}", file=sys.stderr)
 
 
 # ── github ──────────────────────────────────────────────────────────────────
@@ -203,7 +296,63 @@ def cmd_verify(a):
     check("SSM /hubara/hubara/scheduler/ORDER_RECONCILE_INTERVAL_MINUTES",
           base + ["ssm", "get-parameter", "--name",
                   "/hubara/hubara/scheduler/ORDER_RECONCILE_INTERVAL_MINUTES"])
+    keys = [k for k, _ in secret_keys(a.variables)]
+    for tenant in a.tenant:
+        ok = check_tenant_secrets(base, env, f"{a.prefix}/{tenant}", keys) and ok
     sys.exit(0 if ok else "✗ bootstrap incompleto")
+
+
+def _parameter_names(base, env, prefix, query, *extra):
+    """Nombres (la última parte del path) que devuelve `query` sobre
+    `prefix`. Con `--with-decryption` el filtro corre DENTRO del CLI de AWS:
+    al script solo le llegan nombres, nunca un valor."""
+    res = subprocess.run(base + ["ssm", "get-parameters-by-path", "--path", prefix, *extra,
+                                 "--query", query, "--output", "json"],
+                         env=env, capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(res.stderr.strip() or f"exit {res.returncode}")
+    return {name.rsplit("/", 1)[-1] for name in json.loads(res.stdout or "[]") or []}
+
+
+def check_tenant_secrets(base, env, prefix, keys):
+    """Las llaves de `secret_keys` que le faltan al tenant o siguen en
+    placeholder. True si no falta ninguna."""
+    try:
+        present = _parameter_names(base, env, prefix, "Parameters[].Name")
+        placeholders = _parameter_names(base, env, prefix, f"Parameters[?Value=='{PLACEHOLDER}'].Name",
+                                        "--with-decryption")
+    except (RuntimeError, ValueError) as exc:
+        print(f"  ✗ {prefix}: no pude leer SSM ({exc})", file=sys.stderr)
+        return False
+    missing, placeholder = pending(keys, present=present, placeholders=placeholders)
+    if not missing and not placeholder:
+        print(f"  ✓ {prefix}: las {len(keys)} llaves tienen valor", file=sys.stderr)
+        return True
+    if missing:
+        verb = "falta" if len(missing) == 1 else "faltan"
+        print(f"  ✗ {prefix}: {verb} {len(missing)} (no hubo apply de platform con ellas): "
+              + ", ".join(missing), file=sys.stderr)
+    if placeholder:
+        verb = "sigue" if len(placeholder) == 1 else "siguen"
+        print(f"  ✗ {prefix}: {len(placeholder)} {verb} en placeholder (falta cargar el valor): "
+              + ", ".join(placeholder), file=sys.stderr)
+        print("    Si una función no se usa en este sitio, su llave puede quedar así a propósito; "
+              "la lista es para que ninguna se olvide.", file=sys.stderr)
+    return False
+
+
+# ── template ────────────────────────────────────────────────────────────────
+def cmd_template(a):
+    keys = secret_keys(a.variables)
+    text = render_template(keys)
+    out = Path(a.out)
+    if a.check:
+        if not out.exists() or out.read_text(encoding="utf-8") != text:
+            sys.exit(f"✗ {out} está desfasada de secret_keys: corre `python3 aws_bootstrap.py template`")
+        print(f"✓ {out} al día ({len(keys)} llaves)", file=sys.stderr)
+        return
+    out.write_text(text, encoding="utf-8")
+    print(f"✓ {out} regenerada desde secret_keys ({len(keys)} llaves)", file=sys.stderr)
 
 
 def main():
@@ -227,7 +376,14 @@ def main():
     se.add_argument("--file", required=True, help="archivo KEY=VALUE (NO commitear)")
     se.add_argument("--prefix", default="/hubara")
     se.add_argument("--type", default="SecureString", choices=["SecureString", "String"])
+    se.add_argument("--variables", default=str(VARIABLES_TF), help="variables.tf con `secret_keys`")
     se.set_defaults(func=cmd_secrets)
+
+    t = sub.add_parser("template", help="regenerar secrets.example.env desde secret_keys")
+    t.add_argument("--variables", default=str(VARIABLES_TF), help="variables.tf con `secret_keys`")
+    t.add_argument("--out", default=str(TEMPLATE))
+    t.add_argument("--check", action="store_true", help="solo comprobar que la plantilla esté al día")
+    t.set_defaults(func=cmd_template)
 
     g = sub.add_parser("github", parents=[common], help="setear GH variables + secret EC2_SSH_KEY")
     g.add_argument("--repo", required=True, help="owner/repo")
@@ -240,6 +396,10 @@ def main():
     v = sub.add_parser("verify", parents=[common], help="chequear el bootstrap")
     v.add_argument("--bucket", default="agencyhubara-tfstate")
     v.add_argument("--table", default="agencyhubara-tflock")
+    v.add_argument("--tenant", action="append", default=[],
+                   help="además, las llaves de secret_keys que le faltan o siguen en placeholder (repetible)")
+    v.add_argument("--prefix", default="/hubara")
+    v.add_argument("--variables", default=str(VARIABLES_TF), help="variables.tf con `secret_keys`")
     v.set_defaults(func=cmd_verify)
 
     a = p.parse_args()
