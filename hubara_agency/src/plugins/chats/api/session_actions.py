@@ -219,6 +219,14 @@ def _metadata_unreadable(session_key: str) -> HTTPException:
     return HTTPException(status_code=503, detail="metadata de la sesión ilegible: no se aplicó")
 
 
+def _not_written(store: FilesystemMetadataStore, session_key: str) -> HTTPException:
+    """El store no escribió: 503 si `metadata.json` está ilegible (la sesión
+    existe), 404 si la sesión no existe (segunda revisión del PR #393)."""
+    if store.is_unreadable(session_key):
+        return _metadata_unreadable(session_key)
+    return HTTPException(status_code=404, detail="sesión no encontrada")
+
+
 # ── bodies ────────────────────────────────────────────────────────────────────
 
 
@@ -872,13 +880,14 @@ async def postpone(session_key: SessionKey, body: PostponeBody, deps: Deps) -> d
         )
         return data
 
+    store = FilesystemMetadataStore(deps.vault_dir)
     try:
         async with _session_lock(session):
-            updated = FilesystemMetadataStore(deps.vault_dir).update(session, _mutate)
+            updated = store.update(session, _mutate)
     finally:
         _release_session_lock(session)
     if not updated:
-        raise HTTPException(status_code=404, detail="sesión no encontrada")
+        raise _not_written(store, session)
     logger.info("[chats.session_actions] postpone session={} until_ms={}", session, until_ms)
     return {"postponed": postponed_view(updated, now_ms)}
 
@@ -895,13 +904,14 @@ async def clear_postpone(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
         clear_postponement(data)
         return data
 
+    store = FilesystemMetadataStore(deps.vault_dir)
     try:
         async with _session_lock(session):
-            updated = FilesystemMetadataStore(deps.vault_dir).update(session, _mutate)
+            updated = store.update(session, _mutate)
     finally:
         _release_session_lock(session)
     if not updated:
-        raise HTTPException(status_code=404, detail="sesión no encontrada")
+        raise _not_written(store, session)
     logger.info("[chats.session_actions] clear-postpone session={}", session)
     return {"postponed": None}
 

@@ -167,19 +167,21 @@ def test_write_merged_waits_for_an_update_in_progress(tmp_path):
     assert store.read("wa_1") == {"n": 1, "delivery": "sent"}
 
 
-def test_write_merged_never_writes_a_partial_document_over_an_unreadable_one(tmp_path):
-    """Lectura fresca ilegible para una sesión que tenía datos: no se mezcla
-    sobre la nada (dejaría solo las llaves del escritor); se escribe lo que el
-    escritor tiene, como antes."""
+def test_write_merged_does_not_write_a_stale_view_over_an_unreadable_document(tmp_path):
+    """Segunda revisión del PR #393: lectura fresca ilegible para una sesión
+    que el escritor sí había leído. Escribir su copia (`ours`) revertiría lo
+    que pasó desde que la leyó —p. ej. la toma de un humano—: misma regla que
+    `update()`, no se escribe (salvo `overwrite_unreadable=True`)."""
     store = FilesystemMetadataStore(tmp_path)
-    store.write("wa_1", {"active_route": "humano", "n": 0})
+    store.write("wa_1", {"active_route": "ventas", "tag": "NO_ETIQUETADO"})
     base = store.read("wa_1")
-    ours = {**base, "n": 1}
-    (tmp_path / "wa_1" / "metadata.json").write_text("{corrupto", encoding="utf-8")
+    ours = {**base, "last_inbound_message_id": "wamid.x"}
+    path = tmp_path / "wa_1" / "metadata.json"
+    path.write_text('{"active_route": "humano", "tag": "HUMANO", "motivo": "lo', encoding="utf-8")
+    on_disk = path.read_bytes()
 
-    store.write_merged("wa_1", base=base, ours=ours)
-
-    assert store.read("wa_1") == {"active_route": "humano", "n": 1}
+    assert store.write_merged("wa_1", base=base, ours=ours) is None
+    assert path.read_bytes() == on_disk, "escribió su vista vieja sobre la toma del humano"
 
 
 def test_a_nested_write_in_the_same_thread_does_not_hang(tmp_path):
@@ -379,3 +381,78 @@ def test_a_nested_write_through_another_path_to_the_same_file_does_not_hang(tmp_
     assert not worker.is_alive(), "una escritura anidada por otra ruta al mismo archivo colgó el candado"
     assert store.read("wa_1") == {"n": 1}
     assert "metadata_nested_write" in caplog.text
+
+
+# --- segunda revisión del PR #393 ------------------------------------------------
+# Quien reescribe a propósito un documento ilegible (`overwrite_unreadable`) no
+# lo destruye: un JSON truncado se repara a mano. El original queda al lado,
+# tal cual, en `metadata.json.unreadable-<ms>`, y el log dice dónde.
+
+
+def _backups(path) -> list:
+    return sorted(path.parent.glob(f"{path.name}.unreadable-*"))
+
+
+@pytest.mark.parametrize("break_it", _UNREADABLE)
+def test_overwriting_an_unreadable_document_keeps_the_original_aside(tmp_path, break_it, caplog):
+    store = FilesystemMetadataStore(tmp_path)
+    store.write("wa_1", _SESSION)
+    path = tmp_path / "wa_1" / "metadata.json"
+    break_it(path)
+    original = _disk_bytes(path)
+    break_it(path)  # `_disk_bytes` le devuelve el permiso de lectura
+    caplog.set_level(logging.WARNING)
+
+    store.update("wa_1", lambda d: {**d, "active_route": "humano", "tag": "HUMANO"}, overwrite_unreadable=True)
+
+    backups = _backups(path)
+    assert len(backups) == 1, "se reescribió sin guardar el original"
+    assert _disk_bytes(backups[0]) == original
+    assert str(backups[0]) in caplog.text, "el log no dice dónde quedó el original"
+    assert json.loads(_disk_bytes(path)) == {"active_route": "humano", "tag": "HUMANO"}
+
+
+def test_write_merged_that_overwrites_also_keeps_the_original_aside(tmp_path):
+    store = FilesystemMetadataStore(tmp_path)
+    path = tmp_path / "wa_1" / "metadata.json"
+    path.parent.mkdir(parents=True)
+    _unreadable_by_broken_json(path)
+    original = path.read_bytes()
+
+    store.write_merged("wa_1", base={}, ours={"active_route": "humano"}, overwrite_unreadable=True)
+
+    backups = _backups(path)
+    assert len(backups) == 1 and backups[0].read_bytes() == original
+    assert json.loads(path.read_text(encoding="utf-8")) == {"active_route": "humano"}
+
+
+def test_a_document_that_is_not_utf8_is_unreadable_not_an_exception(tmp_path):
+    """Un byte `\\xff` hacía lanzar `UnicodeDecodeError` a `read()`/`update()`:
+    es un documento ilegible como cualquier otro."""
+    store = FilesystemMetadataStore(tmp_path)
+    store.write("wa_1", _SESSION)
+    path = tmp_path / "wa_1" / "metadata.json"
+    path.write_bytes(b'{"active_route": "humano", "x": "\xff\xfe"}')
+    on_disk = path.read_bytes()
+
+    assert store.read("wa_1") == {}
+    assert store.update("wa_1", lambda d: {**d, "n": 1}) is None
+    assert path.read_bytes() == on_disk
+    assert store.update("wa_1", lambda d: {**d, "active_route": "humano"}, overwrite_unreadable=True) == {
+        "active_route": "humano"
+    }
+    assert [b.read_bytes() for b in _backups(path)] == [on_disk]
+
+
+def test_is_unreadable_tells_a_new_session_from_an_unreadable_one(tmp_path):
+    """`read()` devuelve `{}` en los dos casos; quien tiene que distinguirlos
+    (el ingest, una API que responde) pregunta."""
+    store = FilesystemMetadataStore(tmp_path)
+    store.write("wa_ok", _SESSION)
+    path = tmp_path / "wa_roto" / "metadata.json"
+    path.parent.mkdir(parents=True)
+    _unreadable_by_broken_json(path)
+
+    assert store.is_unreadable("wa_nueva") is False
+    assert store.is_unreadable("wa_ok") is False
+    assert store.is_unreadable("wa_roto") is True

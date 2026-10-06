@@ -478,6 +478,19 @@ def test_a_tag_over_an_unreadable_document_is_refused_without_writing(h: _Harnes
     assert path.read_text(encoding="utf-8") == _BROKEN_JSON
 
 
+@pytest.mark.parametrize("method", ["post", "delete"], ids=["posponer", "quitar-pospuesto"])
+def test_postponing_over_an_unreadable_document_is_not_a_missing_session(h: _Harness, method: str) -> None:
+    """Segunda revisión del PR #393: respondía 404 «sesión no encontrada» con
+    la sesión ahí, solo ilegible. Como `/tag`: 503, sin escribir."""
+    import datetime as dt
+
+    path = _break_metadata(h)
+    body = {"date": (dt.date.today() + dt.timedelta(days=3)).isoformat()} if method == "post" else None
+    r = h.client.request(method.upper(), _url("postpone"), json=body)
+    assert r.status_code == 503, r.text
+    assert path.read_text(encoding="utf-8") == _BROKEN_JSON
+
+
 # ── scoping ───────────────────────────────────────────────────────────────────
 
 

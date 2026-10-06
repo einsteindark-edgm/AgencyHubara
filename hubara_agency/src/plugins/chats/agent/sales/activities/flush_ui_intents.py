@@ -749,7 +749,16 @@ def _settle_intents(
     """Saca de la cola, por id y sobre la lectura FRESCA, los intents ya
     resueltos (enviados, fallidos, vencidos o repetidos) y anota en
     `outbound_media_index` las fotos que salieron. Lo demás de la cola (lo que
-    una tool encoló mientras tanto) queda como está."""
+    una tool encoló mientras tanto) queda como está.
+
+    Caso borde conocido (segunda revisión del PR #393, M1): saca por id, no
+    por `(id, queued_at_ms)`. Si mientras se enviaba se reencolara un intent
+    con el MISMO id —un reencolado legítimo de las instrucciones de pago,
+    `payinstr-<order_id>`—, también saldría de la cola sin enviarse. Hoy no se
+    alcanza: ese id solo lo encola `register_order` al crear el pedido, en el
+    turno y antes del flush, y `/order` no reencola un pedido ya registrado.
+    Si algún día se reencola en caliente, sacar por `(id, queued_at_ms)` como
+    hace el registro de fallidos (`_DeliveryLog.blocks`)."""
 
     def _settle(fresh: dict[str, Any]) -> dict[str, Any] | None:
         pending = fresh.get("pending_ui_intents")

@@ -133,8 +133,27 @@ def _image_for_design(product, design: str) -> tuple[str | None, str | None]:
     return (None, None)
 
 
-def _append_intent(session_key: str, intent: dict[str, Any]) -> None:
+#: Lo que la tool le dice al LLM si la tarjeta no entró a la cola
+#: (`metadata.json` ilegible): nada salió, y el bot no lo puede contar como
+#: enviado (segunda revisión del PR #393).
+_NOT_QUEUED = json.dumps(
+    {
+        "queued": False,
+        "error": "metadata_unreadable",
+        "summary": (
+            "No pude dejar listo ese mensaje: la conversación no se pudo leer. "
+            "No le digas al cliente que se lo enviaste; respóndele con texto."
+        ),
+    },
+    ensure_ascii=False,
+)
+
+
+def _append_intent(session_key: str, intent: dict[str, Any]) -> bool:
     """Persiste un UI intent en `metadata.json[pending_ui_intents]`.
+
+    Devuelve si quedó en la cola. False = `metadata.json` ilegible (el store
+    no escribe encima): la tool responde `_NOT_QUEUED`, no «enviado».
 
     El workflow lo consume después de cada iteración LLM y dispara la
     activity correspondiente (ver `workflow_helpers.flush_pending_ui_intents`,
@@ -162,7 +181,7 @@ def _append_intent(session_key: str, intent: dict[str, Any]) -> None:
         fresh["pending_ui_intents"] = [*(fresh.get("pending_ui_intents") or []), queued]
         return fresh
 
-    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_key, _enqueue)
+    return FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_key, _enqueue) is not None
 
 
 def _meta_retailer_id(product) -> str:
@@ -368,7 +387,8 @@ class PresentProductDetailTool(ToolBase):
                 "prefer_native_product_card": True,
             },
         }
-        _append_intent(ctx.session_key, intent)
+        if not _append_intent(ctx.session_key, intent):
+            return _NOT_QUEUED
 
         return json.dumps({
             "queued": True,
@@ -561,7 +581,8 @@ class PresentProductsTool(ToolBase):
                 },
                 "fallback": {"prefer_native_product_list": True},
             }
-            _append_intent(ctx.session_key, intent)
+            if not _append_intent(ctx.session_key, intent):
+                return _NOT_QUEUED
 
         paging_note = (
             f" (en {total_pages} mensajes)" if total_pages > 1 else ""
@@ -913,7 +934,8 @@ class RequestShippingDetailsTool(ToolBase):
                 "order_total_cop": order_total_cop,
             },
         }
-        _append_intent(ctx.session_key, intent)
+        if not _append_intent(ctx.session_key, intent):
+            return _NOT_QUEUED
         return json.dumps({
             "queued": True,
             "kind": "shipping_flow",
@@ -1293,7 +1315,8 @@ class PresentOrderConfirmationTool(ToolBase):
                 "prefer_native_order_details": True,
             },
         }
-        _append_intent(ctx.session_key, intent)
+        if not _append_intent(ctx.session_key, intent):
+            return _NOT_QUEUED
         if discount is not None and discount.quota:
             # El reparto que ve el cliente: `register_order` lo compara con el
             # que relee bajo el candado (la última unidad no se vende dos veces).
@@ -1444,7 +1467,8 @@ class SendShippingRatesTool(ToolBase):
                 "component_kind": "text",
             },
         }
-        _append_intent(ctx.session_key, intent)
+        if not _append_intent(ctx.session_key, intent):
+            return _NOT_QUEUED
         return json.dumps({
             "queued": True,
             "kind": "shipping_rates",
@@ -1509,7 +1533,8 @@ class ReactToMessageTool(ToolBase):
                 "emoji": emoji,
             },
         }
-        _append_intent(ctx.session_key, intent)
+        if not _append_intent(ctx.session_key, intent):
+            return _NOT_QUEUED
         return json.dumps({
             "queued": True,
             "kind": "reaction",
@@ -1575,7 +1600,8 @@ class SendContactCardTool(ToolBase):
                 "component_kind": "contacts",
             },
         }
-        _append_intent(ctx.session_key, intent)
+        if not _append_intent(ctx.session_key, intent):
+            return _NOT_QUEUED
         return json.dumps({
             "queued": True,
             "kind": "contact_card",
@@ -1694,7 +1720,8 @@ class SendCTAUrlTool(ToolBase):
                 "url": url,
             },
         }
-        _append_intent(ctx.session_key, intent)
+        if not _append_intent(ctx.session_key, intent):
+            return _NOT_QUEUED
         return json.dumps({
             "queued": True,
             "kind": "cta_url",
@@ -1862,7 +1889,8 @@ class PresentProductGalleryTool(ToolBase):
                 "count": len(additional),
             },
         }
-        _append_intent(ctx.session_key, intent)
+        if not _append_intent(ctx.session_key, intent):
+            return _NOT_QUEUED
         designs_note = (
             f" Diseños enviados en orden: {', '.join(sent_designs)}."
             if sent_designs
@@ -2133,7 +2161,8 @@ class SendQuickRepliesTool(ToolBase):
                 "button_ids": [b["id"] for b in normalized],
             },
         }
-        _append_intent(ctx.session_key, intent)
+        if not _append_intent(ctx.session_key, intent):
+            return _NOT_QUEUED
         return json.dumps({
             "queued": True,
             "kind": "quick_replies",
@@ -2385,7 +2414,8 @@ class PresentVariantPickerTool(ToolBase):
                 "message": "No quedaron rows tras sanitización.",
             }, ensure_ascii=False)
         total_options = intent["analytics"]["count"]
-        _append_intent(ctx.session_key, intent)
+        if not _append_intent(ctx.session_key, intent):
+            return _NOT_QUEUED
 
         envelope: dict[str, Any] = {
             "queued": True,

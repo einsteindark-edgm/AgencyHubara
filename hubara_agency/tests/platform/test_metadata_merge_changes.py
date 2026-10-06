@@ -328,8 +328,8 @@ def test_lists_both_appended_keep_both_tails() -> None:
 def test_second_write_after_a_rebase_keeps_what_the_other_writer_appended() -> None:
     """Revisión del PR #393 (D2): el ingest escribe dos veces en un mismo
     `execute`. Tras la primera, su `base` es SU vista (sin la entrada que otro
-    escritor agregó antes); en disco esa entrada quedó EN MEDIO. `base` ya no
-    es prefijo de lo de disco, pero sí subsecuencia: no es un conflicto."""
+    escritor agregó antes); en disco esa entrada quedó EN MEDIO. El escritor
+    solo agregó al final: lo suyo va encima de lo de disco, no es un conflicto."""
     h0 = {"tag": "SIN_RESPUESTA", "timestamp": 1.0}
     other = {"tag": "INTERESADO", "timestamp": 2.0, "source": "otro_escritor"}
     returned = {"tag": "NO_ETIQUETADO", "timestamp": 3.0, "source": "ingest:customer_returned"}
@@ -341,29 +341,64 @@ def test_second_write_after_a_rebase_keeps_what_the_other_writer_appended() -> N
     assert _merge(base, ours, fresh) == {"status_history": [h0, other, returned, pdf]}
 
 
-def test_base_missing_an_item_on_disk_is_still_a_conflict() -> None:
-    """Si a lo de disco le falta algo de `base` (otro lo sacó), no es solo
-    agregar: conflicto, gana el escritor."""
+# Segunda revisión del PR #393: regla simple y simétrica para las listas sin
+# identidad. Si `ours` empieza con `base` (el escritor solo agregó), el
+# resultado es lo de disco + lo que agregó el escritor; si es lo de disco el
+# que empieza con `base` (el otro solo agregó), la lista del escritor + lo que
+# agregó el otro; si no, conflicto y gana el escritor. Sin deduplicar: sin
+# identidad, dos entradas iguales no son necesariamente la misma.
+
+
+def test_an_append_goes_on_top_of_whatever_another_writer_left() -> None:
+    """Otro sacó `2` y agregó `5`: lo del otro se queda y el `4` del escritor
+    va encima (antes: conflicto, y el escritor revertía lo del otro)."""
     base = {"q": [1, 2, 3]}
     ours = {"q": [1, 2, 3, 4]}
     fresh = {"q": [1, 3, 5]}
 
-    assert _merge(base, ours, fresh) == {"q": [1, 2, 3, 4]}
+    assert _merge(base, ours, fresh) == {"q": [1, 3, 5, 4]}
 
 
-def test_append_already_on_disk_is_not_duplicated() -> None:
+def test_what_another_writer_appended_survives_even_if_it_also_removed_something() -> None:
+    base = {"q": ["a", "b"]}
+    ours = {"q": ["a", "b", "c"]}
+    fresh = {"q": ["a", "z"]}
+
+    assert _merge(base, ours, fresh) == {"q": ["a", "z", "c"]}
+
+
+def test_a_legit_append_equal_to_an_old_entry_is_kept() -> None:
+    """Deduplicar contra todo lo de disco descartaba un agregado legítimo igual
+    a una entrada vieja."""
+    base = {"q": ["a"]}
+    ours = {"q": ["a", "a"]}
+    fresh = {"q": ["a", "b"]}
+
+    assert _merge(base, ours, fresh) == {"q": ["a", "b", "a"]}
+
+
+def test_without_identity_equal_items_are_not_assumed_to_be_the_same() -> None:
     base = {"ctwa_clids_seen": ["c1"]}
     ours = {"ctwa_clids_seen": ["c1", "c2"]}
     fresh = {"ctwa_clids_seen": ["c1", "c2", "c3"]}
 
-    assert _merge(base, ours, fresh) == {"ctwa_clids_seen": ["c1", "c2", "c3"]}
+    assert _merge(base, ours, fresh) == {"ctwa_clids_seen": ["c1", "c2", "c3", "c2"]}
 
 
-def test_list_rewritten_by_the_writer_wins_on_conflict() -> None:
-    """Recortar o reordenar no es «agregar al final»: conflicto, gana el escritor."""
+def test_a_list_the_writer_rewrote_keeps_what_another_writer_appended() -> None:
+    """El escritor recortó (tope) y agregó; el otro solo agregó: la lista del
+    escritor + lo que agregó el otro (antes se perdía el `5`)."""
     base = {"recent": [1, 2, 3]}
     ours = {"recent": [2, 3, 4]}
     fresh = {"recent": [1, 2, 3, 5]}
+
+    assert _merge(base, ours, fresh) == {"recent": [2, 3, 4, 5]}
+
+
+def test_a_list_both_rewrote_is_a_conflict_and_the_writer_wins() -> None:
+    base = {"recent": [1, 2, 3]}
+    ours = {"recent": [2, 3, 4]}
+    fresh = {"recent": [1, 3]}
 
     assert _merge(base, ours, fresh) == {"recent": [2, 3, 4]}
 

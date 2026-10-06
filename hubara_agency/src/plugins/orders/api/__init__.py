@@ -897,7 +897,13 @@ async def delete_order_photo(
             removed.append(old["filename"])
         return fresh
 
-    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, _apply)
+    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    if store.update(session_id, _apply) is None and store.is_unreadable(session_id):
+        # El store no escribe sobre un metadata.json ilegible: la foto sigue
+        # anotada. Decirlo, no responder «sin foto» (segunda revisión #393).
+        raise HTTPException(
+            status_code=503, detail="No se pudo leer la conversación; la foto no se borró."
+        )
     for filename in removed:
         delete_outbound_image(session_id, filename)
     _publish_orders_changed(backend_id)

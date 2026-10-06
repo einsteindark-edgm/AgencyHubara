@@ -135,6 +135,21 @@ async def test_activity_degrades_when_catalog_is_down(guard_env: Path, monkeypat
     assert _intents(guard_env) == []
 
 
+@pytest.mark.asyncio
+async def test_a_picker_that_could_not_be_queued_leaves_the_bot_text(guard_env: Path) -> None:
+    """Segunda revisión del PR #393: con `metadata.json` ilegible el selector
+    no entra a la cola. La guarda devolvía igual su texto, el workflow callaba
+    el texto del bot y el cliente no recibía nada. Sin selector, el texto del
+    bot sale como está."""
+    from src.plugins.chats.agent.sales.activities.variant_enumeration_guard import (
+        apply_variant_enumeration_guard_activity,
+    )
+
+    guard_env.write_text('{"pending_ui_intents": [', encoding="utf-8")
+
+    assert await apply_variant_enumeration_guard_activity("wa_test_enum", ENUMERATION) == ""
+
+
 # Prueba en vivo 2026-09-24 (cupón AMOR2026 con cupo): el bot escribió las
 # combinaciones del cupón por producto y con precio — la respuesta correcta —
 # y la guarda la reemplazó por un selector de COLORES sueltos: se perdieron los

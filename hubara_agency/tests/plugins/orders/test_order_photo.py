@@ -227,6 +227,22 @@ def test_delete_removes_photo_and_file(api):
     assert not (vault / SID / "media" / filename).exists()
 
 
+def test_delete_over_an_unreadable_conversation_does_not_claim_it_deleted(api):
+    """Segunda revisión del PR #393: con `metadata.json` ilegible el store no
+    escribe; la API respondía 200 «sin foto» y la foto seguía anotada (y su
+    archivo, en disco). Ahora lo dice: 503."""
+    client, vault, _ = api
+    _upload(client)
+    filename = _meta(vault)["order_photos"][BACKEND_ID]["filename"]
+    path = vault / SID / "metadata.json"
+    path.write_text(path.read_text(encoding="utf-8")[:-4], encoding="utf-8")
+
+    res = client.delete("/api/orders/orders/%2331/photo")
+
+    assert res.status_code == 503, res.text
+    assert (vault / SID / "media" / filename).exists()
+
+
 @pytest.mark.parametrize(
     ("data", "mime", "status"),
     [

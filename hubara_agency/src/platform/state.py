@@ -41,6 +41,7 @@ import os
 import re
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -146,8 +147,11 @@ def merge_changes(base: Any, ours: Any, fresh: Any) -> Any:
     * listas de dicts con identidad (``id``, ``wa_message_id``, ``event_id``,
       ``media_id``, ``episode_id``, única en cada lado) → elemento por
       elemento: el orden es el de disco y lo que agregó el escritor va al final;
-    * listas sin identidad a las que los dos solo agregaron al final → las dos
-      colas (sin repetir lo que ya está en disco);
+    * listas sin identidad: si el escritor solo agregó al final (``ours``
+      empieza con ``base``) → lo de disco + lo que agregó; si el otro solo
+      agregó (``fresh`` empieza con ``base``) → la lista del escritor + lo que
+      agregó el otro; si no, conflicto. Sin deduplicar: sin identidad, dos
+      entradas iguales no son necesariamente la misma;
     * conflicto en una hoja (los dos cambiaron lo mismo distinto) → gana el
       escritor.
 
@@ -197,21 +201,17 @@ def _merge_lists(base: list[Any], ours: list[Any], fresh: list[Any]) -> list[Any
     key = _identity_key(base, ours, fresh)
     if key is not None:
         return _merge_keyed(key, base, ours, fresh)
+    # Regla simple y simétrica (segunda revisión del PR #393): lo que uno solo
+    # agregó va encima de lo que dejó el otro, sea lo que sea (el otro pudo
+    # sacar, recortar o meter en medio). Tras una escritura del ingest, su
+    # `base` es SU vista: lo que otro escritor agregó antes queda en disco y
+    # se conserva igual.
     size = len(base)
-    if ours[:size] == base and _is_subsequence(base, fresh):
-        # El escritor solo agregó al final y en disco sigue todo lo de `base`
-        # (en orden), con lo que otros agregaron al final o EN MEDIO: tras una
-        # escritura, la `base` del ingest es SU vista, sin lo que otro escritor
-        # metió antes (revisión del PR #393). Van los dos agregados, sin
-        # repetir lo que ya está en disco.
-        return [*fresh, *(item for item in ours[size:] if item not in fresh)]
+    if ours[:size] == base:
+        return [*fresh, *ours[size:]]
+    if fresh[:size] == base:
+        return [*ours, *fresh[size:]]
     return None
-
-
-def _is_subsequence(items: list[Any], within: list[Any]) -> bool:
-    """¿Están todos los `items`, en el mismo orden, dentro de `within`?"""
-    remaining = iter(within)
-    return all(item in remaining for item in items)
 
 
 def _identity_key(*lists: list[Any]) -> str | None:
@@ -271,13 +271,14 @@ _held = threading.local()
 
 def _read_document(path: Path) -> dict[str, Any] | None:
     """El documento de `path`: ``{}`` si no existe (sesión nueva); ``None`` si
-    existe y NO se pudo leer (OSError, JSON roto o no es un objeto). Una
-    lectura fallida no es una sesión vacía (revisión del PR #393)."""
+    existe y NO se pudo leer (OSError, bytes que no son UTF-8, JSON roto o no
+    es un objeto). Una lectura fallida no es una sesión vacía (revisión del PR
+    #393)."""
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     try:
         data = json.loads(raw)
@@ -286,15 +287,47 @@ def _read_document(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _set_aside_unreadable(path: Path) -> Path | None:
+    """Guarda el original ilegible al lado, tal cual, antes de reescribirlo
+    (segunda revisión del PR #393: un JSON truncado se repara a mano). Primero
+    un enlace duro —no necesita permiso de lectura y el original sigue en su
+    lugar hasta el reemplazo atómico—; si el filesystem no lo permite, se
+    mueve. Devuelve la ruta del respaldo, o None si no se pudo (y entonces no
+    se reescribe)."""
+    stamp = time.time_ns() // 1_000_000
+    backup = path.with_name(f"{path.name}.unreadable-{stamp}")
+    suffix = 1
+    while os.path.lexists(backup):
+        backup = path.with_name(f"{path.name}.unreadable-{stamp}-{suffix}")
+        suffix += 1
+    try:
+        os.link(path, backup)
+    except OSError:
+        try:
+            os.replace(path, backup)
+        except OSError:
+            log.error("metadata_unreadable_not_set_aside: no se reescribe %s", path)
+            return None
+    log.warning(
+        "metadata_unreadable_overwritten: el original quedó en %s",
+        backup,
+        extra={"path": str(path), "backup": str(backup)},
+    )
+    return backup
+
+
 class FilesystemMetadataStore:
     """Adapter filesystem del documento de metadatos por sesion.
 
     Cada sesion mapea a ``<vault_dir>/<session_id>/metadata.json``. ``read()``
     es tolerante (``{}`` si no existe o no se puede leer: para quien solo
-    mira); TODA escritura es **atomica** (temp file + ``os.replace`` via
-    ``atomic_write_json``), va bajo el MISMO candado por sesion (``flock`` sobre
-    ``metadata.json.lock``) y NUNCA escribe sobre un documento que existe y no
-    se pudo leer (se reintenta una vez; si sigue ilegible, no se escribe).
+    mira; ``is_unreadable()`` distingue los dos casos); TODA escritura es
+    **atomica** (temp file + ``os.replace`` via ``atomic_write_json``), va bajo
+    el MISMO candado por sesion (``flock`` sobre ``metadata.json.lock``) y
+    NUNCA escribe sobre un documento que existe y no se pudo leer (se reintenta
+    una vez; si sigue ilegible, no se escribe). Quien tiene que escribir igual
+    lo pide con ``overwrite_unreadable=True`` y el original queda al lado, tal
+    cual, en ``metadata.json.unreadable-<ms>``.
 
     Formas de escribir (ver el docstring del módulo):
       * ``update(session_id, mutator)`` — solo las llaves del escritor sobre la
@@ -350,6 +383,12 @@ class FilesystemMetadataStore:
         document = _read_document(self._path_for(session_id))
         return document if document is not None else {}
 
+    def is_unreadable(self, session_id: str) -> bool:
+        """¿El documento existe y no se pudo leer (tras un reintento)? `read()`
+        devuelve ``{}`` también para una sesión nueva: quien tiene que decir la
+        verdad (una API, el ingest) pregunta acá."""
+        return self._read_fresh(self._path_for(session_id)) is None
+
     def write(self, session_id: str, data: dict[str, Any]) -> None:
         """Reemplaza el documento ENTERO (bajo el candado). Pisa lo que otro
         escritor haya puesto desde que se leyó: fuera de este módulo, usar
@@ -382,21 +421,22 @@ class FilesystemMetadataStore:
         sesión (revisión del PR #393: con ``active_route=humano``, el bot
         revivía). Quien tiene que escribir igual (sacar al bot: la escalación
         a humano, la toma del operador) lo pide con
-        ``overwrite_unreadable=True``: el mutator recibe ``{}``.
+        ``overwrite_unreadable=True``: el mutator recibe ``{}`` y el original
+        queda al lado (``metadata.json.unreadable-<ms>``); si no se puede
+        guardar, no se escribe.
 
         Devuelve el dict escrito, o ``None`` si no se escribió.
         """
         path = self._path_for(session_id)
         with self._locked(path):
             fresh = self._read_fresh(path)
-            if fresh is None:
-                if not overwrite_unreadable:
-                    log.warning("metadata_unreadable_update_skipped", extra={"path": str(path)})
-                    return None
-                log.warning("metadata_unreadable_overwritten", extra={"path": str(path)})
-                fresh = {}
-            result = mutator(fresh)
+            if fresh is None and not overwrite_unreadable:
+                log.warning("metadata_unreadable_update_skipped", extra={"path": str(path)})
+                return None
+            result = mutator({} if fresh is None else fresh)
             if result is None:
+                return None
+            if fresh is None and _set_aside_unreadable(path) is None:
                 return None
             atomic_write_json(path, result)
             return result
@@ -408,6 +448,7 @@ class FilesystemMetadataStore:
         base: dict[str, Any],
         ours: dict[str, Any],
         overwrite_unreadable: bool = False,
+        before_merge: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any] | None:
         """Escribe SOLO lo que el escritor cambió frente a lo que leyó.
 
@@ -417,26 +458,33 @@ class FilesystemMetadataStore:
         candado se relee FRESCO y se escribe ``merge_changes(base, ours,
         fresh)``: lo que otro escritor puso mientras tanto no se revierte.
 
-        Sin lectura fresca útil (el documento desapareció, o existe y sigue
-        ilegible tras un reintento) no se mezcla sobre la nada — quedarían
-        solo las llaves del escritor —: si el escritor sí había leído la sesión
-        (``base`` con datos) se escribe ``ours`` entero, como antes; si tampoco
-        (``base`` vacío), no se escribe, salvo ``overwrite_unreadable=True``
-        (sacar al bot: la ruta humana tiene que quedar escrita). Devuelve lo
-        escrito, o ``None``.
+        ``before_merge(fresh)``: se llama bajo el candado con lo que hay en
+        disco AHORA, antes del merge; puede ajustar ``ours`` (el ingest cede lo
+        suyo si un humano tomó la conversación mientras esperaba — decidido
+        acá y no con una lectura previa, que deja una ventana).
+
+        Documento ilegible (tras un reintento): misma regla que ``update()``
+        — no se escribe, ni siquiera la copia del escritor (revertiría lo que
+        pasó desde que la leyó, p. ej. la toma de un humano) —, salvo
+        ``overwrite_unreadable=True``: se escribe ``ours`` y el original queda
+        al lado. Documento que desapareció con ``base`` con datos: se escribe
+        ``ours`` entero, como antes. Devuelve lo escrito, o ``None``.
         """
         path = self._path_for(session_id)
         with self._locked(path):
             fresh = self._read_fresh(path)
             if fresh is None:
-                if not base and not overwrite_unreadable:
+                if not overwrite_unreadable:
                     log.warning("metadata_unreadable_merge_skipped", extra={"path": str(path)})
                     return None
-                log.warning("metadata_unreadable_writer_view_written", extra={"path": str(path)})
+                if _set_aside_unreadable(path) is None:
+                    return None
                 merged = ours
             elif not fresh and base:
                 merged = ours
             else:
+                if before_merge is not None:
+                    before_merge(fresh)
                 merged = merge_changes(base, ours, fresh)
                 if merged is fresh:
                     return fresh  # el escritor no cambió nada

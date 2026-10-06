@@ -225,3 +225,57 @@ async def test_a_human_who_took_over_during_the_wait_keeps_the_conversation(_iso
     assert metadata["episodes"] == [closed], "quedó un episodio nuevo abierto bajo el humano"
     # Lo demás del mensaje sí quedó escrito.
     assert metadata["last_inbound_message_id"] == "wamid.in"
+
+
+class _TakeoverRightBeforeTheWrite(FilesystemMetadataStore):
+    """El operador toma la conversación justo cuando el ingest va a escribir
+    la rotación: después de cualquier chequeo previo y antes del candado."""
+
+    def __init__(self, vault: Any) -> None:
+        super().__init__(vault)
+        self.taken = False
+
+    def write_merged(self, session_id: str, *, base: dict[str, Any], ours: dict[str, Any], **kw: Any) -> Any:
+        rotates = ours.get("tag") == "NO_ETIQUETADO" and base.get("tag") != "NO_ETIQUETADO"
+        if rotates and not self.taken:
+            self.taken = True
+            self.update(
+                session_id,
+                lambda fresh: {**fresh, "active_route": "humano", "tag": "HUMANO", "motivo": "Humano tomó el control"},
+            )
+        return super().write_merged(session_id, base=base, ours=ours, **kw)
+
+
+@pytest.mark.asyncio
+async def test_the_human_takeover_is_decided_under_the_lock(_isolate_vault_dir) -> None:
+    """Segunda revisión del PR #393 (M3): «¿tomó un humano?» se decidía con
+    una lectura ANTES del candado; una toma entre esa lectura y la escritura
+    dejaba otra vez `tag=NO_ETIQUETADO` y un episodio abierto bajo el humano.
+    Se decide con lo que hay en disco bajo el candado de la escritura."""
+    store = _TakeoverRightBeforeTheWrite(_isolate_vault_dir)
+    now_ms = int(time.time() * 1000)
+    closed = {
+        "episode_id": "ep_001",
+        "started_at_ms": now_ms - 3 * 86_400_000,
+        "closed_at_ms": now_ms - 2 * 86_400_000,
+        "closing_tag": "COMPRA_EXITOSA",
+    }
+    store.write(
+        SID,
+        {"phone_number_id": "pnid-1", "active_route": "ventas", "tag": "COMPRA_EXITOSA", "episodes": [closed]},
+    )
+    message = WhatsAppMessage(
+        message_id="wamid.in",
+        from_number="573001234567",
+        phone_number_id="pnid-1",
+        text="hola, una pregunta",
+        media=None,
+        timestamp=str(int(time.time())),
+    )
+
+    await _ingest(store, lambda fresh: None).execute(message)
+
+    assert store.taken, "la escritura de la rotación no pasó por write_merged"
+    metadata = store.read(SID)
+    assert (metadata["active_route"], metadata["tag"]) == ("humano", "HUMANO")
+    assert metadata["episodes"] == [closed], "quedó un episodio nuevo abierto bajo el humano"
