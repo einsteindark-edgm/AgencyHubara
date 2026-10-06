@@ -60,6 +60,7 @@ cd android_operator && ./gradlew :app:bundleRelease \
 | `:feature:auth` | El login (nativo: va antes de la sesión). |
 | `:feature:chat` | La pieza nativa `chat` (`ChatIsland`: lo que entendió el bot, historial, deshacer, burbujas, composer) con su `ChatViewModel`. Sin entradas de navegación. |
 | `:feature:screens` | **Todas las pantallas**: UN `ScreenViewModel` (MVI), el render de cada componente (`Components.kt`) y las entradas de TODAS las claves (`ScreensNavigation`: cada clave se arma con su pantalla según `ScreenRoutes`). `RealScreensTest` prueba los archivos reales del repo. |
+| `:core:push` | Fuera de la app: notificaciones, el vigía (`Vigia` + `VigiaWorker`), cerrar sesión y los **avisos push** (`PushRegistrar`, `PushHandler`, `OperatorMessagingService`, `FirebasePushTransport`). |
 | `:app` | `MainActivity`, `OperatorApp` (login o shell; las pestañas y sus números salen de `app.json`), radar, `AppNativeActions` (outbox, sesión, incendios). |
 
 ## Reglas
@@ -80,6 +81,11 @@ cd android_operator && ./gradlew :app:bundleRelease \
   `RadarLayerTest` y los escenarios S05/S14.
 - **Todo flujo nuevo de la app entra con su escenario en `e2e/scenarios.yaml`** (con `script` y chequeos):
   esos escenarios son la base de la QA y la compuerta de merge los corre en cada PR que toca la app o su backend.
+- **Los avisos push no llevan datos de clientes** (pasan por Google): solo `{"type": "sync" | "test", "reason"}`.
+  Un push = una vuelta del vigía en el momento (`PushHandler` → `Vigia`; lo que no cabe en 8 s va a WorkManager).
+  Firebase NO va en el APK ni en el repo: el teléfono pide `GET /api/chats/mobile/push` y arranca Firebase con esas
+  opciones (`PushRegistrar`; las guarda para el próximo arranque en frío). El backend decide cuándo despertar
+  (`chats/api/mobile_push.py`). Activarlo es trabajo del operador: `docs/mobile-native/activar-avisos-push.html`.
 - **Todo envío pasa por el outbox** (`OutboxRepository`): Room primero, WorkManager después, `client_action_id`
   idempotente. Deshacer solo si el envío no empezó (`OutboxDao.claim/undo`).
 - **Nada de teléfonos reales en tests** (forge gate): usa `wa_test_*` y números de ceros.
@@ -178,13 +184,21 @@ cd android_operator && ./gradlew :app:bundleRelease \
     sus métricas (la vara para subir), los desacuerdos y el costo (`jev_usage`). El backend de prueba del emulador
     corre Jev falso (`PERCEPTION_PROVIDER=fake`, sin red) con las dos decisiones en sombra (`seed.py` escribe
     `_rollout/decisions.json`; techo `shadow`): cada escenario recorre el motor sin cambiar lo que ve la app.
+27. **Firebase arranca a mano, sin `google-services.json`** (el repo es público y cada tienda tiene su proyecto):
+    `FirebaseInitProvider` está quitado del manifest de `:core:push`; `OperatorApplication.onCreate` llama
+    `PushRegistrar.startFromCache()` (las últimas opciones del servidor, SharedPreferences síncronas) para que un push
+    que despierta el proceso se pueda entregar. La app por defecto de Firebase no se rearma en el mismo proceso: si el
+    servidor cambia de proyecto, vale desde el próximo arranque. En el emulador de CI no hay Firebase: el backend de
+    prueba usa el avisador falso (`PUSH_PROVIDER=fake`, deja cada push en `sandbox/data/pushes.jsonl`) y el paso
+    `relay_push` lo entrega a la app por `E2eWakeReceiver` (`E2E_PUSH`), el mismo `PushHandler` de un push real (S20).
 
 ## Endpoints
 
 Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/messages`, `/sse-ticket`,
 `/events`, `/api/orders/orders[/{id}]`, `PATCH /api/orders/orders/{id}/stage`.
 Nuevos: `GET /api/chats/mobile/suggestions/{id}`, `GET /api/chats/mobile/fires`,
-`GET /api/chats/mobile/hot`, `POST /api/chats/mobile/devices`, `GET /api/chats/catalog`,
+`GET /api/chats/mobile/hot`, `GET /api/chats/mobile/push`, `POST /api/chats/mobile/devices`,
+`DELETE /api/chats/mobile/devices/{token}`, `POST /api/chats/mobile/devices/test` («Probar avisos»), `GET /api/chats/catalog`,
 `POST /api/chats/session-actions/{id}/tools/{tool}`.
 Pantallas del servidor (las de `screens/`): `/api/orders/orders`, `PATCH /api/orders/orders/{id}/confirm-payment`,
 `/api/marketing/campaigns[/{id}[/stats]]`, `/api/dashboard/sessions`.

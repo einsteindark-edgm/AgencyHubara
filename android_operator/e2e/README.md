@@ -138,6 +138,7 @@ firmado `sender: human`), intervenir / devolver / mensajes / plantillas, el SSE 
 | WhatsApp | `WHATSAPP_ACCESS_TOKEN` vacío → corre el FakeSend del repo; cada envío queda en `sent.log` con un wamid único. |
 | Medusa | Subclase del cliente real que responde las llamadas Admin sobre `data/medusa/store.json`. |
 | Temporal | Cliente falso que anota en `temporal.log` (intervenir sí «termina» el workflow de la sesión). |
+| Firebase (avisos push) | `PUSH_PROVIDER=fake`: el despachador real del backend (`mobile_push.py`) decide los pushes y el avisador falso deja cada uno como una línea JSON en `data/pushes.jsonl`. `inject.py push-device <token>` registra un «teléfono»; el paso `{relay_push: s}` espera el push nuevo y se lo entrega a la app con un broadcast a `E2eWakeReceiver` (`E2E_PUSH`), el mismo `PushHandler` que usa un push de Google (S20). |
 | Jev | `PERCEPTION_PROVIDER=fake` (sin red: elige siempre la primera opción) y las decisiones `burbuja` e `incendio` en sombra (techo `SALES_CAPABILITIES_CEILING=shadow` + `_rollout/decisions.json` que siembra `seed.py`): cada escenario recorre el motor de decisiones oficial y su registro en `evals/decisions.jsonl`, sin cambiar lo que ve la app. Lo de Jev «encendido» lo prueban `test_operator_decisions.py` y `test_mobile_api.py`. |
 
 **Datos** (todo sintético; los chats se ven por número en la bandeja):

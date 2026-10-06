@@ -10,16 +10,20 @@ son su respaldo.
     GET  /api/chats/mobile/suggestions/{session_id}   burbujas por etapa
     GET  /api/chats/mobile/fires                      incendios (chats + pedidos)
     GET  /api/chats/mobile/hot                        ventas calientes (widget)
+    GET  /api/chats/mobile/push                       opciones de Firebase para el teléfono (o apagado)
     POST /api/chats/mobile/devices                    registra el token FCM del operador
     DEL  /api/chats/mobile/devices/{token}            lo borra
+    POST /api/chats/mobile/devices/test               «Probar avisos»: un push a los teléfonos de quien pide
     GET  /api/chats/catalog                           catálogo del selector de productos
+
+Avisos push (``mobile_push.py``): con Firebase configurado, el startup arranca
+el despachador que despierta los teléfonos con un incendio grave nuevo o un
+cambio en las ventas calientes.
 
 P-28: este módulo importa SOLO ``src.sdk`` + módulos de ``chats``.
 """
 from __future__ import annotations
 
-import fcntl
-import json
 import os
 import time
 from collections.abc import Callable
@@ -45,8 +49,16 @@ from src.plugins.chats.agent.sales.use_cases.quantity_capture import parse_leadi
 from src.plugins.chats.api.dashboard import (
     _compute_pending_payment_order_id,
     _order_ref_candidate_ids,
+    ensure_sampler,
 )
 from src.plugins.chats.api.mobile_decisions import OperatorDecisions
+from src.plugins.chats.api.mobile_devices import (
+    forget_tokens,
+    operator_tokens,
+    register_token,
+    unregister_token,
+)
+from src.plugins.chats.api.mobile_push import TEST_MESSAGE, PushDispatcher
 from src.plugins.chats.api.order_intake import _read_events
 from src.plugins.chats.shared.draft_items import draft_items, product_key
 from src.plugins.chats.shared.mobile_rules import (
@@ -72,17 +84,19 @@ from src.plugins.chats.shared.purchase_signals import (
 from src.sdk.connectorkit import (
     InMemoryOrderFacts,
     OrderFactsSnapshot,
+    PushOutcome,
     get_catalog_client,
     get_order_facts_port,
+    get_push_port,
     parse_variant_tags,
 )
+from src.sdk.dashboardkit import get_dashboard_event_bus
 from src.sdk.castkit import current_actor
 from src.sdk.mediakit import derive_image_label
 from src.sdk.messagingkit import is_service_window_closed
 from src.sdk.runtime import (
     WORKSPACE_VAULT_DIR,
     FilesystemMetadataStore,
-    atomic_write_json,
     is_vault_session_id,
 )
 
@@ -114,6 +128,8 @@ class MobileDeps:
     payment_instructions_text: Callable[[], str | None]
     #: El motor de decisiones para la app (`mobile_decisions.OperatorDecisions`); None = solo reglas.
     decisions: Any = None
+    #: Los avisos push (`PushPort` de connectorkit); None o sin configurar = sin avisos (la app sigue con su vigía).
+    push: Any = None
 
 
 def _try(name: str, factory: Callable[[], Any]) -> Any | None:
@@ -144,6 +160,7 @@ def get_mobile_deps() -> MobileDeps:
         now_ms=_now_ms,
         payment_instructions_text=_payment_text,
         decisions=OperatorDecisions(vault_dir=WORKSPACE_VAULT_DIR, now_ms=_now_ms),
+        push=_try("push", get_push_port),
     )
 
 
@@ -499,12 +516,11 @@ async def hot(deps: Deps) -> dict[str, Any]:
     return {"hot": hot_sales(candidates, now_ms=deps.now_ms())}
 
 
-# ── POST/DELETE /mobile/devices ──────────────────────────────────────────────
+# ── Avisos push: /mobile/push, /mobile/devices ───────────────────────────────
 #
-# Registro de tokens FCM por operador (el envío de pushes todavía no existe:
-# falta el proyecto de Firebase). Vive en `<vault>/_mobile/devices.json` — el
-# `_` lo deja fuera de todo lo que recorre sesiones (`wa_*`). Solo el token y la
-# versión de la app: nada del teléfono ni del cliente.
+# Los tokens de Firebase de cada operador viven en `<vault>/_mobile/devices.json`
+# (`mobile_devices.py`). El teléfono pide primero `/mobile/push`: si el servidor
+# tiene Firebase, arranca Firebase con esas opciones y registra su token.
 
 
 class DeviceBody(BaseModel):
@@ -514,53 +530,52 @@ class DeviceBody(BaseModel):
     app_version: str = Field(min_length=1, max_length=64)
 
 
-def _registry_path(vault_dir: Path) -> Path:
-    return vault_dir / "_mobile" / "devices.json"
+def _detail(status: int, text: str) -> JSONResponse:
+    """`{"detail": …}`: el texto que la app muestra tal cual (`ScreenDataClient`)."""
+    return JSONResponse(status_code=status, content={"detail": text})
 
 
-def _update_registry(vault_dir: Path, mutate: Callable[[dict[str, list[dict[str, Any]]]], None]) -> None:
-    """Read-modify-write bajo flock (dos celulares registrándose a la vez no
-    se pisan) + escritura atómica."""
-    path = _registry_path(vault_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path.parent / f"{path.name}.lock", "w", encoding="utf-8") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        try:
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                data = {}
-            operators = data.get("operators") if isinstance(data, dict) else None
-            operators = operators if isinstance(operators, dict) else {}
-            mutate(operators)
-            atomic_write_json(path, {"operators": operators})
-        finally:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+@router.get("/mobile/push")
+async def push_config(deps: Deps) -> dict[str, Any]:
+    """Las opciones con las que el teléfono arranca Firebase, solo si el servidor puede mandar avisos."""
+    port = deps.push
+    options = port.client_options() if port is not None and port.configured else None
+    if options is None:
+        return {"enabled": False}
+    return {"enabled": True, "firebase": {
+        "project_id": options.project_id,
+        "application_id": options.application_id,
+        "api_key": options.api_key,
+        "gcm_sender_id": options.gcm_sender_id,
+    }}
 
 
 @router.post("/mobile/devices", status_code=204)
 async def register_device(body: DeviceBody, request: Request, deps: Deps) -> Response:
     """Idempotente: el mismo token se actualiza, no se duplica. Un token queda
     del ÚLTIMO operador que lo registró (el celular cambió de manos)."""
-    actor, now_ms = current_actor(request), deps.now_ms()
-
-    def _mutate(operators: dict[str, list[dict[str, Any]]]) -> None:
-        previous: dict[str, Any] | None = None
-        for owner, devices in operators.items():
-            for device in list(devices):
-                if isinstance(device, dict) and device.get("token") == body.token:
-                    devices.remove(device)
-                    previous = previous or (device if owner == actor else None)
-        operators.setdefault(actor, []).append({
-            "token": body.token,
-            "platform": body.platform,
-            "app_version": body.app_version,
-            "registered_at_ms": int((previous or {}).get("registered_at_ms") or now_ms),
-            "updated_at_ms": now_ms,
-        })
-
-    _update_registry(deps.vault_dir, _mutate)
+    register_token(
+        deps.vault_dir, current_actor(request), body.token,
+        app_version=body.app_version, now_ms=deps.now_ms(), platform=body.platform,
+    )
     return Response(status_code=204)
+
+
+@router.post("/mobile/devices/test")
+async def test_push(request: Request, deps: Deps) -> Any:
+    """«Probar avisos» (pantalla «Más»): un push urgente a los teléfonos de quien lo pide."""
+    port = deps.push
+    if port is None or not port.configured:
+        return _detail(503, "Los avisos no están activados en el servidor: faltan las llaves de Firebase.")
+    tokens = operator_tokens(deps.vault_dir, current_actor(request))
+    outcomes = [await port.send(token, TEST_MESSAGE) for token in tokens]
+    forget_tokens(deps.vault_dir, [t for t, o in zip(tokens, outcomes, strict=True) if o == PushOutcome.UNREGISTERED])
+    sent = outcomes.count(PushOutcome.SENT)
+    if sent:
+        return {"sent": sent}
+    if PushOutcome.FAILED in outcomes:
+        return _detail(502, "Firebase no aceptó el aviso. Vuelve a intentar en un rato.")
+    return _detail(409, "Tu teléfono no está registrado para avisos: cierra y abre la app con internet y vuelve a intentar.")
 
 
 @router.delete("/mobile/devices/{token}", status_code=204)
@@ -568,14 +583,41 @@ async def unregister_device(
     token: Annotated[str, PathParam(min_length=1, max_length=4096)], request: Request, deps: Deps
 ) -> Response:
     """Borra el token del operador que llama (idempotente)."""
-    actor = current_actor(request)
-
-    def _mutate(operators: dict[str, list[dict[str, Any]]]) -> None:
-        devices = operators.get(actor) or []
-        operators[actor] = [d for d in devices if not (isinstance(d, dict) and d.get("token") == token)]
-
-    _update_registry(deps.vault_dir, _mutate)
+    unregister_token(deps.vault_dir, current_actor(request), token)
     return Response(status_code=204)
+
+
+def push_dispatcher(deps: MobileDeps, port: Any) -> PushDispatcher:
+    """El despachador de avisos con los incendios y las ventas calientes de estas mismas rutas."""
+
+    async def read_fires() -> list[dict[str, Any]]:
+        return (await fires(deps))["fires"]
+
+    async def read_hot() -> list[dict[str, Any]]:
+        return (await hot(deps))["hot"]
+
+    return PushDispatcher(port=port, vault_dir=deps.vault_dir, fires=read_fires, hot=read_hot, now_ms=deps.now_ms)
+
+
+_push: PushDispatcher | None = None
+
+
+@router.on_event("startup")
+async def _start_push() -> None:
+    """Con Firebase configurado, arranca el despachador de avisos. El handler
+    corre dos veces (router del plugin y de la app): la guarda lo deja en uno."""
+    global _push
+    if _push is not None:
+        return
+    deps = get_mobile_deps()
+    if deps.push is None or not deps.push.configured:
+        return
+    _push = push_dispatcher(deps, deps.push)
+    get_dashboard_event_bus().add_listener(_push.on_event)
+    # Sin dashboard abierto el muestreador del vault no corre: los cambios del bot no llegarían al bus.
+    ensure_sampler()
+    _push.start()
+    logger.info("[chats.mobile] avisos push encendidos ({})", deps.push.name)
 
 
 # ── GET /catalog ─────────────────────────────────────────────────────────────

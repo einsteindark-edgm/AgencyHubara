@@ -39,6 +39,9 @@ Para cualquier consulta, reclamo o solicitud sobre datos personales: <b>[COMPLET
   <li><b>Datos de los clientes de la tienda:</b> para que el operador los atienda, la app muestra datos que ya están en
     los sistemas de la empresa: nombre de perfil y número de WhatsApp, mensajes, pedidos, dirección y datos de envío.</li>
 </ul>
+<p>Para mandar los avisos, la app registra en los servidores de la empresa el <b>token de Firebase Cloud Messaging</b>
+del teléfono, un identificador de la instalación de la app (no del teléfono ni de la persona). Se borra al cerrar
+sesión.</p>
 <p>La app <b>no</b> recolecta ubicación, contactos del teléfono, fotos o archivos del teléfono, identificadores de
 publicidad, analítica ni informes de fallos, y no muestra anuncios.</p>
 
@@ -52,8 +55,9 @@ publicidad, analítica ni informes de fallos, y no muestra anuncios.</p>
 
 <h2>4. Con quién se comparten</h2>
 <p>Los datos se procesan en los servidores de la empresa, alojados en Amazon Web Services (AWS), y los mensajes que el
-operador envía llegan al cliente por la API de WhatsApp Business de Meta. Estos proveedores tratan los datos por cuenta
-de la empresa y solo para prestar su servicio. La empresa no comparte los datos con otros terceros, salvo obligación
+operador envía llegan al cliente por la API de WhatsApp Business de Meta. Los avisos al teléfono los entrega Firebase
+Cloud Messaging de Google; el aviso solo le dice a la app que se ponga al día y no lleva datos de clientes. Estos
+proveedores tratan los datos por cuenta de la empresa y solo para prestar su servicio. La empresa no comparte los datos con otros terceros, salvo obligación
 legal.</p>
 
 <h2>5. Cómo se protegen</h2>

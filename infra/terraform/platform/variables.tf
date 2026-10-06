@@ -215,6 +215,17 @@ variable "secret_keys" {
     # el proxy LiteLLM). El operador crea la llave con límite de crédito y la
     # carga fuera de banda; con el placeholder el puerto no llama a nadie.
     "OPENROUTER_API_KEY",
+    # Avisos push de la App Operador (Firebase Cloud Messaging): la llave de la
+    # cuenta de servicio de Firebase (Configuración del proyecto → Cuentas de
+    # servicio → Generar nueva clave privada). Es un ARCHIVO: en secrets.<t>.env
+    # va como `FCM_SERVICE_ACCOUNT_JSON=@ruta/al/archivo.json` y el script lo sube
+    # en una línea. Con el placeholder no se mandan avisos (la app sigue con su
+    # vigía de 15 min). Guía: docs/mobile-native/activar-avisos-push.html.
+    "FCM_SERVICE_ACCOUNT_JSON",
+    # El google-services.json de la app Android (el mismo proyecto de Firebase):
+    # de ahí salen las opciones con las que el teléfono arranca Firebase. Nunca va
+    # en el repo (es público). `FIREBASE_ANDROID_CONFIG_JSON=@ruta/google-services.json`.
+    "FIREBASE_ANDROID_CONFIG_JSON",
   ]
 }
 

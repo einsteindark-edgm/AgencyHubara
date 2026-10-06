@@ -1,5 +1,6 @@
 package com.hubara.operator.core.network.api
 
+import com.hubara.operator.core.network.dto.DeviceRequest
 import com.hubara.operator.core.network.dto.FiresDto
 import com.hubara.operator.core.network.dto.HandoffResponseDto
 import com.hubara.operator.core.network.dto.HotDto
@@ -9,6 +10,7 @@ import com.hubara.operator.core.network.dto.InterveneRequest
 import com.hubara.operator.core.network.dto.OrderCommandResultDto
 import com.hubara.operator.core.network.dto.OrderDetailDto
 import com.hubara.operator.core.network.dto.OrderListDto
+import com.hubara.operator.core.network.dto.PushConfigDto
 import com.hubara.operator.core.network.dto.ReturnToBotRequest
 import com.hubara.operator.core.network.dto.SessionDetailsDto
 import com.hubara.operator.core.network.dto.SessionsResponse
@@ -20,6 +22,7 @@ import com.hubara.operator.core.network.dto.ToolResponseDto
 import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.PATCH
 import retrofit2.http.POST
@@ -75,4 +78,14 @@ interface OperatorApi {
 
     @GET("api/dashboard/media/{session}/{file}")
     suspend fun media(@Path("session") session: String, @Path("file") file: String): ResponseBody
+
+    /** Si el servidor tiene Firebase y con qué opciones lo arranca el teléfono. */
+    @GET("api/chats/mobile/push")
+    suspend fun pushConfig(): PushConfigDto
+
+    @POST("api/chats/mobile/devices")
+    suspend fun registerDevice(@Body body: DeviceRequest): Response<Unit>
+
+    @DELETE("api/chats/mobile/devices/{token}")
+    suspend fun unregisterDevice(@Path("token") token: String): Response<Unit>
 }

@@ -44,6 +44,8 @@ from sandbox_common import (  # noqa: E402
     MOBILE_CONFIG,
     MOBILE_SCREENS,
     PHONE_NUMBER_ID,
+    PUSH_CURSOR,
+    PUSH_OUTBOX,
     SANDBOX_DIR,
     VAULT_DIR,
     append_jsonl,
@@ -205,10 +207,32 @@ def mobile_screen(name: str, source: str) -> None:
     print(f"screen: {name} ← {src}")
 
 
+def push_device(token: str) -> None:
+    """Registra un teléfono para avisos, como lo haría la app con su token de Firebase (`POST /mobile/devices`)."""
+    t = now_ms()
+    registry = VAULT_DIR / "_mobile" / "devices.json"
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(registry, {"operators": {"e2e@emulador.test": [{
+        "token": token, "platform": "android", "app_version": "e2e", "registered_at_ms": t, "updated_at_ms": t,
+    }]}})
+    print(f"push-device: {token} registrado para avisos")
+
+
+def push_relay() -> None:
+    """Los pushes que el backend mandó desde la última vez (una línea JSON cada uno)."""
+    lines = PUSH_OUTBOX.read_text(encoding="utf-8").splitlines() if PUSH_OUTBOX.exists() else []
+    start = int(PUSH_CURSOR.read_text(encoding="utf-8") or 0) if PUSH_CURSOR.exists() else 0
+    PUSH_CURSOR.write_text(str(len(lines)), encoding="utf-8")
+    for line in lines[start:]:
+        print(line)
+
+
 def reset(image_base: str) -> None:
     import seed
 
     MOBILE_CONFIG.unlink(missing_ok=True)  # la configuración de la app vuelve a la de siempre
+    PUSH_OUTBOX.unlink(missing_ok=True)    # ni pushes viejos por reenviar
+    PUSH_CURSOR.unlink(missing_ok=True)
     shutil.rmtree(MOBILE_SCREENS, ignore_errors=True)  # y las pantallas, las del repo
 
     info = seed.build(image_base=image_base)
@@ -237,6 +261,9 @@ def main() -> None:
     p_screen = sub.add_parser("screen", help="serve an App Operador screen instead of the repo's one")
     p_screen.add_argument("name", help="<id>.json")
     p_screen.add_argument("--from", dest="source", required=True, help="JSON file (relative to sandbox/)")
+    p_device = sub.add_parser("push-device", help="register a phone token for push notices")
+    p_device.add_argument("token")
+    sub.add_parser("push-relay", help="print the pushes the backend sent since the last call (JSON lines)")
     p_reset = sub.add_parser("reset", help="restore the seed")
     p_reset.add_argument("--image-base", default=DEFAULT_IMAGE_BASE)
     args = parser.parse_args()
@@ -252,6 +279,10 @@ def main() -> None:
         mobile_config(args.min_version)
     elif args.cmd == "screen":
         mobile_screen(args.name, args.source)
+    elif args.cmd == "push-device":
+        push_device(args.token)
+    elif args.cmd == "push-relay":
+        push_relay()
     else:
         reset(args.image_base)
 

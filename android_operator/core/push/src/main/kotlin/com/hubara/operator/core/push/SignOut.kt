@@ -20,8 +20,10 @@ class SignOut @Inject constructor(
     private val ambient: AmbientStore,
     private val widget: HotWidgetUpdater,
     private val screenData: ScreenDataCache,
+    private val push: PushRegistrar,
 ) {
     suspend operator fun invoke() {
+        push.unregister()                                     // antes de revocar: el DELETE va con la sesión
         auth.signOut()
         withContext(Dispatchers.IO) { db.clearAllTables() }   // bandeja, mensajes, outbox, borradores, incendios
         seen.clear()

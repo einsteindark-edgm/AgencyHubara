@@ -17,7 +17,9 @@ import com.hubara.operator.core.database.OperatorDatabase
 import com.hubara.operator.core.model.SeenCounts
 import com.hubara.operator.core.network.auth.CognitoClient
 import com.hubara.operator.core.network.di.ApiConfig
+import com.hubara.operator.core.network.dto.FirebaseOptionsDto
 import com.hubara.operator.core.network.dto.HotSaleDto
+import com.hubara.operator.core.network.dto.PushConfigDto
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -57,8 +59,16 @@ class SignOutTest {
         val screenData = FileScreenDataCache(context)
         screenData.write("ventas|pedidos|/api/orders/orders", kotlinx.serialization.json.Json.parseToJsonElement("""{"orders": [{"customer": "Laura Prueba"}]}"""))
 
+        // El teléfono recibía avisos push: al cerrar sesión deja de recibirlos (el backend borra su token).
+        val pushApi = FakePushApi().apply {
+            config = PushConfigDto(enabled = true, firebase = FirebaseOptionsDto("proyecto-prueba", "1:000:android:abc", "llave-prueba", "000"))
+        }
+        val pushCache = PushCache(context).apply { clear() }
+        val push = PushRegistrar(pushApi, FakePushTransport(), pushCache, { "1.0.0" }) { 0L }
+        push.sync()
+
         var widgetRefreshed = 0
-        SignOut(context, auth, db, seen, ambient, HotWidgetUpdater { widgetRefreshed++ }, screenData)()
+        SignOut(context, auth, db, seen, ambient, HotWidgetUpdater { widgetRefreshed++ }, screenData, push)()
 
         assertThat(db.conversations().observeAll().first()).isEmpty()
         assertThat(ambient.hot.first()).isEmpty()
@@ -66,5 +76,7 @@ class SignOutTest {
         assertThat(shadowOf(manager).allNotifications).isEmpty()
         assertThat(widgetRefreshed).isEqualTo(1)  // el widget de la pantalla de inicio deja de mostrar nombres
         assertThat(screenData.read("ventas|pedidos|/api/orders/orders")).isNull()  // ni lo último de las pantallas del servidor
+        assertThat(pushApi.unregistered).containsExactly("token-1")                  // ni avisos push a este teléfono
+        assertThat(pushCache.registration()).isNull()
     }
 }

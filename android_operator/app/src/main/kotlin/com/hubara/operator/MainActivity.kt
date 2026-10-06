@@ -22,9 +22,11 @@ import javax.inject.Inject
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.hubara.operator.core.data.config.ServerConfigStore
 import com.hubara.operator.core.data.screens.ScreenStore
+import com.hubara.operator.core.push.PushRegistrar
 import com.hubara.operator.core.ui.NativeComponent
 
 @AndroidEntryPoint
@@ -34,6 +36,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var sync: SyncEngine
     @Inject lateinit var serverConfig: ServerConfigStore
     @Inject lateinit var screens: ScreenStore
+    @Inject lateinit var push: PushRegistrar
     @Inject lateinit var natives: Map<String, @JvmSuppressWildcards NativeComponent>
 
     /** Deep link pendiente (notificación o widget), ya validado. */
@@ -62,6 +65,11 @@ class MainActivity : ComponentActivity() {
                 launch {
                     serverConfig.refresh()
                     screens.refreshManifest()
+                }
+                // Con sesión: el teléfono se apunta a los avisos push (si el servidor tiene Firebase).
+                launch {
+                    auth.state.first { it == AuthState.SignedIn || it == AuthState.DevMode }
+                    push.sync()
                 }
                 auth.state.collectLatest { state ->
                     if (state == AuthState.SignedIn || state == AuthState.DevMode) {

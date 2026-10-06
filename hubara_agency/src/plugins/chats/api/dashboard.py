@@ -424,14 +424,15 @@ async def _sampler_loop() -> None:
             logger.exception("dashboard events sampler: tick failed")
 
 
-def _ensure_sampler() -> None:
+def ensure_sampler() -> None:
+    """Arranca el muestreador del vault si no corre (el SSE del dashboard y el despachador de avisos push)."""
     global _sampler_task
     if _sampler_task is None or _sampler_task.done():
         _sampler_task = asyncio.get_running_loop().create_task(_sampler_loop())
 
 
 async def dashboard_events_generator():
-    _ensure_sampler()
+    ensure_sampler()
     bus = get_dashboard_event_bus()
     queue = bus.subscribe()
     try:

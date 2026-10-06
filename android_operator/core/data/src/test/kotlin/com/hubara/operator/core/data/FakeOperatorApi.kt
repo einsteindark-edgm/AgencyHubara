@@ -1,6 +1,7 @@
 package com.hubara.operator.core.data
 
 import com.hubara.operator.core.network.api.OperatorApi
+import com.hubara.operator.core.network.dto.DeviceRequest
 import com.hubara.operator.core.network.dto.FiresDto
 import com.hubara.operator.core.network.dto.HandoffResponseDto
 import com.hubara.operator.core.network.dto.HotDto
@@ -10,6 +11,7 @@ import com.hubara.operator.core.network.dto.InterveneRequest
 import com.hubara.operator.core.network.dto.OrderCommandResultDto
 import com.hubara.operator.core.network.dto.OrderDetailDto
 import com.hubara.operator.core.network.dto.OrderListDto
+import com.hubara.operator.core.network.dto.PushConfigDto
 import com.hubara.operator.core.network.dto.ReturnToBotRequest
 import com.hubara.operator.core.network.dto.SessionDetailsDto
 import com.hubara.operator.core.network.dto.SessionsResponse
@@ -72,6 +74,9 @@ class FakeOperatorApi : OperatorApi {
     override suspend fun order(id: String): OrderDetailDto = error("no usado")
     override suspend fun transitionStage(id: String, body: StageRequest) = OrderCommandResultDto(true, id, body.stage)
     override suspend fun media(session: String, file: String): ResponseBody = "".toResponseBody(JSON)
+    override suspend fun pushConfig() = PushConfigDto()
+    override suspend fun registerDevice(body: DeviceRequest): Response<Unit> = Response.success(Unit)
+    override suspend fun unregisterDevice(token: String): Response<Unit> = Response.success(Unit)
 
     private companion object { val JSON = "application/json".toMediaType() }
 }

@@ -43,6 +43,11 @@ MOBILE_CONFIG = DATA_DIR / "mobile_config.json"  # lo que inject.py cambia de la
 # escenario pone con `inject.py screen` (para probar que un cambio en el servidor llega sin reinstalar la app).
 REPO_SCREENS = SANDBOX_DIR.parent.parent / "screens"
 MOBILE_SCREENS = DATA_DIR / "mobile_screens"
+# Avisos push: el backend de prueba usa el avisador FALSO (`PUSH_PROVIDER=fake`), que deja cada push que mandaría a
+# Firebase como una línea JSON aquí; `inject.py push-relay` entrega los nuevos y el arnés se los pasa a la app con un
+# broadcast a E2eWakeReceiver (E2E_PUSH), el mismo camino que un push de verdad dentro de la app (escenario S20).
+PUSH_OUTBOX = DATA_DIR / "pushes.jsonl"
+PUSH_CURSOR = DATA_DIR / "pushes.cursor"
 
 PORT = int(os.environ.get("SANDBOX_PORT") or 8010)  # run_api.sh lo exporta (SANDBOX_PORT=8020 si 8010 está ocupado)
 #: Catalog photo URLs. The REAL WhatsApp outbound builder only accepts

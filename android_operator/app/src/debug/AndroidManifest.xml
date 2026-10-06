@@ -8,6 +8,8 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.hubara.operator.E2E_WAKE" />
+                <!-- Un push de Firebase simulado (escenario S20): los extras son los datos del push. -->
+                <action android:name="com.hubara.operator.E2E_PUSH" />
             </intent-filter>
         </receiver>
     </application>

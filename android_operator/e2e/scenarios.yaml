@@ -482,3 +482,32 @@ scenarios:
       - screen_lacks: "Pago confirmado"
       - screen_lacks: "Agendá"
       - screen_has: "#42 · Daniela Prueba"
+
+  - id: S20_push_despierta_la_app
+    title: Un push del backend avisa un incendio grave nuevo en segundos, con la app cerrada
+    resumen: "Con la app en segundo plano llega un incendio grave nuevo (Valeria). El backend lo detecta y manda el push —aquí a un Firebase de mentira que el arnés le entrega a la app—; la app se pone al día en el momento y avisa a Valeria sin esperar al vigía de 15 minutos. Tocar el aviso abre su chat."
+    # El push de verdad lo entrega Google Play services y en el emulador de CI no hay Firebase. El backend de prueba
+    # usa el avisador falso (PUSH_PROVIDER=fake): lo que mandaría a Firebase queda en sandbox/data/pushes.jsonl y
+    # `relay_push` se lo pasa a la app con un broadcast a E2eWakeReceiver (E2E_PUSH), que llama al MISMO PushHandler
+    # que OperatorMessagingService. Se abre la app antes para que el vigía periódico ya haya corrido: el aviso de
+    # Valeria solo puede venir del push.
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1},
+            {expect_gone: "· GRAVE"}, home, {wait: 2},
+            {inject: "push-device e2e-emulador"},
+            {inject: "fire --name 'Valeria Prueba' --session wa_000000000110 --waiting-min 11"},
+            {relay_push: 40}, {wait: 6}]
+    locked_app: false
+    script:
+      - notifications
+      - {expect: "Valeria pide un humano"}
+      - {shot: aviso}
+      - {tap: "Valeria pide un humano"}
+      - {expect: "000000000110"}
+    goal: |
+      Estás en la pantalla de inicio de Android y la app «Operador» quedó en segundo plano.
+      1. Abre la cortina de notificaciones (desliza desde arriba).
+      2. Busca una notificación de la app «Operador» sobre Valeria y anota su texto.
+      3. Tócala y confirma qué se abre en la app (debería ser el chat de Valeria, 000000000110).
+      Reporta los tres puntos. Si no hay notificación, dilo.
+    checks:
+      - screen_has: "000000000110"

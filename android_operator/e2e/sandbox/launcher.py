@@ -47,6 +47,7 @@ from sandbox_common import (  # noqa: E402
     REPO_SCREENS,
     PHONE_NUMBER_ID,
     PORT,
+    PUSH_OUTBOX,
     SEED_INFO,
     STATIC_DIR,
     VAULT_DIR,
@@ -78,6 +79,7 @@ SECRET_VARS = (
     "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE",
     "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_HEADERS",
     "PAYMENT_TRANSFER_ACCOUNT_NUMBER", "PAYMENT_TRANSFER_HOLDER_ID",
+    "FCM_SERVICE_ACCOUNT_JSON", "FIREBASE_ANDROID_CONFIG_JSON",
 )
 
 SANDBOX_ENV = {
@@ -103,6 +105,9 @@ SANDBOX_ENV = {
     # recorre el motor oficial (paquete `operador`) sin que cambie lo que ve la app.
     "PERCEPTION_PROVIDER": "fake",
     "SALES_CAPABILITIES_CEILING": "shadow",
+    # Avisos push: el avisador falso (sin Firebase ni red) deja cada push en PUSH_OUTBOX; el arnés lo reenvía.
+    "PUSH_PROVIDER": "fake",
+    "PUSH_FAKE_OUTBOX": str(PUSH_OUTBOX),
     "LITELLM_LOCAL_MODEL_COST_MAP": "True",
     "RATE_LIMIT_PER_MINUTE": "0",
 }

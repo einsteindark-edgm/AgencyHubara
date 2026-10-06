@@ -43,6 +43,25 @@
       ]
     },
     {
+      "type": "section",
+      "title": "Avisos",
+      "children": [
+        {
+          "type": "list",
+          "children": [
+            {
+              "type": "list_item", "icon": "notifications", "icon_tone": "primary",
+              "title": "Probar avisos", "subtitle": "Te mandamos un aviso: debe llegarte aunque cierres la app",
+              "action": {
+                "type": "call", "method": "POST", "path": "/api/chats/mobile/devices/test",
+                "success": "Listo: el aviso de prueba te llega en unos segundos."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "type": "text", "style": "caption", "tone": "muted", "align": "center",
       "text": "Estas pantallas las arma el servidor: se agregan o cambian sin publicar otra versión de la app."
     }

@@ -266,3 +266,24 @@ data class DashboardEventDto(
     val payload: JsonElement? = null,
     @SerialName("ts_ms") val tsMs: Long = 0,
 )
+
+// ── Avisos push (`/api/chats/mobile/push`, `/api/chats/mobile/devices`) ─────────────────────────────
+
+/** Lo que el teléfono necesita para hablar con Firebase. Sale de SSM (nunca del APK): el repo es público. */
+@Serializable
+data class FirebaseOptionsDto(
+    @SerialName("project_id") val projectId: String,
+    @SerialName("application_id") val applicationId: String,
+    @SerialName("api_key") val apiKey: String,
+    @SerialName("gcm_sender_id") val gcmSenderId: String,
+)
+
+@Serializable
+data class PushConfigDto(val enabled: Boolean = false, val firebase: FirebaseOptionsDto? = null)
+
+@Serializable
+data class DeviceRequest(
+    val token: String,
+    val platform: String,
+    @SerialName("app_version") val appVersion: String,
+)

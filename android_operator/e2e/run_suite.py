@@ -88,12 +88,28 @@ class Run:
         self.sid = sid
         self.sent_before = len(sent_lines())
 
+    def _relay_push(self, timeout: float) -> None:
+        """Firebase de mentira: lo que el backend de prueba habría mandado a Google (`inject.py push-relay`) llega a
+        la app por un broadcast a E2eWakeReceiver (E2E_PUSH), que lo pasa al MISMO PushHandler de un push real."""
+        deadline = time.time() + timeout
+        while True:
+            pushes = [json.loads(line) for line in sandbox("push-relay").splitlines() if line.startswith("{")]
+            if pushes:
+                break
+            if time.time() > deadline:
+                raise StepFailed(f"el backend no mandó ningún push en {timeout:.0f} s")
+            time.sleep(1)
+        for push in pushes:
+            extras = " ".join(f"--es {key} {value}" for key, value in push["data"].items())
+            self.dev.sh(f"am broadcast -n {PACKAGE}/{PACKAGE}.E2eWakeReceiver -a {PACKAGE}.E2E_PUSH {extras}")
+
     def step(self, step: dict | str) -> None:
         """Un paso. Sin argumento: "reset", "clear_app", "launch", "home", "back", "notifications".
         Con argumento: {"link": uri}, {"wait": s}, {"inject": "fire …"}, {"adb": "shell cmd"},
         {"tap": "texto"}, {"type": "ascii"}, {"expect": "texto"}, {"expect_gone": "texto"},
         {"expect_all": [...] | {texts, in_order, above_focused}}, {"assert": {<chequeo>}},
-        {"shot": "nombre"} (captura a mitad del escenario, la que muestra el comentario del PR).
+        {"shot": "nombre"} (captura a mitad del escenario, la que muestra el comentario del PR),
+        {"relay_push": s} (espera hasta s segundos el push que mandó el backend y se lo entrega a la app).
         Un texto con «=» adelante busca igual exacto (p. ej. "=Enviar" y no «Enviar aromas»)."""
         if isinstance(step, str):
             step = {step: True}
@@ -138,6 +154,8 @@ class Run:
                 raise StepFailed(f"«{text}» seguía en pantalla a los {timeout:.0f} s")
         elif kind == "expect_all":
             self._expect_all(arg)
+        elif kind == "relay_push":
+            self._relay_push(float(arg))
         elif kind == "shot":
             if self.out is not None:
                 self.dev.screenshot(self.out / f"{self.sid}.{arg}.png")

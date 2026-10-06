@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import com.hubara.operator.core.push.Channels
+import com.hubara.operator.core.push.PushRegistrar
 import com.hubara.operator.core.push.VigiaWorker
 import coil3.ImageLoader
 import coil3.PlatformContext
@@ -27,6 +28,7 @@ import com.hubara.operator.core.data.config.ServerConfigDefaults
 class OperatorApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var okHttp: OkHttpClient
+    @Inject lateinit var push: PushRegistrar
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -34,7 +36,9 @@ class OperatorApplication : Application(), Configuration.Provider, SingletonImag
     override fun onCreate() {
         super.onCreate()
         Channels.register(this)
-        // Con la app cerrada: incendios graves y widget cada 15 min, hasta que llegue FCM.
+        // Firebase con las últimas opciones del servidor: si un push despertó el proceso, ya puede entregarlo.
+        push.startFromCache()
+        // Respaldo del push: incendios graves y widget cada 15 min aunque un push no llegue.
         VigiaWorker.schedule(this)
     }
 
