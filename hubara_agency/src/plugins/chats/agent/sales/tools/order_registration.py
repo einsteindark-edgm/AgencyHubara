@@ -80,7 +80,12 @@ from src.plugins.chats.agent.sales.config.shipping import (
     CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
     SHIPPING_COP_PARAM_DESCRIPTION,
     SHIPPING_RATE_RULE,
-    is_published_shipping_rate,
+    is_published_rate_for_zone,
+)
+from src.plugins.chats.agent.sales.decisions.guards import (
+    CiudadDeEnvio,
+    capability,
+    decide_for_session,
 )
 # El store del metadata por el shim del plugin: `src.sdk.runtime` arrastra temporalio, que las tools
 # no pueden importar (R-DIP #7), y un import nuevo de `src.platform` lo frena el ratchet P-28.
@@ -108,11 +113,17 @@ from src.plugins.chats.agent.sales.use_cases.coupons import (
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     attach_order_to_active_episode,
 )
+from src.plugins.chats.agent.sales.use_cases.order_draft import split_lines_mismatch
 from src.sdk.catalogkit import (
     CatalogPort,
     ProductNotFoundError,
     product_includes_portavelas,
 )
+from src.plugins.chats.shared.store_pack import vocabulary
+
+#: Los ejemplos de la tienda que el LLM ve en estas tools salen del dominio
+#: del paquete activo (`domain.yaml: vocabulary`, PAQUETES_DE_DECISION.md F5).
+_V = vocabulary()
 
 
 def _order_reference(raw_payload: dict[str, Any] | None) -> str | None:
@@ -281,7 +292,7 @@ class RegisterOrderTool(ToolBase):
                 "description": (
                     "Items del pedido. Cada item: handle (snapshot), "
                     "quantity, unit_price_cop, opcionalmente "
-                    "variant_label (ej. 'Lavanda', 'Azul')."
+                    f"variant_label (ej. {_V['variant_label_examples']})."
                 ),
                 "items": {
                     "type": "object",
@@ -382,10 +393,15 @@ class RegisterOrderTool(ToolBase):
         quotas: Any = None,
         sales: Any = None,
         quota_lock: Any = None,
+        split_lines_guard: bool = True,
     ) -> None:
         """`quotas`/`sales`/`quota_lock`: cupo por unidad (central de cupones).
         Con cupo, el reparto se relee BAJO el candado del código antes de
-        crear el draft (nunca se vende dos veces la última unidad)."""
+        crear el draft (nunca se vende dos veces la última unidad).
+        `split_lines_guard`: un producto repartido en variantes en el borrador
+        exige una línea por cada una (`split_lines_mismatch`). Es para el bot:
+        el borrador es su memoria; el operador que registra desde el panel lo
+        apaga (manda lo que acordó con el cliente)."""
         # Mismo patrón que `ManageConversationTagTool`: el `workspace` que
         # llega es el RUNTIME WORKSPACE CANONICO compartido — NO se usa
         # para metadata. `vault_dir` (DI-friendly): default vault canónico.
@@ -407,6 +423,7 @@ class RegisterOrderTool(ToolBase):
         self._quotas = quotas
         self._sales = sales
         self._quota_lock = quota_lock
+        self._split_lines_guard = split_lines_guard
 
     def _quota_code(self, session_key: str) -> str | None:
         """Código del cupón aplicado si tiene cupo por unidad (hay que
@@ -663,7 +680,16 @@ class RegisterOrderTool(ToolBase):
         # pago como "sin costo" (L-19). Va ANTES de SEC-07: con envío 0 y el
         # total sumado con la tarifa, SEC-07 diría "total esperado = subtotal"
         # y el modelo gastaría un reintento quitando el envío del total.
-        if not is_published_shipping_rate(int(shipping_cop), order_shipping.city):
+        # La zona de la ciudad la decide el motor de decisiones (capacidad
+        # `zona_de_envio`; regla de hoy: Bogotá si la ciudad lo dice; si no,
+        # valen las dos tarifas).
+        zone = await decide_for_session(
+            capability("zona_de_envio"),
+            CiudadDeEnvio(ciudad=order_shipping.city),
+            session_id=ctx.session_key,
+            vault_dir=self._vault_dir,
+        )
+        if not is_published_rate_for_zone(int(shipping_cop), (zone.value or {}).get("zona")):
             logger.warning(
                 "🧾 [TOOL register_order] SHIPPING_MISMATCH session={} city={} shipping_cop={}",
                 ctx.session_key,
@@ -708,6 +734,39 @@ class RegisterOrderTool(ToolBase):
                         "; ".join(v.message() for v in invalid_variants)
                         + ". El pedido NO se registró: confirma con el cliente una opción "
                         "de la lista y vuelve a presentar la confirmación."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        # Producto repartido en variantes (`set_order_slot(lineas=...)`): la
+        # orden lleva una línea por cada una (laboratorio, caso 4567: «una
+        # lila y otra azul» iba a registrar dos lilas).
+        mismatch = (
+            split_lines_mismatch(
+                metadata_before,
+                [
+                    (v.title, int(it["quantity"]), v.color or _said(it, "color"), v.aroma or _said(it, "aroma"))
+                    for it, v in zip(items, variants)
+                ],
+            )
+            if self._split_lines_guard
+            else []
+        )
+        if mismatch:
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "split_lines_mismatch",
+                    "error": "split_lines_mismatch",
+                    "summary": (
+                        "El pedido tiene productos en varias líneas, una por variante: "
+                        + "; ".join(mismatch)
+                        + ". El pedido NO se registró: manda una línea por cada una, con su "
+                        "`color`, `aroma` y `quantity`, como en la confirmación que vio el "
+                        "cliente. Si el cliente cambió las variantes o las cantidades, "
+                        "actualiza primero el borrador con set_order_slot(lineas=...) y "
+                        "vuelve a presentar la confirmación."
                     ),
                 },
                 ensure_ascii=False,
@@ -996,8 +1055,8 @@ class RegisterOrderTool(ToolBase):
             "registered_at_ms": int(time.time() * 1000),
             "raw_provider_payload": result.raw_payload,
             # Identidad Meta (SKU = retailer_id) de cada línea, ya en la
-            # forma `contents` de CAPI: Purchase/OrderCreated la llevan para
-            # la coincidencia de catálogo. Best-effort (catálogo caído →
+            # forma `contents` de CAPI: Purchase/OrderCreated dicen qué se
+            # compró. Best-effort (catálogo caído →
             # []), nunca bloquea el registro.
             "capi_contents": await self._capi_contents(items),
         }

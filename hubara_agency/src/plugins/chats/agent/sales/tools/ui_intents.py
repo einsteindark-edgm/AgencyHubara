@@ -51,6 +51,7 @@ from loguru import logger
 from src.sdk.connectorkit import product_retailer_id
 from src.platform.catalog import CatalogPort, ProductNotFoundError, deslugify
 from src.platform.config import WORKSPACE_VAULT_DIR
+from src.plugins.chats.agent.sales.decisions.guards import catalog_choice_buttons
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp import limits as wa_limits
 from src.plugins.chats.agent.sales.config.shipping import (
@@ -59,7 +60,12 @@ from src.plugins.chats.agent.sales.config.shipping import (
     SHIPPING_RATE_NATIONAL_COP,
     SHIPPING_RATE_RULE,
     cash_on_delivery_available,
-    is_published_shipping_rate,
+    is_published_rate_for_zone,
+)
+from src.plugins.chats.agent.sales.decisions.guards import (
+    CiudadDeEnvio,
+    capability,
+    decide_for_session,
 )
 from src.plugins.chats.agent.sales.pricing import (
     accepted_prices,
@@ -72,6 +78,35 @@ from src.plugins.chats.agent.sales.config.payments import (
     get_nequi_number,
 )
 from src.sdk.mediakit import derive_image_label
+from src.plugins.chats.shared.store_pack import vocabulary
+
+#: Los ejemplos de la tienda que el LLM ve en estas tools salen del dominio
+#: del paquete activo (`domain.yaml: vocabulary`, PAQUETES_DE_DECISION.md F5).
+_V = vocabulary()
+
+
+def no_more_photos_message(title: str) -> str:
+    """Lo que la galería le dice al LLM cuando no quedan fotos del producto."""
+    return f"No tengo más fotos de {title}. Continúa en texto — pregúntale al cliente {_V['variant_question']}."
+
+
+#: Lo que la galería le pide al LLM después de mandar las fotos.
+PHOTOS_SENT_NEXT = (
+    " NO le mandes el link a la web — el cliente ya las está viendo en el chat. Tu próximo "
+    f"mensaje: invítalo a elegir {_V['variant_dimensions']} o cerrar la compra."
+)
+
+
+def picker_sent_summary(variant_type: str, total_options: int) -> str:
+    """Lo que el selector de variantes le dice al LLM cuando ya salió."""
+    return (
+        f"Picker de {variant_type} con {total_options} opciones "
+        "enviado como UN solo mensaje de texto con emojis curados. "
+        "Ese mensaje YA incluye el texto introductorio y la invitación "
+        "a elegir — NO escribas texto adicional en este turno; el "
+        "picker es tu mensaje completo. Espera la respuesta libre del "
+        f"cliente (ej: {_V['variant_reply_examples']})."
+    )
 
 
 def _product_designs(product) -> list[str]:
@@ -227,7 +262,7 @@ class PresentProductDetailTool(ToolBase):
                 "description": (
                     "Texto opcional para añadir al caption después del "
                     "título y precio. Mantén breve (<200 chars). "
-                    "Ej: 'aroma lavanda · 40 horas de duración'."
+                    f"Ej: {_V['caption_example']}."
                 ),
                 "maxLength": 400,
             },
@@ -341,7 +376,7 @@ class PresentProductDetailTool(ToolBase):
                 "currency": currency,
                 "product_id": product.id,
                 # Identidad VIGENTE en Meta (SKU): el flush la usa como
-                # `content_ids` del ViewContent (coincidencia de catálogo).
+                # `content_ids` del ViewContent de CAPI.
                 "retailer_id": _meta_retailer_id(product),
                 # Label del diseño mostrado (o derivado del filename de la
                 # portada) — el dispatch lo persiste en outbound_media_index
@@ -423,8 +458,7 @@ class PresentProductsTool(ToolBase):
                 "description": (
                     "Texto corto que acompaña la lista — es lo ÚNICO que "
                     "el cliente leerá con el menú (el content fuera de la "
-                    "tool no se envía). Ej: 'Estas son "
-                    "nuestras velas religiosas:'. Máx 1024 chars Meta."
+                    f"tool no se envía). Ej: {_V['list_intro_example']}. Máx 1024 chars Meta."
                 ),
             },
             "group_by": {
@@ -993,7 +1027,7 @@ class PresentOrderConfirmationTool(ToolBase):
                 "type": "integer",
                 "minimum": 0,
                 "default": 0,
-                "description": "Impuestos en COP. Velas artesanales suelen ser 0.",
+                "description": _V["tax_note"],
             },
             "shipping_address_summary": {
                 "type": "string",
@@ -1102,6 +1136,7 @@ class PresentOrderConfirmationTool(ToolBase):
 
         from src.plugins.chats.agent.sales.use_cases.order_draft import (
             get_projectable_draft,
+            split_lines_mismatch,
         )
 
         metadata_now = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(ctx.session_key)
@@ -1122,6 +1157,43 @@ class PresentOrderConfirmationTool(ToolBase):
                     "opción de la lista y vuelve a llamar present_order_confirmation."
                 ),
             }, ensure_ascii=False)
+        # Producto repartido en variantes (`set_order_slot(lineas=...)`): la
+        # tarjeta lleva una línea por cada una (laboratorio, caso 4567, turno
+        # 23: salió con dos lilas para «una lila y otra azul»).
+        line_variants = [
+            (
+                v.color or (str(it.get("color") or "").strip() or None),
+                v.aroma or (str(it.get("aroma") or "").strip() or None),
+            )
+            for it, v in zip(items, variants)
+        ]
+        mismatch = split_lines_mismatch(
+            metadata_now,
+            [
+                (v.title, int(it["quantity"]), color, aroma)
+                for it, v, (color, aroma) in zip(items, variants, line_variants)
+            ],
+        )
+        if mismatch:
+            return json.dumps({
+                "queued": False,
+                "error": "split_lines_mismatch",
+                "message": (
+                    "El pedido tiene productos en varias líneas, una por variante: "
+                    + "; ".join(mismatch)
+                    + ". NO se encoló la confirmación: manda una línea por cada una, con "
+                    "su `color`, `aroma` y `quantity`. Si el cliente cambió las variantes "
+                    "o las cantidades, actualiza primero el borrador con "
+                    "set_order_slot(lineas=...)."
+                ),
+            }, ensure_ascii=False)
+        # Un producto que va en varias líneas: la tarjeta dice la variante de
+        # cada una (si no, el cliente ve dos renglones iguales).
+        handles = [str(it["handle"]) for it in items]
+        for resolved, (color, aroma) in zip(resolved_items, line_variants):
+            variant = " · ".join(value for value in (color, aroma) if value)
+            if variant and handles.count(resolved["handle"]) > 1:
+                resolved["variant"] = variant
         draft_city = (get_projectable_draft(metadata_now) or {}).get("ciudad")
 
         # Los rechazos baratos (precio, envío) van ANTES del descuento: el
@@ -1154,9 +1226,15 @@ class PresentOrderConfirmationTool(ToolBase):
         # operador 2026-09-23: sin descuentos ni envío gratis). Con la ciudad
         # del borrador, la misma regla que `register_order` (Bogotá solo la
         # suya): el cliente no confirma un total que el registro rechazaría.
-        if not is_published_shipping_rate(
-            int(shipping_cop), draft_city if isinstance(draft_city, str) else None
-        ):
+        # La zona de la ciudad la decide el motor de decisiones (capacidad
+        # `zona_de_envio`; regla de hoy: Bogotá si la ciudad lo dice).
+        zone = await decide_for_session(
+            capability("zona_de_envio"),
+            CiudadDeEnvio(ciudad=draft_city if isinstance(draft_city, str) else None),
+            session_id=ctx.session_key,
+            vault_dir=WORKSPACE_VAULT_DIR,
+        )
+        if not is_published_rate_for_zone(int(shipping_cop), (zone.value or {}).get("zona")):
             logger.warning(
                 "🚨 [TOOL present_order_confirmation] shipping_mismatch session={} shipping_cop={}",
                 ctx.session_key, shipping_cop,
@@ -1774,8 +1852,7 @@ class PresentProductGalleryTool(ToolBase):
                 "queued": False,
                 "error": "no_additional_images",
                 "message": (
-                    f"No tengo más fotos de {product.title}. Continúa en "
-                    "texto — pregúntale al cliente por aroma/color."
+                    no_more_photos_message(product.title)
                 ),
             }, ensure_ascii=False)
         # Cap defensivo
@@ -1828,9 +1905,7 @@ class PresentProductGalleryTool(ToolBase):
                 f"{len(additional)} foto(s) adicionales de {product.title} "
                 "enviadas en secuencia."
                 + designs_note
-                + " NO le mandes el link a la web — el "
-                "cliente ya las está viendo en el chat. Tu próximo "
-                "mensaje: invítalo a elegir aroma/color o cerrar la compra."
+                + PHOTOS_SENT_NEXT
             ),
         }, ensure_ascii=False)
 
@@ -1852,7 +1927,7 @@ class SendQuickRepliesTool(ToolBase):
     + 2-3 botones para guiar la elección.
 
     Caso de uso #2: decisiones binarias durante la conversación. Ej:
-    "¿continúas con el aroma lavanda o cambias?".
+    "¿continúas con la variante elegida o cambias?".
 
     Los IDs de botones deben ser semánticos (catalog.browse, order.cancel,
     etc.) — el LLM los verá de vuelta como "[el cliente tocó el botón:
@@ -2032,12 +2107,28 @@ class SendQuickRepliesTool(ToolBase):
         # lista para caber y el cliente pierde opciones. Se rechaza ANTES de
         # encolar; el LLM debe re-llamar present_products / present_variant_picker.
         rejected, kinds = await self._catalog_choices(normalized)
+        # Motor de decisiones (F5): si los botones eligen del catálogo lo
+        # decide la capacidad `selector` con el proveedor del bot de la
+        # conversación (la regla de hoy por defecto: idéntico a antes). El
+        # namespace del id es piso.
+        rejected = list(
+            await catalog_choice_buttons(
+                body,
+                [b["title"] for b in normalized],
+                rule_rejected=rejected,
+                by_id=[b["title"] for b in normalized if b["id"].casefold().startswith(self._CATALOG_ID_PREFIXES)],
+                session_id=ctx.session_key,
+                vault_dir=Path(WORKSPACE_VAULT_DIR),
+            )
+        )
         if rejected:
             product_like = kinds & {"product", "producto", "handle", "sku"}
             use = (
                 "present_products (con los handles de search_products)"
                 if product_like
                 else "present_variant_picker (aroma Y color = DOS llamadas)"
+                if kinds
+                else "present_products (productos) o present_variant_picker (aromas, colores)"
             )
             logger.warning(
                 "🔘 [TOOL send_quick_replies] rechazado como selector de "
@@ -2118,10 +2209,10 @@ class PresentVariantPickerTool(ToolBase):
     name = "present_variant_picker"
     description = (
         "Envía un mensaje de texto bonito al cliente con las opciones de "
-        "variante (aromas / colores / tamaños), con un emoji distintivo "
+        f"variante ({_V['variant_kinds']}), con un emoji distintivo "
         "por opción agrupadas por categoría. El cliente lee y **responde "
-        "por texto** la que prefiere (ej: 'lavanda', 'el morado'). Úsala "
-        "cuando vayas a presentar 4 o más opciones de aroma/color de un "
+        f"por texto** la que prefiere (ej: {_V['variant_reply_examples']}). Úsala "
+        f"cuando vayas a presentar 4 o más opciones de {_V['variant_dimensions']} de un "
         "producto. El emoji por opción se asigna automáticamente desde el "
         "registry Hubara — **tú NO pasas emojis, solo el nombre literal "
         "del envelope**. Si el cliente ya eligió la variante, NO uses esta "
@@ -2151,8 +2242,8 @@ class PresentVariantPickerTool(ToolBase):
                             "minLength": 1,
                             "maxLength": 60,
                             "description": (
-                                "Nombre LITERAL del envelope (ej 'Lavanda', "
-                                "'Verde menta', 'rosado'). Closed-list — "
+                                f"Nombre LITERAL del envelope (ej {_V['variant_label_literal_examples']}). "
+                                "Closed-list — "
                                 "no inventes."
                             ),
                         },
@@ -2165,8 +2256,7 @@ class PresentVariantPickerTool(ToolBase):
                 "minLength": 1,
                 "maxLength": 1024,
                 "description": (
-                    "Texto breve que acompaña el picker. Ej: 'Tenemos "
-                    "estos aromas:' o 'Estos son los colores disponibles:'. "
+                    f"Texto breve que acompaña el picker. Ej: {_V['picker_intro_examples']}. "
                     "Sin listar las opciones en el texto — el cliente las "
                     "ve en la lista tappable."
                 ),
@@ -2330,14 +2420,7 @@ class PresentVariantPickerTool(ToolBase):
             "variant_type": variant_type,
             "count": total_options,
             "pages": 1,
-            "summary": (
-                f"Picker de {variant_type} con {total_options} opciones "
-                "enviado como UN solo mensaje de texto con emojis curados. "
-                "Ese mensaje YA incluye el texto introductorio y la invitación "
-                "a elegir — NO escribas texto adicional en este turno; el "
-                "picker es tu mensaje completo. Espera la respuesta libre del "
-                "cliente (ej: 'lavanda', 'el morado')."
-            ),
+            "summary": picker_sent_summary(variant_type, total_options),
         }
         if removed_invalid:
             envelope["removed_invalid_options"] = removed_invalid
@@ -2390,6 +2473,7 @@ def build_variant_picker_intent(
     intro_text: str,
     handle: str | None,
     coupon: dict[str, Any] | None = None,
+    closing_text: str | None = None,
 ) -> dict[str, Any] | None:
     """Intent `variant_picker` (texto curado con emojis) para `labels` ya
     validados. `None` si no queda ninguna row. Lo usan la tool
@@ -2480,6 +2564,7 @@ def build_variant_picker_intent(
                 if coupon
                 else {}
             ),
+            **({"closing_text": closing_text} if closing_text else {}),
         },
         "analytics": {
             "component_id": f"variant_picker.{variant_type}",

@@ -1,0 +1,756 @@
+{
+  "groups": [
+    {
+      "key": "descubrimiento",
+      "label": "descubrimiento",
+      "color": "var(--color-info)",
+      "columns": [
+        {
+          "id": "APE-01",
+          "name": "Saludo por hora y marca en el primer contacto",
+          "level": "mayor"
+        },
+        {
+          "id": "APE-02",
+          "name": "Sin apertura prohibida",
+          "level": "menor"
+        },
+        {
+          "id": "APE-03",
+          "name": "Ofrece el catálogo en la apertura",
+          "level": "mayor"
+        },
+        {
+          "id": "APE-04",
+          "name": "No vuelve a saludar a un cliente con historial",
+          "level": "menor"
+        },
+        {
+          "id": "DES-01",
+          "name": "Máximo dos preguntas antes de mostrar productos",
+          "level": "mayor"
+        },
+        {
+          "id": "DES-02",
+          "name": "Una pregunta por burbuja",
+          "level": "menor"
+        },
+        {
+          "id": "DES-03",
+          "name": "Catálogo pedido, catálogo enviado",
+          "level": "critico"
+        },
+        {
+          "id": "DES-04",
+          "name": "Clasificó bien la intención del cliente",
+          "level": "mayor"
+        },
+        {
+          "id": "DES-05",
+          "name": "Busca en el catálogo antes de nombrar productos o precios",
+          "level": "critico"
+        },
+        {
+          "id": "DES-06",
+          "name": "Sin datos de catálogo inventados",
+          "level": "critico"
+        },
+        {
+          "id": "DES-07",
+          "name": "Lead sin fit: redirige o escala, no fuerza la venta",
+          "level": "mayor"
+        },
+        {
+          "id": "DES-08",
+          "name": "Producto elegido queda en el pedido",
+          "level": "mayor"
+        },
+        {
+          "id": "DES-09",
+          "name": "Diseño antes que aroma",
+          "level": "menor"
+        }
+      ]
+    },
+    {
+      "key": "variantes",
+      "label": "variantes",
+      "color": "var(--color-violet)",
+      "columns": [
+        {
+          "id": "VAR-01",
+          "name": "Cuatro o más aromas o colores nunca en texto plano",
+          "level": "critico"
+        },
+        {
+          "id": "VAR-01b",
+          "name": "La guarda de variantes tuvo que actuar",
+          "level": "mayor"
+        },
+        {
+          "id": "VAR-02",
+          "name": "Picker con opciones válidas",
+          "level": "mayor"
+        },
+        {
+          "id": "VAR-03",
+          "name": "Sin pickers duplicados en un turno",
+          "level": "menor"
+        },
+        {
+          "id": "VAR-04",
+          "name": "Elección de variante queda en el pedido",
+          "level": "mayor"
+        },
+        {
+          "id": "VAR-05",
+          "name": "No elige variantes por el cliente",
+          "level": "mayor"
+        },
+        {
+          "id": "VAR-06",
+          "name": "No vuelve a preguntar la cantidad",
+          "level": "mayor"
+        },
+        {
+          "id": "VAR-07",
+          "name": "Precio visible antes de pedir confirmación o datos",
+          "level": "mayor"
+        },
+        {
+          "id": "VAR-09",
+          "name": "Botones rápidos sin selectores de catálogo",
+          "level": "menor"
+        }
+      ]
+    },
+    {
+      "key": "confirmacion",
+      "label": "confirmación",
+      "color": "var(--color-cyan)",
+      "columns": [
+        {
+          "id": "CON-01",
+          "name": "Formulario de envío solo tras confirmación de compra",
+          "level": "critico"
+        },
+        {
+          "id": "CON-02",
+          "name": "Aplazamiento respetado",
+          "level": "critico"
+        },
+        {
+          "id": "CON-03",
+          "name": "No afirma pedido confirmado o registrado sin serlo",
+          "level": "critico"
+        },
+        {
+          "id": "CON-04",
+          "name": "Pide el sí explícito antes de avanzar",
+          "level": "mayor"
+        },
+        {
+          "id": "CON-05",
+          "name": "La guarda de confirmación tuvo que actuar",
+          "level": "mayor"
+        }
+      ]
+    },
+    {
+      "key": "datos_envio",
+      "label": "datos de envío",
+      "color": "var(--color-yellow)",
+      "columns": [
+        {
+          "id": "ENV-01",
+          "name": "Formulario de envío una sola vez",
+          "level": "mayor"
+        },
+        {
+          "id": "ENV-02",
+          "name": "Formulario sin responder al cliente",
+          "level": "mayor"
+        },
+        {
+          "id": "ENV-03",
+          "name": "Datos del formulario quedan en el pedido",
+          "level": "mayor"
+        },
+        {
+          "id": "ENV-04",
+          "name": "No vuelve a pedir datos de envío ya dados",
+          "level": "mayor"
+        },
+        {
+          "id": "ENV-05",
+          "name": "Sin datos bancarios ni valor de envío definitivo en texto",
+          "level": "critico"
+        },
+        {
+          "id": "ENV-06",
+          "name": "Formas de pago informadas correctamente",
+          "level": "mayor"
+        },
+        {
+          "id": "ENV-07",
+          "name": "Nombre de quien recibe antes de registrar",
+          "level": "mayor"
+        }
+      ]
+    },
+    {
+      "key": "cierre",
+      "label": "cierre",
+      "color": "var(--color-pink)",
+      "columns": [
+        {
+          "id": "CIE-01",
+          "name": "Secuencia canónica de cierre",
+          "level": "critico"
+        },
+        {
+          "id": "CIE-02",
+          "name": "Registra la orden solo con confirmación del cliente",
+          "level": "critico"
+        },
+        {
+          "id": "CIE-03",
+          "name": "Pago pendiente si y solo si hay orden",
+          "level": "critico"
+        },
+        {
+          "id": "CIE-03b",
+          "name": "La red de seguridad tuvo que cerrar la orden",
+          "level": "mayor"
+        },
+        {
+          "id": "CIE-04",
+          "name": "Escala la verificación de pago tras registrar",
+          "level": "critico"
+        },
+        {
+          "id": "CIE-05",
+          "name": "Un solo mensaje de cierre, sin frases prohibidas",
+          "level": "mayor"
+        },
+        {
+          "id": "CIE-06",
+          "name": "Nunca COMPRA_EXITOSA por el bot",
+          "level": "critico"
+        },
+        {
+          "id": "CIE-07",
+          "name": "Montos coherentes",
+          "level": "critico"
+        },
+        {
+          "id": "CIE-08",
+          "name": "Aviso de portavelas solo si el pedido lo trae",
+          "level": "menor"
+        }
+      ]
+    },
+    {
+      "key": "postcierre",
+      "label": "post-cierre",
+      "color": "var(--color-accent)",
+      "columns": [
+        {
+          "id": "POS-01",
+          "name": "Pago afirmado solo con pago verificado",
+          "level": "critico"
+        },
+        {
+          "id": "POS-02",
+          "name": "Cambios al pedido se escalan",
+          "level": "mayor"
+        }
+      ]
+    },
+    {
+      "key": "transversal",
+      "label": "transversal",
+      "color": "var(--color-neutral)",
+      "columns": [
+        {
+          "id": "TAG-01",
+          "name": "Etiqueta de cierre sostenida por la evidencia",
+          "level": "critico"
+        },
+        {
+          "id": "TAG-01b",
+          "name": "La guarda de etiquetas tuvo que degradar",
+          "level": "mayor"
+        },
+        {
+          "id": "TAG-02",
+          "name": "Motivo de escalación sostenido por la evidencia",
+          "level": "critico"
+        },
+        {
+          "id": "TAG-03",
+          "name": "Escala cuando el guion lo exige",
+          "level": "mayor"
+        },
+        {
+          "id": "TAG-04",
+          "name": "No escala consultas normales",
+          "level": "mayor"
+        },
+        {
+          "id": "TAG-05",
+          "name": "Con ruta humano el bot no vuelve a hablar",
+          "level": "critico"
+        },
+        {
+          "id": "TAG-06",
+          "name": "La red de escalación tuvo que actuar",
+          "level": "mayor"
+        },
+        {
+          "id": "TAG-07",
+          "name": "RECHAZO o INTERESADO sostenidos por la conversación",
+          "level": "mayor"
+        },
+        {
+          "id": "EST-01",
+          "name": "Tuteo colombiano, cero voseo",
+          "level": "menor"
+        },
+        {
+          "id": "EST-02",
+          "name": "Sin guion largo y emojis de la lista",
+          "level": "menor"
+        },
+        {
+          "id": "EST-03",
+          "name": "Sin texto administrativo al cliente",
+          "level": "critico"
+        },
+        {
+          "id": "EST-03b",
+          "name": "La guarda de texto administrativo tuvo que actuar",
+          "level": "mayor"
+        },
+        {
+          "id": "EST-04",
+          "name": "No revela que es una IA",
+          "level": "mayor"
+        },
+        {
+          "id": "EST-05",
+          "name": "Sin promesas de tiempos de entrega",
+          "level": "mayor"
+        },
+        {
+          "id": "EST-06",
+          "name": "Sin narración descartada",
+          "level": "menor"
+        },
+        {
+          "id": "EST-07",
+          "name": "Retiene lo que el cliente ya dijo",
+          "level": "mayor"
+        },
+        {
+          "id": "EST-08",
+          "name": "Responde lo que el cliente preguntó",
+          "level": "mayor"
+        },
+        {
+          "id": "GHO-01",
+          "name": "El turno de ghosting no le escribe al cliente",
+          "level": "critico"
+        },
+        {
+          "id": "GHO-02",
+          "name": "Con formulario pendiente espera diez minutos",
+          "level": "menor"
+        }
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "key": "wa_100000000001::ep_007",
+      "verdict": "FALLA",
+      "label": "wa_…0000001 · ep_007",
+      "title": "wa_100000000001 · ep_007",
+      "meta": "2026-09-14 · CONFIRMADO_SIN_DATOS",
+      "checks": {
+        "APE-01": "pasa",
+        "APE-02": "pasa",
+        "APE-03": "pasa",
+        "APE-04": "no_aplica",
+        "DES-01": "desconocido",
+        "DES-02": "desconocido",
+        "DES-03": "desconocido",
+        "DES-05": "desconocido",
+        "DES-08": "desconocido",
+        "DES-09": "desconocido",
+        "VAR-01": "falla",
+        "VAR-01b": "pasa",
+        "VAR-02": "no_aplica",
+        "VAR-03": "no_aplica",
+        "VAR-04": "no_aplica",
+        "VAR-06": "pasa",
+        "VAR-07": "pasa",
+        "VAR-09": "pasa",
+        "CON-01": "falla",
+        "CON-02": "falla",
+        "CON-03": "no_aplica",
+        "CON-05": "pasa",
+        "ENV-01": "desconocido",
+        "ENV-02": "desconocido",
+        "ENV-03": "desconocido",
+        "ENV-04": "desconocido",
+        "ENV-05": "desconocido",
+        "ENV-07": "desconocido",
+        "CIE-01": "desconocido",
+        "CIE-02": "desconocido",
+        "CIE-03": "desconocido",
+        "CIE-03b": "desconocido",
+        "CIE-04": "desconocido",
+        "CIE-05": "desconocido",
+        "CIE-06": "desconocido",
+        "CIE-07": "desconocido",
+        "CIE-08": "desconocido",
+        "POS-01": "desconocido",
+        "TAG-01": "falla",
+        "TAG-01b": "pasa",
+        "TAG-02": "falla",
+        "TAG-05": "pasa",
+        "TAG-06": "pasa",
+        "EST-01": "desconocido",
+        "EST-02": "desconocido",
+        "EST-03": "desconocido",
+        "EST-03b": "desconocido",
+        "EST-05": "desconocido",
+        "EST-06": "desconocido",
+        "GHO-01": "pasa",
+        "GHO-02": "falla"
+      }
+    },
+    {
+      "key": "wa_100000000002::ep_012",
+      "verdict": "FALLA",
+      "label": "wa_…0000002 · ep_012",
+      "title": "wa_100000000002 · ep_012",
+      "meta": "2026-09-13 · CONFIRMADO_PAGO_PENDIENTE",
+      "checks": {
+        "APE-01": "pasa",
+        "APE-02": "pasa",
+        "APE-03": "pasa",
+        "APE-04": "pasa",
+        "DES-01": "falla",
+        "DES-02": "pasa",
+        "DES-03": "pasa",
+        "DES-05": "pasa",
+        "DES-08": "pasa",
+        "DES-09": "pasa",
+        "VAR-01": "pasa",
+        "VAR-01b": "pasa",
+        "VAR-02": "pasa",
+        "VAR-03": "pasa",
+        "VAR-04": "pasa",
+        "VAR-06": "pasa",
+        "VAR-07": "pasa",
+        "VAR-09": "pasa",
+        "CON-01": "pasa",
+        "CON-02": "pasa",
+        "CON-03": "pasa",
+        "CON-05": "pasa",
+        "ENV-01": "pasa",
+        "ENV-02": "pasa",
+        "ENV-03": "pasa",
+        "ENV-04": "pasa",
+        "ENV-05": "pasa",
+        "ENV-07": "pasa",
+        "CIE-01": "pasa",
+        "CIE-02": "pasa",
+        "CIE-03": "falla",
+        "CIE-03b": "pasa",
+        "CIE-04": "pasa",
+        "CIE-05": "pasa",
+        "CIE-06": "pasa",
+        "CIE-07": "pasa",
+        "CIE-08": "pasa",
+        "POS-01": "no_aplica",
+        "TAG-01": "pasa",
+        "TAG-01b": "pasa",
+        "TAG-02": "pasa",
+        "TAG-05": "pasa",
+        "TAG-06": "pasa",
+        "EST-01": "pasa",
+        "EST-02": "pasa",
+        "EST-03": "pasa",
+        "EST-03b": "pasa",
+        "EST-05": "pasa",
+        "EST-06": "pasa",
+        "GHO-01": "pasa",
+        "GHO-02": "pasa"
+      }
+    },
+    {
+      "key": "wa_100000000003::ep_003",
+      "verdict": "ALERTA",
+      "label": "wa_…0000003 · ep_003",
+      "title": "wa_100000000003 · ep_003",
+      "meta": "2026-09-13 · INTERESADO",
+      "checks": {
+        "APE-01": "pasa",
+        "APE-02": "pasa",
+        "APE-03": "pasa",
+        "APE-04": "pasa",
+        "DES-01": "pasa",
+        "DES-02": "pasa",
+        "DES-03": "pasa",
+        "DES-05": "pasa",
+        "DES-08": "pasa",
+        "DES-09": "pasa",
+        "VAR-01": "pasa",
+        "VAR-01b": "pasa",
+        "VAR-02": "pasa",
+        "VAR-03": "pasa",
+        "VAR-04": "pasa",
+        "VAR-06": "pasa",
+        "VAR-07": "falla",
+        "VAR-09": "pasa",
+        "CON-01": "pasa",
+        "CON-02": "pasa",
+        "CON-03": "pasa",
+        "CON-05": "pasa",
+        "ENV-01": "pasa",
+        "ENV-02": "falla",
+        "ENV-03": "pasa",
+        "ENV-04": "pasa",
+        "ENV-05": "pasa",
+        "ENV-07": "pasa",
+        "CIE-01": "no_aplica",
+        "CIE-02": "no_aplica",
+        "CIE-03": "no_aplica",
+        "CIE-03b": "no_aplica",
+        "CIE-04": "no_aplica",
+        "CIE-05": "no_aplica",
+        "CIE-06": "no_aplica",
+        "CIE-07": "no_aplica",
+        "CIE-08": "no_aplica",
+        "POS-01": "no_aplica",
+        "TAG-01": "pasa",
+        "TAG-01b": "pasa",
+        "TAG-02": "pasa",
+        "TAG-05": "pasa",
+        "TAG-06": "pasa",
+        "EST-01": "pasa",
+        "EST-02": "pasa",
+        "EST-03": "pasa",
+        "EST-03b": "pasa",
+        "EST-05": "pasa",
+        "EST-06": "pasa",
+        "GHO-01": "pasa",
+        "GHO-02": "pasa"
+      }
+    },
+    {
+      "key": "wa_100000000004::ep_001",
+      "verdict": "ALERTA",
+      "label": "wa_…0000004 · ep_001",
+      "title": "wa_100000000004 · ep_001",
+      "meta": "2026-09-12 · INTERESADO · legado",
+      "checks": {
+        "APE-01": "pasa",
+        "APE-02": "pasa",
+        "APE-03": "pasa",
+        "APE-04": "pasa",
+        "DES-01": "pasa",
+        "DES-02": "pasa",
+        "DES-03": "pasa",
+        "DES-05": "pasa",
+        "DES-08": "pasa",
+        "DES-09": "pasa",
+        "VAR-01": "pasa",
+        "VAR-01b": "desconocido",
+        "VAR-02": "pasa",
+        "VAR-03": "pasa",
+        "VAR-04": "pasa",
+        "VAR-06": "falla",
+        "VAR-07": "pasa",
+        "VAR-09": "pasa",
+        "CON-01": "no_aplica",
+        "CON-02": "no_aplica",
+        "CON-03": "no_aplica",
+        "CON-05": "no_aplica",
+        "ENV-01": "no_aplica",
+        "ENV-02": "no_aplica",
+        "ENV-03": "no_aplica",
+        "ENV-04": "no_aplica",
+        "ENV-05": "no_aplica",
+        "ENV-07": "no_aplica",
+        "CIE-01": "no_aplica",
+        "CIE-02": "no_aplica",
+        "CIE-03": "no_aplica",
+        "CIE-03b": "no_aplica",
+        "CIE-04": "no_aplica",
+        "CIE-05": "no_aplica",
+        "CIE-06": "no_aplica",
+        "CIE-07": "no_aplica",
+        "CIE-08": "no_aplica",
+        "POS-01": "no_aplica",
+        "TAG-01": "pasa",
+        "TAG-01b": "pasa",
+        "TAG-02": "pasa",
+        "TAG-05": "pasa",
+        "TAG-06": "pasa",
+        "EST-01": "pasa",
+        "EST-02": "pasa",
+        "EST-03": "pasa",
+        "EST-03b": "pasa",
+        "EST-05": "pasa",
+        "EST-06": "desconocido",
+        "GHO-01": "pasa",
+        "GHO-02": "desconocido"
+      }
+    },
+    {
+      "key": "wa_100000000005::ep_002",
+      "verdict": "PASA",
+      "label": "wa_…0000005 · ep_002",
+      "title": "wa_100000000005 · ep_002",
+      "meta": "2026-09-12 · CONFIRMADO_PAGO_PENDIENTE",
+      "checks": {
+        "APE-01": "pasa",
+        "APE-02": "pasa",
+        "APE-03": "pasa",
+        "APE-04": "pasa",
+        "DES-01": "pasa",
+        "DES-02": "pasa",
+        "DES-03": "pasa",
+        "DES-04": "pasa",
+        "DES-05": "pasa",
+        "DES-06": "pasa",
+        "DES-07": "pasa",
+        "DES-08": "pasa",
+        "DES-09": "pasa",
+        "VAR-01": "pasa",
+        "VAR-01b": "pasa",
+        "VAR-02": "pasa",
+        "VAR-03": "pasa",
+        "VAR-04": "pasa",
+        "VAR-05": "pasa",
+        "VAR-06": "pasa",
+        "VAR-07": "pasa",
+        "VAR-09": "pasa",
+        "CON-01": "pasa",
+        "CON-02": "pasa",
+        "CON-03": "pasa",
+        "CON-04": "pasa",
+        "CON-05": "pasa",
+        "ENV-01": "pasa",
+        "ENV-02": "pasa",
+        "ENV-03": "pasa",
+        "ENV-04": "pasa",
+        "ENV-05": "pasa",
+        "ENV-06": "pasa",
+        "ENV-07": "pasa",
+        "CIE-01": "pasa",
+        "CIE-02": "pasa",
+        "CIE-03": "pasa",
+        "CIE-03b": "pasa",
+        "CIE-04": "pasa",
+        "CIE-05": "pasa",
+        "CIE-06": "pasa",
+        "CIE-07": "pasa",
+        "CIE-08": "pasa",
+        "POS-01": "no_aplica",
+        "POS-02": "no_aplica",
+        "TAG-01": "pasa",
+        "TAG-01b": "pasa",
+        "TAG-02": "pasa",
+        "TAG-03": "pasa",
+        "TAG-04": "pasa",
+        "TAG-05": "pasa",
+        "TAG-06": "pasa",
+        "TAG-07": "pasa",
+        "EST-01": "pasa",
+        "EST-02": "pasa",
+        "EST-03": "pasa",
+        "EST-03b": "pasa",
+        "EST-04": "pasa",
+        "EST-05": "pasa",
+        "EST-06": "pasa",
+        "EST-07": "pasa",
+        "EST-08": "pasa",
+        "GHO-01": "pasa",
+        "GHO-02": "pasa"
+      }
+    },
+    {
+      "key": "wa_100000000006::ep_001",
+      "verdict": "PASA",
+      "label": "wa_…0000006 · ep_001",
+      "title": "wa_100000000006 · ep_001",
+      "meta": "2026-09-11 · RECHAZO",
+      "checks": {
+        "APE-01": "pasa",
+        "APE-02": "falla",
+        "APE-03": "pasa",
+        "APE-04": "pasa",
+        "DES-01": "pasa",
+        "DES-02": "pasa",
+        "DES-03": "pasa",
+        "DES-05": "pasa",
+        "DES-08": "pasa",
+        "DES-09": "pasa",
+        "VAR-01": "no_aplica",
+        "VAR-01b": "no_aplica",
+        "VAR-02": "no_aplica",
+        "VAR-03": "no_aplica",
+        "VAR-04": "no_aplica",
+        "VAR-06": "no_aplica",
+        "VAR-07": "no_aplica",
+        "VAR-09": "no_aplica",
+        "CON-01": "no_aplica",
+        "CON-02": "no_aplica",
+        "CON-03": "no_aplica",
+        "CON-05": "no_aplica",
+        "ENV-01": "no_aplica",
+        "ENV-02": "no_aplica",
+        "ENV-03": "no_aplica",
+        "ENV-04": "no_aplica",
+        "ENV-05": "no_aplica",
+        "ENV-07": "no_aplica",
+        "CIE-01": "no_aplica",
+        "CIE-02": "no_aplica",
+        "CIE-03": "no_aplica",
+        "CIE-03b": "no_aplica",
+        "CIE-04": "no_aplica",
+        "CIE-05": "no_aplica",
+        "CIE-06": "no_aplica",
+        "CIE-07": "no_aplica",
+        "CIE-08": "no_aplica",
+        "POS-01": "no_aplica",
+        "TAG-01": "pasa",
+        "TAG-01b": "pasa",
+        "TAG-02": "pasa",
+        "TAG-05": "pasa",
+        "TAG-06": "pasa",
+        "EST-01": "pasa",
+        "EST-02": "pasa",
+        "EST-03": "pasa",
+        "EST-03b": "pasa",
+        "EST-05": "pasa",
+        "EST-06": "pasa",
+        "GHO-01": "pasa",
+        "GHO-02": "pasa"
+      }
+    },
+    {
+      "key": "wa_100000000007::ep_004",
+      "verdict": "SIN_DATOS",
+      "label": "wa_…0000007 · ep_004",
+      "title": "wa_100000000007 · ep_004",
+      "meta": "2026-09-10",
+      "checks": {}
+    }
+  ]
+}

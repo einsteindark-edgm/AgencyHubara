@@ -56,6 +56,7 @@ class FakeLoadOrStart:
         message: str,
         phone_number_id: str | None,
         extra_context: list[str] | None = None,
+        inbound_meta: dict | None = None,
     ) -> None:
         self.calls.append(_Call(session_id, message, phone_number_id, extra_context))
 
@@ -71,6 +72,14 @@ class FakeMetadataStore:
 
     def write(self, session_id: str, data: dict) -> None:
         self.store[session_id] = dict(data)
+
+    def update(self, session_id: str, mutator):  # noqa: ANN001, ANN201
+        import copy
+
+        result = mutator(copy.deepcopy(self.read(session_id)))
+        if result is not None:
+            self.write(session_id, result)
+        return result
 
 
 def _make_image(media_id: str, *, caption: str | None = None) -> WhatsAppMessage:
@@ -485,3 +494,142 @@ def test_parse_kind_and_description_robust():
     kind2, desc2 = _parse_kind_and_description("una vela rosada bonita")
     assert kind2 == VISION_KIND_OTHER
     assert desc2 == "una vela rosada bonita"
+
+
+# --- Identificación de la foto contra el catálogo (2026-09-30) --------------
+
+
+class _Identifier:
+    """Doble del identificador de fotos: devuelve el producto que se le da."""
+
+    def __init__(self, product) -> None:  # noqa: ANN001
+        self.product = product
+        self.seen: list = []
+        self.refreshes = 0
+
+    cost_usd = 0.0
+    calls = 0
+
+    async def identify(self, vision, image):  # noqa: ANN001, ANN201
+        from src.plugins.chats.agent.sales.use_cases.photo_product import PhotoIdentification
+
+        self.seen.append(vision)
+        return PhotoIdentification(
+            self.product, {"text": {"handle": getattr(self.product, "handle", None)}},
+            cost_usd=self.cost_usd, calls=self.calls,
+        )
+
+    def refresh_index_soon(self) -> None:
+        self.refreshes += 1
+
+
+def _identified_use_case(identifier: _Identifier) -> tuple[FakeLoadOrStart, FakeMetadataStore, IngestInboundMessage]:
+    loader, metadata = FakeLoadOrStart(), FakeMetadataStore()
+    use_case = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=metadata,  # type: ignore[arg-type]
+        photo_identifier=identifier,
+    )
+    return loader, metadata, use_case
+
+
+@pytest.mark.asyncio
+async def test_a_photo_of_our_product_enters_naming_it_and_the_turn_carries_the_note(monkeypatch):
+    """Caso 6543 (laboratorio caso-fotos-0929): la captura de nuestro catálogo
+    con «Sacrificio de Amor». La foto entra a la conversación nombrando el
+    producto (queda en el historial y en el dashboard) y el turno lleva la nota
+    que prohíbe negarlo."""
+    from src.plugins.chats.agent.sales.use_cases.photo_product import PhotoProduct
+
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    identifier = _Identifier(PhotoProduct("sacrificio-de-amor", "Sacrificio de Amor", "nombre", "Sacrificio de Amor"))
+    loader, metadata, use_case = _identified_use_case(identifier)
+
+    await use_case._describe_image_and_reenter(_make_image("product_1", caption="tienes esta?"))
+
+    [call] = loader.calls
+    assert call.message == (
+        "[el cliente envió una foto: Foto de una vela artesanal color rosado (es nuestro producto "
+        '«Sacrificio de Amor»: se lee su nombre en la imagen)] con el texto: "tienes esta?"'
+    )
+    notes = [n for n in call.extra_context or [] if n.startswith("[FOTO DEL CLIENTE")]
+    assert len(notes) == 1 and "«Sacrificio de Amor» (handle sacrificio-de-amor)" in notes[0]
+    recent = metadata.store["wa_5491111111111"]["recent_image_descriptions"][-1]
+    assert recent["product"] == {"handle": "sacrificio-de-amor", "how": "nombre", "title": "Sacrificio de Amor"}
+    assert identifier.refreshes == 1
+
+
+@pytest.mark.asyncio
+async def test_the_turns_after_the_photo_still_know_it_is_ours(monkeypatch):
+    """Laboratorio caso-fotos-0930-r7, 4567 t13: ya reconocida la foto, el
+    cliente dice «no están todas» y el bot negó lo verificado. Cada turno
+    siguiente lleva la nota de las fotos reconocidas en el episodio (la de la
+    foto misma ya lleva la suya)."""
+    from src.plugins.chats.agent.sales.use_cases.photo_product import PhotoProduct
+
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    identifier = _Identifier(PhotoProduct("sacrificio-de-amor", "Sacrificio de Amor", "nombre", "Sacrificio de Amor"))
+    loader, metadata, use_case = _identified_use_case(identifier)
+    text = WhatsAppMessage(
+        message_id="wamid.TXT", from_number="5491111111111", phone_number_id="PID",
+        text="me gustaría esas, pero no están todas", media=None, timestamp="1714312350", msg_type="text",
+    )
+
+    await use_case.execute(_make_image("product_1"))
+    await use_case.execute(text)  # espera a que la foto entre
+
+    photo_call, text_call = loader.calls
+    facts = [n for n in text_call.extra_context or [] if n.startswith("[FOTOS DEL CLIENTE YA RECONOCIDAS")]
+    assert len(facts) == 1 and "es «Sacrificio de Amor» (handle sacrificio-de-amor)" in facts[0]
+    assert not [n for n in photo_call.extra_context or [] if n.startswith("[FOTOS DEL CLIENTE YA RECONOCIDAS")]
+    stored = metadata.store["wa_5491111111111"]
+    assert stored["recent_image_descriptions"][-1]["episode_id"] == stored["episodes"][-1]["episode_id"]
+
+
+@pytest.mark.asyncio
+async def test_a_photo_that_is_not_identified_enters_as_before(monkeypatch):
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    identifier = _Identifier(None)
+    loader, metadata, use_case = _identified_use_case(identifier)
+
+    await use_case._describe_image_and_reenter(_make_image("product_1"))
+
+    [call] = loader.calls
+    assert call.message == "[el cliente envió una foto: Foto de una vela artesanal color rosado]"
+    assert not [n for n in call.extra_context or [] if n.startswith("[FOTO DEL CLIENTE")]
+    assert "product" not in metadata.store["wa_5491111111111"]["recent_image_descriptions"][-1]
+    assert len(identifier.seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_payment_receipt_is_never_matched_against_the_catalog(monkeypatch):
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    monkeypatch.setattr("src.platform.whatsapp.client.send_message", _noop_send, raising=False)
+    identifier = _Identifier(None)
+    _, _, use_case = _identified_use_case(identifier)
+
+    await use_case._describe_image_and_reenter(_make_image("receipt_1"))
+
+    assert identifier.seen == []
+
+
+async def _noop_send(*_args, **_kwargs) -> None:  # noqa: ANN002, ANN003
+    return None
+
+
+@pytest.mark.asyncio
+async def test_what_reading_the_photo_cost_goes_to_the_conversation(monkeypatch):
+    """Describir la foto + buscarla en el catálogo (huella y comparación):
+    todo queda en `vision_usage` del episodio, como el costo LLM, WA y Jev."""
+    monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
+    identifier = _Identifier(None)
+    identifier.cost_usd, identifier.calls = 0.0008, 2
+    loader, metadata, use_case = _identified_use_case(identifier)
+    metadata.store["wa_5491111111111"] = {"episodes": [{"episode_id": "ep_001", "closed_at_ms": None}]}
+
+    await use_case._describe_image_and_reenter(_make_image("product_1"))
+
+    [episode] = metadata.store["wa_5491111111111"]["episodes"]
+    # 1 descripción (el doble no cobra) + 2 de la búsqueda por imagen.
+    assert episode["vision_usage"] == {"calls": 3, "cost_usd_micros": 800}

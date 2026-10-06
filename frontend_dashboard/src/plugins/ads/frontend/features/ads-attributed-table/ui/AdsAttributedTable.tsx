@@ -22,6 +22,7 @@ import {
   fmtN,
   fmtUsd,
   fmtUsdMicros,
+  fmtUsdMicrosFine,
 } from "@plugins/ads/frontend/lib/format";
 import { MissingField } from "@plugins/ads/frontend/lib/MissingField";
 
@@ -99,6 +100,15 @@ export function AdsAttributedTable({ rows }: Props) {
               <th className="num">Costo LLM</th>
               <th className="num" title="Lo que Meta cobra por los mensajes de esta conversación, por categoría">
                 Costo WA
+              </th>
+              <th className="num" title="Lo que cobra Jev (el clasificador del bot nuevo) por las preguntas de esta conversación">
+                Costo Jev
+              </th>
+              <th className="num" title="Lo que cuesta leer las fotos del cliente: describirlas y buscarlas en el catálogo">
+                Costo imágenes
+              </th>
+              <th className="num" title="Lo que cuesta transcribir las notas de voz del cliente">
+                Costo audio
               </th>
             </tr>
           </thead>
@@ -215,12 +225,68 @@ export function AdsAttributedTable({ rows }: Props) {
                       <MissingField />
                     )}
                   </td>
+                  {/* Costo de Jev de la conversación + cuántas preguntas.
+                      null = no le preguntó a Jev (hoy, toda conversación del
+                      bot actual): no es un dato que falte. */}
+                  <td className="num" data-testid="jev-cost-cell">
+                    {c.jevCostUsdMicros != null ? (
+                      <div>
+                        <div>{fmtUsdMicrosFine(c.jevCostUsdMicros)}</div>
+                        {c.jevCalls != null && (
+                          <div style={{ fontSize: 11, color: "var(--fg-mute)" }}>
+                            {fmtN(c.jevCalls)} {c.jevCalls === 1 ? "pregunta" : "preguntas"}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span title="Esta conversación no le preguntó a Jev" style={{ color: "var(--fg-faint)" }}>
+                        —
+                      </span>
+                    )}
+                  </td>
+                  {/* Costo de leer las fotos del cliente (describir, huella y
+                      comparar contra el catálogo) + cuántas lecturas. null =
+                      no mandó fotos. */}
+                  <td className="num" data-testid="vision-cost-cell">
+                    {c.visionCostUsdMicros != null ? (
+                      <div>
+                        <div>{fmtUsdMicrosFine(c.visionCostUsdMicros)}</div>
+                        {c.visionCalls != null && (
+                          <div style={{ fontSize: 11, color: "var(--fg-mute)" }}>
+                            {fmtN(c.visionCalls)} {c.visionCalls === 1 ? "lectura" : "lecturas"}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span title="El cliente no mandó fotos en esta conversación" style={{ color: "var(--fg-faint)" }}>
+                        —
+                      </span>
+                    )}
+                  </td>
+                  {/* Costo de transcribir sus notas de voz + cuántas. null =
+                      no mandó notas de voz. */}
+                  <td className="num" data-testid="audio-cost-cell">
+                    {c.audioCostUsdMicros != null ? (
+                      <div>
+                        <div>{fmtUsdMicrosFine(c.audioCostUsdMicros)}</div>
+                        {c.audioCalls != null && (
+                          <div style={{ fontSize: 11, color: "var(--fg-mute)" }}>
+                            {fmtN(c.audioCalls)} {c.audioCalls === 1 ? "nota de voz" : "notas de voz"}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span title="El cliente no mandó notas de voz en esta conversación" style={{ color: "var(--fg-faint)" }}>
+                        —
+                      </span>
+                    )}
+                  </td>
                 </tr>
               );
             })}
             {list.length === 0 && (
               <tr>
-                <td colSpan={11} className="att-empty">
+                <td colSpan={14} className="att-empty">
                   Sin chats que coincidan con el filtro.
                 </td>
               </tr>

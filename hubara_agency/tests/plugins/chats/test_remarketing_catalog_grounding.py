@@ -401,3 +401,51 @@ async def test_truthful_hook_is_recorded(tmp_path: Path) -> None:
     hook = "Hola de nuevo 🌿 ¿Te ayudo a elegir el aroma de tu Cubo Love? 🤍"
     tracker = await _run_guarded_workflow(tmp_path, hook, ["vaso"])
     assert "Cubo Love" in json.dumps(tracker.recorded_turns, default=str, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------- motor de decisiones (F3)
+#
+# «Producto nombrado» (qué ficha ve el gancho) y «fuera de catálogo» (lo que
+# el cliente pidió y no existe) pasan al motor por el enchufe de
+# `chats/shared/agent_decisions` (remarketing no importa ventas). Con el bot
+# de hoy, o sin el motor conectado, el contexto es el de siempre.
+
+
+def test_the_facts_can_come_from_the_products_the_engine_named() -> None:
+    facts = catalog_facts_for(CATALOG, mentioned="la del corazón me gustó", named=["Cubo de corazón"])
+
+    assert "corazones entrelazados" in facts
+    assert "bajorrelieve" not in facts
+
+
+@pytest.mark.asyncio
+async def test_with_jev_the_hook_gets_the_product_named_in_other_words(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.plugins.chats.agent.sales.decisions.remarketing_context import register_catalog_context_decision
+    from src.plugins.chats.shared import agent_decisions
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    monkeypatch.setattr(agent_decisions, "_catalog_context_decider", None)  # se restaura al terminar
+    register_catalog_context_decision()
+    monkeypatch.setattr(context_mod, "get_catalog_client", lambda: _Catalog(CATALOG))
+    sid = "wa_573001234567"
+    d = _isolate_vault_dir / sid
+    (d / "sessions").mkdir(parents=True)
+    (d / "metadata.json").write_text(json.dumps({"tag": "INTERESADO"}), encoding="utf-8")
+    lines = [{"role": "user", "content": "me encantó la de los corazoncitos"}, {"role": "assistant", "content": "¡Es preciosa!"}]
+    (d / "sessions" / f"{sid}.jsonl").write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in lines), encoding="utf-8")
+
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    today = await ActivityEnvironment().run(read_remarketing_context_activity, sid)
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    pick = TypedAnswer(id="producto.nombrado", kind="choice", choice="cubo_de_corazon",
+                       probs=(("cubo_de_corazon", 0.93),), confidence=0.93)
+    fake = FakePerceptionAdapter({"producto.nombrado": pick})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+    with_jev = await ActivityEnvironment().run(read_remarketing_context_activity, sid)
+
+    assert "corazones entrelazados" not in today.catalog_facts
+    assert "corazones entrelazados" in with_jev.catalog_facts

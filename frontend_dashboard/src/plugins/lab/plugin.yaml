@@ -1,0 +1,37 @@
+# Manifest de lab — generado por `hubara create plugin` (F-SDK-3).
+# Contrato: PLUGIN_CONTRACT.md · schema: ../_schema/plugin.schema.yaml
+# Regla de oro: campo nuevo ⇒ schema + modelo tipado + check (mismo PR).
+id: lab
+version: 0.1.0
+archetype: full_stack  # P-29: el TCK audita esta identidad de por vida
+display_name: Laboratorio
+description: |
+  Laboratorio de conversaciones del agente de ventas: corre el banco de
+  conversaciones reales contra el bot actual y los bots nuevos, y muestra las
+  evaluaciones, el hilo de cada turno y el botón "Nueva corrida". Solo vista:
+  la simulación y la evaluación viven en chats (worker sales_lab) y se leen
+  por el contrato lab@v1.
+
+# Los datos son de chats: se consumen server-side por el cast api/lab
+# (src/plugins/lab/api/lab.py). El frontend solo llama a /api/lab/*.
+depends_on: [chats]
+consumes:
+  - provider: chats
+    contract: lab@v1
+    into: lab-views
+    cast: api/lab
+
+# ── Frontend ───────────────────────────────────────────────────────────
+frontend:
+  entry: ./frontend
+  contributes:
+    sections:
+      - { key: lab, label: Laboratorio, order: 7, icon: flask }
+    sidebar:
+      - { route: /lab, label: Laboratorio, icon: flask }
+
+# ── API REST ────────────────────────────────────────────────────────────
+api:
+  python_module: src.plugins.lab.api
+  prefix: /api/lab
+  tags: [Laboratorio]

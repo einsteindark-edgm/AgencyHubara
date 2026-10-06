@@ -28,6 +28,25 @@ def test_catalogkit_reexports_port_dtos_and_errors():
     assert kit.get_catalog_client is composition.get_catalog_client
 
 
+def test_catalogkit_reexports_the_closed_list_resolvers():
+    """Motor de decisiones (F3, mapeos): el resolver de categorías y el de
+    familias de color son la regla de hoy (el respaldo) de las capacidades
+    `categoria` y `familia_de_color`, que viven en el plugin `chats` y no
+    pueden importar `src.platform` (P-28)."""
+    import src.platform.catalog.categories as categories
+    import src.platform.catalog.color_families as color_families
+    import src.platform.catalog.variant_attrs as variant_attrs
+    import src.sdk.catalogkit as kit
+
+    assert getattr(kit, "CatalogCategoryDTO", None) is categories.CatalogCategoryDTO
+    assert getattr(kit, "CategoryResolution", None) is categories.CategoryResolution
+    assert getattr(kit, "resolve_category", None) is categories.resolve_category
+    assert getattr(kit, "ColorFamilies", None) is color_families.ColorFamilies
+    assert getattr(kit, "resolve_color_family", None) is color_families.resolve_color_family
+    assert getattr(kit, "family_of_color", None) is color_families.family_of_color
+    assert getattr(kit, "normalize_label", None) is variant_attrs.normalize_label
+
+
 def test_catalogkit_reexports_portavelas_predicates():
     """La decisión "¿este producto trae portavela?" vive en platform (es
     metadata de producto); los plugins la consumen vía este kit."""

@@ -1,7 +1,7 @@
 {
   "name": "hubara-dev",
-  "version": "0.1.0",
-  "description": "Harness de desarrollo full-stack para el monorepo AgencyHubara (backend DEHA/Temporal + frontend FSD + plugin system + Platform SDK). Bundlea el skill hubara-plugin-developer, subagents especializados (explorer, tdd-author, gate-reviewer), hooks que enforzan TDD y corren los gates determinísticos, y el comando /hubara-gates. La fuente de verdad del conocimiento es ARCHITECTURE_FINAL_fable.md + docs/_sdk/.",
+  "version": "0.2.0",
+  "description": "Harness de desarrollo full-stack para el monorepo AgencyHubara (backend DEHA/Temporal + frontend FSD + plugin system + Platform SDK). Bundlea el skill hubara-plugin-developer, subagents especializados (explorer, tdd-author, gate-reviewer), hooks que enforzan TDD y corren los gates determinísticos, y el comando /hubara-gates. Conoce el motor de decisiones: un bug de decisión se arregla en el paquete, no en el lugar que decide (L-34). La fuente de verdad del conocimiento es ARCHITECTURE_FINAL_fable.md + docs/_sdk/.",
   "author": {
     "name": "einsteindark"
   },

@@ -23,12 +23,13 @@ hubara-dev/
 │       ├── 01-hard-rules.md            # qué te frena cada gate (§3)
 │       ├── 02-recipes.md               # recetas test-first (§4)
 │       ├── 03-command-panel.md         # panel determinístico (§8)
-│       ├── 04-lessons.md               # qué NO repetir (§9, L-0..L-15)
-│       └── 05-sdk-surface.md           # kits + certificación + CLI (docs/_sdk)
+│       ├── 04-lessons.md               # qué NO repetir (§9, L-0..L-34)
+│       ├── 05-sdk-surface.md           # kits + certificación + CLI (docs/_sdk)
+│       └── 06-decision-bundles.md      # motor de decisiones: paquetes, bucle de un bug de decisión, triage
 ├── agents/                             # ← AGENTS (subagents, contexto aislado)
 │   ├── hubara-explorer.md              # mapea un subsistema antes de editar (read-only)
 │   ├── hubara-tdd-author.md            # escribe el test rojo primero
-│   └── hubara-gate-reviewer.md         # corre §8 + audita §3/§9 antes de cerrar
+│   └── hubara-gate-reviewer.md         # corre §8 + audita §3/§9 + la regla del motor (L-34) antes de cerrar
 ├── hooks/                              # ← HOOKS (enforcement determinista)
 │   ├── hooks.json
 │   └── scripts/{inject-rules,tdd-guard,affected-tests}.py · run-gates.sh
@@ -54,6 +55,12 @@ Tres capas, de menor a mayor fricción:
 3. **PostToolUse** (`affected-tests.py`) — tras la edición, corre el test
    afectado y devuelve 🔴/🟢. Esto es lo que un hook SÍ puede hacer con
    certeza: cerrar el bucle rojo→verde.
+
+El `tdd-guard` suma un segundo recordatorio cuando el archivo es un **lugar
+que decide** (ingest, tools, egreso, remarketing, cierre de ventas): si el
+cambio es de cómo decide el bot, va en una versión nueva del paquete de
+decisión, no en un `if` ahí (L-34). Y al editar un YAML de
+`decisions/bundles/` recuerda que una versión publicada no se edita.
 
 Estos hooks **componen** con los del repo (`pre-bash-cd-check`,
 `post-edit-lint`, `stop-arch-gate`, …): se apilan, no se reemplazan.

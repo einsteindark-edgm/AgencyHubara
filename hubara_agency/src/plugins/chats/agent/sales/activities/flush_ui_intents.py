@@ -92,13 +92,19 @@ _INTENT_TEXT_NEUTRAL: dict[str, str | None] = {
 }
 
 
-def _sanitize_intent_client_text(
-    kind: str, params: dict[str, Any]
+async def _sanitize_intent_client_text(
+    kind: str, params: dict[str, Any], *, session_id: str | None = None
 ) -> dict[str, Any]:
     """Limpia los params de texto de un intent y neutraliza olor a admin.
 
     Import tardío del sanitizer (mismo patrón que el resto del módulo: no
     tocar imports pesados en module load del worker).
+
+    Motor de decisiones (F5): con `session_id`, la muletilla del modelo al
+    principio la decide la capacidad `preambulo` y si un texto NO es para el
+    cliente, `destinatario`, con el proveedor del bot de la conversación (la
+    regla de hoy por defecto: idéntico a antes). Sin `session_id`, la regla
+    de hoy.
     """
     from src.sdk.agentkit import looks_like_admin_leak, sanitize_llm_text
 
@@ -107,8 +113,17 @@ def _sanitize_intent_client_text(
         value = out.get(key)
         if not isinstance(value, str) or not value.strip():
             continue
-        cleaned = sanitize_llm_text(value).text or value
-        if looks_like_admin_leak(cleaned):
+        if session_id:
+            from src.platform.config import WORKSPACE_VAULT_DIR
+            from src.plugins.chats.agent.sales.decisions.guards import clean_llm_text, is_internal_text
+
+            vault = Path(WORKSPACE_VAULT_DIR)
+            cleaned = await clean_llm_text(value, session_id=session_id, vault_dir=vault) or value
+            internal = await is_internal_text(cleaned, session_id=session_id, vault_dir=vault)
+        else:
+            cleaned = sanitize_llm_text(value).text or value
+            internal = looks_like_admin_leak(cleaned)
+        if internal:
             activity.logger.warning(
                 "flush_ui_intents.admin_text_neutralized",
                 extra={
@@ -296,10 +311,14 @@ async def _gallery_inter_delay() -> None:
 
 @activity.defn(name="flush_pending_ui_intents_activity")
 @with_heartbeat(every=5)
-async def flush_pending_ui_intents_activity(session_id: str) -> int:
-    """Activity del workflow: delega en `flush_pending_ui_intents` (la lógica
-    es una función plana para que también la pueda invocar un handler HTTP)."""
-    return await flush_pending_ui_intents(session_id)
+async def flush_pending_ui_intents_activity(session_id: str) -> list[dict[str, Any]] | int:
+    """Activity del workflow: delega en `flush_pending_ui_intents_report` (la
+    lógica es una función plana para que también la pueda invocar un handler
+    HTTP). Devuelve qué entregó, intent por intent (`[{kind, wamid, ok}]`,
+    traza v2). La anotación admite `int` A PROPÓSITO: Temporal decodifica el
+    resultado grabado con este tipo, y las histories anteriores a la traza v2
+    grabaron la cantidad (replay, L-22)."""
+    return await flush_pending_ui_intents_report(session_id)
 
 
 async def flush_pending_ui_intents(
@@ -308,10 +327,24 @@ async def flush_pending_ui_intents(
     only_ids: Collection[str] | None = None,
     operator_tool: str | None = None,
 ) -> int:
+    """Cantidad de intents enviados (excluye los que fallaron y los unknown)."""
+    report = await flush_pending_ui_intents_report(
+        session_id, only_ids=only_ids, operator_tool=operator_tool
+    )
+    return sum(1 for r in report if r["ok"])
+
+
+async def flush_pending_ui_intents_report(
+    session_id: str,
+    *,
+    only_ids: Collection[str] | None = None,
+    operator_tool: str | None = None,
+) -> list[dict[str, Any]]:
     """Lee `metadata.json[pending_ui_intents]` y dispatch a `send_*`.
 
-    Devuelve la cantidad de intents enviados (excluye los que fallaron y
-    los unknown).
+    Devuelve un registro por intent intentado, en orden: `{kind, wamid, ok}`
+    (`wamid` de Meta si salió; `None` si falló o no se despachó). Los intents
+    vencidos que se descartan sin intentar no aparecen.
 
     Función PLANA (sin `activity.info()` ni heartbeat): la invoca la activity
     de arriba desde el workflow Sales y, desde D1.2b, el endpoint
@@ -339,7 +372,7 @@ async def flush_pending_ui_intents(
 
     metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
     if not metadata_file.exists():
-        return 0
+        return []
     try:
         data = json.loads(metadata_file.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
@@ -347,7 +380,7 @@ async def flush_pending_ui_intents(
             "flush_ui_intents.bad_metadata",
             extra={"session_id": session_id},
         )
-        return 0
+        return []
 
     # `data` es la FOTO del arranque: decide qué se envía y a quién, pero
     # NUNCA se reescribe entera. Entre un envío y el siguiente el cliente pudo
@@ -367,7 +400,7 @@ async def flush_pending_ui_intents(
         if wanted is None or (isinstance(i, dict) and i.get("id") in wanted)
     ]
     if not intents:
-        return 0
+        return []
 
     # PREMORTEM C4: descartar intents vencidos ANTES de resolver teléfono o
     # dispatch — un turno suprimido no puede convertirse en un mensaje
@@ -405,7 +438,7 @@ async def flush_pending_ui_intents(
         persist(lambda md: _drop_processed(md, stale_intents))
     intents = fresh_intents
     if not intents:
-        return 0
+        return []
 
     # Resolve target phone
     phone_number_id = data.get("phone_number_id") or os.getenv(
@@ -420,13 +453,13 @@ async def flush_pending_ui_intents(
         # Limpiar igual (lo que se iba a enviar) — no podemos enviar, mejor
         # no acumular forever
         persist(lambda md: _drop_processed(md, intents))
-        return 0
+        return []
 
     last_inbound_msg_id = data.get("last_inbound_message_id")
     bus = get_event_bus()
     tenant_id = os.getenv("HUBARA_TENANT_ID", "hubara")
 
-    sent_count = 0
+    report: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
 
     # PREMORTEM #1: idempotency on Temporal retry.
@@ -451,6 +484,12 @@ async def flush_pending_ui_intents(
         # falle a medias — cada foto que SÍ llegó es citable.
         media_log: list[dict[str, Any]] = []
         try:
+            # Motor de decisiones (`destinatario`, F5): los textos del LLM se
+            # deciden UNA vez, acá. Lo que sale y lo que muestra el panel
+            # (el marker de abajo) son los mismos params: si el motor cambió
+            # un texto por el neutro, el operador ve el neutro que leyó el
+            # cliente, no el texto rechazado.
+            params = await _sanitize_intent_client_text(kind or "", params, session_id=session_id)
             result = await _dispatch_intent(
                 wa_client=wa_client,
                 wa_dtos=wa_dtos,
@@ -461,6 +500,8 @@ async def flush_pending_ui_intents(
                 to_number=to_number,
                 last_inbound_message_id=last_inbound_msg_id,
                 media_log=media_log,
+                session_id=session_id,
+                client_text_decided=True,
             )
         except Exception as e:  # noqa: BLE001
             activity.logger.warning(
@@ -472,6 +513,7 @@ async def flush_pending_ui_intents(
                 },
             )
             failed.append({"kind": kind, "error": str(e)})
+            report.append({"kind": kind, "wamid": None, "ok": False})
             # Pop el intent fallido (NO retry automático — el LLM puede
             # decidir reemitir en próxima iteración) y persistir.
             persist(lambda md: _drop_processed(md, [intent]))
@@ -480,6 +522,7 @@ async def flush_pending_ui_intents(
         if result is None:
             # kind desconocido o intent inválido (sin imagen, etc)
             failed.append({"kind": kind, "error": "no_dispatch"})
+            report.append({"kind": kind, "wamid": None, "ok": False})
             persist(lambda md: _drop_processed(md, [intent]))
             continue
 
@@ -493,6 +536,7 @@ async def flush_pending_ui_intents(
                 },
             )
             failed.append({"kind": kind, "error": result.error})
+            report.append({"kind": kind, "wamid": None, "ok": False})
             persist(lambda md: _drop_processed(md, [intent]))
             continue
 
@@ -502,7 +546,7 @@ async def flush_pending_ui_intents(
         # `_mark_flow_awaiting_reply` ya está en el metadata fresco: esta
         # escritura no lo pisa (run 01a0a0f1, 2026-09-14).
         persist(lambda md: _record_sent(md, intent, media_log))
-        sent_count += 1
+        report.append({"kind": kind, "wamid": result.wa_message_id, "ok": True})
 
         # Auditoría CAPI 2026-09-08: lo que el cliente acaba de VER es la
         # señal de embudo para Meta (ViewContent / AddToCart /
@@ -560,7 +604,7 @@ async def flush_pending_ui_intents(
     if failed:
         persist(lambda md: _record_failures(md, failed))
 
-    return sent_count
+    return report
 
 
 #: Tope del histórico `ui_intents_failures` en metadata.json.
@@ -670,8 +714,14 @@ async def _dispatch_intent(
     to_number: str,
     last_inbound_message_id: str | None,
     media_log: list[dict[str, Any]] | None = None,
+    session_id: str | None = None,
+    client_text_decided: bool = False,
 ):
     """Mapea `kind` a la función `send_*` correspondiente.
+
+    `client_text_decided`: el caller ya pasó los textos del LLM por
+    `_sanitize_intent_client_text` (el flush lo hace para que el marker del
+    panel muestre lo mismo que salió); no se le vuelve a preguntar al motor.
 
     `fallback`: hints opcionales del tool al dispatcher (ej.
     `prefer_native_product_list: bool` para `products_list`). Vacío si la
@@ -688,7 +738,8 @@ async def _dispatch_intent(
     """
     # Choke point de texto LLM en intents (run 1c9ef231): limpiar/neutralizar
     # ANTES de cualquier rama — todos los kinds leen de `params`.
-    params = _sanitize_intent_client_text(kind or "", params)
+    if not client_text_decided:
+        params = await _sanitize_intent_client_text(kind or "", params, session_id=session_id)
     if kind == "product_detail":
         link = params.get("image_url")
         if not link:
@@ -783,8 +834,10 @@ async def _dispatch_intent(
                                 wa_limits.MAX_PRODUCT_LIST_HEADER,
                             ),
                             body=wa_limits.truncate(
-                                params.get("intro_text")
-                                or "Toca un producto para ver más:",
+                                _with_card_guide(
+                                    params.get("intro_text") or "Toca un producto para ver más:",
+                                    first_page=params.get("page") in (None, 1),
+                                ),
                                 wa_limits.MAX_PRODUCT_LIST_BODY,
                             ),
                             sections=product_sections,
@@ -966,9 +1019,14 @@ async def _dispatch_intent(
         # textual completo. A.12 nativo (interactive.order_details) requiere
         # Meta Catalog + gateway approved — se activará por feature flag.
         items = params.get("items") or []
+        # La variante va cuando el producto se repite en varias líneas
+        # («1× Velón Gorrión (Lila · Lavanda)»); si no, la línea de siempre.
         lines = [
-            f"• {it.get('quantity', 1)}× {it.get('title') or it.get('handle')} — "
-            f"${it.get('unit_price_cop', 0):,}".replace(",", ".")
+            (
+                f"• {it.get('quantity', 1)}× {it.get('title') or it.get('handle')}"
+                + (f" ({it['variant']})" if it.get("variant") else "")
+                + f" — ${it.get('unit_price_cop', 0):,}"
+            ).replace(",", ".")
             for it in items
         ]
         items_summary = "\n".join(lines)
@@ -1220,6 +1278,25 @@ async def _dispatch_intent(
     return None
 
 
+#: Cómo se usan los dos botones de la ficha de un producto del catálogo de
+#: WhatsApp (no se pueden cambiar: son de WhatsApp). «Enviar mensaje a la
+#: empresa» manda el producto exacto (`referred_product`, 2026-09-30).
+CATALOG_CARD_GUIDE = (
+    "Toca una vela para ver sus fotos y el precio. Para pedirla, «Añadir a la solicitud de pedido» "
+    "y envía la solicitud; si tienes una duda sobre ella, «Enviar mensaje a la empresa»."
+)
+
+
+def _with_card_guide(intro: str, *, first_page: bool) -> str:
+    """El texto del catálogo con la guía de los botones (solo la primera página)."""
+    return f"{intro}\n\n{CATALOG_CARD_GUIDE}" if first_page else intro
+
+
+def render_variant_picker_text(params: dict[str, Any]) -> str | None:
+    """El texto que recibe el cliente con un selector de variantes."""
+    return _render_variant_picker_text(params)
+
+
 def _render_variant_picker_text(params: dict[str, Any]) -> str | None:
     """Aromas/colores/tamaños como **texto plano con emojis curados**.
 
@@ -1267,9 +1344,11 @@ def _render_variant_picker_text(params: dict[str, Any]) -> str | None:
                 text_lines.append(row_title)
         text_lines.append("")  # separador entre sections
 
-    # Pie pidiendo respuesta libre. Sin botones — esperamos texto.
+    # Pie pidiendo respuesta libre. Sin botones — esperamos texto. Si el
+    # selector lo armó la guarda de enumeración con la lista del bot, cierra
+    # con lo que el bot escribió después de la lista (su pregunta).
     variant_type = params.get("variant_type") or ""
-    tail = {
+    tail = str(params.get("closing_text") or "").strip() or {
         "scent": "Dime cuál te gusta y seguimos 🤍",
         "color": "Cuéntame qué color prefieres y seguimos 🤍",
         "size": "Dime qué tamaño quieres y seguimos 🤍",
@@ -1341,9 +1420,9 @@ def _enqueue_capi_for_sent_intent(
 
 def _capi_contents_for_intent(kind: str | None, params: dict[str, Any]) -> list[dict[str, Any]]:
     """Identidad de producto (``retailer_id`` = SKU en Meta) del intent que el
-    cliente acaba de VER, en la forma ``contents`` de CAPI. Es lo que hace que
-    Commerce Manager cruce el evento con el catálogo (2026-09-14: 0% de
-    coincidencia porque ningún evento la traía).
+    cliente acaba de VER, en la forma ``contents`` de CAPI: le dice a Meta qué
+    producto vio. No cuenta para la "coincidencia de catálogo" (solo eventos
+    web/app, verificado 2026-09-21).
 
       * product_detail / product_gallery / variant_picker → el producto
         (``params.retailer_id``, precio unitario si viene).

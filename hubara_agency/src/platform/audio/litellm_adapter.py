@@ -49,6 +49,7 @@ from __future__ import annotations
 import base64
 import os
 import time
+from typing import Any
 
 import litellm
 import structlog
@@ -56,15 +57,9 @@ import structlog
 from src.platform.audio.dtos import TranscriptionRequest, TranscriptionResult
 from src.platform.audio.meta_media_fetcher import fetch_media_bytes
 from src.platform.config import API_BASE_LLMLITE
+from src.platform.observability.pricing import response_cost_usd
 
 logger = structlog.get_logger()
-
-# Costo estimado por segundo de audio para Gemini Flash-Lite.
-# Cálculo: ~25 tokens/segundo input @ $0.10/1M tokens audio + ~10 tokens output
-# por segundo @ $0.40/1M output. Total ≈ $0.000003/segundo audio.
-# Si cambiás el modelo, este número solo afecta la métrica de cost_usd_estimate,
-# no la lógica.
-_GEMINI_FLASH_LITE_COST_PER_SECOND = 0.000004
 
 
 _PROMPT_ES = (
@@ -98,6 +93,13 @@ _INAUDIBLE_MARKERS = (
 # transcribe a "sí" o "ok" es útil, pero "..." o "a" no.
 _MIN_USEFUL_CHARS = 2
 
+# Gemini cuenta el audio a 32 tokens por segundo ("1 minute = 1,920 tokens",
+# ai.google.dev/gemini-api/docs/audio, revisado 2026-10-05). Antes se dividía
+# por 25: una nota de ~47 s salía "de más de 60 s" y al cliente se le pedía
+# escribirla. `_PROMPT_TEXT_TOKENS` = lo que pesa `_PROMPT_ES` (~250 chars).
+_AUDIO_TOKENS_PER_SECOND = 32.0
+_PROMPT_TEXT_TOKENS = 70
+
 
 class LiteLLMTranscriptionAdapter:
     """Transcripción vía litellm + Gemini Flash-Lite (default) u otro modelo
@@ -108,12 +110,10 @@ class LiteLLMTranscriptionAdapter:
         model: str = "litellm_proxy/gemini-multimodal",
         api_base: str | None = None,
         api_key: str | None = None,
-        cost_per_second_usd: float = _GEMINI_FLASH_LITE_COST_PER_SECOND,
     ) -> None:
         self._model = model
         self._api_base = api_base
         self._api_key = api_key
-        self._cost_per_second = cost_per_second_usd
         # Identificador opaco para logs / analytics
         self.name = model.replace("/", "_")
 
@@ -224,6 +224,12 @@ class LiteLLMTranscriptionAdapter:
             )
 
         latency_ms = int((time.time() - started) * 1000)
+        # Google ya cobró: el costo viaja en TODO resultado de aquí en adelante
+        # (también vacío, inaudible o muy corto), para cargarlo a la
+        # conversación. Lo que diga el proxy o tokens × tabla con la entrada a
+        # la tarifa de AUDIO del modelo que contestó (2.5 Flash-Lite cobra el
+        # audio 3x el texto: $0.30 vs $0.10 por 1M).
+        cost_estimate = response_cost_usd(response, self._model, audio_input=True)
 
         # 3. Extraer texto
         try:
@@ -239,6 +245,7 @@ class LiteLLMTranscriptionAdapter:
                 ok=False,
                 error="bad_response_shape",
                 provider=self.name,
+                cost_usd_estimate=cost_estimate,
                 latency_ms=latency_ms,
             )
 
@@ -254,6 +261,7 @@ class LiteLLMTranscriptionAdapter:
                 ok=False,
                 error="empty" if not text else "inaudible",
                 provider=self.name,
+                cost_usd_estimate=cost_estimate,
                 latency_ms=latency_ms,
             )
         # Cap mínimo — audios que transcriben a 1 char son ruido.
@@ -263,23 +271,12 @@ class LiteLLMTranscriptionAdapter:
                 ok=False,
                 error="too_short",
                 provider=self.name,
+                cost_usd_estimate=cost_estimate,
                 latency_ms=latency_ms,
             )
 
-        # 4. Calcular duración + costo aproximados
-        # Gemini no devuelve `duration` como Whisper. Estimamos por tokens
-        # input (25 tok/s para audio). Si litellm expone el usage:
-        duration_seconds: float | None = None
-        cost_estimate: float | None = None
-        try:
-            usage = response.usage  # type: ignore[attr-defined]
-            prompt_tokens = getattr(usage, "prompt_tokens", None)
-            if prompt_tokens:
-                # Gemini factura audio a 25 tok/segundo en input
-                duration_seconds = max(0.0, (prompt_tokens - 50) / 25.0)
-                cost_estimate = duration_seconds * self._cost_per_second
-        except Exception:  # noqa: BLE001
-            pass
+        # 4. Duración: Gemini no la devuelve como Whisper; sale de los tokens.
+        duration_seconds = _audio_seconds(getattr(response, "usage", None))
 
         # 5. Aplicar regla de duración máxima (Hubara A.5: >60s → too_long)
         if duration_seconds and duration_seconds > request.max_duration_seconds:
@@ -301,6 +298,23 @@ class LiteLLMTranscriptionAdapter:
             cost_usd_estimate=cost_estimate,
             latency_ms=latency_ms,
         )
+
+
+def _audio_seconds(usage: Any) -> float | None:
+    """Segundos de audio según los tokens que contó Gemini: 32 por segundo
+    ("1 minute = 1,920 tokens", ai.google.dev/gemini-api/docs/audio). Con el
+    desglose por modalidad (`prompt_tokens_details.audio_tokens`) es exacto; sin
+    él, se descuenta la instrucción de texto que acompaña al audio."""
+    if usage is None:
+        return None
+    details = getattr(usage, "prompt_tokens_details", None)
+    audio_tokens = getattr(details, "audio_tokens", None) if details is not None else None
+    if isinstance(audio_tokens, int) and audio_tokens > 0:
+        return audio_tokens / _AUDIO_TOKENS_PER_SECOND
+    prompt_tokens = getattr(usage, "prompt_tokens", None)
+    if not isinstance(prompt_tokens, int) or prompt_tokens <= 0:
+        return None
+    return max(0.0, (prompt_tokens - _PROMPT_TEXT_TOKENS) / _AUDIO_TOKENS_PER_SECOND)
 
 
 def _normalize_mime(mime: str) -> str:

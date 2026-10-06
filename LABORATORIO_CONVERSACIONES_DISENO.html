@@ -1,0 +1,2055 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Copia del plan visual del laboratorio (artifact https://claude.ai/artifact/4UNdDwmnQiFFEnPL9r9APe, versión 10).
+     Es la referencia de diseño de la UI: ver LABORATORIO_CONVERSACIONES_PLAN.md §11. Se abre directo en el navegador. -->
+<style>:root{color-scheme:light}body{margin:0;font:14px system-ui,sans-serif;background:#fafafa}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>Laboratorio de conversaciones</title>
+<meta name="description" content="Plan completo para probar el bot de ventas con clasificador (Jev u OpenAI, servidos por OpenRouter) sobre las conversaciones reales, evaluarlo con el mismo scorecard de producción y ver el hilo de ejecución de cada turno.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #f5f5f5; --paper-2: #ececec; --card: #ffffff; --ink: #2d3142; --muted: #4f5d75; --soft: #7a8399;
+  --rule: rgba(45,49,66,0.12); --rule-2: rgba(45,49,66,0.07); --accent: #eb6c36; --accent-tint: rgba(235,108,54,0.08);
+  --accent-line: rgba(235,108,54,0.45); --link: #2e5aa8; --code-bg: rgba(45,49,66,0.06);
+  --ok: #2f7d4f; --ok-tint: rgba(47,125,79,0.10); --warn: #9a5b00; --warn-tint: rgba(154,91,0,0.10); --bad: #b3261e; --bad-tint: rgba(179,38,30,0.09);
+  /* Tokens de los diagramas (los SVG usan colores literales; .dg los re-mapea a estos tokens) */
+  --dg-paper: #f5f5f5; --dg-node: #ffffff; --dg-ink: #2d3142; --dg-muted: #4f5d75; --dg-soft: #7a8399;
+  --dg-accent: #eb6c36; --dg-tint: rgba(235,108,54,0.08); --dg-link: #2e5aa8;
+  --dg-store: rgba(45,49,66,0.05); --dg-ext: rgba(45,49,66,0.03); --dg-ext-line: rgba(45,49,66,0.30);
+  --dg-opt: rgba(45,49,66,0.02); --dg-opt-line: rgba(45,49,66,0.22); --dg-rule: rgba(45,49,66,0.12);
+  --dg-band: rgba(79,93,117,0.04); --dg-bound: rgba(235,108,54,0.05); --dg-bound-line: rgba(235,108,54,0.50);
+  --dg-tag-line: rgba(79,93,117,0.45);
+  --sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --serif: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
+  --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Maqueta del dashboard (valores reales de frontend_dashboard/src/index.css: siempre oscuro) */
+  --hb-bg: #0b0b0d; --hb-win: #1d1d1f; --hb-titlebar: #2b2b2e; --hb-canvas: #1a1a1c; --hb-panel: #1f1f21;
+  --hb-fg: #ebebeb; --hb-fg-soft: rgba(235,235,235,0.78); --hb-fg-muted: rgba(235,235,235,0.55); --hb-fg-faint: rgba(235,235,235,0.38);
+  --hb-line: rgba(255,255,255,0.08); --hb-line-strong: rgba(255,255,255,0.14); --hb-accent: #0a84ff; --hb-accent-soft: rgba(10,132,255,0.18);
+  --hb-bubble-in: #2a2a2d; --hb-bubble-out: #0a5cd1; --hb-ok: #5be07b; --hb-ok-soft: rgba(91,224,123,0.18);
+  --hb-warn: #ffb44a; --hb-warn-soft: rgba(255,180,74,0.18); --hb-danger: #ff7269; --hb-danger-soft: rgba(255,114,105,0.18);
+  --hb-info: #5fa9ff; --hb-cyan: #5fdcff; --hb-cyan-soft: rgba(95,220,255,0.16); --hb-violet: #d68aff; --hb-violet-soft: rgba(214,138,255,0.18);
+  --hb-neutral: #8e8e93; --hb-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', ui-sans-serif, system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #23262f; --paper-2: #2b2f3b; --card: #2d3142; --ink: #f2f2f2; --muted: #bfc0c0; --soft: #8e98ac;
+    --rule: rgba(245,245,245,0.12); --rule-2: rgba(245,245,245,0.07); --accent: #f08a59; --accent-tint: rgba(240,138,89,0.12);
+    --accent-line: rgba(240,138,89,0.5); --link: #6a95d8; --code-bg: rgba(245,245,245,0.08);
+    --ok: #6fcf97; --ok-tint: rgba(111,207,151,0.12); --warn: #f2b36b; --warn-tint: rgba(242,179,107,0.12); --bad: #ff8a80; --bad-tint: rgba(255,138,128,0.12);
+    --dg-paper: #2d3142; --dg-node: #353a4d; --dg-ink: #f5f5f5; --dg-muted: #bfc0c0; --dg-soft: #8e98ac;
+    --dg-accent: #f08a59; --dg-tint: rgba(240,138,89,0.10); --dg-link: #6a95d8;
+    --dg-store: rgba(245,245,245,0.05); --dg-ext: rgba(245,245,245,0.03); --dg-ext-line: rgba(245,245,245,0.30);
+    --dg-opt: rgba(245,245,245,0.02); --dg-opt-line: rgba(245,245,245,0.22); --dg-rule: rgba(245,245,245,0.12);
+    --dg-band: rgba(191,192,192,0.05); --dg-bound: rgba(240,138,89,0.06); --dg-bound-line: rgba(240,138,89,0.55);
+    --dg-tag-line: rgba(191,192,192,0.45);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #23262f; --paper-2: #2b2f3b; --card: #2d3142; --ink: #f2f2f2; --muted: #bfc0c0; --soft: #8e98ac;
+  --rule: rgba(245,245,245,0.12); --rule-2: rgba(245,245,245,0.07); --accent: #f08a59; --accent-tint: rgba(240,138,89,0.12);
+  --accent-line: rgba(240,138,89,0.5); --link: #6a95d8; --code-bg: rgba(245,245,245,0.08);
+  --ok: #6fcf97; --ok-tint: rgba(111,207,151,0.12); --warn: #f2b36b; --warn-tint: rgba(242,179,107,0.12); --bad: #ff8a80; --bad-tint: rgba(255,138,128,0.12);
+  --dg-paper: #2d3142; --dg-node: #353a4d; --dg-ink: #f5f5f5; --dg-muted: #bfc0c0; --dg-soft: #8e98ac;
+  --dg-accent: #f08a59; --dg-tint: rgba(240,138,89,0.10); --dg-link: #6a95d8;
+  --dg-store: rgba(245,245,245,0.05); --dg-ext: rgba(245,245,245,0.03); --dg-ext-line: rgba(245,245,245,0.30);
+  --dg-opt: rgba(245,245,245,0.02); --dg-opt-line: rgba(245,245,245,0.22); --dg-rule: rgba(245,245,245,0.12);
+  --dg-band: rgba(191,192,192,0.05); --dg-bound: rgba(240,138,89,0.06); --dg-bound-line: rgba(240,138,89,0.55);
+  --dg-tag-line: rgba(191,192,192,0.45);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 400 15px/1.6 var(--sans); padding-inline: 16px; -webkit-font-smoothing: antialiased; }
+.page { max-width: 1240px; margin: 0 auto; padding-block: 40px 64px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px; }
+@media (min-width: 1180px) { .page { grid-template-columns: 208px minmax(0, 1fr); } }
+main { min-width: 0; max-width: 980px; }
+
+/* Índice */
+.toc { font-size: 13px; }
+.toc p { font: 500 10.5px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--soft); margin: 0 0 10px; }
+.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.toc a { display: grid; grid-template-columns: 26px 1fr; gap: 4px; color: var(--muted); text-decoration: none; padding: 4px 8px; border-radius: 6px; line-height: 1.35; }
+.toc a span { font: 500 11px/1.6 var(--mono); color: var(--soft); }
+.toc a:hover, .toc a:focus-visible { background: var(--rule-2); color: var(--ink); outline: none; }
+@media (min-width: 1180px) { .toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; max-height: calc(100vh - 48px); overflow: auto; } }
+@media (max-width: 1179px) { .toc ol { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); } }
+
+/* Tipografía */
+.eyebrow { font: 500 11px/1.4 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+h1 { font: 400 clamp(2.2rem, 4vw + 1rem, 3.4rem)/1.02 var(--serif); letter-spacing: -.02em; margin: 0 0 16px; text-wrap: balance; }
+h2 { font: 600 1.28rem/1.3 var(--sans); letter-spacing: -.01em; margin: 0 0 8px; text-wrap: balance; }
+h3 { font: 600 1rem/1.35 var(--sans); margin: 0 0 6px; }
+p { margin: 0 0 12px; }
+.lede { font-size: 1.06rem; color: var(--muted); max-width: 68ch; }
+.prose { max-width: 70ch; color: var(--muted); }
+.prose strong, .lede strong, td strong, li strong { color: var(--ink); font-weight: 600; }
+code, .mono { font-family: var(--mono); font-size: .82em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; color: var(--ink); word-break: break-word; }
+a { color: var(--link); }
+section { margin-top: 64px; scroll-margin-top: 24px; }
+section > header { margin-bottom: 18px; }
+.sec-num { font: 500 11px/1 var(--mono); color: var(--accent); letter-spacing: .16em; margin-right: 8px; }
+
+/* Cabecera */
+.hero { padding-bottom: 8px; border-bottom: 1px solid var(--rule); }
+.hero .lede { font-size: 1.12rem; }
+.status { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 24px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font: 500 12px/1 var(--mono); letter-spacing: .02em; padding: 7px 10px; border-radius: 999px; border: 1px solid var(--rule); color: var(--muted); background: var(--card); }
+.pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--soft); display: inline-block; }
+.pill.accent { border-color: var(--accent-line); color: var(--accent); } .pill.accent i { background: var(--accent); }
+.pill.ok i { background: var(--ok); }
+.summary { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin: 8px 0 28px; }
+.summary div { border-top: 2px solid var(--ink); padding-top: 10px; }
+.summary h3 { font-size: .95rem; }
+.summary p { color: var(--muted); font-size: .92rem; margin: 0; }
+
+/* Pasos del modelo acordado */
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 18px 0 8px; counter-reset: st; }
+.steps li { list-style: none; background: var(--card); border: 1px solid var(--rule); border-radius: 8px; padding: 14px 14px 12px; counter-increment: st; position: relative; }
+.steps li::before { content: counter(st); font: 600 12px/1 var(--mono); color: var(--accent); display: block; margin-bottom: 8px; }
+.steps li strong { display: block; color: var(--ink); margin-bottom: 4px; font-size: .95rem; }
+.steps li span { color: var(--muted); font-size: .88rem; line-height: 1.5; display: block; }
+.steps { padding: 0; }
+
+/* Cifras */
+.figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; margin: 18px 0; }
+.figures div { background: var(--card); padding: 14px 16px; }
+.figures b { display: block; font: 400 2rem/1.05 var(--serif); color: var(--ink); font-variant-numeric: tabular-nums; }
+.figures span { display: block; font-size: .82rem; color: var(--muted); line-height: 1.4; margin-top: 4px; }
+
+/* Tarjetas */
+.cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); margin-top: 18px; }
+.card { background: var(--card); border: 1px solid var(--rule); border-radius: 8px; padding: 16px 18px; }
+.card h3 { display: flex; align-items: center; gap: 8px; }
+.card h3::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ink); flex: none; }
+.card.k-accent h3::before { background: var(--accent); } .card.k-link h3::before { background: var(--link); } .card.k-muted h3::before { background: var(--soft); }
+.card p, .card li { color: var(--muted); font-size: .9rem; line-height: 1.55; }
+.card ul { margin: 6px 0 0; padding-left: 18px; }
+.card li { margin-bottom: 4px; }
+
+/* Diagramas */
+.figure { margin: 18px 0 6px; }
+.dg-wrap { background: var(--paper-2); border: 1px solid var(--rule); border-radius: 10px; padding: 16px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.dg-wrap svg { display: block; width: 100%; height: auto; }
+.dg-wrap svg.w1000 { min-width: 880px; } .dg-wrap svg.w840 { min-width: 760px; }
+.figcap { font-size: .86rem; color: var(--soft); margin: 8px 2px 0; }
+.figcap b { color: var(--muted); font-weight: 600; }
+.scroll-hint { display: none; font: 500 11px var(--mono); color: var(--soft); margin: 6px 2px 0; }
+@media (max-width: 900px) { .scroll-hint { display: block; } }
+
+/* Mapa de colores literales de los SVG → tokens (claro y oscuro) */
+.dg [fill="#f5f5f5"] { fill: var(--dg-paper); }
+.dg [fill="#ffffff"], .dg [fill="#fff"] { fill: var(--dg-node); }
+.dg [fill="#2d3142"] { fill: var(--dg-ink); } .dg [stroke="#2d3142"] { stroke: var(--dg-ink); }
+.dg [fill="#4f5d75"] { fill: var(--dg-muted); } .dg [stroke="#4f5d75"] { stroke: var(--dg-muted); }
+.dg [fill="#7a8399"] { fill: var(--dg-soft); } .dg [stroke="#7a8399"] { stroke: var(--dg-soft); }
+.dg [fill="#eb6c36"] { fill: var(--dg-accent); } .dg [stroke="#eb6c36"] { stroke: var(--dg-accent); }
+.dg [fill="#2e5aa8"] { fill: var(--dg-link); } .dg [stroke="#2e5aa8"] { stroke: var(--dg-link); }
+.dg [fill="rgba(235,108,54,0.08)"] { fill: var(--dg-tint); }
+.dg [fill="rgba(45,49,66,0.05)"] { fill: var(--dg-store); }
+.dg [fill="rgba(45,49,66,0.03)"] { fill: var(--dg-ext); } .dg [stroke="rgba(45,49,66,0.30)"] { stroke: var(--dg-ext-line); }
+.dg [fill="rgba(45,49,66,0.02)"] { fill: var(--dg-opt); } .dg [stroke="rgba(45,49,66,0.22)"] { stroke: var(--dg-opt-line); }
+.dg [stroke="rgba(45,49,66,0.12)"] { stroke: var(--dg-rule); }
+.dg [fill="rgba(79,93,117,0.04)"] { fill: var(--dg-band); }
+.dg [fill="rgba(235,108,54,0.05)"] { fill: var(--dg-bound); } .dg [stroke="rgba(235,108,54,0.50)"] { stroke: var(--dg-bound-line); }
+.dg [stroke="rgba(79,93,117,0.45)"] { stroke: var(--dg-tag-line); }
+
+/* Tablas */
+.table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; background: var(--card); margin: 16px 0; }
+table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--rule-2); line-height: 1.5; }
+th { font: 500 10.5px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); background: var(--rule-2); white-space: nowrap; }
+td { color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+td.nw { white-space: nowrap; }
+.cards.c2 { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.t-phase { white-space: nowrap; font: 600 12px var(--mono); color: var(--accent); }
+.chip { display: inline-block; font: 500 10.5px/1.3 var(--mono); letter-spacing: .04em; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--rule); color: var(--muted); white-space: nowrap; }
+.chip.no { border-color: var(--rule); } .chip.yes { color: var(--warn); border-color: var(--warn); } .chip.ok { color: var(--ok); border-color: var(--ok); }
+.chip.bad { color: var(--bad); border-color: var(--bad); }
+
+/* Bloques de código */
+pre { background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font: 400 12.5px/1.6 var(--mono); color: var(--ink); margin: 14px 0; }
+pre .c { color: var(--soft); }
+pre .k { color: var(--accent); }
+
+/* Aside editorial */
+.aside { font: italic 400 1.2rem/1.45 var(--serif); color: var(--muted); border-left: 2px solid var(--accent); padding: 2px 0 2px 16px; margin: 20px 0; max-width: 62ch; }
+
+/* Decisiones */
+.decisions { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: dc; }
+.decisions li { counter-increment: dc; background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px 14px 48px; position: relative; color: var(--muted); font-size: .94rem; }
+.decisions li::before { content: counter(dc); position: absolute; left: 16px; top: 14px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--accent-line); color: var(--accent); font: 600 12px/20px var(--mono); text-align: center; }
+.decisions b { color: var(--ink); }
+.decisions .rec { display: inline-block; margin-top: 6px; font: 500 11px var(--mono); color: var(--ok); }
+
+.foot { margin-top: 72px; padding-top: 16px; border-top: 1px solid var(--rule); font: 400 12px/1.6 var(--mono); color: var(--soft); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+
+/* ───────── Maqueta del dashboard (oscuro, como el producto) ───────── */
+.screen { background: var(--hb-win); color: var(--hb-fg); font: 400 13px/1.42 var(--hb-sans); border-radius: 12px; border: 1px solid #000; box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset; overflow: hidden; margin: 18px 0 8px; }
+.screen-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--hb-titlebar); border-bottom: 1px solid var(--hb-line); flex-wrap: wrap; }
+.dots { display: flex; gap: 6px; } .dots i { width: 11px; height: 11px; border-radius: 50%; display: block; background: #ff5f57; } .dots i:nth-child(2) { background: #febc2e; } .dots i:nth-child(3) { background: #28c840; }
+.screen-title { font-weight: 600; font-size: 12.5px; color: var(--hb-fg-soft); }
+.seg { display: inline-flex; background: rgba(255,255,255,0.06); border: 1px solid var(--hb-line); border-radius: 8px; padding: 2px; margin-left: auto; flex-wrap: wrap; }
+.seg button { font: 500 12px/1 var(--hb-sans); color: var(--hb-fg-muted); background: transparent; border: 0; border-radius: 6px; padding: 7px 10px; cursor: pointer; }
+.seg button[aria-pressed="true"], .seg button[aria-selected="true"] { background: var(--hb-accent-soft); color: #fff; }
+.seg button:focus-visible, .hb-btn:focus-visible, .turn-chip:focus-visible, .burst:focus-visible, .qtabs button:focus-visible, .step-row:focus-visible, .x:focus-visible { outline: 2px solid var(--hb-accent); outline-offset: 2px; }
+.screen-body { display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); min-height: 420px; }
+@media (max-width: 820px) { .screen-body { grid-template-columns: minmax(0, 1fr); } }
+.thread { background: radial-gradient(800px 400px at 60% -10%, rgba(10,132,255,0.05), transparent 60%), var(--hb-canvas); padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; border-right: 1px solid var(--hb-line); }
+.day { align-self: center; font-size: 10.5px; color: var(--hb-fg-faint); text-transform: uppercase; letter-spacing: .08em; font-weight: 600; padding: 4px 10px; }
+.bub { max-width: 82%; padding: 8px 12px; border-radius: 14px; font-size: 13.5px; line-height: 1.42; white-space: pre-line; word-wrap: break-word; }
+.bub .meta { font-size: 10px; color: var(--hb-fg-faint); margin-top: 3px; text-align: right; font-variant-numeric: tabular-nums; }
+.b-in { align-self: flex-start; background: var(--hb-bubble-in); color: var(--hb-fg); border-bottom-left-radius: 5px; }
+.b-out { align-self: flex-end; background: var(--hb-bubble-out); color: #fff; border-bottom-right-radius: 5px; }
+.b-out .meta { color: rgba(255,255,255,0.75); }
+.b-comp { align-self: flex-end; background: rgba(10,92,209,0.35); border: 1px solid rgba(95,169,255,0.4); color: #fff; }
+.burst { align-self: flex-start; display: flex; gap: 8px; background: transparent; border: 0; padding: 0; cursor: pointer; text-align: left; color: inherit; font: inherit; width: 100%; }
+.burst .rail { width: 3px; border-radius: 3px; background: var(--hb-violet); opacity: .8; flex: none; }
+.burst .stack { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
+.burst .stack .bub { max-width: 90%; }
+.burst-tag { font: 600 10px/1 var(--hb-sans); letter-spacing: .06em; text-transform: uppercase; color: var(--hb-violet); display: flex; align-items: center; gap: 6px; }
+.turn-chip { align-self: flex-end; display: inline-flex; align-items: center; gap: 8px; font: 500 12px/1 var(--hb-sans); color: var(--hb-fg); background: rgba(255,255,255,0.06); border: 1px solid var(--hb-line-strong); border-radius: 999px; padding: 7px 12px; cursor: pointer; }
+.turn-chip:hover { background: rgba(255,255,255,0.1); }
+.turn-chip i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.turn-chip small { color: var(--hb-fg-muted); font-size: 11.5px; }
+.explain { padding: 18px 20px; background: var(--hb-panel); color: var(--hb-fg-soft); font-size: 13px; line-height: 1.6; }
+.explain h4 { margin: 0 0 8px; color: var(--hb-fg); font-size: 13.5px; }
+.explain ol { margin: 0; padding-left: 18px; } .explain li { margin-bottom: 6px; }
+.explain .note { margin-top: 12px; font-size: 12px; color: var(--hb-fg-muted); border-top: 1px solid var(--hb-line); padding-top: 10px; }
+.k-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+
+/* Modal del hilo de ejecución */
+.modal-back { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 50; display: flex; align-items: center; justify-content: center; padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 16px); }
+.modal { width: min(1120px, 100%); max-height: min(88vh, 900px); background: var(--hb-win); color: var(--hb-fg); font: 400 13px/1.45 var(--hb-sans); border-radius: 12px; border: 1px solid var(--hb-line-strong); box-shadow: 0 20px 60px rgba(0,0,0,0.55); display: flex; flex-direction: column; overflow: hidden; }
+.m-head { padding: 12px 16px; border-bottom: 1px solid var(--hb-line); display: grid; gap: 10px; background: var(--hb-titlebar); }
+.m-top { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.m-title { font-size: 15px; font-weight: 600; margin: 0; }
+.m-meta { font-size: 12px; color: var(--hb-fg-muted); font-variant-numeric: tabular-nums; }
+.x { margin-left: auto; background: rgba(255,255,255,0.06); border: 1px solid var(--hb-line); color: var(--hb-fg); border-radius: 8px; width: 32px; height: 32px; font-size: 16px; cursor: pointer; flex: none; }
+.m-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.m-label { font: 600 10px/1 var(--hb-sans); text-transform: uppercase; letter-spacing: .08em; color: var(--hb-fg-faint); margin-right: 2px; }
+.hchip { display: inline-flex; align-items: center; gap: 6px; font: 500 11.5px/1 var(--hb-sans); padding: 5px 8px; border-radius: 999px; border: 1px solid var(--hb-line-strong); color: var(--hb-fg-soft); background: rgba(255,255,255,0.03); white-space: nowrap; }
+.hchip.ok { color: var(--hb-ok); background: var(--hb-ok-soft); border-color: transparent; }
+.hchip.bad { color: var(--hb-danger); background: var(--hb-danger-soft); border-color: transparent; }
+.hchip.warn { color: var(--hb-warn); background: var(--hb-warn-soft); border-color: transparent; }
+.hchip.jev { color: var(--hb-violet); background: var(--hb-violet-soft); border-color: transparent; }
+.m-body { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); min-height: 0; flex: 1; }
+.m-seq { overflow: auto; padding: 8px 8px 16px; border-right: 1px solid var(--hb-line); background: var(--hb-canvas); }
+.m-seq svg { display: block; width: 100%; min-width: 560px; height: auto; }
+.m-list { display: none; }
+.m-detail { overflow: auto; padding: 16px 18px; background: var(--hb-panel); }
+.m-result { padding: 10px 16px; border-top: 1px solid var(--hb-line); font-size: 12.5px; display: flex; gap: 8px; align-items: center; background: var(--hb-titlebar); flex-wrap: wrap; }
+@media (max-width: 760px) {
+  .modal-back { padding: 0; }
+  .modal { max-height: none; height: 100%; border-radius: 0; }
+  .m-body { grid-template-columns: minmax(0, 1fr); overflow: auto; }
+  .m-seq { display: none; }
+  .m-list { display: grid; gap: 6px; padding: 12px; background: var(--hb-canvas); }
+  .m-detail { overflow: visible; }
+}
+.step-row { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: center; text-align: left; background: rgba(255,255,255,0.03); border: 1px solid var(--hb-line); border-radius: 8px; padding: 8px 10px; color: var(--hb-fg); font: 500 12.5px/1.35 var(--hb-sans); cursor: pointer; width: 100%; }
+.step-row[aria-current="true"] { border-color: var(--hb-accent); background: var(--hb-accent-soft); }
+.step-row .n { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font: 700 11px/1 var(--hb-sans); color: #0b0b0d; }
+.step-row small { display: block; color: var(--hb-fg-muted); font-weight: 400; font-size: 11.5px; }
+.step-row time { color: var(--hb-fg-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.d-kind { font: 600 10px/1 var(--hb-sans); letter-spacing: .08em; text-transform: uppercase; margin: 0 0 6px; }
+.d-title { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+.d-meta { font-size: 12px; color: var(--hb-fg-muted); margin-bottom: 12px; font-variant-numeric: tabular-nums; }
+.d-sec { margin-top: 14px; }
+.d-sec h5 { margin: 0 0 6px; font: 600 10.5px/1 var(--hb-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--hb-fg-faint); }
+.d-box { background: rgba(0,0,0,0.25); border: 1px solid var(--hb-line); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; color: var(--hb-fg-soft); }
+.d-box.code { font: 400 11.5px/1.55 var(--mono); }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 12.5px; }
+.kv dt { color: var(--hb-fg-muted); } .kv dd { margin: 0; color: var(--hb-fg); font-variant-numeric: tabular-nums; }
+.probs { display: grid; gap: 6px; }
+.prob { display: grid; grid-template-columns: minmax(96px, 150px) 1fr 44px 18px; gap: 8px; align-items: center; font-size: 12px; }
+.prob .bar { position: relative; height: 8px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; }
+.prob .bar b { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--hb-neutral); }
+.prob.pick .bar b { background: var(--hb-violet); }
+.prob .bar em { position: absolute; top: -2px; bottom: -2px; width: 2px; background: rgba(255,255,255,0.55); }
+.prob .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--hb-fg-soft); }
+.prob .s { text-align: center; }
+.prob .lab { color: var(--hb-fg-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prob.pick .lab { color: var(--hb-fg); font-weight: 600; }
+
+/* Calidad LLM (maqueta) */
+.qtabs { display: flex; gap: 2px; padding: 0 12px; background: var(--hb-panel); border-bottom: 1px solid var(--hb-line); overflow-x: auto; }
+.qtabs button { font: 500 12.5px/1 var(--hb-sans); color: var(--hb-fg-muted); background: transparent; border: 0; border-bottom: 2px solid transparent; padding: 11px 10px; cursor: pointer; white-space: nowrap; }
+.qtabs button[aria-selected="true"] { color: var(--hb-fg); border-bottom-color: var(--hb-accent); }
+.qtabs .new { font: 700 9px/1 var(--hb-sans); color: var(--hb-violet); margin-left: 4px; letter-spacing: .04em; vertical-align: 1px; }
+.qsrc { display: flex; gap: 10px; align-items: center; padding: 10px 14px; background: var(--hb-canvas); border-bottom: 1px solid var(--hb-line); flex-wrap: wrap; }
+.qsrc .seg { margin-left: 0; }
+.qpane { padding: 16px; background: var(--hb-canvas); min-height: 280px; }
+.qgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.qtile { background: var(--hb-panel); border: 1px solid var(--hb-line); border-radius: 10px; padding: 12px; }
+.qtile b { display: block; font: 600 22px/1.1 var(--hb-sans); color: var(--hb-fg); font-variant-numeric: tabular-nums; }
+.qtile span { font-size: 11.5px; color: var(--hb-fg-muted); }
+.qtable { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 12px; background: var(--hb-panel); border: 1px solid var(--hb-line); border-radius: 10px; overflow: hidden; }
+.qtable th { font: 600 10px/1.2 var(--hb-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--hb-fg-faint); background: rgba(255,255,255,0.03); padding: 8px 10px; border-bottom: 1px solid var(--hb-line); text-align: left; white-space: nowrap; }
+.qtable td { padding: 8px 10px; border-bottom: 1px solid var(--hb-line); color: var(--hb-fg-soft); vertical-align: middle; }
+.qtable tr:last-child td { border-bottom: 0; }
+.qtable td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.qtable .pend { color: var(--hb-fg-faint); }
+.qwrap { overflow-x: auto; }
+.qnote { font-size: 11.5px; color: var(--hb-fg-muted); margin-top: 10px; }
+.strip { display: grid; grid-template-columns: 130px repeat(4, minmax(140px, 1fr)); gap: 8px; min-width: 720px; }
+.strip .h { font: 600 10px/1.2 var(--hb-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--hb-fg-faint); padding: 4px 0; }
+.strip .lane { font-size: 12px; color: var(--hb-fg-soft); padding-top: 6px; }
+.strip .cell { background: var(--hb-panel); border: 1px solid var(--hb-line); border-radius: 8px; padding: 8px; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; min-height: 44px; }
+.strip button.cell { cursor: pointer; text-align: left; color: inherit; font: inherit; }
+.strip button.cell:hover { border-color: var(--hb-accent); }
+.strip .txt { font-size: 11.5px; color: var(--hb-fg-muted); line-height: 1.35; width: 100%; }
+.tp { font: 500 11px/1 var(--hb-sans); padding: 4px 7px; border-radius: 999px; }
+.tp.c { color: var(--hb-ok); background: var(--hb-ok-soft); } .tp.m { color: var(--hb-danger); background: var(--hb-danger-soft); } .tp.p { color: var(--hb-warn); background: var(--hb-warn-soft); }
+/* Sección Laboratorio (maqueta) */
+.lab-pane { padding: 0; }
+.lab-conv { display: grid; grid-template-columns: 200px minmax(0, 1fr) 248px; min-height: 440px; }
+@media (max-width: 900px) { .lab-conv { grid-template-columns: minmax(0, 1fr); } .lab-list { display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--hb-line); } .lab-item { min-width: 190px; border-bottom: 0; border-right: 1px solid var(--hb-line); } .lab-insp { border-left: 0; border-top: 1px solid var(--hb-line); } }
+.lab-list { background: var(--hb-panel); border-right: 1px solid var(--hb-line); }
+.lab-item { display: block; width: 100%; text-align: left; padding: 10px 12px; border: 0; border-bottom: 1px solid var(--hb-line); background: transparent; color: var(--hb-fg); font: 500 12.5px/1.35 var(--hb-sans); cursor: pointer; }
+.lab-item[aria-current="true"] { background: var(--hb-accent-soft); }
+.lab-item small { display: block; color: var(--hb-fg-muted); font-weight: 400; font-size: 11px; margin-top: 2px; }
+.lab-item .badges { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+.lab-item:focus-visible, .subtabs button:focus-visible { outline: 2px solid var(--hb-accent); outline-offset: -2px; }
+.vb { font: 600 9.5px/1 var(--hb-sans); padding: 3px 6px; border-radius: 999px; letter-spacing: .02em; white-space: nowrap; }
+.vb.pasa { color: var(--hb-ok); background: var(--hb-ok-soft); } .vb.alerta { color: var(--hb-warn); background: var(--hb-warn-soft); }
+.vb.falla { color: var(--hb-danger); background: var(--hb-danger-soft); }
+.lab-thread { display: flex; flex-direction: column; min-width: 0; }
+.lab-thread .thread { border-right: 0; flex: 1; }
+.lab-bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--hb-line); background: var(--hb-canvas); flex-wrap: wrap; }
+.lab-bar .seg { margin-left: 0; }
+.lab-insp { background: var(--hb-panel); border-left: 1px solid var(--hb-line); padding: 10px 12px 14px; font-size: 12.5px; color: var(--hb-fg-soft); }
+.subtabs { display: flex; gap: 2px; margin-bottom: 8px; border-bottom: 1px solid var(--hb-line); }
+.subtabs button { font: 500 12px/1 var(--hb-sans); color: var(--hb-fg-muted); background: transparent; border: 0; border-bottom: 2px solid transparent; padding: 9px 8px; cursor: pointer; }
+.subtabs button[aria-selected="true"] { color: var(--hb-fg); border-bottom-color: var(--hb-accent); }
+.side-h { margin: 12px 0 6px; font: 600 10px/1 var(--hb-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--hb-fg-faint); }
+.vrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; }
+.vrow.on { background: rgba(255,255,255,0.05); color: var(--hb-fg); }
+.vrow b { color: var(--hb-fg); font-weight: 600; }
+.ev { border-bottom: 1px solid var(--hb-line); padding: 8px 0; }
+.ev-top { display: flex; align-items: center; gap: 6px; } .ev-top b { color: var(--hb-fg); } .ev-top small { margin-left: auto; color: var(--hb-fg-faint); font-size: 11px; }
+.ev p { margin: 4px 0 0; color: var(--hb-fg-muted); font-size: 12px; }
+@media (prefers-reduced-motion: no-preference) { .modal { animation: pop .16s ease-out; } @keyframes pop { from { transform: translateY(6px); opacity: .6; } to { transform: none; opacity: 1; } } }
+/* Botón y panel de Nueva corrida (maqueta) */
+.run-btn { font: 600 12px/1 var(--hb-sans); color: #fff; background: var(--hb-accent); border: 0; border-radius: 7px; padding: 8px 12px; cursor: pointer; white-space: nowrap; }
+.run-btn[aria-expanded="true"] { background: var(--hb-accent-soft); }
+.run-btn:disabled { opacity: .45; cursor: not-allowed; }
+.run-ghost { font: 500 12px/1 var(--hb-sans); color: var(--hb-fg-soft); background: transparent; border: 1px solid var(--hb-line-strong); border-radius: 7px; padding: 8px 12px; cursor: pointer; }
+.run-btn:focus-visible, .run-ghost:focus-visible, .run-check input:focus-visible { outline: 2px solid var(--hb-accent); outline-offset: 2px; }
+.run-panel { background: var(--hb-canvas); border-bottom: 1px solid var(--hb-line); padding: 14px 16px; }
+.run-panel > div { display: grid; gap: 12px; }
+.run-row { display: flex; gap: 8px 16px; align-items: center; flex-wrap: wrap; font-size: 12.5px; color: var(--hb-fg-soft); }
+.run-lbl { flex: 0 0 96px; color: var(--hb-fg-muted); font-size: 11.5px; }
+.run-row .seg { margin-left: 0; }
+.run-check { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.run-check input { accent-color: var(--hb-accent); }
+.run-check.off { color: var(--hb-fg-faint); cursor: not-allowed; }
+.run-check em { font-style: normal; font-size: 11px; }
+.run-cost { color: var(--hb-fg); font-variant-numeric: tabular-nums; }
+.run-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.run-steps { display: flex; gap: 6px; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
+.run-steps li { font-size: 11.5px; padding: 5px 9px; border-radius: 999px; border: 1px solid var(--hb-line); color: var(--hb-fg-muted); }
+.run-steps li.done { color: var(--hb-ok); background: var(--hb-ok-soft); border-color: transparent; }
+.run-steps li.now { color: #fff; background: var(--hb-accent-soft); border-color: var(--hb-accent); }
+.run-bar { height: 6px; border-radius: 6px; background: rgba(255,255,255,0.08); overflow: hidden; }
+.run-bar b { display: block; height: 100%; width: 34%; background: var(--hb-accent); }
+</style>
+
+<div class="page">
+<nav class="toc" aria-label="Índice">
+  <p>Índice</p>
+  <ol>
+    <li><a href="#construir"><span>01</span>Lo que vamos a construir</a></li>
+    <li><a href="#datos"><span>02</span>Lo que dicen los datos</a></li>
+    <li><a href="#arquitectura"><span>03</span>Dónde corre cada cosa</a></li>
+    <li><a href="#banco"><span>04</span>El banco de pruebas</a></li>
+    <li><a href="#simular"><span>05</span>Simular sin inventar al cliente</a></li>
+    <li><a href="#evaluador"><span>06</span>El mismo evaluador</a></li>
+    <li><a href="#bot"><span>07</span>El bot nuevo</a></li>
+    <li><a href="#hilo"><span>08</span>El hilo de cada turno</a></li>
+    <li><a href="#laboratorio"><span>09</span>Sección Laboratorio</a></li>
+    <li><a href="#modelos"><span>10</span>Cambiar de modelo</a></li>
+    <li><a href="#produccion"><span>11</span>Enchufar y publicar</a></li>
+    <li><a href="#fases"><span>12</span>Orden de trabajo</a></li>
+    <li><a href="#riesgos"><span>13</span>Riesgos</a></li>
+    <li><a href="#costos"><span>14</span>Costos</a></li>
+    <li><a href="#decisiones"><span>15</span>Decisiones</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <p class="eyebrow">Plan técnico · AgencyHubara · 23 de septiembre de 2026</p>
+  <h1>Laboratorio de conversaciones</h1>
+  <p class="lede">Vamos a tomar todas las conversaciones reales desde el 10 de septiembre y hacer que el bot nuevo las responda turno por turno. El bot nuevo primero clasifica la ráfaga con <strong>Jev</strong> (de TypeSafe) o con un <strong>modelo pequeño de OpenAI</strong>, los dos servidos por OpenRouter. A esas respuestas les pasamos <strong>el mismo evaluador de producción</strong> y comparamos <strong>las mismas gráficas</strong> de Calidad LLM lado a lado. Además, cada turno tendrá su <strong>hilo de ejecución</strong>, en producción y en el laboratorio: qué midió el clasificador, qué tools corrieron y en qué orden, y qué terminó respondiendo el LLM.</p>
+  <div class="status">
+    <span class="pill accent"><i></i>Plan aprobado · todavía sin código</span>
+    <span class="pill ok"><i></i>Verificado contra main 82055bf6</span>
+    <span class="pill ok"><i></i>Datos leídos de producción hoy</span>
+    <span class="pill ok"><i></i>Clasificadores: Jev y OpenAI por OpenRouter</span>
+  </div>
+  <div class="summary">
+    <div><h3>Lo que no cambia</h3><p>Hasta la Fase 5 ningún cliente ve nada distinto. El bot actual sigue igual y el laboratorio corre en su propia caja, sin llaves para escribirle a nadie.</p></div>
+    <div><h3>Lo primero que ganas</h3><p>Una sección nueva, Laboratorio, donde ves las conversaciones reales con el hilo de cada turno del bot <em>actual</em> (Fase 2). Sirve desde el primer día para ver por qué una ráfaga quedó a medias.</p></div>
+    <div><h3>Cómo decidimos</h3><p>Mismo scorecard, mismo juez, mismas gráficas, y el bot actual re-simulado como control. Si el bot nuevo no gana, no sale.</p></div>
+    <div><h3>Cómo se cambia de modelo</h3><p>Un solo puerto con perfiles: Jev, DeepSeek o el que venga. Cambiar es un parámetro y una corrida del banco.</p></div>
+  </div>
+</header>
+
+<section id="construir">
+  <header>
+    <p class="eyebrow"><span class="sec-num">01</span>Lo que vamos a construir</p>
+    <h2>Tu modelo, tal como lo planteaste</h2>
+  </header>
+  <ol class="steps">
+    <li><strong>Banco</strong><span>El sistema lee todas las conversaciones desde el 10-sep y arma un caso por cada turno en que el bot le respondió a un cliente.</span></li>
+    <li><strong>Responde el bot nuevo</strong><span>En cada caso, el bot nuevo recibe la conversación real hasta ese momento y la ráfaga del cliente, y contesta.</span></li>
+    <li><strong>Mismo evaluador</strong><span>A esas respuestas se les pasa el scorecard de producción: los mismos 65 checks y el mismo juez.</span></li>
+    <li><strong>Mismas gráficas</strong><span>La sección Laboratorio muestra las gráficas de Calidad LLM para cada bot: Producción, Actual simulado, Nuevo + Jev y Nuevo + OpenAI.</span></li>
+    <li><strong>Hilo de cada turno</strong><span>Un clic en la ráfaga o en la respuesta abre la secuencia completa: Jev, tools, guardas y respuesta final.</span></li>
+  </ol>
+  <p class="prose">Hay tres precisiones que hacen justa la comparación:</p>
+  <ul class="prose">
+    <li><strong>No inventamos al cliente.</strong> Cada turno se responde sobre lo que pasó de verdad hasta ese momento. Medimos cómo contesta cada ráfaga, no si habría vendido más.</li>
+    <li><strong>El bot actual también pasa por el simulador.</strong> Es el control: así la diferencia la pone la estrategia y no el simulador.</li>
+    <li><strong>Primero se arregla EST-08.</strong> Hoy no ve las ráfagas. El arreglo vale para producción y para el laboratorio por igual.</li>
+  </ul>
+</section>
+
+<section id="datos">
+  <header>
+    <p class="eyebrow"><span class="sec-num">02</span>Lo que dicen los datos</p>
+    <h2>El banco real, leído hoy en la caja de producción</h2>
+    <p class="lede">Solo lectura. Los scripts corrieron dentro de la caja y devolvieron conteos, sin teléfonos. Esto es lo que va a entrar al banco.</p>
+  </header>
+  <div class="figures">
+    <div><b>82</b><span>conversaciones con mensajes desde el 10-sep</span></div>
+    <div><b>91</b><span>episodios: 10 compras, 10 rechazos y 63 todavía abiertos</span></div>
+    <div><b>615</b><span>mensajes de clientes</span></div>
+    <div><b>309</b><span>turnos del cliente con traza completa (desde el 15-sep)</span></div>
+    <div><b>20&nbsp;%</b><span>de los grupos de mensajes seguidos del cliente son ráfagas (2 o más)</span></div>
+    <div><b>25&nbsp;%</b><span>de los turnos perdieron texto del LLM escrito junto a una tool (100 de 404)</span></div>
+  </div>
+
+  <h3>Lo que hoy falla en producción</h3>
+  <p class="prose">Último scorecard de cada episodio (91 episodios): <strong>27 pasan, 54 en alerta, 9 fallan y 1 sin datos</strong>. Estos son los checks que más fallan y su relación con las ráfagas:</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Check</th><th>Qué mide</th><th class="num">Episodios que fallan</th><th>Relación con las ráfagas</th></tr></thead>
+      <tbody>
+        <tr><td class="nw"><strong>EST-06</strong></td><td>El LLM escribió texto para el cliente junto a una tool y se descartó</td><td class="num">50</td><td><span class="chip bad">alta</span> ahí se pierden respuestas a otros asuntos</td></tr>
+        <tr><td class="nw"><strong>APE-03</strong></td><td>Ofrece el catálogo en la apertura</td><td class="num">32</td><td><span class="chip">media</span></td></tr>
+        <tr><td class="nw"><strong>EST-03b</strong></td><td>La guarda de texto administrativo tuvo que actuar</td><td class="num">9</td><td><span class="chip">baja</span></td></tr>
+        <tr><td class="nw"><strong>APE-01</strong></td><td>Saludo por hora y marca en el primer contacto</td><td class="num">8</td><td><span class="chip">baja</span></td></tr>
+        <tr><td class="nw"><strong>CON-05</strong></td><td>La guarda de confirmación tuvo que actuar</td><td class="num">8</td><td><span class="chip">baja</span></td></tr>
+        <tr><td class="nw"><strong>ENV-02</strong></td><td>Mandó el formulario sin responder lo que el cliente escribió</td><td class="num">6</td><td><span class="chip bad">alta</span> el formulario tapa la pregunta</td></tr>
+        <tr><td class="nw"><strong>EST-07</strong></td><td>Retiene lo que el cliente ya dijo</td><td class="num">6</td><td><span class="chip bad">alta</span> es el hilo de la conversación</td></tr>
+        <tr><td class="nw"><strong>EST-08</strong></td><td>Responde lo que el cliente preguntó</td><td class="num">4</td><td><span class="chip bad">alta</span> pero hoy está ciego (ver §6)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Un caso típico</h3>
+  <p class="prose">Este ejemplo está anonimizado y reescrito. El cliente escribe dos mensajes con 7 segundos de diferencia: pide el catálogo de otros diseños y pregunta cuánto cuesta el envío a Bogotá. El bot llama <code>send_shipping_rates</code>, cuya descripción le dice que <em>"el mensaje fijo ES tu respuesta (tu turno termina)"</em>. El cliente recibe las tarifas y <strong>el catálogo queda sin respuesta</strong>. El evaluador de hoy no lo marca porque el primer mensaje no tiene "?". Este es el caso que usa la maqueta del §8.</p>
+
+  <div class="cards">
+    <div class="card k-muted"><h3>Cómo escriben</h3><p>Entre dos mensajes de una misma ráfaga pasan 11 s en la mediana (p75: 30 s). El 56&nbsp;% llega dentro de 12 s. Con la espera actual de 1,5 s, muchas segundas partes llegan cuando el bot ya está pensando. Eso lo maneja el reinicio del turno, como máximo 2 veces.</p></div>
+    <div class="card k-muted"><h3>Muchos turnos tocan varios asuntos</h3><p>62 de 309 turnos del cliente (20&nbsp;%) mencionan dos o más asuntos, según una heurística por palabras clave. El problema es por asunto, no por mensaje: un solo mensaje con tres preguntas también se queda a medias.</p></div>
+    <div class="card k-muted"><h3>Personas en la conversación</h3><p>En 30 de las 82 conversaciones escribió alguien del equipo (311 mensajes). Esos turnos no se simulan porque el bot no los respondió. Sí quedan como contexto para los turnos siguientes.</p></div>
+  </div>
+</section>
+
+<section id="arquitectura">
+  <header>
+    <p class="eyebrow"><span class="sec-num">03</span>Dónde corre cada cosa</p>
+    <h2>El laboratorio tiene su propia caja; producción no carga con nada nuevo</h2>
+    <p class="lede">Esto cambia respecto al primer borrador. Medí la caja de producción: es una t3.medium (2 vCPU, 3,8 GB) <strong>sin swap y con ~450 MB libres</strong>, y LiteLLM solo ocupa ~980 MB. Si metemos ahí un simulador, el sistema operativo podría matar un proceso del bot real. Por eso el laboratorio corre en una caja aparte que se prende para cada corrida y se apaga sola. Es el mismo patrón que ya usa la caja de GraphAgents (<code>Launcher</code> + SSM + autostop).</p>
+  </header>
+  <div class="figure">
+    <div class="dg-wrap dg">
+      <svg class="w1000" viewBox="0 0 1000 620" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="arq-t arq-d">
+        <title id="arq-t">Arquitectura del laboratorio de conversaciones</title>
+        <desc id="arq-d">A la izquierda, la caja de producción con el bot de ventas, el vault y Calidad LLM. En el centro, la caja del laboratorio, que recibe el banco desde un bucket S3 privado y devuelve resultados al mismo bucket. A la derecha, el puerto de percepción con Jev, OpenAI y un próximo modelo intercambiables, servidos por OpenRouter. El bot de producción usará el mismo puerto solo desde la fase de sombra.</desc>
+        <defs>
+          <marker id="arq-a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="arq-aa" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+          <marker id="arq-al" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+        </defs>
+        <rect width="1000" height="620" fill="#f5f5f5"/>
+
+        <!-- Zonas -->
+        <rect x="24" y="104" width="300" height="376" rx="10" fill="rgba(79,93,117,0.04)" stroke="rgba(45,49,66,0.12)"/>
+        <rect x="372" y="104" width="300" height="376" rx="10" fill="rgba(235,108,54,0.05)" stroke="rgba(235,108,54,0.50)" stroke-dasharray="4,4"/>
+        <rect x="720" y="104" width="256" height="376" rx="10" fill="rgba(79,93,117,0.04)" stroke="rgba(45,49,66,0.12)"/>
+        <g font-family="'Geist Mono', monospace" font-size="8" letter-spacing="0.14em">
+          <text x="40" y="124" fill="#4f5d75">CAJA DE PRODUCCIÓN · T3.MEDIUM</text>
+          <text x="40" y="136" fill="#7a8399">SIN CARGA NUEVA DEL LABORATORIO</text>
+          <text x="388" y="124" fill="#eb6c36">CAJA DEL LABORATORIO · BAJO DEMANDA</text>
+          <text x="388" y="136" fill="#7a8399">SIN LLAVES DE WHATSAPP NI MEDUSA</text>
+          <text x="736" y="124" fill="#4f5d75">OPENROUTER · INTERCAMBIABLES</text>
+        </g>
+
+        <!-- Conectores (antes que los nodos) -->
+        <line x1="244" y1="152" x2="244" y2="72" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arq-al)"/>
+        <line x1="174" y1="208" x2="174" y2="272" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arq-a)"/>
+        <line x1="174" y1="328" x2="174" y2="392" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arq-a)"/>
+        <path d="M 284 300 H 300 Q 308 300 308 308 V 536" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arq-a)"/>
+        <path d="M 248 572 H 180 Q 172 572 172 564 V 448" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arq-a)"/>
+        <path d="M 392 536 V 196 Q 392 188 400 188 H 412" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arq-a)"/>
+        <path d="M 522 224 V 556 Q 522 564 514 564 H 448" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arq-a)"/>
+        <line x1="632" y1="180" x2="736" y2="180" stroke="#eb6c36" stroke-width="1.4" marker-end="url(#arq-aa)"/>
+        <path d="M 284 168 H 340 Q 348 168 348 160 V 96 Q 348 88 356 88 H 936 Q 944 88 944 96 V 152" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arq-a)"/>
+        <line x1="788" y1="208" x2="788" y2="288" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arq-al)"/>
+        <line x1="908" y1="208" x2="908" y2="288" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arq-al)"/>
+
+        <!-- Etiquetas de los conectores -->
+        <g font-family="'Geist Mono', monospace" font-size="8" letter-spacing="0.08em" fill="#4f5d75">
+          <text x="252" y="94" fill="#2e5aa8">ENVÍA</text>
+          <text x="182" y="244">ESCRIBE</text>
+          <text x="182" y="364">LEE PROD</text>
+          <text x="300" y="512" text-anchor="end">EXPORTA · BOTÓN</text>
+          <text x="214" y="563" text-anchor="middle">LEE LAB</text>
+          <text x="400" y="334">BANCO</text>
+          <text x="530" y="334">RESULTADOS</text>
+          <text x="696" y="172" text-anchor="middle" font-size="7" fill="#eb6c36">PREGUNTAS</text>
+          <text x="560" y="80" text-anchor="middle">SOMBRA · CANARY · FASE 5+</text>
+          <text x="796" y="252" fill="#2e5aa8">DECISIONS</text>
+          <text x="916" y="252" fill="#2e5aa8">LITELLM</text>
+        </g>
+
+        <!-- Nodos -->
+        <g font-family="'Geist', sans-serif" text-anchor="middle">
+          <rect x="64" y="24" width="220" height="48" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)"/>
+          <text x="174" y="45" fill="#2d3142" font-size="12" font-weight="600">WhatsApp</text>
+          <text x="174" y="60" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">clientes reales · Cloud API</text>
+
+          <rect x="64" y="152" width="220" height="56" rx="6" fill="#ffffff" stroke="#2d3142"/>
+          <text x="174" y="176" fill="#2d3142" font-size="12" font-weight="600">Bot de ventas</text>
+          <text x="174" y="192" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">worker sales · traza por turno</text>
+
+          <rect x="64" y="272" width="220" height="56" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75"/>
+          <text x="174" y="296" fill="#2d3142" font-size="12" font-weight="600">Vault</text>
+          <text x="174" y="312" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">conversaciones · trazas</text>
+
+          <rect x="64" y="392" width="220" height="56" rx="6" fill="#ffffff" stroke="#2d3142"/>
+          <text x="174" y="416" fill="#2d3142" font-size="12" font-weight="600">Dashboard</text>
+          <text x="174" y="432" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">Laboratorio · Calidad LLM</text>
+
+          <rect x="248" y="536" width="200" height="56" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75"/>
+          <text x="348" y="560" fill="#2d3142" font-size="12" font-weight="600">S3 privado</text>
+          <text x="348" y="576" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">banco · resultados · cifrado</text>
+
+          <rect x="412" y="152" width="220" height="72" rx="6" fill="#ffffff" stroke="#2d3142"/>
+          <text x="522" y="176" fill="#2d3142" font-size="12" font-weight="600">Laboratorio</text>
+          <text x="522" y="193" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">banco · sandbox · scorecard</text>
+          <text x="522" y="208" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">Temporal dev · 4 brazos</text>
+
+          <rect x="736" y="152" width="224" height="56" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36"/>
+          <text x="848" y="176" fill="#2d3142" font-size="12" font-weight="600">Puerto de percepción</text>
+          <text x="848" y="192" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">perfil activo = un parámetro</text>
+
+          <rect x="736" y="288" width="104" height="56" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)"/>
+          <text x="788" y="312" fill="#2d3142" font-size="11.5" font-weight="600">TypeSafe Jev</text>
+          <text x="788" y="328" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">typesafe/jev-1.13</text>
+
+          <rect x="856" y="288" width="104" height="56" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)"/>
+          <text x="908" y="312" fill="#2d3142" font-size="11.5" font-weight="600">OpenAI</text>
+          <text x="908" y="328" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">gpt-4o-mini</text>
+
+          <rect x="736" y="384" width="224" height="56" rx="6" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.22)" stroke-dasharray="4,3"/>
+          <text x="848" y="408" fill="#2d3142" font-size="12" font-weight="600">Próximo modelo</text>
+          <text x="848" y="424" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">otro perfil, el mismo puerto</text>
+        </g>
+
+        <!-- Aside editorial -->
+        <text x="540" y="424" fill="#4f5d75" font-size="13" font-style="italic" font-family="'Instrument Serif', serif">no puede escribirle</text>
+        <text x="540" y="442" fill="#4f5d75" font-size="13" font-style="italic" font-family="'Instrument Serif', serif">a ningún cliente</text>
+
+        <!-- Leyenda -->
+        <g font-family="'Geist', sans-serif" font-size="9" fill="#4f5d75">
+          <text x="600" y="540" font-family="'Geist Mono', monospace" font-size="8" letter-spacing="0.16em">LEYENDA</text>
+          <rect x="600" y="556" width="24" height="12" rx="3" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)"/><text x="632" y="566">Externo</text>
+          <rect x="700" y="556" width="24" height="12" rx="3" fill="rgba(45,49,66,0.05)" stroke="#4f5d75"/><text x="732" y="566">Datos</text>
+          <rect x="780" y="556" width="24" height="12" rx="3" fill="rgba(235,108,54,0.08)" stroke="#eb6c36"/><text x="812" y="566">Punto de cambio</text>
+          <line x1="600" y1="588" x2="628" y2="588" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arq-a)"/><text x="636" y="591">Fase futura</text>
+          <line x1="720" y1="588" x2="748" y2="588" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arq-al)"/><text x="756" y="591">Llamada externa</text>
+          <line x1="860" y1="588" x2="888" y2="588" stroke="#eb6c36" stroke-width="1.4" marker-end="url(#arq-aa)"/><text x="896" y="591">Uso principal</text>
+        </g>
+      </svg>
+    </div>
+    <p class="scroll-hint">← desliza para ver el diagrama completo →</p>
+    <p class="figcap"><b>Figura 1.</b> El bot de producción solo usa el puerto de percepción desde la fase de sombra (línea punteada). Antes de eso, el clasificador vive únicamente en el laboratorio.</p>
+  </div>
+  <div class="cards">
+    <div class="card k-accent"><h3>Producción no carga con nada nuevo</h3><p>En la Fase 0 el bot solo agrega pasos a la traza que ya escribe en cada turno. En sombra (Fase 5) suma dos llamadas cortas al clasificador por turno. Tienen tope de tiempo y nunca bloquean el envío.</p></div>
+    <div class="card"><h3>La caja del laboratorio no puede escribirle a nadie</h3>
+      <ul>
+        <li>No tiene llaves de WhatsApp, Medusa, Meta ni del Temporal de producción. Su rol de IAM se las niega.</li>
+        <li>Corre su propio Temporal en modo desarrollo (un proceso con base SQLite), con puertos falsos para todo lo que tenga efectos.</li>
+        <li>Si el sandbox abre una conexión que no sea al LLM o al clasificador, un test de fugas lo hace fallar.</li>
+      </ul>
+    </div>
+    <div class="card k-link"><h3>Los datos no salen de AWS</h3><p>El banco viaja por un bucket S3 privado y cifrado, con permisos solo para las dos cajas. A OpenRouter (Jev y OpenAI) solo van ráfagas anonimizadas, sin recolección de datos y con retención cero cuando el endpoint la ofrezca.</p></div>
+  </div>
+</section>
+
+<section id="banco">
+  <header>
+    <p class="eyebrow"><span class="sec-num">04</span>El banco de pruebas</p>
+    <h2>Un botón lanza todo: exportar, simular y evaluar</h2>
+    <p class="lede">Cuando pulsas <strong>Nueva corrida</strong> en la sección Laboratorio, el worker de evaluación exporta el banco al bucket en ese momento. La caja del laboratorio se prende, arma un caso por turno, lo corre en los brazos, lo evalúa y deja los resultados en la misma sección. Después se apaga. No hay nada programado.</p>
+  </header>
+  <div class="figure">
+    <div class="dg-wrap dg">
+      <svg class="w1000" viewBox="0 0 1000 420" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="bn-t bn-d">
+        <title id="bn-t">Del banco a las gráficas</title>
+        <desc id="bn-d">Seis pasos en cuatro carriles: pulsas Nueva corrida y producción exporta el banco; el laboratorio reconstruye los casos por turno, simula los brazos y los evalúa con el mismo scorecard; Calidad LLM muestra las mismas gráficas con un selector; tú decides.</desc>
+        <defs>
+          <marker id="bn-a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="bn-aa" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+        </defs>
+        <rect width="1000" height="420" fill="#f5f5f5"/>
+        <!-- Carriles -->
+        <rect x="24" y="56" width="952" height="80" rx="6" fill="rgba(79,93,117,0.04)" stroke="rgba(45,49,66,0.12)"/>
+        <rect x="24" y="144" width="952" height="80" rx="6" fill="rgba(235,108,54,0.05)" stroke="rgba(235,108,54,0.50)" stroke-dasharray="4,4"/>
+        <rect x="24" y="232" width="952" height="80" rx="6" fill="rgba(79,93,117,0.04)" stroke="rgba(45,49,66,0.12)"/>
+        <rect x="24" y="320" width="952" height="80" rx="6" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.12)"/>
+        <g font-family="'Geist Mono', monospace" font-size="8" letter-spacing="0.14em" fill="#4f5d75">
+          <text x="40" y="100">PRODUCCIÓN</text>
+          <text x="40" y="188" fill="#eb6c36">LABORATORIO</text>
+          <text x="40" y="276">DASHBOARD</text>
+          <text x="40" y="364">TÚ</text>
+        </g>
+        <!-- Encabezado de pasos -->
+        <g font-family="'Geist Mono', monospace" text-anchor="middle">
+          <circle cx="235" cy="26" r="8" fill="#ffffff" stroke="#2d3142"/><text x="235" y="29" font-size="8" font-weight="600" fill="#2d3142">1</text><text x="235" y="48" font-size="7.5" letter-spacing="0.12em" fill="#4f5d75">LANZAR Y EXPORTAR</text>
+          <circle cx="370" cy="26" r="8" fill="#ffffff" stroke="#2d3142"/><text x="370" y="29" font-size="8" font-weight="600" fill="#2d3142">2</text><text x="370" y="48" font-size="7.5" letter-spacing="0.12em" fill="#4f5d75">RECONSTRUIR</text>
+          <circle cx="504" cy="26" r="8" fill="#ffffff" stroke="#2d3142"/><text x="504" y="29" font-size="8" font-weight="600" fill="#2d3142">3</text><text x="504" y="48" font-size="7.5" letter-spacing="0.12em" fill="#4f5d75">SIMULAR</text>
+          <circle cx="639" cy="26" r="8" fill="rgba(235,108,54,0.08)" stroke="#eb6c36"/><text x="639" y="29" font-size="8" font-weight="600" fill="#eb6c36">4</text><text x="639" y="48" font-size="7.5" letter-spacing="0.12em" fill="#eb6c36">EVALUAR</text>
+          <circle cx="774" cy="26" r="8" fill="#ffffff" stroke="#2d3142"/><text x="774" y="29" font-size="8" font-weight="600" fill="#2d3142">5</text><text x="774" y="48" font-size="7.5" letter-spacing="0.12em" fill="#4f5d75">COMPARAR</text>
+          <circle cx="908" cy="26" r="8" fill="#ffffff" stroke="#2d3142"/><text x="908" y="29" font-size="8" font-weight="600" fill="#2d3142">6</text><text x="908" y="48" font-size="7.5" letter-spacing="0.12em" fill="#4f5d75">DECIDIR</text>
+        </g>
+        <!-- Conectores -->
+        <line x1="235" y1="334" x2="235" y2="122" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#bn-a)"/>
+        <path d="M 285 96 H 362 Q 370 96 370 104 V 158" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#bn-a)"/>
+        <line x1="420" y1="184" x2="454" y2="184" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#bn-a)"/>
+        <line x1="554" y1="184" x2="589" y2="184" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#bn-a)"/>
+        <path d="M 689 184 H 766 Q 774 184 774 192 V 246" fill="none" stroke="#eb6c36" stroke-width="1.4" marker-end="url(#bn-aa)"/>
+        <path d="M 824 272 H 900 Q 908 272 908 280 V 334" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#bn-a)"/>
+        <g font-family="'Geist Mono', monospace" font-size="7.5" letter-spacing="0.08em" fill="#4f5d75" text-anchor="middle">
+          <text x="326" y="88">S3</text>
+          <text x="727" y="176" fill="#eb6c36">RESULTADOS</text>
+          <text x="862" y="264">EVIDENCIA</text>
+        </g>
+        <!-- Nodos -->
+        <g font-family="'Geist', sans-serif" text-anchor="middle">
+          <rect x="185" y="70" width="100" height="52" rx="6" fill="#ffffff" stroke="#2d3142"/>
+          <text x="235" y="92" fill="#2d3142" font-size="11" font-weight="600">Exportador</text>
+          <text x="235" y="107" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">botón · sales_eval</text>
+
+          <rect x="320" y="158" width="100" height="52" rx="6" fill="#ffffff" stroke="#2d3142"/>
+          <text x="370" y="180" fill="#2d3142" font-size="11" font-weight="600">Casos por turno</text>
+          <text x="370" y="195" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">prefijo + ráfaga</text>
+
+          <rect x="454" y="158" width="100" height="52" rx="6" fill="#ffffff" stroke="#2d3142"/>
+          <text x="504" y="180" fill="#2d3142" font-size="11" font-weight="600">Brazos</text>
+          <text x="504" y="195" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">A0 · A1 · B · C</text>
+
+          <rect x="589" y="158" width="100" height="52" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36"/>
+          <text x="639" y="180" fill="#2d3142" font-size="11" font-weight="600">Mismo scorecard</text>
+          <text x="639" y="195" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">turno por turno</text>
+
+          <rect x="724" y="246" width="100" height="52" rx="6" fill="#ffffff" stroke="#2d3142"/>
+          <text x="774" y="268" fill="#2d3142" font-size="11" font-weight="600">Mismas gráficas</text>
+          <text x="774" y="283" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">sección Laboratorio</text>
+
+          <rect x="185" y="334" width="100" height="52" rx="6" fill="rgba(79,93,117,0.04)" stroke="#4f5d75"/>
+          <text x="235" y="356" fill="#2d3142" font-size="11" font-weight="600">Nueva corrida</text>
+          <text x="235" y="371" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">pulsas el botón</text>
+
+          <rect x="858" y="334" width="100" height="52" rx="6" fill="rgba(79,93,117,0.04)" stroke="#4f5d75"/>
+          <text x="908" y="356" fill="#2d3142" font-size="11" font-weight="600">Decides</text>
+          <text x="908" y="371" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">Jev, LLM o nada</text>
+        </g>
+        <text x="320" y="282" fill="#4f5d75" font-size="13" font-style="italic" font-family="'Instrument Serif', serif">cada turno parte de lo que pasó de verdad</text>
+      </svg>
+    </div>
+    <p class="scroll-hint">← desliza para ver el diagrama completo →</p>
+    <p class="figcap"><b>Figura 2.</b> Todo arranca cuando pulsas <b>Nueva corrida</b>; no hay nada programado. El paso 4 es el que da la cara: sin él las gráficas no serían comparables con las de producción.</p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Entra al banco</th><th>No entra</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Turnos en que el bot le respondió a un cliente</strong> desde el 10-sep. Los del 15-sep en adelante tienen traza completa (309 hoy). Los del 10 al 14 entran con fidelidad reducida y se reportan aparte.</td>
+          <td>Turnos que respondió una persona del equipo, turnos que inicia el sistema (los "fantasma": 95), sesiones de prueba (<code>wa_golden_*</code>, números internos, pedidos de prueba) y conversaciones en cuarentena.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="cards">
+    <div class="card"><h3>Qué guarda cada caso</h3>
+      <ul>
+        <li>El historial real del LLM hasta ese turno, con tools y resultados. Ya está en el vault (<code>agent_state</code>, 82 archivos).</li>
+        <li>Los mensajes individuales de la ráfaga con su hora.</li>
+        <li>Lo que el bot respondió de verdad: textos, tarjetas y tools.</li>
+        <li>El estado antes del turno: etapa, borrador del pedido y etiquetas (<code>stage_in</code>, <code>draft</code>, <code>state</code>).</li>
+      </ul>
+    </div>
+    <div class="card"><h3>Versionado</h3><p>Cada banco tiene un id y una huella. Cada corrida dice contra qué banco se hizo, con qué perfiles y con qué versión del evaluador. Dos corridas solo se comparan si comparten banco y versión del evaluador; el tablero lo exige.</p></div>
+    <div class="card k-muted"><h3>Exclusiones con motivo</h3><p>Cada turno que queda fuera se lista con su motivo en la pestaña del banco. Así se ve que nadie escogió los casos a mano.</p></div>
+  </div>
+</section>
+
+<section id="simular">
+  <header>
+    <p class="eyebrow"><span class="sec-num">05</span>Simular sin inventar al cliente</p>
+    <h2>Cada turno se responde sobre la conversación real hasta ese punto</h2>
+    <p class="lede">La respuesta del bot nuevo no se usa en el turno siguiente, que vuelve a partir de lo que pasó de verdad. Así nunca hay que inventar qué habría contestado el cliente.</p>
+  </header>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Brazo</th><th>Qué es</th><th>Para qué sirve</th></tr></thead>
+      <tbody>
+        <tr><td><strong>A0 · Producción</strong></td><td>Lo que el bot respondió de verdad. No se vuelve a ejecutar.</td><td>La línea base real.</td></tr>
+        <tr><td><strong>A1 · Actual simulado</strong></td><td>El bot de hoy dentro del sandbox, con el mismo catálogo y la misma hora que los demás brazos.</td><td>Es el control: aísla el efecto del simulador.</td></tr>
+        <tr><td><strong>B · Nuevo + Jev</strong></td><td>La estrategia nueva, con Jev (<code>typesafe/jev-1.13</code>, por OpenRouter) en la percepción y en la verificación. Devuelve probabilidades calibradas.</td><td>La apuesta.</td></tr>
+        <tr><td><strong>C · Nuevo + OpenAI</strong></td><td>La misma estrategia con OpenAI por OpenRouter: <code>gpt-4o-mini-2024-07-18</code>, cuyos logprobs se usan como probabilidades reales. Por OpenRouter, <code>gpt-5.4-nano</code> no los devuelve.</td><td>El rival con probabilidades reales, a ≈ US$0,0006 por turno.</td></tr>
+        <tr><td><strong>E… · Perfil nuevo</strong></td><td>Cualquier modelo que quieras probar mañana.</td><td>Cambiar de tecnología sin rehacer nada.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose"><strong>Cómo corre un turno simulado.</strong> La caja levanta su propio Temporal en modo desarrollo (un solo contenedor con base SQLite, no el clúster completo; ver más abajo) y registra un <code>SimSalesTurnWorkflow</code> que llama al mismo <code>run_agent_turn</code> de producción. El historial del LLM se carga hasta el turno <em>i</em> y la ráfaga entra por la misma coalescencia que en producción. Así lo que se prueba es el código que corre en producción, no una copia.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Lo que hace el bot</th><th>En producción</th><th>En el sandbox</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Correr el turno</strong> (workflow y activities)</td><td>Temporal Cloud, cola <code>queue-sales-agent</code></td><td>Temporal en modo desarrollo dentro de la caja: el mismo servidor en un solo proceso y el mismo código del workflow, sin llave de Temporal Cloud.</td></tr>
+        <tr><td><strong>Enviar texto o tarjetas</strong></td><td>API de WhatsApp (Meta)</td><td>Se captura y se guarda; no sale. La caja ni siquiera tiene el token.</td></tr>
+        <tr><td><strong>Buscar productos</strong></td><td>Snapshot del catálogo (no llama a Medusa)</td><td>El mismo snapshot para A1, B y C: el del día de la corrida.</td></tr>
+        <tr><td><strong>Promociones y cupones</strong></td><td>Medusa en vivo, solo lectura</td><td>Copia de las promociones exportada con el banco.</td></tr>
+        <tr><td><strong>Verificar precio y stock al cobrar</strong></td><td>Medusa en vivo</td><td>Responde desde el mismo snapshot del catálogo.</td></tr>
+        <tr><td><strong>Registrar el pedido</strong></td><td>Medusa: crea un draft order real</td><td>Falso: guarda "se habría creado" con los ítems y devuelve un id ficticio, como el <code>StubOrderRegistration</code> que ya existe.</td></tr>
+        <tr><td><strong>Consultar el estado de un pedido</strong></td><td>Medusa y OrderFacts en vivo</td><td>Si el turno real lo consultó, lo que respondió en ese momento; si no, los datos del día de la corrida.</td></tr>
+        <tr><td><strong>Etiquetas, etapa y borrador</strong></td><td>Vault</td><td>Una copia del vault dentro del sandbox, que se tira al terminar.</td></tr>
+        <tr><td><strong>Escalar a una persona</strong></td><td>Notifica y cambia la ruta</td><td>Se registra; no notifica a nadie.</td></tr>
+        <tr><td><strong>Eventos CAPI y transiciones a otros agentes</strong></td><td>Meta y el Temporal de producción</td><td>Apagados o solo registrados; no arrancan nada.</td></tr>
+        <tr><td><strong>Saber la hora</strong></td><td>Reloj real</td><td>La hora original del turno, con un reloj inyectado. Afecta saludos por hora y la ventana de 24 h.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="cards">
+    <div class="card"><h3>Tres repeticiones</h3><p>El LLM no responde igual dos veces. En las corridas de decisión cada turno se corre tres veces por brazo, y el tablero muestra cuántas de las tres pasan (pass^3).</p></div>
+    <div class="card k-muted"><h3>Lo que no se puede medir</h3><p>Si el cliente habría comprado, o cómo habría seguido la conversación. Los checks que dependen de turnos futuros, como el cierre o el pedido registrado, no se tocan. Se muestran como "sin señal en simulación".</p></div>
+    <div class="card k-accent"><h3>Qué llaves lleva la caja</h3><p>Solo las de los LLM: DeepSeek para el bot, Gemini para el juez y OpenRouter para Jev y OpenAI. Con esas, lo peor que puede pasar es gastar de más, y para eso está el tope por corrida. No lleva las de WhatsApp, Medusa, Meta ni Temporal Cloud. Con la de Medusa, una corrida podría crear decenas de pedidos reales; con la de Temporal Cloud, un error de cola podría quitarle turnos al bot real. Ya nos pasó algo parecido: la suite golden heredó el entorno de producción y escribió <code>wa_golden_*</code> en el vault real.</p></div>
+  </div>
+
+  <h3 style="margin-top:28px">Qué Temporal lleva la caja</h3>
+  <p class="prose">La caja del laboratorio es una máquina de AWS, no tu Mac: «propio» quiere decir que el Temporal vive dentro de esa caja y no en Temporal Cloud. No se instala Temporal completo. Hay tres formas de tener un servidor de Temporal propio y la caja usa la más liviana: el modo desarrollo del CLI oficial, que junta todo el servidor en un solo proceso.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>Temporal autoalojado completo</th><th>Tu stack local de Docker</th><th>Caja del laboratorio</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Qué es</strong></td><td>El servidor como se opera en producción cuando no hay Temporal Cloud</td><td><code>temporalio/auto-setup:1.24.2</code></td><td><code>temporal server start-dev</code>, con la imagen oficial <code>temporalio/temporal:1.9.1</code> fijada por digest</td></tr>
+        <tr><td><strong>Servicios internos</strong> (frontend, history, matching y worker)</td><td>Separados</td><td>Juntos, en un contenedor</td><td>Juntos, en un proceso</td></tr>
+        <tr><td><strong>Base de datos</strong></td><td>PostgreSQL, MySQL o Cassandra, y Elasticsearch opcional</td><td>Postgres 14 en otro contenedor</td><td>SQLite: un archivo que se borra en cada arranque de la caja</td></tr>
+        <tr><td><strong>UI</strong></td><td>Aparte</td><td>Aparte (<code>temporalio/ui</code>)</td><td>Dentro del mismo proceso. Se ve por SSM, sin puertos públicos.</td></tr>
+        <tr><td><strong>Contenedores</strong></td><td>Varios, más la base de datos</td><td>3</td><td>1</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose"><strong>Medido en tu Mac</strong>, solo para ver cuánto pesa; en la caja corre el mismo programa (el CLI 1.4.1 que ya tienes con Homebrew y el SDK <code>temporalio</code> 1.25.0 del repo): arranca en 0,5&nbsp;s y ocupa 72&nbsp;MB de RAM en reposo y 100&nbsp;MB después de correr un workflow. La caja tiene 8&nbsp;GB. El worker se conecta con <code>TEMPORAL_URL=temporal:7233</code> y el namespace <code>hubara-lab</code>, sin llave: es la rama sin llave que ya tiene <code>src/platform/temporal/client.py</code>.</p>
+
+  <h3 style="margin-top:28px">Dónde quedan las carpetas, las memorias y los resultados</h3>
+  <p class="prose">La misma imagen no es el mismo despliegue. El código escribe donde le indican sus variables de entorno (<code>WORKSPACE_VAULT_DIR</code>, <code>EXOCLAW_STATE_DIR</code>, <code>CATALOG_SNAPSHOT_DIR</code>…), y en la caja del laboratorio esas variables apuntan a carpetas desechables. El bot sí crea la carpeta del número, <code>metadata.json</code>, el historial, <code>memory/MEMORY.md</code> y la traza, pero dentro de un sandbox por turno que se borra al terminar.</p>
+<pre><span class="c"># Caja del laboratorio: disco propio; el vault de producción no está montado</span>
+/lab/bench/&lt;banco&gt;/                        <span class="c">copia del banco bajada de S3, solo lectura</span>
+    vault/wa_…/                             <span class="c">historial, metadata, trazas y scorecards reales</span>
+    agent_state/…                           <span class="c">historial real del LLM</span>
+    catalog/                                <span class="c">snapshot del catálogo</span>
+/lab/runs/&lt;corrida&gt;/&lt;brazo&gt;/&lt;rep&gt;/&lt;turno&gt;/   <span class="c">sandbox de UN turno: se crea, se usa y se borra</span>
+    vault/wa_…/metadata.json, sessions/, memory/MEMORY.md, evals/turn_traces.jsonl
+    agent_state/…/sessions/wa_….jsonl
+
+<span class="c"># S3 privado: lo único que sale de la caja</span>
+bench/&lt;banco&gt;/                              <span class="c">lo sube producción al pulsar el botón</span>
+runs/&lt;corrida&gt;/manifest.json                <span class="c">banco, brazos, perfiles, imagen y versión del evaluador</span>
+runs/&lt;corrida&gt;/turns/&lt;brazo&gt;/&lt;rep&gt;/         <span class="c">traza v2 de cada turno simulado</span>
+runs/&lt;corrida&gt;/scores/&lt;brazo&gt;/&lt;rep&gt;/        <span class="c">checks por turno, con la forma del scorecard</span>
+runs/&lt;corrida&gt;/summary.json                 <span class="c">lo que dibujan las gráficas</span></pre>
+  <div class="cards">
+    <div class="card k-accent"><h3>Por qué nunca en el vault de producción</h3><p>Más de diez partes del código de producción recorren el vault buscando carpetas <code>wa_*</code>: reengagement, Order Sentinel, post-venta, pedidos, el barrido del scorecard y la atribución, entre otras. Si apareciera ahí una carpeta del laboratorio, el ciclo de reengagement podría terminar escribiéndole a ese cliente. Por eso el laboratorio no escribe en el vault, ni siquiera en una subcarpeta.</p></div>
+    <div class="card"><h3>Cuatro candados</h3>
+      <ul>
+        <li><strong>Físico:</strong> el disco del vault solo está conectado a la caja de producción.</li>
+        <li><strong>Permisos:</strong> el rol de la caja del laboratorio solo lee <code>bench/</code> y escribe <code>runs/</code>. No puede leer las llaves de producción.</li>
+        <li><strong>Código:</strong> el worker del laboratorio no arranca si alguna carpeta apunta fuera de <code>/lab/</code> o si encuentra una llave de producción en su entorno. Las variables se fijan antes de importar la app, porque la composición guarda las rutas en caché.</li>
+        <li><strong>Test de fugas:</strong> corre un turno simulado y falla si se escribió algo fuera del sandbox o si se abrió una conexión que no sea al LLM o al clasificador.</li>
+      </ul>
+    </div>
+    <div class="card k-link"><h3>Qué pasa con los resultados</h3><p>La API de producción solo los lee para dibujar la sección Laboratorio. Nunca entran a <code>_evals/scorecards</code>, así que Chats, Calidad LLM y el barrido diario no los ven. Dentro del sandbox, cada número se reemplaza por uno ficticio con el mismo formato (<code>wa_570…</code>, que no existe en Colombia). El mapeo con la conversación real solo queda en el bucket privado.</p></div>
+  </div>
+  <p class="prose"><strong>En sombra y en canary no hay nada simulado.</strong> Son conversaciones reales que escriben en el vault como hoy. Lo único nuevo son campos adicionales en la misma traza de cada turno.</p>
+</section>
+
+<section id="evaluador">
+  <header>
+    <p class="eyebrow"><span class="sec-num">06</span>El mismo evaluador</p>
+    <h2>Mismos checks y mismo juez, con dos ajustes que valen para todos</h2>
+    <p class="lede">Los dos cambios aplican igual a producción y al laboratorio. Sin ellos el evaluador no vería la mejora.</p>
+  </header>
+  <div class="cards">
+    <div class="card k-accent"><h3>1 · EST-08 v2, lo primero</h3>
+      <p>Hoy EST-08 solo se activa si el cliente escribió "?", el juez ve como máximo 400 caracteres y los saltos de línea se juntan. La versión 2:</p>
+      <ul>
+        <li>ve la ráfaga completa, mensaje por mensaje;</li>
+        <li>no exige "?";</li>
+        <li>devuelve cobertura por asunto, por ejemplo "2 asuntos, 1 respondido".</li>
+      </ul>
+      <p>El juez saca los asuntos por su cuenta y nunca usa lo que dijo el clasificador del brazo. Así nadie se califica a sí mismo.</p>
+    </div>
+    <div class="card"><h3>2 · Modo por turno</h3><p>Hoy el scorecard califica el episodio entero y solo reporta el primer turno que falla (<code>failed(check, turn)</code>). El laboratorio necesita calificar el turno <em>i</em> con el prefijo real como contexto. Para eso se agrega un "turno foco" al motor: las reglas son las mismas y solo cambia qué turno se juzga. El juez recibe una llamada por episodio y brazo, con todas las respuestas candidatas marcadas, igual que hoy juzga el episodio completo.</p></div>
+    <div class="card k-link"><h3>Validación antes de usarlo</h3><p>El modo por turno tiene que reproducir las fallas del scorecard de producción en los 91 episodios reales. Si no las reproduce, no se usa. Esa prueba queda como test permanente.</p></div>
+  </div>
+  <p class="prose" style="margin-top:18px"><strong>El veredicto del episodio simulado</strong> se calcula con la misma regla de producción (<code>verdict.py</code>) sobre los checks por turno. Por eso, en el laboratorio, "Producción" se vuelve a medir con esa misma regla. Las cuatro columnas quedan comparables entre sí, aunque pueden diferir un poco de la pestaña de producción, que además incluye checks del episodio completo.</p>
+  <p class="prose"><strong>Estadística honesta.</strong> La comparación es pareada, turno a turno contra A1, con intervalos calculados por conversación, porque los turnos de una misma conversación no son independientes. Con ~300 turnos se ven las diferencias grandes; las chicas necesitan que el banco crezca. Cuando el intervalo cruza el cero, el tablero dice <em>"aún no concluyente"</em> en lugar de pintar una flecha.</p>
+</section>
+
+<section id="bot">
+  <header>
+    <p class="eyebrow"><span class="sec-num">07</span>El bot nuevo</p>
+    <h2>Primero se decide qué responder, después se escribe y antes de enviar se revisa</h2>
+    <p class="lede">El clasificador, sea Jev o el LLM, solo responde preguntas cerradas y el código arma el plan. El LLM que conversa sigue siendo DeepSeek, como hoy, y ahora recibe la lista de asuntos en el mensaje del turno en vez de adivinarla.</p>
+  </header>
+
+  <div class="figure">
+    <div class="dg-wrap dg">
+<svg class="w1000" viewBox="0 0 1000 700" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="turno-title turno-desc">
+          <title id="turno-title">El turno nuevo del bot de ventas</title>
+          <desc id="turno-desc">Diagrama de flujo: la ráfaga pasa por una percepción tipada; si la confianza no alcanza, el turno sale como hoy; si alcanza, el código arma el plan, el LLM redacta y una verificación decide si enviar o agregar un complemento o dejar el asunto pendiente, y el plan del turno queda registrado.</desc>
+          <defs>
+            <marker id="turno-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+            <marker id="turno-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+          </defs>
+          <rect width="1000" height="700" fill="#f5f5f5"/>
+
+          <!-- Flechas -->
+          <line x1="500" y1="80" x2="500" y2="104" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#turno-arrow)"/>
+          <line x1="500" y1="160" x2="500" y2="184" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#turno-arrow)"/>
+          <line x1="600" y1="228" x2="680" y2="228" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#turno-arrow)"/>
+          <line x1="500" y1="272" x2="500" y2="296" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#turno-arrow)"/>
+          <line x1="500" y1="352" x2="500" y2="376" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#turno-arrow)"/>
+          <line x1="500" y1="432" x2="500" y2="456" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#turno-arrow)"/>
+          <line x1="500" y1="544" x2="500" y2="576" stroke="#eb6c36" stroke-width="1.4" marker-end="url(#turno-arrow-accent)"/>
+          <line x1="600" y1="500" x2="680" y2="500" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#turno-arrow)"/>
+          <path d="M 780,528 V 594 Q 780,602 772,602 H 600" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#turno-arrow)"/>
+
+          <!-- Etiquetas de las ramas -->
+          <g font-family="'Geist Mono', monospace" font-size="8" text-anchor="middle" letter-spacing="0.12em">
+            <rect x="628" y="208" width="24" height="12" rx="2" fill="#f5f5f5"/><text x="640" y="217" fill="#4f5d75">NO</text>
+            <rect x="508" y="278" width="24" height="12" rx="2" fill="#f5f5f5"/><text x="520" y="287" fill="#4f5d75">SÍ</text>
+            <rect x="508" y="554" width="24" height="12" rx="2" fill="#f5f5f5"/><text x="520" y="563" fill="#eb6c36">SÍ</text>
+            <rect x="628" y="480" width="24" height="12" rx="2" fill="#f5f5f5"/><text x="640" y="489" fill="#4f5d75">NO</text>
+          </g>
+
+          <!-- Inicio -->
+          <rect x="400" y="32" width="200" height="48" rx="24" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+          <text x="500" y="54" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Ráfaga del cliente</text>
+          <text x="500" y="69" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">mensajes 1..n con hora</text>
+
+          <!-- Percepción tipada -->
+          <rect x="400" y="104" width="200" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="500" y="128" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Percepción tipada</text>
+          <text x="500" y="145" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">1 llamada · ~25 preguntas</text>
+
+          <!-- ¿Confianza suficiente? -->
+          <polygon points="500,184 600,228 500,272 400,228" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="500" y="226" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Confianza</text>
+          <text x="500" y="240" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">suficiente?</text>
+
+          <!-- Turno como hoy -->
+          <rect x="680" y="204" width="200" height="48" rx="24" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+          <text x="780" y="226" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Turno como hoy</text>
+          <text x="780" y="241" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">falla o duda → fail-open</text>
+
+          <!-- Plan en código -->
+          <rect x="400" y="296" width="200" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="500" y="320" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Plan en código</text>
+          <text x="500" y="337" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">qué cubrir · qué mostrar</text>
+
+          <!-- Redacción -->
+          <rect x="400" y="376" width="200" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="500" y="400" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Redacción (LLM)</text>
+          <text x="500" y="417" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">DeepSeek, como hoy</text>
+
+          <!-- ¿Todo cubierto? (focal) -->
+          <polygon points="500,456 600,500 500,544 400,500" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+          <text x="500" y="498" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Todo</text>
+          <text x="500" y="512" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">cubierto?</text>
+          <text x="388" y="503" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">verificación tipada</text>
+
+          <!-- Complemento o pendiente -->
+          <rect x="680" y="472" width="200" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="780" y="496" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Complemento o pendiente</text>
+          <text x="780" y="513" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">1 intento · o al turno siguiente</text>
+
+          <!-- Enviar y registrar -->
+          <rect x="400" y="576" width="200" height="52" rx="26" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+          <text x="500" y="599" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Enviar y registrar</text>
+          <text x="500" y="615" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">hilo del turno → traza v2</text>
+
+          <!-- Anotaciones editoriales -->
+          <text x="380" y="136" fill="#4f5d75" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="end">Jev o el LLM: el mismo puerto</text>
+          <text x="380" y="328" fill="#4f5d75" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="end">reglas en código, con tests</text>
+
+          <!-- Leyenda -->
+          <line x1="40" y1="648" x2="960" y2="648" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+          <text x="40" y="664" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEYENDA · LA FORMA INDICA EL TIPO</text>
+          <rect x="40" y="676" width="24" height="12" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+          <text x="72" y="686" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Inicio / fin</text>
+          <rect x="196" y="676" width="24" height="12" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="228" y="686" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Paso</text>
+          <polygon points="316,682 328,676 340,682 328,688" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+          <text x="352" y="686" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Decisión</text>
+          <line x1="456" y1="682" x2="484" y2="682" stroke="#eb6c36" stroke-width="1.4" marker-end="url(#turno-arrow-accent)"/>
+          <text x="492" y="686" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Camino feliz</text>
+          <line x1="608" y1="682" x2="636" y2="682" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#turno-arrow)"/>
+          <text x="644" y="686" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Rama</text>
+        </svg>
+    </div>
+    <p class="scroll-hint">← desliza para ver el diagrama completo →</p>
+    <p class="figcap"><b>Figura 3.</b> Si el clasificador falla o duda, el turno sale exactamente como hoy (fail-open). El paso resaltado, la verificación, es el que hoy no existe.</p>
+  </div>
+
+  <div class="cards">
+    <div class="card k-accent"><h3>Qué pregunta el clasificador</h3>
+      <p>Unas 25 preguntas en una sola llamada:</p>
+      <ul>
+        <li><strong>Asuntos</strong> (probabilidad de sí): catálogo, precio, envío, tiempos, pagos, medidas, color o variante, aroma, personalización, disponibilidad, estado de pedido, datos de envío, confirma compra, aplaza, queja, pregunta sobre una foto y saludo.</li>
+        <li><strong>Hilo</strong>: ¿responde a la última pregunta del bot? ¿repite algo que quedó sin respuesta?</li>
+        <li><strong>Etapa</strong> (elección entre opciones) y <strong>asunto principal de cada mensaje</strong> de la ráfaga.</li>
+      </ul>
+    </div>
+    <div class="card"><h3>Qué decide el código</h3>
+      <ul>
+        <li>Una línea por asunto, con cómo se responde: texto con datos, tarjeta o el flujo que ya existe.</li>
+        <li>Un solo elemento interactivo por turno, y va al final.</li>
+        <li>Los datos que no necesitan al LLM, como tarifas de envío o medios de pago, se precargan y van como dato a la redacción.</li>
+        <li>Los pendientes del turno anterior entran primero.</li>
+        <li>Como máximo una ronda extra del LLM y una burbuja de complemento.</li>
+      </ul>
+    </div>
+    <div class="card k-muted"><h3>Cuándo se hace a un lado</h3><p>Si el clasificador tarda más de 3 s, falla o su confianza queda bajo el umbral, el turno sale exactamente como hoy y queda registrado. La verificación nunca bloquea un envío: si duda, envía y deja el asunto pendiente para el turno siguiente.</p></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Causa que encontramos en el código</th><th>Qué la corrige</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Turno de una sola acción.</strong> Seis tools cortan el turno, y <code>send_shipping_rates</code> "es la respuesta".</td><td>Si la lista de asuntos no está cubierta, el LLM recibe una ronda más. Las tarifas llegan como dato, así que ya no son "la respuesta".</td></tr>
+        <tr><td><strong>Guardas que se llevan el texto entero</strong> (default-deny, enumeración de variantes, Checkpoint B).</td><td>La verificación corre después de las guardas. Si una guarda borró un asunto, lo detecta y agrega un complemento.</td></tr>
+        <tr><td><strong>La ráfaga llega como un bloque</strong>, y la nota va escondida en el prompt de sistema.</td><td>El clasificador ve cada mensaje por separado. El LLM recibe la lista de asuntos en el mensaje del turno.</td></tr>
+        <tr><td><strong>Nadie lleva los pendientes</strong> de un turno al siguiente.</td><td>Los asuntos sin cubrir pasan al turno siguiente, se ven en el hilo y cuentan en el evaluador. El clasificador pregunta en la propia conversación qué quedó sin responder, en vez de guardarlo en memoria interna. Por eso funciona igual en el laboratorio y después de un reinicio.</td></tr>
+        <tr><td><strong>EST-08 ciego</strong> ante las ráfagas.</td><td>EST-08 v2 (§6).</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="hilo">
+  <header>
+    <p class="eyebrow"><span class="sec-num">08</span>El hilo de ejecución de cada turno</p>
+    <h2>Un clic en la ráfaga o en la respuesta, y ves todo lo que pasó en orden</h2>
+    <p class="lede">En cada conversación y en cada turno, un clic abre un modal con la secuencia completa: qué midió Jev y qué escogió, qué tools corrieron y en qué orden, si Jev volvió a revisar y qué terminó respondiendo el LLM. Funciona como el historial de ejecución de Make: cada paso está numerado y al tocarlo ves su entrada, su salida, el tiempo y el costo.</p>
+  </header>
+
+  <div class="figure">
+    <div class="dg-wrap dg">
+      <svg class="w1000" viewBox="0 0 1000 690" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="sq-t sq-d">
+        <title id="sq-t">Secuencia de un turno del bot nuevo</title>
+        <desc id="sq-d">El cliente manda una ráfaga; el workflow le hace preguntas tipadas a Jev, arma un plan en código, pide al agente que redacte; el agente busca productos; el workflow verifica con Jev que cada asunto quedó cubierto; si falta alguno pide un complemento; y envía texto y tarjetas al cliente.</desc>
+        <defs>
+          <marker id="sq-a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="sq-aa" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+          <marker id="sq-al" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+        </defs>
+        <rect width="1000" height="690" fill="#f5f5f5"/>
+
+        <!-- Líneas de vida -->
+        <g stroke="rgba(45,49,66,0.22)" stroke-width="1" stroke-dasharray="3,3">
+          <line x1="110" y1="68" x2="110" y2="636"/><line x1="320" y1="68" x2="320" y2="636"/><line x1="520" y1="68" x2="520" y2="636"/><line x1="710" y1="68" x2="710" y2="636"/><line x1="890" y1="68" x2="890" y2="636"/>
+        </g>
+
+        <!-- Fragmento opcional -->
+        <rect x="280" y="508" width="470" height="68" rx="4" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.22)"/>
+        <rect x="280" y="508" width="40" height="16" rx="2" fill="#f5f5f5" stroke="rgba(45,49,66,0.22)"/>
+        <text x="300" y="520" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.12em">OPT</text>
+        <text x="330" y="520" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.04em">[falta un asunto]</text>
+
+        <!-- Barras de activación -->
+        <rect x="316" y="108" width="8" height="504" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="0.8"/>
+        <rect x="516" y="148" width="8" height="40" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="0.8"/>
+        <rect x="516" y="452" width="8" height="40" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="0.8"/>
+        <rect x="706" y="292" width="8" height="120" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="0.8"/>
+        <rect x="706" y="548" width="8" height="20" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="0.8"/>
+        <rect x="886" y="332" width="8" height="40" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="0.8"/>
+
+        <!-- Mensajes -->
+        <line x1="110" y1="108" x2="315" y2="108" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#sq-a)"/>
+        <line x1="324" y1="148" x2="515" y2="148" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#sq-al)"/>
+        <line x1="516" y1="188" x2="325" y2="188" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#sq-a)"/>
+        <path d="M 324 228 H 352 Q 360 228 360 236 V 244 Q 360 252 352 252 H 325" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#sq-a)"/>
+        <line x1="324" y1="292" x2="705" y2="292" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#sq-a)"/>
+        <line x1="714" y1="332" x2="885" y2="332" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#sq-a)"/>
+        <line x1="886" y1="372" x2="715" y2="372" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#sq-a)"/>
+        <line x1="706" y1="412" x2="325" y2="412" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#sq-a)"/>
+        <line x1="324" y1="452" x2="515" y2="452" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#sq-al)"/>
+        <line x1="516" y1="492" x2="325" y2="492" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#sq-a)"/>
+        <line x1="324" y1="556" x2="705" y2="556" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#sq-a)"/>
+        <line x1="316" y1="612" x2="111" y2="612" stroke="#eb6c36" stroke-width="1.4" marker-end="url(#sq-aa)"/>
+
+        <!-- Etiquetas de mensajes -->
+        <g font-family="'Geist Mono', monospace" font-size="8.5" fill="#4f5d75" text-anchor="middle">
+          <text x="215" y="100">ráfaga: 2 mensajes en 7 s</text>
+          <text x="420" y="140" fill="#2e5aa8">25 preguntas tipadas</text>
+          <text x="420" y="180">catálogo 0,96 · envío 0,98</text>
+          <text x="368" y="244" text-anchor="start">plan: 2 asuntos</text>
+          <text x="420" y="284">ráfaga + lista de asuntos</text>
+          <text x="800" y="324">search_products</text>
+          <text x="800" y="364">12 productos</text>
+          <text x="615" y="404">texto + present_products</text>
+          <text x="420" y="444" fill="#2e5aa8">¿cubre cada asunto?</text>
+          <text x="420" y="484">catálogo ✓ 0,95 · envío ✓ 0,93</text>
+          <text x="420" y="548">1 burbuja de complemento</text>
+          <text x="215" y="604" fill="#eb6c36">texto + 12 tarjetas</text>
+        </g>
+
+        <!-- Actores -->
+        <g font-family="'Geist', sans-serif" text-anchor="middle">
+          <rect x="35" y="24" width="150" height="44" rx="6" fill="rgba(79,93,117,0.04)" stroke="#7a8399"/>
+          <text x="110" y="43" fill="#2d3142" font-size="12" font-weight="600">Cliente</text>
+          <text x="110" y="58" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', monospace">WhatsApp</text>
+          <rect x="245" y="24" width="150" height="44" rx="6" fill="#ffffff" stroke="#2d3142"/>
+          <text x="320" y="43" fill="#2d3142" font-size="12" font-weight="600">Workflow</text>
+          <text x="320" y="58" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', monospace">código · Temporal</text>
+          <rect x="445" y="24" width="150" height="44" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36"/>
+          <text x="520" y="43" fill="#2d3142" font-size="12" font-weight="600">Jev</text>
+          <text x="520" y="58" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', monospace">percepción tipada</text>
+          <rect x="635" y="24" width="150" height="44" rx="6" fill="#ffffff" stroke="#2d3142"/>
+          <text x="710" y="43" fill="#2d3142" font-size="12" font-weight="600">Agente</text>
+          <text x="710" y="58" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', monospace">DeepSeek · redacta</text>
+          <rect x="815" y="24" width="150" height="44" rx="6" fill="#ffffff" stroke="#2d3142"/>
+          <text x="890" y="43" fill="#2d3142" font-size="12" font-weight="600">Tools</text>
+          <text x="890" y="58" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', monospace">catálogo · pedidos</text>
+        </g>
+
+        <!-- Leyenda -->
+        <g font-family="'Geist', sans-serif" font-size="9" fill="#4f5d75">
+          <line x1="40" y1="664" x2="68" y2="664" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#sq-a)"/><text x="76" y="667">Llamada</text>
+          <line x1="150" y1="664" x2="178" y2="664" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#sq-a)"/><text x="186" y="667">Respuesta</text>
+          <line x1="270" y1="664" x2="298" y2="664" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#sq-al)"/><text x="306" y="667">Llamada a un proveedor</text>
+          <line x1="450" y1="664" x2="478" y2="664" stroke="#eb6c36" stroke-width="1.4" marker-end="url(#sq-aa)"/><text x="486" y="667">Lo que recibe el cliente</text>
+        </g>
+      </svg>
+    </div>
+    <p class="scroll-hint">← desliza para ver el diagrama completo →</p>
+    <p class="figcap"><b>Figura 4.</b> Lo que dibuja el modal para un turno del bot nuevo. Con el bot actual la secuencia es más corta, sin Jev y sin plan, y ahí se ve dónde se perdió un asunto.</p>
+  </div>
+
+  <h3 style="margin-top:28px">Pruébalo: la maqueta del modal</h3>
+  <p class="prose">Es un ejemplo ilustrativo con el caso del §2; los valores y los tiempos están inventados para mostrar la vista. Toca la ráfaga o el botón que va debajo de la respuesta, cambia de brazo arriba y recorre los pasos.</p>
+  <div class="screen" id="chatMock">
+    <div class="screen-bar">
+      <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
+      <span class="screen-title">Laboratorio · conversación de ejemplo</span>
+      <div class="seg" role="group" aria-label="Brazo del laboratorio">
+        <button type="button" id="armActual" data-arm="actual" aria-pressed="true">Bot actual</button>
+        <button type="button" id="armNuevo" data-arm="nuevo" aria-pressed="false">Bot nuevo + Jev</button>
+      </div>
+    </div>
+    <div class="screen-body">
+      <div class="thread" id="thread"></div>
+      <div class="explain">
+        <h4>Cómo se usa</h4>
+        <ol>
+          <li><span class="k-dot" style="background:var(--hb-violet)"></span>La barra morada agrupa los mensajes de una ráfaga. Tocarla abre el hilo en el primer paso.</li>
+          <li>El botón debajo de la respuesta resume el turno: cuántos pasos tuvo y cuántos asuntos cubrió.</li>
+          <li>En el modal, cada número es un paso. Tócalo para ver entrada, salida, tiempo y costo.</li>
+        </ol>
+        <p class="note">Esta es la vista del Laboratorio, donde puedes cambiar de bot para el mismo turno. En Chats el mismo modal llega con la sombra (Fase 5) y muestra el turno real.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="cards">
+    <div class="card k-accent"><h3>Dónde aparece</h3>
+      <ul>
+        <li><strong>Laboratorio (desde la Fase 2):</strong> en cada turno de cada conversación del banco, con pestañas por bot. Empieza con el bot actual y suma los bots nuevos en las Fases 3 y 4.</li>
+        <li><strong>Chats (desde la Fase 5):</strong> un botón al final de cada turno y sobre cada ráfaga, siempre visible. No depende del mouse, así que funciona en la app Android.</li>
+        <li><strong>Calidad LLM:</strong> se queda con datos reales; en el canary suma un filtro "bot actual / bot nuevo".</li>
+      </ul>
+    </div>
+    <div class="card"><h3>Cómo se construye en el dashboard</h3><p>El modal y el dibujo de la secuencia van en <code>@/shared/ui</code>, sin conocimiento del dominio, como <code>DateRangeFilter</code>. Lo estrena el plugin <code>lab</code> y después lo usa <code>chats</code>. Cada plugin tiene su contrato y su mapper, y el backend entrega los pasos listos para dibujar desde un solo builder en <code>chats</code>. No se agrega ninguna librería: el dashboard ya dibuja todo en SVG propio. Hoy no hay un modal compartido (hay unas 11 copias hechas a mano), así que este trabajo deja uno.</p></div>
+    <div class="card k-muted"><h3>Conversaciones viejas</h3><p>Del 15 al 23 de septiembre la traza v1 ya tiene las tools en orden, con argumentos y extracto del resultado. Esos turnos se ven, con menos detalle: sin tiempos y con las guardas sin orden. Antes del 15-sep solo se ven los mensajes y los nombres de las tools.</p></div>
+  </div>
+
+  <h3 style="margin-top:28px">Qué se guarda por turno: la traza v2</h3>
+  <p class="prose">Es una extensión de la traza que el bot ya escribe en <code>&lt;sesión&gt;/evals/turn_traces.jsonl</code>. Los campos de la v1 se quedan igual, para que el scorecard no cambie.</p>
+<pre><span class="c">// Una línea por turno. Abreviado; los textos se cortan a 600 caracteres.</span>
+{
+  <span class="k">"v"</span>: 2,
+  <span class="k">"turn_key"</span>: "run:019f…/t:27",            <span class="c">// run_id + número de turno: no depende del contador de la activity</span>
+  <span class="k">"source"</span>: "prod",                        <span class="c">// o "lab:&lt;corrida&gt;:&lt;brazo&gt;:&lt;repetición&gt;"</span>
+  <span class="k">"inbound"</span>: [{"seq": 41, "wamid": "wamid.…", "ts_ms": 1790000000000, "kind": "text", "text": "…"}],
+  <span class="k">"steps"</span>: [
+    {"i": 1, "at_ms": 0,    "kind": "perception", "model": "typesafe/jev-1.13", "profile": "jev-v1", "mode": "shadow",
+     "dur_ms": 420, "confidence": 0.91, "answers": [{"q": "topic.catalogo", "p": 0.96, "picked": true, "msg": 1}]},
+    {"i": 2, "at_ms": 430,  "kind": "plan", "checklist": [{"topic": "catalogo", "msg": 1, "via": "card"},
+                                                         {"topic": "envio", "msg": 2, "via": "text"}]},
+    {"i": 3, "at_ms": 440,  "kind": "llm", "round": 1, "dur_ms": 1900, "tokens_in": 38412, "tokens_out": 96,
+     "tool_calls": ["search_products"], "text_fate": "none"},
+    {"i": 4, "at_ms": 2350, "kind": "tool", "name": "search_products", "call_id": "…", "args": {"query": "velas"},
+     "ok": true, "excerpt": "12 productos…", "dur_ms": 300},
+    {"i": 5, "at_ms": 2700, "kind": "guard", "name": "variant_enumeration_guard", "before": "…", "after": "…"},
+    {"i": 6, "at_ms": 4300, "kind": "verify", "answers": [{"topic": "catalogo", "p": 0.95}, {"topic": "envio", "p": 0.93}],
+     "decision": "send"},
+    {"i": 7, "at_ms": 4800, "kind": "outbound", "bubbles": [{"seq": 44, "wamid": "wamid.…", "kind": "text", "delivered": true},
+                                                           {"seq": 45, "kind": "ui:present_products"}]}
+  ],
+  <span class="k">"topics"</span>: [{"id": "catalogo", "msg": 1, "status": "covered"}, {"id": "envio", "msg": 2, "status": "covered"}],
+  <span class="k">"context_notes"</span>: ["burst_note", "draft"],   <span class="c">// qué notas se inyectaron ese turno (solo nombres)</span>
+  <span class="c">// … más los campos v1: tools, guards, sent_texts, llm_text, stage_in/out, draft, state</span>
+}</pre>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Regla</th><th>Por qué</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Si solo cambia el contenido de la traza, no hay <code>workflow.patched</code>.</strong></td><td>Cambiar los argumentos de una activity no rompe el replay (lección L-22, regla 3). Igual se agregan tests de replay con historias reales.</td></tr>
+        <tr><td><strong>Todo lo que agenda activities nuevas va detrás de <code>workflow.patched</code>.</strong></td><td>La percepción, la verificación y la lectura del modo cambian los comandos del workflow (L-9). Cada activity nueva lleva su fake en el arnés de debounce y su fixture de replay.</td></tr>
+        <tr><td><strong>Los ids de la ráfaga viajan en un 4.º argumento opcional de la señal.</strong> Se despliega primero el worker y después la API.</td><td>Un worker viejo que recibe 4 argumentos falla la tarea del workflow hasta que llega el código nuevo. Al revés no pasa nada: la señal vieja de 3 argumentos toma el valor por defecto.</td></tr>
+        <tr><td><strong>El envío devuelve los wamid entregados.</strong> Las historias viejas aceptan también la forma anterior (<code>None</code>).</td><td>Hoy <code>sent_texts</code> es lo que se pidió enviar, no lo que llegó. Además, el dashboard muestra textos que la guarda del selector no envió (tarea aparte).</td></tr>
+        <tr><td><strong>Las guardas se registran en orden, con el antes y el después.</strong></td><td>Hoy se guardan ordenadas alfabéticamente y sin duplicados. Así se pierde dónde actuaron y qué borraron, incluido el texto que suprime el Checkpoint B.</td></tr>
+        <tr><td><strong>Hay límites de tamaño:</strong> 600 caracteres por texto, 60 pasos por turno y JSON compacto.</td><td>La traza viaja en la historia de Temporal. El workflow ya hace continue-as-new cada 50 turnos.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="laboratorio">
+  <header>
+    <p class="eyebrow"><span class="sec-num">09</span>Sección Laboratorio</p>
+    <h2>Un lugar aparte que se ve como Chats y lanza las corridas</h2>
+    <p class="lede">El laboratorio tiene su propia sección en el dashboard, con un plugin nuevo: <code>lab</code>. Se parece a Chats: una lista de conversaciones, el hilo de cada una y un panel a la derecha. Solo que el panel muestra el <strong>resumen de las evaluaciones del chat</strong> y tiene una subpestaña con <strong>cada check del evaluador</strong>, y cada turno abre el <strong>modal del hilo</strong>. Chats y Calidad LLM se quedan solo con datos reales de producción. Arriba a la derecha está el botón <strong>Nueva corrida</strong>, que lanza todo el proceso.</p>
+  </header>
+  <div class="screen" id="labMock">
+    <div class="screen-bar">
+      <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
+      <span class="screen-title">Laboratorio · Agente de ventas</span>
+      <span class="m-meta" style="margin-left:auto">Corrida: banco del 24-sep · 4 bots · 3 repeticiones</span>
+      <button type="button" class="run-btn" id="runOpen" aria-expanded="false" aria-controls="runPanel">Nueva corrida</button>
+    </div>
+    <div class="run-panel" id="runPanel" hidden>
+      <div id="runForm">
+        <div class="run-row"><span class="run-lbl">Bots</span>
+          <label class="run-check"><input type="checkbox" checked disabled> A1 · Actual simulado (control)</label>
+          <label class="run-check"><input type="checkbox" id="runArmB" checked> B · Nuevo + Jev</label>
+          <label class="run-check"><input type="checkbox" id="runArmC" checked> C · Nuevo + OpenAI</label>
+        </div>
+        <div class="run-row"><span class="run-lbl">Repeticiones</span>
+          <div class="seg"><button type="button" data-reps="1" aria-pressed="false">1 · rápida</button><button type="button" data-reps="3" aria-pressed="true">3 · decisión</button></div>
+        </div>
+        <div class="run-row"><span class="run-lbl">Banco</span>
+          <div class="seg"><button type="button" data-bank="new" aria-pressed="true">Exportar ahora</button><button type="button" data-bank="reuse" aria-pressed="false">Reusar el del 24-sep</button></div>
+        </div>
+        <div class="run-row"><span class="run-lbl">Costo</span><span class="run-cost" id="runCost">≈ US$95 estimado · 3.600 turnos · tope por corrida US$120 · quedan US$300 del mes</span></div>
+        <div class="run-actions"><button type="button" class="run-ghost" id="runClose">Cerrar</button><button type="button" class="run-btn" id="runGo">Lanzar corrida</button></div>
+      </div>
+      <div id="runProgress" hidden>
+        <ol class="run-steps"><li class="done">Exportar banco</li><li class="done">Prender la caja</li><li class="now">Correr bots</li><li>Evaluar</li><li>Listo</li></ol>
+        <div class="run-bar" aria-hidden="true"><b></b></div>
+        <div class="run-row"><span class="run-lbl">Avance</span><span class="run-cost" id="runNow"></span></div>
+        <div class="run-actions"><button type="button" class="run-ghost" id="runCancel">Cancelar corrida</button></div>
+      </div>
+    </div>
+    <div class="qtabs" role="tablist" aria-label="Pestañas del laboratorio">
+      <button type="button" role="tab" id="lt-conv" data-tab="conv" aria-selected="true">Conversaciones</button>
+      <button type="button" role="tab" id="lt-res" data-tab="res" aria-selected="false">Resumen</button>
+      <button type="button" role="tab" id="lt-banco" data-tab="banco" aria-selected="false">Banco y corridas</button>
+    </div>
+    <div class="qpane lab-pane" id="labPane" role="tabpanel" aria-labelledby="lt-conv"></div>
+  </div>
+  <p class="figcap">Maqueta con los estilos reales del dashboard. Las cifras de Producción y del banco son las de hoy; los veredictos de los bots simulados son un ejemplo ilustrativo. El botón <strong>Nueva corrida</strong> abre el formulario: el costo se recalcula con lo que marques, y los topes y el avance son de ejemplo.</p>
+
+  <div class="cards c2">
+    <div class="card k-accent"><h3>Por qué no un segundo Chats ni un filtro en Chats</h3><p>Chats tiene el compositor que envía mensajes reales. Si ahí aparecieran conversaciones simuladas, alguien podría terminar respondiéndole a un cliente real sobre algo que nunca pasó. Además habría que tocar el backend de Chats en producción. La sección Laboratorio no tiene compositor: su única acción es lanzar o cancelar una corrida, y eso no toca a ningún cliente.</p></div>
+    <div class="card"><h3>Qué hay en cada pestaña</h3>
+      <ul>
+        <li><strong>Conversaciones:</strong> la lista del banco con el veredicto de cada bot; el hilo con un selector de bot; a la derecha, el resumen de evaluaciones y la subpestaña Evaluaciones; y en cada turno, el modal del hilo.</li>
+        <li><strong>Resumen:</strong> las mismas gráficas de Calidad LLM para cada bot, y las diferencias contra el bot actual.</li>
+        <li><strong>Banco y corridas:</strong> qué entró al banco, qué se excluyó y por qué, y cada corrida con su costo.</li>
+      </ul>
+    </div>
+    <div class="card k-link"><h3>La lógica sigue en <code>chats</code></h3><p>La simulación y la evaluación viven con el agente: el worker <code>sales_lab</code> y el mismo scorecard de <code>sales_eval</code>. El plugin <code>lab</code> solo muestra los resultados, como <code>agents_admin</code> muestra Calidad LLM. Así no reabre la decisión cerrada de que las evaluaciones no son un plugin. Lee por cast el contrato <code>lab@v1</code>, y se apaga con <code>ENABLED_PLUGINS</code> sin tocar nada más.</p></div>
+    <div class="card k-muted"><h3>Qué se comparte y qué no</h3>
+      <ul>
+        <li>El modal y el dibujo de la secuencia van en <code>@/shared/ui</code>. Los estrena el laboratorio y después los usa Chats.</li>
+        <li>Las gráficas de Calidad LLM se mueven a <code>@/shared/ui</code> para que las dos secciones dibujen exactamente las mismas. Es el único cambio a un plugin existente antes de producción, y no cambia lo que muestra Calidad LLM.</li>
+        <li>El hilo del laboratorio usa las mismas clases CSS de Chats. Se ve igual sin tocar el código de Chats.</li>
+      </ul>
+    </div>
+  </div>
+  <h3 style="margin-top:28px">El botón Nueva corrida</h3>
+  <p class="prose">No hay nada programado. Todo arranca cuando pulsas <strong>Nueva corrida</strong>, eliges bots, repeticiones y banco, y confirmas el costo estimado. Si nadie lo pulsa, no se exporta nada, la caja no se prende y no hay gasto.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Fase</th><th>Dónde corre</th><th>Qué hace</th></tr></thead>
+      <tbody>
+        <tr><td class="nw"><strong>1 · Exportar</strong></td><td>Caja de producción</td><td>Arma el banco en ese momento y lo sube a S3 archivo por archivo. Hoy pesa unos 15–20&nbsp;MB y la caja tiene ≈ 420&nbsp;MB libres, así que no le quita memoria al bot.</td></tr>
+        <tr><td class="nw"><strong>2 · Prender la caja</strong></td><td>AWS (EC2 y SSM)</td><td>Prende la caja del laboratorio y espera a que su agente de SSM esté en línea.</td></tr>
+        <tr><td class="nw"><strong>3 · Correr</strong></td><td>Caja del laboratorio</td><td>Recibe la orden por SSM, baja el banco, corre los bots y va escribiendo su avance en S3.</td></tr>
+        <tr><td class="nw"><strong>4 · Evaluar</strong></td><td>Caja del laboratorio</td><td>El mismo scorecard, turno por turno, y el juez.</td></tr>
+        <tr><td class="nw"><strong>5 · Listo</strong></td><td>Dashboard</td><td>La corrida aparece en la sección. La caja se apaga sola a los 10 minutos sin trabajo.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="cards c2">
+    <div class="card k-accent"><h3>Candados del botón</h3>
+      <ul>
+        <li><strong>Una corrida a la vez.</strong> Un doble clic o dos personas al tiempo no lanzan dos corridas.</li>
+        <li><strong>Topes de gasto</strong> por corrida y por mes (propuestos: US$120 y US$300). Si la estimación no cabe, no deja lanzar; si el gasto real llega al tope, la caja corta.</li>
+        <li><strong>Cancelar</strong> en cualquier momento: la caja guarda lo que alcanzó a correr y se apaga.</li>
+        <li>Si algo falla, la corrida queda como fallida con el motivo. No se relanza sola, porque cuesta dinero.</li>
+      </ul>
+    </div>
+    <div class="card"><h3>Qué no cambia</h3>
+      <ul>
+        <li>Quien orquesta es un workflow de Temporal en producción (<code>LabLaunchWorkflow</code>). Si producción se redespliega en medio de una corrida, sigue donde iba.</li>
+        <li>La caja del laboratorio sigue sin llaves de producción y nunca ve el vault.</li>
+        <li>El botón no toca a ningún cliente: exporta, prende la caja y muestra resultados.</li>
+      </ul>
+    </div>
+  </div>
+  <p class="prose"><strong>Cuando pase a producción:</strong> Chats recibe el botón por turno y el mismo modal desde la sombra (Fase 5), con trazas reales. Calidad LLM sigue con datos reales y en el canary suma un filtro "bot actual / bot nuevo". El laboratorio se queda como banco permanente para cualquier cambio futuro: otro modelo, otro prompt, otra tool.</p>
+</section>
+
+<section id="modelos">
+  <header>
+    <p class="eyebrow"><span class="sec-num">10</span>Cambiar de modelo</p>
+    <h2>El bot no sabe qué modelo clasifica: habla con un puerto</h2>
+    <p class="lede">Cada modelo es un perfil versionado, y el perfil activo es un parámetro de Terraform. Es el mismo patrón que ya usa la visión de imágenes (<code>get_image_vision_port</code>, con <code>IMAGE_VISION_PROVIDER</code>), expuesto a los plugins por <code>src.sdk.connectorkit</code> y cargado de forma perezosa para no arrastrar vendors.</p>
+  </header>
+<pre><span class="c"># hubara_agency/src/platform/perception/profiles.yaml</span>
+<span class="k">jev-v1:</span>                        <span class="c"># brazo B</span>
+  provider: openrouter_decisions <span class="c"># httpx → openrouter.ai/api/alpha/decisions</span>
+  model: typesafe/jev-1.13       <span class="c"># fijo, nunca "Jev Latest" (lección L-23)</span>
+  questions: rafaga-v1           <span class="c"># forma nativa: noul, choice y score</span>
+  timeout_s: 3
+  thresholds: {detect: 0.70, confidence: 0.60, covered: 0.70}
+  anonymize: true                <span class="c"># nombres, teléfonos y direcciones fuera antes de salir</span>
+<span class="k">openai-lp-v1:</span>                  <span class="c"># brazo C</span>
+  provider: litellm
+  model: litellm_proxy/openrouter-perception  <span class="c"># → openrouter/openai/gpt-4o-mini-2024-07-18</span>
+  params: {logprobs: true, top_logprobs: 20, temperature: 0}
+  questions: rafaga-v1-codes     <span class="c"># un token por respuesta</span>
+  timeout_s: 3
+  thresholds: {detect: 0.70, confidence: 0.60, covered: 0.70}</pre>
+  <div class="cards">
+    <div class="card k-accent"><h3>Probar un modelo nuevo</h3>
+      <ul>
+        <li>Si habla por LiteLLM, basta un perfil nuevo. Si tiene API propia, un adaptador: un archivo más su test de contrato.</li>
+        <li>Se corre el banco con ese perfil como brazo D.</li>
+        <li>Si gana en las mismas gráficas, cambias <code>SALES_PERCEPTION_PROFILE</code>.</li>
+      </ul>
+    </div>
+    <div class="card"><h3>La arena: Jev contra el LLM</h3><p>Además de las gráficas del scorecard, cada brazo reporta:</p>
+      <ul>
+        <li>acuerdo con los asuntos que saca el juez;</li>
+        <li>calibración: cuando dice 0,9, ¿acierta 9 de cada 10?;</li>
+        <li>latencia p95 y costo por turno;</li>
+        <li>cuántas veces cayó a "turno como hoy".</li>
+      </ul>
+    </div>
+    <div class="card k-muted"><h3>Idioma</h3><p>Jev está optimizado para inglés. El juego de preguntas se prueba en inglés y en español sobre el mismo contenido en español, y la arena decide cuál queda.</p></div>
+  </div>
+</section>
+
+<section id="produccion">
+  <header>
+    <p class="eyebrow"><span class="sec-num">11</span>Enchufar y publicar</p>
+    <h2>No hay un segundo chatbot: son tres capas dentro del mismo turno</h2>
+    <p class="lede">El bot nuevo no reemplaza exoclaw, los episodios ni las guardas. Es el mismo workflow con tres capas que se enchufan <strong>antes</strong>, <strong>durante</strong> y <strong>al final</strong> de la llamada a exoclaw. Las capas solo corren si el modo de la sesión lo permite; con el modo apagado, el turno es exactamente el de hoy.</p>
+  </header>
+
+  <div class="figure">
+    <div class="dg-wrap dg">
+      <svg class="w1000" viewBox="0 0 1000 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="an-t an-d">
+        <title id="an-t">Dónde se enchufan las tres capas en el turno de hoy</title>
+        <desc id="an-d">El turno de hoy va de la ráfaga a run_agent_turn de exoclaw (build_prompt, bucle de llm_chat y tools, record_turn), a las guardas de ventas y al envío. La capa 1 entra entre la ráfaga y exoclaw, la capa 2 en el punto donde hoy una tool corta el turno, y la capa 3 entre las guardas y el envío. Si falta un asunto, el complemento vuelve a exoclaw como un turno de sistema. Episodios, historial, tools, guardas, traza y scorecard se reutilizan sin cambios.</desc>
+        <defs>
+          <marker id="an-a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="an-aa" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+        </defs>
+        <rect width="1000" height="520" fill="#f5f5f5"/>
+
+        <!-- Contenedor de exoclaw -->
+        <rect x="348" y="176" width="312" height="144" rx="10" fill="rgba(79,93,117,0.04)" stroke="rgba(45,49,66,0.12)"/>
+
+        <!-- Conectores: camino de hoy -->
+        <line x1="152" y1="236" x2="348" y2="236" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#an-a)"/>
+        <line x1="436" y1="236" x2="452" y2="236" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#an-a)"/>
+        <line x1="556" y1="236" x2="572" y2="236" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#an-a)"/>
+        <line x1="660" y1="236" x2="684" y2="236" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#an-a)"/>
+        <line x1="796" y1="236" x2="876" y2="236" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#an-a)"/>
+        <!-- Conectores: capas nuevas -->
+        <path d="M 88 204 V 100 Q 88 92 96 92 H 176" fill="none" stroke="#eb6c36" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#an-aa)"/>
+        <path d="M 324 92 H 380 Q 388 92 388 100 V 176" fill="none" stroke="#eb6c36" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#an-aa)"/>
+        <line x1="504" y1="120" x2="504" y2="216" stroke="#eb6c36" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#an-aa)"/>
+        <path d="M 740 268 V 380 Q 740 388 748 388 H 780" fill="none" stroke="#eb6c36" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#an-aa)"/>
+        <line x1="920" y1="360" x2="920" y2="268" stroke="#eb6c36" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#an-aa)"/>
+        <path d="M 820 416 V 432 Q 820 440 812 440 H 512 Q 504 440 504 432 V 320" fill="none" stroke="#eb6c36" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#an-aa)"/>
+
+        <!-- Etiquetas -->
+        <text x="512" y="164" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">¿CORTAR EL TURNO?</text>
+        <text x="660" y="432" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">falta un asunto → turno de sistema, como los fantasma</text>
+        <text x="504" y="284" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', monospace" text-anchor="middle">episodio activo · historial del LLM por episodio</text>
+        <text x="364" y="306" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">RUN_AGENT_TURN · EXOCLAW · SIN CAMBIOS</text>
+
+        <!-- Nodos del turno de hoy -->
+        <g font-family="'Geist', sans-serif" text-anchor="middle">
+          <rect x="24" y="204" width="128" height="64" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)"/>
+          <text x="88" y="232" fill="#2d3142" font-size="12" font-weight="600">Ráfaga</text>
+          <text x="88" y="250" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">coalesce_inbox</text>
+
+          <rect x="356" y="216" width="80" height="40" rx="5" fill="#ffffff" stroke="#2d3142"/>
+          <text x="396" y="240" fill="#2d3142" font-size="9.5" font-family="'Geist Mono', monospace">build_prompt</text>
+          <rect x="452" y="216" width="104" height="40" rx="5" fill="#ffffff" stroke="#2d3142"/>
+          <text x="504" y="240" fill="#2d3142" font-size="9.5" font-family="'Geist Mono', monospace">llm_chat ⇄ tools</text>
+          <rect x="572" y="216" width="80" height="40" rx="5" fill="#ffffff" stroke="#2d3142"/>
+          <text x="612" y="240" fill="#2d3142" font-size="9.5" font-family="'Geist Mono', monospace">record_turn</text>
+
+          <rect x="684" y="204" width="112" height="64" rx="6" fill="#ffffff" stroke="#2d3142"/>
+          <text x="740" y="232" fill="#2d3142" font-size="12" font-weight="600">Guardas</text>
+          <text x="740" y="250" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">picker · admin</text>
+
+          <rect x="876" y="204" width="100" height="64" rx="6" fill="#ffffff" stroke="#2d3142"/>
+          <text x="926" y="232" fill="#2d3142" font-size="12" font-weight="600">Envío</text>
+          <text x="926" y="250" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">WhatsApp · traza</text>
+        </g>
+
+        <!-- Capas nuevas -->
+        <g font-family="'Geist', sans-serif" text-anchor="middle">
+          <rect x="176" y="64" width="148" height="56" rx="6" fill="rgba(235,108,54,0.05)" stroke="rgba(235,108,54,0.50)" stroke-dasharray="4,4"/>
+          <text x="250" y="88" fill="#2d3142" font-size="12" font-weight="600">① Antes</text>
+          <text x="250" y="105" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">percepción · Jev o LLM</text>
+
+          <rect x="440" y="64" width="128" height="56" rx="6" fill="rgba(235,108,54,0.05)" stroke="rgba(235,108,54,0.50)" stroke-dasharray="4,4"/>
+          <text x="504" y="88" fill="#2d3142" font-size="12" font-weight="600">② Durante</text>
+          <text x="504" y="105" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">ronda extra si falta</text>
+
+          <rect x="780" y="360" width="168" height="56" rx="6" fill="rgba(235,108,54,0.05)" stroke="rgba(235,108,54,0.50)" stroke-dasharray="4,4"/>
+          <text x="864" y="384" fill="#2d3142" font-size="12" font-weight="600">③ Al final</text>
+          <text x="864" y="401" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">verifica antes de enviar</text>
+        </g>
+
+        <!-- Aside -->
+        <text x="620" y="86" fill="#4f5d75" font-size="13" font-style="italic" font-family="'Instrument Serif', serif">① ② ③ corren solo si el modo de la sesión lo permite.</text>
+        <text x="620" y="104" fill="#4f5d75" font-size="13" font-style="italic" font-family="'Instrument Serif', serif">Con el modo apagado, el turno es el de hoy.</text>
+
+        <!-- Banda de lo que no cambia + leyenda -->
+        <line x1="24" y1="462" x2="976" y2="462" stroke="rgba(45,49,66,0.12)"/>
+        <text x="24" y="482" fill="#4f5d75" font-size="8.5" font-family="'Geist Mono', monospace" letter-spacing="0.1em">SE REUTILIZA SIN CAMBIOS: EPISODIOS · HISTORIAL DE EXOCLAW · TOOLS · GUARDAS · TRAZA · SCORECARD</text>
+        <g font-family="'Geist', sans-serif" font-size="9" fill="#4f5d75">
+          <line x1="24" y1="504" x2="52" y2="504" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#an-a)"/><text x="60" y="507">Camino de hoy (modo apagado)</text>
+          <line x1="240" y1="504" x2="268" y2="504" stroke="#eb6c36" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#an-aa)"/><text x="276" y="507">Capa nueva</text>
+          <rect x="370" y="498" width="24" height="12" rx="3" fill="rgba(235,108,54,0.05)" stroke="rgba(235,108,54,0.50)" stroke-dasharray="4,4"/><text x="402" y="507">Solo con el modo encendido, en canary o en sombra</text>
+        </g>
+      </svg>
+    </div>
+    <p class="scroll-hint">← desliza para ver el diagrama completo →</p>
+    <p class="figcap"><b>Figura 5.</b> Las capas se cuelgan de tres puntos del turno que ya existe. exoclaw no se toca: recibe el mismo tipo de mensaje y guarda el historial como siempre.</p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Capa</th><th>Dónde entra</th><th>Qué reutiliza</th><th>Qué agrega</th></tr></thead>
+      <tbody>
+        <tr><td class="nw"><strong>① Antes</strong></td><td>En <code>sales_session.py</code>, entre <code>_coalesce_batch</code> y la llamada a <code>run_agent_turn</code>.</td><td>La ráfaga ya coalescida y el mensaje del turno (<code>PendingMessage</code>). exoclaw lo arma con <code>build_prompt</code>, como siempre.</td><td>Una activity de percepción. La lista de asuntos viaja dentro del mensaje del turno.</td></tr>
+        <tr><td class="nw"><strong>② Durante</strong></td><td>En <code>run_agent_turn</code> (<code>workflow_helpers.py</code>), en el punto donde hoy una tool corta el turno.</td><td>El mismo bucle de exoclaw: <code>llm_chat</code> ⇄ <code>execute_tool</code>.</td><td>Un parámetro opcional, <code>turn_policy</code>. Si no se pasa, es el código de hoy. No agenda llamadas nuevas.</td></tr>
+        <tr><td class="nw"><strong>③ Al final</strong></td><td>En <code>sales_session.py</code>, después de las guardas y antes de <code>send_whatsapp_message_activity</code>.</td><td>Las guardas de hoy. El complemento es un turno de sistema como los "fantasma" (<code>[SISTEMA]: …</code>): pasa por exoclaw y queda en el historial, en el episodio y en el dashboard.</td><td>Una activity de verificación.</td></tr>
+        <tr><td class="nw"><strong>Modo</strong></td><td>En la lectura de configuración que el workflow ya hace en cada vuelta (hoy lee el timeout de inactividad).</td><td>La misma activity de lectura.</td><td>El modo de la sesión: apagado, sombra, canary o encendido.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 style="margin-top:28px">Por qué no se daña producción</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Lo que podría pasar</th><th>La garantía</th><th>Cómo se prueba antes de desplegar</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Que el bot cambie con el modo apagado</strong></td><td>Con el modo apagado no se agenda ninguna activity nueva: corre el código de hoy.</td><td>El <code>Replayer</code> de Temporal re-juega historias reales de producción. Si cambia un solo comando, el CI falla.</td></tr>
+        <tr><td><strong>Romper las conversaciones en curso al desplegar</strong></td><td>Cada paso nuevo va detrás de <code>workflow.patched("perception-v1")</code>.</td><td>Replay de historias grabadas antes del cambio; el arnés ya existe (<code>test_replay_sales.py</code>).</td></tr>
+        <tr><td><strong>Que Jev se caiga o se demore</strong></td><td>Tope de 3 s y fail-open: el turno sigue como hoy.</td><td>Tests con activities falsas que fallan o se demoran (arnés <code>test_sales_workflow_debounce.py</code>).</td></tr>
+        <tr><td><strong>Afectar remarketing o ETA</strong>, que comparten <code>run_agent_turn</code></td><td><code>turn_policy</code> es opcional y, si no se pasa, no hace nada.</td><td>Sus suites corren sin cambios.</td></tr>
+        <tr><td><strong>Que el LLM no recuerde lo que dijo</strong></td><td>El complemento pasa por <code>record_turn</code>, como cualquier turno.</td><td>Un test que compara lo que recibió el cliente con lo que quedó en el historial del LLM.</td></tr>
+        <tr><td><strong>Desplegar la señal nueva en mal orden</strong></td><td>Primero el worker, después la API.</td><td>Un test de la señal con 3 y con 4 argumentos.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 style="margin-top:28px">Cómo se publica: la misma imagen, de la sombra a todos</h3>
+  <div class="cards c2">
+    <div class="card k-muted"><h3>El laboratorio corre la misma imagen</h3><p>La caja del laboratorio usa el mismo tag de GHCR (<code>HUBARA_IMAGE</code>) que se va a desplegar. Solo cambian los adaptadores que tienen efectos, igual que en los tests del workflow. Sirve para decidir si vale la pena seguir; no es la prueba final.</p></div>
+    <div class="card"><h3>La sombra ya es producción</h3><p>Es la misma imagen, con clientes reales y con exoclaw, episodios, WhatsApp y Jev reales. Las capas corren pero no cambian la respuesta. Prueba la integración, la latencia y los errores con tráfico de verdad.</p></div>
+    <div class="card k-accent"><h3>El canary es la prueba de verdad</h3><p>El bot nuevo responde de verdad: primero a tus números de prueba, después al 10&nbsp;% y al 50&nbsp;% de las sesiones. El evaluador de producción de todos los días califica esos episodios reales. Calidad LLM separa, dentro de Producción, los turnos del bot actual de los del bot nuevo, porque la traza guarda el modo de cada turno. El encendido se decide con esa comparación real, no con el laboratorio.</p></div>
+    <div class="card k-link"><h3>Publicar es cambiar el modo</h3><p>No se despliega otro chatbot. Encender es subir el modo al 100&nbsp;%, y apagar vuelve al camino de hoy con el siguiente mensaje. Dos semanas después de estar al 100&nbsp;% se limpian los patches viejos; el modo apagado se queda como interruptor de emergencia.</p></div>
+  </div>
+
+  <h3 style="margin-top:28px">El recorrido de fases</h3>
+  <p class="prose">Una activity lee el modo al inicio de cada turno, así que un cambio llega a las conversaciones vivas con el mensaje siguiente. Terraform fija el techo, es decir, hasta dónde se puede llegar. El día a día se maneja desde el dashboard con chequeos de preparación, como ya hace el plugin MBA. Apagar nunca se bloquea.</p>
+
+  <div class="figure">
+    <div class="dg-wrap dg">
+<svg class="w1000" viewBox="0 0 1000 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="rollout-title rollout-desc">
+          <title id="rollout-title">Paso seguro del bot nuevo a producción</title>
+          <desc id="rollout-desc">Mapa de fases: laboratorio, sombra, canary con lista cerrada, canary por porcentaje y encendido; cualquier alerta pausa y se retoma al corregir; el interruptor de apagado vuelve al bot actual desde cualquier fase; tras dos semanas estables se retira el camino viejo.</desc>
+          <defs>
+            <marker id="rollout-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#4f5d75"/></marker>
+            <marker id="rollout-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#eb6c36"/></marker>
+          </defs>
+          <rect width="1000" height="520" fill="#f5f5f5"/>
+          <rect x="24" y="44" width="952" height="120" rx="8" fill="rgba(79,93,117,0.04)" stroke="rgba(45,49,66,0.12)"/>
+          <rect x="24" y="400" width="952" height="104" rx="8" fill="rgba(45,49,66,0.05)" stroke="rgba(45,49,66,0.12)"/>
+          <text x="40" y="64" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">PAUSA / REVISIÓN</text>
+          <text x="40" y="208" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">FASES</text>
+          <text x="40" y="420" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">SALIDAS FINALES</text>
+          <text x="64" y="324" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace">cada avance exige chequeos: laboratorio, días en sombra, cero regresiones críticas</text>
+
+          <!-- Transiciones (antes que los estados) -->
+          <line x1="40" y1="256" x2="64" y2="256" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#rollout-arrow)"/>
+          <line x1="200" y1="256" x2="248" y2="256" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#rollout-arrow)"/>
+          <line x1="384" y1="256" x2="432" y2="256" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#rollout-arrow)"/>
+          <line x1="568" y1="256" x2="616" y2="256" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#rollout-arrow)"/>
+          <line x1="752" y1="256" x2="800" y2="256" stroke="#eb6c36" stroke-width="1.4" marker-end="url(#rollout-arrow-accent)"/>
+          <line x1="500" y1="220" x2="500" y2="140" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#rollout-arrow)"/>
+          <path d="M425 96 H324 Q316 96 316 104 V220" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#rollout-arrow)"/>
+          <line x1="419" y1="376" x2="419" y2="416" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#rollout-arrow)"/>
+          <line x1="868" y1="292" x2="868" y2="416" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#rollout-arrow)"/>
+
+          <g font-family="'Geist Mono',monospace" font-size="7" text-anchor="middle" letter-spacing="0.08em" fill="#4f5d75">
+            <rect x="24" y="238" width="36" height="12" rx="2" fill="#f5f5f5"/><text x="42" y="247">BANCO</text>
+            <rect x="204" y="238" width="40" height="12" rx="2" fill="#f5f5f5"/><text x="224" y="247">APRUEBA</text>
+            <rect x="388" y="238" width="40" height="12" rx="2" fill="#f5f5f5"/><text x="408" y="247">7 DÍAS</text>
+            <rect x="572" y="238" width="40" height="12" rx="2" fill="#f5f5f5"/><text x="592" y="247">ESTABLE</text>
+            <rect x="754" y="238" width="44" height="12" rx="2" fill="#f5f5f5"/><text x="776" y="247" fill="#eb6c36">PROMUEVE</text>
+            <rect x="508" y="174" width="40" height="12" rx="2" fill="#f5f5f5"/><text x="528" y="183">ALERTA</text>
+            <rect x="342" y="76" width="56" height="12" rx="2" fill="#f5f5f5"/><text x="370" y="85">CORREGIDO</text>
+            <rect x="427" y="388" width="44" height="12" rx="2" fill="#f5f5f5"/><text x="449" y="397">APAGADO</text>
+            <rect x="806" y="346" width="54" height="12" rx="2" fill="#f5f5f5"/><text x="833" y="355">2 SEMANAS</text>
+          </g>
+
+          <circle cx="34" cy="256" r="6" fill="#2d3142"/>
+          <!-- "Desde cualquier fase": una sola anotación en vez de una flecha por fase -->
+          <circle cx="419" cy="368" r="8" fill="#f5f5f5" stroke="#2d3142" stroke-width="1"/>
+          <text x="419" y="372" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist',sans-serif" text-anchor="middle">∗</text>
+          <text x="435" y="371" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace">∗ = desde cualquier fase, incluida la pausa</text>
+
+          <!-- Fases principales -->
+          <g font-family="'Geist',sans-serif" text-anchor="middle">
+            <g><rect x="64" y="220" width="136" height="72" rx="8" fill="#fff" stroke="#2d3142"/><text x="132" y="251" fill="#2d3142" font-size="12" font-weight="600">Laboratorio</text><text x="132" y="270" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace">simula sobre el banco</text></g>
+            <g><rect x="248" y="220" width="136" height="72" rx="8" fill="#fff" stroke="#2d3142"/><text x="316" y="251" fill="#2d3142" font-size="12" font-weight="600">Sombra</text><text x="316" y="270" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace">calcula, no actúa</text></g>
+            <g><rect x="432" y="220" width="136" height="72" rx="8" fill="#fff" stroke="#2d3142"/><text x="500" y="251" fill="#2d3142" font-size="12" font-weight="600">Canary · lista</text><text x="500" y="270" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace">tus números de prueba</text></g>
+            <g><rect x="616" y="220" width="136" height="72" rx="8" fill="#fff" stroke="#2d3142"/><text x="684" y="251" fill="#2d3142" font-size="12" font-weight="600">Canary · %</text><text x="684" y="270" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace">10% → 50% sesiones</text></g>
+            <g><rect x="800" y="220" width="136" height="72" rx="8" fill="rgba(235,108,54,0.08)" stroke="#eb6c36"/><circle cx="820" cy="244" r="7" fill="none" stroke="#eb6c36"/><circle cx="820" cy="244" r="4" fill="#eb6c36"/><text x="878" y="251" fill="#2d3142" font-size="12" font-weight="600">Encendido</text><text x="868" y="270" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace">100% · apagado listo</text></g>
+          </g>
+
+          <!-- Estado de pausa -->
+          <g text-anchor="middle">
+            <g><rect x="425" y="68" width="150" height="72" rx="8" fill="#f5f5f5" stroke="#4f5d75" stroke-dasharray="5,4"/><rect x="435" y="78" width="34" height="12" rx="2" fill="none" stroke="rgba(79,93,117,0.45)"/><text x="452" y="87" fill="#4f5d75" font-size="7" font-family="'Geist Mono',monospace">PAUSA</text><text x="500" y="111" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist',sans-serif">Pausado</text><text x="500" y="126" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace">alerta o chequeo en rojo</text></g>
+          </g>
+
+          <!-- Salidas finales -->
+          <g text-anchor="middle">
+            <g><rect x="334" y="416" width="170" height="72" rx="8" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1.5"/><rect x="344" y="426" width="24" height="12" rx="2" fill="none" stroke="rgba(79,93,117,0.45)"/><text x="356" y="435" fill="#4f5d75" font-size="7" font-family="'Geist Mono',monospace">FIN</text><text x="419" y="459" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist',sans-serif">Vuelta al bot actual</text><text x="419" y="474" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace">apagado · nunca se bloquea</text></g>
+            <g><rect x="784" y="416" width="168" height="72" rx="8" fill="rgba(45,49,66,0.05)" stroke="#4f5d75"/><rect x="794" y="426" width="24" height="12" rx="2" fill="none" stroke="rgba(79,93,117,0.45)"/><text x="806" y="435" fill="#4f5d75" font-size="7" font-family="'Geist Mono',monospace">FIN</text><text x="868" y="459" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist',sans-serif">Limpieza de patches</text><text x="868" y="474" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace">el apagado se queda</text></g>
+          </g>
+        </svg>
+    </div>
+    <p class="scroll-hint">← desliza para ver el diagrama completo →</p>
+    <p class="figcap"><b>Figura 6.</b> Cualquier alerta pausa el avance; el apagado vuelve al bot actual desde cualquier fase.</p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Modo</th><th>Qué hace</th><th>Para el cliente</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Apagado</strong></td><td>Todo sigue como hoy.</td><td><span class="chip ok">sin cambio</span></td></tr>
+        <tr><td><strong>Sombra</strong></td><td>La percepción corre en paralelo al LLM y la verificación después de enviar, así que no agrega espera. Todo queda en el hilo y mide la cobertura real del bot actual.</td><td><span class="chip ok">sin cambio</span></td></tr>
+        <tr><td><strong>Canary · lista</strong></td><td>El bot nuevo responde solo a tus números de prueba.</td><td><span class="chip">solo pruebas</span></td></tr>
+        <tr><td><strong>Canary · %</strong></td><td>El bot nuevo atiende el 10&nbsp;% y después el 50&nbsp;% de las sesiones. El reparto es fijo por sesión: una conversación no cambia de bot a mitad.</td><td><span class="chip yes">acotado</span></td></tr>
+        <tr><td><strong>Encendido</strong></td><td>El bot nuevo atiende el 100&nbsp;%. A las 2 semanas se limpian los patches viejos; el apagado se queda.</td><td><span class="chip yes">todos</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="cards">
+    <div class="card k-accent"><h3>Chequeos para avanzar</h3>
+      <ul>
+        <li><strong>Laboratorio:</strong> el brazo elegido supera a A1 en cobertura de asuntos con un intervalo que no cruza cero, y ningún check crítico o mayor empeora. El simulador debe ser fiel: A1 coincide con A0 en al menos el 90&nbsp;% de los checks de código.</li>
+        <li><strong>Sombra, 7 días o más:</strong> menos del 1&nbsp;% de caídas a "turno como hoy", p95 de percepción por debajo de 1,5 s y cero turnos afectados.</li>
+        <li><strong>Canary:</strong> en los episodios reales, el bot nuevo iguala o supera al actual con el mismo evaluador de producción, no aumentan los FALLA y el apagado ya se probó en vivo.</li>
+      </ul>
+    </div>
+    <div class="card"><h3>Apagado</h3><p>Un botón en el dashboard vuelve al bot actual en el siguiente mensaje de cada conversación, sin redeploy. Terraform también puede bajar el techo a "apagado". Los chequeos de preparación nunca bloquean el apagado.</p></div>
+  </div>
+</section>
+
+<section id="fases">
+  <header>
+    <p class="eyebrow"><span class="sec-num">12</span>Orden de trabajo</p>
+    <h2>Siete fases y 19 PRs; los clientes no ven nada hasta la Fase 6</h2>
+    <p class="lede">Cada PR se hace con TDD (primero el test en rojo) y pasa el panel de gates. No hay PRs apilados. Todo cambio de workflow lleva replay contra historias reales de producción. Chats no se toca hasta la sombra.</p>
+  </header>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Fase</th><th>Entregas</th><th>Lista cuando</th><th>¿Lo ven los clientes?</th></tr></thead>
+      <tbody>
+        <tr><td class="t-phase">0</td><td><strong>Medir bien y registrar el hilo.</strong> (1) EST-08 v2 con calibración. (2) Traza v2 en el bot actual. (3) Ids de la ráfaga en la señal, desplegando el worker antes que la API.</td><td>EST-08 v2 marca el caso catálogo + envío. La traza de cada turno real trae los pasos en orden. El replay pasa con historias reales.</td><td><span class="chip ok">no</span></td></tr>
+        <tr><td class="t-phase">1</td><td><strong>Puerto de percepción.</strong> (4) Puerto con adaptadores fake, null, litellm y openrouter_decisions, perfiles, preguntas v1, export perezoso en <code>connectorkit</code>, docs y TCK. (5) Terraform: parámetros de modo, perfil y canary; secreto <code>OPENROUTER_API_KEY</code>; alias de LiteLLM con logprobs; prueba real de los dos clasificadores por OpenRouter.</td><td>El mismo test de contrato pasa con los cuatro adaptadores. Importar el SDK sigue sin arrastrar vendors (el test ya existe).</td><td><span class="chip ok">no</span></td></tr>
+        <tr><td class="t-phase">2</td><td><strong>Caja, banco y sección Laboratorio.</strong> (6) Terraform: caja del laboratorio (módulo tipo graphagents con autostop), bucket S3 y permisos mínimos. (7) Lanzador de corridas: exportador, launcher y API del botón. (8) Worker <code>sales_lab</code> y contrato <code>lab@v1</code>. (9) Plugin <code>lab</code>: botón <strong>Nueva corrida</strong>, pestañas Banco y corridas y Conversaciones, con el modal del hilo en <code>@/shared/ui</code>. (10) Las gráficas de Calidad LLM pasan a <code>@/shared/ui</code>, sin cambiar lo que muestra Calidad LLM.</td><td><code>terraform plan</code> no toca la caja de producción. En la sección Laboratorio lanzas una corrida con el botón y ves el banco y el hilo de cada turno real del bot actual.</td><td><span class="chip ok">no</span></td></tr>
+        <tr><td class="t-phase">3</td><td><strong>Simulador y evaluación por turno.</strong> (11) Sandbox: Temporal de la caja en modo desarrollo, puertos falsos, reloj inyectado, prefijo real, turno de humo y test de fugas. (12) Scorecard en modo turno, validado contra los 91 episodios. (13) Bots Producción y Actual simulado, y pestaña Resumen con las mismas gráficas y las diferencias.</td><td>El Actual simulado coincide con Producción en al menos el 90&nbsp;% de los checks de código. El modo por turno reproduce las fallas de producción.</td><td><span class="chip ok">no</span></td></tr>
+        <tr><td class="t-phase">4</td><td><strong>Bot nuevo en el laboratorio.</strong> (14) Las capas ①②③ detrás del modo y de <code>workflow.patched("perception-v1")</code>, con fail-open. (15) Bots Nuevo + Jev y Nuevo + OpenAI, y métricas de la arena.</td><td>Con el modo apagado, el replay es idéntico. Los dos bots nuevos corren sobre el banco completo y tú decides con las gráficas.</td><td><span class="chip ok">no</span></td></tr>
+        <tr><td class="t-phase">5</td><td><strong>Sombra en producción.</strong> (16) Lectura del modo en cada turno, y control en el dashboard con chequeos de preparación y apagado. (17) Chats: botón por turno y el mismo modal del hilo, con trazas reales.</td><td>7 días o más en sombra dentro de los umbrales.</td><td><span class="chip ok">no cambia respuestas</span></td></tr>
+        <tr><td class="t-phase">6</td><td><strong>Canary y encendido.</strong> (18) Calidad LLM: filtro "bot actual / bot nuevo" dentro de Producción. Operación: lista, 10&nbsp;%, 50&nbsp;% y 100&nbsp;%. (19) Limpieza de patches a las 2 semanas; el modo apagado se queda como interruptor de emergencia.</td><td>Se cumple la vara de promoción (§15, punto 4).</td><td><span class="chip yes">sí, gradual y con apagado</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">Las fases 0 y 1 no dependen de los clasificadores, y la Fase 2 ya te da el hilo del bot actual en la sección Laboratorio. Jev y OpenAI entran con la llave de OpenRouter; ya no hace falta el acceso anticipado a TypeSafe.</p>
+</section>
+
+<section id="riesgos">
+  <header>
+    <p class="eyebrow"><span class="sec-num">13</span>Riesgos</p>
+    <h2>Lo que podría salir mal en producción, y cómo lo cerramos</h2>
+  </header>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Riesgo</th><th>Cómo lo cerramos</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Que el simulador tumbe al bot real.</strong> La caja tiene ~450 MB libres y no tiene swap.</td><td>El simulador va en una caja aparte. La de producción solo agrega trazas.</td></tr>
+        <tr><td><strong>Que el laboratorio le escriba a un cliente o toque un pedido.</strong></td><td>La caja no tiene llaves (IAM), todo lo que tiene efectos va por puertos falsos, no se conecta al Temporal de producción y hay un test de fugas en CI.</td></tr>
+        <tr><td><strong>Workflows vivos que dejen de re-jugarse.</strong></td><td>Los cambios que solo tocan contenido van sin patch (L-22). Lo que agrega pasos va con <code>workflow.patched</code>. Hay replay con historias reales, y el worker se despliega antes que la API.</td></tr>
+        <tr><td><strong>Un <code>terraform apply</code> que reemplace cajas.</strong> Ya nos pasó con el vault.</td><td>El módulo nuevo va con <code>count</code>, se revisa que el plan no toque la caja de producción y nunca se hace un apply con reemplazos.</td></tr>
+        <tr><td><strong>Jev lento, caído o que cambie de versión.</strong></td><td>Fail-open con tope de 3 s, id fijo <code>typesafe/jev-1.13</code>, sombra primero y métrica de caídas.</td></tr>
+        <tr><td><strong>Jev rinde menos en español.</strong></td><td>La arena prueba las preguntas en inglés y en español. Si no rinde, la alternativa es el LLM.</td></tr>
+        <tr><td><strong>Datos personales en proveedores nuevos</strong> (OpenRouter y TypeSafe).</td><td>Se anonimiza antes de enviar, se pide <code>data_collection: deny</code> y retención cero cuando el endpoint la ofrezca, y tú revisas las políticas de OpenRouter y de TypeSafe. Para comparar: hoy DeepSeek y Gemini ya reciben las conversaciones completas.</td></tr>
+        <tr><td><strong>La API de decisiones de OpenRouter está en alpha.</strong></td><td>Test de contrato con respuestas grabadas, validación de cada respuesta y fail-open. Plan B: la API directa de TypeSafe, con el mismo contrato.</td></tr>
+        <tr><td><strong>OpenRouter caído.</strong> Se caen Jev y OpenAI a la vez.</td><td>El turno sale como hoy (fail-open), y la sombra mide las caídas antes de encender nada.</td></tr>
+        <tr><td><strong>Que el clasificador se califique a sí mismo.</strong></td><td>El juez saca los asuntos por su cuenta, y A0 y A1 se miden igual que los demás.</td></tr>
+        <tr><td><strong>Un banco chico</strong> (~300 turnos).</td><td>Tres repeticiones, intervalos por conversación y "aún no concluyente" cuando corresponde. Además, cada corrida exporta el banco al día.</td></tr>
+        <tr><td><strong>Que cambie el evaluador o el juez.</strong> El permiso del juez vence el 2026-12-18.</td><td>Cada corrida lleva la versión del registro y del juez. No se mezclan corridas de versiones distintas.</td></tr>
+        <tr><td><strong>Confundir datos simulados con producción.</strong></td><td>El laboratorio es una sección aparte, sin compositor: su única acción es lanzar corridas. Chats y Calidad LLM solo muestran producción.</td></tr>
+        <tr><td><strong>Costos que se disparen.</strong></td><td>Topes de gasto por corrida y por mes. El botón muestra el costo estimado, no deja lanzar lo que no cabe y solo permite una corrida a la vez.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="costos">
+  <header>
+    <p class="eyebrow"><span class="sec-num">14</span>Costos</p>
+    <h2>Barato de operar; la corrida de decisión es lo más caro</h2>
+  </header>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Concepto</th><th class="num">Costo</th><th>Base</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Caja del laboratorio</strong> (t3.large bajo demanda, ~2 h por corrida completa)</td><td class="num">≈ US$0,17 / corrida</td><td>Precio de lista. El disco suma ≈ US$2,4 al mes.</td></tr>
+        <tr><td><strong>Agente simulado</strong>, un brazo sobre el banco actual</td><td class="num">≈ US$7</td><td>Medido: producción gastó US$7,09 de LLM en esos mismos 91 episodios.</td></tr>
+        <tr><td><strong>Corrida de decisión</strong>: A1 + B + C, tres repeticiones, más el juez</td><td class="num">≈ US$95</td><td>≈ US$63 de agente y ≈ US$30 de juez. Lo del juez es una estimación: su precio no está en el archivo de precios del repo.</td></tr>
+        <tr><td><strong>Corrida rápida</strong> (A1 y un bot nuevo, una repetición, más el juez)</td><td class="num">≈ US$20</td><td>Para probar un cambio antes de gastar en una corrida de decisión.</td></tr>
+        <tr><td><strong>Jev en producción</strong> (2 llamadas por turno)</td><td class="num">≈ US$0,0002 / turno</td><td>US$0,042 por millón de tokens de entrada, por OpenRouter; la salida es gratis.</td></tr>
+        <tr><td><strong>OpenAI en producción</strong> (si gana)</td><td class="num">≈ US$0,0006 / turno</td><td><code>gpt-4o-mini</code> por OpenRouter: US$0,15 por millón de tokens de entrada y US$0,60 por millón de salida.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="decisiones">
+  <header>
+    <p class="eyebrow"><span class="sec-num">15</span>Decisiones</p>
+    <h2>Cinco decisiones aprobadas; falta confirmar el modelo de OpenAI</h2>
+  </header>
+  <ol class="decisions">
+    <li><b>La simulación y la evaluación viven en <code>chats</code>, con caja propia; la vitrina es un plugin nuevo, <code>lab</code>.</b> El worker <code>sales_lab</code> corre solo en la caja del laboratorio y usa el mismo scorecard de <code>sales_eval</code>, así que se respeta la decisión cerrada de que las evaluaciones viven con el agente. El plugin <code>lab</code> es la sección Laboratorio del dashboard: de solo lectura salvo el botón <strong>Nueva corrida</strong>, lee <code>lab@v1</code> por cast y se apaga con <code>ENABLED_PLUGINS</code>.<br><span class="rec">Aprobado el 23-sep.</span></li>
+    <li><b>Jev por OpenRouter, con datos anonimizados.</b> Jev (<code>typesafe/jev-1.13</code>) está en OpenRouter desde el 18 de septiembre, así que no hace falta el acceso anticipado ni una cuenta en TypeSafe. Se llama por la API de decisiones de OpenRouter (en alpha) y devuelve probabilidades calibradas. Las ráfagas van anonimizadas.<br><span class="rec">Aprobado el 23-sep. Falta que revises las políticas de privacidad de OpenRouter y de TypeSafe.</span></li>
+    <li><b>Clasificadores: Jev y OpenAI, los dos por OpenRouter.</b> Una sola cuenta y una sola llave. DeepSeek queda fuera porque ya es el agente, y Gemini porque no da probabilidades reales. Ajuste: por OpenRouter, <code>gpt-5.4-nano</code> no devuelve logprobs; el OpenAI barato que sí los da es <code>gpt-4o-mini-2024-07-18</code>, a ≈ US$0,0006 por turno. La comparación completa está en el <code>.md</code>, §1.3.<br><span class="rec">Aprobado el 23-sep. Falta confirmar el modelo de OpenAI.</span></li>
+    <li><b>Vara de promoción.</b> Cobertura de asuntos (EST-08 v2) mejor que A1 con un intervalo que no cruce cero, ningún check crítico o mayor peor, y 7 días o más en sombra con menos del 1&nbsp;% de caídas y p95 de percepción por debajo de 1,5 s. La ajustamos cuando veamos las primeras gráficas.<br><span class="rec">Aprobada como punto de partida el 23-sep.</span></li>
+    <li><b>La corrida se lanza con un botón, sin cron.</b> El botón <strong>Nueva corrida</strong> de la sección Laboratorio exporta el banco en ese momento, prende la caja y muestra el avance. Una corrida a la vez, con topes de gasto por corrida y por mes (propuestos: US$120 y US$300).<br><span class="rec">Aprobado el 23-sep: lo pediste tú.</span></li>
+  </ol>
+  <div class="cards">
+    <div class="card k-accent"><h3>Lo que necesito de ti</h3>
+      <ul>
+        <li>Crear la cuenta de OpenRouter y dos llaves con límite de crédito, una para producción y otra para la caja del laboratorio. Yo no creo cuentas.</li>
+        <li>Confirmar el modelo de OpenAI (<code>gpt-4o-mini-2024-07-18</code>, con logprobs) y revisar las políticas de privacidad de OpenRouter y de TypeSafe.</li>
+        <li>Confirmar los topes de gasto del laboratorio y decidir si el botón <strong>Nueva corrida</strong> debe ser solo tuyo (hoy el dashboard no tiene roles).</li>
+        <li>Opcional, pero ayuda: revisar 20 casos para calibrar EST-08 v2. Son unos 20 minutos en la pestaña de calibración.</li>
+      </ul>
+    </div>
+    <div class="card k-muted"><h3>Hallazgos laterales</h3>
+      <ul>
+        <li>El dashboard muestra como enviado un texto que la guarda del selector de variantes no envió. Lo dejé como tarea aparte.</li>
+        <li>La marca de "handoff" se pierde al juntar la ráfaga: la guarda del saludo de primer contacto no la ve y la traza nunca dice "handoff". También quedó como tarea aparte.</li>
+        <li>El frontend no conoce la fidelidad "partial" y la muestra como vacía. Se arregla en el PR 6.</li>
+        <li>El registro de envíos del episodio se salta la despedida cuando el episodio ya cerró. Se corrige en el PR 2.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <span>Verificado contra main 82055bf6 · producción leída el 23-sep-2026 (solo lectura)</span>
+  <span>Plan: todavía sin código</span>
+</footer>
+</main>
+</div>
+
+<div class="modal-back" id="traceBack" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle" id="traceModal">
+    <div class="m-head">
+      <div class="m-top">
+        <div>
+          <p class="m-title" id="mTitle">Hilo del turno 2</p>
+          <div class="m-meta" id="mMeta"></div>
+        </div>
+        <div class="seg" role="group" aria-label="Brazo del turno" id="mArms">
+          <button type="button" id="mArmActual" data-arm="actual" aria-pressed="true">Bot actual</button>
+          <button type="button" id="mArmNuevo" data-arm="nuevo" aria-pressed="false">Bot nuevo + Jev</button>
+        </div>
+        <button type="button" class="x" id="mClose" aria-label="Cerrar el hilo">✕</button>
+      </div>
+      <div class="m-row" id="mTopics"></div>
+      <div class="m-row" id="mChecks"></div>
+    </div>
+    <div class="m-body">
+      <div class="m-seq" id="mSeq"></div>
+      <div class="m-list" id="mList"></div>
+      <div class="m-detail" id="mDetail" aria-live="polite"></div>
+    </div>
+    <div class="m-result" id="mResult"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var LANES = ["Cliente", "Workflow", "Jev", "LLM", "Tools"];
+  var COL = { info: "var(--hb-info)", jev: "var(--hb-violet)", ok: "var(--hb-ok)", warn: "var(--hb-warn)", bad: "var(--hb-danger)", tool: "var(--hb-cyan)", neutral: "var(--hb-neutral)" };
+  var BURST = "10:41:02 · vi que también hacen velas con otros diseños, ¿me mandas el catálogo?\n10:41:09 · y el envío a Bogotá cuánto sale?";
+  var NEW_TEXT = "¡Claro! 😊 Tenemos más diseños; te dejo el catálogo aquí abajo 👇\n\nEl envío a Bogotá cuesta $X.XXX y llega en 2 a 3 días hábiles.";
+  var ARMS = {
+    actual: {
+      meta: "Mar 23 sep · 10:41:09 · ráfaga de 2 mensajes · 2,9 s · US$0,006 · producción",
+      topics: [["catálogo · mensaje 1", "bad", "sin responder"], ["envío a Bogotá · mensaje 2", "ok", "respondido"]],
+      checks: [["EST-08 v2", "bad", "1 de 2 asuntos"], ["EST-06", "bad", "texto descartado"], ["ENV-02", "ok", "pasa"]],
+      result: ["warn", "⚠", "El catálogo quedó sin responder: send_shipping_rates cortó el turno y el texto del LLM se descartó."],
+      reply: [{ kind: "out", text: "📦 Tarifas de envío\nBogotá: $X.XXX · 2 a 3 días hábiles\nResto del país: según la ciudad" }],
+      chip: { dot: "var(--hb-warn)", sub: "7 pasos · 1 de 2 asuntos" },
+      steps: [
+        { from: 0, to: 1, kind: "Entrada", status: "info", title: "Ráfaga · 2 mensajes", short: "ráfaga: 2 mensajes", t: "+0,0 s",
+          sec: [{ h: "Mensajes", box: BURST }, { h: "Cómo llegó", text: "Los dos mensajes se juntaron con la espera de ráfaga (1,5 s de silencio, tope de 12 s). Hoy el LLM los recibe unidos en un solo bloque, y la nota de ráfaga va en el prompt de sistema." }] },
+        { from: 1, to: 3, kind: "LLM", status: "info", title: "Ronda 1", short: "ronda 1 · deepseek-v4-flash", t: "+0,1 s", dur: "2,4 s",
+          sec: [{ h: "Llamada", kv: [["Modelo", "deepseek-v4-flash, sin razonamiento"], ["Tokens de entrada", "38.412"], ["Tokens de salida", "96"], ["Terminó por", "tool_calls"], ["Costo", "US$0,0058"]] }, { h: "Entrada", text: "Prompt de sistema + historial del episodio + la ráfaga unida." }] },
+        { from: 3, to: 1, kind: "LLM", status: "warn", title: "1 tool + texto", short: "pide send_shipping_rates + texto", t: "+2,5 s",
+          sec: [{ h: "Pidió", box: "send_shipping_rates()", code: true }, { h: "Texto escrito junto a la tool", box: "¡Claro! 😊 Te comparto el catálogo y el valor del envío a Bogotá." }] },
+        { from: 1, to: 1, kind: "Guarda", status: "bad", title: "Texto descartado", short: "default-deny", t: "+2,5 s",
+          sec: [{ h: "Qué pasó", text: "El texto que el LLM escribe junto a una tool nunca se envía (default-deny, PR #213). Aquí se perdió la única mención al catálogo." }, { h: "Check", text: "EST-06 falla en este turno." }] },
+        { from: 1, to: 4, kind: "Tool", status: "tool", title: "send_shipping_rates", short: "send_shipping_rates", t: "+2,5 s", dur: "0,2 s",
+          sec: [{ h: "Argumentos", box: "{}", code: true }, { h: "Descripción de la tool", text: "«el mensaje fijo ES tu respuesta (tu turno termina)». El turno se corta aquí." }] },
+        { from: 4, to: 1, kind: "Tool", status: "tool", title: "Encolado", short: "queued · corta el turno", t: "+2,7 s",
+          sec: [{ h: "Resultado", box: "{\"queued\": true, \"kind\": \"shipping_rates\"}", code: true }] },
+        { from: 1, to: 0, kind: "Envío", status: "warn", title: "1 mensaje fijo", short: "tarifas de envío", t: "+2,9 s",
+          sec: [{ h: "Enviado", box: "📦 Tarifas de envío\nBogotá: $X.XXX · 2 a 3 días hábiles\nResto del país: según la ciudad" }, { h: "Asuntos", text: "Envío: respondido. Catálogo: sin responder, y nadie lo verificó antes de enviar." }, { h: "Entrega", kv: [["wamid", "wamid.…a41f"], ["Estado", "entregado"]] }] }
+      ]
+    },
+    nuevo: {
+      meta: "Mar 23 sep · 10:41:09 · ráfaga de 2 mensajes · 4,8 s · US$0,006 · laboratorio · brazo B",
+      topics: [["catálogo · mensaje 1", "ok", "cubierto"], ["envío a Bogotá · mensaje 2", "ok", "cubierto"]],
+      checks: [["EST-08 v2", "ok", "2 de 2 asuntos"], ["EST-06", "ok", "pasa"], ["ENV-02", "ok", "pasa"]],
+      result: ["ok", "✓", "2 de 2 asuntos respondidos en un solo mensaje, con las tarjetas al final."],
+      reply: [{ kind: "out", text: NEW_TEXT }, { kind: "comp", text: "🛍️ Catálogo · 12 productos" }],
+      chip: { dot: "var(--hb-ok)", sub: "13 pasos · 2 de 2 asuntos" },
+      steps: [
+        { from: 0, to: 1, kind: "Entrada", status: "info", title: "Ráfaga · 2 mensajes", short: "ráfaga: 2 mensajes", t: "+0,0 s",
+          sec: [{ h: "Mensajes", box: BURST }, { h: "Cómo llegó", text: "Igual que hoy. La diferencia es que el clasificador ve cada mensaje por separado, con su hora." }] },
+        { from: 1, to: 2, kind: "Jev · percepción", status: "jev", title: "25 preguntas", short: "percepción · 25 preguntas", t: "+0,1 s", dur: "0,42 s",
+          sec: [{ h: "Llamada", kv: [["Modelo", "typesafe/jev-1.13 · OpenRouter"], ["Perfil", "jev-v1"], ["Modo", "laboratorio"], ["Costo", "US$0,00008"]] },
+                { h: "Asuntos · probabilidad de sí (umbral 0,70)", probs: [["catálogo · msg 1", 0.96, true], ["envío · msg 2", 0.98, true], ["precio", 0.31, false], ["saludo", 0.12, false], ["disponibilidad", 0.12, false], ["pagos", 0.05, false], ["medidas", 0.04, false]], thr: 0.70 },
+                { h: "Etapa y confianza", kv: [["Etapa", "descubrimiento (0,83)"], ["Confianza", "0,91 ≥ 0,60 → usa el plan"]] }] },
+        { from: 2, to: 1, kind: "Jev · percepción", status: "jev", title: "2 asuntos", short: "catálogo 0,96 · envío 0,98", t: "+0,5 s",
+          sec: [{ h: "Resultado", box: "catálogo       → mensaje 1\nenvío a Bogotá → mensaje 2", code: true }] },
+        { from: 1, to: 1, kind: "Plan · código", status: "neutral", title: "Plan: 2 asuntos", short: "plan: 2 asuntos", t: "+0,5 s", dur: "1 ms",
+          sec: [{ h: "Lista de asuntos", box: "1. catálogo (mensaje 1) → tarjetas de productos, al final\n2. envío a Bogotá (mensaje 2) → texto con la tarifa" }, { h: "Precargado sin el LLM", box: "Tarifa Bogotá: $X.XXX · 2 a 3 días hábiles" }, { h: "Reglas", text: "Un solo elemento interactivo por turno y al final. Como máximo una ronda extra del LLM y una burbuja de complemento." }] },
+        { from: 1, to: 3, kind: "LLM", status: "info", title: "Ronda 1", short: "ráfaga + lista de asuntos", t: "+0,5 s", dur: "1,9 s",
+          sec: [{ h: "Llamada", kv: [["Modelo", "deepseek-v4-flash"], ["Tokens de entrada", "38.690"], ["Tokens de salida", "41"], ["Terminó por", "tool_calls"]] }, { h: "Lo nuevo en la entrada", box: "Asuntos de esta ráfaga (responde todos en un solo mensaje natural):\n1) catálogo — mensaje 1\n2) envío a Bogotá — tarifa $X.XXX, 2 a 3 días hábiles" }] },
+        { from: 3, to: 1, kind: "LLM", status: "info", title: "Pide search_products", short: "pide search_products", t: "+2,4 s",
+          sec: [{ h: "Pidió", box: "search_products({\"query\": \"velas diseños\", \"limit\": 12})", code: true }] },
+        { from: 1, to: 4, kind: "Tool", status: "tool", title: "search_products", short: "search_products", t: "+2,4 s", dur: "0,3 s",
+          sec: [{ h: "Argumentos", box: "{\"query\": \"velas diseños\", \"limit\": 12}", code: true }, { h: "Quién la ejecuta", text: "El workflow, con la activity execute_tool de exoclaw, después de que el LLM la pide." }] },
+        { from: 4, to: 1, kind: "Tool", status: "tool", title: "12 productos", short: "12 productos", t: "+2,7 s",
+          sec: [{ h: "Extracto del resultado", box: "12 productos: Velón Amor Eterno, Trilogía, Duo Zodiacal…" }] },
+        { from: 1, to: 3, kind: "LLM", status: "info", title: "Ronda 2", short: "ronda 2 · con el resultado", t: "+2,7 s", dur: "1,6 s",
+          sec: [{ h: "Entrada", text: "El mismo turno, más el resultado de search_products." }] },
+        { from: 3, to: 1, kind: "LLM", status: "info", title: "Texto + present_products", short: "texto + present_products", t: "+4,3 s",
+          sec: [{ h: "Texto", box: NEW_TEXT }, { h: "Tool al final", box: "present_products(12)", code: true }] },
+        { from: 1, to: 2, kind: "Jev · verificación", status: "jev", title: "2 preguntas", short: "¿cubre cada asunto?", t: "+4,3 s", dur: "0,38 s",
+          sec: [{ h: "Cobertura (umbral 0,70)", probs: [["cubre catálogo · msg 1", 0.95, true], ["cubre envío · msg 2", 0.93, true]], thr: 0.70 }, { h: "Qué ve Jev", text: "El texto final después de las guardas, más las tarjetas que se van a mostrar." }] },
+        { from: 2, to: 1, kind: "Jev · verificación", status: "jev", title: "Todo cubierto", short: "catálogo ✓ · envío ✓", t: "+4,7 s",
+          sec: [{ h: "Decisión", text: "Enviar. Si faltara un asunto, el código pediría una burbuja de complemento. Si Jev dudara, se envía igual y el asunto queda pendiente para el turno siguiente." }] },
+        { from: 1, to: 0, kind: "Envío", status: "ok", title: "Texto + 12 tarjetas", short: "texto + 12 tarjetas", t: "+4,8 s",
+          sec: [{ h: "Enviado", box: NEW_TEXT + "\n\n[12 tarjetas de productos]" }, { h: "Asuntos", text: "Catálogo: cubierto. Envío: cubierto." }] }
+      ]
+    }
+  };
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]; }); }
+  function fmt(p) { return p.toFixed(2).replace(".", ","); }
+  function byId(id) { return document.getElementById(id); }
+
+  /* ── Hilo de chat de la maqueta ── */
+  var chatArm = "actual";
+  function renderThread() {
+    var a = ARMS[chatArm];
+    var h = '<div class="day">Hoy</div>' +
+      '<div class="bub b-in">Buenas tardes<div class="meta">10:38</div></div>' +
+      '<div class="bub b-out">¡Buenas tardes! Te damos la bienvenida a Hubara 🤍 ¿Buscas una vela para regalar o para tu espacio?<div class="meta">10:38</div></div>' +
+      '<button type="button" class="burst" id="burstBtn" aria-label="Ver el hilo de la ráfaga de 2 mensajes">' +
+        '<span class="rail" aria-hidden="true"></span><span class="stack">' +
+        '<span class="burst-tag">Ráfaga · 2 mensajes · 7 s</span>' +
+        '<span class="bub b-in" style="display:block">vi que también hacen velas con otros diseños, ¿me mandas el catálogo?<span class="meta" style="display:block">10:41</span></span>' +
+        '<span class="bub b-in" style="display:block">y el envío a Bogotá cuánto sale?<span class="meta" style="display:block">10:41</span></span>' +
+      '</span></button>';
+    a.reply.forEach(function (b) {
+      h += '<div class="bub ' + (b.kind === "comp" ? "b-comp" : "b-out") + '">' + esc(b.text) + '<div class="meta">10:41</div></div>';
+    });
+    h += '<button type="button" class="turn-chip" id="turnChip"><i style="background:' + a.chip.dot + '"></i>Ver hilo del turno <small>' + esc(a.chip.sub) + '</small></button>';
+    byId("thread").innerHTML = h;
+    byId("burstBtn").addEventListener("click", function (e) { openTrace(chatArm, 0, e.currentTarget); });
+    byId("turnChip").addEventListener("click", function (e) { openTrace(chatArm, ARMS[chatArm].steps.length - 1, e.currentTarget); });
+  }
+  function setChatArm(arm) {
+    chatArm = arm;
+    byId("armActual").setAttribute("aria-pressed", String(arm === "actual"));
+    byId("armNuevo").setAttribute("aria-pressed", String(arm === "nuevo"));
+    renderThread();
+  }
+  byId("armActual").addEventListener("click", function () { setChatArm("actual"); });
+  byId("armNuevo").addEventListener("click", function () { setChatArm("nuevo"); });
+
+  /* ── Modal ── */
+  var cur = { arm: "actual", step: 0, trigger: null };
+  var LX = [58, 173, 288, 403, 518], W = 610, Y0 = 70, DY = 44;
+
+  function seqSvg(arm, sel) {
+    var steps = ARMS[arm].steps, H = Y0 + (steps.length - 1) * DY + 34;
+    var usesJev = steps.some(function (s) { return s.from === 2 || s.to === 2; });
+    var o = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Secuencia de pasos del turno" xmlns="http://www.w3.org/2000/svg"><defs>';
+    Object.keys(COL).forEach(function (k) {
+      o += '<marker id="mk-' + k + '" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" style="fill:' + COL[k] + '"/></marker>';
+    });
+    o += '</defs>';
+    LANES.forEach(function (name, i) {
+      var dim = (i === 2 && !usesJev);
+      var c = i === 2 ? "var(--hb-violet)" : "var(--hb-fg-soft)";
+      o += '<rect x="' + (LX[i] - 54) + '" y="8" width="108" height="22" rx="11" style="fill:rgba(255,255,255,0.05);stroke:var(--hb-line-strong)"/>';
+      o += '<text x="' + LX[i] + '" y="23" text-anchor="middle" style="fill:' + (dim ? "var(--hb-fg-faint)" : c) + ';font:600 11px var(--hb-sans)">' + name + (dim ? " · sin uso" : "") + '</text>';
+      o += '<line x1="' + LX[i] + '" y1="32" x2="' + LX[i] + '" y2="' + (H - 6) + '" style="stroke:rgba(255,255,255,' + (dim ? 0.05 : 0.12) + ')" stroke-dasharray="3,3"/>';
+    });
+    steps.forEach(function (s, i) {
+      var y = Y0 + i * DY, c = COL[s.status], on = i === sel;
+      o += '<g class="st" data-i="' + i + '" tabindex="0" role="button" aria-label="Paso ' + (i + 1) + ': ' + esc(s.title) + '" style="cursor:pointer;outline:none">';
+      o += '<rect x="4" y="' + (y - 20) + '" width="' + (W - 8) + '" height="40" rx="8" style="fill:transparent;' + (on ? "stroke:var(--hb-accent);stroke-width:1" : "stroke:none") + '"/>';
+      if (s.from === s.to) {
+        var x = LX[s.from];
+        o += '<rect x="' + (x - 58) + '" y="' + (y - 13) + '" width="116" height="26" rx="6" style="fill:#232326;stroke:' + c + ';stroke-width:' + (on ? 2 : 1) + '"/>';
+        o += '<text x="' + x + '" y="' + (y + 4) + '" text-anchor="middle" style="fill:var(--hb-fg);font:500 10.5px var(--hb-sans)">' + esc(s.short) + '</text>';
+        o += '<circle cx="' + (x - 74) + '" cy="' + y + '" r="9" style="fill:' + c + ';stroke:' + (on ? "#fff" : "none") + ';stroke-width:2"/>';
+        o += '<text x="' + (x - 74) + '" y="' + (y + 3.5) + '" text-anchor="middle" style="fill:#0b0b0d;font:700 10px var(--hb-sans)">' + (i + 1) + '</text>';
+      } else {
+        var dir = s.to > s.from ? 1 : -1, x1 = LX[s.from] + dir * 4, x2 = LX[s.to] - dir * 6;
+        var dashed = (s.to < s.from && s.to !== 0) ? ' stroke-dasharray="5,4"' : "";
+        o += '<line x1="' + x1 + '" y1="' + y + '" x2="' + x2 + '" y2="' + y + '" style="stroke:' + c + ';stroke-width:' + (on ? 2 : 1.3) + '"' + dashed + ' marker-end="url(#mk-' + s.status + ')"/>';
+        var tw = s.short.length * 5.8 + 10;
+        var lx = dir > 0 ? x1 + 28 : x1 - 28 - tw;
+        o += '<rect x="' + lx + '" y="' + (y - 21) + '" width="' + tw + '" height="15" rx="3" style="fill:var(--hb-canvas)"/>';
+        o += '<text x="' + (lx + 5) + '" y="' + (y - 10) + '" style="fill:' + (on ? "var(--hb-fg)" : "var(--hb-fg-soft)") + ';font:' + (on ? 600 : 500) + ' 10.5px var(--hb-sans)">' + esc(s.short) + '</text>';
+        var bx = x1 + dir * 16;
+        o += '<circle cx="' + bx + '" cy="' + y + '" r="9" style="fill:' + c + ';stroke:' + (on ? "#fff" : "var(--hb-canvas)") + ';stroke-width:2"/>';
+        o += '<text x="' + bx + '" y="' + (y + 3.5) + '" text-anchor="middle" style="fill:#0b0b0d;font:700 10px var(--hb-sans)">' + (i + 1) + '</text>';
+      }
+      o += '<text x="' + (W - 6) + '" y="' + (y + 4) + '" text-anchor="end" style="fill:var(--hb-fg-faint);font:500 10px var(--hb-sans)">' + esc(s.t) + '</text>';
+      o += '</g>';
+    });
+    return o + '</svg>';
+  }
+
+  function listHtml(arm, sel) {
+    return ARMS[arm].steps.map(function (s, i) {
+      return '<button type="button" class="step-row" data-i="' + i + '" aria-current="' + (i === sel) + '">' +
+        '<span class="n" style="background:' + COL[s.status] + '">' + (i + 1) + '</span>' +
+        '<span>' + esc(s.title) + '<small>' + LANES[s.from] + ' → ' + LANES[s.to] + '</small></span>' +
+        '<time>' + esc(s.t) + '</time></button>';
+    }).join("");
+  }
+
+  function detailHtml(arm, i) {
+    var s = ARMS[arm].steps[i];
+    var h = '<p class="d-kind" style="color:' + COL[s.status] + '">' + esc(s.kind) + '</p>' +
+      '<h4 class="d-title">' + (i + 1) + '. ' + esc(s.title) + '</h4>' +
+      '<div class="d-meta">' + LANES[s.from] + ' → ' + LANES[s.to] + ' · ' + esc(s.t) + (s.dur ? ' · duró ' + esc(s.dur) : '') + '</div>';
+    s.sec.forEach(function (x) {
+      h += '<div class="d-sec"><h5>' + esc(x.h) + '</h5>';
+      if (x.box !== undefined) h += '<div class="d-box' + (x.code ? " code" : "") + '">' + esc(x.box) + '</div>';
+      if (x.text) h += '<div style="color:var(--hb-fg-soft);font-size:12.5px">' + esc(x.text) + '</div>';
+      if (x.kv) h += '<dl class="kv">' + x.kv.map(function (kv) { return '<dt>' + esc(kv[0]) + '</dt><dd>' + esc(kv[1]) + '</dd>'; }).join("") + '</dl>';
+      if (x.probs) {
+        h += '<div class="probs">' + x.probs.map(function (p) {
+          return '<div class="prob' + (p[2] ? " pick" : "") + '"><span class="lab">' + esc(p[0]) + '</span>' +
+            '<span class="bar"><b style="width:' + Math.round(p[1] * 100) + '%"></b><em style="left:' + Math.round(x.thr * 100) + '%"></em></span>' +
+            '<span class="v">' + fmt(p[1]) + '</span><span class="s">' + (p[2] ? "✓" : "") + '</span></div>';
+        }).join("") + '</div>';
+      }
+      h += '</div>';
+    });
+    h += '<p style="margin-top:16px;font-size:11px;color:var(--hb-fg-faint)">Ejemplo ilustrativo: los valores están inventados para mostrar la vista.</p>';
+    return h;
+  }
+
+  function chips(list) {
+    return list.map(function (c) { return '<span class="hchip ' + c[1] + '">' + esc(c[0]) + ' · ' + esc(c[2]) + '</span>'; }).join("");
+  }
+
+  function renderModal() {
+    var a = ARMS[cur.arm];
+    byId("mMeta").textContent = a.meta;
+    byId("mTopics").innerHTML = '<span class="m-label">Asuntos</span>' + chips(a.topics);
+    byId("mChecks").innerHTML = '<span class="m-label">Checks del turno</span>' + chips(a.checks);
+    byId("mSeq").innerHTML = seqSvg(cur.arm, cur.step);
+    byId("mList").innerHTML = listHtml(cur.arm, cur.step);
+    byId("mDetail").innerHTML = detailHtml(cur.arm, cur.step);
+    var r = a.result;
+    byId("mResult").innerHTML = '<span class="hchip ' + r[0] + '">' + r[1] + '</span><span>' + esc(r[2]) + '</span>';
+    byId("mArmActual").setAttribute("aria-pressed", String(cur.arm === "actual"));
+    byId("mArmNuevo").setAttribute("aria-pressed", String(cur.arm === "nuevo"));
+  }
+
+  function select(i, focusSvg) {
+    cur.step = i;
+    renderModal();
+    if (focusSvg) {
+      var g = byId("mSeq").querySelector('.st[data-i="' + i + '"]');
+      if (g && g.focus) { try { g.focus({ preventScroll: true }); } catch (e) { g.focus(); } }
+    }
+  }
+
+  function openTrace(arm, step, trigger) {
+    cur.arm = arm; cur.step = step; cur.trigger = trigger || null;
+    renderModal();
+    byId("traceBack").hidden = false;
+    document.body.style.overflow = "hidden";
+    byId("mClose").focus();
+  }
+  function closeTrace() {
+    byId("traceBack").hidden = true;
+    document.body.style.overflow = "";
+    if (cur.trigger && cur.trigger.focus) cur.trigger.focus();
+  }
+  window.__openTrace = openTrace;
+
+  byId("mClose").addEventListener("click", closeTrace);
+  byId("traceBack").addEventListener("click", function (e) { if (e.target === e.currentTarget) closeTrace(); });
+  document.addEventListener("keydown", function (e) {
+    if (byId("traceBack").hidden) return;
+    if (e.key === "Escape") { e.preventDefault(); closeTrace(); return; }
+    var t = e.target;
+    if ((e.key === "Enter" || e.key === " ") && t && t.classList && t.classList.contains("st")) {
+      e.preventDefault(); select(Number(t.getAttribute("data-i")), true);
+    }
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && t && t.classList && t.classList.contains("st")) {
+      e.preventDefault();
+      var n = ARMS[cur.arm].steps.length, i = cur.step + (e.key === "ArrowDown" ? 1 : -1);
+      if (i >= 0 && i < n) select(i, true);
+    }
+  });
+  byId("mSeq").addEventListener("click", function (e) {
+    var g = e.target.closest ? e.target.closest(".st") : null;
+    if (g) select(Number(g.getAttribute("data-i")), true);
+  });
+  byId("mList").addEventListener("click", function (e) {
+    var b = e.target.closest ? e.target.closest(".step-row") : null;
+    if (b) { select(Number(b.getAttribute("data-i")), false); var d = byId("mDetail"); if (d.scrollIntoView) d.scrollIntoView({ block: "start", behavior: "smooth" }); }
+  });
+  byId("mArmActual").addEventListener("click", function () { cur.arm = "actual"; cur.step = 0; renderModal(); });
+  byId("mArmNuevo").addEventListener("click", function () { cur.arm = "nuevo"; cur.step = 0; renderModal(); });
+
+  renderThread();
+
+  /* ── Sección Laboratorio (maqueta) ── */
+  var lab = { tab: "conv", bot: "b", side: "res", conv: 0 };
+  var BOTS = [["prod", "Producción"], ["a1", "Actual simulado"], ["b", "Nuevo + Jev"], ["c", "Nuevo + OpenAI"]];
+  var BOT_ARM = { prod: "actual", a1: "actual", b: "nuevo", c: "nuevo" };
+  var VERD = { prod: ["alerta", "ALERTA"], a1: ["alerta", "ALERTA"], b: ["pasa", "PASA"], c: ["pasa", "PASA"] };
+  var CONVS = [["Conversación de ejemplo", "23 sep · 4 turnos · 1 ráfaga", "alerta", "pasa"], ["Conversación 2", "22 sep · 9 turnos · 2 ráfagas", "falla", "alerta"], ["Conversación 3", "22 sep · 3 turnos", "pasa", "pasa"], ["Conversación 4", "21 sep · 12 turnos · 3 ráfagas", "alerta", "pasa"]];
+  var EVALS = {
+    actual: [["EST-08 v2", "bad", "turno 2", "Pidió el catálogo en el mensaje 1 y no recibió respuesta."], ["EST-06", "bad", "turno 2", "El texto escrito junto a send_shipping_rates se descartó."], ["ENV-02", "ok", "—", "No mandó el formulario sin responder."], ["APE-01", "ok", "turno 1", "Saludó según la hora y con la marca."]],
+    nuevo: [["EST-08 v2", "ok", "turno 2", "Los 2 asuntos de la ráfaga recibieron respuesta."], ["EST-06", "ok", "—", "No hubo texto descartado."], ["ENV-02", "ok", "—", "No mandó el formulario sin responder."], ["APE-01", "ok", "turno 1", "Saludó según la hora y con la marca."]]
+  };
+  var PARETO = [["EST-06", "texto descartado junto a una tool", 50], ["APE-03", "catálogo en la apertura", 32], ["EST-03b", "guarda administrativa actuó", 9], ["APE-01", "saludo en el primer contacto", 8], ["CON-05", "guarda de confirmación actuó", 8]];
+  function vb(cls, txt) { return '<span class="vb ' + cls + '">' + esc(txt) + '</span>'; }
+
+  function labThreadHtml() {
+    var a = ARMS[BOT_ARM[lab.bot]];
+    var h = '<div class="day">Hoy</div>' +
+      '<div class="bub b-in">Buenas tardes<div class="meta">10:38</div></div>' +
+      '<div class="bub b-out">¡Buenas tardes! Te damos la bienvenida a Hubara 🤍 ¿Buscas una vela para regalar o para tu espacio?<div class="meta">10:38</div></div>' +
+      '<button type="button" class="burst" id="labBurst" aria-label="Ver el hilo de la ráfaga de 2 mensajes">' +
+        '<span class="rail" aria-hidden="true"></span><span class="stack">' +
+        '<span class="burst-tag">Ráfaga · 2 mensajes · 7 s</span>' +
+        '<span class="bub b-in" style="display:block">vi que también hacen velas con otros diseños, ¿me mandas el catálogo?<span class="meta" style="display:block">10:41</span></span>' +
+        '<span class="bub b-in" style="display:block">y el envío a Bogotá cuánto sale?<span class="meta" style="display:block">10:41</span></span>' +
+      '</span></button>';
+    a.reply.forEach(function (b) { h += '<div class="bub ' + (b.kind === "comp" ? "b-comp" : "b-out") + '">' + esc(b.text) + '<div class="meta">10:41</div></div>'; });
+    return h + '<button type="button" class="turn-chip" id="labChip"><i style="background:' + a.chip.dot + '"></i>Ver hilo del turno <small>' + esc(a.chip.sub) + '</small></button>';
+  }
+
+  function labSideHtml() {
+    if (lab.side === "ev") {
+      return EVALS[BOT_ARM[lab.bot]].map(function (e) {
+        return '<div class="ev"><div class="ev-top"><b>' + esc(e[0]) + '</b>' + vb(e[1] === "ok" ? "pasa" : "falla", e[1] === "ok" ? "pasa" : "falla") + '<small>' + esc(e[2]) + '</small></div><p>' + esc(e[3]) + '</p></div>';
+      }).join("") + '<p class="qnote">Cada check trae su evidencia y la crítica del juez, igual que en Calidad LLM.</p>';
+    }
+    return '<h5 class="side-h">Veredicto por bot</h5>' +
+      BOTS.map(function (b) { return '<div class="vrow' + (b[0] === lab.bot ? " on" : "") + '"><span>' + esc(b[1]) + '</span>' + vb(VERD[b[0]][0], VERD[b[0]][1]) + '</div>'; }).join("") +
+      '<h5 class="side-h">Asuntos cubiertos</h5><div class="vrow"><span>Bot actual</span><b>1 de 2</b></div><div class="vrow"><span>Bot nuevo</span><b>2 de 2</b></div>' +
+      '<h5 class="side-h">Checks que cambian</h5><div class="vrow"><span>EST-08 v2</span><span>✗ → ✓</span></div><div class="vrow"><span>EST-06</span><span>✗ → ✓</span></div>' +
+      '<p class="qnote">Ejemplo ilustrativo.</p>';
+  }
+
+  function labConvHtml() {
+    var list = CONVS.map(function (c, i) {
+      return '<button type="button" class="lab-item" data-conv="' + i + '" aria-current="' + (i === lab.conv) + '">' + esc(c[0]) + '<small>' + esc(c[1]) + '</small><span class="badges">' + vb(c[2], "actual " + c[2].toUpperCase()) + vb(c[3], "nuevo " + c[3].toUpperCase()) + '</span></button>';
+    }).join("");
+    var seg = BOTS.map(function (b) { return '<button type="button" data-bot="' + b[0] + '" aria-pressed="' + (b[0] === lab.bot) + '">' + esc(b[1]) + '</button>'; }).join("");
+    var note = lab.conv === 0 ? "" : '<div class="qnote" style="padding:6px 12px 0">Maqueta: todas las conversaciones muestran el mismo ejemplo.</div>';
+    return '<div class="lab-conv">' +
+      '<div class="lab-list" aria-label="Conversaciones del banco">' + list + '</div>' +
+      '<div class="lab-thread"><div class="lab-bar"><span class="m-label">Bot</span><div class="seg" role="group" aria-label="Bot">' + seg + '</div></div>' + note + '<div class="thread">' + labThreadHtml() + '</div></div>' +
+      '<div class="lab-insp"><div class="subtabs" role="tablist" aria-label="Panel de evaluación">' +
+        '<button type="button" role="tab" data-side="res" aria-selected="' + (lab.side === "res") + '">Resumen</button>' +
+        '<button type="button" role="tab" data-side="ev" aria-selected="' + (lab.side === "ev") + '">Evaluaciones</button></div>' +
+        labSideHtml() + '</div></div>';
+  }
+
+  function labResHtml() {
+    var rows = BOTS.map(function (b) {
+      var real = b[0] === "prod";
+      return '<tr><td>' + esc(b[1]) + '</td>' + (real ? '<td class="num">27</td><td class="num">54</td><td class="num">9</td><td class="num">1</td>' : '<td class="num pend">—</td><td class="num pend">—</td><td class="num pend">—</td><td class="num pend">—</td>') + '<td>' + (real ? "91 episodios reales" : '<span class="pend">se llena con la corrida</span>') + '</td></tr>';
+    }).join("");
+    var R = [["EST-08 v2 · responde cada asunto", "se mide con v2"], ["EST-06 · texto descartado", "50 / 91"], ["ENV-02 · formulario sin responder", "6 / 91"], ["EST-07 · retiene lo dicho", "6 / 91"], ["APE-03 · catálogo en la apertura", "32 / 91"]];
+    return '<div class="qwrap"><table class="qtable"><thead><tr><th>Bot</th><th class="num">Pasan</th><th class="num">Alerta</th><th class="num">Fallan</th><th class="num">Sin datos</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<div class="qnote">Fallas más frecuentes en Producción (episodios, de 91). Es la misma gráfica de Calidad LLM, y se repite para cada bot.</div><div style="display:grid;gap:6px;margin-top:8px">' +
+      PARETO.map(function (p) {
+        return '<div style="display:grid;grid-template-columns:64px 1fr 34px;gap:8px;align-items:center;font-size:12px"><span style="color:var(--hb-fg)">' + p[0] + '</span>' +
+          '<span style="position:relative;height:16px;background:rgba(255,255,255,0.04);border-radius:4px"><b style="position:absolute;left:0;top:0;bottom:0;width:' + Math.round(p[2] / 50 * 100) + '%;background:var(--hb-danger-soft);border-radius:4px"></b><span style="position:relative;padding-left:6px;color:var(--hb-fg-soft);font-size:11px;line-height:16px">' + esc(p[1]) + '</span></span>' +
+          '<span style="text-align:right;color:var(--hb-fg-soft);font-variant-numeric:tabular-nums">' + p[2] + '</span></div>';
+      }).join("") + '</div>' +
+      '<div class="qwrap"><table class="qtable"><thead><tr><th>Diferencia por check</th><th class="num">Producción</th><th class="num">Actual simulado</th><th class="num">Nuevo + Jev</th><th class="num">Nuevo + OpenAI</th><th class="num">Nuevo vs. actual</th></tr></thead><tbody>' +
+      R.map(function (r) { return '<tr><td>' + esc(r[0]) + '</td><td class="num">' + esc(r[1]) + '</td><td class="num pend">pendiente</td><td class="num pend">pendiente</td><td class="num pend">pendiente</td><td class="num pend">—</td></tr>'; }).join("") +
+      '</tbody></table></div><div class="qnote">Cada diferencia lleva su intervalo, o dice "aún no concluyente". Debajo va la lista de turnos que cambiaron de resultado, y cada uno abre el hilo con pestañas por bot.</div>';
+  }
+
+  function labBancoHtml() {
+    return '<div class="qgrid">' +
+      '<div class="qtile"><b>82</b><span>conversaciones</span></div>' +
+      '<div class="qtile"><b>91</b><span>episodios</span></div>' +
+      '<div class="qtile"><b>309</b><span>turnos del cliente con traza completa</span></div>' +
+      '<div class="qtile"><b>28</b><span>turnos con ráfaga (2+ mensajes)</span></div>' +
+      '<div class="qtile"><b>62</b><span>turnos con 2+ asuntos (heurística; el juez da la cifra oficial)</span></div>' +
+      '<div class="qtile"><b>95</b><span>turnos del sistema, excluidos</span></div></div>' +
+      '<div class="qwrap"><table class="qtable"><thead><tr><th>Corrida</th><th>Banco</th><th>Bots</th><th>Repeticiones</th><th>Estado</th><th class="num">Costo</th></tr></thead><tbody>' +
+      '<tr><td>Primera corrida</td><td>del día</td><td>Producción · Actual simulado · Nuevo + Jev · Nuevo + OpenAI</td><td>3</td><td class="pend">pendiente (Fase 3)</td><td class="num pend">—</td></tr>' +
+      '</tbody></table></div><div class="qnote">Cada turno excluido aparece con su motivo: lo respondió una persona (hubo intervención humana en 30 conversaciones), es una sesión de prueba o está en cuarentena.</div>';
+  }
+
+  function renderLab() {
+    ["conv", "res", "banco"].forEach(function (t) { byId("lt-" + t).setAttribute("aria-selected", String(t === lab.tab)); });
+    var pane = byId("labPane");
+    pane.setAttribute("aria-labelledby", "lt-" + lab.tab);
+    pane.innerHTML = lab.tab === "conv" ? labConvHtml() : lab.tab === "res" ? labResHtml() : labBancoHtml();
+    if (lab.tab !== "conv") return;
+    pane.querySelectorAll("[data-bot]").forEach(function (b) { b.addEventListener("click", function () { lab.bot = b.getAttribute("data-bot"); renderLab(); }); });
+    pane.querySelectorAll("[data-side]").forEach(function (b) { b.addEventListener("click", function () { lab.side = b.getAttribute("data-side"); renderLab(); }); });
+    pane.querySelectorAll("[data-conv]").forEach(function (b) { b.addEventListener("click", function () { lab.conv = Number(b.getAttribute("data-conv")); renderLab(); }); });
+    byId("labBurst").addEventListener("click", function (e) { openTrace(BOT_ARM[lab.bot], 0, e.currentTarget); });
+    byId("labChip").addEventListener("click", function (e) { openTrace(BOT_ARM[lab.bot], ARMS[BOT_ARM[lab.bot]].steps.length - 1, e.currentTarget); });
+  }
+  ["conv", "res", "banco"].forEach(function (t) { byId("lt-" + t).addEventListener("click", function () { lab.tab = t; renderLab(); }); });
+  renderLab();
+})();
+(function () {
+  var open = document.getElementById("runOpen");
+  var panel = document.getElementById("runPanel");
+  if (!open || !panel) return;
+  var form = document.getElementById("runForm");
+  var prog = document.getElementById("runProgress");
+  var state = { reps: 3, bank: "new", B: true, C: true };
+  var USD_PER_ARM_PASS = 10.5, TURNS = 400, RUN_CAP = 120, MONTH_LEFT = 300;
+  function est() {
+    var arms = 1 + (state.B ? 1 : 0) + (state.C ? 1 : 0);
+    return { usd: Math.round(arms * state.reps * USD_PER_ARM_PASS), turns: arms * state.reps * TURNS };
+  }
+  function fmt(n) { return n.toLocaleString("es-CO"); }
+  function paint() {
+    var e = est();
+    document.getElementById("runCost").textContent = "≈ US$" + e.usd + " estimado · " + fmt(e.turns) + " turnos · tope por corrida US$" + RUN_CAP + " · quedan US$" + MONTH_LEFT + " del mes";
+    document.getElementById("runGo").disabled = e.usd > RUN_CAP || e.usd > MONTH_LEFT;
+    panel.querySelectorAll("[data-reps]").forEach(function (b) { b.setAttribute("aria-pressed", String(Number(b.getAttribute("data-reps")) === state.reps)); });
+    panel.querySelectorAll("[data-bank]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-bank") === state.bank)); });
+  }
+  function setOpen(v) {
+    panel.hidden = !v;
+    open.setAttribute("aria-expanded", String(v));
+    if (v) { form.hidden = false; prog.hidden = true; paint(); }
+  }
+  open.addEventListener("click", function () { setOpen(panel.hidden); });
+  panel.querySelectorAll("[data-reps]").forEach(function (b) { b.addEventListener("click", function () { state.reps = Number(b.getAttribute("data-reps")); paint(); }); });
+  panel.querySelectorAll("[data-bank]").forEach(function (b) { b.addEventListener("click", function () { state.bank = b.getAttribute("data-bank"); paint(); }); });
+  ["B", "C"].forEach(function (k) {
+    var c = document.getElementById("runArm" + k);
+    c.addEventListener("change", function () { state[k] = c.checked; paint(); });
+  });
+  document.getElementById("runClose").addEventListener("click", function () { setOpen(false); open.focus(); });
+  document.getElementById("runGo").addEventListener("click", function () {
+    var e = est(), done = Math.round(e.turns * 0.34);
+    document.getElementById("runNow").textContent = fmt(done) + " de " + fmt(e.turns) + " turnos · ≈ US$" + Math.round(e.usd * 0.34) + " gastados de ≈ US$" + e.usd;
+    form.hidden = true;
+    prog.hidden = false;
+  });
+  document.getElementById("runCancel").addEventListener("click", function () { form.hidden = false; prog.hidden = true; paint(); });
+})();
+</script>
+
+</body>
+</html>

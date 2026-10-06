@@ -175,3 +175,12 @@ def _isolate_vault_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
             monkeypatch.setattr(mod, "WORKSPACE_VAULT_DIR", isolated, raising=False)
 
     yield isolated
+
+
+@pytest.fixture(autouse=True)
+def _decisions_bundle_from_the_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El paquete de decisión lo fija cada prueba que lo necesita, nunca el
+    shell: con `SALES_DECISIONS_BUNDLE` de producción exportado (ventas-2), las
+    suites de paridad y del texto que ve el LLM medían otro paquete
+    (premortem 2026-10-02)."""
+    monkeypatch.delenv("SALES_DECISIONS_BUNDLE", raising=False)

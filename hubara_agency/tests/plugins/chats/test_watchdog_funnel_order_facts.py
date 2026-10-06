@@ -109,3 +109,56 @@ class TestOpenCart:
         assert is_open_cart(md["episodes"][0], md, snap) is True
         md["tag"] = "COMPRA_EXITOSA"
         assert is_open_cart(md["episodes"][0], md, snap) is False
+
+
+class TestInternalLabel:
+    """«Resumen interno en una plantilla» (motor de decisiones, familia C):
+    el `motivo` es prosa que el LLM escribió al etiquetar y hoy entra tal
+    cual como variable de la plantilla. Si el motor decide que no es un
+    texto para el cliente, va el genérico."""
+
+    def _spec(self) -> TemplateSpec:
+        return TemplateSpec(
+            name="watchdog_q", category="marketing", language="es_CO", waba_template_name="watchdog_q",
+            semantics="retomar la cotización", triggers_when_window_expiring=True,
+            requires_episode_stage="awaiting_quote",
+            variables=(TemplateVariable(name="product_or_quote_label", type="string", max_length=None,
+                                        description="producto"),),
+        )
+
+    def test_today_the_motivo_goes_as_it_is(self) -> None:
+        md = {**_metadata(), "motivo": "Cliente pidió precio del Cubo Love; se le cotizó y no respondió"}
+        assert _resolve_template_variables(self._spec(), md)["product_or_quote_label"] == md["motivo"]
+
+    def test_an_internal_motivo_is_replaced_by_the_generic_label(self) -> None:
+        md = {**_metadata(), "motivo": "Cliente pidió precio del Cubo Love; se le cotizó y no respondió"}
+        assert _resolve_template_variables(self._spec(), md, motivo_ok=False)["product_or_quote_label"] == "tu consulta"
+
+
+async def test_with_jev_the_watchdog_does_not_send_an_internal_summary(_isolate_vault_dir, monkeypatch) -> None:
+    from src.plugins.chats.agent.sales.decisions.remarketing_context import register_label_decision
+    from src.plugins.chats.shared import agent_decisions
+
+    monkeypatch.setattr(agent_decisions, "_label_decider", None)  # se restaura al terminar
+    register_label_decision()
+
+    import src.platform.perception.adapters.fake as fake_mod
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    answer = TypedAnswer(id="egreso.destinatario", kind="choice", choice="reporte_interno",
+                         probs=(("reporte_interno", 0.93),), confidence=0.93)
+    fake = fake_mod.FakePerceptionAdapter({"egreso.destinatario": answer})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+
+    internal = await agent_decisions.label_is_internal(
+        session_id="wa_573001234567", text="Cliente pidió precio del Cubo Love; se le cotizó y no respondió",
+        vault_dir=_isolate_vault_dir,
+    )
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    today = await agent_decisions.label_is_internal(
+        session_id="wa_573001234567", text="Cliente pidió precio del Cubo Love", vault_dir=_isolate_vault_dir,
+    )
+
+    assert internal is True and today is False

@@ -24,7 +24,7 @@ isinstance check).
 """
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, Protocol, TYPE_CHECKING
 
 import structlog
 
@@ -46,6 +46,7 @@ from src.platform.orchestration import (
     envelope_for,
 )
 from src.platform.state import FilesystemMetadataStore
+from src.plugins.chats.agent.sales.cart_lines import CartLine, build_cart_note, lines_from_products
 from src.plugins.chats.agent.sales.parsers import WhatsAppMessage
 from src.plugins.chats.agent.sales.translate import (
     EffectiveText,
@@ -53,12 +54,8 @@ from src.plugins.chats.agent.sales.translate import (
 )
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.sdk.messagingkit import (
-    OPT_OUT_SOURCE_TEXT,
-    detect_marketing_opt_out,
-    mark_marketing_opt_out,
     fresh_resume_label,
     opt_out_campaign_id,
-    register_reengagement_deferral,
     resolve_local_timezone,
     update_reengagement_index_entry,
 )
@@ -77,7 +74,8 @@ from src.plugins.chats.agent.sales.use_cases.campaign_reply import (
     unanswered_campaign_touch,
 )
 from src.plugins.chats.agent.sales.use_cases.closing_ack import (
-    is_ack_after_farewell,
+    ACK_TEXT,
+    ack_shape,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_memory import (
     quote_template_in_turn,
@@ -97,8 +95,14 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 )
 from src.plugins.chats.shared.purchase_signals import (
     build_deferral_note,
-    register_inbound_purchase_signals,
 )
+from src.plugins.chats.agent.sales.decisions.readings import (
+    Inbound,
+    apply_readings,
+    read_catalog_gap,
+    read_coupon_talk,
+)
+from src.plugins.chats.agent.sales.use_cases.funnel_stage import resolve_funnel_stage
 from src.plugins.chats.agent.sales.use_cases.order_draft import (
     build_order_draft_note,
     get_projectable_draft,
@@ -108,14 +112,21 @@ from src.plugins.chats.agent.sales.use_cases.coupon_application import (
     CouponApplication,
     store_coupon_application,
 )
-from src.plugins.chats.agent.sales.use_cases.catalog_gap import build_catalog_gap_note
+from src.plugins.chats.agent.sales.use_cases.catalog_gap import catalog_gap_note
+from src.plugins.chats.agent.sales.use_cases.photo_product import (
+    PhotoIdentification,
+    build_photo_facts_note,
+    build_photo_product_note,
+    photo_reentry_text,
+)
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer
+from src.plugins.chats.agent.sales.use_cases.photo_reads import PhotoReads
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
     build_coupon_note,
-    coupon_in_play,
 )
 from src.plugins.chats.agent.sales.use_cases.web_product_ref import (
+    CATALOG_ORIGIN,
     apply_web_product_capture,
     build_web_product_note,
     detect_agent_source,
@@ -123,6 +134,7 @@ from src.plugins.chats.agent.sales.use_cases.web_product_ref import (
     mark_web_product_resolved,
     mark_web_product_unresolved,
     record_agent_referral,
+    referred_product_id,
 )
 from src.plugins.chats.agent.sales.use_cases.web_cart import (
     apply_web_cart_capture,
@@ -138,6 +150,8 @@ from src.plugins.chats.shared.contracts.events import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from temporalio.client import Client
 
     from src.sdk.connectorkit import (
@@ -150,6 +164,20 @@ if TYPE_CHECKING:
 #: root can wire `get_temporal_client` directly without wrapping.
 TemporalClientFactory = Callable[[], Awaitable["Client"]]
 
+
+class InboundReadingsProvider(Protocol):
+    """Las lecturas del cliente (motor de decisiones, `decisions/readings.py`):
+    compra, retoma y baja (`read`) y el acuse tras la despedida (`read_ack`,
+    que se pide antes del ciclo de episodios)."""
+
+    async def read(self, inbound: Inbound) -> Any: ...
+
+    async def read_ack(self, inbound: Inbound) -> Any: ...
+
+
+#: `execute(..., customer_text=_FROM_MESSAGE)`: el texto del cliente es el del mensaje.
+_FROM_MESSAGE: Any = object()
+
 #: `(código, now_ms) → CouponApplication`: valida el cupón de la campaña
 #: contra Medusa y su cupo (`resolve_coupon_application`), sin escribir.
 CampaignCouponApplier = Callable[[str, int], Awaitable[CouponApplication]]
@@ -161,6 +189,11 @@ CouponUnitsReader = Callable[[dict[str, Any]], Awaitable[QuotaOffer]]
 # HU web-cart: timeout de la hidratación inline (patrón L-2 — el webhook no
 # puede demorar el primer turno; cualquier fallo degrada en silencio).
 _WEB_CART_HYDRATION_TIMEOUT_S = 3.0
+#: Tope de la espera de un mensaje del cliente por su foto (visión ~1,5 s,
+#: hasta ~4,5 s comparando con el catálogo; el paso de imagen tiene tope de 6 s).
+PHOTO_WAIT_MAX_S = 10.0
+#: Tope del aviso al workflow de que una foto se está leyendo (una señal).
+_PHOTO_NOTICE_TIMEOUT_S = 2.0
 
 #: Validar el cupón de la campaña (promociones de Medusa + vendidas del cupo)
 #: antes del primer turno. Si no alcanza, el bot lo aplica con `apply_coupon`.
@@ -172,6 +205,11 @@ _CAMPAIGN_COUPON_TIMEOUT_S = 5.0
 _CATALOG_GAP_LIMIT = 200
 _CATALOG_GAP_TIMEOUT_S = 2.0
 
+#: Errores de transcripción en los que la nota de voz nunca llegó a Google
+#: (no se bajó de Meta, o el proveedor falló o limitó): no se cobran a la
+#: conversación. Cualquier otro (vacío, inaudible, muy larga) sí: Google la oyó.
+_AUDIO_NOT_BILLED = ("media_fetch_failed", "rate_limit", "provider_error")
+
 #: Cap de descarga para documentos PDF inbound (comprobantes). La restricción
 #: de subida la impone WhatsApp (100 MB); de nuestro lado, por encima de este
 #: cap NO se descarga (el fetcher corta con el `file_size` declarado, antes de
@@ -181,6 +219,64 @@ _CATALOG_GAP_TIMEOUT_S = 2.0
 _MAX_INBOUND_DOCUMENT_BYTES = 10 * 1024 * 1024
 
 logger = structlog.get_logger()
+
+
+def _inbound_meta(parsed: WhatsAppMessage) -> dict[str, Any]:
+    """`{wamid, ts_ms, kind}` del inbound (Meta manda la hora en segundos)."""
+    ts = str(parsed.timestamp or "").strip()
+    return {
+        "wamid": parsed.message_id or None,
+        "ts_ms": int(ts) * 1000 if ts.isdigit() else None,
+        "kind": parsed.msg_type or "text",
+    }
+
+
+async def catalog_gap_note_for(
+    catalog: CatalogPort | None, *, vault_dir: Path, session_id: str, text: str | None
+) -> str | None:
+    """Nota de lo que no existe en el catálogo; None sin catálogo o si falla
+    (un aviso de más no justifica demorar ni tumbar el turno). Los términos
+    los decide el motor (capacidad `fuera_de_catalogo`: la regla de hoy los
+    propone y Jev solo puede quitar alguno); la nota es la de siempre con los
+    que quedan. La usan el ingest y el sandbox del laboratorio: los dos arman
+    exactamente la misma nota."""
+    import asyncio
+
+    if catalog is None or not text:
+        return None
+    try:
+        result = await asyncio.wait_for(
+            catalog.search("", limit=_CATALOG_GAP_LIMIT),
+            timeout=_CATALOG_GAP_TIMEOUT_S,
+        )
+    except Exception as exc:  # noqa: BLE001 — degrade, never break the ingest
+        logger.warning("catalog_gap_check_failed", reason=type(exc).__name__)
+        return None
+    try:
+        verdict = await read_catalog_gap(
+            vault_dir,
+            session_id=session_id,
+            text=text,
+            products=list(result.results),
+        )
+    except Exception as exc:  # noqa: BLE001 — degrade, never break the ingest
+        logger.error("catalog_gap_reading_failed", session_id=session_id, error=f"{type(exc).__name__}: {exc}"[:300])
+        return None
+    return catalog_gap_note(verdict.value)
+
+
+class PhotoIdentifierPort(Protocol):
+    """Qué producto nuestro es la foto (``use_cases/photo_product``)."""
+
+    async def identify(self, vision: Any, image: Any) -> PhotoIdentification: ...
+
+    def refresh_index_soon(self) -> None: ...
+
+
+#: `(session_id, wamid, done)`: el ingest empezó a leer una foto del cliente
+#: (`done=False`) o la foto ya entró al bot (`done=True`). Texto antes de la
+#: foto (2026-09-30): el workflow espera la foto en la misma ráfaga.
+PhotoNotifier = Callable[[str, str, bool], Awaitable[None]]
 
 
 class IngestInboundMessage:
@@ -199,8 +295,25 @@ class IngestInboundMessage:
         catalog: CatalogPort | None = None,
         campaign_coupon: CampaignCouponApplier | None = None,
         coupon_units_now: CouponUnitsReader | None = None,
+        readings: InboundReadingsProvider | None = None,
+        photo_identifier: PhotoIdentifierPort | None = None,
+        photo_wait_s: float = PHOTO_WAIT_MAX_S,
+        photo_notifier: PhotoNotifier | None = None,
     ) -> None:
         self._history_store = history_store
+        self._photo_identifier = photo_identifier
+        # Aviso al workflow de ventas: una foto del cliente se está leyendo (y
+        # cuándo ya entró). Sin él, la foto entra como hoy.
+        self._photo_notifier = photo_notifier
+        # Las fotos de cada cliente que se están leyendo: sus mensajes esperan
+        # a que la foto entre al bot (ráfaga partida, 2026-09-30).
+        self._photo_reads = PhotoReads()
+        self._photo_wait_s = photo_wait_s
+        # Motor de decisiones (enchufe 1): las lecturas del cliente (compra,
+        # retoma, baja) las da el proveedor; el ingest escribe los MISMOS
+        # campos de hoy. Sin proveedor, el del motor con el registro de bots
+        # (`reglas` por defecto: el resultado es el de siempre).
+        self._readings = readings
         # Cupón de la campaña: se valida y aplica solo cuando el cliente
         # responde (sin esto el bot lo aplica con `apply_coupon`).
         self._campaign_coupon = campaign_coupon
@@ -226,6 +339,9 @@ class IngestInboundMessage:
         parsed: WhatsAppMessage,
         *,
         persisted_image_url: str | None = None,
+        customer_text: Any = _FROM_MESSAGE,
+        photo_note: str | None = None,
+        from_photo: bool = False,
     ) -> None:
         """Procesa un inbound parseado.
 
@@ -234,8 +350,32 @@ class IngestInboundMessage:
         sintético, pasa acá la URL de la imagen ya persistida en el media store
         para que el evento del cliente en el JSONL la lleve y el dashboard la
         renderice. Los inbounds normales (texto del webhook) lo dejan en None.
+
+        ``customer_text``: lo que ESCRIBIÓ el cliente, para las lecturas
+        (compra, retoma, baja). Por defecto, el texto del mensaje. El reentry
+        de visión pasa solo el texto que el cliente puso en la foto (o None):
+        la descripción la escribió la visión y no se lee como si fuera del
+        cliente (bug: un comprobante pausaba la reactivación una semana).
+
+        ``photo_note``: otro canal interno del reentry de visión: la nota del
+        turno cuando la foto se reconoció como un producto nuestro
+        (``photo_product.build_photo_product_note``).
+
+        ``from_photo``: el mensaje ES la foto que reentra (no espera a nada).
+        Cualquier otro mensaje del cliente que llega mientras se lee una foto
+        suya espera a que la foto entre al bot (con tope ``photo_wait_s``):
+        así la foto y el «¿tienes esta?» van en la misma ráfaga y en orden.
+        Las fotos no se esperan entre sí.
         """
         session_id = f"{WHATSAPP_SESSION_PREFIX}{parsed.from_number}"
+        if not from_photo and not _is_photo(parsed) and self._photo_reads.reading(session_id):
+            waited_s = await self._photo_reads.wait(session_id, max_s=self._photo_wait_s)
+            logger.info(
+                "inbound_waited_for_photo",
+                session=session_id,
+                waited_ms=int(waited_s * 1000),
+                gave_up=self._photo_reads.reading(session_id),
+            )
 
         # --- 1. Read metadata UNA vez al principio (atribución + typing) ---
         try:
@@ -323,6 +463,7 @@ class IngestInboundMessage:
         # saltamos es la rotación de episodios + el reset del tag. Al volver al
         # bot (return-to-bot pone active_route=ventas) se reanuda el ciclo.
         episode_boundary_note: str | None = None
+        _prev_closed_episode: dict[str, Any] | None = None
         campaign_reply_note: str | None = None
         campaign_reply_touch: dict[str, Any] | None = None
         # El episodio que se cerró cuando este mensaje abrió uno nuevo con el
@@ -333,6 +474,7 @@ class IngestInboundMessage:
         # ("bienvenido a Hubara… ¿en qué te puedo ayudar hoy?"). Si el
         # cliente solo acusa recibo del cierre, el mensaje queda en el chat
         # y no abre episodio ni despierta al agente (return tras persistirlo).
+        # Lo que dice el texto lo lee el motor (capacidad `acuse`).
         closing_ack = False
         _campaign_touch: dict[str, Any] | None = None
         if metadata.get("active_route") != ROUTE_HUMANO:
@@ -348,8 +490,12 @@ class IngestInboundMessage:
                 metadata, now_ms, quoted_message_id=(parsed.context or {}).get("id")
             )
             # Un 👍 a la campaña es respuesta a la campaña, no acuse.
-            closing_ack = _campaign_touch is None and is_ack_after_farewell(
-                metadata, parsed, lambda: self._session_events(session_id)
+            closing_ack = _campaign_touch is None and await self._is_closing_ack(
+                session_id,
+                metadata,
+                parsed,
+                now_ms=now_ms,
+                synthetic=customer_text is not _FROM_MESSAGE,
             )
         if metadata.get("active_route") != ROUTE_HUMANO and not closing_ack:
             if _campaign_touch is not None:
@@ -376,7 +522,7 @@ class IngestInboundMessage:
             # Con respuesta a campaña la nota de la campaña reemplaza a la de
             # frontera ("saluda y pregunta en qué ayudar" la contradice).
             episode_boundary_note = (
-                _build_episode_boundary_note(_prev_closed_episode)
+                build_episode_boundary_note(_prev_closed_episode)
                 if _prev_closed_episode is not None and campaign_reply_note is None
                 else None
             )
@@ -416,61 +562,69 @@ class IngestInboundMessage:
         # disparar un utility template legítimo.
         metadata["last_inbound_at_ms"] = now_ms
         metadata["service_window_expires_at_ms"] = compute_service_window_expiry(now_ms)
-        # Señal determinista del cliente sobre la compra (2026-09-14): un
-        # "después" bloquea el cierre en este turno; un "sí" con producto en
-        # el draft registra la confirmación que exigen request_shipping_details
-        # / CONFIRMADO_SIN_DATOS / ORDER_PENDING_SHIPPING_DETAILS.
-        inbound_signal = register_inbound_purchase_signals(
+        # Lecturas del cliente (motor de decisiones, enchufe 1): compra,
+        # retoma y baja las da el proveedor, con el metadata de ANTES de este
+        # mensaje y lo que el cliente vio; acá solo se escriben, igual que hoy.
+        tz = resolve_local_timezone(session_id)
+        # Lo que el cliente vio ANTES de este mensaje: contexto de las
+        # lecturas y, más abajo, del cupón (cuando este mensaje ya quedó en el
+        # historial).
+        events_before = self._session_events(session_id)
+        readings = await self._read_inbound(
+            Inbound(
+                session_id=session_id,
+                text=parsed.text if customer_text is _FROM_MESSAGE else customer_text,
+                now_ms=now_ms,
+                message_id=parsed.message_id,
+                interactive=parsed.interactive,
+                order=parsed.order,
+                metadata=metadata,
+                events=events_before,
+                stage=resolve_funnel_stage(metadata),
+                tz=tz,
+            )
+        )
+        # Se escriben los MISMOS campos de siempre (una sola función, la misma
+        # que usa el sandbox del laboratorio):
+        # * señal de compra (2026-09-14): un "después" bloquea el cierre en
+        #   este turno; un "sí" con producto en el draft registra la
+        #   confirmación que exigen request_shipping_details /
+        #   CONFIRMADO_SIN_DATOS / ORDER_PENDING_SHIPPING_DETAILS;
+        # * aplazamiento con fecha ("les escribo la otra semana"): hasta esa
+        #   fecha remarketing y el watchdog no le escriben (runs 337efe8c /
+        #   ee3cec91: 4 toques en 24h → "No más"); una cortesía no la levanta;
+        # * baja de marketing (campañas directas): el template promete
+        #   "respóndeme NO MÁS y te doy de baja". La frase explícita es piso:
+        #   con el motor en `jev`, Jev solo agrega bajas. Sticky: solo la
+        #   revierte el operador. Queda registrado cuándo, por qué vía y qué
+        #   campaña la provocó: la que citó (2026-09-25) o la del touch
+        #   reciente. Una prueba citada no carga la baja.
+        _quoted = quoted_campaign_touch(metadata, (parsed.context or {}).get("id"))
+        written = apply_readings(
             metadata,
-            parsed.text,
+            readings,
+            text=parsed.text,
             now_ms=now_ms,
             message_id=parsed.message_id,
-            interactive=parsed.interactive,
-            order=parsed.order,
+            tz=tz,
+            opt_out_campaign_id=(
+                _quoted["campaign_id"]
+                if _quoted is not None and not _quoted.get("test")
+                else opt_out_campaign_id(metadata, now_ms)
+            ),
         )
-        if inbound_signal is not None:
+        # El cliente solo agradece o saluda (capacidad `cortesia`): el episodio
+        # nuevo no abre venta (caso del 2026-09-29, «pedido listo»).
+        if episode_boundary_note is not None and _prev_closed_episode is not None and readings.courtesy_only:
+            episode_boundary_note = build_episode_boundary_note(_prev_closed_episode, courtesy=True)
+        if written.signal is not None:
             logger.info(
                 "inbound_purchase_signal",
                 session_id=session_id,
-                kind=inbound_signal,
+                kind=written.signal,
                 text_preview=(parsed.text or "")[:60],
             )
-
-        # Aplazamiento con fecha ("les escribo la otra semana"): hasta esa
-        # fecha el remarketing y el watchdog no le escriben (incidente runs
-        # 337efe8c / ee3cec91: 4 toques en 24h tras el aplazamiento → "No
-        # más"). Una cortesía no la levanta; retomar la charla sí.
-        register_reengagement_deferral(
-            metadata,
-            parsed.text,
-            now_ms=now_ms,
-            tz=resolve_local_timezone(session_id),
-        )
-
-        # Opt-out de marketing (plugin marketing, campañas directas): el
-        # template aprobado promete "respóndeme NO MÁS y te doy de baja" —
-        # este es el punto que la CUMPLE. Determinista (sin LLM): un pedido
-        # de baja no puede depender de interpretación. Sticky: solo lo
-        # revierte el operador editando el metadata.
-        if (
-            not metadata.get("marketing_opt_out")
-            and parsed.text
-            and detect_marketing_opt_out(parsed.text, metadata, now_ms)
-        ):
-            # Queda registrado cuándo, por qué vía y qué campaña lo provocó:
-            # la que citó (2026-09-25) o la del touch reciente — métrica de
-            # bajas por campaña. Una prueba citada no carga la baja.
-            _quoted = quoted_campaign_touch(metadata, (parsed.context or {}).get("id"))
-            mark_marketing_opt_out(
-                metadata,
-                now_ms=now_ms,
-                source=OPT_OUT_SOURCE_TEXT,
-                campaign_id=(
-                    _quoted["campaign_id"]
-                    if _quoted is not None and not _quoted.get("test")
-                    else opt_out_campaign_id(metadata, now_ms)
-                ),
-            )
+        if written.opted_out:
             # Pidió la baja: no se le sigue conversando la campaña.
             campaign_reply_note = None
             campaign_reply_touch = None
@@ -478,7 +632,7 @@ class IngestInboundMessage:
                 "marketing_opt_out_detected",
                 session_id=session_id,
                 campaign_id=metadata.get("marketing_opt_out_campaign_id"),
-                text_preview=parsed.text[:60],
+                text_preview=(parsed.text or "")[:60],
             )
 
         # HU-WA24H-001 F1.3: ventana extendida 72h CTWA. Solo se setea la
@@ -663,6 +817,49 @@ class IngestInboundMessage:
                 if updated_ref is not None:
                     metadata = updated_ref
 
+        # --- 2f-bis. «Enviar mensaje a la empresa» desde la ficha del catálogo ---
+        # Meta manda el producto exacto (`context.referred_product`); hasta el
+        # 2026-09-30 se descartaba y el bot solo veía «¿la tienen disponible?».
+        # Mismo estado que el botón de la web (`web_product_ref`, por
+        # episodio), resuelto contra el catálogo como el carrito. La nota solo
+        # llega con el producto verificado.
+        referred = referred_product_id(parsed.context) if not product_ref else None
+        if referred and metadata.get("active_route") != ROUTE_HUMANO:
+            captured_card = {"new": False}
+
+            def _capture_card_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                if fresh.get("active_route") == ROUTE_HUMANO:
+                    return None
+                captured_card["new"] = apply_web_product_capture(
+                    fresh, sku=referred, source=None, now_ms=now_ms, origin=CATALOG_ORIGIN
+                )
+                return fresh if captured_card["new"] else None
+
+            fresh_after_card = self._metadata_store.update(session_id, _capture_card_mutator)
+            if fresh_after_card is not None:
+                metadata = fresh_after_card
+
+            if captured_card["new"]:
+                card_lines = await self._catalog_lines([{"product_retailer_id": referred}])
+                card_line = (card_lines or {}).get(referred)
+                card_reason = "not_in_catalog" if card_lines is not None else "catalog_unavailable"
+
+                def _apply_card_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                    state = fresh.get("web_product_ref") or {}
+                    if state.get("sku") != referred:
+                        return None  # otro producto ganó mientras se resolvía
+                    if card_line is not None:
+                        mark_web_product_resolved(
+                            fresh, handle=card_line.handle, title=card_line.title, variant=card_line.variant
+                        )
+                    else:
+                        mark_web_product_unresolved(fresh, reason=card_reason)
+                    return fresh
+
+                updated_card = self._metadata_store.update(session_id, _apply_card_mutator)
+                if updated_card is not None:
+                    metadata = updated_card
+
         # --- 2g. Cupón de la campaña: se aplica solo ---
         # Conversación de prueba del 2026-09-24 (AMOR2026 con cupo por
         # unidad): la nota pedía validarlo "si lo menciona", el bot nunca
@@ -715,10 +912,15 @@ class IngestInboundMessage:
         # `catalog=None` por ahora — list_reply usa el title raw del cliente.
         # Wire del catalog port queda como follow-up cuando se exponga via
         # composition.
+        # El carrito de WhatsApp llega con códigos: se leen en el catálogo
+        # para que el bot (y el operador en Chats) vean nombre, variante y
+        # precio (2026-09-30).
+        cart_lines = await self._cart_lines(parsed)
         effective: EffectiveText = await translate_to_effective_text(
             parsed,
             catalog=None,
             referral_already_seen=referral_already_seen,
+            cart_lines=cart_lines,
         )
 
         # --- 4. Audio inbound: defer a la transcripción ---
@@ -788,8 +990,11 @@ class IngestInboundMessage:
                 "mime_type": effective.image_mime_type,
             }
             self._safe_write_metadata(session_id, metadata)
+            self._photo_reads.begin(session_id)
+            # Texto ANTES de la foto: el bot ya tiene el texto; que espere la foto.
+            await self._notify_photo(session_id, parsed.message_id, done=False)
             _spawn_safe(
-                self._describe_image_and_reenter(parsed),
+                self._read_photo(parsed, session_id),
                 label="vision.describe_and_reenter",
                 session_id=session_id,
             )
@@ -961,8 +1166,11 @@ class IngestInboundMessage:
         # habla de otra cosa, el turno es del catálogo normal: no se lee el
         # cupo y la nota lo recuerda en una línea (pedido del operador,
         # 2026-09-24). Después del texto efectivo: un audio o una foto se
-        # deciden por lo que dicen, una sola vez.
-        coupon_talk = coupon_checked_now or coupon_in_play(metadata, effective.text)
+        # deciden por lo que dicen, una sola vez. Lo decide el motor de
+        # decisiones (capacidad `cupon`, con `coupon_in_play` de regla de hoy).
+        coupon_talk = coupon_checked_now or await self._coupon_talk(
+            session_id, metadata, effective.text, events_before
+        )
         if coupon_talk and not coupon_checked_now and metadata.get("active_route") != ROUTE_HUMANO:
             reread = await self._reread_coupon_units(session_id, metadata, now_ms)
             if reread is not None:
@@ -988,7 +1196,7 @@ class IngestInboundMessage:
         # enviamos (context.id ∈ outbound_media_index), le decimos al LLM
         # exactamente cuál — "esta me gusta" deja de ser ambiguo (caso
         # wa_573125671604: pedido registrado con el diseño equivocado).
-        photo_citation_note = _build_photo_citation_note(
+        photo_citation_note = build_photo_citation_note(
             parsed.context, metadata
         )
         # HU web-cart: nota de lead caliente — se proyecta cada turno
@@ -1008,10 +1216,20 @@ class IngestInboundMessage:
         # Lo que el cliente pidió o mostró (la foto reentra como texto) y no
         # existe en el catálogo (incidente 2026-09-23: «¿y en vaso?» + foto de
         # una vela de dragón, y Ventas solo reenvió el catálogo).
-        catalog_gap_note = (
-            await self._catalog_gap_note(effective.text)
+        gap_note = (
+            await self._catalog_gap_note(session_id, effective.text)
             if metadata.get("active_route") != ROUTE_HUMANO
             else None
+        )
+        # Las fotos del cliente ya reconocidas como productos nuestros en el
+        # episodio: cada turno siguiente las recuerda (laboratorio 4567 t13:
+        # «no están todas» y el bot negó lo verificado). La foto que reentra
+        # ya lleva su propia nota.
+        photo_facts_note = None if from_photo else build_photo_facts_note(metadata)
+        # El carrito: el handle de cada producto, para seguir la venta.
+        cart_note = build_cart_note(
+            (parsed.order or {}).get("product_items") or [] if isinstance(parsed.order, dict) else [],
+            cart_lines,
         )
         # Respuesta a campaña: la nota solo viaja por la ruta Sales (el
         # remarketing no recibe plugin_context) — el turno va a Ventas.
@@ -1034,6 +1252,11 @@ class IngestInboundMessage:
             message=turn_message,
             phone_number_id=parsed.phone_number_id,
             **route_kwargs,
+            # Traza v2 (plan del laboratorio, PR 3): wamid, hora y tipo del
+            # mensaje; el workflow arma `inbound[]` de la ráfaga con esto. El
+            # texto crudo (sin la campaña citada ni el episodio anterior) es lo
+            # que lee el clasificador de las capas nuevas (PR 14).
+            inbound_meta={**_inbound_meta(parsed), "text": effective.text},
             extra_context=[
                 note
                 for note in (
@@ -1044,8 +1267,11 @@ class IngestInboundMessage:
                     web_product_note,
                     order_draft_note,
                     coupon_note,
+                    photo_facts_note,
+                    photo_note,
                     photo_citation_note,
-                    catalog_gap_note,
+                    cart_note,
+                    gap_note,
                 )
                 if note
             ]
@@ -1055,6 +1281,113 @@ class IngestInboundMessage:
     # =========================================================================
     # Helpers
     # =========================================================================
+
+    async def _read_inbound(self, inbound: Inbound) -> Any:
+        """Las lecturas del cliente con el proveedor inyectado o el del motor.
+        Si el motor no puede leer (p. ej. el paquete de la tienda no compila),
+        las reglas del código: el mensaje nunca se pierde (premortem 2026-10-02)."""
+        provider = self._readings
+        if provider is None:
+            from src.plugins.chats.agent.sales.decisions.readings import EngineReadings
+
+            provider = EngineReadings(WORKSPACE_VAULT_DIR)
+        try:
+            return await provider.read(inbound)
+        except Exception as exc:  # noqa: BLE001 — el ingest nunca pierde el mensaje
+            from src.plugins.chats.agent.sales.decisions.readings import rules_readings
+
+            logger.error("ingest.readings_failed", session_id=inbound.session_id, error=f"{type(exc).__name__}: {exc}"[:300])
+            return rules_readings(inbound)
+
+    async def _is_closing_ack(
+        self,
+        session_id: str,
+        metadata: dict[str, Any],
+        parsed: WhatsAppMessage,
+        *,
+        now_ms: int,
+        synthetic: bool,
+    ) -> bool:
+        """¿El cliente solo le acusa recibo a la despedida del agente?
+
+        Lo estructural lo decide el código (`ack_shape`: el agente se
+        despidió; una reacción o un sticker son acuse por sí solos; foto,
+        audio o botones nunca). Un texto lo lee el motor de decisiones con el
+        MISMO proveedor de lecturas (capacidad `acuse`; con `reglas`, la
+        regla de hoy `is_closing_ack`). Nunca es acuse si lo último que le
+        mandamos es una plantilla posterior a la despedida: la contesta. El
+        historial es el de ANTES de persistir este mensaje.
+        """
+        shape = ack_shape(metadata, parsed)
+        if shape is None:
+            return False
+        events = self._session_events(session_id)
+        if shape == ACK_TEXT:
+            verdict = await self._read_ack(
+                Inbound(
+                    session_id=session_id,
+                    text=parsed.text,
+                    now_ms=now_ms,
+                    message_id=parsed.message_id,
+                    metadata=metadata,
+                    events=events,
+                    synthetic=synthetic,
+                )
+            )
+            if not verdict.value:
+                return False
+            logger.info(
+                "closing_ack_read",
+                session_id=session_id,
+                by=verdict.by,
+                provider=verdict.provider,
+            )
+        return unseen_template_text(events) is None
+
+    async def _read_ack(self, inbound: Inbound) -> Any:
+        """El acuse con el proveedor inyectado o el del motor. Un proveedor
+        sin `read_ack` (anterior a la capacidad) deja el acuse al del motor."""
+        try:
+            return await self._read_ack_or_raise(inbound)
+        except Exception as exc:  # noqa: BLE001 — el ingest nunca pierde el mensaje
+            from src.plugins.chats.agent.sales.decisions.readings import rules_ack
+
+            logger.error("ingest.ack_reading_failed", session_id=inbound.session_id, error=f"{type(exc).__name__}: {exc}"[:300])
+            return rules_ack(inbound)
+
+    async def _read_ack_or_raise(self, inbound: Inbound) -> Any:
+        read_ack = getattr(self._readings, "read_ack", None)
+        if read_ack is None:
+            from src.plugins.chats.agent.sales.decisions.readings import EngineReadings
+
+            read_ack = EngineReadings(WORKSPACE_VAULT_DIR).read_ack
+        return await read_ack(inbound)
+
+    async def _coupon_talk(
+        self,
+        session_id: str,
+        metadata: dict[str, Any],
+        text: str | None,
+        events: list[dict[str, Any]],
+    ) -> bool:
+        """¿Este mensaje habla del cupón aplicado? Lo decide el motor con el
+        bot de la conversación (capacidad `cupon`; regla de hoy:
+        `coupon_in_play`). `events`: lo que el cliente vio antes."""
+        try:
+            verdict = await read_coupon_talk(
+                WORKSPACE_VAULT_DIR,
+                session_id=session_id,
+                metadata=metadata,
+                text=text,
+                events=events,
+            )
+        except Exception as exc:  # noqa: BLE001 — sin el motor, la regla de hoy
+            from src.plugins.chats.agent.sales.decisions.bundled_ingest import coupon_in_play
+            from src.plugins.chats.agent.sales.decisions.readings import Inbound as _Inbound
+
+            logger.error("ingest.coupon_reading_failed", session_id=session_id, error=f"{type(exc).__name__}: {exc}"[:300])
+            return bool(coupon_in_play(_Inbound(session_id=session_id, text=text, now_ms=0, metadata=metadata)))
+        return bool(verdict.value)
 
     def _session_events(self, session_id: str) -> list[dict[str, Any]]:
         """El JSONL de la sesión (lo que ve el dashboard). Vacío si el store
@@ -1159,22 +1492,38 @@ class IngestInboundMessage:
         )
         return updated
 
-    async def _catalog_gap_note(self, text: str) -> str | None:
-        """Nota de lo que no existe en el catálogo; None sin catálogo o si
-        falla (un aviso de más no justifica demorar ni tumbar el turno)."""
+    async def _catalog_gap_note(self, session_id: str, text: str) -> str | None:
+        """Nota de lo que no existe en el catálogo (`catalog_gap_note_for`)."""
+        return await catalog_gap_note_for(
+            self._catalog,
+            vault_dir=WORKSPACE_VAULT_DIR,
+            session_id=session_id,
+            text=text,
+        )
+
+    async def _cart_lines(self, parsed: WhatsAppMessage) -> dict[str, CartLine | None] | None:
+        """Los ítems del carrito leídos en el catálogo, o None (sin carrito,
+        sin catálogo o si no responde a tiempo: el carrito sale con sus
+        códigos, como antes)."""
+        order = parsed.order if isinstance(parsed.order, dict) else None
+        return await self._catalog_lines((order or {}).get("product_items") or [])
+
+    async def _catalog_lines(self, items: list[Any]) -> dict[str, CartLine | None] | None:
+        """Cada `product_retailer_id` → su línea del catálogo (SKU, id de la
+        variante o del producto), o None si el catálogo no responde a tiempo."""
         import asyncio
 
-        if self._catalog is None or not text:
+        if not items or self._catalog is None:
             return None
         try:
             result = await asyncio.wait_for(
                 self._catalog.search("", limit=_CATALOG_GAP_LIMIT),
-                timeout=_CATALOG_GAP_TIMEOUT_S,
+                timeout=_WEB_CART_HYDRATION_TIMEOUT_S,
             )
         except Exception as exc:  # noqa: BLE001 — degrade, never break the ingest
-            logger.warning("catalog_gap_check_failed", reason=type(exc).__name__)
+            logger.warning("cart_names_unavailable", reason=type(exc).__name__)
             return None
-        return build_catalog_gap_note(text, list(result.results))
+        return lines_from_products(items, list(result.results))
 
     async def _resolve_product_ref(self, sku: str) -> tuple[Any, str | None]:
         """Resolves a `ref: HUB-…` SKU against the catalog WITHOUT mutating
@@ -1567,6 +1916,8 @@ class IngestInboundMessage:
             )
             return
 
+        self._charge_audio(session_id, result)
+
         # Limpiar pending_transcription
         try:
             metadata = self._metadata_store.read(session_id)
@@ -1662,6 +2013,28 @@ class IngestInboundMessage:
         )
         await self.execute(synthetic)
 
+    async def _read_photo(self, parsed: WhatsAppMessage, session_id: str) -> None:
+        """Lee la foto y la hace entrar al bot; al terminar (o fallar) suelta
+        los mensajes del cliente que esperaban por ella y le avisa al workflow
+        (después del mensaje de la foto) que ya no hay nada que esperar."""
+        try:
+            await self._describe_image_and_reenter(parsed)
+        finally:
+            self._photo_reads.end(session_id)
+            await self._notify_photo(session_id, parsed.message_id, done=True)
+
+    async def _notify_photo(self, session_id: str, wamid: str | None, *, done: bool) -> None:
+        """El aviso al workflow de ventas de que una foto del cliente se está
+        leyendo (o ya entró). Nunca frena la foto: sin aviso, entra como hoy."""
+        import asyncio
+
+        if self._photo_notifier is None or not wamid:
+            return
+        try:
+            await asyncio.wait_for(self._photo_notifier(session_id, wamid, done), timeout=_PHOTO_NOTICE_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 — la foto entra igual
+            logger.warning("photo_reading_notice_failed", session=session_id, done=done, error=repr(exc)[:200])
+
     async def _describe_image_and_reenter(self, parsed: WhatsAppMessage) -> None:
         """Describe la imagen (Gemini visión) y re-ejecuta el ingest con un
         mensaje text sintético. Background task — el webhook ya devolvió 200.
@@ -1706,6 +2079,13 @@ class IngestInboundMessage:
                 mime_type=media.get("mime_type") or "image/jpeg",
             )
         )
+        # ¿Qué producto nuestro es la foto? (2026-09-30: capturas de nuestro
+        # catálogo negadas o confundidas). Nunca en un comprobante.
+        product = (
+            await self._identify_photo(result, session_id=session_id, persisted=persisted, media_id=media_id)
+            if result.ok and not result.is_payment_receipt
+            else None
+        )
 
         # Limpiar pending_vision + registrar el resultado en metadata
         try:
@@ -1715,15 +2095,21 @@ class IngestInboundMessage:
         metadata.pop("pending_vision", None)
         if result.ok:
             recent = list(metadata.get("recent_image_descriptions") or [])
-            recent.append(
-                {
-                    "media_id": media_id,
-                    "kind": result.kind,
-                    "description": result.description,
-                    "provider": result.provider,
-                    "cost_usd_estimate": result.cost_usd_estimate,
-                }
-            )
+            described: dict[str, Any] = {
+                "media_id": media_id,
+                "kind": result.kind,
+                "description": result.description,
+                "provider": result.provider,
+                "cost_usd_estimate": result.cost_usd_estimate,
+            }
+            # El episodio de la foto y, si se reconoció, el producto: los turnos
+            # siguientes del episodio lo recuerdan (`build_photo_facts_note`).
+            active = get_active_episode(metadata)
+            if active and active.get("episode_id"):
+                described["episode_id"] = active["episode_id"]
+            if product is not None:
+                described["product"] = {"handle": product.handle, "how": product.how, "title": product.title}
+            recent.append(described)
             metadata["recent_image_descriptions"] = recent[-20:]
         else:
             errs = list(metadata.get("vision_failures") or [])
@@ -1746,6 +2132,9 @@ class IngestInboundMessage:
                 kind=result.kind if result.ok else "unknown",
             )
         self._safe_write_metadata(session_id, metadata)
+        # Lo que costó describirla (también un comprobante) va a la conversación.
+        if result.ok:
+            self._charge_vision(session_id, result.cost_usd_estimate, calls=1)
 
         # Analytics
         await self._emit_event(
@@ -1762,6 +2151,8 @@ class IngestInboundMessage:
                     "latency_ms": result.latency_ms,
                     "error": result.error,
                     "is_payment_receipt": result.is_payment_receipt,
+                    "product_handle": product.handle if product is not None else None,
+                    "identified_by": product.how if product is not None else None,
                 },
             )
         )
@@ -1775,6 +2166,9 @@ class IngestInboundMessage:
             await self.execute(
                 self._synthetic_text_message(parsed, placeholder),
                 persisted_image_url=persisted_image_url,
+                # Las lecturas solo leen lo que escribió el cliente en la foto.
+                customer_text=caption or None,
+                from_photo=True,
             )
             return
 
@@ -1811,7 +2205,9 @@ class IngestInboundMessage:
                 f"[el cliente envió un comprobante de pago: {result.description}]"
             )
         else:
-            synthetic_text = f"[el cliente envió una foto: {result.description}]"
+            # Si se reconoció, la foto entra nombrando el producto (queda en el
+            # historial y en el dashboard) y el turno lleva su nota.
+            synthetic_text = photo_reentry_text(result.description, product)
         if caption:
             synthetic_text += f' con el texto: "{caption}"'
         logger.info(
@@ -1824,7 +2220,101 @@ class IngestInboundMessage:
         await self.execute(
             self._synthetic_text_message(parsed, synthetic_text),
             persisted_image_url=persisted_image_url,
+            # La descripción la escribió la visión: las lecturas del cliente
+            # (compra, retoma, baja) solo leen lo que él puso en la foto.
+            customer_text=caption or None,
+            photo_note=(
+                build_photo_product_note(product, result.description)
+                if product is not None
+                else None
+            ),
+            from_photo=True,
         )
+
+    def _charge_audio(self, session_id: str, result: Any) -> None:
+        """Lo que costó transcribir la nota de voz, al episodio de la
+        conversación (`audio_usage`). Google cobra toda llamada que contestó,
+        aunque no saliera texto útil; no la que nunca llegó al modelo."""
+        from src.sdk.connectorkit import record_audio_cost
+
+        if (result.error or "").startswith(_AUDIO_NOT_BILLED):
+            return
+        record_audio_cost(session_id, result.cost_usd_estimate, calls=1, store=self._metadata_store)
+
+    def _charge_vision(self, session_id: str, cost_usd: float | None, *, calls: int) -> None:
+        """Lo que costó leer la foto, al episodio de la conversación
+        (`vision_usage`, como el costo LLM, el de WhatsApp y el de Jev)."""
+        from src.sdk.connectorkit import record_vision_cost
+
+        record_vision_cost(session_id, cost_usd, calls=calls, store=self._metadata_store)
+
+    async def _identify_photo(
+        self,
+        result: Any,
+        *,
+        session_id: str,
+        persisted: tuple[str, str] | None,
+        media_id: str,
+    ) -> Any:
+        """El producto nuestro que es la foto, o None. Nunca tumba el ingest:
+        sin identificador, sin catálogo o con cualquier falla, la foto sigue
+        como siempre (con su descripción). Deja el índice de fotos del
+        catálogo completándose en segundo plano."""
+        identifier = self._photo_identifier
+        if identifier is None:
+            return None
+
+        async def image() -> tuple[bytes, str] | None:
+            return await self._inbound_image_bytes(session_id, persisted, media_id)
+
+        try:
+            identification = await identifier.identify(result, image)
+        except Exception as exc:  # noqa: BLE001 — la foto sigue sin identificar
+            logger.warning("photo_product.identify_failed", session=session_id, error_type=type(exc).__name__)
+            identification = None
+        # La búsqueda por imagen (huella + comparación) también se cobra a la
+        # conversación; por texto no cuesta nada.
+        calls = int(getattr(identification, "calls", 0) or 0)
+        if calls:
+            self._charge_vision(session_id, getattr(identification, "cost_usd", 0.0), calls=calls)
+        try:
+            identifier.refresh_index_soon()
+        except Exception as exc:  # noqa: BLE001 — el índice se completa la próxima vez
+            logger.warning("photo_product.refresh_failed", error_type=type(exc).__name__)
+        product = identification.product if identification is not None else None
+        logger.info(
+            "photo_product.identified" if product is not None else "photo_product.not_identified",
+            session=session_id,
+            handle=product.handle if product is not None else None,
+            how=product.how if product is not None else None,
+            trace=identification.trace if identification is not None else None,
+        )
+        return product
+
+    @staticmethod
+    async def _inbound_image_bytes(
+        session_id: str, persisted: tuple[str, str] | None, media_id: str
+    ) -> tuple[bytes, str] | None:
+        """Los bytes de la foto: la copia que ya se guardó para el dashboard
+        o, si no se pudo guardar, otra vez desde Meta."""
+        from src.platform.audio.meta_media_fetcher import fetch_media_bytes
+        from src.platform.media import resolve_media_file
+
+        if persisted is not None:
+            path = resolve_media_file(session_id, persisted[1])
+            if path is not None:
+                try:
+                    return path.read_bytes(), "image/jpeg"
+                except OSError:
+                    pass
+        try:
+            fetched = await fetch_media_bytes(media_id)
+        except Exception:  # noqa: BLE001 — sin bytes, sin búsqueda por imagen
+            return None
+        if not fetched:
+            return None
+        data, mime = fetched
+        return data, mime or "image/jpeg"
 
     async def _persist_inbound_document(
         self, session_id: str, media_id: str, mime_type: str | None
@@ -2059,7 +2549,7 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _build_episode_boundary_note(prev_episode: dict[str, Any]) -> str:
+def build_episode_boundary_note(prev_episode: dict[str, Any], *, courtesy: bool = False) -> str:
     """Nota de frontera de episodio para `plugin_context` en re-engagement.
 
     Cuando el cliente vuelve tras un episodio CERRADO, el `memory_window` del
@@ -2069,6 +2559,12 @@ def _build_episode_boundary_note(prev_episode: dict[str, Any]) -> str:
     3b3fbaee: re-emitía EpisodeClosedEvent y crasheaba el dispatch). La nota le
     dice explícitamente que arranque una conversación nueva. NO toca el
     historial (eso requeriría modificar la base lib). Tuteo colombiano (REGLA #1).
+
+    `courtesy` (capacidad `cortesia`): el cliente solo agradece o saluda. Caso
+    del 2026-09-29: el ETA avisó «tu pedido ya está listo», el cliente
+    contestó «Son geniales. Muchas gracias» y, con «pregunta en qué puedes
+    ayudar hoy», el bot abrió venta. Con cortesía la nota pide una respuesta
+    breve y cálida, sin abrir venta.
     """
     closing_tag = prev_episode.get("closing_tag") or ""
     order_id = prev_episode.get("order_id")
@@ -2077,6 +2573,7 @@ def _build_episode_boundary_note(prev_episode: dict[str, Any]) -> str:
         "CONFIRMADO_PAGO_PENDIENTE",
         "CONFIRMADO_SIN_DATOS",
     }
+    order_hint = ""
     if closing_tag in _CLOSED_WITH_ORDER:
         prev_clause = (
             "ya cerró con un pedido"
@@ -2085,12 +2582,30 @@ def _build_episode_boundary_note(prev_episode: dict[str, Any]) -> str:
             "(verificación de pago / envío). NO lo retomes ni vuelvas a "
             "confirmarlo"
         )
+        # Laboratorio caso-cortesia-1001 (2026-09-30): con solo «NO lo
+        # retomes», los dos bots le prometieron al cliente «un colega coordina
+        # la entrega» sin escalar, y nadie quedaba avisado.
+        order_hint = (
+            " Si el cliente pide algo de ese pedido (coordinar la entrega, un "
+            "cambio o el pago), escálalo con escalate_to_human para que el "
+            "equipo lo atienda en este chat; no le prometas que alguien lo va a "
+            "contactar sin escalar."
+        )
     else:
         prev_clause = "ya se cerró y no tiene nada pendiente de tu lado"
+    if courtesy:
+        return (
+            "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
+            "Empieza un episodio NUEVO con este cliente. La conversación anterior "
+            f"{prev_clause}.{order_hint} El cliente solo agradece o saluda: contéstale breve y "
+            "cálido a lo que dijo, en una o dos frases (si comenta algo de su "
+            "pedido, por ejemplo que le gustó, agradéceselo). No abras una venta "
+            "nueva, no ofrezcas productos ni preguntes en qué más puedes ayudar."
+        )
     return (
         "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
         "Empieza un episodio NUEVO con este cliente. La conversación anterior "
-        f"{prev_clause}. Trata este mensaje como el inicio de una conversación "
+        f"{prev_clause}.{order_hint} Trata este mensaje como el inicio de una conversación "
         "nueva: saluda con calidez y pregunta en qué puedes ayudar hoy. Solo "
         "menciona lo anterior si el cliente lo trae explícitamente."
     )
@@ -2121,6 +2636,16 @@ def _build_reply_kwargs(
     if not quoted_id or not isinstance(quoted_id, str):
         return kwargs
     reply_to: dict[str, Any] = {"id": quoted_id}
+    # «Enviar mensaje a la empresa»: la cita es la ficha del producto.
+    referred = referred_product_id(context)
+    if referred:
+        state = metadata.get("web_product_ref")
+        resolved = isinstance(state, dict) and state.get("sku") == referred and state.get("status") == "resolved"
+        title = str(state.get("title") or "") if resolved else ""
+        variant = f" ({state['variant']})" if resolved and state.get("variant") else ""
+        reply_to.update(author="catalog", text=f"{title}{variant}" if title else referred)
+        kwargs["reply_to"] = reply_to
+        return kwargs
     entry = (metadata.get("outbound_media_index") or {}).get(quoted_id)
     if isinstance(entry, dict):
         reply_to["author"] = "agent"
@@ -2133,7 +2658,7 @@ def _build_reply_kwargs(
     return kwargs
 
 
-def _build_photo_citation_note(
+def build_photo_citation_note(
     context: dict[str, Any] | None, metadata: dict[str, Any]
 ) -> str | None:
     """Nota de cita de foto para `plugin_context`.
@@ -2250,6 +2775,12 @@ def _classify_origin_channel(
     # Defensivo: clid presente pero source_type missing/unknown — default a "ad"
     # (es el caso más común y mantiene compatibilidad con el HU-002).
     return "ad"
+
+
+def _is_photo(parsed: WhatsAppMessage) -> bool:
+    """¿El mensaje es una foto que va a la visión? (las fotos no se esperan entre sí)"""
+    media = parsed.media or {}
+    return media.get("type") == "image" and isinstance(media.get("id"), str)
 
 
 def _spawn_safe(coro, *, label: str, session_id: str | None) -> None:

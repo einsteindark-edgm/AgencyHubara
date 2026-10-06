@@ -23,12 +23,18 @@ from temporalio.worker import Worker
 from exoclaw_temporal.config import ExecuteToolInput, LLMResponseData, ToolCallData
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
+from tests.sales_workflow_versions import sales_workflow_versions
 from tests.test_sales_workflow_debounce import (
     SALES_QUEUE,
     Tracker,
     _final_resp,
     _make_fake_activities,
 )
+
+#: Tests que NO corren contra el workflow V2 (motor de decisiones F4), con su
+#: motivo (ver `tests/sales_workflow_versions.py`).
+V2_EXCLUDED: dict[str, str] = {}
+_sales_workflow_version = sales_workflow_versions(__name__, V2_EXCLUDED)
 
 _NARRATION = "El cliente eligió Cubo Love. Le pregunto el aroma."
 

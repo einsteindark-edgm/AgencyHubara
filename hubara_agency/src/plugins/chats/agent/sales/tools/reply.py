@@ -22,11 +22,23 @@ from typing import Any
 from exoclaw.agent.tools import ToolBase, ToolContext
 from loguru import logger
 
-# textkit, no agentkit: una tool no puede arrastrar temporalio (R-DIP, ADR-001).
-from src.sdk.textkit import (
-    looks_like_admin_leak,
-    salvage_customer_text,
-    sanitize_llm_text,
+from src.plugins.chats.agent.sales.decisions.guards import (
+    clean_llm_text,
+    customer_reply_text,
+    option_list,
+)
+from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+from src.plugins.chats.agent.sales.use_cases.photo_product import (
+    PROMISE_MESSAGE,
+    denies_availability,
+    promises_to_follow_up,
+    verified_denial_message,
+    verified_photo_products,
+)
+from src.plugins.chats.agent.sales.variant_enumeration import (
+    catalog_variant_labels,
+    intro_before,
+    option_list_message,
 )
 
 _REJECTED_MESSAGE = (
@@ -34,6 +46,14 @@ _REJECTED_MESSAGE = (
     "cliente en tercera persona, narrar lo que haces). Escribe SOLO lo que el "
     "cliente debe leer, hablándole a él, y vuelve a llamar send_reply."
 )
+
+
+#: El mensaje del cliente en que `send_reply` ya retuvo una negación (o una
+#: promesa de revisar después): el segundo intento sale (UNA retención por
+#: mensaje, nunca un bucle).
+_VERIFIED_CHECK_KEY = "verified_photos_denial_checked"
+_PROMISE_CHECK_KEY = "promise_later_checked"
+_LIST_CHECK_KEY = "option_list_checked"
 
 
 class SendReplyTool(ToolBase):
@@ -61,15 +81,129 @@ class SendReplyTool(ToolBase):
         "required": ["text"],
     }
 
-    def __init__(self, workspace: str | Path) -> None:
+    def __init__(
+        self, workspace: str | Path, vault_dir: str | Path | None = None, catalog: Any = None
+    ) -> None:
         self._workspace = Path(workspace)
+        # Vault del motor de decisiones (registro de bots, cola de
+        # desacuerdos). Sin él: el bot fijado del laboratorio o la regla de hoy.
+        self._vault_dir = Path(vault_dir) if vault_dir is not None else None
+        # Catálogo (aromas y colores) para ver si el texto es una lista para
+        # escoger. Sin él, el texto sale y la protección decide después.
+        self._catalog = catalog
+
+    def _hold_once(self, session_key: str, key: str, error: str, message: str) -> str | None:
+        """Retiene el texto si todavía no se retuvo uno por `key` en este
+        mensaje del cliente (`last_inbound_message_id`) y lo anota. Sin vault,
+        sin mensaje del cliente o si no se puede anotar: el texto sale."""
+        if self._vault_dir is None:
+            return None
+        store = FilesystemMetadataStore(self._vault_dir)
+        try:
+            metadata = store.read(session_key) or {}
+        except Exception:  # noqa: BLE001 — sin metadata legible: el texto sale
+            return None
+        inbound = metadata.get("last_inbound_message_id")
+        if not inbound or metadata.get(key) == inbound:
+            return None
+
+        def _mark(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            if not fresh:
+                return None
+            fresh[key] = inbound
+            return fresh
+
+        try:
+            if store.update(session_key, _mark) is None:
+                return None
+        except Exception:  # noqa: BLE001 — sin la marca podría repetirse: el texto sale
+            return None
+        logger.info("💬 [TOOL send_reply] retenido ({}) session={}", error, session_key)
+        return json.dumps({"sent": False, "error": error, "message": message}, ensure_ascii=False)
+
+    def _held_for_promise(self, session_key: str, text: str) -> str | None:
+        """Laboratorio caso-fotos-0930-r9, 4567 t13 (bot nuevo): «Déjame
+        revisar bien las cuatro… Dame un momento y te confirmo», y el turno
+        terminó. El bot no puede volver a escribir (AGENTS.md lo prohíbe; nadie
+        lo hacía cumplir): se retiene UNA vez para que revise ahora."""
+        if not promises_to_follow_up(text):
+            return None
+        return self._hold_once(session_key, _PROMISE_CHECK_KEY, "promise_later", PROMISE_MESSAGE)
+
+    def _held_for_verified_photos(self, session_key: str, text: str) -> str | None:
+        """Laboratorio caso-fotos-0930-r8, 4567 t13 (los dos bots): con las
+        fotos del cliente ya verificadas como productos nuestros, el bot
+        contestó «la única que manejamos es el Velón Gorrión». Si la respuesta
+        dice que no tenemos un producto y el episodio tiene fotos verificadas,
+        se retiene UNA vez por mensaje del cliente con lo verificado; el
+        segundo intento sale (si habla de otro producto, lo reenvía igual).
+        Sin vault, sin fotos verificadas o si no se puede anotar la retención,
+        el texto sale como siempre."""
+        if self._vault_dir is None or not denies_availability(text):
+            return None
+        try:
+            metadata = FilesystemMetadataStore(self._vault_dir).read(session_key) or {}
+        except Exception:  # noqa: BLE001 — sin metadata legible: el texto sale
+            return None
+        products = verified_photo_products(metadata)
+        if not products:
+            return None
+        return self._hold_once(
+            session_key, _VERIFIED_CHECK_KEY, "verified_photos", verified_denial_message(products)
+        )
+
+    def _held_before(self, session_key: str, key: str) -> bool:
+        """¿Ya se retuvo un texto por `key` en este mensaje del cliente? Evita
+        repetir la consulta (catálogo, Jev) en el segundo intento."""
+        try:
+            metadata = FilesystemMetadataStore(self._vault_dir).read(session_key) or {}
+        except Exception:  # noqa: BLE001 — ilegible: `_hold_once` decide
+            return False
+        inbound = metadata.get("last_inbound_message_id")
+        return bool(inbound) and metadata.get(key) == inbound
+
+    async def _held_for_option_list(self, session_key: str, text: str) -> str | None:
+        """Laboratorio caso-fotos-0930-r10, 4567 t19 y t20 (los dos bots): el
+        bot escribió los aromas como lista de texto y la protección los cambió
+        por el selector después del turno. Si el texto es una lista para
+        escoger (capacidad `enumeracion`: la regla en el bot actual, Jev en el
+        nuevo), se devuelve UNA vez por mensaje del cliente para que el modelo
+        mande el selector él mismo, con el producto y lo que iba a decir. Sin
+        catálogo, sin vault o si algo falla: el texto sale y la protección
+        sigue detrás."""
+        if self._catalog is None or self._vault_dir is None or self._held_before(session_key, _LIST_CHECK_KEY):
+            return None
+        try:
+            result = await self._catalog.search(q="", limit=30)
+            aromas, colors = catalog_variant_labels(result.results)
+            listed = await option_list(
+                text, aromas=aromas, colors=colors, session_id=session_key, vault_dir=self._vault_dir
+            )
+        except Exception as exc:  # noqa: BLE001 — nunca frena la respuesta
+            logger.warning("💬 [TOOL send_reply] sin revisar la lista ({}) session={}", exc, session_key)
+            return None
+        if not listed:
+            return None
+        variant_type, labels = str(listed[0]), list(listed[1])
+        return self._hold_once(
+            session_key,
+            _LIST_CHECK_KEY,
+            "option_list",
+            option_list_message(variant_type, labels, intro_before(text, labels)),
+        )
 
     async def execute_with_context(
         self, ctx: ToolContext, text: str = "", **_: Any
     ) -> str:
-        cleaned = sanitize_llm_text(text or "").text
-        if cleaned and looks_like_admin_leak(cleaned, extended=True):
-            cleaned = salvage_customer_text(cleaned, extended=True)
+        # Motor de decisiones (F5): la muletilla del modelo al principio la
+        # decide `preambulo`; si el texto no es para el cliente lo deciden
+        # `destinatario` y `rescate`, con el proveedor del bot de la
+        # conversación (la regla de hoy por defecto: idéntico a antes).
+        cleaned = await customer_reply_text(
+            await clean_llm_text(text or "", session_id=ctx.session_key, vault_dir=self._vault_dir),
+            session_id=ctx.session_key,
+            vault_dir=self._vault_dir,
+        )
         if not cleaned:
             logger.warning(
                 "💬 [TOOL send_reply] rechazado (vacío o nota interna) session={} text={!r}",
@@ -80,6 +214,13 @@ class SendReplyTool(ToolBase):
                 {"sent": False, "error": "internal_text", "message": _REJECTED_MESSAGE},
                 ensure_ascii=False,
             )
+        held = (
+            self._held_for_verified_photos(ctx.session_key, cleaned)
+            or self._held_for_promise(ctx.session_key, cleaned)
+            or await self._held_for_option_list(ctx.session_key, cleaned)
+        )
+        if held is not None:
+            return held
         return json.dumps(
             {
                 "reply": {"text": cleaned},

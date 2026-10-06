@@ -18,6 +18,22 @@ VISION_KIND_OTHER = "otro"
 
 
 @dataclass(frozen=True)
+class VisibleText:
+    """Texto que se lee en la imagen, copiado tal cual por el modelo.
+
+    Cada campo es None si no se ve o no se lee con seguridad. Lo usa el
+    emparejador de fotos contra el catálogo (una captura de nuestro catálogo
+    trae el nombre, el precio y a veces la URL del producto).
+    """
+
+    product_name: str | None = None
+    price: str | None = None
+    url: str | None = None
+    sku: str | None = None
+    other: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class VisionRequest:
     """Pedido de descripción de una imagen inbound.
 
@@ -53,6 +69,11 @@ class VisionResult:
       provider: cuál adapter respondió (modelo o "fake"/"null").
       cost_usd_estimate: costo estimado para attribution.
       latency_ms: latencia del provider call.
+      visible_text: el texto que se lee en la imagen, por campo (nombre del
+        producto, precio, URL, código). None si la respuesta no lo trae
+        (formato viejo o error).
+      is_screenshot: si la imagen es una captura de pantalla (None si no se
+        sabe).
     """
 
     description: str
@@ -63,3 +84,5 @@ class VisionResult:
     provider: str | None = None
     cost_usd_estimate: float | None = None
     latency_ms: int | None = None
+    visible_text: VisibleText | None = None
+    is_screenshot: bool | None = None

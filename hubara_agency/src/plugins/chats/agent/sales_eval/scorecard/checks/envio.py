@@ -6,8 +6,13 @@ import re
 from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     failed,
+    focus_turn_of,
+    in_focus,
     is_legacy,
+    judged,
+    judged_turns,
     not_applicable,
+    not_judged,
     passed,
     quote,
     sent_texts,
@@ -52,6 +57,15 @@ def _form_turns(traj: Trajectory) -> list[Turn]:
 @code_check("ENV-01")
 def check_shipping_form_once(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     forms = _form_turns(traj)
+    if in_focus(traj):
+        focus = focus_turn_of(traj)
+        if focus is None or focus.turn not in {f.turn for f in forms}:
+            return not_judged("ENV-01", traj, "no se envió el formulario de envío")
+        if forms[0].turn != focus.turn:
+            return failed(
+                "ENV-01", focus.turn, f"turno {focus.turn}: formulario repetido (ya salió en el turno {forms[0].turn})"
+            )
+        return passed("ENV-01", f"formulario en el turno {focus.turn}", turn=focus.turn)
     if not forms:
         return not_applicable("ENV-01", "no se envió el formulario de envío")
     if len(forms) >= 2:
@@ -70,9 +84,9 @@ def _answers_written_message(turn: Turn) -> bool:
 
 @code_check("ENV-02")
 def check_form_with_reply(traj: Trajectory, ctx: CheckContext) -> CheckResult:
-    applicable = [t for t in _form_turns(traj) if _answers_written_message(t)]
+    applicable = [t for t in _form_turns(traj) if judged(traj, t) and _answers_written_message(t)]
     if not applicable:
-        return not_applicable("ENV-02", "ningún formulario respondió a un mensaje escrito del cliente")
+        return not_judged("ENV-02", traj, "ningún formulario respondió a un mensaje escrito del cliente")
     for turn in applicable:
         if not turn.sent_texts:
             detail = f"; narración descartada {quote(turn.discarded_narration[0])}" if turn.discarded_narration else ""
@@ -85,9 +99,9 @@ def check_form_with_reply(traj: Trajectory, ctx: CheckContext) -> CheckResult:
 
 @code_check("ENV-03")
 def check_form_data_recorded(traj: Trajectory, ctx: CheckContext) -> CheckResult:
-    arrivals = [t for t in traj.turns if t.inbound_text.lower().startswith(_FORM_DATA_MARKER)]
+    arrivals = [t for t in judged_turns(traj) if t.inbound_text.lower().startswith(_FORM_DATA_MARKER)]
     if not arrivals:
-        return not_applicable("ENV-03", "el cliente no envió el formulario")
+        return not_judged("ENV-03", traj, "el cliente no envió el formulario")
     legacy = is_legacy(traj)
     for turn in arrivals:
         recorded = turn.tool_attempted("set_order_slot") if legacy else turn.tool_ok("set_order_slot")
@@ -109,6 +123,8 @@ def check_no_reask_shipping_data(traj: Trajectory, ctx: CheckContext) -> CheckRe
     if not any(_known_fields(t.draft) for t in traj.turns):
         return not_applicable("ENV-04", "el pedido nunca tuvo datos de envío")
     for previous, turn in zip(traj.turns, traj.turns[1:], strict=False):
+        if not judged(traj, turn):
+            continue
         known = _known_fields(previous.draft)
         for text in turn.sent_texts:
             if "?" not in text:
@@ -150,15 +166,15 @@ def check_no_bank_data_or_shipping_value(traj: Trajectory, ctx: CheckContext) ->
         if _SHIPPING_VALUE_RE.search(text):
             return failed("ENV-05", turn.turn, f"turno {turn.turn}: valor de envío definitivo {quote(text)}")
     if not any_text:
-        return not_applicable("ENV-05", "el bot no envió texto")
+        return not_judged("ENV-05", traj, "el bot no envió texto")
     return passed("ENV-05")
 
 
 @code_check("ENV-07")
 def check_receiver_name_before_register(traj: Trajectory, ctx: CheckContext) -> CheckResult:
-    attempts = [(t, tc) for t in traj.turns for tc in t.tools_named("register_order")]
+    attempts = [(t, tc) for t in judged_turns(traj) for tc in t.tools_named("register_order")]
     if not attempts:
-        return not_applicable("ENV-07", "no se intentó registrar la orden")
+        return not_judged("ENV-07", traj, "no se intentó registrar la orden")
     if is_legacy(traj) or all(tc.ok is None for _, tc in attempts):
         return unknown("ENV-07", "sin resultado de register_order")
     for turn, tc in attempts:

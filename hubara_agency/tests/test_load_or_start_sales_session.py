@@ -37,11 +37,9 @@ from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
-# ADR-2026-05-20: the use_case dispatches by signal-name string ("send_message")
-# now, no class references. We keep the imports of HubaraSalesSessionWorkflow
-# only because the test still asserts that the *start_workflow* call references
-# `HubaraSalesSessionWorkflow.run` (intra-agent ref, OK). RemarketingSessionWorkflow
-# is no longer needed (cross-agent — replaced by string dispatch + manifest).
+# ADR-2026-05-20: the use_case dispatches by signal-name string ("send_message").
+# Motor de decisiones F2: el workflow de ventas también arranca por NOMBRE, el
+# que decide el registro de bots para la conversación (V1 por defecto).
 
 
 # --- Fakes -----------------------------------------------------------------
@@ -621,3 +619,231 @@ async def test_prefer_sales_never_overrides_the_human_route():
 
     assert client.start_calls == []
     assert metadata.data["active_route"] == ROUTE_HUMANO
+
+
+# --- Ids de la ráfaga (plan del laboratorio, PR 3) --------------------------
+
+_META = {"wamid": "wamid.A", "ts_ms": 1_000_000, "kind": "text"}
+
+
+@pytest.mark.asyncio
+async def test_inbound_ids_travel_as_fourth_signal_arg_when_enabled(monkeypatch):
+    """Con `SALES_SIGNAL_INBOUND_META=on` la señal lleva `{wamid, ts_ms, kind}`
+    para la traza v2. Se enciende DESPUÉS de desplegar el worker que acepta el
+    4.º argumento: un worker viejo que lo recibe falla la tarea del workflow."""
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    args = client.start_calls[0]["start_signal_args"]
+    assert len(args) == 4 and args[3] == {**_META, "perception_mode": "off"}
+
+
+@pytest.mark.asyncio
+async def test_inbound_ids_stay_out_of_the_signal_by_default(monkeypatch):
+    monkeypatch.delenv("SALES_SIGNAL_INBOUND_META", raising=False)
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    assert len(client.start_calls[0]["start_signal_args"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_remarketing_signal_never_gets_the_fourth_arg(monkeypatch):
+    """El workflow de remarketing tiene su propia `send_message` de 3 argumentos."""
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    running = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
+    client = FakeClient(existing_handles={"remarketing-wa_9": running})
+    use_case = _make_use_case(FakeMetadataStore(initial={"active_route": ROUTE_REMARKETING}), client)
+
+    await use_case.execute(session_id="wa_9", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    assert running.signals and all(len(args) == 3 for _fn, args in running.signals)
+
+
+def _rollout(tmp_path, monkeypatch, **state):
+    """Estado del control del dashboard (PR 16) en un vault de prueba."""
+    import json as _json
+
+    from src.plugins.chats.agent.sales.use_cases import load_or_start_sales_session as los
+
+    (tmp_path / "_rollout").mkdir(exist_ok=True)
+    (tmp_path / "_rollout" / "perception.json").write_text(_json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(los, "_vault_dir", lambda: tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_the_perception_mode_travels_with_the_inbound_ids(monkeypatch, tmp_path):
+    """Plan del laboratorio, PR 14 y 16: el modo de las capas nuevas viaja en
+    el 4.º argumento: el del control del dashboard, nunca por encima del techo
+    de Terraform (`SALES_PERCEPTION_MODE_CEILING`), con el perfil activo."""
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", "on")
+    monkeypatch.setenv("SALES_PERCEPTION_PROFILE", "jev-v2")
+    _rollout(tmp_path, monkeypatch, mode="shadow")
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    meta = client.start_calls[0]["start_signal_args"][3]
+    assert meta == {**_META, "perception_mode": "shadow", "perception_profile": "jev-v2"}
+
+
+@pytest.mark.asyncio
+async def test_the_ceiling_caps_the_dashboard_mode(monkeypatch, tmp_path):
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", "shadow")
+    _rollout(tmp_path, monkeypatch, mode="on")
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    assert client.start_calls[0]["start_signal_args"][3]["perception_mode"] == "shadow"
+
+
+@pytest.mark.asyncio
+async def test_canary_acts_on_the_test_number_and_the_rest_measures_in_shadow(monkeypatch, tmp_path):
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", "on")
+    _rollout(tmp_path, monkeypatch, mode="canary", canary_percent=0, test_numbers=["wa_42"])
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+    await use_case.execute(session_id="wa_43", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    modes = [c["start_signal_args"][3]["perception_mode"] for c in client.start_calls]
+    assert modes == ["canary", "shadow"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", ['{"mode": "canary", "canary_percent": NaN}', '{"mode": "canary", "test_numbers": 7}', "{roto"])
+async def test_an_unreadable_rollout_never_stops_the_customer_message(monkeypatch, tmp_path, raw):
+    """El estado del control lo puede dejar raro una edición a mano: el
+    mensaje del cliente viaja igual y el modo cuenta como `off` (antes una
+    excepción acá dejaba al bot mudo para TODOS los clientes)."""
+    from src.plugins.chats.agent.sales.use_cases import load_or_start_sales_session as los
+
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", "on")
+    (tmp_path / "_rollout").mkdir()
+    (tmp_path / "_rollout" / "perception.json").write_text(raw, encoding="utf-8")
+    monkeypatch.setattr(los, "_vault_dir", lambda: tmp_path)
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    args = client.start_calls[0]["start_signal_args"]
+    assert args[0] == "hola" and args[3] == {**_META, "perception_mode": "off"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("ceiling", "state"), [(None, "on"), ("off", "on"), ("encendido", "on"), ("on", None), ("on", "off")])
+async def test_without_an_active_mode_the_mode_travels_as_off(monkeypatch, tmp_path, ceiling, state):
+    """El modo `off` viaja EXPLÍCITO: el workflow se queda con el último modo
+    que recibió, así que sin esto un chat en curso seguiría en canary/on
+    después de apagar o de bajar el techo (hasta que su sesión termine)."""
+    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
+    if ceiling is None:
+        monkeypatch.delenv("SALES_PERCEPTION_MODE_CEILING", raising=False)
+    else:
+        monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", ceiling)
+    if state is None:
+        from src.plugins.chats.agent.sales.use_cases import load_or_start_sales_session as los
+
+        monkeypatch.setattr(los, "_vault_dir", lambda: tmp_path)
+    else:
+        _rollout(tmp_path, monkeypatch, mode=state)
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None, inbound_meta=_META)
+
+    assert client.start_calls[0]["start_signal_args"][3] == {**_META, "perception_mode": "off"}
+
+
+@pytest.mark.asyncio
+async def test_the_sales_workflow_version_comes_from_the_bot_registry(monkeypatch, tmp_path):
+    """Motor de decisiones F2: el arranque del workflow de ventas lo decide el
+    registro de bots por conversación (V1 por defecto; V2 cuando su control y
+    el techo de Terraform lo prenden). Se arranca por NOMBRE."""
+    from src.plugins.chats.agent.sales.decisions import bots
+
+    _rollout(tmp_path, monkeypatch, mode="off")
+    client = FakeClient()
+    use_case = _make_use_case(FakeMetadataStore(initial={}), client)
+    await use_case.execute(session_id="wa_42", message="hola", phone_number_id=None)
+    assert client.start_calls[0]["workflow"] == bots.WORKFLOW_V1
+
+    monkeypatch.setenv("SALES_WORKFLOW_V2_CEILING", "on")
+    bots.write_workflow_mode(tmp_path, "on")
+    client2 = FakeClient()
+    await _make_use_case(FakeMetadataStore(initial={}), client2).execute(session_id="wa_43", message="hola", phone_number_id=None)
+    assert client2.start_calls[0]["workflow"] == bots.WORKFLOW_V2
+
+
+# --- Texto ANTES de la foto (2026-09-30) -------------------------------------
+# El ingest avisa al workflow de ventas que está leyendo una foto del cliente
+# (y cuándo ya entró): la ráfaga la espera. Solo a ventas, y sin arrancar
+# nada: si no hay workflow vivo, la foto entra como hoy.
+
+
+class _SignalFails(FakeHandle):
+    async def signal(self, fn, *, args) -> None:
+        raise RuntimeError("workflow not found")
+
+
+@pytest.mark.asyncio
+async def test_the_sales_workflow_hears_a_photo_being_read() -> None:
+    handle = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
+    client = FakeClient(existing_handles={"session-wa_1": handle})
+    uc = _make_use_case(FakeMetadataStore({"active_route": ROUTE_VENTAS}), client)
+
+    await uc.notify_photo_reading("wa_1", "wamid.P", False)
+    await uc.notify_photo_reading("wa_1", "wamid.P", True)
+
+    assert handle.signals == [("photo_reading", ["wamid.P", False]), ("photo_reading", ["wamid.P", True])]
+    assert client.start_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", [ROUTE_HUMANO, ROUTE_REMARKETING])
+async def test_other_routes_do_not_hear_about_the_photo(route: str) -> None:
+    handle = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
+    client = FakeClient(existing_handles={"session-wa_1": handle})
+    uc = _make_use_case(FakeMetadataStore({"active_route": route}), client)
+
+    await uc.notify_photo_reading("wa_1", "wamid.P", False)
+
+    assert handle.signals == []
+
+
+@pytest.mark.asyncio
+async def test_the_end_of_a_photo_reaches_sales_even_if_the_route_changed() -> None:
+    """Un comprobante de pago pasa la conversación a una persona mientras se
+    lee: el aviso de que la foto terminó igual le llega a ventas (solo quita
+    la foto de la espera). Sin él, ventas la esperaría en un turno futuro."""
+    handle = FakeHandle(status=WorkflowExecutionStatus.RUNNING)
+    client = FakeClient(existing_handles={"session-wa_1": handle})
+    uc = _make_use_case(FakeMetadataStore({"active_route": ROUTE_HUMANO}), client)
+
+    await uc.notify_photo_reading("wa_1", "wamid.P", True)
+
+    assert handle.signals == [("photo_reading", ["wamid.P", True])]
+
+
+@pytest.mark.asyncio
+async def test_without_a_live_workflow_the_notice_is_dropped() -> None:
+    client = FakeClient(existing_handles={"session-wa_1": _SignalFails(status=None)})
+    uc = _make_use_case(FakeMetadataStore(), client)
+
+    await uc.notify_photo_reading("wa_1", "wamid.P", False)  # no lanza
+
+    assert client.start_calls == []

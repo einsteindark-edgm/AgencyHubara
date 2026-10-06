@@ -77,3 +77,45 @@ SHALL terminar `result_missing_dispatch` sin ejecutar ni cerrar watermarks.
 - GIVEN LiteLLM inalcanzable para una conversación
 - WHEN el run completa con esa sesión en `llm_errors`
 - THEN su watermark NO avanza y el ciclo siguiente la re-analiza
+
+### Requirement: Lector de Jev del estado del pedido (motor de decisiones F8)
+
+El lector SHALL fijarlo Terraform (`ORDER_SENTINEL_READER`: `off` | `shadow` |
+`on`; nace `off`). Con `off` el snapshot, el run y el resumen del ciclo SHALL
+ser los de hoy y Jev NO se llama. Con `shadow` u `on`, la activity del
+snapshot SHALL preguntarle a Jev por cada conversación «¿qué cambió?» (nada,
+en preparación, listo, en camino, entregado, pago confirmado) y, solo si Jev
+está seguro (p ≥ 0,85) de que algo cambió, un sí/no por cada mensaje NUEVO
+desde el watermark (del equipo o del cliente; el pago, solo del equipo; a lo
+sumo 16) que podría probarlo. El veredicto de Jev SHALL tener la forma del
+veredicto del LLM, con la evidencia textual de los mensajes que Jev marcó
+(p ≥ 0,85). Si Jev duda, cae o tarda, la lectura MUST NOT traer veredicto:
+decide el LLM. El LLM se sigue llamando siempre (es la regla de hoy y la vara
+se mide contra él). En `shadow` actúa el LLM; en `on` actúa el veredicto de
+Jev cuando lo hay. Las guardas del agente MUST ser las mismas para las dos
+fuentes. Lo que Jev ve MUST ir anonimizado con las casillas personales del
+borrador del pedido vinculado. Cada lectura SHALL dejar una métrica
+(`DecisionMetrics`, capacidad `estado_pedido`) y los DESACUERDOS entre lo que
+el LLM y Jev harían despachar SHALL ir a la cola única que califica Claude
+Code (`DisagreementLog`); registrar es observabilidad: si falla, el ciclo
+igual termina.
+
+#### Scenario: En sombra el desacuerdo se registra y actúa el LLM
+
+- GIVEN el lector en `shadow`, el operador escribió "ya salió con el mensajero" y el pedido está `ready`
+- AND Jev lee `en_camino` con esa cita y el LLM no ve señal
+- WHEN corre el ciclo
+- THEN no se despacha nada (actúa el LLM)
+- AND la cola de desacuerdos recibe `estado_pedido` con `rule: {action: none}` y `jev: {action: transition, to_stage: shipping}`
+
+#### Scenario: Con el lector encendido actúa Jev bajo las mismas guardas
+
+- GIVEN el lector en `on` y Jev lee `entregado` para un pedido `ready`
+- WHEN el agente planifica
+- THEN el veredicto de Jev queda `suppressed: invalid_transition` (`by: jev`), igual que si lo hubiera propuesto el LLM
+
+#### Scenario: Jev caído no cambia nada
+
+- GIVEN el lector en `on` y Jev responde timeout
+- WHEN corre el ciclo
+- THEN la lectura trae `verdict: null` y `error: timeout`, decide el LLM como hoy y la métrica cuenta la caída

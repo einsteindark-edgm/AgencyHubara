@@ -256,6 +256,15 @@ async def test_send_time_recheck_copies_the_coupon_terms_of_now(
     _seed_session(vault, "wa_+571", {"tag": "COMPRA_EXITOSA"})
     promo = _promo(value=20, ends_at_ms=1_790_571_600_000)  # 2026-09-28T05:00Z → "27 de septiembre"
     monkeypatch.setattr(acts, "get_promotions_port", lambda: FakePromotionsPort([promo]))
+    # El envío se dispara antes de que el cupón venza (el reloj real ya pasó el 27).
+    from datetime import datetime as _real_datetime
+
+    class _BeforeTheEnd(_real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _real_datetime.fromtimestamp((1_790_571_600_000 - 3 * 86_400_000) / 1000, tz=tz)
+
+    monkeypatch.setattr(acts, "datetime", _BeforeTheEnd)
 
     plan = await ActivityEnvironment().run(load_campaign_send_plan_activity, "mkt-1")
 

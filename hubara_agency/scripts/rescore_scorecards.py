@@ -13,6 +13,10 @@ worker `sales_eval` de prod):
     python scripts/rescore_scorecards.py --since 2026-09-09 --until 2026-09-15 --dry-run
     python scripts/rescore_scorecards.py --since 2026-09-09 --until 2026-09-15
     python scripts/rescore_scorecards.py --since 2026-09-09 --until 2026-09-15 --no-judge
+    python scripts/rescore_scorecards.py --since 2026-09-09 --until 2026-09-15 --claude-judge
+
+`--claude-judge`: el recálculo A PEDIDO que califica Claude Code (deja los
+checks de juez en la cola aunque `EVAL_LLM_JUDGE_ENABLED` esté apagado).
 """
 from __future__ import annotations
 
@@ -45,6 +49,10 @@ async def main() -> None:
     ap.add_argument("--until", required=True, help="último día (Bogotá), YYYY-MM-DD, inclusive")
     ap.add_argument("--dry-run", action="store_true", help="lista los episodios sin calificar")
     ap.add_argument("--no-judge", action="store_true", help="solo checks de código")
+    ap.add_argument(
+        "--claude-judge", action="store_true",
+        help="deja los checks de juez en la cola de Claude Code (a pedido; sin costo de API)",
+    )
     args = ap.parse_args()
 
     start_ms, end_ms = bogota_range_ms(args.since, args.until)
@@ -55,6 +63,14 @@ async def main() -> None:
     if args.dry_run or not units:
         return
 
+    await rescore_units(units, with_judge=not args.no_judge, judge_kind="claude" if args.claude_judge else "")
+
+
+async def rescore_units(
+    units: list[tuple[str, str]], *, with_judge: bool, judge_kind: str = "", pause_s: float = _PAUSE_S
+) -> None:
+    """Recalifica cada episodio con `ScoreEpisodeWorkflow`, uno a la vez (lo usa
+    también `claude_judge.py aplicar`)."""
     from temporalio.exceptions import WorkflowAlreadyStartedError
 
     from src.plugins.chats.agent.sales_eval.evals.contracts import ScoreEpisodeInput
@@ -68,7 +84,9 @@ async def main() -> None:
         try:
             handle = await client.start_workflow(
                 "ScoreEpisodeWorkflow",
-                ScoreEpisodeInput(session_id=session_id, episode_id=episode_id, with_judge=not args.no_judge),
+                ScoreEpisodeInput(
+                    session_id=session_id, episode_id=episode_id, with_judge=with_judge, judge_kind=judge_kind
+                ),
                 id=workflow_id,
                 task_queue=task_queue,
             )
@@ -81,7 +99,7 @@ async def main() -> None:
         except Exception as exc:  # noqa: BLE001 — un episodio no frena el resto
             print(f"  …{session_id[-4:]} {episode_id}: ERROR {exc!r}"[:200], flush=True)
         if i < len(units) - 1:
-            await asyncio.sleep(_PAUSE_S)
+            await asyncio.sleep(pause_s)
 
 
 if __name__ == "__main__":

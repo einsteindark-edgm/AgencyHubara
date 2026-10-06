@@ -97,19 +97,8 @@ def _explained_by_catalog(catalog_prices: set[int]) -> set[int]:
     return lines | pairs
 
 
-def find_unexplained_amounts(
-    text: str | None,
-    *,
-    catalog_prices: Iterable[int],
-    policy_amounts: Iterable[int],
-) -> list[UnexplainedAmount]:
-    """Montos del texto que NO se explican por el catálogo ni por la política.
-
-    Explicado = precio de catálogo, múltiplo por cantidad (1..5) o suma de dos
-    líneas; en oraciones con contexto de política también los montos de
-    política y sus combinaciones con un monto explicado (total con envío,
-    "te faltan $X para el mínimo").
-    """
+def _explanations(catalog_prices: Iterable[int], policy_amounts: Iterable[int]) -> tuple[set[int], set[int]]:
+    """(explicados por el catálogo, explicados por la política)."""
     catalog = {int(p) for p in catalog_prices if int(p) > 0}
     policy = {int(p) for p in policy_amounts if int(p) > 0}
     explained = _explained_by_catalog(catalog)
@@ -118,16 +107,61 @@ def find_unexplained_amounts(
         for p in policy:
             policy_explained.add(base + p)
             policy_explained.add(abs(p - base))
+    return explained, policy_explained
+
+
+def _key(sentence: str) -> str:
+    return " ".join(sentence.split())
+
+
+def policy_decided_sentences(
+    text: str | None, *, catalog_prices: Iterable[int], policy_amounts: Iterable[int]
+) -> list[str]:
+    """Las oraciones (normalizadas) donde las palabras de política son lo que
+    acepta un monto: la oración las trae y tiene un monto que el catálogo no
+    explica y la política sí. Ahí una cotización equivocada con una de esas
+    palabras pasaría ("Desde $45.000 tienes el Cubo"): el motor de decisiones
+    del plugin le pregunta a Jev si la oración cotiza un producto."""
+    explained, policy_explained = _explanations(catalog_prices, policy_amounts)
+    out: list[str] = []
+    for sentence in split_sentences(text):
+        if not has_policy_context(sentence):
+            continue
+        amounts = extract_cop_amounts(sentence)
+        if any(a not in explained and a in policy_explained for a in amounts):
+            out.append(_key(sentence))
+    return out
+
+
+def find_unexplained_amounts(
+    text: str | None,
+    *,
+    catalog_prices: Iterable[int],
+    policy_amounts: Iterable[int],
+    product_quotes: frozenset[str] | set[str] = frozenset(),
+) -> list[UnexplainedAmount]:
+    """Montos del texto que NO se explican por el catálogo ni por la política.
+
+    Explicado = precio de catálogo, múltiplo por cantidad (1..5) o suma de dos
+    líneas; en oraciones con contexto de política también los montos de
+    política y sus combinaciones con un monto explicado (total con envío,
+    "te faltan $X para el mínimo").
+
+    `product_quotes` (oraciones normalizadas): las que el motor de decisiones
+    leyó como cotización de un producto; pierden el contexto de política.
+    Vacío = la regla de palabras de hoy.
+    """
+    explained, policy_explained = _explanations(catalog_prices, policy_amounts)
     hits: list[UnexplainedAmount] = []
     for sentence in split_sentences(text):
         amounts = extract_cop_amounts(sentence)
         if not amounts:
             continue
-        policy_ctx = has_policy_context(sentence)
+        policy_ctx = has_policy_context(sentence) and _key(sentence) not in product_quotes
         for amount in amounts:
             if amount in explained:
                 continue
             if policy_ctx and amount in policy_explained:
                 continue
-            hits.append(UnexplainedAmount(amount=amount, sentence=" ".join(sentence.split())))
+            hits.append(UnexplainedAmount(amount=amount, sentence=_key(sentence)))
     return hits

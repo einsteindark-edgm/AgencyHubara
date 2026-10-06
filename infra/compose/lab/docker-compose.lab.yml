@@ -1,0 +1,87 @@
+# Compose de la CAJA DEL LABORATORIO (LABORATORIO_CONVERSACIONES_PLAN.md §3.3–§3.6).
+# NO es la compose de producción y nunca se renderiza en la caja de la app.
+# Lo instala el cloud-init del módulo `lab-instance` en /opt/lab/ y lo levanta
+# `dispatch.sh` cuando llega una orden por SSM.
+#
+# Tres servicios:
+#   temporal   Temporal en modo desarrollo (`temporal server start-dev`): un solo
+#              proceso con base SQLite en /lab/temporal (se borra en cada
+#              arranque de la caja: lab-temporal-reset.service). El puerto 7233
+#              solo existe en la red interna; la UI en 127.0.0.1:8233 se ve por
+#              port-forward de SSM (runbook §7). Imagen oficial FIJADA POR DIGEST.
+#   litellm    El mismo proxy, versión y healthcheck que producción, con el
+#              litellm_config.yaml de la imagen de la corrida (lo instala
+#              dispatch.sh). Llaves: SOLO las de /hubara-lab (DeepSeek, Gemini y
+#              la llave de OpenRouter del laboratorio), en su propio env file.
+#   sales_lab  La MISMA imagen de GHCR que producción, con el worker del
+#              laboratorio. Sin llaves de producción: su guard de arranque no
+#              arranca si ve TEMPORAL_API_KEY, WHATSAPP_*, MEDUSA_* o META_*, si
+#              TEMPORAL_URL no es `temporal:7233` o si una carpeta sale de /lab.
+#              Solo monta /lab/runs y /lab/bench (no la base de Temporal).
+#              Perfil `run`: solo corre por `docker compose run` (una por corrida).
+#
+# Env files (los escribe dispatch.sh, 0600): compose.env solo interpola
+# HUBARA_IMAGE; litellm.env y sales_lab.env llevan las llaves de cada uno. El
+# token de GHCR no va a ningún env file: dispatch.sh lo pasa directo a docker login.
+name: hubara-lab
+
+services:
+  temporal:
+    image: temporalio/temporal:1.9.1@sha256:ad4c82c97bd12b417d1ea942610dbcd511afb250c4d5ed26c694009533df447e
+    command:
+      - server
+      - start-dev
+      - --ip
+      - 0.0.0.0
+      - --ui-ip
+      - 0.0.0.0
+      - --namespace
+      - hubara-lab
+      - --db-filename
+      - /data/lab.sqlite
+    volumes:
+      - /lab/temporal:/data
+    ports:
+      - "127.0.0.1:8233:8233"
+    restart: unless-stopped
+
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.86.2@sha256:cae1ac3492d6d0bea69c26f4485381624e073eb753f3534ae7703a4204a4ce6b
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes:
+      - /opt/lab/litellm_config.yaml:/app/config.yaml:ro
+    env_file: /opt/lab/litellm.env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  sales_lab:
+    image: ${HUBARA_IMAGE:?falta HUBARA_IMAGE}
+    profiles: ["run"]
+    # Igual que producción (x-app): el backend no se instala como paquete.
+    working_dir: /app/hubara_agency
+    command: ["python", "-m", "src.plugins.chats.workers.sales_lab"]
+    env_file: /opt/lab/sales_lab.env
+    environment:
+      TEMPORAL_URL: temporal:7233
+      TEMPORAL_NAMESPACE: hubara-lab
+      API_BASE_LLMLITE: http://litellm:4000
+      LAB_ROOT: /lab
+      ENABLED_PLUGINS: chats
+      OTEL_SDK_DISABLED: "true"
+      HUBARA_ENV: lab
+      # La tabla de precios de producción: sin ella cada turno cuesta US$0 y los
+      # topes de gasto quedan ciegos (render-env-from-ssm.sh la fija en prod).
+      OPENLIT_PRICING_JSON: /app/hubara_agency/deploy/openlit/pricing.json
+    volumes:
+      - /lab/runs:/lab/runs
+      - /lab/bench:/lab/bench
+    depends_on:
+      temporal:
+        condition: service_started
+      litellm:
+        condition: service_healthy

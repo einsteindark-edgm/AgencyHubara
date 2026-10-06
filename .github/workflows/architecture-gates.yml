@@ -155,6 +155,50 @@ jobs:
           OTEL_SDK_DISABLED: "true"
         run: uv run pytest tests/plugins/test_premortem_invariants.py -q
 
+      - name: Laboratorio de conversaciones (sandbox del turno + test de fugas)
+        # LABORATORIO_CONVERSACIONES_PLAN.md §3.5, candado 4: un turno real del
+        # banco corre en un proceso aparte con el workflow de ventas de
+        # producción, sobre el servidor de pruebas de Temporal y un LLM falso;
+        # los hooks de auditoría de Python fallan el test si abre una conexión
+        # no local o escribe fuera de su sandbox. SIN los dummies de Medusa a
+        # propósito: el sandbox no puede necesitar Medusa.
+        if: needs.changes.outputs.central == 'true'
+        working-directory: hubara_agency
+        env:
+          OTEL_SDK_DISABLED: "true"
+        run: uv run pytest tests/plugins/chats/lab tests/platform/lab -q
+
+      - name: Paquetes de decisión (certificador)
+        # PAQUETES_DE_DECISION.md §6: un paquete que no compila no existe. Sin
+        # esto, un YAML roto llegaba a producción: el arranque solo lee el
+        # dominio de la tienda y las capacidades compilan en la primera
+        # decisión → cada mensaje del cliente fallaba en el ingest (premortem
+        # 2026-10-02). Certifica TODOS los paquetes del repo (~3 s).
+        if: needs.changes.outputs.central == 'true'
+        working-directory: hubara_agency
+        env:
+          OTEL_SDK_DISABLED: "true"
+        run: uv run python -m src.sdk.cli decisions check
+
+      - name: Paquetes de decisión (paridad, turno, centinela y dominio de la tienda)
+        # Las pruebas que exigen que cada paquete decida como se diseñó: la
+        # paridad con las clases, el turno (rafaga + tablas), el lector del
+        # Order Sentinel y el texto que ve el LLM. `tests/platform/decisions`
+        # no cuelga con los dummies (solo CEL y YAML).
+        if: needs.changes.outputs.central == 'true'
+        working-directory: hubara_agency
+        env:
+          MEDUSA_BASE_URL: http://medusa.invalid
+          MEDUSA_ADMIN_TOKEN: ci-dummy
+          OTEL_SDK_DISABLED: "true"
+        run: >-
+          uv run pytest -q
+          tests/platform/decisions
+          tests/plugins/chats/sales/decisions
+          tests/plugins/order_sentinel/test_sentinel_bundle.py
+          tests/sdk/test_decisions_cli.py
+          tests/plugins/chats/test_store_domain.py
+
       - name: Guards del proxy LLM (ids upstream revisados + thinking + multimodal + resumen)
         # `tests/platform/` NO corre completo acá (cuelga con los dummies de Medusa),
         # así que los guards que cargan el `litellm_config.yaml` REAL se nombran uno
@@ -177,6 +221,8 @@ jobs:
           tests/platform/test_llm_thinking_disabled.py
           tests/platform/test_multimodal_via_proxy.py
           tests/platform/customer_scoring/test_llm_summary.py
+          tests/platform/perception
+          tests/infra
           -q
 
       - name: PR solo de GraphAgents — central no aplica

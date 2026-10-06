@@ -32,6 +32,16 @@ NOW = 1_789_406_554_683
 KEY = "wa_test_guards"
 
 
+@pytest.fixture(autouse=True)
+def _ingest_clock_at_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El ingest corre con el reloj de los episodios del test (NOW, 14-sep):
+    con el reloj real, a los 14 días el episodio vence y el ingest abre otro
+    sin el borrador (bomba de tiempo que estalló el 28-sep)."""
+    import src.plugins.chats.agent.sales.use_cases.ingest_inbound_message as ingest
+
+    monkeypatch.setattr(ingest, "_now_ms", lambda: NOW + 1_000)
+
+
 @pytest.fixture
 def ctx() -> ToolContext:
     return ToolContext(session_key=KEY, channel="whatsapp", chat_id=KEY)
@@ -205,6 +215,40 @@ async def test_sales_escalation_forwards_the_customer_farewell(ctx, tmp_path: Pa
     assert result["customer_message"] == farewell
 
 
+@pytest.mark.asyncio
+async def test_sales_escalation_lets_the_engine_decide_the_persona_of_the_farewell(
+    ctx, tmp_path: Path, monkeypatch
+) -> None:
+    """Motor de decisiones (F5): en la despedida del relevo, qué oración se
+    cae lo decide la capacidad `persona` con el proveedor del bot. Con Jev, la
+    frase de marca se queda y el relevo «un humano» se cae."""
+    from src.platform.perception.adapters.fake import FakePerceptionAdapter
+    from src.platform.tools.escalation import EscalateToHumanTool
+    from src.plugins.chats.agent.sales.tools.escalation import guarded_escalation_tool
+    from src.sdk import connectorkit
+    from src.sdk.connectorkit import TypedAnswer
+
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    # Con el bot B también se pregunta por la muletilla del modelo: no hay.
+    answers = {"persona.1": 0.03, "persona.2": 0.97, "persona.3": 0.01, "preambulo.1": 0.02, "preambulo.2": 0.02}
+    fake = FakePerceptionAdapter({q: TypedAnswer(id=q, kind="noul", p=p) for q, p in answers.items()})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+    SalesEscalateToHumanTool = guarded_escalation_tool(EscalateToHumanTool)
+    _seed(tmp_path, {"active_route": "ventas", "episodes": [_episode()]})
+    tool = SalesEscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+
+    result = json.loads(
+        await tool.execute_with_context(
+            ctx,
+            reason_category="BULK_ORDER",
+            summary="pide ~100 unidades",
+            customer_message="Cada vela lleva un toque humano. Un humano te confirma el pedido. Gracias por elegirnos 🤍",
+        )
+    )
+
+    assert result["customer_message"] == "Cada vela lleva un toque humano. Gracias por elegirnos 🤍"
+
+
 # ---------------------------------------------------------------- remarketing handoff
 
 
@@ -259,7 +303,7 @@ class _Loader:
     def __init__(self) -> None:
         self.calls: list[Any] = []
 
-    async def execute(self, session_id: str, message: str, phone_number_id: str | None, extra_context: list[str] | None = None) -> None:
+    async def execute(self, session_id: str, message: str, phone_number_id: str | None, extra_context: list[str] | None = None, inbound_meta: dict | None = None) -> None:
         self.calls.append((session_id, message, extra_context or []))
 
 

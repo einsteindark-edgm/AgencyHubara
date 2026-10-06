@@ -62,6 +62,7 @@ Antes de escribir nada, leé en este orden con `Read tool`:
    | UI feature dentro de plugin existente | `sections/05-frontend-fsd.md` + `sections/06-frontend-plugin.md` |
    | Cambio en `src/platform/` | `sections/02-backend-platform.md` |
    | Modifica archivo shared (icon, entity, schema, theme) | `sections/07-shared-files.md` (re-leer en profundidad) |
+   | Cómo decide el bot (confirmar compra, baja, cortesía, zona de envío, para quién es un texto, escribirle de nuevo, cierre…) o un bug «el bot decidió mal» | `sections/11-decision-engine.md` |
 
    **Regla:** cargá MÁXIMO 4-5 secciones por iteración. No leas todo —
    context window finito.
@@ -177,6 +178,15 @@ Sub-cambios por capa:
 - **§3.1.6 Composition:** <qué factory agregar>
 - **§3.1.7 Worker registration:** <qué `register_tool_extension` agregar>
 - **§3.1.8 Tests:** <qué unit / functional tests>
+- **§3.1.9 Decisiones del bot (motor de decisiones):** por cada cambio de
+  comportamiento, ¿es una **decisión** (juicio sobre lo que dijo el cliente o
+  el bot → versión nueva del paquete: capacidad, pregunta, umbral, fila,
+  ejemplos; ver `sections/11-decision-engine.md`), un **hecho** (precio, cupo,
+  stock, envío, etapa → donde vive el dato) o una **redacción** del asesor
+  (`turn.yaml: guide`/`nudge`, `domain.yaml`)? Una decisión NUNCA se planifica
+  como `if`/regex/guarda en el ingest, una tool o el egreso. Si hace falta
+  código, es UN builtin genérico con su prueba. `(N/A)` si la HU no toca cómo
+  decide el bot.
 
 ### §3.2 API HTTP (`hubara_agency/src/plugins/<id>/api/...`)
 

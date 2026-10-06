@@ -12,6 +12,10 @@ import { usePluginHost, useSelection } from "@/shared/lib";
 import { AgentsList } from "@plugins/agents_admin/frontend/features/agents-list";
 import { AgentsPrompts } from "@plugins/agents_admin/frontend/features/agents-prompts";
 import { AgentsInspector } from "@plugins/agents_admin/frontend/features/agents-inspector";
+import {
+  DecisionsControlPanel,
+  PerceptionRolloutPanel,
+} from "@plugins/agents_admin/frontend/features/perception-rollout";
 
 export function AgentsSection() {
   // F7: chrome + selección llegan por el PluginHost (contrato genérico).
@@ -30,7 +34,14 @@ export function AgentsSection() {
         />
       )}
       <AgentsPrompts agentId={selectedAgentId} />
-      {showInspector && <AgentsInspector agentId={selectedAgentId} />}
+      {showInspector && (
+        <AgentsInspector agentId={selectedAgentId}>
+          {/* El bot nuevo (capas con clasificador) y el motor de decisiones
+              (capacidades y versión del workflow) solo existen en ventas. */}
+          {selectedAgentId === "sales" && <PerceptionRolloutPanel />}
+          {selectedAgentId === "sales" && <DecisionsControlPanel />}
+        </AgentsInspector>
+      )}
     </>
   );
 }

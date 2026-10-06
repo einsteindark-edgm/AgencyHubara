@@ -55,3 +55,33 @@ def test_difference_to_threshold_is_explained_in_policy_context() -> None:
 def test_unexplained_amount_without_context_is_flagged() -> None:
     hits = find_unexplained_amounts("Te queda en $40.000 🤍", catalog_prices={49500}, policy_amounts={45000})
     assert [h.amount for h in hits] == [40000]
+
+
+# ── Motor de decisiones (F5, capacidad `monto`) ──
+#
+# Las palabras de política («desde», «envío», «mínimo»…) aceptan montos de
+# política en la oración. Eso deja pasar una cotización equivocada que trae
+# una de esas palabras («Desde $45.000 tienes el Cubo»). Jev lee, SOLO en las
+# oraciones donde esa decisión cambia el resultado, si la oración cotiza el
+# precio de un producto: entonces pierde el contexto de política. La cuenta
+# sigue en código; Jev solo puede hacer el chequeo más estricto.
+
+
+def test_the_sentences_where_the_policy_words_decide_are_the_candidates() -> None:
+    from src.plugins.chats.agent.sales.price_quotes import policy_decided_sentences
+
+    text = "Desde $45.000 tienes el Cubo Love 🤍. Te queda en $40.000. El Cubo Love vale $49.500."
+
+    assert policy_decided_sentences(text, catalog_prices={49500}, policy_amounts={45000}) == [
+        "Desde $45.000 tienes el Cubo Love 🤍.",
+    ]
+
+
+def test_a_product_quote_loses_the_policy_context() -> None:
+    text = "Desde $45.000 tienes el Cubo Love 🤍."
+
+    assert find_unexplained_amounts(text, catalog_prices={49500}, policy_amounts={45000}) == []
+    hits = find_unexplained_amounts(
+        text, catalog_prices={49500}, policy_amounts={45000}, product_quotes={"Desde $45.000 tienes el Cubo Love 🤍."}
+    )
+    assert [h.amount for h in hits] == [45000]

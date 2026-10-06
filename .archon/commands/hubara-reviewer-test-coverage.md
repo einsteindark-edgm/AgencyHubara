@@ -95,6 +95,31 @@ Por cada `failure_mode` en `$ARTIFACTS_DIR/premortem.yaml`:
 - grep `\.only\(\|@pytest.skip\|xdescribe\|xit\|xtest` en tests nuevos → tests no corriendo.
 - grep `setTimeout` en `.spec.ts` → flaky.
 
+### F. Decisiones del motor (ADR-2026-10-02)
+
+Si el diff toca `hubara_agency/src/plugins/**/decisions/bundles/**` o cambia cómo
+decide el bot (ver `.claude/skills/hubara-architecture-guide/sections/11-decision-engine.md`):
+
+- **El rojo de una decisión es un ejemplo del YAML.** Cada fila `when` nueva o
+  cambiada de `decide:` tiene un `examples:` que la decide, y cada umbral tocado
+  tiene ejemplos en el borde (0,84 · 0,85 · 0,86). Faltan → `severity: high,
+  type: missing_decision_example` (el certificador da DB010 si una fila no tiene
+  ejemplo; verificá con `cd hubara_agency && uv run python -m src.sdk.cli decisions check`).
+- **Un bug de producción** de decisión trae su caso real como ejemplo
+  (las `answers` del veredicto, anonimizadas — nunca un teléfono). Si no →
+  `severity: high, type: missing_incident_example`.
+- **Versión nueva del paquete** (carpeta nueva bajo `bundles/`): su huella en
+  `tests/plugins/test_decision_bundles_published.py` y una prueba de «es la
+  anterior + este cambio y nada más» (patrón `test_decisions_ventas_2.py`).
+  Falta alguna → `severity: high, type: missing_bundle_version_test`.
+- **Un cambio de pregunta o criterios** (lo que Jev entiende) NO lo prueba un
+  ejemplo (le da las respuestas a la tabla): el task-result debe citar la
+  corrida del laboratorio `B@<paquete>` o dejar la capacidad en sombra para
+  medir. Si no → `severity: medium, type: decision_comprehension_unmeasured`.
+- **Un test de pytest que fija lógica de decisión en un lugar** (un regex o un
+  `if` nuevo en una tool/ingest/egreso) es señal de `DECISION-OUTSIDE-BUNDLE`:
+  `severity: high, type: decision_tested_in_place` (cross-ref con DEHA).
+
 ---
 
 ## §5. Phase 4 — Cross-reference con premortem

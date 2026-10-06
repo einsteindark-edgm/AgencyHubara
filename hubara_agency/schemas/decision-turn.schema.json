@@ -1,0 +1,946 @@
+{
+  "$defs": {
+    "BurstQuestion": {
+      "additionalProperties": false,
+      "description": "Una pregunta fija de la ráfaga; con `when`, solo si los hechos del\nturno coinciden (`{hecho: valor}` o `{hecho: [valores]}`).",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "noul",
+            "choice"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "criteria": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Criteria",
+          "type": "object"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "text",
+        "criteria"
+      ],
+      "title": "BurstQuestion",
+      "type": "object"
+    },
+    "BurstState": {
+      "additionalProperties": false,
+      "properties": {
+        "sections": {
+          "$ref": "#/$defs/StateSections"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "pending": {
+          "minLength": 1,
+          "title": "Pending",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sections",
+        "message",
+        "pending"
+      ],
+      "title": "BurstState",
+      "type": "object"
+    },
+    "ContractExample": {
+      "additionalProperties": false,
+      "properties": {
+        "topics": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Topics",
+          "type": "array"
+        },
+        "answers": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Answers",
+          "type": "object"
+        },
+        "input": {
+          "additionalProperties": true,
+          "title": "Input",
+          "type": "object"
+        },
+        "expect": {
+          "items": {
+            "$ref": "#/$defs/Requirement"
+          },
+          "title": "Expect",
+          "type": "array"
+        }
+      },
+      "required": [
+        "topics",
+        "expect"
+      ],
+      "title": "ContractExample",
+      "type": "object"
+    },
+    "ContractRow": {
+      "additionalProperties": false,
+      "properties": {
+        "topic": {
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        },
+        "any_of": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Any Of",
+          "type": "array"
+        },
+        "nudge": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Nudge"
+        }
+      },
+      "required": [
+        "topic",
+        "any_of"
+      ],
+      "title": "ContractRow",
+      "type": "object"
+    },
+    "CoverageRule": {
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tools",
+          "type": "array"
+        },
+        "words": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Words",
+          "type": "array"
+        },
+        "any_text": {
+          "default": false,
+          "title": "Any Text",
+          "type": "boolean"
+        }
+      },
+      "title": "CoverageRule",
+      "type": "object"
+    },
+    "EachMessage": {
+      "additionalProperties": false,
+      "description": "La pregunta de cada mensaje de la ráfaga: `{k}` (desde 1).",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_{}]+)+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "choice",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "criteria": {
+          "$ref": "#/$defs/EachMessageCriteria"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "text",
+        "criteria"
+      ],
+      "title": "EachMessage",
+      "type": "object"
+    },
+    "EachMessageCriteria": {
+      "additionalProperties": false,
+      "properties": {
+        "from_topics": {
+          "const": "label",
+          "title": "From Topics",
+          "type": "string"
+        },
+        "extra": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Extra",
+          "type": "object"
+        }
+      },
+      "required": [
+        "from_topics"
+      ],
+      "title": "EachMessageCriteria",
+      "type": "object"
+    },
+    "EachMessageEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "each_message": {
+          "$ref": "#/$defs/EachMessage"
+        }
+      },
+      "required": [
+        "each_message"
+      ],
+      "title": "EachMessageEntry",
+      "type": "object"
+    },
+    "EachTopic": {
+      "additionalProperties": false,
+      "description": "La pregunta de cada asunto: `{topic}`, `{label}` y `{hint}`.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_{}]+)+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "noul",
+            "choice"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "criteria": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Criteria",
+          "type": "object"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "text",
+        "criteria"
+      ],
+      "title": "EachTopic",
+      "type": "object"
+    },
+    "EachTopicEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "each_topic": {
+          "$ref": "#/$defs/EachTopic"
+        }
+      },
+      "required": [
+        "each_topic"
+      ],
+      "title": "EachTopicEntry",
+      "type": "object"
+    },
+    "Guide": {
+      "additionalProperties": false,
+      "properties": {
+        "choice_topics": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Choice Topics",
+          "type": "array"
+        },
+        "no_sale_stages": {
+          "items": {
+            "type": "string"
+          },
+          "title": "No Sale Stages",
+          "type": "array"
+        },
+        "stagnant_turns": {
+          "minimum": 1,
+          "title": "Stagnant Turns",
+          "type": "integer"
+        },
+        "slot_labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Slot Labels",
+          "type": "object"
+        }
+      },
+      "required": [
+        "stagnant_turns"
+      ],
+      "title": "Guide",
+      "type": "object"
+    },
+    "OtherwiseRow": {
+      "additionalProperties": false,
+      "properties": {
+        "otherwise": {
+          "title": "Otherwise"
+        }
+      },
+      "required": [
+        "otherwise"
+      ],
+      "title": "OtherwiseRow",
+      "type": "object"
+    },
+    "Reading": {
+      "additionalProperties": false,
+      "properties": {
+        "answered": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "title": "Answered",
+          "type": "object"
+        },
+        "any": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Any",
+          "type": "object"
+        }
+      },
+      "title": "Reading",
+      "type": "object"
+    },
+    "ReplyState": {
+      "additionalProperties": false,
+      "properties": {
+        "header": {
+          "minLength": 1,
+          "title": "Header",
+          "type": "string"
+        },
+        "empty": {
+          "minLength": 1,
+          "title": "Empty",
+          "type": "string"
+        },
+        "components": {
+          "minLength": 1,
+          "title": "Components",
+          "type": "string"
+        }
+      },
+      "required": [
+        "header",
+        "empty",
+        "components"
+      ],
+      "title": "ReplyState",
+      "type": "object"
+    },
+    "Requirement": {
+      "additionalProperties": false,
+      "properties": {
+        "topic": {
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "any_of": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Any Of",
+          "type": "array"
+        }
+      },
+      "required": [
+        "topic",
+        "any_of"
+      ],
+      "title": "Requirement",
+      "type": "object"
+    },
+    "StateSections": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "minLength": 1,
+          "title": "Context",
+          "type": "string"
+        },
+        "facts": {
+          "minLength": 1,
+          "title": "Facts",
+          "type": "string"
+        },
+        "turn": {
+          "minLength": 1,
+          "title": "Turn",
+          "type": "string"
+        },
+        "quoted": {
+          "minLength": 1,
+          "title": "Quoted",
+          "type": "string"
+        }
+      },
+      "required": [
+        "context",
+        "facts",
+        "turn",
+        "quoted"
+      ],
+      "title": "StateSections",
+      "type": "object"
+    },
+    "TopicRef": {
+      "additionalProperties": false,
+      "properties": {
+        "topic": {
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "msg": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Msg"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "title": "TopicRef",
+      "type": "object"
+    },
+    "TurnExamples": {
+      "additionalProperties": false,
+      "properties": {
+        "contract": {
+          "items": {
+            "$ref": "#/$defs/ContractExample"
+          },
+          "minItems": 1,
+          "title": "Contract",
+          "type": "array"
+        },
+        "verify": {
+          "items": {
+            "$ref": "#/$defs/VerifyExample"
+          },
+          "minItems": 1,
+          "title": "Verify",
+          "type": "array"
+        }
+      },
+      "required": [
+        "contract",
+        "verify"
+      ],
+      "title": "TurnExamples",
+      "type": "object"
+    },
+    "TurnQuestionnaire": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "topics": {
+          "items": {
+            "$ref": "#/$defs/TurnTopic"
+          },
+          "minItems": 1,
+          "title": "Topics",
+          "type": "array"
+        },
+        "questions": {
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/BurstQuestion"
+              },
+              {
+                "$ref": "#/$defs/EachTopicEntry"
+              },
+              {
+                "$ref": "#/$defs/EachMessageEntry"
+              }
+            ]
+          },
+          "minItems": 1,
+          "title": "Questions",
+          "type": "array"
+        },
+        "verify": {
+          "$ref": "#/$defs/VerifySpec"
+        },
+        "state": {
+          "$ref": "#/$defs/BurstState"
+        },
+        "reply_state": {
+          "$ref": "#/$defs/ReplyState"
+        }
+      },
+      "required": [
+        "id",
+        "topics",
+        "questions",
+        "verify",
+        "state",
+        "reply_state"
+      ],
+      "title": "TurnQuestionnaire",
+      "type": "object"
+    },
+    "TurnTopic": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "hint": {
+          "default": "",
+          "title": "Hint",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "title": "TurnTopic",
+      "type": "object"
+    },
+    "VerifyExample": {
+      "additionalProperties": false,
+      "properties": {
+        "topics": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/TopicRef"
+              }
+            ]
+          },
+          "minItems": 1,
+          "title": "Topics",
+          "type": "array"
+        },
+        "answers": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Answers",
+          "type": "object"
+        },
+        "expect": {
+          "$ref": "#/$defs/VerifyExpect"
+        }
+      },
+      "required": [
+        "topics",
+        "expect"
+      ],
+      "title": "VerifyExample",
+      "type": "object"
+    },
+    "VerifyExpect": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "enum": [
+            "send",
+            "complement",
+            "pending"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "missing": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing",
+          "type": "array"
+        }
+      },
+      "required": [
+        "decision"
+      ],
+      "title": "VerifyExpect",
+      "type": "object"
+    },
+    "VerifySpec": {
+      "additionalProperties": false,
+      "description": "La pregunta de ③ por asunto: `{label}` y `{where}` (`where_msg` con\n`{msg}` si se sabe el mensaje; si no, `where_none`).",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_{}]+)+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "noul",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "where_msg": {
+          "minLength": 1,
+          "title": "Where Msg",
+          "type": "string"
+        },
+        "where_none": {
+          "minLength": 1,
+          "title": "Where None",
+          "type": "string"
+        },
+        "criteria": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Criteria",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "text",
+        "where_msg",
+        "where_none",
+        "criteria"
+      ],
+      "title": "VerifySpec",
+      "type": "object"
+    },
+    "WhenRow": {
+      "additionalProperties": false,
+      "properties": {
+        "when": {
+          "minLength": 1,
+          "title": "When",
+          "type": "string"
+        },
+        "then": {
+          "title": "Then"
+        }
+      },
+      "required": [
+        "when",
+        "then"
+      ],
+      "title": "WhenRow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "policy": {
+      "minLength": 1,
+      "title": "Policy",
+      "type": "string"
+    },
+    "thresholds": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Thresholds",
+      "type": "object"
+    },
+    "questionnaire": {
+      "$ref": "#/$defs/TurnQuestionnaire"
+    },
+    "coverage": {
+      "additionalProperties": {
+        "$ref": "#/$defs/CoverageRule"
+      },
+      "title": "Coverage",
+      "type": "object"
+    },
+    "reading": {
+      "$ref": "#/$defs/Reading"
+    },
+    "contract": {
+      "items": {
+        "$ref": "#/$defs/ContractRow"
+      },
+      "title": "Contract",
+      "type": "array"
+    },
+    "verify_decide": {
+      "items": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/WhenRow"
+          },
+          {
+            "$ref": "#/$defs/OtherwiseRow"
+          }
+        ]
+      },
+      "minItems": 1,
+      "title": "Verify Decide",
+      "type": "array"
+    },
+    "guide": {
+      "$ref": "#/$defs/Guide"
+    },
+    "examples": {
+      "$ref": "#/$defs/TurnExamples"
+    }
+  },
+  "required": [
+    "policy",
+    "thresholds",
+    "questionnaire",
+    "coverage",
+    "verify_decide",
+    "guide",
+    "examples"
+  ],
+  "title": "Turn",
+  "type": "object"
+}

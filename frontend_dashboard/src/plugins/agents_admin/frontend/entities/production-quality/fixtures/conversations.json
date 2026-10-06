@@ -1,0 +1,35 @@
+{
+  "days": 56,
+  "bot": null,
+  "count": 2,
+  "conversations": [
+    {
+      "session_id": "wa_100000000001",
+      "turns": 2,
+      "episodes": [
+        "ep_007"
+      ],
+      "last_at_ms": 1790866861000,
+      "verdicts": {
+        "ep_007": "FALLA"
+      },
+      "bots": {
+        "ep_007": "nuevo"
+      }
+    },
+    {
+      "session_id": "wa_100000000005",
+      "turns": 1,
+      "episodes": [
+        "ep_002"
+      ],
+      "last_at_ms": 1790863200000,
+      "verdicts": {
+        "ep_002": "PASA"
+      },
+      "bots": {
+        "ep_002": "actual"
+      }
+    }
+  ]
+}

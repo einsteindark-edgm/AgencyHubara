@@ -66,6 +66,16 @@ api:
     # HUMANO (`/api/chats/session-actions/{session_key}/tools/{tool}`): flush
     # acotado a lo que encoló, historial firmado por el humano, idempotente.
     - { module: src.plugins.chats.api.operator_tools, prefix: /api/chats, tags: [Chats_OperatorTools] }
+    # Laboratorio de conversaciones (LABORATORIO_CONVERSACIONES_PLAN.md §3.7 y
+    # §4.3): el botón "Nueva corrida" (estimado, lanzar, en curso, cancelar).
+    # Las lecturas del contrato lab@v1 llegan con el PR 8.
+    - { module: src.plugins.chats.api.lab, prefix: /api/chats, tags: [Chats_Lab] }
+    # Contrato perception-rollout@v1 (plan del laboratorio, PR 16): el encendido
+    # del bot nuevo por etapas. El panel de Agents lo consume por cast.
+    - { module: src.plugins.chats.api.perception, prefix: /api/chats, tags: [Chats_Perception] }
+    # Plan del laboratorio PR 17: el hilo de cada turno del bot (botón por
+    # turno en el panel del chat).
+    - { module: src.plugins.chats.api.turns, prefix: /api/chats, tags: [Chats_Turns] }
 
 # ── Agente Temporal ────────────────────────────────────────────────────
 # Dos workers en task queues exclusivas: SALES_QUEUE y REMARKETING_QUEUE.
@@ -110,8 +120,13 @@ agent:
       # encuentra la transition matchea, y arranca el target workflow por
       # nombre (string). Cross-worker imports están prohibidos por R-DIP #10
       # (ver `.importlinter` contracto `agents-independent`).
+      # Motor de decisiones F4: el V2 se registra al lado del V1 (congelado) y
+      # el registro de bots arranca uno u otro por nombre. El V1 va PRIMERO:
+      # `get_workflow_name` devuelve el índice 0 (lo que arranca quien no
+      # consulta el enrutador).
       workflow_classes:
         - HubaraSalesSessionWorkflow
+        - HubaraSalesSessionWorkflowV2
       emits:
         - SalesSessionCompletionEvent
         # HU-WA24H-001 Sprint 2: service-window lifecycle events.
@@ -435,16 +450,21 @@ agent:
     - name: sales_eval
       module: src.plugins.chats.workers.sales_eval
       task_queue: queue-sales-eval
-      # DOS Temporal Schedules que el propio worker crea al bootear
+      # TRES Temporal Schedules que el propio worker crea al bootear
       # (*_SCHEDULE_ID en workers/sales_eval.py): la eval online diaria
-      # (toggle SALES_EVAL_SCHEDULE_ENABLED, default on) y la golden suite
-      # (opt-in GOLDEN_EVAL_SCHEDULE_ENABLED, default OFF — vive en CI).
+      # (toggle SALES_EVAL_SCHEDULE_ENABLED, default on), la golden suite
+      # (opt-in GOLDEN_EVAL_SCHEDULE_ENABLED, default OFF — vive en CI) y la
+      # sonda diaria de Jev del motor de decisiones (toggle
+      # DECISIONS_PROBE_SCHEDULE_ENABLED, default on; sin OPENROUTER_API_KEY
+      # no llama a nadie y reporta `sin_llave`).
       # Acktos Studio dibuja el reloj a partir de esta declaración.
       schedule:
         - id: sales-eval-schedule
           cadence: diario 23:00 Bogotá
         - id: golden-eval-schedule
           cadence: diario 06:00 (opt-in, OFF por default)
+        - id: decisions-probe-schedule
+          cadence: diario 07:00 Bogotá
       workflow_classes:
         - SalesEvalWorkflow
         # Eval dirigida de UN episodio al cerrar (event-driven). La dispara la
@@ -453,6 +473,9 @@ agent:
         # Scorecard por etapa a demanda (HU-SC-2): "Recalcular con juez" desde
         # el dashboard. Lo arranca la API de evals (el juez excede el timeout del cast).
         - ScoreEpisodeWorkflow
+        # Laboratorio (plan §3.7): el botón "Nueva corrida" de la sección
+        # Laboratorio. Id fijo `lab-launch` (una corrida a la vez).
+        - LabLaunchWorkflow
       deployment:
         replicas: 1
         cpu_request: 250m

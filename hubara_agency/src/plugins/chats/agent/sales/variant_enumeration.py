@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 MIN_ENUMERATED = 4
 
@@ -71,6 +74,27 @@ def _count_combinations(text_norm: str, *, aromas: list[str], colors: list[str])
     return len(re.findall(pattern, text_norm))
 
 
+@dataclass(frozen=True)
+class EnumerationCandidates:
+    """Lo que el código encuentra en el texto: los aromas y colores del
+    catálogo (en orden de aparición) y cuántas combinaciones "Color · Aroma"."""
+
+    scents: tuple[str, ...]
+    colors: tuple[str, ...]
+    combinations: int
+
+
+def enumeration_candidates(text: str | None, *, aromas: list[str], colors: list[str]) -> EnumerationCandidates:
+    if not text:
+        return EnumerationCandidates((), (), 0)
+    norm = _normalize(text)
+    return EnumerationCandidates(
+        scents=tuple(label for _pos, label in _find_labels(norm, aromas)),
+        colors=tuple(label for _pos, label in _find_labels(norm, colors)),
+        combinations=_count_combinations(norm, aromas=aromas, colors=colors),
+    )
+
+
 def find_enumerated_variants(
     text: str | None,
     *,
@@ -84,22 +108,18 @@ def find_enumerated_variants(
     Una lista de combinaciones "Color · Aroma" (las de un cupón con cupo) no
     es una enumeración suelta: el picker de un solo tipo la destrozaría
     (prueba en vivo 2026-09-24: se perdieron aromas, productos y precios)."""
-    if not text:
+    found = enumeration_candidates(text, aromas=aromas, colors=colors)
+    if found.combinations >= MIN_COMBINATIONS:
         return None
-    norm = _normalize(text)
-    if _count_combinations(norm, aromas=aromas, colors=colors) >= MIN_COMBINATIONS:
-        return None
-    scents = _find_labels(norm, aromas)
-    cols = _find_labels(norm, colors)
     # Un label presente en ambas listas (ej. "Café") cuenta para el tipo que
     # domina: se resuelve después de contar.
-    if len(cols) > len(scents):
-        winner, labels = "color", cols
+    if len(found.colors) > len(found.scents):
+        winner, labels = "color", found.colors
     else:
-        winner, labels = "scent", scents
+        winner, labels = "scent", found.scents
     if len(labels) < min_count:
         return None
-    return winner, [label for _pos, label in labels]
+    return winner, list(labels)
 
 
 def intro_before(text: str, labels: list[str]) -> str:
@@ -114,6 +134,23 @@ def intro_before(text: str, labels: list[str]) -> str:
     # la posición sobre el texto original recorriendo ambos en paralelo.
     original_cut = _map_position(text, cut)
     return text[:original_cut].rstrip().rstrip(":;,-–— ").strip()
+
+
+def outro_after(text: str, labels: list[str]) -> str:
+    """Texto que sigue a la lista (la pregunta con que cierra el bot), sin la
+    puntuación que cerraba la lista. Vacío si la lista termina el texto."""
+    norm = _normalize(text)
+    hits = _find_labels(norm, labels)
+    if not hits:
+        return ""
+    end = max(pos + len(_normalize(label)) for pos, label in hits)
+    return text[_map_position(text, end):].lstrip(" \t\n.,;:!–—-").strip()
+
+
+def as_lead_in(intro: str) -> str:
+    """«Los que maneja son» → «Los que maneja son:» (la lista va debajo)."""
+    intro = intro.strip()
+    return f"{intro}:" if intro and intro[-1].isalnum() else intro
 
 
 def _map_position(original: str, norm_pos: int) -> int:
@@ -131,4 +168,45 @@ def default_intro(variant_type: str) -> str:
     return _DEFAULT_INTRO.get(variant_type, "Estas son las opciones")
 
 
-__all__ = ["MIN_ENUMERATED", "default_intro", "find_enumerated_variants", "intro_before"]
+def catalog_variant_labels(products: Iterable[Any]) -> tuple[list[str], list[str]]:
+    """Aromas y colores de todos los productos (tags «Aroma: …» / «Color: …»),
+    sin repetir y en el orden en que aparecen."""
+    from src.sdk.connectorkit import parse_variant_tags
+
+    aromas: list[str] = []
+    colors: list[str] = []
+    for product in products:
+        attrs = parse_variant_tags(getattr(product, "tags", None))
+        aromas += [a for a in attrs.aromas if a.casefold() not in {x.casefold() for x in aromas}]
+        colors += [c for c in attrs.colors if c.casefold() not in {x.casefold() for x in colors}]
+    return aromas, colors
+
+
+_KIND_WORDS = {"scent": "aromas", "color": "colores"}
+
+
+def option_list_message(variant_type: str, labels: Sequence[str], intro: str) -> str:
+    """Lo que `send_reply` le dice al modelo al devolverle una lista de aromas o
+    colores escrita como texto (laboratorio caso-fotos-0930-r10, 4567 t20): que
+    la mande con el selector, con lo que le iba a decir antes de la lista."""
+    kind = _KIND_WORDS.get(variant_type, "opciones")
+    said = f" y en intro_text lo que le decías antes de la lista («{intro}»)" if intro else ""
+    return (
+        f"No se envió: le escribiste {len(labels)} {kind} como lista de texto. Para que escoja usa "
+        f'present_variant_picker con variant_type "{variant_type}", options con esos {kind}, el handle '
+        f"del producto{said}: le llega el selector con las opciones del catálogo y tu turno termina ahí. "
+        "Si la lista no era para que escoja, vuelve a llamar send_reply con el mismo texto."
+    )
+
+
+__all__ = [
+    "MIN_COMBINATIONS",
+    "MIN_ENUMERATED",
+    "EnumerationCandidates",
+    "catalog_variant_labels",
+    "default_intro",
+    "enumeration_candidates",
+    "find_enumerated_variants",
+    "intro_before",
+    "option_list_message",
+]

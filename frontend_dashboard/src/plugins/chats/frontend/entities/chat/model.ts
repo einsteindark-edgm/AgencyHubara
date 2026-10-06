@@ -109,7 +109,9 @@ export type OutboundAuthor = "bot" | "human";
 
 /** Autor del mensaje citado: cliente, bot, operador, o desconocido cuando el
  *  backend no pudo resolver la cita. */
-export type QuoteAuthor = "user" | "agent" | "human" | "unknown";
+/** `catalog`: el cliente escribió desde la ficha de un producto del catálogo de
+ *  WhatsApp («Enviar mensaje a la empresa»); el texto es el producto. */
+export type QuoteAuthor = "user" | "agent" | "human" | "catalog" | "unknown";
 
 /** Mensaje al que el cliente respondió citándolo (reply de WhatsApp). */
 export interface ChatQuote {
@@ -149,6 +151,8 @@ export interface ChatMessageItem {
   /** Forma real del mensaje detrás del marker del historial (botones,
    *  foto con caption + visión, tap, reacción). Ausente = mensaje normal. */
   event?: ChatEvent;
+  /** Turno del bot que produjo el mensaje (abre el hilo del turno). */
+  turnKey?: string;
 }
 
 export interface MemoryItem {

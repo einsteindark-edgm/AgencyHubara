@@ -37,3 +37,8 @@ class ImageVisionPort(Protocol):
         caller (ingest) decide el fallback según ``result.ok``.
         """
         ...
+
+    async def describe_image(self, image_bytes: bytes, mime_type: str) -> VisionResult:
+        """Lo mismo, con la imagen ya en memoria (el laboratorio describe las
+        fotos de su banco; no hay media de Meta que bajar)."""
+        ...

@@ -87,6 +87,22 @@ def test_rescore_without_judge_keeps_previous_judge_results(client: TestClient, 
     assert any(r["check_id"] == "DES-04" and r["source"] == "judge" for r in detail["scorecard"]["results"])
 
 
+def test_rescore_without_judge_keeps_the_topic_coverage_of_est08(client: TestClient, tmp_path: Path) -> None:
+    """EST-08 v2 guarda la cobertura por asunto; recalcular solo el código no la borra."""
+    topics = [{"topic": "catálogo", "turn": 2, "msg": 1, "covered": False, "evidence": "me mandas el catálogo"}]
+    store.append_scorecard(store.scorecards_dir(tmp_path), {
+        "session_id": SESSION, "episode_id": "ep_007", "verdict": "ALERTA", "judge": True,
+        "results": [{"check_id": "EST-08", "verdict": "falla", "turn": 2, "evidence": "e", "critique": "c",
+                     "source": "judge", "topics": topics}],
+    })
+
+    detail = client.post("/api/chats/evals/scorecard/rescore",
+                         json={"session_id": SESSION, "episode_id": "ep_007", "judge": False}).json()
+
+    est08 = next(r for r in detail["scorecard"]["results"] if r["check_id"] == "EST-08")
+    assert est08["topics"] == topics
+
+
 def test_rescore_with_judge_queues_the_workflow(client: TestClient, monkeypatch) -> None:
     started: list = []
 

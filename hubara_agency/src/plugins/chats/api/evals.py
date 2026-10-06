@@ -287,3 +287,8 @@ def discard_candidate(candidate_id: str) -> dict[str, Any]:
 from src.plugins.chats.api.scorecards import router as _scorecards_router  # noqa: E402
 
 router.include_router(_scorecards_router)
+
+# Calidad LLM con la vista del laboratorio, sobre producción (2026-10-02).
+from src.plugins.chats.api.quality import router as _quality_router  # noqa: E402
+
+router.include_router(_quality_router)

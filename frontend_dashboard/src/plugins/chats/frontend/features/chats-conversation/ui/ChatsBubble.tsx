@@ -14,6 +14,7 @@ const QUOTE_AUTHOR_LABEL: Record<ChatQuote["author"], string> = {
   user: "Cliente",
   agent: "Bot",
   human: "Humano",
+  catalog: "Ficha del catálogo",
   unknown: "Mensaje anterior",
 };
 

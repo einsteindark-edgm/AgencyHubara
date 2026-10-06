@@ -72,9 +72,16 @@ def resolve_customer_farewell(reason_category: str, customer_message: str | None
     despedida aprobada de la categoría. Reemplazo, no bloqueo: un falso
     positivo cuesta una oración, nunca un cliente sin respuesta.
     """
-    text = keep_customer_safe_sentences(sanitize_llm_text(customer_message or "").text)
-    if len(text.split()) >= _MIN_FAREWELL_WORDS:
-        return text
+    return farewell_from_safe_text(
+        reason_category, keep_customer_safe_sentences(sanitize_llm_text(customer_message or "").text)
+    )
+
+
+def farewell_from_safe_text(reason_category: str, safe_text: str) -> str:
+    """La despedida final desde el texto YA filtrado: si lo que queda es muy
+    poco (o nada), la aprobada de la categoría. Nunca vacío."""
+    if len(safe_text.split()) >= _MIN_FAREWELL_WORDS:
+        return safe_text
     return _FAREWELL_BY_REASON.get(reason_category, _DEFAULT_FAREWELL)
 
 
@@ -225,6 +232,16 @@ class EscalateToHumanTool(ToolBase):
             Path(vault_dir) if vault_dir is not None else WORKSPACE_VAULT_DIR
         )
 
+    # La despedida desde el texto ya filtrado (para quien sobreescribe
+    # `customer_farewell` y filtra con otro juez).
+    farewell_from_safe_text = staticmethod(farewell_from_safe_text)
+
+    async def customer_farewell(self, ctx: ToolContext, reason_category: str, customer_message: str) -> str:
+        """El texto FINAL que el cliente lee (ver `resolve_customer_farewell`).
+        Punto de extensión: el plugin de ventas lo sobreescribe para que su
+        motor de decisiones decida qué oraciones se caen."""
+        return resolve_customer_farewell(reason_category, customer_message)
+
     async def execute_with_context(
         self,
         ctx: ToolContext,
@@ -271,8 +288,8 @@ class EscalateToHumanTool(ToolBase):
             # final_content y TERMINA el turno sin otro llm_chat (run
             # 5ed9af2d: el llm_chat forzado tras este result produjo el acuse
             # "Listo, la conversación quedó en manos del equipo humano.").
-            "customer_message": resolve_customer_farewell(
-                reason_category, customer_message
+            "customer_message": await self.customer_farewell(
+                ctx, reason_category, customer_message
             ),
             # Queda en el historial que verá el LLM en sesiones futuras: sin
             # vocabulario que oponga persona vs. sistema y sin órdenes que

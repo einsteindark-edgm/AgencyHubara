@@ -193,3 +193,21 @@ async def test_audio_adapter_talks_openai_format_to_registered_proxy_alias(
         f"el modelo '{payload.get('model')}' no está registrado en el "
         f"model_list del proxy ({_LITELLM_CONFIG})"
     )
+
+
+def test_photo_search_adapters_default_to_registered_proxy_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Identificación de fotos (2026-09-30): los embeddings de imagen y el
+    verificador van al proxy con alias registrados (`gemini-embedding`,
+    `gemini-photo-match`), sin llave en el proceso; un alias que el proxy no
+    tiene es un 400 en cada foto y la búsqueda por imagen muere en silencio."""
+    from src.platform.vision.embeddings import LiteLLMImageEmbeddingAdapter
+    from src.platform.vision.photo_match import LiteLLMPhotoMatchAdapter
+
+    for var in ("IMAGE_EMBEDDING_MODEL", "PHOTO_MATCH_MODEL", "IMAGE_VISION_API_KEY", "GEMINI_API_KEY", "LITELLM_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    aliases = _proxy_model_aliases()
+
+    for adapter in (LiteLLMImageEmbeddingAdapter.from_env(), LiteLLMPhotoMatchAdapter.from_env()):
+        prefix, _, alias = adapter._model.partition("/")
+        assert prefix == "litellm_proxy" and alias in aliases, adapter._model
+        assert adapter._api_key == "no-key"

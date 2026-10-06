@@ -38,7 +38,19 @@ from src.platform.vision.dtos import (
     VisionRequest,
     VisionResult,
 )
+from src.platform.vision.embeddings import (
+    FakeImageEmbeddingAdapter,
+    ImageEmbeddingPort,
+    LiteLLMImageEmbeddingAdapter,
+    NullImageEmbeddingAdapter,
+)
 from src.platform.vision.litellm_adapter import LiteLLMVisionAdapter
+from src.platform.vision.photo_match import (
+    FakePhotoMatchAdapter,
+    LiteLLMPhotoMatchAdapter,
+    NullPhotoMatchAdapter,
+    PhotoMatchPort,
+)
 from src.platform.vision.port import ImageVisionPort
 
 logger = structlog.get_logger()
@@ -58,6 +70,9 @@ class _NullVisionAdapter:
             provider=self.name,
         )
 
+    async def describe_image(self, image_bytes: bytes, mime_type: str) -> VisionResult:
+        return await self.describe(VisionRequest(media_id="", mime_type=mime_type))
+
 
 class _FakeVisionAdapter:
     """Adapter para tests / dev sin conexión a Gemini.
@@ -69,8 +84,15 @@ class _FakeVisionAdapter:
 
     name = "fake"
 
+    async def describe_image(self, image_bytes: bytes, mime_type: str) -> VisionResult:
+        """Mismo marcador, en los bytes (el laboratorio describe su banco)."""
+        return self._describe(image_bytes.decode("utf-8", "ignore"), media_id="bytes")
+
     async def describe(self, request: VisionRequest) -> VisionResult:
-        mid = request.media_id.lower()
+        return self._describe(request.media_id, media_id=request.media_id)
+
+    def _describe(self, marker: str, *, media_id: str) -> VisionResult:
+        mid = marker.lower()
         if "receipt" in mid or "comprobante" in mid or "pago" in mid:
             return VisionResult(
                 description="Comprobante de transferencia por $34.000 (ref 1234)",
@@ -92,7 +114,7 @@ class _FakeVisionAdapter:
                 latency_ms=10,
             )
         return VisionResult(
-            description=f"[FAKE VISION de media={request.media_id}]",
+            description=f"[FAKE VISION de media={media_id}]",
             ok=True,
             kind=VISION_KIND_OTHER,
             is_payment_receipt=False,
@@ -134,3 +156,36 @@ def get_image_vision_port() -> ImageVisionPort:
         falling_back_to="null",
     )
     return _NullVisionAdapter()
+
+
+@lru_cache(maxsize=1)
+def get_image_embedding_port() -> ImageEmbeddingPort:
+    """Embeddings de imagen (buscar en el catálogo la foto más parecida).
+
+    Sigue el MISMO interruptor que la visión (``IMAGE_VISION_PROVIDER``):
+    ``fake`` → vector determinista sin red; ``off`` → sin embeddings (la
+    búsqueda por imagen se salta); default → el alias ``gemini-embedding`` del
+    proxy (``IMAGE_EMBEDDING_MODEL`` lo cambia).
+    """
+    provider = (os.getenv("IMAGE_VISION_PROVIDER") or "auto").lower()
+    if provider == "fake":
+        return FakeImageEmbeddingAdapter()
+    if provider in {"auto", "litellm"}:
+        return LiteLLMImageEmbeddingAdapter.from_env()
+    return NullImageEmbeddingAdapter()
+
+
+@lru_cache(maxsize=1)
+def get_photo_match_port() -> PhotoMatchPort:
+    """El verificador de fotos contra el catálogo (``photo_match``).
+
+    Mismo interruptor que la visión (``IMAGE_VISION_PROVIDER``): ``fake`` →
+    elige por bytes idénticos; ``off`` → nunca identifica; default → el alias
+    ``gemini-photo-match`` del proxy (``PHOTO_MATCH_MODEL`` lo cambia).
+    """
+    provider = (os.getenv("IMAGE_VISION_PROVIDER") or "auto").lower()
+    if provider == "fake":
+        return FakePhotoMatchAdapter()
+    if provider in {"auto", "litellm"}:
+        return LiteLLMPhotoMatchAdapter.from_env()
+    return NullPhotoMatchAdapter()

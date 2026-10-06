@@ -266,6 +266,21 @@ export interface AdsCampaign {
   waCostByCategory?: WaCostByCategory | null;
   /** Mensajes enviados cuyo precio aún no llegó por webhook (no están en el total). */
   waMsgsPending?: number;
+  /** Costo de Jev de la campaña en USD micros (suma de `episode.jev_usage`).
+   *  null = ninguna conversación le preguntó a Jev (≠ "costó 0"). */
+  jevCostUsdMicros?: number | null;
+  /** Preguntas a Jev de la campaña. */
+  jevCalls?: number | null;
+  /** Costo de leer las fotos de los clientes de la campaña (USD micros, suma
+   *  de `episode.vision_usage`). null = ninguna conversación mandó fotos. */
+  visionCostUsdMicros?: number | null;
+  /** Llamadas a Gemini para leer esas fotos. */
+  visionCalls?: number | null;
+  /** Costo de transcribir las notas de voz de los clientes de la campaña (USD
+   *  micros, suma de `episode.audio_usage`). null = nadie mandó notas de voz. */
+  audioCostUsdMicros?: number | null;
+  /** Llamadas a Gemini para transcribirlas. */
+  audioCalls?: number | null;
   /** Duración media de los episodios CERRADOS del bucket (ms) — el "tiempo"
    *  del embudo. null si no hay episodios cerrados con timestamps válidos. */
   avgEpisodeDurationMs: number | null;
@@ -351,6 +366,26 @@ export interface AttributedConversation {
   waCostByCategory?: WaCostByCategory | null;
   /** Mensajes cuyo precio aún no llegó por webhook. */
   waMsgsPending?: number;
+
+  // --- Costo de Jev de la conversación (2026-10-01) ---
+  /** Lo que cobró Jev por las preguntas de la conversación, en USD micros.
+   *  null = no le preguntó a Jev. */
+  jevCostUsdMicros?: number | null;
+  /** Cuántas preguntas le hizo a Jev. */
+  jevCalls?: number | null;
+
+  // --- Costo de leer las fotos del cliente (2026-10-01) ---
+  /** Describir, huella y comparar contra el catálogo, en USD micros. null =
+   *  no mandó fotos. */
+  visionCostUsdMicros?: number | null;
+  /** Llamadas a Gemini para leerlas. */
+  visionCalls?: number | null;
+
+  // --- Costo de transcribir las notas de voz (2026-10-05) ---
+  /** USD micros. null = no mandó notas de voz. */
+  audioCostUsdMicros?: number | null;
+  /** Llamadas a Gemini para transcribirlas. */
+  audioCalls?: number | null;
 
   /** Evento CAPI reportado a Meta para este episodio (`LeadSubmitted` |
    *  `Purchase` | `OrderCanceled`). `OrderCanceled` pisa a `Purchase`: Meta no

@@ -28,6 +28,9 @@ cd frontend_dashboard && npm run plugins:sync && npx tsc -b && \
 ```
 
 Con el SDK presente, la DoD suma la certificación: `… uv run pytest tests/conformance -q`.
+Y los paquetes de decisión: `cd hubara_agency && uv run python -m src.sdk.cli decisions check`
+(CI y el deploy lo vuelven a correr; si tocaste un YAML de `decisions/bundles/`, sumá
+`uv run pytest -q tests/platform/decisions tests/plugins/chats/sales/decisions tests/plugins/test_decision_bundles_published.py`).
 
 El comando `/hubara-gates` corre todo esto por vos y reporta el resultado.
 
@@ -38,6 +41,7 @@ El comando `/hubara-gates` corre todo esto por vos y reporta el resultado.
   orquestación + meta-gate.
 - `… uv run pytest tests/conformance -q` — TCK por plugin (P-27).
 - `… uv run python -m src.sdk.cli check` — el compilador rápido (sin red).
+- `… uv run python -m src.sdk.cli decisions check` — certifica los paquetes de decisión (DB001–DB016).
 - `cd frontend_dashboard && npm run test:arch` — FSD + íconos + meta-gate front.
 
 PROTECTED tocado ⇒ prefijo `ARCH_CHANGE_APPROVED=1` local + label

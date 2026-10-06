@@ -247,8 +247,8 @@ def enqueue_capi_event(
     }
     normalized_contents = normalize_capi_contents(contents)
     if normalized_contents:
-        # Identidad de producto (SKU = retailer_id en Meta) para la
-        # coincidencia de catálogo — ver `CapiCustomData`.
+        # Identidad de producto (SKU = retailer_id en Meta) — ver
+        # `CapiCustomData`.
         entry["contents"] = normalized_contents
     outbox.append(entry)
     return event_id

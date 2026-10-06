@@ -18,6 +18,10 @@ consumes:
     contract: evals@v1          # GET history · GET/POST/DELETE candidates
     into: eval-views
     cast: api/evals
+  - provider: chats
+    contract: perception-rollout@v1   # encendido del bot nuevo (plan del laboratorio, PR 16)
+    into: agent-config
+    cast: api/perception
 
 # ── Frontend ───────────────────────────────────────────────────────────
 # El shell renderiza la `Page` del plugin cuando section==="agent".

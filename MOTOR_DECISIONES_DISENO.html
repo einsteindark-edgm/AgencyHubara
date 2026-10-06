@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Copia del diseño v2 del motor de decisiones con Jev (aprobado por el operador el 2026-09-28: «sí a todo»).
+     Es la referencia de diseño del plan técnico MOTOR_DECISIONES_PLAN.md: revisarla antes de implementar cada fase.
+     Se abre directo en el navegador (autocontenida, SVG en línea). -->
+<title>Motor de decisiones Jev</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    color-scheme: dark;
+    --bg: #0b0b0d; --canvas: #1a1a1c; --panel: #1f1f21; --raise: #2a2a2d;
+    --fg: #ebebeb; --fg-soft: rgba(235,235,235,0.78); --fg-muted: rgba(235,235,235,0.55);
+    --line: rgba(255,255,255,0.08); --line-strong: rgba(255,255,255,0.14);
+    --accent: #0a84ff; --info: #5fa9ff; --violet: #d68aff; --violet-soft: rgba(214,138,255,0.14);
+    --cyan: #5fdcff; --ok: #5be07b; --ok-soft: rgba(91,224,123,0.14);
+    --warn: #ffb44a; --warn-soft: rgba(255,180,74,0.14); --danger: #ff7269; --danger-soft: rgba(255,114,105,0.14);
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+  html { background: var(--bg); }
+  body { font-family: var(--sans); background: var(--bg); color: var(--fg); font-size: 15px; line-height: 1.6; padding: 48px 16px 96px; }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--fg-muted); }
+  h1 { font-size: clamp(28px, 3vw + 12px, 40px); font-weight: 700; letter-spacing: -.02em; line-height: 1.15; margin: 8px 0 12px; text-wrap: balance; }
+  h2 { font-size: 24px; font-weight: 700; letter-spacing: -.01em; margin: 72px 0 8px; text-wrap: balance; display: flex; gap: 12px; align-items: baseline; }
+  h2 .n { font-family: var(--mono); font-size: 13px; color: var(--fg-muted); font-weight: 500; }
+  h3 { font-size: 17px; font-weight: 600; margin: 40px 0 8px; text-wrap: balance; }
+  p, li { color: var(--fg-soft); max-width: 72ch; }
+  p + p { margin-top: 10px; }
+  strong { color: var(--fg); font-weight: 600; }
+  code, .mono { font-family: var(--mono); font-size: .86em; color: var(--fg); background: var(--raise); padding: 1px 5px; border-radius: 4px; }
+  .lede { font-size: 17px; color: var(--fg-soft); max-width: 68ch; }
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+  .toc a { font-size: 13px; color: var(--fg); text-decoration: none; border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 12px; }
+  .toc a:hover { border-color: var(--accent); }
+  figure { margin: 20px 0 0; background: var(--canvas); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-x: auto; }
+  figure svg { display: block; width: 100%; min-width: 820px; height: auto; }
+  .table-wrap { overflow-x: auto; margin-top: 16px; border: 1px solid var(--line); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align: left; font-weight: 600; color: var(--fg-muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--fg-soft); }
+  tr:last-child td { border-bottom: 0; }
+  td.num { font-family: var(--mono); color: var(--fg); width: 36px; font-variant-numeric: tabular-nums; }
+  td.where { font-family: var(--mono); font-size: 11.5px; color: var(--fg-muted); width: 30%; word-break: break-word; }
+  pre { font-family: var(--mono); font-size: 12.5px; line-height: 1.55; background: var(--canvas); border: 1px solid var(--line); border-radius: 10px; padding: 16px; overflow-x: auto; color: var(--fg); margin-top: 14px; }
+  pre .c { color: var(--fg-muted); }
+  pre .k { color: var(--violet); }
+  .callout { margin-top: 16px; border-left: 3px solid var(--violet); background: var(--violet-soft); border-radius: 0 8px 8px 0; padding: 12px 16px; }
+  .callout p { max-width: none; }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-color: var(--ok); background: var(--ok-soft); }
+  .pill { display: inline-block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+  .pill.v { color: var(--violet); } .pill.o { color: var(--ok); } .pill.w { color: var(--warn); } .pill.d { color: var(--danger); } .pill.i { color: var(--info); } .pill.m { color: var(--fg-muted); }
+  .grid2 { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 16px; margin-top: 16px; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .card h4 { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .card p { font-size: 14px; }
+  ul { padding-left: 20px; margin-top: 8px; }
+  li + li { margin-top: 4px; }
+  footer { margin-top: 80px; padding-top: 16px; border-top: 1px solid var(--line); font-family: var(--mono); font-size: 11px; color: var(--fg-muted); }
+</style>
+<style>
+  .q { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--violet); margin-top: 28px; }
+  .ask { margin-top: 6px; border-left: 3px solid var(--line-strong); padding: 4px 0 4px 14px; font-style: italic; color: var(--fg-soft); max-width: 76ch; }
+  .answer { margin-top: 10px; font-size: 16px; color: var(--fg); max-width: 72ch; }
+  .rule { display: grid; grid-template-columns: 36px 1fr; gap: 10px; margin-top: 10px; }
+  .rule .k { font-family: var(--mono); font-size: 13px; color: var(--violet); padding-top: 1px; }
+  .layers { display: grid; gap: 10px; margin-top: 16px; }
+  .layer { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; display: grid; grid-template-columns: 190px 1fr; gap: 16px; }
+  .layer.focal { border-color: var(--violet); background: var(--violet-soft); }
+  .layer .t { font-weight: 600; color: var(--fg); }
+  .layer .s { font-family: var(--mono); font-size: 11px; color: var(--fg-muted); margin-top: 4px; }
+  .layer p { font-size: 14px; }
+  @media (max-width: 760px) { .layer { grid-template-columns: 1fr; gap: 6px; } }
+  td.t { color: var(--fg); font-weight: 500; }
+  .tag { font-family: var(--mono); font-size: 11px; color: var(--fg-muted); }
+  ol { padding-left: 22px; margin-top: 8px; }
+  ol li + li { margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="eyebrow">Laboratorio de conversaciones · diseño v2 del bot nuevo · 28-sep-2026</p>
+<h1>Motor de decisiones con Jev</h1>
+<p class="lede">Tus cinco temas, cada uno con lo que pasa hoy en el código y la respuesta que propongo. Lo que digo del código lo verifiqué en <code>lab/todo</code> (0b7edd25). Donde algo todavía no se sabe (por ejemplo, qué tan bien hace Jev una pregunta nueva) lo digo y explico cómo se mide antes de que actúe.</p>
+<nav class="toc">
+  <a href="#resumen">0 · En una página</a>
+  <a href="#si">1 · El «Si» sin contexto</a>
+  <a href="#solo-jev">2 · Solo Jev</a>
+  <a href="#motor">3 · Motor desacoplado</a>
+  <a href="#tools">4 · Control de herramientas</a>
+  <a href="#etapas">5 · Etapas</a>
+  <a href="#quemado">6 · Código quemado</a>
+  <a href="#mudanza">7 · Cómo se muda al motor</a>
+  <a href="#inyeccion">8 · Inyección</a>
+  <a href="#bugs">9 · Bugs encontrados</a>
+  <a href="#riesgos">10 · Riesgos</a>
+  <a href="#fases">11 · Fases</a>
+  <a href="#decidir">12 · Lo que necesito de ti</a>
+</nav>
+
+<!-- 0 -->
+<h2 id="resumen"><span class="n">00</span>En una página</h2>
+<div class="table-wrap"><table>
+<tr><th>Tema</th><th>Respuesta corta</th><th>Fase</th></tr>
+<tr><td class="t">El «Si» sin contexto</td><td>El motor le da a Jev lo que el cliente vio antes del turno (textos, botones, tarjetas, citas) y los datos del pedido, separado de los mensajes de este turno. Con eso Jev dice qué respondió el «Si». Además arregla una regla de hoy: un «Si» o un «Ok» con producto en el borrador ya cuenta como compra confirmada, sin importar lo que preguntó el bot.</td><td><span class="pill v">F1</span></td></tr>
+<tr><td class="t">Solo Jev</td><td>Se quita OpenAI completo (adaptador, perfil, brazo C del laboratorio, alias del proxy, pantalla). Sin rival, la vara es otra: un banco de referencia que califico yo (Claude Code), el bot de hoy contra el nuevo en el scorecard, y cada versión de Jev contra la anterior.</td><td><span class="pill v">F0</span></td></tr>
+<tr><td class="t">Motor desacoplado</td><td>Tres capas: Jev (el oráculo, casi nunca cambia), el motor (cuestionarios versionados, contexto y políticas, cambia seguido) y los consumidores (workflow, tools, laboratorio), que solo leen decisiones. Una pregunta nueva no toca el workflow ni las tools.</td><td><span class="pill v">F0 · F2</span></td></tr>
+<tr><td class="t">Control de herramientas</td><td>Hoy <strong>no</strong> se controla: la verificación mira si la respuesta atiende el asunto, no si usó la tool correcta. Propongo un contrato asunto → tool, una ronda extra que nombra la tool que falta y una auditoría antes de enviar.</td><td><span class="pill v">F6</span></td></tr>
+<tr><td class="t">Etapas</td><td>La etapa ya la calcula el código a partir del borrador; el LLM no la escoge. Por dónde se cuela la alucinación es por los datos que el LLM guarda y por el «sí». Jev revisa cada dato que el LLM guarda, lee el «sí» con contexto y le da al LLM el siguiente paso de la etapa.</td><td><span class="pill v">F6</span></td></tr>
+<tr><td class="t">Código quemado</td><td>Cinco barridos del código productivo: unas 85 filas intentan entender el lenguaje con regex o listas de palabras; agrupadas son 32 piezas. Probé las reglas reales: «Te confirmo, sí la quiero» cuenta como aplazamiento y «no me escriban» no cuenta como baja. Cada pieza se muda al motor como una capacidad con su pregunta a Jev; la regla vieja queda solo como respaldo dentro del motor, y unas 100 reglas de verdad (catálogo, aritmética, mecánica del turno) se quedan.</td><td><span class="pill v">F2 → F5</span></td></tr>
+<tr><td class="t">Inyección</td><td>Tres enchufes y un solo control. El ingest recibe un proveedor de lecturas. Las activities y tools se sustituyen por nombre o por su fábrica. El workflow nuevo (V2, sin reglas de texto) se registra al lado del actual, que queda congelado. El laboratorio y producción usan el mismo registro: en el laboratorio escoge el brazo; en producción, el despliegue gradual por conversación.</td><td><span class="pill v">F2 · F4 · F7</span></td></tr>
+</table></div>
+<div class="callout">
+<p><strong>Cuatro reglas que no se negocian.</strong> 1) Jev percibe, el código decide y el LLM redacta: Jev nunca escoge una tool ni una etapa, responde preguntas cerradas. 2) Si Jev falla o tarda, decide la regla de hoy, que queda de respaldo dentro del motor. 3) Nada actúa sin pasar antes por el laboratorio y por la sombra en producción, y cada capacidad tiene su propio interruptor. 4) Desde ya, el arreglo de una alucinación nueva entra como capacidad del motor, nunca como otro regex en un worker.</p>
+</div>
+
+<!-- 1 -->
+<h2 id="si"><span class="n">01</span>El «Si» cuando el contexto está en un mensaje anterior</h2>
+<p class="q">Lo que planteaste</p>
+<p class="ask">¿Cómo resolvemos el «Si», las ráfagas donde el contexto vive antes y Jev no sabe nada de él?</p>
+
+<h3>Lo que pasa hoy en el código</h3>
+<ul>
+<li>El <code>state</code> que recibe Jev es solo la ráfaga (<code>burst_state</code>, <code>questions.py:65</code>). La función acepta la última pregunta del bot (<code>last_bot_text</code>), pero el workflow <strong>nunca se la pasa</strong> (<code>sales_session.py:759</code> y <code>:775</code>).</li>
+<li>Y si se la pasara, se quedaría con los primeros 400 caracteres (<code>questions.py:79</code>). La pregunta del bot casi siempre va al final del mensaje.</li>
+<li>A Jev ya se le hacen dos preguntas sobre el hilo («¿responde la última pregunta del asesor?», «¿repite algo sin respuesta?») y una de etapa. Pero las contesta a ciegas y <strong>nadie usa esas respuestas</strong>: el plan solo lee los 17 asuntos y el asunto de cada mensaje (<code>plan.py:104</code>).</li>
+<li>Aparte de Jev, hoy ya hay una regla de texto que decide sobre el «sí», en producción. Si el cliente escribe «Si», «Ok» o «Dale» y hay un producto en el borrador, <strong>la compra queda confirmada</strong>, pregunte lo que pregunte el bot (<code>purchase_signals.py:63</code> y <code>:123</code>). Lo probé con la función real: «Si» y «Ok» dan compra confirmada. Esa confirmación es la que destraba el formulario de envío (<code>ui_intents.py:555</code>).</li>
+</ul>
+
+<h3>La respuesta</h3>
+<p class="answer">El motor le da a Jev lo que el cliente vio antes del turno, en una sección separada de los mensajes de este turno, y le pregunta qué está respondiendo el cliente.</p>
+<div class="rule"><span class="k">1</span><p><strong>La ventana de lo que vio el cliente.</strong> El motor la arma dentro de su activity, leyendo el historial del vault (<code>&lt;vault&gt;/&lt;sesión&gt;/sessions/&lt;sesión&gt;.jsonl</code>). Ese archivo ya tiene lo que el cliente vio: textos del bot, mensajes del equipo y una nota por cada botón, tarjeta, catálogo o formulario (<code>flush_ui_intents.py:1276</code>). Por ejemplo: «El bot envió botones: Sí, lo quiero · Cambiar algo — con el mensaje: …». También tiene la cita cuando el cliente responde citando un mensaje (<code>reply_to</code>).</p></div>
+<div class="rule"><span class="k">2</span><p><strong>Cómo se corta.</strong> Se quitan del final los mensajes que son de esta ráfaga (por su <code>wamid</code>; si no viajó, los del cliente que vienen después de la última respuesta del bot). Entran los últimos 8 eventos o unos 1.800 caracteres. Un mensaje largo del bot se corta <strong>por el principio</strong>, así se conserva la pregunta del final. En producción el historial ya trae la ráfaga y en el sandbox del laboratorio no; con esta regla los dos quedan iguales.</p></div>
+<div class="rule"><span class="k">3</span><p><strong>Los hechos del pedido.</strong> La etapa que calcula el código, el producto, el color, el aroma y la cantidad de cada ítem, y la ciudad. Dirección, teléfono y nombre de quien recibe solo van como «dado» o «falta». Todo pasa por la anonimización que ya existe.</p></div>
+<div class="rule"><span class="k">4</span><p><strong>Preguntas nuevas sobre el hilo.</strong> «¿Qué le preguntó el asesor en su último mensaje?», con estas opciones: confirmar la compra, confirmar un dato de envío, elegir una variante, ver opciones, otra de sí o no, pregunta abierta, nada. Luego: «¿El cliente responde esa pregunta?» y «¿qué responde: sí, no u otra cosa?». Si lo último que vio el cliente fue la tarjeta de confirmación o el formulario, el código ya sabe qué se preguntó y no hace falta preguntarle a Jev.</p></div>
+<div class="rule"><span class="k">5</span><p><strong>Las preguntas de asuntos se limitan a este turno.</strong> Dicen «en los mensajes de ESTE TURNO». Si no, Jev tomaría como pedido nuevo algo que el bot ya dijo en el contexto (un falso positivo).</p></div>
+
+<p style="margin-top:14px">Así se vería el <code>state</code> con la ráfaga D de la conversación de la parte 2. Los hechos del pedido son ilustrativos:</p>
+<pre><span class="c">CONTEXTO — lo que el cliente vio antes de este turno (no es de este turno)</span>
+[cliente] Quiero el dúo amarillo aries lavanda
+[asesor]  …Me acuerdo perfecto de tu Duo Zodiacal Aries. ¿Te lo enviamos a la misma dirección?
+
+<span class="c">HECHOS DEL PEDIDO</span>
+Etapa: datos de envío · Ítem 1: Duo Zodiacal Aries, amarillo, lavanda, 1 unidad
+Ciudad: dada · Dirección: dada · Teléfono: dado · Quien recibe: dado · Método de pago: falta
+
+<span class="c">ESTE TURNO — mensajes del cliente</span>
+[1] (+0 s) Si
+[2] (+12 s) Y quiero una vela adicional</pre>
+
+<figure><svg viewBox="0 0 960 684" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="motor-si-title motor-si-desc">
+<title id="motor-si-title">El «Si» con contexto</title>
+<desc id="motor-si-desc">El motor lee del vault lo que el cliente vio antes del turno (textos, botones, tarjetas, citas) y los datos del pedido, corta la ráfaga actual, tapa datos personales y le pregunta a Jev con dos secciones: contexto y este turno. La política convierte la lectura en una nota y en evidencia.</desc>
+<defs>
+<marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#8e8e93"/></marker>
+<marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5fa9ff"/></marker>
+<marker id="arrow-jev" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#d68aff"/></marker>
+<marker id="arrow-ok" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5be07b"/></marker>
+<marker id="arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#8e8e93" stroke-width="1.2"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#1a1a1c"/>
+<line x1="120" y1="120" x2="120" y2="608" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="300" y1="120" x2="300" y2="608" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="480" y1="120" x2="480" y2="608" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="660" y1="120" x2="660" y2="608" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="840" y1="120" x2="840" y2="608" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="124" y1="180" x2="294" y2="180" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-open)"/>
+<rect x="142" y="160" width="136" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="169" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">1 «SI» · «Y OTRA VELA»</text>
+<line x1="304" y1="224" x2="474" y2="224" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="336" y="204" width="108" height="12" rx="2" fill="#1a1a1c"/>
+<text x="390" y="213" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">2 ANTES DEL TURNO</text>
+<line x1="484" y1="268" x2="654" y2="268" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="522" y="248" width="96" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="257" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">3 LEE HISTORIAL</text>
+<line x1="656" y1="312" x2="486" y2="312" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="500" y="292" width="140" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="301" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">4 LO QUE VIO EL CLIENTE</text>
+<path d="M484 356 H512 V376 H490" fill="none" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="520" y="358" width="160" height="12" rx="2" fill="#1a1a1c"/>
+<text x="526" y="367" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">5 CORTA RÁFAGA · TAPA DATOS</text>
+<line x1="484" y1="420" x2="834" y2="420" stroke="#d68aff" stroke-width="1.4" marker-end="url(#arrow-jev)"/>
+<rect x="500" y="400" width="140" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="409" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">6 CONTEXTO + ESTE TURNO</text>
+<line x1="836" y1="464" x2="486" y2="464" stroke="#d68aff" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-jev)"/>
+<rect x="694" y="444" width="112" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="453" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">7 LECTURA DEL «SI»</text>
+<path d="M484 508 H512 V528 H490" fill="none" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="520" y="510" width="160" height="12" rx="2" fill="#1a1a1c"/>
+<text x="526" y="519" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">8 POLÍTICA: DATO, NO COMPRA</text>
+<line x1="476" y1="572" x2="306" y2="572" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="334" y="552" width="112" height="12" rx="2" fill="#1a1a1c"/>
+<text x="390" y="561" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">9 NOTA + EVIDENCIA</text>
+<rect x="44" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="44" y="64" width="152" height="56" rx="6" fill="rgba(142,142,147,0.10)" stroke="rgba(161,161,166,0.7)" stroke-width="1"/>
+<rect x="52" y="70" width="47" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="75" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PERSONA</text>
+<text x="120" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Cliente</text>
+<text x="120" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">WhatsApp</text>
+<rect x="224" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="224" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.05)" stroke="rgba(235,235,235,0.55)" stroke-width="1"/>
+<rect x="232" y="70" width="32" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="248" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PROD</text>
+<text x="300" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Workflow de ventas</text>
+<text x="300" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">HubaraSalesSession</text>
+<rect x="404" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="404" y="64" width="152" height="56" rx="6" fill="rgba(214,138,255,0.12)" stroke="#d68aff" stroke-width="1"/>
+<rect x="412" y="70" width="37" height="12" rx="2" fill="transparent" stroke="#d68aff" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="430" y="79" fill="#d68aff" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">MOTOR</text>
+<text x="480" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Motor de decisiones</text>
+<text x="480" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">sales/decisions</text>
+<rect x="584" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="584" y="64" width="152" height="56" rx="6" fill="rgba(95,220,255,0.06)" stroke="rgba(95,220,255,0.55)" stroke-width="1"/>
+<rect x="592" y="70" width="37" height="12" rx="2" fill="transparent" stroke="#5fdcff" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="610" y="79" fill="#5fdcff" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">DATOS</text>
+<text x="660" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Vault</text>
+<text x="660" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">historial + borrador</text>
+<rect x="764" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="764" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="772" y="70" width="47" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="795" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ORÁCULO</text>
+<text x="840" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Jev</text>
+<text x="840" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">/api/alpha/decisions</text>
+<line x1="30" y1="632" x2="930" y2="632" stroke="rgba(255,255,255,0.10)" stroke-width="0.8"/>
+<text x="30" y="652" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.14em">LEYENDA</text>
+<line x1="120" y1="649" x2="156" y2="649" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="166" y="652" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">LLAMADA</text>
+<line x1="256" y1="649" x2="292" y2="649" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<text x="302" y="652" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">RESPUESTA</text>
+<line x1="392" y1="649" x2="428" y2="649" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-open)"/>
+<text x="438" y="652" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">SIN ESPERA</text>
+<line x1="528" y1="649" x2="564" y2="649" stroke="#d68aff" stroke-width="1.2" marker-end="url(#arrow-jev)"/>
+<text x="574" y="652" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">JEV</text>
+</svg></figure>
+
+<p style="margin-top:16px">Qué cambia con tres respuestas cortas, cada una a una pregunta distinta del bot:</p>
+<div class="table-wrap"><table>
+<tr><th>Lo último que vio el cliente</th><th>Cliente</th><th>Hoy (regla de texto)</th><th>Con el motor</th></tr>
+<tr><td>«¿Te lo enviamos a la misma dirección?»</td><td>Si</td><td><span class="pill w">compra confirmada</span></td><td>Confirma la dirección anterior. La nota le dice al LLM: «El Si responde tu pregunta sobre la dirección». No es una compra.</td></tr>
+<tr><td>«¿Quieres que te muestre los aromas?»</td><td>Ok</td><td><span class="pill w">compra confirmada</span></td><td>Quiere ver aromas: el siguiente paso es el selector de aromas. No se destraba el formulario de envío.</td></tr>
+<tr><td>Botones «Sí, lo quiero · Cambiar algo» con el precio</td><td>Si</td><td><span class="pill o">compra confirmada</span></td><td><span class="pill o">compra confirmada</span>, con evidencia: el código sabe que eran los botones de compra y Jev dice que el cliente los responde que sí.</td></tr>
+</table></div>
+
+<h3>Qué se hace con la lectura</h3>
+<ul>
+<li><strong>Una nota al LLM</strong>, la misma nota del plan de hoy pero con la lectura: «El Si (mensaje 1) responde tu pregunta sobre la dirección: el cliente confirma la anterior. En el mensaje 2 pide agregar una vela. Atiende las dos cosas».</li>
+<li><strong>Evidencia para la confirmación de compra.</strong> Con el motor actuando, la regla de texto sigue marcando la compra, pero el motor puede <em>retirar</em> esa marca en el mismo turno. Lo hace solo si Jev está casi seguro (p ≤ 0,20) de que el «sí» no respondía una pregunta de compra. Si el motor se equivoca, el costo es que el bot pregunta «¿lo dejamos así?» una vez más. Si Jev no responde, queda la regla de hoy.</li>
+</ul>
+
+<h3>Por qué no toca el workflow y cómo se mide</h3>
+<p>El contexto se arma dentro de la activity del motor, leyendo el vault, igual que hoy ya lee el borrador para tapar nombres (<code>activities.py:49</code>). El workflow no cambia: la conversación en vuelo no se entera y no hace falta un <code>patched</code> nuevo. Lo único que se agrega a la entrada es el <code>wamid</code> de cada mensaje, que es solo un dato más.</p>
+<p>Se mide en el laboratorio: el mismo banco, <strong>Jev con el cuestionario v1 contra Jev con el v2</strong>, y las dos versiones contra el banco de referencia (ver tema 2). Lo que hay que vigilar es que la precisión de los asuntos no caiga por ver el contexto.</p>
+
+<!-- 2 -->
+<h2 id="solo-jev"><span class="n">02</span>Solo Jev: quitar OpenAI y no fallar sin rival</h2>
+<p class="q">Lo que planteaste</p>
+<p class="ask">Quitemos el LLM de OpenAI que iba a ser el contrincante de Jev; vamos 100 % con Jev, así que no podemos cometer errores.</p>
+
+<h3>Lo que se quita</h3>
+<div class="table-wrap"><table>
+<tr><th>Dónde</th><th>Qué</th></tr>
+<tr><td class="where">platform/perception/adapters/litellm.py</td><td>El adaptador de OpenAI con logprobs, entero, y su rama en <code>composition.py</code>.</td></tr>
+<tr><td class="where">platform/perception/profiles.yaml</td><td>El perfil <code>openai-lp-v1</code>. Queda <code>jev-v1</code> (y luego <code>jev-v2</code>…).</td></tr>
+<tr><td class="where">sales_lab/arms.py · api/lab.py · launch/costs.py</td><td>El brazo C, su nombre en la API y su costo. Los brazos del laboratorio pasan a ser <strong>A1 más uno o más perfiles de Jev</strong>, para comparar versiones entre sí.</td></tr>
+<tr><td class="where">frontend lab: model.ts · RunLauncher.tsx · resumen</td><td>La opción C del formulario y de las gráficas.</td></tr>
+<tr><td class="where">exoclaw-temporal/litellm_config.yaml · openlit/pricing.json</td><td>El alias <code>openrouter-perception</code> (gpt-4o-mini) y su precio.</td></tr>
+<tr><td class="where">docs/_sdk/07-connectorkit.md · spec de ventas · plan del laboratorio</td><td>Las menciones a OpenAI, y una entrada en §12 del plan con el cambio.</td></tr>
+<tr><td class="where">tests</td><td>Los tests del adaptador y del alias se borran; los del laboratorio y el costo quedan solo con Jev.</td></tr>
+</table></div>
+<p style="margin-top:10px"><code>OPENROUTER_API_KEY</code> se queda: Jev entra por ahí. La llave de OpenAI de Terraform <strong>no</strong> se toca, porque la usa la transcripción de audios.</p>
+
+<h3>Qué reemplaza al rival como vara</h3>
+<p>El brazo C servía para tener una segunda opinión. Sin él, la medida sale de cuatro lugares:</p>
+<div class="rule"><span class="k">1</span><p><strong>Banco de referencia calificado por Claude Code.</strong> Unos 150 turnos del banco, escogidos a propósito entre los difíciles: ráfagas, respuestas cortas como «Si», «Ok» o «Ese», citas, fotos y confirmaciones. Yo contesto el mismo cuestionario que Jev, leyendo la conversación completa. Por cada pregunta se mide precisión, cobertura y calibración. Funciona igual que la cola del juez que ya construimos, y las etiquetas viven en el S3 del laboratorio, nunca en el repo.</p></div>
+<div class="rule"><span class="k">2</span><p><strong>El bot de hoy (A1) contra el nuevo en el scorecard</strong>, con el mismo juez: el resultado de negocio.</p></div>
+<div class="rule"><span class="k">3</span><p><strong>Jev contra Jev.</strong> Cada versión nueva del cuestionario se compara con la anterior, primero en el laboratorio y luego en sombra doble en producción (ver tema 3).</p></div>
+<div class="rule"><span class="k">4</span><p><strong>Una sonda diaria.</strong> 20 ráfagas sintéticas con respuesta conocida, sin datos de clientes. Detecta si la API alpha cambia de forma o si Jev empieza a responder distinto.</p></div>
+
+<h3>Cómo no fallar</h3>
+<ul>
+<li><strong>Si Jev falla o tarda, el turno es el de hoy.</strong> Eso ya existe: timeout de 3 s y <code>ok=False</code> sin lanzar error. Y el modo <code>off</code> sigue siendo el interruptor de emergencia.</li>
+<li><strong>Ninguna pregunta actúa sin probarse.</strong> Una pregunta solo puede mover algo si en el banco de referencia tiene precisión de 0,95 o más en su umbral y al menos 30 casos positivos. Si no, se queda en sombra, midiendo.</li>
+<li><strong>La calibración queda atada a la versión exacta de Jev.</strong> La respuesta de Jev trae la versión que la sirvió (hoy <code>typesafe/jev-1.13-20260917</code>). Si cambia, todo lo que actúa baja a sombra solo hasta que se recalibre, y queda un aviso en la traza y en el panel «Bot nuevo».</li>
+<li><strong>Umbrales según lo que cuesta cada error</strong>, no un 0,70 para todo:</li>
+</ul>
+<div class="table-wrap"><table>
+<tr><th>Error de Jev</th><th>Qué le pasa al cliente</th><th>Costo</th><th>Para actuar (inicial, se calibra)</th></tr>
+<tr><td>Se le pasa un asunto</td><td>Lo mismo que hoy</td><td><span class="pill o">nulo</span></td><td>—</td></tr>
+<tr><td>Ve un asunto que no está</td><td>El bot contesta algo que no le preguntaron</td><td><span class="pill w">medio</span></td><td>p ≥ 0,70 (el de hoy)</td></tr>
+<tr><td>Dice «no lo dijo» de un dato que sí dijo</td><td>El bot le vuelve a preguntar</td><td><span class="pill m">bajo</span></td><td>frena solo con p ≤ 0,15</td></tr>
+<tr><td>Lee un «sí» de compra que no era</td><td>Formulario de envío antes de tiempo</td><td><span class="pill d">alto</span></td><td>confirma solo con p ≥ 0,85 y con la pregunta de compra visible</td></tr>
+<tr><td>Pide un complemento que no hacía falta</td><td>Una burbuja de más</td><td><span class="pill w">medio</span></td><td>p ≤ 0,30 (el de hoy)</td></tr>
+</table></div>
+
+<!-- 3 -->
+<h2 id="motor"><span class="n">03</span>Un motor de decisiones que se cambia sin romper lo demás</h2>
+<p class="q">Lo que planteaste</p>
+<p class="ask">Piensa el feature como un motor de decisiones desacoplado del resto: le vamos a ir metiendo más preguntas a Jev y cambiarlo no puede impactar a los demás componentes.</p>
+
+<h3>Las tres capas</h3>
+<div class="layers">
+<div class="layer"><div><div class="t">Consumidores</div><div class="s">casi nunca cambian</div></div><p>El workflow de ventas, las tools que guardan datos o abren etapas (<code>set_order_slot</code>, <code>request_shipping_details</code>), el laboratorio y la traza. Solo leen <strong>decisiones</strong>. No conocen ni una pregunta de Jev ni un umbral.</p></div>
+<div class="layer focal"><div><div class="t">Motor de decisiones</div><div class="s">cambia seguido · sales/decisions</div></div><p><strong>Puntos de control</strong>: antes del turno, durante (al guardar un dato) y antes de enviar. <strong>Contexto</strong>: la ventana de lo que vio el cliente y los hechos del pedido. <strong>Cuestionarios versionados</strong> como datos (<code>rafaga-v2.yaml</code>), cada pregunta con cuándo aplica. <strong>Políticas puras y versionadas</strong> que convierten respuestas en decisiones. <strong>Perfiles</strong> que juntan cuestionario, política, umbrales y qué capacidades actúan.</p></div>
+<div class="layer"><div><div class="t">Oráculo</div><div class="s">casi nunca cambia · platform/perception</div></div><p>Jev por la Decisions API: recibe <code>state</code> y preguntas cerradas, devuelve probabilidades. Nunca lanza error. Solo quedan el adaptador de Jev, el falso de los tests y el nulo del modo <code>off</code>.</p></div>
+</div>
+
+<figure><svg viewBox="0 0 960 952" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="motor-turno-title motor-turno-desc">
+<title id="motor-turno-title">Un turno con el motor: tres puntos de control</title>
+<desc id="motor-turno-desc">El workflow consulta al motor antes del turno y antes de enviar; durante el turno, la tool que guarda un dato del pedido también consulta al motor. El motor arma el contexto, le pregunta a Jev y devuelve decisiones; el LLM solo redacta.</desc>
+<defs>
+<marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#8e8e93"/></marker>
+<marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5fa9ff"/></marker>
+<marker id="arrow-jev" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#d68aff"/></marker>
+<marker id="arrow-ok" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5be07b"/></marker>
+<marker id="arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#8e8e93" stroke-width="1.2"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#1a1a1c"/>
+<line x1="120" y1="120" x2="120" y2="876" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="300" y1="120" x2="300" y2="876" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="480" y1="120" x2="480" y2="876" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="660" y1="120" x2="660" y2="876" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="840" y1="120" x2="840" y2="876" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="304" y1="180" x2="654" y2="180" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="336" y="160" width="108" height="12" rx="2" fill="#1a1a1c"/>
+<text x="390" y="169" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">1 ANTES DEL TURNO</text>
+<line x1="664" y1="224" x2="834" y2="224" stroke="#d68aff" stroke-width="1.4" marker-end="url(#arrow-jev)"/>
+<rect x="682" y="204" width="136" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="213" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">2 CONTEXTO + PREGUNTAS</text>
+<line x1="836" y1="268" x2="666" y2="268" stroke="#d68aff" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-jev)"/>
+<rect x="698" y="248" width="104" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="257" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">3 PROBABILIDADES</text>
+<line x1="656" y1="312" x2="306" y2="312" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="510" y="292" width="120" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="301" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">4 DECISIONES + NOTA</text>
+<line x1="296" y1="356" x2="126" y2="356" stroke="#5fa9ff" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<rect x="164" y="336" width="92" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="345" fill="#5fa9ff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">5 TURNO + NOTA</text>
+<line x1="124" y1="400" x2="294" y2="400" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="162" y="380" width="96" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="389" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">6 PIDE UNA TOOL</text>
+<line x1="304" y1="444" x2="474" y2="444" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="336" y="424" width="108" height="12" rx="2" fill="#1a1a1c"/>
+<text x="390" y="433" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">7 EJECUTA LA TOOL</text>
+<line x1="484" y1="488" x2="654" y2="488" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="508" y="468" width="124" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="477" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">8 DURANTE: ¿LO DIJO?</text>
+<line x1="664" y1="532" x2="834" y2="532" stroke="#d68aff" stroke-width="1.4" marker-end="url(#arrow-jev)"/>
+<rect x="694" y="512" width="112" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="521" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">9 PREGUNTA CERRADA</text>
+<line x1="836" y1="576" x2="666" y2="576" stroke="#d68aff" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-jev)"/>
+<rect x="720" y="556" width="60" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="565" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">10 P(SÍ)</text>
+<line x1="656" y1="620" x2="486" y2="620" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="516" y="600" width="108" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="609" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">11 ACEPTA O FRENA</text>
+<line x1="476" y1="664" x2="306" y2="664" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="350" y="644" width="80" height="12" rx="2" fill="#1a1a1c"/>
+<text x="390" y="653" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">12 RESULTADO</text>
+<line x1="304" y1="708" x2="654" y2="708" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="334" y="688" width="112" height="12" rx="2" fill="#1a1a1c"/>
+<text x="390" y="697" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">13 ANTES DE ENVIAR</text>
+<line x1="664" y1="752" x2="834" y2="752" stroke="#d68aff" stroke-width="1.4" marker-end="url(#arrow-jev)"/>
+<rect x="690" y="732" width="120" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="741" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">14 ¿CUBRE? ¿CUMPLE?</text>
+<line x1="836" y1="796" x2="666" y2="796" stroke="#d68aff" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-jev)"/>
+<rect x="704" y="776" width="92" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="785" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">15 P(CUBIERTO)</text>
+<line x1="656" y1="840" x2="306" y2="840" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="500" y="820" width="140" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="829" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">16 ENVIAR O COMPLEMENTO</text>
+<rect x="44" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="44" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="52" y="70" width="27" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="65" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">API</text>
+<text x="120" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">LLM de ventas</text>
+<text x="120" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">DeepSeek (exoclaw)</text>
+<rect x="224" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="224" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.05)" stroke="rgba(235,235,235,0.55)" stroke-width="1"/>
+<rect x="232" y="70" width="32" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="248" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PROD</text>
+<text x="300" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Workflow de ventas</text>
+<text x="300" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">HubaraSalesSession</text>
+<rect x="404" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="404" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.05)" stroke="rgba(235,235,235,0.55)" stroke-width="1"/>
+<rect x="412" y="70" width="52" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="438" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ACTIVITY</text>
+<text x="480" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Tools</text>
+<text x="480" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">execute_tool</text>
+<rect x="584" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="584" y="64" width="152" height="56" rx="6" fill="rgba(214,138,255,0.12)" stroke="#d68aff" stroke-width="1"/>
+<rect x="592" y="70" width="37" height="12" rx="2" fill="transparent" stroke="#d68aff" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="610" y="79" fill="#d68aff" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">MOTOR</text>
+<text x="660" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Motor de decisiones</text>
+<text x="660" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">sales/decisions</text>
+<rect x="764" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="764" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="772" y="70" width="47" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="795" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ORÁCULO</text>
+<text x="840" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Jev</text>
+<text x="840" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">/api/alpha/decisions</text>
+<line x1="30" y1="900" x2="930" y2="900" stroke="rgba(255,255,255,0.10)" stroke-width="0.8"/>
+<text x="30" y="920" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.14em">LEYENDA</text>
+<line x1="120" y1="917" x2="156" y2="917" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="166" y="920" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">LLAMADA</text>
+<line x1="256" y1="917" x2="292" y2="917" stroke="#5fa9ff" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<text x="302" y="920" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">HTTP / AWS</text>
+<line x1="392" y1="917" x2="428" y2="917" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<text x="438" y="920" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">RESPUESTA</text>
+<line x1="528" y1="917" x2="564" y2="917" stroke="#d68aff" stroke-width="1.2" marker-end="url(#arrow-jev)"/>
+<text x="574" y="920" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">JEV</text>
+</svg></figure>
+
+<h3>El contrato con los consumidores</h3>
+<p>Es lo único que ven el workflow y las tools. Solo crece con campos opcionales, y cada campo nuevo trae un valor por defecto que reproduce el comportamiento anterior:</p>
+<pre>TurnDecisions(
+    ok=True,                          <span class="c"># False → Jev no respondió: el turno es el de hoy</span>
+    versions={"profile": "jev-v2", "questions": "rafaga-v2", "policy": "turno-v2",
+              "model": "typesafe/jev-1.13-20260917"},
+    note="[LECTURA DEL TURNO] …",     <span class="c"># la única nota que se inyecta; la redacta el motor</span>
+    topics=[{"topic": "datos_envio", "msg": 1, "p": 0.91}, …],
+    reading={"bot_asked": "confirmar_dato_envio", "answers_bot": 0.93, "purchase": "no"},
+    tools={"required": [{"topic": "envio", "any_of": ["send_shipping_rates"],
+                         "nudge": "Para el costo del envío usa send_shipping_rates."}]},
+    stage={"now": "etapa_datos_envio", "given_now": ["ciudad"], "missing": ["telefono", "metodo_pago"]},
+    acting={"context": "on", "tools": "shadow", "slots": "shadow", "stage": "shadow"},
+    answers=[…], latency_ms=310, cost_usd=0.0001,
+)</pre>
+
+<h3>Cinco reglas para cambiarlo sin romper nada</h3>
+<div class="rule"><span class="k">1</span><p><strong>Una pregunta nueva no toca a los consumidores.</strong> Va al cuestionario (datos), a una política (con su test) y al banco de referencia.</p></div>
+<div class="rule"><span class="k">2</span><p><strong>Las reglas viven en la activity y viajan grabadas en su resultado; el workflow solo aplica.</strong> Hoy no pasa así, y lo arreglo. La tabla <code>_COVERED_BY</code> (<code>plan.py:50</code>) corre <em>dentro</em> del workflow, en el corte por tool (<code>workflow_helpers.py:1167</code>). Si mañana la cambiamos, una conversación en vuelo podría decidir una ronda distinta al re-ejecutarse y romper el replay. En el motor, las tools requeridas y sus textos llegan dentro del resultado grabado: cambiar la regla solo afecta a los turnos nuevos.</p></div>
+<div class="rule"><span class="k">3</span><p><strong>Los nombres de las activities y la forma del contrato no cambian.</strong> Se agregan campos, nunca se quitan. Así no hace falta un <code>patched</code> nuevo cada vez que crece el cuestionario.</p></div>
+<div class="rule"><span class="k">4</span><p><strong>Sombra doble.</strong> Mientras <code>jev-v1</code> actúa, <code>jev-v2</code> corre en sombra <em>dentro de la misma activity</em>: dos llamadas a Jev en paralelo, y la de sombra solo va a la traza. El workflow no agrega ni un paso. La sombra tiene un tiempo máximo propio para no demorar el turno.</p></div>
+<div class="rule"><span class="k">5</span><p><strong>Fronteras vigiladas por test.</strong> El workflow solo importa el contrato y la fachada del motor, las tools solo su guardia, y el motor no importa nada del workflow. Un test de arquitectura lo exige.</p></div>
+
+<h3>Receta: agregar una pregunta nueva</h3>
+<ol>
+<li>La pregunta entra a un cuestionario nuevo (<code>rafaga-v3.yaml</code>) con su texto, sus opciones y <em>cuándo aplica</em> (por ejemplo, solo en la etapa de variantes).</li>
+<li>La política que la usa, con un test rojo primero: respuestas falsas de Jev → decisión esperada.</li>
+<li>Califico sus casos en el banco de referencia.</li>
+<li>Laboratorio: <code>jev-v2</code> contra <code>jev-v3</code> en el mismo banco.</li>
+<li>Producción: sombra doble y la vara de siempre.</li>
+<li>Se cambia el perfil en Terraform (<code>tenants.*.lab.perception_profile</code>). El workflow, las tools y el dashboard no se tocan.</li>
+</ol>
+
+<h3>Dónde vive cada cosa</h3>
+<div class="table-wrap"><table>
+<tr><th>Pieza</th><th>Ruta</th><th>Hoy</th></tr>
+<tr><td>Oráculo (Jev, falso, nulo) y anonimización</td><td class="where">src/platform/perception/</td><td>existe; se le quita OpenAI</td></tr>
+<tr><td>Motor: contexto, cuestionarios, políticas, perfiles, activities</td><td class="where">src/plugins/chats/agent/sales/decisions/</td><td>hoy se llama <code>perception/</code>; se reorganiza</td></tr>
+<tr><td>Fachada para el workflow y guardia para las tools</td><td class="where">sales/decisions/facade.py · guards.py</td><td>nuevo</td></tr>
+<tr><td>Banco de referencia (etiquetas)</td><td class="where">S3 del laboratorio · bench/labels/</td><td>nuevo</td></tr>
+</table></div>
+<p style="margin-top:10px">El núcleo genérico (cargar cuestionarios, calibrar, sombra doble) pasa a la plataforma cuando otro agente lo necesite, por ejemplo remarketing. Hoy sería una capa sin segundo cliente.</p>
+
+<!-- 4 -->
+<h2 id="tools"><span class="n">04</span>¿El LLM usó la herramienta que tenía que usar?</h2>
+<p class="q">Lo que planteaste</p>
+<p class="ask">¿Profundizamos a ese nivel, o la verificación final (si la respuesta cubre lo que se preguntó) ya lo cubre? Me lo imagino como un validador y clasificador de cuándo usar las tools, con control de esas selecciones.</p>
+
+<h3>La respuesta corta: hoy no se controla</h3>
+<p>Hoy hay dos piezas, y ninguna revisa la herramienta:</p>
+<ul>
+<li><strong>La ronda extra (②)</strong> solo corre cuando una tool corta el turno. Y da un asunto por atendido si hubo <em>una</em> tool de la lista <em>o</em> una palabra en el texto. Por ejemplo, «precio» queda atendido si el texto trae un «$», aunque el precio salga de la memoria del LLM.</li>
+<li><strong>La verificación (③)</strong> le pregunta a Jev si la respuesta <em>atiende</em> el asunto. Mide si contestó, no de dónde salió el dato. «El envío a Medellín vale $12.000», escrito sin <code>send_shipping_rates</code>, pasa como cubierto. Y rompe la regla del operador: las tarifas solo salen por <code>send_shipping_rates</code>.</li>
+</ul>
+
+<h3>La propuesta: contrato de herramientas</h3>
+<p class="answer">Jev dice <em>qué pide</em> el cliente; un contrato escrito en código dice <em>qué tool lo resuelve</em>; el motor revisa que se haya usado.</p>
+<div class="table-wrap"><table>
+<tr><th>Asunto (Jev)</th><th>Tool que lo resuelve</th><th>Condición fina</th></tr>
+<tr><td class="t">catálogo</td><td class="where">present_products · present_product_gallery · list_categories</td><td>—</td></tr>
+<tr><td class="t">precio</td><td class="where">search_products · get_product_by_handle · present_product_detail · present_products</td><td>No hace falta si el precio de <em>ese</em> producto ya está en lo último que vio el cliente (Jev, con el contexto del tema 1).</td></tr>
+<tr><td class="t">envío (costo o cobertura)</td><td class="where">send_shipping_rates</td><td>Siempre (regla del operador del 7-sep).</td></tr>
+<tr><td class="t">medidas</td><td class="where">present_product_detail · get_product_by_handle</td><td>—</td></tr>
+<tr><td class="t">colores · aromas</td><td class="where">present_variant_picker</td><td>En la etapa de variantes. Antes de esa etapa basta con la ficha.</td></tr>
+<tr><td class="t">disponibilidad</td><td class="where">search_products · get_product_by_handle</td><td>—</td></tr>
+<tr><td class="t">estado del pedido</td><td class="where">check_order_status</td><td>—</td></tr>
+<tr><td class="t">entrega datos de envío</td><td class="where">set_order_slot con esos campos</td><td>Jev dice cuáles dio: ciudad, dirección, teléfono, quien recibe, pago.</td></tr>
+<tr><td class="t">queja sobre un pedido</td><td class="where">escalate_to_human</td><td>Jev: «¿es un reclamo sobre un pedido ya hecho?»</td></tr>
+<tr><td class="t">promoción · cupón <span class="tag">v2</span></td><td class="where">list_promotions · apply_coupon</td><td>Asunto nuevo del cuestionario v2.</td></tr>
+</table></div>
+<p style="margin-top:10px">Los asuntos sin tool (tiempos, pagos, personalización, aplazamiento, saludo) se siguen revisando por texto con la verificación ③.</p>
+
+<h3>Tres momentos de control</h3>
+<div class="rule"><span class="k">1</span><p><strong>Antes del turno.</strong> La nota dice qué atender <em>y con qué</em>: «envío (mensaje 2): usa send_shipping_rates».</p></div>
+<div class="rule"><span class="k">2</span><p><strong>Antes de que el LLM termine.</strong> Si va a cerrar el turno sin una tool requerida y el turno todavía no ha enviado nada, hay <strong>una</strong> ronda extra que nombra la tool que falta. Hoy la ronda extra solo existe en el corte por tool; esta es la segunda puerta. Solo actúa si el resultado grabado del motor trae tools requeridas, así que el replay de las conversaciones viejas no cambia.</p></div>
+<div class="rule"><span class="k">3</span><p><strong>Antes de enviar.</strong> El motor audita las tools requeridas contra las usadas, y el resultado queda en la traza de cada turno y como métrica del laboratorio: «cumplimiento del contrato». Para montos ya existe una regla determinista, <code>find_unexplained_amounts</code> (<code>price_quotes.py:100</code>), que hoy solo corre al verificar el checkout; la corro en cada turno. Para afirmaciones como «hay stock» o «llega mañana» sin haber consultado, le hago a Jev una pregunta de respaldo. Esa pregunta arranca en sombra: todavía no sé si Jev la hace bien, y el banco de referencia lo dirá.</p></div>
+
+<figure><svg viewBox="0 0 960 1072" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="motor-tools-title motor-tools-desc">
+<title id="motor-tools-title">Control de herramientas en un turno</title>
+<desc id="motor-tools-desc">Jev dice qué pide el cliente; el contrato de herramientas del motor dice qué tool lo resuelve. Si el LLM va a terminar sin esa tool y el turno no ha enviado nada, hay una ronda extra que nombra la tool. Antes de enviar, el motor audita requeridas contra usadas y Jev verifica que la respuesta cubra el asunto.</desc>
+<defs>
+<marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#8e8e93"/></marker>
+<marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5fa9ff"/></marker>
+<marker id="arrow-jev" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#d68aff"/></marker>
+<marker id="arrow-ok" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5be07b"/></marker>
+<marker id="arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#8e8e93" stroke-width="1.2"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#1a1a1c"/>
+<rect x="72" y="492" width="456" height="236" rx="4" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+<rect x="72" y="492" width="37" height="16" rx="2" fill="#1a1a1c" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+<text x="90" y="504" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.12em">OPT</text>
+<text x="84" y="524" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.04em">[va a terminar sin la tool requerida y el turno no ha enviado nada]</text>
+<line x1="120" y1="120" x2="120" y2="996" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="300" y1="120" x2="300" y2="996" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="480" y1="120" x2="480" y2="996" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="660" y1="120" x2="660" y2="996" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="840" y1="120" x2="840" y2="996" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="304" y1="180" x2="654" y2="180" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="336" y="160" width="108" height="12" rx="2" fill="#1a1a1c"/>
+<text x="390" y="169" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">1 ANTES DEL TURNO</text>
+<line x1="664" y1="224" x2="834" y2="224" stroke="#d68aff" stroke-width="1.4" marker-end="url(#arrow-jev)"/>
+<rect x="710" y="204" width="80" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="213" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">2 ¿QUÉ PIDE?</text>
+<line x1="836" y1="268" x2="666" y2="268" stroke="#d68aff" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-jev)"/>
+<rect x="698" y="248" width="104" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="257" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">3 ENVÍO · P 0,94</text>
+<path d="M664 312 H692 V332 H670" fill="none" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="700" y="314" width="72" height="12" rx="2" fill="#1a1a1c"/>
+<text x="706" y="323" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">4 CONTRATO</text>
+<line x1="656" y1="376" x2="306" y2="376" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="510" y="356" width="120" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="365" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">5 NOTA + REQUERIDAS</text>
+<line x1="296" y1="420" x2="126" y2="420" stroke="#5fa9ff" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<rect x="164" y="400" width="92" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="409" fill="#5fa9ff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">6 TURNO + NOTA</text>
+<line x1="124" y1="464" x2="294" y2="464" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="156" y="444" width="108" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="453" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">7 TEXTO, SIN TOOL</text>
+<path d="M304 552 H332 V572 H310" fill="none" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="340" y="554" width="120" height="12" rx="2" fill="#1a1a1c"/>
+<text x="346" y="563" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">8 NOTA: USA LA TOOL</text>
+<line x1="296" y1="616" x2="126" y2="616" stroke="#5fa9ff" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<rect x="166" y="596" width="88" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="605" fill="#5fa9ff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">9 RONDA EXTRA</text>
+<line x1="124" y1="660" x2="294" y2="660" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="162" y="640" width="96" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="649" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">10 PIDE LA TOOL</text>
+<line x1="304" y1="704" x2="474" y2="704" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="322" y="684" width="136" height="12" rx="2" fill="#1a1a1c"/>
+<text x="390" y="693" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">11 SEND_SHIPPING_RATES</text>
+<line x1="304" y1="764" x2="654" y2="764" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="334" y="744" width="112" height="12" rx="2" fill="#1a1a1c"/>
+<text x="390" y="753" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">12 ANTES DE ENVIAR</text>
+<path d="M664 808 H692 V828 H670" fill="none" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="700" y="810" width="124" height="12" rx="2" fill="#1a1a1c"/>
+<text x="706" y="819" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">13 AUDITA REQUERIDAS</text>
+<line x1="664" y1="872" x2="834" y2="872" stroke="#d68aff" stroke-width="1.4" marker-end="url(#arrow-jev)"/>
+<rect x="688" y="852" width="124" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="861" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">14 ¿CUBRE EL ASUNTO?</text>
+<line x1="836" y1="916" x2="666" y2="916" stroke="#d68aff" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-jev)"/>
+<rect x="704" y="896" width="92" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="905" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">15 P(CUBIERTO)</text>
+<line x1="656" y1="960" x2="306" y2="960" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="538" y="940" width="64" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="949" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">16 ENVIAR</text>
+<rect x="44" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="44" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="52" y="70" width="27" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="65" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">API</text>
+<text x="120" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">LLM de ventas</text>
+<text x="120" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">DeepSeek (exoclaw)</text>
+<rect x="224" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="224" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.05)" stroke="rgba(235,235,235,0.55)" stroke-width="1"/>
+<rect x="232" y="70" width="32" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="248" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PROD</text>
+<text x="300" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Workflow de ventas</text>
+<text x="300" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">HubaraSalesSession</text>
+<rect x="404" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="404" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.05)" stroke="rgba(235,235,235,0.55)" stroke-width="1"/>
+<rect x="412" y="70" width="52" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="438" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ACTIVITY</text>
+<text x="480" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Tools</text>
+<text x="480" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">execute_tool</text>
+<rect x="584" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="584" y="64" width="152" height="56" rx="6" fill="rgba(214,138,255,0.12)" stroke="#d68aff" stroke-width="1"/>
+<rect x="592" y="70" width="37" height="12" rx="2" fill="transparent" stroke="#d68aff" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="610" y="79" fill="#d68aff" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">MOTOR</text>
+<text x="660" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Motor de decisiones</text>
+<text x="660" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">sales/decisions</text>
+<rect x="764" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="764" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="772" y="70" width="47" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="795" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ORÁCULO</text>
+<text x="840" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Jev</text>
+<text x="840" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">/api/alpha/decisions</text>
+<line x1="30" y1="1020" x2="930" y2="1020" stroke="rgba(255,255,255,0.10)" stroke-width="0.8"/>
+<text x="30" y="1040" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.14em">LEYENDA</text>
+<line x1="120" y1="1037" x2="156" y2="1037" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="166" y="1040" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">LLAMADA</text>
+<line x1="256" y1="1037" x2="292" y2="1037" stroke="#5fa9ff" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<text x="302" y="1040" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">HTTP / AWS</text>
+<line x1="392" y1="1037" x2="428" y2="1037" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<text x="438" y="1040" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">RESPUESTA</text>
+<line x1="528" y1="1037" x2="564" y2="1037" stroke="#d68aff" stroke-width="1.2" marker-end="url(#arrow-jev)"/>
+<text x="574" y="1040" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">JEV</text>
+</svg></figure>
+
+<!-- 5 -->
+<h2 id="etapas"><span class="n">05</span>Etapas: guiar al LLM de la mano</h2>
+<p class="q">Lo que planteaste</p>
+<p class="ask">Jev podría saber si el LLM está guiando bien la conversación en cada etapa, sugerirle pasar a la siguiente y evitar que alucine pasar etapas sin tener la información que necesita.</p>
+
+<h3>Lo que pasa hoy</h3>
+<ul>
+<li><strong>La etapa ya no la escoge el LLM.</strong> La calcula el código a partir del borrador del pedido (<code>resolve_funnel_stage</code>, <code>funnel_stage.py:71</code>), y el LLM recibe solo el guion de esa etapa. Son cinco: descubrimiento, variantes, datos de envío, cierre y postcierre.</li>
+<li>La pregunta de etapa que se le hace a Jev tiene <strong>siete</strong> opciones que no coinciden con esas cinco, y su respuesta no se usa.</li>
+<li>Entonces el LLM no «salta» de etapa directamente. Lo hace <strong>guardando datos</strong> con <code>set_order_slot</code> y <strong>usando las tools que abren etapa</strong>. Por ahí se cuela la alucinación:</li>
+</ul>
+<div class="table-wrap"><table>
+<tr><th>Cómo se cuela</th><th>Caso</th><th>Qué hay hoy</th></tr>
+<tr><td>Guarda un dato que el cliente no dijo</td><td>Run b730c006: color inventado, cantidad fija y formulario, todo en un turno</td><td>El corte por tool evita que siga en el mismo turno, pero no revisa el dato.</td></tr>
+<tr><td>Toma un «sí» cualquiera como compra</td><td>Tema 1</td><td>La regla de texto sin contexto.</td></tr>
+<tr><td>Se queda dando vueltas en una etapa</td><td>Vuelve a preguntar lo que ya se dijo</td><td>Solo el guion lo pide.</td></tr>
+<tr><td>No acompaña cuando el cliente se devuelve</td><td>«Mejor muéstrame otros» en plena toma de datos</td><td>Solo el guion lo pide.</td></tr>
+</table></div>
+
+<h3>La propuesta: contrato de etapas, con Jev como fuente de evidencia</h3>
+<p class="answer">La etapa la sigue decidiendo el código. Jev aporta evidencia: si el cliente de verdad dijo lo que el LLM guarda, qué dio en este turno y si quiere avanzar o devolverse. El motor convierte eso en un siguiente paso concreto.</p>
+<div class="table-wrap"><table>
+<tr><th>Etapa</th><th>Sale cuando</th><th>Qué le pregunta el motor a Jev en esta etapa</th><th>Qué frena</th></tr>
+<tr><td class="t">descubrimiento</td><td>hay producto elegido</td><td>¿Eligió un producto concreto? ¿Cuál de los que vio?</td><td>Guardar <code>producto</code> sin que lo haya elegido</td></tr>
+<tr><td class="t">variantes</td><td>aroma, color y cantidad en cada ítem</td><td>¿Eligió aroma, color o cantidad en este turno? ¿Quiere cambiar de producto?</td><td>Guardar una variante inventada</td></tr>
+<tr><td class="t">datos de envío</td><td>ciudad, dirección, teléfono, quien recibe y pago</td><td>¿Qué datos dio en este turno? ¿Confirma una dirección anterior?</td><td>El formulario sin compra confirmada (ya existe, ahora con la lectura del tema 1); datos inventados</td></tr>
+<tr><td class="t">cierre</td><td>orden registrada</td><td>¿Confirma el resumen? ¿Pide cambiar algo?</td><td>Registrar sin que confirme el resumen (se suma a <code>verify_order_for_checkout</code>)</td></tr>
+<tr><td class="t">postcierre</td><td>—</td><td>¿Pregunta por su pedido? ¿Mandó un comprobante?</td><td>Afirmar el pago sin <code>check_order_status</code></td></tr>
+</table></div>
+<p style="margin-top:10px">Las preguntas son condicionales: solo se hacen las de la etapa actual. Así el cuestionario crece sin que cada llamada a Jev se vuelva gigante.</p>
+
+<h3>Lo que hace Jev en las etapas</h3>
+<div class="rule"><span class="k">1</span><p><strong>Revisa cada dato que se guarda.</strong> Cuando el LLM llama <code>set_order_slot(color="rojo")</code>, la tool le pregunta al motor, y el motor a Jev: «¿el cliente eligió rojo?». Si Jev está casi seguro de que no (p ≤ 0,15), la tool no guarda y le dice al LLM «el cliente no lo ha dicho; pregúntale». Si lo dijo o hay duda, guarda y la duda queda en la traza. Si Jev no responde en 2 s, guarda como hoy. Pasa dentro de la activity de la tool, así que el workflow no cambia.</p></div>
+<div class="rule"><span class="k">2</span><p><strong>Detecta lo que el cliente dio y el LLM no guardó.</strong> Si Jev dice que en este turno el cliente dio la ciudad y el LLM no llamó <code>set_order_slot(ciudad)</code>, es una tool requerida que falta. Entra por la misma puerta del tema 4.</p></div>
+<div class="rule"><span class="k">3</span><p><strong>Lee el «sí» con contexto</strong> (tema 1) antes de que la compra cuente como confirmada.</p></div>
+<div class="rule"><span class="k">4</span><p><strong>Le da al LLM el siguiente paso.</strong> Sale del borrador, que es determinista, y de lo que dijo Jev en este turno. Una línea en la misma nota: «[ETAPA] Datos de envío. El cliente acaba de dar la ciudad (mensaje 1). Falta teléfono y método de pago. Siguiente paso: guarda la ciudad y pide solo esos dos».</p></div>
+<div class="rule"><span class="k">5</span><p><strong>Acompaña al cliente cuando se devuelve.</strong> Si quiere otro producto, la nota le dice al LLM que quite el anterior (<code>quitar=true</code>). La etapa retrocede sola, porque sale del borrador.</p></div>
+<div class="rule"><span class="k">6</span><p><strong>Detecta el estancamiento.</strong> La traza ya guarda la etapa de entrada y salida de cada turno. Tres turnos seguidos en la misma etapa sin un dato nuevo es una alerta en el laboratorio y en el scorecard, y el motor refuerza el siguiente paso en la nota.</p></div>
+
+<figure><svg viewBox="0 0 960 828" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="motor-ranura-title motor-ranura-desc">
+<title id="motor-ranura-title">Una ranura con prueba</title>
+<desc id="motor-ranura-desc">Cuando el LLM guarda un dato del pedido con set_order_slot, la tool le pregunta al motor si el cliente de verdad lo dijo. Solo con certeza alta de que no lo dijo, la tool frena y le pide al LLM preguntar; si lo dijo o hay duda, guarda (la duda queda en la traza) y la etapa avanza por el borrador.</desc>
+<defs>
+<marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#8e8e93"/></marker>
+<marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5fa9ff"/></marker>
+<marker id="arrow-jev" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#d68aff"/></marker>
+<marker id="arrow-ok" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5be07b"/></marker>
+<marker id="arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#8e8e93" stroke-width="1.2"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#1a1a1c"/>
+<rect x="72" y="384" width="636" height="172" rx="4" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+<rect x="72" y="384" width="37" height="16" rx="2" fill="#1a1a1c" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+<text x="90" y="396" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.12em">OPT</text>
+<text x="84" y="416" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.04em">[p ≤ 0,15: el cliente no lo dijo]</text>
+<rect x="432" y="576" width="296" height="148" rx="4" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+<rect x="432" y="576" width="37" height="16" rx="2" fill="#1a1a1c" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+<text x="450" y="588" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.12em">OPT</text>
+<text x="444" y="608" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.04em">[p &gt; 0,15: lo dijo, o hay duda y queda en la traza]</text>
+<line x1="120" y1="120" x2="120" y2="752" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="300" y1="120" x2="300" y2="752" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="480" y1="120" x2="480" y2="752" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="660" y1="120" x2="660" y2="752" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="840" y1="120" x2="840" y2="752" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="124" y1="180" x2="294" y2="180" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="150" y="160" width="120" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="169" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">1 PIDE COLOR = ROJO</text>
+<line x1="304" y1="224" x2="474" y2="224" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="336" y="204" width="108" height="12" rx="2" fill="#1a1a1c"/>
+<text x="390" y="213" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">2 EJECUTA LA TOOL</text>
+<line x1="484" y1="268" x2="654" y2="268" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="502" y="248" width="136" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="257" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">3 ¿EL CLIENTE LO DIJO?</text>
+<line x1="664" y1="312" x2="834" y2="312" stroke="#d68aff" stroke-width="1.4" marker-end="url(#arrow-jev)"/>
+<rect x="696" y="292" width="108" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="301" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">4 ¿ELIGIÓ «ROJO»?</text>
+<line x1="836" y1="356" x2="666" y2="356" stroke="#d68aff" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-jev)"/>
+<rect x="724" y="336" width="52" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="345" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">5 P(SÍ)</text>
+<line x1="656" y1="444" x2="486" y2="444" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="544" y="424" width="52" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="433" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">6 FRENA</text>
+<line x1="476" y1="488" x2="306" y2="488" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="320" y="468" width="140" height="12" rx="2" fill="#1a1a1c"/>
+<text x="390" y="477" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">7 «PREGÚNTALE EL COLOR»</text>
+<line x1="296" y1="532" x2="126" y2="532" stroke="#5fa9ff" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<rect x="158" y="512" width="104" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="521" fill="#5fa9ff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">8 LEE EL RECHAZO</text>
+<line x1="656" y1="636" x2="486" y2="636" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="540" y="616" width="60" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="625" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">9 ACEPTA</text>
+<path d="M484 680 H512 V700 H490" fill="none" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="520" y="682" width="160" height="12" rx="2" fill="#1a1a1c"/>
+<text x="526" y="691" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">10 GUARDA · LA ETAPA AVANZA</text>
+<rect x="44" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="44" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="52" y="70" width="27" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="65" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">API</text>
+<text x="120" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">LLM de ventas</text>
+<text x="120" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">DeepSeek (exoclaw)</text>
+<rect x="224" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="224" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.05)" stroke="rgba(235,235,235,0.55)" stroke-width="1"/>
+<rect x="232" y="70" width="32" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="248" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PROD</text>
+<text x="300" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Workflow de ventas</text>
+<text x="300" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">HubaraSalesSession</text>
+<rect x="404" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="404" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.05)" stroke="rgba(235,235,235,0.55)" stroke-width="1"/>
+<rect x="412" y="70" width="32" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="428" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">TOOL</text>
+<text x="480" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">set_order_slot</text>
+<text x="480" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">tool del pedido</text>
+<rect x="584" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="584" y="64" width="152" height="56" rx="6" fill="rgba(214,138,255,0.12)" stroke="#d68aff" stroke-width="1"/>
+<rect x="592" y="70" width="37" height="12" rx="2" fill="transparent" stroke="#d68aff" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="610" y="79" fill="#d68aff" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">MOTOR</text>
+<text x="660" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Motor de decisiones</text>
+<text x="660" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">sales/decisions</text>
+<rect x="764" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="764" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="772" y="70" width="47" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="795" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ORÁCULO</text>
+<text x="840" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Jev</text>
+<text x="840" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">/api/alpha/decisions</text>
+<line x1="30" y1="776" x2="930" y2="776" stroke="rgba(255,255,255,0.10)" stroke-width="0.8"/>
+<text x="30" y="796" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.14em">LEYENDA</text>
+<line x1="120" y1="793" x2="156" y2="793" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="166" y="796" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">LLAMADA</text>
+<line x1="256" y1="793" x2="292" y2="793" stroke="#5fa9ff" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<text x="302" y="796" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">HTTP / AWS</text>
+<line x1="392" y1="793" x2="428" y2="793" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<text x="438" y="796" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">RESPUESTA</text>
+<line x1="528" y1="793" x2="564" y2="793" stroke="#d68aff" stroke-width="1.2" marker-end="url(#arrow-jev)"/>
+<text x="574" y="796" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">JEV</text>
+</svg></figure>
+
+<div class="callout warn"><p><strong>Por qué Jev no escoge la etapa.</strong> Hoy la etapa es una cuenta exacta sobre el borrador, y eso es lo que más protege la venta. Si la escogiera un clasificador, un error de Jev movería al LLM de guion. Lo que Jev hace es alimentar esa cuenta con datos verificados.</p></div>
+
+<!-- 6 -->
+<h2 id="quemado"><span class="n">06</span>Código quemado: lo que hay en producción</h2>
+<p class="q">Lo que planteaste</p>
+<p class="ask">Por los bugs de alucinación, en main hay código determinista en workers y activities que evita que salgan mensajes o que busca palabras clave. Eso no debería existir: debería resolverlo este motor con clasificadores. Búscalo y dime cómo lo pasamos.</p>
+
+<h3>Cómo lo busqué</h3>
+<p>Hice cinco barridos en paralelo, cada uno leyendo completa su zona:</p>
+<ul>
+<li>el ingest de la API;</li>
+<li>el workflow de ventas;</li>
+<li>el ciclo del turno (<code>run_agent_turn</code> y el filtro de texto del LLM);</li>
+<li>las tools y activities de ventas;</li>
+<li>remarketing, ETA y el Order Sentinel.</li>
+</ul>
+<p>Cada fila trae archivo, línea, dónde corre, el incidente que la originó y si decide o no. Los ejemplos de abajo los corrí yo con las funciones reales.</p>
+<div class="table-wrap"><table>
+<tr><th></th><th>Filas</th><th>Qué son</th><th>Qué se hace</th></tr>
+<tr><td class="t">Semánticas o mixtas</td><td>≈85 filas, que agrupadas son 32 piezas</td><td>Intentan entender el lenguaje con regex o listas de palabras: lo que escribió el cliente o lo que escribió el LLM</td><td>Se mudan al motor: decide Jev y la regla queda de respaldo</td></tr>
+<tr><td class="t">Invariantes</td><td>≈100</td><td>Verdad del catálogo, aritmética, mecánica del turno, protocolo, seguridad</td><td>Se quedan: no adivinan nada</td></tr>
+<tr><td class="t">Pisos legales</td><td>2</td><td>La baja de marketing por texto y por el error 131050 de Meta</td><td>Se quedan como piso; Jev solo agrega</td></tr>
+</table></div>
+
+<h3>Por qué no se puede seguir parchando</h3>
+<div class="rule"><span class="k">1</span><p><strong>Es lógica de replay.</strong> Una regla que corre dentro del workflow decide si se agenda un envío. Cuando se amplió el detector de fugas, el historial real del run 5ed9af2d dejó de reproducirse (L-21). Por eso ese set está congelado por hash: mejorarlo exige un patch nuevo por cada cambio. En remarketing hay tres reglas así que ni siquiera están congeladas.</p></div>
+<div class="rule"><span class="k">2</span><p><strong>Siempre va un incidente atrás.</strong> Cada regex nació de un caso y falla con la siguiente forma de decir lo mismo. La tabla de abajo lo muestra.</p></div>
+<div class="rule"><span class="k">3</span><p><strong>Está repetido.</strong></p></div>
+<ul>
+<li>«Compra confirmada» se define de tres maneras: el ingest, la reconciliación de MBA y el scorecard.</li>
+<li>Un mismo texto de ventas pasa hasta cinco veces por el detector de fugas.</li>
+<li>Hay cinco reacciones distintas cuando, al limpiar un texto, no queda nada.</li>
+<li>El saludo se detecta con regex en un lugar y con palabras sueltas en otro.</li>
+</ul>
+
+<p style="margin-top:16px">Lo que decide hoy el código:</p>
+<div class="table-wrap"><table>
+<tr><th>Texto</th><th>Lo que decide la regla de hoy</th><th>Lo que es</th></tr>
+<tr><td>«Te confirmo, sí la quiero»</td><td><span class="pill d">aplazamiento</span> El formulario de envío se rechaza.</td><td>Confirma la compra</td></tr>
+<tr><td>«¿Me llega mañana?» · «Déjame la roja» · «Hasta luego»</td><td><span class="pill w">aplazamiento</span></td><td>Una pregunta, una elección y una despedida</td></tr>
+<tr><td>«Ok, lavanda», con producto en el borrador</td><td><span class="pill w">compra confirmada</span></td><td>Eligió un aroma</td></tr>
+<tr><td>«no me escriban» · «elimínenme de la lista» · «Por favor no me contacten»</td><td><span class="pill d">no es baja</span></td><td>Es baja, y es piso legal</td></tr>
+<tr><td>«quiero saber no más el precio» · «Hay una más baja?»</td><td><span class="pill w">baja</span> Sale de las campañas para siempre.</td><td>No es baja</td></tr>
+<tr><td>«Usa el código VELAS_10 al pagar» · «Enviamos al cliente final directamente»</td><td><span class="pill w">texto interno</span> No se envía.</td><td>Un mensaje al cliente</td></tr>
+<tr><td>«La IA no hace nuestras velas» · «Cada vela lleva un toque humano»</td><td><span class="pill w">delata que es un bot</span> Se borra la oración.</td><td>Un mensaje de marca</td></tr>
+<tr><td>«Tu pedido no incluye portavelas.»</td><td><span class="pill w">aviso del portavelas</span> Se borra.</td><td>Es cierto y hay que decirlo</td></tr>
+<tr><td>«[el cliente envió un comprobante de pago: … del viernes 25 de septiembre]»</td><td><span class="pill w">aplazamiento con fecha</span> Pausa la reactivación hasta el 2-oct.</td><td>Un pago</td></tr>
+</table></div>
+
+<h3>Las 32 piezas, por familia</h3>
+<div class="table-wrap"><table>
+<tr><th>Pieza</th><th>Dónde vive hoy</th><th>Qué decide</th></tr>
+<tr><td colspan="3" class="t">A · Lecturas de lo que escribe el cliente (casi todas en el ingest de la API)</td></tr>
+<tr><td>Compra y aplazamiento</td><td class="where">shared/purchase_signals.py:35-174 · ingest:411</td><td>Marca la compra confirmada o el aplazamiento, que después leen 4 tools, remarketing y el scorecard</td></tr>
+<tr><td>Aplazamiento con fecha y cortesía</td><td class="where">platform/whatsapp/reengagement_deferral.py:94-290 · ingest:431</td><td>Pausa la reactivación y el watchdog; permite una plantilla paga</td></tr>
+<tr><td>Baja de marketing <span class="tag">piso legal</span></td><td class="where">platform/whatsapp/marketing_opt_out.py:34-107 · ingest:443</td><td>Saca al cliente de las campañas (para siempre)</td></tr>
+<tr><td>Cupón en juego</td><td class="where">sales/use_cases/coupons.py:359-438 · ingest:946</td><td>Relee el cupo del cupón y elige la nota</td></tr>
+<tr><td>Pedido fuera de catálogo</td><td class="where">shared/product_truth.py:31-117 · ingest:989 · contexto de remarketing</td><td>Le dice al LLM qué «no existe»; en remarketing, qué no puede nombrar</td></tr>
+<tr><td>Cantidad en la respuesta</td><td class="where">sales/use_cases/quantity_capture.py:49-180 (activity del prompt)</td><td>Guarda la cantidad en el borrador</td></tr>
+<tr><td>Documento PDF = comprobante</td><td class="where">ingest:809-868</td><td>Pasa la conversación a humano</td></tr>
+<tr><td>Respuesta a una campaña</td><td class="where">sales/use_cases/campaign_reply.py:33-87</td><td>Cierra el episodio anterior (por tiempo y por cita: casi todo es invariante)</td></tr>
+<tr><td colspan="3" class="t">B · Lo que dijo el cliente, llevado a listas cerradas (dentro de las tools)</td></tr>
+<tr><td>Categoría pedida</td><td class="where">platform/catalog/categories.py:20-208</td><td>Filtra la búsqueda (parecido de texto ≥ 0,80)</td></tr>
+<tr><td>Familia de color</td><td class="where">tools/order_draft.py:380-448 · color_families.py</td><td>«Rojo vino» → el color del catálogo</td></tr>
+<tr><td>Ítem del pedido</td><td class="where">tools/order_draft.py:586-657</td><td>A cuál producto va un aroma o color</td></tr>
+<tr><td>Ciudad → tarifa de envío</td><td class="where">config/shipping.py:70-126</td><td>Si «bogota» aparece en el texto; hay dos funciones que no coinciden</td></tr>
+<tr><td>Producto nombrado (remarketing)</td><td class="where">remarketing/use_cases/context.py:169-191</td><td>Qué ficha de producto se le muestra al LLM</td></tr>
+<tr><td>Etiqueta de variante y valores múltiples</td><td class="where">coupon_quota.py:504-520 · variant_attrs.py:25</td><td>Valida la etiqueta y parte «rojo y azul» (léxico; poco valor para Jev)</td></tr>
+<tr><td colspan="3" class="t">C · Lecturas de lo que escribió el LLM (egreso)</td></tr>
+<tr><td>Texto interno (fuga)</td><td class="where">platform/llm_text_sanitizer.py:371-492, usado en 8 sitios: workflow de ventas, run_agent_turn, remarketing, envío, flush, send_reply, tags, escalación</td><td>No enviar, borrar párrafos, no grabar en el historial</td></tr>
+<tr><td>Delata que es un bot</td><td class="where">llm_text_sanitizer.py:556-601</td><td>Borra oraciones en cierres y escalaciones</td></tr>
+<tr><td>Preámbulo del modelo</td><td class="where">llm_text_sanitizer.py:43-96</td><td>Quita «Aquí tienes:» y similares</td></tr>
+<tr><td>Rescate cuando al limpiar no queda nada</td><td class="where">llm_text_sanitizer.py:495-622 · escalation.py:41-78 · 5 reacciones distintas</td><td>Silencio, despedida enlatada o rechazo, según el sitio</td></tr>
+<tr><td>Enumeración de variantes en texto</td><td class="where">activities/variant_enumeration_guard.py · variant_enumeration.py</td><td>Cambia el texto por el selector</td></tr>
+<tr><td>Aviso del portavelas</td><td class="where">sales_session.py:1378-1406 · sanitizer:520-553</td><td>Borra toda oración con «portavela»</td></tr>
+<tr><td>¿Ya saludó?</td><td class="where">first_contact_greeting.py:36-92 · sales_session.py:1181-1242</td><td>Manda la burbuja de bienvenida</td></tr>
+<tr><td>¿El monto citado es precio de producto?</td><td class="where">price_quotes.py:42-133 · tools/checkout.py</td><td>Obliga a corregir un precio mal citado</td></tr>
+<tr><td>Botones que son un selector</td><td class="where">tools/ui_intents.py:1886-2024</td><td>Rechaza los botones</td></tr>
+<tr><td>Cobertura por palabras (capa ②)</td><td class="where">perception/plan.py:47-160</td><td>Da una ronda extra (duplica la verificación ③ de Jev)</td></tr>
+<tr><td>Verdad de producto y popularidad</td><td class="where">shared/product_truth.py:57-135 · remarketing.py:591-613</td><td>Bloquea el gancho de remarketing</td></tr>
+<tr><td>Resumen interno en una plantilla</td><td class="where">remarketing/activities/watchdog_activities.py:226-277</td><td>Manda <code>motivo</code> (prosa del LLM) como variable al cliente</td></tr>
+<tr><td colspan="3" class="t">D · Decisiones que hoy toma el LLM por instrucción del prompt</td></tr>
+<tr><td>Etiqueta de cierre por abandono</td><td class="where">sales/prompts.py:19-87</td><td>Escoge entre 4 etiquetas; una regla la degrada después</td></tr>
+<tr><td>¿Sobra un mensaje de remarketing?</td><td class="where">remarketing/prompts.py (regla 7) · NO_MESSAGE</td><td>El mismo LLM que redacta decide si abstenerse</td></tr>
+<tr><td>¿Cambió el estado del pedido?</td><td class="where">GraphAgents/graphs/order_sentinel.py:41-122</td><td>Un LLM devuelve JSON; guardas deterministas después</td></tr>
+<tr><td>¿Hay un mensaje que responder tras un relevo?</td><td class="where">workflow_helpers.py:412-452</td><td>El LLM decide con el prompt y NO_MESSAGE</td></tr>
+</table></div>
+
+<!-- 7 -->
+<h2 id="mudanza"><span class="n">07</span>Cómo se muda cada pieza al motor</h2>
+<p class="answer">Cada pieza pasa a ser una <strong>capacidad</strong> del motor: una o dos preguntas cerradas a Jev, una política que convierte la respuesta en decisión y la regla vieja de respaldo. El que consume la decisión (tool, activity, workflow) no sabe quién contestó.</p>
+<div class="layers">
+<div class="layer"><div><div class="t">Paso 1 · Envolver</div><div class="s">sin cambio de comportamiento</div></div><p>La regla de hoy se mueve tal cual al motor como proveedor <code>reglas</code> de su capacidad, y el consumidor le pide la decisión al motor. Con <code>reglas</code> el resultado es idéntico, y los tests de hoy y el replay lo prueban.</p></div>
+<div class="layer"><div><div class="t">Paso 2 · Sombra</div><div class="s">decide la regla</div></div><p>Jev contesta la pregunta equivalente al mismo tiempo. Cada desacuerdo entre la regla y Jev va a una cola que califico yo. Cuando coinciden no hay nada que revisar, así que el trabajo es chico.</p></div>
+<div class="layer focal"><div><div class="t">Paso 3 · Decide Jev</div><div class="s">por capacidad, gradual</div></div><p>Esto pasa con la vara cumplida: Jev gana en los desacuerdos y tiene precisión de 0,95 o más en el banco de referencia. Si Jev no responde, decide la regla.</p></div>
+<div class="layer"><div><div class="t">Paso 4 · Solo en el motor</div><div class="s">cuando se apaga V1</div></div><p>La regla ya no aparece en ningún worker, activity ni tool: vive únicamente como respaldo dentro del motor, con su nombre y su test.</p></div>
+</div>
+
+<h3>El catálogo de capacidades</h3>
+<div class="table-wrap"><table>
+<tr><th>Capacidad</th><th>Pregunta a Jev</th><th>Dónde se pregunta</th><th>Si Jev no responde</th></tr>
+<tr><td colspan="4" class="t">Lecturas del cliente. Escriben los mismos campos de hoy, así que llegan a V1, V2, remarketing y el watchdog sin tocarlos</td></tr>
+<tr><td class="t">compra</td><td>choice «¿Qué hace el cliente con la compra?» {confirma, aplaza, rechaza, pregunta, da datos, se despide, otro}, junto con lo que preguntó el asesor (tema 1). Queda <em>una</em> sola definición de «compra confirmada»</td><td>ingest</td><td>regla de hoy</td></tr>
+<tr><td class="t">retoma</td><td>noul «¿Dice que retomará más adelante?» · choice «¿Cuándo?» · noul «¿Es solo una cortesía?». La fecha la sigue calculando el código</td><td>ingest</td><td>regla de hoy</td></tr>
+<tr><td class="t">baja</td><td>noul «¿Pide dejar de recibir mensajes o promociones?»</td><td>ingest, también por el camino de MBA</td><td>la frase explícita siempre cuenta (piso)</td></tr>
+<tr><td class="t">cupón</td><td>noul «¿Habla del cupón o de sus productos?»</td><td>ingest</td><td>regla de hoy</td></tr>
+<tr><td class="t">fuera de catálogo</td><td>El regex propone candidatos; por cada término, noul «¿Es algo que el cliente pide o muestra?»</td><td>ingest y contexto de remarketing</td><td>regla de hoy</td></tr>
+<tr><td class="t">cantidad</td><td>noul «¿El asesor preguntó cuántas?» · choice «¿Qué cantidad dio?» {1…20, otra, ninguna}</td><td>activity del prompt</td><td>regla de hoy</td></tr>
+<tr><td colspan="4" class="t">Llevar a listas cerradas. El valor final se sigue validando contra el catálogo</td></tr>
+<tr><td class="t">mapeos</td><td>Categoría, familia de color, ítem del pedido, zona de envío y producto nombrado: choice sobre la lista cerrada {…, ambiguo, ninguno}</td><td>dentro de cada tool</td><td>regla de hoy</td></tr>
+<tr><td colspan="4" class="t">Texto del LLM. Se pregunta en las tools y activities que ya graban su resultado y, en V2, antes de grabar el turno</td></tr>
+<tr><td class="t">destinatario</td><td>choice «¿Qué es este texto?» {mensaje al cliente, razonamiento, reporte interno, acuse al sistema, deliberación}. Reemplaza el detector de fugas en sus 8 sitios</td><td>tools, flush, envío; V2</td><td>regla de hoy</td></tr>
+<tr><td class="t">persona</td><td>noul «¿Deja ver que quien atiende es un bot o una IA?»</td><td>tools de cierre y escalación</td><td>regla de hoy</td></tr>
+<tr><td class="t">rescate</td><td>El choice de destinatario, párrafo por párrafo, con <em>una</em> sola reacción si no queda nada: la línea aprobada según el caso</td><td>donde se pregunte destinatario</td><td>línea aprobada</td></tr>
+<tr><td class="t">enumeración</td><td>choice «¿Qué enumera el texto?» {aromas, colores, combinaciones de cupón, productos, nada}. El selector se sigue armando con el catálogo</td><td>activity de enumeración</td><td>regla de hoy</td></tr>
+<tr><td class="t">saludo · portavelas · monto · selector</td><td>«¿Alguno de estos mensajes ya saluda?» · por oración, «¿le afirma algo del portavelas?» · «¿esta oración cotiza precio de un producto?» · «¿estos botones piden elegir producto o variante?»</td><td>V2 · V2 · tool · tool</td><td>regla de hoy</td></tr>
+<tr><td class="t">cobertura</td><td>La pregunta <code>cover.*</code> que ya existe; la capa ② por palabras desaparece</td><td>V2</td><td>—</td></tr>
+<tr><td class="t">verdad de producto</td><td>noul «¿Ofrece algo que no está en la ficha?» · noul «¿Afirma popularidad?»</td><td>antes de enviar el gancho</td><td>regla de hoy</td></tr>
+<tr><td colspan="4" class="t">Decisiones del agente. Hoy las toma el LLM por instrucción del prompt</td></tr>
+<tr><td class="t">contactar</td><td>noul «¿Sobra un mensaje proactivo ahora?». Se decide <strong>antes</strong> de llamar al LLM de remarketing: si sobra, no se redacta nada, y así desaparecen las fugas por deliberación</td><td>antes del turno de remarketing</td><td>el LLM, como hoy</td></tr>
+<tr><td class="t">cierre por abandono</td><td>choice {confirmado sin datos, interesado, rechazo, compra exitosa}</td><td>activity de cierre</td><td>el LLM, como hoy</td></tr>
+<tr><td class="t">estado del pedido</td><td>choice «¿Qué cambió?» y un noul por cada mensaje que sirve de evidencia (el Order Sentinel)</td><td>GraphAgents</td><td>el LLM, como hoy</td></tr>
+</table></div>
+
+<h3>Lo que no se muda</h3>
+<p>Estas reglas no adivinan nada y se quedan como código:</p>
+<ul>
+<li>la verdad del catálogo: handles, variantes, precios, cupos y la tabla de tarifas;</li>
+<li>la aritmética de montos y fechas;</li>
+<li>la mecánica del turno:
+  <ul>
+  <li>debounce y reinicios;</li>
+  <li>corte por tool y por entrega;</li>
+  <li>el texto junto a una tool nunca sale;</li>
+  <li>la escalación y la etiqueta terminan el turno;</li>
+  <li>el turno administrativo;</li>
+  <li>el ghosting por tiempo;</li>
+  </ul></li>
+<li>el protocolo: el centinela <code>NO_MESSAGE</code>, los tokens <code>ref:cart</code> y el formato E.164;</li>
+<li>la seguridad: datos personales y URLs permitidas;</li>
+<li>el pago confirmado solo con <code>pay_status</code>;</li>
+<li>la etapa calculada por el borrador;</li>
+<li>las guardas del Order Sentinel.</li>
+</ul>
+<p>Hay una lección que ya aprendimos y que se mantiene. Cuando «texto interno llegó al cliente», el arreglo es cerrar el canal ambiguo por construcción. El clasificador es la red de seguridad, no el arreglo.</p>
+<div class="callout warn"><p><strong>El juez no puede medir con la regla que se reemplaza.</strong> Estos checks del scorecard llaman a los mismos detectores de producción:</p>
+<ul>
+<li>EST-03, sobre fugas;</li>
+<li>los checks de variantes;</li>
+<li>los CON-*, sobre confirmación y aplazamiento.</li>
+</ul>
+<p>Si comparamos la regla con Jev usando esos checks, el laboratorio premiaría a la regla. Para la comparación, esos checks se califican con el juez (yo).</p></div>
+
+<!-- 8 -->
+<h2 id="inyeccion"><span class="n">08</span>Inyección: las mismas piezas en el laboratorio y en producción</h2>
+<p class="q">Lo que planteaste</p>
+<p class="ask">Piensa en inyectar un worker o una activity nueva, o lo que esté contaminado, para correr el laboratorio con piezas sin código quemado. Luego, en producción, reemplazarlas igual, por inyección.</p>
+
+<h3>Tres enchufes y un solo control</h3>
+<div class="layers">
+<div class="layer"><div><div class="t">1 · Lecturas del ingest</div><div class="s">API · un proveedor por sesión</div></div><p><code>IngestInboundMessage</code> ya recibe sus dependencias. Se le agrega un proveedor de lecturas que escribe los mismos campos de hoy (<code>last_inbound_signal</code>, confirmación, <code>reengagement_deferral</code>, <code>marketing_opt_out</code>). Esos campos los leen las tools de ventas, remarketing, el watchdog y el ciclo de reactivación, y ninguno se toca. Suma entre 0,3 y 0,5 s antes de avisar al workflow, que igual espera 1,5 s de silencio.</p></div>
+<div class="layer"><div><div class="t">2 · Activities y tools</div><div class="s">por nombre y por fábrica</div></div><p>Las activities se sustituyen por nombre en la lista del worker: así <code>sales_build_prompt</code> ya reemplaza a <code>build_prompt</code>. Las tools se sustituyen por fábrica en su registro, como la escalación protegida. Dentro, el proveedor se escoge por sesión, y su resultado queda grabado en la historia: cambiar la implementación no rompe el replay.</p></div>
+<div class="layer focal"><div><div class="t">3 · Workflow V2</div><div class="s">tipo nuevo · V1 congelado</div></div><p><code>HubaraSalesSessionWorkflowV2</code> se registra en el mismo worker, al lado del actual. No trae ni una regla de texto: aplica los veredictos que el motor dejó grabados. El actual (V1) no se toca.</p></div>
+</div>
+<p style="margin-top:12px"><strong>El control es un solo registro de «bots»</strong> (<code>sales/decisions/bots.py</code>). Cada bot es una versión del workflow, un proveedor por capacidad y un perfil de Jev. Lo leen el arranque, el ingest, las tools y el laboratorio. El despliegue gradual es el que ya existe (números de prueba, porcentaje estable por conversación y techo en Terraform), ahora por capacidad y por versión del workflow.</p>
+
+<div class="table-wrap"><table>
+<tr><th>Enchufe</th><th>Dónde está hoy</th><th>Precedente en el código</th><th>Lo único que cambia</th></tr>
+<tr><td class="t">Lecturas</td><td class="where">ingest:411-470 llama directo a las reglas</td><td>el cupón inyectado con tiempo máximo (composition.py:152-202)</td><td>un parámetro nuevo en el constructor</td></tr>
+<tr><td class="t">Estado compartido</td><td class="where">last_inbound_signal: un escritor (ingest:411) y cuatro lectores</td><td>—</td><td>se cambia el escritor y los cuatro lectores cambian sin tocarlos</td></tr>
+<tr><td class="t">Activities</td><td class="where">SALES_ACTIVITIES (workers/sales.py:406-477)</td><td>sales_build_prompt</td><td>la guarda de paridad acepta una tabla de sustituciones declaradas (hoy acepta una sola)</td></tr>
+<tr><td class="t">Tools</td><td class="where">register_tool_extension (workers/sales.py:140-399)</td><td>guarded_escalation_tool</td><td>—</td></tr>
+<tr><td class="t">Arranque</td><td class="where">el workflow de ventas se arranca en 4 lugares (ingest, dispatcher, relevo de remarketing, API de handoff)</td><td>el dispatcher ya arranca por nombre del manifiesto</td><td>una sola función, <code>bot_for_session()</code></td></tr>
+<tr><td class="t">Laboratorio</td><td class="where">sandbox_activities sustituye por nombre (sandbox/activities.py:217-245)</td><td>es el mismo mecanismo</td><td>el brazo escoge un bot del registro</td></tr>
+</table></div>
+
+<figure><svg viewBox="0 0 960 1068" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="motor-inyeccion-title motor-inyeccion-desc">
+<title id="motor-inyeccion-title">Inyección: el mismo registro en el laboratorio y en producción</title>
+<desc id="motor-inyeccion-desc">Un solo registro de bots decide qué versión del workflow y qué proveedores corren: en producción por el despliegue gradual de cada conversación, en el laboratorio por el brazo. El worker registra las dos versiones; el workflow nuevo solo aplica los veredictos que el motor dejó grabados.</desc>
+<defs>
+<marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#8e8e93"/></marker>
+<marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5fa9ff"/></marker>
+<marker id="arrow-jev" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#d68aff"/></marker>
+<marker id="arrow-ok" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5be07b"/></marker>
+<marker id="arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#8e8e93" stroke-width="1.2"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#1a1a1c"/>
+<rect x="72" y="164" width="440" height="192" rx="4" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+<rect x="72" y="164" width="37" height="16" rx="2" fill="#1a1a1c" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+<text x="90" y="176" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.12em">OPT</text>
+<text x="84" y="196" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.04em">[producción: entra un mensaje de WhatsApp]</text>
+<rect x="72" y="376" width="276" height="128" rx="4" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+<rect x="72" y="376" width="37" height="16" rx="2" fill="#1a1a1c" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+<text x="90" y="388" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.12em">OPT</text>
+<text x="84" y="408" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.04em">[laboratorio: la caja corre un caso del banco]</text>
+<line x1="120" y1="120" x2="120" y2="992" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="300" y1="120" x2="300" y2="992" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="480" y1="120" x2="480" y2="992" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="660" y1="120" x2="660" y2="992" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="840" y1="120" x2="840" y2="992" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="124" y1="224" x2="294" y2="224" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="132" y="204" width="156" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="213" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">1 ¿QUÉ BOT PARA LA SESIÓN?</text>
+<path d="M304 268 H332 V288 H310" fill="none" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="340" y="270" width="124" height="12" rx="2" fill="#1a1a1c"/>
+<text x="346" y="279" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">2 DESPLIEGUE GRADUAL</text>
+<line x1="296" y1="332" x2="126" y2="332" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="148" y="312" width="124" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="321" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">3 V2 · PERFIL JEV-V2</text>
+<line x1="124" y1="436" x2="294" y2="436" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="134" y="416" width="152" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="425" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">4 ¿QUÉ BOT PARA EL BRAZO?</text>
+<line x1="296" y1="480" x2="126" y2="480" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="148" y="460" width="124" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="469" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">5 V2 · PERFIL JEV-V2</text>
+<line x1="124" y1="540" x2="474" y2="540" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="142" y="520" width="136" height="12" rx="2" fill="#1a1a1c"/>
+<text x="210" y="529" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">6 LECTURAS + INICIA V2</text>
+<line x1="484" y1="584" x2="654" y2="584" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="516" y="564" width="108" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="573" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">7 ANTES DEL TURNO</text>
+<line x1="664" y1="628" x2="834" y2="628" stroke="#d68aff" stroke-width="1.4" marker-end="url(#arrow-jev)"/>
+<rect x="714" y="608" width="72" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="617" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">8 LECTURAS</text>
+<line x1="836" y1="672" x2="666" y2="672" stroke="#d68aff" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-jev)"/>
+<rect x="698" y="652" width="104" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="661" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">9 P POR PREGUNTA</text>
+<line x1="656" y1="716" x2="486" y2="716" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="502" y="696" width="136" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="705" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">10 DECISIONES GRABADAS</text>
+<path d="M484 760 H512 V780 H490" fill="none" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="520" y="762" width="136" height="12" rx="2" fill="#1a1a1c"/>
+<text x="526" y="771" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">11 TOOLS LEEN EL LIBRO</text>
+<line x1="484" y1="824" x2="654" y2="824" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="538" y="804" width="64" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="813" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">12 EGRESO</text>
+<line x1="664" y1="868" x2="834" y2="868" stroke="#d68aff" stroke-width="1.4" marker-end="url(#arrow-jev)"/>
+<rect x="680" y="848" width="140" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="857" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">13 ¿ES PARA EL CLIENTE?</text>
+<line x1="836" y1="912" x2="666" y2="912" stroke="#d68aff" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow-jev)"/>
+<rect x="720" y="892" width="60" height="12" rx="2" fill="#1a1a1c"/>
+<text x="750" y="901" fill="#d68aff" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">14 P(SÍ)</text>
+<line x1="656" y1="956" x2="486" y2="956" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="514" y="936" width="112" height="12" rx="2" fill="#1a1a1c"/>
+<text x="570" y="945" fill="#8e8e93" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">15 ENVIAR O FRENAR</text>
+<rect x="44" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="44" y="64" width="152" height="56" rx="6" fill="rgba(142,142,147,0.10)" stroke="rgba(161,161,166,0.7)" stroke-width="1"/>
+<rect x="52" y="70" width="42" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="73" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ORIGEN</text>
+<text x="120" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Entrada</text>
+<text x="120" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">webhook · caja del lab</text>
+<rect x="224" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="224" y="64" width="152" height="56" rx="6" fill="rgba(214,138,255,0.12)" stroke="#d68aff" stroke-width="1"/>
+<rect x="232" y="70" width="47" height="12" rx="2" fill="transparent" stroke="#d68aff" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="255" y="79" fill="#d68aff" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CONTROL</text>
+<text x="300" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Registro de bots</text>
+<text x="300" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">decisions/bots.py</text>
+<rect x="404" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="404" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.05)" stroke="rgba(235,235,235,0.55)" stroke-width="1"/>
+<rect x="412" y="70" width="32" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="428" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PROD</text>
+<text x="480" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Worker de ventas</text>
+<text x="480" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">V1 congelado · V2</text>
+<rect x="584" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="584" y="64" width="152" height="56" rx="6" fill="rgba(214,138,255,0.12)" stroke="#d68aff" stroke-width="1"/>
+<rect x="592" y="70" width="37" height="12" rx="2" fill="transparent" stroke="#d68aff" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="610" y="79" fill="#d68aff" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">MOTOR</text>
+<text x="660" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Motor de decisiones</text>
+<text x="660" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">sales/decisions</text>
+<rect x="764" y="64" width="152" height="56" rx="6" fill="#1a1a1c"/>
+<rect x="764" y="64" width="152" height="56" rx="6" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="772" y="70" width="47" height="12" rx="2" fill="transparent" stroke="#a1a1a6" stroke-opacity="0.5" stroke-width="0.8"/>
+<text x="795" y="79" fill="#a1a1a6" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ORÁCULO</text>
+<text x="840" y="100" fill="#ebebeb" font-size="12" font-family="'Inter', system-ui, sans-serif" text-anchor="middle" font-weight="600">Jev</text>
+<text x="840" y="114" fill="#a1a1a6" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">/api/alpha/decisions</text>
+<line x1="30" y1="1016" x2="930" y2="1016" stroke="rgba(255,255,255,0.10)" stroke-width="0.8"/>
+<text x="30" y="1036" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.14em">LEYENDA</text>
+<line x1="120" y1="1033" x2="156" y2="1033" stroke="#8e8e93" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="166" y="1036" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">LLAMADA</text>
+<line x1="256" y1="1033" x2="292" y2="1033" stroke="#8e8e93" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<text x="302" y="1036" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">RESPUESTA</text>
+<line x1="392" y1="1033" x2="428" y2="1033" stroke="#d68aff" stroke-width="1.2" marker-end="url(#arrow-jev)"/>
+<text x="438" y="1036" fill="#a1a1a6" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="start" letter-spacing="0.06em">JEV</text>
+</svg></figure>
+
+<h3>El laboratorio</h3>
+<ul>
+<li><strong>Los brazos se definen por composición.</strong>
+  <ul>
+  <li><strong>A1</strong> = V1 con reglas: el bot de hoy.</li>
+  <li><strong>B0</strong> = V2 con reglas. Tiene que dar lo mismo que A1, y así prueba que el esqueleto nuevo es fiel.</li>
+  <li><strong>B</strong> = V2 con Jev.</li>
+  </ul>
+  Así se separa el efecto de cambiar el workflow del efecto de Jev.</li>
+<li><strong>Hoy el sandbox no corre el ingest</strong>: arranca el workflow directo. Verifiqué estas consecuencias:
+  <ul>
+  <li>el aplazamiento nunca se registra;</li>
+  <li>el check CON-02 no se juzga en los brazos simulados;</li>
+  <li>la confirmación de compra llega con estado inconsistente: puede perderse una anterior o colarse una posterior.</li>
+  </ul>
+  El sandbox pasa a correr el paso de lecturas del ingest, con el mismo proveedor que el brazo.</li>
+<li><strong>Remarketing no se simula.</strong> Sus capacidades se miden con el banco de referencia y con una sombra más larga, hasta que tenga su propio sandbox.</li>
+</ul>
+
+<h3>Producción</h3>
+<ul>
+<li><strong>Cada capacidad avanza por su cuenta.</strong> Pasa de sombra a canary con números de prueba, luego a un porcentaje y luego a todos. Las lecturas del ingest y el egreso en tools y activities funcionan igual con V1, así que se pueden encender <strong>sin esperar a V2</strong>.</li>
+<li><strong>V2 entra cuando en el laboratorio B0 da lo mismo que A1 y B da igual o mejor.</strong> Primero canary con números de prueba, luego un porcentaje de las conversaciones nuevas, luego todas.
+  <ul>
+  <li>Una conversación viva no cambia de versión: el id es el mismo, y la sesión termina a los 5 minutos sin mensajes.</li>
+  <li>Así, V1 se vacía en horas y después se borra.</li>
+  </ul></li>
+<li><strong>Vuelta atrás.</strong> El registro manda las conversaciones nuevas a V1 y cada capacidad vuelve a <code>reglas</code>. Se lee en el siguiente turno, sin desplegar.</li>
+</ul>
+
+<h3>Por qué un workflow nuevo y no parches al actual</h3>
+<p>Lo que hoy decide el workflow por dentro (la fuga en el texto final, el saludo, el portavelas, el rescate y la cobertura ②) solo se cambia con un patch por regla. El workflow ya tiene 39 patches propios y el ciclo del turno otros 12.</p>
+<p>Un tipo nuevo nace sin historia:</p>
+<ul>
+<li>no necesita patches;</li>
+<li>se compara limpio contra el actual en el laboratorio;</li>
+<li>se revierte cambiando el enrutamiento;</li>
+<li>deja al actual intacto mientras tanto.</li>
+</ul>
+<p>Para no duplicar código, V2 reutiliza las funciones puras del actual y las mismas activities. Lo único que no trae son las reglas de texto, y un test lo exige: falla si V2 importa un detector de texto.</p>
+
+<!-- 9 -->
+<h2 id="bugs"><span class="n">09</span>Bugs reales que encontré de paso</h2>
+<p>Todos los verifiqué con el código o con las funciones reales. Los tres primeros no esperan al motor: dejé una tarea aparte para cada uno, con test primero.</p>
+<div class="table-wrap"><table>
+<tr><th>Bug</th><th>Dónde</th><th>Qué hago</th></tr>
+<tr><td>Si el selector de variantes se rechaza, el cliente se queda sin respuesta: el workflow mira el nombre de la tool, no si se entregó</td><td class="where">sales_session.py:1319-1323</td><td><span class="pill i">tarea creada</span></td></tr>
+<tr><td>La baja no detecta «no me escriban» ni «elimínenme de la lista», y el camino de MBA no registra bajas</td><td class="where">marketing_opt_out.py · ingest_standby.py</td><td><span class="pill i">tarea creada</span> Achicar lo que hoy se marca de más es decisión tuya (punto 12).</td></tr>
+<tr><td>Un cliente que compró una vez cuenta como «confirmado» en todos sus episodios siguientes: las guardas no lo frenan</td><td class="where">purchase_signals.py:177-186</td><td><span class="pill i">tarea creada</span></td></tr>
+<tr><td>«Te confirmo, sí la quiero» frena el formulario de envío</td><td class="where">purchase_signals.py:35-61</td><td>Lo resuelve la capacidad «compra» (F3)</td></tr>
+<tr><td>Un comprobante de pago pausa la reactivación una semana, porque el texto que escribe la visión pasa por las lecturas del cliente</td><td class="where">reengagement_deferral.py · ingest:431</td><td>Lo resuelve «retoma» (F3): lo que escribe la visión deja de pasar por las lecturas del cliente</td></tr>
+<tr><td>La capa ② mira texto que el cliente nunca ve y deja «aplazamiento» siempre cubierto; la verificación ③ cuenta como tarjetas las tools rechazadas y <code>send_reply</code></td><td class="where">mi código en #372 (plan.py:64, workflow_helpers.py:1167, sales_session.py:1478)</td><td>Lo corrijo en F0</td></tr>
+<tr><td><code>motivo</code>, el resumen interno del LLM, va como variable de la plantilla del watchdog al cliente</td><td class="where">watchdog_activities.py:226-277</td><td>Capacidad de egreso para plantillas. En código el watchdog viene apagado; no verifiqué su valor en producción</td></tr>
+<tr><td>Varias guardas leen el vocabulario del catálogo con tope de 30 productos</td><td class="where">variant_enumeration_guard.py:31 · ui_intents.py:1913, 2183</td><td>Se corrige al mudar cada pieza</td></tr>
+<tr><td>Las dos funciones de tarifa por ciudad (la del bot y la de MBA) no coinciden</td><td class="where">config/shipping.py:70-126</td><td>Se unifican en el mapeo «zona de envío»</td></tr>
+<tr><td>El texto que se bloqueó igual se guarda en el dashboard y en el historial del LLM</td><td class="where">sales_session.py:1520 · remarketing.py:689-695</td><td>V2 no guarda lo que no se envió</td></tr>
+</table></div>
+
+<!-- 10 -->
+<h2 id="riesgos"><span class="n">10</span>Riesgos y cómo se cubren</h2>
+<div class="table-wrap"><table>
+<tr><th>Riesgo</th><th>Salvaguarda</th></tr>
+<tr><td>La API de Jev está en alpha y puede cambiar o caerse</td><td>Se valida la forma de cada respuesta (ya existe); si falla, el turno es el de hoy. Además, la sonda diaria y los tests con respuestas grabadas.</td></tr>
+<tr><td>Jev cambia de versión sin avisar</td><td>La calibración queda atada a la versión exacta: si cambia, todo lo que actúa baja a sombra.</td></tr>
+<tr><td>El contexto hace que Jev vea asuntos viejos</td><td>Las preguntas se limitan a «este turno», y se mide la precisión de v1 contra v2 en el mismo banco.</td></tr>
+<tr><td>Jev frena un dato verdadero</td><td>Solo frena con p ≤ 0,15, y el costo es una pregunta más, no una venta perdida. Yo reviso los frenos en el laboratorio.</td></tr>
+<tr><td>Cambiar una regla rompe conversaciones en vuelo</td><td>Las reglas viajan grabadas en el resultado de la activity; el workflow solo las aplica.</td></tr>
+<tr><td>La nota crece y diluye la obediencia (la dieta del prompt)</td><td>Una sola nota del motor, con tope de caracteres vigilado por test, como el que ya existe para el prompt.</td></tr>
+<tr><td>Más latencia</td><td>Antes del turno ya se mide (p95 de 0,47 s). Revisar un dato suma una llamada por cada <code>set_order_slot</code>, con 2 s de tiempo máximo. La vara de 1,5 s de p95 sigue.</td></tr>
+<tr><td>Datos personales hacia TypeSafe</td><td>La anonimización de hoy. Además, dirección, teléfono y nombre solo viajan como «dado» o «falta».</td></tr>
+<tr><td>Mantener dos versiones mientras conviven</td><td>Todo arreglo nuevo de una alucinación entra como capacidad del motor, que sirve a V1 y a V2 a la vez. V1 solo recibe arreglos críticos y se apaga en horas cuando V2 llega al 100 %.</td></tr>
+<tr><td>El juez premia a la regla</td><td>En las comparaciones, los checks que usan los detectores de producción los califica el juez.</td></tr>
+<tr><td>Una lectura equivocada en el ingest afecta a todos los agentes que leen ese campo</td><td>Cada lectura pasa por sombra con los desacuerdos calificados antes de actuar. La baja explícita nunca se puede quitar.</td></tr>
+<tr><td>Jev en el camino del webhook</td><td>En el ingest se le da un tiempo máximo corto (1,5 s), como ya se hace con el cupón. Si no responde, decide la regla.</td></tr>
+<tr><td>Dos procesos: la API escribe las lecturas y los workers las leen</td><td>El formato de los campos no cambia. Si algún día cambia, se despliega primero el lector.</td></tr>
+<tr><td>Remarketing no tiene laboratorio</td><td>Para sus capacidades: banco de referencia y una sombra más larga.</td></tr>
+</table></div>
+
+<!-- 11 -->
+<h2 id="fases"><span class="n">11</span>Fases</h2>
+<p>Cada fase se hace con TDD, pasa por el laboratorio y por la sombra en producción, y enciende <strong>su</strong> capacidad por separado. F0 y F2 no cambian el comportamiento: solo preparan el terreno.</p>
+<div class="table-wrap"><table>
+<tr><th>Fase</th><th>Qué entra</th><th>Qué actúa al terminar</th><th>Cómo se sabe que sirve</th></tr>
+<tr><td class="t">F0 · Solo Jev + base del motor</td><td>Quitar OpenAI. Reorganizar <code>perception/</code> en el motor, con fachada y contrato. Las reglas de ② viajan en el resultado grabado. Corregir mis capas ② y ③ (sección 9).</td><td>Lo mismo que hoy.</td><td>Replay 38/38, la fixture congelada de <code>perception-v1</code> y el laboratorio A1 contra B igual que antes.</td></tr>
+<tr><td class="t">F1 · Contexto</td><td>Ventana de lo que vio el cliente, hechos del pedido, lectura del «sí» y cuestionario v2 limitado a «este turno». Arranca el banco de referencia.</td><td>La nota con la lectura.</td><td>Banco de referencia y <code>jev-v1</code> contra <code>jev-v2</code>.</td></tr>
+<tr><td class="t">F2 · Enchufes</td><td>Registro de bots, arranque unificado, tabla de sustituciones declaradas y parámetro de lecturas en el ingest. El sandbox pasa a correr las lecturas del ingest. Cada regla se envuelve como proveedor <code>reglas</code> (paso 1).</td><td>Lo mismo que hoy.</td><td>Tests y replay sin cambios, y A1 del laboratorio idéntico antes y después.</td></tr>
+<tr><td class="t">F3 · Lecturas del cliente con Jev</td><td>compra, retoma, baja, cupón, fuera de catálogo, cantidad y mapeos.</td><td>Por capacidad: sombra en producción (también sirve a V1), luego canary, luego todos.</td><td>Desacuerdos que califico yo, banco de referencia y los CON-* juzgados en el laboratorio.</td></tr>
+<tr><td class="t">F4 · Workflow V2</td><td>El workflow nuevo sin reglas de texto, que aplica los veredictos grabados, y la guarda que falla si importa un detector.</td><td>Solo en el laboratorio.</td><td>B0 igual a A1.</td></tr>
+<tr><td class="t">F5 · Texto del LLM con Jev</td><td>destinatario, persona, rescate, enumeración, saludo, portavelas, monto, selector y verdad de producto.</td><td>En tools y activities, para V1 y V2; lo que hoy decide el workflow, solo en V2.</td><td>Desacuerdos calificados y B igual o mejor que A1.</td></tr>
+<tr><td class="t">F6 · Tools, datos y etapas</td><td>Temas 4 y 5: contrato de tools, revisión de cada dato, confirmación con contexto actuando y guía de etapas.</td><td>En V2.</td><td>Cumplimiento del contrato, frenos revisados por mí y turnos por etapa.</td></tr>
+<tr><td class="t">F7 · V2 en producción</td><td>Canary con números de prueba, luego un porcentaje de conversaciones nuevas, luego todas. V1 se vacía y se borra.</td><td>Todo.</td><td>La vara de producción y el scorecard de producción: actual contra nuevo.</td></tr>
+<tr><td class="t">F8 · Decisiones del agente y asuntos nuevos</td><td>Remarketing decide antes de redactar; cierre por abandono; Order Sentinel; asuntos nuevos del cuestionario.</td><td>Según la vara de cada una.</td><td>Banco de referencia.</td></tr>
+</table></div>
+<p style="margin-top:12px"><strong>Vara para encender cada capacidad:</strong></p>
+<ul>
+<li><strong>En el laboratorio:</strong> el bot nuevo igual o mejor que A1 en el scorecard, sin checks que empeoren.</li>
+<li><strong>En el banco de referencia:</strong> cada pregunta que actúa, con precisión de 0,95 o más, y Jev ganando en los desacuerdos con la regla.</li>
+<li><strong>En producción:</strong> la vara que ya existe (7 días en sombra, caídas menores al 1 % y p95 menor a 1,5 s), y la misma versión de Jev con la que se calibró.</li>
+</ul>
+
+<!-- 12 -->
+<h2 id="decidir"><span class="n">12</span>Lo que necesito de ti</h2>
+<div class="rule"><span class="k">1</span><p><strong>¿F0 va dentro de #372?</strong> Recomiendo que sí: así el laboratorio nace solo con Jev y con el motor, sin cambiar el comportamiento. La otra opción es un PR aparte después de mergear #372.</p></div>
+<div class="rule"><span class="k">2</span><p><strong>¿Aprobamos el workflow V2?</strong> Es un tipo nuevo registrado al lado del actual; el actual queda congelado hasta apagarse. Recomiendo que sí: es la única forma de sacar las reglas del workflow sin un patch por regla, y se revierte cambiando el enrutamiento.</p></div>
+<div class="rule"><span class="k">3</span><p><strong>¿Jev puede frenar?</strong> Se trata de frenar un dato que el cliente no dijo, o retirar un «sí» leído como compra, solo con certeza alta y después de la sombra. Recomiendo que sí: el peor caso es una pregunta de más al cliente.</p></div>
+<div class="rule"><span class="k">4</span><p><strong>¿Califico yo el banco de referencia y los desacuerdos?</strong> Para arrancar serían unos 150 turnos; después, solo los casos en que la regla y Jev no coinciden. Recomiendo que sí: es la vara que reemplaza al rival.</p></div>
+<div class="rule"><span class="k">5</span><p><strong>La baja de marketing es una decisión legal.</strong> La tarea que dejé solo agrega las frases que faltan, y eso es seguro. Achicar lo que hoy se marca de más («quiero saber no más el precio») sí es decisión tuya. Recomiendo esperar a que la capacidad «baja» pase la sombra; entonces dejar como piso solo las frases inequívocas y que Jev decida los casos dudosos.</p></div>
+
+<footer>Verificado contra lab/todo @ 0b7edd25 · 2026-09-28 · El inventario sale de 5 barridos del código productivo · Los ejemplos de texto son sintéticos o de la cuenta del equipo, con datos tapados</footer>
+</div>
+</body>
+</html>

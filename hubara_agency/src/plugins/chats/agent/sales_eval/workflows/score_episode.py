@@ -27,7 +27,9 @@ class ScoreEpisodeWorkflow:
     async def run(self, inp: ScoreEpisodeInput) -> ScorecardSummary:
         return await workflow.execute_activity(
             score_episode_scorecard_activity,
-            args=[inp.session_id, inp.episode_id, inp.with_judge],
+            # `judge_kind` solo viaja si lo hay: el recálculo de siempre
+            # conserva sus argumentos.
+            args=[inp.session_id, inp.episode_id, inp.with_judge, *([inp.judge_kind] if inp.judge_kind else [])],
             start_to_close_timeout=timedelta(minutes=10),
             heartbeat_timeout=timedelta(seconds=60),
             retry_policy=RetryPolicy(maximum_attempts=2),

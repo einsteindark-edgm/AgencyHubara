@@ -51,8 +51,14 @@ def judge_calls(monkeypatch) -> list[str]:
         calls.append("run_judge_checks")
         return []
 
+    async def run_judge_checks_focus(real, candidates, ctx, judge, **_kw):
+        # El scorecard de producción juzga turno por turno (Calidad LLM, 2026-10-02).
+        calls.append("run_judge_checks_focus")
+        return {}
+
     monkeypatch.setattr(composition, "get_judge", get_judge)
     monkeypatch.setattr(judge_checks, "run_judge_checks", run_judge_checks)
+    monkeypatch.setattr(judge_checks, "run_judge_checks_focus", run_judge_checks_focus)
     return calls
 
 
@@ -96,7 +102,7 @@ async def test_scorecard_calls_the_judge_again_when_the_switch_is_on(
 
     await ActivityEnvironment().run(ea.score_episode_scorecard_activity, SESSION, "ep_007", True)
 
-    assert judge_calls == ["run_judge_checks"]
+    assert judge_calls == ["run_judge_checks_focus"]
 
 
 async def test_legacy_eval_is_skipped_without_calling_the_judge(tmp_path: Path, monkeypatch, judge_calls) -> None:

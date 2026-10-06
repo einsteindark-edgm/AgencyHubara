@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Motor de decisiones</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* Estilo editorial de diagram-design (papel claro, tinta, acento naranja).
+     Una sola apariencia a propósito: los diagramas están dibujados para ella. */
+  :root {
+    color-scheme: light;
+    --paper: #f5f5f5;
+    --paper-2: #ececec;
+    --card: #ffffff;
+    --ink: #2d3142;
+    --muted: #4f5d75;
+    --soft: #7a8399;
+    --rule: rgba(45,49,66,0.12);
+    --rule-solid: #bfc0c0;
+    --accent: #eb6c36;
+    --accent-tint: rgba(235,108,54,0.08);
+    --link: #2e5aa8;
+    --sans: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --serif: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 400 16px/1.65 var(--sans); padding-inline: 16px; }
+  main { max-width: 1160px; margin: 0 auto; padding-block: 48px 96px; }
+  .eyebrow { font: 500 11px/1.4 var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+  h1 { font: 400 clamp(2.4rem, 4vw + 1rem, 3.4rem)/1.05 var(--serif); letter-spacing: -.02em; margin: 0 0 20px; text-wrap: balance; }
+  h2 { font: 400 clamp(1.7rem, 2vw + 1rem, 2.2rem)/1.15 var(--serif); letter-spacing: -.01em; margin: 0 0 14px; text-wrap: balance; }
+  h3 { font: 600 1.05rem/1.35 var(--sans); margin: 32px 0 10px; }
+  p, li { max-width: 72ch; }
+  p { margin: 0 0 14px; }
+  a { color: var(--link); text-underline-offset: 3px; }
+  code { font: 400 .86em/1 var(--mono); background: var(--paper-2); padding: 2px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+  pre { font: 400 13px/1.55 var(--mono); background: var(--card); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 18px; overflow-x: auto; margin: 0 0 18px; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .lede { font-size: 1.15rem; color: var(--muted); max-width: 66ch; }
+  .rule-of-gold { border-left: 3px solid var(--accent); background: var(--accent-tint); padding: 16px 20px; border-radius: 0 6px 6px 0; margin: 24px 0; max-width: 80ch; }
+  .rule-of-gold p { margin: 0; }
+  .rule-of-gold strong { font-weight: 600; }
+  nav.toc { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 24px; margin: 32px 0 8px; padding: 18px 20px; border: 1px solid var(--rule); border-radius: 6px; background: var(--card); }
+  nav.toc a { font: 400 14px/1.5 var(--sans); color: var(--ink); text-decoration: none; }
+  nav.toc a span { font-family: var(--mono); color: var(--soft); margin-right: 8px; font-size: 12px; }
+  nav.toc a:hover { color: var(--accent); }
+  section { padding-top: 56px; margin-top: 56px; border-top: 1px solid var(--rule); }
+  .num { font: 500 12px/1 var(--mono); color: var(--accent); letter-spacing: .1em; display: block; margin-bottom: 10px; }
+  figure { margin: 24px 0 28px; }
+  .diagram { width: 100%; overflow-x: auto; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; }
+  .diagram svg { display: block; width: 100%; }
+  figcaption { font: 400 13px/1.5 var(--sans); color: var(--muted); margin-top: 10px; max-width: 90ch; }
+  .preview { display: block; border: 1px solid var(--rule); border-radius: 6px; background: var(--card); overflow: hidden; text-decoration: none; color: inherit; }
+  .preview img { display: block; width: 100%; height: auto; }
+  .preview .bar { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--rule); font: 500 13px/1.4 var(--mono); color: var(--link); }
+  .preview .bar span:last-child { color: var(--muted); font-weight: 400; }
+  .preview:hover .bar { color: var(--accent); }
+  .open { font: 500 13px/1.4 var(--mono); }
+  .table-wrap { width: 100%; overflow-x: auto; margin: 0 0 20px; border: 1px solid var(--rule); border-radius: 6px; background: var(--card); }
+  table { border-collapse: collapse; width: 100%; min-width: 680px; font-size: 14px; line-height: 1.5; }
+  th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--rule); }
+  th { font: 500 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); background: var(--paper); }
+  tr:last-child td { border-bottom: 0; }
+  td code { white-space: nowrap; overflow-wrap: normal; }
+  .tag { display: inline-block; font: 500 10px/1.6 var(--mono); letter-spacing: .1em; text-transform: uppercase; padding: 0 6px; border-radius: 2px; border: 1px solid var(--rule-solid); color: var(--muted); white-space: nowrap; }
+  .tag.data { border-color: var(--accent); color: var(--accent); }
+  .steps { counter-reset: step; list-style: none; padding: 0; margin: 0 0 20px; }
+  .steps > li { counter-increment: step; position: relative; padding: 0 0 18px 44px; max-width: 86ch; }
+  .steps > li::before { content: counter(step, decimal-leading-zero); position: absolute; left: 0; top: 2px; font: 500 12px/1.4 var(--mono); color: var(--accent); letter-spacing: .08em; }
+  .steps > li > strong { display: block; font-weight: 600; margin-bottom: 2px; }
+  .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 32px; }
+  .note { font-size: 14px; color: var(--muted); }
+  ul.dont { padding-left: 20px; }
+  ul.dont li { margin-bottom: 8px; }
+  ul.dont li::marker { content: "✕  "; color: var(--accent); }
+  .meta { font: 400 12px/1.6 var(--mono); color: var(--soft); margin-top: 56px; }
+  @media (max-width: 700px) { main { padding-block: 32px 64px; } .cols { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+
+<p class="eyebrow">AgencyHubara · motor de decisiones · guía para programarlo</p>
+<h1>El motor de decisiones</h1>
+<p class="lede">El asesor (un LLM) conversa. Las decisiones con consecuencias —¿el cliente confirmó la compra?, ¿pidió la baja?, ¿este texto es para él o es una nota interna?, ¿la ciudad es Bogotá o nacional?— las toma un motor genérico que lee un <strong>paquete de decisión</strong>: datos versionados y certificados, uno por tienda. Esta guía explica dónde entra, cómo decide, qué cambió frente a <code>main</code> y, sobre todo, cómo se programa ahora una mejora o se arregla un bug de decisiones sin volver a regar código.</p>
+
+<div class="rule-of-gold">
+  <p><strong>La regla de oro.</strong> Un bug de decisión se arregla en el paquete: otra pregunta, otro umbral, otra fila de la tabla o un ejemplo nuevo, en una versión nueva del paquete. Nunca con un <code>if</code>, un regex o una guarda nueva en el lugar que decide. Código solo cuando al motor le falta algo genérico (un dato, un cálculo) y entonces va a <em>un</em> builtin con su prueba, nunca a varios archivos.</p>
+</div>
+
+<nav class="toc" aria-label="Contenido">
+  <a href="#capas"><span>01</span>Las cuatro capas</a>
+  <a href="#donde"><span>02</span>Dónde entra en el sistema</a>
+  <a href="#como"><span>03</span>Cómo decide una capacidad</a>
+  <a href="#modos"><span>04</span>Quién decide hoy: los modos</a>
+  <a href="#cambio"><span>05</span>Qué cambió en la arquitectura</a>
+  <a href="#dominio"><span>06</span>El dominio, palabra por palabra</a>
+  <a href="#bug"><span>07</span>Un bug de decisión: el bucle</a>
+  <a href="#donde-va"><span>08</span>¿Dónde va el arreglo?</a>
+  <a href="#mejorar"><span>09</span>Mejorar el motor mismo</a>
+  <a href="#no"><span>10</span>Lo que ya no se hace</a>
+  <a href="#comandos"><span>11</span>Comandos y archivos</a>
+</nav>
+
+<!-- ───────────────────────────── 01 ───────────────────────────── -->
+<section id="capas">
+<span class="num">01</span>
+<h2>Las cuatro capas</h2>
+<p>El motor separa lo que cambia seguido (qué preguntar, con qué certeza, qué decidir) de lo que cambia poco (cómo se evalúa, cómo se le pregunta a Jev, qué se registra). Arriba está lo que se edita para arreglar o mejorar una decisión; abajo, el código que casi nunca se toca.</p>
+
+<figure>
+<div class="diagram" role="region" aria-label="Diagrama de capas; desplazar horizontalmente en pantallas angostas" tabindex="0">
+<svg viewBox="0 0 1000 420" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="capas-title capas-desc" style="min-width:760px">
+  <title id="capas-title">Las cuatro capas del motor de decisiones</title>
+  <desc id="capas-desc">Pila de cuatro capas: dominio de la tienda y paquete de decisión son datos, el catálogo es el contrato y el motor es código; el paquete es la capa donde se arreglan los bugs de decisión.</desc>
+  <rect width="1000" height="420" fill="#f5f5f5"/>
+
+  <text x="24" y="68" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">CAMBIA SEGUIDO</text>
+  <line x1="72" y1="80" x2="72" y2="336" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+  <polygon points="68,80 76,80 72,72" fill="#4f5d75"/>
+  <text x="24" y="356" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">CAMBIA POCO</text>
+
+  <line x1="120" y1="80" x2="960" y2="80" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+  <line x1="120" y1="336" x2="960" y2="336" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+
+  <!-- L4 Dominio -->
+  <rect x="120" y="80" width="840" height="64" fill="#ffffff"/>
+  <line x1="120" y1="144" x2="960" y2="144" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+  <text x="140" y="116" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">L4 · DATO</text>
+  <text x="232" y="110" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif">Dominio de la tienda</text>
+  <text x="232" y="128" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">bundles/&lt;tienda&gt;/domain.yaml</text>
+  <text x="940" y="116" fill="#4f5d75" font-size="10" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.04em">nombre · despedida · vocabulario del agente</text>
+
+  <!-- L3 Paquete (focal) -->
+  <rect x="120" y="144" width="840" height="64" fill="rgba(235,108,54,0.08)"/>
+  <rect x="120" y="144" width="840" height="64" fill="none" stroke="#eb6c36" stroke-width="1"/>
+  <text x="140" y="180" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em" font-weight="600">L3 · DATO</text>
+  <text x="232" y="174" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif">Paquete de decisión</text>
+  <text x="232" y="192" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">bundles/&lt;tienda&gt;/capabilities/*.yaml · turn.yaml</text>
+  <text x="940" y="180" fill="#eb6c36" font-size="10" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.04em">preguntas · umbrales · tablas · ejemplos</text>
+
+  <!-- L2 Catálogo -->
+  <rect x="120" y="208" width="840" height="64" fill="#f5f5f5"/>
+  <line x1="120" y1="272" x2="960" y2="272" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+  <text x="140" y="244" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">L2 · CONTRATO</text>
+  <text x="232" y="238" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif">Catálogo del motor</text>
+  <text x="232" y="256" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">bundles/builtins.yaml</text>
+  <text x="940" y="244" fill="#4f5d75" font-size="10" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.04em">qué puede pedir un paquete · lugares · reglas fijas</text>
+
+  <!-- L1 Motor -->
+  <rect x="120" y="272" width="840" height="64" fill="#ececec"/>
+  <text x="140" y="308" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">L1 · CÓDIGO</text>
+  <text x="232" y="302" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif">Motor</text>
+  <text x="232" y="320" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">src/platform/decisions · decide()</text>
+  <text x="940" y="308" fill="#4f5d75" font-size="10" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.04em">CEL · certificador · Jev · pisos · registros</text>
+
+  <text x="120" y="384" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">CAPA FOCAL</text>
+  <text x="212" y="384" fill="#4f5d75" font-size="13" font-family="'Instrument Serif', serif" font-style="italic">Un bug de decisión se arregla en L3 (o en L4) con una versión nueva del paquete. L2 y L1 cambian solo si al motor le falta algo.</text>
+</svg>
+</div>
+<figcaption>Las rutas de L3 y L4 son de ventas: <code>hubara_agency/src/plugins/chats/shared/decisions/bundles/</code>. El Order Sentinel tiene su propio catálogo y su paquete (<code>centinela</code>) sobre el mismo motor.</figcaption>
+</figure>
+
+<div class="cols">
+  <div>
+    <h3>L1 · Motor (código, igual para toda tienda)</h3>
+    <p class="note">Compila el YAML, evalúa las condiciones en CEL con tipos, le pregunta a Jev, aplica los pisos de seguridad y registra cada veredicto. Vive en <code>src/platform/decisions/</code> (fachada <code>src.sdk.decisionkit</code>) y en el enchufe de ventas <code>decide()</code>.</p>
+  </div>
+  <div>
+    <h3>L2 · Catálogo (el contrato)</h3>
+    <p class="note"><code>builtins.yaml</code> declara qué puede pedir un paquete: los builtins con su firma, las capacidades que el código pide (<code>capabilities:</code>), las reglas y pisos obligatorios, el vocabulario del turno, los lugares (<code>places:</code>) y qué resuelve cada decisión (<code>about:</code>).</p>
+  </div>
+  <div>
+    <h3>L3 · Paquete de decisión (dato)</h3>
+    <p class="note">Una carpeta por tienda y versión (<code>ventas</code>, <code>ventas-2</code>). Un YAML por capacidad: la pregunta a Jev, los umbrales, la tabla <code>when/then</code>, la regla de respaldo, el piso y los ejemplos que deben cumplirse. Además <code>turn.yaml</code>: lo que Jev lee antes del turno, el contrato asunto → tools y la verificación antes de enviar.</p>
+  </div>
+  <div>
+    <h3>L4 · Dominio de la tienda (dato)</h3>
+    <p class="note"><code>domain.yaml</code>: el nombre, la despedida aprobada y los ejemplos que el asesor ve en sus herramientas («'lavanda', 'el morado'»). Una tienda nueva escribe esto en vez de cambiar textos en el código.</p>
+  </div>
+</div>
+</section>
+
+<!-- ───────────────────────────── 02 ───────────────────────────── -->
+<section id="donde">
+<span class="num">02</span>
+<h2>Dónde entra en el sistema</h2>
+<p>Cada parte del software que necesita decidir pide la decisión <strong>por nombre</strong> al mismo resolutor: <code>capability("baja")</code>. El resolutor la toma del paquete que eligió Terraform para la tienda, consulta quién decide en esta conversación y, si toca, le pregunta a Jev. Ningún lugar lleva la lógica adentro. El diagrama interactivo cita cada caja a su código (botón <em>SRC</em>) y trae vistas guiadas para las cuatro preguntas.</p>
+
+<figure>
+<a class="preview" href="donde-entra.html"><img src="previas/donde-entra.png" width="1440" height="900" loading="lazy" alt="Diagrama: los lugares (ingest, turno, egreso, remarketing y cierre) piden la decisión al resolutor, que lee el paquete, le pregunta a Jev, consulta los interruptores y anota el veredicto en los registros que muestra Calidad LLM."><span class="bar"><span>Abrir el diagrama interactivo →</span><span>archify · cada caja citada a su archivo y línea (commit e2cfd981)</span></span></a>
+</figure>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Parte del software</th><th>Decisiones que pide</th><th>Dónde se piden</th></tr></thead>
+  <tbody>
+    <tr><td>Al leer cada mensaje del cliente</td><td>compra, retoma, baja, cortesía, acuse, cupón, fuera del catálogo</td><td><code>decisions/readings.py</code> (desde el ingest)</td></tr>
+    <tr><td>Antes de que el bot responda</td><td>cantidad · y el turno de Jev: la ráfaga ①, el contrato asunto → tools y la verificación ③</td><td><code>activities/build_prompt_stage.py</code>, <code>decisions/engine.py</code> + <code>turn.yaml</code></td></tr>
+    <tr><td>Dentro de las herramientas</td><td>categoría, color pedido, producto del pedido, datos de envío, zona de envío, botones para elegir, precios cotizados, no parecer un bot, para quién es (oración por oración)</td><td><code>tools/*.py</code> y <code>decisions/guards.py</code></td></tr>
+    <tr><td>Antes de enviar la respuesta</td><td>muletilla del modelo, para quién es el texto, rescate del texto, portavelas, bienvenida, lista de opciones, colega prometido</td><td><code>decisions/egress.py</code>, <code>decisions/guards.py</code>, <code>activities/variant_enumeration_guard.py</code></td></tr>
+    <tr><td>Después de enviar</td><td>afirmación sin consultar (por ahora solo mide)</td><td><code>activities/turn_trace.py</code></td></tr>
+    <tr><td>Mensajes de seguimiento</td><td>escribirle de nuevo, producto del que habló, para quién es (en una plantilla), fuera del catálogo</td><td><code>decisions/remarketing_context.py</code>, <code>decisions/contact.py</code></td></tr>
+    <tr><td>Al cerrar una conversación abandonada</td><td>etiqueta de cierre</td><td><code>decisions/cierre.py</code></td></tr>
+    <tr><td>Order Sentinel (otro plugin)</td><td>qué cambió en el pedido, evidencia del cambio</td><td><code>order_sentinel/…/use_cases/readings.py</code> con su paquete <code>centinela</code></td></tr>
+  </tbody>
+</table>
+</div>
+<p class="note">Rutas relativas a <code>hubara_agency/src/plugins/chats/agent/sales/</code>. La misma lista, con lo que resuelve cada decisión en español llano, está en Agents → Calidad LLM → <strong>Motor de decisiones</strong>: sale de <code>builtins.yaml: places/about</code>, así que no se desactualiza.</p>
+</section>
+
+<!-- ───────────────────────────── 03 ───────────────────────────── -->
+<section id="como">
+<span class="num">03</span>
+<h2>Cómo decide una capacidad</h2>
+<p>Una capacidad es una decisión con nombre: <code>acuse</code> responde «¿este mensaje solo le acusa recibo a la despedida?». Así se ve completa (es el archivo real de <code>ventas</code>):</p>
+
+<pre><code>capability: acuse
+value: bool
+input: Inbound
+rule: {builtin: closing_ack}            # la regla de hoy: decide si Jev no está, duda o falla
+state: {builtin: message_after_close}   # lo que ve Jev (con los datos personales tapados)
+questions:
+  - id: acuse.solo_cortesia
+    kind: noul                           # sí/no → probabilidad p
+    text: "¿Este mensaje del cliente es solo un acuse de recibo o una cortesía a la despedida …?"
+    criteria: {"true": "sí", "false": "no"}
+thresholds: {"absorb": 0.9}
+decide:                                  # en orden: la primera fila que se cumple decide
+  - when: "!('acuse.solo_cortesia' in p)"
+    then: doubt                          # Jev no contestó: decide la regla
+  - when: "p['acuse.solo_cortesia'] >= th['absorb']"
+    then: true
+  - otherwise: false
+floor: {builtin: jev_without_question_mark}   # piso: un mensaje con «?» nunca se absorbe
+same: {builtin: bool_eq}
+examples:                                # el certificador los corre: son las pruebas del YAML
+  - {answers: {acuse.solo_cortesia: 0.9}, expect: true}
+  - {answers: {acuse.solo_cortesia: 0.89}, expect: false}
+  - {answers: {}, expect: doubt}</code></pre>
+
+<p>En CEL la tabla lee <code>p</code> (probabilidad de cada pregunta sí/no), <code>choice</code> y <code>conf</code> (preguntas de opciones), <code>th</code> (umbrales), <code>rule</code> (lo que dijo la regla), <code>inp</code> (la entrada), <code>vars</code>, <code>consts</code>, <code>opt</code> (opciones armadas desde la entrada), <code>items</code> (cuando decide parte por parte) y <code>dom</code> (el dominio). El certificador (<code>decisions check</code>) rechaza el paquete si una llave no existe, si una condición compara un número con un texto, si una fila nunca se alcanza o si un ejemplo no da lo esperado: DB001–DB016.</p>
+
+<figure>
+<a class="preview" href="una-decision.html"><img src="previas/una-decision.png" width="1440" height="900" loading="lazy" alt="Secuencia: el lugar pregunta quién decide, pide la capacidad al resolutor, el resolutor la toma del paquete, le pregunta a Jev, evalúa la tabla, anota métrica, desacuerdo y decisión, y devuelve el veredicto."><span class="bar"><span>Abrir «una decisión, paso a paso» →</span><span>el recorrido de decide()</span></span></a>
+</figure>
+
+<h3>El veredicto: lo que se mira primero en un bug</h3>
+<p>Cada decisión devuelve un <code>Verdict</code> y, si Jev participó, queda en <code>&lt;vault&gt;/&lt;sesión&gt;/evals/decisions.jsonl</code> y se ve en Calidad LLM → Conversaciones → el turno → «Decisiones de Jev».</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Campo</th><th>Qué dice</th></tr></thead>
+  <tbody>
+    <tr><td><code>value</code></td><td>Lo que se decidió (lo que usa el lugar).</td></tr>
+    <tr><td><code>by</code></td><td><code>reglas</code> (la regla de hoy) · <code>jev</code> · <code>piso</code> (el piso cambió lo de Jev) · <code>respaldo</code> (Jev debía decidir pero no pudo).</td></tr>
+    <tr><td><code>provider</code></td><td>El modo en esta conversación: <code>reglas</code>, <code>sombra</code> o <code>jev</code>.</td></tr>
+    <tr><td><code>reason</code></td><td>Por qué decidió la regla: <code>duda</code>, <code>bundle_error</code>, <code>no_question</code>, <code>timeout</code>, <code>http_…</code>, <code>model_changed</code>, <code>unknown_profile</code>.</td></tr>
+    <tr><td><code>rule</code> · <code>jev</code> · <code>agree</code></td><td>Lo que dijo cada uno y si coincidieron. Un desacuerdo va a la cola que califica Claude Code.</td></tr>
+    <tr><td><code>answers</code></td><td>Lo que contestó Jev a cada pregunta (<code>p</code>, <code>choice</code>, <code>confidence</code>): es la entrada exacta para el ejemplo que reproduce el bug.</td></tr>
+    <tr><td><code>bundle</code></td><td><code>id@versión</code> del paquete que decidió (por ejemplo <code>ventas-2@2</code>).</td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<!-- ───────────────────────────── 04 ───────────────────────────── -->
+<section id="modos">
+<span class="num">04</span>
+<h2>Quién decide hoy: los modos</h2>
+<p>Cada capacidad tiene su interruptor, guardado en el vault de la tienda y movido desde Agents (panel «Motor de decisiones»). El modo efectivo nunca pasa del techo que fija Terraform. Una capacidad nueva o cambiada empieza en sombra: decide la regla de hoy y Jev se pregunta igual, así se mide sin riesgo.</p>
+
+<figure>
+<div class="diagram" role="region" aria-label="Diagrama de modos; desplazar horizontalmente en pantallas angostas" tabindex="0">
+<svg viewBox="0 0 1000 380" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="modos-title modos-desc" style="min-width:760px">
+  <title id="modos-title">Modos de una capacidad</title>
+  <desc id="modos-desc">Una capacidad pasa de la regla de hoy a sombra, de sombra a canary y de canary a encendido; subir a canary o a encendido exige la vara, y bajar a la regla de hoy nunca se bloquea.</desc>
+  <defs>
+    <marker id="modos-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+    <marker id="modos-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+  </defs>
+  <rect width="1000" height="380" fill="#f5f5f5"/>
+
+  <!-- Transiciones (antes que los estados) -->
+  <line x1="54" y1="164" x2="88" y2="164" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#modos-arrow)"/>
+  <line x1="256" y1="164" x2="320" y2="164" stroke="#eb6c36" stroke-width="1.4" marker-end="url(#modos-arrow-accent)"/>
+  <line x1="488" y1="164" x2="552" y2="164" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#modos-arrow)"/>
+  <line x1="720" y1="164" x2="784" y2="164" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#modos-arrow)"/>
+  <path d="M 868 204 V 260 Q 868 268 860 268 H 180 Q 172 268 172 260 V 206" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#modos-arrow)"/>
+
+  <rect x="268" y="144" width="40" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="288" y="153" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SUBIR</text>
+  <rect x="496" y="144" width="48" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="520" y="153" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">LA VARA</text>
+  <rect x="728" y="144" width="48" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="752" y="153" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">LA VARA</text>
+  <rect x="440" y="244" width="160" height="12" rx="2" fill="#f5f5f5"/>
+  <text x="520" y="253" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">BAJAR · DESDE CUALQUIER MODO</text>
+
+  <circle cx="48" cy="164" r="6" fill="#2d3142"/>
+
+  <!-- Regla de hoy -->
+  <rect x="88" y="124" width="168" height="80" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+  <rect x="96" y="132" width="28" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+  <text x="110" y="141" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">OFF</text>
+  <text x="172" y="166" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Regla de hoy</text>
+  <text x="172" y="182" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">decide la regla</text>
+  <text x="172" y="194" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Jev no se pregunta</text>
+
+  <!-- Sombra (focal) -->
+  <rect x="320" y="124" width="168" height="80" rx="8" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+  <rect x="328" y="132" width="44" height="12" rx="2" fill="transparent" stroke="rgba(235,108,54,0.50)" stroke-width="0.8"/>
+  <text x="350" y="141" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SHADOW</text>
+  <text x="404" y="166" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Sombra</text>
+  <text x="404" y="182" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">decide la regla</text>
+  <text x="404" y="194" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Jev se pregunta y se mide</text>
+
+  <!-- Canary -->
+  <rect x="552" y="124" width="168" height="80" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+  <rect x="560" y="132" width="44" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+  <text x="582" y="141" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CANARY</text>
+  <text x="636" y="166" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Canary</text>
+  <text x="636" y="182" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">decide Jev en las</text>
+  <text x="636" y="194" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">conversaciones de prueba</text>
+
+  <!-- Encendido -->
+  <rect x="784" y="124" width="168" height="80" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+  <rect x="792" y="132" width="24" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+  <text x="804" y="141" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ON</text>
+  <text x="868" y="166" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Encendido</text>
+  <text x="868" y="182" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">decide Jev</text>
+  <text x="868" y="194" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">con duda, la regla</text>
+
+  <text x="48" y="316" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LA VARA</text>
+  <text x="128" y="316" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif">7+ días en sombra (de los últimos 14) · 100+ decisiones medidas · menos del 1 % de caídas de Jev · p95 bajo 1,5 s</text>
+  <text x="128" y="334" fill="#2d3142" font-size="11" font-family="'Geist', sans-serif">20+ desacuerdos regla ↔ Jev calificados por Claude Code, con Jev ganando más veces que la regla</text>
+  <text x="48" y="362" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">TECHO</text>
+  <text x="128" y="362" fill="#4f5d75" font-size="11" font-family="'Geist', sans-serif">Ningún modo pasa del techo de Terraform (SALES_CAPABILITIES_CEILING). Bajar nunca se bloquea: es el interruptor de emergencia.</text>
+</svg>
+</div>
+<figcaption>La vara está en <code>decisions/capability_rollout.py</code>. Una variante (<code>control: destinatario</code>) comparte el interruptor de su decisión.</figcaption>
+</figure>
+</section>
+
+<!-- ───────────────────────────── 05 ───────────────────────────── -->
+<section id="cambio">
+<span class="num">05</span>
+<h2>Qué cambió en la arquitectura</h2>
+<p>En <code>main</code> (producción hoy) no existe la carpeta <code>decisions/</code>: cada decisión es código dentro del lugar que la toma —un regex en el ingest, una guarda en una tool, un umbral fijo, una frase en el prompt—. Arreglar una decisión es tocar varios archivos y desplegar. En la rama del PR #372 los lugares piden la decisión al motor y lo que decide vive en el paquete.</p>
+
+<figure>
+<div class="diagram" role="region" aria-label="Antes, cambios y después de la arquitectura de decisiones; desplazar horizontalmente en pantallas angostas" tabindex="0">
+<svg viewBox="0 0 1200 690" xmlns="http://www.w3.org/2000/svg" data-diagram="architecture-delta" role="img" aria-labelledby="delta-title delta-desc" style="min-width:1100px">
+  <title id="delta-title">Decisiones antes y después del motor</title>
+  <desc id="delta-desc">Antes, cada lugar decidía con su propia lógica en código; después, los lugares piden la decisión a un motor nuevo que lee el paquete de la tienda, le pregunta a Jev y deja la regla de hoy como respaldo; ocho cambios entre las dos fotos.</desc>
+  <defs>
+    <marker id="delta-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+  </defs>
+  <rect width="1200" height="690" fill="#f5f5f5"/>
+  <text x="24" y="28" fill="#2d3142" font-size="14" font-family="'Geist', sans-serif" font-weight="600">Antes</text>
+  <text x="24" y="52" fill="#4f5d75" font-size="10" font-family="'Geist', sans-serif">main · producción hoy</text>
+  <text x="424" y="28" fill="#2d3142" font-size="14" font-family="'Geist', sans-serif" font-weight="600">Cambios</text>
+  <text x="424" y="52" fill="#4f5d75" font-size="10" font-family="'Geist', sans-serif">Cuatro componentes · cuatro relaciones</text>
+  <text x="840" y="28" fill="#2d3142" font-size="14" font-family="'Geist', sans-serif" font-weight="600">Después</text>
+  <text x="840" y="52" fill="#4f5d75" font-size="10" font-family="'Geist', sans-serif">PR #372 · motor de decisiones</text>
+  <path d="M 392 8 V 600 M 808 8 V 600" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+
+  <g data-snapshot="before" transform="translate(24 96)" data-grid="336 432 4">
+    <path data-kind="relationship" data-object-id="turno" data-status="unchanged" data-signature="turno" data-from="llm" data-to="lugares" d="M 168 56 V 112" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#delta-arrow)"/>
+    <path data-kind="relationship" data-object-id="decide" data-status="rewired" data-signature="pide-la-decision" data-from="lugares" data-to="reglas" d="M 168 176 V 336" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="8 3 2 3" marker-end="url(#delta-arrow)"/>
+    <rect x="176" y="76" width="44" height="16" rx="2" fill="#f5f5f5"/>
+    <text x="180" y="88" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">turno</text>
+    <rect x="176" y="248" width="112" height="16" rx="2" fill="#f5f5f5"/>
+    <text x="180" y="260" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">decide · if / regex</text>
+    <g data-kind="component" data-object-id="llm" data-status="unchanged" data-signature="asesor-llm">
+      <rect data-role="bounds" x="96" y="0" width="144" height="56" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+      <text x="108" y="14" fill="#4f5d75" font-size="7.5" font-family="'Geist Mono', monospace">= llm · SIN CAMBIO</text>
+      <text x="108" y="33" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600">Asesor (LLM)</text>
+      <text x="108" y="48" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">conversa y llama tools</text>
+    </g>
+    <g data-kind="component" data-object-id="lugares" data-status="unchanged" data-signature="ingest,tools,egreso,seguimiento">
+      <rect data-role="bounds" x="96" y="112" width="144" height="64" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+      <text x="108" y="127" fill="#4f5d75" font-size="7.5" font-family="'Geist Mono', monospace">= lugares · SIN CAMBIO</text>
+      <text x="108" y="148" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600">Lugares</text>
+      <text x="108" y="165" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">ingest · tools · egreso</text>
+    </g>
+    <g data-kind="component" data-object-id="reglas" data-status="changed" data-signature="reglas:toda-la-decision">
+      <rect data-role="bounds" x="116" y="336" width="104" height="64" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1.2"/>
+      <path d="M 117 348 V 388" fill="none" stroke="#eb6c36" stroke-width="3"/>
+      <text x="124" y="351" fill="#4f5d75" font-size="7.5" font-family="'Geist Mono', monospace">~ reglas · CAMBIÓ</text>
+      <text x="124" y="372" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600">En código</text>
+      <text x="124" y="389" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">regex · if</text>
+    </g>
+    <text x="8" y="240" fill="#4f5d75" font-size="12" font-family="'Geist', sans-serif">Cada lugar</text>
+    <text x="8" y="258" fill="#4f5d75" font-size="12" font-family="'Geist', sans-serif">decide por</text>
+    <text x="8" y="276" fill="#4f5d75" font-size="12" font-family="'Geist', sans-serif">su cuenta.</text>
+  </g>
+
+  <text x="424" y="110" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">01</text>
+  <text x="456" y="108" data-change="CHANGED" data-target="reglas" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">CHANGED · reglas<tspan x="456" y="131" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" letter-spacing="0">Decidían todo → solo respaldo y pisos</tspan></text>
+  <path d="M 456 148 H 776" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+  <text x="424" y="170" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">02</text>
+  <text x="456" y="168" data-change="ADDED" data-target="motor" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">ADDED · motor<tspan x="456" y="191" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" letter-spacing="0">Motor genérico: capability() + decide()</tspan></text>
+  <path d="M 456 208 H 776" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+  <text x="424" y="230" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">03</text>
+  <text x="456" y="228" data-change="ADDED" data-target="paquete" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">ADDED · paquete<tspan x="456" y="251" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" letter-spacing="0">Paquete por tienda: YAML + CEL, versionado</tspan></text>
+  <path d="M 456 268 H 776" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+  <text x="424" y="290" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">04</text>
+  <text x="456" y="288" data-change="ADDED" data-target="jev" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">ADDED · jev<tspan x="456" y="311" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" letter-spacing="0">Jev responde lo que el paquete pregunta</tspan></text>
+  <path d="M 456 328 H 776" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+  <text x="424" y="350" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">05</text>
+  <text x="456" y="348" data-change="REWIRED" data-target="decide" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">REWIRED · decide<tspan x="456" y="371" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" letter-spacing="0">Lugares → su regla  ⇒  lugares → motor</tspan></text>
+  <path d="M 456 388 H 776" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+  <text x="424" y="410" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">06</text>
+  <text x="456" y="408" data-change="ADDED" data-target="lee" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">ADDED · lee<tspan x="456" y="431" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" letter-spacing="0">Motor → el paquete que eligió Terraform</tspan></text>
+  <path d="M 456 448 H 776" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+  <text x="424" y="470" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">07</text>
+  <text x="456" y="468" data-change="ADDED" data-target="pregunta" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">ADDED · pregunta<tspan x="456" y="491" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" letter-spacing="0">Motor → Jev, con los datos tapados</tspan></text>
+  <path d="M 456 508 H 776" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+  <text x="424" y="530" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">08</text>
+  <text x="456" y="528" data-change="ADDED" data-target="respaldo" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">ADDED · respaldo<tspan x="456" y="551" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" letter-spacing="0">Motor → regla de hoy si Jev duda o falla</tspan></text>
+  <text x="424" y="580" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">SE QUEDA</text>
+  <text x="424" y="598" fill="#4f5d75" font-size="11" font-family="'Geist', sans-serif">Asesor (LLM) · lugares · turno</text>
+
+  <g data-snapshot="after" transform="translate(840 96)" data-grid="336 432 4">
+    <path data-kind="relationship" data-object-id="turno" data-status="unchanged" data-signature="turno" data-from="llm" data-to="lugares" d="M 168 56 V 112" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#delta-arrow)"/>
+    <path data-kind="relationship" data-object-id="decide" data-status="rewired" data-signature="pide-la-decision" data-from="lugares" data-to="motor" d="M 168 176 V 224" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="8 3 2 3" marker-end="url(#delta-arrow)"/>
+    <path data-kind="relationship" data-object-id="respaldo" data-status="added" data-signature="respaldo" data-from="motor" data-to="reglas" d="M 168 288 V 336" fill="none" stroke="#4f5d75" stroke-width="2" marker-end="url(#delta-arrow)"/>
+    <path data-kind="relationship" data-object-id="lee" data-status="added" data-signature="lee-paquete" data-from="motor" data-to="paquete" d="M 96 256 H 60 Q 52 256 52 264 V 336" fill="none" stroke="#4f5d75" stroke-width="2" marker-end="url(#delta-arrow)"/>
+    <path data-kind="relationship" data-object-id="pregunta" data-status="added" data-signature="pregunta-a-jev" data-from="motor" data-to="jev" d="M 240 256 H 276 Q 284 256 284 264 V 336" fill="none" stroke="#4f5d75" stroke-width="2" marker-end="url(#delta-arrow)"/>
+    <rect x="176" y="76" width="44" height="16" rx="2" fill="#f5f5f5"/>
+    <text x="180" y="88" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">turno</text>
+    <rect x="176" y="192" width="60" height="16" rx="2" fill="#f5f5f5"/>
+    <text x="180" y="204" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">decide</text>
+    <rect x="176" y="304" width="52" height="16" rx="2" fill="#f5f5f5"/>
+    <text x="180" y="316" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">respaldo</text>
+    <rect x="60" y="300" width="28" height="16" rx="2" fill="#f5f5f5"/>
+    <text x="64" y="312" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">lee</text>
+    <rect x="292" y="300" width="44" height="16" rx="2" fill="#f5f5f5"/>
+    <text x="294" y="312" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">pregunta</text>
+    <g data-kind="component" data-object-id="llm" data-status="unchanged" data-signature="asesor-llm">
+      <rect data-role="bounds" x="96" y="0" width="144" height="56" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+      <text x="108" y="14" fill="#4f5d75" font-size="7.5" font-family="'Geist Mono', monospace">= llm · SIN CAMBIO</text>
+      <text x="108" y="33" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600">Asesor (LLM)</text>
+      <text x="108" y="48" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">conversa y llama tools</text>
+    </g>
+    <g data-kind="component" data-object-id="lugares" data-status="unchanged" data-signature="ingest,tools,egreso,seguimiento">
+      <rect data-role="bounds" x="96" y="112" width="144" height="64" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+      <text x="108" y="127" fill="#4f5d75" font-size="7.5" font-family="'Geist Mono', monospace">= lugares · SIN CAMBIO</text>
+      <text x="108" y="148" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600">Lugares</text>
+      <text x="108" y="165" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">ingest · tools · egreso</text>
+    </g>
+    <g data-kind="component" data-object-id="motor" data-status="added" data-signature="motor:capability+decide">
+      <rect data-role="bounds" x="96" y="224" width="144" height="64" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+      <rect x="100" y="228" width="136" height="56" rx="4" fill="none" stroke="#4f5d75" stroke-width="0.8"/>
+      <text x="108" y="239" fill="#4f5d75" font-size="7.5" font-family="'Geist Mono', monospace">+ motor · NUEVO</text>
+      <text x="108" y="260" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600">Motor</text>
+      <text x="108" y="277" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">capability() · decide()</text>
+    </g>
+    <g data-kind="component" data-object-id="paquete" data-status="added" data-signature="paquete:yaml+cel">
+      <rect data-role="bounds" x="0" y="336" width="104" height="64" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+      <rect x="4" y="340" width="96" height="56" rx="4" fill="none" stroke="#4f5d75" stroke-width="0.8"/>
+      <text x="10" y="351" fill="#4f5d75" font-size="7.5" font-family="'Geist Mono', monospace">+ paquete · NUEVO</text>
+      <text x="10" y="372" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600">Paquete</text>
+      <text x="10" y="389" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">YAML + CEL</text>
+    </g>
+    <g data-kind="component" data-object-id="reglas" data-status="changed" data-signature="reglas:respaldo-y-pisos">
+      <rect data-role="bounds" x="116" y="336" width="104" height="64" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1.2"/>
+      <path d="M 117 348 V 388" fill="none" stroke="#eb6c36" stroke-width="3"/>
+      <text x="124" y="351" fill="#4f5d75" font-size="7.5" font-family="'Geist Mono', monospace">~ reglas · CAMBIÓ</text>
+      <text x="124" y="372" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600">Regla de hoy</text>
+      <text x="124" y="389" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">respaldo · piso</text>
+    </g>
+    <g data-kind="component" data-object-id="jev" data-status="added" data-signature="jev:oraculo">
+      <rect data-role="bounds" x="232" y="336" width="104" height="64" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1.2"/>
+      <rect x="236" y="340" width="96" height="56" rx="4" fill="none" stroke="#4f5d75" stroke-width="0.8"/>
+      <text x="242" y="351" fill="#4f5d75" font-size="7.5" font-family="'Geist Mono', monospace">+ jev · NUEVO</text>
+      <text x="242" y="372" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" font-weight="600">Jev</text>
+      <text x="242" y="389" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">datos tapados</text>
+    </g>
+  </g>
+
+  <path d="M 24 620 H 1176" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+  <rect x="24" y="636" width="20" height="16" rx="3" fill="none" stroke="#4f5d75" stroke-width="1"/>
+  <text x="56" y="648" fill="#4f5d75" font-size="11" font-family="'Geist', sans-serif">= Sin cambio</text>
+  <rect x="220" y="636" width="20" height="16" rx="3" fill="none" stroke="#4f5d75" stroke-width="1"/>
+  <rect x="224" y="640" width="12" height="8" rx="1" fill="none" stroke="#4f5d75" stroke-width="0.8"/>
+  <text x="252" y="648" fill="#4f5d75" font-size="11" font-family="'Geist', sans-serif">+ Nuevo (ADDED)</text>
+  <rect x="440" y="636" width="20" height="16" rx="3" fill="none" stroke="#4f5d75" stroke-width="1"/>
+  <path d="M 441 640 V 648" stroke="#eb6c36" stroke-width="3"/>
+  <text x="472" y="648" fill="#4f5d75" font-size="11" font-family="'Geist', sans-serif">~ Cambió (CHANGED)</text>
+  <path d="M 680 644 H 700" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="8 3 2 3" marker-end="url(#delta-arrow)"/>
+  <text x="712" y="648" fill="#4f5d75" font-size="11" font-family="'Geist', sans-serif">⇢ Reconectada (REWIRED)</text>
+  <text x="24" y="676" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Los ids se mantienen entre las dos fotos. Las líneas punteadas marcan el cambio, no el protocolo.</text>
+  <text x="1176" y="676" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">6 componentes · 5 relaciones · 8 cambios</text>
+</svg>
+</div>
+<figcaption>Las reglas de hoy no desaparecen: quedan como builtins con nombre (<code>rule:</code> de cada capacidad) que deciden en modo off, en sombra y cuando Jev duda o falla, y como pisos que nada puede quitar.</figcaption>
+</figure>
+
+<h3>Lo que costaba un arreglo en main</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Arreglo en main</th><th>Lo que tocó</th><th>Con el motor</th></tr></thead>
+  <tbody>
+    <tr><td>#371 · el cupo del cupón y la guarda de enumeración</td><td>9 archivos de código (tools, use cases, composition, ingest, guardas)</td><td>Lo que es <em>decisión</em> («¿habla del cupón?», «¿enumera variantes?») son las capacidades <code>cupon</code> y <code>enumeracion</code>: preguntas y filas en el paquete. El cálculo del cupo sigue siendo un hecho del dominio, en un solo lugar.</td></tr>
+    <tr><td>#376 · decir que no existe lo que piden fuera del catálogo</td><td>6 archivos (código de ventas y remarketing, workflow y el prompt <code>SOUL.md</code>)</td><td>«¿Lo que pide existe?» es la capacidad <code>fuera_de_catalogo</code> (en el ingest y en remarketing, la misma). Qué le dice el bot va en la guía del turno o en el dominio.</td></tr>
+    <tr><td>#379 · un acuse tras la despedida no reabre la conversación</td><td>2 archivos (un use case nuevo y el ingest)</td><td>Es la capacidad <code>acuse</code> (arriba, completa): otro umbral u otra redacción es una versión nueva del paquete.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Antes y después, en una tabla</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Tema</th><th>Antes (main)</th><th>Ahora</th></tr></thead>
+  <tbody>
+    <tr><td>Dónde vive una decisión</td><td>En el lugar que la toma, mezclada con su código</td><td>En el paquete; el lugar la pide por nombre</td></tr>
+    <tr><td>Cambiar una pregunta o un umbral</td><td>Editar código y desplegar</td><td>Versión nueva del paquete, certificada; Terraform la elige</td></tr>
+    <tr><td>Saber con qué se decidió</td><td>No quedaba registro</td><td>El veredicto lleva paquete, respuestas de Jev, regla y motivo</td></tr>
+    <tr><td>Probar antes de producción</td><td>Pruebas unitarias del código</td><td><code>examples:</code> certificados + laboratorio <code>B@paquete</code> + sombra en producción</td></tr>
+    <tr><td>Otra tienda (zapatos)</td><td>Reemplazar textos de velas en el código (forge)</td><td>Otra carpeta de paquete y otro <code>domain.yaml</code></td></tr>
+    <tr><td>Volver atrás</td><td>Revertir código</td><td>El id anterior en Terraform, apply y redeploy</td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<!-- ───────────────────────────── 06 ───────────────────────────── -->
+<section id="dominio">
+<span class="num">06</span>
+<h2>El dominio, palabra por palabra</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Palabra</th><th>Qué es</th><th>Dónde vive</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Capacidad</strong></td><td>Una decisión con nombre y tipo de valor (<code>bool</code>, una etiqueta, <code>{cantidad: int?}</code>, una lista).</td><td><code>capabilities/&lt;nombre&gt;.yaml</code> <span class="tag data">dato</span></td></tr>
+    <tr><td><strong>Paquete</strong></td><td>Todas las capacidades de una tienda, más su turno y su dominio. Inmutable: otro texto u otro umbral es otra versión (<code>ventas-2@2</code>).</td><td><code>bundles/&lt;id&gt;/bundle.yaml</code> <span class="tag data">dato</span></td></tr>
+    <tr><td><strong>Catálogo</strong></td><td>El contrato entre motor y paquetes: builtins, capacidades exigidas, reglas y pisos fijos, lugares y <code>about</code>.</td><td><code>bundles/builtins.yaml</code> <span class="tag">contrato</span></td></tr>
+    <tr><td><strong>Builtin</strong></td><td>Código con nombre que un paquete puede pedir: regla, estado (lo que ve Jev), opciones, vista, ítems, piso o comparador.</td><td><code>decisions/bundled*.py</code> <span class="tag">código</span></td></tr>
+    <tr><td><strong>Regla de hoy</strong></td><td>El builtin que decide sin Jev (modo off, sombra, duda o falla).</td><td><code>rule:</code> de la capacidad</td></tr>
+    <tr><td><strong>Pregunta</strong></td><td>Lo que se le pregunta a Jev: sí/no (<code>noul</code> → <code>p</code>) o de opciones (<code>choice</code>), con sus criterios. Es el <em>prompting</em> de la decisión.</td><td><code>questions:</code> / <code>each:</code></td></tr>
+    <tr><td><strong>Umbral</strong></td><td>La certeza que exige una fila (<code>th['absorb'] = 0.9</code>).</td><td><code>thresholds:</code></td></tr>
+    <tr><td><strong>Tabla</strong></td><td>Filas <code>when/then</code> en CEL; la primera que se cumple decide; <code>doubt</code> = decide la regla.</td><td><code>decide:</code></td></tr>
+    <tr><td><strong>Piso</strong></td><td>Lo que nunca se quita, aunque Jev diga otra cosa (la baja legal, el relevo, «un mensaje con ? nunca se absorbe»).</td><td><code>floor:</code> · <code>required_floors</code></td></tr>
+    <tr><td><strong>Ejemplo</strong></td><td>Respuestas de Jev → valor esperado. El certificador los corre; son la prueba roja/verde del YAML.</td><td><code>examples:</code></td></tr>
+    <tr><td><strong>Veredicto</strong></td><td>El resultado de una decisión con todo su porqué (ver §03).</td><td><code>decisions.jsonl</code> por conversación</td></tr>
+    <tr><td><strong>Modo y techo</strong></td><td>Quién decide (off · sombra · canary · on) y el máximo que permite Terraform.</td><td>vault + <code>SALES_CAPABILITIES_CEILING</code></td></tr>
+    <tr><td><strong>Jev y su perfil</strong></td><td>El modelo pequeño que contesta las preguntas (oráculo <code>jev-1.13</code>, vía OpenRouter). El perfil del turno (<code>jev-v5</code>) dice qué cuestionario usa.</td><td><code>bundle.yaml: oracle</code>, <code>profiles.yaml</code></td></tr>
+    <tr><td><strong>Turno ① ② ③</strong></td><td>① Jev lee la ráfaga: qué asuntos plantea el cliente. ② Qué tool atiende cada asunto (el contrato). ③ Antes de enviar, si la respuesta atiende cada asunto.</td><td><code>turn.yaml</code> <span class="tag data">dato</span></td></tr>
+    <tr><td><strong>Dominio de la tienda</strong></td><td>Nombre, despedida y vocabulario que ve el asesor.</td><td><code>domain.yaml</code> <span class="tag data">dato</span></td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<!-- ───────────────────────────── 07 ───────────────────────────── -->
+<section id="bug">
+<span class="num">07</span>
+<h2>Un bug de decisión: el bucle</h2>
+<p>Cuando en producción una decisión sale mal (el bot reabre una conversación cerrada, guarda un dato que el cliente no dio, cobra la zona equivocada), el arreglo sigue siempre el mismo camino. Lo que cambia es <em>dónde</em> cae el arreglo (ver §08), nunca la regla de oro.</p>
+
+<figure>
+<a class="preview" href="bug-de-decision.html"><img src="previas/bug-de-decision.png" width="1440" height="900" loading="lazy" alt="Workflow: del síntoma en Calidad LLM al veredicto, de ahí a dónde falló; si decidió mal, ejemplo rojo y cambio en el paquete; si falta un dato, un builtin; si decidió la regla, subir el modo; luego laboratorio y promoción."><span class="bar"><span>Abrir «un bug de decisión» →</span><span>del síntoma al paquete nuevo</span></span></a>
+</figure>
+
+<ol class="steps">
+  <li><strong>Ver el síntoma con su turno.</strong> Agents → Calidad LLM → Conversaciones → la conversación → el turno. La ventana del turno muestra el paso a paso y «Decisiones de Jev». Si no hay decisión de Jev en ese turno, la decidió la regla de hoy (modo off) o no es un problema de decisión (ver §08, última fila).</li>
+  <li><strong>Leer el veredicto.</strong> Capacidad, <code>bundle</code>, <code>by</code>, <code>reason</code>, <code>rule</code> vs <code>jev</code> y <code>answers</code>. Con eso ya se sabe si falló la pregunta (Jev entendió mal), la tabla o el umbral (Jev entendió bien y se decidió mal), un dato de entrada o el modo.</li>
+  <li><strong>Rojo: escribir el caso como ejemplo.</strong> En <code>capabilities/&lt;capacidad&gt;.yaml</code> de una <em>copia nueva</em> del paquete, agregar a <code>examples:</code> las <code>answers</code> del veredicto (anonimizadas) con el valor correcto en <code>expect</code>. <code>decisions check</code> da <code>DB010</code>. Si lo que falló es que Jev entendió mal, el ejemplo no lo puede probar (le da las respuestas directo a la tabla): ahí la prueba es la corrida del laboratorio del paso 5 y, en producción, la sombra.</li>
+  <li><strong>Verde: el cambio mínimo en el paquete.</strong> Otra redacción de la pregunta o de sus criterios, otro umbral, otra fila o el orden de las filas. <code>decisions check</code> en verde. El paquete nuevo lleva su <code>id</code> (la carpeta) y su <code>version</code>, su huella en <code>tests/plugins/test_decision_bundles_published.py</code> y una prueba que diga que es el anterior con ese cambio y nada más (como <code>test_decisions_ventas_2.py</code>). Un experimento de esta tienda va en <code>deletes</code> de <code>forge/manifest.yaml</code>.</li>
+  <li><strong>Medir en el laboratorio.</strong> Commit, y en el laboratorio «Nueva corrida» → «Paquete a comparar: ventas-N». Corre <code>B@ventas-N</code> contra el banco de conversaciones reales y el resumen muestra la diferencia <code>B → B@ventas-N</code>, con las decisiones de Jev por turno.</li>
+  <li><strong>Promover.</strong> Con el paquete ya desplegado en la imagen: <code>tenants.&lt;t&gt;.lab.decisions_bundle = "ventas-N"</code> en <code>infra/terraform/platform/tenants.auto.tfvars</code>, <code>terraform apply</code> de platform (el operador) y dispatch de <strong>Backend deploy</strong>. Al arrancar, la API y los workers registran <code>decisions.bundle_ready</code> con el <code>id@versión</code>. Volver atrás = el id anterior.</li>
+  <li><strong>Vigilar.</strong> Calidad LLM → Motor de decisiones muestra la versión que corre y el modo de cada decisión; Conversaciones muestra las decisiones turno por turno; la cola de desacuerdos y las métricas dicen si Jev gana. Ojo: el modo es de la capacidad, no de la versión del paquete. Si la capacidad estaba encendida, el cambio actúa apenas entra el paquete; para medirlo antes, bájala a sombra y vuelve a subirla con la vara.</li>
+</ol>
+</section>
+
+<!-- ───────────────────────────── 08 ───────────────────────────── -->
+<section id="donde-va">
+<span class="num">08</span>
+<h2>¿Dónde va el arreglo?</h2>
+<p>Se diagnostica con el veredicto, no con intuición. La columna de la derecha es lo que <em>no</em> se hace: el camino de main.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Lo que muestra el veredicto</th><th>Qué falló</th><th>Dónde se arregla</th><th>Lo que no se hace</th></tr></thead>
+  <tbody>
+    <tr><td><code>by=jev</code>, Jev contestó seguro, pero lo contrario de lo correcto</td><td>La pregunta o sus criterios son ambiguos (Jev entendió otra cosa)</td><td><code>text</code> / <code>criteria</code> / opciones de la pregunta, en una versión nueva; se mide en el laboratorio y en sombra</td><td>Un regex o una lista de palabras en el lugar</td></tr>
+    <tr><td><code>by=jev</code>, Jev contestó bien (p = 0,82) pero el umbral pedía 0,85</td><td>Umbral o fila</td><td><code>thresholds</code> / <code>decide</code>, con ejemplos en el borde (0,84 · 0,85 · 0,86)</td><td>Cambiar el umbral en el código o en el perfil</td></tr>
+    <tr><td><code>reason=duda</code> muy seguido</td><td>Banda de duda muy ancha o una pregunta que mezcla dos cosas</td><td>Partir la pregunta en dos, ajustar la tabla</td><td>Forzar la decisión con un <code>if</code></td></tr>
+    <tr><td><code>reason=bundle_error</code></td><td>La tabla falla al evaluarse (lee una respuesta que no llegó, un tipo equivocado)</td><td>Fila <code>!('x' in p)</code> → <code>doubt</code> primero; ejemplo que lo cubra</td><td>Atrapar la excepción en el lugar</td></tr>
+    <tr><td><code>reason=no_question</code> o falta un dato en lo que ve Jev</td><td>La entrada no trae lo que la pregunta necesita</td><td>Un builtin de estado, vista u opciones (código genérico, con su prueba y su entrada en el catálogo)</td><td>Armar el texto para Jev dentro de una tool</td></tr>
+    <tr><td><code>by=reglas</code> con <code>provider=reglas</code> o <code>sombra</code></td><td>Decidió la regla de hoy: no es un bug de Jev</td><td>Si Jev acierta en sombra, subir el modo con la vara; si la capacidad seguirá apagada, corregir el builtin de la regla</td><td>Tocar el paquete para «arreglar» a Jev</td></tr>
+    <tr><td><code>by=piso</code></td><td>El piso cambió lo que dijo Jev, a propósito (la baja legal, el relevo)</td><td>Casi nunca es bug. Los pisos obligatorios no se cambian (DB012)</td><td>Quitar el piso desde el paquete</td></tr>
+    <tr><td><code>reason=timeout</code>, <code>http_…</code>, <code>model_changed</code></td><td>Jev no contestó o OpenRouter sirvió otro modelo</td><td>Infraestructura y perfil del oráculo (espera, modelo calibrado); la sonda diaria lo vigila</td><td>Bajar umbrales para compensar</td></tr>
+    <tr><td>Hace falta una decisión que no existe</td><td>Capacidad nueva</td><td>Catálogo (<code>capabilities</code> + <code>about</code> con su lugar) + YAML con ejemplos + <strong>un</strong> lugar que la pide con <code>capability("x")</code>; nace en off y pasa por sombra</td><td>Una función nueva en el lugar</td></tr>
+    <tr><td>El bot dijo algo mal sin que ninguna decisión fallara</td><td>No es una decisión: es lo que el asesor redacta</td><td>La guía del turno (<code>turn.yaml: guide</code>, los <code>nudge</code> del contrato) o el dominio (<code>domain.yaml</code>); el prompt base del asesor (<code>workspace/SOUL.md</code>) solo si es de la conducta general</td><td>Una guarda que reescriba el texto</td></tr>
+    <tr><td>Un hecho está mal (precio, cupo, stock, envío, etapa del pedido)</td><td>No es una decisión: es un dato verificado</td><td>Donde vive el dato, una sola vez (catálogo, <code>OrderFacts</code>, cupón): lo verificado manda</td><td>Pedirle a Jev que adivine un hecho</td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<!-- ───────────────────────────── 09 ───────────────────────────── -->
+<section id="mejorar">
+<span class="num">09</span>
+<h2>Mejorar el motor mismo</h2>
+<p>A veces el paquete no alcanza porque al motor le falta una pieza genérica. Entonces sí es código, pero en un solo sitio y con TDD:</p>
+<ul>
+  <li><strong>Un builtin nuevo</strong> (un dato que la entrada no trae, un cálculo que CEL no hace): la función, su entrada en <code>builtins.yaml</code> con su firma y su prueba. <code>test_the_catalog_and_the_code_declare_the_same_builtins</code> exige que coincidan. Si arrastra Temporal, el ingest o el catálogo, va en <code>bundled_ingest.py</code> / <code>bundled_catalog.py</code> / <code>bundled_egress.py</code> y se registra en <code>LAZY_BUILTINS</code>.</li>
+  <li><strong>Algo nuevo en el formato del paquete</strong> (un tipo de pregunta, una variable de CEL): en <code>src/platform/decisions/</code> con sus pruebas en <code>tests/platform/decisions/</code> y su código del certificador. Si cambia lo que significa un paquete, sube <code>engine_contract</code>; el contrato viejo sigue en <code>SUPPORTED_CONTRACTS</code> (un paquete publicado nunca deja de correr).</li>
+  <li><strong>Migrar comportamiento vivo</strong> que todavía es código: primero la paridad (una foto del comportamiento de antes) y después el YAML que la iguala; la foto no se regenera con el código nuevo.</li>
+  <li><strong>Un plugin nuevo con decisiones</strong>: su propio catálogo junto a sus paquetes (<code>**/decisions/bundles/&lt;id&gt;/</code>), <code>load_bundle</code> desde <code>src.sdk.decisionkit</code>, como el Order Sentinel.</li>
+</ul>
+<p class="note">Lo que sigue en código y está pendiente de pasar al paquete: los campos aroma, color y diseño del pedido, la cédula y el barrio, las zonas de envío de Colombia, las frases del piso de persona y la redacción general de la guía de etapas.</p>
+</section>
+
+<!-- ───────────────────────────── 10 ───────────────────────────── -->
+<section id="no">
+<span class="num">10</span>
+<h2>Lo que ya no se hace</h2>
+<ul class="dont">
+  <li>Un <code>if</code>, un regex o una guarda nueva en el lugar que decide para corregir una decisión.</li>
+  <li>Nombrar una clase de capacidad (<code>Baja()</code>) o importarla: se pide <code>capability("baja")</code>. Dos pruebas lo frenan.</li>
+  <li>Editar una versión publicada del paquete: su huella sha256 está congelada en una prueba.</li>
+  <li>Borrar un paquete que SSM nombra o que un rollback puede pedir.</li>
+  <li>Escribir un piso en el YAML o cambiar la regla de la baja legal o del relevo (DB012).</li>
+  <li>Poner un ejemplo de la tienda («el Velón de Cristo») en el código de una tool: va en <code>domain.yaml: vocabulary</code>.</li>
+  <li>Cargar paquetes dentro del código de un workflow (R-DET): solo en el ingest, las tools y las activities.</li>
+  <li>Importar <code>src.platform.decisions</code> desde un plugin: se usa <code>src.sdk.decisionkit</code>.</li>
+  <li>Regenerar una foto de paridad con el código nuevo (la vuelve tautológica).</li>
+  <li>Dejar <code>coverage: {}</code> pensando que «no se juzga»: es una regla que nunca se cumple y pide otra ronda del LLM.</li>
+</ul>
+</section>
+
+<!-- ───────────────────────────── 11 ───────────────────────────── -->
+<section id="comandos">
+<span class="num">11</span>
+<h2>Comandos y archivos</h2>
+<pre><code># certificar todos los paquetes (CI y el deploy lo vuelven a correr)
+cd hubara_agency &amp;&amp; uv run python -m src.sdk.cli decisions check
+
+# esquema para que el editor autocomplete los YAML
+cd hubara_agency &amp;&amp; uv run python -m src.sdk.cli decisions schema
+
+# pruebas del motor y de las decisiones de ventas
+cd hubara_agency &amp;&amp; uv run pytest -q tests/platform/decisions tests/plugins/chats/sales/decisions
+
+# la cola de desacuerdos (en un worker de producción, por SSM; responder escribe en el vault: pedir OK)
+python scripts/decisions_queue.py resumen
+python scripts/decisions_queue.py siguiente --max-chars 20000 --capacidad acuse
+python scripts/decisions_queue.py puntaje</code></pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Para</th><th>Archivo</th></tr></thead>
+  <tbody>
+    <tr><td>Diseño completo y reglas de quien escribe paquetes</td><td><code>PAQUETES_DE_DECISION.md</code> (§12 y §13)</td></tr>
+    <tr><td>El kit para plugins</td><td><code>docs/_sdk/17-decisionkit.md</code></td></tr>
+    <tr><td>La referencia que leen los agentes</td><td><code>hubara-dev/skills/hubara-plugin-developer/references/06-decision-bundles.md</code></td></tr>
+    <tr><td>Los paquetes de ventas y su catálogo</td><td><code>hubara_agency/src/plugins/chats/shared/decisions/bundles/</code></td></tr>
+    <tr><td>El enchufe <code>decide()</code> y el veredicto</td><td><code>…/sales/decisions/capabilities/__init__.py</code></td></tr>
+    <tr><td>El resolutor y el paquete activo</td><td><code>…/sales/decisions/registry.py</code>, <code>chats/shared/store_pack.py</code></td></tr>
+    <tr><td>Modos y la vara</td><td><code>…/sales/decisions/bots.py</code>, <code>capability_rollout.py</code></td></tr>
+    <tr><td>Motor genérico y certificador</td><td><code>hubara_agency/src/platform/decisions/</code></td></tr>
+    <tr><td>Fuentes de los diagramas de archify</td><td><code>docs/motor-de-decisiones/fuentes/*.archify.json</code></td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<p class="meta">Escrita el 2026-10-02 sobre la rama lab/todo (PR #372, commit e2cfd981). Si un archivo de esta guía contradice al código, gana el código.</p>
+</main>
+</body>
+</html>

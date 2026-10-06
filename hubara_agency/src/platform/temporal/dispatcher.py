@@ -124,7 +124,11 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
     except (RPCError, RuntimeError):
         pass
 
-    workflow_name = get_workflow_name("chats", "sales")
+    # La versión del workflow por conversación la decide el plugin (motor de
+    # decisiones F2/F7); sin enrutador, la del manifiesto.
+    from src.platform.workflow_routing import route_workflow
+
+    workflow_name = route_workflow("chats", "sales", get_workflow_name("chats", "sales"), session_id=session_id)
     try:
         await client.start_workflow(
             workflow_name,

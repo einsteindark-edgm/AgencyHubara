@@ -6,11 +6,14 @@ atención sobre las reglas de la etapa actual (las 28 llamadas de una sola
 conversación real sumaron 1.06M prompt tokens). Este override:
 
   1. Lee `metadata.json` de la sesión (I/O permitido: es una activity).
-  2. Captura determinista de la cantidad en respuestas compuestas
-     (`quantity_capture`, incidente run 943e6bff: "Una que colores tienes?"
-     tras "¿Cuántas unidades deseas?" — el LLM atendió la pregunta y soltó el
-     dato). Si el agente acaba de preguntar la cantidad y el cliente arranca
-     con una, se persiste en el `order_draft` ANTES de armar el prompt.
+  2. Captura de la cantidad en respuestas compuestas (`quantity_capture`,
+     incidente run 943e6bff: "Una que colores tienes?" tras "¿Cuántas
+     unidades deseas?" — el LLM atendió la pregunta y soltó el dato). Si el
+     agente acaba de preguntar la cantidad y el cliente dio una, se persiste
+     en el `order_draft` ANTES de armar el prompt. La LECTURA la decide el
+     motor de decisiones (capacidad `cantidad`: la regla de hoy es la
+     determinista, Jev la corrige con el bot en `jev`); la ESCRITURA es la de
+     siempre, con sus compuertas.
   3. Resuelve la etapa del funnel de forma DETERMINISTA con
      `resolve_funnel_stage` (proyección pura del `order_draft` del episodio
      activo — la etapa NO la elige el LLM), sobre el draft ya actualizado.
@@ -51,11 +54,15 @@ from src.plugins.chats.agent.sales.use_cases.order_draft import (
     build_order_draft_note,
     get_projectable_draft,
 )
+from src.plugins.chats.agent.sales.decisions.guards import (
+    RespuestaDeCantidad,
+    capability,
+    decide_for_session,
+)
 from src.plugins.chats.agent.sales.use_cases.quantity_capture import (
-    agent_asked_quantity,
-    capture_quantity_from_reply,
+    apply_reply_quantity,
     last_visible_agent_text,
-    parse_leading_quantity,
+    quantity_slot_open,
 )
 
 _DRAFT_NOTE_PREFIX = "[DATOS DEL PEDIDO YA CONFIRMADOS POR EL CLIENTE"
@@ -97,36 +104,41 @@ async def sales_build_prompt(input: BuildPromptInput) -> list[dict[str, Any]]:
         session.get_history(max_messages=input.llm.memory_window)
     )
     now_ms = int(time.time() * 1000)
+    # La LECTURA la decide el motor con el bot de la conversación (`reglas`
+    # por defecto = la regla de hoy, sin Jev). Solo se le pregunta a Jev si
+    # hay dónde escribir (`quantity_slot_open`).
+    verdict = await decide_for_session(
+        capability("cantidad"),
+        RespuestaDeCantidad(
+            last_agent_text=last_agent_text,
+            text=input.message,
+            open_slot=quantity_slot_open(metadata),
+        ),
+        session_id=input.session_id,
+        vault_dir=WORKSPACE_VAULT_DIR,
+    )
+    quantity = (verdict.value or {}).get("cantidad")
     captured: int | None = None
 
     def _mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
         nonlocal captured
-        captured = capture_quantity_from_reply(
-            fresh,
-            last_agent_text=last_agent_text,
-            inbound_text=input.message,
-            now_ms=now_ms,
-        )
+        captured = apply_reply_quantity(fresh, quantity, now_ms=now_ms)
         return fresh if captured is not None else None
 
-    # Pre-check PURO (texto del agente + texto del cliente) antes de tocar el
-    # vault: `update` crea el dir de sesión + sidecar `.lock` aunque aborte, y
-    # en el turno común (sin cantidad) no queremos ese side-effect. Cuando
-    # aplica, `update` relee FRESCO bajo lock y solo escribe si el mutator
-    # captura (None = abort sin write) — atómico frente a dashboard/ingest.
-    written = (
-        store.update(input.session_id, _mutator)
-        if agent_asked_quantity(last_agent_text)
-        and parse_leading_quantity(input.message) is not None
-        else None
-    )
+    # Sin cantidad leída no se toca el vault: `update` crea el dir de sesión +
+    # sidecar `.lock` aunque aborte, y en el turno común (sin cantidad) no
+    # queremos ese side-effect. Cuando aplica, `update` relee FRESCO bajo lock
+    # y solo escribe si el mutator captura (None = abort sin write) — atómico
+    # frente a dashboard/ingest.
+    written = store.update(input.session_id, _mutator) if quantity is not None else None
     if written is not None:
         metadata = written
         activity.logger.info(
             "build_prompt: cantidad capturada del mensaje compuesto "
-            "session=%s cantidad=%s",
+            "session=%s cantidad=%s por=%s",
             input.session_id,
             captured,
+            verdict.by,
         )
 
     stage = resolve_funnel_stage(metadata)
