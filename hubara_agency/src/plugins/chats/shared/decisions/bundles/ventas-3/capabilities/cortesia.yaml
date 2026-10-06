@@ -12,10 +12,14 @@
 # solo «Buenos días 🤍», sin invitar a seguir (en el turno 2 el bot dio la
 # bienvenida de marca). Un saludo solo con el que el cliente empieza a escribir
 # no es cortesía: abre la conversación y espera que lo atiendan. La pregunta
-# lo dice, y la primera fila lo decide sin leer a Jev cuando el mensaje abre
-# el episodio y la tienda no escribe hace 24 horas o más (o nunca escribió):
-# la vista `reply_gap`. El aviso reciente (ETA «¿Nos confirmas…?» → «Hola…
-# Muchas gracias») lo sigue decidiendo Jev.
+# lo dice. Y cuando el mensaje abre el episodio y la tienda no escribe hace 24
+# horas o más (o nunca escribió; la vista `reply_gap`), Jev contesta además si
+# es SOLO un saludo: si lo es, no es cortesía aunque `cortesia.solo` diga que
+# sí. La hora sola no decide: un «gracias» tardío («Gracias, me llegó y está
+# divina» a las 48 h, «Muchas gracias» a una campaña a las 30 h) sigue siendo
+# cortesía (revisión del PR #390: la primera versión de la fila lo perdía y
+# volvía el caso del 2026-09-29). El aviso reciente (ETA «¿Nos confirmas…?» →
+# «Hola… Muchas gracias») lo sigue decidiendo Jev.
 capability: cortesia
 value: bool
 input: Inbound
@@ -38,11 +42,24 @@ questions:
     criteria:
       "true": "sí, solo agradece, elogia o se despide (aunque también salude)"
       "false": "no: pregunta, pide algo, responde una pregunta o solo saluda para empezar a hablar"
+  # Solo cuando importa: el mensaje abre el episodio tras un día o más sin que
+  # la tienda escriba (o sin que haya escrito nunca).
+  - id: cortesia.saludo_solo
+    kind: noul
+    when: "inp.opens_episode == true && (inp.hours_since_store == null || inp.hours_since_store >= 24)"
+    text: >-
+      ¿El mensaje del cliente es solo un saludo («hola», «buenas», «buenos
+      días»), sin agradecer, elogiar, contar algo ni despedirse?
+    criteria:
+      "true": "sí, solo saluda"
+      "false": "no: también agradece, elogia, cuenta algo, pide algo o se despide"
 thresholds: {"yes": 0.80}
 decide:
-  # Abre el episodio y la tienda no escribe hace un día o más (o nunca): el
-  # cliente empieza a hablar, no agradece. Antes de leer a Jev.
-  - when: "inp.opens_episode == true && (inp.hours_since_store == null || inp.hours_since_store >= 24)"
+  # Abre el episodio tras un día o más sin que la tienda escriba (o nunca) y es
+  # SOLO un saludo: el cliente empieza a hablar, no agradece. Si Jev no dice
+  # que es solo un saludo, decide `cortesia.solo` (un «gracias» tardío sí es
+  # cortesía).
+  - when: "inp.opens_episode == true && (inp.hours_since_store == null || inp.hours_since_store >= 24) && 'cortesia.saludo_solo' in p && p['cortesia.saludo_solo'] >= th['yes']"
     then: false
   - when: "!('cortesia.solo' in p)"
     then: doubt
@@ -57,17 +74,29 @@ examples:
   - {answers: {cortesia.solo: 0.79}, expect: false}
   - {answers: {}, expect: doubt}
   # ventas-3 (2026-10-06): «Buenas» de un cliente que vuelve 11 días (264 h)
-  # después abre el episodio. Jev dijo 0,94 y el turno solo devolvió el saludo.
-  - {answers: {cortesia.solo: 0.94}, input: {opens_episode: true, hours_since_store: 264}, expect: false}
-  # Borde: 24 horas justas sin que la tienda escriba ya es volver.
-  - {answers: {cortesia.solo: 0.94}, input: {opens_episode: true, hours_since_store: 24}, expect: false}
-  # El primer mensaje de alguien a quien la tienda nunca le escribió.
-  - {answers: {cortesia.solo: 0.94}, input: {opens_episode: true, hours_since_store: null}, expect: false}
-  # La fila va antes de leer a Jev: sin su respuesta tampoco es cortesía.
-  - {answers: {}, input: {opens_episode: true, hours_since_store: 264}, expect: false}
+  # después abre el episodio. Jev dijo 0,94 a «solo cortesía», pero es SOLO un
+  # saludo: no es cortesía (el turno solo había devuelto el saludo).
+  - {answers: {cortesia.solo: 0.94, cortesia.saludo_solo: 0.95}, input: {opens_episode: true, hours_since_store: 264}, expect: false}
+  # Revisión del PR #390: un «gracias» tardío SÍ es cortesía. «Gracias, me llegó
+  # y está divina» a las 48 h; «Muchas gracias» a una campaña a las 30 h.
+  - {answers: {cortesia.solo: 0.94, cortesia.saludo_solo: 0.05}, input: {opens_episode: true, hours_since_store: 48}, expect: true}
+  - {answers: {cortesia.solo: 0.9, cortesia.saludo_solo: 0.03}, input: {opens_episode: true, hours_since_store: 30}, expect: true}
+  # Bordes del umbral del saludo solo (el mismo `yes`): 0,80 decide la fila; con
+  # 0,79 decide `cortesia.solo`.
+  - {answers: {cortesia.solo: 0.94, cortesia.saludo_solo: 0.80}, input: {opens_episode: true, hours_since_store: 264}, expect: false}
+  - {answers: {cortesia.solo: 0.94, cortesia.saludo_solo: 0.79}, input: {opens_episode: true, hours_since_store: 264}, expect: true}
+  # Borde de la hora: 24 horas justas ya es volver; también el primer mensaje
+  # de alguien a quien la tienda nunca le escribió.
+  - {answers: {cortesia.solo: 0.94, cortesia.saludo_solo: 0.95}, input: {opens_episode: true, hours_since_store: 24}, expect: false}
+  - {answers: {cortesia.solo: 0.94, cortesia.saludo_solo: 0.95}, input: {opens_episode: true, hours_since_store: null}, expect: false}
+  # La fila va antes de leer `cortesia.solo`: sin esa respuesta, el saludo solo basta.
+  - {answers: {cortesia.saludo_solo: 0.95}, input: {opens_episode: true, hours_since_store: 264}, expect: false}
+  # Sin la respuesta del saludo solo decide `cortesia.solo` (o la regla, si tampoco está).
+  - {answers: {cortesia.solo: 0.94}, input: {opens_episode: true, hours_since_store: 264}, expect: true}
+  - {answers: {}, input: {opens_episode: true, hours_since_store: 264}, expect: doubt}
   # El aviso reciente (ETA «¿Nos confirmas…?» hace 23 h o menos → «Hola…
   # Muchas gracias») abre el episodio, pero lo sigue decidiendo Jev.
-  - {answers: {cortesia.solo: 0.94}, input: {opens_episode: true, hours_since_store: 23}, expect: true}
+  - {answers: {cortesia.solo: 0.94, cortesia.saludo_solo: 0.95}, input: {opens_episode: true, hours_since_store: 23}, expect: true}
   - {answers: {cortesia.solo: 0.79}, input: {opens_episode: true, hours_since_store: 0}, expect: false}
   # Dentro del episodio, aunque la tienda no escriba hace días: decide Jev.
-  - {answers: {cortesia.solo: 0.94}, input: {opens_episode: false, hours_since_store: 264}, expect: true}
+  - {answers: {cortesia.solo: 0.94, cortesia.saludo_solo: 0.95}, input: {opens_episode: false, hours_since_store: 264}, expect: true}

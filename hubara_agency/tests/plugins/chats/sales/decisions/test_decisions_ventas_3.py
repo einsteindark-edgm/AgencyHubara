@@ -9,23 +9,30 @@ más (esta prueba lo exige, como `test_decisions_ventas_2.py`):
   dio 0,94 a «solo cortesía» y el turno contestó «Buenos días 🤍» sin invitar
   a seguir; en el turno 2 el bot dio la bienvenida de marca. Un saludo solo
   con el que el cliente abre la conversación no es cortesía (la pregunta lo
-  dice ahora) y un mensaje que abre el episodio cuando la tienda no escribe
-  hace 24 horas o más (o nunca escribió) tampoco, diga lo que diga Jev: una
-  fila antes de leerlo, con la vista genérica `reply_gap`. El aviso reciente
-  (ETA «¿Nos confirmas…?» → «Hola… Muchas gracias») lo sigue decidiendo Jev.
+  dice ahora). Cuando el mensaje abre el episodio y la tienda no escribe
+  hace 24 horas o más (o nunca escribió), Jev contesta además si es SOLO un
+  saludo (`cortesia.saludo_solo`, con la vista genérica `reply_gap`): si lo
+  es, no es cortesía aunque `cortesia.solo` diga que sí. Un «gracias» tardío
+  («Gracias, me llegó y está divina» a las 48 h, «Muchas gracias» a una
+  campaña a las 30 h) sigue siendo cortesía (revisión del PR #390: la
+  primera versión de la fila lo perdía). El aviso reciente (ETA «¿Nos
+  confirmas…?» → «Hola… Muchas gracias») lo sigue decidiendo Jev.
 * **Compra**: «¿Te cuento los aromas y colores?» → «Si, quiero uno para mi
   mamá, le gusta la naturaleza». Jev: `confirma` 0,51 y `pregunta_compra`
   0,05; con la duda decidía la regla («^si», «quiero uno») y la compra
   quedaba confirmada (pegajosa: habilita el formulario de envío y el cierre).
   Si se sabe que el asesor NO preguntó por la compra y la regla leyó un «sí»
-  en el texto, se retira (salvo que Jev lea un aplazamiento).
+  en el texto, se retira (salvo que Jev lea un aplazamiento CON certeza: uno
+  dudoso no deja pasar el sí).
 * **Afirmación** (solo mide): la pregunta de sí/no quedaba en duda 6 de 9
   veces. Jev dice QUÉ afirma el texto (stock, entrega, estado del pedido o
   nada) y la tabla lo cruza con las herramientas del turno, que el código ya
   sabe.
 * **Turno** (`rafaga-v6`): `confirma_compra` ya no se lee en «sí, quiero
-  ver»; asunto nuevo `gusto` (dice qué le gusta o para quién es) que se
-  atiende recomendando una o dos opciones, no listando 11 aromas.
+  ver»; asunto nuevo `gusto` (dice qué le gusta o para quién es), con una
+  etiqueta neutra (es una opción del clasificador de Jev), que se atiende
+  recomendando una o dos opciones (② por palabras, ③ y el guion), no
+  listando 11 aromas.
 * **Cantidad** (decisión del operador, 2026-10-06): si el cliente dice
   explícitamente cuántas unidades quiere («quiero uno», «dame dos»), se
   anota aunque el asesor no lo haya preguntado. Solo Jev (pregunta nueva
@@ -142,16 +149,25 @@ def test_ventas_3_is_ventas_2_with_these_changes_and_nothing_else() -> None:
     assert {**_load(V3 / "bundle.yaml"), "id": "ventas-2", "version": 2} == _load(V2 / "bundle.yaml")
 
 
-def test_cortesia_adds_the_view_a_row_before_jev_and_keeps_the_rest() -> None:
+#: Abre el episodio y la tienda no escribe hace un día o más (o nunca).
+OPENS_AFTER_A_DAY = "inp.opens_episode == true && (inp.hours_since_store == null || inp.hours_since_store >= 24)"
+
+
+def test_cortesia_adds_the_view_the_greeting_question_and_a_row_and_keeps_the_rest() -> None:
+    """La fila nueva no decide sola por la hora: exige que Jev diga que el
+    mensaje es SOLO un saludo (revisión del PR #390). La pregunta nueva se
+    hace solo cuando importa (abre el episodio tras un día o más)."""
     _need_v3()
     old, new = _load(V2 / "capabilities/cortesia.yaml"), _load(V3 / "capabilities/cortesia.yaml")
 
     assert new["view"] == {"builtin": "reply_gap"}
-    [question] = new["questions"]
-    assert question["id"] == "cortesia.solo" and question["kind"] == "noul"
-    assert "«buenas»" in question["text"] and "NO es cortesía" in question["text"]
+    solo, greeting = new["questions"]
+    assert solo["id"] == "cortesia.solo" and solo["kind"] == "noul"
+    assert "«buenas»" in solo["text"] and "NO es cortesía" in solo["text"]
+    assert (greeting["id"], greeting["kind"], greeting["when"]) == ("cortesia.saludo_solo", "noul", OPENS_AFTER_A_DAY)
+    assert "sin agradecer, elogiar, contar algo ni despedirse" in greeting["text"]
     assert new["decide"][0] == {
-        "when": "inp.opens_episode == true && (inp.hours_since_store == null || inp.hours_since_store >= 24)",
+        "when": f"{OPENS_AFTER_A_DAY} && 'cortesia.saludo_solo' in p && p['cortesia.saludo_solo'] >= th['yes']",
         "then": False,
     }
     assert new["decide"][1:] == old["decide"]
@@ -210,7 +226,9 @@ def test_the_turn_changes_only_the_purchase_hint_the_new_topic_its_rule_and_one_
         "id": "confirma_compra", "label": "confirmación de compra",
         "hint": "confirma la compra o el pedido que el asesor le propuso (pedir algo, elegir o aceptar ver opciones no es confirmar)",
     }]
-    assert gusto["id"] == "gusto" and "recomiéndale una o dos opciones" in gusto["label"]
+    # La etiqueta es una opción del clasificador de Jev: descripción neutra,
+    # sin instrucciones para el LLM (revisión del PR #390).
+    assert (gusto["id"], gusto["label"]) == ("gusto", "lo que le gusta o para quién es")
     assert new["coverage"] == {**old["coverage"], "gusto": new["coverage"]["gusto"]}
     assert new["reading"]["any"] == old["reading"]["any"]
     answered = {k: v for k, v in new["reading"]["answered"].items() if k != "ver_opciones"}
@@ -242,11 +260,18 @@ def _returning(text: str, *, store_hours_ago: int | None, opens: bool = True) ->
     return Inbound(session_id=SID, text=text, now_ms=NOW, message_id=WAMID, metadata=meta, events=events, tz=TZ)
 
 
+#: Lo que Jev dijo del «Buenas» del incidente, más que es SOLO un saludo.
+ONLY_A_GREETING = (_noul("cortesia.solo", 0.94), _noul("cortesia.saludo_solo", 0.95))
+#: Un agradecimiento: Jev lo lee como cortesía y no como un saludo solo.
+A_THANKS = (_noul("cortesia.solo", 0.94), _noul("cortesia.saludo_solo", 0.05))
+
+
 async def test_the_greeting_of_a_customer_who_comes_back_days_later_is_not_courtesy(monkeypatch) -> None:
     """El incidente: «Buenas» 11 días (264 horas) después. Con `ventas-2` Jev
-    (0,94) lo daba por cortesía; con `ventas-3` decide la fila nueva."""
+    (0,94) lo daba por cortesía; con `ventas-3` Jev dice además que es solo
+    un saludo y decide la fila nueva."""
     _need_v3()
-    _jev(monkeypatch, _noul("cortesia.solo", 0.94))
+    fake = _jev(monkeypatch, *ONLY_A_GREETING)
     inp = _returning("Buenas", store_hours_ago=264)
 
     _use(monkeypatch, "ventas-2")
@@ -256,6 +281,32 @@ async def test_the_greeting_of_a_customer_who_comes_back_days_later_is_not_court
 
     assert (before.value, before.by) == (True, "jev")
     assert (after.value, after.by, after.bundle) == (False, "jev", "ventas-3@3")
+    assert fake.calls[-1][1] == ("cortesia.solo", "cortesia.saludo_solo")
+
+
+@pytest.mark.parametrize(
+    ("text", "hours"),
+    [
+        ("Gracias, me llegó y está divina", 48),  # el pedido llegó dos días después del último aviso
+        ("Muchas gracias", 30),  # a una campaña de ayer
+    ],
+)
+async def test_a_late_thanks_that_opens_the_episode_is_still_courtesy(monkeypatch, text: str, hours: int) -> None:
+    """Revisión del PR #390 (bloqueante): la primera fila decidía `false` por
+    la hora, sin mirar el texto, y volvía el caso del 2026-09-29 («pregunta
+    en qué puedes ayudar» a quien solo agradece) para todo «gracias» tardío.
+    Si Jev dice que no es solo un saludo, decide `cortesia.solo`, como en
+    `ventas-2`."""
+    _need_v3()
+    _jev(monkeypatch, *A_THANKS)
+    inp = _returning(text, store_hours_ago=hours)
+
+    _use(monkeypatch, "ventas-2")
+    before = await _decide("cortesia", inp)
+    _use(monkeypatch, "ventas-3")
+    after = await _decide("cortesia", inp)
+
+    assert (before.value, after.value) == (True, True)
 
 
 async def test_the_ingest_no_longer_marks_the_returning_greeting_as_courtesy(monkeypatch, tmp_path: Path) -> None:
@@ -265,7 +316,7 @@ async def test_the_ingest_no_longer_marks_the_returning_greeting_as_courtesy(mon
     from src.plugins.chats.agent.sales.decisions.readings import EngineReadings
 
     _need_v3()
-    _jev(monkeypatch, _noul("cortesia.solo", 0.94))
+    _jev(monkeypatch, *ONLY_A_GREETING)
     monkeypatch.setenv("DECISIONS_BOT", "B")
     inp = _returning("Buenas", store_hours_ago=264)
 
@@ -280,7 +331,7 @@ async def test_the_ingest_no_longer_marks_the_returning_greeting_as_courtesy(mon
 
 async def test_the_first_message_to_a_store_that_never_wrote_is_not_courtesy(monkeypatch) -> None:
     _need_v3()
-    _jev(monkeypatch, _noul("cortesia.solo", 0.94))
+    _jev(monkeypatch, *ONLY_A_GREETING)
     _use(monkeypatch, "ventas-3")
 
     verdict = await _decide("cortesia", _returning("Hola, buenos días", store_hours_ago=None))
@@ -291,15 +342,72 @@ async def test_the_first_message_to_a_store_that_never_wrote_is_not_courtesy(mon
 async def test_the_thanks_to_a_recent_notice_is_still_decided_by_jev(monkeypatch) -> None:
     """Caso del 2026-09-29: el ETA avisó «¿Nos confirmas…?» hace una hora y el
     cliente contestó «Hola… Muchas gracias»: abre el episodio, pero la tienda
-    acaba de escribir. Decide Jev, como en `ventas-2`."""
+    acaba de escribir. Decide Jev, como en `ventas-2`, y la pregunta del
+    saludo solo ni se hace (tampoco dentro del episodio)."""
     _need_v3()
-    _jev(monkeypatch, _noul("cortesia.solo", 0.9))
+    fake = _jev(monkeypatch, _noul("cortesia.solo", 0.9), _noul("cortesia.saludo_solo", 0.95))
     _use(monkeypatch, "ventas-3")
 
     recent = await _decide("cortesia", _returning("Hola cómo están? Son geniales. Muchas gracias", store_hours_ago=1))
     inside = await _decide("cortesia", _returning("Muchas gracias", store_hours_ago=264, opens=False))
 
     assert (recent.value, inside.value) == (True, True)
+    assert [asked for _state, asked in fake.calls] == [("cortesia.solo",), ("cortesia.solo",)]
+
+
+# ── cortesía de punta a punta por el ingest (gotcha 1: verificar comportamiento) ──
+
+
+def _ingest_after_purchase(store_hours_ago: int) -> tuple[Any, Any, Any]:
+    """El ingest de producción con el proveedor del motor (sin inyectar
+    lecturas) para un cliente cuyo episodio anterior cerró con una compra; lo
+    último que le escribió la tienda fue el aviso del ETA, hace
+    `store_hours_ago` horas (evento `assistant` fechado del dashboard)."""
+    from datetime import timedelta
+
+    from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import IngestInboundMessage
+    from tests.plugins.chats.test_ingest_readings_provider import READY, _after_purchase, _Capture, _History
+
+    sent = datetime.now(timezone.utc) - timedelta(hours=store_hours_ago, minutes=1)
+    history = _History([{"role": "assistant", "content": READY, "timestamp": sent.isoformat()}])
+    loader, store = _Capture(), _after_purchase()
+    ingest = IngestInboundMessage(history_store=history, load_session=loader, metadata_store=store)  # type: ignore[arg-type]
+    return ingest, loader, store
+
+
+@pytest.mark.parametrize(
+    ("hours", "courtesy"),
+    [
+        (264, False),  # «Buenas» 11 días después: solo un saludo, abre la conversación
+        (1, True),  # el aviso del ETA fue hace una hora: decide Jev (0,94)
+    ],
+)
+async def test_the_ingest_turn_note_follows_the_returning_greeting(monkeypatch, hours: int, courtesy: bool) -> None:
+    """Por `IngestInboundMessage.execute` con `ventas-3` y el bot B: el
+    episodio nuevo abre con «Buenas», Jev dice que es cortesía (0,94) y solo
+    un saludo (0,95). A las 264 h la nota del turno NO es la de cortesía y no
+    queda `last_inbound_courtesy`; a 1 h, sí. Si un refactor le pasara a
+    `Inbound` una copia del metadata de ANTES de abrir el episodio,
+    `opens_episode` daría false en silencio y esta prueba lo dice."""
+    from tests.plugins.chats.test_ingest_readings_provider import SID as INGEST_SID
+    from tests.plugins.chats.test_ingest_readings_provider import _msg
+
+    _need_v3()
+    _jev(monkeypatch, *ONLY_A_GREETING, _noul("acuse.solo_cortesia", 0.02))
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    _use(monkeypatch, "ventas-3")
+    ingest, loader, store = _ingest_after_purchase(hours)
+
+    await ingest.execute(_msg("Buenas"))
+
+    [note] = [n for n in loader.extra_context[-1] if "episodio NUEVO" in n]
+    mark = store.read(INGEST_SID).get("last_inbound_courtesy")
+    if courtesy:
+        assert "solo agradece o saluda" in note and "pregunta en qué puedes ayudar" not in note
+        assert mark is not None and mark["message_id"] == "wamid.X"
+    else:
+        assert "pregunta en qué puedes ayudar" in note and "solo agradece o saluda" not in note
+        assert mark is None
 
 
 # ── compra: el «sí» que respondía otra cosa ─────────────────────────────────
@@ -339,6 +447,19 @@ async def test_a_yes_to_see_the_options_is_not_a_purchase(monkeypatch) -> None:
     assert before.rule == ["affirmation", "text"]
     assert (before.value, before.by, before.reason) == (["affirmation", "text"], "respaldo", "duda")
     assert (after.value, after.by) == ([None, "text"], "jev")
+
+
+async def test_a_doubtful_deferral_does_not_let_the_yes_through(monkeypatch) -> None:
+    """Revisión del PR #390: con «aplaza» dudoso (0,6) la fila no retiraba,
+    la confianza baja daba duda y la regla confirmaba la compra. Solo un
+    aplazamiento con certeza detiene la fila."""
+    _need_v3()
+    _jev(monkeypatch, _choice("compra.que_hace", "aplaza", 0.6), _noul("compra.pregunta_compra", 0.05))
+    _use(monkeypatch, "ventas-3")
+
+    verdict = await _decide("compra", _yes_to_see_options())
+
+    assert verdict.value == [None, "text"]
 
 
 async def test_jev_reading_a_deferral_is_never_retracted_by_the_new_row(monkeypatch) -> None:

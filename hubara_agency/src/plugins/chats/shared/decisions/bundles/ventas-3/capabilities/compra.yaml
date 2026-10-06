@@ -41,9 +41,10 @@ decide:
   # ventas-3 (2026-10-06, turno 5): si se sabe que el asesor NO preguntó por la
   # compra (la tarjeta lo dice, o Jev ≤ `retract`), el «sí» que la regla leyó
   # en el texto respondía otra cosa: se retira, aunque Jev dude de lo que hace
-  # el cliente. Un aplazamiento que lea Jev no se toca (lo deciden las filas
-  # de abajo). `rule` vale [] en un ejemplo sin `rule:`.
-  - when: "vars.asked >= 0.0 && vars.asked <= th['retract'] && rule == ['affirmation', 'text'] && (!('compra.que_hace' in choice) || choice['compra.que_hace'] != 'aplaza')"
+  # el cliente. Un aplazamiento que Jev lea CON certeza no se toca (lo deciden
+  # las filas de abajo); uno dudoso no deja pasar el sí (revisión del PR #390).
+  # `rule` vale [] en un ejemplo sin `rule:`.
+  - when: "vars.asked >= 0.0 && vars.asked <= th['retract'] && rule == ['affirmation', 'text'] && !('compra.que_hace' in choice && choice['compra.que_hace'] == 'aplaza' && conf['compra.que_hace'] >= th['choice'])"
     then: [null, text]
   - when: "!('compra.que_hace' in choice) || conf['compra.que_hace'] < th['choice']"
     then: doubt
@@ -90,6 +91,9 @@ examples:
   - {answers: {compra.que_hace: {choice: confirma, p: 0.51}}, input: {context: false}, rule: [affirmation, text], expect: doubt}
   # La regla leyó un aplazamiento: la fila nueva no lo toca.
   - {answers: {compra.que_hace: {choice: confirma, p: 0.51}, compra.pregunta_compra: 0.05}, input: {context: true}, rule: [deferral, text], expect: doubt}
-  # Jev lee un aplazamiento (aunque dude): no se retira; con certeza, aplaza.
-  - {answers: {compra.que_hace: {choice: aplaza, p: 0.6}, compra.pregunta_compra: 0.05}, input: {context: true}, rule: [affirmation, text], expect: doubt}
+  # Un aplazamiento dudoso de Jev no deja pasar el sí (revisión del PR #390:
+  # daba duda y la regla confirmaba); con certeza (borde 0,7), aplaza.
+  - {answers: {compra.que_hace: {choice: aplaza, p: 0.6}, compra.pregunta_compra: 0.05}, input: {context: true}, rule: [affirmation, text], expect: [null, text]}
+  - {answers: {compra.que_hace: {choice: aplaza, p: 0.69}, compra.pregunta_compra: 0.05}, input: {context: true}, rule: [affirmation, text], expect: [null, text]}
+  - {answers: {compra.que_hace: {choice: aplaza, p: 0.7}, compra.pregunta_compra: 0.05}, input: {context: true}, rule: [affirmation, text], expect: [deferral, text]}
   - {answers: {compra.que_hace: {choice: aplaza, p: 0.9}, compra.pregunta_compra: 0.05}, input: {context: true}, rule: [affirmation, text], expect: [deferral, text]}

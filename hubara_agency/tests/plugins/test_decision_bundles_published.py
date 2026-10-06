@@ -28,7 +28,7 @@ IN_FORGE_CLONE = not (Path(__file__).resolve().parents[3] / "forge").is_dir()
 PUBLISHED = {
     "ventas@1": "54a57cac9e6764f53cf50689891ab089e38184a0895f6d04744d141b6d6670b9",
     "ventas-2@2": "b2554fcc15954ce093dbb9abfb3bcc363f21d9964ec7f0529b0d30048d5a4320",
-    "ventas-3@3": "4e8403006e19d2a1b2220ff3f0b90df62c48ef19238ac6d2a9c46babf68d3e38",
+    "ventas-3@3": "7200201c46e1b9707e1b071c86920878003c72f143a2ba154d29e78b8fd0bcbf",
     "centinela@1": "59200ee02051d7867a113259a44b396be8ae448c7cec88c2dd61e0f7767285ef",
 }
 
