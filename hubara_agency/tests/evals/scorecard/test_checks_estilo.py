@@ -148,6 +148,24 @@ def test_est06_same_narration_with_other_spaces_or_case_is_not_lost() -> None:
     assert _run("EST-06", t).verdict == "pasa"
 
 
+def test_est06_narration_split_in_several_bubbles_is_not_lost() -> None:
+    """El envío parte el texto en burbujas: la narración es el texto entero."""
+    t = traj(T(1, sent=["Buenos días 🤍", "¿En qué te ayudo?"], narration=["Buenos días 🤍\n\n¿En qué te ayudo?"]))
+
+    assert _run("EST-06", t).verdict == "pasa"
+
+
+def test_est06_same_narration_in_another_unicode_form_is_not_lost() -> None:
+    """La misma tilde escrita descompuesta (NFD) o un carácter de ancho
+    completo no hacen una narración distinta."""
+    import unicodedata
+
+    t = traj(T(1, sent=["Buenos días 🤍 ¿Qué tal?"],
+               narration=[unicodedata.normalize("NFD", "Buenos días 🤍 ¿Qué tal？")]))
+
+    assert _run("EST-06", t).verdict == "pasa"
+
+
 def test_est06_narration_read_in_a_card_is_not_lost() -> None:
     t = traj(T(1, narration=["¿Seguimos?"], tools=[tool("send_quick_replies", body="¿Seguimos?")]))
 

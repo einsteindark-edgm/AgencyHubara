@@ -52,17 +52,20 @@ from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp import limits as wa_limits
 from src.plugins.chats.agent.sales.card_messages import (
     SHIPPING_FORM_CTA,
-    order_card_text,
+    order_card_record,
+    shipping_fields_text,
     shipping_form_text,
 )
 from src.plugins.chats.agent.sales.config.shipping import (
     SHIPPING_COP_PARAM_DESCRIPTION,
     SHIPPING_RATE_BOGOTA_COP,
     SHIPPING_RATE_NATIONAL_COP,
+    SHIPPING_FLOW_PLACEHOLDER,
     SHIPPING_RATE_RULE,
     SHIPPING_RATES_MESSAGE,
     cash_on_delivery_available,
     is_published_rate_for_zone,
+    shipping_flow_id,
 )
 from src.plugins.chats.shared.draft_items import draft_items
 from src.plugins.chats.agent.sales.decisions.guards import (
@@ -873,6 +876,14 @@ class RequestShippingDetailsTool(ToolBase):
         # del borrador, cantidad y subtotal del catálogo (incidente
         # 2026-10-06, turno 9). Es lo que el cliente lee con el botón.
         body = shipping_form_text(priced["lines"], _draft_items_of(ctx.session_key))
+        # Lo que va a leer el cliente: ese mensaje con el Flow o, sin Flow
+        # configurado, la lista de campos que el flush manda por texto (la
+        # misma regla del flush, `shipping_flow_id`).
+        customer_text = (
+            body
+            if shipping_flow_id(SHIPPING_FLOW_PLACEHOLDER)
+            else shipping_fields_text(order_total_cop, get_nequi_number())
+        )
         flow_token = f"shipping_{ctx.session_key}_{int(time.time())}"
 
         # Opciones de pago dinámicas. El RadioButtonsGroup del Flow JSON
@@ -915,7 +926,7 @@ class RequestShippingDetailsTool(ToolBase):
                 # cae al fallback de texto plano (recolección conversacional
                 # turn-by-turn). Operador setup: ver
                 # docs/META_CATALOG_SETUP.md §Fase 13.
-                "flow_id": "FLOW_ID_SHIPPING_PLACEHOLDER",
+                "flow_id": SHIPPING_FLOW_PLACEHOLDER,
                 "flow_token": flow_token,
                 "flow_cta": SHIPPING_FORM_CTA,
                 "flow_action": "navigate",
@@ -947,16 +958,16 @@ class RequestShippingDetailsTool(ToolBase):
             "flow_token": flow_token,
             # Lo que leyó el cliente con el formulario (traza, calificación y
             # verificación ③ lo leen de acá).
-            "customer_text": body,
+            "customer_text": customer_text,
             "summary": (
                 "Formulario de datos de envío enviado al cliente (ciudad, "
                 "barrio, dirección, teléfono, nombre de quien recibe, cédula "
-                "opcional, método de pago) con el mensaje de `customer_text`, "
-                "que ya dice producto, variantes, cantidad y subtotal. NO lo "
-                "repitas ni vuelvas a pedir los datos; usa `send_reply` solo si "
-                "el cliente preguntó otra cosa. Los datos llegan del "
-                "formulario o por texto: anótalos con set_order_slot y, cuando "
-                "los tengas TODOS, continúa con verify_order_for_checkout."
+                "opcional, método de pago) con el mensaje de `customer_text`: "
+                "es lo que leyó. NO lo repitas ni vuelvas a pedir los datos; usa "
+                "`send_reply` solo si el cliente preguntó otra cosa. Los datos "
+                "llegan del formulario o por texto: anótalos con set_order_slot "
+                "y, cuando los tengas TODOS, continúa con "
+                "verify_order_for_checkout."
             ),
         }, ensure_ascii=False)
 
@@ -1420,10 +1431,9 @@ class PresentOrderConfirmationTool(ToolBase):
             "kind": "order_confirmation",
             "reference_id": reference_id,
             **amounts,
-            # La tarjeta tal como la lee el cliente: el mismo texto que manda
-            # el flush (`card_messages.order_card_text`), para la traza y la
-            # verificación ③.
-            "customer_text": order_card_text(intent["params"]),
+            # La tarjeta que lee el cliente (el mismo texto que manda el
+            # flush), con su dirección tapada: va a la traza y a la ③ (Jev).
+            "customer_text": order_card_record(intent["params"]),
             "summary": summary.replace(",", "."),
         }, ensure_ascii=False)
 

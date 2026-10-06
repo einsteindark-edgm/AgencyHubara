@@ -116,21 +116,27 @@ class Turn:
         return any(t.name == name for t in self.tools)
 
     @property
-    def read_texts(self) -> tuple[str, ...]:
-        """Lo que el cliente LEYÓ en el turno, en el orden en que le llegó: los
-        textos y, después, el texto de las tarjetas que salieron (el flush va
-        después del texto): el que redacta el LLM y el que arma el código
-        (`card_text`). Con complemento, lo suyo va al final (caso 4567: el
-        saludo iba en el texto de la lista, antes del complemento)."""
-        if self.read_order is not None:
-            return self.read_order
-        cards = (
+    def card_read_texts(self) -> tuple[str, ...]:
+        """El texto de las tarjetas que salieron en el turno (las que no se
+        negaron), en orden: el que redacta el LLM (`card_texts`) y el que arma
+        el código (`card_text`: el mensaje del formulario, el resumen del
+        pedido, las tarifas)."""
+        return tuple(
             x
             for t in self.tools
             if t.ok is not False
             for x in (*card_texts(t.name, t.args), *((t.card_text,) if t.card_text else ()))
         )
-        return (*self.sent_texts, *cards)
+
+    @property
+    def read_texts(self) -> tuple[str, ...]:
+        """Lo que el cliente LEYÓ en el turno, en el orden en que le llegó: los
+        textos y, después, el texto de las tarjetas (el flush va después del
+        texto). Con complemento, lo suyo va al final (caso 4567: el saludo iba
+        en el texto de la lista, antes del complemento)."""
+        if self.read_order is not None:
+            return self.read_order
+        return (*self.sent_texts, *self.card_read_texts)
 
     @property
     def is_customer(self) -> bool:

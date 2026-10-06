@@ -127,11 +127,12 @@ async def test_multi_item_subtotal_and_summary(ctx, _isolate_vault_dir: Path) ->
 
 @pytest.mark.asyncio
 async def test_multi_item_form_message_lists_each_product_with_its_variant_and_subtotal(
-    ctx, _isolate_vault_dir: Path
+    ctx, _isolate_vault_dir: Path, monkeypatch
 ) -> None:
     """Varios productos: el mensaje del formulario dice cada uno con su
     cantidad, sus variantes del borrador y su subtotal, y el subtotal en
     productos. Todo del catálogo: el monto que mande el LLM no aparece."""
+    monkeypatch.setenv("META_FLOW_ID_SHIPPING", "flow-123")  # el Flow de producción
     draft = {
         "slots": {"producto": "Trilogía del Terror + Calabaza"},
         "items": [

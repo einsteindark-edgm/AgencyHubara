@@ -192,8 +192,9 @@ CHECKS: tuple[CheckSpec, ...] = (
        ("guion:sales_script regla máxima 2",)),
     _c("ENV-02", "Formulario sin responder al cliente", "envio", "mayor", "code",
        "Se envió el formulario en respuesta a un mensaje escrito del cliente.",
-       "El cliente lee un texto con el formulario: su mensaje (producto, variantes, cantidad y subtotal) "
-       "o un texto del bot; no le llega el formulario pelado.",
+       "Ante una pregunta, un aplazamiento, una queja o un traspaso el bot responde con su propio texto; "
+       "el mensaje del formulario (producto, variantes, cantidad y subtotal) basta solo cuando el cliente "
+       "dio una cantidad, dijo que sí o eligió una variante.",
        ("PR #281", "incidente 2026-10-06: el cliente leyó el mensaje del formulario")),
     _c("ENV-03", "Datos del formulario quedan en el pedido", "envio", "mayor", "code",
        "El cliente envió el formulario.",

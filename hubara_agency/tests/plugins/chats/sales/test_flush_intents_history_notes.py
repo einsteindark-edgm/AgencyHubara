@@ -371,10 +371,20 @@ def test_build_history_event_order_confirmation_mentions_summary():
 
 
 _FORM_MESSAGE = (
-    "Para enviarte tu pedido necesito unos datos 🤍\n\n• *2× Velón Koala* (Blanco · Lavanda)\n"
-    "Subtotal en productos: $70.000\n\nEl envío va aparte y lo verás en el resumen del pedido. "
+    "Para enviarte tu pedido necesito unos datos 🤍\n\n• *2× Velón Koala* (Blanco, Lavanda)\n"
+    "Subtotal en productos: $70.000\n\nEl envío va aparte (lo calcula la transportadora). "
     "Toca «Completar datos» para llenar el formulario (toma 30 segundos)."
 )
+
+
+def _shipping_intent(body: str = _FORM_MESSAGE) -> dict:
+    return {"id": "i-f", "kind": "shipping_flow",
+            "params": {"flow_id": "FLOW_ID_SHIPPING_PLACEHOLDER", "flow_token": "shipping_x_1",
+                       "flow_cta": "Completar datos", "flow_action": "navigate",
+                       "flow_action_screen": "SHIPPING_DETAILS",
+                       "flow_action_data": {"order_total_cop": 70000, "items_summary": "2× Velón Koala",
+                                            "show_cash_on_delivery": True, "payment_options": []},
+                       "body": body, "header_text": "Datos de envío", "order_total_cop": 70000}}
 
 
 def test_build_history_event_shipping_flow_shows_the_form_message():
@@ -395,16 +405,7 @@ async def test_the_form_message_in_the_panel_is_the_one_the_customer_read(vault,
 
     monkeypatch.setenv("META_FLOW_ID_SHIPPING", "flow-123")
     monkeypatch.delenv("DECISIONS_BOT", raising=False)
-    _seed_metadata(
-        vault,
-        [{"id": "i-f", "kind": "shipping_flow",
-          "params": {"flow_id": "FLOW_ID_SHIPPING_PLACEHOLDER", "flow_token": "shipping_x_1",
-                     "flow_cta": "Completar datos", "flow_action": "navigate",
-                     "flow_action_screen": "SHIPPING_DETAILS",
-                     "flow_action_data": {"order_total_cop": 70000, "items_summary": "2× Velón Koala",
-                                          "show_cash_on_delivery": True, "payment_options": []},
-                     "body": _FORM_MESSAGE, "header_text": "Datos de envío", "order_total_cop": 70000}}],
-    )
+    _seed_metadata(vault, [_shipping_intent()])
 
     await ActivityEnvironment().run(flush_pending_ui_intents_activity, _SESSION_ID)
 
@@ -412,6 +413,88 @@ async def test_the_form_message_in_the_panel_is_the_one_the_customer_read(vault,
     [event] = _read_history(vault)
     assert sent == _FORM_MESSAGE
     assert event["content"].endswith(f" — con el mensaje: «{sent}»")
+
+
+@pytest.mark.asyncio
+async def test_without_the_flow_the_panel_shows_the_list_the_customer_read(vault, monkeypatch):
+    """Sin `META_FLOW_ID_SHIPPING` el flush manda la lista de campos por texto:
+    el marcador dice eso, no el mensaje del Flow (que no salió)."""
+    import src.platform.whatsapp.client as wa_client
+
+    monkeypatch.delenv("META_FLOW_ID_SHIPPING", raising=False)
+    _seed_metadata(vault, [_shipping_intent()])
+
+    await ActivityEnvironment().run(flush_pending_ui_intents_activity, _SESSION_ID)
+
+    wa_client.send_flow.assert_not_awaited()
+    sent = wa_client.send_text.call_args.args[2]
+    [event] = _read_history(vault)
+    assert event["component_kind"] == "shipping_flow"
+    assert "por texto" in event["content"]
+    assert sent[:120] in event["content"]
+    assert "Subtotal en productos" not in event["content"]
+
+
+@pytest.mark.asyncio
+async def test_when_meta_rejects_the_flow_the_panel_shows_the_list_the_customer_read(vault, monkeypatch):
+    """Meta rechazó el Flow y el flush cayó a la lista de campos: el marcador
+    lleva lo que de verdad salió."""
+    import src.platform.whatsapp.client as wa_client
+
+    monkeypatch.setenv("META_FLOW_ID_SHIPPING", "flow-123")
+    monkeypatch.setattr(
+        wa_client, "send_flow",
+        AsyncMock(return_value=SimpleNamespace(ok=False, wa_message_id=None, error="(#131009) flow")),
+    )
+    _seed_metadata(vault, [_shipping_intent()])
+
+    await ActivityEnvironment().run(flush_pending_ui_intents_activity, _SESSION_ID)
+
+    sent = wa_client.send_text.call_args.args[2]
+    [event] = _read_history(vault)
+    assert sent[:120] in event["content"]
+    assert "Subtotal en productos" not in event["content"]
+
+
+@pytest.mark.asyncio
+async def test_the_form_message_goes_out_as_the_code_wrote_it(vault, monkeypatch):
+    """El mensaje del formulario lo arma el código: no pasa por el saneador de
+    textos del LLM ni le pregunta a Jev; sale tal cual (igual a
+    `customer_text`)."""
+    import src.platform.whatsapp.client as wa_client
+    from src.plugins.chats.agent.sales.decisions import guards
+
+    asked: list[str] = []
+
+    async def _clean(raw, **_kw):
+        asked.append(raw)
+        return raw
+
+    monkeypatch.setattr(guards, "clean_llm_text", _clean)
+    monkeypatch.setenv("META_FLOW_ID_SHIPPING", "flow-123")
+    body = "Para enviarte tu pedido necesito unos datos — sale tal cual"
+    _seed_metadata(vault, [_shipping_intent(body)])
+
+    await ActivityEnvironment().run(flush_pending_ui_intents_activity, _SESSION_ID)
+
+    assert wa_client.send_flow.call_args.args[2].body == body
+    assert asked == []
+
+
+@pytest.mark.asyncio
+async def test_jev_reads_the_start_of_a_long_form_marker(vault, monkeypatch):
+    """La ventana de Jev corta por el PRINCIPIO los mensajes largos: el texto
+    de la tarjeta se recorta adentro del marcador para que el principio
+    («El bot pidió los datos de envío…») siempre quede."""
+    from src.plugins.chats.agent.sales.decisions.context import customer_window
+
+    monkeypatch.delenv("META_FLOW_ID_SHIPPING", raising=False)  # la lista de campos: más de 500
+    _seed_metadata(vault, [_shipping_intent()])
+
+    await ActivityEnvironment().run(flush_pending_ui_intents_activity, _SESSION_ID)
+
+    window = customer_window(_read_history(vault), burst_wamids=[])
+    assert window.lines[-1].startswith("[asesor] 📋 El bot pidió los datos de envío")
 
 
 def test_build_history_event_reaction_includes_emoji():

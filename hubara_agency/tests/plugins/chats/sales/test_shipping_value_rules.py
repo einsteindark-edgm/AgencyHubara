@@ -195,14 +195,48 @@ async def test_order_summary_prepaid_zero_shipping_says_no_cost():
 @pytest.mark.asyncio
 async def test_the_order_summary_marker_shows_the_card_the_customer_read():
     """Incidente 2026-10-06: el marcador del historial decía solo «envió el
-    resumen del pedido»; el operador, Jev y Calidad LLM no veían la tarjeta."""
+    resumen del pedido»; el operador, Jev y Calidad LLM no veían la tarjeta.
+    La dirección del cliente no va en el registro: la lee el cliente en su
+    tarjeta, el marcador la lleva tapada."""
     body = await _order_summary_body()
 
     ev = _build_history_event("order_confirmation", dict(_ORDER_PARAMS))
 
-    assert ev["content"] == (
-        f"🧾 El bot envió el resumen del pedido con botones para confirmar — con el mensaje: «{body}»"
-    )
+    head = "🧾 El bot envió el resumen del pedido con botones para confirmar — con el mensaje: «*Resumen de tu pedido*"
+    assert ev["content"].startswith(head)
+    assert "Subtotal productos: $112.500 COP" in ev["content"]
+    assert "Calle 59b sur 38" in body
+    assert "Calle 59b sur 38" not in ev["content"] and "Medellín" not in ev["content"]
+    assert "📍 Dirección: [dirección del cliente]" in ev["content"]
+
+
+_LONG_ORDER_PARAMS = {
+    **_ORDER_PARAMS,
+    "payment_method": "transfer",
+    "discount_cop": 11250,
+    "coupon_code": "VELAS10",
+    "coupon_note": (
+        "El cupón VELAS10 aplica a una unidad de cada producto con cupo: Velón Amor Eterno, "
+        "Encanto Silvestre y Sagrado Rostro llevan el descuento; las unidades que pidas de más "
+        "van a precio normal porque el cupo de la promoción es de una por producto."
+    ),
+}
+
+
+def test_jev_reads_the_start_of_a_long_order_summary_marker():
+    """La ventana de Jev corta por el PRINCIPIO los mensajes de más de 500
+    caracteres: un resumen de 3 ítems con cupón perdía «El bot envió el
+    resumen del pedido…». El texto de la tarjeta se recorta ADENTRO del
+    marcador: el principio siempre queda."""
+    from src.plugins.chats.agent.sales.card_messages import order_card_text
+    from src.plugins.chats.agent.sales.decisions.context import customer_window
+
+    assert len(order_card_text(_LONG_ORDER_PARAMS)) > 500
+    ev = _build_history_event("order_confirmation", dict(_LONG_ORDER_PARAMS))
+
+    window = customer_window([{**ev, "timestamp": "2026-10-06T12:00:00+00:00"}], burst_wamids=[])
+
+    assert window.lines[-1].startswith("[asesor] 🧾 El bot envió el resumen del pedido con botones para confirmar")
 
 
 @pytest.mark.asyncio
@@ -397,8 +431,41 @@ async def test_order_confirmation_envelope_carries_the_card_the_customer_reads(t
     await _dispatch(wa_client, "order_confirmation", intent["params"])
 
     sent = wa_client.send_interactive_buttons.await_args.args[2].body
-    assert result["customer_text"] == sent
+    address = "📍 Dirección: Calle 59b sur 38, Poblado, Medellín"
+    assert address in sent  # el cliente lee su dirección en la tarjeta
+    assert result["customer_text"] == sent.replace(address, "📍 Dirección: [dirección del cliente]")
     assert sent.startswith("*Resumen de tu pedido*\n• 2× Velón Amor Eterno")
+
+
+@pytest.mark.asyncio
+async def test_the_customer_address_never_reaches_the_records_of_the_card(tmp_path: Path):
+    """Privacidad: la dirección del resumen del pedido no va en lo que se
+    registra ni sale hacia Jev: ni en `customer_text`, ni en la traza
+    (`card_text`), ni en la entrada de la verificación ③. El detector de
+    direcciones del anonimizador no ve «Calle 59b sur 38»."""
+    from src.plugins.chats.agent.sales.decisions.facade import delivered_card_texts
+    from src.plugins.chats.agent.sales.turn_trace import summarize_tool_event
+
+    args = {
+        "items": [{"handle": "velon-amor-eterno", "quantity": 1, "unit_price_cop": 38500}],
+        "shipping_cop": 16940,
+        "shipping_address_summary": "Calle 59b sur 38, Poblado, Medellín",
+        "payment_method": "transfer",
+    }
+    tool = PresentOrderConfirmationTool(workspace=str(tmp_path), catalog=_OneProductCatalog())
+    raw = await tool.execute_with_context(_ctx(), **args)
+    event = {"name": "present_order_confirmation", "args": {}, "result": raw}
+
+    records = [
+        json.loads(raw)["customer_text"],
+        summarize_tool_event("present_order_confirmation", {}, raw)["card_text"],
+        *delivered_card_texts([event]),
+    ]
+
+    assert len(records) == 3
+    for text in records:
+        assert "Calle 59b" not in text and "Poblado" not in text and "Medellín" not in text
+        assert "[dirección del cliente]" in text
 
 
 @pytest.mark.asyncio

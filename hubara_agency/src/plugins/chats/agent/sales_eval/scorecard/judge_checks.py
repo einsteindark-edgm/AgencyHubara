@@ -289,6 +289,10 @@ def _reply_lines(t: Any, text_limit: int | None) -> list[str]:
     p = f"T{t.turn} ·"
     for s in t.sent_texts:
         lines.extend(_quoted(p, "bot envió", s if text_limit is None else _clip(s, text_limit)))
+    # Lo que el cliente leyó con las tarjetas: el texto de la lista o de los
+    # botones y el que arma el código (el mensaje del formulario, el resumen).
+    for c in t.card_read_texts:
+        lines.extend(_quoted(p, "bot envió con la tarjeta", c if text_limit is None else _clip(c, text_limit)))
     if t.suppressed_reason and t.llm_text:
         lines.extend(_quoted(p, f"texto suprimido ({t.suppressed_reason}), el cliente NO lo vio", t.llm_text))
     # Solo la que el cliente no leyó: la igual a un texto que salió no se

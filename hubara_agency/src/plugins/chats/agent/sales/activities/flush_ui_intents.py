@@ -37,7 +37,11 @@ from temporalio import activity
 
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
 from src.platform.temporal.heartbeat import with_heartbeat
-from src.plugins.chats.agent.sales.card_messages import order_card_text
+from src.plugins.chats.agent.sales.card_messages import (
+    order_card_record,
+    order_card_text,
+    shipping_fields_text,
+)
 from src.plugins.chats.agent.sales.config.payments import (
     PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA,
     PAYMENT_LINK_SURCHARGE_OTHER_BANKS,
@@ -45,7 +49,7 @@ from src.plugins.chats.agent.sales.config.payments import (
 )
 from src.plugins.chats.agent.sales.config.shipping import (
     SHIPPING_RATES_MESSAGE,
-    cash_on_delivery_available,
+    shipping_flow_id,
 )
 
 # Delay entre fotos del gallery — sin pausa Meta los entrega como burst, lo
@@ -89,6 +93,11 @@ _INTENT_TEXT_NEUTRAL: dict[str, str | None] = {
     "footer": None,
 }
 
+#: Intents cuyos textos arma el CÓDIGO, no el LLM (el mensaje y el encabezado
+#: del formulario de envío): no pasan por el saneador ni le preguntan a Jev.
+#: Salen tal cual, el mismo `customer_text` que leen la traza y la ③.
+_CODE_TEXT_KINDS = frozenset({"shipping_flow"})
+
 
 async def _sanitize_intent_client_text(
     kind: str, params: dict[str, Any], *, session_id: str | None = None
@@ -107,6 +116,8 @@ async def _sanitize_intent_client_text(
     from src.sdk.agentkit import looks_like_admin_leak, sanitize_llm_text
 
     out = dict(params)
+    if kind in _CODE_TEXT_KINDS:
+        return out
     for key, neutral in _INTENT_TEXT_NEUTRAL.items():
         value = out.get(key)
         if not isinstance(value, str) or not value.strip():
@@ -444,6 +455,9 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
         # persiste en `outbound_media_index` aunque el envelope global
         # falle a medias — cada foto que SÍ llegó es citable.
         media_log: list[dict[str, Any]] = []
+        # Lo que de verdad salió cuando no es lo de `params` (la lista de
+        # campos si el formulario no salió como Flow): el marcador lleva eso.
+        sent: dict[str, Any] = {}
         try:
             # Motor de decisiones (`destinatario`, F5): los textos del LLM se
             # deciden UNA vez, acá. Lo que sale y lo que muestra el panel
@@ -461,6 +475,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
                 to_number=to_number,
                 last_inbound_message_id=last_inbound_msg_id,
                 media_log=media_log,
+                sent=sent,
                 session_id=session_id,
                 client_text_decided=True,
             )
@@ -534,7 +549,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
         # Marker al histórico del dashboard (post-pop, post-write —
         # best-effort: si crashea, el intent NO se reenvía y el flush sigue).
         try:
-            history_event = _build_history_event(kind, params)
+            history_event = _build_history_event(kind, params, sent_text=sent.get("text"))
             if history_event is not None:
                 # `wamid`: destino de las citas del cliente ("este" citando
                 # los botones / el catálogo / la foto). Sin él el dashboard
@@ -585,6 +600,7 @@ async def _dispatch_intent(
     to_number: str,
     last_inbound_message_id: str | None,
     media_log: list[dict[str, Any]] | None = None,
+    sent: dict[str, Any] | None = None,
     session_id: str | None = None,
     client_text_decided: bool = False,
 ):
@@ -603,6 +619,11 @@ async def _dispatch_intent(
     send exitoso — `{wa_message_id, handle, title, image_url, label}` — para
     que el caller persista `outbound_media_index` (resolver replies del
     cliente que citan una foto; caso wa_573125671604).
+
+    `sent`: dict mutable donde se anota lo que de verdad salió cuando no es
+    lo de `params` — `{"text": ...}` si el formulario de envío cayó a la
+    lista de campos por texto — para que el marcador del historial no
+    muestre un mensaje que el cliente no recibió.
 
     Devuelve `OutboundResult` o None si el kind es desconocido / intent
     invalido sin posibilidad de envío.
@@ -778,15 +799,11 @@ async def _dispatch_intent(
         #   3. Placeholder → caemos al fallback de texto plano.
         # El env-first hace que cambiar el Flow en Meta (re-publicar →
         # nuevo flow_id) sea un re-deploy del worker SIN tocar código.
-        env_flow_id = (os.environ.get("META_FLOW_ID_SHIPPING") or "").strip()
-        flow_id = (
-            env_flow_id
-            if env_flow_id and env_flow_id != "FLOW_ID_SHIPPING_PLACEHOLDER"
-            else params.get("flow_id")
-        )
-        use_native_flow = bool(flow_id and flow_id != "FLOW_ID_SHIPPING_PLACEHOLDER")
+        # La misma regla que usa la tool para decir en `customer_text` qué va
+        # a leer el cliente (`config/shipping.shipping_flow_id`).
+        flow_id = shipping_flow_id(params.get("flow_id"))
 
-        if use_native_flow:
+        if flow_id is not None:
             # Defensa en profundidad (post-mortem run bc54cb93, 2026-05-25):
             # ANTES el send_flow estaba sin try/except. Si Meta rechazaba o
             # `_mark_flow_awaiting_reply` lanzaba NameError, el cliente se
@@ -847,38 +864,9 @@ async def _dispatch_intent(
         # (anti-patrón sesión adc6400c — la opción "Compartir ubicación" no
         # funciona y el cliente abandona). Las formas de pago se informan
         # con sus condiciones (requisito 2026-08-31).
-        order_total_cop = int(params.get("order_total_cop") or 0)
-        nequi = get_nequi_number()
-        payment_lines = []
-        if cash_on_delivery_available(order_total_cop):
-            payment_lines.append(
-                "  • Contra entrega — el valor se calcula con la "
-                "transportadora"
-            )
-        payment_lines.append(
-            f"  • Pago anticipado — Nequi o llave {nequi}"
-            if nequi
-            else "  • Pago anticipado (Nequi)"
-        )
-        payment_lines.append(
-            "  • Link de pago — recargo adicional de "
-            f"{PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA} con Nequi o "
-            f"Bancolombia, {PAYMENT_LINK_SURCHARGE_OTHER_BANKS} con otros "
-            "bancos"
-        )
-        payment_block = "\n".join(payment_lines)
-        text = (
-            "Para coordinar el envío necesito estos datos, puedes "
-            "enviármelos en un solo mensaje o uno por uno:\n\n"
-            "🏙️ *Ciudad*\n"
-            "📍 *Barrio*\n"
-            "🏠 *Dirección* (calle, número, apartamento)\n"
-            "📞 *Teléfono* de contacto\n"
-            "🙋 *Nombre de quien recibe* el pedido\n"
-            "🪪 *Cédula* de quien recibe (opcional)\n"
-            "💳 *Método de pago*, elige entre:\n"
-            f"{payment_block}"
-        )
+        text = shipping_fields_text(int(params.get("order_total_cop") or 0), get_nequi_number())
+        if sent is not None:
+            sent["text"] = text
         return await wa_client.send_text(
             phone_number_id,
             to_number,
@@ -1263,8 +1251,22 @@ def _trunc(text: str, limit: int = _NOTE_TEXT_LIMIT) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _card_marker(head: str, text: str) -> str:
+    """«<head> — con el mensaje: «<texto>»» para una tarjeta cuyo texto arma el
+    código. El texto se recorta ADENTRO del marcador para que el marcador
+    entero quepa en una línea de la ventana de Jev, que corta los mensajes
+    largos por el PRINCIPIO: lo primero que se lee es qué mandó el bot."""
+    from src.plugins.chats.agent.sales.decisions.context import MAX_LINE_CHARS
+
+    text = text.strip()
+    if not text:
+        return head
+    prefix = f"{head} — con el mensaje: «"
+    return f"{prefix}{_trunc(text, MAX_LINE_CHARS - len(prefix) - 1)}»"
+
+
 def _build_history_event(
-    kind: str | None, params: dict[str, Any]
+    kind: str | None, params: dict[str, Any], *, sent_text: str | None = None
 ) -> dict[str, Any] | None:
     """Marker human-readable del intent enviado, para el JSONL del dashboard.
 
@@ -1313,16 +1315,19 @@ def _build_history_event(
         content = f"🛍️ El bot envió el catálogo con {total} productos"
     elif kind == "shipping_flow":
         # El mensaje del formulario y el resumen del pedido los arma el
-        # código: van enteros, como los leyó el cliente (incidente
-        # 2026-10-06: el operador, Jev y Calidad LLM no los veían).
-        content = "📋 El bot pidió los datos de envío (formulario)"
-        body = str(params.get("body") or "").strip()
-        if body:
-            content += f" — con el mensaje: «{body}»"
+        # código: van como los leyó el cliente (incidente 2026-10-06: el
+        # operador, Jev y Calidad LLM no los veían). Si el Flow no salió, la
+        # lista de campos que se mandó por texto (`sent_text`).
+        if sent_text:
+            content = _card_marker("📋 El bot pidió los datos de envío por texto", sent_text)
+        else:
+            content = _card_marker(
+                "📋 El bot pidió los datos de envío (formulario)", str(params.get("body") or "")
+            )
     elif kind == "order_confirmation":
-        content = (
-            "🧾 El bot envió el resumen del pedido con botones para confirmar"
-            f" — con el mensaje: «{order_card_text(params)}»"
+        # Sin la dirección del cliente: el registro no la necesita.
+        content = _card_marker(
+            "🧾 El bot envió el resumen del pedido con botones para confirmar", order_card_record(params)
         )
     elif kind == "reaction":
         content = f"El bot reaccionó con {params.get('emoji', '🤍')} a un mensaje del cliente"

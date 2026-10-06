@@ -432,7 +432,7 @@ async def test_shipping_flow_placeholder_offers_cod_when_total_over_45k(
     assert "transportadora" in text.lower()
 
 
-def test_humanize_payment_maps_new_methods():
+def test_payment_label_maps_new_methods():
     """`payment_link` es método nuevo; `transfer` ahora se lee como pago
     anticipado; `card` queda como legacy (órdenes viejas). Vive con el texto
     del resumen del pedido (`card_messages`), que también arma la tool."""

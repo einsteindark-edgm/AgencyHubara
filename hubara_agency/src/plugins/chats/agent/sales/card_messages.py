@@ -7,11 +7,13 @@ Dos tarjetas llevan un texto que no redacta el LLM:
   productos y qué hacer. Incidente 2026-10-06 (bot V2, turno 9): salía «Para
   enviarte *2× …* necesito unos datos. Toca el botón para completar el
   formulario — toma 30 segundos.», sin aroma, color ni subtotal y con guion
-  largo;
+  largo. Sin el Flow, el flush pide los datos con la lista de campos
+  (`shipping_fields_text`);
 * el resumen del pedido (`present_order_confirmation`), el que va con los
-  botones Confirmar / Modificar / Cancelar.
+  botones Confirmar / Modificar / Cancelar. Lo que se registra de él lleva la
+  dirección tapada (`order_card_record`).
 
-Una sola función por tarjeta para el flush (que la envía), su marcador del
+Una sola función por texto para el flush (que lo envía), su marcador del
 historial y el envelope de la tool (`customer_text`): la calificación, la
 verificación ③ y Calidad LLM leen lo mismo que el cliente. Puro y sin
 Temporal: lo importan las tools (contrato `tools-no-temporal`).
@@ -21,9 +23,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from src.plugins.chats.agent.sales.config.payments import (
+    PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA,
+    PAYMENT_LINK_SURCHARGE_OTHER_BANKS,
+)
 from src.plugins.chats.agent.sales.config.shipping import (
     ORDER_SUMMARY_SHIPPING_LINE,
     ORDER_SUMMARY_SHIPPING_NOTE,
+    cash_on_delivery_available,
 )
 from src.plugins.chats.agent.sales.pricing import format_cop
 from src.plugins.chats.shared.draft_items import product_key
@@ -36,6 +43,11 @@ SHIPPING_FORM_CTA = "Completar datos"
 
 #: Las variantes de una línea del borrador, en el orden en que se nombran.
 _VARIANT_FIELDS = ("color", "aroma", "diseno")
+
+#: Cómo queda la dirección del cliente en lo que se REGISTRA de su resumen del
+#: pedido (envelope, traza, verificación ③, marcador del historial): el
+#: cliente la lee en su tarjeta; los registros y Jev no la necesitan.
+ADDRESS_MASK = "[dirección del cliente]"
 
 
 # ── Formulario de envío ─────────────────────────────────────────────────────
@@ -59,8 +71,11 @@ def shipping_form_text(lines: Sequence[Mapping[str, Any]], draft: Sequence[Mappi
     total = sum(p["subtotal_cop"] for p in products)
     head = "Para enviarte tu pedido necesito unos datos 🤍"
     subtotal = f"Subtotal en productos: {format_cop(total)}"
+    # El formulario sale ANTES de elegir el pago: la frase vale con contra
+    # entrega (el resumen dice «Por confirmar») y con pago anticipado (tarifa
+    # mínima, no definitiva; regla del operador 2026-09-07).
     closing = (
-        "El envío va aparte y lo verás en el resumen del pedido. "
+        "El envío va aparte (lo calcula la transportadora). "
         f"Toca «{SHIPPING_FORM_CTA}» para llenar el formulario (toma 30 segundos)."
     )
 
@@ -98,9 +113,10 @@ def _product_row(product: Mapping[str, Any], draft: Sequence[Mapping[str, Any]],
 
 
 def _variant_label(product: Mapping[str, Any], draft: Sequence[Mapping[str, Any]]) -> str:
-    """Las variantes del borrador para `product`: las de su línea, o una por
-    variante («1× Lila · Lavanda, 1× Azul · Lavanda») si el producto va
-    repartido y sus cantidades suman las del pedido. Si no cuadran, nada: el
+    """Las variantes del borrador para `product`, separadas por coma como en
+    el guion («2× Velón Koala (Sándalo, Café)»): las de su línea o, si el
+    producto va repartido y sus cantidades suman las del pedido, una por
+    variante («1× Lila, Lavanda; 1× Azul, Lavanda»). Si no cuadran, nada: el
     mensaje no dice algo que contradiga la cantidad."""
     keys = {product_key(product.get("title")), product_key(product.get("handle"))} - {""}
     own = [item for item in draft if product_key(item.get("producto")) in keys]
@@ -109,18 +125,57 @@ def _variant_label(product: Mapping[str, Any], draft: Sequence[Mapping[str, Any]
     quantities = [_quantity(item.get("cantidad")) for item in own]
     labels = [_variant(item) for item in own]
     if own and all(quantities) and all(labels) and sum(q or 0 for q in quantities) == product["quantity"]:
-        return ", ".join(f"{q}× {label}" for q, label in zip(quantities, labels, strict=True))
+        return "; ".join(f"{q}× {label}" for q, label in zip(quantities, labels, strict=True))
     return ""
 
 
 def _variant(item: Mapping[str, Any]) -> str:
     values = (" ".join(str(item.get(field) or "").split()) for field in _VARIANT_FIELDS)
-    return " · ".join(value for value in values if value)
+    return ", ".join(value for value in values if value)
 
 
 def _quantity(raw: Any) -> int | None:
     text = str(raw if raw is not None else "").strip()
     return int(text) if text.isdigit() and int(text) > 0 else None
+
+
+def shipping_fields_text(order_total_cop: int, nequi: str) -> str:
+    """Los datos de envío pedidos por TEXTO, cuando no sale el Flow (sin
+    `META_FLOW_ID_SHIPPING` o si Meta lo rechaza): los campos, uno por línea, y
+    las tres formas de pago con sus condiciones (requisito 2026-08-31; contra
+    entrega solo desde el mínimo en productos). Sin botones: la opción nativa
+    de ubicación hacía abandonar (sesión adc6400c). `nequi`: la llave vigente
+    (`get_nequi_number()`); vacía, sin número."""
+    payment_lines = []
+    if cash_on_delivery_available(order_total_cop):
+        payment_lines.append(
+            "  • Contra entrega — el valor se calcula con la "
+            "transportadora"
+        )
+    payment_lines.append(
+        f"  • Pago anticipado — Nequi o llave {nequi}"
+        if nequi
+        else "  • Pago anticipado (Nequi)"
+    )
+    payment_lines.append(
+        "  • Link de pago — recargo adicional de "
+        f"{PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA} con Nequi o "
+        f"Bancolombia, {PAYMENT_LINK_SURCHARGE_OTHER_BANKS} con otros "
+        "bancos"
+    )
+    payment_block = "\n".join(payment_lines)
+    return (
+        "Para coordinar el envío necesito estos datos, puedes "
+        "enviármelos en un solo mensaje o uno por uno:\n\n"
+        "🏙️ *Ciudad*\n"
+        "📍 *Barrio*\n"
+        "🏠 *Dirección* (calle, número, apartamento)\n"
+        "📞 *Teléfono* de contacto\n"
+        "🙋 *Nombre de quien recibe* el pedido\n"
+        "🪪 *Cédula* de quien recibe (opcional)\n"
+        "💳 *Método de pago*, elige entre:\n"
+        f"{payment_block}"
+    )
 
 
 # ── Resumen del pedido ──────────────────────────────────────────────────────
@@ -206,3 +261,13 @@ def order_card_text(params: Mapping[str, Any]) -> str:
             text = note.strip()
             body += "\n\n🎟️ " + (text if len(text) <= room else text[: room - 1].rstrip() + "…")
     return body
+
+
+def order_card_record(params: Mapping[str, Any]) -> str:
+    """El resumen del pedido como queda en los REGISTROS (envelope, traza,
+    verificación ③ hacia Jev, marcador del historial): el mismo que leyó el
+    cliente, con su dirección tapada (`ADDRESS_MASK`). El anonimizador no
+    reconoce direcciones como «Calle 59b sur 38». Lo que recibe el cliente no
+    cambia (`order_card_text`)."""
+    line = f"📍 Dirección: {params.get('shipping_address_summary', '')}"
+    return order_card_text(params).replace(line, f"📍 Dirección: {ADDRESS_MASK}", 1)
