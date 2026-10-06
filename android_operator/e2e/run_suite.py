@@ -178,8 +178,10 @@ def _text_and_timeout(arg: str | dict, default: float) -> tuple[str, float]:
 
 def run_artemis(sc: dict, out: Path, serial: str) -> tuple[bool, str]:
     artemis = os.environ.get("ARTEMIS", str(HERE / "artemis.sh"))
+    # --standalone: Artemis corre en este proceso. Sin eso levanta un servicio aparte (por defecto en 127.0.0.1:8000,
+    # el puerto de la API local) y el log solo dice «Task completed successfully!», sin el informe que se lee abajo.
     cmd = [*shlex.split(artemis), "run", sc["goal"].strip(), "-p", sc.get("profile", "flash"), "-s", serial,
-           "-n", sc["id"], "-t", str(out / "traces")]
+           "-n", sc["id"], "-t", str(out / "traces"), "--standalone"]
     if sc.get("locked_app", True):
         cmd += ["-a", PACKAGE]
     log = out / f"{sc['id']}.artemis.log"

@@ -270,7 +270,9 @@ scenarios:
     goal: |
       En «Chats» abre la conversación 000000000105.
       1. Confirma que no se puede escribir texto libre y que aparece un botón «Reactivar con plantilla». Tócalo.
-      2. Elige la primera plantilla de la lista, lee la vista previa y toca «Enviar plantilla».
+      2. Elige la primera plantilla de la lista. Confirma que «Enviar plantilla» está apagado mientras el campo del
+         tema está vacío; escribe en ese campo exactamente «tu pedido de velas», lee la vista previa y toca
+         «Enviar plantilla».
       3. Anota qué plantilla enviaste y qué muestra el chat después.
       Reporta los tres puntos.
     checks:

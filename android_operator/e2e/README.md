@@ -23,7 +23,7 @@ los mismos chequeos:
 | `qa.sh` | La compuerta en una línea: APK nuevo, emulador (lo arranca si no hay), backend de prueba y la suite con guion. CI llama a este mismo script. |
 | `devicekit.py` | Manejo y chequeos por adb sin LLM: árbol de UI, toques, foco, teclado, qué tapa a qué, capturas. |
 | `radar_focus_check.py` | La regla del radar medida con precisión: llega un incendio grave mientras el operador escribe y la tarjeta aparece sin quitarle el foco ni cerrar el teclado. |
-| `artemis.sh` | Envoltura de Artemis que toma la llave de Gemini del entorno o de un archivo, sin imprimirla. |
+| `artemis.sh` | Envoltura de Artemis que toma la llave de Gemini del entorno o de un archivo, sin imprimirla, y levanta el servicio de Artemis en 8030 (`ARTEMIS_DAEMON_PORT`): por defecto usaría 127.0.0.1:8000, el puerto de la API local de Docker, y lo que pidiera 127.0.0.1:8000 le llegaría a Artemis. |
 
 ## La compuerta de merge (`.github/workflows/qa-emulador.yml`)
 
