@@ -2,20 +2,23 @@
 `perception-rollout@v1` de chats, que el panel de Agents consume por cast.
 
 GET devuelve el estado, el techo de Terraform, los chequeos de cada modo,
-las métricas de la sombra y el resumen de la sonda diaria de Jev. PUT mueve
-el modo DENTRO del techo: apagar y bajar siempre pasan; subir sin cumplir los
-chequeos da 422 con los que fallan.
+las métricas de la sombra y el resumen de la sonda diaria de Jev.
+
+Los cambios van SOLO por comando (decisión del operador, 2026-10-06: «que los
+botones de la UI no sirvan y todo se haga por comandos, para evitar que
+alguien jugando dañe producción»): los PUT responden 403 con el comando y no
+escriben nada. Las garantías de cada cambio viven en `decisions/control.py`
+(`test_decisions_control.py`).
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.plugins.chats.agent.sales.decisions import probe
+from src.plugins.chats.agent.sales.decisions import control, probe
 from src.plugins.chats.api import perception as api
 
 NOW_MS = 1_790_200_000_000
@@ -33,7 +36,7 @@ def _probe_report(status: str = "ok", *, hours_ago: int = 2) -> dict:
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setattr(api, "_vault_dir", lambda: tmp_path)
-    monkeypatch.setattr(api, "_now_ms", lambda: NOW_MS)
+    monkeypatch.setattr(control, "_now_ms", lambda: NOW_MS)
     monkeypatch.setenv("SALES_PERCEPTION_MODE_CEILING", "on")
     monkeypatch.setenv("SALES_PERCEPTION_PROFILE", "jev-v1")
     monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "on")
@@ -54,93 +57,27 @@ def test_get_reports_state_ceiling_checks_and_metrics(client: TestClient) -> Non
         "days": 0, "turns": 0, "fallback_rate": None, "p95_ms": None, "model_changed": 0, "served_model": None,
     }
     assert {c["code"] for c in body["readiness"]["canary"]} >= {"signal_meta_on", "shadow_days", "shadow_p95"}
+    assert body["test_numbers_jev"] is False
 
 
-def test_put_moves_the_mode_within_the_ceiling(client: TestClient, tmp_path: Path) -> None:
-    res = client.put("/api/chats/perception/rollout", json={"mode": "shadow"})
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("rollout", {"mode": "shadow", "test_numbers": ["wa_573001234567"]}),
+        ("capabilities", {"capability": "baja", "mode": "shadow"}),
+        ("workflow", {"mode": "canary"}),
+    ],
+)
+def test_changes_from_the_dashboard_are_refused_with_the_command(
+    client: TestClient, tmp_path: Path, path: str, body: dict
+) -> None:
+    res = client.put(f"/api/chats/perception/{path}", json=body)
 
-    assert res.status_code == 200 and res.json()["state"]["mode"] == "shadow"
-    saved = json.loads((tmp_path / "_rollout" / "perception.json").read_text(encoding="utf-8"))
-    assert saved["mode"] == "shadow" and saved["updated_at_ms"] == 1_790_200_000_000
-
-
-def test_raising_without_the_shadow_bar_is_422_with_the_failing_checks(client: TestClient) -> None:
-    client.put("/api/chats/perception/rollout", json={"mode": "shadow"})
-
-    res = client.put("/api/chats/perception/rollout", json={"mode": "on"})
-
-    assert res.status_code == 422
-    assert "shadow_days" in res.json()["detail"]["failing"]
-
-
-def test_turning_off_always_works(client: TestClient, monkeypatch) -> None:
-    client.put("/api/chats/perception/rollout", json={"mode": "shadow"})
-    monkeypatch.setenv("SALES_SIGNAL_INBOUND_META", "off")
-    monkeypatch.delenv("OPENROUTER_API_KEY")
-
-    res = client.put("/api/chats/perception/rollout", json={"mode": "off"})
-
-    assert res.status_code == 200 and res.json()["state"]["mode"] == "off"
-
-
-def test_canary_settings_are_validated(client: TestClient) -> None:
-    bad_percent = client.put("/api/chats/perception/rollout", json={"mode": "off", "canary_percent": 150})
-    bad_number = client.put("/api/chats/perception/rollout", json={"mode": "off", "test_numbers": ["573001234567"]})
-
-    assert bad_percent.status_code == 422 and bad_number.status_code == 422
-    ok = client.put("/api/chats/perception/rollout", json={"mode": "off", "canary_percent": 10, "test_numbers": ["wa_573001234567"]})
-    assert ok.status_code == 200 and ok.json()["state"]["test_numbers"] == ["wa_573001234567"]
-
-
-def test_turning_off_never_waits_for_the_shadow_metrics(client: TestClient, tmp_path: Path, monkeypatch) -> None:
-    """Apagar es el interruptor de emergencia: no recorre el vault antes de
-    escribir, y si las métricas fallan igual responde (con la sombra en cero,
-    así nadie sube por error)."""
-    client.put("/api/chats/perception/rollout", json={"mode": "shadow"})
-
-    def broken(*_a, **_k):
-        raise RuntimeError("recorrido del vault caído")
-
-    monkeypatch.setattr(api, "shadow_metrics", broken)
-    res = client.put("/api/chats/perception/rollout", json={"mode": "off"})
-
-    assert res.status_code == 200 and res.json()["state"]["mode"] == "off"
-    saved = json.loads((tmp_path / "_rollout" / "perception.json").read_text(encoding="utf-8"))
-    assert saved["mode"] == "off"
-    got = client.get("/api/chats/perception/rollout").json()
-    assert got["metrics"]["turns"] == 0 and "shadow_days" in got["can"]["canary"]
-
-
-def test_an_odd_stored_setting_never_blocks_turning_off(client: TestClient, tmp_path: Path) -> None:
-    (tmp_path / "_rollout").mkdir()
-    (tmp_path / "_rollout" / "perception.json").write_text(
-        json.dumps({"mode": "canary", "canary_percent": 150, "test_numbers": ["no-es-un-numero"]}), encoding="utf-8"
-    )
-
-    res = client.put("/api/chats/perception/rollout", json={"mode": "off"})
-
-    assert res.status_code == 200 and res.json()["state"]["mode"] == "off"
-
-
-def _bearer(claims: dict) -> dict[str, str]:
-    import base64
-
-    def seg(obj: dict) -> str:
-        return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
-
-    return {"Authorization": f"Bearer {seg({'alg': 'none'})}.{seg(claims)}.firma"}
-
-
-def test_the_change_is_signed_by_whoever_made_it(client: TestClient, tmp_path: Path) -> None:
-    """Auditoría: el estado guarda quién movió el modo (el token ya lo validó
-    `require_auth` antes de llegar acá)."""
-    client.put("/api/chats/perception/rollout", json={"mode": "shadow"}, headers=_bearer({"username": "operadora"}))
-    saved = json.loads((tmp_path / "_rollout" / "perception.json").read_text(encoding="utf-8"))
-    assert saved["updated_by"] == "operadora"
-
-    client.put("/api/chats/perception/rollout", json={"mode": "off"})
-    saved = json.loads((tmp_path / "_rollout" / "perception.json").read_text(encoding="utf-8"))
-    assert saved["updated_by"] == "dashboard"
+    assert res.status_code == 403
+    detail = res.json()["detail"]
+    assert detail["reason"] == "by_command"
+    assert "src.plugins.chats.agent.sales.decisions.control" in detail["command"]
+    assert not (tmp_path / "_rollout").exists()
 
 
 def test_the_terraform_placeholder_is_not_a_key(client: TestClient, monkeypatch) -> None:
@@ -149,33 +86,6 @@ def test_the_terraform_placeholder_is_not_a_key(client: TestClient, monkeypatch)
     body = client.get("/api/chats/perception/rollout").json()
 
     assert "api_key" in body["can"]["shadow"]
-
-
-def test_test_numbers_must_match_whole(client: TestClient) -> None:
-    res = client.put("/api/chats/perception/rollout", json={"mode": "off", "test_numbers": ["wa_573001234567\n"]})
-
-    assert res.status_code == 422
-
-
-def test_a_slow_raise_never_overwrites_a_turn_off_that_arrived_meanwhile(client: TestClient, tmp_path: Path, monkeypatch) -> None:
-    """Subir calcula las métricas de la sombra (lento); si en ese tiempo otro
-    operador apagó, la subida no pisa el apagado: 409 y el estado queda off."""
-    from src.plugins.chats.agent.sales.decisions.rollout import RolloutState
-    from src.plugins.chats.agent.sales.decisions.rollout_store import ShadowMetrics, write_state
-
-    client.put("/api/chats/perception/rollout", json={"mode": "shadow"})
-    probe.write_report(tmp_path, _probe_report())
-
-    def metrics_while_someone_turns_off(*_a, **_k):
-        write_state(tmp_path, RolloutState(mode="off", updated_by="otra persona"))
-        return ShadowMetrics(days=8, turns=400, fallback_rate=0.0, p95_ms=500)
-
-    monkeypatch.setattr(api, "shadow_metrics", metrics_while_someone_turns_off)
-    res = client.put("/api/chats/perception/rollout", json={"mode": "canary", "canary_percent": 10})
-
-    assert res.status_code == 409
-    saved = json.loads((tmp_path / "_rollout" / "perception.json").read_text(encoding="utf-8"))
-    assert saved["mode"] == "off"
 
 
 def test_get_reports_the_latest_probe_and_feeds_the_check(client: TestClient, tmp_path: Path) -> None:
@@ -197,17 +107,3 @@ def test_without_a_probe_canary_and_on_stay_closed(client: TestClient) -> None:
     assert body.get("probe") == {"status": "sin_datos", "at_ms": None, "pass_rate": None, "models": []}
     assert "probe_ok" in body["can"]["canary"] and "probe_ok" in body["can"]["on"]
     assert "probe_ok" not in body["can"]["shadow"]
-
-
-@pytest.mark.parametrize("report", [_probe_report("degraded"), _probe_report(hours_ago=49)], ids=["degraded", "vieja"])
-def test_raising_with_a_bad_or_old_probe_is_422(client: TestClient, tmp_path: Path, monkeypatch, report) -> None:
-    from src.plugins.chats.agent.sales.decisions.rollout_store import ShadowMetrics
-
-    client.put("/api/chats/perception/rollout", json={"mode": "shadow"})
-    monkeypatch.setattr(api, "shadow_metrics", lambda *_a, **_k: ShadowMetrics(days=8, turns=400, fallback_rate=0.0, p95_ms=500))
-    probe.write_report(tmp_path, report)
-
-    res = client.put("/api/chats/perception/rollout", json={"mode": "canary", "canary_percent": 10})
-
-    assert res.status_code == 422
-    assert res.json()["detail"]["failing"] == ["probe_ok"]

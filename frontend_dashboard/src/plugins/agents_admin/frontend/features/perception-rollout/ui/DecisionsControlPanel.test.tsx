@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { DecisionsControlPanel } from "./DecisionsControlPanel";
 
 /**
  * Motor de decisiones (diseño v2 §08 y §11, fase F7): cada capacidad con su
- * interruptor (reglas → sombra → canary → Jev) y la versión del workflow de
- * ventas (V2 por canary antes de todos). Bajar siempre está; subir se apaga
- * si falta la vara (y dice qué falta); canary y Jev piden confirmar.
+ * modo (reglas → sombra → canary → Jev) y la versión del workflow de ventas.
+ * SOLO LECTURA desde el 2026-10-06: dice qué falta para subir y el comando;
+ * los cambios van por comando, nunca desde el dashboard.
  */
 
 const fetchMock = vi.fn();
@@ -56,18 +56,7 @@ function json(body: unknown, status = 200) {
 beforeEach(() => {
   state = payload();
   vi.stubGlobal("fetch", fetchMock);
-  fetchMock.mockImplementation((url: string, init?: RequestInit) => {
-    if (init?.method === "PUT") {
-      const body = JSON.parse(String(init.body));
-      if (String(url).endsWith("/perception/capabilities")) {
-        state = payload({ baja: "off", compra: "shadow", [body.capability]: body.mode });
-      } else {
-        state = payload(undefined, body.mode);
-      }
-      return json(state);
-    }
-    return json(state);
-  });
+  fetchMock.mockImplementation(() => json(state));
 });
 
 afterEach(() => {
@@ -82,12 +71,6 @@ function renderPanel() {
       <DecisionsControlPanel />
     </QueryClientProvider>,
   );
-}
-
-function puts() {
-  return fetchMock.mock.calls
-    .filter(([, init]) => init?.method === "PUT")
-    .map(([u, init]) => [String(u), JSON.parse(init.body)]);
 }
 
 describe("DecisionsControlPanel", () => {
@@ -128,46 +111,24 @@ describe("DecisionsControlPanel", () => {
     expect(within(preambulo).getByText("Ahora: Sombra")).toBeInTheDocument();
   });
 
-  it("pasa una capacidad a sombra sin confirmar", async () => {
+  it("sin la vara dice qué falta para canary", async () => {
     renderPanel();
+
     const baja = await screen.findByRole("group", { name: "Baja" });
-
-    fireEvent.click(within(baja).getByRole("button", { name: "Sombra" }));
-
-    await waitFor(() =>
-      expect(puts()).toEqual([[expect.stringContaining("/api/agents/perception/capabilities"), { capability: "baja", mode: "shadow" }]]),
-    );
+    expect(within(baja).getByText("Para canary falta:")).toBeInTheDocument();
+    expect(within(baja).getByText("2 días en sombra; mínimo 7")).toBeInTheDocument();
   });
 
-  it("sin la vara, subir a canary está apagado y dice qué falta", async () => {
+  it("no tiene nada que cambie el bot: da el comando y nunca escribe", async () => {
     renderPanel();
-    const compra = await screen.findByRole("group", { name: "Compra" });
 
-    expect(within(compra).getByRole("button", { name: "Canary" })).toBeDisabled();
-    expect(within(compra).getByText("2 días en sombra; mínimo 7")).toBeInTheDocument();
-  });
-
-  it("volver a reglas siempre está", async () => {
-    renderPanel();
-    const compra = await screen.findByRole("group", { name: "Compra" });
-
-    fireEvent.click(within(compra).getByRole("button", { name: "Reglas" }));
-
-    await waitFor(() =>
-      expect(puts()).toEqual([[expect.stringContaining("/api/agents/perception/capabilities"), { capability: "compra", mode: "off" }]]),
-    );
-  });
-
-  it("V2 va primero a canary, con confirmación, y V1 siempre está", async () => {
-    renderPanel();
-    await screen.findByText("Ahora: V1");
-
-    expect(screen.getByRole("button", { name: "V2 para todos" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "V2 en canary" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Sí, V2 en canary" }));
-
-    await waitFor(() => expect(puts()).toEqual([[expect.stringContaining("/api/agents/perception/workflow"), { mode: "canary" }]]));
-    fireEvent.click(await screen.findByRole("button", { name: "Volver a V1" }));
-    await waitFor(() => expect(puts().at(-1)).toEqual([expect.stringContaining("/api/agents/perception/workflow"), { mode: "off" }]));
+    await screen.findByRole("group", { name: "Baja" });
+    // El único «botón» es el encabezado plegable del Panel compartido: no cambia nada del bot.
+    const controls = screen.queryAllByRole("button").filter((b) => !b.textContent?.includes("Motor de decisiones"));
+    expect(controls).toHaveLength(0);
+    expect(screen.getByText(/Se cambia por comando/)).toBeInTheDocument();
+    expect(screen.getByText(/src\.plugins\.chats\.agent\.sales\.decisions\.control/)).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
   });
 });
