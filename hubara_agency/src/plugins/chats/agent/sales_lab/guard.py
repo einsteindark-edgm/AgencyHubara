@@ -41,6 +41,17 @@ _FORBIDDEN_KEYS = (
 # no haya llave; sin `WHATSAPP_ACCESS_TOKEN` (prohibida) el envío es simulado.
 SANDBOX_SENTINELS: dict[str, str] = {"WHATSAPP_PHONE_NUMBER_ID": "lab-sandbox"}
 
+# Las llaves de LLM del laboratorio llevan nombre propio (`*_LAB`, decisión del
+# operador 2026-10-05): la del `.env` local era la misma de producción, así que
+# una corrida gastaba del tope de producción sin que nadie lo notara. Sin la
+# suya, el worker no arranca; con ella, `prepare_lab_env` se la pasa a la app
+# con el nombre que lee (nombre de la app → nombre en el laboratorio).
+LAB_KEYS: dict[str, str] = {
+    "OPENROUTER_API_KEY": "OPENROUTER_API_KEY_LAB",
+    "DEEPSEEK_API_KEY": "DEEPSEEK_API_KEY_LAB",
+    "GEMINI_API_KEY": "GEMINI_API_KEY_LAB",
+}
+
 # Carpetas que el código de producción escribe: todas dentro de LAB_ROOT.
 _FOLDERS: dict[str, str] = {
     "WORKSPACE_VAULT_DIR": "sandbox/vault",
@@ -68,6 +79,13 @@ def prepare_lab_env(env: MutableMapping[str, str]) -> None:
         current = env.get(var) or ""
         if not current or not _inside(current, root):
             env[var] = os.path.join(root, rel)
+    for app_name, lab_name in LAB_KEYS.items():
+        value = env.get(lab_name)
+        if value:
+            env[app_name] = value
+        else:
+            # Una llave con el nombre de producción nunca llega sola a la app.
+            env.pop(app_name, None)
     env["OTEL_SDK_DISABLED"] = "true"
 
 
@@ -85,6 +103,12 @@ def check_lab_env(env: Mapping[str, str]) -> list[str]:
         problems.append(f"TEMPORAL_NAMESPACE debe ser {LAB_NAMESPACE}")
     if env.get("HUBARA_ENV") != "lab":
         problems.append("HUBARA_ENV debe ser lab")
+    for lab_name in LAB_KEYS.values():
+        if not env.get(lab_name):
+            problems.append(
+                f"{lab_name}: falta la llave propia del laboratorio. Genera una nueva, con su límite de gasto; "
+                "nunca la de producción."
+            )
     for var in _FOLDERS:
         value = env.get(var) or ""
         if not value or not _inside(value, root):

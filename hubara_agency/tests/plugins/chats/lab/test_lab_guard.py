@@ -21,8 +21,9 @@ GOOD = {
     "TEMPORAL_NAMESPACE": "hubara-lab",
     "HUBARA_ENV": "lab",
     "LAB_ROOT": "/lab",
-    "DEEPSEEK_API_KEY": "sk-deepseek",
-    "OPENROUTER_API_KEY": "sk-or-lab",
+    "DEEPSEEK_API_KEY_LAB": "sk-deepseek-lab",
+    "GEMINI_API_KEY_LAB": "sk-gemini-lab",
+    "OPENROUTER_API_KEY_LAB": "sk-or-lab",
 }
 
 
@@ -30,6 +31,40 @@ def _prepared(**over) -> dict:
     env = {**GOOD, **over}
     prepare_lab_env(env)
     return env
+
+
+@pytest.mark.parametrize("lab_key", ["OPENROUTER_API_KEY_LAB", "DEEPSEEK_API_KEY_LAB", "GEMINI_API_KEY_LAB"])
+def test_the_lab_does_not_start_without_its_own_llm_keys(lab_key: str) -> None:
+    """Las llaves del laboratorio llevan nombre propio (`*_LAB`): una corrida
+    nunca gasta con la llave de producción por accidente (la del `.env` local
+    es la misma de producción). Sin la suya, no arranca y dice qué hacer."""
+    env = {k: v for k, v in GOOD.items() if k != lab_key}
+    prepare_lab_env(env)
+
+    problems = check_lab_env(env)
+
+    assert any(lab_key in p and "llave propia" in p for p in problems)
+
+
+def test_the_app_gets_the_lab_keys_under_the_names_it_reads() -> None:
+    """La app lee `OPENROUTER_API_KEY` (Jev), `DEEPSEEK_API_KEY` y
+    `GEMINI_API_KEY`: el guard se las pasa desde las `*_LAB`, y una llave con
+    el nombre de producción que se haya colado nunca llega a la app."""
+    env = _prepared(OPENROUTER_API_KEY="sk-or-de-produccion")
+
+    assert env["OPENROUTER_API_KEY"] == "sk-or-lab"
+    assert env["DEEPSEEK_API_KEY"] == "sk-deepseek-lab"
+    assert env["GEMINI_API_KEY"] == "sk-gemini-lab"
+
+
+def test_a_production_named_key_without_its_lab_key_never_reaches_the_app() -> None:
+    env = {k: v for k, v in GOOD.items() if k != "OPENROUTER_API_KEY_LAB"}
+    env["OPENROUTER_API_KEY"] = "sk-or-de-produccion"
+
+    prepare_lab_env(env)
+
+    assert "OPENROUTER_API_KEY" not in env
+    assert check_lab_env(env) != []
 
 
 def test_prepare_pins_every_folder_inside_the_lab_root() -> None:
