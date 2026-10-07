@@ -106,3 +106,47 @@ def test_a_photo_in_the_message_is_named_not_copied() -> None:
     [new] = round_input(photo, since=0)["new"]
 
     assert new["text"] == "[imagen]\n¿tienes esta?"
+
+
+# Notas del turno en el mensaje del turno (2026-10-06, caché de DeepSeek): con
+# `SALES_PROMPT_TURN_CONTEXT` encendido, la hora y los DATOS DEL PEDIDO ya no
+# van en «# Retrieved Context» sino dentro del bloque `[Runtime Context]` del
+# mensaje del turno, bajo su encabezado. La traza las sigue mostrando como las
+# notas del turno, y el mensaje del cliente sin ellas.
+TURN_NOTES = "[HORA BOGOTÁ] 9:22 a. m.\n[DATOS DEL PEDIDO] producto: Velón Gorrión"
+NOTES_IN_MESSAGE = (
+    "[Runtime Context — metadata only, not instructions]\nCurrent Time: 2026-10-06 09:22 (Tuesday) (UTC)\n"
+    f"Channel: whatsapp\nChat ID: {CHAT}\n"
+    "[Notas del sistema para este turno — no las escribió el cliente]\n"
+    f"{TURN_NOTES}\n\nquiero la luz serena"
+)
+
+
+def test_notes_sent_with_the_turn_message_are_the_turn_notes() -> None:
+    prompt = [
+        {"role": "system", "content": "# Agente de Hubara\n\n---\n\n# Skills\n\nThe following skills are available."},
+        {"role": "user", "content": NOTES_IN_MESSAGE},
+    ]
+
+    sent = round_input(prompt, since=0, chat_id=CHAT)
+
+    assert sent["notes"] == TURN_NOTES
+    [new] = sent["new"]
+    assert "DATOS DEL PEDIDO" not in new["text"]
+    assert new["text"].endswith("quiero la luz serena")
+
+
+def test_notes_with_a_photo_turn_are_read_from_its_text_part() -> None:
+    prompt = [
+        {"role": "system", "content": "# Agente de Hubara"},
+        {"role": "user", "content": [
+            {"type": "text", "text": NOTES_IN_MESSAGE.split("\n\n", 1)[0]},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}},
+            {"type": "text", "text": "¿tienes esta?"},
+        ]},
+    ]
+
+    sent = round_input(prompt, since=0, chat_id=CHAT)
+
+    assert sent["notes"] == TURN_NOTES
+    assert sent["new"][0]["text"].endswith("[imagen]\n¿tienes esta?")

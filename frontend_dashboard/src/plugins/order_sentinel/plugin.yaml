@@ -38,7 +38,7 @@ agent:
       # Acktos Studio dibuja el reloj en la cajita a partir de esta declaración.
       schedule:
         id: order-sentinel-cycle-schedule
-        cadence: diario 01:00 UTC
+        cadence: diario 04:00 UTC (23:00 Bogotá)
       workflow_classes:
         - OrderSentinelCycleWorkflow
       deployment:

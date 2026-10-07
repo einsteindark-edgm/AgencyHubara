@@ -28,6 +28,29 @@ def _litellm_cache_logger(kwargs, completion_response, start_time, end_time):
 
 litellm.success_callback = [_litellm_cache_logger]
 
+
+def _cached_prompt_tokens(usage: object) -> int:
+    """Tokens del prompt servidos desde el caché del proveedor (0 si no dice)."""
+    details = getattr(usage, "prompt_tokens_details", None)
+    cached = getattr(details, "cached_tokens", None) if details is not None else None
+    if not cached:
+        cached = getattr(usage, "prompt_cache_hit_tokens", None)  # nativo de DeepSeek
+    return int(cached) if isinstance(cached, int) and cached > 0 else 0
+
+
+class _CacheAwareLiteLLMProvider(LiteLLMProvider):
+    """El proveedor de exoclaw copia solo prompt/completion/total: suma
+    `cached_tokens` al `usage` para que el costo por episodio cobre el input
+    cacheado a su precio (DeepSeek: US$0,003/M vs US$0,15/M; verificado en
+    prod 2026-10-06 que el proxy lo trae en `prompt_tokens_details`)."""
+
+    def _parse_response(self, response: object):  # type: ignore[override]
+        parsed = super()._parse_response(response)
+        cached = _cached_prompt_tokens(getattr(response, "usage", None))
+        if cached and isinstance(parsed.usage, dict):
+            parsed.usage["cached_tokens"] = cached
+        return parsed
+
 def _attach_baggage(baggage: dict[str, str] | None):
     """Attachea ``baggage`` al contexto OTel actual; devuelve el token (o None).
 
@@ -69,7 +92,7 @@ async def llm_chat(input: LLMChatInput) -> LLMResponseData:
     # workflow→activity, por eso los IDs viajan por el input (LLMChatInput.baggage).
     _baggage_token = _attach_baggage(input.baggage)
     try:
-        provider = LiteLLMProvider(
+        provider = _CacheAwareLiteLLMProvider(
             api_key=input.llm.api_key,
             api_base=input.llm.api_base,
             default_model=input.llm.model,

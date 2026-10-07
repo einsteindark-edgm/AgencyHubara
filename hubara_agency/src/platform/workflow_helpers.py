@@ -969,7 +969,11 @@ async def run_agent_turn(
 
 
 async def _record_cut_attempt_cost(
-    session: SessionInput, episode_id: str | None, prompt_tokens: int, completion_tokens: int
+    session: SessionInput,
+    episode_id: str | None,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cached_tokens: int = 0,
 ) -> None:
     """El costo de un intento cortado también va al episodio: el modelo se
     pagó aunque la respuesta no saliera (antes se perdía: el corte volvía antes
@@ -988,6 +992,8 @@ async def _record_cut_attempt_cost(
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     model=session.llm.model,
+                    # Costo real: lo cacheado a su precio (solo contenido, L-9).
+                    cached_prompt_tokens=cached_tokens,
                 ),
                 **_CONV_OPTIONS,  # type: ignore[arg-type]
             )
@@ -1133,6 +1139,8 @@ async def _run_agent_turn_impl(
     # tool-loop; se persiste al episodio tras el loop (record_episode_llm_usage).
     turn_prompt_tokens = 0
     turn_completion_tokens = 0
+    # Parte del prompt que el proveedor sirvió desde su caché (costo real).
+    turn_cached_tokens = 0
     # Hasta dónde llegaba `messages` en la ronda anterior (0 = primera).
     sent_until = 0
 
@@ -1162,6 +1170,7 @@ async def _run_agent_turn_impl(
             turn_completion_tokens += int(
                 response.usage.get("completion_tokens", 0) or 0
             )
+            turn_cached_tokens += int(response.usage.get("cached_tokens", 0) or 0)
         llm_step: dict[str, Any] = {
             "kind": "llm",
             "at_ms": llm_started_ms,
@@ -1199,7 +1208,9 @@ async def _run_agent_turn_impl(
             )
             steps.append({"kind": "cut", "at_ms": _now_ms(), "reason": "checkpoint_a"})
             if interrupt_before_record:
-                await _record_cut_attempt_cost(session, episode_id, turn_prompt_tokens, turn_completion_tokens)
+                await _record_cut_attempt_cost(
+                    session, episode_id, turn_prompt_tokens, turn_completion_tokens, turn_cached_tokens
+                )
             return TurnResult(
                 final_content="", tools_used=tools_used, interrupted=True, steps=steps
             )
@@ -1985,7 +1996,9 @@ async def _run_agent_turn_impl(
             "saliera la respuesta; el caller recompone el batch y relanza"
         )
         steps.append({"kind": "cut", "at_ms": _now_ms(), "reason": "before_record", "text": final_content})
-        await _record_cut_attempt_cost(session, episode_id, turn_prompt_tokens, turn_completion_tokens)
+        await _record_cut_attempt_cost(
+            session, episode_id, turn_prompt_tokens, turn_completion_tokens, turn_cached_tokens
+        )
         return TurnResult(final_content="", tools_used=tools_used, interrupted=True, steps=steps)
 
     skip_record = (
@@ -2022,6 +2035,8 @@ async def _run_agent_turn_impl(
                 prompt_tokens=turn_prompt_tokens,
                 completion_tokens=turn_completion_tokens,
                 model=session.llm.model,
+                # Solo contenido del input (L-9): el replay no compara inputs.
+                cached_prompt_tokens=turn_cached_tokens,
             ),
             **_CONV_OPTIONS,  # type: ignore[arg-type]
         )

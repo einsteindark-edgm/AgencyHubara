@@ -30,6 +30,12 @@
 #     salen las capacidades (preguntas, umbrales, tablas) y el dominio de la
 #     tienda (los ejemplos que el agente ve en sus herramientas); un paquete
 #     que no existe falla fuerte (nunca corre la inteligencia de otra tienda).
+#   SALES_PROMPT_TURN_CONTEXT      off | team | on. Dónde van las notas de cada turno
+#     de ventas (hora de Bogotá, DATOS DEL PEDIDO, nota de la percepción): off = en
+#     las instrucciones (`# Retrieved Context`), como antes; on = en el mensaje del
+#     turno, así las instrucciones son idénticas turno a turno y el caché de prefijo
+#     de DeepSeek las cubre con las tools (45 % → 99 % cacheado, medido 2026-10-06);
+#     team = solo las conversaciones de LAB_INTERNAL_NUMBERS (el piloto).
 #   LAB_MAX_USD_PER_RUN / _MONTH   topes de gasto del botón "Nueva corrida" (§3.7).
 #   LAB_INTERNAL_NUMBERS           teléfonos del equipo (E.164, separados por coma):
 #     sus conversaciones no entran al banco (motivo `numero_interno`). Lo leen la
@@ -53,6 +59,7 @@ variable "config" {
     workflow_v2_ceiling     = optional(string, "off")
     order_sentinel_reader   = optional(string, "off")
     decisions_bundle        = optional(string, "ventas")
+    prompt_turn_context     = optional(string, "off")
   })
 }
 
@@ -70,6 +77,7 @@ locals {
     SALES_WORKFLOW_V2_CEILING     = var.config.workflow_v2_ceiling
     ORDER_SENTINEL_READER         = var.config.order_sentinel_reader
     SALES_DECISIONS_BUNDLE        = var.config.decisions_bundle
+    SALES_PROMPT_TURN_CONTEXT     = var.config.prompt_turn_context
   }
 }
 

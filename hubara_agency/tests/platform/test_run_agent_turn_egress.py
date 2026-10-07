@@ -53,6 +53,8 @@ class _State:
         self.recorded: list[list[dict]] = []
         # Costo registrado al episodio: (episodio, tokens de entrada, de salida).
         self.usage: list[tuple[str, int, int]] = []
+        # Tokens cacheados de cada registro de costo (costo real, 2026-10-06).
+        self.cached: list[int] = []
 
 
 STATE = _State()
@@ -89,6 +91,7 @@ async def _probe_egress(final_text: str, ctx: dict) -> dict:
 @activity.defn(name="record_episode_llm_usage")
 async def _record_usage(inp: RecordEpisodeLLMUsageInput) -> None:
     STATE.usage.append((inp.episode_id, inp.prompt_tokens, inp.completion_tokens))
+    STATE.cached.append(inp.cached_prompt_tokens)
 
 
 @activity.defn(name="record_episode_llm_usage")
@@ -436,6 +439,20 @@ async def test_every_cut_attempt_records_its_cost() -> None:
 
     early = await _turn(responses=[_said(ANSWER, usage=_USAGE)], writes="start", opt_in=True)
     assert early["cuts"] == ["checkpoint_a"] and STATE.usage == [("ep_001", 1200, 30)]
+
+
+async def test_a_cut_attempt_also_records_its_cached_tokens() -> None:
+    """Costo real (2026-10-06): lo que DeepSeek sirvió desde su caché en un
+    intento cortado se cobra a su precio, como en un turno completo."""
+    usage = {**_USAGE, "cached_tokens": 1100}
+    await _turn(
+        responses=[_said(ANSWER, usage=usage)], egress_out={"text": ANSWER, "llm_text": ANSWER},
+        writes="egress", opt_in=True,
+    )
+    assert STATE.cached == [1100]
+
+    await _turn(responses=[_said(ANSWER, usage=usage)], writes="start", opt_in=True)
+    assert STATE.cached == [1100]
 
 
 async def test_without_the_opt_in_a_cut_attempt_records_nothing_as_today() -> None:
