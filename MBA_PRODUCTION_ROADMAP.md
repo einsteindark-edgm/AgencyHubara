@@ -284,7 +284,7 @@ DoD: tabla completada en `hubara_agency/.hubara/specs/plugins/mba/f0-results.md`
 
 **D4.1 · Métricas por cohorte** — pedidos pagados / conversación, costo por conversación (tokens $2/1M + mensajes), tiempo de humano, tasa de handoff. Persistir por `control_owner`.
 **D4.2 · Comparativo en el dashboard** — extensión de "Calidad LLM" o sección nueva: Hubara vs MBA con las métricas de D4.1.
-**D4.3 · Kill switch y runbook** — un comando que hace `rollout.enabled=false` + quita `mba` de `ENABLED_PLUGINS` + `release` de hilos activos; runbook en `.hubara/project-context.md`.
+**D4.3 · Kill switch y runbook** — un comando que hace `rollout.enabled=false` + quita `mba` de `ENABLED_PLUGINS` + `release` de hilos activos; runbook en `.hubara/project-context.md`. **Prioridad subida (incidente 2026-09-11):** el rollout apareció encendido en Meta sin acción de Hubara (contenido en minutos, sin exposición: allowlist vacía). Falta una alerta de drift periódica (rollout ON sin que pasen los checks) además del kill switch.
 **D4.4 · Unit economics** — modelar el precio de MBA en el motor CTWA antes de `EVERYONE`.
 **D4.5 · Cohorte real** — allowlist de leads de un anuncio; criterio de pasar a `EVERYONE` definido antes de empezar.
 
