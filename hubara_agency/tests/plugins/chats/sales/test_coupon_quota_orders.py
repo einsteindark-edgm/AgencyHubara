@@ -9,6 +9,8 @@ si otro cliente se llevó la última unidad, no crea el draft y devuelve
 """
 from __future__ import annotations
 
+from tests.plugins.chats.sales.confirmation_fixture import CONFIRMED_NOW
+
 import asyncio
 import json
 from dataclasses import asdict, dataclass, field
@@ -84,7 +86,7 @@ def _seed(vault: Path, key: str = KEY, *, draft_items: list[dict[str, Any]] | No
         episode["order_draft"] = {"items": draft_items}
     path = vault / key / "metadata.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"episodes": [episode]}, ensure_ascii=False), encoding="utf-8")
+    path.write_text(json.dumps({"episodes": [episode], **CONFIRMED_NOW}, ensure_ascii=False), encoding="utf-8")
     return path
 
 
@@ -553,7 +555,7 @@ _Catalog.products["cubo-sol"] = _product("cubo-sol", "Cubo Sol", "21000", "prod_
 def _seed_without_coupon(vault: Path) -> Path:
     path = vault / KEY / "metadata.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"episodes": [{"episode_id": "ep_001", "started_at_ms": 1}]}), encoding="utf-8")
+    path.write_text(json.dumps({"episodes": [{"episode_id": "ep_001", "started_at_ms": 1}], **CONFIRMED_NOW}), encoding="utf-8")
     return path
 
 

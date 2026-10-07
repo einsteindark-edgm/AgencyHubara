@@ -15,6 +15,8 @@ Sesión orgánica (sin ``ctwa_clid``) → ningún productor escribe nada.
 """
 from __future__ import annotations
 
+from tests.plugins.chats.sales.confirmation_fixture import CONFIRMED_NOW
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +46,7 @@ def _attributed(**extra: Any) -> dict[str, Any]:
         "phone_number_id": "pnid-1",
         "ctwa_referrals": [{"ctwa_clid": "CLID_1", "captured_at_ms": NOW_MS - 1000}],
         "episodes": [{"episode_id": "ep_001", "started_at_ms": NOW_MS - 5000, "closed_at_ms": None}],
+        **CONFIRMED_NOW,
     }
     md.update(extra)
     return md
@@ -90,17 +93,17 @@ async def test_interesado_twice_enqueues_once(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_compra_exitosa_enqueues_purchase_with_order_value(tmp_path: Path) -> None:
+async def test_the_bot_tagging_compra_exitosa_sends_no_purchase_to_meta(tmp_path: Path) -> None:
+    """2026-10-07 (CIE-06): COMPRA_EXITOSA la pone el equipo al verificar el
+    pago; esta tool solo la usa el bot y la rechaza. Del bot, la compra que
+    recibía Meta era una conversión sin pago verificado (caso ···4148)."""
     path = _seed(
         tmp_path,
         _attributed(registered_order={"success": True, "order_id": "order_7", "total_cop": 89000, "currency": "COP"}),
     )
     tool = ManageConversationTagTool(workspace=str(tmp_path), vault_dir=tmp_path)
     await tool.execute_with_context(_ctx(), tag="COMPRA_EXITOSA", motivo="pago verificado")
-    entries = _outbox(path)
-    assert [(e["event_name"], e["event_id"], e["value"], e["currency"]) for e in entries] == [
-        ("Purchase", "purchase_order_7", 89000, "COP")
-    ]
+    assert _outbox(path) == []
 
 
 @pytest.mark.asyncio
@@ -344,16 +347,16 @@ async def test_order_confirmation_enqueues_add_to_cart_contents(flush_env) -> No
 
 @pytest.mark.asyncio
 async def test_compra_exitosa_purchase_carries_registered_contents(tmp_path: Path) -> None:
-    path = _seed(
-        tmp_path,
-        _attributed(registered_order={
-            "success": True, "order_id": "order_7", "total_cop": 42000, "currency": "COP",
-            "capi_contents": [{"id": "HUB-CUBOLOVE", "quantity": 2, "item_price": 21000}],
-        }),
-    )
-    tool = ManageConversationTagTool(workspace=str(tmp_path), vault_dir=tmp_path)
-    await tool.execute_with_context(_ctx(), tag="COMPRA_EXITOSA", motivo="pago verificado")
-    entries = _outbox(path)
+    """La compra la marca el equipo (endpoint humano/MBA) con el mismo helper
+    que usaba la tool del bot; la tool ya no la acepta (2026-10-07, CIE-06)."""
+    from src.plugins.chats.shared.funnel import enqueue_capi_for_tag
+
+    md = _attributed(registered_order={
+        "success": True, "order_id": "order_7", "total_cop": 42000, "currency": "COP",
+        "capi_contents": [{"id": "HUB-CUBOLOVE", "quantity": 2, "item_price": 21000}],
+    })
+    enqueue_capi_for_tag(md, tag="COMPRA_EXITOSA", session_id=SESSION, now_ms=NOW_MS, source="humano", episode_id="ep_001")
+    entries = md.get("capi_outbox") or []
     assert entries[0]["event_name"] == "Purchase"
     assert entries[0]["contents"] == [{"id": "HUB-CUBOLOVE", "quantity": 2, "item_price": 21000}]
 

@@ -763,6 +763,33 @@ confirmación es episodio-scoped (incidente runs 01a0a0eb / 01a0a0f1, 2026-09-14
 - WHEN el ingest procesa el mensaje
 - THEN `order_draft.confirmed_at_ms` queda registrado y `request_shipping_details` procede
 
+### Requirement: Guardas del cierre en el registro, el resumen y la etiqueta de venta
+
+Desde el 2026-10-07 (`purchase_signals.closing_blocker`): con un episodio
+activo, `register_order` SHALL rechazar con `customer_deferred` si el último
+mensaje del cliente aplazó, y con `purchase_not_confirmed` si no hay
+confirmación: ni la anotada en el episodio ni un «Confirmar» o un «sí» en el
+último mensaje (que cuenta aunque el borrador no tenga el producto, para no
+frenar una venta legítima). Sin episodio no frena. `present_order_confirmation`
+SHALL rechazar con `customer_deferred` si el último mensaje aplazó.
+`manage_conversation_tag` SHALL rechazar `COMPRA_EXITOSA` con `human_only_tag`:
+la pone el equipo al verificar el pago (y le manda a Meta la compra por CAPI).
+Las guardas son del bot: el pedido que el operador crea desde el panel
+(`api/session_actions.py`, `closing_guard=False`) NO pasa por ellas.
+
+#### Scenario: Registro sin confirmación
+
+- GIVEN un episodio activo sin `confirmed_at_ms` y un último mensaje sin afirmación
+- WHEN el LLM llama `register_order`
+- THEN devuelve `registered=false, error=purchase_not_confirmed` y no llama al puerto de órdenes
+- AND si el último mensaje fue el botón Confirmar, registra aunque el borrador no tenga el producto
+
+#### Scenario: El bot intenta cerrar como compra exitosa
+
+- GIVEN un pedido registrado
+- WHEN el LLM llama `manage_conversation_tag(tag=COMPRA_EXITOSA)`
+- THEN devuelve `error=human_only_tag`, no cambia la etiqueta y no encola ninguna compra para Meta
+
 ### Requirement: Aplazamiento del cliente
 
 Cuando el ÚLTIMO inbound es un aplazamiento ("voy en camino", "luego",

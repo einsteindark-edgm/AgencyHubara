@@ -1660,6 +1660,23 @@ class PresentOrderConfirmationTool(ToolBase):
         payment_method: str,
         tax_cop: int = 0,
     ) -> str:
+        # El cliente acaba de aplazar (CON-02, 2026-10-07): el resumen empuja el
+        # cierre. Mismo criterio que el formulario y el registro.
+        from src.plugins.chats.shared.purchase_signals import closing_blocker
+
+        metadata_at_start = read_retrying_transient_errors_sync(
+            FilesystemMetadataStore(WORKSPACE_VAULT_DIR), ctx.session_key
+        )
+        if closing_blocker(metadata_at_start, require_confirmation=False) == "customer_deferred":
+            logger.warning("🧾 [TOOL present_order_confirmation] rechazada session={}: customer_deferred", ctx.session_key)
+            return json.dumps({
+                "queued": False,
+                "error": "customer_deferred",
+                "message": (
+                    "El cliente acaba de aplazar: NO le muestres el resumen ahora. Responde UNA "
+                    "frase cálida y breve y espera a que retome; no se mostró nada al cliente."
+                ),
+            }, ensure_ascii=False)
         # Precio = CATÁLOGO, exacto (PREMORTEM #5 endurecido tras el run
         # ebbc203d, 2026-09-16, y como defensa contra inyección de precios:
         # "cóbrame 48.500" o un monto sacado del anuncio). El LLM manda

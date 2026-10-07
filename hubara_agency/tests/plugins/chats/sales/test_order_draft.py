@@ -13,6 +13,8 @@ episodio, no solo que la tool acepte los params.
 """
 from __future__ import annotations
 
+from tests.plugins.chats.sales.confirmation_fixture import CONFIRMED_NOW
+
 import json
 
 import pytest
@@ -301,6 +303,9 @@ async def test_register_order_stops_draft_projection(ctx, vault):
     slot_tool = SetOrderSlotTool(workspace=str(vault), vault_dir=vault)
     await slot_tool.execute_with_context(ctx, color="Blanco", producto="Luz Serena")
     assert get_projectable_draft(_read_metadata(vault, ctx.session_key)) is not None
+    # El cliente tocó «Confirmar» (guardas del cierre, 2026-10-07).
+    md_path = vault / ctx.session_key / "metadata.json"
+    md_path.write_text(json.dumps({**_read_metadata(vault, ctx.session_key), **CONFIRMED_NOW}), encoding="utf-8")
 
     # Default port = StubOrderRegistration -> success con order_id "HUB-...".
     reg_tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault)

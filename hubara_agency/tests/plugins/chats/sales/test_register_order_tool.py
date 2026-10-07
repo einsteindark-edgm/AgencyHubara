@@ -20,6 +20,8 @@ Garantías verificadas:
 """
 from __future__ import annotations
 
+from tests.plugins.chats.sales.confirmation_fixture import CONFIRMED_NOW
+
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -335,6 +337,7 @@ async def test_register_order_attaches_order_id_to_active_episode(ctx, vault):
     (vault / ctx.session_key / "metadata.json").write_text(
         json.dumps(
             {
+                **CONFIRMED_NOW,
                 "episodes": [
                     {
                         "episode_id": "ep_001",
@@ -407,6 +410,7 @@ async def test_register_order_failure_does_not_attach_order_id(ctx, vault):
     (vault / ctx.session_key / "metadata.json").write_text(
         json.dumps(
             {
+                **CONFIRMED_NOW,
                 "episodes": [
                     {
                         "episode_id": "ep_001",

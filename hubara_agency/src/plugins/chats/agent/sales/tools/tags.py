@@ -195,6 +195,24 @@ class ManageConversationTagTool(ToolBase):
         # (incidente 2026-10-06: una copia vieja devolvió una foto a la cola).
         base = copy.deepcopy(data)
 
+        # COMPRA_EXITOSA la pone el equipo al verificar el pago (guion, regla
+        # 11; CIE-06). Esta tool solo la usa el bot, y la etiqueta le manda a
+        # Meta una compra (CAPI Purchase): del bot, sin pago verificado, sería
+        # una conversión falsa (caso ···4148, plan del motor §6.12).
+        if tag == "COMPRA_EXITOSA":
+            return json.dumps(
+                {
+                    "error": "human_only_tag",
+                    "message": (
+                        "COMPRA_EXITOSA la pone el equipo cuando verifica el pago: no la "
+                        "uses. Si el pedido quedó registrado, la etiqueta es "
+                        "CONFIRMADO_PAGO_PENDIENTE (con `escalate_to_human`, "
+                        "PAYMENT_VERIFICATION_PENDING); si no, INTERESADO o RECHAZO."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
         # Premortem FIX #1: CONFIRMADO_PAGO_PENDIENTE requiere que el LLM
         # haya llamado `register_order` con éxito previamente. Sin esa
         # precondición, marcar este tag deja la metadata en estado

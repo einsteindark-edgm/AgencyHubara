@@ -116,6 +116,9 @@ with workflow.unsafe.imports_passed_through():
         restart_allowed,
         settle_burst,
     )
+    # La guarda de listas con el selector que de verdad salió (VAR-01,
+    # 2026-10-07): su gate vive en el helper, como el de las ráfagas.
+    from src.plugins.chats.agent.sales.workflows.picker_v2 import enumeration_guard_applies
 
     # Funciones puras del V1 (sin copiar): traza, capas ①③, debounce y CAPI.
     from src.plugins.chats.agent.sales.workflows.sales_session import (
@@ -761,10 +764,11 @@ class HubaraSalesSessionWorkflowV2:
                 if (
                     result.final_content
                     and not suppress_text_for_picker
-                    and _VARIANT_PICKER not in result.tools_used
                     and not self._force_shutdown
                     and not abstained
                     and not admin_no_send
+                    # Al final: el gate solo se consulta cuando lo demás se cumple.
+                    and enumeration_guard_applies(result.tools_used, delivered_components(result.tool_events))
                 ):
                     replaced_by_picker = await workflow.execute_activity(
                         apply_variant_enumeration_guard_activity,

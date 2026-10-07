@@ -12,6 +12,8 @@ Contrato:
 """
 from __future__ import annotations
 
+from tests.plugins.chats.sales.confirmation_fixture import CONFIRMED_NOW
+
 import json
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -163,7 +165,7 @@ def ctx() -> ToolContext:
 def _seed(vault: Path, extra: dict | None = None) -> Path:
     path = vault / KEY / "metadata.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    md = {"episodes": [{"episode_id": "ep_001", "started_at_ms": 1, "closed_at_ms": None}]}
+    md = {"episodes": [{"episode_id": "ep_001", "started_at_ms": 1, "closed_at_ms": None}], **CONFIRMED_NOW}
     md.update(extra or {})
     path.write_text(json.dumps(md, ensure_ascii=False), encoding="utf-8")
     return path
