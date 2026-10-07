@@ -37,7 +37,7 @@ def test_the_segment_spread_keeps_what_another_writer_wrote_after_loading(tmp_pa
     # Entre cargar las sesiones y aplicar, la conversación sigue viva.
     store.update(SID, lambda d: {**d, "last_inbound_message_id": "wamid.nuevo"})
 
-    assert apply_spread_to_vault(vault, plan, campaign) == 1
+    assert apply_spread_to_vault(vault, plan, campaign) == [SID]
 
     doc = store.read(SID)
     assert doc["last_inbound_message_id"] == "wamid.nuevo", "el reparto pisó lo que otro escribió"
@@ -59,9 +59,22 @@ def test_the_segment_spread_skips_a_session_that_is_no_longer_eligible(tmp_path:
     store.update(SID, lambda d: {**d, "origin": {"source_id": "AD_OTRA_CAMPANA"}})
     before = (vault / SID / "metadata.json").read_bytes()
 
-    assert apply_spread_to_vault(vault, plan, campaign) == 0
+    assert apply_spread_to_vault(vault, plan, campaign) == []
 
     assert (vault / SID / "metadata.json").read_bytes() == before
+
+
+def test_medusa_is_restamped_only_for_the_sessions_the_vault_wrote() -> None:
+    """Octava revisión (M8): una sesión que el vault saltó (ya no era de la
+    campaña) no se re-estampa en Medusa: su orden quedaría con otro anuncio."""
+    from scripts.spread_dia_del_padre_segments import plan_to_restamp
+
+    plan = [
+        {"session_key": "wa_573001234567", "new_source_id": "AD_NEW", "order_ids": ["order_1"]},
+        {"session_key": "wa_573009876543", "new_source_id": "AD_NEW", "order_ids": ["order_2"]},
+    ]
+
+    assert [p["session_key"] for p in plan_to_restamp(plan, ["wa_573009876543"])] == ["wa_573009876543"]
 
 
 def test_reseeding_a_session_goes_through_the_store(tmp_path: Path) -> None:

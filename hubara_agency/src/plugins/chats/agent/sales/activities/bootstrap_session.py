@@ -11,6 +11,7 @@ de un modulo por activity. El re-export en ``activities/__init__.py``
 preserva el import path publico.
 """
 from __future__ import annotations
+from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
 from pathlib import Path
 from typing import Any
@@ -299,7 +300,7 @@ async def read_order_draft_note_activity(session_id: str) -> str | None:
     )
 
     store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
-    metadata = store.read(session_id)
+    metadata = read_retrying_transient_errors_sync(store, session_id)
     slots = get_projectable_draft(metadata)
     if not slots:
         return None

@@ -94,7 +94,7 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
-from src.plugins.chats.agent.sales.use_cases.metadata_reads import read_retrying_transient_errors
+from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors
 from src.plugins.chats.shared.purchase_signals import (
     build_deferral_note,
 )
@@ -641,6 +641,12 @@ class IngestInboundMessage:
             # Pidió la baja: no se le sigue conversando la campaña.
             campaign_reply_note = None
             campaign_reply_touch = None
+            if isinstance(base, _Unread):
+                # La primera lectura falló: la baja no depende de ella y tiene
+                # que quedar (sticky). Se escribe sobre la lectura FRESCA.
+                self._persist_opt_out_over_fresh(
+                    session_id, (parsed.context or {}).get("id"), now_ms
+                )
             logger.info(
                 "marketing_opt_out_detected",
                 session_id=session_id,
@@ -1081,20 +1087,23 @@ class IngestInboundMessage:
                 effective.document_mime_type,
             )
             persisted_document_url = persisted_doc[0] if persisted_doc else None
-            metadata_dirty = False
-            if persisted_doc:
-                self._index_persisted_media(
-                    metadata,
-                    media_id=effective.document_media_id,
-                    filename=persisted_doc[1],
-                    kind=KIND_PDF_DOCUMENT,
-                )
-                metadata_dirty = True
-            notify_client = False
-            if metadata.get("active_route", ROUTE_VENTAS) != ROUTE_HUMANO:
-                nombre = effective.document_filename or "sin nombre"
+            nombre = effective.document_filename or "sin nombre"
+            document_media_id = effective.document_media_id
+
+            def _route_pdf(target: dict[str, Any]) -> bool:
+                """Indexa el PDF y pasa la conversación a verificación humana
+                si no lo estaba. True si la pasó."""
+                if persisted_doc:
+                    self._index_persisted_media(
+                        target,
+                        media_id=document_media_id,
+                        filename=persisted_doc[1],
+                        kind=KIND_PDF_DOCUMENT,
+                    )
+                if target.get("active_route", ROUTE_VENTAS) == ROUTE_HUMANO:
+                    return False
                 self._apply_human_route(
-                    metadata,
+                    target,
                     motivo=(
                         f"Cliente envió un documento PDF ({nombre}). Posible "
                         "comprobante de pago — verificar la recepción del pago "
@@ -1103,10 +1112,35 @@ class IngestInboundMessage:
                     ),
                     reason_category="PAYMENT_VERIFICATION_PENDING",
                 )
-                metadata_dirty = True
-                notify_client = True
-            if metadata_dirty:
-                self._safe_write_metadata(session_id, metadata, base)
+                return True
+
+            if isinstance(base, _Unread):
+                # La primera lectura falló (tras sus reintentos): la ruta
+                # humana no depende de ella y tiene que quedar. Se escribe
+                # sobre la lectura FRESCA (mejor esfuerzo, octava revisión).
+                routed = {"to_human": False}
+
+                def _pdf_over_fresh(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                    routed["to_human"] = _route_pdf(fresh)
+                    return fresh if (routed["to_human"] or persisted_doc) else None
+
+                route_written = (
+                    self._update_best_effort(session_id, _pdf_over_fresh, what="ruta_humana_por_pdf")
+                    is not None
+                )
+                notify_client = routed["to_human"] and route_written
+                if notify_client:
+                    _route_pdf(metadata)  # lo que sigue de este ingest también lo ve
+            else:
+                to_human = _route_pdf(metadata)
+                route_written = (
+                    self._safe_write_metadata(session_id, metadata, base)
+                    if (to_human or persisted_doc)
+                    else True
+                )
+                notify_client = to_human and route_written
+            # «Un colega lo revisa» solo si la ruta humana quedó escrita: si
+            # no, nadie tendría el caso (octava revisión).
             if notify_client:
                 try:
                     from src.platform.whatsapp import client as wa_client
@@ -1529,6 +1563,30 @@ class IngestInboundMessage:
         )
         return updated
 
+    def _persist_opt_out_over_fresh(
+        self, session_id: str, quoted_message_id: str | None, now_ms: int
+    ) -> None:
+        """La baja «NO MÁS» cuando la primera lectura del ingest falló: no
+        depende de esa lectura y es sticky. Se marca sobre la lectura FRESCA
+        (con la campaña citada o la del toque reciente), de mejor esfuerzo."""
+        from src.sdk.messagingkit import OPT_OUT_SOURCE_TEXT, mark_marketing_opt_out
+
+        def _opt_out(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            if fresh.get("marketing_opt_out"):
+                return None
+            quoted = quoted_campaign_touch(fresh, quoted_message_id)
+            campaign_id = (
+                quoted["campaign_id"]
+                if quoted is not None and not quoted.get("test")
+                else opt_out_campaign_id(fresh, now_ms)
+            )
+            mark_marketing_opt_out(
+                fresh, now_ms=now_ms, source=OPT_OUT_SOURCE_TEXT, campaign_id=campaign_id
+            )
+            return fresh
+
+        self._update_best_effort(session_id, _opt_out, what="baja_de_marketing")
+
     def _update_best_effort(
         self,
         session_id: str,
@@ -1915,7 +1973,7 @@ class IngestInboundMessage:
         base: dict[str, Any],
         *,
         before_merge: Callable[[dict[str, Any]], None] | None = None,
-    ) -> None:
+    ) -> bool:
         """Escribe SOLO lo que este ingest cambió en `data` desde `base` (lo que
         leyó, o lo que escribió la vez anterior), sobre lo que hay en disco
         AHORA (`write_merged`, merge de tres vías). Incidente 2026-10-06: la
@@ -1931,10 +1989,11 @@ class IngestInboundMessage:
         loguea y el mensaje del cliente sigue su camino.
 
         Si la lectura inicial falló (`base` es `_Unread`), no se escribe: el
-        ingest decidió sobre `{}`, no sobre el documento (sexta revisión)."""
+        ingest decidió sobre `{}`, no sobre el documento (sexta revisión).
+        Devuelve si escribió."""
         if isinstance(base, _Unread):
             logger.info("metadata_write_skipped_unread", session=session_id)
-            return
+            return False
         try:
             self._metadata_store.write_merged(
                 session_id,
@@ -1948,8 +2007,9 @@ class IngestInboundMessage:
                 session=session_id,
                 error=f"{type(exc).__name__}: {exc}"[:200],
             )
-            return
+            return False
         _rebase(base, data)
+        return True
 
     async def _emit_watchdog_events(
         self,

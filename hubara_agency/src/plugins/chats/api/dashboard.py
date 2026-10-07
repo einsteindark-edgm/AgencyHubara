@@ -581,8 +581,16 @@ async def list_dashboard_sessions():
 
             # Por el store: un archivo dañado se lee de su última copia buena
             # (antes: con JSON roto una conversación humana salía como del bot,
-            # y con UTF-8 inválido o sin permiso la lista entera fallaba).
-            data = metadata_store.read(entry)
+            # y con UTF-8 inválido o sin permiso la lista entera fallaba). Un
+            # error pasajero (el store lanza) omite SOLO esta sesión: la lista
+            # no se cae por una (octava revisión).
+            try:
+                data = metadata_store.read(entry)
+            except OSError as exc:
+                logger.warning(
+                    "dashboard: sesión {} omitida de la bandeja (no se pudo leer): {}", entry, repr(exc)[:200]
+                )
+                continue
             if data:
                 tag = data.get("tag", tag)
                 motivo = data.get("motivo", motivo)

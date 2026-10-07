@@ -46,6 +46,7 @@ payload corrupto NO bloquea a los siguientes. Errores se loguean + se
 emite analytics `error.flush_intent`.
 """
 from __future__ import annotations
+from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
 import asyncio
 import hashlib
@@ -383,7 +384,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
     # Por el store: un metadata dañado se lee de la última copia buena
     # (decisión del operador, 2026-10-06). Esa copia va una escritura atrás:
     # si trae una tarjeta ya entregada, el registro de entregas la frena.
-    data = store.read(session_id)
+    data = read_retrying_transient_errors_sync(store, session_id)
 
     intents = [it for it in (data.get("pending_ui_intents") or []) if isinstance(it, dict)]
     if not intents:

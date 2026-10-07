@@ -21,6 +21,7 @@ import os
 import time
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 import structlog
@@ -199,7 +200,143 @@ async def test_a_persistent_read_error_leaves_the_message_in_the_history_and_say
     assert len(history.events) == 1, "el mensaje del cliente no quedó en el historial"
     assert woken == [], "el router decidió sobre una ruta que no pudo leer"
     assert path.read_bytes() == before
-    errors = [e["event"] for e in logs if e.get("log_level") == "error"]
+    errors = [e for e in logs if e.get("log_level") == "error"]
     assert any(
-        f"no pude leer la ruta de {SID}" in event and "el mensaje no se despachó" in event for event in errors
+        e["event"] == "no pude leer la ruta; el mensaje no se despachó" and e.get("session_id") == SID for e in errors
     ), errors
+
+
+# --- la primera lectura del ingest falla del todo (octava revisión, M1) -------
+# Tras sus reintentos el ingest no escribe lo que decidió sobre `{}`. Pero hay
+# decisiones que NO dependen de esa lectura y tienen que quedar: la ruta humana
+# por un comprobante PDF y la baja «NO MÁS». Se escriben con `update` sobre la
+# lectura fresca; la cortesía del PDF sale solo si la ruta quedó escrita.
+
+
+class _Temporal:
+    """Temporal de mentira: anota si el router despachó el mensaje."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def get_workflow_handle(self, workflow_id: str) -> Any:
+        temporal = self
+
+        class _Handle:
+            async def terminate(self, reason: str | None = None) -> None:
+                temporal.calls.append("terminate")
+
+            async def describe(self) -> Any:
+                raise RuntimeError("no existe")
+
+            async def signal(self, *args: Any, **kwargs: Any) -> None:
+                temporal.calls.append("signal")
+
+        return _Handle()
+
+    async def start_workflow(self, *args: Any, **kwargs: Any) -> None:
+        self.calls.append("start_workflow")
+
+
+class _OptOutReadings:
+    async def read(self, inbound: Inbound) -> Readings:
+        return Readings(purchase=(None, "text"), deferral=None, courtesy=False, opt_out=True)
+
+
+def _pdf() -> WhatsAppMessage:
+    return WhatsAppMessage(
+        message_id="wamid.doc",
+        from_number="573001234567",
+        phone_number_id="pnid-1",
+        text=None,
+        media={"type": "document", "id": "doc-1", "mime_type": "application/pdf", "filename": "comprobante.pdf"},
+        timestamp=str(int(time.time())),
+    )
+
+
+async def _ingest_with_first_read_failing(
+    vault: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    message: WhatsAppMessage,
+    *,
+    readings: Any,
+    failures: int = 4,
+    disk_full: bool = False,
+) -> tuple[FilesystemMetadataStore, _Temporal, AsyncMock]:
+    import src.platform.whatsapp.client as wa_client
+
+    async def pdf_bytes(*args: Any, **kwargs: Any) -> tuple[bytes, str]:
+        return (b"%PDF-1.4 comprobante", "application/pdf")
+
+    monkeypatch.setattr("src.platform.audio.meta_media_fetcher.fetch_media_bytes", pdf_bytes)
+    told = AsyncMock(return_value=None)
+    monkeypatch.setattr(wa_client, "send_message", told)
+    monkeypatch.setattr("src.plugins.chats.agent.sales.metadata_reads.READ_RETRY_DELAYS_S", (0, 0, 0))
+    store = _seeded(vault)
+    if disk_full:
+        import src.platform.state as state
+
+        def no_space(*args: Any, **kwargs: Any) -> None:
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        monkeypatch.setattr(state, "atomic_write_json", no_space)
+    temporal = _Temporal()
+
+    async def client() -> Any:
+        return temporal
+
+    ingest = IngestInboundMessage(
+        history_store=_History(),  # type: ignore[arg-type]
+        load_session=LoadOrStartSalesSession(client, store),
+        metadata_store=_FlakyReads(store, failures=failures),  # type: ignore[arg-type]
+        readings=readings,
+    )
+    await ingest.execute(message)
+    return store, temporal, told
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_receipt_goes_to_a_human_even_if_the_first_read_never_worked(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, temporal, told = await _ingest_with_first_read_failing(
+        _isolate_vault_dir, monkeypatch, _pdf(), readings=_Readings()
+    )
+
+    on_disk = store.read(SID)
+    assert (on_disk["active_route"], on_disk.get("escalation_reason")) == ("humano", "PAYMENT_VERIFICATION_PENDING"), (
+        "se le prometió un colega al cliente y nadie tiene el caso"
+    )
+    assert any("Recibí tu documento" in call.args[2] for call in told.await_args_list)
+    assert temporal.calls == [], "el bot se despachó sobre una conversación que pasó a una persona"
+
+
+@pytest.mark.asyncio
+async def test_a_marketing_opt_out_stays_even_if_the_first_read_never_worked(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    message = WhatsAppMessage(
+        message_id="wamid.x", from_number="573001234567", phone_number_id="pnid-1",
+        text="NO MÁS", media=None, timestamp=str(int(time.time())),
+    )
+
+    store, _temporal, _told = await _ingest_with_first_read_failing(
+        _isolate_vault_dir, monkeypatch, message, readings=_OptOutReadings()
+    )
+
+    assert store.read(SID).get("marketing_opt_out") is True, "se perdió la baja «NO MÁS»"
+
+
+@pytest.mark.asyncio
+async def test_the_pdf_courtesy_only_goes_out_if_the_human_route_was_written(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Si el disco no deja escribir la ruta humana, no se le dice al cliente
+    «un colega lo revisa» (nadie tendría el caso)."""
+    _store, _temporal, told = await _ingest_with_first_read_failing(
+        _isolate_vault_dir, monkeypatch, _pdf(), readings=_Readings(), failures=0, disk_full=True
+    )
+
+    assert not any("Recibí tu documento" in call.args[2] for call in told.await_args_list), (
+        "se prometió un colega sin que la ruta humana quedara escrita"
+    )

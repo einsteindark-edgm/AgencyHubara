@@ -59,7 +59,7 @@ from src.platform.routing import resolve_route_workflow_id
 from src.plugins.chats.agent.sales.context import build_bogota_context_string
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
-from src.plugins.chats.agent.sales.use_cases.metadata_reads import read_retrying_transient_errors
+from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors
 
 logger = structlog.get_logger()
 
@@ -203,7 +203,7 @@ class LoadOrStartSalesSession:
             data = await read_retrying_transient_errors(self._metadata_store, session_id)
         except OSError as exc:
             logger.error(
-                f"no pude leer la ruta de {session_id}; el mensaje no se despachó",
+                "no pude leer la ruta; el mensaje no se despachó",
                 session_id=session_id,
                 error=repr(exc)[:200],
             )
@@ -311,10 +311,17 @@ class LoadOrStartSalesSession:
                 pass
             data["active_route"] = ROUTE_VENTAS
             # Solo la ruta, sobre la lectura fresca: entre la lectura de
-            # arriba y acá hubo un `terminate` a Temporal.
-            self._metadata_store.update(
-                session_id, lambda fresh: {**fresh, "active_route": ROUTE_VENTAS}
-            )
+            # arriba y acá hubo un `terminate` a Temporal. De mejor esfuerzo
+            # (octava revisión): si el disco no deja escribir, este despacho
+            # igual va a ventas (lo decide `active_route` local).
+            try:
+                self._metadata_store.update(
+                    session_id, lambda fresh: {**fresh, "active_route": ROUTE_VENTAS}
+                )
+            except Exception as exc:  # noqa: BLE001 — mejor esfuerzo: el mensaje sigue
+                logger.warning(
+                    "router_prefer_sales_route_write_failed", session_id=session_id, error=repr(exc)[:200]
+                )
             active_route = ROUTE_VENTAS
 
         # 3. Si la ruta activa es remarketing, intentamos reusar; si murio, fallback.

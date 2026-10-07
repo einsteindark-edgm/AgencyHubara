@@ -35,6 +35,7 @@ Cada tool devuelve un envelope JSON con:
   * `summary` — texto para el LLM
 """
 from __future__ import annotations
+from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
 import json
 import time
@@ -611,7 +612,7 @@ def _shipping_precondition_rejection(
         has_purchase_confirmation,
     )
 
-    data = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_key)
+    data = read_retrying_transient_errors_sync(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), session_key)
     signal = current_signal(data)
     if signal and signal.get("kind") == "deferral":
         quoted = str(signal.get("text") or "").strip()
@@ -1112,7 +1113,7 @@ class PresentOrderConfirmationTool(ToolBase):
             split_lines_mismatch,
         )
 
-        metadata_now = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(ctx.session_key)
+        metadata_now = read_retrying_transient_errors_sync(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), ctx.session_key)
         # Color y aroma de cada ítem: en un producto con cupo lo que manda el
         # LLM tiene que existir en las listas del producto; si no, NO hay monto
         # (se corrige primero). Sin cupón no se valida (se acepta como antes).

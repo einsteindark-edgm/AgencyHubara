@@ -138,13 +138,15 @@ async def test_promised_handoff_escalates_over_a_damaged_document_from_the_last_
 
 
 @pytest.mark.asyncio
-async def test_a_transient_read_error_stops_the_promised_handoff_net_and_keeps_the_takeover(
-    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("times", [1, 4], ids=["un-error", "persistente"])
+async def test_a_transient_read_error_never_lets_the_promised_handoff_net_overwrite_the_takeover(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch, times: int
 ) -> None:
     """Sexta revisión del PR #393: con un EMFILE, `read()` devolvía la copia
     vieja (antes de la toma del operador) y la red escalaba encima, pisando el
-    motivo y el `escalation_reason` del operador. Ahora `read()` lanza: la
-    activity falla (Temporal la reintenta) y nada cambia."""
+    motivo y el `escalation_reason` del operador. Ahora `read()` lanza y la red
+    reintenta su lectura (octava revisión): con un error de un instante lee lo
+    fresco y no hace nada; si sigue fallando, lanza. Nada cambia."""
     import errno
     import os
 
@@ -165,7 +167,7 @@ async def test_a_transient_read_error_stops_the_promised_handoff_net_and_keeps_t
 
     monkeypatch.setattr(guards, "promised_handoff", promised_handoff)
     real_read_text = Path.read_text
-    left = {"n": 1}
+    left = {"n": times}
 
     def read_text(self: Path, *args: Any, **kwargs: Any) -> str:
         if self.name == "metadata.json" and left["n"]:
@@ -175,8 +177,11 @@ async def test_a_transient_read_error_stops_the_promised_handoff_net_and_keeps_t
 
     monkeypatch.setattr(Path, "read_text", read_text)
 
-    with pytest.raises(OSError):
+    if times == 1:
         await ensure_promised_handoff_activity(SID, "Un colega del equipo te escribe enseguida.")
+    else:
+        with pytest.raises(OSError):
+            await ensure_promised_handoff_activity(SID, "Un colega del equipo te escribe enseguida.")
 
     monkeypatch.setattr(Path, "read_text", real_read_text)
     after = {p.name: p.read_bytes() for p in path.parent.iterdir() if not p.name.endswith(".lock")}

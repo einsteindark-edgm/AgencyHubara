@@ -245,15 +245,13 @@ def test_the_flush_failure_history_does_not_revive_the_bot(tmp_path, damage):
     assert after["ui_intents_failures"][-1]["kind"] == "product_detail"
 
 
-def test_update_raises_on_a_transient_read_failure_and_the_retry_writes(tmp_path, monkeypatch):
-    """Sexta revisión del PR #393: sin reintentos ni esperas dentro del store.
-    Un error pasajero lanza sin escribir; el reintento (el de Temporal) escribe."""
+def test_update_retries_a_transient_read_failure(tmp_path, monkeypatch):
+    """Octava revisión del PR #393: quien escribe reintenta, bajo el candado y
+    con esperas cortas, un error pasajero (como releía a11a150b). `read()` no."""
     from pathlib import Path
 
     store = FilesystemMetadataStore(tmp_path)
     store.write("wa_1", _SESSION)
-    path = tmp_path / "wa_1" / "metadata.json"
-    before = path.read_bytes()
     real_read_text = Path.read_text
     failures = {"left": 1}
 
@@ -264,10 +262,6 @@ def test_update_raises_on_a_transient_read_failure_and_the_retry_writes(tmp_path
         return real_read_text(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", flaky_read_text)
-
-    with pytest.raises(OSError):
-        store.update("wa_1", lambda d: {**d, "n": 1})
-    assert path.read_bytes() == before
 
     written = store.update("wa_1", lambda d: {**d, "n": 1})
 

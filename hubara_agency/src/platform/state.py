@@ -55,7 +55,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
 
@@ -269,6 +269,8 @@ def _merge_keyed(key: str, base: list[dict[str, Any]], ours: list[dict[str, Any]
 
 log = logging.getLogger(__name__)
 
+_T = TypeVar("_T")
+
 # Candados que el hilo actual ya tiene (por archivo REAL: `realpath`, así el
 # mismo archivo por un symlink es el mismo candado). `flock` no es reentrante
 # entre descriptores del mismo proceso: un mutator que escribiera la misma
@@ -289,6 +291,14 @@ DAMAGED_SUFFIX = ".damaged"
 #: otro error del sistema (EMFILE, ENFILE, ENOMEM, EAGAIN, ESTALE, EIO…) es
 #: PASAJERO: no dice nada del documento, y tratarlo como daño pisaría uno sano.
 _DAMAGE_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EISDIR, errno.ENOTDIR, errno.ELOOP})
+
+#: Los errores PASAJEROS que se reintentan.
+TRANSIENT_ERRNOS = frozenset({errno.EMFILE, errno.ENFILE, errno.ENOMEM, errno.EAGAIN, errno.ESTALE, errno.EIO})
+#: Quien ESCRIBE reintenta un error pasajero (al releer o al escribir), bajo el
+#: candado de la sesión y con esperas cortas: un EIO de un instante no hace
+#: fallar la anotación de algo que ya pasó (octava revisión; a11a150b releía
+#: una vez). `read()` no reintenta: corre en el bucle async.
+_WRITE_RETRY_DELAYS_S: tuple[float, ...] = (0.02, 0.06, 0.15)
 
 
 class _Absent:
@@ -508,6 +518,24 @@ def _put_back(path: Path, aside: _SetAside) -> None:
         log.error("metadata_damaged_not_put_back", extra={"path": str(path), "error": repr(exc)[:200]})
 
 
+def _retrying_transient(operation: Callable[[], _T], path: Path, what: str) -> _T:
+    """`operation()`; ante un error PASAJERO espera un poco y la repite, hasta 3
+    veces (`_WRITE_RETRY_DELAYS_S`). Otro error, o el pasajero tras el último
+    reintento, se lanza. Solo para quien escribe, bajo el candado."""
+    for attempt, delay in enumerate(_WRITE_RETRY_DELAYS_S, start=1):
+        try:
+            return operation()
+        except OSError as exc:
+            if exc.errno not in TRANSIENT_ERRNOS:
+                raise
+            log.warning(
+                "metadata_write_retry",
+                extra={"path": str(path), "what": what, "attempt": attempt, "error": repr(exc)[:200]},
+            )
+        time.sleep(delay)
+    return operation()
+
+
 def _replace_document(path: Path, data: dict[str, Any], snapshot: _Snapshot) -> None:
     """Escribe `data` (atómico) cuidando las copias. Desde un documento sano, la
     versión anterior pasa a `.prev` SOLO si la escritura termina bien (si
@@ -521,7 +549,7 @@ def _replace_document(path: Path, data: dict[str, Any], snapshot: _Snapshot) -> 
     elif snapshot.state == "damaged":
         aside = _set_aside_damaged(path)
     try:
-        atomic_write_json(path, data)
+        _retrying_transient(lambda: atomic_write_json(path, data), path, "escritura")
     except BaseException:
         if previous is not None:
             _discard(previous)
@@ -560,11 +588,13 @@ class FilesystemMetadataStore:
         ``{}`` por un error pasajero, así nadie que lee → decide → escribe
         decide sobre algo que no pudo leer (Temporal reintenta la activity).
       * **El que escribe repara**, bajo el candado (``update``,
-        ``write_merged``, ``write``): relee fresco (un intento). Si está
-        dañado, lo aparta UNA vez como ``metadata.json.damaged-<ms>``, aplica
-        su cambio sobre la copia buena (o ``{}``) y escribe atómico; si la
-        escritura falla, lo apartado vuelve a su lugar (``metadata.json`` nunca
-        queda ausente). Error pasajero → lanza sin escribir.
+        ``write_merged``, ``write``): relee fresco. Si está dañado, lo aparta
+        UNA vez como ``metadata.json.damaged-<ms>``, aplica su cambio sobre la
+        copia buena (o ``{}``) y escribe atómico; si la escritura falla, lo
+        apartado vuelve a su lugar (``metadata.json`` nunca queda ausente). Un
+        error pasajero al releer o al escribir se reintenta hasta 3 veces con
+        esperas cortas (20, 60 y 150 ms; bajo el candado de esa sesión) y
+        recién después lanza, sin escribir.
       * **Copia buena**: cada escritura sobre un documento sano deja la versión
         que reemplaza como ``.prev``. Se enlaza (sin enlaces, se copia) a
         ``.metadata.json.prev.tmp`` —nombre fijo: bajo el candado hay un solo
@@ -629,8 +659,15 @@ class FilesystemMetadataStore:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
     def _fresh(self, path: Path) -> _Snapshot:
-        """Lo que ve quien lee o escribe (ver la clase), con su alerta."""
+        """Lo que ve quien LEE (ver la clase), con su alerta: un intento."""
         snapshot = _snapshot(path)
+        _alert_once(path, snapshot)
+        return snapshot
+
+    def _fresh_locked(self, path: Path) -> _Snapshot:
+        """Lo que ve quien ESCRIBE, bajo el candado: un error pasajero se
+        reintenta (esperas cortas) antes de lanzar."""
+        snapshot = _retrying_transient(lambda: _snapshot(path), path, "relectura")
         _alert_once(path, snapshot)
         return snapshot
 
@@ -646,7 +683,7 @@ class FilesystemMetadataStore:
         ``update`` o ``write_merged``."""
         path = self._path_for(session_id)
         with self._locked(path):
-            _replace_document(path, data, self._fresh(path))
+            _replace_document(path, data, self._fresh_locked(path))
 
     def update(
         self,
@@ -671,7 +708,7 @@ class FilesystemMetadataStore:
         """
         path = self._path_for(session_id)
         with self._locked(path):
-            snapshot = self._fresh(path)
+            snapshot = self._fresh_locked(path)
             result = mutator(snapshot.data)
             if result is None:
                 return None
@@ -707,7 +744,7 @@ class FilesystemMetadataStore:
         """
         path = self._path_for(session_id)
         with self._locked(path):
-            snapshot = self._fresh(path)
+            snapshot = self._fresh_locked(path)
             fresh = snapshot.data
             if not fresh and base:
                 merged = ours

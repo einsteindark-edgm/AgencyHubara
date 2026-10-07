@@ -305,9 +305,9 @@ def _taken_by_the_operator(vault: Path) -> Path:
     return vault / _SESSION / "metadata.json"
 
 
-def _one_transient_read(monkeypatch: pytest.MonkeyPatch) -> None:
+def _transient_reads(monkeypatch: pytest.MonkeyPatch, times: int) -> None:
     real_read_text = Path.read_text
-    left = {"n": 1}
+    left = {"n": times}
 
     def read_text(self: Path, *args, **kwargs) -> str:
         if self.name == "metadata.json" and left["n"]:
@@ -323,14 +323,21 @@ def _session_files(md: Path) -> dict[str, bytes]:
 
 
 @pytest.mark.parametrize("net", ["pago-pendiente", "escalacion-de-cierre"])
-async def test_a_transient_read_error_stops_the_net_and_keeps_the_operator_takeover(
-    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch, net: str
+@pytest.mark.parametrize("times", [1, 4], ids=["un-error", "persistente"])
+async def test_a_transient_read_error_never_lets_the_net_overwrite_the_operator_takeover(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch, net: str, times: int
 ):
+    """Un error de un instante se reintenta (octava revisión): la red lee lo
+    fresco —la toma— y no hace nada. Si sigue fallando, lanza (Temporal
+    reintenta). En ningún caso decide sobre la copia vieja."""
     md = _taken_by_the_operator(_isolate_vault_dir)
     before = _session_files(md)
-    _one_transient_read(monkeypatch)
+    _transient_reads(monkeypatch, times)
 
-    with pytest.raises(OSError):
+    if times == 1:
         await (_run() if net == "pago-pendiente" else _run_escalation())
+    else:
+        with pytest.raises(OSError):
+            await (_run() if net == "pago-pendiente" else _run_escalation())
 
     assert _session_files(md) == before, "la red pisó la toma del operador"

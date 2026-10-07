@@ -28,6 +28,7 @@ Patron LLM (ver `workspace/TOOLS.md`):
     borrar un dato que quedo indefinido, mandalo como string vacio.
 """
 from __future__ import annotations
+from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
 import copy
 import json
@@ -799,7 +800,7 @@ class SetOrderSlotTool(ToolBase):
             )
 
         now_ms = int(time.time() * 1000)
-        data = self._store.read(ctx.session_key)
+        data = read_retrying_transient_errors_sync(self._store, ctx.session_key)
         # Lo leído: entre esta lectura y la escritura se consulta el catálogo
         # y el motor (Jev); la escritura lleva SOLO lo que esta tool cambió
         # (incidente 2026-10-06: la copia entera pisaba otras escrituras).

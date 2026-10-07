@@ -370,15 +370,40 @@ def _failing_reads(monkeypatch: pytest.MonkeyPatch, names: set[str], times: int,
     monkeypatch.setattr(Path, "read_text", read_text)
 
 
-@pytest.mark.parametrize("times", [1, 3, 4])
+@pytest.mark.parametrize("times", [1, 2])
+@pytest.mark.parametrize("how", ["update", "write_merged"])
+def test_a_transient_read_error_under_the_lock_is_retried_and_the_fresh_document_is_written(
+    tmp_path, monkeypatch, times, how
+) -> None:
+    """Octava revisión: quien escribe reintenta (bajo el candado, esperas
+    cortas) un error pasajero al releer. Escribe sobre el documento FRESCO —la
+    toma del humano—, nunca sobre la copia vieja, y la copia buena rota."""
+    path = _session(tmp_path)
+    _prev(path).write_text(json.dumps({**_GOOD, "active_route": "ventas"}), encoding="utf-8")
+    path.write_text(json.dumps(_GOOD), encoding="utf-8")
+    on_disk = path.read_bytes()
+    _failing_reads(monkeypatch, {"metadata.json", "metadata.json.prev"}, times)
+    store = FilesystemMetadataStore(tmp_path)
+
+    if how == "update":
+        store.update(SID, lambda d: {**d, "ui_intents_failures": [{"kind": "x"}]})
+    else:
+        store.write_merged(SID, base={}, ours={"ui_intents_failures": [{"kind": "x"}]})
+
+    assert _json_or_none(path) == {**_GOOD, "ui_intents_failures": [{"kind": "x"}]}
+    assert _prev(path).read_bytes() == on_disk
+    assert _damaged_copies(path) == []
+
+
+@pytest.mark.parametrize("times", [4, 5])
 @pytest.mark.parametrize("how", ["update", "write_merged"])
 def test_a_transient_read_error_is_not_damage_the_write_fails_and_nothing_changes(
     tmp_path, monkeypatch, times, how
 ) -> None:
     """Un documento SANO (con la toma de un humano como última escritura) no
     se aparta ni se reemplaza por la copia vieja porque el sistema se quedó
-    sin descriptores un instante: la escritura falla en el primer error, sin
-    reintentos ni esperas (Temporal reintenta la activity), y nada cambia."""
+    sin descriptores: tras los 3 reintentos la escritura falla (Temporal
+    reintenta la activity) y nada cambia."""
     path = _session(tmp_path)
     _prev(path).write_text(json.dumps({**_GOOD, "active_route": "ventas"}), encoding="utf-8")
     path.write_text(json.dumps(_GOOD), encoding="utf-8")
@@ -408,7 +433,7 @@ def test_a_transient_error_reading_the_good_copy_also_stops_the_write(tmp_path, 
     _prev(path).write_text(json.dumps(_GOOD), encoding="utf-8")
     _broken_json(path)
     before = path.read_bytes()
-    _failing_reads(monkeypatch, {"metadata.json.prev"}, 3)
+    _failing_reads(monkeypatch, {"metadata.json.prev"}, 4)  # la lectura y sus 3 reintentos
 
     raised = None
     try:
@@ -419,6 +444,53 @@ def test_a_transient_error_reading_the_good_copy_also_stops_the_write(tmp_path, 
     assert path.read_bytes() == before, "siguió desde vacío y pisó la sesión"
     assert _damaged_copies(path) == []
     assert raised is not None and raised.errno == errno.EMFILE
+
+
+def _write_fails(monkeypatch: pytest.MonkeyPatch, times: int, code: int = errno.EIO) -> list[float]:
+    """Las primeras `times` escrituras (`atomic_write_json`) fallan con un error
+    pasajero; devuelve las esperas que hizo quien escribe."""
+    real_write = state.atomic_write_json
+    left = {"n": times}
+
+    def flaky_write(path: Path, data: Any) -> None:
+        if left["n"]:
+            left["n"] -= 1
+            raise OSError(code, os.strerror(code))
+        real_write(path, data)
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(state, "atomic_write_json", flaky_write)
+    monkeypatch.setattr(state.time, "sleep", sleeps.append)
+    return sleeps
+
+
+@pytest.mark.parametrize("times", [1, 2])
+def test_a_transient_error_writing_is_retried_with_short_waits(tmp_path, monkeypatch, times) -> None:
+    store = FilesystemMetadataStore(tmp_path)
+    store.write(SID, {"v": 1})
+    sleeps = _write_fails(monkeypatch, times)
+
+    store.update(SID, lambda d: {**d, "v": 2})
+
+    path = tmp_path / SID / "metadata.json"
+    assert _json_or_none(path) == {"v": 2}, "un error pasajero de un instante hizo fallar la escritura"
+    assert _json_or_none(_prev(path)) == {"v": 1}
+    assert sleeps == [0.02, 0.06][:times]
+
+
+def test_a_transient_error_writing_four_times_raises_and_leaves_the_disk_intact(tmp_path, monkeypatch) -> None:
+    store = FilesystemMetadataStore(tmp_path)
+    store.write(SID, {"v": 1})
+    store.write(SID, {"v": 2})
+    path = tmp_path / SID / "metadata.json"
+    before = _disk(path)
+    _write_fails(monkeypatch, 4)
+
+    with pytest.raises(OSError) as raised:
+        store.update(SID, lambda d: {**d, "v": 3})
+
+    assert raised.value.errno == errno.EIO
+    assert _disk(path) == before, "una escritura que falló tocó el disco"
 
 
 @pytest.mark.parametrize("failure", ["disco-lleno", "no-serializable"])

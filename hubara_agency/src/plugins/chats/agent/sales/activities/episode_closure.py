@@ -36,6 +36,7 @@ DEHA:
     NO debe cambiar el `closed_at_ms` del episodio.
 """
 from __future__ import annotations
+from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
 import copy
 import time
@@ -115,7 +116,7 @@ async def ensure_payment_pending_closure_activity(
         return PaymentPendingClosureResult(acted=False, escalated=False)
     # Por el store: un metadata dañado se lee de la última copia buena
     # (decisión del operador, 2026-10-06), así la red no se calla por eso.
-    data: dict[str, Any] = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
+    data: dict[str, Any] = read_retrying_transient_errors_sync(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), session_id)
     base = copy.deepcopy(data)
 
     # Timestamp idempotente entre retries: un retry de esta activity NO debe
@@ -228,7 +229,7 @@ async def ensure_closing_escalation_activity(
         )
         return False
     # Por el store: un metadata dañado se lee de la última copia buena.
-    data: dict[str, Any] = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
+    data: dict[str, Any] = read_retrying_transient_errors_sync(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), session_id)
     base = copy.deepcopy(data)
 
     try:
@@ -281,7 +282,7 @@ async def ensure_promised_handoff_activity(session_id: str, text: str) -> bool:
     if not (WORKSPACE_VAULT_DIR / session_id / "metadata.json").exists():
         return False
     # Por el store: un metadata dañado se lee de la última copia buena.
-    data: dict[str, Any] = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
+    data: dict[str, Any] = read_retrying_transient_errors_sync(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), session_id)
     base = copy.deepcopy(data)
     if data.get("active_route") == ROUTE_HUMANO:
         return False

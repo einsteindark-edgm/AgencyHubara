@@ -202,7 +202,7 @@ def test_a_write_that_failed_is_still_pending_and_the_session_untouched(
     base: dict[str, Any] = {"active_route": "humano", "tag": "HUMANO"}
     metadata: dict[str, Any] = {**base, "first_touch_origin": "direct"}
 
-    _failing_reads(monkeypatch, "metadata.json", 1)  # sin reintentos: uno basta
+    _failing_reads(monkeypatch, "metadata.json", 4)  # la relectura y sus 3 reintentos
     ingest._safe_write_metadata(SID, metadata, base)  # falla (error pasajero)
 
     assert path.read_bytes() == before, "un error pasajero pisó la toma del humano"
@@ -229,30 +229,70 @@ class _RecordingHistory(_History):
         self.events.append(content)
 
 
-class _BotWoken(Exception):
-    """El router llegó a despertar al bot (pidió el cliente de Temporal)."""
+class _Temporal:
+    """Temporal de mentira: anota lo que el router le pide. El mensaje se
+    despacha con `start_workflow` (signal-with-start) al workflow de ventas."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def get_workflow_handle(self, workflow_id: str) -> Any:
+        temporal = self
+
+        class _Handle:
+            async def terminate(self, reason: str | None = None) -> None:
+                temporal.calls.append(("terminate", workflow_id))
+
+            async def describe(self) -> Any:
+                raise RuntimeError("no existe")
+
+            async def signal(self, *args: Any, **kwargs: Any) -> None:
+                temporal.calls.append(("signal", workflow_id))
+
+        return _Handle()
+
+    async def start_workflow(self, *args: Any, **kwargs: Any) -> None:
+        self.calls.append(("start_workflow", kwargs.get("id", "")))
+
+    def dispatched(self) -> bool:
+        return any(kind in ("start_workflow", "signal") and wid == f"session-{SID}" for kind, wid in self.calls)
+
+
+_NOW_MS = int(time.time() * 1000)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "text",
-    ["hola, quiero una vela", "hola ref:cart_01ABCDEFGHIJKLMNOPQRSTUV"],
-    ids=["texto", "carrito-web"],
+    ("text", "seed"),
+    [
+        ("hola, quiero una vela", {"active_route": "ventas"}),
+        ("hola ref:cart_01ABCDEFGHIJKLMNOPQRSTUV", {"active_route": "ventas"}),
+        # Respuesta a una campaña con la ruta en remarketing: el router pasa la
+        # conversación a ventas (`prefer_sales`) y escribe la ruta.
+        (
+            "hola, me interesa la promo",
+            {
+                "active_route": "remarketing",
+                "campaign_touches": [{"campaign_id": "camp-1", "sent_at_ms": _NOW_MS - 60_000, "wa_message_id": "wamid.c1"}],
+            },
+        ),
+    ],
+    ids=["texto", "carrito-web", "respuesta-a-campana"],
 )
 async def test_an_auxiliary_write_that_fails_does_not_lose_the_message(
-    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch, text: str
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch, text: str, seed: dict[str, Any]
 ) -> None:
     """Las escrituras auxiliares del ingest y del router (captura del carrito,
-    del ref, de la tarjeta y del cupón; el `phone_number_id`) son de mejor
-    esfuerzo: si el disco no deja escribir, se registra y se sigue. El mensaje
-    queda en el historial y el bot se despierta igual. Antes, la excepción
-    cortaba el ingest, que corre después de responder 200 al webhook: Meta no
-    lo reintenta."""
+    del ref, de la tarjeta y del cupón; el `phone_number_id`; la ruta a ventas
+    de una respuesta a campaña) son de mejor esfuerzo: si el disco no deja
+    escribir, se registra y se sigue. El mensaje queda en el historial y se
+    despacha igual. Antes, la excepción cortaba el ingest, que corre después
+    de responder 200 al webhook: Meta no lo reintenta."""
     import src.platform.state as state
     from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import LoadOrStartSalesSession
 
     store = FilesystemMetadataStore(_isolate_vault_dir)
-    store.write(SID, {"phone_number_id": "pnid-1", "active_route": "ventas", "tag": "INTERESADO"})
+    store.write(SID, {"phone_number_id": "pnid-1", "tag": "INTERESADO", **seed})
     path = _isolate_vault_dir / SID / "metadata.json"
     before = path.read_bytes()
 
@@ -260,36 +300,33 @@ async def test_an_auxiliary_write_that_fails_does_not_lose_the_message(
         raise OSError(errno.ENOSPC, "No space left on device")
 
     monkeypatch.setattr(state, "atomic_write_json", disk_full)
-    woken: list[bool] = []
+    temporal = _Temporal()
 
-    async def wake_the_bot() -> Any:
-        woken.append(True)
-        raise _BotWoken
+    async def client() -> Any:
+        return temporal
 
     history = _RecordingHistory()
     ingest = IngestInboundMessage(
         history_store=history,  # type: ignore[arg-type]
-        load_session=LoadOrStartSalesSession(wake_the_bot, store),
+        load_session=LoadOrStartSalesSession(client, store),
         metadata_store=store,
         readings=_Readings(),
     )
 
-    with pytest.raises(_BotWoken):
-        await ingest.execute(
-            WhatsAppMessage(
-                message_id="wamid.x1",
-                from_number="573001234567",
-                phone_number_id="pnid-1",
-                text=text,
-                media=None,
-                timestamp=str(int(time.time())),
-            )
+    await ingest.execute(
+        WhatsAppMessage(
+            message_id="wamid.x1",
+            from_number="573001234567",
+            phone_number_id="pnid-1",
+            text=text,
+            media=None,
+            timestamp=str(int(time.time())),
         )
+    )
 
     assert history.events, "el mensaje del cliente no quedó en el historial"
-    assert woken, "el bot no se despertó"
+    assert temporal.dispatched(), f"el mensaje no se despachó: {temporal.calls}"
     assert path.read_bytes() == before
-
 
 
 @pytest.mark.asyncio

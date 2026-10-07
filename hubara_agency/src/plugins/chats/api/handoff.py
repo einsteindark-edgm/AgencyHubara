@@ -569,6 +569,23 @@ def _env_phone() -> str:
     return phone
 
 
+def _record_after_send(metadata_store: FilesystemMetadataStore, session_id: str, mutator) -> None:
+    """Anota en metadata.json algo que YA SALIÓ (la marca del
+    `client_message_id`). De mejor esfuerzo (PR #393, octava revisión): si
+    falla (el store ya reintentó los errores pasajeros), se registra y se
+    sigue — el operador no recibe un 500 por un mensaje que el cliente sí
+    recibió, y el historial lo anota igual. Sin la marca, la reserva del cmid
+    vence sola (`_PENDING_SEND_TTL_MS`)."""
+    try:
+        metadata_store.update(session_id, mutator)
+    except Exception as exc:  # noqa: BLE001 — el envío ya ocurrió
+        logger.error(
+            "dashboard: no pude anotar un envío que ya salió",
+            session_id=session_id,
+            error=repr(exc)[:200],
+        )
+
+
 @router.post(
     "/sessions/{session_id}/messages",
     response_model=HumanMessageResponse,
@@ -790,7 +807,7 @@ async def send_human_message(
             fresh["sent_human_message_ids"] = marked[-200:]  # cap
             return fresh
 
-        metadata_store.update(session_id, _mark_sent)
+        _record_after_send(metadata_store, session_id, _mark_sent)
 
     try:
         # `wamid` del adjunto: destino de las citas del cliente ("quiero
@@ -952,7 +969,7 @@ async def send_human_template_message(
             fresh["sent_human_message_ids"] = marked[-200:]  # cap
             return fresh
 
-        metadata_store.update(session_id, _mark_sent)
+        _record_after_send(metadata_store, session_id, _mark_sent)
 
     logger.info(
         "dashboard.send_human_template",

@@ -91,3 +91,30 @@ def test_the_conversation_view_shows_a_damaged_conversation_from_its_last_good_c
     assert response.status_code == 200, "un archivo dañado no deja abrir la conversación"
     body = response.json()
     assert (body["active_agent_route"], body["tag"], body["motivo"]) == ("humano", "HUMANO", "Lo atiende Ana")
+
+
+def test_a_session_that_cannot_be_read_does_not_take_down_the_inbox(client, monkeypatch) -> None:
+    """Octava revisión (M3): `read()` lanza ante un error pasajero; la bandeja
+    lee TODAS las sesiones, así que un EIO en una sola tumbaba la lista entera.
+    Esa sesión se omite (con log) y las demás se muestran."""
+    c, vault = client
+    other = "wa_573009876543"
+    for sid in (SID, other):
+        path = vault / sid / "metadata.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(_HUMAN), encoding="utf-8")
+    real_read_text = Path.read_text
+    broken = vault / other
+
+    def read_text(self: Path, *args, **kwargs) -> str:
+        if self.parent == broken and self.name.startswith("metadata.json"):
+            raise OSError(5, "Input/output error")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    response = c.get("/api/dashboard/sessions")
+
+    assert response.status_code == 200, "una sesión ilegible tumbó la bandeja entera"
+    ids = [s["session_id"] for s in response.json()["sessions"]]
+    assert SID in ids and other not in ids

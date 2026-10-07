@@ -180,7 +180,11 @@ jobs:
           tests/plugins/chats/sales/test_payment_pending_closure.py::test_safety_net_acts_over_a_damaged_document_from_the_last_good_copy
           tests/plugins/chats/sales/test_payment_pending_closure.py::test_closing_escalation_acts_over_a_damaged_document_from_the_last_good_copy
           tests/plugins/orders/test_emit_stage_capi_value.py::test_a_stage_event_is_queued_over_a_damaged_chat_from_its_last_good_copy
-          tests/plugins/chats/sales/test_payment_pending_closure.py::test_a_transient_read_error_stops_the_net_and_keeps_the_operator_takeover
+          tests/plugins/chats/sales/test_payment_pending_closure.py::test_a_transient_read_error_never_lets_the_net_overwrite_the_operator_takeover
+          tests/plugins/chats/sales/test_transient_reads_in_activities_and_tools.py
+          tests/plugins/chats/test_handoff_record_after_send.py
+          tests/platform/test_whatsapp_record_after_send.py
+          tests/plugins/reengagement/test_unresponsive_tag.py::test_a_session_that_cannot_be_written_does_not_stop_the_cycle
           tests/scripts/test_scripts_write_metadata_with_the_store.py
 
       - name: Premortem invariants (compose drift + paridad k8s + colas únicas)

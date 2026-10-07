@@ -698,14 +698,23 @@ def _update_metadata(
     session_id: str,
     mutator: Callable[[dict[str, Any]], dict[str, Any] | None],
 ) -> dict[str, Any] | None:
-    """Anota un envío en metadata.json: `mutator` aplica SOLO lo del envío
-    sobre la lectura fresca, bajo el candado del store (incidente 2026-10-06:
-    la copia leída antes del envío pisaba lo que otro escritor puso mientras
-    Meta respondía). Import local: platform/state importa de config — evita
-    el ciclo en el import del módulo."""
+    """Anota un envío que YA SALIÓ en metadata.json: `mutator` aplica SOLO lo
+    del envío sobre la lectura fresca, bajo el candado del store (incidente
+    2026-10-06: la copia leída antes del envío pisaba lo que otro escritor
+    puso mientras Meta respondía). Import local: platform/state importa de
+    config — evita el ciclo en el import del módulo.
+
+    De mejor esfuerzo (PR #393, octava revisión): si la anotación falla (el
+    store ya reintentó los errores pasajeros), se registra y se sigue. Lanzar
+    haría que Temporal reintentara la activity y el mensaje saldría otra vez
+    (misma regla que `_safe_update` del flush: el envío ya ocurrió)."""
     from src.platform.state import FilesystemMetadataStore
 
-    return FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, mutator)
+    try:
+        return FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, mutator)
+    except Exception as exc:  # noqa: BLE001 — el envío ya ocurrió: nunca reenviar por anotarlo
+        log.error("outbound_record_failed_after_send", session_id=session_id, error=repr(exc)[:200])
+        return None
 
 
 def _resolve_phone_number_id(metadata: dict[str, Any]) -> str:
