@@ -19,8 +19,17 @@ from src.plugins.chats.agent.sales_eval.scorecard.trajectory import (
 )
 
 
-def tool(name: str, ok: bool | None = True, error: str | None = None, notes=(), **args: Any) -> ToolCall:
-    return ToolCall(name=name, ok=ok, error=error, notes=tuple(notes), args=dict(args))
+def tool(
+    name: str,
+    ok: bool | None = True,
+    error: str | None = None,
+    notes=(),
+    card_text: str | None = None,
+    **args: Any,
+) -> ToolCall:
+    """`card_text`: el texto que armó el código para el cliente con la tarjeta
+    (el mensaje del formulario de envío, el resumen del pedido, las tarifas)."""
+    return ToolCall(name=name, ok=ok, error=error, notes=tuple(notes), args=dict(args), card_text=card_text)
 
 
 def T(

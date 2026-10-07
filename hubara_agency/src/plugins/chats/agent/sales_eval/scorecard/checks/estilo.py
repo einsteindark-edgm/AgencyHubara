@@ -15,6 +15,7 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     failed,
     is_legacy,
     judged_turns,
+    lost_narration,
     not_judged,
     passed,
     quote,
@@ -113,10 +114,10 @@ def check_no_discarded_narration(traj: Trajectory, ctx: CheckContext) -> CheckRe
     if is_legacy(traj):
         return unknown("EST-06", "legacy sin narración descartada")
     for turn in judged_turns(traj):
-        if turn.discarded_narration:
-            return failed(
-                "EST-06", turn.turn, f"turno {turn.turn}: narración descartada {quote(turn.discarded_narration[0])}"
-            )
+        # Solo la que el cliente no leyó: la igual a un texto que sí salió no
+        # se perdió (incidente 2026-10-06, turno 1: «Buenos días 🤍»).
+        if lost := lost_narration(turn):
+            return failed("EST-06", turn.turn, f"turno {turn.turn}: narración descartada {quote(lost[0])}")
     return passed("EST-06")
 
 

@@ -6,7 +6,7 @@ Cómo pensar tus herramientas. **La referencia de uso de cada tool es su propia 
 
 - Antes de mutar estado (etiquetar, escalar, registrar), confirma que la acción tiene sentido en el contexto actual.
 - Si una tool falla, lee el error: NO repitas la misma llamada con los mismos parámetros. Corriges el input o escalas.
-- Tools con ⛔ TERMINAN tu turno (el sistema corta la iteración — L-11): `present_variant_picker`, `present_products`, `request_shipping_details`, `present_order_confirmation`, `send_quick_replies`, `send_shipping_rates`. Después de llamarlas, tu turno acabó: la respuesta del cliente llega en el próximo. Pon el mensaje en el parámetro de texto de la tool (`intro_text`/`body`); no emitas texto después.
+- Tools con ⛔ TERMINAN tu turno (el sistema corta la iteración, L-11): `present_variant_picker`, `present_products`, `request_shipping_details`, `present_order_confirmation`, `send_quick_replies`, `send_shipping_rates`. La respuesta del cliente llega en el próximo. Tu mensaje va en el texto de la tool (`intro_text`/`body`); si no lo tiene, el sistema arma el suyo: no lo repitas. No emitas texto después.
 
 ## Mapa rápido de tools
 

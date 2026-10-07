@@ -138,6 +138,23 @@ def test_tools_doc_describes_items_based_shipping_request() -> None:
     assert "items" in stage
 
 
+def test_the_prompts_say_the_shipping_form_carries_its_own_message() -> None:
+    """Incidente 2026-10-06 (bot V2, turno 9): TOOLS.md pedía poner el mensaje
+    «en el parámetro de texto de la tool», que `request_shipping_details` no
+    tiene, y la etapa pedía acompañar el formulario con un texto que repetía lo
+    mismo. El formulario sale con el mensaje que arma el sistema; otra
+    pregunta del cliente va en `send_reply`."""
+    tools = (WORKSPACE / "TOOLS.md").read_text(encoding="utf-8")
+    assert "Pon el mensaje en el parámetro de texto de la tool" not in tools
+    assert "el sistema arma el suyo" in tools
+
+    stage = (WORKSPACE / "skills" / "etapa_datos_envio" / "SKILL.md").read_text(encoding="utf-8")
+    step = next(line for line in stage.splitlines() if line.startswith("1. `request_shipping_details"))
+    assert "Para coordinar tu envío necesito unos datos" not in step
+    assert "no lo repitas" in step
+    assert "send_reply" in step
+
+
 def test_price_source_rule_names_the_ad_and_the_customer() -> None:
     """La regla de 'precio = catálogo' menciona explícitamente que ni el
     anuncio ni lo que escriba el cliente son fuente de precio."""
