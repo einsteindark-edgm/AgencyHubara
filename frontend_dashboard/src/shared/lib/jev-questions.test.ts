@@ -30,6 +30,12 @@ describe("jevQuestionLabel", () => {
   it("un id que no conoce se lee igual, sin puntos ni guiones bajos", () => {
     expect(jevQuestionLabel("nueva.pregunta_rara")).toBe("nueva · pregunta rara");
   });
+
+  it("el asunto de lo que le gusta o para quién es (ventas-3, 2026-10-06)", () => {
+    expect(jevQuestionLabel("topic.gusto")).toBe("¿Dice qué le gusta o para quién es?");
+    expect(jevQuestionLabel("cover.gusto")).toBe("¿La respuesta atiende lo que le gusta o para quién es?");
+    expect(jevChoiceLabel("msg.1.topic", "gusto")).toBe("lo que le gusta o para quién es");
+  });
 });
 
 describe("jevChoiceLabel", () => {

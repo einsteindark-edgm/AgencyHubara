@@ -33,6 +33,7 @@ la activity `build_prompt` de Sales lee/persiste.
 """
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from typing import Any
@@ -94,16 +95,79 @@ def agent_asked_quantity(text: str | None) -> bool:
 
 
 def last_visible_agent_text(history: list[dict[str, Any]]) -> str | None:
-    """Última burbuja del agente que el cliente VIO: assistant con contenido
-    y sin `tool_calls` (la narración pre-tool no se envía — PR #213)."""
-    for msg in reversed(history):
+    """Última burbuja del agente que el cliente VIO.
+
+    Desde el 2026-09-23 el texto sale SOLO por `send_reply`: el historial lo
+    guarda en `tool_calls[send_reply].arguments.text` con `content` vacío
+    (`workflow_helpers._history_view`). Sin leerlo, la captura quedaba ciega
+    (2026-10-06: cero decisiones de cantidad tras «¿Cuántas unidades
+    deseas?»). La narración que acompaña una llamada nunca se envía (PR
+    #213) y un `send_reply` retenido o rechazado (`sent: false`) no salió.
+    Un assistant con contenido y sin `tool_calls` es la burbuja de los
+    historiales de antes.
+
+    Solo cuenta lo que el asesor dijo JUSTO ANTES del mensaje del cliente: la
+    búsqueda no cruza el mensaje anterior del cliente (revisión del PR #390:
+    una pregunta de cantidad de turnos viejos se volvía a capturar). Si el
+    mensaje de ahora ya viene al final del historial, se salta."""
+    held = _replies_not_sent(history)
+    end = len(history)
+    while end > 0 and history[end - 1].get("role") == "user":
+        end -= 1
+    for msg in reversed(history[:end]):
+        if msg.get("role") == "user":
+            return None
         if msg.get("role") != "assistant":
             continue
-        if msg.get("tool_calls"):
+        calls = msg.get("tool_calls")
+        if calls:
+            text = _last_reply_text(calls, held)
+            if text is not None:
+                return text
             continue
         content = msg.get("content")
         if isinstance(content, str) and content.strip():
             return content
+    return None
+
+
+def _json_object(raw: Any) -> dict[str, Any] | None:
+    """Un objeto JSON (o ya un dict), o None."""
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str):
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _replies_not_sent(history: list[dict[str, Any]]) -> set[str]:
+    """Las llamadas cuyo resultado dice que no salió nada (`sent: false`)."""
+    out: set[str] = set()
+    for msg in history:
+        if msg.get("role") != "tool" or not isinstance(msg.get("tool_call_id"), str):
+            continue
+        payload = _json_object(msg.get("content"))
+        if payload is not None and payload.get("sent") is False:
+            out.add(msg["tool_call_id"])
+    return out
+
+
+def _last_reply_text(calls: Any, not_sent: set[str]) -> str | None:
+    """El texto del último `send_reply` que salió en un mensaje del asistente."""
+    for call in reversed(list(calls) if isinstance(calls, list) else []):
+        if not isinstance(call, dict) or call.get("id") in not_sent:
+            continue
+        function = call.get("function")
+        if not isinstance(function, dict) or function.get("name") != "send_reply":
+            continue
+        args = _json_object(function.get("arguments"))
+        text = args.get("text") if args is not None else None
+        if isinstance(text, str) and text.strip():
+            return text
     return None
 
 

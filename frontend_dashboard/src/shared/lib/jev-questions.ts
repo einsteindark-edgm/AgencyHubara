@@ -1,6 +1,6 @@
 /**
  * Las preguntas que Jev contesta en el paso «Jev lee el mensaje» (cuestionario
- * de la ráfaga, `rafaga-v5`) y en la revisión de la respuesta (`cover.*`), en
+ * de la ráfaga, `rafaga-v5`/`rafaga-v6`) y en la revisión de la respuesta (`cover.*`), en
  * palabras del operador. El panel mostraba el id del cuestionario
  * (`topic.variante`) y el operador tenía que preguntar qué quería decir
  * (2026-09-30). El id queda a mano para depurar (el `title` de la fila).
@@ -26,6 +26,8 @@ const TOPICS: Record<string, { question: string; label: string }> = {
   foto: { question: "¿Pregunta por una foto que envió o citó?", label: "la foto" },
   saludo: { question: "¿Saluda?", label: "el saludo" },
   promocion: { question: "¿Pregunta por promociones, descuentos o un cupón?", label: "las promociones o cupones" },
+  // ventas-3 (rafaga-v6, 2026-10-06): se atiende recomendando una o dos opciones.
+  gusto: { question: "¿Dice qué le gusta o para quién es?", label: "lo que le gusta o para quién es" },
 };
 
 /** Las demás preguntas del cuestionario, por su id. */
