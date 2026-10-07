@@ -1,0 +1,54 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "Reactivar una conversación con la ventana de 24 h cerrada: abre con la plantilla recomendada; «Elegir otra» muestra la lista. Cada variable es un campo (form.<variable>) y la vista previa se arma con fill.",
+  "schema": 1,
+  "id": "plantillas",
+  "title": "Reactivar la conversación",
+  "params": ["session"],
+  "state": { "elegida": "", "lista": false },
+  "data": {
+    "plantillas": { "app": "templates" }
+  },
+  "computed": {
+    "recomendada": "{{plantillas | where:'is_default' | first | get:'name'}}",
+    "nombre": "{{state.elegida | default:recomendada}}",
+    "t": "{{plantillas | where:'name':nombre | first}}",
+    "t_vacia": "{{t | empty}}"
+  },
+  "body": [
+    { "type": "text", "tone": "muted", "text": "La ventana de 24 h está cerrada: solo se puede escribir con una plantilla aprobada." },
+    {
+      "type": "list", "items": "{{plantillas}}", "as": "p", "key": "{{p.name}}", "visible": "{{state.lista | or:t_vacia}}",
+      "item": {
+        "type": "list_item", "title": "{{p.label}}",
+        "subtitle": "{{p.needs_image | if:'Lleva foto: todavía se envía desde el dashboard':p.body}}",
+        "action": {
+          "type": "if", "condition": "{{p.needs_image}}",
+          "then": { "type": "message", "text": "Esa plantilla lleva foto: todavía se envía desde el dashboard." },
+          "else": { "type": "set_state", "values": { "elegida": "{{p.name}}", "lista": false } }
+        }
+      },
+      "empty": { "type": "empty", "icon": "mail", "title": "No hay plantillas", "body": "No se pudieron cargar las plantillas." }
+    },
+    {
+      "type": "column", "spacing": 12, "visible": ["{{state.lista | not}}", "{{t | present}}"],
+      "children": [
+        { "type": "text", "style": "label", "emphasis": true, "tone": "primary", "text": "{{t.label}}" },
+        {
+          "type": "list", "items": "{{t.variables}}", "as": "v", "key": "{{v.name}}", "style": "plain",
+          "item": { "type": "text_field", "bind": "form.{{v.name}}", "label": "{{v.label}}", "max_length": "{{v.max_length}}" }
+        },
+        { "type": "card", "tone": "primary", "children": [ { "type": "text", "text": "{{t.preview_body | fill:form:t.fallback}}" } ] },
+        {
+          "type": "button", "text": "Enviar plantilla", "full_width": true,
+          "enabled": "{{t.variable_names | missing:form | empty}}",
+          "action": [
+            { "type": "native", "name": "send_template", "args": { "session": "{{params.session}}", "template": "{{t.name}}", "values": "{{form}}" } },
+            { "type": "back" }
+          ]
+        },
+        { "type": "button", "style": "text", "text": "Elegir otra", "action": { "type": "set_state", "values": { "lista": true } } }
+      ]
+    }
+  ]
+}

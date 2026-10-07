@@ -1,0 +1,8 @@
+# Lo que generan el backend de prueba y las corridas (nunca se versiona)
+sandbox/data/
+sandbox/*.log
+sandbox/*.pid
+sandbox/.pycache/
+sandbox/sse_capture.txt
+sandbox/verify_transcript.txt
+__pycache__/

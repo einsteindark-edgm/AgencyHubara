@@ -1,0 +1,11 @@
+<journey name="Incendio grave mientras escribo">
+  <description>Un incendio grave aparece al instante y no le quita el foco al teclado.</description>
+  <actions>
+    <action>Abre la conversación de prueba "wa_test_laura" y toma la conversación</action>
+    <action>Toca el campo de mensaje y escribe "te confirmo el"</action>
+    <action>Provoca un incendio grave de prueba: deja que "wa_test_sofia" pida un humano y espere 10 minutos sin respuesta</action>
+    <action>Verifica que aparece una tarjeta del radar arriba de la pantalla</action>
+    <action>Verifica que el teclado sigue abierto y que el campo dice "te confirmo el"</action>
+    <action>Escribe " aroma" y verifica que el campo dice "te confirmo el aroma"</action>
+  </actions>
+</journey>

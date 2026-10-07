@@ -10,6 +10,8 @@ otro precio rechaza el registro con `price_mismatch` y NO toca Medusa.
 """
 from __future__ import annotations
 
+from tests.plugins.chats.sales.confirmation_fixture import CONFIRMED_NOW
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -74,7 +76,7 @@ def ctx() -> ToolContext:
 def _seed(vault: Path, ledger: dict | None = None) -> Path:
     path = vault / KEY / "metadata.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    md: dict[str, Any] = {"episodes": [{"episode_id": "ep_001", "started_at_ms": 1, "closed_at_ms": None}]}
+    md: dict[str, Any] = {"episodes": [{"episode_id": "ep_001", "started_at_ms": 1, "closed_at_ms": None}], **CONFIRMED_NOW}
     if ledger is not None:
         md["checkout_verification"] = ledger
     path.write_text(json.dumps(md, ensure_ascii=False), encoding="utf-8")

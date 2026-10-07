@@ -24,7 +24,7 @@ interface Props {
  *
  * Por qué un popover y no un click directo: los pedidos que cierra el bot se
  * registran como **draft orders** de Medusa, y `confirm-payment` rechaza drafts
- * (`invalid_state: el pedido aún es draft. Agendá la entrega primero`). El
+ * (`invalid_state: el pedido todavía es un borrador. Agenda la entrega primero`). El
  * backend convierte draft→Order recién al **agendar la entrega**
  * (`schedule_delivery` → `convert-to-order`). Así que el flujo de 1 paso para
  * el humano es, internamente, dos llamadas secuenciales — las MISMAS que usa el

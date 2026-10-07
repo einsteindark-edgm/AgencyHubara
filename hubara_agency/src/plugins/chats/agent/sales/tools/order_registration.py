@@ -101,6 +101,7 @@ from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
     split_key,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
+from src.plugins.chats.shared.purchase_signals import closing_blocker
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
     coupon_discount_for_items,
@@ -244,6 +245,22 @@ def _registered_split_for_same_order(
 #: Un registro con cupo espera a lo sumo esto a que termine otro del mismo
 #: código (el adapter de Medusa acota el suyo a ~45 s).
 _QUOTA_LOCK_TIMEOUT_S = 60.0
+
+
+#: Por qué no se registra el pedido ahora (`closing_blocker`, 2026-10-07):
+#: el cliente acaba de aplazar (CON-02) o todavía no confirmó (CIE-02).
+_CLOSING_BLOCKED_SUMMARY = {
+    "customer_deferred": (
+        "El cliente acaba de aplazar: el pedido NO se registró. Responde UNA "
+        "frase cálida y breve, sin pedir datos ni confirmar nada, y espera a que "
+        "retome."
+    ),
+    "purchase_not_confirmed": (
+        "El cliente todavía NO confirmó el pedido: NO se registró. Muéstrale el "
+        "resumen con `present_order_confirmation` y espera a que toque "
+        "«Confirmar» o te diga que sí; con su sí, vuelve a llamar `register_order`."
+    ),
+}
 
 
 class RegisterOrderTool(ToolBase):
@@ -391,6 +408,7 @@ class RegisterOrderTool(ToolBase):
         sales: Any = None,
         quota_lock: Any = None,
         split_lines_guard: bool = True,
+        closing_guard: bool = True,
     ) -> None:
         """`quotas`/`sales`/`quota_lock`: cupo por unidad (central de cupones).
         Con cupo, el reparto se relee BAJO el candado del código antes de
@@ -398,7 +416,10 @@ class RegisterOrderTool(ToolBase):
         `split_lines_guard`: un producto repartido en variantes en el borrador
         exige una línea por cada una (`split_lines_mismatch`). Es para el bot:
         el borrador es su memoria; el operador que registra desde el panel lo
-        apaga (manda lo que acordó con el cliente)."""
+        apaga (manda lo que acordó con el cliente).
+        `closing_guard`: sin la confirmación del cliente, o tras su aplazamiento,
+        no se registra (`closing_blocker`, 2026-10-07). También es para el bot:
+        el operador que registra desde el panel ya habló con el cliente."""
         # Mismo patrón que `ManageConversationTagTool`: el `workspace` que
         # llega es el RUNTIME WORKSPACE CANONICO compartido — NO se usa
         # para metadata. `vault_dir` (DI-friendly): default vault canónico.
@@ -421,6 +442,7 @@ class RegisterOrderTool(ToolBase):
         self._sales = sales
         self._quota_lock = quota_lock
         self._split_lines_guard = split_lines_guard
+        self._closing_guard = closing_guard
 
     def _quota_code(self, session_key: str) -> str | None:
         """Código del cupón aplicado si tiene cupo por unidad (hay que
@@ -568,6 +590,23 @@ class RegisterOrderTool(ToolBase):
             subtotal_cop=subtotal_cop, shipping_cop=shipping_cop,
             total_cop=total_cop, currency=currency,
         )
+        blocked = (
+            closing_blocker(self._read_metadata(ctx.session_key), require_confirmation=True)
+            if self._closing_guard
+            else None
+        )
+        if blocked is not None:
+            logger.warning("🧾 [TOOL register_order] rechazada session={}: {}", ctx.session_key, blocked)
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": blocked,
+                    "error": blocked,
+                    "summary": _CLOSING_BLOCKED_SUMMARY[blocked],
+                },
+                ensure_ascii=False,
+            )
         code = self._quota_code(ctx.session_key)
         if code is None:
             return await self._execute(ctx, **args)

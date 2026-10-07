@@ -1,0 +1,11 @@
+{
+  "$schema": "./app.schema.json",
+  "_nota": "Las pestañas de la barra de abajo, en orden (la primera es la de inicio). Se aplican la próxima vez que se abre la app.",
+  "schema": 1,
+  "tabs": [
+    { "screen": "chats", "label": "Chats", "icon": "chat", "icon_selected": "chat_filled" },
+    { "screen": "incendios", "label": "Incendios", "icon": "fire", "icon_selected": "fire_filled", "badge": "{{radar | count}}" },
+    { "screen": "ordenes", "label": "Órdenes", "icon": "orders", "icon_selected": "orders_filled" },
+    { "screen": "mas", "label": "Más", "icon": "apps" }
+  ]
+}

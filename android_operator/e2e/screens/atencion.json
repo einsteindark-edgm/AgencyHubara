@@ -1,0 +1,38 @@
+{
+  "$schema": "../../screens/screen.schema.json",
+  "_nota": "Prueba E2E (S18): una pantalla que NO viene en el APK. Lee un endpoint que ya existía (/api/dashboard/sessions) y abre el chat nativo.",
+  "schema": 1,
+  "id": "atencion",
+  "title": "Quién atiende",
+  "data": {
+    "chats": { "get": "/api/dashboard/sessions", "refreshOn": ["chats"] }
+  },
+  "computed": {
+    "con_humano": "{{chats.sessions | where:'active_agent_route':'humano'}}",
+    "con_bot": "{{chats.sessions | where_not:'active_agent_route':'humano'}}",
+    "recientes": "{{chats.sessions | sort_desc:'last_updated_timestamp'}}"
+  },
+  "body": [
+    {
+      "type": "grid", "columns": 2,
+      "children": [
+        { "type": "stat", "icon": "person", "tone": "warning", "label": "Con humano", "value": "{{con_humano | count}}" },
+        { "type": "stat", "icon": "bot", "tone": "bot", "label": "Con el bot", "value": "{{con_bot | count}}" }
+      ]
+    },
+    {
+      "type": "list", "items": "{{recientes}}", "as": "s", "key": "{{s.session_id}}",
+      "item": {
+        "type": "list_item",
+        "avatar": "{{s.customer_name | default:s.phone_number}}",
+        "title": "{{s.customer_name | default:s.phone_number}}",
+        "subtitle": "{{s.phone_number}}",
+        "tag": "{{s.active_agent_route | map:'humano=Humano;*=Bot'}}",
+        "tag_tone": "{{s.active_agent_route | map:'humano=warning;*=bot'}}",
+        "trailing_caption": "{{s.last_updated_timestamp | relative}}",
+        "action": { "type": "open_chat", "session": "{{s.session_id}}" }
+      },
+      "empty": { "type": "empty", "icon": "chat", "title": "No hay chats" }
+    }
+  ]
+}

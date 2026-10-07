@@ -61,6 +61,8 @@ const CAPABILITY_LABEL: Record<string, string> = {
   rescate: "Rescate",
   portavelas: "Portavelas",
   saludo: "Saludo",
+  burbuja: "Burbuja principal (App Operador)",
+  incendio: "Incendio de chat (App Operador)",
 };
 
 const CAPABILITY_HINT: Record<string, string> = {
@@ -91,6 +93,8 @@ const CAPABILITY_HINT: Record<string, string> = {
   rescate: "¿qué párrafos se salvan? (V2)",
   portavelas: "¿promete portavelas que no van? (V2)",
   saludo: "¿el turno ya saluda? (V2)",
+  burbuja: "¿qué acción del chat le conviene enviar al operador?",
+  incendio: "¿qué tan grave es el chat que espera, qué plantea y si empeoró?",
 };
 
 const WORKFLOW_LABEL: Record<WorkflowMode, string> = {

@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cobertura del motor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper: #f5f5f5;
+      --color-paper-2: #ececec;
+      --color-ink: #2d3142;
+      --color-muted: #4f5d75;
+      --color-soft: #7a8399;
+      --color-rule: rgba(45,49,66,0.12);
+      --color-accent: #eb6c36;
+      --color-accent-tint: rgba(235,108,54,0.10);
+      --color-link: #2e5aa8;
+      --font-sans: 'Geist', system-ui, sans-serif;
+      --font-serif: 'Instrument Serif', 'Noto Serif', 'Times New Roman', serif;
+      --font-mono: 'Geist Mono', ui-monospace, Menlo, monospace;
+    }
+    body { font-family: var(--font-sans); background: var(--color-paper); color: var(--color-ink); padding: 3rem 1rem; }
+    .container { max-width: 1180px; margin: 0 auto; }
+    .eyebrow { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase; color: var(--color-muted); margin-bottom: 0.75rem; }
+    h1 { font-family: var(--font-serif); font-weight: 400; font-size: clamp(1.75rem, 3vw + 1rem, 2.6rem); letter-spacing: -0.02em; line-height: 1.1; margin-bottom: 0.6rem; }
+    h2 { font-family: var(--font-serif); font-weight: 400; font-size: 1.6rem; letter-spacing: -0.01em; margin: 3rem 0 0.4rem; }
+    h3 { font-size: 0.95rem; font-weight: 600; margin: 1.4rem 0 0.4rem; }
+    p, li { line-height: 1.6; }
+    .subtitle { font-size: 1.02rem; color: var(--color-muted); max-width: 70ch; }
+    .lede { color: var(--color-muted); font-size: 0.92rem; max-width: 76ch; margin-bottom: 1rem; }
+    code { font-family: var(--font-mono); font-size: 0.82em; }
+    a { color: var(--color-link); }
+
+    .answer { background: #fff; border: 1px solid var(--color-rule); border-left: 3px solid var(--color-accent); border-radius: 6px; padding: 1.25rem 1.4rem; margin-top: 2rem; max-width: 86ch; }
+    .answer p + p { margin-top: 0.6rem; }
+    .answer strong { font-weight: 600; }
+
+    .tiles { display: grid; grid-template-columns: 1.1fr 1fr 1fr 0.9fr; gap: 0.75rem; margin-top: 1.5rem; }
+    @media (max-width: 860px) { .tiles { grid-template-columns: 1fr 1fr; } }
+    .tile { background: #fff; border: 1px solid var(--color-rule); border-radius: 6px; padding: 1rem 1.1rem; }
+    .tile .n { font-family: var(--font-serif); font-size: 2.4rem; line-height: 1; }
+    .tile .k { font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--color-soft); margin: 0.4rem 0 0.35rem; }
+    .tile p { font-size: 0.82rem; color: var(--color-muted); }
+
+    .split { display: grid; grid-template-columns: 1.2fr 1fr 0.8fr; gap: 0.75rem; margin-top: 0.75rem; }
+    @media (max-width: 860px) { .split { grid-template-columns: 1fr; } }
+    .split .tile .n { font-size: 2rem; }
+
+    /* Waffle de las 54 reglas */
+    .waffle { margin-top: 1.25rem; display: grid; gap: 0.9rem; }
+    .fam { display: grid; grid-template-columns: 120px 1fr; gap: 0.75rem; align-items: start; }
+    @media (max-width: 640px) { .fam { grid-template-columns: 1fr; gap: 0.35rem; } }
+    .fam-name { font-family: var(--font-mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-muted); padding-top: 0.55rem; }
+    .cells { display: flex; flex-wrap: wrap; gap: 6px; }
+    .cell { width: 74px; height: 38px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.02em; border: 1px solid transparent; position: relative; }
+    .cell.crit::after { content: ""; position: absolute; top: 4px; right: 4px; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+    .s-C { background: var(--color-ink); color: #fff; }
+    .s-M { background: #fff; color: var(--color-muted); border: 1px dashed rgba(79,93,117,0.55); }
+    .s-P { background: var(--color-accent-tint); color: #a3471d; border: 1px solid var(--color-accent); }
+    .s-S { background: var(--color-accent); color: #fff; }
+    .legend { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; margin-top: 1.1rem; font-size: 0.8rem; color: var(--color-muted); }
+    .legend span.sw { display: inline-block; width: 18px; height: 12px; border-radius: 2px; vertical-align: -1px; margin-right: 0.4rem; }
+    .legend .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--color-ink); margin-right: 0.45rem; vertical-align: 1px; }
+
+    /* Hallazgos */
+    .findings { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; margin-top: 1rem; }
+    @media (max-width: 860px) { .findings { grid-template-columns: 1fr; } }
+    .finding { background: #fff; border: 1px solid var(--color-rule); border-radius: 6px; padding: 1.1rem 1.2rem; }
+    .finding .tag { font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-accent); margin-bottom: 0.35rem; }
+    .finding h4 { font-size: 0.92rem; font-weight: 600; margin-bottom: 0.45rem; line-height: 1.35; }
+    .finding p { font-size: 0.84rem; color: var(--color-muted); }
+    .finding p + p { margin-top: 0.45rem; }
+    .finding .where { font-family: var(--font-mono); font-size: 0.72rem; color: var(--color-soft); margin-top: 0.55rem; }
+
+    /* Tabla */
+    .table-wrap { width: 100%; overflow-x: auto; margin-top: 0.75rem; border: 1px solid var(--color-rule); border-radius: 6px; background: #fff; }
+    table { border-collapse: collapse; width: 100%; min-width: 920px; font-size: 0.8rem; }
+    th { text-align: left; font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-muted); font-weight: 500; padding: 0.7rem 0.75rem; border-bottom: 1px solid var(--color-rule); background: #fafafa; position: sticky; top: 0; }
+    td { padding: 0.6rem 0.75rem; border-bottom: 1px solid rgba(45,49,66,0.07); vertical-align: top; line-height: 1.45; color: var(--color-ink); }
+    td.fix { color: var(--color-muted); }
+    tr.famrow td { background: var(--color-paper-2); font-family: var(--font-mono); font-size: 0.64rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--color-muted); padding: 0.45rem 0.75rem; }
+    td .id { font-family: var(--font-mono); font-size: 0.74rem; font-weight: 600; display: block; }
+    .lvl { font-family: var(--font-mono); font-size: 0.66rem; letter-spacing: 0.04em; }
+    .lvl.critico { font-weight: 600; color: var(--color-ink); }
+    .lvl.mayor { color: var(--color-muted); }
+    .lvl.menor { color: var(--color-soft); }
+    .pill { display: inline-block; font-family: var(--font-mono); font-size: 0.64rem; padding: 2px 7px; border-radius: 3px; white-space: nowrap; }
+    .owner { font-family: var(--font-mono); font-size: 0.64rem; color: var(--color-soft); display: block; margin-top: 0.25rem; letter-spacing: 0.04em; }
+
+    /* Plan */
+    ol.plan { counter-reset: step; list-style: none; margin-top: 1rem; display: grid; gap: 0.9rem; }
+    ol.plan > li { background: #fff; border: 1px solid var(--color-rule); border-radius: 6px; padding: 1.1rem 1.2rem 1.1rem 3.4rem; position: relative; font-size: 0.86rem; color: var(--color-muted); }
+    ol.plan > li::before { counter-increment: step; content: counter(step, decimal-leading-zero); position: absolute; left: 1.1rem; top: 1rem; font-family: var(--font-serif); font-size: 1.5rem; color: var(--color-ink); }
+    ol.plan > li:first-child::before { content: "00"; }
+    ol.plan h4 { color: var(--color-ink); font-size: 0.95rem; font-weight: 600; margin-bottom: 0.35rem; }
+    ol.plan ul { margin: 0.5rem 0 0 1rem; }
+    ol.plan ul li { margin-bottom: 0.3rem; }
+    .why { margin-top: 0.5rem; font-style: italic; font-family: var(--font-serif); font-size: 1rem; color: var(--color-ink); }
+
+    .note { font-size: 0.82rem; color: var(--color-muted); max-width: 86ch; margin-top: 0.75rem; }
+
+    /* Actualización con main */
+    .update { background: #fff; border: 1px solid var(--color-rule); border-left: 3px solid var(--color-ink); border-radius: 6px; padding: 1.25rem 1.4rem; margin-top: 1rem; max-width: 86ch; }
+    .update p + p { margin-top: 0.6rem; }
+    .st { display: inline-block; font-family: var(--font-mono); font-size: 0.64rem; padding: 2px 7px; border-radius: 3px; white-space: nowrap; }
+    .st.ok { background: var(--color-ink); color: #fff; }
+    .st.up { background: #fff; color: var(--color-muted); border: 1px solid rgba(79,93,117,0.55); }
+    .st.open { background: var(--color-accent); color: #fff; }
+    .st.watch { background: var(--color-accent-tint); color: #a3471d; border: 1px solid var(--color-accent); }
+    .gain { display: block; margin-top: 0.3rem; font-size: 0.74rem; color: var(--color-link); }
+    .footer { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid rgba(45,49,66,0.10); font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.04em; color: var(--color-soft); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <p class="eyebrow">Motor de decisiones · Calidad LLM · 2026-10-06 · actualizado 2026-10-07</p>
+  <h1>¿El motor de decisiones cubre las 54 reglas?</h1>
+  <p class="subtitle">Para cada regla de código del scorecard: qué pieza del bot nuevo (V2 con Jev) hace que se cumpla, si la protege antes de que el cliente vea algo, y qué falta y dónde ponerlo. Análisis sobre <code>main</code> f83d51b4, revisado contra f6cbae67 (PRs #390–#394).</p>
+
+  <div class="update">
+    <p><strong>Actualización 2026-10-07: qué cambió con #390–#394.</strong> Los cinco PRs arreglan el incidente de tu corrida del 6-oct: cortesía, «sí» falsos, cantidad ciega, ráfagas cortadas, formulario sin mensaje, tarjetas invisibles para la calificación y catálogo en tres listas. No era su objetivo cerrar los huecos de esta auditoría, y no los cierran.</p>
+    <p>De los 12 hallazgos, ninguno se cerró. Uno mejoró su base: <code>afirmacion</code> ahora pregunta <em>qué</em> afirma el mensaje y el código lo cruza con las herramientas, aunque sigue sin frenar. En el mapa, ninguna regla cambia de estado y nueve mejoran dentro del suyo.</p>
+    <p>Lo más útil es que dejan piezas que acortan el plan: la vista <code>reply_gap</code>, la forma nueva de <code>afirmacion</code>, el corte antes de grabar de V2 con su patrón de <code>patched</code> en helpers, el texto de las tarjetas en la traza y la lectura que reintenta del metadata. Detalle en <a href="#main-0710">Qué trajo main</a>.</p>
+  </div>
+
+  <div class="answer">
+    <p><strong>No las cubre todas, y no debería cubrirlas todas.</strong> Solo 11 reglas quedan protegidas antes de que el cliente vea algo; otras 12 solo miden si una red tuvo que corregir al LLM. Las 31 restantes dependen, del todo o en parte, de que el LLM siga el prompt. De las 20 críticas, 4 no tienen ninguna protección y 7 la tienen a medias.</p>
+    <p><strong>Sí hay que robustecer el motor, pero en pocas piezas.</strong> 18 de esas 31 reglas son decisiones y caben en el motor con seis piezas. La más grande es una <em>puerta de afirmaciones</em> antes de enviar, que sola cubre 6 reglas (5 críticas). Otras 10 no son decisiones sino hechos mecánicos (¿el cliente tocó Confirmar?, ¿el formulario ya salió?): van en las herramientas, no en el paquete. Las 3 últimas son de redacción y se quedan en el prompt.</p>
+    <p><strong>Primero hay que arreglar al árbitro.</strong> El scorecard tiene fallas que esconden o inventan problemas, en los dos bots. Mientras no se arreglen, no vas a poder medir si el motor mejora.</p>
+  </div>
+
+  <div class="tiles" aria-label="Las 54 reglas según su protección">
+    <div class="tile"><div class="n">11</div><p class="k">Protegidas</p><p>Algo frena el error antes de que el cliente lo vea: el motor (6) o código fijo (5).</p></div>
+    <div class="tile"><div class="n">12</div><p class="k">Solo miden</p><p>Una red ya protege al cliente; la regla mide cuántas veces tuvo que actuar (calidad del LLM).</p></div>
+    <div class="tile"><div class="n">17</div><p class="k">A medias</p><p>Hay protección en un camino o con una condición, y por otro camino el error sale.</p></div>
+    <div class="tile"><div class="n">14</div><p class="k">Solo el prompt</p><p>Nada lo hace cumplir: depende de que el LLM obedezca la instrucción.</p></div>
+  </div>
+
+  <h2>Las 54 de un vistazo</h2>
+  <p class="lede">Cada cuadro es una regla, agrupada por familia. Los naranjas son el trabajo pendiente. El punto marca las críticas.</p>
+
+  <div class="waffle" role="img" aria-label="Mapa de las 54 reglas: 11 protegidas, 12 que solo miden, 17 a medias y 14 que dependen solo del prompt.">
+    <div class="fam"><div class="fam-name">Apertura</div><div class="cells">
+      <span class="cell s-P" title="APE-01 Saludo por hora y marca en el primer contacto">APE-01</span>
+      <span class="cell s-S" title="APE-02 Sin apertura prohibida">APE-02</span>
+      <span class="cell s-S" title="APE-03 Ofrece el catálogo en la apertura">APE-03</span>
+      <span class="cell s-P" title="APE-04 No vuelve a saludar a un cliente con historial">APE-04</span>
+    </div></div>
+    <div class="fam"><div class="fam-name">Descubrimiento</div><div class="cells">
+      <span class="cell s-S" title="DES-01 Máximo dos preguntas antes de mostrar productos">DES-01</span>
+      <span class="cell s-S" title="DES-02 Una pregunta por burbuja">DES-02</span>
+      <span class="cell s-C crit" title="DES-03 Catálogo pedido, catálogo enviado (crítica)">DES-03</span>
+      <span class="cell s-P crit" title="DES-05 Busca en el catálogo antes de nombrar productos o precios (crítica)">DES-05</span>
+      <span class="cell s-P" title="DES-08 Producto elegido queda en el pedido">DES-08</span>
+      <span class="cell s-S" title="DES-09 Diseño antes que aroma">DES-09</span>
+      <span class="cell s-P crit" title="DES-10 Los precios que escribe son los del catálogo (crítica)">DES-10</span>
+    </div></div>
+    <div class="fam"><div class="fam-name">Variantes</div><div class="cells">
+      <span class="cell s-P crit" title="VAR-01 Cuatro o más aromas o colores nunca en texto plano (crítica)">VAR-01</span>
+      <span class="cell s-M" title="VAR-01b La protección tuvo que cambiar una lista por el selector">VAR-01b</span>
+      <span class="cell s-M" title="VAR-02 Picker con opciones válidas">VAR-02</span>
+      <span class="cell s-S" title="VAR-03 Sin pickers duplicados en un turno">VAR-03</span>
+      <span class="cell s-P" title="VAR-04 Elección de variante queda en el pedido">VAR-04</span>
+      <span class="cell s-P" title="VAR-06 No vuelve a preguntar la cantidad">VAR-06</span>
+      <span class="cell s-P" title="VAR-07 Precio visible antes de pedir confirmación o datos">VAR-07</span>
+      <span class="cell s-M" title="VAR-09 Botones rápidos sin selectores de catálogo">VAR-09</span>
+    </div></div>
+    <div class="fam"><div class="fam-name">Confirmación</div><div class="cells">
+      <span class="cell s-C crit" title="CON-01 Formulario de envío solo tras confirmación de compra (crítica)">CON-01</span>
+      <span class="cell s-P crit" title="CON-02 Aplazamiento respetado (crítica)">CON-02</span>
+      <span class="cell s-S crit" title="CON-03 No afirma pedido confirmado o registrado sin serlo (crítica)">CON-03</span>
+      <span class="cell s-M" title="CON-05 La guarda de confirmación tuvo que actuar">CON-05</span>
+    </div></div>
+    <div class="fam"><div class="fam-name">Envío</div><div class="cells">
+      <span class="cell s-S" title="ENV-01 Formulario de envío una sola vez">ENV-01</span>
+      <span class="cell s-P" title="ENV-02 Formulario sin responder al cliente">ENV-02</span>
+      <span class="cell s-P" title="ENV-03 Datos del formulario quedan en el pedido">ENV-03</span>
+      <span class="cell s-P" title="ENV-04 No vuelve a pedir datos de envío ya dados">ENV-04</span>
+      <span class="cell s-S crit" title="ENV-05 Sin datos bancarios ni valor de envío definitivo en texto (crítica)">ENV-05</span>
+      <span class="cell s-M" title="ENV-07 Nombre de quien recibe antes de registrar">ENV-07</span>
+    </div></div>
+    <div class="fam"><div class="fam-name">Cierre</div><div class="cells">
+      <span class="cell s-P crit" title="CIE-01 Secuencia canónica de cierre (crítica)">CIE-01</span>
+      <span class="cell s-S crit" title="CIE-02 Registra la orden solo con confirmación del cliente (crítica)">CIE-02</span>
+      <span class="cell s-C crit" title="CIE-03 Pago pendiente si y solo si hay orden (crítica)">CIE-03</span>
+      <span class="cell s-M" title="CIE-03b La red de seguridad tuvo que cerrar la orden">CIE-03b</span>
+      <span class="cell s-C crit" title="CIE-04 Escala la verificación de pago tras registrar (crítica)">CIE-04</span>
+      <span class="cell s-S" title="CIE-05 Un solo mensaje de cierre, sin frases prohibidas">CIE-05</span>
+      <span class="cell s-S crit" title="CIE-06 Nunca COMPRA_EXITOSA por el bot (crítica)">CIE-06</span>
+      <span class="cell s-M crit" title="CIE-07 Montos coherentes (crítica)">CIE-07</span>
+      <span class="cell s-M" title="CIE-08 Aviso de portavelas solo si el pedido lo trae">CIE-08</span>
+    </div></div>
+    <div class="fam"><div class="fam-name">Poscierre</div><div class="cells">
+      <span class="cell s-P crit" title="POS-01 Pago afirmado solo con pago verificado (crítica)">POS-01</span>
+    </div></div>
+    <div class="fam"><div class="fam-name">Etiquetas</div><div class="cells">
+      <span class="cell s-C crit" title="TAG-01 Etiqueta de cierre sostenida por la evidencia (crítica)">TAG-01</span>
+      <span class="cell s-M" title="TAG-01b La guarda de etiquetas tuvo que degradar">TAG-01b</span>
+      <span class="cell s-P crit" title="TAG-02 Motivo de escalación sostenido por la evidencia (crítica)">TAG-02</span>
+      <span class="cell s-C crit" title="TAG-05 Con ruta humano el bot no vuelve a hablar (crítica)">TAG-05</span>
+      <span class="cell s-M" title="TAG-06 La red de escalación tuvo que actuar">TAG-06</span>
+      <span class="cell s-C" title="TAG-08 Promete un colega solo si escala">TAG-08</span>
+    </div></div>
+    <div class="fam"><div class="fam-name">Estilo</div><div class="cells">
+      <span class="cell s-S" title="EST-01 Tuteo colombiano, cero voseo">EST-01</span>
+      <span class="cell s-P" title="EST-02 Sin guion largo y emojis de la lista">EST-02</span>
+      <span class="cell s-C crit" title="EST-03 Sin texto administrativo al cliente (crítica)">EST-03</span>
+      <span class="cell s-M" title="EST-03b La guarda de texto administrativo tuvo que actuar">EST-03b</span>
+      <span class="cell s-S" title="EST-05 Sin promesas de tiempos de entrega">EST-05</span>
+      <span class="cell s-M" title="EST-06 Sin narración descartada">EST-06</span>
+      <span class="cell s-C" title="EST-09 Cortesía sin empujón de venta">EST-09</span>
+    </div></div>
+    <div class="fam"><div class="fam-name">Ghosting</div><div class="cells">
+      <span class="cell s-C crit" title="GHO-01 El turno de ghosting no le escribe al cliente (crítica)">GHO-01</span>
+      <span class="cell s-C" title="GHO-02 Con formulario pendiente espera diez minutos">GHO-02</span>
+    </div></div>
+  </div>
+  <div class="legend">
+    <span><span class="sw s-C"></span>Protegida</span>
+    <span><span class="sw s-M"></span>Solo mide (una red protege)</span>
+    <span><span class="sw s-P"></span>A medias</span>
+    <span><span class="sw s-S"></span>Solo el prompt</span>
+    <span><span class="dot"></span>Crítica</span>
+  </div>
+
+  <div class="split">
+    <div class="tile"><div class="n">18</div><p class="k">Van al motor</p><p>Son decisiones. Seis piezas: una puerta de afirmaciones nueva y cinco ajustes de paquete (<code>saludo</code>, <code>cierre</code>, «repregunta», «despedida» y filas de <code>turn.yaml</code>).</p></div>
+    <div class="tile"><div class="n">10</div><p class="k">Van a código fijo</p><p>Son hechos mecánicos que no necesitan a Jev. Las herramientas son las mismas para los dos bots, así que también protegen hoy al bot actual.</p></div>
+    <div class="tile"><div class="n">3</div><p class="k">Se quedan en el prompt</p><p>Redacción menor: una pregunta por burbuja, tuteo y emojis.</p></div>
+  </div>
+
+  <p class="note"><strong>Qué corre hoy en producción.</strong> El bot nuevo con Jev solo atiende tus números de prueba, y solo si están prendidos <code>workflow canary</code> y <code>prueba-jev si</code>. Desde el repo no puedo ver si los prendiste; lo supongo porque hiciste la corrida con Jev. Todos los demás clientes siguen con el bot actual (V1), con las capacidades en <code>reglas</code> y las capas ①②③ en sombra. En la tabla, «motor» solo actúa con Jev en tus números de prueba. «Código fijo» actúa para todos.</p>
+
+  <h2 id="main-0710">Qué trajo main (#390–#394)</h2>
+  <p class="lede">Leí la descripción de cada PR y verifiqué en el código de f6cbae67 cada hallazgo de la auditoría.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th style="width:18%">PR</th><th style="width:38%">Qué arregla</th><th style="width:20%">Reglas que mejora</th><th>Cuándo actúa</th></tr></thead>
+      <tbody>
+        <tr><td><span class="id">#390</span>ventas-3, cantidad y guion</td><td>La cortesía distingue «Buenas» de un agradecimiento. Un «sí» que no respondía a la compra ya no la confirma. <code>afirmacion</code> pregunta qué afirma y el código lo cruza con las herramientas. Nuevo asunto <code>gusto</code> (recomendar una o dos). La cantidad dejó de estar ciega y Jev anota la cantidad no preguntada. Guion: el sí con el total antes del formulario, y el cliente que vuelve no es un primer contacto.</td><td>EST-09, CON-01 y TAG-01 (menos «sí» falsos), VAR-06, VAR-07 y APE-04 (guion)</td><td>La cantidad y el guion, con el deploy y para todos. Lo de <code>ventas-3</code>, solo cuando se promueva: laboratorio con las llaves <code>*_LAB</code> y después Terraform.</td></tr>
+        <tr><td><span class="id">#391</span>Ráfagas en V2</td><td>El bot nuevo ya no contesta a mitad de una ráfaga: recompone hasta 30 s, corta antes de grabar si el cliente escribió, y agrega una nota de continuación en vez de la falsa «desde tu última respuesta».</td><td>ENV-04 (el «¿me confirmas el teléfono?» del incidente)</td><td>Con el deploy, solo en V2.</td></tr>
+        <tr><td><span class="id">#392</span>Formulario y tarjetas visibles</td><td>El mensaje del formulario lo arma el código: producto, variantes y subtotal. El texto de las tarjetas entra a la traza (<code>card_text</code>), a la verificación ③ y al juez. ENV-02 falla cerrada y EST-06 deja de marcar falsos.</td><td>ENV-02, VAR-07, EST-06 y DES-03 (árbitro)</td><td>Con el deploy. Falta tuyo: publicar el Flow corregido en Meta.</td></tr>
+        <tr><td><span class="id">#393</span>Un solo escritor de metadata.json</td><td>Candado y merge de tres vías. Cada tarjeta sale una sola vez. Un archivo dañado se repara al escribir y nunca pasa la conversación a humano.</td><td>VAR-03 y ENV-01, pero solo los duplicados por carrera, no los que pide el LLM</td><td>Con el deploy, para todos.</td></tr>
+        <tr><td><span class="id">#394</span>Catálogo en un mensaje</td><td>«¿Qué tienen?» sale en un mensaje o, si no cabe, como menú de categorías. La capacidad <code>categoria</code> del motor también decide en <code>present_products</code>. Un producto sin precio no se muestra.</td><td>DES-03; DES-05 y DES-10 de forma indirecta</td><td>Con el deploy, para todos.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Los hallazgos de la auditoría, contra main</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th style="width:40%">Hallazgo</th><th style="width:12%">En main</th><th>Evidencia</th></tr></thead>
+      <tbody>
+        <tr><td><code>register_order</code> registra sin confirmación ni respeto al aplazamiento (CIE-02, CON-02, CIE-01)</td><td><span class="st open">abierto</span></td><td>Solo el formulario lo exige: <code>ui_intents.py:1160-1195</code>. La lectura de <code>compra</code> mejoró en <code>ventas-3</code> (menos «sí» falsos), así que exigirla en el registro ahora es más confiable.</td></tr>
+        <tr><td>El piso de <code>cierre</code> ordena COMPRA_EXITOSA (CIE-06)</td><td><span class="st open">abierto</span></td><td><code>ventas-3</code> copia <code>cierre</code> igual y el builtin <code>closing_invariants</code> no cambió.</td></tr>
+        <tr><td>V2: con el selector rechazado, la lista sale como texto (VAR-01)</td><td><span class="st open">abierto</span></td><td><code>sales_session_v2.py:764</code> sigue mirando <code>tools_used</code>.</td></tr>
+        <tr><td><code>saludo</code> da por saludado un «hola» (APE-01, APE-02)</td><td><span class="st open">abierto</span></td><td><code>saludo.yaml</code> es idéntico en <code>ventas-3</code>. El guion mejoró al cliente que vuelve (APE-04), pero eso es prompt.</td></tr>
+        <tr><td><code>afirmacion</code> mide, pero no frena (CON-03, POS-01, EST-05, DES-05)</td><td><span class="st up">mejoró la base</span></td><td>Ahora Jev dice qué afirma (stock, entrega, estado del pedido, nada) y el código decide con las herramientas usadas. Antes quedaba en duda 6 de cada 9 veces. Sigue corriendo después de enviar.</td></tr>
+        <tr><td>El texto final suelto se salta las revisiones de <code>send_reply</code></td><td><span class="st open">abierto</span></td><td>Pero #391 dejó en V2 un punto de corte después del egreso y antes de grabar: es el lugar natural para retener y recomponer.</td></tr>
+        <tr><td>EST-03b: ALERTA en cada <code>NO_MESSAGE</code></td><td><span class="st open">abierto</span></td><td><code>checks/estilo.py:84-92</code> sin cambios.</td></tr>
+        <tr><td>EST-03 juzga a Jev con el detector viejo</td><td><span class="st open">abierto</span></td><td>Sin cambios.</td></tr>
+        <tr><td>CIE-03 y CIE-04 ciegas en modo turno</td><td><span class="st open">abierto</span></td><td><code>checks/cierre.py:134</code> y <code>:190</code> sin cambios.</td></tr>
+        <tr><td>Traspasos mal juzgados</td><td><span class="st open">abierto</span></td><td><code>is_handoff</code> sigue en False. La traza sí guarda la nota <code>handoff</code> en <code>context_notes</code>, así que el arreglo es solo del scorecard y corrige también el pasado al recalificar.</td></tr>
+        <tr><td>VAR-01b y EST-03b no ven las retenciones de <code>send_reply</code></td><td><span class="st open">abierto</span></td><td>Sin cambios.</td></tr>
+        <tr><td>CIE-07 busca <code>price_drift</code></td><td><span class="st open">abierto</span></td><td><code>checks/cierre.py:246</code> sin cambios.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Lo nuevo que hay que vigilar</h3>
+  <ul class="note" style="margin-left:1.1rem">
+    <li><span class="st watch">Calidad LLM</span> Las decisiones de Jev de un intento cortado (#391) aparecen en el turno como si el texto hubiera salido, y cuentan para la vara de encendido. Es el pendiente (b) del propio PR.</li>
+    <li><span class="st watch">Más ALERTA</span> ENV-02 ahora falla cerrada (#392): un «sí» poco común falla de más. Espera más alertas de ENV-02 que antes, y no todas reales.</li>
+    <li><span class="st watch">Prompt lleno</span> <code>SOUL.md</code> queda a 17 bytes de su tope y <code>sales_script</code> a 6 (#390). Lo que falta tiene que ir al motor o a código fijo: ya no cabe en el prompt.</li>
+    <li><span class="st watch">Todos los bots</span> El arreglo de la cantidad (#390) cambia el camino de reglas de todos los bots desde el deploy, sin esperar a <code>ventas-3</code>.</li>
+  </ul>
+
+  <h2>Lo que encontré roto en el bot</h2>
+  <p class="lede">Verificado leyendo el código, con archivo y línea. No lo medí en datos de producción.</p>
+  <div class="findings">
+    <div class="finding">
+      <p class="tag">Crítica · CIE-02 · CON-02</p>
+      <h4><code>register_order</code> registra sin la confirmación del cliente y durante un aplazamiento</h4>
+      <p>Solo el formulario de envío exige el sí y respeta el «después» del cliente. El registro, el resumen del pedido y las etiquetas CONFIRMADO_* no lo revisan. La lectura ya existe en el motor (<code>compra</code>, <code>retoma</code>); lo que falta es que esas herramientas la usen.</p>
+      <p class="where">tools/ui_intents.py:589-632 (única precondición) · tools/order_registration.py (sus errores no incluyen la confirmación)</p>
+    </div>
+    <div class="finding">
+      <p class="tag">Crítica · CIE-06 · contradicción</p>
+      <h4>El motor le ordena al bot la etiqueta que el guion le prohíbe</h4>
+      <p>En el cierre por abandono (solo V2), el piso de <code>cierre</code> convierte «hay pedido registrado» en COMPRA_EXITOSA, y el aviso dice «usa OBLIGATORIAMENTE» esa etiqueta. La herramienta la acepta, aunque su propia descripción dice que la pone el humano y no el LLM. Pasa poco, porque la red cierra el episodio al registrar, pero en producción el bot actual ya puso COMPRA_EXITOSA una vez (caso ···4148, plan §6.12).</p>
+      <p class="where">decisions/bundled.py:200-210 · prompts.py <code>_DECIDED_GHOSTING_PROMPT</code> · tools/tags.py <code>_TAG_ENUM</code></p>
+    </div>
+    <div class="finding">
+      <p class="tag">Crítica · VAR-01 · solo V2</p>
+      <h4>Si el selector de variantes falla, la lista de aromas sale como texto</h4>
+      <p>V2 cambió algo a propósito: si el selector no salió, el texto sí sale, para no dejar al cliente sin respuesta. Pero la guarda que convierte una lista en selector sigue mirando si el selector se <em>intentó</em>, no si se <em>entregó</em>. Con un selector rechazado, la guarda no actúa y la lista llega como texto plano. Ojo al arreglarlo: V2 ya corre en producción, así que el cambio tiene que ser seguro para el replay.</p>
+      <p class="where">workflows/sales_session_v2.py:680-691 (<code>delivered_components</code> contra <code>tools_used</code>)</p>
+    </div>
+    <div class="finding">
+      <p class="tag">Mayor · APE-01 · APE-02</p>
+      <h4><code>saludo</code> da por saludado un «hola» sin hora ni marca</h4>
+      <p>La regla y la pregunta a Jev («¿ya saluda: buenos días, hola, bienvenida?») aceptan «hola». Si el LLM abre con «¡Hola!», no sale la burbuja con la hora y la marca. APE-01 falla, y además «¡Hola!» es justo la apertura que APE-02 prohíbe. El arreglo es de paquete: otra pregunta y otra regla en una versión nueva.</p>
+      <p class="where">first_contact_greeting.py:48-54 · bundles/ventas-2/capabilities/saludo.yaml</p>
+    </div>
+    <div class="finding">
+      <p class="tag">Crítica · CON-03 · POS-01 · EST-05</p>
+      <h4><code>afirmacion</code> mide, pero nunca frena</h4>
+      <p>«Tu pedido quedó confirmado», «ya recibimos tu pago» o «te llega mañana» salen sin ninguna revisión antes del envío. La capacidad que pregunta por afirmaciones sin consultar corre después de enviar y solo escribe en la traza. Con <code>reglas</code> ni siquiera corre.</p>
+      <p class="where">activities/turn_trace.py:24-47</p>
+    </div>
+    <div class="finding">
+      <p class="tag">Pendiente conocido · §6.6 del plan</p>
+      <h4>El texto final suelto se salta las revisiones de <code>send_reply</code></h4>
+      <p>Lista de opciones, producto ya verificado por la foto y «te confirmo después»: todo eso se revisa en <code>send_reply</code>. Cuando el LLM cierra con texto suelto (7 u 8 de cada 43 turnos en el laboratorio), nada de eso corre. Es el cambio genérico del que dependen casi todas las mejoras de texto.</p>
+      <p class="where">platform/workflow_helpers.py (run_agent_turn) · tools/reply.py:124-223</p>
+    </div>
+  </div>
+
+  <h2>Lo que encontré roto en el árbitro</h2>
+  <p class="lede">Fallas del scorecard que esconden problemas o inventan algunos, en los dos bots. Es lo primero que conviene arreglar.</p>
+  <div class="findings">
+    <div class="finding">
+      <p class="tag">Falsa alarma · EST-03b</p>
+      <h4>Cada <code>NO_MESSAGE</code> cuenta como «la guarda de texto administrativo actuó»</h4>
+      <p>El detector viejo ve «NO_MESSAGE» como una etiqueta interna (lo comprobé: devuelve <code>True</code>). La guarda deja <code>admin_text_guard</code> en la traza aunque el bot se haya callado bien. Resultado: ALERTA en cada turno en que el bot decide no hablar, por ejemplo al recibir un traspaso.</p>
+      <p class="where">checks/estilo.py:83-91 · decisions/egress.py:574-577 · sales_session.py:1527-1539</p>
+    </div>
+    <div class="finding">
+      <p class="tag">Falsa falla crítica · EST-03</p>
+      <h4>Las reglas con el detector viejo juzgan a Jev con la regla que Jev reemplaza</h4>
+      <p>«Usa el código VELAS_10 al pagar»: Jev lo aprueba y V2 lo envía, pero EST-03 usa el detector viejo y lo marca FALLA crítica. Con el juez apagado, nadie desempata. VAR-01 y DES-10 también comparten detector con su regla.</p>
+      <p class="where">checks/estilo.py:73-80 (<code>looks_like_admin_leak</code>) · tests/test_sales_workflow_v2.py:961-998</p>
+    </div>
+    <div class="finding">
+      <p class="tag">Ciegas · CIE-03 · CIE-04</p>
+      <h4>Dos reglas críticas no pueden fallar en el modo en que se califica</h4>
+      <p>En modo turno, el que usan producción y el laboratorio, solo devuelven «pasa» o «sin señal». Una orden sin su etiqueta de pago pendiente, o sin la escalación de verificación, nunca saldría como FALLA. Hoy las redes lo evitan, pero si una red se rompe, nadie se entera.</p>
+      <p class="where">checks/cierre.py:134-142 y 186-191</p>
+    </div>
+    <div class="finding">
+      <p class="tag">Mal juzgados · traspasos</p>
+      <h4>La traza ya no marca los turnos de traspaso</h4>
+      <p>Desde que la plataforma junta los mensajes de la ráfaga, <code>is_handoff</code> siempre vale <code>False</code>. Al volver de remarketing, APE-01, APE-02 y APE-03 piden un saludo que el bot omite a propósito. DES-03 puede dar una FALLA crítica leyendo «catálogo» en el resumen que escribió remarketing. DES-08, ENV-02 y EST-09 no juzgan esos turnos.</p>
+      <p class="where">platform/workflow_helpers.py:632-637 · checks/descubrimiento.py, envio.py, estilo.py (rama <code>handoff</code>)</p>
+    </div>
+    <div class="finding">
+      <p class="tag">Miden la red equivocada · VAR-01b · EST-03b</p>
+      <h4>Las retenciones dentro de <code>send_reply</code> no cuentan</h4>
+      <p>El motor ya decide la lista de opciones y el texto interno <em>antes</em> de enviar, dentro de <code>send_reply</code>. Esas retenciones no dejan el nombre de guarda que leen los checks. Así que VAR-01b y EST-03b solo ven la red de después, y una mejora del motor no se distingue de una buena suerte del LLM.</p>
+      <p class="where">tools/reply.py:165-216 · checks/variantes.py:50-61</p>
+    </div>
+    <div class="finding">
+      <p class="tag">Menor · CIE-07</p>
+      <h4>Busca un error que nadie emite y no ve otros dos</h4>
+      <p><code>price_drift</code> no lo produce ninguna herramienta. Los avisos <code>discrepancy</code> y <code>quoted_price_mismatch</code> de la verificación no dejan rastro que el check lea.</p>
+      <p class="where">checks/cierre.py:237-249 · tools/checkout.py:394-399</p>
+    </div>
+  </div>
+
+  <h2>Regla por regla</h2>
+  <p class="lede">«Quién la sostiene» es lo que hoy hace que se cumpla en el bot nuevo. «Qué falta» dice qué agregar y en qué capa. «Con las capas» quiere decir que necesita las capas ①②③ actuando (en tus números de prueba, con <code>prueba-jev</code>).</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th style="width:22%">Regla</th><th style="width:7%">Nivel</th><th style="width:27%">Quién la sostiene en el bot nuevo</th><th style="width:10%">Estado</th><th>Qué falta y dónde</th></tr></thead>
+      <tbody>
+        <tr class="famrow"><td colspan="5">Apertura</td></tr>
+        <tr><td><span class="id">APE-01</span>Saludo por hora y marca en el primer contacto</td><td><span class="lvl mayor">mayor</span></td><td>Motor <code>saludo</code> decide la burbuja de bienvenida</td><td><span class="pill s-P">a medias</span></td><td class="fix">Un «hola» cuenta como saludo y la burbuja no sale. Paquete: <code>saludo</code> v2 que pregunte «¿saluda con la hora y nombra a Hubara?».<span class="owner">PAQUETE</span></td></tr>
+        <tr><td><span class="id">APE-02</span>Sin apertura prohibida</td><td><span class="lvl menor">menor</span></td><td>Solo el prompt</td><td><span class="pill s-S">solo prompt</span></td><td class="fix">El mismo <code>saludo</code> v2 (o <code>preambulo</code>) quita «¡Hola!» o «Hey» cuando sale la burbuja.<span class="owner">PAQUETE</span></td></tr>
+        <tr><td><span class="id">APE-03</span>Ofrece el catálogo en la apertura</td><td><span class="lvl mayor">mayor</span></td><td>Solo el prompt: el contrato no pide nada para «saludo»</td><td><span class="pill s-S">solo prompt</span></td><td class="fix"><code>turn.yaml</code>: una fila de apertura que pida botones o catálogo en el primer contacto. El contrato necesita ver <code>first_contact</code> (cambio chico del motor).<span class="owner">PAQUETE + MOTOR</span></td></tr>
+        <tr><td><span class="id">APE-04</span>No vuelve a saludar a quien ya conoce</td><td><span class="lvl menor">menor</span></td><td><code>saludo</code> no manda la burbuja; nadie revisa el texto del LLM</td><td><span class="pill s-P">a medias</span></td><td class="fix"><code>saludo</code> v2 también fuera del primer contacto.<span class="owner">PAQUETE</span><span class="gain">#390: el guion ya dice que quien vuelve no es un primer contacto (prompt)</span></td></tr>
+
+        <tr class="famrow"><td colspan="5">Descubrimiento</td></tr>
+        <tr><td><span class="id">DES-01</span>Máximo dos preguntas antes de mostrar productos</td><td><span class="lvl mayor">mayor</span></td><td>Solo el prompt</td><td><span class="pill s-S">solo prompt</span></td><td class="fix">Guía de descubrimiento: tras dos preguntas sin mostrar nada, pedir <code>present_products</code>. La política ya lee las trazas del episodio.<span class="owner">PAQUETE (turn.yaml)</span></td></tr>
+        <tr><td><span class="id">DES-02</span>Una pregunta por burbuja</td><td><span class="lvl menor">menor</span></td><td>Solo el prompt</td><td><span class="pill s-S">solo prompt</span></td><td class="fix">Redacción: no vale una capacidad.<span class="owner">PROMPT</span></td></tr>
+        <tr><td><span class="id">DES-03</span>Catálogo pedido, catálogo enviado</td><td><span class="lvl critico">crítico</span></td><td>Contrato del turno (catálogo → <code>present_products</code>) y segunda puerta</td><td><span class="pill s-C">protegida</span></td><td class="fix">Con las capas. Nada en el motor; arreglar el check en los traspasos.<span class="owner">ÁRBITRO</span><span class="gain">#394: el catálogo sale en un mensaje o como menú de categorías, y el menú cuenta como catálogo</span></td></tr>
+        <tr><td><span class="id">DES-05</span>Busca antes de nombrar producto o precio</td><td><span class="lvl critico">crítico</span></td><td>Contrato, pero solo si el cliente pregunta</td><td><span class="pill s-P">a medias</span></td><td class="fix">Puerta de afirmaciones: si nombra un producto o un precio sin haber consultado el catálogo en el episodio, retener y pedir la consulta.<span class="owner">MOTOR</span></td></tr>
+        <tr><td><span class="id">DES-08</span>Producto elegido queda en el pedido</td><td><span class="lvl mayor">mayor</span></td><td>Guía de etapas (con las capas)</td><td><span class="pill s-P">a medias</span></td><td class="fix"><code>turn.yaml</code>: pregunta «¿elige un producto que ya vio?» y una fila que exija <code>set_order_slot</code>.<span class="owner">PAQUETE (turn.yaml)</span></td></tr>
+        <tr><td><span class="id">DES-09</span>Diseño antes que aroma</td><td><span class="lvl menor">menor</span></td><td>Solo el prompt</td><td><span class="pill s-S">solo prompt</span></td><td class="fix">Guía de descubrimiento en <code>turn.yaml</code>.<span class="owner">PAQUETE (turn.yaml)</span></td></tr>
+        <tr><td><span class="id">DES-10</span>Los precios que escribe son los del catálogo</td><td><span class="lvl critico">crítico</span></td><td>Código fijo en el cierre (verificación, resumen y registro) y <code>monto</code> en la verificación</td><td><span class="pill s-P">a medias</span></td><td class="fix">Un precio en una respuesta normal sale sin revisión. Llevar <code>monto</code> y <code>find_unexplained_amounts</code> a la puerta de afirmaciones.<span class="owner">MOTOR</span></td></tr>
+
+        <tr class="famrow"><td colspan="5">Variantes</td></tr>
+        <tr><td><span class="id">VAR-01</span>Cuatro o más aromas o colores nunca en texto plano</td><td><span class="lvl critico">crítico</span></td><td>Motor <code>enumeracion</code>: <code>send_reply</code> retiene y la guarda cambia la lista por un selector</td><td><span class="pill s-P">a medias</span></td><td class="fix">Hueco de V2: con el selector rechazado, la guarda se salta. Debe mirar el selector entregado.<span class="owner">CÓDIGO FIJO</span></td></tr>
+        <tr><td><span class="id">VAR-01b</span>La protección tuvo que cambiar una lista por el selector</td><td><span class="lvl mayor">mayor</span></td><td>Red (guarda de después)</td><td><span class="pill s-M">solo mide</span></td><td class="fix">Baja sola cuando el texto final suelto pase por las revisiones de <code>send_reply</code>.<span class="owner">MOTOR (genérico)</span></td></tr>
+        <tr><td><span class="id">VAR-02</span>Picker con opciones válidas</td><td><span class="lvl mayor">mayor</span></td><td>Código fijo: la herramienta rechaza</td><td><span class="pill s-M">solo mide</span></td><td class="fix">—</td></tr>
+        <tr><td><span class="id">VAR-03</span>Sin pickers duplicados en un turno</td><td><span class="lvl menor">menor</span></td><td>Nada</td><td><span class="pill s-S">solo prompt</span></td><td class="fix">La herramienta rechaza un segundo selector del mismo tipo en el turno.<span class="owner">CÓDIGO FIJO</span></td></tr>
+        <tr><td><span class="id">VAR-04</span>Elección de variante queda en el pedido</td><td><span class="lvl mayor">mayor</span></td><td>Guía de etapas (con las capas)</td><td><span class="pill s-P">a medias</span></td><td class="fix">La respuesta del selector trae el id exacto: escribirla en el borrador al llegar, como el carrito. Es un hecho, no una decisión.<span class="owner">CÓDIGO FIJO</span></td></tr>
+        <tr><td><span class="id">VAR-06</span>No vuelve a preguntar la cantidad</td><td><span class="lvl mayor">mayor</span></td><td>Motor <code>cantidad</code> la captura; nada frena que la vuelva a pedir</td><td><span class="pill s-P">a medias</span></td><td class="fix">Capacidad «repregunta»: «¿pide un dato que el pedido ya tiene?», con el borrador como piso.<span class="owner">MOTOR</span><span class="gain">#390: la cantidad dejó de estar ciega (todos los bots) y Jev anota la no preguntada (ventas-3)</span></td></tr>
+        <tr><td><span class="id">VAR-07</span>Precio visible antes de pedir confirmación o datos</td><td><span class="lvl mayor">mayor</span></td><td>La tarjeta de confirmación muestra el precio; el rechazo del formulario pide decirlo</td><td><span class="pill s-P">a medias</span></td><td class="fix">El formulario exige un precio visto en el episodio.<span class="owner">CÓDIGO FIJO</span><span class="gain">#392: el mensaje del formulario trae el subtotal · #390: el guion pide el sí con el total antes</span></td></tr>
+        <tr><td><span class="id">VAR-09</span>Botones rápidos sin selectores de catálogo</td><td><span class="lvl menor">menor</span></td><td>Motor <code>selector</code>: la herramienta rechaza</td><td><span class="pill s-M">solo mide</span></td><td class="fix">—</td></tr>
+
+        <tr class="famrow"><td colspan="5">Confirmación</td></tr>
+        <tr><td><span class="id">CON-01</span>Formulario de envío solo tras confirmación de compra</td><td><span class="lvl critico">crítico</span></td><td>Motor <code>compra</code> lee el sí; el formulario lo exige</td><td><span class="pill s-C">protegida</span></td><td class="fix">—<span class="gain">#390 (ventas-3): un «sí» que no respondía a la compra ya no la confirma. En el incidente del 6-oct, uno así habría habilitado el formulario</span></td></tr>
+        <tr><td><span class="id">CON-02</span>Aplazamiento respetado</td><td><span class="lvl critico">crítico</span></td><td>Motor <code>retoma</code> y <code>compra</code> leen el aplazamiento; solo el formulario lo respeta</td><td><span class="pill s-P">a medias</span></td><td class="fix">La misma precondición en <code>present_order_confirmation</code>, <code>register_order</code> y las etiquetas CONFIRMADO_*.<span class="owner">CÓDIGO FIJO</span></td></tr>
+        <tr><td><span class="id">CON-03</span>No afirma pedido confirmado o registrado sin serlo</td><td><span class="lvl critico">crítico</span></td><td>Nada antes de enviar: <code>afirmacion</code> solo mide después</td><td><span class="pill s-S">solo prompt</span></td><td class="fix">Puerta de afirmaciones, con el hecho «orden registrada» como piso.<span class="owner">MOTOR</span></td></tr>
+        <tr><td><span class="id">CON-05</span>La guarda de confirmación tuvo que actuar</td><td><span class="lvl mayor">mayor</span></td><td>Red</td><td><span class="pill s-M">solo mide</span></td><td class="fix">No cuenta los rechazos de la escalación ni de la etiqueta de pago pendiente.<span class="owner">ÁRBITRO</span></td></tr>
+
+        <tr class="famrow"><td colspan="5">Envío</td></tr>
+        <tr><td><span class="id">ENV-01</span>Formulario de envío una sola vez</td><td><span class="lvl mayor">mayor</span></td><td>Nada</td><td><span class="pill s-S">solo prompt</span></td><td class="fix">El formulario no sale dos veces en el episodio. Si el cliente corrige un dato, se le pide por texto.<span class="owner">CÓDIGO FIJO</span></td></tr>
+        <tr><td><span class="id">ENV-02</span>Formulario sin responder al cliente</td><td><span class="lvl mayor">mayor</span></td><td>El complemento ③ responde lo que quedó (con las capas)</td><td><span class="pill s-P">a medias</span></td><td class="fix"><code>turn.yaml</code>: el aviso del formulario igual al de tarifas («si preguntó otra cosa, respóndela con <code>send_reply</code> en el mismo paso»).<span class="owner">PAQUETE (turn.yaml)</span><span class="gain">#392: el formulario nunca sale «pelado» (el código arma su mensaje) y ENV-02 falla cerrada</span></td></tr>
+        <tr><td><span class="id">ENV-03</span>Datos del formulario quedan en el pedido</td><td><span class="lvl mayor">mayor</span></td><td>El contrato pide <code>set_order_slot</code> en la etapa de datos (con las capas)</td><td><span class="pill s-P">a medias</span></td><td class="fix">Los datos del formulario llegan estructurados: escribirlos al llegar.<span class="owner">CÓDIGO FIJO</span></td></tr>
+        <tr><td><span class="id">ENV-04</span>No vuelve a pedir datos de envío ya dados</td><td><span class="lvl mayor">mayor</span></td><td>La guía dice «lo que falta» (con las capas)</td><td><span class="pill s-P">a medias</span></td><td class="fix">Capacidad «repregunta».<span class="owner">MOTOR</span><span class="gain">#391: el bot nuevo ya no contesta a mitad de la ráfaga en que el cliente manda sus datos</span></td></tr>
+        <tr><td><span class="id">ENV-05</span>Sin datos bancarios ni valor de envío definitivo en texto</td><td><span class="lvl critico">crítico</span></td><td>Nada en el texto libre</td><td><span class="pill s-S">solo prompt</span></td><td class="fix">Puerta de afirmaciones. Piso: los patrones bancarios, con la llave pública permitida.<span class="owner">MOTOR</span></td></tr>
+        <tr><td><span class="id">ENV-07</span>Nombre de quien recibe antes de registrar</td><td><span class="lvl mayor">mayor</span></td><td>Código fijo: <code>register_order</code> rechaza</td><td><span class="pill s-M">solo mide</span></td><td class="fix">—</td></tr>
+
+        <tr class="famrow"><td colspan="5">Cierre</td></tr>
+        <tr><td><span class="id">CIE-01</span>Secuencia canónica de cierre</td><td><span class="lvl critico">crítico</span></td><td>El registro revalida montos contra lo verificado, pero no exige la tarjeta de confirmación</td><td><span class="pill s-P">a medias</span></td><td class="fix"><code>register_order</code> exige una confirmación presentada para esos ítems.<span class="owner">CÓDIGO FIJO</span></td></tr>
+        <tr><td><span class="id">CIE-02</span>Registra la orden solo con confirmación del cliente</td><td><span class="lvl critico">crítico</span></td><td>Nada: <code>register_order</code> no la exige</td><td><span class="pill s-S">solo prompt</span></td><td class="fix"><code>register_order</code> exige la confirmación, con la misma función del formulario y posterior al último resumen.<span class="owner">CÓDIGO FIJO</span></td></tr>
+        <tr><td><span class="id">CIE-03</span>Pago pendiente si y solo si hay orden</td><td><span class="lvl critico">crítico</span></td><td>Código fijo en la etiqueta y red orden↔etiqueta</td><td><span class="pill s-C">protegida</span></td><td class="fix">El check está ciego en modo turno.<span class="owner">ÁRBITRO</span></td></tr>
+        <tr><td><span class="id">CIE-03b</span>La red de seguridad tuvo que cerrar la orden</td><td><span class="lvl mayor">mayor</span></td><td>Red</td><td><span class="pill s-M">solo mide</span></td><td class="fix">—</td></tr>
+        <tr><td><span class="id">CIE-04</span>Escala la verificación de pago tras registrar</td><td><span class="lvl critico">crítico</span></td><td>Red: escala sola</td><td><span class="pill s-C">protegida</span></td><td class="fix">El check está ciego en modo turno.<span class="owner">ÁRBITRO</span></td></tr>
+        <tr><td><span class="id">CIE-05</span>Un solo mensaje de cierre, sin frases prohibidas</td><td><span class="lvl mayor">mayor</span></td><td>Nada</td><td><span class="pill s-S">solo prompt</span></td><td class="fix">Capacidad «despedida» en el egreso: las frases prohibidas viven en <code>domain.yaml</code> y se cambian por la despedida aprobada, como ya hace <code>portavelas</code>.<span class="owner">MOTOR</span></td></tr>
+        <tr><td><span class="id">CIE-06</span>Nunca COMPRA_EXITOSA por el bot</td><td><span class="lvl critico">crítico</span></td><td>Al revés: el piso de <code>cierre</code> la ordena, y la herramienta la acepta</td><td><span class="pill s-S">solo prompt</span></td><td class="fix">Piso de <code>cierre</code> sin COMPRA_EXITOSA (versión <code>ventas-3</code>). Además, la herramienta la rechaza.<span class="owner">PAQUETE + CÓDIGO FIJO</span></td></tr>
+        <tr><td><span class="id">CIE-07</span>Montos coherentes</td><td><span class="lvl critico">crítico</span></td><td>Código fijo: la verificación y el registro rechazan</td><td><span class="pill s-M">solo mide</span></td><td class="fix">Corregir qué errores lee el check.<span class="owner">ÁRBITRO</span></td></tr>
+        <tr><td><span class="id">CIE-08</span>Aviso de portavelas solo si el pedido lo trae</td><td><span class="lvl menor">menor</span></td><td>Motor <code>portavelas</code> en el egreso</td><td><span class="pill s-M">solo mide</span></td><td class="fix">—</td></tr>
+
+        <tr class="famrow"><td colspan="5">Poscierre</td></tr>
+        <tr><td><span class="id">POS-01</span>Pago afirmado solo con pago verificado</td><td><span class="lvl critico">crítico</span></td><td>El contrato pide <code>check_order_status</code> si el cliente pregunta (con las capas)</td><td><span class="pill s-P">a medias</span></td><td class="fix">Puerta de afirmaciones, con el hecho «<code>check_order_status</code> dio pagado en el turno».<span class="owner">MOTOR</span></td></tr>
+
+        <tr class="famrow"><td colspan="5">Etiquetas y escalación</td></tr>
+        <tr><td><span class="id">TAG-01</span>Etiqueta de cierre sostenida por la evidencia</td><td><span class="lvl critico">crítico</span></td><td>Código fijo en las etiquetas y la lectura de <code>compra</code></td><td><span class="pill s-C">protegida</span></td><td class="fix">—</td></tr>
+        <tr><td><span class="id">TAG-01b</span>La guarda de etiquetas tuvo que degradar</td><td><span class="lvl mayor">mayor</span></td><td>Red</td><td><span class="pill s-M">solo mide</span></td><td class="fix">—</td></tr>
+        <tr><td><span class="id">TAG-02</span>Motivo de escalación sostenido por la evidencia</td><td><span class="lvl critico">crítico</span></td><td>«Datos pendientes» exige confirmación; «verificación de pago» no exige nada</td><td><span class="pill s-P">a medias</span></td><td class="fix">PAYMENT_VERIFICATION_PENDING exige una orden o un comprobante.<span class="owner">CÓDIGO FIJO</span></td></tr>
+        <tr><td><span class="id">TAG-05</span>Con ruta humano el bot no vuelve a hablar</td><td><span class="lvl critico">crítico</span></td><td>Código fijo</td><td><span class="pill s-C">protegida</span></td><td class="fix">—</td></tr>
+        <tr><td><span class="id">TAG-06</span>La red de escalación tuvo que actuar</td><td><span class="lvl mayor">mayor</span></td><td>Red (<code>relevo</code>)</td><td><span class="pill s-M">solo mide</span></td><td class="fix">—</td></tr>
+        <tr><td><span class="id">TAG-08</span>Promete un colega solo si escala</td><td><span class="lvl mayor">mayor</span></td><td>Motor <code>relevo</code> y la red que escala</td><td><span class="pill s-C">protegida</span></td><td class="fix">—</td></tr>
+
+        <tr class="famrow"><td colspan="5">Estilo</td></tr>
+        <tr><td><span class="id">EST-01</span>Tuteo colombiano, cero voseo</td><td><span class="lvl menor">menor</span></td><td>Solo el prompt</td><td><span class="pill s-S">solo prompt</span></td><td class="fix">Redacción.<span class="owner">PROMPT</span></td></tr>
+        <tr><td><span class="id">EST-02</span>Sin guion largo y emojis de la lista</td><td><span class="lvl menor">menor</span></td><td>El saneador quita las rayas; los emojis no</td><td><span class="pill s-P">a medias</span></td><td class="fix">Redacción.<span class="owner">PROMPT</span></td></tr>
+        <tr><td><span class="id">EST-03</span>Sin texto administrativo al cliente</td><td><span class="lvl critico">crítico</span></td><td>Motor <code>destinatario</code> y <code>rescate</code> en el egreso, <code>send_reply</code> y los menús</td><td><span class="pill s-C">protegida</span></td><td class="fix">El check juzga a Jev con el detector viejo.<span class="owner">ÁRBITRO</span></td></tr>
+        <tr><td><span class="id">EST-03b</span>La guarda de texto administrativo tuvo que actuar</td><td><span class="lvl mayor">mayor</span></td><td>Red</td><td><span class="pill s-M">solo mide</span></td><td class="fix">Falla en falso con cada <code>NO_MESSAGE</code>.<span class="owner">ÁRBITRO</span></td></tr>
+        <tr><td><span class="id">EST-05</span>Sin promesas de tiempos de entrega</td><td><span class="lvl mayor">mayor</span></td><td>Nada: «tiempos» no pide herramienta, y la ③ empuja a contestarlo</td><td><span class="pill s-S">solo prompt</span></td><td class="fix">Puerta de afirmaciones, y en <code>domain.yaml</code> la frase aprobada para hablar de tiempos («2 a 3 días hábiles» no es promesa; «te llega mañana» sí).<span class="owner">MOTOR</span></td></tr>
+        <tr><td><span class="id">EST-06</span>Sin narración descartada</td><td><span class="lvl menor">menor</span></td><td>Código fijo: el cliente nunca la ve</td><td><span class="pill s-M">solo mide</span></td><td class="fix">—<span class="gain">#392: ya no cuenta la narración igual a un texto que el cliente leyó</span></td></tr>
+        <tr><td><span class="id">EST-09</span>Cortesía sin empujón de venta</td><td><span class="lvl mayor">mayor</span></td><td>Motor <code>cortesia</code> (solo con Jev; con <code>reglas</code> no hace nada)</td><td><span class="pill s-C">protegida</span></td><td class="fix">Arreglar el check en los traspasos.<span class="owner">ÁRBITRO</span><span class="gain">#390 (ventas-3): «Buenas» de quien vuelve ya no es cortesía; un agradecimiento tardío sí</span></td></tr>
+
+        <tr class="famrow"><td colspan="5">Ghosting</td></tr>
+        <tr><td><span class="id">GHO-01</span>El turno de ghosting no le escribe al cliente</td><td><span class="lvl critico">crítico</span></td><td>Código fijo</td><td><span class="pill s-C">protegida</span></td><td class="fix">—</td></tr>
+        <tr><td><span class="id">GHO-02</span>Con formulario pendiente espera diez minutos</td><td><span class="lvl menor">menor</span></td><td>Código fijo</td><td><span class="pill s-C">protegida</span></td><td class="fix">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Qué robustecer, en orden</h2>
+  <p class="lede">Plan actualizado con lo que trajo main. Respeta la regla del operador: un error de decisión se arregla en el paquete. Se escribe código solo cuando al motor le falta algo genérico, y un hecho se arregla donde vive el dato. Como <code>ventas-3</code> ya tiene su huella publicada, lo nuevo del paquete va en <code>ventas-4</code>.</p>
+  <ol class="plan">
+    <li>
+      <h4>Arreglar al árbitro (scorecard, <code>REGISTRY_VERSION</code> 8)</h4>
+      <ul>
+        <li>EST-03b ignora las abstenciones (<code>no_message</code>).</li>
+        <li>CIE-03 y CIE-04 se juzgan con el episodio completo al cierre, para que vuelvan a poder fallar.</li>
+        <li>Los traspasos se leen de <code>context_notes</code> (la traza ya guarda <code>handoff</code>), y el primer contacto es el que de verdad usó el bot. Así se arreglan APE-01, APE-02, APE-03, DES-03, DES-08, ENV-02 y EST-09, también hacia atrás al recalificar.</li>
+        <li>Nuevo con #391: Calidad LLM marca como «intento cortado» las decisiones de Jev de un intento que no salió, cruzándolas con los pasos <code>cut</code> de la traza.</li>
+        <li>VAR-07 cuenta el subtotal del mensaje del formulario, que con #392 ya viaja en <code>card_text</code>.</li>
+        <li>Cuando Jev decidió y el detector viejo opina distinto (EST-03, VAR-01, DES-10), mostrarlo como «desacuerdo con el motor» y no como FALLA. La decisión es tuya.</li>
+        <li>Contar las retenciones de <code>send_reply</code> en VAR-01b y EST-03b, y arreglar los errores que lee CIE-07.</li>
+        <li>Recalificar.</li>
+      </ul>
+      <p class="why">No toca a ningún cliente, y sin esto no se puede medir ni <code>ventas-3</code> ni lo que siga.</p>
+    </li>
+    <li>
+      <h4>Código fijo para las críticas, reusando lo de #393</h4>
+      <ul>
+        <li><code>register_order</code>, el resumen del pedido y las etiquetas CONFIRMADO_* usan la misma precondición del formulario (<code>_shipping_precondition_rejection</code>), leída con <code>read_retrying_transient_errors_sync</code>. Exigen la confirmación posterior al último resumen y respetan el aplazamiento (CIE-02, CIE-01, CON-02).</li>
+        <li><code>manage_conversation_tag</code> rechaza COMPRA_EXITOSA del bot (CIE-06).</li>
+        <li>En V2, la guarda de listas mira el selector entregado (VAR-01). Va detrás de <code>patched</code> en un helper, el patrón que dejó #391 en <code>bursts_v2.py</code>, porque hay sesiones V2 vivas.</li>
+      </ul>
+      <p class="why">Las herramientas son las mismas para los dos bots: protegen a todos desde el deploy, sin esperar a la sombra.</p>
+    </li>
+    <li>
+      <h4>Motor: retener y recomponer después del egreso</h4>
+      <ul>
+        <li>El egreso de V2 ya corre antes de grabar, y #391 ya sabe cortar el turno en ese punto y recomponerlo. Falta que el egreso pueda devolver «retener, con esta nota» y que <code>run_agent_turn</code> le dé al modelo una ronda más, como la segunda puerta.</li>
+        <li>Con eso, el texto final suelto pasa por las mismas revisiones que <code>send_reply</code>: lista, producto verificado por la foto y «te confirmo después» (pendiente §6.6).</li>
+      </ul>
+      <p class="why">Es el único cambio genérico que hace falta. Todo lo demás es paquete.</p>
+    </li>
+    <li>
+      <h4>Paquete <code>ventas-4</code></h4>
+      <ul>
+        <li><strong>Puerta de afirmaciones.</strong> <code>afirmacion</code> de <code>ventas-3</code> ya tiene la forma correcta: Jev dice qué afirma y el código decide con los hechos. Faltan dos cosas:
+          <ul>
+            <li>opciones nuevas, cada una con su hecho: pedido confirmado o registrado → orden registrada (CON-03); pago recibido → <code>check_order_status</code> pagado (POS-01); precio → montos del catálogo (DES-10); valor de envío definitivo o datos bancarios (ENV-05);</li>
+            <li>que actúe antes de enviar, con la retención del paso anterior.</li>
+          </ul>
+        </li>
+        <li><strong><code>saludo</code> v2 con la vista <code>reply_gap</code> de #390.</strong> Primer contacto de verdad es «la tienda nunca escribió» (<code>hours_since_store == null</code>), y la pregunta pasa a ser «¿saluda con la hora y nombra a Hubara?» (APE-01, APE-02, APE-04).</li>
+        <li><strong><code>cierre</code> con un builtin nuevo sin COMPRA_EXITOSA</strong> (CIE-06). Así <code>ventas-2</code> y <code>ventas-3</code> no cambian.</li>
+        <li><strong>«repregunta» y «despedida»</strong> (VAR-06, ENV-04, CIE-05), y las filas de <code>turn.yaml</code> (APE-03, DES-08, DES-01, DES-09).</li>
+      </ul>
+      <p>Cada cambio va test-first: el ejemplo nuevo da rojo DB010, después <code>decisions check</code>, el laboratorio y la sombra. Con el prompt casi lleno (#390 I3), esto ya no tiene otro lugar donde ir.</p>
+    </li>
+    <li>
+      <h4>Laboratorio: medir antes de promover</h4>
+      <ul>
+        <li>Correr <code>B@ventas-3</code> contra el paquete de hoy con los 10 casos que dejó #390, y después <code>ventas-4</code>, ya con el árbitro arreglado.</li>
+        <li>El laboratorio corre en local (#388), pero necesita las llaves <code>*_LAB</code>. Generarlas es tuyo.</li>
+      </ul>
+    </li>
+    <li>
+      <h4>Código fijo para las mayores</h4>
+      <ul>
+        <li>El formulario sale una vez (ENV-01), aunque #393 ya evita los duplicados por carrera.</li>
+        <li>No dos selectores del mismo tipo en un turno (VAR-03).</li>
+        <li>La selección del selector y los datos del formulario se escriben al llegar (VAR-04, ENV-03).</li>
+        <li>La verificación de pago exige una orden o un comprobante (TAG-02).</li>
+      </ul>
+    </li>
+  </ol>
+
+  <h2>Las 13 reglas del juez</h2>
+  <p class="lede">Están apagadas desde el 28-sep, así que nadie las califica. Varias son justo lo que hace Jev, y conviene saber qué pieza las sostiene.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th style="width:30%">Regla</th><th style="width:40%">Pieza del motor relacionada</th><th>Estado</th></tr></thead>
+      <tbody>
+        <tr><td><span class="id">DES-04</span>Clasificó bien la intención del cliente</td><td>La ráfaga ① de Jev (los 18 asuntos)</td><td>Es lo que hace Jev, y nadie lo mide</td></tr>
+        <tr><td><span class="id">DES-06</span>Sin datos de catálogo inventados</td><td>Contrato (consultar antes) y <code>fuera_de_catalogo</code></td><td>A medias: la puerta de afirmaciones lo completa</td></tr>
+        <tr><td><span class="id">DES-07</span>Lead sin fit: redirige o escala</td><td><code>fuera_de_catalogo</code> (la nota)</td><td>A medias</td></tr>
+        <tr><td><span class="id">VAR-05</span>No elige variantes por el cliente</td><td><code>datos</code> y <code>familia_de_color</code></td><td>A medias: <code>datos</code> mira los datos de envío, no las variantes</td></tr>
+        <tr><td><span class="id">CON-04</span>Pide el sí explícito antes de avanzar</td><td><code>compra</code></td><td>Protegida en la lectura</td></tr>
+        <tr><td><span class="id">ENV-06</span>Formas de pago informadas correctamente</td><td>Tarjetas y herramientas</td><td>Código fijo</td></tr>
+        <tr><td><span class="id">POS-02</span>Cambios al pedido se escalan</td><td>Contrato «queja» (pedido hecho → escalar)</td><td>A medias</td></tr>
+        <tr><td><span class="id">TAG-03</span>Escala cuando el guion lo exige</td><td>Ninguna (solo <code>relevo</code> y «queja»)</td><td>Hueco: «¿hay que escalar?» no es una capacidad</td></tr>
+        <tr><td><span class="id">TAG-04</span>No escala consultas normales</td><td>Ninguna</td><td>Hueco</td></tr>
+        <tr><td><span class="id">TAG-07</span>RECHAZO o INTERESADO sostenidos</td><td><code>cierre</code> (solo en el abandono)</td><td>A medias</td></tr>
+        <tr><td><span class="id">EST-04</span>No revela que es una IA</td><td><code>persona</code>, que solo revisa las despedidas de escalación y de cierre</td><td>Hueco en las respuestas normales</td></tr>
+        <tr><td><span class="id">EST-07</span>Retiene lo que el cliente ya dijo</td><td>Notas del borrador y guía de etapas</td><td>A medias («repregunta» lo completa)</td></tr>
+        <tr><td><span class="id">EST-08</span>Responde lo que el cliente preguntó</td><td>La verificación ③ y el complemento</td><td>Protegida con las capas</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Cómo lo verifiqué</h2>
+  <ul class="note" style="margin-left:1.1rem">
+    <li>Tres mapas independientes del código: las 54 reglas (qué lee cada una de la traza), las 29 capacidades de <code>ventas-2</code> con <code>turn.yaml</code>, y las guardas del camino de V2 contra V1.</li>
+    <li>Revisé yo mismo los puntos críticos en el código:
+      <ul>
+        <li>las precondiciones de <code>register_order</code>;</li>
+        <li>el piso de <code>cierre</code> y su aviso;</li>
+        <li>la guarda de listas de V2;</li>
+        <li>la regla de <code>saludo</code>;</li>
+        <li><code>NO_MESSAGE</code> en EST-03b, con el detector ejecutado;</li>
+        <li>CIE-03 y CIE-04 en modo turno;</li>
+        <li>la marca de traspaso.</li>
+      </ul>
+    </li>
+    <li>El laboratorio (corridas r4–r13 del plan) coincide: en el bot nuevo siguen EST-06, DES-08, CIE-05, VAR-01b y APE-03 o DES-09 en el turno 1. Todas están en la lista de pendientes de arriba.</li>
+    <li>El 2026-10-07 repetí la verificación contra main f6cbae67. Leí las descripciones de #390–#394 y revisé en el código cada hallazgo: precondiciones, cierre, guarda de V2, <code>saludo</code>, <code>afirmacion</code>, los checks del árbitro y las notas de la traza.</li>
+    <li>No miré datos de producción. La corrida de hoy con Jev serviría para contar cuántas veces pasa cada hueco, pero leer el vault de producción necesita tu permiso.</li>
+  </ul>
+
+  <div class="footer">
+    <span>Fuentes: sales_eval/scorecard/{registry,checks/*}.py · shared/decisions/bundles/ventas-2/ · sales/decisions/ · sales/workflows/sales_session{,_v2}.py · sales/tools/</span>
+    <span>análisis · 2026-10-06</span>
+  </div>
+</div>
+</body>
+</html>

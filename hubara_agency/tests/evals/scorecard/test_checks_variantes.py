@@ -113,6 +113,19 @@ def test_var07_price_in_text_or_catalog_before_passes() -> None:
     assert run("VAR-07", traj(T(1))).verdict == "no_aplica"
 
 
+def test_var07_a_form_whose_message_shows_the_subtotal_shows_the_price() -> None:
+    # PR #392: el código arma el mensaje del formulario con los productos y el
+    # subtotal; el cliente ve el precio en la misma tarjeta que le pide los
+    # datos, como con el resumen del pedido.
+    form = tool(
+        "request_shipping_details",
+        card_text="Para enviarte tu pedido necesito unos datos 🤍\n\n• *1× Velón Koala* (Blanco): $36.000\n"
+        "Subtotal en productos: $36.000",
+    )
+    t = traj(T(1, sent=["¿Te lo dejo en blanco?"]), T(2, tools=[form]))
+    assert run("VAR-07", t).verdict == "pasa"
+
+
 def _traced(first_excerpt: str):
     """Trayectoria desde la traza (fidelidad completa): `present_products`
     con el comienzo de su envelope (`excerpt`) y después el formulario."""

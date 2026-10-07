@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Android 13+: se pide en contexto, con el flujo de tres estados (skill android-permissions-security). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+        <!-- Los pushes de Firebase. No exportado: solo Google Play services lo despierta (con su permiso propio). -->
+        <service
+            android:name=".OperatorMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Firebase NO arranca solo (no hay google-services.json: el repo es público): lo arranca PushRegistrar con
+             las opciones que manda el backend, y en cada arranque del proceso con las últimas guardadas. -->
+        <provider
+            android:name="com.google.firebase.provider.FirebaseInitProvider"
+            android:authorities="${applicationId}.firebaseinitprovider"
+            tools:node="remove" />
+    </application>
+</manifest>

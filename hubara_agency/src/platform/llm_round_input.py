@@ -21,6 +21,8 @@ import re
 from collections import Counter
 from typing import Any
 
+from src.platform.prompt_layout import turn_notes
+
 NOTES_MAX = 6000
 USER_MAX = 4000
 TOOL_MAX = 1500
@@ -105,9 +107,15 @@ def round_input(messages: list[dict[str, Any]], *, since: int, chat_id: str | No
     system = _text(messages[0].get("content")) if messages and messages[0].get("role") == "system" else ""
     last = messages[-1] if messages and messages[-1].get("role") == "user" else None
     history = messages[1 if system else 0 : -1 if last is not None else None]
+    notes = _notes(system)
+    if last is not None:
+        # Con las notas en el mensaje del turno (`prompt_layout`): son las notas
+        # del turno, y el mensaje del cliente se muestra sin ellas.
+        moved, content = turn_notes(last.get("content"))
+        notes, last = notes or moved, {**last, "content": content}
     return {
         "system": {"chars": len(system), "parts": [{"name": n, "chars": e - s} for n, s, e in _parts(system)]},
-        "notes": _bound(_masked(_notes(system), chat_id), NOTES_MAX),
+        "notes": _bound(_masked(notes, chat_id), NOTES_MAX),
         "history": dict(Counter(str(m.get("role")) for m in history)),
         "new": [_new_entry(last, chat_id)] if last is not None else [],
     }

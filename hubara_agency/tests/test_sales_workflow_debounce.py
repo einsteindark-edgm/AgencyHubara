@@ -94,6 +94,8 @@ class Tracker:
         # Costo del LLM registrado al episodio: (episodio, tokens de entrada)
         # de cada registro (también los de los intentos cortados, V2).
         self.episode_llm_usage: list[tuple[str, int]] = []
+        # Costo real (2026-10-06): lo que el turno le manda al registro del episodio.
+        self.usage_records: list[RecordEpisodeLLMUsageInput] = []
 
 
 # Burbuja 1 del guion de apertura (etapa_descubrimiento) — lo que la activity
@@ -352,6 +354,7 @@ def _make_fake_activities(
     @activity.defn(name="record_episode_llm_usage")
     async def fake_record_episode_llm_usage(input: RecordEpisodeLLMUsageInput) -> None:
         tracker.episode_llm_usage.append((input.episode_id, input.prompt_tokens))
+        tracker.usage_records.append(input)
 
     return [
         # El egreso del workflow V2 (motor de decisiones F4) es la activity
@@ -3541,3 +3544,40 @@ async def test_each_turn_aligns_the_llm_history_with_the_episode_before_the_prom
     first_send = next(i for i, e in enumerate(tracker.timeline) if e.startswith("send:"))
     assert tracker.timeline.index("reset_llm_history") < first_send
     assert len(tracker.history_reset_calls) == len(tracker.build_prompt_calls)
+
+
+@pytest.mark.asyncio
+async def test_cached_prompt_tokens_reach_the_episode_cost(tmp_path: Path) -> None:
+    """Costo real (2026-10-06): los tokens que DeepSeek sirvió desde su caché
+    llegan al registro del episodio (antes se perdían y Ads cobraba todo el
+    input a precio sin caché, ~3x lo real)."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    reply = LLMResponseData(
+        content="Hola, ¿en qué te ayudo?",
+        finish_reason="stop",
+        has_tool_calls=False,
+        tool_calls=[],
+        usage={"prompt_tokens": 28000, "completion_tokens": 50, "total_tokens": 28050, "cached_tokens": 27800},
+    )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(tracker, workspace_path=str(workspace), llm_responses=[reply]),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(session_id="wa_test_cache", runtime_workspace_path=str(workspace)),
+                id="session-wa_test_cache",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(HubaraSalesSessionWorkflow.send_message, args=["Hola", None, None])
+            await handle.result()
+
+    turn = [r for r in tracker.usage_records if r.prompt_tokens == 28000]
+    assert len(turn) == 1
+    assert getattr(turn[0], "cached_prompt_tokens", None) == 27800

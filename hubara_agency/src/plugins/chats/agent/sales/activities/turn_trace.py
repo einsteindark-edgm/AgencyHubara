@@ -87,4 +87,17 @@ async def persist_turn_trace_activity(session_id: str, payload_json: str) -> boo
             exc,
         )
         return False
+    _witness_holes(WORKSPACE_VAULT_DIR, record, metadata)
     return True
+
+
+def _witness_holes(vault_dir, record: dict, metadata: dict) -> None:
+    """Testigo de huecos (`sales/huecos.py`): best-effort, después de la traza."""
+    from src.plugins.chats.agent.sales import huecos
+
+    try:
+        line = huecos.witness_line(record, metadata)
+        if line is not None:
+            huecos.append_line(vault_dir, line)
+    except Exception as exc:  # noqa: BLE001 — el testigo nunca afecta el turno
+        activity.logger.warning("huecos: no se escribió la línea del testigo: %r", exc)

@@ -58,7 +58,9 @@ async def _tag(tmp_path: Path, ctx: ToolContext, **params: Any) -> dict[str, Any
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tag", ["INTERESADO", "RECHAZO", "COMPRA_EXITOSA"])
+# COMPRA_EXITOSA ya no: la pone el equipo y la tool se la rechaza al bot
+# (test_closing_guards.py, 2026-10-07).
+@pytest.mark.parametrize("tag", ["INTERESADO", "RECHAZO"])
 async def test_self_sufficient_tag_declares_it_ends_the_turn(
     ctx: ToolContext, tmp_path: Path, tag: str
 ) -> None:

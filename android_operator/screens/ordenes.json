@@ -1,0 +1,27 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "Las órdenes (la misma lista que el kanban del dashboard). Tocar una abre su ficha (pedido.json, como hoja).",
+  "schema": 1,
+  "id": "ordenes",
+  "title": "Órdenes",
+  "data": {
+    "pedidos": { "get": "/api/orders/orders", "query": { "limit": "200" }, "refreshOn": ["orders"] }
+  },
+  "body": [
+    {
+      "type": "list", "items": "{{pedidos.orders}}", "as": "o", "key": "{{o.id}}", "style": "plain",
+      "item": {
+        "type": "list_item",
+        "icon": "{{o.status | map:'ready=check;delivered=check;shipping=shipping;cancelled=close;*=inventory'}}",
+        "icon_tone": "{{o.status | map:'ready=success;delivered=success;cancelled=neutral;*=secondary' | when:o.overdue:'danger'}}",
+        "title": "#{{o.display_id | replace:'#':''}} · {{o.customer}}",
+        "tag": "{{o.status | map:'new=Nuevo;preparing=Preparando;ready=Listo;shipping=En camino;delivered=Entregado;cancelled=Cancelado'}}{{o.overdue | if:' · atrasada'}}",
+        "tag_tone": "{{o.overdue | if:'danger':'neutral'}}",
+        "caption": "{{o.city}}",
+        "trailing": "{{o.total_cop | money}}",
+        "action": { "type": "open_order", "order": "{{o.id}}" }
+      },
+      "empty": { "type": "empty", "icon": "orders", "title": "No hay órdenes", "body": "Cuando el bot registre un pedido, aparece aquí." }
+    }
+  ]
+}

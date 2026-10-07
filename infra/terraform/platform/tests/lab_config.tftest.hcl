@@ -261,6 +261,62 @@ run "un_paquete_de_decision_con_nombre_raro_no_pasa_el_plan" {
   expect_failures = [var.tenants]
 }
 
+# Notas del turno en el mensaje del turno (caché de DeepSeek, 2026-10-06): la
+# hora y los DATOS DEL PEDIDO salen de las instrucciones. off = como antes ·
+# team = solo los internal_numbers · on = todas las conversaciones.
+run "las_notas_del_turno_nacen_en_las_instrucciones" {
+  command = plan
+  variables {
+    tenants = {
+      t = {
+        api_url       = "https://x.example"
+        callback_urls = ["https://x.example/callback"]
+        logout_urls   = ["https://x.example/"]
+      }
+    }
+  }
+  assert {
+    condition     = module.lab_config["t"].params["SALES_PROMPT_TURN_CONTEXT"] == "off"
+    error_message = "Sin bloque lab, SALES_PROMPT_TURN_CONTEXT queda en off."
+  }
+}
+
+run "las_notas_del_turno_viajan_a_ssm" {
+  command = plan
+  module { source = "./modules/lab-config" }
+  variables {
+    tenant = "t1"
+    config = {
+      perception_mode_ceiling = "off"
+      perception_profile      = "jev-v1"
+      signal_inbound_meta     = false
+      max_usd_per_run         = 120
+      max_usd_per_month       = 300
+      internal_numbers        = []
+      prompt_turn_context     = "team"
+    }
+  }
+  assert {
+    condition     = aws_ssm_parameter.lab["SALES_PROMPT_TURN_CONTEXT"].value == "team" && aws_ssm_parameter.lab["SALES_PROMPT_TURN_CONTEXT"].name == "/hubara/t1/SALES_PROMPT_TURN_CONTEXT"
+    error_message = "SALES_PROMPT_TURN_CONTEXT va en /hubara/<tenant>/ con el valor del tenant."
+  }
+}
+
+run "un_modo_de_notas_raro_no_pasa_el_plan" {
+  command = plan
+  variables {
+    tenants = {
+      t = {
+        api_url       = "https://x.example"
+        callback_urls = ["https://x.example/callback"]
+        logout_urls   = ["https://x.example/"]
+        lab           = { prompt_turn_context = "shadow" }
+      }
+    }
+  }
+  expect_failures = [var.tenants]
+}
+
 run "el_techo_de_toques_del_remarketing_es_la_escalera_completa_por_defecto" {
   command = plan
   module { source = "./modules/lab-config" }

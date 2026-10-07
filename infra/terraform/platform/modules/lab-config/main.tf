@@ -36,6 +36,12 @@
 #     el dashboard (Agents → Remarketing → Frecuencia) DENTRO de este techo y
 #     nunca lo supera; 5 = el comportamiento de siempre. Bajarlo aplica sobre lo
 #     guardado (gana el menor). Lo leen la API y los workers de remarketing.
+#   SALES_PROMPT_TURN_CONTEXT      off | team | on. Dónde van las notas de cada turno
+#     de ventas (hora de Bogotá, DATOS DEL PEDIDO, nota de la percepción): off = en
+#     las instrucciones (`# Retrieved Context`), como antes; on = en el mensaje del
+#     turno, así las instrucciones son idénticas turno a turno y el caché de prefijo
+#     de DeepSeek las cubre con las tools (45 % → 99 % cacheado, medido 2026-10-06);
+#     team = solo las conversaciones de LAB_INTERNAL_NUMBERS (el piloto).
 #   LAB_MAX_USD_PER_RUN / _MONTH   topes de gasto del botón "Nueva corrida" (§3.7).
 #   LAB_INTERNAL_NUMBERS           teléfonos del equipo (E.164, separados por coma):
 #     sus conversaciones no entran al banco (motivo `numero_interno`). Lo leen la
@@ -60,6 +66,7 @@ variable "config" {
     order_sentinel_reader   = optional(string, "off")
     decisions_bundle        = optional(string, "ventas")
     remarketing_max_touches = optional(number, 5)
+    prompt_turn_context     = optional(string, "off")
   })
 }
 
@@ -78,6 +85,7 @@ locals {
     ORDER_SENTINEL_READER         = var.config.order_sentinel_reader
     SALES_DECISIONS_BUNDLE        = var.config.decisions_bundle
     REMARKETING_MAX_TOUCHES       = tostring(var.config.remarketing_max_touches)
+    SALES_PROMPT_TURN_CONTEXT     = var.config.prompt_turn_context
   }
 }
 

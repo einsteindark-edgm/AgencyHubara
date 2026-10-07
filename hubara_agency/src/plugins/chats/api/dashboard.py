@@ -296,6 +296,10 @@ def _session_signature(meta_file: Path) -> tuple[str, str]:
         # escritura puede cortar un codepoint UTF-8 multibyte (los metadata
         # traen emojis en motivo/nombres — premortem 2026-06-11).
         return ("", "")
+    return _signatures_of(data)
+
+
+def _signatures_of(data: dict) -> tuple[str, str]:
     orders_sig = json.dumps(
         [data.get("registered_order"), data.get("failed_order_registrations")],
         sort_keys=True,
@@ -303,6 +307,13 @@ def _session_signature(meta_file: Path) -> tuple[str, str]:
     )
     eta_sig = json.dumps(data.get("eta_tracking"), sort_keys=True, default=str)
     return (orders_sig, eta_sig)
+
+
+#: Firmas de una sesión sin pedidos ni ETA: con esto se compara una sesión que no existía en la muestra
+#: anterior (o que ya no existe). Comparar contra `None` hacía que CADA conversación nueva publicara
+#: `orders.changed` y `eta.changed`, ensuciaba todas las órdenes cacheadas y la siguiente lectura de
+#: incendios o del tablero relistaba Medusa entero.
+_NO_ORDERS_SIG, _NO_ETA_SIG = _signatures_of({})
 
 
 def _sample_vault_state(
@@ -368,9 +379,11 @@ def _diff_to_events(
         if p == c:
             continue
         changed_ids.append(sid)
-        if (p or {}).get("orders_sig") != (c or {}).get("orders_sig"):
+        absent = {"orders_sig": _NO_ORDERS_SIG, "eta_sig": _NO_ETA_SIG}
+        p, c = p or absent, c or absent
+        if p["orders_sig"] != c["orders_sig"]:
             orders_changed = True
-        if (p or {}).get("eta_sig") != (c or {}).get("eta_sig"):
+        if p["eta_sig"] != c["eta_sig"]:
             eta_changed = True
     return (sorted(changed_ids), orders_changed, eta_changed)
 
@@ -411,14 +424,15 @@ async def _sampler_loop() -> None:
             logger.exception("dashboard events sampler: tick failed")
 
 
-def _ensure_sampler() -> None:
+def ensure_sampler() -> None:
+    """Arranca el muestreador del vault si no corre (el SSE del dashboard y el despachador de avisos push)."""
     global _sampler_task
     if _sampler_task is None or _sampler_task.done():
         _sampler_task = asyncio.get_running_loop().create_task(_sampler_loop())
 
 
 async def dashboard_events_generator():
-    _ensure_sampler()
+    ensure_sampler()
     bus = get_dashboard_event_bus()
     queue = bus.subscribe()
     try:
@@ -550,6 +564,56 @@ def _inbound_count(history_file: Path) -> int:
     return value
 
 
+# ── Nombre y vista previa (bandeja de la app nativa y del dashboard) ──────
+#
+# `customer_name` = nombre de perfil de WhatsApp que guarda el ingest; `last_message_preview` = lo último
+# con texto del historial, recortado. Campos opcionales: sin perfil la app cae al número. La vista previa
+# lee solo la cola del JSONL, con el mismo cache por (mtime, size) que los otros contadores.
+_PREVIEW_MAX = 80
+_PREVIEW_TAIL_BYTES = 16_384
+_preview_cache: dict[Path, tuple[float, int, str | None]] = {}
+
+
+def _customer_name(data: dict) -> str | None:
+    profile = data.get("profile")
+    name = profile.get("name") if isinstance(profile, dict) else None
+    return (name.strip() or None) if isinstance(name, str) else None
+
+
+def _scan_last_message_preview(history_file: Path) -> str | None:
+    with history_file.open("rb") as f:
+        size = f.seek(0, os.SEEK_END)
+        f.seek(max(0, size - _PREVIEW_TAIL_BYTES))
+        lines = f.read().splitlines()
+    if size > _PREVIEW_TAIL_BYTES:
+        lines = lines[1:]  # la primera línea de la cola puede venir cortada
+    for raw in reversed(lines):
+        try:
+            event = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if not isinstance(event, dict) or event.get("role") not in ("user", "assistant"):
+            continue
+        text = event.get("content")
+        if isinstance(text, str) and text.strip():
+            clean = " ".join(text.split())
+            return clean if len(clean) <= _PREVIEW_MAX else clean[: _PREVIEW_MAX - 1].rstrip() + "…"
+    return None
+
+
+def _last_message_preview(history_file: Path) -> str | None:
+    try:
+        st = history_file.stat()
+        cached = _preview_cache.get(history_file)
+        if cached is not None and cached[:2] == (st.st_mtime, st.st_size):
+            return cached[2]
+        value = _scan_last_message_preview(history_file)
+    except OSError:
+        return None
+    _preview_cache[history_file] = (st.st_mtime, st.st_size, value)
+    return value
+
+
 @router.get("/sessions")
 async def list_dashboard_sessions():
     """
@@ -578,6 +642,7 @@ async def list_dashboard_sessions():
             order_ref = None
             origin = None
             postponed = None
+            customer_name = None
 
             # Por el store: un archivo dañado se lee de su última copia buena
             # (antes: con JSON roto una conversación humana salía como del bot,
@@ -604,16 +669,19 @@ async def list_dashboard_sessions():
                 # Filtro "Pospuestos": dijo cuándo retoma y aún no quedó
                 # SIN_RESPUESTA (la regla vive en messagingkit).
                 postponed = postponed_view(data, int(time.time() * 1000))
+                customer_name = _customer_name(data)
             
             # Buscamos el timestamp de la ultima conversacion
             last_updated = 0
             last_inbound_ms = None
             inbound_count = 0
+            last_message_preview = None
             history_file = session_path / "sessions" / f"{entry}.jsonl"
             if history_file.exists():
                 last_updated = history_file.stat().st_mtime
                 last_inbound_ms = _last_inbound_ms(history_file)
                 inbound_count = _inbound_count(history_file)
+                last_message_preview = _last_message_preview(history_file)
             else:
                 last_updated = session_path.stat().st_mtime
 
@@ -631,6 +699,8 @@ async def list_dashboard_sessions():
                 "inbound_count": inbound_count,
                 "origin": origin,
                 "postponed": postponed,
+                "customer_name": customer_name,
+                "last_message_preview": last_message_preview,
             })
 
     # Estado real de los pedidos del inbox, en UNA lectura: los que esperan
@@ -766,13 +836,16 @@ async def get_session_history(session_id: str):
                 elif role == "tool":
                     msg_obj["ui_type"] = "tool_execution_result"
                 elif role == "assistant":
-                    if msg_obj.get("sender") == "human":
-                        msg_obj["ui_type"] = "human_message"
-                    elif msg_obj.get("kind") == "ui_component":
+                    if msg_obj.get("kind") == "ui_component":
                         # Marker de envío no-textual (catálogo, flow, botones…)
                         # escrito por flush_pending_ui_intents_activity — el
-                        # frontend lo pinta como nota de sistema.
+                        # frontend lo pinta como nota de sistema. Va ANTES de
+                        # `sender`: si lo mandó el operador desde la app
+                        # (`sender=human`) sigue siendo una tarjeta, no un
+                        # texto que el cliente leyó.
                         msg_obj["ui_type"] = "ui_component_sent"
+                    elif msg_obj.get("sender") == "human":
+                        msg_obj["ui_type"] = "human_message"
                     elif msg_obj.get("tool_calls"):
                         msg_obj["ui_type"] = "agent_tool_call"
                     else:

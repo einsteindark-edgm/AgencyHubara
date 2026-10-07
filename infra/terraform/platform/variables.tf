@@ -61,6 +61,13 @@ variable "tenants" {
       allow_everyone         = optional(bool, false)      # permite ai_audience=EVERYONE desde la tab (D2.3)
     }), {})
 
+    # App Operador (Android). frontend-deploy publica <cloudfront>/mobile/config.json con api_url + Cognito + esto:
+    # la app solo trae fija esa URL, así un cambio de api_url (nueva IP) le llega sin publicar otra versión.
+    mobile = optional(object({
+      privacy_url      = optional(string, "") # política de privacidad pública (Google Play la exige en la app)
+      min_version_code = optional(number, 0)  # versionCode mínimo; una app más vieja pide actualizarse
+    }), {})
+
     # Laboratorio de conversaciones y capas del bot con clasificador
     # (LABORATORIO_CONVERSACIONES_PLAN.md §4.4). Defaults = todo apagado. Se
     # materializa como SSM String en /hubara/<tenant>/<VAR> (modules/lab-config).
@@ -76,12 +83,18 @@ variable "tenants" {
       order_sentinel_reader   = optional(string, "off")    # lector de Jev del Order Sentinel: off | shadow | on
       decisions_bundle        = optional(string, "ventas") # paquete de decisión de la tienda (chats/shared/decisions/bundles/<id>, PAQUETES_DE_DECISION.md)
       remarketing_max_touches = optional(number, 5)        # TECHO de toques del remarketing (0..5): el dashboard (Agents → Remarketing → Frecuencia) elige dentro de él; 5 = la escalera completa
+      prompt_turn_context     = optional(string, "off")    # notas del turno (hora, pedido) en el mensaje del turno y no en las instrucciones (caché de DeepSeek): off | team | on
     }), {})
   }))
 
   validation {
     condition     = alltrue([for t in values(var.tenants) : can(regex("^https://[^\\s\"'#]+$", t.api_url))])
     error_message = "tenants.*.api_url: https://… sin espacios, comillas ni '#' (entra al agent.yaml de MBA)."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : t.mobile.privacy_url == "" || can(regex("^https://[^\\s\"'#]+$", t.mobile.privacy_url))])
+    error_message = "tenants.*.mobile.privacy_url: vacío o https://… (Google Play exige una URL pública y la app solo acepta https)."
   }
 
   validation {
@@ -109,6 +122,11 @@ variable "tenants" {
   validation {
     condition     = alltrue([for t in values(var.tenants) : contains(["off", "shadow", "on"], t.lab.order_sentinel_reader)])
     error_message = "tenants.*.lab.order_sentinel_reader: off | shadow | on (el Order Sentinel es un lote diario: no tiene canary)."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : contains(["off", "team", "on"], t.lab.prompt_turn_context)])
+    error_message = "tenants.*.lab.prompt_turn_context: off | team (solo internal_numbers) | on."
   }
 
   validation {
@@ -212,6 +230,17 @@ variable "secret_keys" {
     # el proxy LiteLLM). El operador crea la llave con límite de crédito y la
     # carga fuera de banda; con el placeholder el puerto no llama a nadie.
     "OPENROUTER_API_KEY",
+    # Avisos push de la App Operador (Firebase Cloud Messaging): la llave de la
+    # cuenta de servicio de Firebase (Configuración del proyecto → Cuentas de
+    # servicio → Generar nueva clave privada). Es un ARCHIVO: en secrets.<t>.env
+    # va como `FCM_SERVICE_ACCOUNT_JSON=@ruta/al/archivo.json` y el script lo sube
+    # en una línea. Con el placeholder no se mandan avisos (la app sigue con su
+    # vigía de 15 min). Guía: docs/mobile-native/activar-avisos-push.html.
+    "FCM_SERVICE_ACCOUNT_JSON",
+    # El google-services.json de la app Android (el mismo proyecto de Firebase):
+    # de ahí salen las opciones con las que el teléfono arranca Firebase. Nunca va
+    # en el repo (es público). `FIREBASE_ANDROID_CONFIG_JSON=@ruta/google-services.json`.
+    "FIREBASE_ANDROID_CONFIG_JSON",
   ]
 }
 

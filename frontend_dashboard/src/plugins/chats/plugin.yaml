@@ -58,6 +58,14 @@ api:
     # Lee la conversación con DeepSeek y devuelve el formulario PRE-LLENADO;
     # no registra nada (eso lo hace session-actions@v1 /order).
     - { module: src.plugins.chats.api.order_intake, prefix: /api/chats, tags: [Chats_OrderIntake] }
+    # App móvil del operador (Android): burbujas por etapa, incendios, ventas
+    # calientes, registro de dispositivos (FCM) y catálogo del selector. Todo
+    # por REGLAS deterministas (`chats/shared/mobile_rules`), sin LLM.
+    - { module: src.plugins.chats.api.mobile, prefix: /api/chats, tags: [Chats_Mobile] }
+    # Acción del operador desde la app: corre una tool de UI del bot COMO EL
+    # HUMANO (`/api/chats/session-actions/{session_key}/tools/{tool}`): flush
+    # acotado a lo que encoló, historial firmado por el humano, idempotente.
+    - { module: src.plugins.chats.api.operator_tools, prefix: /api/chats, tags: [Chats_OperatorTools] }
     # Laboratorio de conversaciones (LABORATORIO_CONVERSACIONES_PLAN.md §3.7 y
     # §4.3): el botón "Nueva corrida" (estimado, lanzar, en curso, cancelar).
     # Las lecturas del contrato lab@v1 llegan con el PR 8.

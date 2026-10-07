@@ -1,0 +1,1414 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>App Operador nativa · SDUI + Generative UI</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --color-paper: #f5f5f5; --color-paper-2: #ececec; --color-ink: #2d3142; --color-muted: #4f5d75;
+  --color-soft: #7a8399; --color-rule: rgba(45,49,66,0.12); --color-accent: #eb6c36;
+  --color-accent-tint: rgba(235,108,54,0.08); --color-link: #2e5aa8;
+  --font-sans: 'Geist', system-ui, sans-serif;
+  --font-serif: 'Instrument Serif', 'Noto Serif', 'Times New Roman', serif;
+  --font-mono: 'Geist Mono', ui-monospace, Menlo, monospace;
+}
+body { font-family: var(--font-sans); background: var(--color-paper); color: var(--color-ink);
+       min-height: 100vh; padding: 3rem 2rem; }
+.container { max-width: 1320px; margin: 0 auto; }
+.header { margin-bottom: 2rem; }
+.eyebrow { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500; letter-spacing: 0.18em;
+           text-transform: uppercase; color: var(--color-muted); margin-bottom: 0.75rem; }
+h1 { font-family: var(--font-serif); font-size: clamp(1.9rem, 3vw + 1rem, 2.9rem); font-weight: 400;
+     letter-spacing: -0.02em; line-height: 1.08; margin-bottom: 0.75rem; max-width: 24ch; }
+.subtitle { font-size: 1.05rem; line-height: 1.55; color: var(--color-muted); max-width: 70ch; }
+.toc { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; margin: 1.5rem 0 0; padding-top: 1rem;
+       border-top: 1px solid var(--color-rule); font-family: var(--font-mono); font-size: 0.72rem; }
+.toc a { color: var(--color-muted); text-decoration: none; }
+.toc a:hover { color: var(--color-accent); }
+section { margin-top: 3.5rem; }
+section > .eyebrow { margin-bottom: 0.4rem; }
+h2 { font-family: var(--font-serif); font-weight: 400; font-size: clamp(1.5rem, 2vw + 0.8rem, 2rem);
+     letter-spacing: -0.01em; line-height: 1.15; margin-bottom: 1rem; }
+h3 { font-size: 0.95rem; font-weight: 600; margin: 1.6rem 0 0.6rem; }
+.prose { max-width: 78ch; }
+.prose p, .prose li { font-size: 0.95rem; line-height: 1.62; color: var(--color-ink); }
+.prose p + p { margin-top: 0.8rem; }
+.prose ul, .prose ol { margin: 0.6rem 0 0.6rem 1.25rem; }
+.prose li { margin-bottom: 0.35rem; }
+.prose strong { font-weight: 600; }
+.lede { font-family: var(--font-serif); font-size: clamp(1.25rem, 1.2vw + 0.9rem, 1.6rem); line-height: 1.35;
+        max-width: 60ch; }
+.lede em { color: var(--color-accent); font-style: italic; }
+code { font-family: var(--font-mono); font-size: 0.82em; background: rgba(45,49,66,0.06);
+       padding: 0.05em 0.3em; border-radius: 3px; }
+pre { font-family: var(--font-mono); font-size: 0.76rem; line-height: 1.55; background: #ffffff;
+      border: 1px solid var(--color-rule); border-radius: 6px; padding: 1rem 1.1rem; overflow-x: auto;
+      margin: 0.9rem 0; color: var(--color-ink); max-width: 100%; }
+pre code { background: none; padding: 0; font-size: inherit; }
+.code-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 1rem; align-items: start; }
+.code-grid > * { min-width: 0; }
+.code-cap { font-family: var(--font-mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase;
+            color: var(--color-soft); margin-top: 1rem; }
+.diagram-container { width: 100%; overflow-x: auto; margin: 1.25rem 0 0.5rem; }
+svg { width: 100%; min-width: 1280px; display: block; }
+.figcap { font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-soft); letter-spacing: 0.04em;
+          margin-bottom: 1rem; }
+.table-wrap { width: 100%; overflow-x: auto; margin: 1rem 0; }
+table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 0.84rem; background: #ffffff;
+        border: 1px solid var(--color-rule); border-radius: 6px; }
+th { font-family: var(--font-mono); font-size: 0.64rem; font-weight: 500; letter-spacing: 0.14em;
+     text-transform: uppercase; color: var(--color-muted); text-align: left; padding: 0.7rem 0.8rem;
+     border-bottom: 1px solid var(--color-rule); background: rgba(45,49,66,0.03); }
+td { padding: 0.65rem 0.8rem; border-bottom: 1px solid rgba(45,49,66,0.07); vertical-align: top;
+     line-height: 1.5; color: var(--color-ink); }
+tr:last-child td { border-bottom: none; }
+td:first-child { font-weight: 600; min-width: 11rem; }
+td.soft { color: var(--color-muted); }
+.pill { display: inline-block; font-family: var(--font-mono); font-size: 0.64rem; letter-spacing: 0.08em;
+        text-transform: uppercase; padding: 0.1rem 0.45rem; border-radius: 3px; border: 1px solid var(--color-rule);
+        color: var(--color-muted); white-space: nowrap; }
+.pill.gen { color: var(--color-accent); border-color: rgba(235,108,54,0.45); }
+.pill.nat { color: var(--color-ink); border-color: rgba(45,49,66,0.35); }
+.cards { display: grid; grid-template-columns: 1.1fr 1fr 0.9fr; gap: 1rem; margin-top: 1.25rem; }
+.cards.two { grid-template-columns: 1.15fr 0.85fr; }
+.card { background: #ffffff; border-radius: 6px; border: 1px solid var(--color-rule); padding: 1.25rem; }
+.card-header { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.875rem; padding-bottom: 0.875rem;
+               border-bottom: 1px solid rgba(45,49,66,0.08); }
+.card-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.card-dot.ink { background: var(--color-ink); } .card-dot.muted { background: var(--color-muted); }
+.card-dot.coral { background: var(--color-accent); } .card-dot.link { background: var(--color-link); }
+.card-dot.soft { background: var(--color-soft); }
+.card h3 { font-size: 0.875rem; font-weight: 600; margin: 0; }
+.card p, .card li { color: var(--color-muted); font-size: 0.84rem; line-height: 1.55; }
+.card ul { list-style: none; }
+.card li { margin-bottom: 0.35rem; padding-left: 0.875rem; position: relative; }
+.card li::before { content: '—'; position: absolute; left: 0; color: rgba(45,49,66,0.25); font-size: 0.75rem; }
+.rules { counter-reset: r; list-style: none; margin: 1rem 0 0; padding: 0; display: grid;
+         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; }
+.rules li { counter-increment: r; background: #ffffff; border: 1px solid var(--color-rule); border-radius: 6px;
+            padding: 0.9rem 1rem 0.9rem 2.6rem; position: relative; font-size: 0.86rem; line-height: 1.5; }
+.rules li::before { content: counter(r, decimal-leading-zero); position: absolute; left: 0.9rem; top: 0.95rem;
+                    font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-accent); }
+.rules li strong { display: block; font-weight: 600; margin-bottom: 0.15rem; }
+.note { border-left: 2px solid var(--color-accent); padding: 0.2rem 0 0.2rem 1rem; margin: 1.2rem 0;
+        color: var(--color-muted); font-size: 0.9rem; line-height: 1.55; max-width: 78ch; }
+.sources { font-family: var(--font-mono); font-size: 0.72rem; line-height: 1.8; color: var(--color-muted);
+           columns: 2 360px; column-gap: 2rem; margin-top: 0.75rem; }
+.sources span { color: var(--color-soft); }
+.footer { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid rgba(45,49,66,0.10);
+          font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.06em; color: var(--color-soft);
+          display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+@media (max-width: 820px) {
+  body { padding: 2rem 16px; }
+  .cards, .cards.two, .code-grid { grid-template-columns: 1fr; }
+}
+@media print {
+  .diagram-container, .table-wrap { overflow-x: visible; }
+  svg { min-width: 0; }
+  table { min-width: 0; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header">
+  <p class="eyebrow">Arquitectura · App Operador nativa · 28 sep 2026</p>
+  <h1>Una app que se arma sola: Server-Driven UI + Generative UI en Compose</h1>
+  <p class="subtitle">Cómo reconstruir la app móvil de Chats en Kotlin y Jetpack Compose para que el backend
+  defina qué piezas existen, Jev (TypeSafe) decida cuáles mostrar en cada momento, y la app solo tenga que
+  pintarlas con componentes nativos.</p>
+  <nav class="toc">
+    <a href="#s0">00 La idea</a><a href="#s1">01 Investigación</a><a href="#s2">02 Arquitectura</a>
+    <a href="#s3">03 Runtime</a><a href="#s4">04 La app por dentro</a><a href="#s5">05 El contrato</a>
+    <a href="#s6">06 Nativo vs generativo</a><a href="#s7">07 Vistas de hoy</a><a href="#s8">08 Cambio de paradigma</a>
+    <a href="#s9">09 Confianza y seguridad</a><a href="#s10">10 El ciclo</a><a href="#s11">11 Backend</a>
+    <a href="#s12">12 Roadmap y riesgos</a>
+  </nav>
+</div>
+
+<section id="s0">
+  <p class="eyebrow">00 · La idea en una frase</p>
+  <p class="lede">El servidor define <em>qué puede existir</em> (un catálogo de plantillas JSON versionadas).
+  Jev decide <em>qué se muestra ahora</em> (elige, ordena y da prominencia con una confianza calibrada).
+  La app Compose solo sabe <em>cómo pintarlo</em> y cómo ejecutar un conjunto cerrado de acciones nativas.</p>
+  <div class="cards">
+    <div class="card"><div class="card-header"><span class="card-dot ink"></span><h3>Server-Driven UI · el contrato</h3></div>
+      <ul><li>Pantallas y tarjetas llegan como JSON de un catálogo versionado.</li>
+      <li>Cambiar una tarjeta o agregar una nueva no pasa por Play Store.</li>
+      <li>La app ignora lo que no entiende sin romperse.</li></ul></div>
+    <div class="card"><div class="card-header"><span class="card-dot coral"></span><h3>Jev · la decisión</h3></div>
+      <ul><li>No escribe UI: responde preguntas tipadas (Choice, Score, Noul) con probabilidades.</li>
+      <li>La mayoría de las respuestas llegan en unos 100 ms: cabe dentro de la carga de cada pantalla.</li>
+      <li>Si tarda o duda, deciden las reglas.</li></ul></div>
+    <div class="card"><div class="card-header"><span class="card-dot muted"></span><h3>Compose · el render</h3></div>
+      <ul><li>Motor SDUI en Kotlin puro con MVI.</li>
+      <li>Registro de componentes nativos.</li>
+      <li>Islas nativas para lo crítico: timeline, composer, cámara.</li>
+      <li>Pinta en la app, en notificaciones, en el Live Update y en widgets.</li></ul></div>
+  </div>
+</section>
+<section id="s1"><p class="eyebrow">01 · Lo que encontré investigando</p><h2>Seis hallazgos que definen la arquitectura</h2><div class="table-wrap"><table><thead><tr><th>Tema</th><th>Hallazgo</th><th>Qué implica para nosotros</th></tr></thead><tbody><tr><td>Jev (TypeSafe)</td><td>Es un modelo «System One»: responde preguntas tipadas sobre un <code>state</code> (texto o JSON). Hay tres tipos: Choice (hasta 255 opciones), Score (2 a 10 niveles) y Noul (probabilidad de sí), siempre con su confianza. Admite varias preguntas en paralelo por request. Versión jev-1.13, 64k tokens, US$0,042 por millón de tokens de entrada, 1.200 req/min. La mayoría responde en unos 100 ms.</td><td>Nuestra generative UI es <strong>selectiva</strong>: Jev arma la pantalla eligiendo piezas de un catálogo cerrado, no inventando UI. Nada de lo que se pinta existe fuera de lo que validamos.</td></tr><tr><td>Límites de Jev 1.13</td><td>Lee literal. Falla con aritmética, conteos y fechas. Pierde precisión con contexto irrelevante. Se puede desviar con instrucciones inyectadas. No genera texto. Está optimizado para inglés.</td><td>Fechas y montos se calculan en código y le llegan como categorías ("hace 2–5 min"). El estado es mínimo. Las preguntas van en inglés y los datos en español. Jev solo decide UI de bajo riesgo: las acciones las confirma el operador.</td></tr><tr><td>A2UI v0.9 (Google)</td><td>Protocolo abierto de UI declarativa para agentes: lista plana de componentes con id, data model con JSON Pointer, catálogos negociados y acciones de vuelta al servidor. Existe un renderer Compose de la comunidad.</td><td>Copiamos la <strong>forma</strong> del contrato, no la librería. Así un LLM podrá escribir plantillas nuevas en el mismo formato.</td></tr><tr><td>Remote Compose (AndroidX)</td><td>Versión 1.0.0-alpha20 (23-sep-2026). Serializa UI de Compose a un documento binario y está pensado para superficies remotas. Todavía es alfa.</td><td>No lo usamos como base. Lo revisamos cuando llegue a beta.</td></tr><tr><td>Arquitectura en Compose</td><td>La guía oficial sigue siendo ViewModel con flujo unidireccional (UDF). Navigation 3 ya es estable y maneja la pila de navegación como una lista de claves serializables.</td><td>Si las pantallas llegan del servidor, no puede haber un ViewModel escrito a mano para cada una. Usamos MVI con un store genérico por surface; el ViewModel queda solo como contenedor de ciclo de vida.</td></tr><tr><td>La app actual</td><td>Tauri 2 + WebView sobre el plugin chats (~8.900 líneas TS). Ya hay SDUI embrionario: el servidor proyecta <code>event.kind</code> (así entró la tarjeta de envío en #382) y las plantillas de WhatsApp traen sus variables.</td><td>La migración parte de algo que ya funciona: generalizamos ese patrón a todas las pantallas.</td></tr></tbody></table></div></section>
+<section id="s2">
+  <p class="eyebrow">02 · Arquitectura general</p>
+  <h2>Cuatro piezas, una responsabilidad cada una</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 628" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="arquitectura-title arquitectura-desc">
+<title id="arquitectura-title">Arquitectura general SDUI + Jev</title>
+<desc id="arquitectura-desc">Los agentes publican propuestas y la app pide surfaces al UI Composer, que combina plantillas versionadas, estado del dominio y decisiones de Jev, y empuja patches en tiempo real por SSE.</desc>
+
+<defs><marker id="a1-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="a1-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="a1-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="a1-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="a1-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="a1-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<rect x="40" y="56" width="240" height="488" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/><rect x="52" y="60" width="124" height="12" rx="2" fill="#f5f5f5"/><text x="114" y="69" fill="rgba(45,49,66,0.55)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">DISPOSITIVO · ANDROID</text>
+<rect x="312" y="56" width="704" height="488" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/><rect x="324" y="60" width="140" height="12" rx="2" fill="#f5f5f5"/><text x="394" y="69" fill="rgba(45,49,66,0.55)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">BACKEND HUBARA · FASTAPI</text>
+<rect x="1048" y="56" width="192" height="488" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/><rect x="1060" y="60" width="56" height="12" rx="2" fill="#f5f5f5"/><text x="1088" y="69" fill="rgba(45,49,66,0.55)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">EXTERNOS</text>
+<path d="M 256 288 H 560" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#a1-arrow-link)"/>
+<rect x="446" y="268" width="68" height="12" rx="2" fill="#f5f5f5"/><text x="480" y="277" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">GET SURFACE</text>
+<path d="M 760 276 H 1064" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#a1-arrow-link)"/>
+<rect x="922" y="256" width="60" height="12" rx="2" fill="#f5f5f5"/><text x="952" y="265" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PREGUNTAS</text>
+<path d="M 660 248 V 160" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#a1-arrow)"/>
+<rect x="668" y="198" width="64" height="12" rx="2" fill="#f5f5f5"/><text x="700" y="207" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PLANTILLAS</text>
+<path d="M 840 160 V 192 Q 840 200 832 200 H 748 Q 740 200 740 208 V 248" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#a1-arrow)"/>
+<rect x="758" y="180" width="64" height="12" rx="2" fill="#f5f5f5"/><text x="790" y="189" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PROPUESTAS</text>
+<path d="M 760 300 H 896 Q 904 300 904 308 V 432" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#a1-arrow)"/>
+<rect x="912" y="366" width="44" height="12" rx="2" fill="#f5f5f5"/><text x="934" y="375" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">ESTADO</text>
+<path d="M 1144 96 V 84 Q 1144 76 1136 76 H 708 Q 700 76 700 84 V 96" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#a1-arrow)"/>
+<rect x="762" y="84" width="52" height="12" rx="2" fill="#f5f5f5"/><text x="788" y="93" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">BORRADOR</text>
+<path d="M 160 224 V 136 Q 160 128 168 128 H 336" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#a1-arrow-link)"/>
+<rect x="226" y="108" width="44" height="12" rx="2" fill="#f5f5f5"/><text x="248" y="117" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">ACCIÓN</text>
+<path d="M 384 160 V 280 a 8,8 0 0,0 0,16 V 432" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#a1-arrow)"/>
+<rect x="392" y="214" width="48" height="12" rx="2" fill="#f5f5f5"/><text x="416" y="223" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">EVENTOS</text>
+<path d="M 620 328 V 456 Q 620 464 612 464 H 528" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#a1-arrow)"/>
+<rect x="628" y="386" width="36" height="12" rx="2" fill="#f5f5f5"/><text x="646" y="395" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PATCH</text>
+<path d="M 336 464 H 176 Q 168 464 168 456 V 352" fill="none" stroke="#2e5aa8" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#a1-arrow-link)"/>
+<rect x="222" y="444" width="68" height="12" rx="2" fill="#f5f5f5"/><text x="256" y="453" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">TIEMPO REAL</text>
+<rect x="64" y="224" width="192" height="128" rx="6" fill="#f5f5f5"/>
+<rect x="64" y="224" width="192" height="128" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="72" y="230" width="24" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="84" y="239" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">APP</text>
+<text x="160" y="276" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">App Operador</text>
+<text x="160" y="292" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Kotlin · Compose</text>
+<text x="160" y="306" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">app · notificación · widget</text>
+<text x="160" y="320" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Room · outbox · FCM</text>
+<rect x="336" y="96" width="192" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="336" y="96" width="192" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="344" y="102" width="24" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="356" y="111" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">API</text>
+<text x="432" y="130" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">API de acciones</text>
+<text x="432" y="146" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">chats · orders (hoy)</text>
+<rect x="560" y="96" width="200" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="560" y="96" width="200" height="64" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<rect x="568" y="102" width="28" height="12" rx="2" fill="none" stroke="#4f5d75" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="582" y="111" fill="#4f5d75" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">JSON</text>
+<text x="660" y="130" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Registro de plantillas</text>
+<text x="660" y="146" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">versionado · ETag · rollback</text>
+<rect x="816" y="96" width="176" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="816" y="96" width="176" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="824" y="102" width="36" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="842" y="111" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">AGENT</text>
+<text x="904" y="130" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Agentes Hubara</text>
+<text x="904" y="146" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">ventas · remarketing · ETA</text>
+<rect x="560" y="248" width="200" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="560" y="248" width="200" height="80" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<rect x="568" y="254" width="28" height="12" rx="2" fill="none" stroke="#eb6c36" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="582" y="263" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CORE</text>
+<text x="660" y="283" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">UI Composer</text>
+<text x="660" y="299" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">plugin mobile_ui</text>
+<text x="660" y="313" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">/api/mobile/surfaces</text>
+<rect x="336" y="432" width="192" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="336" y="432" width="192" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="344" y="438" width="24" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="356" y="447" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SSE</text>
+<text x="432" y="466" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Stream en tiempo real</text>
+<text x="432" y="482" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">/api/dashboard/events</text>
+<rect x="816" y="432" width="176" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="816" y="432" width="176" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="824" y="438" width="24" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="836" y="447" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SDK</text>
+<text x="904" y="466" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Puertos del SDK</text>
+<text x="904" y="482" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">OrderFacts · sesiones</text>
+<rect x="1064" y="248" width="160" height="80" rx="6" fill="#f5f5f5"/>
+<rect x="1064" y="248" width="160" height="80" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<rect x="1072" y="254" width="24" height="12" rx="2" fill="none" stroke="#eb6c36" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="1084" y="263" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+<text x="1144" y="283" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Jev · TypeSafe</text>
+<text x="1144" y="299" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">/v1/systemone</text>
+<text x="1144" y="313" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">~100 ms · confianza</text>
+<rect x="1064" y="96" width="160" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="1064" y="96" width="160" height="64" rx="6" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="1072" y="102" width="24" height="12" rx="2" fill="none" stroke="#7a8399" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="1084" y="111" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">LLM</text>
+<text x="1144" y="130" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">LLM autor</text>
+<text x="1144" y="146" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">borradores de vista</text>
+<text x="1144" y="388" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="middle">elige, no genera</text><path d="M 1144 374 Q 1152 354 1144 334" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="1144" cy="332" r="2" fill="#2d3142"/>
+<line x1="40" y1="584" x2="1240" y2="584" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="607" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="598" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="138" y="606" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Compone / decide</text>
+<rect x="258" y="598" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="280" y="606" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Servicio</text>
+<rect x="360" y="598" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<text x="382" y="606" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Almacén</text>
+<rect x="458" y="598" width="14" height="10" rx="2" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="480" y="606" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Diseño (fase 4)</text>
+<path d="M 596 603 H 612" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#a1-arrow-link)"/>
+<text x="618" y="606" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">HTTP</text>
+<path d="M 678 603 H 694" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#a1-arrow)"/>
+<text x="700" y="606" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Interno</text>
+<path d="M 776 603 H 792" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#a1-arrow)"/>
+<text x="798" y="606" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Asíncrono</text>
+</svg>
+</div>
+<p class="figcap">Figura 1 · El Composer es el único que conoce plantillas, estado y Jev a la vez. La app solo conoce componentes y acciones.</p>
+  <div class="prose">
+  <ul>
+    <li><strong>App Operador (Android).</strong> Pide surfaces, las pinta (en la app, en notificaciones y en
+    widgets) y ejecuta acciones. No sabe de negocio: sabe de componentes.</li>
+    <li><strong>Agentes Hubara.</strong> Ventas, Remarketing, Entregas y Order Sentinel siguen atendiendo. Lo nuevo
+    es que, cuando necesitan a un humano, publican una <strong>propuesta</strong>: qué quieren hacer, con qué
+    evidencia y si se puede deshacer. La acción de la propuesta es la misma tool que ejecutarían ellos.</li>
+    <li><strong>UI Composer</strong>: un plugin nuevo, <code>mobile_ui</code>, con arquetipo <code>api_only</code>.
+    Arma cada surface así:
+      <ul>
+        <li>Lee el estado del dominio por los puertos del SDK. Los pedidos se leen siempre por
+        <code>OrderFacts</code>, nunca de copias.</li>
+        <li>Toma las plantillas del registro.</li>
+        <li>Le pregunta a Jev solo lo que el código no puede decidir.</li>
+        <li>Aplica los umbrales y devuelve un documento listo para pintar.</li>
+      </ul>
+    Cuando algo cambia en el dominio, recalcula solo los slots afectados y empuja un patch por SSE.</li>
+    <li><strong>Registro de plantillas.</strong> Los JSON viven versionados en el repo. Un gate los valida
+    (schema + render de prueba) y se publican a un almacén con ETag. Actualizar la UI es publicar una versión;
+    volver atrás es apuntar a la anterior.</li>
+    <li><strong>Jev, detrás de un puerto</strong> (<code>DecisionPort</code>). El puerto tiene tres adaptadores:
+    TypeSafe, un LLM barato y reglas deterministas. Los plugins nunca importan al proveedor (P-31).</li>
+    <li><strong>LLM autor</strong> (fase 4). Cuando el operador pide una vista que no existe, un LLM redacta
+    una plantilla borrador en el mismo formato. Solo entra al catálogo después de validarse y de que el
+    operador la fije.</li>
+  </ul>
+  <p class="note">Para la paridad no hay que reescribir el backend: las acciones usan los endpoints que ya
+  existen en chats y orders.</p>
+  </div>
+</section>
+
+<section id="s3">
+  <p class="eyebrow">03 · Runtime</p>
+  <h2>Cómo llega un momento y cómo se pinta una pantalla</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 704" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="secuencia-title secuencia-desc">
+<title id="secuencia-title">Cómo llega un momento al operador</title>
+<desc id="secuencia-desc">Secuencia en la que un agente publica una propuesta, el Composer consulta a Jev con presupuesto de 300 ms o cae a reglas, la app la muestra como notificación, el operador aprueba con huella y la acción se ejecuta con la misma tool que usaría el agente.</desc>
+
+<defs><marker id="s2-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="s2-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="s2-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="s2-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="s2-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="s2-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<line x1="160" y1="88" x2="160" y2="640" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="400" y1="88" x2="400" y2="640" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="640" y1="88" x2="640" y2="640" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="880" y1="88" x2="880" y2="640" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="1120" y1="88" x2="1120" y2="640" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<rect x="584" y="152" width="352" height="184" rx="4" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.22)" stroke-width="1"/>
+<rect x="584" y="152" width="40" height="16" rx="2" fill="#f5f5f5" stroke="rgba(45,49,66,0.22)" stroke-width="1"/>
+<text x="604" y="164" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.12em">ALT</text>
+<text x="652" y="184" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.04em">[jev ≤ 300 ms]</text>
+<line x1="592" y1="260" x2="928" y2="260" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="652" y="280" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.04em">[timeout · error]</text>
+<rect x="396" y="372" width="8" height="208" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<rect x="636" y="120" width="8" height="268" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<rect x="876" y="200" width="8" height="48" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<rect x="1116" y="116" width="8" height="20" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<rect x="1116" y="508" width="8" height="64" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+<path d="M 1116 128 H 644" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#s2-arrow)"/>
+<rect x="970" y="108" width="60" height="12" rx="2" fill="#f5f5f5"/><text x="1000" y="117" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PROPUESTA</text>
+<path d="M 644 208 H 876" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#s2-arrow-link)"/>
+<rect x="736" y="188" width="80" height="12" rx="2" fill="#f5f5f5"/><text x="776" y="197" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">FAN-OUT 1 REQ</text>
+<path d="M 876 240 H 644" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#s2-arrow)"/>
+<rect x="716" y="220" width="88" height="12" rx="2" fill="#f5f5f5"/><text x="760" y="229" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SUPERFICIE+URG</text>
+<path d="M 644 296 H 684 Q 692 296 692 304 V 312 Q 692 320 684 320 H 646" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#s2-arrow)"/>
+<rect x="700" y="302" width="84" height="12" rx="2" fill="#f5f5f5"/><text x="742" y="311" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">REGLAS DEFAULT</text>
+<path d="M 636 380 H 404" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#s2-arrow-open)"/>
+<rect x="488" y="360" width="64" height="12" rx="2" fill="#f5f5f5"/><text x="520" y="369" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PUSH · FCM</text>
+<path d="M 396 420 H 160" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#s2-arrow)"/>
+<rect x="240" y="400" width="76" height="12" rx="2" fill="#f5f5f5"/><text x="278" y="409" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NOTIFICACIÓN</text>
+<path d="M 160 468 H 396" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#s2-arrow)"/>
+<rect x="234" y="448" width="88" height="12" rx="2" fill="#f5f5f5"/><text x="278" y="457" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">APRUEBA+HUELLA</text>
+<path d="M 404 516 H 1116" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#s2-arrow-accent)"/>
+<rect x="476" y="496" width="88" height="12" rx="2" fill="#f5f5f5"/><text x="520" y="505" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">EJECUTA ACCIÓN</text>
+<path d="M 1116 564 H 404" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#s2-arrow-open)"/>
+<rect x="960" y="544" width="80" height="12" rx="2" fill="#f5f5f5"/><text x="1000" y="553" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SURFACE.PATCH</text>
+<rect x="72" y="40" width="176" height="48" rx="6" fill="#f5f5f5"/>
+<rect x="72" y="40" width="176" height="48" rx="6" fill="rgba(79,93,117,0.10)" stroke="#7a8399" stroke-width="1"/>
+<text x="160" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Operador</text>
+<text x="160" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">humano</text>
+<rect x="312" y="40" width="176" height="48" rx="6" fill="#f5f5f5"/>
+<rect x="312" y="40" width="176" height="48" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="400" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">App Operador</text>
+<text x="400" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">notificación · app</text>
+<rect x="552" y="40" width="176" height="48" rx="6" fill="#f5f5f5"/>
+<rect x="552" y="40" width="176" height="48" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="640" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">UI Composer</text>
+<text x="640" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">mobile_ui</text>
+<rect x="792" y="40" width="176" height="48" rx="6" fill="#f5f5f5"/>
+<rect x="792" y="40" width="176" height="48" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="880" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Jev · TypeSafe</text>
+<text x="880" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">systemone</text>
+<rect x="1032" y="40" width="176" height="48" rx="6" fill="#f5f5f5"/>
+<rect x="1032" y="40" width="176" height="48" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="1120" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Agentes + dominio</text>
+<text x="1120" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">ventas · API · OrderFacts</text>
+<text x="952" y="228" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">~100 ms típico</text><path d="M 948 224 Q 918 216 890 224" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="888" cy="224" r="2" fill="#2d3142"/>
+<text x="680" y="548" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">la misma tool que usaría el agente</text><path d="M 676 542 Q 664 534 660 520" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="660" cy="517" r="2" fill="#2d3142"/>
+<line x1="40" y1="660" x2="1240" y2="660" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="683" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<path d="M 116 679 H 132" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#s2-arrow)"/>
+<text x="138" y="682" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Llamada</text>
+<path d="M 214 679 H 230" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#s2-arrow-link)"/>
+<text x="236" y="682" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">HTTP</text>
+<path d="M 296 679 H 312" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#s2-arrow)"/>
+<text x="318" y="682" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Respuesta</text>
+<path d="M 402 679 H 418" fill="none" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#s2-arrow-open)"/>
+<text x="424" y="682" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Asíncrono (push / SSE)</text>
+<path d="M 576 679 H 592" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#s2-arrow-accent)"/>
+<text x="598" y="682" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Resultado principal</text>
+<rect x="734" y="674" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="756" y="682" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Actor foco</text>
+</svg>
+</div>
+<p class="figcap">Figura 2 · Un agente propone, Jev decide dónde y cómo se ve, y el operador aprueba donde esté. Si Jev pasa de 300 ms, deciden las reglas.</p>
+  <div class="prose">
+  <h3>Empuje: el caso normal</h3>
+  <ol>
+    <li>Un agente publica una propuesta con su evidencia y su acción (por ejemplo <code>order.confirm_payment</code>).</li>
+    <li>El Composer arma un estado mínimo y hace <strong>una sola</strong> llamada a Jev con todas las preguntas
+    (fan-out): dónde debe verse, qué evidencia va primero y qué tan urgente es. El presupuesto es de 300 ms; si se
+    pasa o falla, deciden las reglas deterministas.</li>
+    <li>El momento llega por FCM. Si la app está cerrada y basta un toque, es una notificación accionable; si no,
+    entra a la cola de momentos.</li>
+    <li>El operador aprueba, con huella si la acción mueve dinero. La app ejecuta la acción con la misma tool que
+    usaría el agente, y el resultado vuelve como <code>surface.patch</code> por SSE.</li>
+  </ol>
+  <h3>Tirón: cuando el operador pide algo</h3>
+  <p>La app pide <code>GET /api/mobile/surfaces/{id}</code>, o manda una intención a <code>/api/mobile/intents</code>,
+  con su <code>catalogVersion</code> y un <code>If-None-Match</code>. Abre al instante con lo último guardado en Room
+  y después refresca. El Composer compone igual que en el empuje: estado mínimo, una llamada a Jev, umbrales, y un
+  documento que incluye <code>decisions[]</code> (qué se eligió, con qué confianza y por qué).</p>
+  </div>
+</section>
+
+<section id="s4">
+  <p class="eyebrow">04 · La app Android por dentro</p>
+  <h2>¿MVVM? Solo dentro de las islas nativas</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 524" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="capas-title capas-desc">
+<title id="capas-title">Capas de la app Android</title>
+<desc id="capas-desc">Seis capas de la app nativa, del shell con Navigation 3 hasta datos y plataforma, con el motor SDUI MVI como capa central.</desc>
+
+<defs><marker id="c3-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="c3-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="c3-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="c3-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="c3-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="c3-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<rect x="200" y="48" width="880" height="384" rx="6" fill="#f5f5f5"/>
+<rect x="200" y="48" width="880" height="384" rx="6" fill="#ffffff" stroke="#4f5d75" stroke-width="1"/>
+<line x1="200" y1="112" x2="1080" y2="112" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+<line x1="200" y1="176" x2="1080" y2="176" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+<line x1="200" y1="240" x2="1080" y2="240" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+<line x1="200" y1="304" x2="1080" y2="304" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+<line x1="200" y1="368" x2="1080" y2="368" stroke="rgba(45,49,66,0.12)" stroke-width="1"/>
+<text x="220" y="84" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.04em">L6 · :app</text>
+<text x="420" y="85" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Shell de la app</text>
+<text x="1060" y="84" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">Navigation 3 · Hilt · tema · sesión Cognito</text>
+<text x="220" y="148" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.04em">L5 · :feature:*</text>
+<text x="420" y="149" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Islas nativas</text>
+<text x="1060" y="148" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">timeline · composer · cámara · outbox — ViewModel propio</text>
+<text x="220" y="212" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.04em">L4 · :sdui:compose</text>
+<text x="420" y="213" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Renderer Compose</text>
+<text x="1060" y="212" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">ComponentRegistry · RenderNode · design system M3</text>
+<rect x="200" y="240" width="880" height="64" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1.2"/>
+<text x="220" y="276" fill="#eb6c36" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.04em">L3 · :sdui:engine</text>
+<text x="420" y="277" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Motor SDUI · MVI</text>
+<text x="1060" y="276" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">SurfaceStore · reducer puro · bindings · acciones</text>
+<text x="220" y="340" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.04em">L2 · :sdui:protocol</text>
+<text x="420" y="341" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Protocolo</text>
+<text x="1060" y="340" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">kotlinx.serialization · schema v1 · Node.Unknown</text>
+<text x="220" y="404" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.04em">L1 · :core:data</text>
+<text x="420" y="405" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Datos y plataforma</text>
+<text x="1060" y="404" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">OkHttp SSE · Room · WorkManager · DataStore + Tink · FCM</text>
+<path d="M 160 424 V 60" fill="none" stroke="#2d3142" stroke-width="1" marker-end="url(#c3-arrow-ink)"/>
+<text x="160" y="448" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">ABSTRACCIÓN</text>
+<text x="1100" y="268" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">Kotlin puro · test en JVM</text><path d="M 1104 276 Q 1098 292 1086 304" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="1084" cy="304" r="2" fill="#2d3142"/>
+<line x1="40" y1="480" x2="1240" y2="480" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="503" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="494" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="138" y="502" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Donde vive la lógica SDUI</text>
+<rect x="306" y="494" width="14" height="10" rx="2" fill="#f5f5f5" stroke="#4f5d75" stroke-width="1"/>
+<text x="328" y="502" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Módulo Gradle</text>
+</svg>
+</div>
+<p class="figcap">Figura 3 · Seis módulos Gradle. El motor y el protocolo no dependen de Android: se prueban en la JVM en milisegundos.</p>
+  <div class="prose">
+  <p>MVVM clásico asume que cada pantalla tiene un ViewModel escrito a mano que conoce su estado. Aquí las
+  pantallas llegan del servidor, así que ese ViewModel no puede existir por adelantado. Por eso la
+  propuesta es <strong>flujo unidireccional estricto con MVI</strong> en el motor:</p>
+  <ul>
+    <li><strong>Un estado inmutable por surface</strong> (<code>SurfaceState</code>): el documento, el data
+    model y las acciones en vuelo.</li>
+    <li><strong>Intents tipados</strong>: llegó el documento, llegó un patch, el operador tocó algo, terminó
+    una acción.</li>
+    <li><strong>Un reducer puro</strong> en Kotlin, sin Android.</li>
+    <li><strong>Efectos</strong> que produce el reducer y ejecuta la capa nativa: llamar a la API, abrir la
+    cámara, navegar, pedir confirmación.</li>
+  </ul>
+  <p>El <code>ViewModel</code> de AndroidX se queda, pero solo como contenedor que sobrevive a rotaciones.
+  Hay <strong>un único</strong> <code>SurfaceViewModel</code> genérico para todas las pantallas SDUI.</p>
+  <p>MVVM clásico sí se usa en las <strong>islas nativas</strong> (timeline, composer, cámara), que tienen
+  lógica propia y datos en vivo. El servidor decide dónde van y con qué configuración, pero no toca su
+  interior.</p>
+  <p>Evalué Circuit (Slack), que separa Presenter y UI y encaja bien con Compose. Lo descarté porque sus
+  pantallas son clases que existen al compilar, y aquí las pantallas son datos. Un motor propio chico
+  (~2–3 mil líneas) nos deja controlar el contrato de punta a punta.</p>
+  </div>
+  <div class="code-grid">
+    <div><p class="code-cap">Protocolo</p><pre><code class="kotlin">// :sdui:protocol — contrato puro, sin Android
+@Serializable
+data class Surface(
+    val id: String,                     // &quot;chat.conversation&quot;
+    val schemaVersion: Int,
+    val catalogVersion: Int,
+    val root: String,
+    val nodes: List&lt;Node&gt;,              // lista plana; los hijos van por id
+    val data: JsonObject = EmptyJson,   // los nodos se enlazan con JSON Pointer
+    val decisions: List&lt;Decision&gt; = emptyList(),
+)
+
+@Serializable
+data class Node(
+    val id: String,
+    val type: String,                   // &quot;card&quot;, &quot;kv&quot;, &quot;chat.timeline&quot;…
+    val props: JsonObject = EmptyJson,
+    val children: List&lt;String&gt; = emptyList(),
+    val bind: Map&lt;String, String&gt; = emptyMap(),   // prop -&gt; &quot;/order/total_cop&quot;
+    val visibleIf: Condition? = null,             // eq / exists / not; sin scripts
+    val on: Map&lt;String, ActionRef&gt; = emptyMap(),  // &quot;tap&quot; -&gt; acción
+)
+
+@Serializable
+data class ActionRef(val name: String, val args: JsonObject = EmptyJson)</code></pre></div>
+    <div><p class="code-cap">Motor MVI</p><pre><code class="kotlin">// :sdui:engine — MVI puro: se testea en la JVM, sin emulador
+data class SurfaceState(
+    val surface: Surface? = null,
+    val data: JsonObject = EmptyJson,
+    val inFlight: Set&lt;String&gt; = emptySet(),
+    val offline: Boolean = false,
+)
+
+sealed interface Intent {
+    data class Loaded(val surface: Surface) : Intent
+    data class Patched(val patch: Patch) : Intent
+    data class Tapped(val nodeId: String, val action: ActionRef) : Intent
+    data class Finished(val key: String, val result: ActionResult) : Intent
+}
+
+sealed interface Effect {
+    data class Run(val key: String, val action: ResolvedAction) : Effect
+    data class Confirm(val key: String, val spec: ConfirmSpec) : Effect // la política vive en la app
+    data class Navigate(val route: Route) : Effect
+}
+
+fun reduce(state: SurfaceState, intent: Intent): Pair&lt;SurfaceState, List&lt;Effect&gt;&gt;</code></pre></div>
+  </div>
+  <p class="code-cap">Renderer</p><pre><code class="kotlin">// :sdui:compose — el registro es la única puerta entre el JSON y la pantalla
+interface ComponentRenderer {
+    @Composable fun Render(node: ResolvedNode, scope: RenderScope)
+}
+
+@Composable
+fun RenderNode(id: String, scope: RenderScope) {
+    val node = scope.resolve(id) ?: return        // oculto por visibleIf
+    key(id) {
+        scope.registry[node.type]?.Render(node, scope)
+            ?: Unsupported(node)                   // tipo nuevo en app vieja: no crashea
+    }
+}
+
+// Cada módulo aporta sus componentes con multibinding de Hilt
+@Module @InstallIn(SingletonComponent::class)
+object ChatComponents {
+    @Provides @IntoMap @StringKey(&quot;kv&quot;)
+    fun kv(): ComponentRenderer = KeyValueRow
+    @Provides @IntoMap @StringKey(&quot;chat.timeline&quot;)
+    fun timeline(): ComponentRenderer = ChatTimelineIsland  // isla con su propio ViewModel
+}</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Capa</th><th>Elección</th><th>Por qué</th></tr></thead><tbody><tr><td>Lenguaje y UI</td><td>Kotlin 2 · Jetpack Compose · Material 3</td><td>Nativo, sin WebView. Se acaban los problemas del WebView 86 de fábrica del Motorola.</td></tr><tr><td>Navegación</td><td>Navigation 3</td><td>La pila es una lista de claves <code>@Serializable</code>, así que el servidor puede empujar un <code>SurfaceKey(id, params)</code>.</td></tr><tr><td>Inyección</td><td>Hilt con multibinding</td><td>El registro de componentes es un <code>Map&lt;String, ComponentRenderer&gt;</code> inyectado.</td></tr><tr><td>Contrato</td><td>kotlinx.serialization</td><td>Polimorfismo con fallback a <code>Unknown</code>, para que una app vieja tolere plantillas nuevas.</td></tr><tr><td>Red</td><td>OkHttp + Retrofit · SSE de OkHttp</td><td>Reusa <code>/api/dashboard/sse-ticket</code> y <code>/events</code>.</td></tr><tr><td>Offline</td><td>Room · WorkManager</td><td>Cache de surfaces con ETag. Outbox de envíos y fotos con <code>client_message_id</code> (idempotente, como hoy).</td></tr><tr><td>Sesión</td><td>DataStore + Tink (Keystore)</td><td>El refresh token de Cognito queda cifrado. El login sigue siendo <code>USER_PASSWORD_AUTH</code>, igual que hoy.</td></tr><tr><td>Push</td><td>FCM</td><td>Cierra un hueco actual: hoy no llega ninguna notificación si la app está cerrada.</td></tr><tr><td>Fuera de la app</td><td>Notificaciones con acciones y <code>RemoteInput</code> · Live Updates (<code>ProgressStyle</code>) · Jetpack Glance · BiometricPrompt</td><td>El mismo JSON se pinta en la notificación, en el Live Update y en un widget, y aprobar dinero pide huella. En Android anterior a 16 (el Motorola de hoy tiene Android 11) el Live Update se degrada a una notificación persistente.</td></tr><tr><td>Imágenes</td><td>Coil 3</td><td>Carga y cache de las fotos del chat.</td></tr><tr><td>Calidad</td><td>Tests JVM del reducer · screenshot tests por componente · Macrobenchmark + Baseline Profiles</td><td>Cada componente del catálogo tiene una captura de referencia, y el scroll del timeline se mide.</td></tr></tbody></table></div></section>
+<section id="s5">
+  <p class="eyebrow">05 · El contrato</p>
+  <h2>El documento SDUI</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 564" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="documento-title documento-desc">
+<title id="documento-title">El documento SDUI</title>
+<desc id="documento-desc">Modelo de datos del documento: un Surface raíz con nodos, data model y slots; los slots tienen plantillas candidatas y decisiones sobre propuestas de los agentes; los nodos disparan acciones nativas.</desc>
+
+<defs><marker id="d4-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="d4-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="d4-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="d4-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="d4-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="d4-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<path d="M 300 120 H 380" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<rect x="322" y="100" width="36" height="12" rx="2" fill="#f5f5f5"/><text x="340" y="109" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">DATOS</text>
+<text x="308" y="134" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="start">1</text>
+<text x="372" y="134" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end">1</text>
+<path d="M 600 120 H 680" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<rect x="622" y="100" width="36" height="12" rx="2" fill="#f5f5f5"/><text x="640" y="109" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SLOTS</text>
+<text x="608" y="134" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="start">1</text>
+<text x="672" y="134" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end">N</text>
+<path d="M 900 120 H 980" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<rect x="914" y="100" width="52" height="12" rx="2" fill="#f5f5f5"/><text x="940" y="109" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">RESUELVE</text>
+<text x="908" y="134" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="start">1</text>
+<text x="972" y="134" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end">N</text>
+<path d="M 490 204 V 344" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<rect x="498" y="268" width="36" height="12" rx="2" fill="#f5f5f5"/><text x="516" y="277" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NODOS</text>
+<text x="498" y="218" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="start">1</text>
+<text x="498" y="338" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="start">N</text>
+<path d="M 380 400 H 300" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<rect x="318" y="380" width="44" height="12" rx="2" fill="#f5f5f5"/><text x="340" y="389" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">ON TAP</text>
+<text x="372" y="414" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end">1</text>
+<text x="308" y="414" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="start">N</text>
+<path d="M 790 188 V 344" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<rect x="798" y="260" width="64" height="12" rx="2" fill="#f5f5f5"/><text x="830" y="269" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">CANDIDATOS</text>
+<text x="798" y="202" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="start">N</text>
+<text x="798" y="338" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="start">N</text>
+<path d="M 680 400 H 600" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<rect x="610" y="380" width="60" height="12" rx="2" fill="#f5f5f5"/><text x="640" y="389" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">EXPANDE A</text>
+<text x="672" y="414" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end">1</text>
+<text x="608" y="414" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="start">N</text>
+<path d="M 1090 188 V 344" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<rect x="1098" y="260" width="52" height="12" rx="2" fill="#f5f5f5"/><text x="1124" y="269" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">FORMA DE</text>
+<text x="1098" y="202" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="start">N</text>
+<text x="1098" y="338" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="start">1</text>
+<rect x="80" y="64" width="220" height="108" rx="6" fill="#f5f5f5"/>
+<rect x="80" y="64" width="220" height="108" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<line x1="80" y1="96" x2="300" y2="96" stroke="#2d3142" stroke-opacity="0.35" stroke-width="1"/>
+<rect x="88" y="74" width="44" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="110" y="83" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ENTIDAD</text>
+<text x="140" y="85" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">DataModel</text>
+<text x="92" y="114" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">JSON libre del surface</text>
+<text x="92" y="130" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">/session/…</text>
+<text x="92" y="146" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">/order/…</text>
+<text x="92" y="162" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">/decisions/…</text>
+<rect x="380" y="64" width="220" height="140" rx="6" fill="#f5f5f5"/>
+<rect x="380" y="64" width="220" height="140" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<line x1="380" y1="96" x2="600" y2="96" stroke="#eb6c36" stroke-opacity="0.35" stroke-width="1"/>
+<rect x="388" y="74" width="28" height="12" rx="2" fill="none" stroke="#eb6c36" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="402" y="83" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">RAÍZ</text>
+<text x="424" y="85" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Surface</text>
+<text x="392" y="114" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace"># id · chat.conversation</text>
+<text x="392" y="130" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">schemaVersion · 1</text>
+<text x="392" y="146" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">catalogVersion · 3</text>
+<text x="392" y="162" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">root → Node</text>
+<text x="392" y="178" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">etag · ttl</text>
+<text x="392" y="194" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">slots → Slot[]</text>
+<rect x="680" y="64" width="220" height="124" rx="6" fill="#f5f5f5"/>
+<rect x="680" y="64" width="220" height="124" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<line x1="680" y1="96" x2="900" y2="96" stroke="#2d3142" stroke-opacity="0.35" stroke-width="1"/>
+<rect x="688" y="74" width="44" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="710" y="83" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ENTIDAD</text>
+<text x="740" y="85" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Slot</text>
+<text x="692" y="114" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace"># id · moment.focus</text>
+<text x="692" y="130" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">candidatos → Template[]</text>
+<text x="692" y="146" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">preguntas · Jev</text>
+<text x="692" y="162" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">política · umbrales</text>
+<text x="692" y="178" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">fallback → Template</text>
+<rect x="980" y="64" width="220" height="124" rx="6" fill="#f5f5f5"/>
+<rect x="980" y="64" width="220" height="124" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<line x1="980" y1="96" x2="1200" y2="96" stroke="#2d3142" stroke-opacity="0.35" stroke-width="1"/>
+<rect x="988" y="74" width="44" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="1010" y="83" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ENTIDAD</text>
+<text x="1040" y="85" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Decision</text>
+<text x="992" y="114" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">→ Slot</text>
+<text x="992" y="130" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">elegidos[] · orden</text>
+<text x="992" y="146" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">confianza · 0–1</text>
+<text x="992" y="162" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">por qué</text>
+<text x="992" y="178" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">fuente · jev | reglas</text>
+<rect x="80" y="344" width="220" height="124" rx="6" fill="#f5f5f5"/>
+<rect x="80" y="344" width="220" height="124" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<line x1="80" y1="376" x2="300" y2="376" stroke="#2d3142" stroke-opacity="0.35" stroke-width="1"/>
+<rect x="88" y="354" width="44" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="110" y="363" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ENTIDAD</text>
+<text x="140" y="365" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Action</text>
+<text x="92" y="394" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">name · order.transition</text>
+<text x="92" y="410" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">args {} · pointers</text>
+<text x="92" y="426" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">confirm · no | simple | doble</text>
+<text x="92" y="442" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">idempotencia · cmid</text>
+<text x="92" y="458" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">política en la app</text>
+<rect x="380" y="344" width="220" height="140" rx="6" fill="#f5f5f5"/>
+<rect x="380" y="344" width="220" height="140" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<line x1="380" y1="376" x2="600" y2="376" stroke="#2d3142" stroke-opacity="0.35" stroke-width="1"/>
+<rect x="388" y="354" width="44" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="410" y="363" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ENTIDAD</text>
+<text x="440" y="365" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Node</text>
+<text x="392" y="394" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace"># id</text>
+<text x="392" y="410" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">type · card | kv | …</text>
+<text x="392" y="426" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">props {}</text>
+<text x="392" y="442" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">children → Node[]</text>
+<text x="392" y="458" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">bind · /json/pointer</text>
+<text x="392" y="474" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">on.tap → Action</text>
+<rect x="680" y="344" width="220" height="124" rx="6" fill="#f5f5f5"/>
+<rect x="680" y="344" width="220" height="124" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<line x1="680" y1="376" x2="900" y2="376" stroke="#2d3142" stroke-opacity="0.35" stroke-width="1"/>
+<rect x="688" y="354" width="44" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="710" y="363" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ENTIDAD</text>
+<text x="740" y="365" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Template</text>
+<text x="692" y="394" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace"># id@versión</text>
+<text x="692" y="410" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">requires[] · capacidades</text>
+<text x="692" y="426" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">tenant · hubara | vincenzo</text>
+<text x="692" y="442" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">nodes → Node[]</text>
+<text x="692" y="458" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">estado · borrador | vivo</text>
+<rect x="980" y="344" width="220" height="124" rx="6" fill="#f5f5f5"/>
+<rect x="980" y="344" width="220" height="124" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<line x1="980" y1="376" x2="1200" y2="376" stroke="#2d3142" stroke-opacity="0.35" stroke-width="1"/>
+<rect x="988" y="354" width="44" height="12" rx="2" fill="none" stroke="#2d3142" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="1010" y="363" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ENTIDAD</text>
+<text x="1040" y="365" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif">Proposal</text>
+<text x="992" y="394" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">agente · sales</text>
+<text x="992" y="410" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">acción → Action</text>
+<text x="992" y="426" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">evidencia[]</text>
+<text x="992" y="442" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">reversible · sí | no</text>
+<text x="992" y="458" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">patrón · avisa|pregunta|revisa</text>
+<line x1="40" y1="520" x2="1240" y2="520" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="543" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="534" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="138" y="542" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Raíz del agregado</text>
+<rect x="266" y="534" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="288" y="542" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Entidad</text>
+<text x="371" y="542" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">1·N</text>
+<text x="386" y="542" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Cardinalidad</text>
+</svg>
+</div>
+<p class="figcap">Figura 4 · Todo lo generativo pasa por un Slot. Un Node nunca ejecuta código: referencia una Action de un conjunto cerrado. Las propuestas de los agentes llegan con esa Action ya armada.</p>
+  <div class="prose"><ul>
+    <li><strong>Lista plana de nodos con id.</strong> Los hijos van por referencia. Así es fácil aplicar
+    patches y fácil que un LLM la genere.</li>
+    <li><strong>Datos separados de la estructura.</strong> Los nodos se enlazan con JSON Pointer
+    (<code>/order/total_cop</code>). Un patch de datos no reconstruye la pantalla: Compose solo recompone lo
+    que está enlazado a ese dato.</li>
+    <li><strong>Las acciones son referencias</strong> a handlers nativos de un conjunto cerrado
+    (<code>chat.send</code>, <code>order.transition</code>…). El JSON no puede ejecutar código ni saltarse la
+    confirmación, porque la política de confirmación vive en la app.</li>
+    <li><strong>Dos versiones.</strong> <code>schemaVersion</code> describe la forma del documento y
+    <code>catalogVersion</code> dice qué componentes existen. La app manda su <code>catalogVersion</code> en
+    cada pedido, y el servidor solo usa plantillas cuyo <code>requires[]</code> esa app soporta. Si igual
+    llega un tipo desconocido, se pinta como <code>Unsupported</code> o se oculta; nunca crashea.</li>
+    <li><strong>Slots.</strong> Cada slot declara sus candidatos, sus preguntas para Jev, sus umbrales y su
+    fallback.</li>
+    <li><strong>Propuestas.</strong> Un agente que necesita a un humano publica una <code>Proposal</code>: su
+    acción (la misma <code>ActionRef</code> que ejecutaría él), su evidencia, si se puede deshacer y su patrón
+    (avisar, preguntar o revisar). Jev decide la forma de cada propuesta, y esa decisión queda registrada.</li>
+  </ul></div>
+  <p class="code-cap">Surface de la conversación</p><pre><code class="json">{
+  &quot;id&quot;: &quot;chat.conversation&quot;,
+  &quot;schemaVersion&quot;: 1,
+  &quot;catalogVersion&quot;: 3,
+  &quot;root&quot;: &quot;screen&quot;,
+  &quot;nodes&quot;: [
+    { &quot;id&quot;: &quot;screen&quot;,   &quot;type&quot;: &quot;layout.chat&quot;,
+      &quot;children&quot;: [&quot;header&quot;, &quot;moment&quot;, &quot;timeline&quot;, &quot;composer&quot;] },
+    { &quot;id&quot;: &quot;header&quot;,   &quot;type&quot;: &quot;template&quot;, &quot;props&quot;: { &quot;ref&quot;: &quot;header.chat@2&quot; } },
+    { &quot;id&quot;: &quot;timeline&quot;, &quot;type&quot;: &quot;chat.timeline&quot;, &quot;bind&quot;: { &quot;session&quot;: &quot;/session/id&quot; } },
+    { &quot;id&quot;: &quot;moment&quot;,   &quot;type&quot;: &quot;slot&quot;, &quot;props&quot;: { &quot;ref&quot;: &quot;slot.moment_in_focus@1&quot;, &quot;max&quot;: 1 } },
+    { &quot;id&quot;: &quot;composer&quot;, &quot;type&quot;: &quot;chat.composer&quot;, &quot;bind&quot;: { &quot;mode&quot;: &quot;/composer/mode&quot; } }
+  ],
+  &quot;data&quot;: {
+    &quot;session&quot;:  { &quot;id&quot;: &quot;session-wa_…&quot; },
+    &quot;composer&quot;: { &quot;mode&quot;: &quot;human&quot;, &quot;window&quot;: &quot;open_more_than_4h&quot; }
+  },
+  &quot;decisions&quot;: [
+    { &quot;slot&quot;: &quot;moment&quot;, &quot;chosen&quot;: [&quot;proposal:confirm_payment&quot;], &quot;confidence&quot;: 0.93, &quot;source&quot;: &quot;jev&quot;,
+      &quot;why&quot;: &quot;Llegó un comprobante y hay un pedido con pago pendiente&quot; }
+  ]
+}</code></pre>
+</section>
+
+<section id="s6">
+  <p class="eyebrow">06 · La regla de reparto</p>
+  <h2>Qué es nativo, qué es SDUI y qué es generativo</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 708" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="cuadrante-title cuadrante-desc">
+<title id="cuadrante-title">Nativo, SDUI o generativo</title>
+<desc id="cuadrante-desc">Cuadrante que ubica cada pieza de la app según criticidad y variabilidad: lo crítico y estable es nativo, y la forma, superficie y orden de cada momento los decide Jev.</desc>
+
+<defs><marker id="q5-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="q5-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="q5-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="q5-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="q5-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="q5-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<path d="M 200 340 H 1080" fill="none" stroke="#2d3142" stroke-width="1" marker-end="url(#q5-arrow-ink)"/>
+<path d="M 640 640 V 60" fill="none" stroke="#2d3142" stroke-width="1" marker-end="url(#q5-arrow-ink)"/>
+<text x="1092" y="343" fill="#2d3142" font-size="9" font-family="'Geist Mono', monospace" letter-spacing="0.18em">VARIABILIDAD</text>
+<text x="640" y="46" fill="#2d3142" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.18em">CRITICIDAD</text>
+<text x="216" y="84" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="start" letter-spacing="0.18em">NATIVO</text>
+<text x="1064" y="84" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.18em">SDUI + ACCIÓN NATIVA</text>
+<text x="216" y="624" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="start" letter-spacing="0.18em">PLANTILLA SDUI</text>
+<text x="1064" y="624" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.18em">GENERATIVO · JEV</text>
+<circle cx="300" cy="132" r="4" fill="#2d3142"/>
+<text x="310" y="136" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Timeline de mensajes</text>
+<circle cx="420" cy="196" r="4" fill="#2d3142"/>
+<text x="430" y="200" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Composer + outbox</text>
+<circle cx="280" cy="264" r="4" fill="#2d3142"/>
+<text x="290" y="268" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Cámara y subida de fotos</text>
+<circle cx="720" cy="140" r="4" fill="#2d3142"/>
+<text x="730" y="144" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Etapas de pedido</text>
+<circle cx="880" cy="212" r="4" fill="#2d3142"/>
+<text x="890" y="216" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Aprobar pago con huella</text>
+<circle cx="740" cy="292" r="4" fill="#2d3142"/>
+<text x="750" y="296" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Notificación accionable</text>
+<circle cx="300" cy="412" r="4" fill="#2d3142"/>
+<text x="310" y="416" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Módulos de evidencia</text>
+<circle cx="420" cy="488" r="4" fill="#2d3142"/>
+<text x="430" y="492" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Tarjeta de datos de envío</text>
+<circle cx="260" cy="568" r="4" fill="#2d3142"/>
+<text x="270" y="572" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Filas de un espacio</text>
+<circle cx="900" cy="520" r="4" fill="#2d3142"/>
+<text x="910" y="524" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Espacios por intención</text>
+<circle cx="700" cy="580" r="4" fill="#2d3142"/>
+<text x="710" y="584" fill="#2d3142" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Forma y superficie de cada momento</text>
+<circle cx="860" cy="440" r="4" fill="#eb6c36"/>
+<text x="870" y="444" fill="#eb6c36" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Cola de momentos</text>
+<line x1="40" y1="664" x2="1240" y2="664" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="687" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<circle cx="123" cy="683" r="4" fill="#2d3142"/>
+<text x="138" y="686" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Pieza de la app</text>
+<circle cx="261" cy="683" r="4" fill="#eb6c36"/>
+<text x="276" y="686" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Donde más rinde Jev</text>
+</svg>
+</div>
+<p class="figcap">Figura 5 · Cuanto más crítico y estable, más nativo. Cuanto más contextual y tolerante a error, más generativo.</p>
+  <div class="prose"><p>Jev nunca decide en el cuadrante crítico. Puede <strong>proponer</strong> que
+  aparezca el momento «Confirmar pago», pero la acción de adentro (confirmar el pago, cancelar un pedido)
+  es nativa y pide confirmación. Si Jev se equivoca, lo peor que pasa es que aparece un momento que el
+  operador descarta.</p></div>
+</section>
+
+<section id="s7">
+  <p class="eyebrow">07 · Ejemplo con lo que ya existe</p>
+  <h2>Las vistas de hoy, renderizadas con SDUI</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 452" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="arbol-title arbol-desc">
+<title id="arbol-title">La conversación de hoy como árbol SDUI</title>
+<desc id="arbol-desc">Árbol del surface chat.conversation: encabezado plantilla, timeline e input como islas nativas y un slot generativo; la tarjeta de envío #382 pasa a ser una plantilla.</desc>
+
+<defs><marker id="t6-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="t6-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="t6-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="t6-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="t6-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="t6-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<path d="M 640 88 V 120" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<path d="M 170 120 H 1100" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<path d="M 170 120 V 148" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<path d="M 460 120 V 148" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<path d="M 810 120 V 148" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<path d="M 1100 120 V 148" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<path d="M 460 200 V 232" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<path d="M 340 232 H 580" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<path d="M 340 232 V 260" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<path d="M 580 232 V 260" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<path d="M 810 200 V 260" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<path d="M 1100 200 V 260" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<rect x="520" y="40" width="240" height="48" rx="6" fill="#f5f5f5"/>
+<rect x="520" y="40" width="240" height="48" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="640" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Surface · chat.conversation</text>
+<text x="640" y="76" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">documento raíz</text>
+<rect x="80" y="148" width="180" height="52" rx="6" fill="#f5f5f5"/>
+<rect x="80" y="148" width="180" height="52" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="170" y="170" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Encabezado</text>
+<text x="170" y="186" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">plantilla header.chat</text>
+<rect x="360" y="148" width="200" height="52" rx="6" fill="#f5f5f5"/>
+<rect x="360" y="148" width="200" height="52" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="460" y="170" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Timeline</text>
+<text x="460" y="186" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">isla nativa · paginada</text>
+<rect x="720" y="148" width="180" height="52" rx="6" fill="#f5f5f5"/>
+<rect x="720" y="148" width="180" height="52" rx="6" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="810" y="170" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Momento en curso</text>
+<text x="810" y="186" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">slot · vacío hoy</text>
+<rect x="1000" y="148" width="200" height="52" rx="6" fill="#f5f5f5"/>
+<rect x="1000" y="148" width="200" height="52" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="1100" y="170" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Composer</text>
+<text x="1100" y="186" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">isla nativa · outbox</text>
+<rect x="252" y="260" width="176" height="52" rx="6" fill="#f5f5f5"/>
+<rect x="252" y="260" width="176" height="52" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="340" y="282" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Burbujas msg.*</text>
+<text x="340" y="298" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">texto · foto · pdf · cita</text>
+<rect x="492" y="260" width="176" height="52" rx="6" fill="#f5f5f5"/>
+<rect x="492" y="260" width="176" height="52" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="580" y="282" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">card.shipping_form</text>
+<text x="580" y="298" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">plantilla · sin release</text>
+<rect x="722" y="260" width="176" height="52" rx="6" fill="#f5f5f5"/>
+<rect x="722" y="260" width="176" height="52" rx="6" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="810" y="282" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Candidatos</text>
+<text x="810" y="298" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">pago · pedido · envío…</text>
+<rect x="1012" y="260" width="176" height="52" rx="6" fill="#f5f5f5"/>
+<rect x="1012" y="260" width="176" height="52" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="1100" y="282" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Modo del composer</text>
+<text x="1100" y="298" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">bot · humano · ventana</text>
+<text x="580" y="372" fill="#eb6c36" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="middle">así entró #382; mañana sería solo JSON</text><path d="M 580 356 Q 588 336 580 318" fill="none" stroke="rgba(235,108,54,0.50)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="580" cy="316" r="2" fill="#eb6c36"/>
+<line x1="40" y1="408" x2="1240" y2="408" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="431" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="422" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="138" y="430" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Plantilla o isla nativa</text>
+<rect x="294" y="422" width="14" height="10" rx="2" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="316" y="430" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Slot generativo</text>
+<rect x="432" y="422" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="454" y="430" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Evento del servidor hecho plantilla</text>
+</svg>
+</div>
+<p class="figcap">Figura 6 · El surface de la conversación. Timeline y composer son islas nativas; encabezado, burbujas y tarjetas son plantillas.</p>
+<div class="table-wrap"><table><thead><tr><th>Hoy (Tauri · React)</th><th>Mañana (Compose)</th><th>Tipo</th></tr></thead><tbody><tr><td>Login y nueva contraseña</td><td>Pantalla nativa <code>:feature:auth</code>, mismo flujo Cognito.</td><td><span class="pill nat">nativo</span></td></tr><tr><td>Bandeja</td><td>Deja de ser la pantalla de inicio y queda como un espacio más («conversaciones abiertas»). La lista es nativa y paginada; los filtros (incluido «Sin responder»), las secciones y las filas son plantillas.</td><td><span class="pill">SDUI</span> + <span class="pill nat">nativo</span></td></tr><tr><td>Conversación</td><td>Surface <code>chat.conversation</code>. El encabezado es plantilla, el timeline es isla nativa y cada tipo de evento es una plantilla <code>msg.*</code>.</td><td><span class="pill">SDUI</span> + <span class="pill nat">nativo</span></td></tr><tr><td>Tarjeta de envío (#382), botones del bot, reacciones, foto con visión IA</td><td>Plantillas compuestas de primitivas (<code>card</code>, <code>kv</code>, <code>money</code>, <code>link.tel</code>). Un tipo nuevo de evento se publica sin release.</td><td><span class="pill">SDUI</span></td></tr><tr><td>Composer (bot/humano, ventana 24 h, adjuntos, cámara, outbox)</td><td>Isla nativa. El <strong>modo</strong> lo decide el servidor; hoy se deduce en el cliente.</td><td><span class="pill nat">nativo</span> + <span class="pill">SDUI</span></td></tr><tr><td>Reactivar conversación</td><td>Formulario generado desde <code>variables[]</code>, que ya manda el servidor.</td><td><span class="pill">SDUI</span></td></tr><tr><td>Crear pedido rápido (1.152 líneas)</td><td>Formulario SDUI que se alimenta de <code>order-intake/suggest</code> (<code>missing[]</code>, <code>catalog[]</code>, <code>warnings[]</code>). Registrar el pedido es una acción nativa.</td><td><span class="pill">SDUI</span> + <span class="pill nat">nativo</span></td></tr><tr><td>Pedidos del cliente, pasos «listo» y «despacho»</td><td>Hoja <code>customer_orders</code>. Las transiciones permitidas vienen del servidor, así que desaparece el grafo de etapas duplicado en el cliente (<code>NEXT_STAGES</code>).</td><td><span class="pill">SDUI</span> + <span class="pill nat">nativo</span></td></tr><tr><td>Inspector (etiqueta, pospuesto, historial, memoria)</td><td>Hoja plantilla. Las pestañas Agente, Notas y Archivos hoy son maquetas: se construyen de verdad o se quitan.</td><td><span class="pill">SDUI</span></td></tr><tr><td>Cola de momentos</td><td>No existe hoy. Reemplaza a la bandeja como punto de entrada (ver sección 08).</td><td><span class="pill gen">generativo</span></td></tr></tbody></table></div>
+  <div class="code-grid">
+    <div><p class="code-cap">Plantilla msg.shipping_form (lo que hoy es ShippingFormCard)</p><pre><code class="json">{
+  &quot;id&quot;: &quot;msg.shipping_form@3&quot;,
+  &quot;requires&quot;: [&quot;card&quot;, &quot;kv&quot;, &quot;kv.list&quot;, &quot;money&quot;, &quot;link.tel&quot;],
+  &quot;nodes&quot;: [
+    { &quot;id&quot;: &quot;c&quot;, &quot;type&quot;: &quot;card&quot;,
+      &quot;props&quot;: { &quot;eyebrow&quot;: &quot;Cliente · Datos de envío&quot;, &quot;tone&quot;: &quot;inbound&quot; },
+      &quot;children&quot;: [&quot;who&quot;, &quot;tel&quot;, &quot;addr&quot;, &quot;extra&quot;, &quot;items&quot;, &quot;pay&quot;, &quot;total&quot;] },
+    { &quot;id&quot;: &quot;who&quot;,   &quot;type&quot;: &quot;kv&quot;,       &quot;props&quot;: { &quot;label&quot;: &quot;Recibe&quot; },
+      &quot;bind&quot;: { &quot;value&quot;: &quot;/event/receiver_name&quot; } },
+    { &quot;id&quot;: &quot;tel&quot;,   &quot;type&quot;: &quot;link.tel&quot;, &quot;props&quot;: { &quot;label&quot;: &quot;Teléfono&quot; },
+      &quot;bind&quot;: { &quot;value&quot;: &quot;/event/phone&quot; } },
+    { &quot;id&quot;: &quot;addr&quot;,  &quot;type&quot;: &quot;kv&quot;,       &quot;props&quot;: { &quot;label&quot;: &quot;Dirección&quot; },
+      &quot;bind&quot;: { &quot;value&quot;: &quot;/event/address_line&quot; } },
+    { &quot;id&quot;: &quot;extra&quot;, &quot;type&quot;: &quot;kv.list&quot;,  &quot;bind&quot;: { &quot;items&quot;: &quot;/event/extra&quot; } },
+    { &quot;id&quot;: &quot;items&quot;, &quot;type&quot;: &quot;kv&quot;,       &quot;props&quot;: { &quot;label&quot;: &quot;Pedido&quot; },
+      &quot;bind&quot;: { &quot;value&quot;: &quot;/event/items_summary&quot; } },
+    { &quot;id&quot;: &quot;pay&quot;,   &quot;type&quot;: &quot;kv&quot;,       &quot;props&quot;: { &quot;label&quot;: &quot;Pago&quot; },
+      &quot;bind&quot;: { &quot;value&quot;: &quot;/event/payment_method_label&quot; } },
+    { &quot;id&quot;: &quot;total&quot;, &quot;type&quot;: &quot;money&quot;,    &quot;props&quot;: { &quot;label&quot;: &quot;Total&quot;, &quot;currency&quot;: &quot;COP&quot; },
+      &quot;bind&quot;: { &quot;value&quot;: &quot;/event/order_total_cop&quot; } }
+  ]
+}</code></pre></div>
+    <div><p class="code-cap">Datos de la tarjeta de pedido: transiciones desde el servidor</p><pre><code class="json">{
+  &quot;order&quot;: {
+    &quot;display_id&quot;: 41, &quot;status_label&quot;: &quot;Listo&quot;, &quot;total_cop&quot;: 89900,
+    &quot;due_label&quot;: &quot;mar 30 sep&quot;,
+    &quot;allowed_transitions&quot;: [
+      { &quot;label&quot;: &quot;Despachar&quot;, &quot;form&quot;: &quot;ship_step&quot;,
+        &quot;action&quot;: { &quot;name&quot;: &quot;order.transition&quot;,
+                    &quot;args&quot;: { &quot;order_id&quot;: &quot;ord_…&quot;, &quot;to&quot;: &quot;shipping&quot; } } },
+      { &quot;label&quot;: &quot;Cancelar&quot;, &quot;tone&quot;: &quot;danger&quot;, &quot;confirm&quot;: &quot;double&quot;,
+        &quot;action&quot;: { &quot;name&quot;: &quot;order.transition&quot;,
+                    &quot;args&quot;: { &quot;order_id&quot;: &quot;ord_…&quot;, &quot;to&quot;: &quot;cancelled&quot; } } }
+    ]
+  }
+}</code></pre>
+    <div class="prose"><p>Un solo componente <code>actions.row</code> pinta los botones. El servidor decide
+    cuáles caben, en qué orden y si piden confirmación doble. La app nunca vuelve a copiar la máquina de estados
+    de los pedidos.</p>
+    <p>El timeline no pide plantillas mensaje por mensaje. Descarga el manifiesto del catálogo una vez
+    (con ETag) y cada mensaje llega con su <code>template</code> y sus datos.</p></div></div>
+  </div>
+  <p class="note">El inventario de la app actual encontró deudas que se corrigen de paso:</p>
+  <div class="prose"><ul>
+    <li>La bandeja y el historial no están paginados: llegan completos en cada fetch y en cada snapshot SSE.</li>
+    <li>En móvil no hay aviso de reconexión.</li>
+    <li>Las notificaciones solo funcionan con la app viva.</li>
+  </ul></div>
+</section>
+<section id="s8">
+  <p class="eyebrow">08 · El cambio de paradigma</p>
+  <h2>El operador no navega: dirige</h2>
+  <div class="prose">
+  <p>La primera versión de este rediseño seguía siendo una app de lugares: pestañas, un feed y un chat con
+  tarjetas encima. La IA decoraba las pantallas de siempre.</p>
+  <p>El cambio de paradigma está en la pregunta. Ya no es «¿a qué pantalla voy?», sino «¿qué necesita de mí el
+  negocio ahora?». En Hubara quienes atienden son los agentes: Ventas, Remarketing, Entregas y Order Sentinel.
+  El operador no debería operar una app; debería <strong>dirigir a los agentes</strong>. Eso significa decidir
+  lo que solo un humano puede decidir y declarar resultados. La interfaz aparece para eso y se va.</p>
+  </div>
+  <div class="table-wrap"><table><thead><tr><th>Antes · app de lugares</th><th>Ahora · momentos e intenciones</th></tr></thead><tbody><tr><td>Navegar pestañas y pantallas</td><td>Declarar un resultado: «despacha lo de hoy»</td></tr><tr><td>La bandeja de chats es el inicio</td><td>La cola de momentos es el inicio, y termina: «listo por hoy»</td></tr><tr><td>El chat es la pantalla principal</td><td>El chat es evidencia de una decisión</td></tr><tr><td>El operador ejecuta cada paso</td><td>Los agentes proponen; el operador aprueba, edita o toma el control</td></tr><tr><td>Pantallas fijas que diseñamos nosotros</td><td>Espacios que aparecen por intención y se disuelven; persiste lo que el operador fija</td></tr><tr><td>La app es el destino</td><td>La decisión llega donde está el operador: notificación, pantalla bloqueada, widget</td></tr><tr><td>Configuración en menús</td><td>Cada decisión repetida puede volverse regla</td></tr></tbody></table></div>
+  <h3>De dónde sale la idea</h3>
+  <div class="table-wrap"><table><thead><tr><th>Referencia</th><th>Qué tomamos</th></tr></thead><tbody><tr><td>Jakob Nielsen · «AI: first new UI paradigm in 60 years»</td><td>Especificar resultados, no pasos. El locus reemplaza a la navegación.</td></tr><tr><td>Mercury OS (Jason Yuan)</td><td>Sin apps ni carpetas: módulos de contenido y acción que se ensamblan por intención y se agrupan en espacios.</td></tr><tr><td>T Phone de Deutsche Telekom con Brain.ai (MWC 2024)</td><td>La IA predice y genera la siguiente interfaz; no hay apps que abrir.</td></tr><tr><td>LangChain · ambient agents y Agent Inbox</td><td>Los agentes trabajan sobre el flujo de eventos y solo interrumpen para avisar, preguntar o pedir revisión.</td></tr><tr><td>ChatGPT Pulse</td><td>Pocas tarjetas y un final explícito, sin scroll infinito.</td></tr><tr><td>Pixel Magic Cue y Live Updates de Android 16</td><td>La ayuda aparece donde ya estás (llamada, notificación, pantalla bloqueada), con progreso en vivo.</td></tr><tr><td>Michael Bernstein · just-in-time interfaces (2026)</td><td>Interfaces descartables, construidas para el momento.</td></tr><tr><td>Ink &amp; Switch · malleable software</td><td>Una pendiente suave de usar a ajustar a crear. Aquí: fijar un espacio, cambiar sus filtros, volver regla una decisión.</td></tr><tr><td>Builder.io · agent-native</td><td>Cada botón que toca el humano llama a la misma tool que ejecuta el agente.</td></tr><tr><td>Gemini dynamic view (Google)</td><td>Una interfaz generada para cada pedido. Pero puede tardar un minuto; por eso nosotros componemos desde el catálogo con Jev en ~100 ms.</td></tr></tbody></table></div>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 740" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="redisenio-title redisenio-desc">
+<title id="redisenio-title">Las tres superficies del paradigma nuevo</title>
+<desc id="redisenio-desc">Tres pantallas: la pantalla bloqueada con el pulso del día y notificaciones que deciden, la app con el momento en foco y la conversación como evidencia, y un espacio compuesto por una intención.</desc>
+
+<defs><marker id="w7-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="w7-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="w7-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="w7-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="w7-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="w7-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<text x="80" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">SUPERFICIE 1 · PANTALLA BLOQUEADA</text><rect x="80" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="194" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<text x="224" y="112" fill="#2d3142" font-size="14" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">9:10</text>
+<text x="224" y="128" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">martes 30 sep</text>
+<rect x="92" y="148" width="264" height="92" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="100" y="160" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LIVE UPDATE · PULSO DEL DÍA</text>
+<text x="104" y="180" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">3 por decidir · 12 en camino</text>
+<rect x="104" y="192" width="30" height="8" rx="2" fill="#2d3142" fill-opacity="0.25"/>
+<rect x="136" y="192" width="38" height="8" rx="2" fill="#2d3142" fill-opacity="0.45"/>
+<rect x="176" y="192" width="94" height="8" rx="2" fill="#2d3142" fill-opacity="0.7"/>
+<rect x="272" y="192" width="70" height="8" rx="2" fill="#2d3142" fill-opacity="1"/>
+<text x="104" y="216" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">prep 4 · listos 5 · camino 12 · entregados 9</text>
+<rect x="92" y="256" width="264" height="312" rx="6" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3"/><text x="100" y="268" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">NOTIFICACIONES QUE DECIDEN</text>
+<rect x="104" y="276" width="240" height="132" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="116" y="294" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">VENTAS · AHORA</text>
+<text x="116" y="314" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Pago de Laura M. · #41</text>
+<text x="116" y="330" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">comprobante $89.900 = pedido</text>
+<rect x="116" y="344" width="88" height="24" rx="4" fill="#2d3142"/><text x="160.0" y="360" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Aprobar</text>
+<rect x="212" y="344" width="64" height="24" rx="4" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="244.0" y="360" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Ver</text>
+<text x="116" y="392" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">confirmas con tu huella</text>
+<rect x="104" y="420" width="240" height="132" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="116" y="438" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">REMARKETING · PREGUNTA</text>
+<text x="116" y="458" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">¿Envío gratis a Carlos?</text>
+<text x="116" y="474" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">carrito $142.000 · 2 días sin responder</text>
+<rect x="116" y="488" width="48" height="24" rx="4" fill="#2d3142"/><text x="140.0" y="504" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Sí</text>
+<rect x="172" y="488" width="48" height="24" rx="4" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="196.0" y="504" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">No</text>
+<rect x="228" y="488" width="80" height="24" rx="4" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="268.0" y="504" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Hablar yo</text>
+<text x="116" y="536" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">tu respuesta puede volverse regla</text>
+<text x="224" y="600" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">2 momentos más en la app</text>
+<line x1="184" y1="640" x2="264" y2="640" stroke="#2d3142" stroke-opacity="0.35" stroke-width="3" stroke-linecap="round"/>
+<text x="496" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">SUPERFICIE 2 · MOMENTOS</text><rect x="496" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="610" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<rect x="508" y="92" width="264" height="64" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="516" y="104" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">PULSO DE LOS AGENTES</text>
+<text x="520" y="126" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">3 por decidir</text>
+<circle cx="524" cy="141" r="3" fill="#4f5d75"/>
+<text x="530" y="144" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Ventas 6</text>
+<circle cx="596" cy="141" r="3" fill="#4f5d75"/>
+<text x="602" y="144" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Remarketing 40</text>
+<circle cx="694" cy="141" r="3" fill="#4f5d75"/>
+<text x="700" y="144" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Entregas 12</text>
+<rect x="508" y="172" width="264" height="240" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/><text x="516" y="184" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">MOMENTO EN FOCO</text>
+<rect x="520" y="190" width="84" height="14" rx="2" fill="none" stroke="#eb6c36" stroke-width="0.8"/>
+<text x="562" y="200" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">VENTAS PROPONE</text>
+<text x="760" y="200" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="end">CONF 0,93</text>
+<text x="520" y="226" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">Confirmar el pago de Laura M.</text>
+<text x="520" y="242" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">pedido #41 · transferencia · $89.900</text>
+<rect x="520" y="254" width="64" height="76" rx="4" fill="rgba(45,49,66,0.08)"/>
+<text x="552" y="296" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">[recibo]</text>
+<text x="596" y="272" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">monto $89.900 = pedido ✓</text>
+<text x="596" y="288" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">banco coincide</text>
+<text x="596" y="304" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">llegó hace 3 min</text>
+<text x="596" y="322" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">NO SE DESHACE · HUELLA</text>
+<rect x="520" y="344" width="80" height="24" rx="4" fill="#2d3142"/><text x="560.0" y="360" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Aprobar</text>
+<rect x="608" y="344" width="64" height="24" rx="4" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="640.0" y="360" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Editar</text>
+<rect x="680" y="344" width="80" height="24" rx="4" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="720.0" y="360" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Hablar yo</text>
+<text x="520" y="396" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">↳ volver regla: si el monto coincide</text>
+<rect x="508" y="428" width="264" height="108" rx="6" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3"/><text x="516" y="440" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LA CONVERSACIÓN ES EVIDENCIA</text>
+<rect x="520" y="448" width="196" height="22" rx="8" fill="rgba(45,49,66,0.06)"/>
+<text x="530" y="463" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">listo, ya te hice la transferencia</text>
+<rect x="588" y="476" width="172" height="22" rx="8" fill="rgba(45,49,66,0.14)"/>
+<text x="750" y="491" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="end">Perfecto, ya lo reviso</text>
+<text x="640" y="524" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">desliza para ver toda la conversación</text>
+<rect x="508" y="548" width="264" height="28" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="520" y="566" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Siguiente · Remarketing pregunta por Carlos</text>
+<rect x="508" y="588" width="264" height="60" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="516" y="600" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LOCUS · DILE QUÉ LOGRAR</text>
+<rect x="520" y="606" width="208" height="28" rx="8" fill="#ffffff" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="532" y="624" fill="#7a8399" font-size="10" font-family="'Geist', sans-serif" text-anchor="start">despacha lo de hoy…</text>
+<circle cx="748" cy="620" r="10" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<rect x="745" y="613" width="6" height="10" rx="3" fill="#4f5d75"/>
+<text x="912" y="44" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">SUPERFICIE 3 · ESPACIO POR INTENCIÓN</text><rect x="912" y="60" width="288" height="600" rx="10" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/><rect x="1026" y="70" width="60" height="6" rx="3" fill="rgba(45,49,66,0.15)"/>
+<rect x="924" y="92" width="264" height="92" rx="6" fill="rgba(45,49,66,0.04)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="932" y="104" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">INTENCIÓN INTERPRETADA</text>
+<text x="936" y="124" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">«despacha lo de hoy»</text>
+<rect x="936" y="138" width="44" height="20" rx="4" fill="#ffffff" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="958.0" y="152" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">hoy</text>
+<rect x="988" y="138" width="56" height="20" rx="4" fill="#ffffff" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="1016.0" y="152" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">listos</text>
+<rect x="1052" y="138" width="112" height="20" rx="4" fill="#ffffff" stroke="rgba(45,49,66,0.30)" stroke-width="1"/><text x="1108.0" y="152" fill="#2d3142" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">Bogotá + nacional</text>
+<text x="936" y="174" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" text-anchor="start">JEV ELIGIÓ LOS FILTROS · TOCA PARA CAMBIAR</text>
+<rect x="924" y="200" width="264" height="344" rx="6" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3"/><text x="932" y="212" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">ESPACIO COMPUESTO PARA ESTO</text>
+<rect x="936" y="220" width="240" height="64" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<text x="948" y="242" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">5 listos para salir</text>
+<rect x="948" y="254" width="128" height="8" rx="2" fill="#2d3142" fill-opacity="1"/>
+<rect x="1078" y="254" width="41" height="8" rx="2" fill="#2d3142" fill-opacity="0.35"/>
+<rect x="1121" y="254" width="41" height="8" rx="2" fill="#2d3142" fill-opacity="0.15"/>
+<text x="948" y="276" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">3 completos · 1 sin guía · 1 sin foto</text>
+<rect x="936" y="296" width="240" height="148" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<rect x="948" y="312" width="12" height="12" rx="2" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<text x="968" y="320" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">#38 · Bogotá</text>
+<text x="968" y="334" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Duo Zodiacal · $89.900</text>
+<rect x="1104" y="310" width="60" height="18" rx="4" fill="none" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="1134" y="323" fill="#2d3142" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">sin guía</text>
+<line x1="948" y1="344" x2="1164" y2="344" stroke="rgba(45,49,66,0.08)" stroke-width="1"/>
+<rect x="948" y="360" width="12" height="12" rx="2" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<text x="968" y="368" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">#41 · Medellín</text>
+<text x="968" y="382" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Cubo Love · $64.000</text>
+<rect x="1104" y="358" width="60" height="18" rx="4" fill="none" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="1134" y="371" fill="#2d3142" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">listo</text>
+<line x1="948" y1="392" x2="1164" y2="392" stroke="rgba(45,49,66,0.08)" stroke-width="1"/>
+<rect x="948" y="408" width="12" height="12" rx="2" fill="none" stroke="#4f5d75" stroke-width="1"/>
+<text x="968" y="416" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">#44 · Cali</text>
+<text x="968" y="430" fill="#7a8399" font-size="9" font-family="'Geist', sans-serif" text-anchor="start">Portavelas · $52.000</text>
+<rect x="1104" y="406" width="60" height="18" rx="4" fill="none" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+<text x="1134" y="419" fill="#2d3142" font-size="8" font-family="'Geist', sans-serif" text-anchor="middle">sin foto</text>
+<rect x="936" y="456" width="240" height="76" rx="6" fill="#ffffff" stroke="rgba(45,49,66,0.18)" stroke-width="1"/>
+<rect x="948" y="468" width="112" height="24" rx="4" fill="#2d3142"/><text x="1004.0" y="484" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Despachar 3</text>
+<rect x="1068" y="468" width="96" height="24" rx="4" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="1116.0" y="484" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Pedir 1 guía</text>
+<text x="948" y="516" fill="#7a8399" font-size="8" font-family="'Geist', sans-serif" text-anchor="start">cada despacho avisa al cliente</text>
+<rect x="924" y="560" width="264" height="88" rx="6" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="4,3"/><text x="932" y="572" fill="#7a8399" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">¿HERRAMIENTA O DESECHABLE?</text>
+<text x="936" y="592" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="start">¿Lo quieres cada mañana?</text>
+<rect x="936" y="608" width="104" height="24" rx="4" fill="#2d3142"/><text x="988.0" y="624" fill="#ffffff" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Fijar · 8:00</text>
+<rect x="1048" y="608" width="88" height="24" rx="4" fill="#ffffff" stroke="rgba(45,49,66,0.35)" stroke-width="1"/><text x="1092.0" y="624" fill="#2d3142" font-size="10" font-family="'Geist', sans-serif" text-anchor="middle">Solo hoy</text>
+<text x="432" y="404" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="middle">sin abrir la app</text><path d="M 392 410 Q 372 412 358 420" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="356" cy="420" r="2" fill="#2d3142"/>
+<text x="848" y="470" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="middle">chat = evidencia</text><path d="M 806 476 Q 790 480 774 482" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="772" cy="482" r="2" fill="#2d3142"/>
+<line x1="40" y1="696" x2="1240" y2="696" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="719" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="710" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="rgba(45,49,66,0.35)" stroke-width="1"/>
+<text x="138" y="718" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Ancla fija</text>
+<rect x="226" y="710" width="14" height="10" rx="2" fill="rgba(45,49,66,0.015)" stroke="rgba(45,49,66,0.45)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="248" y="718" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Se compone por momento (Jev)</text>
+<rect x="432" y="710" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="454" y="718" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Momento en foco</text>
+</svg>
+</div>
+<p class="figcap">Figura 7 · Tres superficies, ninguna pestaña. La mayoría de los momentos se decide fuera de la app; dentro, la conversación es evidencia y los espacios aparecen por intención.</p>
+  <div class="cards">
+    <div class="card"><div class="card-header"><span class="card-dot ink"></span><h3>Ambiente · fuera de la app</h3></div>
+      <ul><li>Un Live Update con el pulso del día: cuántos momentos esperan y cuántos pedidos van en camino.</li>
+      <li>Notificaciones que <em>son</em> la decisión. Responder una pregunta es un toque; aprobar dinero pide huella.</li>
+      <li>Un widget (Jetpack Glance) con el mismo pulso en la pantalla de inicio.</li></ul></div>
+    <div class="card"><div class="card-header"><span class="card-dot coral"></span><h3>Momentos · la única pantalla fija</h3></div>
+      <ul><li>Una cola finita con lo que los agentes escalan. Cada uno es un aviso, una pregunta o una revisión.</li>
+      <li>Cada momento muestra quién propone, qué, con qué evidencia, con qué confianza y si se puede deshacer.</li>
+      <li>El operador aprueba, edita, habla él mismo con el cliente o convierte la decisión en regla.</li></ul></div>
+    <div class="card"><div class="card-header"><span class="card-dot muted"></span><h3>Intención · el locus</h3></div>
+      <ul><li>El operador escribe o dicta un resultado: «despacha lo de hoy», «¿quién no ha pagado?».</li>
+      <li>Jev elige el espacio y los filtros del catálogo, el código consulta y aparece un espacio compuesto.</li>
+      <li>Al terminar, el espacio se disuelve o se fija como herramienta.</li></ul></div>
+  </div>
+  <h3>Un día con el paradigma nuevo</h3>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 540" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="jornada-title jornada-desc">
+<title id="jornada-title">Un día del operador con el paradigma nuevo</title>
+<desc id="jornada-desc">Mapa de viaje del operador en cinco momentos del día: mira el pulso, decide pagos sin abrir la app, atiende un caso difícil con la conversación como evidencia, despacha por intención y cierra el día convirtiendo una decisión en regla.</desc>
+
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<text x="212" y="40" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">07:30</text>
+<text x="212" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">El pulso</text>
+<text x="436" y="40" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">09:10</text>
+<text x="436" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Decide sin abrir</text>
+<text x="660" y="40" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">11:40</text>
+<text x="660" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Caso difícil</text>
+<text x="884" y="40" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">15:00</text>
+<text x="884" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Despacho por intención</text>
+<text x="1108" y="40" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">18:30</text>
+<text x="1108" y="60" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Listo por hoy</text>
+<line x1="112" y1="100" x2="1208" y2="100" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="104" y="104" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.10em">ALTO</text>
+<line x1="112" y1="180" x2="1208" y2="180" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="104" y="184" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.10em">NEUTRO</text>
+<line x1="112" y1="260" x2="1208" y2="260" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="104" y="264" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.10em">BAJO</text>
+<polyline points="212,140 436,100" fill="none" stroke="#4f5d75" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="436,100 660,260" fill="none" stroke="#eb6c36" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="660,260 884,140 1108,100" fill="none" stroke="#4f5d75" stroke-width="1.5" stroke-linejoin="round"/>
+<circle cx="212" cy="140" r="5" fill="#4f5d75"/>
+<circle cx="436" cy="100" r="5" fill="#4f5d75"/>
+<circle cx="660" cy="260" r="5" fill="#eb6c36"/>
+<circle cx="884" cy="140" r="5" fill="#4f5d75"/>
+<circle cx="1108" cy="100" r="5" fill="#4f5d75"/>
+<line x1="112" y1="280" x2="1208" y2="280" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<line x1="112" y1="376" x2="1208" y2="376" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<line x1="112" y1="424" x2="1208" y2="424" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<line x1="112" y1="472" x2="1208" y2="472" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="104" y="304" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.14em">ACCIONES</text>
+<text x="104" y="404" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.14em">SUPERFICIE</text>
+<text x="104" y="452" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end" letter-spacing="0.14em">JEV DECIDE</text>
+<text x="212" y="304" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" text-anchor="middle">Mira el pulso del día</text>
+<text x="212" y="404" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">pantalla bloqueada · live update</text>
+<text x="212" y="452" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">urgencia de cada momento</text>
+<text x="436" y="304" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" text-anchor="middle">Aprueba 2 pagos sin abrir</text>
+<text x="436" y="404" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">notificación accionable</text>
+<text x="436" y="452" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">superficie: notificación</text>
+<text x="660" y="304" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" text-anchor="middle">Toma un caso difícil</text>
+<text x="660" y="404" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">conversación como evidencia</text>
+<text x="660" y="452" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">evidencia primero: chat</text>
+<text x="884" y="304" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" text-anchor="middle">Pide «despacha lo de hoy»</text>
+<text x="884" y="404" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">espacio por intención</text>
+<text x="884" y="452" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">espacio y filtros del catálogo</text>
+<text x="1108" y="304" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif" text-anchor="middle">Fija una regla y cierra</text>
+<text x="1108" y="404" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">cola vacía · listo por hoy</text>
+<text x="1108" y="452" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">¿decisión repetible? → regla</text>
+<rect x="568" y="316" width="184" height="16" rx="2" fill="rgba(235,108,54,0.08)" stroke="rgba(235,108,54,0.50)" stroke-width="0.8" stroke-dasharray="3,3"/>
+<text x="660" y="328" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">CLIENTE MOLESTO POR RETRASO</text>
+<rect x="568" y="336" width="184" height="16" rx="2" fill="rgba(235,108,54,0.08)" stroke="rgba(235,108,54,0.50)" stroke-width="0.8" stroke-dasharray="3,3"/>
+<text x="660" y="348" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">NECESITA EL CONTEXTO ARMADO</text>
+<line x1="40" y1="496" x2="1240" y2="496" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="519" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<line x1="116" y1="516" x2="132" y2="516" stroke="#4f5d75" stroke-width="1.5"/><circle cx="124" cy="516" r="3" fill="#4f5d75"/>
+<text x="140" y="519" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Cómo se siente</text>
+<line x1="296" y1="516" x2="312" y2="516" stroke="#eb6c36" stroke-width="1.5"/><circle cx="304" cy="516" r="3" fill="#eb6c36"/>
+<text x="320" y="519" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Punto más bajo</text>
+<rect x="476" y="512" width="16" height="8" rx="2" fill="rgba(235,108,54,0.08)" stroke="rgba(235,108,54,0.50)" stroke-width="0.8" stroke-dasharray="3,3"/>
+<text x="500" y="519" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Fricción a diseñar</text>
+</svg>
+</div>
+<p class="figcap">Figura 8 · Un día del operador. El punto bajo sigue existiendo (un cliente molesto necesita a una persona), pero llega con el contexto armado.</p>
+  <div class="prose">
+  <p>El punto bajo del día no desaparece: un cliente molesto sigue necesitando a una persona. Lo que cambia es
+  cómo llega ese momento. El operador no tiene que buscar la conversación ni reconstruir la historia: el momento
+  llega con la evidencia armada, y lo primero que se ve es lo que Jev juzgó más útil para decidir.</p>
+  </div>
+  <h3>La constitución de la interfaz</h3>
+  <ol class="rules">
+    <li><strong>Se declara, no se navega</strong>El locus es la navegación. No hay pestañas.</li>
+    <li><strong>Los agentes hacen, el operador decide</strong>Solo llega lo que necesita un humano: avisar, preguntar o revisar.</li>
+    <li><strong>Aparece y se disuelve</strong>Un espacio dura lo que dura su intención. Solo persiste lo que el operador fija.</li>
+    <li><strong>La decisión va al operador</strong>Primero la notificación, la pantalla bloqueada o el widget; abrir la app es el último recurso.</li>
+    <li><strong>Todo termina</strong>La cola tiene final: «listo por hoy». No hay scroll infinito.</li>
+    <li><strong>Cada momento se explica</strong>Quién propone, por qué, con qué confianza y si se puede deshacer.</li>
+    <li><strong>Lo que se repite se vuelve regla</strong>Siempre con aprobación explícita, visible en un solo lugar y reversible.</li>
+    <li><strong>Nada se mueve bajo el dedo</strong>El locus y el momento en foco no cambian de lugar. Lo nuevo espera su turno.</li>
+  </ol>
+  <h3>Catálogo inicial de momentos</h3>
+  <div class="table-wrap"><table><thead><tr><th>Momento</th><th>Patrón</th><th>Lo propone</th><th>Dónde aparece</th><th>Acciones</th></tr></thead><tbody><tr><td>Confirmar pago</td><td>revisar</td><td>Ventas</td><td>notificación, con huella</td><td>Aprobar · Editar · Hablar yo</td></tr><tr><td>¿Envío gratis?</td><td>preguntar</td><td>Remarketing</td><td>notificación</td><td>Sí · No · Hablar yo</td></tr><tr><td>Cliente molesto</td><td>avisar</td><td>Ventas</td><td>cola, con la conversación como evidencia</td><td>Hablar yo · Devolver al bot</td></tr><tr><td>Pedido atrasado</td><td>avisar</td><td>Order Sentinel</td><td>cola</td><td>Reprogramar · Avisar al cliente</td></tr><tr><td>Foto de producto</td><td>preguntar</td><td>Ventas</td><td>cola</td><td>Enviar foto del catálogo · Tomar foto</td></tr><tr><td>Listo sin guía</td><td>revisar</td><td>Entregas (ETA)</td><td>espacio «Despacho de hoy»</td><td>Pedir guía · Despachar</td></tr><tr><td>Fuera de la ventana de 24 h</td><td>revisar</td><td>Remarketing</td><td>notificación</td><td>Enviar plantilla · Descartar</td></tr><tr><td>Campaña con muchas bajas</td><td>avisar</td><td>Marketing</td><td>cola</td><td>Pausar campaña · Ver respuestas</td></tr></tbody></table></div>
+  <h3>Qué hace Jev en este paradigma</h3>
+  <div class="prose"><ul>
+    <li><strong>Triage.</strong> Un Noul decide si el momento necesita a un humano, y un Score mide qué tan urgente es. El orden de la cola sale de ahí.</li>
+    <li><strong>Superficie.</strong> Un Choice decide dónde se decide: notificación, cola o conversación.</li>
+    <li><strong>Evidencia primero.</strong> Otro Choice elige qué se ve arriba: el recibo, el fragmento del chat o los datos del pedido.</li>
+    <li><strong>Intención.</strong> Choices sobre el catálogo de espacios y sobre filtros enumerados («hoy», «esta semana»). Para nombres de clientes y productos, el código busca candidatos y Jev elige entre ellos.</li>
+    <li><strong>Reglas.</strong> Un Noul pregunta si una decisión es repetible. El conteo de cuántas veces se decidió igual lo hace el código.</li>
+  </ul></div>
+  <h3>Qué cambia en la arquitectura</h3>
+  <div class="prose"><p>Casi nada, y eso es buena señal: el contrato SDUI y el Composer ya eran la base correcta. Cambian cuatro cosas:</p>
+  <ol>
+    <li><strong>Aparece la Propuesta</strong> (figura 4). Los agentes publican propuestas por un <code>ProposalPort</code>
+    del SDK, en lugar de solo pasarle la conversación al humano. La acción de una propuesta es la misma
+    <code>ActionRef</code> que la tool del agente: cada botón que toca el operador ejecuta exactamente lo que habría
+    ejecutado el agente.</li>
+    <li><strong>El renderer gana destinos.</strong> Además de la app, un mismo surface se pinta como notificación
+    (acciones + <code>RemoteInput</code>), como Live Update y como widget de Glance. Cada destino usa un subconjunto
+    del catálogo.</li>
+    <li><strong>Jev suma preguntas</strong> de superficie, de evidencia y de repetibilidad.</li>
+    <li><strong>«Volver regla» escribe políticas</strong> que los agentes leen antes de escalar. Tienen aprobación
+    explícita, se ven en un solo lugar y tienen botón de deshacer.</li>
+  </ol></div>
+</section>
+
+<section id="s9">
+  <p class="eyebrow">09 · Confianza y seguridad</p>
+  <h2>La política de cada slot</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 744" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="confianza-title confianza-desc">
+<title id="confianza-title">Política de confianza por slot</title>
+<desc id="confianza-desc">Diagrama de flujo: si Jev no responde en 300 ms mandan las reglas; con confianza de 0,85 o más se muestra una tarjeta, entre 0,60 y 0,85 un chip, y el operador siempre decide.</desc>
+
+<defs><marker id="f8-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="f8-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="f8-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="f8-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="f8-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="f8-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<path d="M 640 72 V 96" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#f8-arrow)"/>
+<path d="M 640 192 V 224" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#f8-arrow)"/>
+<rect x="648" y="202" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="658" y="211" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SÍ</text>
+<path d="M 760 144 H 952 Q 960 144 960 152 V 496" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#f8-arrow)"/>
+<rect x="818" y="124" width="76" height="12" rx="2" fill="#f5f5f5"/><text x="856" y="133" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO · TIMEOUT</text>
+<path d="M 520 272 H 328 Q 320 272 320 280 V 496" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#f8-arrow-accent)"/>
+<rect x="410" y="252" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="420" y="261" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SÍ</text>
+<path d="M 640 320 V 352" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#f8-arrow)"/>
+<rect x="648" y="330" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="658" y="339" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+<path d="M 640 448 V 496" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#f8-arrow)"/>
+<rect x="648" y="466" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="658" y="475" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SÍ</text>
+<path d="M 760 400 H 872 Q 880 400 880 408 V 496" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#f8-arrow)"/>
+<rect x="806" y="380" width="20" height="12" rx="2" fill="#f5f5f5"/><text x="816" y="389" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+<path d="M 320 552 V 636 Q 320 644 328 644 H 480" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#f8-arrow)"/>
+<path d="M 640 552 V 616" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#f8-arrow)"/>
+<path d="M 920 552 V 636 Q 920 644 912 644 H 800" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#f8-arrow)"/>
+<rect x="540" y="32" width="200" height="40" rx="20" fill="#f5f5f5"/><rect x="540" y="32" width="200" height="40" rx="20" fill="#ffffff" stroke="#2d3142" stroke-width="1"/><text x="640" y="56" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Slot a resolver</text>
+<polygon points="640,96 760,144 640,192 520,144" fill="#f5f5f5"/><polygon points="640,96 760,144 640,192 520,144" fill="#ffffff" stroke="#2d3142" stroke-width="1"/><text x="640" y="148" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Respuesta ≤ 300 ms?</text>
+<polygon points="640,224 760,272 640,320 520,272" fill="#f5f5f5"/><polygon points="640,224 760,272 640,320 520,272" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/><text x="640" y="276" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Confianza ≥ 0,85?</text>
+<polygon points="640,352 760,400 640,448 520,400" fill="#f5f5f5"/><polygon points="640,352 760,400 640,448 520,400" fill="#ffffff" stroke="#2d3142" stroke-width="1"/><text x="640" y="404" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">¿Confianza ≥ 0,60?</text>
+<rect x="200" y="496" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="200" y="496" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="320" y="520" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Momento destacado</text>
+<text x="320" y="536" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">cola o notificación · con porqué</text>
+<rect x="520" y="496" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="520" y="496" width="240" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="640" y="520" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Sugerencia compacta</text>
+<text x="640" y="536" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">chip · un toque</text>
+<rect x="800" y="496" width="240" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="800" y="496" width="240" height="56" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<text x="920" y="520" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Layout por reglas</text>
+<text x="920" y="536" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">determinista · sin Jev</text>
+<rect x="480" y="616" width="320" height="56" rx="6" fill="#f5f5f5"/>
+<rect x="480" y="616" width="320" height="56" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="640" y="640" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">El operador decide</text>
+<text x="640" y="656" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">confirmación nativa · queda registrado</text>
+<text x="784" y="276" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">umbrales por slot</text><path d="M 780 272 Q 772 268 764 272" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/><circle cx="762" cy="272" r="2" fill="#2d3142"/>
+<line x1="40" y1="700" x2="1240" y2="700" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="723" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<rect x="116" y="714" width="16" height="10" rx="5" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="138" y="722" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Inicio</text>
+<polygon points="213,713 220,719 213,725 206,719" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="228" y="722" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Decisión</text>
+<rect x="308" y="714" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="330" y="722" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Resultado</text>
+<rect x="414" y="714" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+<text x="436" y="722" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Respaldo</text>
+<path d="M 516 719 H 532" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#f8-arrow-accent)"/>
+<text x="538" y="722" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Camino con Jev seguro</text>
+</svg>
+</div>
+<p class="figcap">Figura 9 · Los umbrales son por slot y se calibran con los datos de la fase en sombra. Los de TypeSafe (0,60 y 0,85) son el punto de partida.</p>
+  <p class="code-cap">Lo que el Composer le manda a Jev cuando llega una propuesta</p>
+  <pre><code class="json">POST https://openrouter.ai/api/alpha/decisions   (PerceptionPort · PR #372)
+{
+  &quot;model&quot;: &quot;typesafe/jev-1.13&quot;,
+  &quot;state&quot;: {
+    &quot;proposal&quot;: { &quot;agent&quot;: &quot;sales&quot;, &quot;action&quot;: &quot;order.confirm_payment&quot;, &quot;reversible&quot;: false },
+    &quot;conversation&quot;: {
+      &quot;last_customer_messages&quot;: [&quot;[image] payment receipt&quot;, &quot;listo, ya te hice la transferencia&quot;],
+      &quot;minutes_since_last_customer_message&quot;: &quot;2-5&quot;
+    },
+    &quot;order&quot;:    { &quot;stage&quot;: &quot;new&quot;, &quot;payment&quot;: &quot;pending&quot;, &quot;method&quot;: &quot;transfer&quot; },
+    &quot;vision&quot;:   { &quot;receipt_detected&quot;: true, &quot;amount_matches_order&quot;: &quot;yes&quot; },
+    &quot;operator&quot;: { &quot;app_in_foreground&quot;: false, &quot;open_moments&quot;: &quot;3-5&quot; }
+  },
+  &quot;questions&quot;: {
+    &quot;surface&quot;: {
+      &quot;type&quot;: &quot;choice&quot;,
+      &quot;instructions&quot;: &quot;Where should the operator decide this moment?&quot;,
+      &quot;criteria&quot;: {
+        &quot;notification&quot;: { &quot;what&quot;: &quot;One tap is enough; the evidence fits in two lines&quot; },
+        &quot;queue&quot;:        { &quot;what&quot;: &quot;Needs a quick look at evidence inside the app&quot; },
+        &quot;conversation&quot;: { &quot;what&quot;: &quot;The operator must talk to the customer directly&quot; }
+      }
+    },
+    &quot;evidence_first&quot;: {
+      &quot;type&quot;: &quot;choice&quot;,
+      &quot;instructions&quot;: &quot;Which evidence should the operator see first?&quot;,
+      &quot;criteria&quot;: {
+        &quot;receipt_photo&quot;: { &quot;what&quot;: &quot;The payment receipt image&quot; },
+        &quot;chat_excerpt&quot;:  { &quot;what&quot;: &quot;The last messages of the conversation&quot; },
+        &quot;order_facts&quot;:   { &quot;what&quot;: &quot;Order total, items and payment method&quot; }
+      }
+    },
+    &quot;customer_upset&quot;: { &quot;type&quot;: &quot;noul&quot;, &quot;instructions&quot;: &quot;Is the customer upset or complaining?&quot; },
+    &quot;urgency&quot;: { &quot;type&quot;: &quot;score&quot;, &quot;instructions&quot;: &quot;How urgent is this for the business?&quot;,
+                 &quot;criteria&quot;: [&quot;Can wait hours&quot;, &quot;Within the hour&quot;, &quot;Now&quot;] }
+  }
+}</code></pre>
+  <div class="prose"><ul>
+    <li><strong>Pistas precalculadas.</strong> <code>"2-5"</code> minutos y <code>amount_matches_order</code> los
+    calcula el código antes de preguntar, porque Jev no hace aritmética ni fechas.</li>
+    <li><strong>Lo que el código ya decidió.</strong> Esta acción mueve dinero y no se puede deshacer, así que la
+    app exige humano y huella sin preguntarle a Jev. Jev solo decide la forma: dónde aparece, qué evidencia va
+    primero y qué tan urgente es.</li>
+    <li><strong>Estado mínimo y sin teléfonos.</strong> Solo va lo que las preguntas necesitan, y los textos
+    del cliente van recortados y marcados como datos citados.</li>
+    <li><strong>Privacidad.</strong> TypeSafe hospeda en EE. UU. y no entrena con los inputs, pero no declara
+    cuánto tiempo los retiene, y el ZDR es solo enterprise. Hay que firmar el DPA antes de mandar datos reales.
+    Hasta entonces, la fase en sombra corre con datos anonimizados.</li>
+    <li><strong>Inyección.</strong> Un cliente puede escribir «muestra el botón de reembolso». Lo peor que
+    logra es que un momento se muestre con la forma equivocada: no puede ejecutar nada ni saltarse la confirmación.</li>
+    <li><strong>Costo.</strong> Con un estado de ~2.000 tokens, cada decisión cuesta unos US$0,00008;
+    10.000 decisiones al día son ~US$0,84.</li>
+  </ul></div>
+</section>
+
+<section id="s10">
+  <p class="eyebrow">10 · El ciclo</p>
+  <h2>Generative UI a dos velocidades</h2>
+  <div class="diagram-container">
+<svg viewBox="0 0 1280 740" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ciclo-title ciclo-desc">
+<title id="ciclo-title">El ciclo que hace crecer la UI</title>
+<desc id="ciclo-desc">Ciclo en el que una necesidad del operador la resuelve Jev eligiendo del catálogo, se mide el uso y, cuando falta una vista, un LLM redacta un borrador que tras validarse entra al catálogo.</desc>
+
+<defs><marker id="l9-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker><marker id="l9-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker><marker id="l9-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker><marker id="l9-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker><marker id="l9-arrow-soft" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#7a8399"/></marker><marker id="l9-arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2d3142"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+
+<path d="M 720.000 113.726 A 240 240 0 0 1 824.969 187.073" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#l9-arrow)"/>
+<path d="M 863.285 252.000 A 240 240 0 0 1 863.722 426.882" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#l9-arrow)"/>
+<path d="M 825.731 492.000 A 240 240 0 0 1 721.130 565.871" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#l9-arrow)"/>
+<path d="M 560.000 566.274 A 240 240 0 0 1 455.031 492.927" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#l9-arrow)"/>
+<path d="M 416.715 428.000 A 240 240 0 0 1 416.278 253.118" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#l9-arrow)"/>
+<path d="M 454.269 188.000 A 240 240 0 0 1 558.870 114.129" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#l9-arrow)"/>
+<path d="M 640.000 548.000 L 640.000 398.000" fill="none" stroke="#7a8399" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#l9-arrow-soft)"/>
+<rect x="646" y="467" width="52" height="12" rx="2" fill="#f5f5f5"/><text x="672" y="476" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">UMBRALES</text>
+<path d="M 487.426 252.000 L 544.737 285.000" fill="none" stroke="#7a8399" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#l9-arrow-soft)"/>
+<rect x="473" y="285" width="60" height="12" rx="2" fill="#f5f5f5"/><text x="503" y="294" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PLANTILLA</text>
+<rect x="560" y="68" width="160" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="560" y="68" width="160" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="640" y="96" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Necesidad</text>
+<text x="640" y="112" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">momento o intención</text>
+<rect x="768" y="188" width="160" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="768" y="188" width="160" height="64" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="848" y="216" fill="#eb6c36" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Jev elige</text>
+<text x="848" y="232" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">choice sobre el catálogo</text>
+<rect x="768" y="428" width="160" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="768" y="428" width="160" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="848" y="456" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Se pinta</text>
+<text x="848" y="472" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">nativo + su porqué</text>
+<rect x="560" y="548" width="160" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="560" y="548" width="160" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="640" y="576" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Se mide</text>
+<text x="640" y="592" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">usado · descartado</text>
+<rect x="352" y="428" width="160" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="352" y="428" width="160" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="432" y="456" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Detecta hueco</text>
+<text x="432" y="472" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">LLM redacta borrador</text>
+<rect x="352" y="188" width="160" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="352" y="188" width="160" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="432" y="216" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Valida y fija</text>
+<text x="432" y="232" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">schema + operador</text>
+<rect x="540" y="288" width="200" height="104" rx="8" fill="#2d3142"/>
+<text x="640" y="338" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Catálogo + políticas</text>
+<text x="640" y="356" fill="rgba(245,245,245,0.75)" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">plantillas · umbrales</text>
+<line x1="40" y1="696" x2="1240" y2="696" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="719" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEYENDA</text>
+<path d="M 116 715 H 132" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#l9-arrow)"/>
+<text x="138" y="718" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Flujo del ciclo</text>
+<path d="M 254 715 H 270" fill="none" stroke="#7a8399" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#l9-arrow-soft)"/>
+<text x="276" y="718" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Escribe en el catálogo</text>
+<rect x="428" y="710" width="14" height="10" rx="2" fill="#2d3142"/>
+<text x="450" y="718" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Estado acumulado</text>
+<rect x="570" y="710" width="14" height="10" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+<text x="592" y="718" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Paso en milisegundos</text>
+</svg>
+</div>
+<p class="figcap">Figura 10 · Jev trabaja en milisegundos sobre lo que existe. El LLM trabaja en minutos, con revisión humana, sobre lo que falta. Cada vista fijada es una opción más para Jev.</p>
+  <div class="prose">
+  <p><strong>Runtime (Jev, milisegundos).</strong> Elige, ordena y decide cuánto destaca cada pieza del catálogo.
+  Es barato, calibrado y acotado.</p>
+  <p><strong>Diseño (LLM, minutos).</strong> Redacta plantillas nuevas en el formato del catálogo cuando la
+  medición muestra un hueco: intenciones que caen en <code>none</code>, momentos que se descartan siempre,
+  vistas que se piden y no existen. Ninguna plantilla generada se pinta sin pasar el schema y sin que el
+  operador la apruebe.</p>
+  <p>Así la interfaz crece con lo que el operador realmente necesita, y la decisión en vivo sigue siendo
+  rápida y predecible.</p>
+  </div>
+</section>
+<section id="s11"><p class="eyebrow">11 · Backend</p><h2>El plugin <code>mobile_ui</code></h2><div class="table-wrap"><table><thead><tr><th>Método</th><th>Ruta</th><th>Qué hace</th></tr></thead><tbody><tr><td>GET</td><td><code>/api/mobile/surfaces/{surface_id}</code></td><td>Arma y devuelve un surface (ETag / 304).</td></tr><tr><td>GET</td><td><code>/api/mobile/catalog</code></td><td>Manifiesto de plantillas y versiones, para precargar y usar offline.</td></tr><tr><td>POST</td><td><code>/api/mobile/intents</code></td><td>Locus: interpreta la intención y devuelve un espacio compuesto (fase 4).</td></tr><tr><td>POST</td><td><code>/api/mobile/decisions/{id}/feedback</code></td><td>Registra si el momento se aprobó, se editó, se descartó o se ignoró.</td></tr><tr><td>POST</td><td><code>/api/mobile/rules</code></td><td>«Volver regla»: guarda una política que los agentes leen, con aprobación explícita y botón de deshacer.</td></tr><tr><td>SDK</td><td><code>ProposalPort</code></td><td>Los agentes publican propuestas: acción, evidencia, reversibilidad y patrón (avisar, preguntar o revisar).</td></tr><tr><td>SSE</td><td><code>/api/dashboard/events</code></td><td>Dominio nuevo <code>mobile</code>, tipo <code>surface_patch</code>: patches por slot.</td></tr><tr><td>—</td><td>Endpoints actuales de chats y orders</td><td>Acciones. La paridad sale sin reescribir nada.</td></tr></tbody></table></div>
+  <div class="prose">
+  <p>Gates, siguiendo el harness (TDD primero):</p>
+  <ul>
+    <li>Cada plantilla se valida contra el JSON Schema del protocolo, y su <code>requires[]</code> contra el
+    catálogo (pytest).</li>
+    <li>Un test de la app decodifica <strong>los mismos fixtures JSON</strong>, así que el contrato queda
+    verificado en ambos lados.</li>
+    <li>Golden de decisiones: conversaciones reales anonimizadas, cada una con su tarjeta esperada, corriendo
+    en sombra.</li>
+    <li><code>DecisionPort</code> tiene su TCK (P-27). El adaptador de TypeSafe vive en platform y se expone
+    por el SDK (P-28 / P-31).</li>
+  </ul>
+  </div>
+</section>
+<section id="s12"><p class="eyebrow">12 · Roadmap y riesgos</p><h2>En qué orden construirlo</h2><div class="table-wrap"><table><thead><tr><th>Fase</th><th>Qué se construye</th><th>Termina cuando</th></tr></thead><tbody><tr><td>F0 · Contrato y spike</td><td>Protocolo v1, motor y renderer con 8 primitivas. <code>mobile_ui</code> sirve 1 surface desde un fixture. Evaluación offline de Jev con conversaciones reales anonimizadas, en español.</td><td>La app pinta <code>chat.conversation</code> desde JSON y tenemos una precisión medida de Jev por tarjeta.</td></tr><tr><td>F1 · Paridad sin Jev</td><td>Login, bandeja, conversación, composer con outbox y cámara, hoja de pedidos, reactivar y pedido rápido. Slots resueltos con reglas deterministas. La cola de momentos arranca con reglas: cada traspaso a humano de hoy ya es un momento. Historial paginado en el backend. FCM.</td><td>El operador trabaja el día completo en la app nativa y la de Tauri queda congelada.</td></tr><tr><td>F2 · Jev en sombra</td><td><code>DecisionPort</code> con el adaptador de TypeSafe. Cada decisión se registra al lado de la de las reglas. Tablero de calibración.</td><td>Cada tarjeta tiene un umbral elegido con datos.</td></tr><tr><td>F3 · Momentos en vivo</td><td>Jev decide la forma, la superficie y la urgencia de cada momento. Notificaciones accionables, Live Update y widget, detrás de flags por tenant.</td><td>El operador resuelve la mayoría de los momentos sin abrir la app, y nadie reporta que la pantalla «se mueve».</td></tr><tr><td>F4 · Intención y autor</td><td>Locus de intención, espacios compuestos, «volver regla», y un LLM que redacta plantillas borrador con el flujo validar → fijar.</td><td>Las vistas y reglas que fija el operador entran sin release.</td></tr><tr><td>F5 · Cierre</td><td>Retirar la app Tauri. Revisar Remote Compose si ya está en beta.</td><td>—</td></tr></tbody></table></div><div class="table-wrap"><table><thead><tr><th>Riesgo / decisión</th><th>Por qué importa</th><th>Propuesta</th></tr></thead><tbody><tr><td>Acceso a Jev y DPA</td><td>Sin acceso no hay F2 con datos reales, y la retención no está declarada.</td><td>Pedir el acceso ya. F0 y F1 no dependen de Jev; F2 arranca con datos anonimizados.</td></tr><tr><td>Jev en español</td><td>La documentación advierte menor rendimiento fuera del inglés.</td><td>Preguntas y criterios en inglés, datos en español. Se mide en F0, y el plan B es un LLM barato detrás del mismo puerto.</td></tr><tr><td>Quién publica plantillas</td><td>Publicar UI es publicar producto.</td><td>GitOps: PR, gate y publicación por CI. El editor visual en Acktos Studio viene después.</td></tr><tr><td>Historial sin paginar</td><td>En nativo, el timeline necesita cursores.</td><td>Endpoint paginado y eventos delta en SSE, dentro de F1.</td></tr><tr><td>Desfase de catálogo</td><td>Una app vieja puede recibir una plantilla nueva.</td><td><code>requires[]</code> + <code>catalogVersion</code> negociado, con <code>Unsupported</code> como red.</td></tr><tr><td>Pantalla que «baila»</td><td>Una UI generativa mal hecha cansa.</td><td>Regla 8: el locus y el momento en foco no se mueven; lo nuevo espera su turno.</td></tr><tr><td>Cambio de hábito</td><td>El operador lleva meses trabajando desde la bandeja.</td><td>La bandeja sigue disponible como espacio. Se mide qué porcentaje de momentos se resuelve desde la notificación y desde la cola.</td></tr></tbody></table></div>
+  <p class="eyebrow" style="margin-top:2rem">Fuentes</p>
+  <div class="sources">
+    TypeSafe · índice de docs <span>docs.typesafe.ai/llms.txt</span><br>
+    TypeSafe · API <span>docs.typesafe.ai/api.md</span><br>
+    TypeSafe · cómo construir con System One <span>docs.typesafe.ai/concepts/how-to-build-with-system-one.md</span><br>
+    TypeSafe · límites de Jev 1.13 <span>docs.typesafe.ai/model-jaggedness/jev-1.13.md</span><br>
+    TypeSafe · routing por confianza <span>docs.typesafe.ai/patterns/confidence-routing.md</span><br>
+    TypeSafe · modelos y precios <span>docs.typesafe.ai/models.md</span><br>
+    A2UI <span>a2ui.org · github.com/google/A2UI</span><br>
+    A2UI v0.9 <span>copilotkit.ai/blog/a2ui-whats-new-in-google-generative-ui-spec</span><br>
+    Remote Compose <span>developer.android.com/jetpack/androidx/releases/compose-remote</span><br>
+    Navigation 3 <span>developer.android.com/jetpack/androidx/releases/navigation3</span><br>
+    Arquitectura de UI en Compose <span>developer.android.com/develop/ui/compose/architecture</span><br>
+    Circuit <span>slackhq.github.io/circuit</span><br>
+    Nielsen · AI: first new UI paradigm <span>nngroup.com/articles/ai-paradigm</span><br>
+    Mercury OS <span>uxdesign.cc/introducing-mercury-os-f4de45a04289</span><br>
+    Deutsche Telekom · app-free AI phone <span>telekom.com</span><br>
+    LangChain · ambient agents <span>langchain.com/blog/introducing-ambient-agents</span><br>
+    ChatGPT Pulse <span>platformer.news/chatgpt-pulse-proactive-ai</span><br>
+    Pixel Magic Cue <span>blog.google/products/pixel/google-pixel-magic-cue-ai-feature</span><br>
+    Android 16 progress-centric notifications <span>developer.android.com/about/versions/16/features/progress-centric-notifications</span><br>
+    Bernstein · just-in-time interfaces <span>arxiv.org/abs/2609.06770</span><br>
+    Ink &amp; Switch · malleable software <span>inkandswitch.com/essay/malleable-software</span><br>
+    Builder.io · generative UI agent-native <span>builder.io/blog/designing-generative-ui-in-an-agent-native-world</span><br>
+    Google Research · generative UI <span>research.google/blog/generative-ui-a-rich-custom-visual-interactive-user-experience-for-any-prompt</span>
+  </div>
+</section>
+
+<div class="footer"><span>AgencyHubara · App Operador nativa · SDUI + Generative UI</span><span>Propuesta · 28 sep 2026</span></div>
+</div>
+</body>
+</html>

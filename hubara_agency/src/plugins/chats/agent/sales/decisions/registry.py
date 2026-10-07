@@ -27,6 +27,7 @@ Sin Temporal: lo usan el ingest, las tools (vía `guards`) y las activities.
 from __future__ import annotations
 
 import importlib
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,7 @@ from src.sdk.decisionkit import BundleError, CompiledBundle, CompiledTurn, Diagn
 
 __all__ = [
     "BUNDLES_DIR", "BUNDLE_ENV", "DEFAULT_BUNDLE", "active_bundle", "active_bundle_id", "active_turn", "capability",
-    "reset", "warm_up",
+    "foreign_capability", "reset", "warm_up",
 ]
 
 logger = structlog.get_logger()
@@ -179,9 +180,28 @@ def capability(name: str) -> Any:
     return found
 
 
+#: Capacidades de otros paquetes (catálogo propio) ya resueltas: (id@versión, nombre) → capacidad.
+_foreign: dict[tuple[str, str], Any] = {}
+
+
+def foreign_capability(name: str, *, bundle: CompiledBundle, builtins: Callable[[str, str], Callable[..., Any]]) -> Any:
+    """La capacidad `name` de OTRO paquete con su propio catálogo (la App
+    Operador: `chats/shared/operator/decisions`), con la forma de `Capability`:
+    corre por el MISMO `decide()` que las de la tienda, con los builtins de su
+    paquete. `KeyError` si el paquete no la trae."""
+    key = (bundle.ref, name)
+    found = _foreign.get(key)
+    if found is None:
+        if name not in bundle.capabilities:
+            raise KeyError(f"el paquete {bundle.ref} no trae la capacidad {name!r}")
+        found = _foreign[key] = BundledCapability(bundle.capability(name), builtins=builtins)
+    return found
+
+
 def reset() -> None:
     """Olvida lo resuelto (pruebas, o tras cambiar la config del proceso)."""
     _resolved.clear()
+    _foreign.clear()
     _broken.clear()
     _bundle.cache_clear()
     store_pack.reset()

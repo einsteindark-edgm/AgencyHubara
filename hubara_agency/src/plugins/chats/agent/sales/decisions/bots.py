@@ -67,6 +67,9 @@ CAPABILITIES: tuple[str, ...] = (
     "contactar", "cierre", "relevo",
     # Egreso del workflow V2 (F4/F5): solo actúan en conversaciones con V2.
     "destinatario", "rescate", "portavelas", "saludo",
+    # App Operador (paquete `operador`, chats/shared/operator/decisions): qué
+    # burbuja va primero en el chat y cómo se clasifica un incendio de chat.
+    "burbuja", "incendio",
 )
 #: V2 no tiene sombra (no se corren dos workflows): apagado, canary o encendido.
 WORKFLOW_MODES: tuple[str, ...] = ("off", "canary", "on")

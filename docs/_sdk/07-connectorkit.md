@@ -18,8 +18,8 @@ deployment.**
   composición: `OrderQueryPort`/`OrderCommandPort`/`OrderRegistrationPort`
   (commerce), `CatalogPort`/`CheckoutVerificationPort`, `MetaCatalogPort`,
   `AudioTranscriptionPort`, `ImageVisionPort`, `CustomerScoringPort`,
-  `AttributionReadPort`, **`WebCartReaderPort`** y **`PerceptionPort`**
-  (sección "Percepción", abajo).
+  `AttributionReadPort`, **`WebCartReaderPort`**, **`PerceptionPort`**
+  (sección "Percepción", abajo) y **`PushPort`** (sección "Avisos push").
 - **`WebCartReaderPort`** (HU web-cart hot lead, `src/platform/carts/`):
   lee un carrito de la **Store API** de Medusa v2 (`GET /store/carts/{id}`
   con `x-publishable-api-key` — env `MEDUSA_PUBLISHABLE_API_KEY`; sin ella
@@ -298,6 +298,29 @@ Los cuestionarios (p. ej. `rafaga-v1`) son dominio de cada agente y viven en
 su plugin como datos, no en platform: el perfil del motor nombra el
 cuestionario, la política y el perfil del oráculo, para que la traza y el
 laboratorio digan con qué se midió.
+
+## Avisos push: `PushPort` (Firebase Cloud Messaging hacia la App Operador)
+
+El «corrientazo» que despierta el teléfono del operador aunque la app esté
+cerrada. Lleva SOLO qué hacer (`data = {"type": "sync", "reason": "fire"}`):
+nada de clientes, porque pasa por los servidores de Google; la app lee su
+backend con sesión y arma el aviso. Lo usa el plugin `chats`
+(`chats/api/mobile_push.py`: un incendio grave nuevo → push urgente; cambian
+las ventas calientes del widget → push normal, uno cada 2 min como mucho).
+
+| Símbolo | Qué es |
+|---|---|
+| `PushPort.send(token, PushMessage)` | contrato; **nunca lanza**: `SENT`, `UNREGISTERED` (el token ya no sirve → quien llama lo borra del registro), `FAILED` (transitorio: cuota, 5xx, sin respuesta, error en lo que mandamos; el token queda) o `NOT_CONFIGURED` |
+| `PushPort.configured` / `client_options()` | si puede mandar, y las 4 opciones con las que el TELÉFONO arranca Firebase (`FirebaseClientOptions`, de `google-services.json`); None si no hay |
+| `PushMessage(data, urgent, collapse_key, ttl_s)` | solo datos (sin `notification`); `urgent` = prioridad HIGH de Android (despierta un teléfono en reposo), `collapse_key` = FCM guarda solo el último si el teléfono está apagado |
+| `get_push_port()` | factory; `PUSH_PROVIDER=auto` (FCM si están las dos llaves; si no, nulo) · `fake` (`PUSH_FAKE_OUTBOX` = archivo con un JSON por aviso; lo usa el backend del emulador) · `off` |
+| `fcm_v1` | FCM API HTTP v1 (`POST https://fcm.googleapis.com/v1/projects/<id>/messages:send`). Llaves en SSM: `FCM_SERVICE_ACCOUNT_JSON` (la cuenta de servicio; firma un JWT RS256 → token de OAuth de 1 h, sin la librería de Google) y `FIREBASE_ANDROID_CONFIG_JSON` (el `google-services.json`; `MOBILE_ANDROID_PACKAGE` elige el cliente). Llaves de dos proyectos distintos = nulo (cada aviso volvería `SENDER_ID_MISMATCH`) |
+| `FakePushAdapter` / `NullPushAdapter` | dobles oficiales; contract suite en `tests/platform/push/test_push_contract.py` (fake y FCM contra un Google simulado con `httpx.MockTransport`) |
+
+Las dos llaves son ARCHIVOS: se cargan con `aws_bootstrap.py secrets`
+escribiendo `CLAVE=@ruta/archivo.json` en `secrets.<tenant>.env` (el script
+las sube en una línea: el deploy arma el `.env` una línea por clave). Guía para
+el operador: `docs/mobile-native/activar-avisos-push.html`.
 
 ## Fotos del cliente contra el catálogo: visión, embeddings y verificador
 

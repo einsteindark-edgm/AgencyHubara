@@ -297,6 +297,7 @@ def score_episode_turns(
     record = score_turns(
         traj, {t.turn: t for t in traj.turns}, ctx,
         episodes_at=states, judge_results=judge_results, calibrated=calibrated,
+        episode_results=closed_episode_failures(traj, ctx),
     )
     record.update(
         {
@@ -313,6 +314,25 @@ def score_episode_turns(
         }
     )
     return record
+
+
+#: Checks del cierre que en modo turno solo pueden esperar («sin señal»): la
+#: orden, su etiqueta de pago pendiente y la escalación de verificación se
+#: juntan entre turnos. Con el episodio cerrado no hay nada que esperar.
+CLOSED_EPISODE_CHECKS = frozenset({"CIE-03", "CIE-04"})
+
+
+def closed_episode_failures(traj: Trajectory, ctx: CheckContext) -> dict[int, list[CheckResult]]:
+    """Las fallas de `CLOSED_EPISODE_CHECKS` juzgadas con el episodio completo,
+    por el turno que las causó. Solo con el episodio cerrado (abierto, la
+    etiqueta o la escalación todavía pueden llegar)."""
+    if traj.closed_at_ms is None or not traj.turns:
+        return {}
+    out: dict[int, list[CheckResult]] = {}
+    for r in run_code_checks(replace(traj, focus_turn=None), ctx):
+        if r.check_id in CLOSED_EPISODE_CHECKS and r.verdict == "falla" and isinstance(r.turn, int):
+            out.setdefault(r.turn, []).append(r)
+    return out
 
 
 def strongest_results(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -344,8 +364,13 @@ def score_turns(
     episodes_at: Mapping[int, dict[str, Any]] | None = None,
     judge_results: Mapping[int, Iterable[CheckResult]] | None = None,
     calibrated: Iterable[str] = frozenset(),
+    episode_results: Mapping[int, Iterable[CheckResult]] | None = None,
 ) -> dict[str, Any]:
     """Califica turnos simulados con el prefijo REAL como contexto.
+
+    `episode_results[k]` reemplaza, en el turno k, el resultado de esos checks
+    (producción: las fallas del cierre juzgadas con el episodio cerrado,
+    `closed_episode_failures`).
 
     Cada candidato (turno k → `Turn`, misma forma que `turn_from_trace`) se
     juzga sobre `focus_trajectory(real, candidato)`: solo ese turno puede
@@ -365,6 +390,9 @@ def score_turns(
         focus = focus_trajectory(real, candidates[k], episode_at=(episodes_at or {}).get(k))
         judged = pin_to_focus((judge_results or {}).get(k, ()), k)
         results = [*run_code_checks(focus, ctx), *judged]
+        overrides = {r.check_id: replace(r, turn=k) for r in (episode_results or {}).get(k, ())}
+        if overrides:
+            results = [overrides.get(r.check_id, r) for r in results]
         card = compute_scorecard(focus, SPECS_BY_ID, results, calibrated=calibrated_set)
         by_turn.append(
             {

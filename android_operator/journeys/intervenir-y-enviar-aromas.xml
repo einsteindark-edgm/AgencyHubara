@@ -1,0 +1,15 @@
+<!-- Se corre con el Android CLI (skill android-cli, journeys). Conversación de prueba del backend local. -->
+<journey name="Intervenir y enviar aromas">
+  <description>Tomar una conversación, enviar una burbuja, deshacerla y enviarla de nuevo.</description>
+  <actions>
+    <action>Abre la conversación de prueba "wa_test_laura" desde Chats</action>
+    <action>Verifica que arriba dice "El bot atiende" y hay un botón "Tomar la conversación"</action>
+    <action>Toca "Tomar la conversación"</action>
+    <action>Verifica que el encabezado dice "Tú atiendes" y aparecen burbujas sobre el campo de mensaje</action>
+    <action>Toca la primera burbuja</action>
+    <action>Verifica que aparece una barra "Enviando" con el botón "Deshacer"</action>
+    <action>Toca "Deshacer" y verifica que la barra desaparece</action>
+    <action>Toca de nuevo la primera burbuja y espera 6 segundos</action>
+    <action>Verifica que el mensaje enviado aparece en el chat marcado como "humano"</action>
+  </actions>
+</journey>

@@ -37,6 +37,7 @@ output "build_config" {
       cognito_domain  = module.auth[t].user_pool_domain
       bucket          = module.frontend[t].bucket_name
       distribution_id = module.frontend[t].distribution_id
+      mobile          = var.tenants[t].mobile # → <cloudfront>/mobile/config.json de la App Operador
     }
   }
 }

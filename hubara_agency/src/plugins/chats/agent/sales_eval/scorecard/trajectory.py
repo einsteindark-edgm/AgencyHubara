@@ -266,6 +266,24 @@ def _episode_fields(episode: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: El encuadre con que la plataforma entrega un turno que es SOLO un traspaso
+#: de remarketing (`workflow_helpers._handoff_takeover_framing`). Desde que la
+#: ráfaga se junta en `coalesce_inbox` la traza ya no dice `trigger: handoff`:
+#: el turno llega como «customer» con este texto (y el bot no saluda: no es un
+#: primer contacto, aunque el historial no traiga mensajes del agente).
+_HANDOFF_FRAMING = "[SISTEMA — HANDOFF DE REMARKETING A VENTAS]"
+_HANDOFF_SUMMARY_RE = re.compile(r"Contexto del handoff:\s*(.*?)\nPrimero mira el historial", re.DOTALL)
+
+
+def _handoff_summary(inbound_text: str) -> str | None:
+    """El resumen del traspaso si el turno es solo un traspaso, o None."""
+    text = inbound_text.lstrip()
+    if not text.startswith(_HANDOFF_FRAMING):
+        return None
+    m = _HANDOFF_SUMMARY_RE.search(text)
+    return m.group(1).strip() if m else ""
+
+
 def turn_from_trace(raw: dict[str, Any], default_turn: int = 1) -> Turn:
     """Un turno desde su registro de traza (la forma que escribe el worker).
 
@@ -273,11 +291,17 @@ def turn_from_trace(raw: dict[str, Any], default_turn: int = 1) -> Turn:
     tools = tuple(_tool_from_trace(x) for x in raw.get("tools") or [] if isinstance(x, dict))
     guards = tuple(str(g) for g in raw.get("guards") or [])
     signal = raw.get("signal")
+    inbound_text = str(raw.get("inbound_text") or "")
+    trigger = str(raw.get("trigger") or "customer")
+    first_contact = bool(raw.get("first_contact"))
+    handoff_summary = _handoff_summary(inbound_text) if trigger == "customer" else None
+    if handoff_summary is not None:
+        trigger, inbound_text, first_contact = "handoff", handoff_summary, False
     return Turn(
         turn=int(raw.get("turn") or default_turn),
         at_ms=_as_int(raw.get("turn_started_ms")) or _as_int(raw.get("recorded_at_ms")),
-        trigger=str(raw.get("trigger") or "customer"),
-        inbound_text=str(raw.get("inbound_text") or ""),
+        trigger=trigger,
+        inbound_text=inbound_text,
         signal=signal.get("kind") if isinstance(signal, dict) else None,
         sent_texts=tuple(str(x) for x in raw.get("sent_texts") or []),
         llm_text=str(raw.get("llm_text") or ""),
@@ -291,7 +315,7 @@ def turn_from_trace(raw: dict[str, Any], default_turn: int = 1) -> Turn:
         draft=dict(raw.get("draft") or {}),
         confirmed=bool(raw.get("confirmed")),
         state=dict(raw.get("state") or {}),
-        first_contact=bool(raw.get("first_contact")),
+        first_contact=first_contact,
         inbound=_inbound_from_trace(raw.get("inbound")),
     )
 

@@ -242,6 +242,20 @@ def test_round_trip_with_the_real_quick_replies_producer():
     assert event["body"] == "¿Qué te gustaría saber?"
 
 
+def test_round_trip_buttons_sent_by_the_operator_from_the_app_are_still_buttons():
+    """La app móvil corre `send_quick_replies` como el humano: la nota dice
+    "El operador envió botones" y el panel los sigue pintando como botones."""
+    produced = _build_history_event(
+        "quick_replies",
+        {"body": "¿Te lo envío hoy?", "buttons": [{"title": "Sí, hoy"}, {"title": "Más tarde"}]},
+        actor="El operador",
+    )
+    event = detect_chat_event({**produced, "role": "assistant", "sender": "human"})
+    assert event is not None and event["kind"] == "bot_buttons"
+    assert [b["title"] for b in event["buttons"]] == ["Sí, hoy", "Más tarde"]
+    assert event["body"] == "¿Te lo envío hoy?"
+
+
 def test_round_trip_with_the_real_button_reply_translation():
     msg = WhatsAppMessage(
         message_id="wamid.1",

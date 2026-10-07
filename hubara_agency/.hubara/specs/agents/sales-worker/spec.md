@@ -763,6 +763,33 @@ confirmación es episodio-scoped (incidente runs 01a0a0eb / 01a0a0f1, 2026-09-14
 - WHEN el ingest procesa el mensaje
 - THEN `order_draft.confirmed_at_ms` queda registrado y `request_shipping_details` procede
 
+### Requirement: Guardas del cierre en el registro, el resumen y la etiqueta de venta
+
+Desde el 2026-10-07 (`purchase_signals.closing_blocker`): con un episodio
+activo, `register_order` SHALL rechazar con `customer_deferred` si el último
+mensaje del cliente aplazó, y con `purchase_not_confirmed` si no hay
+confirmación: ni la anotada en el episodio ni un «Confirmar» o un «sí» en el
+último mensaje (que cuenta aunque el borrador no tenga el producto, para no
+frenar una venta legítima). Sin episodio no frena. `present_order_confirmation`
+SHALL rechazar con `customer_deferred` si el último mensaje aplazó.
+`manage_conversation_tag` SHALL rechazar `COMPRA_EXITOSA` con `human_only_tag`:
+la pone el equipo al verificar el pago (y le manda a Meta la compra por CAPI).
+Las guardas son del bot: el pedido que el operador crea desde el panel
+(`api/session_actions.py`, `closing_guard=False`) NO pasa por ellas.
+
+#### Scenario: Registro sin confirmación
+
+- GIVEN un episodio activo sin `confirmed_at_ms` y un último mensaje sin afirmación
+- WHEN el LLM llama `register_order`
+- THEN devuelve `registered=false, error=purchase_not_confirmed` y no llama al puerto de órdenes
+- AND si el último mensaje fue el botón Confirmar, registra aunque el borrador no tenga el producto
+
+#### Scenario: El bot intenta cerrar como compra exitosa
+
+- GIVEN un pedido registrado
+- WHEN el LLM llama `manage_conversation_tag(tag=COMPRA_EXITOSA)`
+- THEN devuelve `error=human_only_tag`, no cambia la etiqueta y no encola ninguna compra para Meta
+
 ### Requirement: Aplazamiento del cliente
 
 Cuando el ÚLTIMO inbound es un aplazamiento ("voy en camino", "luego",
@@ -1447,6 +1474,38 @@ Antes de enviar el texto final de un turno que no escaló, V1 y V2 SHALL pregunt
 - GIVEN el LLM llamó `escalate_to_human` y su despedida dice «Un colega del equipo te responde en este mismo chat»
 - WHEN el workflow envía la despedida
 - THEN la red no se consulta
+
+### Requirement: Las notas del turno no cambian las instrucciones (2026-10-06)
+
+El caché de DeepSeek es de prefijo estricto y renderiza las tools después del
+system (medido el 2026-10-06: 45 % cacheado en la primera llamada de cada turno
+con la hora en las instrucciones, 99 % con instrucciones idénticas). Con
+`SALES_PROMPT_TURN_CONTEXT` en `on` (o en `team` para los `LAB_INTERNAL_NUMBERS`),
+las notas del turno (hora de Bogotá, DATOS DEL PEDIDO, nota de la percepción)
+SHALL viajar en el mensaje del turno, dentro del bloque `[Runtime Context]`, y
+las instrucciones MUST ser idénticas de un turno al siguiente mientras no cambie
+la etapa. El historial durable MUST guardar solo lo que escribió el cliente.
+Con `off` (default) o cualquier otro valor, las notas van en las instrucciones
+(`# Retrieved Context`), como antes. La traza de Calidad LLM MUST mostrar las
+notas del turno en ambos casos.
+
+#### Scenario: Otro minuto, mismas instrucciones
+
+- GIVEN `SALES_PROMPT_TURN_CONTEXT=on` y dos turnos seguidos en la misma etapa, a las 10:22 y a las 10:23, con un dato nuevo del pedido
+- WHEN se arma el prompt de cada turno
+- THEN el system de ambos es idéntico y la hora y los DATOS DEL PEDIDO están en el mensaje del turno, antes de lo que escribió el cliente
+
+#### Scenario: El historial no acumula notas viejas
+
+- GIVEN `SALES_PROMPT_TURN_CONTEXT=on` y un turno con la hora de Bogotá y los DATOS DEL PEDIDO (con o sin foto)
+- WHEN exoclaw graba el mensaje del turno en el historial
+- THEN el historial guarda solo el texto del cliente (y `[image]` si hubo foto)
+
+#### Scenario: Piloto del equipo
+
+- GIVEN `SALES_PROMPT_TURN_CONTEXT=team` y `LAB_INTERNAL_NUMBERS` con el teléfono del operador
+- WHEN escriben el operador y un cliente
+- THEN solo el turno del operador lleva las notas en el mensaje; el del cliente, en las instrucciones
 
 ## Out of scope
 

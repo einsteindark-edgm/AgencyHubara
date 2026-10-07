@@ -414,12 +414,19 @@ def builtin_names() -> dict[str, str]:
 
 
 class BundledCapability:
-    """Una capacidad del paquete con la forma de `Capability`."""
+    """Una capacidad del paquete con la forma de `Capability`.
 
-    def __init__(self, table: CompiledCapability) -> None:
+    `builtins`: de dónde salen los builtins que pide el paquete (clase,
+    nombre) → función. Por defecto los de ventas; otro paquete con su propio
+    catálogo (la App Operador, `chats/shared/operator/decisions`) pasa los
+    suyos y corre por el MISMO `decide()` del motor."""
+
+    def __init__(self, table: CompiledCapability, builtins: Callable[[str, str], Callable[..., Any]] | None = None) -> None:
         spec = table.spec
         self._table = table
         self._spec = spec
+        #: None = los de ventas (`builtin`, buscado al llamar: las pruebas lo sustituyen).
+        self._builtins = builtins
         #: El interruptor (proveedor, panel, traza): el de la capacidad, o el
         #: de la que esta variante pregunta de otra forma (`control:`).
         self.name = table.control
@@ -430,7 +437,8 @@ class BundledCapability:
         self.bundle = table.bundle
 
     def _call(self, kind: str, ref: Any, *args: Any, **extra: Any) -> Any:
-        return builtin(kind, ref.builtin)(*args, **ref.params, **extra)
+        resolve = self._builtins or builtin
+        return resolve(kind, ref.builtin)(*args, **ref.params, **extra)
 
     def _inp(self, inp: Any) -> dict[str, Any]:
         """Lo que las condiciones leen como `inp`: los campos declarados y los

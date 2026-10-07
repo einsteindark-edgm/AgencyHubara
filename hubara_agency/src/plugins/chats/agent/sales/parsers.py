@@ -30,7 +30,7 @@ queda como bridge mínimo del payload Meta hacia el ingestor).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 # SEC-12: `from_number` de Meta es un teléfono E.164 (solo dígitos, sin `+`).
@@ -72,6 +72,9 @@ class WhatsAppMessage:
     context: dict[str, Any] | None = None  # quoted message
     contacts: list[dict[str, Any]] | None = None  # cliente compartió contacto
     raw: dict[str, Any] = field(default_factory=dict)  # mensaje completo para edge cases
+    # Nombre de perfil de WhatsApp de quien escribe (`value.contacts[].profile.name`), limpio. No es el
+    # `contacts` de arriba (una tarjeta de contacto que el cliente compartió).
+    profile_name: str | None = None
 
 
 def parse_whatsapp_inbound(body: dict) -> WhatsAppMessage | None:
@@ -118,7 +121,27 @@ def parse_whatsapp_inbound(body: dict) -> WhatsAppMessage | None:
     if not isinstance(messages, list):
         raise ValueError("'messages' must be a list")
 
-    return _parse_message(messages[0], phone_number_id)
+    parsed = _parse_message(messages[0], phone_number_id)
+    name = _profile_name(value.get("contacts"), parsed.from_number) if parsed is not None else None
+    return replace(parsed, profile_name=name) if parsed is not None and name else parsed
+
+
+_PROFILE_NAME_MAX = 80
+
+
+def _profile_name(contacts: Any, from_number: str) -> str | None:
+    """Nombre de perfil del contacto que escribió: el de su `wa_id` (o el único que venga), sin
+    espacios de sobra ni caracteres de control, y acotado. `None` si no hay uno usable."""
+    if not isinstance(contacts, list):
+        return None
+    candidates = [c for c in contacts if isinstance(c, dict)]
+    mine = [c for c in candidates if c.get("wa_id") == from_number] or candidates[:1]
+    profile = mine[0].get("profile") if mine else None
+    name = profile.get("name") if isinstance(profile, dict) else None
+    if not isinstance(name, str):
+        return None
+    clean = " ".join("".join(ch for ch in name if ch.isprintable()).split())
+    return clean[:_PROFILE_NAME_MAX] or None
 
 
 @dataclass(frozen=True)
