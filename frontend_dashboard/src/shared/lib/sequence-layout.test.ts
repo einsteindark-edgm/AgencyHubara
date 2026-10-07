@@ -178,6 +178,18 @@ describe("layoutSequence", () => {
     ]);
   });
 
+  it("el corte antes de grabar y el del cierre dicen lo que pasó de verdad (ráfagas, 2026-10-06)", () => {
+    const { rows } = layoutSequence([
+      { i: 0, at_ms: 0, kind: "cut", reason: "before_record", text: "¿Me confirmas el barrio?" },
+      { i: 1, at_ms: 5, kind: "cut", reason: "checkpoint_b", text: "¿Cuál te gusta más?" },
+    ]);
+
+    expect(rows.map((r) => r.short)).toEqual([
+      "el cliente siguió escribiendo antes del envío",
+      "el cliente escribió: el cierre no se envía",
+    ]);
+  });
+
   it("un reinicio que esperó la foto lo dice (texto antes de la foto, 2026-09-30)", () => {
     const { rows } = layoutSequence([{ i: 0, at_ms: 0, kind: "restart", attempt: 1, drained: 1, photo: true }]);
 

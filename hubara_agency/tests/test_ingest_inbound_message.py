@@ -10,6 +10,8 @@ Verifican:
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 from dataclasses import dataclass
 
 import pytest
@@ -59,7 +61,7 @@ class FakeLoadOrStart:
         )
 
 
-class FakeMetadataStore:
+class FakeMetadataStore(MergingMetadataStoreMixin):
     """Fake in-memory para `last_inbound_message_id` (Fix 5 typing indicator)."""
 
     def __init__(self) -> None:

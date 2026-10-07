@@ -138,19 +138,25 @@ async def test_a_rejected_send_drops_only_its_intent_and_keeps_what_was_saved_me
 
 
 @pytest.mark.asyncio
-async def test_a_legacy_intent_without_id_is_matched_by_content_and_an_identical_late_one_survives(
+async def test_a_legacy_intent_without_id_goes_out_once_even_if_a_stale_write_brings_it_back(
     vault: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Una foto encolada antes de que los intents tuvieran id, y una escritura
+    vieja que la devuelve a la cola mientras se envía (incidente 2026-10-06, #393):
+    sale UNA vez; el registro de entregas frena la copia."""
+    from src.platform.whatsapp import client as wa_client
+
     legacy = {k: v for k, v in _photo().items() if k != "id"}
     _seed(vault, pending_ui_intents=[legacy])
-    # un escritor legacy vuelve a encolar la MISMA foto (sin id) durante el envío
     _others_write_during_the_send(vault, monkeypatch, dict(legacy))
 
     assert await flush_ui_intents.flush_pending_ui_intents(_SID) == 1
+    assert await flush_ui_intents.flush_pending_ui_intents(_SID) == 0
 
+    assert wa_client.send_image.await_count == 1
     meta = _meta(vault)
-    assert meta["pending_ui_intents"] == [legacy]  # sale la enviada, no la que llegó después
-    assert meta["last_inbound_at_ms"] == _T1
+    assert meta["pending_ui_intents"] == []
+    assert meta["last_inbound_at_ms"] == _T1  # el mensaje del cliente no se borró
 
 
 def test_the_flow_flag_is_written_under_the_metadata_lock(vault: Path) -> None:

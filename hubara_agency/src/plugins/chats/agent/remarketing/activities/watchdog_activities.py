@@ -621,17 +621,25 @@ async def _emit_cart_abandoned_if_open(
         order_facts = await _watchdog_order_facts(metadata)
         if episode is None or not is_open_cart(episode, metadata, order_facts):
             return
-        event_id = enqueue_capi_event(
-            metadata,
-            event_name="CartAbandoned",
-            session_id=session_id,
-            episode_id=str(episode.get("episode_id") or ""),
-            source="watchdog_fired",
-            now_ms=now_ms,
-        )
-        if event_id is None:
+        episode_id = str(episode.get("episode_id") or "")
+        enqueued: dict[str, Any] = {}
+
+        def _enqueue(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            # Sobre la lectura fresca (la consulta a OrderFacts de arriba tarda):
+            # solo el outbox de CAPI, nada más del metadata.
+            enqueued["event_id"] = enqueue_capi_event(
+                fresh,
+                event_name="CartAbandoned",
+                session_id=session_id,
+                episode_id=episode_id,
+                source="watchdog_fired",
+                now_ms=now_ms,
+            )
+            return fresh if enqueued["event_id"] is not None else None
+
+        store.update(session_id, _enqueue)
+        if enqueued.get("event_id") is None:
             return
-        store.write(session_id, metadata)
         await flush_capi_outbox(session_id)
     except Exception as exc:  # noqa: BLE001 — atribución best-effort
         log.warning("watchdog_capi_cart_abandoned_failed", session_id=session_id, error=str(exc))

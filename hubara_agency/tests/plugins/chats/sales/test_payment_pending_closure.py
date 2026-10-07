@@ -14,11 +14,17 @@ Casos cubiertos:
 """
 from __future__ import annotations
 
+import copy
+import errno
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
 from temporalio.testing import ActivityEnvironment
+
+from src.platform.state import FilesystemMetadataStore
 
 from src.plugins.chats.agent.sales.activities.episode_closure import (
     ensure_closing_escalation_activity,
@@ -239,3 +245,99 @@ async def test_closing_escalation_missing_metadata_is_noop(_isolate_vault_dir: P
         ensure_closing_escalation_activity, "wa_nope", "ORDER_PENDING_SHIPPING_DETAILS", "x"
     )
     assert escalated is False
+
+
+# --- metadata.json dañado (PR #393) ---------------------------------------------
+# Las redes leían el archivo directo y no hacían nada ante un daño; la decisión
+# del operador es recuperar con la última copia buena (`metadata.json.prev`).
+
+
+def _damage_with_last_good(vault: Path, last_good: dict) -> Path:
+    md = _write_metadata(vault, last_good)
+    md.with_name("metadata.json.prev").write_text(json.dumps(last_good), encoding="utf-8")
+    md.write_text('{"active_route": "ventas", "episodes": [', encoding="utf-8")
+    return md
+
+
+async def test_safety_net_acts_over_a_damaged_document_from_the_last_good_copy(_isolate_vault_dir: Path):
+    md = _damage_with_last_good(_isolate_vault_dir, _active_episode_metadata())
+
+    result = await _run()
+
+    assert (result.acted, result.escalated) == (True, True), "la red no hizo nada ante un archivo dañado"
+    data = json.loads(md.read_text(encoding="utf-8"))
+    assert data["active_route"] == "humano"
+    assert data["episodes"][-1]["closing_tag"] == "CONFIRMADO_PAGO_PENDIENTE"
+
+
+async def test_closing_escalation_acts_over_a_damaged_document_from_the_last_good_copy(_isolate_vault_dir: Path):
+    data = _active_episode_metadata()
+    data["episodes"][-1]["closed_at_ms"] = _FIXED_MS - 5_000
+    data["episodes"][-1]["closing_tag"] = "CONFIRMADO_SIN_DATOS"
+    data["tag"] = "CONFIRMADO_SIN_DATOS"
+    md = _damage_with_last_good(_isolate_vault_dir, data)
+
+    assert await _run_escalation() is True, "la red no escaló ante un archivo dañado"
+    assert json.loads(md.read_text(encoding="utf-8"))["active_route"] == "humano"
+
+
+# --- un error PASAJERO al leer (PR #393, sexta revisión) ---------------------------
+# Con un EMFILE, `read()` devolvía la copia vieja en silencio y la red decidía y
+# escribía sobre ella: pisó la toma del operador (motivo, `escalation_reason`,
+# `closing_tag`). Ahora `read()` lanza: la activity falla (Temporal la reintenta)
+# y el documento queda como estaba. Las redes no cambiaron.
+
+
+def _taken_by_the_operator(vault: Path) -> Path:
+    """Sesión SANA cuya última escritura fue la toma del operador; la copia
+    buena (`.prev`) es la de antes (ventas, episodio abierto)."""
+    before = _active_episode_metadata()
+    taken = copy.deepcopy(before)
+    taken.update(
+        active_route="humano", tag="HUMANO", motivo="Lo atiende Ana (operador)", escalation_reason="OPERATOR_TAKEOVER"
+    )
+    taken["episodes"][-1].update(
+        closed_at_ms=_FIXED_MS - 1_000, closing_tag="COMPRA_EXITOSA", closing_motivo="cerró el operador"
+    )
+    store = FilesystemMetadataStore(vault)
+    store.write(_SESSION, before)
+    store.write(_SESSION, taken)
+    return vault / _SESSION / "metadata.json"
+
+
+def _transient_reads(monkeypatch: pytest.MonkeyPatch, times: int) -> None:
+    real_read_text = Path.read_text
+    left = {"n": times}
+
+    def read_text(self: Path, *args, **kwargs) -> str:
+        if self.name == "metadata.json" and left["n"]:
+            left["n"] -= 1
+            raise OSError(errno.EMFILE, os.strerror(errno.EMFILE))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+
+def _session_files(md: Path) -> dict[str, bytes]:
+    return {p.name: p.read_bytes() for p in md.parent.iterdir() if not p.name.endswith(".lock")}
+
+
+@pytest.mark.parametrize("net", ["pago-pendiente", "escalacion-de-cierre"])
+@pytest.mark.parametrize("times", [1, 4], ids=["un-error", "persistente"])
+async def test_a_transient_read_error_never_lets_the_net_overwrite_the_operator_takeover(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch, net: str, times: int
+):
+    """Un error de un instante se reintenta (octava revisión): la red lee lo
+    fresco —la toma— y no hace nada. Si sigue fallando, lanza (Temporal
+    reintenta). En ningún caso decide sobre la copia vieja."""
+    md = _taken_by_the_operator(_isolate_vault_dir)
+    before = _session_files(md)
+    _transient_reads(monkeypatch, times)
+
+    if times == 1:
+        await (_run() if net == "pago-pendiente" else _run_escalation())
+    else:
+        with pytest.raises(OSError):
+            await (_run() if net == "pago-pendiente" else _run_escalation())
+
+    assert _session_files(md) == before, "la red pisó la toma del operador"

@@ -93,6 +93,52 @@ describe("jevAnswers", () => {
   });
 });
 
+describe("afirmación y cantidad del paquete ventas-3 (2026-10-06)", () => {
+  it("qué afirma el mensaje, en palabras, con cada opción", () => {
+    const claim = (choice: string) =>
+      jevAnswers(decision({ capability: "afirmacion", value: true, answers: [{ q: "afirmacion.que_afirma", choice, confidence: 0.9 }] }));
+    expect(claim("stock")).toEqual(["¿Qué le afirma el mensaje al cliente? que algo está disponible o agotado (90 %)"]);
+    expect(claim("entrega")).toEqual(["¿Qué le afirma el mensaje al cliente? cuándo le llega su pedido (90 %)"]);
+    expect(claim("estado_pedido")).toEqual(["¿Qué le afirma el mensaje al cliente? en qué va su pedido (90 %)"]);
+    expect(claim("nada")).toEqual(["¿Qué le afirma el mensaje al cliente? nada (90 %)"]);
+  });
+
+  it("si el mensaje que abre el episodio es solo un saludo", () => {
+    expect(
+      jevAnswers(
+        decision({
+          capability: "cortesia",
+          value: false,
+          answers: [
+            { q: "cortesia.solo", p: 0.94 },
+            { q: "cortesia.saludo_solo", p: 0.95 },
+          ],
+        }),
+      ),
+    ).toEqual(["¿Solo agradece o saluda, sin pedir nada? sí (94 %)", "¿Es solo un saludo, sin agradecer ni contar nada? sí (95 %)"]);
+  });
+
+  it("la cantidad que el cliente dice sin que se la pregunten", () => {
+    expect(
+      jevAnswers(
+        decision({
+          capability: "cantidad",
+          value: { cantidad: 1 },
+          answers: [
+            { q: "cantidad.pregunto", p: 0.05 },
+            { q: "cantidad.dice", p: 0.95 },
+            { q: "cantidad.dio", choice: "1", confidence: 0.9 },
+          ],
+        }),
+      ),
+    ).toEqual([
+      "¿El asesor preguntó cuántas unidades? no (95 %)",
+      "¿El cliente dice cuántas unidades quiere? sí (95 %)",
+      "¿Qué cantidad dio? 1 (90 %)",
+    ]);
+  });
+});
+
 describe("cortesía y colega prometido (2026-09-30)", () => {
   it("dice qué decidieron y qué se le preguntó a Jev", () => {
     expect(decisionSentence(decision({ capability: "cortesia", value: true }))).toEqual({

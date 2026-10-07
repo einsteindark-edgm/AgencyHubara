@@ -66,12 +66,30 @@ def _slots(vault: Path, sid: str) -> dict:
 
 
 async def _turn(tmp_path: Path, vault: Path, sid: str, message: str, *, slots: dict = SLOTS,
-                agent: str = _AGENT_ASKED) -> str:
+                agent: str = _AGENT_ASKED, via_send_reply: bool = False) -> str:
     ws = _make_workspace(tmp_path)
     _seed_metadata(vault, sid, dict(slots))
-    _seed_history(ws, sid, agent)
+    _seed_history(ws, sid, agent, via_send_reply=via_send_reply)
     messages = await sales_build_prompt(_input(ws, sid, message, None))
     return messages[0]["content"]
+
+
+async def test_jev_reads_the_quantity_question_that_went_out_by_send_reply(
+    tmp_path: Path, _isolate_vault_dir: Path, oracle, quantity_on
+) -> None:
+    """Conversación del 2026-10-06: el texto sale por `send_reply` (el
+    historial no tiene `content`) y la capacidad quedaba ciega, sin una sola
+    decisión de cantidad. Con el historial de hoy, Jev lee la pregunta."""
+    oracle["fake"] = FakePerceptionAdapter({
+        "cantidad.pregunto": _noul("cantidad.pregunto", 0.97), "cantidad.dio": _choice("cantidad.dio", "2", 0.95),
+    })
+
+    system = await _turn(tmp_path, _isolate_vault_dir, "wa_573009876543", "Quiero 2", via_send_reply=True)
+
+    assert _slots(_isolate_vault_dir, "wa_573009876543").get("cantidad") == "2"
+    assert "Cantidad: 2" in system
+    [(state, _)] = oracle["fake"].calls
+    assert "¿Cuántas unidades deseas?" in state and "Quiero 2" in state
 
 
 async def test_with_rules_the_capture_is_todays(tmp_path: Path, _isolate_vault_dir: Path, oracle) -> None:

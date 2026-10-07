@@ -9,15 +9,20 @@ tools, que llegan al resolutor por `guards`, no arrastran Temporal (contrato
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
+from datetime import datetime, timezone
 from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.bundled import customer_text
-from src.plugins.chats.agent.sales.decisions.context import customer_window, order_facts
+from src.plugins.chats.agent.sales.decisions.context import customer_window, order_facts, real_wamid
 from src.plugins.chats.agent.sales.use_cases.closing_ack import is_closing_ack
 from src.plugins.chats.agent.sales.use_cases.coupons import coupon_in_play as _coupon_in_play
 from src.plugins.chats.agent.sales.use_cases.coupons import coupon_talk_subject
+from src.plugins.chats.shared.funnel import active_episode
 from src.plugins.chats.shared.purchase_signals import classify_inbound_purchase_signal
 from src.sdk.messagingkit import is_courtesy_text, is_opt_out_text, parse_reengagement_deferral
+
+_HOUR_MS = 3_600_000
 
 
 def _window(inp: Any) -> Any:
@@ -68,6 +73,46 @@ def purchase_window(inp: Any) -> dict[str, Any]:
     lo último fue una tarjeta (`asked_known`: confirmar_compra, …)."""
     window = _window(inp)
     return {"context": bool(window.lines), "asked_known": window.bot_asked_known}
+
+
+def reply_gap(inp: Any) -> dict[str, Any]:
+    """Si este mensaje abrió el episodio activo (`opens_episode`: el ingest lo
+    abrió con él, también por la reentrada de un audio o una foto) y las horas
+    enteras desde el último mensaje de la tienda (`hours_since_store`: el
+    evento `assistant` más reciente del historial —el bot, el equipo o una
+    plantilla— por su `timestamp`; None si nunca escribió o ninguno se puede
+    fechar). No lee `last_inbound_at_ms`: el ingest ya lo pisó con este
+    mensaje (incidente del 2026-10-06: «Buenas» 11 días después)."""
+    metadata = getattr(inp, "metadata", None)
+    episode = active_episode(dict(metadata)) if isinstance(metadata, Mapping) else None
+    started = str((episode or {}).get("started_inbound_message_id") or "")
+    message_id = str(getattr(inp, "message_id", None) or "")
+    opens = bool(started) and bool(message_id) and real_wamid(started) == real_wamid(message_id)
+    return {"opens_episode": opens, "hours_since_store": _hours_since_store(inp)}
+
+
+def _event_ms(stamp: Any) -> int | None:
+    """La hora de un evento del historial (ISO 8601; sin zona = UTC, como el
+    laboratorio), o None si no se puede fechar."""
+    if not isinstance(stamp, str) or not stamp.strip():
+        return None
+    try:
+        moment = datetime.fromisoformat(stamp.strip())
+    except ValueError:
+        return None
+    return int((moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)).timestamp() * 1000)
+
+
+def _hours_since_store(inp: Any) -> int | None:
+    """Desde el final del historial (append-only): el último mensaje de la
+    tienda que se puede fechar. Uno sin hora se salta."""
+    for event in reversed(list(getattr(inp, "events", ()) or ())):
+        if not isinstance(event, Mapping) or event.get("role") != "assistant":
+            continue
+        at_ms = _event_ms(event.get("timestamp"))
+        if at_ms is not None:
+            return max(0, int(getattr(inp, "now_ms", 0) or 0) - at_ms) // _HOUR_MS
+    return None
 
 
 # ── estado ──

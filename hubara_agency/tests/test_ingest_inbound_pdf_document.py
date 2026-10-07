@@ -15,6 +15,8 @@ tests exigen:
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, patch
 
@@ -74,7 +76,7 @@ class FakeLoadOrStart:
         self.messages.append(message)
 
 
-class FakeMetadataStore:
+class FakeMetadataStore(MergingMetadataStoreMixin):
     def __init__(self) -> None:
         self.store: dict[str, dict] = {}
 

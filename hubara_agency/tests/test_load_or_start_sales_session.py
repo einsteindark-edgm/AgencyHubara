@@ -19,6 +19,8 @@ la forma de ese bloque, no el contenido literal (depende de `datetime.now`).
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 import asyncio
 
 import pytest
@@ -45,7 +47,7 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 # --- Fakes -----------------------------------------------------------------
 
 
-class FakeMetadataStore:
+class FakeMetadataStore(MergingMetadataStoreMixin):
     def __init__(self, initial: dict | None = None) -> None:
         self.data = dict(initial or {})
         self.writes: list[tuple[str, dict]] = []

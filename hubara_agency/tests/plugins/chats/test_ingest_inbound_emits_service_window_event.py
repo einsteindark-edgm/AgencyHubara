@@ -14,6 +14,8 @@ Scenarios:
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 import asyncio
 from typing import Any
 
@@ -56,7 +58,7 @@ class FakeLoadOrStart:
         self.calls.append((session_id, message))
 
 
-class FakeMetadataStore:
+class FakeMetadataStore(MergingMetadataStoreMixin):
     """In-memory metadata store. Seedeable per-test."""
 
     def __init__(self, seed: dict | None = None) -> None:

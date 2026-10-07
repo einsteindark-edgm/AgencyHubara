@@ -13,6 +13,8 @@ sale igual.
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 import asyncio
 from typing import Any
 
@@ -61,7 +63,7 @@ class _Loader:
         self.messages.append(kw["message"])
 
 
-class _Metadata:
+class _Metadata(MergingMetadataStoreMixin):
     def __init__(self) -> None:
         self.data: dict[str, dict[str, Any]] = {}
 

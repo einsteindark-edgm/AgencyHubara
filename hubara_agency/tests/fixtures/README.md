@@ -15,6 +15,22 @@ history (R-DET / ADR-005).
 | `history_sales_escalation_prepatch_v1.json` | `HubaraSalesSessionWorkflow` | history REAL de prod (run 5ed9af2d, 2026-09-18), saneada |
 | `history_sales_tag_closure_prepatch_v1.json` | `HubaraSalesSessionWorkflow` | sintética, generada con el código del commit 4052c29 (PRE `tag-ends-turn-v1`) |
 | `history_sales_perception_v1.json` | `HubaraSalesSessionWorkflow` | sintética, clasificador PRENDIDO (`perception-v1`), generada con el código de `lab/integracion` (9afa43b4) |
+| `history_sales_v2_burst_prepatch_v1.json` | `HubaraSalesSessionWorkflowV2` | sintética, generada con el código de `main` en f83d51b4 (PRE ráfagas sin cortes) |
+
+**`history_sales_v2_burst_prepatch_v1.json` también está CONGELADA y NO se
+regenera.** Es una sesión del bot nuevo (V2) con una ráfaga, con la forma
+ANTERIOR a las ráfagas sin cortes (incidente 2026-10-06): el turno 1 llega al
+tope de 2 reinicios y responde aunque el cliente siga escribiendo, en el turno 2
+llega un mensaje mientras corre el egreso y la respuesta se graba y se envía
+igual, y los intentos cortados reportan tokens sin registrar su costo. Hay
+sesiones vivas del V2 (los números de prueba): protege los tres gates
+(`burst-time-budget-v1`, `turn-interrupt-before-record-v1` y
+`turn-interrupt-cost-v1`), con control negativo automatizado por gate y por
+sitio (`test_prepatch_v2_burst_history_breaks_without_each_gate`). Sesión
+sintética `wa_rafaga_v2` (dirección inventada), identidad del worker →
+`fixture-worker`. Procedencia en `generate_sales_v2_burst_prepatch_fixture.py`
+(se NIEGA a correr si el código ya trae los gates). Se borra junto con el
+`workflow.deprecate_patch(...)` de los tres gates.
 
 **`history_sales_tag_closure_prepatch_v1.json` también está CONGELADA y NO se
 regenera** (el código que la produjo ya no existe: regenerarla hoy daría la

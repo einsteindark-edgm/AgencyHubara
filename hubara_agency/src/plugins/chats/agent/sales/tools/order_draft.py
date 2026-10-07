@@ -28,7 +28,9 @@ Patron LLM (ver `workspace/TOOLS.md`):
     borrar un dato que quedo indefinido, mandalo como string vacio.
 """
 from __future__ import annotations
+from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
+import copy
 import json
 import time
 from collections.abc import Awaitable, Callable
@@ -474,9 +476,15 @@ class SetOrderSlotTool(ToolBase):
         return items_now[k], products[k]
 
     async def _remove(
-        self, ctx: ToolContext, data: dict[str, Any], producto: str, now_ms: int
+        self,
+        ctx: ToolContext,
+        data: dict[str, Any],
+        base: dict[str, Any],
+        producto: str,
+        now_ms: int,
     ) -> str:
-        """`quitar=true`: saca el producto del pedido (lo descartó o lo cambió)."""
+        """`quitar=true`: saca el producto del pedido (lo descartó o lo cambió).
+        `base`: lo leído, para escribir solo este cambio (`write_merged`)."""
         catalog_products = await self._catalog_products()
         product = _find_product(catalog_products or [], producto)
         name = product.title if product is not None else producto
@@ -489,7 +497,7 @@ class SetOrderSlotTool(ToolBase):
             update_order_draft(
                 data, slots={"producto": name}, now_ms=now_ms, remove_product=True
             )
-            self._store.write(ctx.session_key, data)
+            self._store.write_merged(ctx.session_key, base=base, ours=data)
         logger.info(
             "📝 [TOOL set_order_slot] session={} quitar={!r} present={}",
             ctx.session_key, name, present,
@@ -792,10 +800,14 @@ class SetOrderSlotTool(ToolBase):
             )
 
         now_ms = int(time.time() * 1000)
-        data = self._store.read(ctx.session_key)
+        data = read_retrying_transient_errors_sync(self._store, ctx.session_key)
+        # Lo leído: entre esta lectura y la escritura se consulta el catálogo
+        # y el motor (Jev); la escritura lleva SOLO lo que esta tool cambió
+        # (incidente 2026-10-06: la copia entera pisaba otras escrituras).
+        base = copy.deepcopy(data)
 
         if quitar and producto:
-            return await self._remove(ctx, data, producto, now_ms)
+            return await self._remove(ctx, data, base, producto, now_ms)
 
         # Un producto en varias variantes, cada una con su cantidad (`lineas`).
         lines_product: str | None = None
@@ -979,7 +991,7 @@ class SetOrderSlotTool(ToolBase):
         if wrote:
             update_order_draft(data, slots=provided, now_ms=now_ms)
         if wrote or lines_written is not None:
-            self._store.write(ctx.session_key, data)
+            self._store.write_merged(ctx.session_key, base=base, ours=data)
         wrote = wrote or lines_written is not None
         current_slots = get_projectable_draft(data) or {}
 

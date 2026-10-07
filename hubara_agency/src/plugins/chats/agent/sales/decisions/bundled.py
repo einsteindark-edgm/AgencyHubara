@@ -371,6 +371,7 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
     },
     "view": {
         "purchase_window": _INGEST,
+        "reply_gap": _INGEST,
         "enumeration_found": _CATALOG,
     },
     "items": {

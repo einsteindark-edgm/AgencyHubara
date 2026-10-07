@@ -144,6 +144,14 @@ def test_des03_legacy_request_without_component_fails() -> None:
     assert (_run("DES-03", t).verdict, _run("DES-03", t).turn) == ("falla", 1)
 
 
+def test_des03_legacy_category_menu_answers_the_catalog_request() -> None:
+    """Catálogo que no cabe en un mensaje (PR #394): el cliente recibe primero
+    el menú de categorías. En una conversación sin traza eso queda como el
+    componente `categories`: atendió el pedido, no es un rojo."""
+    t = traj(T(1, inbound="quiero ver el catálogo", intents=["categories"], stage_in=None), fidelity="legacy")
+    assert _run("DES-03", t).verdict == "pasa"
+
+
 # ── DES-05 ────────────────────────────────────────────────────────────────
 def test_des05_price_after_search_passes() -> None:
     t = traj(

@@ -39,6 +39,7 @@ Shape en ``metadata.json``::
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import time
 from dataclasses import dataclass, field
@@ -48,6 +49,7 @@ from typing import Any, Awaitable, Callable
 import httpx
 import structlog
 
+from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp.capi import (
     CAPI_EVENT_NAMES,
     META_CAPI_API_URL,
@@ -273,11 +275,15 @@ def _read_metadata(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def _write_metadata(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+def _save_changes(path: Path, base: dict[str, Any], data: dict[str, Any]) -> None:
+    """Escribe SOLO lo que este proceso cambió en `data` frente a lo que leyó
+    (`base`), sobre lo que hay en disco ahora y bajo el candado del store
+    (incidente 2026-10-06: la copia entera, escrita después de esperar a Meta,
+    pisaba lo que el chat escribió mientras tanto — un evento recién encolado,
+    la cola de tarjetas)."""
+    FilesystemMetadataStore(path.parent.parent).write_merged(
+        path.parent.name, base=base, ours=data
+    )
 
 
 async def _default_post(url: str, body: dict[str, Any], token: str) -> httpx.Response:
@@ -364,6 +370,9 @@ async def flush_capi_outbox(
     pending = pending_capi_events(metadata)
     if not pending:
         return CapiFlushResult(session_id=session_id)
+    # Lo leído: entre esta lectura y la escritura se habla con Meta; la
+    # escritura lleva solo lo que el flush cambió (`_save_changes`).
+    base = copy.deepcopy(metadata)
 
     clid, captured_at_ms = resolve_ctwa_attribution(metadata)
     outcomes: list[dict[str, Any]] = []
@@ -470,7 +479,7 @@ async def flush_capi_outbox(
         log.warning("capi_send_failed_5xx", session_id=session_id, event_id=event_id, http_status=status_code, attempts=entry["attempts"])
 
     metadata[OUTBOX_KEY] = remaining
-    _write_metadata(path, metadata)
+    _save_changes(path, base, metadata)
     return CapiFlushResult(
         session_id=session_id,
         sent=sent,

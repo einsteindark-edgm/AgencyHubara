@@ -79,14 +79,15 @@ async def transcribe_audio_activity(session_id: str) -> str:
 
     if not result.ok or not result.text:
         # Persistir error para tracking
-        errors = list(data.get("transcription_failures") or [])
-        errors.append({
-            "media_id": media_id,
-            "error": result.error,
-            "provider": result.provider,
-        })
-        data["transcription_failures"] = errors[-20:]
-        _safe_write_metadata(metadata_file, data)
+        _record_transcription(
+            session_id,
+            "transcription_failures",
+            {
+                "media_id": media_id,
+                "error": result.error,
+                "provider": result.provider,
+            },
+        )
 
         # Avisar al cliente: pídele que escriba
         phone_number_id = data.get("phone_number_id") or os.getenv(
@@ -128,16 +129,17 @@ async def transcribe_audio_activity(session_id: str) -> str:
         return ""
 
     # OK: persistir texto + emitir analytics
-    transcriptions = list(data.get("recent_transcriptions") or [])
-    transcriptions.append({
-        "media_id": media_id,
-        "text": result.text,
-        "duration_seconds": result.duration_seconds,
-        "provider": result.provider,
-        "cost_usd_estimate": result.cost_usd_estimate,
-    })
-    data["recent_transcriptions"] = transcriptions[-20:]
-    _safe_write_metadata(metadata_file, data)
+    _record_transcription(
+        session_id,
+        "recent_transcriptions",
+        {
+            "media_id": media_id,
+            "text": result.text,
+            "duration_seconds": result.duration_seconds,
+            "provider": result.provider,
+            "cost_usd_estimate": result.cost_usd_estimate,
+        },
+    )
 
     try:
         await bus.record(make_wa_interaction(
@@ -160,13 +162,23 @@ async def transcribe_audio_activity(session_id: str) -> str:
     return result.text
 
 
-def _safe_write_metadata(path, data: dict[str, Any]) -> None:
+def _record_transcription(session_id: str, key: str, entry: dict[str, Any]) -> None:
+    """Saca `pending_transcription` (el de ESTE audio) y agrega `entry` a `key`
+    (últimos 20), con `update()` sobre la lectura fresca: la transcripción
+    tarda segundos y la copia leída antes ya no es la de disco (incidente
+    2026-10-06). Si mientras tanto llegó otro audio, su pendiente queda."""
+    from src.sdk.runtime import WORKSPACE_VAULT_DIR, FilesystemMetadataStore
+
+    def _apply(fresh: dict[str, Any]) -> dict[str, Any]:
+        pending = fresh.get("pending_transcription")
+        if not isinstance(pending, dict) or pending.get("media_id") == entry.get("media_id"):
+            fresh.pop("pending_transcription", None)
+        fresh[key] = [*(fresh.get(key) or []), entry][-20:]
+        return fresh
+
     try:
-        path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, _apply)
     except OSError:
         activity.logger.warning(
-            "transcribe_audio.write_failed", extra={"path": str(path)}
+            "transcribe_audio.write_failed", extra={"session_id": session_id}
         )

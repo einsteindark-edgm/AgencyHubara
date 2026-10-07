@@ -240,6 +240,18 @@ def test_a_cart_named_from_the_catalog_keeps_its_codes_for_the_lab() -> None:
     assert ingest_fields(CART) == EXPECTED_FIELDS[2]
 
 
+def test_a_category_chosen_from_the_menu_is_the_row_the_customer_tapped() -> None:
+    """Catálogo que no cabe en un mensaje (2026-10-06): el cliente elige una
+    categoría del menú. El laboratorio la reconstruye como la fila que tocó,
+    con su id (el código lo lee por el id, no por el texto)."""
+    from src.plugins.chats.agent.sales_lab.cases import ingest_fields
+
+    assert ingest_fields('[el cliente eligió la categoría: Velones (category="categoria:velones")]') == {
+        "kind": "interactive",
+        "interactive": {"type": "list_reply", "id": "categoria:velones", "title": "Velones"},
+    }
+
+
 def test_the_burst_carries_what_the_webhook_brought_besides_the_text(tmp_path: Path) -> None:
     """Las lecturas del ingest leen lo que el cliente ESCRIBIÓ: en una foto,
     solo el texto que puso en ella; un botón o un carrito los lee el código.

@@ -87,14 +87,15 @@ async def test_a_ui_tool_that_enqueues_keeps_what_the_ingest_saved_meanwhile(
     vault = _isolate_vault_dir
     _seed(vault, pending_ui_intents=[])
     other = _OtherProcess(vault, _customer_writes)
-    real_read = FilesystemMetadataStore.read
+    # El hueco: la lectura fresca de `update()` (bajo el candado) y su escritura.
+    real_fresh = FilesystemMetadataStore._fresh_locked
 
-    def read_then_the_ingest_writes(self: FilesystemMetadataStore, session_id: str) -> dict[str, Any]:
-        data = real_read(self, session_id)
+    def read_then_the_ingest_writes(self: FilesystemMetadataStore, path: Path) -> Any:
+        snapshot = real_fresh(self, path)
         other.strike()
-        return data
+        return snapshot
 
-    monkeypatch.setattr(FilesystemMetadataStore, "read", read_then_the_ingest_writes)
+    monkeypatch.setattr(FilesystemMetadataStore, "_fresh_locked", read_then_the_ingest_writes)
 
     await SendShippingRatesTool(workspace=str(vault)).execute_with_context(_ctx())
     other.finish()

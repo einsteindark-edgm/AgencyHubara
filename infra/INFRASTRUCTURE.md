@@ -134,7 +134,7 @@ Este documento es la **fuente de verdad de dónde se aloja cada componente**. Lo
   | `chats/sales` | chats | agente de ventas (**camino crítico** de ingresos) |
   | `chats/remarketing` | chats | agente de remarketing |
   | `chats/sales_eval` | chats | scoring de calidad RAGAS, **Scheduled Workflow offline** (§3.10) |
-  | `catalog/sync` | catalog | sync Medusa→snapshot (`CATALOG_SNAPSHOT_DIR`, TTL 30 min) |
+  | `catalog/sync` | catalog | sync Medusa→snapshot (`CATALOG_SNAPSHOT_DIR`) a pedido: botón Sync del dashboard, sin horario. A los 30 min (`CATALOG_MAX_AGE_MINUTES`) el dashboard marca la copia como vieja; nada la refresca solo |
   | `eta/eta` | eta | notifica cambios de estado de pedido (window-aware WhatsApp) |
   | `orders/reconcile` | orders | red de seguridad idempotente, corre cada `ORDER_RECONCILE_INTERVAL_MINUTES` (5) |
 

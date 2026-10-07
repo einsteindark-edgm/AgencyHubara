@@ -35,15 +35,18 @@ def _append_pending_handoff(session_id: str, summary: str) -> None:
     summary exacto ya está contenido, skip — idempotencia ante retries de la
     activity.
     """
-    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
-    data = metadata_store.read(session_id)
-    existing = data.get("pending_handoff_summary") or ""
-    if summary in existing:
-        return
-    data["pending_handoff_summary"] = (
-        f"{existing}\n{summary}" if existing else summary
-    )
-    metadata_store.write(session_id, data)
+    def _append(fresh: dict) -> dict | None:
+        # Sobre la lectura fresca y solo esta llave (bajo el candado): un
+        # `read_and_clear` o cualquier otro escritor en medio no se pisa.
+        existing = fresh.get("pending_handoff_summary") or ""
+        if summary in existing:
+            return None
+        fresh["pending_handoff_summary"] = (
+            f"{existing}\n{summary}" if existing else summary
+        )
+        return fresh
+
+    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, _append)
 
 
 @activity.defn(name="write_pending_handoff")

@@ -29,7 +29,8 @@ Reglas:
 DEHA:
 - Funciones puras que MUTAN el dict `metadata` recibido por argumento.
   No tocan filesystem ni Temporal. El caller persiste con
-  `FilesystemMetadataStore.write()`.
+  `FilesystemMetadataStore.update()` (dentro del mutator) o
+  `write_merged()` (solo lo que cambió frente a lo leído).
 - `now_ms` por DI para tests determinísticos (R-DET implícito).
 """
 from __future__ import annotations

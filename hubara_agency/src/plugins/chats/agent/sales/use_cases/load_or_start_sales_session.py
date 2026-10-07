@@ -59,6 +59,7 @@ from src.platform.routing import resolve_route_workflow_id
 from src.plugins.chats.agent.sales.context import build_bogota_context_string
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors
 
 logger = structlog.get_logger()
 
@@ -134,7 +135,8 @@ class LoadOrStartSalesSession:
     PR-E: ``metadata_store`` ahora se type-hints como la concreta
     ``FilesystemMetadataStore`` (no ``MetadataStorePort``). Los fakes en tests
     siguen funcionando porque Python es duck-typed; un fake con
-    ``read(...)`` / ``write(...)`` se acepta sin problemas.
+    ``read(...)`` / ``update(...)`` se acepta sin problemas (las escrituras
+    van por ``update``: solo la llave que cambia, sobre la lectura fresca).
     """
 
     def __init__(
@@ -193,7 +195,19 @@ class LoadOrStartSalesSession:
         # frontera de episodio en re-engagement (bug run 3b3fbaee). Es un
         # hueco genérico — cualquier dato de contexto del turno cabe acá.
         # 1. Resolver ruta y persistir phone_number_id (lectura + posible escritura).
-        data = self._metadata_store.read(session_id)
+        # Un error pasajero se reintenta acá (hasta 3 veces, sin frenar el
+        # bucle): Meta no reintenta este ingest. Sin la ruta no se decide (un
+        # humano puede tener la conversación): el mensaje ya quedó en el
+        # historial, el ingest falla (`ingest_failed` en el ledger) y se avisa.
+        try:
+            data = await read_retrying_transient_errors(self._metadata_store, session_id)
+        except OSError as exc:
+            logger.error(
+                "no pude leer la ruta; el mensaje no se despachó",
+                session_id=session_id,
+                error=repr(exc)[:200],
+            )
+            raise
         active_route = data.get("active_route", ROUTE_VENTAS)
 
         # 1.1. Sales pendiente de Flow (sesión c4e3416f): si acabamos de
@@ -224,7 +238,18 @@ class LoadOrStartSalesSession:
 
         if phone_number_id:
             data["phone_number_id"] = phone_number_id
-            self._metadata_store.write(session_id, data)
+            # Solo esta llave, sobre la lectura fresca (incidente 2026-10-06:
+            # la copia entera pisaba lo que otro escritor puso mientras tanto).
+            # De mejor esfuerzo: si el disco no deja escribir, el mensaje igual
+            # se despacha (el número ya viaja en `data` para este turno).
+            try:
+                self._metadata_store.update(
+                    session_id, lambda fresh: {**fresh, "phone_number_id": phone_number_id}
+                )
+            except Exception as exc:  # noqa: BLE001 — mejor esfuerzo: el mensaje sigue
+                logger.warning(
+                    "router_phone_number_id_write_failed", session_id=session_id, error=repr(exc)[:200]
+                )
 
         # 1.5. Ruta humano: cliente esta en el inbox humano (escalation previa).
         # El mensaje del cliente ya quedo persistido en el JSONL (lo hace
@@ -285,7 +310,18 @@ class LoadOrStartSalesSession:
             except Exception:  # noqa: BLE001 — no existe / ya terminó / race
                 pass
             data["active_route"] = ROUTE_VENTAS
-            self._metadata_store.write(session_id, data)
+            # Solo la ruta, sobre la lectura fresca: entre la lectura de
+            # arriba y acá hubo un `terminate` a Temporal. De mejor esfuerzo
+            # (octava revisión): si el disco no deja escribir, este despacho
+            # igual va a ventas (lo decide `active_route` local).
+            try:
+                self._metadata_store.update(
+                    session_id, lambda fresh: {**fresh, "active_route": ROUTE_VENTAS}
+                )
+            except Exception as exc:  # noqa: BLE001 — mejor esfuerzo: el mensaje sigue
+                logger.warning(
+                    "router_prefer_sales_route_write_failed", session_id=session_id, error=repr(exc)[:200]
+                )
             active_route = ROUTE_VENTAS
 
         # 3. Si la ruta activa es remarketing, intentamos reusar; si murio, fallback.
