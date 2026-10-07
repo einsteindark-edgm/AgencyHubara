@@ -1,0 +1,170 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Manifiesto de la App Operador",
+  "description": "Las pestañas de la barra de abajo, en orden (la primera es la de inicio). Se aplican la próxima vez que se abre la app.",
+  "type": "object",
+  "required": [
+    "schema",
+    "tabs"
+  ],
+  "patternProperties": {
+    "^[_$]": {
+      "description": "Nota para quien lee el archivo (la app la ignora)."
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema": {
+      "const": 1
+    },
+    "tabs": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": [
+          "screen",
+          "label",
+          "icon"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "screen": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]{1,64}$",
+            "description": "Una pantalla sin parámetros."
+          },
+          "label": {
+            "type": "string"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "enum": [
+                  "add",
+                  "apps",
+                  "arrow_back",
+                  "bar_chart",
+                  "bolt",
+                  "bot",
+                  "calendar",
+                  "call",
+                  "campaign",
+                  "chat",
+                  "chat_filled",
+                  "check",
+                  "check_circle",
+                  "chevron_right",
+                  "close",
+                  "edit",
+                  "error",
+                  "filter",
+                  "fire",
+                  "fire_filled",
+                  "group",
+                  "info",
+                  "inventory",
+                  "link",
+                  "location",
+                  "mail",
+                  "more_vert",
+                  "notifications",
+                  "orders",
+                  "orders_filled",
+                  "payments",
+                  "person",
+                  "receipt",
+                  "refresh",
+                  "schedule",
+                  "search",
+                  "sell",
+                  "send",
+                  "settings",
+                  "shipping",
+                  "star",
+                  "storefront",
+                  "trending_down",
+                  "trending_up",
+                  "undo",
+                  "warning"
+                ]
+              },
+              {
+                "type": "string",
+                "pattern": "\\{\\{"
+              }
+            ],
+            "description": "Ícono del catálogo."
+          },
+          "icon_selected": {
+            "anyOf": [
+              {
+                "enum": [
+                  "add",
+                  "apps",
+                  "arrow_back",
+                  "bar_chart",
+                  "bolt",
+                  "bot",
+                  "calendar",
+                  "call",
+                  "campaign",
+                  "chat",
+                  "chat_filled",
+                  "check",
+                  "check_circle",
+                  "chevron_right",
+                  "close",
+                  "edit",
+                  "error",
+                  "filter",
+                  "fire",
+                  "fire_filled",
+                  "group",
+                  "info",
+                  "inventory",
+                  "link",
+                  "location",
+                  "mail",
+                  "more_vert",
+                  "notifications",
+                  "orders",
+                  "orders_filled",
+                  "payments",
+                  "person",
+                  "receipt",
+                  "refresh",
+                  "schedule",
+                  "search",
+                  "sell",
+                  "send",
+                  "settings",
+                  "shipping",
+                  "star",
+                  "storefront",
+                  "trending_down",
+                  "trending_up",
+                  "undo",
+                  "warning"
+                ]
+              },
+              {
+                "type": "string",
+                "pattern": "\\{\\{"
+              }
+            ],
+            "description": "Ícono con la pestaña elegida."
+          },
+          "badge": {
+            "type": "string",
+            "description": "Número sobre el ícono, de una fuente del teléfono: {{radar | count}}."
+          }
+        }
+      }
+    }
+  }
+}

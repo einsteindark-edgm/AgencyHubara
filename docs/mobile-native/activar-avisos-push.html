@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activar avisos push</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: guía de una columna en tres fases (Firebase → AWS → teléfono); cada paso es una tarjeta con casilla, quién
+   lo hace, cuánto tarda y sus comandos para copiar. Mismo sistema que «Publicar App Operador en Google Play». */
+:root {
+  --bg: #f9f9fe; --surface: #ffffff; --surface-2: #eeedf3; --fg: #1a1c1f; --muted: #424751; --line: #c2c6d3;
+  --accent: #005db8; --accent-soft: #d6e3ff; --on-accent-soft: #00468d;
+  --you-bg: #ffdcc7; --you-fg: #723600; --done-bg: #cfeedd; --done-fg: #00522f; --warn-bg: #ffd9dd; --warn-fg: #910033;
+  --code-bg: #eeedf3;
+  --font: "Google Sans Flex", "Roboto Flex", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121317; --surface: #1e2024; --surface-2: #282a2e; --fg: #e2e2e7; --muted: #c2c6d3; --line: #424751;
+  --accent: #aac7ff; --accent-soft: #00468d; --on-accent-soft: #d6e3ff;
+  --you-bg: #723600; --you-fg: #ffdcc7; --done-bg: #00522f; --done-fg: #b6f2d0; --warn-bg: #910033; --warn-fg: #ffd9dd;
+  --code-bg: #0c0e12; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121317; --surface: #1e2024; --surface-2: #282a2e; --fg: #e2e2e7; --muted: #c2c6d3; --line: #424751;
+  --accent: #aac7ff; --accent-soft: #00468d; --on-accent-soft: #d6e3ff;
+  --you-bg: #723600; --you-fg: #ffdcc7; --done-bg: #00522f; --done-fg: #b6f2d0; --warn-bg: #910033; --warn-fg: #ffd9dd;
+  --code-bg: #0c0e12; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 16px; line-height: 1.6;
+  padding-inline: 16px; padding-block: 0 72px; margin: 0 }
+.wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 48px }
+h1, h2, h3 { text-wrap: balance; margin: 0; letter-spacing: -0.01em }
+h1 { font-size: clamp(2rem, 5vw, 2.7rem); font-weight: 700; line-height: 1.1 }
+h2 { font-size: 1.5rem; font-weight: 650 }
+h3 { font-size: 1.1rem; font-weight: 650 }
+p { margin: 0 }
+.lead { color: var(--muted); max-width: 68ch; font-size: 1.05rem }
+.eyebrow { font-size: .78rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--accent) }
+a { color: var(--accent); overflow-wrap: anywhere }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 6px }
+code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); padding: 1px 6px; border-radius: 6px; overflow-wrap: anywhere }
+.cmd { display: flex; align-items: stretch; gap: 0; background: var(--code-bg); border-radius: 14px; overflow: hidden; min-width: 0 }
+.cmd pre { margin: 0; padding: 12px 14px; overflow-x: auto; font-family: var(--mono); font-size: .86rem; line-height: 1.5; flex: 1; min-width: 0 }
+.cmd button { flex: none; border: 0; background: var(--surface-2); color: var(--fg); font: 600 .8rem var(--font); padding: 0 14px; cursor: pointer }
+.cmd button:hover { background: var(--accent-soft); color: var(--on-accent-soft) }
+header { padding-block: 48px 0; display: grid; gap: 16px }
+.progress { display: flex; align-items: center; gap: 12px; flex-wrap: wrap }
+.bar { flex: 1 1 220px; height: 10px; background: var(--surface-2); border-radius: 999px; overflow: hidden }
+.bar span { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .3s }
+.count { font-variant-numeric: tabular-nums; color: var(--muted); font-size: .92rem }
+
+.summary { display: grid; grid-template-columns: 1.1fr .9fr; gap: 16px }
+.panel { background: var(--surface); border-radius: 20px; padding: 22px; display: grid; gap: 12px; align-content: start; min-width: 0 }
+.panel.soft { background: var(--surface-2) }
+.panel ul, .panel ol { margin: 0; padding-left: 1.1em; display: grid; gap: 8px }
+.callout { border-radius: 16px; padding: 14px 16px; background: var(--warn-bg); color: var(--warn-fg) }
+.callout.info { background: var(--accent-soft); color: var(--on-accent-soft) }
+.callout b { font-weight: 650 }
+
+section.phase { display: grid; gap: 14px }
+.phase-head { display: grid; gap: 6px }
+.steps { display: grid; gap: 12px }
+.step { background: var(--surface); border-radius: 20px; padding: 20px 22px; display: grid; gap: 12px; counter-increment: step; min-width: 0 }
+.step-top { display: flex; gap: 12px; align-items: flex-start }
+.step-top input { width: 22px; height: 22px; margin-top: 3px; accent-color: var(--accent); flex: none; cursor: pointer }
+.step-title { display: grid; gap: 6px; min-width: 0 }
+.step-title h3::before { content: counter(step) ". "; color: var(--accent) }
+.tags { display: flex; gap: 6px; flex-wrap: wrap }
+.tag { font-size: .76rem; font-weight: 650; border-radius: 999px; padding: 2px 10px; letter-spacing: .02em }
+.tag.you { background: var(--you-bg); color: var(--you-fg) }
+.tag.done { background: var(--done-bg); color: var(--done-fg) }
+.tag.time { background: var(--surface-2); color: var(--muted) }
+.step.checked { opacity: .62 }
+.step.checked .step-title h3 { text-decoration: line-through }
+.step ol, .step ul { margin: 0; padding-left: 1.25em; display: grid; gap: 6px }
+.sources { font-size: .9rem; color: var(--muted); display: grid; gap: 4px }
+.sources b { font-weight: 600 }
+.alt { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; display: grid; gap: 8px }
+table { width: 100%; border-collapse: collapse; min-width: 560px }
+.tablewrap { overflow-x: auto; background: var(--surface); border-radius: 18px }
+th, td { text-align: left; padding: 10px 14px; border-top: 1px solid var(--surface-2); vertical-align: top }
+th { font-size: .82rem; color: var(--muted); font-weight: 600; border-top: 0 }
+.route { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; counter-reset: hop }
+.route li { display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; counter-increment: hop }
+.route li::before { content: counter(hop); width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--on-accent-soft); font-weight: 700; font-variant-numeric: tabular-nums }
+.route li.google::before { background: var(--you-bg); color: var(--you-fg) }
+@media (max-width: 720px) { .summary { grid-template-columns: 1fr } .step { padding: 18px } }
+@media (prefers-reduced-motion: reduce) { .bar span { transition: none } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header>
+  <span class="eyebrow">App Operador · Firebase Cloud Messaging</span>
+  <h1>Activar los avisos push</h1>
+  <p class="lead">Con esto, un incendio grave le llega al teléfono del operador en segundos aunque la app esté cerrada, y el
+    widget de ventas calientes se actualiza solo. Hoy, con la app cerrada, el teléfono revisa cada 15 minutos. El código
+    ya está hecho; faltan tres cosas que solo puedes hacer tú: crear el proyecto de Firebase, cargar dos llaves en AWS y
+    probar en el teléfono.</p>
+  <div class="progress" aria-live="polite">
+    <div class="bar" aria-hidden="true"><span id="bar"></span></div>
+    <span class="count" id="count">0 de 12 pasos</span>
+  </div>
+</header>
+
+<div class="summary">
+  <div class="panel">
+    <h2>Lo que necesitas</h2>
+    <ul>
+      <li>Una cuenta de Google (la de la empresa). Firebase Cloud Messaging es <b>gratis</b>, sin límite de avisos.</li>
+      <li>Tu acceso de administrador a AWS, el mismo con el que cargaste los otros secretos (Jev, WhatsApp).</li>
+      <li>GitHub, para aprobar el <code>terraform apply</code> y lanzar el deploy.</li>
+      <li>El teléfono del operador con Google Play (cualquier Android normal, el Motorola sirve).</li>
+    </ul>
+  </div>
+  <div class="panel soft">
+    <h2>Ya quedó hecho</h2>
+    <ul>
+      <li>La app pide su configuración de Firebase al servidor y se registra sola al abrir.</li>
+      <li>El backend detecta el incendio grave nuevo y manda el aviso; borra los teléfonos que ya no existen.</li>
+      <li>Terraform declara las dos llaves; el script las sube desde los archivos que bajes.</li>
+      <li>«Más → Probar avisos» en la app, y el escenario S20 en el emulador.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout"><b>Las llaves nunca van al chat ni al repo.</b> El repositorio es público. Los dos archivos que vas a
+  bajar de Firebase se quedan en una carpeta tuya fuera del repo y llegan a AWS con el script del paso 6.</div>
+
+<!-- FASE A -->
+<section class="phase">
+  <div class="phase-head">
+    <span class="eyebrow">Fase A · en Firebase · unos 20 minutos</span>
+    <h2>El proyecto y sus dos archivos</h2>
+    <p class="lead">Puedes hacerla hoy, antes de mergear el PR. Al final tendrás dos archivos JSON en tu computador.</p>
+  </div>
+  <div class="steps" style="counter-reset: step 0">
+
+    <article class="step">
+      <div class="step-top"><input type="checkbox" id="s-proyecto" aria-label="Marcar paso hecho">
+        <div class="step-title"><h3>Crea el proyecto de Firebase</h3>
+          <div class="tags"><span class="tag you">Lo haces tú</span><span class="tag time">5 min</span></div></div></div>
+      <ol>
+        <li>Entra a la consola de Firebase con la cuenta de Google de la empresa y elige <b>Crear un proyecto</b>.</li>
+        <li>Ponle un nombre que reconozcas, por ejemplo <code>hubara-operador</code>. Firebase le arma un id único
+          (por ejemplo <code>hubara-operador-a1b2c</code>); no hace falta anotarlo.</li>
+        <li>Cuando pregunte por <b>Google Analytics</b>, desactívalo: la app no lo usa y así no recoge datos de más.</li>
+        <li>Termina con <b>Crear proyecto</b>. Queda en el plan gratuito (Spark), que alcanza para los avisos.</li>
+      </ol>
+      <div class="sources"><b>Oficial:</b> <a href="https://console.firebase.google.com/" target="_blank" rel="noopener">Consola de Firebase</a>
+        · <a href="https://firebase.google.com/docs/android/setup" target="_blank" rel="noopener">Agregar Firebase a una app Android</a></div>
+    </article>
+
+    <article class="step">
+      <div class="step-top"><input type="checkbox" id="s-app" aria-label="Marcar paso hecho">
+        <div class="step-title"><h3>Registra la app Android y baja <code>google-services.json</code></h3>
+          <div class="tags"><span class="tag you">Lo haces tú</span><span class="tag time">5 min</span></div></div></div>
+      <ol>
+        <li>En la página del proyecto toca el ícono de <b>Android</b> (Agregar app).</li>
+        <li>Nombre del paquete, exactamente: <code>com.hubara.operator</code>. Apodo: <code>App Operador</code>. El SHA-1 no
+          hace falta para los avisos: déjalo vacío.</li>
+        <li><b>Registrar app</b> → <b>Descargar google-services.json</b>. Guárdalo en una carpeta tuya fuera del repo, por
+          ejemplo <code>~/hubara-secretos/</code>.</li>
+        <li>Los pasos siguientes del asistente (copiar el archivo a la app, agregar el plugin de Gradle, el SDK) <b>sáltatelos</b>
+          con «Siguiente» hasta terminar: la app ya trae Firebase y recibe esa configuración desde el servidor.</li>
+      </ol>
+    </article>
+
+    <article class="step">
+      <div class="step-top"><input type="checkbox" id="s-api" aria-label="Marcar paso hecho">
+        <div class="step-title"><h3>Revisa que la API de Cloud Messaging (V1) esté activa</h3>
+          <div class="tags"><span class="tag you">Lo haces tú</span><span class="tag time">1 min</span></div></div></div>
+      <ol>
+        <li>Ícono de engranaje → <b>Configuración del proyecto</b> → pestaña <b>Cloud Messaging</b>.</li>
+        <li>En «API de Firebase Cloud Messaging (V1)» debe decir <b>Habilitada</b>. En proyectos nuevos viene así.</li>
+        <li>Si dice inhabilitada: menú ⋮ de esa fila → «Administrar API en Google Cloud Console» → <b>Habilitar</b>.</li>
+        <li>La «API heredada» (legacy) no se usa: Google la apagó. No la actives.</li>
+      </ol>
+    </article>
+
+    <article class="step">
+      <div class="step-top"><input type="checkbox" id="s-cuenta" aria-label="Marcar paso hecho">
+        <div class="step-title"><h3>Genera la llave de la cuenta de servicio</h3>
+          <div class="tags"><span class="tag you">Lo haces tú</span><span class="tag time">3 min</span></div></div></div>
+      <p>Es la llave con la que el backend firma cada aviso. Trátala como una contraseña.</p>
+      <ol>
+        <li><b>Configuración del proyecto</b> → pestaña <b>Cuentas de servicio</b> → «SDK de Firebase Admin».</li>
+        <li><b>Generar nueva clave privada</b> → confirmar. Baja un archivo como
+          <code>hubara-operador-a1b2c-firebase-adminsdk-xxxxx.json</code>. Guárdalo junto al anterior.</li>
+      </ol>
+      <div class="alt">
+        <p><b>Más seguro (opcional, 5 min):</b> esa cuenta puede administrar todo el proyecto de Firebase. Como el proyecto
+          solo sirve para los avisos, el riesgo es bajo; si prefieres una llave que solo pueda mandar avisos:</p>
+        <ol>
+          <li>Google Cloud Console (mismo proyecto) → <b>IAM y administración → Cuentas de servicio → Crear</b>, nombre
+            <code>avisos-app-operador</code>.</li>
+          <li>Rol: <b>Administrador de la API de Firebase Cloud Messaging</b> (<code>roles/firebasecloudmessaging.admin</code>).</li>
+          <li>En la cuenta creada: <b>Claves → Agregar clave → Crear clave nueva → JSON</b>. Usa ese archivo en vez del anterior.</li>
+        </ol>
+      </div>
+      <p>Si Google dice que la creación de claves está bloqueada por una política de la organización
+        (<code>iam.disableServiceAccountKeyCreation</code>), la cuenta de Google pertenece a un Workspace con esa regla:
+        pide al administrador una excepción para este proyecto, o crea el proyecto con una cuenta fuera de esa organización.</p>
+      <div class="sources"><b>Oficial:</b> <a href="https://firebase.google.com/docs/cloud-messaging/auth-server" target="_blank" rel="noopener">Autorizar solicitudes de envío (FCM HTTP v1)</a></div>
+    </article>
+  </div>
+</section>
+
+<!-- FASE B -->
+<section class="phase">
+  <div class="phase-head">
+    <span class="eyebrow">Fase B · en AWS · unos 15 minutos</span>
+    <h2>Las llaves en SSM y el backend nuevo</h2>
+    <p class="lead">Después de mergear el PR #385. Los comandos van desde la raíz del repo, en <code>main</code> actualizado.</p>
+  </div>
+  <div class="steps" style="counter-reset: step 4">
+
+    <article class="step">
+      <div class="step-top"><input type="checkbox" id="s-apply" aria-label="Marcar paso hecho">
+        <div class="step-title"><h3>Crea los dos parámetros con Terraform</h3>
+          <div class="tags"><span class="tag you">Lo apruebas tú</span><span class="tag time">5 min</span></div></div></div>
+      <p>Toda llave nace en Terraform (así la hereda el siguiente tenant). El apply crea
+        <code>FCM_SERVICE_ACCOUNT_JSON</code> y <code>FIREBASE_ANDROID_CONFIG_JSON</code> con un valor de relleno.</p>
+      <ol>
+        <li>Mira el plan del último <b>terraform-plan</b> de <code>main</code>: debe crear esos dos parámetros. Si trae otros
+          cambios, son pendientes de antes (el plan de despliegue de #372): pregúntame antes de aprobar.</li>
+        <li>Lanza el apply y apruébalo en GitHub (entorno <code>production</code>):</li>
+      </ol>
+      <div class="cmd"><pre><code>gh workflow run terraform-apply.yml --ref main -f root=platform</code></pre><button type="button">Copiar</button></div>
+    </article>
+
+    <article class="step">
+      <div class="step-top"><input type="checkbox" id="s-secretos" aria-label="Marcar paso hecho">
+        <div class="step-title"><h3>Sube las dos llaves con el script</h3>
+          <div class="tags"><span class="tag you">Lo haces tú</span><span class="tag time">3 min</span></div></div></div>
+      <ol>
+        <li>Crea el archivo <code>infra/scripts/secrets.firebase.env</code> con estas dos líneas, cambiando las rutas por
+          las de tus archivos. Git lo ignora (todo <code>*secret*.env</code> en esa carpeta).</li>
+      </ol>
+      <div class="cmd"><pre><code>FCM_SERVICE_ACCOUNT_JSON=@~/hubara-secretos/hubara-operador-a1b2c-firebase-adminsdk-xxxxx.json
+FIREBASE_ANDROID_CONFIG_JSON=@~/hubara-secretos/google-services.json</code></pre><button type="button">Copiar</button></div>
+      <p>La <code>@</code> le dice al script que lea el archivo y lo suba en una sola línea. Si un archivo está mal, el
+        script dice cuál y no sube nada.</p>
+      <ol start="2">
+        <li>Súbelas con tu perfil de AWS de administrador:</li>
+      </ol>
+      <div class="cmd"><pre><code>python3 infra/scripts/aws_bootstrap.py secrets --tenant hubara --file infra/scripts/secrets.firebase.env</code></pre><button type="button">Copiar</button></div>
+    </article>
+
+    <article class="step">
+      <div class="step-top"><input type="checkbox" id="s-verify" aria-label="Marcar paso hecho">
+        <div class="step-title"><h3>Confirma que ya no están en relleno</h3>
+          <div class="tags"><span class="tag you">Lo haces tú</span><span class="tag time">1 min</span></div></div></div>
+      <p>El bucket es el del state de Terraform (la variable <code>TF_STATE_BUCKET</code> de GitHub). El script solo lista
+        nombres: ningún valor sale de AWS.</p>
+      <div class="cmd"><pre><code>python3 infra/scripts/aws_bootstrap.py verify --tenant hubara --bucket TU_BUCKET_DE_STATE</code></pre><button type="button">Copiar</button></div>
+      <p>Ninguna de las dos debe aparecer como pendiente.</p>
+    </article>
+
+    <article class="step">
+      <div class="step-top"><input type="checkbox" id="s-deploy" aria-label="Marcar paso hecho">
+        <div class="step-title"><h3>Redespliega el backend</h3>
+          <div class="tags"><span class="tag you">Lo haces tú</span><span class="tag time">5 min</span></div></div></div>
+      <p>El deploy vuelve a armar el <code>.env</code> del servidor desde SSM; sin él, el backend sigue sin llaves.</p>
+      <div class="cmd"><pre><code>gh workflow run backend-deploy.yml --ref main</code></pre><button type="button">Copiar</button></div>
+      <p>Al arrancar, el log del API dice <code>[chats.mobile] avisos push encendidos (fcm_v1)</code>. Si no lo ves, no
+        pasa nada: el paso 11 lo comprueba desde el teléfono.</p>
+    </article>
+  </div>
+</section>
+
+<!-- FASE C -->
+<section class="phase">
+  <div class="phase-head">
+    <span class="eyebrow">Fase C · en el teléfono · unos 5 minutos</span>
+    <h2>Registrar y probar</h2>
+  </div>
+  <div class="steps" style="counter-reset: step 8">
+
+    <article class="step">
+      <div class="step-top"><input type="checkbox" id="s-instalar" aria-label="Marcar paso hecho">
+        <div class="step-title"><h3>Instala la versión nueva de la app</h3>
+          <div class="tags"><span class="tag you">Lo haces tú</span><span class="tag time">5 min</span></div></div></div>
+      <p>La que sale de <code>main</code> después del merge. Si la distribuyes por la prueba interna de Google Play, sube un
+        <code>.aab</code> nuevo: si ya subiste la versión 1, esta necesita <code>versionCode</code> 2 (en
+        <code>android_operator/app/build.gradle.kts</code>; pídemelo y lo dejo listo). La receta está en la guía de Google Play.</p>
+    </article>
+
+    <article class="step">
+      <div class="step-top"><input type="checkbox" id="s-abrir" aria-label="Marcar paso hecho">
+        <div class="step-title"><h3>Abre la app con internet</h3>
+          <div class="tags"><span class="tag you">Lo haces tú</span><span class="tag time">1 min</span></div></div></div>
+      <p>Con la sesión iniciada, la app pide al servidor la configuración de Firebase, lo arranca y registra el teléfono.
+        No hay botón: pasa solo. En Android 13 o más nuevo acepta el permiso de notificaciones si lo pide (el Motorola con
+        Android 11 no lo pide).</p>
+    </article>
+
+    <article class="step">
+      <div class="step-top"><input type="checkbox" id="s-probar" aria-label="Marcar paso hecho">
+        <div class="step-title"><h3>Prueba con «Más → Probar avisos»</h3>
+          <div class="tags"><span class="tag you">Lo haces tú</span><span class="tag time">1 min</span></div></div></div>
+      <p>Abajo dice «Listo: el aviso de prueba te llega en unos segundos» y llega la notificación <b>«Los avisos
+        funcionan»</b>. Ese aviso hizo el viaje completo: el backend, Google y el teléfono. Si sale otro mensaje, está en la
+        tabla de abajo.</p>
+    </article>
+
+    <article class="step">
+      <div class="step-top"><input type="checkbox" id="s-real" aria-label="Marcar paso hecho">
+        <div class="step-title"><h3>La prueba de verdad: con la app cerrada</h3>
+          <div class="tags"><span class="tag you">Lo haces tú</span><span class="tag time">3 min</span></div></div></div>
+      <ol>
+        <li>Cierra la app del todo (deslízala fuera de Recientes) y bloquea el teléfono.</li>
+        <li>Desde tu número de prueba, escríbele a la tienda que quieres hablar con una persona.</li>
+        <li>En segundos debe llegar el aviso del incendio grave. Tócalo: abre el chat.</li>
+      </ol>
+      <p>Si «Probar avisos» llega pero esto no, casi siempre es el ahorro de batería: en el teléfono, Configuración → Apps →
+        Operador → Batería → <b>Sin restricciones</b>, y revisa que el canal «Incendios graves» no esté silenciado.</p>
+    </article>
+  </div>
+</section>
+
+<section class="phase">
+  <div class="phase-head">
+    <span class="eyebrow">Si algo falla</span>
+    <h2>Lo que ves y qué hacer</h2>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Lo que ves</th><th>Qué pasa</th><th>Qué hacer</th></tr></thead>
+      <tbody>
+        <tr><td>«Los avisos no están activados en el servidor»</td><td>El backend no tiene las llaves, siguen en relleno o son de dos proyectos distintos.</td><td>Repite los pasos 6–8. Las dos llaves tienen que ser del mismo proyecto de Firebase.</td></tr>
+        <tr><td>«Tu teléfono no está registrado para avisos»</td><td>La app no alcanzó a registrarse: sin internet al abrir, sin Google Play o una versión vieja.</td><td>Cierra y abre la app con internet. Revisa que sea la versión del paso 9.</td></tr>
+        <tr><td>«Firebase no aceptó el aviso»</td><td>Google rechazó el envío: la API V1 apagada o la llave revocada.</td><td>Revisa el paso 3; si borraste la llave en Firebase, genera otra (paso 4) y vuelve a subirla (paso 6).</td></tr>
+        <tr><td>Llega «Probar avisos» pero no los incendios con la app cerrada</td><td>El teléfono frena la app en segundo plano.</td><td>Batería «Sin restricciones» y el canal «Incendios graves» activo (paso 12).</td></tr>
+        <tr><td>No llega nada y no hay mensaje</td><td>Sin internet en el teléfono o la app sin permiso de notificaciones.</td><td>Configuración → Apps → Operador → Notificaciones: activadas.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="summary">
+  <div class="panel">
+    <h2>El recorrido de un aviso</h2>
+    <ol class="route">
+      <li><span>Un cliente espera a una persona; el backend ve que el incendio pasó a grave.</span></li>
+      <li><span>El backend le pide a Google que despierte los teléfonos registrados.</span></li>
+      <li class="google"><span>Google entrega el aviso. Solo dice «ponte al día»: ni nombres, ni mensajes, ni teléfonos.</span></li>
+      <li><span>La app despierta, lee el backend con su sesión y arma la notificación.</span></li>
+    </ol>
+  </div>
+  <div class="panel soft">
+    <h2>Cuándo avisa</h2>
+    <ul>
+      <li>Incendio grave nuevo: aviso urgente, al momento.</li>
+      <li>Cambian las ventas calientes: el widget se actualiza, como mucho cada 2 minutos.</li>
+      <li>Si un aviso se pierde, el teléfono igual revisa cada 15 minutos.</li>
+      <li><b>Para apagarlo:</b> borra la llave en Firebase (Cuentas de servicio) o vuelve a dejar el relleno en SSM y
+        redespliega. La app sigue con su revisión de 15 minutos.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout info"><b>Google Play.</b> La app ahora guarda en el servidor el token de Firebase del teléfono. Ya
+  actualicé el borrador de la política de privacidad y las respuestas de «Seguridad de los datos»
+  (<code>android_operator/release/</code>): cuando la app pase de prueba interna a cerrada o producción, marca «ID del
+  dispositivo u otros IDs» como recolectado, para la funcionalidad de la app.</div>
+</div>
+
+<script>
+(() => {
+  const KEY = 'activar-avisos-push-pasos';
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') } catch (e) { saved = {} }
+  const boxes = [...document.querySelectorAll('.step input[type=checkbox]')];
+  const bar = document.getElementById('bar'), count = document.getElementById('count');
+  const render = () => {
+    const done = boxes.filter(b => b.checked).length;
+    boxes.forEach(b => b.closest('.step').classList.toggle('checked', b.checked));
+    bar.style.width = (100 * done / boxes.length) + '%';
+    count.textContent = done + ' de ' + boxes.length + ' pasos';
+  };
+  boxes.forEach(b => {
+    b.checked = !!saved[b.id];
+    b.addEventListener('change', () => {
+      saved[b.id] = b.checked;
+      try { localStorage.setItem(KEY, JSON.stringify(saved)) } catch (e) {}
+      render();
+    });
+  });
+  render();
+  document.querySelectorAll('.cmd button').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const text = btn.parentElement.querySelector('code').textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = 'Copiado';
+      } catch (e) {
+        const range = document.createRange();
+        range.selectNodeContents(btn.parentElement.querySelector('code'));
+        const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+        btn.textContent = 'Selecciona y copia';
+      }
+      setTimeout(() => { btn.textContent = 'Copiar' }, 1800);
+    });
+  });
+})();
+</script>
+</body>
+</html>

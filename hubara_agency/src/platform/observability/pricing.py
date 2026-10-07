@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,24 @@ def _price_entry(model: str, pricing_table: dict[str, dict[str, Any]]) -> dict[s
     return pricing if isinstance(pricing, dict) else None
 
 
+def _peak_multiplier(pricing: dict[str, Any], at_ms: int | None) -> float:
+    """El recargo de hora pico del proveedor en ``at_ms`` (1.0 = valle).
+
+    ``peak = {"multiplier": 2, "weekdays_utc": [0..4], "hours_utc": [[1, 4], ...]}``:
+    días (lunes = 0) y rangos de hora ``[inicio, fin)`` en UTC. Sin ``at_ms`` o
+    sin ``peak``, valle."""
+    peak = pricing.get("peak")
+    if at_ms is None or not isinstance(peak, dict):
+        return 1.0
+    at = datetime.fromtimestamp(at_ms / 1000, tz=timezone.utc)
+    if at.weekday() not in (peak.get("weekdays_utc") or []):
+        return 1.0
+    for start, end in peak.get("hours_utc") or []:
+        if start <= at.hour < end:
+            return float(peak.get("multiplier", 1.0) or 1.0)
+    return 1.0
+
+
 def compute_llm_cost_usd(
     model: str,
     prompt_tokens: int,
@@ -52,12 +71,18 @@ def compute_llm_cost_usd(
     pricing_table: dict[str, dict[str, Any]],
     *,
     audio_input: bool = False,
+    cached_prompt_tokens: int = 0,
+    at_ms: int | None = None,
 ) -> float:
     """``(prompt/1000)*promptPrice + (completion/1000)*completionPrice`` en USD.
 
     Con ``audio_input`` la entrada va a ``audioPromptPrice`` cuando el modelo lo
     tiene (gemini-2.5-flash-lite cobra el audio 3x el texto); si no, a
-    ``promptPrice``. Devuelve ``0.0`` si el modelo no está en la tabla.
+    ``promptPrice``. ``cached_prompt_tokens`` (parte de ``prompt_tokens`` que el
+    proveedor sirvió desde su caché) va a ``cachedPromptPrice`` si el modelo lo
+    tiene — si no, a precio completo: la cifra nunca queda por debajo de lo
+    real. Con ``at_ms`` se aplica el recargo de hora pico (``peak``) del modelo.
+    Devuelve ``0.0`` si el modelo no está en la tabla.
     """
     pricing = _price_entry(model, pricing_table)
     if pricing is None:
@@ -65,11 +90,15 @@ def compute_llm_cost_usd(
     prompt_price = float(pricing.get("promptPrice", 0.0) or 0.0)
     if audio_input:
         prompt_price = float(pricing.get("audioPromptPrice", prompt_price) or 0.0)
+    cached_price = float(pricing.get("cachedPromptPrice", prompt_price) or 0.0)
+    cached = min(max(0, cached_prompt_tokens), max(0, prompt_tokens))
     completion_price = float(pricing.get("completionPrice", 0.0) or 0.0)
-    cost = (prompt_tokens / 1000.0) * prompt_price + (
-        completion_tokens / 1000.0
-    ) * completion_price
-    return round(cost, 8)
+    cost = (
+        ((prompt_tokens - cached) / 1000.0) * prompt_price
+        + (cached / 1000.0) * cached_price
+        + (completion_tokens / 1000.0) * completion_price
+    )
+    return round(cost * _peak_multiplier(pricing, at_ms), 8)
 
 
 def image_price_usd(model: str, pricing_table: dict[str, dict[str, Any]]) -> float | None:

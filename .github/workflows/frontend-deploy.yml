@@ -11,7 +11,8 @@ name: Frontend deploy
 on:
   push:
     branches: [main]
-    paths: ["frontend_dashboard/**", ".github/workflows/frontend-deploy.yml"]
+    # android_operator/screens/: las pantallas de la App Operador que define el servidor salen con este deploy.
+    paths: ["frontend_dashboard/**", "android_operator/screens/**", ".github/workflows/frontend-deploy.yml"]
   workflow_dispatch:
 
 permissions:
@@ -69,6 +70,10 @@ jobs:
           # sale sin auth → el dashboard rompe contra la API (que sí exige JWT).
           echo "cognito_authority=https://cognito-idp.$(echo "$CFG" | jq -r .region).amazonaws.com/$(echo "$CFG" | jq -r .user_pool_id)" >> "$GITHUB_OUTPUT"
           echo "cognito_client_id=$(echo "$CFG" | jq -r .app_client_id)" >> "$GITHUB_OUTPUT"
+          # App Operador (Android): región de Cognito y el bloque `mobile` del tenant (vacío si aún no hay apply).
+          echo "region=$(echo "$CFG" | jq -r .region)" >> "$GITHUB_OUTPUT"
+          echo "mobile_privacy_url=$(echo "$CFG" | jq -r '.mobile.privacy_url // ""')" >> "$GITHUB_OUTPUT"
+          echo "mobile_min_version=$(echo "$CFG" | jq -r '.mobile.min_version_code // 0')" >> "$GITHUB_OUTPUT"
 
       # 2) Build del frontend con el VITE_API_URL del tenant.
       - uses: actions/setup-node@v4
@@ -89,6 +94,41 @@ jobs:
         run: |
           npm ci
           npm run build
+
+      # 2b) Configuración de la App Operador: la app solo trae fija la URL <cloudfront>/mobile/config.json y de aquí
+      #     aprende a qué backend ir (api_url), Cognito, la política de privacidad y la versión mínima. Mismos valores
+      #     que el build del dashboard: cambiar api_url en Terraform + este deploy = la app va al servidor nuevo sin
+      #     publicar otra versión. Receta: docs/mobile-native/publicar-en-google-play.html.
+      - name: Configuración de la App Operador (mobile/config.json)
+        env:
+          API_URL: ${{ steps.cfg.outputs.api_url }}
+          REGION: ${{ steps.cfg.outputs.region }}
+          CLIENT_ID: ${{ steps.cfg.outputs.cognito_client_id }}
+          PRIVACY_URL: ${{ steps.cfg.outputs.mobile_privacy_url }}
+          MIN_VERSION: ${{ steps.cfg.outputs.mobile_min_version }}
+        run: |
+          mkdir -p frontend_dashboard/dist/mobile
+          jq -n --arg api "$API_URL" --arg region "$REGION" --arg client "$CLIENT_ID" --arg privacy "$PRIVACY_URL" \
+            --argjson min "${MIN_VERSION:-0}" \
+            '{version: 1, api_base_url: $api, cognito_region: $region, cognito_client_id: $client, min_version_code: $min}
+             + (if $privacy == "" then {} else {privacy_url: $privacy} end)' \
+            > frontend_dashboard/dist/mobile/config.json
+          cat frontend_dashboard/dist/mobile/config.json
+
+      # 2c) Pantallas de la App Operador (Server-Driven UI): los archivos de android_operator/screens/ quedan en
+      #     <cloudfront>/mobile/screens/, junto a config.json, y la app los baja de ahí. Una pantalla nueva o cambiada
+      #     sale con este deploy, SIN publicar otra versión en Google Play. La CI de Android (ScreensRepoTest) ya los
+      #     validó en el PR contra el catálogo de la app; aquí solo se revisa que sean JSON. Los esquemas del editor
+      #     (*.schema.json) no se publican. Guía: android_operator/screens/README.md.
+      - name: Pantallas de la App Operador (mobile/screens/)
+        run: |
+          mkdir -p frontend_dashboard/dist/mobile/screens
+          for f in android_operator/screens/*.json; do
+            case "$f" in *.schema.json) continue ;; esac
+            jq empty "$f"
+            cp "$f" frontend_dashboard/dist/mobile/screens/
+          done
+          ls frontend_dashboard/dist/mobile/screens
 
       # 3) Subir a S3 + invalidar CloudFront (rol angosto de deploy).
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4

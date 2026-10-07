@@ -33,8 +33,12 @@ tenants = {
     # platform + dispatch de Backend deploy, que no se dispara con Terraform
     # (render del .env desde SSM → SALES_DECISIONS_BUNDLE; certifica el paquete
     # en la imagen antes de cambiar containers). `ventas-2` (2026-10-02) es
-    # `ventas` con la regla ② de `promocion`. El resto de `lab` queda en sus
-    # defaults (todo apagado). Volver atrás = "ventas".
+    # `ventas` con la regla ② de `promocion`. `ventas-3` (2026-10-07, #390) es
+    # `ventas-2` con los arreglos de la conversación de prueba del 2026-10-06
+    # (cortesía, compra, afirmación, cantidad, asunto `gusto`): solo cambia lo
+    # que decide Jev, es decir, los números de prueba con `prueba-jev si`. El
+    # resto de `lab` queda en sus defaults (todo apagado). Volver atrás =
+    # "ventas-2".
     #
     # `internal_numbers`: teléfonos del equipo; sus conversaciones no entran al
     # banco del laboratorio. El del operador (2026-10-05) es el número con el
@@ -48,13 +52,20 @@ tenants = {
     # (7 días en sombra, etc.). `signal_inbound_meta`: el 4.º argumento de la
     # señal; se aplica DESPUÉS del primer deploy de #372 (worker antes que la
     # API). Volver atrás = "off" + apply + Backend deploy.
+    #
+    # `prompt_turn_context` (2026-10-06): las notas del turno (hora, DATOS DEL
+    # PEDIDO) salen de las instrucciones para que el caché de DeepSeek cubra
+    # instrucciones + tools. Piloto `team` (solo internal_numbers); con la
+    # calidad vista en Calidad LLM → "on". Volver atrás = "off" + apply + Backend
+    # deploy.
     lab = {
-      decisions_bundle        = "ventas-2"
+      decisions_bundle        = "ventas-3"
       internal_numbers        = ["+573125671604"]
       perception_mode_ceiling = "canary"
       capabilities_ceiling    = "canary"
       workflow_v2_ceiling     = "canary"
       signal_inbound_meta     = true
+      prompt_turn_context     = "team"
     }
   }
 

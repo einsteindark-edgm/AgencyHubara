@@ -120,7 +120,7 @@ export function ScheduleDeliveryAction({ orderId, open, onOpenChange }: Props) {
           <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--fg-faint, var(--color-neutral))", lineHeight: 1.35 }}>
             El pedido se agenda (queda como pedido en preparación) y el cliente
             recibe la notificación de entrega por WhatsApp. El pago NO se
-            confirma — podés confirmarlo después.
+            confirma — puedes confirmarlo después.
           </p>
           {currentIso && (
             <p style={{ margin: 0, fontSize: "0.72rem", color: "var(--fg-faint, var(--color-neutral))", lineHeight: 1.35 }}>

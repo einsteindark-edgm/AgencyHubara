@@ -211,6 +211,16 @@ _LAZY_EXPORTS: dict[str, str] = {
     "DecisionMetrics": "src.platform.perception.metrics",
     "get_perception_port": "src.platform.perception.composition",
     "oracle_timeout_s": "src.platform.perception.composition",
+    # Avisos push a la App Operador (Firebase Cloud Messaging, API HTTP v1): el
+    # corrientazo que despierta el teléfono sin datos de clientes. Fake y nulo
+    # oficiales; `send` nunca lanza (docs/_sdk/07-connectorkit.md §Avisos push).
+    "PushPort": "src.platform.push.ports",
+    "PushMessage": "src.platform.push.ports",
+    "PushOutcome": "src.platform.push.ports",
+    "FirebaseClientOptions": "src.platform.push.ports",
+    "FakePushAdapter": "src.platform.push.adapters.fake",
+    "NullPushAdapter": "src.platform.push.adapters.null",
+    "get_push_port": "src.platform.push.composition",
 }
 
 

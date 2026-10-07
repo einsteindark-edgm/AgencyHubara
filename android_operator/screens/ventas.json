@@ -1,0 +1,58 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "Resumen de ventas con los pedidos de /api/orders/orders (los mismos de la pestaña Órdenes). Los pedidos de prueba y los cancelados no cuentan.",
+  "schema": 1,
+  "id": "ventas",
+  "title": "Resumen de ventas",
+  "state": { "rango": "today" },
+  "data": {
+    "pedidos": { "get": "/api/orders/orders", "query": { "limit": "500" }, "refreshOn": ["orders"] }
+  },
+  "computed": {
+    "reales": "{{pedidos.orders | where_not:'is_test' | where_not:'status':'cancelled'}}",
+    "del_rango": "{{reales | since:'created_at_ms':state.rango | sort_desc:'created_at_ms'}}"
+  },
+  "topActions": [ { "icon": "refresh", "label": "Recargar", "action": { "type": "refresh" } } ],
+  "body": [
+    {
+      "type": "chips", "bind": "state.rango",
+      "options": [
+        { "value": "today", "label": "Hoy" },
+        { "value": "7d", "label": "7 días" },
+        { "value": "month", "label": "Este mes" }
+      ]
+    },
+    {
+      "type": "grid", "columns": 2,
+      "children": [
+        { "type": "stat", "icon": "orders", "label": "Pedidos", "value": "{{del_rango | count | number}}" },
+        { "type": "stat", "icon": "payments", "tone": "success", "label": "Vendido", "value": "{{del_rango | sum:'total_cop' | money}}" },
+        {
+          "type": "stat", "icon": "schedule", "tone": "warning", "label": "Por cobrar",
+          "value": "{{reales | where:'pay_status':'pending' | count | number}}", "caption": "Ver y confirmar",
+          "action": { "type": "navigate", "screen": "por_cobrar" }
+        },
+        { "type": "stat", "icon": "warning", "tone": "danger", "label": "Atrasados", "value": "{{reales | where:'overdue' | count | number}}" }
+      ]
+    },
+    {
+      "type": "text", "style": "subtitle", "emphasis": true,
+      "text": "{{del_rango | count | plural:'pedido':'pedidos'}}"
+    },
+    {
+      "type": "list", "items": "{{del_rango}}", "as": "p", "key": "{{p.id}}",
+      "item": {
+        "type": "list_item",
+        "avatar": "{{p.customer}}",
+        "title": "#{{p.display_id | replace:'#':''}} · {{p.customer}}",
+        "subtitle": "{{p.city | default:'Sin ciudad'}} · {{p.pieces | plural:'pieza':'piezas'}}",
+        "tag": "{{p.status | map:'new=Nuevo;preparing=Preparando;ready=Listo;shipping=En camino;delivered=Entregado;*=Otro'}}{{p.overdue | if:' · atrasado'}}",
+        "tag_tone": "{{p.overdue | if:'danger':'secondary'}}",
+        "trailing": "{{p.total_cop | money}}",
+        "trailing_caption": "{{p.created_at_ms | relative}}",
+        "action": { "type": "open_order", "order": "{{p.id}}" }
+      },
+      "empty": { "type": "empty", "icon": "orders", "title": "Sin pedidos en este rango", "body": "Cuando el bot registre uno, aparece aquí." }
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+<resources>
+    <string name="hot_widget_label">Ventas calientes</string>
+    <string name="hot_widget_description">Las conversaciones que están por cerrarse, sin abrir la app.</string>
+</resources>

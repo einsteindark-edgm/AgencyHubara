@@ -401,6 +401,17 @@ class IngestInboundMessage:
             metadata = {}
             base = _Unread()
 
+        # --- 1b. Nombre de perfil de WhatsApp (`contacts[].profile.name`) ---
+        # La bandeja de la app y los incendios muestran quién escribe, no solo
+        # el número. Va por `update()` (lock + lectura fresca) y entra a la copia
+        # local Y a la base: ya está en disco, así que no cuenta como cambio de
+        # este ingest en el merge de tres vías de más abajo.
+        if parsed.profile_name and self._remember_profile_name(session_id, parsed.profile_name):
+            for doc in (metadata, base):
+                if isinstance(doc, dict):
+                    profile = doc.get("profile") if isinstance(doc.get("profile"), dict) else {}
+                    doc["profile"] = {**profile, "name": parsed.profile_name}
+
         # HU web-cart: token `ref:cart_<id>` del texto prellenado que genera
         # la página web. Detección 100% determinista (regex) — jamás del LLM.
         cart_ref = detect_cart_ref(parsed.text)
@@ -1965,6 +1976,23 @@ class IngestInboundMessage:
             label="analytics.record",
             session_id=None,
         )
+
+    def _remember_profile_name(self, session_id: str, name: str) -> bool:
+        """Guarda `profile.name` si cambió (por `update()`: candado + lectura fresca); True si escribió. Best-effort:
+        un fallo acá nunca tumba el ingest del mensaje."""
+
+        def _mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            profile = fresh.get("profile") if isinstance(fresh.get("profile"), dict) else {}
+            if profile.get("name") == name:
+                return None
+            fresh["profile"] = {**profile, "name": name}
+            return fresh
+
+        try:
+            return self._metadata_store.update(session_id, _mutator) is not None
+        except Exception:  # noqa: BLE001 — best-effort
+            logger.info("profile_name_write_failed_ignored", session=session_id)
+            return False
 
     def _safe_write_metadata(
         self,

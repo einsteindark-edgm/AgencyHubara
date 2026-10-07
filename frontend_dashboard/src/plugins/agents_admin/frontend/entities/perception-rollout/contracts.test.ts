@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { rolloutSchema } from "./contracts";
+import { decisionEngineSchema, rolloutSchema } from "./contracts";
 
 describe("rolloutSchema", () => {
   it("tolera un cuerpo parcial y degrada a apagado (L-10)", () => {
@@ -49,5 +49,29 @@ describe("rolloutSchema — motor de decisiones (F7)", () => {
 
     expect(r.capabilities).toEqual({});
     expect(r.workflow_v2.mode).toBe("off");
+  });
+});
+
+describe("decisionEngineSchema — los paquetes que corren en el motor", () => {
+  it("lee el paquete de la tienda, el de la App Operador y de cuál sale cada decisión", () => {
+    const r = decisionEngineSchema.parse({
+      bundle: { id: "ventas", version: 1, ref: "ventas@1", oracle: "jev-1.13", engine_contract: 1, code_default: "ventas" },
+      bundles: [
+        { id: "ventas", version: 1, ref: "ventas@1", oracle: "jev-1.13", name: "La tienda: el bot de ventas y remarketing" },
+        { id: "operador", version: 1, ref: "operador@1", oracle: "jev-1.13", name: "App Operador: el chat y los incendios del teléfono" },
+      ],
+      places: [{ id: "chat_operador", label: "En el chat de la App Operador" }],
+      decisions: [{ capability: "burbuja", name: "Qué acción va primero", where: ["chat_operador"], solves: "…", mode: "shadow", bundle: "operador@1" }],
+    });
+
+    expect(r.bundles.map((b) => b.ref)).toEqual(["ventas@1", "operador@1"]);
+    expect(r.decisions[0].bundle).toBe("operador@1");
+  });
+
+  it("sin la lista de paquetes (un backend anterior) queda vacía", () => {
+    const r = decisionEngineSchema.parse({ bundle: { id: "ventas" }, places: [], decisions: [{ capability: "baja", mode: "off" }] });
+
+    expect(r.bundles).toEqual([]);
+    expect(r.decisions[0].bundle).toBe("");
   });
 });

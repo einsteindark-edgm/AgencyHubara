@@ -1,0 +1,69 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "La pestaña «Más»: el menú de las pantallas del servidor. Una pantalla nueva = su archivo + un renglón aquí.",
+  "schema": 1,
+  "id": "mas",
+  "title": "Más",
+  "body": [
+    {
+      "type": "section",
+      "title": "Ventas",
+      "children": [
+        {
+          "type": "list",
+          "children": [
+            {
+              "type": "list_item", "icon": "bar_chart", "icon_tone": "primary", "chevron": true,
+              "title": "Resumen de ventas", "subtitle": "Pedidos y lo vendido hoy, en la semana o en el mes",
+              "action": { "type": "navigate", "screen": "ventas" }
+            },
+            {
+              "type": "list_item", "icon": "payments", "icon_tone": "warning", "chevron": true,
+              "title": "Por cobrar", "subtitle": "Pedidos con el pago pendiente, para confirmarlo",
+              "action": { "type": "navigate", "screen": "por_cobrar" }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "section",
+      "title": "Marketing",
+      "children": [
+        {
+          "type": "list",
+          "children": [
+            {
+              "type": "list_item", "icon": "campaign", "icon_tone": "bot", "chevron": true,
+              "title": "Campañas", "subtitle": "Envíos de WhatsApp: quién respondió y cuánto vendieron",
+              "action": { "type": "navigate", "screen": "campanas" }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "section",
+      "title": "Avisos",
+      "children": [
+        {
+          "type": "list",
+          "children": [
+            {
+              "type": "list_item", "icon": "notifications", "icon_tone": "primary",
+              "title": "Probar avisos", "subtitle": "Te mandamos un aviso: debe llegarte aunque cierres la app",
+              "action": {
+                "type": "call", "method": "POST", "path": "/api/chats/mobile/devices/test",
+                "success": "Listo: el aviso de prueba te llega en unos segundos."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "text", "style": "caption", "tone": "muted", "align": "center",
+      "text": "Estas pantallas las arma el servidor: se agregan o cambian sin publicar otra versión de la app."
+    }
+  ]
+}

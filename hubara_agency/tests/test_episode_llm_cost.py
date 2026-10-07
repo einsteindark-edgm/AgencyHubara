@@ -201,3 +201,105 @@ async def test_activity_persists_to_vault(
     usage = meta["episodes"][0]["llm_usage"]
     assert usage["cost_usd"] == 0.00028
     assert usage["total_tokens"] == 1500
+
+
+# ── costo real: caché y hora pico (2026-10-06) ───────────────────────────────
+# DeepSeek cobra el input servido desde su caché a US$0,003/M (vs US$0,15/M) y
+# el DOBLE lun-vie 01:00-04:00 y 06:00-10:00 UTC. Antes se cobraba todo a
+# precio sin caché de valle: Ads mostraba ~3x el costo real.
+
+from datetime import datetime, timezone  # noqa: E402
+
+
+def _ms(*args: int) -> int:
+    return int(datetime(*args, tzinfo=timezone.utc).timestamp() * 1000)
+
+
+_REAL = {
+    "deepseek-v4-flash": {
+        "promptPrice": 0.00015,
+        "cachedPromptPrice": 0.000003,
+        "completionPrice": 0.0006,
+        "peak": {"multiplier": 2, "weekdays_utc": [0, 1, 2, 3, 4], "hours_utc": [[1, 4], [6, 10]]},
+    }
+}
+_VALLE = _ms(2026, 10, 6, 12, 0)  # martes 12:00 UTC
+_PICO = _ms(2026, 10, 6, 2, 0)  # martes 02:00 UTC = lunes 21:00 Bogotá
+_SABADO_02 = _ms(2026, 10, 10, 2, 0)  # sábado: sin pico
+_FIN_PICO = _ms(2026, 10, 6, 4, 0)  # 04:00 UTC: ya es valle
+
+
+def _cost(at_ms: int, **kw: int) -> float:
+    return compute_llm_cost_usd("deepseek-v4-flash", 1000, 10, _REAL, at_ms=at_ms, **kw)
+
+
+def test_cached_tokens_are_charged_at_the_cached_price() -> None:
+    # 900 cacheados × 0.000003/1K + 100 sin caché × 0.00015/1K + 10 out × 0.0006/1K
+    expected = round(0.9 * 0.000003 + 0.1 * 0.00015 + 0.01 * 0.0006, 8)
+    assert _cost(_VALLE, cached_prompt_tokens=900) == expected
+
+
+def test_peak_hours_double_the_price_only_on_weekdays() -> None:
+    valle = _cost(_VALLE, cached_prompt_tokens=900)
+    assert _cost(_PICO, cached_prompt_tokens=900) == round(2 * valle, 8)
+    assert _cost(_SABADO_02, cached_prompt_tokens=900) == valle
+    assert _cost(_FIN_PICO, cached_prompt_tokens=900) == valle
+
+
+def test_without_a_cached_price_cached_tokens_pay_full_price() -> None:
+    """Un modelo sin `cachedPromptPrice` (gemini-backup) no se abarata: la
+    cifra nunca queda por debajo de lo real."""
+    assert compute_llm_cost_usd("gemini-backup", 1000, 0, _TABLE, cached_prompt_tokens=900) == 0.00025
+
+
+def test_apply_records_the_cached_tokens_and_the_real_cost() -> None:
+    m = _meta()
+    _apply_episode_llm_usage(
+        m, episode_id="ep_001", prompt_tokens=1000, completion_tokens=10,
+        model="deepseek-v4-flash", dedup_key="a1", pricing_table=_REAL,
+        cached_prompt_tokens=900, at_ms=_VALLE,
+    )
+    usage = m["episodes"][0]["llm_usage"]
+    assert usage["cached_tokens"] == 900
+    assert usage["prompt_tokens"] == 1000
+    assert usage["cost_usd"] == _cost(_VALLE, cached_prompt_tokens=900)
+
+
+def test_the_shipped_pricing_knows_deepseek_cache_and_peak() -> None:
+    table = load_pricing_table(Path(__file__).resolve().parents[1] / "deploy/openlit/pricing.json")
+    for alias in ("deepseek-v4-flash", "deepseek/deepseek-v4-flash", "deepseek-flash"):
+        entry = table[alias]
+        assert entry["cachedPromptPrice"] == 0.000003, alias
+        assert entry["peak"] == {"multiplier": 2, "weekdays_utc": [0, 1, 2, 3, 4], "hours_utc": [[1, 4], [6, 10]]}, alias
+
+
+async def test_activity_persists_cached_tokens(
+    _isolate_vault_dir: Path, monkeypatch, tmp_path: Path
+) -> None:
+    from temporalio.testing import ActivityEnvironment
+
+    from src.platform.observability.cost_attribution import (
+        RecordEpisodeLLMUsageInput,
+        record_episode_llm_usage_activity,
+    )
+
+    pricing = tmp_path / "pricing.json"
+    pricing.write_text(json.dumps({"chat": _REAL}), encoding="utf-8")
+    monkeypatch.setenv("OPENLIT_PRICING_JSON", str(pricing))
+    sess = _isolate_vault_dir / "wa_998"
+    sess.mkdir(parents=True)
+    (sess / "metadata.json").write_text(
+        json.dumps({"episodes": [{"episode_id": "ep_001", "closed_at_ms": None}]}), encoding="utf-8"
+    )
+
+    await ActivityEnvironment().run(
+        record_episode_llm_usage_activity,
+        RecordEpisodeLLMUsageInput(
+            session_id="wa_998", episode_id="ep_001", prompt_tokens=1000,
+            completion_tokens=10, model="deepseek-v4-flash", cached_prompt_tokens=900,
+        ),
+    )
+
+    usage = json.loads((sess / "metadata.json").read_text(encoding="utf-8"))["episodes"][0]["llm_usage"]
+    assert usage["cached_tokens"] == 900
+    assert usage["cost_usd"] in (_cost(_VALLE, cached_prompt_tokens=900), _cost(_PICO, cached_prompt_tokens=900))

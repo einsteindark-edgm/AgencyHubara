@@ -30,7 +30,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_BUTTONS_PREFIX = "🔘 El bot envió botones: "
+#: El marker lo firma el bot o, si la acción salió desde la app, el operador.
+_BUTTONS_PREFIXES = ("🔘 El bot envió botones: ", "🔘 El operador envió botones: ")
 _BUTTONS_BODY_SEP = " — con el mensaje: «"
 _BUTTONS_TITLE_SEP = " · "
 
@@ -101,10 +102,11 @@ def _bot_event(message: dict[str, Any], content: str) -> dict[str, Any] | None:
 
 
 def _bot_buttons(content: str) -> dict[str, Any] | None:
-    start = content.find(_BUTTONS_PREFIX)
-    if start < 0:
+    found = next(((content.find(p), p) for p in _BUTTONS_PREFIXES if p in content), None)
+    if found is None:
         return None
-    rest = content[start + len(_BUTTONS_PREFIX) :]
+    start, prefix = found
+    rest = content[start + len(prefix) :]
 
     body: str | None = None
     if _BUTTONS_BODY_SEP in rest:

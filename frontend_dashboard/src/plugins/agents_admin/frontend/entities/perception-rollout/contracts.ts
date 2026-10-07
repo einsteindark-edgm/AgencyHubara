@@ -80,6 +80,18 @@ export const engineDecisionAboutSchema = z.object({
   /** La decisión de la que es variante (comparte su interruptor), o null. */
   variant_of: z.string().nullable().catch(null).default(null),
   mode: perceptionModeSchema,
+  /** El paquete del que sale (`id@versión`): el de la tienda o el de la App Operador. */
+  bundle: z.string().catch("").default(""),
+});
+
+/** Un paquete de decisión que corre en el motor (la tienda, la App Operador). */
+export const engineBundleSchema = z.object({
+  id: z.string().catch("").default(""),
+  version: z.number().nullable().catch(null).default(null),
+  ref: z.string(),
+  oracle: z.string().catch("").default(""),
+  /** Para qué es, en palabras del operador. */
+  name: z.string().catch("").default(""),
 });
 
 function tolerantList<T extends z.ZodTypeAny>(item: T) {
@@ -105,6 +117,8 @@ export const decisionEngineSchema = z.object({
     /** El paquete que trae el código (lo que corre una tienda sin configurar). */
     code_default: z.string().catch("").default(""),
   }),
+  /** Todos los paquetes que corren en el motor (2026-10-06); vacío con un backend anterior. */
+  bundles: tolerantList(engineBundleSchema),
   profile: z.string().catch("").default(""),
   places: tolerantList(enginePlaceSchema),
   decisions: tolerantList(engineDecisionAboutSchema),

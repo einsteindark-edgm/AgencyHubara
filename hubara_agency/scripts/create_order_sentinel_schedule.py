@@ -1,10 +1,15 @@
 """Crea (idempotente) el Temporal Schedule del ciclo Order Sentinel.
 
 Deploy-time helper (P-20-adjacent): el OrderSentinelCycleWorkflow es one-shot;
-la cadencia la da este Schedule. Default: 1 vez al DÍA a la 01:00 UTC
-(20:00 Bogotá — fin de la jornada del operador) — cada ciclo paga el cold
-start EC2 de la caja GraphAgents y el watermark por sesión hace que un ciclo
-diario procese todo lo acumulado. NO bajar a minutos.
+la cadencia la da este Schedule. Default: 1 vez al DÍA a las 04:00 UTC
+(23:00 Bogotá, 2026-10-06): fuera del pico de DeepSeek (lun-vie 01:00-04:00
+UTC = 20:00-23:00 Bogotá, tarifa doble) y DESPUÉS de las ventas de la noche
+(20:00-22:00), que así se revisan el mismo día. Antes: 01:00 UTC (20:00). Cada
+ciclo paga el cold start EC2 de la caja GraphAgents y el watermark por sesión
+hace que un ciclo diario procese todo lo acumulado. NO bajar a minutos.
+
+Cambiar la hora de un Schedule que ya existe: este script NO lo actualiza
+(no-op si existe) — `temporal schedule update` o borrarlo y volver a correrlo.
 
 Uso:
     cd hubara_agency && uv run python scripts/create_order_sentinel_schedule.py
@@ -32,7 +37,7 @@ SCHEDULE_ID = "order-sentinel-cycle-schedule"
 
 async def main() -> None:
     ensure_plugin_enabled("order_sentinel")
-    hour_utc = int(os.environ.get("ORDER_SENTINEL_CYCLE_HOUR_UTC", "1"))
+    hour_utc = int(os.environ.get("ORDER_SENTINEL_CYCLE_HOUR_UTC", "4"))
     client = await get_temporal_client()
     try:
         await client.create_schedule(
