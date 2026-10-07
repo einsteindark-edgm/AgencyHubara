@@ -227,7 +227,7 @@ def test_des08_draft_with_product_counts_as_recorded() -> None:
 def test_des08_customer_names_shown_product_without_slot_fails() -> None:
     t = traj(
         T(1, tools=[tool("present_products")]),
-        T(2, inbound="me gusta el duo zodiacal", sent=["¡Qué bonita elección!"]),
+        T(2, inbound="me llevo el duo zodiacal", sent=["¡Qué bonita elección!"]),
     )
     r = _run("DES-08", t, CATALOG_CTX)
     assert (r.verdict, r.turn) == ("falla", 2)
@@ -268,8 +268,60 @@ def test_des08_naming_a_product_is_not_choosing_it() -> None:
         "Y el cubo love también estaba en el catálogo",
         "no quiero el cubo love",
         "quiero ver el cubo love",
+        # Que le guste no es que lo quiera (operador, 2026-10-07): el bot
+        # pregunta «¿te la llevas?» y la anota cuando dice que sí.
+        "me gusta el cubo love",
+        "Me encanta el Cubo Love",
+        "me gustan el cubo love y la vela ángel",
     ):
         assert _run("DES-08", _after_catalog(said), CATALOG_CTX).verdict == "no_aplica", said
+
+
+_HALLOWEEN = CheckContext(product_titles=("Trilogía del Terror", "Calabaza", "Momia", "Fantasma"), catalog_available=True)
+
+
+def test_des08_naming_the_one_they_liked_is_not_choosing_it() -> None:
+    """Prueba del operador 2026-10-07 (ep_012 t4): el bot preguntó «¿Cuál de
+    las cuatro te gustó? Dime el nombre y te cuento los detalles» y el cliente
+    contestó «La de la calabaza». Dijo cuál le gustó, no que la quiera: el bot
+    le mostró el detalle y preguntó «¿Te la llevas?»; el cliente preguntó por
+    la trilogía y eligió la calabaza en t7, donde quedó en el pedido."""
+    t = traj(
+        T(1, tools=[tool("present_products")]),
+        T(2, inbound="Me gusta esta", sent=[
+            "Buena elección 🎃 ¿Cuál de las cuatro te gustó? Dime el nombre y te cuento los detalles.",
+        ]),
+        T(3, inbound="La de la calabaza", tools=[tool("present_product_detail")], sent=["¿Te la llevas?"]),
+    )
+
+    assert _run("DES-08", t, _HALLOWEEN).verdict == "no_aplica"
+
+
+def _after_question(question: str, answer: str):
+    return traj(T(1, tools=[tool("present_products")], sent=[question]), T(2, inbound=answer, sent=["Listo"]))
+
+
+def test_des08_answering_with_its_name_which_one_they_like_is_not_choosing_it() -> None:
+    for question in (
+        "¿Cuál te gustó?",
+        "¿Alguna te llamó la atención?",
+        "¿Cuál te interesa? Te cuento los detalles.",
+        "¿Quieres que te cuente más de alguna?",
+    ):
+        assert _run("DES-08", _after_question(question, "el cubo love"), CATALOG_CTX).verdict == "no_aplica", question
+
+
+def test_des08_answering_with_its_name_which_one_they_take_is_choosing_it() -> None:
+    for question in (
+        "¿Cuál te llevas?",
+        "¿Cuál quieres?",
+        "¿Con cuál te quedas?",
+        "¿Te gusta? ¿Te lo llevas?",
+        "¿Cuál te gustaría llevar?",
+        "¿Te animas con el set o prefieres el Cubo Love?",
+    ):
+        result = _run("DES-08", _after_question(question, "el cubo love"), CATALOG_CTX)
+        assert (result.verdict, result.turn) == ("falla", 2), question
 
 
 def test_des08_saying_they_want_it_or_answering_with_just_its_name_is_choosing() -> None:

@@ -44,17 +44,19 @@ _SELECTION_MARKER = "[el cliente seleccionó:"
 #: cliente.
 _PHOTO_ANNOTATION_RE = re.compile(r"\[el cliente envió una foto: [^\]]*\]")
 #: Decir que lo quiere (DES-08). «no quiero» no cuenta; «quiero ver/saber…» es
-#: pedir información.
+#: pedir información; «me gusta» y «me encanta» tampoco: que le guste no es que
+#: lo quiera (operador, 2026-10-07), el bot le pregunta si se lo lleva.
 _WANTS_RE = re.compile(
     r"(?<!no )\b(?:quiero(?! (?:ver|saber|preguntar|conocer|mirar|info))|quisiera|quer[ií]a"
-    r"|me (?:lo |la |los |las )?llevo|me gustar?[ií]a|me gustan?|me encantan?|me quedo con"
+    r"|me (?:lo |la |los |las )?llevo|me gustar?[ií]a|me quedo con"
     r"|voy con|vamos con|dame|deme|reg[aá]l[ae]me|pido|prefiero|escojo|elijo"
     r"|sep[aá]ra(?:me|r|s|mela|melo)?|ap[aá]rta(?:me|mela|melo)?|res[eé]rva(?:me|mela|melo)?"
     r"|compro|comprar|encargo|encargar)\b"
 )
 _NON_WORD_RE = re.compile(r"[^\w]+")
 #: Contestar solo con el nombre del producto («el cubo love porfa») también es
-#: elegirlo: lo que acompaña al nombre son estas palabras de relleno.
+#: elegirlo: lo que acompaña al nombre son estas palabras de relleno. Salvo que
+#: conteste «¿cuál te gustó?» (ver `_asks_which_they_like`).
 _FILLER_WORDS = frozenset({
     "el", "la", "los", "las", "un", "una", "ese", "esa", "este", "esta", "de", "del", "y", "entonces",
     "mejor", "si", "sí", "ok", "listo", "porfa", "por", "favor", "gracias", "pls",
@@ -232,18 +234,52 @@ def _last_display_offers_products(previous: tuple[Turn, ...]) -> bool:
     return last is not None and bool({"products_list", "product_detail"} & set(last.intents))
 
 
-def _wants(words: str, title: str) -> bool:
+#: Una pregunta que pide decidir la compra: «¿te la llevas?», «¿cuál quieres?»,
+#: «¿con cuál te quedas?», «¿prefieres el set o solo la calabaza?».
+_DECISION_ASK_RE = re.compile(
+    r"\b(?:llevas|llevar|llevamos|cu[aá]l(?:es)? quieres|te quedas|te animas|prefieres|eliges|elegir|escoges|escoger"
+    r"|agrego|agregamos|anoto|anotamos|separo|separamos|aparto|apartamos|reservo|reservamos|compras|comprar)\b",
+    re.IGNORECASE,
+)
+#: Una pregunta por lo que le gustó o le interesa: «¿cuál te gustó?», «¿alguna
+#: te llamó la atención?», «dime cuál y te cuento los detalles».
+_LIKING_ASK_RE = re.compile(
+    r"\b(?:te gust[oó]|te gustan?|te llam[oó] la atenci[oó]n|te interesa\w*|te cuento|detalles?"
+    r"|quieres (?:ver|saber|conocer|que te))\b",
+    re.IGNORECASE,
+)
+
+
+def _last_ask(previous: tuple[Turn, ...]) -> str:
+    """La última burbuja con pregunta que leyó el cliente antes de contestar
+    ("" si el último turno en que el bot le escribió no preguntó nada)."""
+    for turn in reversed(previous):
+        if turn.read_texts:
+            return next((text for text in reversed(turn.read_texts) if "?" in text), "")
+    return ""
+
+
+def _asks_which_they_like(ask: str) -> bool:
+    """Prueba del operador 2026-10-07 (ep_012 t4): a «¿Cuál de las cuatro te
+    gustó? Dime el nombre y te cuento los detalles» el cliente contestó «La de
+    la calabaza». Dijo cuál le gustó, no que la quiera."""
+    return not _DECISION_ASK_RE.search(ask) and bool(_LIKING_ASK_RE.search(ask))
+
+
+def _wants(words: str, title: str, ask: str = "") -> bool:
     """¿El cliente dice que QUIERE el producto que nombra? Nombrarlo no es
     elegirlo: «se llama Luz Serena, la saqué de su catálogo» dice cómo se
-    llama (laboratorio caso-fotos-0930-r7, 4567 t17) y «¿tienen el Cubo Love?»
-    pregunta si hay. Sí lo es decir que lo quiere («la quiero», «me llevo»,
-    «me gusta», «sepárame»…) o contestar solo con su nombre («el cubo love
-    porfa»)."""
+    llama (laboratorio caso-fotos-0930-r7, 4567 t17), «¿tienen el Cubo Love?»
+    pregunta si hay y «me gusta el Cubo Love» dice que le gusta. Sí lo es
+    decir que lo quiere («la quiero», «me llevo», «sepárame»…) o contestar
+    solo con su nombre («el cubo love porfa»), salvo que conteste cuál le
+    gustó (`ask`: lo último que le preguntó el bot)."""
     low = words.lower()
     if _WANTS_RE.search(low):
         return True
     rest = _NON_WORD_RE.sub(" ", low.replace(title.lower(), " ")).split()
-    return "?" not in low and all(word in _FILLER_WORDS for word in rest)
+    name_only = "?" not in low and all(word in _FILLER_WORDS for word in rest)
+    return name_only and not _asks_which_they_like(ask)
 
 
 def _is_product_choice(traj: Trajectory, index: int, titles: list[str]) -> bool:
@@ -257,7 +293,8 @@ def _is_product_choice(traj: Trajectory, index: int, titles: list[str]) -> bool:
         return False
     words = _PHOTO_ANNOTATION_RE.sub(" ", words)
     shown = any(set(t.intents) & CATALOG_DISPLAY_INTENTS for t in previous)
-    return shown and any(title.lower() in words.lower() and _wants(words, title) for title in titles)
+    ask = _last_ask(previous)
+    return shown and any(title.lower() in words.lower() and _wants(words, title, ask) for title in titles)
 
 
 def _product_recorded(turn: Turn) -> bool:

@@ -321,7 +321,7 @@ veredicto SHALL depender solo de la traza, nunca del catálogo.
 
 Límite: es una regla de palabras que falla cerrada; ante la duda pide texto
 (un sí poco común puede fallar de más). Los casos viven en el trinquete de
-`tests/evals/scorecard/test_checks_envio.py`: se agregan, nunca se sacan.
+`tests/evals/scorecard/test_env02_ratchet.py`: se agregan, nunca se sacan.
 
 #### Scenario: Pregunta después de un sí (revisión del PR #392)
 
@@ -355,6 +355,39 @@ Desde el 2026-10-07 (`REGISTRY_VERSION` 8):
 - WHEN se califica en modo turno
 - THEN CIE-03 y CIE-04 fallan en el turno 2, el turno 2 da `FALLA` y el episodio da `FALLA`
 
+### Requirement: Que le guste no es elegirlo y las tarifas responden el envío (registro v9)
+
+Prueba del operador del 2026-10-07 con el bot nuevo (`ep_012`): buena
+conversación con dos ALERTA falsas. Desde `REGISTRY_VERSION` 9:
+
+- DES-08 NO SHALL contar como elegir un producto que el cliente diga que le
+  gusta o le encanta («me gusta», «me encanta»): el bot le pregunta si se lo
+  lleva y lo anota cuando dice que sí. «Me gustaría», «lo quiero», «me lo
+  llevo» siguen siendo elegirlo.
+- Contestar solo con el nombre SHALL seguir siendo elegirlo, salvo que
+  conteste una pregunta por lo que le gustó o le interesa («¿cuál te gustó?»,
+  «¿alguna te llamó la atención?», «te cuento los detalles») sin pregunta de
+  compra en la misma burbuja («¿te la llevas?», «¿cuál quieres?»,
+  «¿prefieres…?»).
+- ENV-02 SHALL contar el mensaje de tarifas (`send_shipping_rates`, lo arma el
+  código) como respuesta a cuánto cuesta el envío cuando el cliente lo leyó en
+  el turno. Un plazo, una ciudad que nombran o un medio de pago SHALL seguir
+  exigiendo un texto del bot.
+
+#### Scenario: Le gustó la calabaza y después la eligió
+
+- GIVEN el bot mostró la línea de Halloween y preguntó «¿Cuál de las cuatro te gustó? Dime el nombre y te cuento los detalles»
+- WHEN el cliente contestó «La de la calabaza» y el bot mostró el detalle sin anotarla
+- THEN DES-08 no aplica en ese turno
+- AND si el bot hubiera preguntado «¿Cuál te llevas?», la misma respuesta sin anotarla falla
+
+#### Scenario: «Si» y «¿cuánto cuesta el envío?» con tarifas y formulario
+
+- GIVEN el cliente escribió en una ráfaga «Si» y «Cuánto cuesta el envío ?»
+- WHEN el bot mandó las tarifas y después el formulario, sin texto propio
+- THEN ENV-02 pasa en ese turno
+- AND con «Si» y «cuánto demora el envío?» ENV-02 falla: las tarifas no dicen el plazo
+
 ### Requirement: Testigo e informe de huecos
 
 Para decidir con datos qué arreglar (`docs/calidad-llm/cobertura-motor.html`),
@@ -363,7 +396,7 @@ Para decidir con datos qué arreglar (`docs/calidad-llm/cobertura-motor.html`),
 que se saltó las revisiones de `send_reply`, afirmación sin consultar que Jev
 leyó en sombra), sin textos. Escribirla NUNCA SHALL afectar el turno. El
 informe (`python -m src.plugins.chats.agent.sales_eval.huecos --dias N`) SHALL
-juntar el testigo con los scorecards v8 de la ventana y decir, por propuesta,
+juntar el testigo con los scorecards (v8 o posterior) de la ventana y decir, por propuesta,
 cuántos casos hubo por bot y si vale la pena arreglarla: una regla crítica con
 un caso; una mayor con 2 casos por cada 100 turnos o 3 conversaciones; una
 menor con 5 por cada 100 (con menos de 50 turnos, a lo sumo «quizás»). El

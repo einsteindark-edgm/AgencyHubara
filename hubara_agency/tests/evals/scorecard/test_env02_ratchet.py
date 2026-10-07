@@ -104,10 +104,19 @@ def _form_message(variants: str = "Blanco, Lavanda") -> str:
     )
 
 
+_RATES_MESSAGE = (
+    "Nuestras tarifas mínimas de envío son 🚚:\n• Bogotá y municipios cercanos: $7.900\n"
+    "• Nivel Nacional: $16.940\nEl valor definitivo se confirma al despachar según el tamaño y peso de tu paquete📏📦📦"
+)
+
+
 def _env02(inbound: str, *, variants: str = "Blanco, Lavanda", burst: list[str] | None = None,
-           ctx: CheckContext | None = None):
-    turn = T(1, inbound=inbound, signal=detect_signal(inbound), draft=_VARIANTS_DRAFT,
-             tools=[tool(_FORM, card_text=_form_message(variants))])
+           ctx: CheckContext | None = None, rates: bool | None = None):
+    """`rates`: True, el mensaje de tarifas salió antes del formulario; False,
+    la tool de tarifas falló (el cliente no lo leyó)."""
+    form = tool(_FORM, card_text=_form_message(variants))
+    tools = [form] if rates is None else [tool("send_shipping_rates", ok=rates, card_text=_RATES_MESSAGE), form]
+    turn = T(1, inbound=inbound, signal=detect_signal(inbound), draft=_VARIANTS_DRAFT, tools=tools)
     if burst:
         turn = replace(turn, inbound=tuple(
             InboundMsg(seq=i, ts_ms=i * 1000, kind="text", text=text) for i, text in enumerate(burst)
@@ -152,3 +161,46 @@ def test_env02_a_variant_the_form_does_not_name_needs_a_reply(inbound: str) -> N
 def test_env02_does_not_depend_on_the_catalog(inbound: str) -> None:
     """El veredicto sale solo de la traza: con o sin catálogo, el mismo."""
     assert _env02(inbound).verdict == _env02(inbound, ctx=CheckContext()).verdict
+
+
+# ── Con el mensaje de tarifas (prueba del operador 2026-10-07, ep_012 t9) ──
+# «Si» + «Cuánto cuesta el envío ?»: el bot mandó las tarifas
+# (`send_shipping_rates`, mensaje que arma el código) y después el formulario.
+# Respondió las dos cosas; el check solo contaba el mensaje del formulario.
+# Las tarifas responden cuánto cuesta el envío y nada más: un plazo, una ciudad
+# que nombran o un medio de pago siguen pidiendo un texto del bot.
+_RATES_ANSWER = [
+    ["Si", "Cuánto cuesta el envío ?"],
+    ["sí y cuánto vale el envío"],
+    ["y el envío?"],
+    ["sí y el envío"],
+    ["lavanda y cuánto es el envío"],
+    ["Dale", "cuánto cobran de domicilio?"],
+    ["2", "cuál es el valor del envío a Bogotá"],
+]
+_RATES_DO_NOT_ANSWER = [
+    ["sí, cuánto se demora"],
+    ["Si", "cuánto demora el envío?"],
+    ["ok y hacen envíos a pasto"],
+    ["listo, envían a Cali"],
+    ["Si, aceptan tarjeta"],
+    ["sí y el envío es gratis?"],
+    ["dale, me lo mandan hoy mismo"],
+]
+
+
+@pytest.mark.parametrize("burst", _RATES_ANSWER)
+def test_env02_the_rates_message_answers_how_much_shipping_costs(burst: list[str]) -> None:
+    r = _env02("\n".join(burst), burst=burst, rates=True)
+
+    assert r.verdict == "pasa", (burst, r.evidence)
+
+
+@pytest.mark.parametrize("burst", _RATES_DO_NOT_ANSWER)
+def test_env02_the_rates_message_answers_nothing_else(burst: list[str]) -> None:
+    assert _env02("\n".join(burst), burst=burst, rates=True).verdict == "falla", burst
+
+
+@pytest.mark.parametrize("burst", _RATES_ANSWER)
+def test_env02_rates_the_customer_did_not_get_answer_nothing(burst: list[str]) -> None:
+    assert _env02("\n".join(burst), burst=burst, rates=False).verdict == "falla", burst
