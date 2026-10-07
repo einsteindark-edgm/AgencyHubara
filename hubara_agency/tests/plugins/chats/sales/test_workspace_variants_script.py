@@ -46,17 +46,13 @@ WORKSPACE = STAGES.parent
 #: lo que está cargado en ese turno (el núcleo `sales_script`) también la
 #: ordenaba (segunda revisión del PR #390).
 FORM_INTRO = "Para coordinar tu envío"
-#: Excepción temporal: `etapa_datos_envio/SKILL.md` lo corrige el PR #392, que
-#: se mergea ANTES que este. Al actualizar con main, si ya no trae la frase,
-#: esta excepción se quita.
-NOT_YET = {"skills/etapa_datos_envio/SKILL.md"}
 
 
 def test_the_form_is_not_introduced_by_the_agent() -> None:
     offenders = [
         str(path.relative_to(WORKSPACE))
         for path in sorted(WORKSPACE.rglob("*.md"))
-        if str(path.relative_to(WORKSPACE)) not in NOT_YET and FORM_INTRO in path.read_text(encoding="utf-8")
+        if FORM_INTRO in path.read_text(encoding="utf-8")
     ]
 
     assert offenders == []
