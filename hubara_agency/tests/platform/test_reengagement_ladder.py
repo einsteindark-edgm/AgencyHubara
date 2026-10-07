@@ -113,3 +113,40 @@ def test_record_touch_agrega_y_acota():
     touches = metadata["remarketing_touches"]
     assert touches[-1] == {"at_ms": T0 + 59, "kind": "free_form"}
     assert len(touches) <= 40
+
+
+# ── Frecuencia configurable (dashboard Agents → Remarketing → Frecuencia) ──────
+
+
+def test_max_steps_agota_la_escalera_al_llegar_al_tope_configurado():
+    sent = [(T0 + 2 * H, "free_form"), (T0 + 4 * H, "free_form")]
+    state = ladder_state(T0 + 5 * H, _meta(sent), max_steps=2)
+    assert state.exhausted is True
+    assert state.due is False
+    assert state.next_due_at_ms is None
+
+
+def test_max_steps_mayor_que_los_consumidos_no_agota():
+    sent = [(T0 + 2 * H, "free_form"), (T0 + 4 * H, "free_form")]
+    state = ladder_state(T0 + 8 * H, _meta(sent), max_steps=3)
+    assert state.exhausted is False
+    assert state.due is True
+
+
+def test_max_steps_cero_no_deja_salir_ningun_toque():
+    state = ladder_state(T0 + 10 * H, _meta(), max_steps=0)
+    assert state.exhausted is True
+    assert state.due is False
+
+
+def test_max_steps_no_pasa_de_los_peldaños_de_la_escalera():
+    sent = [(T0 + h * H, "free_form") for h in (2, 4, 8, 14, 20)]
+    assert ladder_state(T0 + 30 * H, _meta(sent), max_steps=99).exhausted is True
+    sent = sent[:4]
+    assert ladder_state(T0 + 30 * H, _meta(sent), max_steps=99).exhausted is False
+
+
+def test_max_steps_aplica_desde_ya_a_quien_ya_recibio_mas_toques():
+    # Bajar de 5 a 2: quien ya recibió 3 toques queda agotado en el acto.
+    sent = [(T0 + h * H, "free_form") for h in (2, 4, 8)]
+    assert ladder_state(T0 + 9 * H, _meta(sent), max_steps=2).exhausted is True

@@ -74,3 +74,23 @@ def test_entry_lleva_el_numero_de_toque():
         ("wa_vencido", _lead(4, touches_h_ago=[2])),
     ])
     assert snapshot["conversations"][0]["ladder_step"] == 1
+
+
+def test_el_tope_configurado_saca_del_seed_a_quien_ya_lo_alcanzo():
+    # Tope 2 (dashboard): quien ya recibió 3 toques sale del seed en el acto.
+    snapshot = build_snapshot_from_sessions(
+        NOW,
+        [("wa_tres", _lead(20, touches_h_ago=[15, 11, 3]))],
+        max_touches=2,
+    )
+    assert _ids(snapshot) == []
+    assert snapshot["prefiltered"] == {"ladder_exhausted": 1}
+
+
+def test_con_tope_mayor_al_consumido_sigue_entrando():
+    snapshot = build_snapshot_from_sessions(
+        NOW,
+        [("wa_uno", _lead(4, touches_h_ago=[2]))],
+        max_touches=2,
+    )
+    assert _ids(snapshot) == ["wa_uno"]

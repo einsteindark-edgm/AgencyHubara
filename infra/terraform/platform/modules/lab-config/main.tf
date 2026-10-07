@@ -30,6 +30,12 @@
 #     salen las capacidades (preguntas, umbrales, tablas) y el dominio de la
 #     tienda (los ejemplos que el agente ve en sus herramientas); un paquete
 #     que no existe falla fuerte (nunca corre la inteligencia de otra tienda).
+#   REMARKETING_MAX_TOUCHES        0..5. TECHO de cuántos toques hace el bot de
+#     remarketing por cada vez que el cliente deja de contestar (la escalera
+#     tiene 5 peldaños: +2h/+4h/+8h/+14h/+20h). El operador elige la cantidad en
+#     el dashboard (Agents → Remarketing → Frecuencia) DENTRO de este techo y
+#     nunca lo supera; 5 = el comportamiento de siempre. Bajarlo aplica sobre lo
+#     guardado (gana el menor). Lo leen la API y los workers de remarketing.
 #   LAB_MAX_USD_PER_RUN / _MONTH   topes de gasto del botón "Nueva corrida" (§3.7).
 #   LAB_INTERNAL_NUMBERS           teléfonos del equipo (E.164, separados por coma):
 #     sus conversaciones no entran al banco (motivo `numero_interno`). Lo leen la
@@ -53,6 +59,7 @@ variable "config" {
     workflow_v2_ceiling     = optional(string, "off")
     order_sentinel_reader   = optional(string, "off")
     decisions_bundle        = optional(string, "ventas")
+    remarketing_max_touches = optional(number, 5)
   })
 }
 
@@ -70,6 +77,7 @@ locals {
     SALES_WORKFLOW_V2_CEILING     = var.config.workflow_v2_ceiling
     ORDER_SENTINEL_READER         = var.config.order_sentinel_reader
     SALES_DECISIONS_BUNDLE        = var.config.decisions_bundle
+    REMARKETING_MAX_TOUCHES       = tostring(var.config.remarketing_max_touches)
   }
 }
 

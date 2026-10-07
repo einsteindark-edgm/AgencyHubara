@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 import { AgentsPrompts } from "./AgentsPrompts";
@@ -113,5 +113,42 @@ describe("AgentsPrompts", () => {
     // Solo `sales` tiene panel de Calidad LLM; todos tienen Personalidad.
     expect(screen.queryByRole("button", { name: /Calidad LLM/i })).toBeNull();
     expect(screen.getByRole("button", { name: /Personalidad/i })).toBeTruthy();
+  });
+
+  it("ofrece el tab Frecuencia solo para el agente remarketing, y lo muestra al elegirlo", async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).includes("/remarketing/frequency")
+        ? jsonResponse({
+            max_touches: 3,
+            ceiling: 5,
+            saved: 3,
+            updated_at_ms: null,
+            updated_by: null,
+            ladder: [{ touch: 1, after_ms: 7_200_000 }],
+          })
+        : jsonResponse({ agents: [REMARKETING_AGENT] }),
+    );
+
+    renderWithClient(<AgentsPrompts agentId="remarketing" />);
+    await waitFor(() => screen.getByText("Remarketing"));
+
+    // Personalidad sigue siendo el default: los prompts visibles, el panel no.
+    expect(screen.queryByRole("radiogroup", { name: /toques máximo/i })).toBeNull();
+    screen.getByText("Eres el Asesor Exclusivo de Ventas de Hubara.");
+
+    fireEvent.click(screen.getByRole("button", { name: /Frecuencia/i }));
+
+    const three = await screen.findByRole("radio", { name: "3" });
+    expect(three.getAttribute("aria-checked")).toBe("true");
+    expect(screen.queryByText("Eres el Asesor Exclusivo de Ventas de Hubara.")).toBeNull();
+  });
+
+  it("no ofrece el tab Frecuencia para el agente de ventas", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ agents: [SALES_AGENT] }));
+
+    renderWithClient(<AgentsPrompts agentId="sales" />);
+    await waitFor(() => screen.getByText("Asesor de Ventas"));
+
+    expect(screen.queryByRole("button", { name: /Frecuencia/i })).toBeNull();
   });
 });

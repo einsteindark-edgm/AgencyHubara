@@ -148,3 +148,57 @@ async def test_a_session_that_cannot_be_written_does_not_stop_the_cycle(
     marked = json.loads((_isolate_vault_dir / "wa_573009876543" / "metadata.json").read_text(encoding="utf-8"))
     assert marked["tag"] == "SIN_RESPUESTA"
     assert snapshot["marked_unresponsive"] == 1
+
+
+# ── Frecuencia configurable: SIN_RESPUESTA llega con el tope del dashboard ────
+
+
+def _con_toques(n: int, last_touch_h_ago: float) -> dict:
+    meta = _exhausted(last_touch_h_ago)
+    meta["remarketing_touches"] = meta["remarketing_touches"][:n]
+    # `_exhausted` los pone de más viejo a más nuevo; con n recortado el último
+    # queda en otro lugar: lo reubicamos para que el último sea el pedido.
+    for i, t in enumerate(meta["remarketing_touches"]):
+        t["at_ms"] = NOW - int((last_touch_h_ago + 2 * (n - 1 - i)) * H)
+    meta["last_inbound_at_ms"] = NOW - int((last_touch_h_ago + 2 * n + 2) * H)
+    return meta
+
+
+def test_con_tope_2_y_dos_toques_sin_respuesta_se_etiqueta_tras_su_gracia():
+    # Gracia = el hueco del último peldaño permitido (2h con tope 2), no 6h.
+    meta = _con_toques(2, 2.5)
+    assert unresponsive_session_ids(NOW, [("wa_a", meta)], max_steps=2) == ["wa_a"]
+    # Con la escalera completa (tope 5) ese mismo cliente todavía puede recibir más.
+    assert unresponsive_session_ids(NOW, [("wa_a", meta)]) == []
+
+
+def test_con_tope_2_la_gracia_corre_desde_el_ultimo_toque():
+    meta = _con_toques(2, 1)
+    assert unresponsive_session_ids(NOW, [("wa_a", meta)], max_steps=2) == []
+
+
+def test_con_tope_0_quien_ya_recibio_toques_se_etiqueta():
+    meta = _con_toques(1, 7)
+    assert unresponsive_session_ids(NOW, [("wa_a", meta)], max_steps=0) == ["wa_a"]
+
+
+@pytest.mark.asyncio
+async def test_el_ciclo_lee_el_tope_guardado_en_el_vault(_isolate_vault_dir: Path):
+    from src.platform.whatsapp.reengagement_frequency import set_max_touches
+
+    set_max_touches(_isolate_vault_dir, 2, actor="operador", now_ms=1)
+    now = int(time.time() * 1000)
+    d = _isolate_vault_dir / "wa_573001234567"
+    d.mkdir(parents=True)
+    meta = _exhausted(7, now=now)
+    meta["remarketing_touches"] = meta["remarketing_touches"][2:]  # 3 toques
+    # Ventana de 72h abierta: la escalera PODRÍA seguir por plantilla, así que
+    # solo el tope del dashboard puede explicar la etiqueta (sin él, no hay tag).
+    meta["ctwa_window_expires_at_ms"] = now + H
+    (d / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    snapshot = await ActivityEnvironment().run(build_reengagement_snapshot_activity)
+
+    data = json.loads((d / "metadata.json").read_text(encoding="utf-8"))
+    assert data["tag"] == "SIN_RESPUESTA"
+    assert snapshot["marked_unresponsive"] == 1

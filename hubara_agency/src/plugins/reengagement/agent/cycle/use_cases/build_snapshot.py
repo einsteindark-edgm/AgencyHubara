@@ -162,8 +162,13 @@ def build_snapshot_from_sessions(
     rate_card: Any = None,
     quiet_checker: Callable[[str], bool] | None = None,
     mba_controls_checker: Callable[[dict[str, Any], str], bool] | None = None,
+    max_touches: int | None = None,
 ) -> dict[str, Any]:
     """(now_ms, [(session_id, metadata)]) → el seed completo del agente.
+
+    `max_touches` = tope de toques del negocio (dashboard Agents → Remarketing
+    → Frecuencia; lo lee la activity, esta función sigue pura). Quien ya lo
+    alcanzó sale del seed (`ladder_exhausted`). `None` = la escalera completa.
 
     Pre-filtro de escala (Punto 1): con `rate_card`, corre la CENTRAL
     (`decide_reengagement` — la misma autoridad del gate, no un espejo) por
@@ -215,7 +220,10 @@ def build_snapshot_from_sessions(
         # previo (enviado o abstenido) ya consumió su peldaño, así que una
         # sesión no vuelve al seed hasta que venza el próximo.
         ladder = ladder_state(
-            now_ms, metadata, first_gap_ms=_min_silence_ms_for(lead)
+            now_ms,
+            metadata,
+            first_gap_ms=_min_silence_ms_for(lead),
+            max_steps=max_touches,
         )
         if ladder.exhausted:
             prefiltered["ladder_exhausted"] = (

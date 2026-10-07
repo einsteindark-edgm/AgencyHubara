@@ -91,3 +91,19 @@ def test_messagingkit_reexports_the_sales_turn_sends():
     assert getattr(kit, "send_typing_indicator_activity", None) is activities.send_typing_indicator_activity
     assert getattr(kit, "send_capi_event_activity", None) is capi.send_capi_event_activity
     assert getattr(kit, "flush_capi_outbox_activity", None) is capi.flush_capi_outbox_activity
+
+
+def test_messagingkit_reexports_reengagement_frequency():
+    # Dashboard Agents → Remarketing → Frecuencia: el plugin `reengagement`
+    # (snapshot + etiqueta SIN_RESPUESTA) y `chats` (API de ajustes) leen y
+    # escriben el tope de toques por SDK — P-28 les prohíbe platform directo.
+    import src.platform.whatsapp.reengagement_frequency as freq
+    import src.platform.whatsapp.reengagement_ladder as ladder
+    import src.sdk.messagingkit as kit
+
+    assert kit.clamp_max_steps is ladder.clamp_max_steps
+    assert kit.effective_max_touches is freq.effective_max_touches
+    assert kit.set_max_touches is freq.set_max_touches
+    assert kit.read_frequency_state is freq.read_state
+    assert kit.frequency_ceiling is freq.ceiling
+    assert kit.FrequencyState is freq.FrequencyState

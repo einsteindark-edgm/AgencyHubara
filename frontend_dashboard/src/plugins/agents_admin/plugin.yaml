@@ -22,6 +22,10 @@ consumes:
     contract: perception-rollout@v1   # encendido del bot nuevo (plan del laboratorio, PR 16)
     into: agent-config
     cast: api/perception
+  - provider: chats
+    contract: remarketing-frequency@v1   # cuántos toques máximo hace el bot de remarketing (editable)
+    into: agent-config
+    cast: api/remarketing_frequency
 
 # ── Frontend ───────────────────────────────────────────────────────────
 # El shell renderiza la `Page` del plugin cuando section==="agent".

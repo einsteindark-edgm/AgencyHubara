@@ -26,6 +26,7 @@ from src.plugins.reengagement.agent.cycle.use_cases import (
     unresponsive_session_ids,
 )
 from src.sdk.messagingkit import (
+    effective_max_touches,
     get_current_rate_card,
     is_quiet_hours_for_session,
     load_reengagement_index,
@@ -80,6 +81,9 @@ async def build_reengagement_snapshot_activity() -> dict[str, Any]:
     """
     now_ms = int(time.time() * 1000)
     vault = WORKSPACE_VAULT_DIR
+    # Tope de toques del negocio (dashboard Agents → Remarketing → Frecuencia),
+    # leído en cada ciclo: un cambio aplica desde ya, sin reiniciar el worker.
+    max_touches = effective_max_touches(vault)
 
     index = load_reengagement_index(vault)
     if index is None:
@@ -99,11 +103,11 @@ async def build_reengagement_snapshot_activity() -> dict[str, Any]:
     # lectura FRESCA: el cliente pudo escribir entre el scan y este write.
     store = FilesystemMetadataStore(vault)
     marked = 0
-    for session_id in unresponsive_session_ids(now_ms, sessions):
+    for session_id in unresponsive_session_ids(now_ms, sessions, max_touches):
         def _mutate(
             data: dict[str, Any], _sid: str = session_id
         ) -> dict[str, Any] | None:
-            if not unresponsive_session_ids(now_ms, [(_sid, data)]):
+            if not unresponsive_session_ids(now_ms, [(_sid, data)], max_touches):
                 return None  # cambió bajo nuestros pies → abortar sin escribir
             return mark_unresponsive(data, now_ms=now_ms)
 
@@ -141,6 +145,7 @@ async def build_reengagement_snapshot_activity() -> dict[str, Any]:
         rate_card=get_current_rate_card(),
         quiet_checker=lambda sid: is_quiet_hours_for_session(sid, now_utc),
         mba_controls_checker=mba_controls_thread,
+        max_touches=max_touches,
     )
     snapshot["marked_unresponsive"] = marked
     snapshot["shortlisted"] = len(sessions)

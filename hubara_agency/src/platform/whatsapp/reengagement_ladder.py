@@ -75,15 +75,32 @@ def _touches(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def clamp_max_steps(max_steps: int | None) -> int:
+    """Peldaños permitidos: `None` = todos; nunca menos de 0 ni más de la escalera."""
+    if max_steps is None:
+        return len(LADDER_GAPS_MS)
+    return max(0, min(int(max_steps), len(LADDER_GAPS_MS)))
+
+
 def ladder_state(
-    now_ms: int, metadata: dict[str, Any], *, first_gap_ms: int | None = None
+    now_ms: int,
+    metadata: dict[str, Any],
+    *,
+    first_gap_ms: int | None = None,
+    max_steps: int | None = None,
 ) -> LadderState:
     """Estado de la escalera para una sesión en `now_ms`.
 
     `first_gap_ms` sobreescribe SOLO el primer hueco: el caller lo deriva del
     calor del lead (🔥 `HOT_FIRST_GAP_MS` con gancho transaccional; ❄️ 4h sin
     ninguna señal). Los huecos siguientes son siempre los de la escalera.
+
+    `max_steps` es cuántos toques como máximo permite el negocio (dashboard
+    Agents → Remarketing → Frecuencia; lo lee el caller, esta función sigue
+    pura). Usa los primeros N huecos de la escalera. Aplica desde ya: quien ya
+    recibió N o más toques queda agotado. `None` = todos los peldaños.
     """
+    limit = clamp_max_steps(max_steps)
     all_touches = _touches(metadata)
     template_cap = (
         sum(
@@ -97,12 +114,12 @@ def ladder_state(
     anchor = metadata.get("last_inbound_at_ms")
     if not isinstance(anchor, int):
         # Nunca escribió: no hay ghosting que perseguir con la escalera.
-        return LadderState(template_cap_reached=template_cap)
+        return LadderState(exhausted=limit == 0, template_cap_reached=template_cap)
 
     since_anchor = [t for t in all_touches if t["at_ms"] > anchor]
     step = len(since_anchor)
     last_touch = since_anchor[-1]["at_ms"] if since_anchor else None
-    if step >= len(LADDER_GAPS_MS):
+    if step >= limit:
         return LadderState(
             step=step,
             exhausted=True,
