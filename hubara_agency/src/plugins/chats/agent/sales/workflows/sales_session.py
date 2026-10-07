@@ -60,6 +60,7 @@ with workflow.unsafe.imports_passed_through():
         apply_variant_enumeration_guard_activity,
         bootstrap_sales_session_activity,
         build_first_contact_greeting_activity,
+        compute_bogota_context_activity,
         decide_ghosting_action,
         ensure_closing_escalation_activity,
         ensure_payment_pending_closure_activity,
@@ -413,6 +414,40 @@ def _verify_step(out: VerifyOutput, started_ms: int, *, applied: bool) -> dict[s
     }
 
 
+async def _bogota_clock() -> list[str]:
+    """El bloque «Hora actual en Colombia» para un turno de SISTEMA (traspaso,
+    abandono, complemento). El mensaje del cliente lo trae desde el ingest;
+    estos turnos no, y el LLM solo veía la hora del contenedor, en UTC (caso
+    4567 del laboratorio: «Buenas tardes 🤍» a las 08:55). La hora la lee la
+    activity (R-DET); en el laboratorio, la del turno original. Si falla, el
+    turno sale sin ella, como antes (nunca tumba la conversación)."""
+    try:
+        clock = await workflow.execute_activity(
+            compute_bogota_context_activity,
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-open
+        workflow.logger.warning(f"compute_bogota_context falló (turno sin hora): {exc!r}")
+        return []
+    return [clock] if clock else []
+
+
+_SYSTEM_TURN_CLOCK_PATCH = "system-turn-bogota-clock-v1"
+
+
+async def _system_turn_clock() -> list[str]:
+    """La hora de Bogotá de un turno de sistema (`_bogota_clock`), para el V1 y
+    el V2: los dos tienen sesiones en vuelo al desplegar.
+
+    Gated (R-DET): histories pre-deploy replayean sin la activity nueva. El gate
+    vive acá porque el archivo del V2 no llama `workflow.patched` (test AST).
+    """
+    if not workflow.patched(_SYSTEM_TURN_CLOCK_PATCH):
+        return []
+    return await _bogota_clock()
+
+
 @workflow.defn(name="HubaraSalesSessionWorkflow")
 class HubaraSalesSessionWorkflow:
     """Long-running session workflow with ghosting injection mechanism."""
@@ -496,6 +531,13 @@ class HubaraSalesSessionWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
         return [draft_note] if draft_note else None
+
+    async def _handoff_context(self, session_id: str) -> list[str] | None:
+        """plugin_context del turno de HANDOFF: la hora de Bogotá y la note del
+        draft (la hora antes de las notas, como la pone el ingest)."""
+        clock = await _system_turn_clock()
+        draft = await self._handoff_draft_context(session_id)
+        return [*clock, *(draft or [])] or None
 
     async def _perceive(self, inp: PerceiveInput) -> PerceiveOutput:
         """Capa ①: nunca tumba el turno (fail-open)."""
@@ -582,7 +624,7 @@ class HubaraSalesSessionWorkflow:
                     PendingMessage(
                         message=initial_handoff,
                         is_handoff=True,
-                        plugin_context=await self._handoff_draft_context(
+                        plugin_context=await self._handoff_context(
                             session.session_id
                         ),
                     )
@@ -637,7 +679,7 @@ class HubaraSalesSessionWorkflow:
                             PendingMessage(
                                 message=late_handoff,
                                 is_handoff=True,
-                                plugin_context=await self._handoff_draft_context(
+                                plugin_context=await self._handoff_context(
                                     session.session_id
                                 ),
                             )
@@ -656,7 +698,9 @@ class HubaraSalesSessionWorkflow:
 
                     self._pending.append(
                         PendingMessage(
-                            message=ghost_trigger, is_ghost_trigger=True
+                            message=ghost_trigger,
+                            is_ghost_trigger=True,
+                            plugin_context=await _system_turn_clock() or None,
                         )
                     )
                     self._force_shutdown = True
@@ -674,7 +718,11 @@ class HubaraSalesSessionWorkflow:
                 )
                 if handoff_refresh:
                     self._pending.append(
-                        PendingMessage(message=handoff_refresh, is_handoff=True)
+                        PendingMessage(
+                            message=handoff_refresh,
+                            is_handoff=True,
+                            plugin_context=await _system_turn_clock() or None,
+                        )
                     )
 
             # Trailing debounce con reset (Fix 1, gated): tras el primer
@@ -1762,6 +1810,7 @@ class HubaraSalesSessionWorkflow:
                                 PendingMessage(
                                     message=complement_note_of(decided.topics, verify_out),
                                     is_complement_trigger=True,
+                                    plugin_context=await _system_turn_clock() or None,
                                 )
                             )
                             for step in reversed(trace_steps):

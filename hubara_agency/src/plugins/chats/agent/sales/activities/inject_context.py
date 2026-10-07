@@ -4,16 +4,18 @@ Mantiene determinismo del workflow (R-DET): el cómputo de `datetime.now()`
 ocurre dentro de la activity, no en el workflow. El resultado es JSON-safe
 (`str`, R-JSON) para viajar limpio por el history de Temporal.
 
-Cuándo usarla:
-  - Desde el workflow `HubaraSalesSessionWorkflow` si se requiere inyectar
-    la hora justo antes de un `_run_turn` (ej: trigger de ghosting,
-    re-saludo en handoff). El path normal (mensaje del cliente entrante)
-    NO necesita esta activity, ya que `load_or_start_sales_session.py`
+Cuándo se usa:
+  - En los turnos de SISTEMA de los workflows de ventas (V1 y V2): el
+    traspaso de remarketing, el cierre por abandono y el complemento de la
+    capa ③ (`workflows/sales_session.py::_bogota_clock`). Sin ella esos
+    turnos solo veían la hora del contenedor, en UTC (caso 4567 del
+    laboratorio: «Buenas tardes 🤍» a las 08:55). El path normal (mensaje
+    del cliente entrante) NO la necesita: `load_or_start_sales_session.py`
     llama al helper puro `context.build_bogota_context_string()` desde
     código sincrónico (use case, fuera del workflow) antes de signalar.
 
-Si se invoca desde el workflow, registrarla en el worker junto al resto
-de activities de Sales.
+Registrada en el worker de ventas; en el laboratorio corre real y lee la
+hora del turno original (`sales_lab/sandbox/clock.py`).
 """
 from __future__ import annotations
 

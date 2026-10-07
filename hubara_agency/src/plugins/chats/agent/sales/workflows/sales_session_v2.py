@@ -144,6 +144,7 @@ with workflow.unsafe.imports_passed_through():
         _perception_step,
         _photo_arriving,
         _reply_as_sent,
+        _system_turn_clock,
         _text_outbound,
         _verify_step,
     )
@@ -261,6 +262,13 @@ class HubaraSalesSessionWorkflowV2:
         )
         return [draft_note] if draft_note else None
 
+    async def _handoff_context(self, session_id: str) -> list[str] | None:
+        """plugin_context del turno de handoff: la hora de Bogotá (turno de
+        sistema, `_system_turn_clock`) y la nota del borrador, en ese orden."""
+        clock = await _system_turn_clock()
+        draft = await self._handoff_draft_context(session_id)
+        return [*clock, *(draft or [])] or None
+
     async def _read_handoff(self, session_id: str) -> str | None:
         return await workflow.execute_activity(
             read_and_clear_pending_handoff_activity,
@@ -365,7 +373,7 @@ class HubaraSalesSessionWorkflowV2:
                 PendingMessage(
                     message=initial_handoff,
                     is_handoff=True,
-                    plugin_context=await self._handoff_draft_context(session.session_id),
+                    plugin_context=await self._handoff_context(session.session_id),
                 )
             )
 
@@ -393,7 +401,7 @@ class HubaraSalesSessionWorkflowV2:
                         PendingMessage(
                             message=late_handoff,
                             is_handoff=True,
-                            plugin_context=await self._handoff_draft_context(session.session_id),
+                            plugin_context=await self._handoff_context(session.session_id),
                         )
                     )
                 elif not self._pending:
@@ -408,13 +416,21 @@ class HubaraSalesSessionWorkflowV2:
                         start_to_close_timeout=timedelta(seconds=10),
                         retry_policy=RetryPolicy(maximum_attempts=2),
                     )
-                    self._pending.append(PendingMessage(message=ghost_trigger, is_ghost_trigger=True))
+                    self._pending.append(
+                        PendingMessage(
+                            message=ghost_trigger, is_ghost_trigger=True, plugin_context=await _system_turn_clock() or None
+                        )
+                    )
                     self._force_shutdown = True
 
             # Handoff que llegó mientras se procesaba un turno anterior.
             handoff_refresh = await self._read_handoff(session.session_id)
             if handoff_refresh:
-                self._pending.append(PendingMessage(message=handoff_refresh, is_handoff=True))
+                self._pending.append(
+                    PendingMessage(
+                        message=handoff_refresh, is_handoff=True, plugin_context=await _system_turn_clock() or None
+                    )
+                )
 
             # Debounce con reinicio: silencio de `_DEBOUNCE_SILENCE`, con tope.
             # `debounce_start` también es el inicio del presupuesto de la
@@ -960,6 +976,7 @@ class HubaraSalesSessionWorkflowV2:
                             PendingMessage(
                                 message=complement_note_of(decided.topics, verify_out),
                                 is_complement_trigger=True,
+                                plugin_context=await _system_turn_clock() or None,
                             )
                         )
                         for step in reversed(trace_steps):

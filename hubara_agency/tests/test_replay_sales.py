@@ -244,3 +244,131 @@ async def test_prepatch_v2_burst_history_breaks_without_each_gate(
     with pytest.raises(workflow.NondeterminismError, match=clash):
         await replayer.replay_workflow(_prepatch_v2_burst_history())
     assert consulted["n"] >= (ungated_at or 1), f"el gate {gate} se consultó {consulted['n']} veces"
+# History SINTÉTICA de los turnos de SISTEMA del V1 ANTES del gate
+# `system-turn-bogota-clock-v1` (caso 4567 del laboratorio, caso-fotos-0929-r3:
+# los turnos que arma el workflow sin mensaje del cliente no traían la hora de
+# Bogotá y el LLM solo veía la del contenedor, en UTC). Cubre el traspaso de
+# remarketing al arrancar, el que llega con la sesión dormida, el que llega a
+# mitad de sesión y el cierre por abandono; el complemento de la capa ③ lo cubre
+# `history_sales_perception_v1.json`. Las sesiones en vuelo al desplegar traen
+# esta forma: la activity de la hora en esos caminos sin su gate las rompería
+# (L-9). CONGELADA — no se regenera (procedencia en
+# `fixtures/generate_system_turns_preclock_fixture.py`); se borra junto con
+# `workflow.deprecate_patch("system-turn-bogota-clock-v1")`.
+SYSTEM_TURNS_PRECLOCK_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "history_sales_system_turns_preclock_v1.json"
+)
+_CLOCK_GATE = "system-turn-bogota-clock-v1"
+
+
+def _system_turns_history() -> WorkflowHistory:
+    return WorkflowHistory.from_json(
+        "test-sales-system-turns-preclock",
+        SYSTEM_TURNS_PRECLOCK_FIXTURE.read_text(encoding="utf-8"),
+    )
+
+
+async def test_system_turns_recorded_before_the_clock_still_replay() -> None:
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflow])
+    await replayer.replay_workflow(_system_turns_history())
+
+
+@pytest.mark.parametrize(
+    ("history", "site", "ungated_from_consultation"),
+    [
+        # El gate se consulta una vez por turno de sistema. Se des-gatea cada
+        # sitio por separado para probar que las fixtures protegen a todos (si
+        # no, el primero enmascara a los demás).
+        pytest.param(_system_turns_history, "traspaso de remarketing al arrancar", 1, id="handoff-start"),
+        pytest.param(_system_turns_history, "traspaso con la sesión dormida", 2, id="handoff-idle"),
+        pytest.param(_system_turns_history, "traspaso a mitad de sesión", 3, id="handoff-refresh"),
+        pytest.param(_system_turns_history, "cierre por abandono", 4, id="ghost"),
+        pytest.param(_perception_history, "complemento de la capa ③", 1, id="complement"),
+    ],
+)
+async def test_the_system_turn_histories_break_if_the_clock_skips_its_gate(
+    monkeypatch, history, site: str, ungated_from_consultation: int
+) -> None:
+    """Control negativo: las fixtures PROTEGEN el gate de la hora. Con el gate
+    en True desde el sitio N (como si la activity no estuviera detrás de él),
+    el replay choca con la history, que en ese punto no la agendó."""
+    from temporalio import workflow
+
+    real_patched = workflow.patched
+    consultations = {"n": 0}
+
+    def ungated(patch_id: str) -> bool:
+        if patch_id != _CLOCK_GATE:
+            return real_patched(patch_id)
+        consultations["n"] += 1
+        return consultations["n"] >= ungated_from_consultation
+
+    monkeypatch.setattr(workflow, "patched", ungated)
+
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflow])
+    with pytest.raises(workflow.NondeterminismError):
+        await replayer.replay_workflow(history())
+    assert consultations["n"] == ungated_from_consultation, (
+        f"{site}: el gate se consultó {consultations['n']} veces"
+    )
+
+
+# La misma forma en el bot nuevo (`HubaraSalesSessionWorkflowV2`): desde el
+# 2026-10-07 todas las conversaciones corren en el V2, así que sus sesiones en
+# vuelo al desplegar traen los turnos de sistema SIN la activity de la hora.
+# Generada con el código de `main` en f89716ad. CONGELADA — no se regenera; se
+# borra junto con el gate.
+V2_SYSTEM_TURNS_PRECLOCK_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "history_sales_v2_system_turns_preclock_v1.json"
+)
+
+
+def _v2_system_turns_history() -> WorkflowHistory:
+    return WorkflowHistory.from_json(
+        "test-sales-v2-system-turns-preclock",
+        V2_SYSTEM_TURNS_PRECLOCK_FIXTURE.read_text(encoding="utf-8"),
+    )
+
+
+async def test_v2_system_turns_recorded_before_the_clock_still_replay() -> None:
+    from src.plugins.chats.agent.sales.workflows.sales_session_v2 import HubaraSalesSessionWorkflowV2
+
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflowV2])
+    await replayer.replay_workflow(_v2_system_turns_history())
+
+
+@pytest.mark.parametrize(
+    ("site", "ungated_from_consultation"),
+    [
+        pytest.param("traspaso de remarketing al arrancar", 1, id="handoff-start"),
+        pytest.param("traspaso con la sesión dormida", 2, id="handoff-idle"),
+        pytest.param("traspaso a mitad de sesión", 3, id="handoff-refresh"),
+        pytest.param("cierre por abandono", 4, id="ghost"),
+    ],
+)
+async def test_the_v2_system_turn_history_breaks_if_the_clock_skips_its_gate(
+    monkeypatch, site: str, ungated_from_consultation: int
+) -> None:
+    """Control negativo en el V2: el gate se consulta una vez por turno de
+    sistema y la fixture protege a cada sitio."""
+    from temporalio import workflow
+
+    from src.plugins.chats.agent.sales.workflows.sales_session_v2 import HubaraSalesSessionWorkflowV2
+
+    real_patched = workflow.patched
+    consultations = {"n": 0}
+
+    def ungated(patch_id: str) -> bool:
+        if patch_id != _CLOCK_GATE:
+            return real_patched(patch_id)
+        consultations["n"] += 1
+        return consultations["n"] >= ungated_from_consultation
+
+    monkeypatch.setattr(workflow, "patched", ungated)
+
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflowV2])
+    with pytest.raises(workflow.NondeterminismError):
+        await replayer.replay_workflow(_v2_system_turns_history())
+    assert consultations["n"] == ungated_from_consultation, (
+        f"{site}: el gate se consultó {consultations['n']} veces"
+    )

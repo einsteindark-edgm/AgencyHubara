@@ -505,11 +505,10 @@ SALES_ACTIVITIES = [
     # HU-002 / A.5: transcripción de audio inbound (Groq/OpenAI).
     transcribe_audio_activity,
     # HU dialecto colombiano: hora de Bogotá + saludo apropiado
-    # inyectado al plugin_context. Disponible para uso desde el
-    # workflow si se requiere recomputar la hora mid-session
-    # (ghosting trigger, handoff resume). El path normal del
-    # cliente entrante usa el helper puro `context.py` desde
-    # `load_or_start_sales_session.py`.
+    # inyectado al plugin_context. La usan los turnos de sistema del
+    # workflow (traspaso, abandono, complemento — caso 4567 del
+    # laboratorio). El path normal del cliente entrante usa el helper
+    # puro `context.py` desde `load_or_start_sales_session.py`.
     compute_bogota_context_activity,
     # HU-WA24H-001 Sprint CAPI: Meta Conversions API event
     # dispatch (Lead / Purchase) en cierre de episode. Disparado
