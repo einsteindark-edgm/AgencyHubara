@@ -17,7 +17,8 @@ temp+rename propios). La regla desde entonces:
     de tres vías) si acumula cambios entre esperas.
   * ``.write()`` del store (reemplazo entero) tampoco va fuera de `state.py`.
 
-Este gate falla si un módulo de `src/` escribe `metadata.json` por otro camino.
+Este gate falla si un módulo de `src/` o de `scripts/` (los scripts de operador,
+desde la sexta revisión del PR #393) escribe `metadata.json` por otro camino.
 La lista permitida lleva SIEMPRE su razón y solo puede achicarse.
 
 Lo mismo vale para las copias de la recuperación automática del store
@@ -36,15 +37,17 @@ No marca `zipfile`/`tarfile` (`.write` LEE el archivo) ni «Meta» la empresa.
 
 También ve lo que crea, mueve o BORRA el documento o sus copias mirando sus
 operandos: `Path.rename`, `hardlink_to`/`symlink_to`, `shutil.copy`/`copy2`/
-`copyfile`/`move` hacia ellos, y `unlink`/`os.remove` (borrar `metadata.json`
-sin su `.prev` haría que la recuperación resucite la sesión).
+`copyfile`/`move` hacia ellos, `unlink`/`os.remove` (borrar `metadata.json`
+sin su `.prev` haría que la recuperación resucite la sesión) y `os.truncate`.
 
 Límites conocidos (no se detectan; hacerlos es más caro que su riesgo): el
 nombre armado con f-string, `+`, `%` o `format` (p. ej.
 `path.with_name(f"{path.name}.prev")`); despacho dinámico
-(`getattr(store, "write")`, `importlib`); `os.write` sobre un descriptor
-abierto en otro lado; `subprocess` (`cp`, `mv`); escritores fuera de `src/`
-(scripts de operador).
+(`getattr(store, "write")`, `importlib`); `os.write` o `.truncate()` sobre un
+descriptor o archivo abierto en otro lado; borrar la carpeta ENTERA de una
+sesión (`shutil.rmtree(vault / sid)`: no nombra el archivo, y una ruta de
+sesión no se distingue de otra carpeta); `subprocess` (`cp`, `mv`, `rm`);
+escritores fuera de `src/` y `scripts/`.
 
 Vive en `tests/platform/` y no en `tests/architecture/` porque esa carpeta es
 `protected: true` en `.hubara/spinal-files.yaml` (sumarle un archivo exige un
@@ -66,6 +69,10 @@ pytestmark = pytest.mark.architecture
 
 HUB_ROOT: Path = Path(__file__).resolve().parents[2]
 SRC_ROOT: Path = HUB_ROOT / "src"
+#: Los scripts de operador también: escribían `metadata.json` a medias (sexta
+#: revisión del PR #393) y un lector los veía como un archivo dañado.
+SCRIPTS_ROOT: Path = HUB_ROOT / "scripts"
+SCANNED_ROOTS: tuple[Path, ...] = (SRC_ROOT, SCRIPTS_ROOT)
 STATE_MODULE = "src/platform/state.py"
 
 #: `ruta::función` → por qué puede escribir `metadata.json` sin el store.
@@ -439,7 +446,7 @@ def _names_store_file(expr: ast.AST, module: _Module, self_attrs: set[str]) -> b
 def _store_file_operation(call: ast.Call, module: _Module, self_attrs: set[str]) -> str | None:
     """Operaciones que crean, mueven o BORRAN el documento o sus copias
     mirando sus operandos (no todo el ámbito): `Path.rename`, `hardlink_to`,
-    `symlink_to`, `shutil.copy*`/`move` HACIA ellos, y `unlink`/`os.remove`
+    `symlink_to`, `shutil.copy*`/`move` HACIA ellos, `os.truncate` y `unlink`/`os.remove`
     (borrar `metadata.json` sin su `.prev` haría que la recuperación resucite
     la sesión). Revisión de la recuperación (1b6f9b83)."""
     func = call.func
@@ -451,7 +458,7 @@ def _store_file_operation(call: ast.Call, module: _Module, self_attrs: set[str])
         return None
     owner = func.value.id if isinstance(func.value, ast.Name) else None
     attr = func.attr
-    if attr in ("remove", "unlink") and owner in module.os_mods:
+    if attr in ("remove", "unlink", "truncate") and owner in module.os_mods:
         target = call.args[0] if call.args else None
         return f"os.{attr} de metadata" if target is not None and _names_store_file(target, module, self_attrs) else None
     if attr == "unlink":
@@ -603,7 +610,8 @@ def scan_sources(sources: dict[str, str]) -> set[str]:
 def scan_tree() -> frozenset[str]:
     sources = {
         path.relative_to(HUB_ROOT).as_posix(): path.read_text(encoding="utf-8")
-        for path in sorted(SRC_ROOT.rglob("*.py"))
+        for root in SCANNED_ROOTS
+        for path in sorted(root.rglob("*.py"))
     }
     return frozenset(scan_sources(sources))
 
@@ -943,6 +951,13 @@ import os
 def reset(metadata_path):
     os.remove(metadata_path)
 ''',
+    # Sexta revisión: truncar el documento en el lugar también es escribirlo.
+    "os_truncate_metadata": '''
+import os
+
+def reset(session_dir):
+    os.truncate(session_dir / "metadata.json", 0)
+''',
 }
 
 
@@ -986,3 +1001,4 @@ def test_reading_the_copies_is_not_writing_them() -> None:
 
 def test_the_gate_scans_the_real_tree() -> None:
     assert len(list(SRC_ROOT.rglob("*.py"))) > 100
+    assert SCRIPTS_ROOT in SCANNED_ROOTS and len(list(SCRIPTS_ROOT.rglob("*.py"))) > 10

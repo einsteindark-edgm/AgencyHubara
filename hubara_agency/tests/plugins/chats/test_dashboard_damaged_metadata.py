@@ -20,7 +20,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import src.platform.state as state
 from src.plugins.chats.api import dashboard
 
 SID = "wa_573001234567"
@@ -32,7 +31,6 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Te
     app = FastAPI()
     app.include_router(dashboard.router, prefix="/api/dashboard")
     monkeypatch.setattr(dashboard, "_resolve_ad_names", lambda ids: {})
-    monkeypatch.setattr(state, "_run_in_background", lambda job: None, raising=False)
     with patch("src.plugins.chats.api.dashboard.WORKSPACE_VAULT_DIR", tmp_path):
         yield TestClient(app, raise_server_exceptions=False), tmp_path
 

@@ -3,19 +3,20 @@
 
 Un archivo dañado es un problema técnico: NO pasa la conversación al equipo
 humano ni traba escrituras. El store se recupera solo, sin que ningún llamador
-cambie:
+cambie (sexta revisión: la regla simple):
 
   * cada escritura sobre un documento que se leyó bien deja la versión
-    anterior como `metadata.json.prev` (la última copia buena);
-  * una lectura dañada devuelve `.prev` con un log de ERROR (una vez por
-    episodio de daño) y deja la reparación a un hilo aparte, bajo el candado;
-  * una escritura sobre un documento dañado lo aparta UNA vez como
-    `metadata.json.damaged-<ms>`, aplica el cambio sobre la copia recuperada
-    (`.prev` o `{}`) y escribe: nunca deja de escribir;
-  * un error de lectura PASAJERO (EMFILE, EIO…) no es daño: la escritura
-    falla y no toca nada (Temporal reintenta).
+    anterior como `metadata.json.prev` (la última copia buena), rotada solo
+    si la escritura termina bien;
+  * el que lee NUNCA escribe: un documento dañado se lee como `.prev` con un
+    log de ERROR (una vez por episodio de daño) y el disco queda igual;
+  * el que escribe repara: aparta el dañado UNA vez como
+    `metadata.json.damaged-<ms>`, aplica su cambio sobre la copia recuperada
+    (`.prev` o `{}`) y escribe;
+  * un error de lectura PASAJERO (EMFILE, EIO…) no es daño: leer y escribir
+    lanzan y nada cambia (Temporal reintenta).
 
-La copia buena va una escritura atrás (N-1).
+Sin esperas ni hilos. La copia buena va a lo sumo una escritura atrás (N-1).
 """
 from __future__ import annotations
 
@@ -95,27 +96,36 @@ def _alerts(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     return [r for r in caplog.records if r.levelno >= logging.ERROR and "metadata dañado" in r.getMessage()]
 
 
-@pytest.fixture(autouse=True)
-def _repair_inline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """La reparación que dispara una lectura corre en un hilo aparte; acá, en
-    el mismo hilo, para poder mirar su resultado (las pruebas que miden el
-    hilo de quien lee lo cambian)."""
-    monkeypatch.setattr(state, "_run_in_background", lambda job: job(), raising=False)
-
-
 # --- leer -----------------------------------------------------------------------
 
 
+def _disk(path: Path) -> dict[str, tuple[int, int, int, int]]:
+    """Qué hay en la carpeta de la sesión (sin el candado): nombre → inodo,
+    tamaño, fecha y permisos. Cualquier escritura del store lo cambia (escribe
+    un inodo nuevo, aparta, rota la copia) sin tener que leer un archivo 000."""
+    out = {}
+    for entry in path.parent.iterdir():
+        if entry.name.endswith(".lock"):
+            continue
+        st = os.lstat(entry)
+        out[entry.name] = (st.st_ino, st.st_size, st.st_mtime_ns, st.st_mode)
+    return out
+
+
 @pytest.mark.parametrize("damage", _DAMAGE)
-def test_a_damaged_document_reads_as_the_last_good_copy_with_an_alert(tmp_path, damage, caplog) -> None:
+def test_a_damaged_document_reads_as_the_last_good_copy_and_the_reader_writes_nothing(tmp_path, damage, caplog) -> None:
+    """El que lee nunca escribe: devuelve la copia buena con una alerta y deja
+    el disco como estaba. Lo repara el próximo que escriba (bajo el candado)."""
     path = _session(tmp_path)
     _prev(path).write_text(json.dumps(_GOOD), encoding="utf-8")
     damage(path)
+    before = _disk(path)
     caplog.set_level(logging.WARNING)
 
     assert FilesystemMetadataStore(tmp_path).read(SID) == _GOOD
     [alert] = _alerts(caplog)
     assert SID in alert.getMessage() and "última copia buena" in alert.getMessage()
+    assert _disk(path) == before, "la lectura escribió"
 
 
 def _torn_once(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
@@ -134,44 +144,48 @@ def _torn_once(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
     monkeypatch.setattr(Path, "read_text", read_text_while_being_written)
 
 
-def test_a_torn_read_under_the_lock_is_resolved_by_retrying(tmp_path, monkeypatch, caplog) -> None:
-    """Quien escribe relee con reintentos: trabaja sobre el documento entero
-    (no sobre la copia vieja), sin apartar nada ni alertar."""
+def test_a_torn_document_under_the_lock_is_damage_and_is_set_aside_whole(tmp_path, monkeypatch, caplog) -> None:
+    """Sin reintentos ni esperas: ya no quedan escritores de afuera a medias
+    (los scripts escriben con el store y el gate lo vigila). Si aun así quien
+    escribe encuentra el archivo cortado, es daño: lo aparta UNA vez tal como
+    está en disco y sigue desde la copia buena."""
     path = _session(tmp_path)
     _prev(path).write_text(json.dumps({"tag": "VIEJO"}), encoding="utf-8")
     current = {**_GOOD, "tag": "ACTUAL"}
     path.write_text(json.dumps(current), encoding="utf-8")
+    on_disk = path.read_bytes()
     _torn_once(monkeypatch, path)
     caplog.set_level(logging.WARNING)
 
     FilesystemMetadataStore(tmp_path).update(SID, lambda d: {**d, "n": 1})
 
-    assert _json_or_none(path) == {**current, "n": 1}
-    assert _damaged_copies(path) == []
-    assert _alerts(caplog) == []
+    assert _json_or_none(path) == {"tag": "VIEJO", "n": 1}
+    [copy] = _damaged_copies(path)
+    assert copy.read_bytes() == on_disk, "lo apartado no es lo que había en disco"
+    assert _alerts(caplog)
 
 
-def test_a_torn_read_without_the_lock_gives_the_copy_but_raises_no_alarm(tmp_path, monkeypatch, caplog) -> None:
-    """Quien solo lee no espera (bucle async): ve la copia buena un instante.
-    La reparación relee bajo el candado, lo encuentra entero y no toca nada."""
+def test_a_torn_read_without_the_lock_gives_the_copy_and_writes_nothing(tmp_path, monkeypatch, caplog) -> None:
+    """Quien solo lee no espera ni repara: ve la copia buena (con la alerta) y
+    el archivo queda como estaba."""
     path = _session(tmp_path)
     _prev(path).write_text(json.dumps({"tag": "VIEJO"}), encoding="utf-8")
     current = {**_GOOD, "tag": "ACTUAL"}
     path.write_text(json.dumps(current), encoding="utf-8")
-    before = path.read_bytes()
+    before = _disk(path)
     _torn_once(monkeypatch, path)
     caplog.set_level(logging.WARNING)
 
     assert FilesystemMetadataStore(tmp_path).read(SID) == {"tag": "VIEJO"}
 
-    assert path.read_bytes() == before
-    assert _damaged_copies(path) == []
-    assert _alerts(caplog) == []
+    assert _disk(path) == before, "la lectura escribió"
+    assert _alerts(caplog)
 
 
-def test_a_missing_document_with_a_prev_is_recovered_with_an_alert(tmp_path, caplog) -> None:
+def test_a_missing_document_with_a_prev_reads_as_the_copy_and_the_next_write_restores_it(tmp_path, caplog) -> None:
     """«No existe pero hay `.prev`»: algo lo borró (nadie en `src/` borra
-    `metadata.json` a propósito). Se recupera con alerta."""
+    `metadata.json` a propósito). La lectura devuelve la copia con alerta y NO
+    lo recrea; lo recrea el próximo que escriba."""
     path = _session(tmp_path)
     _prev(path).write_text(json.dumps(_GOOD), encoding="utf-8")
     caplog.set_level(logging.WARNING)
@@ -179,6 +193,7 @@ def test_a_missing_document_with_a_prev_is_recovered_with_an_alert(tmp_path, cap
 
     assert store.read(SID) == _GOOD
     assert _alerts(caplog)
+    assert not path.exists(), "la lectura recreó el documento"
     store.update(SID, lambda d: {**d, "last_inbound_message_id": "wamid.2"})
     assert json.loads(path.read_text(encoding="utf-8")) == {**_GOOD, "last_inbound_message_id": "wamid.2"}
 
@@ -355,15 +370,15 @@ def _failing_reads(monkeypatch: pytest.MonkeyPatch, names: set[str], times: int,
     monkeypatch.setattr(Path, "read_text", read_text)
 
 
-@pytest.mark.parametrize("times", [3, 4])
+@pytest.mark.parametrize("times", [1, 3, 4])
 @pytest.mark.parametrize("how", ["update", "write_merged"])
 def test_a_transient_read_error_is_not_damage_the_write_fails_and_nothing_changes(
     tmp_path, monkeypatch, times, how
 ) -> None:
     """Un documento SANO (con la toma de un humano como última escritura) no
     se aparta ni se reemplaza por la copia vieja porque el sistema se quedó
-    sin descriptores un instante: la escritura falla (Temporal reintenta) y
-    nada cambia."""
+    sin descriptores un instante: la escritura falla en el primer error, sin
+    reintentos ni esperas (Temporal reintenta la activity), y nada cambia."""
     path = _session(tmp_path)
     _prev(path).write_text(json.dumps({**_GOOD, "active_route": "ventas"}), encoding="utf-8")
     path.write_text(json.dumps(_GOOD), encoding="utf-8")
@@ -380,7 +395,7 @@ def test_a_transient_read_error_is_not_damage_the_write_fails_and_nothing_change
     except OSError as exc:
         raised = exc
 
-    assert path.read_bytes() == before, "un error pasajero pisó un documento sano"
+    assert path.read_bytes() == before, "con un error pasajero, la escritura tocó el documento"
     assert _prev(path).read_bytes() == prev_before
     assert _damaged_copies(path) == []
     assert raised is not None and raised.errno == errno.EMFILE
@@ -433,89 +448,94 @@ def test_a_write_that_fails_does_not_rotate_the_good_copy(tmp_path, monkeypatch,
     assert os.stat(path).st_ino != os.stat(_prev(path)).st_ino
 
 
-def test_read_does_not_sleep_on_the_callers_thread(tmp_path, monkeypatch) -> None:
-    """`read()` corre en el bucle async (ingest, router, bandeja): un dañado
-    no lo frena con esperas. Los reintentos van en la reparación, aparte."""
+@pytest.mark.parametrize("how", ["read", "update"])
+def test_nothing_sleeps_or_starts_a_thread_over_a_damaged_document(tmp_path, monkeypatch, how) -> None:
+    """`read()` corre en el bucle async (ingest, router, bandeja) y nadie
+    repara en segundo plano: ni esperas ni hilos. Quien escribe tampoco
+    reintenta con esperas (bajo el candado hay un solo escritor y todos
+    escriben atómico)."""
     path = _session(tmp_path)
     _prev(path).write_text(json.dumps(_GOOD), encoding="utf-8")
     _broken_json(path)
-    sleeps: list[threading.Thread] = []
-    monkeypatch.setattr(state.time, "sleep", lambda seconds: sleeps.append(threading.current_thread()))
-    started: list[threading.Thread] = []
+    sleeps: list[float] = []
+    threads: list[str] = []
+    real_start = threading.Thread.start
 
-    def in_another_thread(job: Any) -> threading.Thread:
-        thread = threading.Thread(target=job, daemon=True)
-        started.append(thread)
-        thread.start()
-        return thread
+    def start(self: threading.Thread) -> None:
+        threads.append(self.name)
+        real_start(self)
 
-    monkeypatch.setattr(state, "_run_in_background", in_another_thread, raising=False)
+    monkeypatch.setattr(state.time, "sleep", sleeps.append)
+    monkeypatch.setattr(threading.Thread, "start", start)
+    store = FilesystemMetadataStore(tmp_path)
 
-    assert FilesystemMetadataStore(tmp_path).read(SID) == _GOOD
-    for thread in started:
-        thread.join(5)
-    assert threading.current_thread() not in sleeps, "read() esperó en el hilo de quien lee"
+    if how == "read":
+        assert store.read(SID) == _GOOD
+    else:
+        store.update(SID, lambda d: {**d, "n": 1})
+
+    assert sleeps == [], f"{how}() esperó"
+    assert threads == [], f"{how}() arrancó un hilo"
 
 
-def test_reading_a_damaged_document_repairs_it_under_the_lock(tmp_path, monkeypatch) -> None:
+def test_the_next_writer_repairs_what_a_reader_found_damaged(tmp_path) -> None:
     path = _session(tmp_path)
     _prev(path).write_text(json.dumps(_GOOD), encoding="utf-8")
     _broken_json(path)
     damaged_bytes = path.read_bytes()
-    monkeypatch.setattr(state, "_run_in_background", lambda job: job(), raising=False)
+    store = FilesystemMetadataStore(tmp_path)
 
-    assert FilesystemMetadataStore(tmp_path).read(SID) == _GOOD
-
-    assert _json_or_none(path) == _GOOD, "la lectura no disparó la reparación"
-    [copy] = _damaged_copies(path) or [None]
-    assert copy is not None and copy.read_bytes() == damaged_bytes
-
-
-def test_the_repair_leaves_alone_a_document_someone_is_still_writing(tmp_path, monkeypatch, caplog) -> None:
-    """Un script de afuera que no escribe atómico y sigue escribiendo: la
-    reparación lo ve cortado en cada reintento, pero CAMBIANDO entre uno y
-    otro. No es un daño quieto: no alerta, no aparta nada ni escribe la copia
-    vieja encima de lo que el script deja (la próxima lectura vuelve a mirar)."""
-    path = _session(tmp_path)
-    _prev(path).write_text(json.dumps({"tag": "VIEJO"}), encoding="utf-8")
-    _broken_json(path)
-    pieces = iter(['{"tag": "NUEVO"', '{"tag": "NUEVO", "n": 1', '{"tag": "NUEVO", "n": 1, "x": '])
-
-    def the_script_keeps_writing(seconds: float) -> None:
-        path.write_text(next(pieces, '{"tag": "NUEVO", "n": 1, "x": 2'), encoding="utf-8")
-
-    monkeypatch.setattr(state.time, "sleep", the_script_keeps_writing)
-    caplog.set_level(logging.WARNING)
-
-    assert FilesystemMetadataStore(tmp_path).read(SID) == {"tag": "VIEJO"}
-
-    assert path.read_text(encoding="utf-8").startswith('{"tag": "NUEVO"'), "la reparación escribió la copia vieja encima"
+    assert store.read(SID) == _GOOD
+    assert path.read_bytes() == damaged_bytes, "la lectura escribió"
     assert _damaged_copies(path) == []
-    assert _alerts(caplog) == []
+
+    store.update(SID, lambda d: {**d, "n": 1})
+
+    assert _json_or_none(path) == {**_GOOD, "n": 1}
+    [copy] = _damaged_copies(path)
+    assert copy.read_bytes() == damaged_bytes
 
 
-def test_the_alert_fires_once_per_damage_episode(tmp_path, monkeypatch, caplog) -> None:
-    """Mientras el daño siga (aquí la reparación no logra escribir), las
-    lecturas no repiten la alerta. Otro daño después de reparar, sí."""
+def test_the_alert_fires_once_per_damage_episode(tmp_path, caplog) -> None:
+    """Nadie repara al leer, así que el daño sigue hasta la próxima escritura:
+    las lecturas no repiten la alerta. Otro daño después de reparar, sí."""
     path = _session(tmp_path)
     _prev(path).write_text(json.dumps(_GOOD), encoding="utf-8")
     _broken_json(path)
     caplog.set_level(logging.WARNING)
     store = FilesystemMetadataStore(tmp_path)
 
-    def disk_full(*args: Any, **kwargs: Any) -> None:
-        raise OSError(errno.ENOSPC, "No space left on device")
-
-    with monkeypatch.context() as patched:
-        patched.setattr(state, "atomic_write_json", disk_full)
-        for _ in range(3):
-            assert store.read(SID) == _GOOD
-    assert len(_alerts(caplog)) == 1, "una alerta por lectura hasta la próxima escritura"
+    for _ in range(3):
+        assert store.read(SID) == _GOOD
+    assert len(_alerts(caplog)) == 1, "una alerta por lectura"
 
     store.update(SID, lambda d: {**d, "n": 1})  # repara
     _empty_file(path)  # otro daño: otro episodio
     store.read(SID)
     assert len(_alerts(caplog)) == 2
+
+
+@pytest.mark.parametrize("case", ["doc", "copia-de-un-danado", "copia-de-uno-ausente"])
+def test_a_transient_read_error_makes_read_raise(tmp_path, monkeypatch, case) -> None:
+    """El que lee nunca recibe una copia vieja ni `{}` por un error pasajero:
+    lanza. Así quien lee → decide → escribe no decide sobre algo que no pudo
+    leer (las redes de cierre pisaron la toma de un operador con un EMFILE)."""
+    path = _session(tmp_path)
+    _prev(path).write_text(json.dumps({**_GOOD, "active_route": "ventas"}), encoding="utf-8")
+    if case == "doc":
+        path.write_text(json.dumps(_GOOD), encoding="utf-8")
+        failing = {"metadata.json"}
+    elif case == "copia-de-un-danado":
+        _broken_json(path)
+        failing = {"metadata.json.prev"}
+    else:
+        failing = {"metadata.json.prev"}
+    _failing_reads(monkeypatch, failing, 1)
+
+    with pytest.raises(OSError) as raised:
+        FilesystemMetadataStore(tmp_path).read(SID)
+
+    assert raised.value.errno == errno.EMFILE
 
 
 def test_a_reader_racing_a_brand_new_session_does_not_fall_back_to_the_copy(tmp_path, monkeypatch, caplog) -> None:
@@ -572,6 +592,27 @@ def test_with_neither_link_nor_copy_the_write_still_happens(tmp_path, monkeypatc
     assert _json_or_none(_prev(path)) == {"v": 1}, "la copia vieja queda como estaba"
     assert "metadata_prev_not_kept" in caplog.text
     assert not list(path.parent.glob(".metadata.json.prev*")), "quedó un temporal suelto"
+
+
+def test_a_writer_killed_before_promoting_the_copy_leaves_no_pile_of_temps(tmp_path, monkeypatch) -> None:
+    """Un SIGKILL entre escribir y promover la copia deja el temporal de la
+    versión vieja. Con un nombre FIJO por sesión (bajo el candado hay un solo
+    escritor) no se acumulan: la próxima escritura lo reemplaza y lo promueve."""
+    store = FilesystemMetadataStore(tmp_path)
+    store.update(SID, lambda d: {"v": 1})
+    path = tmp_path / SID / "metadata.json"
+    with monkeypatch.context() as killed:
+        killed.setattr(state, "_promote_previous", lambda tmp, target: None)
+        for v in (2, 3, 4):
+            store.update(SID, lambda d, v=v: {**d, "v": v})
+
+    leftovers = [p.name for p in path.parent.iterdir() if p.name.startswith(".")]
+    assert len(leftovers) <= 1, f"se acumulan temporales: {leftovers}"
+
+    store.update(SID, lambda d: {**d, "v": 5})
+
+    assert sorted(p.name for p in path.parent.iterdir()) == ["metadata.json", "metadata.json.lock", "metadata.json.prev"]
+    assert _json_or_none(_prev(path)) == {"v": 4}
 
 
 def test_a_directory_in_place_of_the_document_is_damage(tmp_path) -> None:

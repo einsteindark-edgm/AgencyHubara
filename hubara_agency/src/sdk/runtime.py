@@ -25,17 +25,18 @@ Notas de diseño:
   dict>)`` (merge de tres vías). Nunca ``write`` ni ``atomic_write_json`` sobre
   ``metadata.json``: una copia vieja escrita entera devolvió a la cola una foto
   ya entregada (incidente 2026-10-06; gate
-  ``tests/platform/test_metadata_json_single_writer.py``). Un ``metadata.json``
-  dañado se recupera solo, sin que el llamador haga nada: ``read()`` (sin
-  esperar) devuelve la última copia buena (``metadata.json.prev``, que el store
-  rota después de cada escritura sana; va una escritura atrás: lo que cambió la
-  última escritura antes del daño se pierde) y repara en un
-  hilo aparte con una alerta por episodio; la escritura aparta el dañado una
-  vez (``metadata.json.damaged-<ms>``) y escribe sobre esa copia. Nada pasa al
-  equipo humano por eso. Un error de lectura PASAJERO (EMFILE, EIO…) no es
-  daño: la escritura lanza y no toca nada. Lee siempre con ``read()``, nunca
-  el archivo directo. Estado process-wide NUEVO exige ``clear()`` + fixture
-  autouse (lección L-2).
+  ``tests/platform/test_metadata_json_single_writer.py``, sobre ``src/`` y
+  ``scripts/``). Un ``metadata.json`` dañado se recupera solo, sin que el
+  llamador haga nada: el que LEE (``read()``: un intento, sin esperas) recibe
+  la última copia buena (``metadata.json.prev``, rotada después de cada
+  escritura sana; a lo sumo una escritura atrás: lo que cambió la última
+  escritura antes del daño se pierde) con una alerta por episodio, y NUNCA
+  escribe; el que ESCRIBE (``update``/``write_merged``) aparta el dañado una
+  vez (``metadata.json.damaged-<ms>``) y repara sobre esa copia. Nada pasa al
+  equipo humano por eso. Un error PASAJERO (EMFILE, EIO…) no es daño: leer y
+  escribir LANZAN (nunca una copia vieja ni ``{}``) y Temporal reintenta. Lee
+  siempre con ``read()``, nunca el archivo directo. Estado process-wide NUEVO
+  exige ``clear()`` + fixture autouse (lección L-2).
 - ``atomic_write_json`` es la única forma sancionada de escribir JSON al
   vault (write-rename, sin archivos a medio escribir) — para los demás
   archivos; ``metadata.json`` va por el store.

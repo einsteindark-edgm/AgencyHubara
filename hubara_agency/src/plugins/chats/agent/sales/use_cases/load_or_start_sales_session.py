@@ -227,9 +227,16 @@ class LoadOrStartSalesSession:
             data["phone_number_id"] = phone_number_id
             # Solo esta llave, sobre la lectura fresca (incidente 2026-10-06:
             # la copia entera pisaba lo que otro escritor puso mientras tanto).
-            self._metadata_store.update(
-                session_id, lambda fresh: {**fresh, "phone_number_id": phone_number_id}
-            )
+            # De mejor esfuerzo: si el disco no deja escribir, el mensaje igual
+            # se despacha (el número ya viaja en `data` para este turno).
+            try:
+                self._metadata_store.update(
+                    session_id, lambda fresh: {**fresh, "phone_number_id": phone_number_id}
+                )
+            except Exception as exc:  # noqa: BLE001 — mejor esfuerzo: el mensaje sigue
+                logger.warning(
+                    "router_phone_number_id_write_failed", session_id=session_id, error=repr(exc)[:200]
+                )
 
         # 1.5. Ruta humano: cliente esta en el inbox humano (escalation previa).
         # El mensaje del cliente ya quedo persistido en el JSONL (lo hace

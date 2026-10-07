@@ -34,8 +34,10 @@ camino.
 
 Un `metadata.json` dañado se recupera solo, dentro del store (ver
 `FilesystemMetadataStore`): la última copia buena queda en
-`metadata.json.prev`, la lectura la usa con una alerta y la escritura aparta
-el dañado y sigue. Nada pasa al equipo humano por un archivo dañado.
+`metadata.json.prev`; el que lee la usa con una alerta y nunca escribe, y el
+que escribe aparta el dañado y repara sobre esa copia. Un error pasajero
+(EMFILE, EIO…) falla y se reintenta. Nada pasa al equipo humano por un
+archivo dañado.
 """
 from __future__ import annotations
 
@@ -277,22 +279,15 @@ log = logging.getLogger(__name__)
 _held = threading.local()
 
 
-#: Bajo el candado, un `metadata.json` dañado (o un error pasajero) se relee
-#: unas veces antes de decidir: un escritor de afuera que no escribe atómico
-#: (scripts viejos) lo deja a medias unos milisegundos. Fuera del candado
-#: (`read()`) no se espera nunca: corre en el bucle async.
-_READ_ATTEMPTS = 3
-_READ_RETRY_S = 0.03
-
 #: La última copia buena (se rota DESPUÉS de cada escritura sana).
 PREV_SUFFIX = ".prev"
 #: Un documento dañado, apartado una vez antes de reescribirlo.
 DAMAGED_SUFFIX = ".damaged"
 
 #: Errores de lectura que son DAÑO del archivo (no se arreglan reintentando):
-#: sin permiso, o en su lugar hay un directorio. Cualquier otro error del
-#: sistema (EMFILE, ENFILE, ENOMEM, EAGAIN, ESTALE, EIO…) es PASAJERO: no dice
-#: nada del documento, y tratarlo como daño pisaría uno sano.
+#: sin permiso, o en su lugar hay un directorio o un enlace roto. Cualquier
+#: otro error del sistema (EMFILE, ENFILE, ENOMEM, EAGAIN, ESTALE, EIO…) es
+#: PASAJERO: no dice nada del documento, y tratarlo como daño pisaría uno sano.
 _DAMAGE_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EISDIR, errno.ENOTDIR, errno.ELOOP})
 
 
@@ -330,24 +325,6 @@ def _load(path: Path) -> Any:
     return data if isinstance(data, dict) else None
 
 
-def _load_patiently(path: Path) -> Any:
-    """`_load` con unos reintentos cortos (BAJO EL CANDADO) si sale dañado o con
-    un error pasajero. Si el error pasajero sigue, se lanza: quien escribe no
-    decide sobre algo que no pudo leer (Temporal reintenta la activity)."""
-    for attempt in range(_READ_ATTEMPTS):
-        last = attempt == _READ_ATTEMPTS - 1
-        try:
-            document = _load(path)
-        except OSError:
-            if last:
-                raise
-        else:
-            if document is not None or last:
-                return document
-        time.sleep(_READ_RETRY_S)
-    raise AssertionError("inalcanzable")  # pragma: no cover
-
-
 @dataclass(frozen=True)
 class _Snapshot:
     """El documento de una sesión listo para usar, y de dónde salió."""
@@ -356,8 +333,7 @@ class _Snapshot:
     #: ``ok`` (se leyó bien) · ``new`` (no existe ni hay copia: sesión nueva) ·
     #: ``damaged`` (existe y está dañado: ``data`` es la última copia buena, o
     #: ``{}`` si no hay) · ``missing`` (no existe pero hay copia: ``data`` es
-    #: esa copia) · ``unavailable`` (solo en `read()`: un error pasajero; ``data``
-    #: es la copia buena como mejor esfuerzo, sin alerta ni reparación).
+    #: esa copia).
     state: str
 
 
@@ -365,63 +341,33 @@ def _prev_of(path: Path) -> Path:
     return path.with_name(path.name + PREV_SUFFIX)
 
 
-def _snapshot_locked(path: Path) -> _Snapshot:
-    """Lo que ve quien escribe, BAJO EL CANDADO (con reintentos). Un error
-    pasajero leyendo el documento o su copia buena se lanza."""
-    current = _load_patiently(path)
+def _snapshot(path: Path) -> _Snapshot:
+    """El documento de la sesión y de dónde salió. Un intento por archivo, sin
+    esperas. Un error PASAJERO leyendo el documento o su copia buena se lanza:
+    nadie decide (ni escribe) sobre algo que no pudo leer."""
+    current = _load(path)
     if isinstance(current, dict):
         return _Snapshot(current, "ok")
-    prev = _load_patiently(_prev_of(path))
-    if current is _ABSENT and prev is _ABSENT:
-        return _Snapshot({}, "new")
-    recovered = prev if isinstance(prev, dict) else {}
-    return _Snapshot(recovered, "missing" if current is _ABSENT else "damaged")
-
-
-def _peek(path: Path) -> _Snapshot:
-    """Lo que ve quien solo lee, SIN candado y sin esperar: un intento por
-    archivo. Si el documento no está, se mira la copia y, si la hay, se relee
-    el documento antes de darlo por perdido (un escritor pudo crearlo en
-    medio: sesión nueva con dos escrituras seguidas)."""
-    try:
-        current = _load(path)
-    except OSError as exc:
-        log.warning("metadata_read_transient_error", extra={"path": str(path), "error": repr(exc)[:200]})
-        return _Snapshot(_best_effort_prev(path), "unavailable")
-    if isinstance(current, dict):
-        return _Snapshot(current, "ok")
-    try:
-        prev = _load(_prev_of(path))
-    except OSError:
-        prev = None
+    prev = _load(_prev_of(path))
     if current is _ABSENT:
         if prev is _ABSENT:
             return _Snapshot({}, "new")
-        try:
-            current = _load(path)
-        except OSError:
-            current = _ABSENT
+        # Sin candado, un escritor pudo crear el documento (y su copia) entre
+        # las dos lecturas (sesión nueva con dos escrituras seguidas): se relee
+        # una vez antes de darlo por perdido.
+        current = _load(path)
         if isinstance(current, dict):
             return _Snapshot(current, "ok")
     recovered = prev if isinstance(prev, dict) else {}
     return _Snapshot(recovered, "missing" if current is _ABSENT else "damaged")
 
 
-def _best_effort_prev(path: Path) -> dict[str, Any]:
-    try:
-        prev = _load(_prev_of(path))
-    except OSError:
-        return {}
-    return prev if isinstance(prev, dict) else {}
-
-
-# Alerta UNA vez por episodio de daño (no una por lectura hasta la próxima
-# escritura) y una sola reparación en curso por documento. Estado del proceso:
-# `reset_damage_tracking()` lo limpia (las pruebas lo llaman antes y después de
-# cada una).
+# Una alerta por episodio de daño (no una por lectura: el daño sigue hasta que
+# alguien escribe, y la bandeja lee todas las sesiones a cada rato). Estado del
+# proceso: `reset_damage_tracking()` lo limpia (las pruebas lo llaman antes y
+# después de cada una, lección L-2).
 _TRACKING_LOCK = threading.Lock()
 _ALERTED: dict[str, tuple[Any, ...]] = {}
-_REPAIRING: dict[str, threading.Thread | None] = {}
 
 
 def _file_signature(path: Path) -> tuple[int, int, int] | None:
@@ -468,33 +414,26 @@ def _episode_over(path: Path) -> None:
         _ALERTED.pop(os.path.realpath(path), None)
 
 
-def _run_in_background(job: Callable[[], None]) -> threading.Thread:
-    """La reparación que dispara una lectura corre en un hilo aparte: quien
-    lee (el bucle async) no espera los reintentos ni el candado."""
-    thread = threading.Thread(target=job, name="metadata-repair", daemon=True)
-    thread.start()
-    return thread
-
-
-def reset_damage_tracking(*, wait_s: float = 2.0) -> None:
-    """Espera las reparaciones en curso (con tope) y olvida los episodios de
-    daño ya alertados. Para las pruebas: estado del proceso, una prueba no
-    hereda el de otra."""
-    with _TRACKING_LOCK:
-        threads = [t for t in _REPAIRING.values() if t is not None]
-    deadline = time.monotonic() + wait_s
-    for thread in threads:
-        thread.join(max(0.0, deadline - time.monotonic()))
+def reset_damage_tracking() -> None:
+    """Olvida los episodios de daño ya alertados (estado del proceso). Para
+    las pruebas: una no hereda el de otra."""
     with _TRACKING_LOCK:
         _ALERTED.clear()
-        _REPAIRING.clear()
+
+
+def _prev_temp_of(path: Path) -> Path:
+    """Dónde espera la versión vieja mientras se escribe: un nombre FIJO por
+    sesión (bajo el candado hay un solo escritor). Un SIGKILL entre escribir y
+    promoverla lo deja; la próxima escritura lo reemplaza: no se acumulan."""
+    return path.with_name(f".{path.name}{PREV_SUFFIX}.tmp")
 
 
 def _link_previous(path: Path) -> Path | None:
-    """ANTES de escribir: la versión sana actual se enlaza a un temporal (si el
+    """ANTES de escribir: la versión sana actual se enlaza al temporal (si el
     filesystem no tiene enlaces, se copia). Pasa a ser `.prev` solo si la
     escritura termina bien (`_promote_previous`)."""
-    tmp = path.with_name(f".{path.name}{PREV_SUFFIX}.{os.getpid()}.{time.time_ns()}.tmp")
+    tmp = _prev_temp_of(path)
+    _discard(tmp)
     try:
         try:
             os.link(path, tmp)
@@ -602,60 +541,51 @@ class FilesystemMetadataStore:
     ``atomic_write_json``) y va bajo el MISMO candado por sesion (``flock``
     sobre ``metadata.json.lock``).
 
-    Recuperación automática (decisión del operador, 2026-10-06): un
-    ``metadata.json`` dañado es un problema técnico; NO pasa la conversación al
-    equipo humano ni traba escrituras, y ningún llamador tiene que saberlo:
+    Un ``metadata.json`` dañado (decisión del operador, 2026-10-06) es un
+    problema técnico: NO pasa la conversación al equipo humano ni traba
+    escrituras. La regla, simple:
 
-      * **Daño vs. error pasajero**: es DAÑO lo que no se arregla reintentando
-        — sin permiso (EACCES/EPERM), un directorio en su lugar (EISDIR),
-        vacío, bytes que no son UTF-8, JSON roto o algo que no es un objeto —.
-        Un error PASAJERO del sistema (EMFILE, ENFILE, ENOMEM, EAGAIN, ESTALE,
-        EIO…) no dice nada del documento: bajo el candado se reintenta y, si
-        sigue, la escritura LANZA y no toca nada (Temporal reintenta la
-        activity; el ingest es best-effort y deja lo suyo pendiente). Tratarlo
-        como daño pisaría un documento sano con la copia vieja.
-      * **Copia buena (N-1)**: cada escritura sobre un documento sano deja la
-        versión que reemplaza como ``metadata.json.prev``. Se enlaza a un
-        temporal antes de escribir (si no hay enlaces, se copia) y pasa a
-        ``.prev`` (``os.replace``) SOLO si la escritura termina bien: si
-        falla, la copia buena queda como estaba y en otro inodo. Desde un
-        documento dañado NO se rota. Una sola copia por sesión. La copia va
-        UNA escritura atrás (N-1): un documento dañado se recupera como
-        estaba ANTES de su última escritura, y lo que esa escritura cambió se
-        PIERDE (no vuelve con la próxima escritura: la reparación y las
-        escrituras siguientes van encima de la copia; solo queda en el
-        apartado ``.damaged-<ms>``). Si lo último fue la toma del operador,
-        la conversación vuelve a la ruta anterior y el bot puede contestar
-        hasta que el operador la tome otra vez. Si fue el flush que sacó una
-        foto de la cola, la foto vuelve a la cola pero NO sale otra vez (la
-        frena el registro de entregas, ``ui_intents_delivered.jsonl``, fuera
-        de ``metadata.json``; el siguiente flush la saca sin mandarla) y su
-        entrada de ``outbound_media_index`` se pierde. Se acepta porque con
+      * **Daño** es lo que no se arregla reintentando: el contenido (JSON roto,
+        vacío, bytes que no son UTF-8, algo que no es un objeto) o
+        permisos/forma (EACCES/EPERM, un directorio o un enlace roto en su
+        lugar). Un **error pasajero** del sistema (EMFILE, ENFILE, ENOMEM,
+        EAGAIN, ESTALE, EIO…) no dice nada del documento.
+      * **El que lee nunca escribe.** ``read()`` hace un intento, sin esperas
+        ni hilos. Dañado → la última copia buena (``metadata.json.prev``, o
+        ``{}`` si no hay) con UN log de ERROR por episodio de daño («metadata
+        dañado en <sesión>»), y el disco queda como estaba. No existe y no hay
+        copia → ``{}`` (sesión nueva). No existe pero hay copia → la copia, con
+        la alerta (antes se relee el documento una vez: un escritor pudo
+        crearlo en medio). Error pasajero → LANZA: nunca una copia vieja ni
+        ``{}`` por un error pasajero, así nadie que lee → decide → escribe
+        decide sobre algo que no pudo leer (Temporal reintenta la activity).
+      * **El que escribe repara**, bajo el candado (``update``,
+        ``write_merged``, ``write``): relee fresco (un intento). Si está
+        dañado, lo aparta UNA vez como ``metadata.json.damaged-<ms>``, aplica
+        su cambio sobre la copia buena (o ``{}``) y escribe atómico; si la
+        escritura falla, lo apartado vuelve a su lugar (``metadata.json`` nunca
+        queda ausente). Error pasajero → lanza sin escribir.
+      * **Copia buena**: cada escritura sobre un documento sano deja la versión
+        que reemplaza como ``.prev``. Se enlaza (sin enlaces, se copia) a
+        ``.metadata.json.prev.tmp`` —nombre fijo: bajo el candado hay un solo
+        escritor, así que un SIGKILL deja a lo sumo uno y la próxima escritura
+        lo reemplaza— y pasa a ``.prev`` solo si la escritura termina bien.
+        Desde un documento dañado no se rota. Una sola copia por sesión.
+      * **A lo sumo una escritura atrás (N-1)**: un documento dañado se
+        recupera como estaba antes de su ÚLTIMA escritura, y lo que esa
+        escritura cambió se pierde (queda solo en el apartado). Si lo último
+        fue la toma del operador, vuelve la ruta anterior y el bot puede
+        contestar hasta que el operador la tome otra vez. El caso espejo: si lo
+        último fue «devolver al bot», un daño justo después la deja otra vez en
+        humano — es la versión anterior, no un paso nuevo a humano (sin motivo
+        ni escalación nuevos). Si fue el flush que sacó una foto, la foto
+        vuelve a la cola pero no sale otra vez (la frena el registro de
+        entregas, ``ui_intents_delivered.jsonl``, fuera de ``metadata.json``) y
+        su entrada de ``outbound_media_index`` se pierde. Se acepta porque con
         escrituras atómicas el daño en el lugar casi no ocurre.
-      * **Lectura** (``read()``, sin candado y SIN esperar: corre en el bucle
-        async): un intento; si el documento está dañado devuelve ``.prev`` (o
-        ``{}`` si no hay copia buena) y dispara la reparación en un hilo
-        aparte, bajo el candado: relee con reintentos y, si sigue dañado, deja
-        UN log de ERROR por episodio de daño («metadata dañado en <sesión>»),
-        lo aparta y escribe la copia recuperada. Una lectura rasgada por un
-        escritor de afuera a medias devuelve la copia un instante, sin alerta:
-        la reparación lo ve entero, o lo ve CAMBIAR mientras relee (alguien lo
-        está escribiendo, no es un daño quieto), y no toca nada. «No existe y no hay
-        ``.prev``» es una sesión nueva (``{}``, sin alerta). «No existe pero
-        hay ``.prev``»: se relee el documento una vez (un escritor pudo
-        crearlo en medio) y, si sigue sin estar, algo lo borró: se recupera
-        de ``.prev`` con la alerta. Un error pasajero en ``read()`` devuelve
-        la copia buena como mejor esfuerzo (o ``{}``), sin alerta. Nadie en
-        ``src/`` borra ``metadata.json`` a propósito (revisado; el gate marca
-        los borrados); quien lo haga, que borre también ``.prev``.
-      * **Escritura sobre un documento dañado** (``update``, ``write_merged``,
-        ``write``): lo aparta UNA vez como ``metadata.json.damaged-<ms>`` (si
-        no se puede, sigue igual), aplica el cambio sobre la copia recuperada
-        (``.prev`` o ``{}``) y escribe. Nunca devuelve ``None`` por daño; si
-        la escritura falla, lo apartado vuelve a su lugar (``metadata.json``
-        nunca queda ausente).
-      * ``.prev`` y ``.damaged-*`` los escribe solo este módulo (el gate de un
-        solo escritor lo vigila).
+      * ``.prev`` y ``.damaged-*`` los escribe solo este módulo; nadie más
+        escribe ``metadata.json`` (gate de un solo escritor, sobre ``src/`` y
+        ``scripts/``).
 
     Formas de escribir (ver el docstring del módulo):
       * ``update(session_id, mutator)`` — solo las llaves del escritor sobre la
@@ -698,69 +628,17 @@ class FilesystemMetadataStore:
                 held.discard(key)
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
-    def _snapshot(self, path: Path) -> _Snapshot:
-        """Lo que ve quien escribe (bajo el candado): ver `_snapshot_locked`."""
-        snapshot = _snapshot_locked(path)
+    def _fresh(self, path: Path) -> _Snapshot:
+        """Lo que ve quien lee o escribe (ver la clase), con su alerta."""
+        snapshot = _snapshot(path)
         _alert_once(path, snapshot)
         return snapshot
 
     def read(self, session_id: str) -> dict[str, Any]:
-        """El documento de la sesión (``{}`` si es nueva). Sin candado y sin
-        esperar. Dañado → la última copia buena (o ``{}``) y la reparación en
-        un hilo aparte; la alerta la deja la reparación si, releyendo bajo el
-        candado, el daño sigue (ver la clase)."""
-        path = self._path_for(session_id)
-        snapshot = _peek(path)
-        if snapshot.state in ("damaged", "missing"):
-            self._schedule_repair(session_id)
-        return snapshot.data
-
-    def _schedule_repair(self, session_id: str) -> None:
-        """Una reparación por documento a la vez, en un hilo aparte."""
-        key = os.path.realpath(self._path_for(session_id))
-        with _TRACKING_LOCK:
-            if key in _REPAIRING:
-                return
-            _REPAIRING[key] = None
-
-        def repair() -> None:
-            try:
-                self._repair(session_id)
-            except Exception as exc:  # noqa: BLE001 — best-effort: la próxima escritura también repara
-                log.warning("metadata_repair_failed", extra={"path": key, "error": repr(exc)[:200]})
-            finally:
-                with _TRACKING_LOCK:
-                    _REPAIRING.pop(key, None)
-
-        try:
-            thread = _run_in_background(repair)
-        except Exception as exc:  # noqa: BLE001 — sin hilo, la próxima escritura repara
-            log.warning("metadata_repair_not_started", extra={"path": key, "error": repr(exc)[:200]})
-            with _TRACKING_LOCK:
-                _REPAIRING.pop(key, None)
-            return
-        if isinstance(thread, threading.Thread):
-            with _TRACKING_LOCK:
-                if key in _REPAIRING:
-                    _REPAIRING[key] = thread
-
-    def _repair(self, session_id: str) -> None:
-        """Bajo el candado y con reintentos: si sigue dañado (o desapareció
-        dejando su copia), se escribe la copia recuperada (el dañado se aparta).
-        Si el archivo CAMBIÓ mientras se releía, alguien de afuera lo está
-        escribiendo (con el candado tomado no es el store): no es un daño
-        quieto y no se toca; la próxima lectura vuelve a mirar."""
-        path = self._path_for(session_id)
-        with self._locked(path):
-            before = _file_signature(path)
-            snapshot = _snapshot_locked(path)
-            if snapshot.state not in ("damaged", "missing"):
-                return
-            if _file_signature(path) != before:
-                log.info("metadata_repair_skipped_being_written", extra={"path": str(path)})
-                return
-            _alert_once(path, snapshot)
-            _replace_document(path, snapshot.data, snapshot)
+        """El documento de la sesión (``{}`` si es nueva). Sin candado, sin
+        esperas y sin escribir nada: dañado → la última copia buena (o ``{}``)
+        con la alerta; error pasajero → lanza (ver la clase)."""
+        return self._fresh(self._path_for(session_id)).data
 
     def write(self, session_id: str, data: dict[str, Any]) -> None:
         """Reemplaza el documento ENTERO (bajo el candado). Pisa lo que otro
@@ -768,7 +646,7 @@ class FilesystemMetadataStore:
         ``update`` o ``write_merged``."""
         path = self._path_for(session_id)
         with self._locked(path):
-            _replace_document(path, data, self._snapshot(path))
+            _replace_document(path, data, self._fresh(path))
 
     def update(
         self,
@@ -786,13 +664,14 @@ class FilesystemMetadataStore:
         `mutator` recibe el dict fresco (``{}`` si la sesión no existe todavía;
         la última copia buena si el documento está dañado) y devuelve el dict a
         escribir, o ``None`` para ABORTAR sin escribir. El mutator no hace I/O
-        lento ni ``await``: corre con el candado tomado.
+        lento ni ``await``: corre con el candado tomado. Un error pasajero al
+        leer lanza sin llamar al mutator.
 
         Devuelve el dict escrito, o ``None`` si el mutator abortó.
         """
         path = self._path_for(session_id)
         with self._locked(path):
-            snapshot = self._snapshot(path)
+            snapshot = self._fresh(path)
             result = mutator(snapshot.data)
             if result is None:
                 return None
@@ -823,11 +702,12 @@ class FilesystemMetadataStore:
         Documento dañado: ``fresh`` es la última copia buena (ver la clase).
         Sin nada fresco (sesión que desapareció, o dañada sin copia buena) y
         con ``base`` con datos, se escribe ``ours`` entero: lo que el escritor
-        leyó es lo más completo que hay. Devuelve lo escrito.
+        leyó es lo más completo que hay. Un error pasajero al leer lanza sin
+        escribir. Devuelve lo escrito.
         """
         path = self._path_for(session_id)
         with self._locked(path):
-            snapshot = self._snapshot(path)
+            snapshot = self._fresh(path)
             fresh = snapshot.data
             if not fresh and base:
                 merged = ours

@@ -379,17 +379,24 @@ class IngestInboundMessage:
             )
 
         # --- 1. Read metadata UNA vez al principio (atribución + typing) ---
-        try:
-            metadata = self._metadata_store.read(session_id)
-        except Exception:  # noqa: BLE001 — best-effort
-            metadata = {}
         # Lo que había en disco al leer (incidente 2026-10-06): cada escritura
         # de este `execute` lleva SOLO lo que cambió desde acá (o desde su
         # escritura anterior), no la copia entera. Entre la lectura y la
         # escritura grande se espera a Jev varios segundos; en ese rato el
         # flush del turno anterior saca de la cola la foto que ya mandó, y la
         # copia entera la devolvía (salía otra vez en el turno siguiente).
-        base = copy.deepcopy(metadata)
+        try:
+            metadata = self._metadata_store.read(session_id)
+            base: dict[str, Any] = copy.deepcopy(metadata)
+        except Exception as exc:  # noqa: BLE001 — best-effort: el mensaje no se pierde
+            # Un error pasajero (el store lanza: nunca da una copia vieja ni
+            # `{}`). El mensaje sigue al historial y al router, que relee; lo
+            # que el ingest decida sobre `{}` NO se escribe (pisaba el origen).
+            logger.warning(
+                "ingest_metadata_unreadable", session=session_id, error=repr(exc)[:200]
+            )
+            metadata = {}
+            base = _Unread()
 
         # HU web-cart: token `ref:cart_<id>` del texto prellenado que genera
         # la página web. Detección 100% determinista (regex) — jamás del LLM.
@@ -696,9 +703,10 @@ class IngestInboundMessage:
         # shortlistea sin escanear el vault. Best-effort: un índice roto JAMÁS
         # tumba el ingest (el fallback del builder es full scan).
         try:
-            update_reengagement_index_entry(
-                WORKSPACE_VAULT_DIR, session_id, metadata, now_ms=now_ms
-            )
+            if not isinstance(base, _Unread):  # sin leer el documento, nada que indexar
+                update_reengagement_index_entry(
+                    WORKSPACE_VAULT_DIR, session_id, metadata, now_ms=now_ms
+                )
         except Exception:  # noqa: BLE001
             logger.warning(
                 "reengagement_index_update_failed", session_id=session_id
@@ -727,8 +735,8 @@ class IngestInboundMessage:
                 )
                 return fresh if captured["new"] else None
 
-            fresh_after_capture = self._metadata_store.update(
-                session_id, _capture_mutator
+            fresh_after_capture = self._update_best_effort(
+                session_id, _capture_mutator, what="carrito_web"
             )
             if fresh_after_capture is not None:
                 metadata = fresh_after_capture
@@ -769,7 +777,7 @@ class IngestInboundMessage:
                             _declassify_web_cart_origin(fresh, parsed)
                     return fresh
 
-                updated = self._metadata_store.update(session_id, _apply_mutator)
+                updated = self._update_best_effort(session_id, _apply_mutator, what="carrito_web_resuelto")
                 if updated is not None:
                     metadata = updated
                     _rebase(base, metadata)
@@ -796,7 +804,7 @@ class IngestInboundMessage:
                 )
                 return fresh if appended else None
 
-            logged = self._metadata_store.update(session_id, _referral_mutator)
+            logged = self._update_best_effort(session_id, _referral_mutator, what="ref_de_agente")
             if logged is not None:
                 metadata = logged
                 _rebase(base, metadata)
@@ -812,8 +820,8 @@ class IngestInboundMessage:
                 )
                 return fresh if captured_ref["new"] else None
 
-            fresh_after_ref = self._metadata_store.update(
-                session_id, _capture_ref_mutator
+            fresh_after_ref = self._update_best_effort(
+                session_id, _capture_ref_mutator, what="ref_de_producto"
             )
             if fresh_after_ref is not None:
                 metadata = fresh_after_ref
@@ -834,7 +842,7 @@ class IngestInboundMessage:
                         mark_web_product_unresolved(fresh, reason=reason or "unknown")
                     return fresh
 
-                updated_ref = self._metadata_store.update(session_id, _apply_ref_mutator)
+                updated_ref = self._update_best_effort(session_id, _apply_ref_mutator, what="ref_de_producto_resuelto")
                 if updated_ref is not None:
                     metadata = updated_ref
                     _rebase(base, metadata)
@@ -857,7 +865,7 @@ class IngestInboundMessage:
                 )
                 return fresh if captured_card["new"] else None
 
-            fresh_after_card = self._metadata_store.update(session_id, _capture_card_mutator)
+            fresh_after_card = self._update_best_effort(session_id, _capture_card_mutator, what="tarjeta_del_catalogo")
             if fresh_after_card is not None:
                 metadata = fresh_after_card
                 _rebase(base, metadata)
@@ -879,7 +887,7 @@ class IngestInboundMessage:
                         mark_web_product_unresolved(fresh, reason=card_reason)
                     return fresh
 
-                updated_card = self._metadata_store.update(session_id, _apply_card_mutator)
+                updated_card = self._update_best_effort(session_id, _apply_card_mutator, what="tarjeta_del_catalogo_resuelta")
                 if updated_card is not None:
                     metadata = updated_card
                     _rebase(base, metadata)
@@ -912,7 +920,7 @@ class IngestInboundMessage:
                             return None  # ya tiene un cupón: no se pisa
                         return store_coupon_application(fresh, application, now_ms=now_ms)
 
-                    stored = self._metadata_store.update(session_id, _coupon_mutator)
+                    stored = self._update_best_effort(session_id, _coupon_mutator, what="cupon_de_campana")
                     if stored is not None:
                         metadata = stored
                         _rebase(base, metadata)
@@ -1508,7 +1516,7 @@ class IngestInboundMessage:
             current["units_checked_at_ms"] = now_ms
             return fresh
 
-        updated = self._metadata_store.update(session_id, _mutator)
+        updated = self._update_best_effort(session_id, _mutator, what="cupos_del_cupon")
         logger.info(
             "coupon_units_reread",
             code=code,
@@ -1517,6 +1525,27 @@ class IngestInboundMessage:
             exhausted=exhausted,
         )
         return updated
+
+    def _update_best_effort(
+        self,
+        session_id: str,
+        mutator: Callable[[dict[str, Any]], dict[str, Any] | None],
+        *,
+        what: str,
+    ) -> dict[str, Any] | None:
+        """Escritura AUXILIAR del ingest (captura del carrito, del ref, de la
+        tarjeta, del cupón): de mejor esfuerzo. Si el disco no deja escribir
+        (un error pasajero, disco lleno), se registra y se sigue: el mensaje
+        del cliente igual queda en el historial y se despacha. El ingest corre
+        después de responder 200 al webhook, así que Meta no lo reintenta.
+        ``None`` = no se escribió (como cuando el mutator aborta)."""
+        try:
+            return self._metadata_store.update(session_id, mutator)
+        except Exception as exc:  # noqa: BLE001 — mejor esfuerzo: el mensaje sigue
+            logger.warning(
+                "ingest_aux_write_failed", session_id=session_id, what=what, error=repr(exc)[:200]
+            )
+            return None
 
     async def _catalog_gap_note(self, session_id: str, text: str) -> str | None:
         """Nota de lo que no existe en el catálogo (`catalog_gap_note_for`)."""
@@ -1896,7 +1925,13 @@ class IngestInboundMessage:
         (p. ej. un error de lectura pasajero bajo el candado: el store lanza y
         no toca nada) NO cuenta como hecha: sus cambios siguen pendientes para
         la siguiente (segunda revisión del PR #393). Best-effort: un fallo se
-        loguea y el mensaje del cliente sigue su camino."""
+        loguea y el mensaje del cliente sigue su camino.
+
+        Si la lectura inicial falló (`base` es `_Unread`), no se escribe: el
+        ingest decidió sobre `{}`, no sobre el documento (sexta revisión)."""
+        if isinstance(base, _Unread):
+            logger.info("metadata_write_skipped_unread", session=session_id)
+            return
         try:
             self._metadata_store.write_merged(
                 session_id,
@@ -2591,6 +2626,13 @@ class IngestInboundMessage:
 def _now_ms() -> int:
     import time
     return int(time.time() * 1000)
+
+
+class _Unread(dict):
+    """`base` de un ingest que NO pudo leer `metadata.json` (error pasajero):
+    lo que decida sobre `{}` no se escribe (`_safe_write_metadata`). Sigue
+    siendo `_Unread` aunque se rebasee: el ingest no vio el documento al
+    decidir."""
 
 
 def _rebase(base: dict[str, Any], data: dict[str, Any]) -> None:

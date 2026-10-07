@@ -137,6 +137,52 @@ async def test_promised_handoff_escalates_over_a_damaged_document_from_the_last_
     assert _read(path)["active_route"] == "humano"
 
 
+@pytest.mark.asyncio
+async def test_a_transient_read_error_stops_the_promised_handoff_net_and_keeps_the_takeover(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sexta revisión del PR #393: con un EMFILE, `read()` devolvía la copia
+    vieja (antes de la toma del operador) y la red escalaba encima, pisando el
+    motivo y el `escalation_reason` del operador. Ahora `read()` lanza: la
+    activity falla (Temporal la reintenta) y nada cambia."""
+    import errno
+    import os
+
+    import src.plugins.chats.agent.sales.decisions.guards as guards
+    from src.plugins.chats.agent.sales.activities.episode_closure import ensure_promised_handoff_activity
+
+    path = _seed(_isolate_vault_dir)
+    store = FilesystemMetadataStore(_isolate_vault_dir)
+    store.update(
+        SID,
+        lambda d: {**d, "active_route": "humano", "tag": "HUMANO", "motivo": "Lo atiende Ana (operador)",
+                   "escalation_reason": "OPERATOR_TAKEOVER"},
+    )
+    before = {p.name: p.read_bytes() for p in path.parent.iterdir() if not p.name.endswith(".lock")}
+
+    async def promised_handoff(text: str, **kwargs: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(guards, "promised_handoff", promised_handoff)
+    real_read_text = Path.read_text
+    left = {"n": 1}
+
+    def read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self.name == "metadata.json" and left["n"]:
+            left["n"] -= 1
+            raise OSError(errno.EMFILE, os.strerror(errno.EMFILE))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    with pytest.raises(OSError):
+        await ensure_promised_handoff_activity(SID, "Un colega del equipo te escribe enseguida.")
+
+    monkeypatch.setattr(Path, "read_text", real_read_text)
+    after = {p.name: p.read_bytes() for p in path.parent.iterdir() if not p.name.endswith(".lock")}
+    assert after == before, "la red pisó la toma del operador"
+
+
 # --- revisión del PR #393 (M7) -------------------------------------------------
 
 

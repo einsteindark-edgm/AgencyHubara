@@ -202,7 +202,7 @@ def test_a_write_that_failed_is_still_pending_and_the_session_untouched(
     base: dict[str, Any] = {"active_route": "humano", "tag": "HUMANO"}
     metadata: dict[str, Any] = {**base, "first_touch_origin": "direct"}
 
-    _failing_reads(monkeypatch, "metadata.json", 3)
+    _failing_reads(monkeypatch, "metadata.json", 1)  # sin reintentos: uno basta
     ingest._safe_write_metadata(SID, metadata, base)  # falla (error pasajero)
 
     assert path.read_bytes() == before, "un error pasajero pisó la toma del humano"
@@ -215,3 +215,118 @@ def test_a_write_that_failed_is_still_pending_and_the_session_untouched(
         "direct",
         "wamid.2",
     ), "se perdió lo de la escritura que falló"
+
+
+
+# --- una escritura auxiliar que falla no pierde el mensaje (sexta revisión) -----
+
+
+class _RecordingHistory(_History):
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def append_user_event(self, session_id: str, content: str, **kw: Any) -> None:
+        self.events.append(content)
+
+
+class _BotWoken(Exception):
+    """El router llegó a despertar al bot (pidió el cliente de Temporal)."""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    ["hola, quiero una vela", "hola ref:cart_01ABCDEFGHIJKLMNOPQRSTUV"],
+    ids=["texto", "carrito-web"],
+)
+async def test_an_auxiliary_write_that_fails_does_not_lose_the_message(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch, text: str
+) -> None:
+    """Las escrituras auxiliares del ingest y del router (captura del carrito,
+    del ref, de la tarjeta y del cupón; el `phone_number_id`) son de mejor
+    esfuerzo: si el disco no deja escribir, se registra y se sigue. El mensaje
+    queda en el historial y el bot se despierta igual. Antes, la excepción
+    cortaba el ingest, que corre después de responder 200 al webhook: Meta no
+    lo reintenta."""
+    import src.platform.state as state
+    from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import LoadOrStartSalesSession
+
+    store = FilesystemMetadataStore(_isolate_vault_dir)
+    store.write(SID, {"phone_number_id": "pnid-1", "active_route": "ventas", "tag": "INTERESADO"})
+    path = _isolate_vault_dir / SID / "metadata.json"
+    before = path.read_bytes()
+
+    def disk_full(*args: Any, **kwargs: Any) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(state, "atomic_write_json", disk_full)
+    woken: list[bool] = []
+
+    async def wake_the_bot() -> Any:
+        woken.append(True)
+        raise _BotWoken
+
+    history = _RecordingHistory()
+    ingest = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=LoadOrStartSalesSession(wake_the_bot, store),
+        metadata_store=store,
+        readings=_Readings(),
+    )
+
+    with pytest.raises(_BotWoken):
+        await ingest.execute(
+            WhatsAppMessage(
+                message_id="wamid.x1",
+                from_number="573001234567",
+                phone_number_id="pnid-1",
+                text=text,
+                media=None,
+                timestamp=str(int(time.time())),
+            )
+        )
+
+    assert history.events, "el mensaje del cliente no quedó en el historial"
+    assert woken, "el bot no se despertó"
+    assert path.read_bytes() == before
+
+
+
+@pytest.mark.asyncio
+async def test_an_ingest_that_could_not_read_the_metadata_does_not_write_what_it_decided_on_nothing(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La lectura inicial del ingest es de mejor esfuerzo (el mensaje no se
+    pierde). Con un error pasajero ahí, el ingest decidía sobre `{}` y lo
+    escribía: pisaba el origen de la conversación (el anuncio que la trajo).
+    Ahora no escribe nada de lo suyo; el mensaje va al historial y al router,
+    que relee el documento y decide con lo que hay de verdad."""
+    store = FilesystemMetadataStore(_isolate_vault_dir)
+    store.write(SID, {**_HUMAN_SESSION, "active_route": "ventas", "tag": "INTERESADO"})
+    store.write(SID, {**_HUMAN_SESSION, "origin": {"source_type": "ad", "source_id": "AD_1"}})
+    path = _isolate_vault_dir / SID / "metadata.json"
+    before = path.read_bytes()
+    _failing_reads(monkeypatch, "metadata.json", 1)
+    router = _RouteAtDispatch(store)
+    history = _RecordingHistory()
+    ingest = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=router,  # type: ignore[arg-type]
+        metadata_store=store,
+        readings=_Readings(),
+    )
+
+    await ingest.execute(
+        WhatsAppMessage(
+            message_id="wamid.in",
+            from_number="573001234567",
+            phone_number_id="pnid-1",
+            text="hola?",
+            media=None,
+            timestamp=str(int(time.time())),
+        )
+    )
+
+    assert path.read_bytes() == before, "el ingest escribió lo que decidió sobre un documento que no pudo leer"
+    assert history.events, "el mensaje del cliente no quedó en el historial"
+    assert router.routes == ["humano"]

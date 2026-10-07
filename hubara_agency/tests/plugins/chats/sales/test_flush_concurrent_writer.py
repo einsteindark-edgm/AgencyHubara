@@ -173,12 +173,10 @@ async def test_a_photo_sent_right_before_the_file_got_damaged_is_not_sent_again(
     justo después de que el flush sacó la foto de la cola, la recuperación la
     devuelve a la cola. El registro de entregas (fuera de `metadata.json`) la
     frena: no sale dos veces y se vuelve a sacar."""
-    import src.platform.state as state
     from src.platform.state import FilesystemMetadataStore
     from src.platform.whatsapp import client as wa_client
     from src.plugins.chats.agent.sales.activities import flush_ui_intents
 
-    monkeypatch.setattr(state, "_run_in_background", lambda job: job(), raising=False)
     path = _seed(vault, [_photo_intent()])
     send_image = AsyncMock(return_value=SimpleNamespace(ok=True, wa_message_id=PHOTO_WAMID, error=None))
     monkeypatch.setattr(wa_client, "send_image", send_image)

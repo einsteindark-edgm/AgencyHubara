@@ -14,11 +14,17 @@ Casos cubiertos:
 """
 from __future__ import annotations
 
+import copy
+import errno
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
 from temporalio.testing import ActivityEnvironment
+
+from src.platform.state import FilesystemMetadataStore
 
 from src.plugins.chats.agent.sales.activities.episode_closure import (
     ensure_closing_escalation_activity,
@@ -273,3 +279,58 @@ async def test_closing_escalation_acts_over_a_damaged_document_from_the_last_goo
 
     assert await _run_escalation() is True, "la red no escaló ante un archivo dañado"
     assert json.loads(md.read_text(encoding="utf-8"))["active_route"] == "humano"
+
+
+# --- un error PASAJERO al leer (PR #393, sexta revisión) ---------------------------
+# Con un EMFILE, `read()` devolvía la copia vieja en silencio y la red decidía y
+# escribía sobre ella: pisó la toma del operador (motivo, `escalation_reason`,
+# `closing_tag`). Ahora `read()` lanza: la activity falla (Temporal la reintenta)
+# y el documento queda como estaba. Las redes no cambiaron.
+
+
+def _taken_by_the_operator(vault: Path) -> Path:
+    """Sesión SANA cuya última escritura fue la toma del operador; la copia
+    buena (`.prev`) es la de antes (ventas, episodio abierto)."""
+    before = _active_episode_metadata()
+    taken = copy.deepcopy(before)
+    taken.update(
+        active_route="humano", tag="HUMANO", motivo="Lo atiende Ana (operador)", escalation_reason="OPERATOR_TAKEOVER"
+    )
+    taken["episodes"][-1].update(
+        closed_at_ms=_FIXED_MS - 1_000, closing_tag="COMPRA_EXITOSA", closing_motivo="cerró el operador"
+    )
+    store = FilesystemMetadataStore(vault)
+    store.write(_SESSION, before)
+    store.write(_SESSION, taken)
+    return vault / _SESSION / "metadata.json"
+
+
+def _one_transient_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_read_text = Path.read_text
+    left = {"n": 1}
+
+    def read_text(self: Path, *args, **kwargs) -> str:
+        if self.name == "metadata.json" and left["n"]:
+            left["n"] -= 1
+            raise OSError(errno.EMFILE, os.strerror(errno.EMFILE))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+
+def _session_files(md: Path) -> dict[str, bytes]:
+    return {p.name: p.read_bytes() for p in md.parent.iterdir() if not p.name.endswith(".lock")}
+
+
+@pytest.mark.parametrize("net", ["pago-pendiente", "escalacion-de-cierre"])
+async def test_a_transient_read_error_stops_the_net_and_keeps_the_operator_takeover(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch, net: str
+):
+    md = _taken_by_the_operator(_isolate_vault_dir)
+    before = _session_files(md)
+    _one_transient_read(monkeypatch)
+
+    with pytest.raises(OSError):
+        await (_run() if net == "pago-pendiente" else _run_escalation())
+
+    assert _session_files(md) == before, "la red pisó la toma del operador"

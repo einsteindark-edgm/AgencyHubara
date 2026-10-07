@@ -143,13 +143,14 @@ jobs:
       - name: Una sola forma de escribir metadata.json (ratchet + comportamiento, incidente 2026-10-06)
         # Una copia vieja de metadata.json devolvió a la cola una foto ya
         # entregada y salió dos veces. El gate (AST) falla si un módulo de src/
-        # escribe metadata.json (o sus copias .prev / .damaged-*) sin
-        # FilesystemMetadataStore (update / write_merged); las pruebas de
+        # o de scripts/ escribe metadata.json (o sus copias .prev / .damaged-*)
+        # sin FilesystemMetadataStore (update / write_merged); las pruebas de
         # comportamiento cubren el merge de tres vías, el candado, la
-        # recuperación automática de un archivo dañado (última copia buena,
-        # sin pasar nada al equipo humano), el flush (una tarjeta entregada no
-        # sale dos veces), el ingest y los escritores que esperan algo entre
-        # leer y escribir. Viven en tests/platform/ y tests/plugins/
+        # recuperación de un archivo dañado (el que lee nunca escribe, el que
+        # escribe repara con la última copia buena, un error pasajero lanza;
+        # nada pasa al equipo humano), el flush (una tarjeta entregada no sale
+        # dos veces), el ingest, las redes de cierre, los scripts y los
+        # escritores que esperan algo entre leer y escribir. Viven en tests/platform/ y tests/plugins/
         # (tests/architecture/ es protected y tests/platform no corre completo
         # acá), por eso se nombran una por una.
         if: needs.changes.outputs.central == 'true'
@@ -178,6 +179,8 @@ jobs:
           tests/plugins/chats/sales/test_payment_pending_closure.py::test_safety_net_acts_over_a_damaged_document_from_the_last_good_copy
           tests/plugins/chats/sales/test_payment_pending_closure.py::test_closing_escalation_acts_over_a_damaged_document_from_the_last_good_copy
           tests/plugins/orders/test_emit_stage_capi_value.py::test_a_stage_event_is_queued_over_a_damaged_chat_from_its_last_good_copy
+          tests/plugins/chats/sales/test_payment_pending_closure.py::test_a_transient_read_error_stops_the_net_and_keeps_the_operator_takeover
+          tests/scripts/test_scripts_write_metadata_with_the_store.py
 
       - name: Premortem invariants (compose drift + paridad k8s + colas únicas)
         # Complementa el modo `strict: false` de la branch protection. Dos PRs de
