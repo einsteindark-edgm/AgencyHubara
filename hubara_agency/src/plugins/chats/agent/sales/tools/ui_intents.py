@@ -50,14 +50,24 @@ from src.platform.config import WORKSPACE_VAULT_DIR
 from src.plugins.chats.agent.sales.decisions.guards import catalog_choice_buttons
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp import limits as wa_limits
+from src.plugins.chats.agent.sales.card_messages import (
+    SHIPPING_FORM_CTA,
+    order_card_record,
+    shipping_fields_text,
+    shipping_form_text,
+)
 from src.plugins.chats.agent.sales.config.shipping import (
     SHIPPING_COP_PARAM_DESCRIPTION,
     SHIPPING_RATE_BOGOTA_COP,
     SHIPPING_RATE_NATIONAL_COP,
+    SHIPPING_FLOW_PLACEHOLDER,
     SHIPPING_RATE_RULE,
+    SHIPPING_RATES_MESSAGE,
     cash_on_delivery_available,
     is_published_rate_for_zone,
+    shipping_flow_id,
 )
+from src.plugins.chats.shared.draft_items import draft_items
 from src.plugins.chats.agent.sales.decisions.guards import (
     CiudadDeEnvio,
     capability,
@@ -634,18 +644,32 @@ def _shipping_precondition_rejection(
     }
 
 
+def _draft_items_of(session_key: str) -> list[dict[str, Any]]:
+    """Los ítems del borrador del pedido en curso (producto y variantes) para
+    el mensaje del formulario. Sin borrador proyectable (pedido ya
+    registrado, episodio nuevo): ninguno."""
+    from src.plugins.chats.agent.sales.use_cases.order_draft import get_projectable_draft
+
+    slots = get_projectable_draft(FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_key)) or {}
+    items = slots.get("items")
+    return draft_items({"items": items} if isinstance(items, list) else {"slots": slots})
+
+
 class RequestShippingDetailsTool(ToolBase):
     """Solicita los datos de envío al cliente.
 
-    Mientras el WhatsApp Flow Meta no esté configurado (productivo
-    pendiente), esta tool envía un MENSAJE DE TEXTO PLANO al cliente
-    enumerando los campos que necesitamos (ciudad, barrio, dirección,
-    teléfono, método de pago) — con emojis y formato bonito. El cliente
-    responde por texto y tú parseas su respuesta turn-by-turn.
+    Con el WhatsApp Flow configurado (`META_FLOW_ID_SHIPPING`) el cliente
+    recibe el formulario nativo y los datos llegan en `nfm_reply`; sin él (o
+    si Meta lo rechaza) el flush manda un mensaje de texto que enumera los
+    campos y el cliente responde por chat. La tool es agnóstica al modo: el
+    dispatcher decide.
 
-    Cuando el Flow esté configurado (cambiando `flow_id` a un id real),
-    esta misma tool abre el formulario nativo y recibe los datos en
-    `nfm_reply`. La tool es agnóstica al modo — el dispatcher decide.
+    El mensaje con el que sale el formulario lo arma el código
+    (`card_messages.shipping_form_text`): producto, variantes del borrador,
+    cantidad y subtotal en productos, con los precios del catálogo. El
+    envelope lo devuelve en `customer_text` (lo que leyó el cliente: la traza,
+    la calificación y la verificación lo leen de ahí). Incidente 2026-10-06
+    (bot V2, turno 9): salía sin aroma, color ni subtotal y con guion largo.
 
     Solo se debe llamar UNA SOLA VEZ por sesión.
 
@@ -663,15 +687,18 @@ class RequestShippingDetailsTool(ToolBase):
     description = (
         "Pide al cliente los datos de envío (ciudad, barrio, dirección, "
         "teléfono, nombre de quien recibe, cédula opcional, método de "
-        "pago). Llámala UNA SOLA VEZ por sesión, después de que el cliente "
-        "confirmó qué quiere comprar. Pasa los `items` del pedido (handle "
-        "EXACTO visto en search_products / get_product_by_handle + "
-        "cantidad): el sistema toma precio y nombre del CATÁLOGO, calcula "
-        "el total y decide las formas de pago — tú NUNCA mandas montos. El "
-        "sistema le manda un mensaje de texto enumerando los campos — "
-        "el cliente responde libremente por chat y tú vas armando los "
-        "datos hasta tenerlos completos. NO repitas la lista en tu propio "
-        "texto: la tool ya manda el mensaje formateado."
+        "pago) con el formulario de WhatsApp. Llámala UNA SOLA VEZ por "
+        "sesión, después de que el cliente confirmó qué quiere comprar. "
+        "Pasa los `items` del pedido (handle EXACTO visto en "
+        "search_products / get_product_by_handle + cantidad): el sistema "
+        "toma precio y nombre del CATÁLOGO, calcula el total y decide las "
+        "formas de pago; tú NUNCA mandas montos. El formulario sale con un "
+        "mensaje que arma el sistema: producto, variantes del pedido, "
+        "cantidad, subtotal en productos y que el envío va aparte. NO "
+        "repitas ese mensaje ni la lista de campos en tu texto. Si el "
+        "cliente además preguntó otra cosa, respóndela con `send_reply` "
+        "junto con esta tool, en la misma respuesta: la tool termina tu "
+        "turno."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -708,8 +735,10 @@ class RequestShippingDetailsTool(ToolBase):
     async def _price_items(
         self, ctx: ToolContext, items: list[dict[str, Any]] | None
     ) -> dict[str, Any]:
-        """Resuelve `items` contra el catálogo → `{order_total_cop, items_summary}`
-        o un envelope de rechazo (`{"queued": False, "error": ...}`)."""
+        """Resuelve `items` contra el catálogo → `{order_total_cop,
+        items_summary, lines}` (`lines`: una por ítem con `handle`, `title`,
+        `quantity`, `unit_price_cop` y `subtotal_cop`, para el mensaje del
+        formulario) o un envelope de rechazo (`{"queued": False, "error": ...}`)."""
         not_shown = " No se mostró nada al cliente."
         if not items:
             return {
@@ -731,7 +760,7 @@ class RequestShippingDetailsTool(ToolBase):
                     "escalate_to_human(reason_category='CATALOG_GAP')." + not_shown
                 ),
             }
-        lines: list[str] = []
+        lines: list[dict[str, Any]] = []
         subtotal = 0
         for it in items:
             handle = str((it or {}).get("handle") or "").strip()
@@ -790,9 +819,16 @@ class RequestShippingDetailsTool(ToolBase):
                     ),
                 }
             subtotal += unit_price * qty
-            lines.append(f"{qty}× {product.title}")
+            lines.append({
+                "handle": handle,
+                "title": product.title,
+                "quantity": qty,
+                "unit_price_cop": unit_price,
+                "subtotal_cop": unit_price * qty,
+            })
         # `items_summary` es el header del Flow (maxLength 200 en el JSON).
-        return {"order_total_cop": subtotal, "items_summary": ", ".join(lines)[:200]}
+        summary = ", ".join(f"{line['quantity']}× {line['title']}" for line in lines)
+        return {"order_total_cop": subtotal, "items_summary": summary[:200], "lines": lines}
 
     async def execute_with_context(
         self,
@@ -836,6 +872,18 @@ class RequestShippingDetailsTool(ToolBase):
                 ctx.session_key, rejection["error"],
             )
             return json.dumps(rejection, ensure_ascii=False)
+        # El mensaje del formulario lo arma el código: producto, variantes
+        # del borrador, cantidad y subtotal del catálogo (incidente
+        # 2026-10-06, turno 9). Es lo que el cliente lee con el botón.
+        body = shipping_form_text(priced["lines"], _draft_items_of(ctx.session_key))
+        # Lo que va a leer el cliente: ese mensaje con el Flow o, sin Flow
+        # configurado, la lista de campos que el flush manda por texto (la
+        # misma regla del flush, `shipping_flow_id`).
+        customer_text = (
+            body
+            if shipping_flow_id(SHIPPING_FLOW_PLACEHOLDER)
+            else shipping_fields_text(order_total_cop, get_nequi_number())
+        )
         flow_token = f"shipping_{ctx.session_key}_{int(time.time())}"
 
         # Opciones de pago dinámicas. El RadioButtonsGroup del Flow JSON
@@ -878,9 +926,9 @@ class RequestShippingDetailsTool(ToolBase):
                 # cae al fallback de texto plano (recolección conversacional
                 # turn-by-turn). Operador setup: ver
                 # docs/META_CATALOG_SETUP.md §Fase 13.
-                "flow_id": "FLOW_ID_SHIPPING_PLACEHOLDER",
+                "flow_id": SHIPPING_FLOW_PLACEHOLDER,
                 "flow_token": flow_token,
-                "flow_cta": "Completar datos",
+                "flow_cta": SHIPPING_FORM_CTA,
                 "flow_action": "navigate",
                 "flow_action_screen": "SHIPPING_DETAILS",
                 "flow_action_data": {
@@ -889,11 +937,7 @@ class RequestShippingDetailsTool(ToolBase):
                     "show_cash_on_delivery": cash_on_delivery_available(order_total_cop),
                     "payment_options": payment_options,
                 },
-                "body": (
-                    f"Para enviarte *{items_summary}* necesito unos datos. "
-                    "Toca el botón para completar el formulario — "
-                    "toma 30 segundos."
-                ),
+                "body": body,
                 "header_text": "Datos de envío",
                 # Usado por la rama de texto-plano del dispatcher para decidir
                 # si incluir "contra entrega" como opción de pago.
@@ -912,15 +956,18 @@ class RequestShippingDetailsTool(ToolBase):
             "order_total_cop": order_total_cop,
             "items_summary": items_summary,
             "flow_token": flow_token,
+            # Lo que leyó el cliente con el formulario (traza, calificación y
+            # verificación ③ lo leen de acá).
+            "customer_text": customer_text,
             "summary": (
-                "Mensaje pidiendo datos de envío enviado al cliente "
-                "(ciudad, barrio, dirección, teléfono, nombre de quien "
-                "recibe, cédula opcional, método de pago). "
-                "El cliente responde por texto — tú vas recolectando los "
-                "campos en los próximos turnos. Cuando los tengas TODOS, "
-                "continúa con verify_order_for_checkout. NO pidas los "
-                "datos otra vez en tu próximo mensaje — la tool ya los "
-                "pidió formateados."
+                "Formulario de datos de envío enviado al cliente (ciudad, "
+                "barrio, dirección, teléfono, nombre de quien recibe, cédula "
+                "opcional, método de pago) con el mensaje de `customer_text`: "
+                "es lo que leyó. NO lo repitas ni vuelvas a pedir los datos; usa "
+                "`send_reply` solo si el cliente preguntó otra cosa. Los datos "
+                "llegan del formulario o por texto: anótalos con set_order_slot "
+                "y, cuando los tengas TODOS, continúa con "
+                "verify_order_for_checkout."
             ),
         }, ensure_ascii=False)
 
@@ -1384,6 +1431,9 @@ class PresentOrderConfirmationTool(ToolBase):
             "kind": "order_confirmation",
             "reference_id": reference_id,
             **amounts,
+            # La tarjeta que lee el cliente (el mismo texto que manda el
+            # flush), con su dirección tapada: va a la traza y a la ③ (Jev).
+            "customer_text": order_card_record(intent["params"]),
             "summary": summary.replace(",", "."),
         }, ensure_ascii=False)
 
@@ -1440,6 +1490,8 @@ class SendShippingRatesTool(ToolBase):
         return json.dumps({
             "queued": True,
             "kind": "shipping_rates",
+            # El texto fijo que lee el cliente (traza y verificación ③).
+            "customer_text": SHIPPING_RATES_MESSAGE,
             "summary": (
                 "Mensaje estándar de tarifas de envío enviado al cliente. "
                 "NO repitas ni reformules las tarifas en tu texto; tu turno "

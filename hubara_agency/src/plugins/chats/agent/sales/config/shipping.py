@@ -21,6 +21,8 @@ el cliente sale de estas constantes.
 """
 from __future__ import annotations
 
+import os
+
 from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 SHIPPING_RATE_BOGOTA_COP = 7_900
@@ -58,6 +60,22 @@ ORDER_SUMMARY_SHIPPING_NOTE = (
     "transportadora antes de despachar y te lo confirmaremos para cerrar "
     "tu pedido."
 )
+
+#: El `flow_id` que encola `request_shipping_details`: el Flow real lo
+#: resuelve `shipping_flow_id` (env) o, sin él, se piden los datos por texto.
+SHIPPING_FLOW_PLACEHOLDER = "FLOW_ID_SHIPPING_PLACEHOLDER"
+
+
+def shipping_flow_id(intent_flow_id: str | None = None) -> str | None:
+    """El WhatsApp Flow de datos de envío que sale, o None si no hay: entonces
+    el flush pide los datos con la lista de campos por texto. Primero
+    `META_FLOW_ID_SHIPPING` (productivo: cambiar el Flow en Meta es un
+    redeploy, sin tocar código), después el `flow_id` del intent; el
+    placeholder no cuenta. Una sola regla para el flush (que envía) y la tool
+    (que dice en `customer_text` qué va a leer el cliente)."""
+    env_flow_id = (os.environ.get("META_FLOW_ID_SHIPPING") or "").strip()
+    flow_id = env_flow_id if env_flow_id and env_flow_id != SHIPPING_FLOW_PLACEHOLDER else intent_flow_id
+    return flow_id if flow_id and flow_id != SHIPPING_FLOW_PLACEHOLDER else None
 
 
 def _fold(text: str) -> str:

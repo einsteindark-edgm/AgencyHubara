@@ -35,6 +35,13 @@ _HANDOFF = (
     "Usuario respondió: Voy apenas en camino a casa. Siguiente paso: confirmar el "
     "pedido y tomar datos de envío."
 )
+#: El mensaje con el que sale el formulario (lo arma el código; la traza lo
+#: trae en `card_text` desde el incidente 2026-10-06).
+_FORM_MESSAGE = (
+    "Para enviarte tu pedido necesito unos datos 🤍\n\n• *1× Cubo Love* (Azul, Café)\n"
+    "Subtotal en productos: $89.000\n\nEl envío va aparte (lo calcula la transportadora). "
+    "Toca «Completar datos» para llenar el formulario (toma 30 segundos)."
+)
 
 
 def pr281_before_fix():
@@ -63,7 +70,7 @@ def pr281_before_fix():
           stage_out="confirmacion", draft=_DRAFT_VARIANTS, at_ms=20_000_000,
           narration=["Perfecto, ya casi llegas a casa. Te dejo el formulario."],
           tools=[tool("set_order_slot", aroma="Café", cantidad="1"),
-                 tool("request_shipping_details", order_total_cop=89000)]),
+                 tool("request_shipping_details", card_text=_FORM_MESSAGE, order_total_cop=89000)]),
         T(10, trigger="ghost", inbound="[SISTEMA]: El usuario dejó de responder", stage_in="confirmacion",
           draft=_DRAFT_VARIANTS, at_ms=20_300_000,
           tools=[tool("manage_conversation_tag", tag="CONFIRMADO_SIN_DATOS"),
@@ -110,7 +117,8 @@ def traces_from(t) -> list[dict]:
             "v": 1, "session_id": t.session_id, "episode_id": t.episode_id, "turn": turn.turn,
             "recorded_at_ms": (turn.at_ms or 0) + 5_000, "turn_started_ms": turn.at_ms,
             "trigger": turn.trigger, "inbound_text": turn.inbound_text, "first_contact": turn.first_contact,
-            "tools": [{"name": c.name, "ok": c.ok, "error": c.error, "notes": list(c.notes), "args": dict(c.args)}
+            "tools": [{"name": c.name, "ok": c.ok, "error": c.error, "notes": list(c.notes), "args": dict(c.args),
+                       **({"card_text": c.card_text} if c.card_text else {})}
                       for c in turn.tools],
             "discarded_narration": list(turn.discarded_narration), "llm_text": turn.llm_text,
             "sent_texts": list(turn.sent_texts), "suppressed_reason": turn.suppressed_reason,

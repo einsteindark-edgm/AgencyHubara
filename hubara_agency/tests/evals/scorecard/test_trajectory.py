@@ -64,6 +64,39 @@ def test_build_trajectory_orders_turns_and_derives_intents_from_ok_tools() -> No
     assert traj.first_contact is True
 
 
+_FORM_MESSAGE = "Para enviarte tu pedido necesito unos datos 🤍\n\n• *2× Velón Koala* (Blanco · Lavanda)"
+
+
+def test_the_text_the_code_wrote_with_a_card_is_read_by_the_customer() -> None:
+    """Incidente 2026-10-06 (turno 9): el cliente leyó el mensaje del
+    formulario, que arma el código. La traza lo trae en `card_text` y
+    `read_texts` lo cuenta, después de los textos (el flush va al final)."""
+    traces = [
+        _trace(1, sent_texts=["Listo"], tools=[
+            {"name": "request_shipping_details", "ok": True, "error": None, "notes": [], "args": {},
+             "card_text": _FORM_MESSAGE},
+        ]),
+    ]
+
+    turn = build_trajectory(traces, session_id="wa_100000000001", episode={"episode_id": "ep_007"}).turns[0]
+
+    assert turn.tool("request_shipping_details").card_text == _FORM_MESSAGE
+    assert turn.read_texts == ("Listo", _FORM_MESSAGE)
+
+
+def test_the_text_of_a_rejected_card_is_not_read() -> None:
+    traces = [
+        _trace(1, tools=[
+            {"name": "request_shipping_details", "ok": False, "error": "purchase_not_confirmed", "notes": [],
+             "args": {}, "card_text": _FORM_MESSAGE},
+        ]),
+    ]
+
+    turn = build_trajectory(traces, session_id="wa_100000000001", episode={"episode_id": "ep_007"}).turns[0]
+
+    assert turn.read_texts == ()
+
+
 def test_build_trajectory_without_traces_is_empty() -> None:
     traj = build_trajectory([], session_id="wa_100000000001", episode={"episode_id": "ep_001"})
 

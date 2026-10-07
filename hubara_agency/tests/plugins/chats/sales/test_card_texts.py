@@ -7,6 +7,7 @@ con el menú. La verificación y la revisión solo leían los textos sueltos.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -53,6 +54,58 @@ def test_the_list_text_is_what_the_customer_reads_with_the_menu() -> None:
 )
 def test_each_card_gives_only_the_text_that_goes_with_it(name: str, args: dict[str, Any], read: list[str]) -> None:
     assert card_texts(name, args) == read
+
+
+_FORM_MESSAGE = "Para enviarte tu pedido necesito unos datos 🤍\n\n• *2× Velón Koala* (Blanco · Lavanda)"
+
+
+def test_the_check_of_the_turn_reads_the_message_the_code_wrote_with_the_form() -> None:
+    """Incidente 2026-10-06 (turno 9): el formulario salió con su mensaje
+    (producto, variantes, cantidad, subtotal) y la verificación ③ no lo veía:
+    solo leía los textos que redacta el LLM. El texto viaja en el envelope de
+    la tool (`customer_text`)."""
+    from src.plugins.chats.agent.sales.decisions.facade import delivered_card_texts
+
+    events = [
+        {"name": "send_reply", "args": {"text": "Listo"}, "result": json.dumps({"reply": {"text": "Listo"}})},
+        {
+            "name": "request_shipping_details",
+            "args": {"items": [{"handle": "velon-koala", "quantity": 2}]},
+            "result": json.dumps({"queued": True, "kind": "shipping_flow", "customer_text": _FORM_MESSAGE}),
+        },
+        {
+            "name": "send_quick_replies",
+            "args": {"body": "¿Seguimos?"},
+            "result": json.dumps({"queued": True, "kind": "quick_replies"}),
+        },
+    ]
+
+    assert delivered_card_texts(events) == [_FORM_MESSAGE, "¿Seguimos?"]
+
+
+def test_a_refused_card_or_an_unreadable_envelope_gives_no_text() -> None:
+    from src.plugins.chats.agent.sales.decisions.facade import delivered_card_texts
+
+    events = [
+        {
+            "name": "request_shipping_details",
+            "args": {},
+            "result": json.dumps({"queued": False, "error": "customer_deferred", "customer_text": _FORM_MESSAGE}),
+        },
+        {"name": "send_shipping_rates", "args": {}, "result": '{"queued": true, "customer_text": "Nues'},
+        {"name": "present_order_confirmation", "args": {}, "result": json.dumps({"queued": True, "customer_text": "  "})},
+    ]
+
+    assert delivered_card_texts(events) == []
+
+
+def test_envelope_card_text_reads_only_the_customer_text_of_the_envelope() -> None:
+    from src.plugins.chats.agent.sales.card_texts import envelope_card_text
+
+    assert envelope_card_text(json.dumps({"customer_text": f"  {_FORM_MESSAGE}\n"})) == _FORM_MESSAGE
+    assert envelope_card_text(json.dumps({"summary": "Formulario enviado"})) is None
+    assert envelope_card_text("texto plano") is None
+    assert envelope_card_text(None) is None
 
 
 def test_every_mapped_text_is_a_text_parameter_of_its_tool() -> None:
