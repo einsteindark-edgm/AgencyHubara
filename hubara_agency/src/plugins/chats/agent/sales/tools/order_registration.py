@@ -408,6 +408,7 @@ class RegisterOrderTool(ToolBase):
         sales: Any = None,
         quota_lock: Any = None,
         split_lines_guard: bool = True,
+        closing_guard: bool = True,
     ) -> None:
         """`quotas`/`sales`/`quota_lock`: cupo por unidad (central de cupones).
         Con cupo, el reparto se relee BAJO el candado del código antes de
@@ -415,7 +416,10 @@ class RegisterOrderTool(ToolBase):
         `split_lines_guard`: un producto repartido en variantes en el borrador
         exige una línea por cada una (`split_lines_mismatch`). Es para el bot:
         el borrador es su memoria; el operador que registra desde el panel lo
-        apaga (manda lo que acordó con el cliente)."""
+        apaga (manda lo que acordó con el cliente).
+        `closing_guard`: sin la confirmación del cliente, o tras su aplazamiento,
+        no se registra (`closing_blocker`, 2026-10-07). También es para el bot:
+        el operador que registra desde el panel ya habló con el cliente."""
         # Mismo patrón que `ManageConversationTagTool`: el `workspace` que
         # llega es el RUNTIME WORKSPACE CANONICO compartido — NO se usa
         # para metadata. `vault_dir` (DI-friendly): default vault canónico.
@@ -438,6 +442,7 @@ class RegisterOrderTool(ToolBase):
         self._sales = sales
         self._quota_lock = quota_lock
         self._split_lines_guard = split_lines_guard
+        self._closing_guard = closing_guard
 
     def _quota_code(self, session_key: str) -> str | None:
         """Código del cupón aplicado si tiene cupo por unidad (hay que
@@ -585,7 +590,11 @@ class RegisterOrderTool(ToolBase):
             subtotal_cop=subtotal_cop, shipping_cop=shipping_cop,
             total_cop=total_cop, currency=currency,
         )
-        blocked = closing_blocker(self._read_metadata(ctx.session_key), require_confirmation=True)
+        blocked = (
+            closing_blocker(self._read_metadata(ctx.session_key), require_confirmation=True)
+            if self._closing_guard
+            else None
+        )
         if blocked is not None:
             logger.warning("🧾 [TOOL register_order] rechazada session={}: {}", ctx.session_key, blocked)
             return json.dumps(

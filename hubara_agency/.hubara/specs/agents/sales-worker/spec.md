@@ -774,6 +774,8 @@ frenar una venta legítima). Sin episodio no frena. `present_order_confirmation`
 SHALL rechazar con `customer_deferred` si el último mensaje aplazó.
 `manage_conversation_tag` SHALL rechazar `COMPRA_EXITOSA` con `human_only_tag`:
 la pone el equipo al verificar el pago (y le manda a Meta la compra por CAPI).
+Las guardas son del bot: el pedido que el operador crea desde el panel
+(`api/session_actions.py`, `closing_guard=False`) NO pasa por ellas.
 
 #### Scenario: Registro sin confirmación
 

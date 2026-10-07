@@ -104,6 +104,23 @@ async def test_register_order_with_a_confirmation_noted_in_the_episode(ctx, _iso
 
 
 @pytest.mark.asyncio
+async def test_the_operator_panel_registers_without_the_bot_guard(ctx, _isolate_vault_dir: Path) -> None:
+    """El panel (`api/session_actions.py`) usa la misma tool con
+    `closing_guard=False`: el operador ya habló con el cliente."""
+    _seed(_isolate_vault_dir, signal="deferral")
+    port = FakeOrderRegistrationPort()
+    tool = RegisterOrderTool(workspace=str(_isolate_vault_dir), vault_dir=_isolate_vault_dir, port=port,
+                             closing_guard=False)
+
+    result = json.loads(await tool.execute_with_context(
+        ctx, items=_SAMPLE_ITEMS, shipping=_SAMPLE_SHIPPING, payment_method="transfer",
+        subtotal_cop=17000, shipping_cop=7900, total_cop=24900,
+    ))
+
+    assert result["registered"] is True and len(port.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_the_order_summary_is_not_shown_to_a_customer_who_just_deferred(ctx, _isolate_vault_dir: Path) -> None:
     path = _seed(_isolate_vault_dir, signal="deferral")
     tool = PresentOrderConfirmationTool(workspace=str(_isolate_vault_dir), catalog=FakeCatalog())
