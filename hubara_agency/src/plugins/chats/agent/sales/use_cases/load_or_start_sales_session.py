@@ -59,6 +59,7 @@ from src.platform.routing import resolve_route_workflow_id
 from src.plugins.chats.agent.sales.context import build_bogota_context_string
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+from src.plugins.chats.agent.sales.use_cases.metadata_reads import read_retrying_transient_errors
 
 logger = structlog.get_logger()
 
@@ -194,7 +195,19 @@ class LoadOrStartSalesSession:
         # frontera de episodio en re-engagement (bug run 3b3fbaee). Es un
         # hueco genérico — cualquier dato de contexto del turno cabe acá.
         # 1. Resolver ruta y persistir phone_number_id (lectura + posible escritura).
-        data = self._metadata_store.read(session_id)
+        # Un error pasajero se reintenta acá (hasta 3 veces, sin frenar el
+        # bucle): Meta no reintenta este ingest. Sin la ruta no se decide (un
+        # humano puede tener la conversación): el mensaje ya quedó en el
+        # historial, el ingest falla (`ingest_failed` en el ledger) y se avisa.
+        try:
+            data = await read_retrying_transient_errors(self._metadata_store, session_id)
+        except OSError as exc:
+            logger.error(
+                f"no pude leer la ruta de {session_id}; el mensaje no se despachó",
+                session_id=session_id,
+                error=repr(exc)[:200],
+            )
+            raise
         active_route = data.get("active_route", ROUTE_VENTAS)
 
         # 1.1. Sales pendiente de Flow (sesión c4e3416f): si acabamos de

@@ -171,6 +171,7 @@ jobs:
           tests/plugins/chats/sales/test_writers_keep_concurrent_changes.py
           tests/plugins/chats/test_ingest_keeps_concurrent_writes.py
           tests/plugins/chats/test_ingest_damaged_metadata.py
+          tests/plugins/chats/test_ingest_transient_read_retry.py
           tests/plugins/orders/test_emit_stage_keeps_concurrent_changes.py
           tests/plugins/chats/test_dashboard_damaged_metadata.py
           tests/plugins/chats/test_session_actions_api.py::test_escalate_over_a_damaged_document_still_routes_to_a_human

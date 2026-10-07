@@ -297,16 +297,17 @@ async def test_an_ingest_that_could_not_read_the_metadata_does_not_write_what_it
     _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """La lectura inicial del ingest es de mejor esfuerzo (el mensaje no se
-    pierde). Con un error pasajero ahí, el ingest decidía sobre `{}` y lo
-    escribía: pisaba el origen de la conversación (el anuncio que la trajo).
-    Ahora no escribe nada de lo suyo; el mensaje va al historial y al router,
-    que relee el documento y decide con lo que hay de verdad."""
+    pierde). Con un error pasajero ahí (aun tras los 3 reintentos), el ingest
+    decidía sobre `{}` y lo escribía: pisaba el origen de la conversación (el
+    anuncio que la trajo). Ahora no escribe nada de lo suyo; el mensaje va al
+    historial y al router, que relee el documento y decide con lo que hay de
+    verdad."""
     store = FilesystemMetadataStore(_isolate_vault_dir)
     store.write(SID, {**_HUMAN_SESSION, "active_route": "ventas", "tag": "INTERESADO"})
     store.write(SID, {**_HUMAN_SESSION, "origin": {"source_type": "ad", "source_id": "AD_1"}})
     path = _isolate_vault_dir / SID / "metadata.json"
     before = path.read_bytes()
-    _failing_reads(monkeypatch, "metadata.json", 1)
+    _failing_reads(monkeypatch, "metadata.json", 4)  # la lectura y sus 3 reintentos
     router = _RouteAtDispatch(store)
     history = _RecordingHistory()
     ingest = IngestInboundMessage(

@@ -94,6 +94,7 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
+from src.plugins.chats.agent.sales.use_cases.metadata_reads import read_retrying_transient_errors
 from src.plugins.chats.shared.purchase_signals import (
     build_deferral_note,
 )
@@ -386,12 +387,14 @@ class IngestInboundMessage:
         # flush del turno anterior saca de la cola la foto que ya mandó, y la
         # copia entera la devolvía (salía otra vez en el turno siguiente).
         try:
-            metadata = self._metadata_store.read(session_id)
+            # Un error pasajero se reintenta (hasta 3 veces, sin frenar el bucle).
+            metadata = await read_retrying_transient_errors(self._metadata_store, session_id)
             base: dict[str, Any] = copy.deepcopy(metadata)
         except Exception as exc:  # noqa: BLE001 — best-effort: el mensaje no se pierde
-            # Un error pasajero (el store lanza: nunca da una copia vieja ni
-            # `{}`). El mensaje sigue al historial y al router, que relee; lo
-            # que el ingest decida sobre `{}` NO se escribe (pisaba el origen).
+            # Sigue fallando tras los reintentos (el store lanza: nunca da una
+            # copia vieja ni `{}`). El mensaje sigue al historial y al router,
+            # que relee; lo que el ingest decida sobre `{}` NO se escribe
+            # (pisaba el origen).
             logger.warning(
                 "ingest_metadata_unreadable", session=session_id, error=repr(exc)[:200]
             )
