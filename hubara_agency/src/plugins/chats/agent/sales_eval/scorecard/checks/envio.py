@@ -175,8 +175,27 @@ def _customer_messages(turn: Turn) -> list[str]:
     return out
 
 
-def _leftover(message: str, named: frozenset[str]) -> list[str]:
-    """Lo que queda del mensaje al quitar lo que el formulario cubre."""
+#: El mensaje de tarifas (`send_shipping_rates`, lo arma el código) responde
+#: cuánto cuesta el envío y nada más: leído en el turno, cubre la pregunta
+#: (prueba del operador 2026-10-07, ep_012 t9: «Si» + «Cuánto cuesta el
+#: envío ?» con tarifas y formulario). Un plazo, una ciudad que nombran o un
+#: medio de pago siguen pidiendo un texto del bot.
+_RATES_TOOL = "send_shipping_rates"
+_RATES_COVERED_WORDS = frozenset(_tokens(
+    "cuanto cuanta cual cuales es son seria cuesta cuestan vale valen valor costo precio tarifa tarifas "
+    "cobran cobra sale salen envio envios domicilio domicilios flete a al para bogota ? ¿"
+))
+
+
+def _rates_read(turn: Turn) -> bool:
+    """¿El cliente leyó el mensaje de tarifas en el turno?"""
+    read = turn.card_read_texts
+    return any(tc.name == _RATES_TOOL and tc.card_text and tc.card_text in read for tc in turn.tools)
+
+
+def _leftover(message: str, named: frozenset[str], also: frozenset[str] = frozenset()) -> list[str]:
+    """Lo que queda del mensaje al quitar lo que el formulario cubre (y `also`:
+    lo que cubre otro mensaje que leyó en el turno, como las tarifas)."""
     tokens = _tokens(message)
     rest: list[str] = []
     i = 0
@@ -188,6 +207,7 @@ def _leftover(message: str, named: frozenset[str]) -> list[str]:
         token = tokens[i]
         covered = (
             token in _COVERED_WORDS
+            or token in also
             or token in _YES_EMOJIS
             or bool(_QUANTITY_TOKEN_RE.fullmatch(token))
             or _stem(token) in named
@@ -201,15 +221,16 @@ def _leftover(message: str, named: frozenset[str]) -> list[str]:
 def _form_message_answers(turn: Turn) -> bool:
     """¿El mensaje que arma el código con el formulario le responde al cliente?
     Solo si a ningún mensaje suyo del turno le queda nada al quitarle lo que
-    el formulario cubre (ver arriba). Un traspaso o un aplazamiento piden un
-    texto del bot."""
+    el formulario cubre (ver arriba) y, si las leyó, lo que cubren las tarifas.
+    Un traspaso o un aplazamiento piden un texto del bot."""
     if turn.trigger != "customer" or turn.signal == "deferral":
         return False
     messages = _customer_messages(turn)
     named = frozenset(
         _stem(t) for card in turn.card_read_texts for name in named_in_form(card) for t in _tokens(name)
     )
-    return bool(messages) and not any(_leftover(m, named) for m in messages)
+    also = _RATES_COVERED_WORDS if _rates_read(turn) else frozenset()
+    return bool(messages) and not any(_leftover(m, named, also) for m in messages)
 
 
 @code_check("ENV-02")
@@ -225,7 +246,11 @@ def check_form_with_reply(traj: Trajectory, ctx: CheckContext) -> CheckResult:
             continue
         lost = lost_narration(turn)
         detail = f"; narración descartada {quote(lost[0])}" if lost else ""
-        what = "solo el mensaje del formulario" if turn.card_read_texts else "formulario sin texto"
+        what = (
+            "formulario sin texto" if not turn.card_read_texts
+            else "solo las tarifas y el mensaje del formulario" if _rates_read(turn)
+            else "solo el mensaje del formulario"
+        )
         return failed(
             "ENV-02", turn.turn, f"turno {turn.turn}: {what} ante {quote(turn.inbound_text)}{detail}"
         )

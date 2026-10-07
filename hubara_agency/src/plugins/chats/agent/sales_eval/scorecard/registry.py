@@ -22,7 +22,10 @@ from src.plugins.chats.agent.sales_eval.scorecard.model import CheckSpec
 # que son solo un traspaso de remarketing se leen como traspaso (sin primer
 # contacto); CIE-03 y CIE-04 fallan con el episodio cerrado (modo turno);
 # VAR-07 cuenta el subtotal del mensaje del formulario (PR #392).
-REGISTRY_VERSION = 8
+# v9 (2026-10-07, prueba del operador ep_012): DES-08 no cuenta «me gusta» ni
+# contestar con el nombre «¿cuál te gustó?» como elegir; ENV-02 cuenta el
+# mensaje de tarifas como respuesta a cuánto cuesta el envío.
+REGISTRY_VERSION = 9
 
 LEVELS = ("critico", "mayor", "menor")
 KINDS = ("code", "judge")
@@ -119,7 +122,7 @@ CHECKS: tuple[CheckSpec, ...] = (
        ("memoria:remarketing_no_fit_lead",), ("proactive_offering_back_to_catalog",)),
     _c("DES-08", "Producto elegido queda en el pedido", "descubrimiento", "mayor", "code",
        "El cliente dijo que quiere un producto del catálogo que ya vio, o contestó solo con su nombre "
-       "(nombrarlo o preguntar si hay no es elegirlo).",
+       "(nombrarlo, preguntar si hay, decir que le gusta o contestar «¿cuál te gustó?» no es elegirlo).",
        "En ese turno el producto queda anotado en el pedido.",
        ("guion:etapa_descubrimiento paso 5",)),
     _c("DES-09", "Diseño antes que aroma", "descubrimiento", "menor", "code",
@@ -204,8 +207,10 @@ CHECKS: tuple[CheckSpec, ...] = (
        "Se envió el formulario en respuesta a un mensaje escrito del cliente.",
        "El mensaje del formulario responde solo si, al quitarle a cada mensaje del cliente un sí, una "
        "cantidad, el producto o las variantes que el formulario nombra y las cortesías, no queda nada; ante "
-       "una pregunta, una condición, otra variante o un traspaso, el bot responde con su propio texto.",
-       ("PR #281", "incidente 2026-10-06: el cliente leyó el mensaje del formulario", "revisión del PR #392")),
+       "una pregunta, una condición, otra variante o un traspaso, el bot responde con su propio texto. "
+       "Si el cliente leyó las tarifas en el turno, cuánto cuesta el envío también queda respondido.",
+       ("PR #281", "incidente 2026-10-06: el cliente leyó el mensaje del formulario", "revisión del PR #392",
+        "prueba del operador 2026-10-07: tarifas y formulario")),
     _c("ENV-03", "Datos del formulario quedan en el pedido", "envio", "mayor", "code",
        "El cliente envió el formulario.",
        "En ese turno sus datos quedan anotados en el pedido.",
