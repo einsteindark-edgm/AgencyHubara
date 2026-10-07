@@ -17,6 +17,7 @@ from temporalio import activity
 from src.plugins.chats.agent.sales.decisions import engine
 from src.plugins.chats.agent.sales.decisions.context import (
     TurnContext,
+    ViewedProduct,
     customer_window,
     missing_for_stage,
     order_facts,
@@ -84,6 +85,26 @@ def _turn_context(session_id: str, messages: list[dict]) -> TurnContext | None:
         # El ingest marcó que el último mensaje solo agradece o saluda
         # (capacidad `cortesia`): la guía no empuja la venta.
         courtesy=last_inbound_is_courtesy(metadata),
+        # La ficha (o la página de la web) desde la que escribe: la misma que
+        # proyecta la nota del ingest.
+        viewed_product=_viewed_product(metadata),
+    )
+
+
+def _viewed_product(metadata: dict) -> ViewedProduct | None:
+    """El producto desde el que escribe el cliente: el mismo `web_product_ref`
+    que proyecta la nota del ingest (resuelto, del episodio, sin pedido)."""
+    from src.plugins.chats.agent.sales.use_cases.web_product_ref import CATALOG_ORIGIN, viewed_product
+
+    state = viewed_product(metadata)
+    title = str((state or {}).get("title") or "").strip()
+    if state is None or not title:
+        return None
+    return ViewedProduct(
+        title=title,
+        handle=str(state.get("handle") or ""),
+        from_catalog=state.get("origin") == CATALOG_ORIGIN,
+        variant=str(state.get("variant") or "").strip() or None,
     )
 
 

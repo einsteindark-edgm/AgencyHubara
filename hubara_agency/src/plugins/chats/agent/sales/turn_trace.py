@@ -218,6 +218,11 @@ _CONTEXT_NOTE_PREFIXES: tuple[tuple[str, str], ...] = (
     ("[DATOS DEL PEDIDO", "draft"),
     ("[HANDOFF_REMARKETING]", "handoff"),
     ("[PLAN DEL TURNO]", "turn_plan"),
+    # El producto desde el que escribió el cliente (`web_product_ref`): la
+    # ficha del catálogo de WhatsApp o la página de la web (2026-10-07: salía
+    # como `other` y no se veía si el turno la tenía).
+    ("[PRODUCTO DE LA FICHA DEL CATÁLOGO", "catalog_card"),
+    ("[PRODUCTO VISTO EN LA WEB", "web_product"),
 )
 # Todas las notas «[CONTEXTO DE TURNO…]» empiezan igual: la de ráfaga, la hora
 # de Bogotá y las del ingest (episodio nuevo, foto citada). La traza decía

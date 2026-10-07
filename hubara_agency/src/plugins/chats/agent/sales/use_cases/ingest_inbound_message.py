@@ -2850,20 +2850,26 @@ def _build_reply_kwargs(
     quoted_id = context.get("id")
     # Solo ids string: un valor raro rompería el schema del dashboard (y con
     # él el render de TODA la sesión).
-    if not quoted_id or not isinstance(quoted_id, str):
-        return kwargs
-    reply_to: dict[str, Any] = {"id": quoted_id}
-    # «Enviar mensaje a la empresa»: la cita es la ficha del producto.
+    valid_id = quoted_id if quoted_id and isinstance(quoted_id, str) else None
+    # «Enviar mensaje a la empresa»: la cita es la ficha del producto. Meta
+    # puede mandarla sin `context.id` (2026-10-07, ficha abierta desde la
+    # lista de productos): la cita sale igual, con el código como id.
     referred = referred_product_id(context)
     if referred:
         state = metadata.get("web_product_ref")
         resolved = isinstance(state, dict) and state.get("sku") == referred and state.get("status") == "resolved"
         title = str(state.get("title") or "") if resolved else ""
         variant = f" ({state['variant']})" if resolved and state.get("variant") else ""
-        reply_to.update(author="catalog", text=f"{title}{variant}" if title else referred)
-        kwargs["reply_to"] = reply_to
+        kwargs["reply_to"] = {
+            "id": valid_id or referred,
+            "author": "catalog",
+            "text": f"{title}{variant}" if title else referred,
+        }
         return kwargs
-    entry = (metadata.get("outbound_media_index") or {}).get(quoted_id)
+    if valid_id is None:
+        return kwargs
+    reply_to: dict[str, Any] = {"id": valid_id}
+    entry = (metadata.get("outbound_media_index") or {}).get(valid_id)
     if isinstance(entry, dict):
         reply_to["author"] = "agent"
         title = entry.get("title") or entry.get("handle")

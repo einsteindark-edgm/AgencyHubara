@@ -474,6 +474,23 @@ def test_the_continuation_note_has_its_own_name() -> None:
     assert tt.context_note_names([one, two]) == ["continuation_note", "continuation_note"]
 
 
+def test_the_product_the_customer_wrote_from_has_its_own_name() -> None:
+    """Conversación de prueba del 2026-10-07 (···1604, turno 3): la nota de la
+    ficha del catálogo SÍ llegó, pero la traza decía `other` y en Calidad LLM
+    no se podía saber si el turno la tenía. Se arman con su productor real."""
+    from src.plugins.chats.agent.sales.use_cases.web_product_ref import (
+        CATALOG_ORIGIN,
+        build_web_product_note,
+    )
+
+    def note(origin: str) -> str | None:
+        return build_web_product_note({"web_product_ref": {
+            "sku": "HUB-CALABAZA", "origin": origin, "status": "resolved", "handle": "calabaza", "title": "Calabaza",
+        }})
+
+    assert tt.context_note_names([note(CATALOG_ORIGIN), note("web")]) == ["catalog_card", "web_product"]
+
+
 def test_every_answer_of_jev_reaches_the_step() -> None:
     """El paso «Jev lee el mensaje» se cortaba en 24 respuestas (el tope de
     las listas): en la etapa de variantes se perdían justo las de la etapa
