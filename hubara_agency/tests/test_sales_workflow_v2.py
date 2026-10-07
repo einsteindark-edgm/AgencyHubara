@@ -815,6 +815,24 @@ async def test_a_rejected_picker_does_not_silence_the_answer(tmp_path: Path) -> 
     assert _persisted(v2) == [answer]
 
 
+async def test_a_rejected_picker_whose_answer_lists_the_options_still_gets_the_picker(tmp_path: Path) -> None:
+    """VAR-01 (2026-10-07): con el selector rechazado el texto sale (diferencia
+    2), pero la guarda de listas miraba el selector INTENTADO y no corría: los
+    aromas le llegaban al cliente como texto plano. Ahora mira el entregado."""
+    listing = "Tenemos lavanda, café, sándalo y coco 🤍 ¿Cuál te gusta?"
+    rejected = json.dumps({"queued": False, "error": "invalid_options", "message": "No se envió nada."})
+
+    v2 = await _run(
+        HubaraSalesSessionWorkflowV2,
+        tmp_path,
+        responses=[_tool_resp("present_variant_picker"), _final_resp(listing)],
+        tool_results={"present_variant_picker": rejected},
+        variant_guard_result=True,
+    )
+
+    assert _sent(v2) == []  # la guarda puso el selector en lugar de la lista
+
+
 # ── 3 · Sin la ronda extra de la capa ② (quedan ① y ③) ──────────────────────
 
 

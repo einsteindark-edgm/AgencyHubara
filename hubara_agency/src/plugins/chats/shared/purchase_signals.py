@@ -236,6 +236,28 @@ def is_current_inbound_deferral(metadata: dict[str, Any]) -> bool:
     return bool(sig and sig.get("kind") == "deferral")
 
 
+def closing_blocker(metadata: dict[str, Any], *, require_confirmation: bool) -> str | None:
+    """Por qué no puede avanzar el cierre ahora (resumen, registro), o None.
+
+    * ``customer_deferred``: el último mensaje del cliente aplazó (CON-02).
+    * ``purchase_not_confirmed`` (solo con `require_confirmation`): hay un
+      episodio y nadie confirmó: ni la confirmación anotada en el episodio ni
+      un «Confirmar» o un «sí» en este mismo mensaje (CIE-02). El mensaje
+      cuenta porque la confirmación solo se anota con el producto en el
+      borrador, y un «Confirmar» legítimo no puede quedar frenado.
+
+    Sin episodio no hay con qué juzgar: no frena (falla abierta).
+    """
+    if is_current_inbound_deferral(metadata):
+        return "customer_deferred"
+    if not require_confirmation or has_purchase_confirmation(metadata) or not active_episode(metadata):
+        return None
+    signal = current_signal(metadata)
+    if signal and signal.get("kind") == "affirmation":
+        return None
+    return "purchase_not_confirmed"
+
+
 def build_deferral_note(
     metadata: dict[str, Any], *, resume_label: str | None = None
 ) -> str | None:

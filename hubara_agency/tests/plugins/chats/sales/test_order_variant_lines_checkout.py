@@ -14,6 +14,8 @@ cliente confirmó dos lilas. Ahora el borrador guarda una línea por variante
 """
 from __future__ import annotations
 
+from tests.plugins.chats.sales.confirmation_fixture import CONFIRMED_NOW
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,7 +68,7 @@ def _seed(vault: Path, items: list[dict[str, Any]]) -> Path:
     }
     path = vault / KEY / "metadata.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"episodes": [episode]}, ensure_ascii=False), encoding="utf-8")
+    path.write_text(json.dumps({"episodes": [episode], **CONFIRMED_NOW}, ensure_ascii=False), encoding="utf-8")
     return path
 
 
