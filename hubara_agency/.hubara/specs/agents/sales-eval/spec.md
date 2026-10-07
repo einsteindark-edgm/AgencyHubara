@@ -304,6 +304,33 @@ capacidad que el código pide sin su `about` NO SHALL certificar (DB003).
 - WHEN el operador abre «Motor de decisiones»
 - THEN ve «ventas-2, versión 2», que lo eligió la configuración de la tienda y que el código trae «ventas», y «Baja de mensajes» bajo «Al leer cada mensaje del cliente» con «Jev en sombra: mide, decide la regla»
 
+### Requirement: ENV-02 cuenta el mensaje del formulario solo cuando responde
+
+El formulario de datos de envío sale con un mensaje que arma el código
+(producto, variantes, cantidad y subtotal; sin Flow, la lista de campos) y la
+traza lo trae en `card_text`. ENV-02 SHALL contar ese mensaje como respuesta
+del bot solo si a CADA mensaje del cliente en el turno no le queda nada al
+quitarle lo que el formulario cubre: un sí (también con letras repetidas,
+«Okis» o un emoji de sí como 👍 ❤️ 🤍), una cantidad («2», «dos», «uno»,
+«x2», «2 und», «2 de esas», «2 velas»), el producto y las variantes que nombra
+el PROPIO mensaje del formulario (en cualquier género o número), y cortesías
+o relleno («por favor», «gracias», artículos). Cualquier resto (una pregunta,
+una condición, una variante que el formulario no nombra, otro emoji), un
+aplazamiento o un turno de traspaso SHALL exigir un texto propio del bot. El
+veredicto SHALL depender solo de la traza, nunca del catálogo.
+
+Límite: es una regla de palabras que falla cerrada; ante la duda pide texto
+(un sí poco común puede fallar de más). Los casos viven en el trinquete de
+`tests/evals/scorecard/test_checks_envio.py`: se agregan, nunca se sacan.
+
+#### Scenario: Pregunta después de un sí (revisión del PR #392)
+
+- GIVEN el formulario salió con «2× Velón Koala (Blanco, Lavanda)» y sin texto del bot
+- WHEN el cliente escribió «sí, cuánto se demora», o en una ráfaga «sí» y después «cuánto se demora»
+- THEN ENV-02 falla en ese turno
+- AND con «2», «Siii», «👍» o «Lavanda» ENV-02 pasa
+- AND con «Azul» ENV-02 falla: el formulario no la nombra (el bot no recogió la elección)
+
 ## Out of scope
 
 - La eval legada por métricas DeepEval (convive durante la transición, plan §3.7).

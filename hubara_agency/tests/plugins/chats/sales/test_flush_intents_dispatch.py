@@ -432,18 +432,17 @@ async def test_shipping_flow_placeholder_offers_cod_when_total_over_45k(
     assert "transportadora" in text.lower()
 
 
-def test_humanize_payment_maps_new_methods():
+def test_payment_label_maps_new_methods():
     """`payment_link` es método nuevo; `transfer` ahora se lee como pago
-    anticipado; `card` queda como legacy (órdenes viejas)."""
-    from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
-        _humanize_payment,
-    )
+    anticipado; `card` queda como legacy (órdenes viejas). Vive con el texto
+    del resumen del pedido (`card_messages`), que también arma la tool."""
+    from src.plugins.chats.agent.sales.card_messages import payment_label
 
-    assert _humanize_payment("payment_link") == "Link de pago"
-    assert "anticipado" in _humanize_payment("transfer").lower()
-    assert _humanize_payment("cash_on_delivery") == "Contra entrega"
-    assert _humanize_payment("card") == "Tarjeta"
-    assert _humanize_payment(None) == "Por confirmar"
+    assert payment_label("payment_link") == "Link de pago"
+    assert "anticipado" in payment_label("transfer").lower()
+    assert payment_label("cash_on_delivery") == "Contra entrega"
+    assert payment_label("card") == "Tarjeta"
+    assert payment_label(None) == "Por confirmar"
 
 
 @pytest.mark.asyncio

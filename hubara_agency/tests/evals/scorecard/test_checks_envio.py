@@ -43,20 +43,119 @@ def test_env01_legacy_counts_ui_components() -> None:
 
 
 # ── ENV-02 ────────────────────────────────────────────────────────────────
+#: El mensaje que arma el código con el formulario (la traza lo trae en
+#: `card_text`): toda traza nueva con formulario lo lleva.
+_FORM_MESSAGE = (
+    "Para enviarte tu pedido necesito unos datos 🤍\n\n• *2× Velón Koala* (Blanco, Lavanda)\n"
+    "Subtotal en productos: $70.000\n\nEl envío va aparte (lo calcula la transportadora). "
+    "Toca «Completar datos» para llenar el formulario (toma 30 segundos)."
+)
+_VARIANTS_DRAFT = {"producto": "Velón Koala", "color": "Blanco", "aroma": "Lavanda", "cantidad": "2"}
+
+
+def _form(**kw):
+    return tool(_FORM, card_text=_FORM_MESSAGE, **kw)
+
+
 def test_env02_form_with_reply_text_passes() -> None:
-    t = traj(T(1, inbound="sí, lo quiero", sent=["¡Perfecto! Te dejo el formulario"], tools=[tool(_FORM)]))
+    t = traj(T(1, inbound="sí, lo quiero", sent=["¡Perfecto! Te dejo el formulario"], tools=[_form()]))
     assert _run("ENV-02", t).verdict == "pasa"
 
 
 def test_env02_bare_form_after_handoff_fails_with_discarded_narration() -> None:
+    """Un traspaso (el cliente le respondió a remarketing) pide un texto del
+    bot: el mensaje del formulario no le contesta lo que dijo."""
     t = traj(
         T(1, inbound="hola", sent=["¡Buenos días!"]),
-        T(2, trigger="handoff", inbound="Usuario respondió: voy en camino", tools=[tool(_FORM)],
+        T(2, trigger="handoff", inbound="Usuario respondió: voy en camino", tools=[_form()],
           narration=["Perfecto, te dejo el formulario."]),
     )
     r = _run("ENV-02", t)
     assert (r.verdict, r.turn) == ("falla", 2)
     assert "te dejo el formulario" in r.evidence
+
+
+def test_env02_a_quantity_answered_with_the_form_passes() -> None:
+    """Incidente 2026-10-06 (bot V2, turno 9): el cliente dijo «2» y el bot
+    mandó solo el formulario. Su mensaje (producto, variantes, cantidad y
+    subtotal) le responde: el check lo daba por «formulario sin texto»."""
+    t = traj(T(1, inbound="2", draft=_VARIANTS_DRAFT, tools=[_form()]))
+
+    r = _run("ENV-02", t)
+
+    assert r.verdict == "pasa", r.evidence
+
+
+def test_env02_a_yes_answered_with_the_form_passes() -> None:
+    t = traj(T(1, inbound="Sí, de una", signal="affirmation", draft=_VARIANTS_DRAFT, tools=[_form()]))
+
+    assert _run("ENV-02", t).verdict == "pasa"
+
+
+def test_env02_choosing_the_last_variant_with_the_form_passes() -> None:
+    t = traj(T(1, inbound="Lavanda", draft=_VARIANTS_DRAFT,
+               tools=[tool("set_order_slot", aroma="Lavanda"), _form()]))
+
+    assert _run("ENV-02", t).verdict == "pasa"
+
+
+def test_env02_a_question_answered_only_with_the_form_fails() -> None:
+    """El mensaje del formulario no responde una pregunta: el cliente se queda
+    sin respuesta aunque lea el formulario."""
+    t = traj(T(1, inbound="¿y cuánto se demora en llegar a Cali?", draft=_VARIANTS_DRAFT, tools=[_form()]))
+
+    r = _run("ENV-02", t)
+
+    assert (r.verdict, r.turn) == ("falla", 1)
+    assert "cuánto se demora" in r.evidence
+
+
+def test_env02_a_question_without_question_mark_also_needs_a_reply() -> None:
+    t = traj(T(1, inbound="y cuanto se demora en llegar a cali", draft=_VARIANTS_DRAFT, tools=[_form()]))
+
+    assert _run("ENV-02", t).verdict == "falla"
+
+
+def test_env02_a_yes_with_a_question_needs_a_reply() -> None:
+    t = traj(T(1, inbound="sí, pero ¿hacen envíos a Pasto?", signal="affirmation", draft=_VARIANTS_DRAFT,
+               tools=[_form()]))
+
+    assert _run("ENV-02", t).verdict == "falla"
+
+
+def test_env02_a_deferral_answered_with_the_form_fails() -> None:
+    t = traj(T(1, inbound="voy en camino, luego te escribo", signal="deferral", draft=_VARIANTS_DRAFT,
+               tools=[_form()]))
+
+    assert _run("ENV-02", t).verdict == "falla"
+
+
+def test_env02_a_complaint_answered_with_the_form_fails() -> None:
+    t = traj(T(1, inbound="el pedido anterior me llegó roto", draft=_VARIANTS_DRAFT, tools=[_form()]))
+
+    assert _run("ENV-02", t).verdict == "falla"
+
+
+def test_env02_pr281_with_the_form_message_still_fails() -> None:
+    """El episodio del PR #281 con la forma nueva de la traza (el formulario
+    trae su mensaje): el traspaso con «voy en camino» sigue sin respuesta."""
+    from tests.evals.scorecard.incidents import pr281_before_fix
+
+    t = pr281_before_fix()
+    assert t.turns[8].tool("request_shipping_details").card_text
+
+    r = _run("ENV-02", t)
+
+    assert (r.verdict, r.turn) == ("falla", 9)
+
+
+def test_env02_reads_what_the_customer_read_and_the_registry_says_so() -> None:
+    from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION, SPECS_BY_ID
+
+    assert REGISTRY_VERSION >= 7
+    rule = SPECS_BY_ID["ENV-02"].rule.lower()
+    assert "mensaje" in rule and "pregunta" in rule
+    assert "no queda nada" in rule  # la regla falla cerrada (revisión del PR #392)
 
 
 def test_env02_form_after_confirm_button_is_not_applicable() -> None:
@@ -71,6 +170,7 @@ def test_env02_without_form_is_not_applicable() -> None:
 def test_env02_legacy_bare_form_fails() -> None:
     t = traj(T(1, inbound="sí", intents=["shipping_flow"]), fidelity="legacy")
     assert (_run("ENV-02", t).verdict, _run("ENV-02", t).turn) == ("falla", 1)
+
 
 
 # ── ENV-03 ────────────────────────────────────────────────────────────────
