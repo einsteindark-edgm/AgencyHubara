@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- SOLO debug (arnés E2E): el shell despierta el proceso en segundo plano para que corra el vigía, como tras
+             reiniciar el teléfono. En release no existe: ninguna otra app puede despertar la app. -->
+        <receiver
+            android:name=".E2eWakeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.hubara.operator.E2E_WAKE" />
+                <!-- Un push de Firebase simulado (escenario S20): los extras son los datos del push. -->
+                <action android:name="com.hubara.operator.E2E_PUSH" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

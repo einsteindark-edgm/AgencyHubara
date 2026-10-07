@@ -11,7 +11,7 @@ export function NotesPanel({ detail }: { detail: OrderDetail }) {
         <div
           style={{ fontSize: 11, color: "var(--fg-muted)", padding: 8 }}
         >
-          Sin notas. Agendá el pedido para añadir una nota visible al equipo.
+          Sin notas. Agenda el pedido para añadir una nota visible al equipo.
         </div>
       </InsBlock>
     );

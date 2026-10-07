@@ -551,7 +551,6 @@ en canary/on, y el techo de producción es `off`.
     recibe un clon). Entra con el `terraform apply` de platform y el redeploy
     (render del `.env` desde SSM); volver atrás = `"ventas"`. `ventas-2` no
     viaja a un clon de forge (`deletes`).
-
     **`ventas-3@3`** (#390, 2026-10-07) es `ventas-2` con los arreglos de la
     conversación de prueba del 2026-10-06: cortesía (un saludo que abre la
     conversación no es cortesía; vista `reply_gap`), compra (un «sí» que no
@@ -564,6 +563,24 @@ en canary/on, y el techo de producción es `off`.
     de Backend deploy, y se verifica con `decisions.bundle_ready
     bundle=ventas-3@3` en el log; volver atrás = `"ventas-2"`. Tampoco viaja
     a un clon de forge (`deletes`).
+
+**App Operador (2026-10-05).**
+- La app nativa del operador (PR #385) tiene su paquete,
+  `chats/shared/operator/decisions/bundles/operador/` (catálogo propio: no
+  hereda el de ventas, que exigiría sus 29 capacidades). Dos capacidades:
+  `burbuja` (choice entre las jugadas legales que ya arman las reglas de
+  `mobile_rules` + «ninguna»; ≥ 0,6 esa burbuja va primero y resaltada) e
+  `incendio` (gravedad, tipo y, si ya hubo una lectura, «¿empeoró?»; cada
+  parte con certeza es de Jev, la otra de las reglas; piso: salud o pedido
+  sin registrar siguen graves). Corren por el MISMO `decide()`: el resolutor
+  `registry.foreign_capability(nombre, bundle=…, builtins=…)` (un
+  `BundledCapability` con los builtins de su paquete) + `decide_for_session` (`chats/api/mobile_decisions.py`), así que el modo
+  sale del control del motor (`bots.CAPABILITIES` las trae; se mueven por
+  comando con `decisions/control.py`, techo `SALES_CAPABILITIES_CEILING`) y quedan las métricas, los desacuerdos, el
+  costo y la decisión en la conversación (`stage: "operador"`). La pestaña
+  muestra el paquete junto al de la tienda (`bundles`). Lo único propio de
+  la app es la latencia: la burbuja espera 2,5 s como mucho, los incendios
+  nada (caché por versión del chat y modo).
 
 **F8 hecho (2026-10-02).**
 - El lector de Jev del Order Sentinel tiene su paquete,
@@ -618,6 +635,7 @@ tocarlos.
 | Remarketing (contactar, producto nombrado, fuera de catálogo) | `decide()` vía el enchufe compartido | sí (F2–F4) |
 | Abandono (cierre) | `decide()` | sí (F2) |
 | Order Sentinel | directo al puerto, con las tablas de su paquete (`centinela`) | sí (F8) |
+| App Operador: burbuja principal e incendios de chat (`chats/api/mobile_decisions.py`) | `decide_for_session` (paquete `operador`) | sí (2026-10-06) |
 
 **Dos huecos que cierra F2:**
 

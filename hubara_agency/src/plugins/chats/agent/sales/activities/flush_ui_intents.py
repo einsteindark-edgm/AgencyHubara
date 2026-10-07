@@ -53,6 +53,7 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -351,12 +352,25 @@ async def flush_pending_ui_intents_activity(session_id: str) -> list[dict[str, A
     return await flush_pending_ui_intents_report(session_id)
 
 
-async def flush_pending_ui_intents(session_id: str) -> int:
+async def flush_pending_ui_intents(
+    session_id: str,
+    *,
+    only_ids: Collection[str] | None = None,
+    operator_tool: str | None = None,
+) -> int:
     """Cantidad de intents enviados (excluye los que fallaron y los unknown)."""
-    return sum(1 for r in await flush_pending_ui_intents_report(session_id) if r["ok"])
+    report = await flush_pending_ui_intents_report(
+        session_id, only_ids=only_ids, operator_tool=operator_tool
+    )
+    return sum(1 for r in report if r["ok"])
 
 
-async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any]]:
+async def flush_pending_ui_intents_report(
+    session_id: str,
+    *,
+    only_ids: Collection[str] | None = None,
+    operator_tool: str | None = None,
+) -> list[dict[str, Any]]:
     """Lee `metadata.json[pending_ui_intents]` y dispatch a `send_*`.
 
     Devuelve un registro por intent intentado, en orden: `{kind, wamid, ok}`
@@ -369,6 +383,13 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
     por Meta Business Agent (no hay turno del bot que flushee las
     instrucciones de pago). `activity.logger` es seguro fuera de un activity:
     sin contexto solo omite el sufijo con los datos del activity.
+
+    ``only_ids``: flush ACOTADO — se envían solo los intents con esos ids; el
+    resto de la cola no se toca (ni se envía ni se descarta). Lo usa la acción
+    del operador desde la app (``session-actions .../tools/{tool}``).
+    ``operator_tool``: lo que sale lo mandó el OPERADOR con esa acción — el
+    historial queda con ``sender: "human"`` (como ``append_human_event``) y
+    ``operator_tool``, y las notas dicen "El operador envió…".
 
     `metadata.json` se lee UNA vez (qué mandar, a qué número) y NUNCA se
     escribe con esa copia: cada cambio (sacar de la cola, el índice de fotos,
@@ -393,6 +414,11 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
     data = read_retrying_transient_errors_sync(store, session_id)
 
     intents = [it for it in (data.get("pending_ui_intents") or []) if isinstance(it, dict)]
+    if only_ids is not None:
+        # Flush ACOTADO (la acción del operador desde la app): solo lo que ella
+        # encoló; el resto de la cola ni se envía ni se descarta.
+        wanted = set(only_ids)
+        intents = [it for it in intents if ui_intent_id(it) in wanted]
     if not intents:
         return []
 
@@ -586,8 +612,18 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
         # Marker al histórico del dashboard (post-envío — best-effort: si
         # crashea, el intent NO se reenvía y el flush sigue).
         try:
-            history_event = _build_history_event(kind, params, sent_text=sent.get("text"))
+            history_event = _build_history_event(
+                kind,
+                params,
+                actor="El operador" if operator_tool else "El bot",
+                sent_text=sent.get("text"),
+            )
             if history_event is not None:
+                if operator_tool:
+                    # Lo mandó el humano desde la app: mismo marcador que
+                    # `append_human_event` + la acción que usó.
+                    history_event["sender"] = "human"
+                    history_event["operator_tool"] = operator_tool
                 # `wamid`: destino de las citas del cliente ("este" citando
                 # los botones / el catálogo / la foto). Sin él el dashboard
                 # muestra "Mensaje no disponible" (caso 2026-09-17).
@@ -1601,7 +1637,11 @@ def _card_marker(head: str, text: str) -> str:
 
 
 def _build_history_event(
-    kind: str | None, params: dict[str, Any], *, sent_text: str | None = None
+    kind: str | None,
+    params: dict[str, Any],
+    *,
+    actor: str = "El bot",
+    sent_text: str | None = None,
 ) -> dict[str, Any] | None:
     """Marker human-readable del intent enviado, para el JSONL del dashboard.
 
@@ -1640,7 +1680,7 @@ def _build_history_event(
 
     if kind == "product_detail":
         caption = (params.get("caption") or "").strip()
-        content = "📷 El bot envió una foto del producto"
+        content = f"📷 {actor} envió una foto del producto"
         if caption:
             content += f": «{_trunc(caption)}»"
     elif kind == "products_list":
@@ -1649,9 +1689,9 @@ def _build_history_event(
         )
         category = str(params.get("category") or "").strip()
         content = (
-            f"🛍️ El bot envió los productos de la categoría {category} ({total})"
+            f"🛍️ {actor} envió los productos de la categoría {category} ({total})"
             if category
-            else f"🛍️ El bot envió el catálogo con {total} productos"
+            else f"🛍️ {actor} envió el catálogo con {total} productos"
         )
     elif kind == "categories":
         content = _categories_note(params)
@@ -1661,27 +1701,27 @@ def _build_history_event(
         # operador, Jev y Calidad LLM no los veían). Si el Flow no salió, la
         # lista de campos que se mandó por texto (`sent_text`).
         if sent_text:
-            content = _card_marker("📋 El bot pidió los datos de envío por texto", sent_text)
+            content = _card_marker(f"📋 {actor} pidió los datos de envío por texto", sent_text)
         else:
             content = _card_marker(
-                "📋 El bot pidió los datos de envío (formulario)", str(params.get("body") or "")
+                f"📋 {actor} pidió los datos de envío (formulario)", str(params.get("body") or "")
             )
     elif kind == "order_confirmation":
         # Sin la dirección del cliente: el registro no la necesita.
         content = _card_marker(
-            "🧾 El bot envió el resumen del pedido con botones para confirmar", order_card_record(params)
+            f"🧾 {actor} envió el resumen del pedido con botones para confirmar", order_card_record(params)
         )
     elif kind == "reaction":
-        content = f"El bot reaccionó con {params.get('emoji', '🤍')} a un mensaje del cliente"
+        content = f"{actor} reaccionó con {params.get('emoji', '🤍')} a un mensaje del cliente"
     elif kind == "contact_card":
-        content = "👤 El bot envió la tarjeta de contacto del asesor"
+        content = f"👤 {actor} envió la tarjeta de contacto del asesor"
     elif kind == "cta_url":
         button = _trunc(str(params.get("button_text") or ""), 60)
-        content = f"🔗 El bot envió un botón «{button}» → {params.get('url', '')}"
+        content = f"🔗 {actor} envió un botón «{button}» → {params.get('url', '')}"
     elif kind == "product_gallery":
         n = min(len(params.get("image_urls") or []), _GALLERY_MAX_IMAGES)
         lead = (params.get("lead_caption") or "").strip()
-        content = f"🖼️ El bot envió {n} fotos del producto"
+        content = f"🖼️ {actor} envió {n} fotos del producto"
         if lead:
             content += f" — «{_trunc(lead)}»"
     elif kind == "quick_replies":
@@ -1690,14 +1730,14 @@ def _build_history_event(
             for b in (params.get("buttons") or [])
             if b.get("title")
         )
-        content = f"🔘 El bot envió botones: {titles}"
+        content = f"🔘 {actor} envió botones: {titles}"
         body = _trunc(str(params.get("body") or ""))
         if body:
             content += f" — con el mensaje: «{body}»"
     else:
         # Kind futuro sin descripción específica: nota genérica — si se
         # envió con éxito, el operador merece saber que ALGO salió.
-        content = f"📤 El bot envió un mensaje interactivo ({kind})"
+        content = f"📤 {actor} envió un mensaje interactivo ({kind})"
 
     return {
         "role": "assistant",
@@ -1772,6 +1812,8 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
 
     Best-effort: si falla, loguea pero NO bloquea el envío del Flow.
     El nfm_reply (cuando llegue) limpia el flag desde `ingest_inbound_message`.
+    Se escribe bajo el lock del store sobre la lectura fresca
+    (`_update_metadata`): un `update()` del ingest en vuelo ya no lo pisa.
 
     Resolución del session_id desde `to_number`: respetamos el prefijo
     canónico `WHATSAPP_SESSION_PREFIX` (mismo del wrapper arriba).
@@ -1782,9 +1824,8 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
     misma activity attempt-1 → attempt-N. Si la activity hace retry (Meta tira
     flaky, worker crash mid-execution), el ghosting window NO se renueva por
     cada intento — preserva el momento "real" en que el workflow programó el
-    envío del Flow. Fallback a `time.time()` solo defensivo por si la helper se
-    llamara desde fuera de un activity context en el futuro (no es el caso hoy
-    — todos los call-sites están dentro de `flush_pending_ui_intents_activity`).
+    envío del Flow. Fallback a `time.time()` fuera de un activity context (el
+    flush que invoca la API: `/order` y las acciones del operador).
 
     Escribe SOLO el flag, con `update()` sobre la lectura fresca: el flush lo
     respeta al sacar el Flow de la cola (run 01a0a0f1, 2026-09-14: la copia
@@ -1804,8 +1845,7 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
         # SDK-native: estable entre retries de esta activity attempt.
         ts_ms = int(activity.info().scheduled_time.timestamp() * 1000)
     except RuntimeError:
-        # Defensive — solo dispararía si la helper fuese invocada fuera de un
-        # activity context en el futuro. Wall-clock se acerca lo suficiente.
+        # Fuera de un activity context: wall-clock se acerca lo suficiente.
         ts_ms = int(time.time() * 1000)
 
     def _mark(fresh: dict[str, Any]) -> dict[str, Any]:

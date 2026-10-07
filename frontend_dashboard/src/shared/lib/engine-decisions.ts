@@ -67,6 +67,8 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   rescate: "Rescate",
   portavelas: "Portavelas",
   saludo: "Saludo",
+  burbuja: "Burbuja principal (App Operador)",
+  incendio: "Incendio de chat (App Operador)",
 };
 
 export function capabilityLabel(id: string): string {
@@ -276,6 +278,34 @@ const SENTENCES: Record<string, (value: unknown) => Sentence> = {
   },
   portavelas: () => plain("Revisa lo que dice del portavelas"),
   saludo: (value) => plain(value === true ? "Agrega la bienvenida" : "No hacía falta agregar la bienvenida"),
+  burbuja: (value) => {
+    const raw = str(value);
+    const index = raw === null ? Number.NaN : Number(raw);
+    return Number.isInteger(index)
+      ? plain(`Resalta la burbuja ${index + 1} de la lista`)
+      : plain("No resalta ninguna: hace falta una respuesta escrita");
+  },
+  incendio: (value) => {
+    const fire = obj(value);
+    const parts = [FIRE_SEVERITY[String(fire.severity)] ?? String(fire.severity), FIRE_KIND[String(fire.kind)] ?? "otra cosa"];
+    if (fire.getting_worse === true) parts.push("empeora");
+    return fire.severity === "grave" ? warn(parts.join(" · ")) : plain(parts.join(" · "));
+  },
+};
+
+/** La gravedad y el tipo de un incendio de la App Operador, en palabras. */
+const FIRE_SEVERITY: Record<string, string> = { grave: "Grave", hoy: "Hoy", espera: "Puede esperar" };
+const FIRE_KIND: Record<string, string> = {
+  wants_human: "pide una persona",
+  angry: "queja o molestia",
+  asking_status: "pregunta por su pedido",
+  payment_proof: "comprobante de pago",
+  order_problem: "problema con el pedido o el envío",
+  health: "tema de salud",
+  praise: "felicita o agradece",
+  sale_at_risk: "quiere comprar",
+  bot_stuck: "el bot no pudo seguir",
+  other: "otra cosa",
 };
 
 /** Qué decidió la capacidad, en una frase, y si merece atención. */
@@ -288,6 +318,10 @@ export function decisionSentence(d: EngineDecisionView): Sentence {
 // ── Las preguntas de Jev ─────────────────────────────────────────────────────
 
 const QUESTIONS: Record<string, string> = {
+  "burbuja.cual": "¿Qué acción le conviene enviar al operador?",
+  "incendio.gravedad": "¿Qué tan urgente es responderle?",
+  "incendio.tipo": "¿Qué plantea el cliente?",
+  "incendio.empeora": "¿Empeoró desde la última lectura?",
   "compra.que_hace": "¿Qué hace el cliente con su mensaje?",
   "compra.pregunta_compra": "¿El asesor le había preguntado si confirma la compra?",
   "retoma.aplaza": "¿Dice que retomará más adelante?",

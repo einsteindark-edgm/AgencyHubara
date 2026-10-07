@@ -1,0 +1,67 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "El resultado de una campaña: el envío y lo que le atribuye el plugin de marketing (respuestas, ventas, bajas).",
+  "schema": 1,
+  "id": "campana",
+  "title": "{{campana.name | default:'Campaña'}}",
+  "params": ["campaign_id"],
+  "data": {
+    "campana": { "get": "/api/marketing/campaigns/{{params.campaign_id}}", "refreshOn": ["marketing"] },
+    "stats": { "get": "/api/marketing/campaigns/{{params.campaign_id}}/stats", "optional": true, "refreshOn": ["marketing", "orders"] }
+  },
+  "body": [
+    {
+      "type": "notice", "tone": "danger", "title": "La campaña no salió", "text": "{{campana.failure_reason}}",
+      "visible": "{{campana.failure_reason | present}}"
+    },
+    {
+      "type": "row",
+      "children": [
+        {
+          "type": "tag",
+          "text": "{{campana.status | map:'draft=Borrador;scheduled=Programada;sending=Enviando;sent=Enviada;failed=No salió'}}",
+          "tone": "{{campana.status | map:'sent=success;failed=danger;scheduled=primary;sending=primary;*=neutral'}}"
+        },
+        { "type": "text", "style": "caption", "tone": "muted", "text": "{{campana.sent_at_ms | default:campana.created_at_ms | datetime}}" }
+      ]
+    },
+    {
+      "type": "grid", "columns": 2, "visible": "{{stats | present}}",
+      "children": [
+        { "type": "stat", "icon": "send", "label": "Enviados", "value": "{{stats.sent | default:0 | number}}", "caption": "de {{stats.planned | default:0 | number}} planeados" },
+        { "type": "stat", "icon": "chat", "label": "Respondieron", "value": "{{stats.replied | default:0 | number}}", "caption": "{{stats.replied | divide:stats.sent | percent}} de los enviados" },
+        { "type": "stat", "icon": "orders", "tone": "success", "label": "Ventas", "value": "{{stats.attributed_orders | default:0 | number}}", "caption": "{{stats.attributed_revenue_cop | default:0 | money}}" },
+        { "type": "stat", "icon": "close", "tone": "warning", "label": "Bajas", "value": "{{stats.opted_out | default:0 | number}}", "caption": "pidieron no recibir más" }
+      ]
+    },
+    {
+      "type": "key_value", "label": "COSTO DEL ENVÍO", "value": "{{stats.spent_usd_micros | divide:1000000 | money:'USD'}}",
+      "visible": "{{stats.spent_usd_micros | present}}"
+    },
+    {
+      "type": "notice", "tone": "info", "text": "Las ventas pueden estar desactualizadas: no se pudo leer la tienda.",
+      "visible": "{{stats.orders_stale}}"
+    },
+    {
+      "type": "section", "title": "Mensaje",
+      "children": [
+        {
+          "type": "card",
+          "children": [
+            { "type": "key_value", "label": "ENCABEZADO", "value": "{{campana.message.header | default:'—'}}" },
+            { "type": "key_value", "label": "MENSAJE", "value": "{{campana.message.body | default:'—'}}" },
+            { "type": "key_value", "label": "SEGMENTOS", "value": "{{campana.segments | join:', ' | default:'—'}}" },
+            {
+              "type": "key_value", "label": "CUPÓN", "value": "{{campana.coupon_code}} · {{campana.percent}} % de descuento",
+              "visible": "{{campana.coupon_code | present}}"
+            },
+            {
+              "type": "key_value", "label": "VÁLIDO HASTA", "value": "{{campana.valid_until | date}}",
+              "visible": "{{campana.valid_until | present}}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

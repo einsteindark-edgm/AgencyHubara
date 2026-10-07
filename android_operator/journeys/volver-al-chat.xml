@@ -1,0 +1,11 @@
+<journey name="Atender otra cosa y volver">
+  <description>Desde un chat, ir a un incendio y volver al chat anterior con todo igual.</description>
+  <actions>
+    <action>Abre la conversación de prueba "wa_test_laura"</action>
+    <action>Toca "Incendios" en la barra inferior</action>
+    <action>Toca la primera tarjeta de incendio</action>
+    <action>Verifica que aparece el botón "Volver con"</action>
+    <action>Toca "Volver con"</action>
+    <action>Verifica que estás de nuevo en la conversación "wa_test_laura"</action>
+  </actions>
+</journey>

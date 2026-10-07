@@ -1,0 +1,36 @@
+# App Operador nativa (android_operator/): tests locales y build de release con R8 en cada PR que la
+# toque. No firma ni publica nada: solo verifica que compila, que los tests pasan y que R8 no rompe.
+name: Android operator
+
+on:
+  pull_request:
+    paths: ["android_operator/**", ".github/workflows/android-operator.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: android_operator
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # :core:sdui:test incluye ScreensRepoTest: cada pantalla del servidor (android_operator/screens/) tiene que poder
+      # pintarse entera con esta versión de la app antes de que frontend-deploy la publique.
+      - name: Tests locales (JVM + Robolectric) y pantallas del servidor
+        run: ./gradlew testDebugUnitTest :core:model:test :core:sdui:test --console=plain
+
+      - name: Build de release con R8
+        run: ./gradlew :app:assembleRelease --console=plain

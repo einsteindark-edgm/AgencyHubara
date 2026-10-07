@@ -15,6 +15,7 @@ Para que un sitio nuevo no dependa de la memoria de nadie:
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
@@ -120,6 +121,36 @@ def test_secrets_uploads_only_keys_with_a_value(tmp_path: Path, monkeypatch: pyt
 
     names = [cmd[cmd.index("--name") + 1] for cmd in calls]
     assert names == ["/hubara/nuevo/DEEPSEEK_API_KEY"]
+
+
+def test_a_json_file_is_loaded_with_at_and_travels_in_one_line(tmp_path: Path) -> None:
+    # Las llaves de Firebase son ARCHIVOS: la cuenta de servicio (con una llave privada de varias líneas) y el
+    # google-services.json. El .env que arma el deploy desde SSM es una línea por clave: va en una sola línea.
+    account = {"type": "service_account", "private_key": "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"}
+    (tmp_path / "descargas").mkdir()
+    (tmp_path / "descargas" / "cuenta.json").write_text(json.dumps(account, indent=2), encoding="utf-8")
+    env = tmp_path / "secrets.hubara.env"
+    env.write_text("FCM_SERVICE_ACCOUNT_JSON=@descargas/cuenta.json\nOPENROUTER_API_KEY=llave\n", encoding="utf-8")
+
+    pairs = dict(boot.parse_env_file(env))
+
+    assert "\n" not in pairs["FCM_SERVICE_ACCOUNT_JSON"]
+    assert json.loads(pairs["FCM_SERVICE_ACCOUNT_JSON"]) == account
+    assert pairs["OPENROUTER_API_KEY"] == "llave"
+
+
+@pytest.mark.parametrize(
+    ("content", "why"),
+    [("linea 1\nlinea 2\n", "varias líneas"), ('{"clave": "va$lor"}', "$"), (json.dumps({"x": "a" * 5000}), "4 KB")],
+    ids=["varias_lineas", "signo_pesos", "mas_de_4_kb"],
+)
+def test_a_file_that_would_break_the_env_or_ssm_is_refused(tmp_path: Path, content: str, why: str) -> None:
+    (tmp_path / "archivo").write_text(content, encoding="utf-8")
+    env = tmp_path / "secrets.env"
+    env.write_text("FIREBASE_ANDROID_CONFIG_JSON=@archivo\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="FIREBASE_ANDROID_CONFIG_JSON"):
+        boot.parse_env_file(env)
 
 
 # ── Verificar antes del deploy ──────────────────────────────────────────────

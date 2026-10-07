@@ -1,0 +1,13 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+google-services.json
+# Claves de firma: NUNCA al repo (es público). Viven en ~/.gradle/gradle.properties y en un lugar seguro.
+*.jks
+*.keystore

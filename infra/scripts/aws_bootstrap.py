@@ -199,16 +199,45 @@ def cmd_state(a):
 
 
 # ── secrets ─────────────────────────────────────────────────────────────────
+#: SSM Standard (el tier del módulo `secrets`) no guarda más de 4 KB por parámetro.
+SSM_MAX_CHARS = 4096
+
+
+def _file_value(key, ref, base_dir):
+    """`KEY=@ruta`: el contenido del archivo (relativa al .env). Un JSON va en UNA línea: el deploy arma el `.env`
+    del contenedor con una línea por clave (`render-env-from-ssm.sh`) y compose no acepta `$` sin escapar."""
+    path = os.path.join(base_dir, os.path.expanduser(ref))
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = fh.read()
+    except OSError as exc:
+        sys.exit(f"✗ {key}: no se pudo leer {path} ({exc.strerror}). No se subió nada.")
+    try:
+        value = json.dumps(json.loads(raw), ensure_ascii=False, separators=(",", ":"))
+    except ValueError:
+        value = raw.strip()
+    problem = ("tiene varias líneas (solo un JSON se junta en una)" if "\n" in value or "\t" in value
+               else "tiene un «$» (docker compose lo leería como variable)" if "$" in value
+               else f"pasa de {SSM_MAX_CHARS} caracteres (el límite de SSM Standard)" if len(value) > SSM_MAX_CHARS
+               else None)
+    if problem:
+        sys.exit(f"✗ {key}: {path} {problem}. No se subió nada.")
+    return value
+
+
 def parse_env_file(path):
-    """Lee KEY=VALUE (ignora blancos y #comentarios). Devuelve lista [(k,v)]."""
+    """Lee KEY=VALUE (ignora blancos y #comentarios). Devuelve lista [(k,v)].
+    `KEY=@ruta/archivo.json` sube el contenido del archivo (ver `_file_value`)."""
     out = []
+    base_dir = os.path.dirname(os.path.abspath(path))
     with open(path) as f:
         for ln in f:
             ln = ln.strip()
             if not ln or ln.startswith("#") or "=" not in ln:
                 continue
             k, v = ln.split("=", 1)
-            out.append((k.strip(), v.strip()))
+            k, v = k.strip(), v.strip()
+            out.append((k, _file_value(k, v[1:], base_dir) if v.startswith("@") else v))
     return out
 
 

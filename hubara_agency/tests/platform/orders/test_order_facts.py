@@ -11,6 +11,7 @@ fake oficial (`InMemoryOrderFacts`) deben comportarse igual.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 
@@ -259,3 +260,12 @@ def test_sdk_exposes_the_facts_layer() -> None:
     assert connectorkit.OrderFactsReadPort is OrderFactsReadPort
     assert connectorkit.OrderFacts is OrderFacts
     assert connectorkit.InMemoryOrderFacts is InMemoryOrderFacts
+
+
+def test_facts_carry_the_scheduled_delivery_day() -> None:
+    """La bandeja de incendios de la app móvil marca un pedido "retrasado"
+    con el MISMO día agendado que ve Orders (`due_iso`), no una copia del vault."""
+    scheduled = replace(_summary("order_91", 50_000), due_iso="2026-09-19")
+
+    assert _facts(scheduled).due_iso == "2026-09-19"
+    assert _facts(_summary("order_92", 50_000)).due_iso is None

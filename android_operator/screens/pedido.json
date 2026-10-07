@@ -1,0 +1,125 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "La ficha del pedido (se abre como hoja desde Órdenes, Incendios, el chat o un enlace hubara://order/…). El siguiente paso depende de la etapa: «listo» pide la foto (todavía desde el dashboard) y «despachar» pide la guía y el costo real del envío.",
+  "schema": 1,
+  "id": "pedido",
+  "params": ["order_id"],
+  "data": {
+    "pedido": { "get": "/api/orders/orders/{{params.order_id}}", "refreshOn": ["orders"] }
+  },
+  "computed": {
+    "s": "{{pedido.summary}}",
+    "siguiente": "{{pedido.summary.status | map:'new=preparing;preparing=ready;ready=shipping;shipping=delivered;*='}}",
+    "boton": "{{siguiente | map:'preparing=Empezar a preparar;ready=Marcar listo;shipping=Despachar;delivered=Marcar entregado;*='}}",
+    "etapa": "{{pedido.summary.status | map:'new=Nuevo;preparing=Preparando;ready=Listo;shipping=En camino;delivered=Entregado;cancelled=Cancelado'}}",
+    "costo_ok": "{{form.costo | to_number | gt:0}}",
+    "direccion": "{{pedido.shipping_address}}"
+  },
+  "body": [
+    {
+      "type": "column", "spacing": 2,
+      "children": [
+        { "type": "text", "style": "headline", "emphasis": true, "text": "Pedido #{{s.display_id | replace:'#':''}}" },
+        { "type": "text", "style": "subtitle", "tone": "muted", "text": "{{s.customer}}" }
+      ]
+    },
+    {
+      "type": "section", "title": "Qué compró",
+      "children": [
+        {
+          "type": "card",
+          "children": [
+            {
+              "type": "list", "items": "{{pedido.items_detail}}", "as": "i", "style": "plain",
+              "item": {
+                "type": "row", "align": "top",
+                "children": [
+                  {
+                    "type": "column", "spacing": 0, "weight": 1,
+                    "children": [
+                      { "type": "text", "emphasis": true, "text": "{{i.title}} × {{i.quantity}}" },
+                      { "type": "text", "style": "caption", "tone": "muted", "text": "{{i.variant_label}}", "visible": "{{i.variant_label | present}}" }
+                    ]
+                  },
+                  { "type": "text", "text": "{{i.total_cop | money}}" }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "section", "title": "Estado y siguiente paso",
+      "children": [
+        {
+          "type": "card",
+          "children": [
+            {
+              "type": "stepper", "current": "{{s.status}}", "label": "Etapa: {{etapa}}",
+              "steps": [
+                { "value": "new", "label": "Nuevo" }, { "value": "preparing", "label": "Prep." }, { "value": "ready", "label": "Listo" },
+                { "value": "shipping", "label": "Camino" }, { "value": "delivered", "label": "Entreg." }
+              ]
+            },
+            {
+              "type": "notice", "tone": "warning",
+              "text": "Para marcarla lista hace falta la foto del pedido: por ahora súbela desde el dashboard.",
+              "visible": "{{siguiente | eq:'ready'}}"
+            },
+            {
+              "type": "column", "spacing": 12, "visible": "{{siguiente | eq:'shipping'}}",
+              "children": [
+                { "type": "text_field", "bind": "form.guia", "label": "Link de la guía", "keyboard": "url" },
+                { "type": "text_field", "bind": "form.costo", "label": "Costo real del envío", "keyboard": "number" },
+                {
+                  "type": "button", "text": "Despachar", "full_width": true,
+                  "enabled": "{{form.guia | trim | starts_with:'http' | and:costo_ok}}",
+                  "action": {
+                    "type": "call", "method": "PATCH", "path": "/api/orders/orders/{{params.order_id}}/stage",
+                    "body": { "stage": "shipping", "tracking_url": "{{form.guia | trim}}", "shipping_cost": "{{form.costo | to_number}}" },
+                    "then": [ { "type": "refresh" } ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "button", "text": "{{boton}}", "full_width": true,
+              "visible": "{{siguiente | in:'preparing,delivered'}}",
+              "action": {
+                "type": "call", "method": "PATCH", "path": "/api/orders/orders/{{params.order_id}}/stage",
+                "body": { "stage": "{{siguiente}}" },
+                "then": [ { "type": "refresh" } ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "section", "title": "Pago y envío",
+      "children": [
+        {
+          "type": "card",
+          "children": [
+            {
+              "type": "key_value", "label": "PAGO",
+              "value": "{{pedido.payment_method_label}}{{pedido.payment_method_label | present | if:' · '}}{{s.pay_status | map:'paid=pagado ✓;partial=pago parcial;refund=reembolso;*=pago pendiente'}}"
+            },
+            { "type": "key_value", "label": "TOTAL", "value": "{{s.total_cop | money}} (envío {{pedido.shipping_cop | money}})" },
+            {
+              "type": "key_value", "label": "RECIBE", "value": "{{direccion.first_name}} {{direccion.last_name}}",
+              "visible": "{{direccion.first_name | or:direccion.last_name}}"
+            },
+            { "type": "key_value", "label": "DIRECCIÓN", "value": "{{direccion.address_1}}", "visible": "{{direccion.address_1 | present}}" },
+            {
+              "type": "key_value", "label": "BARRIO",
+              "value": "{{direccion.address_2}}{{direccion.address_2 | present | and:direccion.city | if:' · '}}{{direccion.city}}",
+              "visible": "{{direccion.address_2 | or:direccion.city}}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

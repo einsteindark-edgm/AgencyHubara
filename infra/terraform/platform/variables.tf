@@ -61,6 +61,13 @@ variable "tenants" {
       allow_everyone         = optional(bool, false)      # permite ai_audience=EVERYONE desde la tab (D2.3)
     }), {})
 
+    # App Operador (Android). frontend-deploy publica <cloudfront>/mobile/config.json con api_url + Cognito + esto:
+    # la app solo trae fija esa URL, así un cambio de api_url (nueva IP) le llega sin publicar otra versión.
+    mobile = optional(object({
+      privacy_url      = optional(string, "") # política de privacidad pública (Google Play la exige en la app)
+      min_version_code = optional(number, 0)  # versionCode mínimo; una app más vieja pide actualizarse
+    }), {})
+
     # Laboratorio de conversaciones y capas del bot con clasificador
     # (LABORATORIO_CONVERSACIONES_PLAN.md §4.4). Defaults = todo apagado. Se
     # materializa como SSM String en /hubara/<tenant>/<VAR> (modules/lab-config).
@@ -82,6 +89,11 @@ variable "tenants" {
   validation {
     condition     = alltrue([for t in values(var.tenants) : can(regex("^https://[^\\s\"'#]+$", t.api_url))])
     error_message = "tenants.*.api_url: https://… sin espacios, comillas ni '#' (entra al agent.yaml de MBA)."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : t.mobile.privacy_url == "" || can(regex("^https://[^\\s\"'#]+$", t.mobile.privacy_url))])
+    error_message = "tenants.*.mobile.privacy_url: vacío o https://… (Google Play exige una URL pública y la app solo acepta https)."
   }
 
   validation {
@@ -209,6 +221,17 @@ variable "secret_keys" {
     # el proxy LiteLLM). El operador crea la llave con límite de crédito y la
     # carga fuera de banda; con el placeholder el puerto no llama a nadie.
     "OPENROUTER_API_KEY",
+    # Avisos push de la App Operador (Firebase Cloud Messaging): la llave de la
+    # cuenta de servicio de Firebase (Configuración del proyecto → Cuentas de
+    # servicio → Generar nueva clave privada). Es un ARCHIVO: en secrets.<t>.env
+    # va como `FCM_SERVICE_ACCOUNT_JSON=@ruta/al/archivo.json` y el script lo sube
+    # en una línea. Con el placeholder no se mandan avisos (la app sigue con su
+    # vigía de 15 min). Guía: docs/mobile-native/activar-avisos-push.html.
+    "FCM_SERVICE_ACCOUNT_JSON",
+    # El google-services.json de la app Android (el mismo proyecto de Firebase):
+    # de ahí salen las opciones con las que el teléfono arranca Firebase. Nunca va
+    # en el repo (es público). `FIREBASE_ANDROID_CONFIG_JSON=@ruta/google-services.json`.
+    "FIREBASE_ANDROID_CONFIG_JSON",
   ]
 }
 

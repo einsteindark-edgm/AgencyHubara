@@ -411,7 +411,9 @@ async def test_confirm_payment_rejects_draft_with_helpful_message(adapter):
         assert result.success is False
         assert result.error_detail is not None
         assert result.error_detail.startswith("invalid_state:")
-        assert "draft" in result.error_detail.lower()
+        # Lo lee el operador tal cual (app y dashboard): en español, con tú y diciendo qué hacer.
+        assert "borrador" in result.error_detail.lower()
+        assert "agenda la entrega" in result.error_detail.lower()
 
 
 @pytest.mark.asyncio

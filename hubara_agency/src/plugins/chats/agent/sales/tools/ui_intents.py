@@ -37,9 +37,12 @@ Cada tool devuelve un envelope JSON con:
 from __future__ import annotations
 from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
+import contextlib
+import contextvars
 import json
 import time
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -152,8 +155,27 @@ def _image_for_design(product, design: str) -> tuple[str | None, str | None]:
     return (None, None)
 
 
-def _append_intent(session_key: str, intent: dict[str, Any]) -> None:
-    """Persiste un UI intent en `metadata.json[pending_ui_intents]`.
+#: Ids que encolan las tools dentro de `collect_enqueued_intent_ids()`. Es por tarea: lo que encola un turno
+#: del bot en otra tarea o en otro proceso (el worker de Ventas) nunca aparece aquí.
+_enqueued_ids: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar("ui_intents_enqueued", default=None)
+
+
+@contextlib.contextmanager
+def collect_enqueued_intent_ids() -> Iterator[list[str]]:
+    """Junta los ids de los intents que encolan las tools corridas dentro del bloque, y solo esos.
+
+    Lo usa la app del operador para mandar y firmar como humano SOLO lo que produjo su toque. Comparar la
+    cola antes y después no sirve: un turno del bot en otro proceso puede encolar en medio."""
+    ids: list[str] = []
+    token = _enqueued_ids.set(ids)
+    try:
+        yield ids
+    finally:
+        _enqueued_ids.reset(token)
+
+
+def _append_intent(session_key: str, intent: dict[str, Any]) -> str:
+    """Persiste un UI intent en `metadata.json[pending_ui_intents]` y devuelve su id.
 
     El workflow lo consume después de cada iteración LLM y dispara la
     activity correspondiente (ver `workflow_helpers.flush_pending_ui_intents`,
@@ -169,7 +191,9 @@ def _append_intent(session_key: str, intent: dict[str, Any]) -> None:
       * analytics: metadata para emitir wa_outbound event tras send_*
 
     Agrega con `update()` sobre la lectura fresca (candado del store): solo
-    toca la cola, nunca el resto de `metadata.json`.
+    toca la cola, nunca el resto de `metadata.json`. El id también permite
+    flushear SOLO lo que encoló una acción (la app del operador:
+    `collect_enqueued_intent_ids`), sin arrastrar otros intents de la cola.
     """
     queued = {
         **intent,
@@ -182,6 +206,10 @@ def _append_intent(session_key: str, intent: dict[str, Any]) -> None:
         return fresh
 
     FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_key, _enqueue)
+    sink = _enqueued_ids.get()
+    if sink is not None:
+        sink.append(queued["id"])
+    return queued["id"]
 
 
 def _meta_retailer_id(product) -> str:

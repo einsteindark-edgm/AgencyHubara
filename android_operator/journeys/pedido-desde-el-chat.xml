@@ -1,0 +1,11 @@
+<journey name="Ver el pedido desde el chat">
+  <description>El botón del pedido abre la ficha encima del chat y al cerrarla el borrador sigue.</description>
+  <actions>
+    <action>Abre una conversación de prueba que tenga un pedido asignado</action>
+    <action>Escribe "hola" en el campo de mensaje sin enviarlo</action>
+    <action>Toca el botón "Pedido #" del encabezado</action>
+    <action>Verifica que se abre una hoja con "QUÉ COMPRÓ", "ESTADO Y SIGUIENTE PASO" y "PAGO Y ENVÍO"</action>
+    <action>Cierra la hoja con el gesto de atrás</action>
+    <action>Verifica que el campo de mensaje sigue diciendo "hola"</action>
+  </actions>
+</journey>

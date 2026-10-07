@@ -37,7 +37,7 @@ from __future__ import annotations
 import re
 import time
 import uuid
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, Path, UploadFile
@@ -324,7 +324,11 @@ async def intervene(
     # próxima webhook del cliente ya queda filtrada por LoadOrStartSalesSession
     # (route=humano → no dispatch). Solo la ruta y su historial, sobre la
     # lectura fresca (incidente 2026-10-06: la copia entera pisaba lo que
-    # otro escritor ponía en medio).
+    # otro escritor ponía en medio). Lo que el bot dejó encolado (catálogo,
+    # picker, formulario…) muere acá: con el humano al mando, un flush
+    # posterior lo mandaría como si fuera del operador.
+    dropped: list[Any] = []
+
     def _take_over(fresh: dict) -> dict:
         _append_status(
             fresh,
@@ -333,9 +337,13 @@ async def intervene(
             active_route=ROUTE_HUMANO,
             extra={"source": "dashboard_intervene"},
         )
+        dropped[:] = [i.get("kind") for i in fresh.get("pending_ui_intents") or [] if isinstance(i, dict)]
+        fresh["pending_ui_intents"] = []
         return fresh
 
     data = metadata_store.update(session_id, _take_over) or {}
+    if dropped:
+        logger.info("dashboard.intervene: dropped bot ui intents", session_id=session_id, kinds=dropped)
 
     # 2. Termination de workflows en vuelo: BEST-EFFORT. Si Temporal está caído
     # o devuelve error, NO 500-amos el endpoint — la metadata ya está marcada,
@@ -722,7 +730,7 @@ async def send_human_message(
                 status_code=409,
                 detail=(
                     "Ese mensaje ya se está enviando (request en vuelo). "
-                    "Esperá unos segundos antes de reintentar."
+                    "Espera unos segundos antes de reintentar."
                 ),
             )
 
@@ -862,9 +870,12 @@ async def list_whatsapp_templates() -> WhatsAppTemplatesResponse:
 
     La de seguimiento humano va primero y marcada `is_default`; el resto se
     ofrece por si el caso encaja mejor (estado de pedido, pago pendiente…).
+    Solo las que el operador puede enviar: las de carrusel quedan fuera
+    (`POST .../template-messages` no arma tarjetas — Meta las rechazaba y el
+    502 culpaba a WhatsApp). Lo leen el dashboard y la app Android.
     """
     specs = sorted(
-        get_template_registry().values(),
+        (spec for spec in get_template_registry().values() if not spec.carousel_cards),
         key=lambda spec: (spec.name != OPERATOR_DEFAULT_TEMPLATE, spec.category, spec.name),
     )
     return WhatsAppTemplatesResponse(
