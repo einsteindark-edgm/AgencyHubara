@@ -96,7 +96,8 @@ const CUT_LABELS: Record<string, string> = {
   send_reply: "respuesta entregada",
   tag_closure: "cierra la conversación",
   checkpoint_a: "el cliente escribió mientras pensaba",
-  checkpoint_b: "el cliente escribió antes del envío",
+  checkpoint_b: "el cliente escribió: el cierre no se envía",
+  before_record: "el cliente siguió escribiendo antes del envío",
 };
 
 /** Lo que hizo cada guarda con el texto del modelo. */

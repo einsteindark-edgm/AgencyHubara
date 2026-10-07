@@ -246,6 +246,8 @@ class TurnResult:
     # se abortó ANTES de tocar al cliente porque llegó un mensaje nuevo. El
     # caller debe recomponer el batch (viejo + pendientes) y relanzar el turno
     # — nada se envió, nada se registró en el historial (record_turn skipped).
+    # Con `interrupt_before_record` (V2) también justo antes de grabar el turno
+    # (corte `before_record`, ráfagas sin cortes 2026-10-06).
     interrupted: bool = False
     # Saludo de primer contacto (runs dc32f7fe / 3ce50ef3):
     # True cuando el historial que vio el LLM no tenía NINGÚN mensaje del
@@ -457,6 +459,14 @@ def _rejected_by_tool(payload: dict[str, Any] | None) -> bool:
 def _starts_outbound(tool_names: list[str]) -> bool:
     """¿Este batch produce contenido client-visible (send directo o UI intent)?"""
     return any(name.startswith(_OUTBOUND_TOOL_PREFIXES) for name in tool_names)
+
+
+def _touches_client(tool_names: list[str]) -> bool:
+    """Como `_starts_outbound`, salvo `send_reply`: esa tool no envía nada (su
+    texto lo envía el workflow DESPUÉS del turno), así que hasta grabar el
+    turno el cliente no vio nada de ella. Por nombre, a propósito: ante la
+    duda (una tool que se negó), se asume que el cliente vio algo."""
+    return any(name != "send_reply" and name.startswith(_OUTBOUND_TOOL_PREFIXES) for name in tool_names)
 
 
 def _keeps_pre_tool_content(tool_names: list[str]) -> bool:
@@ -848,8 +858,17 @@ async def run_agent_turn(
     salvage_leaked_text: bool = False,
     turn_policy: TurnPolicy | None = None,
     egress: EgressHook | None = None,
+    interrupt_before_record: bool = False,
 ) -> TurnResult:
     """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
+
+    `interrupt_before_record` (ráfagas sin cortes, incidente 2026-10-06): con
+    `has_new_input`, el turno se revisa una vez más justo antes de grabarse
+    (después del egreso, antes de `record_turn`): si el cliente escribió y el
+    turno todavía no le mostró nada, se corta como en el Checkpoint A
+    (`interrupted=True`, corte `before_record`). Y el costo de cada intento
+    cortado (Checkpoint A o este) se registra al episodio. Opt-in: lo pasa el
+    workflow de ventas V2; V1, remarketing y ETA no cambian ni un comando.
 
     `egress` (motor de decisiones, F4): gancho del caller que decide el egreso
     del texto final ANTES de grabarlo; ver `EgressHook`. Default None = el
@@ -945,7 +964,37 @@ async def run_agent_turn(
         salvage_leaked_text=salvage_leaked_text,
         turn_policy=turn_policy,
         egress=egress,
+        interrupt_before_record=interrupt_before_record,
     )
+
+
+async def _record_cut_attempt_cost(
+    session: SessionInput, episode_id: str | None, prompt_tokens: int, completion_tokens: int
+) -> None:
+    """El costo de un intento cortado también va al episodio: el modelo se
+    pagó aunque la respuesta no saliera (antes se perdía: el corte volvía antes
+    del registro del final del turno). Gate propio; `patched()` va al final.
+    La activity es idempotente por `run_id:activity_id`: cada intento suma.
+    Es contabilidad: si agota sus intentos, el turno sigue (el caller lo
+    recompone) en vez de tumbar la sesión. El comando es el mismo con o sin
+    falla: el replay no cambia."""
+    if episode_id and (prompt_tokens or completion_tokens) and workflow.patched("turn-interrupt-cost-v1"):
+        try:
+            await workflow.execute_activity(
+                record_episode_llm_usage_activity,
+                RecordEpisodeLLMUsageInput(
+                    session_id=session.session_id,
+                    episode_id=episode_id,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    model=session.llm.model,
+                ),
+                **_CONV_OPTIONS,  # type: ignore[arg-type]
+            )
+        except Exception as exc:  # noqa: BLE001 — contabilidad: nunca tumba el turno
+            workflow.logger.warning(
+                f"costo del intento cortado no registrado (non-blocking): session={session.session_id} err={exc!r}"
+            )
 
 
 async def _run_agent_turn_impl(
@@ -961,6 +1010,7 @@ async def _run_agent_turn_impl(
     salvage_leaked_text: bool = False,
     turn_policy: TurnPolicy | None = None,
     egress: EgressHook | None = None,
+    interrupt_before_record: bool = False,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -1069,6 +1119,10 @@ async def _run_agent_turn_impl(
     # True apenas un batch tocó al cliente (send directo o UI intent
     # encolado): desde ahí no hay restart limpio — solo supresión del cierre.
     outbound_started = False
+    # Lo mismo sin `send_reply` (su texto sale después del turno), más lo que
+    # una tool dejó encolado (`queued: true`): lo lee solo la revisión antes
+    # de grabar (`interrupt_before_record`). En memoria.
+    client_touched = False
     transfer_decision: TransferDecision | None = None
     schedule_remarketing: ScheduleRemarketingDecision | None = None
     escalation_decision: EscalationDecision | None = None
@@ -1144,6 +1198,8 @@ async def _run_agent_turn_impl(
                 "nuevo del cliente; el caller recompone el batch y relanza"
             )
             steps.append({"kind": "cut", "at_ms": _now_ms(), "reason": "checkpoint_a"})
+            if interrupt_before_record:
+                await _record_cut_attempt_cost(session, episode_id, turn_prompt_tokens, turn_completion_tokens)
             return TurnResult(
                 final_content="", tools_used=tools_used, interrupted=True, steps=steps
             )
@@ -1152,6 +1208,8 @@ async def _run_agent_turn_impl(
             batch_tool_names = [tc.name for tc in response.tool_calls]
             if _starts_outbound(batch_tool_names):
                 outbound_started = True
+            if _touches_client(batch_tool_names):
+                client_touched = True
             # Cierre que una tool de ESTE batch declaró en su envelope
             # (`tag_closure`, ver el corte más abajo). `None` = la tool no
             # mandó texto para el cliente; "" = mandó y nada era seguro.
@@ -1243,6 +1301,12 @@ async def _run_agent_turn_impl(
 
                 # Intentar extraer decisiones del payload JSON (ADR-001).
                 payload = _try_parse_decision_payload(result)
+                # Lo que una tool dejó encolado para el cliente (`queued:
+                # true`) sale con el flush aunque el turno se corte; p. ej.
+                # `react_to_message`, sin prefijo de salida: el reintento
+                # reaccionaría otra vez (revisión del PR #391). En memoria.
+                if payload is not None and payload.get("queued") is True:
+                    client_touched = True
                 if not _rejected_by_tool(payload) and _ends_turn(
                     [tc.name], version=ends_turn_version
                 ):
@@ -1892,6 +1956,37 @@ async def _run_agent_turn_impl(
     # calls el trigger SÍ queda: lo cierra la llamada, y el tag es un hecho.
     if admin_turn and not any(m.get("tool_calls") for m in recorded):
         recorded = []
+
+    # Revisión antes de grabar y enviar (ráfagas sin cortes, incidente
+    # 2026-10-06; solo con `interrupt_before_record`: el V2). El cliente
+    # escribió mientras corría el último `llm_chat` o el egreso (hasta siete
+    # preguntas a Jev) y el turno todavía no le mostró nada: ninguna tool que
+    # le toca (`client_touched`; el texto de `send_reply` lo envía el workflow
+    # DESPUÉS) ni decisiones capturadas. Como en el Checkpoint A, el turno se
+    # corta sin grabarse y el caller lo recompone con todo: UNA respuesta que
+    # lee la ráfaga entera, no dos cruzadas. `patched()` va ANTES de
+    # `has_new_input()` a propósito: la bandeja del caller puede consultar otro
+    # patch (la foto que se está leyendo, memoizado por run) y una history sin
+    # este marker no debe consultarlo en un lugar nuevo.
+    if (
+        interrupt_before_record
+        and interrupts_enabled
+        and not client_touched
+        and transfer_decision is None
+        and schedule_remarketing is None
+        and escalation_decision is None
+        and episode_closed_decision is None
+        and order_registered_decision is None
+        and workflow.patched("turn-interrupt-before-record-v1")
+        and has_new_input()
+    ):
+        workflow.logger.info(
+            "turno cortado antes de grabarlo: el cliente escribió antes de que "
+            "saliera la respuesta; el caller recompone el batch y relanza"
+        )
+        steps.append({"kind": "cut", "at_ms": _now_ms(), "reason": "before_record", "text": final_content})
+        await _record_cut_attempt_cost(session, episode_id, turn_prompt_tokens, turn_completion_tokens)
+        return TurnResult(final_content="", tools_used=tools_used, interrupted=True, steps=steps)
 
     skip_record = (
         skip_record_when is not None

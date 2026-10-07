@@ -438,6 +438,42 @@ def test_context_note_names_classifies_the_injected_notes() -> None:
     assert tt.context_note_names(None) == []
 
 
+def test_only_the_real_burst_note_is_named_burst_note() -> None:
+    """La hora de Bogotá y las notas del ingest también empiezan con
+    `[CONTEXTO DE TURNO`: la traza las contaba como nota de ráfaga y decía
+    que hubo ráfaga en turnos de un solo mensaje (incidente 2026-10-06). Se
+    arman con sus productores reales: si el texto cambia, el test lo ve."""
+    from datetime import datetime
+
+    from src.plugins.chats.agent.sales.context import build_bogota_context_string
+    from src.sdk.agentkit import InboxMsg, coalesce_inbox
+
+    burst = coalesce_inbox(
+        [InboxMsg(seq=1, wamid=None, text="Carrera 7", ts_ms=1), InboxMsg(seq=2, wamid=None, text="# 12-34", ts_ms=2)],
+        version=2,
+    ).plugin_context
+    clock = build_bogota_context_string(datetime(2026, 10, 6, 15, 30))
+    new_episode = (
+        "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
+        "Empieza un episodio NUEVO con este cliente."
+    )
+
+    assert tt.context_note_names([clock, *(burst or []), new_episode]) == ["clock", "burst_note", "turn_context"]
+    # La forma corta de la hora (una línea) también es la hora.
+    assert tt.context_note_names(["[CONTEXTO DE TURNO] Hora actual en Colombia: 14:30"]) == ["clock"]
+
+
+def test_the_continuation_note_has_its_own_name() -> None:
+    """La nota del turno que sigue a una ráfaga que no alcanzó (bot nuevo), con
+    uno o con varios mensajes nuevos."""
+    from src.plugins.chats.agent.sales.workflows.bursts_v2 import continuation_note
+
+    one = continuation_note(["Te paso la dirección"], ["Carrera 7"])
+    two = continuation_note(["Te paso la dirección"], ["Carrera 7", "# 12-34"])
+
+    assert tt.context_note_names([one, two]) == ["continuation_note", "continuation_note"]
+
+
 def test_every_answer_of_jev_reaches_the_step() -> None:
     """El paso «Jev lee el mensaje» se cortaba en 24 respuestas (el tope de
     las listas): en la etapa de variantes se perdían justo las de la etapa
