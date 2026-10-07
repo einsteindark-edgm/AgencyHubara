@@ -4,9 +4,10 @@ Se llama ANTES de importar la app: la composición guarda rutas y clientes
 con `lru_cache` y varios módulos leen `WORKSPACE_VAULT_DIR` al importarse.
 Cada carpeta que el código de producción escribe apunta al sandbox del caso
 (`/lab/runs/<corrida>/<brazo>/<rep>/<caso>/`), que se arma desde el banco y
-se borra al terminar. El catálogo del banco se exportó horas antes: sin un
-tope de edad alto, la tool de búsqueda le diría al LLM que está "viejo"
-(`stale`), cosa que en producción no pasaba. Los centinelas del guard
+se borra al terminar. El catálogo del banco se exportó horas antes: con el
+tope de edad alto, el log de la búsqueda no lo marca "viejo" (`stale`); el
+LLM no lo lee (desde 2026-10-06 `stale` no va en el envelope: la copia de
+producción se refresca a mano, con el botón Sync). Los centinelas del guard
 (`SANDBOX_SENTINELS`) completan lo que el envío simulado pide.
 """
 from __future__ import annotations

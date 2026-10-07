@@ -215,6 +215,169 @@ async def test_dispatch_intent_does_not_reference_intent_in_scope(
 
 
 # =============================================================================
+# Un solo mensaje cuando cabe (incidente 2026-10-06: el catálogo salió en 3
+# listas). La tool encola UN intent con hasta 30 filas; con el catálogo de
+# Meta sale en UN mensaje y solo la lista de respaldo va en páginas de a 10.
+# =============================================================================
+
+
+def _params_with_rows(per_section: list[int]) -> dict:
+    sections = []
+    for s, size in enumerate(per_section):
+        sections.append({
+            "title": f"Categoría {s + 1}",
+            "rows": [
+                {
+                    "id": f"vela-{s}-{i}",
+                    "title": f"Vela {s}-{i}",
+                    "description": "$23.000 COP",
+                    "product_retailer_id": f"HUB-{s}-{i}",
+                }
+                for i in range(size)
+            ],
+        })
+    return {"intro_text": "Este es nuestro catálogo:", "button_label": "Ver opciones", "sections": sections}
+
+
+async def _dispatch_products(wa_client, params: dict):
+    return await _dispatch_intent(
+        wa_client=wa_client,
+        wa_dtos=wa_dtos,
+        kind="products_list",
+        params=params,
+        fallback={"prefer_native_product_list": True},
+        phone_number_id="phone-1",
+        to_number="573000000000",
+        last_inbound_message_id=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_25_products_go_as_one_catalog_message(monkeypatch):
+    monkeypatch.setenv("META_CATALOG_ID", "1468134707823015")
+    wa_client = _make_wa_client_mock()
+
+    result = await _dispatch_products(wa_client, _params_with_rows([12, 8, 5]))
+
+    assert result is not None and result.ok is True
+    wa_client.send_product_list.assert_awaited_once()
+    wa_client.send_interactive_list.assert_not_awaited()
+    payload = wa_client.send_product_list.call_args.args[2]
+    assert [len(s.product_items) for s in payload.sections] == [12, 8, 5]
+
+
+@pytest.mark.asyncio
+async def test_without_meta_the_list_goes_in_pages_of_ten_and_no_product_is_lost(monkeypatch):
+    monkeypatch.delenv("META_CATALOG_ID", raising=False)
+    wa_client = _make_wa_client_mock()
+    params = _params_with_rows([12, 8, 5])
+
+    result = await _dispatch_products(wa_client, params)
+
+    assert result is not None and result.ok is True
+    wa_client.send_product_list.assert_not_awaited()
+    calls = wa_client.send_interactive_list.call_args_list
+    assert len(calls) == 3
+    sent = [call.args[2] for call in calls]
+    assert all(sum(len(s.rows) for s in page.sections) <= 10 for page in sent)
+    delivered = [r.id for page in sent for s in page.sections for r in s.rows]
+    expected = [r["id"] for s in params["sections"] for r in s["rows"]]
+    assert delivered == expected, "las 25 filas llegan, en orden, sin repetir"
+    assert sent[0].body == "Este es nuestro catálogo:"
+    assert all(page.body == "Más productos del catálogo:" for page in sent[1:])
+
+
+@pytest.mark.asyncio
+async def test_a_failed_page_does_not_stop_the_rest_of_the_list(monkeypatch):
+    """Las demás páginas salen; la que falló queda anotada y las citas del
+    cliente apuntan a la PRIMERA página (la que tiene el texto del asesor)."""
+    monkeypatch.delenv("META_CATALOG_ID", raising=False)
+    wa_client = _make_wa_client_mock()
+    wa_client.send_interactive_list = AsyncMock(
+        side_effect=[
+            SimpleNamespace(ok=True, wa_message_id="wamid.1"),
+            SimpleNamespace(ok=False, error="(#131000) boom", wa_message_id=None),
+            SimpleNamespace(ok=True, wa_message_id="wamid.3"),
+        ]
+    )
+    failures: list[dict] = []
+
+    result = await _dispatch_intent(
+        wa_client=wa_client,
+        wa_dtos=wa_dtos,
+        kind="products_list",
+        params=_params_with_rows([12, 8, 5]),
+        fallback={"prefer_native_product_list": True},
+        phone_number_id="phone-1",
+        to_number="573000000000",
+        last_inbound_message_id=None,
+        failures=failures,
+    )
+
+    assert wa_client.send_interactive_list.await_count == 3
+    assert result.ok is True and result.wa_message_id == "wamid.1"
+    assert failures == [{"kind": "products_list", "error": "(#131000) boom", "page": 2, "pages": 3}]
+
+
+@pytest.mark.asyncio
+async def test_if_the_first_page_fails_nothing_else_is_sent(monkeypatch):
+    monkeypatch.delenv("META_CATALOG_ID", raising=False)
+    wa_client = _make_wa_client_mock()
+    wa_client.send_interactive_list = AsyncMock(
+        return_value=SimpleNamespace(ok=False, error="(#131000) boom", wa_message_id=None)
+    )
+
+    result = await _dispatch_products(wa_client, _params_with_rows([12, 8, 5]))
+
+    assert wa_client.send_interactive_list.await_count == 1
+    assert result.ok is False
+
+
+@pytest.mark.asyncio
+async def test_the_category_menu_goes_as_one_list_with_its_guide(monkeypatch):
+    """Catálogo que no cabe: el cliente recibe sus categorías en UNA lista (no
+    el catálogo de Meta: las filas son categorías, no productos)."""
+    from src.plugins.chats.agent.sales.catalog_menu import CATEGORY_MENU_GUIDE
+
+    monkeypatch.setenv("META_CATALOG_ID", "1468134707823015")
+    wa_client = _make_wa_client_mock()
+    rows = [
+        {"id": "categoria:velones", "title": "Velones", "description": "12 productos"},
+        {"id": "categoria:aromaticas", "title": "Aromáticas", "description": "11 productos"},
+    ]
+
+    result = await _dispatch_intent(
+        wa_client=wa_client,
+        wa_dtos=wa_dtos,
+        kind="categories",
+        params={
+            "intro_text": "Con gusto te muestro el catálogo.",
+            "sections": [{"title": "Categorías", "rows": rows}],
+            "button_label": "Ver categorías",
+            "more_categories": ["Navidad", "Velas de té"],
+        },
+        fallback={},
+        phone_number_id="phone-1",
+        to_number="573000000000",
+        last_inbound_message_id=None,
+    )
+
+    assert result is not None and result.ok is True
+    wa_client.send_product_list.assert_not_awaited()
+    wa_client.send_interactive_list.assert_awaited_once()
+    menu = wa_client.send_interactive_list.call_args.args[2]
+    assert [(r.id, r.title, r.description) for s in menu.sections for r in s.rows] == [
+        ("categoria:velones", "Velones", "12 productos"),
+        ("categoria:aromaticas", "Aromáticas", "11 productos"),
+    ]
+    assert menu.button_label == "Ver categorías"
+    assert menu.body.startswith("Con gusto te muestro el catálogo.")
+    assert CATEGORY_MENU_GUIDE in menu.body
+    # Las que no caben en el menú (más de 10 categorías) van nombradas.
+    assert "Navidad y Velas de té" in menu.body
+
+
+# =============================================================================
 # Variant picker — sesión adc6400c: ahora renderiza como TEXTO con emojis,
 # NO como interactive.list. El cliente responde libremente por chat.
 # =============================================================================

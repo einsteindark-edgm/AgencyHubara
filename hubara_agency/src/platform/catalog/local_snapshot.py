@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.platform.catalog.categories import (
@@ -29,6 +29,7 @@ from src.platform.catalog.errors import (
     CatalogUnavailableError,
     ProductNotFoundError,
 )
+from src.platform.catalog.paths import is_stale, snapshot_age
 
 log = logging.getLogger(__name__)
 
@@ -202,14 +203,10 @@ class LocalSnapshotCatalogClient:
         )
 
     def _is_stale(self) -> bool:
-        try:
-            fetched = datetime.fromisoformat(self._cached_manifest.fetched_at)
-        except ValueError:
-            return True
-        if fetched.tzinfo is None:
-            fetched = fetched.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        return (now - fetched) > timedelta(minutes=self._max_age)
+        # La misma lectura de la fecha y la misma regla que el dashboard
+        # (`paths.snapshot_age` / `paths.is_stale`).
+        age = snapshot_age(self._cached_manifest.fetched_at, datetime.now(timezone.utc))
+        return is_stale(age, self._max_age)
 
 
 # ---------- search matcher ----------

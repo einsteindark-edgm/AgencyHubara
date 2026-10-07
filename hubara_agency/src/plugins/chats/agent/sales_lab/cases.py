@@ -47,6 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.plugins.chats.agent.sales.catalog_menu import category_row_id, parse_category_choice
 from src.plugins.chats.agent.sales.decisions.context import real_wamid
 from src.plugins.chats.agent.sales_lab.recorded_tools import recorded_tool_results
 
@@ -208,6 +209,10 @@ def ingest_fields(text: str, kind: str | None = None) -> dict[str, Any]:
         return {"kind": kind or "text", "caption": caption or None}
     if match := _BUTTON_RE.fullmatch(body):
         return {"kind": "interactive", "interactive": {"type": "button_reply", "id": "", "title": match.group(1)}}
+    # Una fila del menú de categorías (2026-10-06): el código la lee por su id.
+    if choice := parse_category_choice(body):
+        title, slug = choice
+        return {"kind": "interactive", "interactive": {"type": "list_reply", "id": category_row_id(slug), "title": title}}
     if match := _LIST_RE.fullmatch(body):
         return {"kind": "interactive", "interactive": {"type": "list_reply", "id": "", "title": match.group(1)}}
     if match := _CART_RE.fullmatch(body):

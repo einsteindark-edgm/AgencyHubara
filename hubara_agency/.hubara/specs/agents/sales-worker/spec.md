@@ -169,10 +169,23 @@ Medusa live durante la conversación (latency + cuota).
 
 #### Scenario: Snapshot stale
 
-- GIVEN el snapshot tiene > 60min sin actualizarse
+- GIVEN la copia local del catálogo cumplió `CATALOG_MAX_AGE_MINUTES` (30) sin actualizarse
 - WHEN se invocan tools de catálogo
-- THEN aún devuelven datos (stale pero válidos) — `catalog_sync` correrá pronto
+- THEN devuelven los datos de la copia: para el bot es la verdad de la conversación
+- AND el envelope de `search_products` NO trae `stale` ni `manifest`: la edad de la copia queda en el log y en el dashboard (`GET /api/catalog/snapshot`), con la misma regla (vieja desde que cumple el tope, inclusive)
+- AND el refresco de la copia es MANUAL: el botón Sync del dashboard (no hay Schedule ni horario; decisión del operador 2026-10-06)
 - AND si el snapshot está corrupto o no cargado, las tools devuelven `{error: "catalog_unavailable"}` y el LLM debe decirle al cliente "estoy verificando..."
+
+#### Scenario: «¿Qué productos tienen?» (incidente 2026-10-06)
+
+- GIVEN el cliente pide ver qué hay o el catálogo
+- WHEN el LLM llama `present_products` sin handles (sin buscar antes)
+- THEN la tool lee el catálogo completo de la copia local y, si cabe en la lista de productos de WhatsApp (hasta 30 productos en hasta 10 secciones), lo encola en UN intent por categoría: el cliente lo recibe en UN mensaje
+- AND si no cabe, el cliente recibe sus categorías en una lista (una fila por categoría con cuántos productos tiene, id `categoria:<slug>`; con más de 10, las 10 con más productos y las demás nombradas en el texto; los productos sin categoría, y los de una categoría «Otros» real, en UNA fila «Otros»); con una sola categoría el menú sobra y salen sus primeros 30
+- AND cuando elige una, el LLM recibe `[el cliente eligió la categoría: <nombre> (category="categoria:<slug>")]` y `present_products(category=…)` le muestra los de esa categoría (hasta 30; si hay más, la tool lo dice): con el id de la fila, sin preguntarle al motor; con lo que escribió el cliente, lo decide la capacidad `categoria` del motor, igual que en `search_products`
+- AND un producto sin precio no entra al mensaje; con el catálogo de WhatsApp conectado tampoco uno sin foto (el criterio del push a Meta; la lista de respaldo, que es texto, no la necesita): queda un warning y el envelope lo dice (`incomplete`); si ninguno de una categoría puede ir, el LLM recibe cuáles existen y qué les falta
+- AND sin el catálogo de Meta (o si Meta lo rechaza), la lista de respaldo (`interactive.list`) sale en páginas de a 10 filas: nada se recorta en silencio; una página que no llega queda en `ui_intents_failures` y las citas apuntan a la primera
+- AND el historial del dashboard (que también lee Jev) dice qué menú de categorías vio el cliente y de qué categoría era una lista
 
 ### Requirement: Tool de cierre — register_order
 

@@ -503,6 +503,9 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
         # persiste en `outbound_media_index` aunque el envelope global
         # falle a medias — cada foto que SÍ llegó es citable.
         media_log: list[dict[str, Any]] = []
+        # Páginas de la lista de respaldo que no llegaron aunque el intent sí
+        # salió (la primera página llegó): van a `ui_intents_failures`.
+        page_failures: list[dict[str, Any]] = []
         # Lo que de verdad salió cuando no es lo de `params` (la lista de
         # campos si el formulario no salió como Flow): el marcador lleva eso.
         sent: dict[str, Any] = {}
@@ -526,6 +529,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
                 sent=sent,
                 session_id=session_id,
                 client_text_decided=True,
+                failures=page_failures,
             )
         except Exception as e:  # noqa: BLE001
             activity.logger.warning(
@@ -572,6 +576,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
         _record_delivery(session_dir, intent, ok=True, wamid=result.wa_message_id)
         _settle_intents(store, session_id, {intent_id}, media_log=media_log)
         report.append({"kind": kind, "wamid": result.wa_message_id, "ok": True})
+        failed.extend(page_failures)
 
         # Auditoría CAPI 2026-09-08: lo que el cliente acaba de VER es la
         # señal de embudo para Meta (ViewContent / AddToCart /
@@ -588,6 +593,11 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
                 # muestra "Mensaje no disponible" (caso 2026-09-17).
                 if result.wa_message_id:
                     history_event["wamid"] = result.wa_message_id
+                if page_failures:
+                    # La nota no dice que llegó lo que no llegó.
+                    history_event["content"] += "".join(
+                        f" No llegó la página {f['page']} de {f['pages']}." for f in page_failures
+                    )
                 _append_history_event(session_id, history_event)
         except Exception:  # noqa: BLE001 - observability nunca bloquea
             pass
@@ -842,8 +852,14 @@ async def _dispatch_intent(
     sent: dict[str, Any] | None = None,
     session_id: str | None = None,
     client_text_decided: bool = False,
+    failures: list[dict[str, Any]] | None = None,
 ):
     """Mapea `kind` a la función `send_*` correspondiente.
+
+    `failures`: lista mutable donde la lista de respaldo de `products_list`
+    (en páginas) anota cada página que no llegó cuando la primera sí llegó
+    (`{kind, error, page, pages}`): el intent cuenta como enviado y el
+    caller las deja en `ui_intents_failures`.
 
     `client_text_decided`: el caller ya pasó los textos del LLM por
     `_sanitize_intent_client_text` (el flush lo hace para que el marker del
@@ -960,8 +976,13 @@ async def _dispatch_intent(
                         to_number,
                         wa_dtos.InteractiveProductListOutbound(
                             catalog_id=catalog_id,
+                            # `category`: el nombre de la categoría que mostró
+                            # `present_products`; lo arma el código, así que no
+                            # pasa por la guarda del texto del LLM.
                             header_text=wa_limits.truncate(
-                                params.get("header_text") or "Nuestro catálogo",
+                                params.get("header_text")
+                                or params.get("category")
+                                or "Nuestro catálogo",
                                 wa_limits.MAX_PRODUCT_LIST_HEADER,
                             ),
                             body=wa_limits.truncate(
@@ -999,23 +1020,94 @@ async def _dispatch_intent(
                     },
                 )
 
-        # Fallback: interactive.list (sin Meta Catalog — cap 10 total).
-        sections_payload = wa_limits.cap_list_rows_total(
-            sections_payload, wa_limits.MAX_LIST_ROWS_TOTAL
-        )
+        # Respaldo: interactive.list (sin el catálogo de Meta). WhatsApp acepta
+        # 10 filas por lista y el intent trae hasta 30 (incidente 2026-10-06):
+        # va en páginas de a 10, en vez de recortar las demás en silencio.
+        # Si la primera página falla no se sigue (nada llegó: el intent falla).
+        # Si falla otra, las demás salen igual, la que faltó queda en
+        # `failures` (el caller la deja en `ui_intents_failures`) y se
+        # devuelve la PRIMERA página: la que lleva el texto del asesor y a la
+        # que apuntan las citas del cliente. El intent sale de la cola recién
+        # cuando vuelve este dispatch: si la activity se cae entre páginas, el
+        # reintento de Temporal reenvía desde la página 1 (con las páginas, esa
+        # ventana pasa de milisegundos a segundos).
+        pages = wa_limits.paginate_list_rows(sections_payload, wa_limits.MAX_LIST_ROWS_TOTAL)
+        first = None
+        for page_idx, page_sections in enumerate(pages):
+            outbound_page = (
+                wa_dtos.InteractiveListOutbound(
+                    body=(
+                        (params.get("intro_text") or "Mira las opciones:")
+                        if page_idx == 0
+                        else "Más productos del catálogo:"
+                    ),
+                    button_label=params.get("button_label", "Ver opciones"),
+                    sections=[
+                        wa_dtos.ListSection(
+                            title=s.get("title", "Opciones"),
+                            rows=[
+                                wa_dtos.ListRow(
+                                    id=r["id"],
+                                    title=r["title"],
+                                    description=r.get("description"),
+                                )
+                                for r in s["rows"]
+                            ],
+                        )
+                        for s in page_sections
+                    ],
+                )
+            )
+            if page_idx == 0:
+                # Nada llegó todavía: un fallo (o una excepción) es del intent.
+                result = await wa_client.send_interactive_list(phone_number_id, to_number, outbound_page)
+                if result is None or not result.ok:
+                    return result
+                first = result
+                continue
+            # La página 1 ya llegó: lo que falle de acá en adelante (respuesta
+            # o excepción) se anota y se sigue.
+            try:
+                result = await wa_client.send_interactive_list(phone_number_id, to_number, outbound_page)
+                error = None if result is not None and result.ok else (
+                    result.error if result is not None else "no_result"
+                )
+            except Exception as e:  # noqa: BLE001 — la primera página ya llegó
+                error = f"{type(e).__name__}: {e}"
+            if error is not None:
+                activity.logger.warning(
+                    "products_list.page_send_failed",
+                    extra={"page": page_idx + 1, "pages": len(pages), "error": error},
+                )
+                if failures is not None:
+                    failures.append({
+                        "kind": "products_list",
+                        "error": error,
+                        "page": page_idx + 1,
+                        "pages": len(pages),
+                    })
+        return first
+
+    if kind == "categories":
+        # El catálogo no cabe en un mensaje: el cliente recibe sus categorías
+        # en UNA lista (`present_products`, menú de `catalog_menu.py`). Nunca
+        # es el catálogo de Meta: las filas son categorías, no productos.
+        from src.platform.whatsapp import limits as wa_limits
+        from src.plugins.chats.agent.sales.catalog_menu import category_menu_body
+
         sections = [
             wa_dtos.ListSection(
-                title=s.get("title", "Opciones"),
+                title=s.get("title") or "Categorías",
                 rows=[
                     wa_dtos.ListRow(
                         id=r["id"],
                         title=r["title"],
                         description=r.get("description"),
                     )
-                    for r in (s.get("rows") or [])
+                    for r in s["rows"]
                 ],
             )
-            for s in sections_payload
+            for s in (params.get("sections") or [])
             if s.get("rows")
         ]
         if not sections:
@@ -1024,8 +1116,12 @@ async def _dispatch_intent(
             phone_number_id,
             to_number,
             wa_dtos.InteractiveListOutbound(
-                body=params.get("intro_text", "Mira las opciones:"),
-                button_label=params.get("button_label", "Ver opciones"),
+                body=category_menu_body(
+                    params.get("intro_text") or "",
+                    params.get("more_categories") or [],
+                    max_len=wa_limits.MAX_LIST_BODY,
+                ),
+                button_label=params.get("button_label") or "Ver categorías",
                 sections=sections,
             ),
         )
@@ -1551,7 +1647,14 @@ def _build_history_event(
         total = sum(
             len(s.get("rows") or []) for s in (params.get("sections") or [])
         )
-        content = f"🛍️ El bot envió el catálogo con {total} productos"
+        category = str(params.get("category") or "").strip()
+        content = (
+            f"🛍️ El bot envió los productos de la categoría {category} ({total})"
+            if category
+            else f"🛍️ El bot envió el catálogo con {total} productos"
+        )
+    elif kind == "categories":
+        content = _categories_note(params)
     elif kind == "shipping_flow":
         # El mensaje del formulario y el resumen del pedido los arma el
         # código: van como los leyó el cliente (incidente 2026-10-06: el
@@ -1602,6 +1705,41 @@ def _build_history_event(
         "component_kind": kind,
         "content": content,
     }
+
+
+def _categories_note(params: dict[str, Any]) -> str:
+    """El menú de categorías en el historial: sus filas, cuántos productos
+    tiene cada una y el texto que leyó el cliente. Jev lee cada línea del
+    historial hasta 500 caracteres y una más larga la corta por el PRINCIPIO
+    (se perdería qué se ofreció): el texto del menú se arma para el espacio
+    que queda, con la misma regla del mensaje (se recorta el texto del
+    asesor; la guía y las categorías nombradas quedan)."""
+    from src.plugins.chats.agent.sales.catalog_menu import category_menu_body
+    from src.plugins.chats.agent.sales.decisions.context import MAX_LINE_CHARS
+
+    rows = [
+        r
+        for s in (params.get("sections") or [])
+        if isinstance(s, dict)
+        for r in (s.get("rows") or [])
+        if isinstance(r, dict)
+    ]
+    listed = ", ".join(
+        f"{r.get('title')} ({r['description']})" if r.get("description") else str(r.get("title"))
+        for r in rows
+    )
+    head = f"🗂️ El bot envió el menú de categorías: {listed}."
+    room = MAX_LINE_CHARS - len(head) - len(" Mensaje: «»")
+    if room < 20:
+        return head[:MAX_LINE_CHARS]
+    body = " ".join(
+        category_menu_body(
+            str(params.get("intro_text") or ""),
+            params.get("more_categories") or [],
+            max_len=room,
+        ).split()
+    )
+    return f"{head} Mensaje: «{body}»"
 
 
 def _append_history_event(session_id: str, event: dict[str, Any]) -> None:
