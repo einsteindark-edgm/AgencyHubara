@@ -70,6 +70,42 @@ def test_summarize_tool_event_plain_text_result_is_ok() -> None:
     assert event["notes"] == []
 
 
+_FORM_MESSAGE = (
+    "Para enviarte tu pedido necesito unos datos 🤍\n\n• *2× Velón Koala* (Blanco · Lavanda)\n"
+    "Subtotal en productos: $70.000"
+)
+
+
+def test_summarize_tool_event_keeps_the_text_the_code_wrote_for_the_customer() -> None:
+    """Incidente 2026-10-06 (turno 9): el formulario salió con su mensaje
+    (`customer_text` del envelope) y la traza no lo guardaba: la calificación
+    no lo veía. Va entero en `card_text` (el extracto se corta a 240)."""
+    result = json.dumps(
+        {"queued": True, "kind": "shipping_flow", "customer_text": _FORM_MESSAGE, "summary": "x" * 400}
+    )
+
+    event = tt.summarize_tool_event("request_shipping_details", {"items": [{"handle": "h", "quantity": 2}]}, result)
+
+    assert event["ok"] is True
+    assert event["card_text"] == _FORM_MESSAGE
+
+
+def test_summarize_tool_event_without_a_customer_text_has_no_card_text() -> None:
+    rejected = json.dumps({"queued": False, "error": "purchase_not_confirmed", "customer_text": _FORM_MESSAGE})
+
+    assert "card_text" not in tt.summarize_tool_event("search_products", {"q": "x"}, json.dumps({"count": 2}))
+    assert "card_text" not in tt.summarize_tool_event("request_shipping_details", {}, rejected)
+    assert "card_text" not in tt.summarize_tool_event("load_skill", {}, "contenido")
+
+
+def test_summarize_tool_event_bounds_the_card_text_to_the_whatsapp_body() -> None:
+    result = json.dumps({"queued": True, "customer_text": "y" * 3000})
+
+    event = tt.summarize_tool_event("present_order_confirmation", {}, result)
+
+    assert 0 < len(event["card_text"]) <= 1024
+
+
 def test_summarize_tool_event_truncated_json_still_reads_control_keys() -> None:
     full = json.dumps({"query": "", "count": 24, "error": "catalog_unavailable", "results": ["x" * 90] * 80})
 
@@ -176,6 +212,22 @@ def test_build_turn_payload_summarizes_tools_and_bounds_texts() -> None:
     assert payload["tools"][0]["ok"] is False
     assert len(payload["inbound_text"]) <= tt.TEXT_MAX
     assert payload["discarded_narration"] == ["Perfecto, ya casi llegas a casa"]
+
+
+def test_the_form_message_travels_from_the_turn_to_what_the_scorecard_reads() -> None:
+    """De punta a punta: el envelope de la tool → la traza del turno → el
+    turno del scorecard. El cliente leyó el mensaje del formulario."""
+    from src.plugins.chats.agent.sales_eval.scorecard.trajectory import turn_from_trace
+
+    form = {
+        "name": "request_shipping_details",
+        "args": {"items": [{"handle": "velon-koala", "quantity": 2}]},
+        "result": json.dumps({"queued": True, "kind": "shipping_flow", "customer_text": _FORM_MESSAGE}),
+    }
+    payload = _payload(inbound_text="2", tool_events=[form], discarded_narration=[])
+    trace = tt.enrich_turn_trace(payload, _metadata(), previous=None, session_id="wa_x", recorded_at_ms=2_000_500)
+
+    assert turn_from_trace(trace).read_texts == (_FORM_MESSAGE,)
 
 
 def test_enrich_first_turn_of_episode_projects_stage_and_numbering() -> None:

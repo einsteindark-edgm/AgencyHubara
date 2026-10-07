@@ -15,11 +15,15 @@ import json
 import re
 from typing import Any
 
+from src.plugins.chats.agent.sales.card_texts import envelope_card_text
 from src.plugins.chats.agent.sales.decisions.audit import contract_compliance
 from src.plugins.chats.shared.draft_items import draft_items
 
 _ARG_MAX = 160
 _EXCERPT_MAX = 240
+#: El cuerpo de un mensaje interactivo de WhatsApp: el texto de una tarjeta
+#: nunca pasa de ahí.
+_CARD_TEXT_MAX = 1024
 
 # Claves booleanas que, en False, significan "la tool NO hizo su efecto".
 _FALSE_MEANS_REJECTED = ("queued", "registered", "escalated", "verified")
@@ -110,6 +114,11 @@ def summarize_tool_event(
     compact_args = {
         str(k): _short(v, arg_max) for k, v in (args or {}).items() if v not in (None, "", [])
     }
+    # El texto que el código armó para el cliente con la tarjeta (mensaje del
+    # formulario, resumen del pedido, tarifas): lo que el cliente LEYÓ, entero
+    # hasta el cuerpo de WhatsApp. Incidente 2026-10-06 (turno 9): sin él, la
+    # calificación daba el formulario por «sin texto».
+    card_text = envelope_card_text(result) if error is None else None
     return {
         "name": name,
         "ok": error is None,
@@ -117,6 +126,7 @@ def summarize_tool_event(
         "notes": notes,
         "args": compact_args,
         "excerpt": _short(result or "", _EXCERPT_MAX),
+        **({"card_text": _short(card_text, _CARD_TEXT_MAX)} if card_text else {}),
     }
 
 

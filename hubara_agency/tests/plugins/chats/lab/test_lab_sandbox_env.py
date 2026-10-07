@@ -23,6 +23,7 @@ def test_every_folder_points_inside_the_case_sandbox(tmp_path: Path) -> None:
     assert env["EVAL_CANDIDATES_DIR"].startswith(str(box)) and env["EVAL_HISTORY_DIR"].startswith(str(box))
     assert env["OTEL_SDK_DISABLED"] == "true"
     assert env["WHATSAPP_PHONE_NUMBER_ID"] == "lab-sandbox"
+    assert env["META_FLOW_ID_SHIPPING"] == "lab-sandbox-flow"  # el formulario sale como Flow (simulado)
     assert env["LITELLM_LOCAL_MODEL_COST_MAP"] == "True"  # litellm no baja su tabla de precios de GitHub
     assert "WHATSAPP_ACCESS_TOKEN" not in env
     assert int(env["CATALOG_MAX_AGE_MINUTES"]) >= 60 * 24 * 365

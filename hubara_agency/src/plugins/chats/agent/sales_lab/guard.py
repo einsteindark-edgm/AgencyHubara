@@ -39,7 +39,13 @@ _FORBIDDEN_KEYS = (
 # Valores centinela del sandbox: la ÚNICA forma de que una de estas variables
 # tenga valor en la caja. El envío de WhatsApp exige un phone_number_id aunque
 # no haya llave; sin `WHATSAPP_ACCESS_TOKEN` (prohibida) el envío es simulado.
-SANDBOX_SENTINELS: dict[str, str] = {"WHATSAPP_PHONE_NUMBER_ID": "lab-sandbox"}
+# Con el Flow de envío, el formulario sale como en producción (el cliente
+# simulado lee su mensaje, no la lista de campos) y `send_flow` también se
+# simula sin llave.
+SANDBOX_SENTINELS: dict[str, str] = {
+    "WHATSAPP_PHONE_NUMBER_ID": "lab-sandbox",
+    "META_FLOW_ID_SHIPPING": "lab-sandbox-flow",
+}
 
 # Las llaves de LLM del laboratorio llevan nombre propio (`*_LAB`, decisión del
 # operador 2026-10-05): la del `.env` local era la misma de producción, así que

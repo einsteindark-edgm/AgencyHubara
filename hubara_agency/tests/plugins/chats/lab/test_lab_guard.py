@@ -99,6 +99,49 @@ def test_the_sandbox_phone_id_sentinel_is_the_only_whatsapp_value_allowed() -> N
     assert check_lab_env(_prepared(WHATSAPP_PHONE_NUMBER_ID="lab-sandbox", WHATSAPP_ACCESS_TOKEN="EAAG")) != []
 
 
+def test_the_sandbox_flow_sentinel_is_the_only_meta_value_allowed() -> None:
+    """Con el centinela del Flow, el formulario del laboratorio sale como en
+    producción (el mensaje del Flow, no la lista de campos). Solo ESE valor
+    pasa: un `flow_id` de verdad sigue prohibido."""
+    assert check_lab_env(_prepared(META_FLOW_ID_SHIPPING="lab-sandbox-flow")) == []
+    assert check_lab_env(_prepared(META_FLOW_ID_SHIPPING="123456789")) != []
+
+
+@pytest.mark.asyncio
+async def test_the_lab_sends_the_form_as_a_flow_without_the_network(monkeypatch) -> None:
+    """Sin `WHATSAPP_ACCESS_TOKEN` (prohibida en la caja) el envío del Flow es
+    simulado: ninguna conexión sale de la caja."""
+    import httpx
+
+    import src.platform.whatsapp.client as wa_client
+    from src.platform.whatsapp import dtos as wa_dtos
+    from src.plugins.chats.agent.sales.activities.flush_ui_intents import _dispatch_intent
+    from src.plugins.chats.agent.sales_lab.guard import SANDBOX_SENTINELS
+
+    def _no_network(*_a, **_kw):
+        raise AssertionError("conexión de red desde la caja del laboratorio")
+
+    monkeypatch.setattr(httpx, "AsyncClient", _no_network)
+    monkeypatch.setattr(wa_client, "WHATSAPP_ACCESS_TOKEN", "")
+    monkeypatch.setenv("META_FLOW_ID_SHIPPING", SANDBOX_SENTINELS["META_FLOW_ID_SHIPPING"])
+    params = {
+        "flow_id": "FLOW_ID_SHIPPING_PLACEHOLDER", "flow_token": "shipping_x_1", "flow_cta": "Completar datos",
+        "flow_action": "navigate", "flow_action_screen": "SHIPPING_DETAILS",
+        "flow_action_data": {"order_total_cop": 50000, "items_summary": "2× Velas",
+                             "show_cash_on_delivery": True, "payment_options": []},
+        "body": "Para enviarte tu pedido necesito unos datos 🤍", "header_text": "Datos de envío",
+        "order_total_cop": 50000,
+    }
+
+    result = await _dispatch_intent(
+        wa_client=wa_client, wa_dtos=wa_dtos, kind="shipping_flow", params=params, fallback={},
+        phone_number_id=SANDBOX_SENTINELS["WHATSAPP_PHONE_NUMBER_ID"], to_number="573000000000",
+        last_inbound_message_id=None,
+    )
+
+    assert result.ok and result.wa_message_id == "fake-interactive.flow"
+
+
 def test_an_empty_production_variable_is_not_a_key() -> None:
     assert check_lab_env(_prepared(MEDUSA_BASE_URL="")) == []
 

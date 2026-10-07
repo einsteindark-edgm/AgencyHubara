@@ -391,7 +391,9 @@ def test_asking_shipping_details_builds_the_items_from_the_draft(h: _Harness) ->
     assert "*Ciudad*" in text and "Contra entrega" in text
     [event] = h.history()
     assert event["component_kind"] == "shipping_flow" and event["operator_tool"] == "request_shipping_details"
-    assert event["content"] == "📋 El operador pidió los datos de envío (formulario)"
+    # Sin Flow configurado salió por texto: el marcador lleva lo que leyó el cliente (#392) y dice quién lo mandó.
+    assert event["content"].startswith("📋 El operador pidió los datos de envío por texto — con el mensaje: «")
+    assert "*Ciudad*" in event["content"]
 
 
 def test_asking_shipping_details_keeps_the_bot_guard_and_needs_a_resolvable_draft(h: _Harness) -> None:
