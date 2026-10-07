@@ -36,9 +36,13 @@ tenants = {
     # `ventas` con la regla ② de `promocion`. `ventas-3` (2026-10-07, #390) es
     # `ventas-2` con los arreglos de la conversación de prueba del 2026-10-06
     # (cortesía, compra, afirmación, cantidad, asunto `gusto`): solo cambia lo
-    # que decide Jev, es decir, los números de prueba con `prueba-jev si`. El
-    # resto de `lab` queda en sus defaults (todo apagado). Volver atrás =
-    # "ventas-2".
+    # que decide Jev, es decir, los números de prueba con `prueba-jev si`.
+    # `ventas-4` (2026-10-07, #402) es `ventas-3` con la política `turno-v4`: si
+    # el cliente escribe desde la ficha del catálogo (o la página de la web),
+    # la guía de descubrimiento le dice al LLM que responda sobre ese producto
+    # en vez de «ayúdale a escoger un producto». Promovido sin pasar por el
+    # laboratorio (decisión del operador). El resto de `lab` queda en sus
+    # defaults (todo apagado). Volver atrás = "ventas-3".
     #
     # `internal_numbers`: teléfonos del equipo; sus conversaciones no entran al
     # banco del laboratorio. El del operador (2026-10-05) es el número con el
@@ -59,7 +63,7 @@ tenants = {
     # calidad vista en Calidad LLM → "on". Volver atrás = "off" + apply + Backend
     # deploy.
     lab = {
-      decisions_bundle        = "ventas-3"
+      decisions_bundle        = "ventas-4"
       internal_numbers        = ["+573125671604"]
       perception_mode_ceiling = "canary"
       capabilities_ceiling    = "canary"
