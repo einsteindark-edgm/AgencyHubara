@@ -50,6 +50,7 @@ from src.platform.whatsapp.templates.registry import (
     TemplateSpec,
     render_template_body,
 )
+from src.platform.whatsapp.reengagement_frequency import effective_max_touches
 from src.platform.whatsapp.reengagement_ladder import ladder_state, record_touch
 from src.platform.whatsapp.reengagement_deferral import (
     mark_appointment_touched,
@@ -178,7 +179,11 @@ async def check_reengagement_policy_activity(session_id: str) -> SendDecision:
     # y la escalera no puede estar agotada. El PRIMER hueco (dormancia por
     # calor) lo aplica el pre-filtro del ciclo, no este gate — la central
     # también sirve al disparo manual (delay 0); acá lo cubre `customer_active`.
-    ladder = ladder_state(now_ms, metadata)
+    # Tope de toques del negocio (dashboard Agents → Remarketing → Frecuencia):
+    # se lee en cada envío, así que un cambio aplica desde ya.
+    ladder = ladder_state(
+        now_ms, metadata, max_steps=effective_max_touches(WORKSPACE_VAULT_DIR)
+    )
     if ladder.exhausted:
         return _ladder_suppress(
             "ladder_exhausted", "escalera agotada sin respuesta — no se envía más"

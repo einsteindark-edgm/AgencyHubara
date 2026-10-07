@@ -15,6 +15,7 @@ from typing import Any
 
 from src.sdk.messagingkit import (
     LADDER_GAPS_MS,
+    clamp_max_steps,
     ladder_state,
     lead_state_from_metadata,
 )
@@ -50,21 +51,34 @@ def _can_continue_for_free(now_ms: int, metadata: dict[str, Any]) -> bool:
     return lead.transactional_hook or lead.may_pay_marketing
 
 
+def _grace_ms(max_steps: int | None) -> int:
+    """Gracia tras el último toque: el hueco del último peldaño PERMITIDO (con
+    el tope del dashboard en 2, 2h; con la escalera completa, 6h)."""
+    steps = clamp_max_steps(max_steps)
+    return LADDER_GAPS_MS[steps - 1] if steps > 0 else 0
+
+
 def unresponsive_session_ids(
-    now_ms: int, sessions: list[tuple[str, dict[str, Any]]]
+    now_ms: int,
+    sessions: list[tuple[str, dict[str, Any]]],
+    max_steps: int | None = None,
 ) -> list[str]:
     """Sesiones a etiquetar: recibieron toques, no contestaron, y la escalera
     terminó — porque se agotó o porque ya no puede continuar (ventanas gratis
     cerradas a mitad de camino, p.ej. quiet hours empujaron el siguiente toque
-    fuera de las 24h). Siempre tras la gracia desde el último toque."""
+    fuera de las 24h). Siempre tras la gracia desde el último toque.
+
+    `max_steps` = el tope de toques del negocio (dashboard Agents →
+    Remarketing → Frecuencia); `None` = la escalera completa."""
+    grace = _grace_ms(max_steps)
     out: list[str] = []
     for session_id, metadata in sessions:
         if metadata.get("tag") not in _RETAGGABLE:
             continue
-        ladder = ladder_state(now_ms, metadata)
+        ladder = ladder_state(now_ms, metadata, max_steps=max_steps)
         if (
             ladder.last_touch_at_ms is None
-            or now_ms - ladder.last_touch_at_ms < UNRESPONSIVE_GRACE_MS
+            or now_ms - ladder.last_touch_at_ms < grace
         ):
             continue
         if ladder.exhausted or not _can_continue_for_free(now_ms, metadata):

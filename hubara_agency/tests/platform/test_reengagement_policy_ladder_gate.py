@@ -97,3 +97,33 @@ async def test_tag_remarketing_del_operador_salta_la_escalera(_isolate_vault_dir
     _seed(_isolate_vault_dir, silence_h=3, touches=[(0.5, "free_form")], tag="REMARKETING")
     decision = await _decide()
     assert decision.allowed is True
+
+
+# ── Frecuencia configurable: la central respeta el tope del dashboard ─────────
+
+
+@pytest.mark.asyncio
+async def test_suprime_si_ya_se_alcanzo_el_tope_configurado(_isolate_vault_dir: Path):
+    from src.platform.whatsapp.reengagement_frequency import set_max_touches
+
+    set_max_touches(_isolate_vault_dir, 2, actor="operador", now_ms=1)
+    # Tres toques ya enviados (tope 2): aplica desde ya, aunque el 4º ya venció.
+    _seed(
+        _isolate_vault_dir,
+        silence_h=20,
+        touches=[(15, "free_form"), (11, "free_form"), (3, "free_form")],
+    )
+    decision = await _decide()
+    assert decision.allowed is False
+    assert decision.suppress_reason == "ladder_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_con_tope_cero_no_sale_ni_el_primer_toque(_isolate_vault_dir: Path):
+    from src.platform.whatsapp.reengagement_frequency import set_max_touches
+
+    set_max_touches(_isolate_vault_dir, 0, actor="operador", now_ms=1)
+    _seed(_isolate_vault_dir, silence_h=3, touches=[])
+    decision = await _decide()
+    assert decision.allowed is False
+    assert decision.suppress_reason == "ladder_exhausted"

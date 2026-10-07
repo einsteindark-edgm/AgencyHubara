@@ -1,0 +1,14 @@
+{
+  "max_touches": 5,
+  "ceiling": 5,
+  "saved": null,
+  "updated_at_ms": null,
+  "updated_by": null,
+  "ladder": [
+    { "touch": 1, "after_ms": 7200000 },
+    { "touch": 2, "after_ms": 14400000 },
+    { "touch": 3, "after_ms": 28800000 },
+    { "touch": 4, "after_ms": 50400000 },
+    { "touch": 5, "after_ms": 72000000 }
+  ]
+}

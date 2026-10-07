@@ -10,9 +10,10 @@ import { useState } from "react";
 
 import { PROMPT_SECTIONS, useAgents } from "@plugins/agents_admin/frontend/entities/agent";
 import { AgentsQuality } from "@plugins/agents_admin/frontend/features/agents-quality";
+import { RemarketingFrequencyPanel } from "@plugins/agents_admin/frontend/features/remarketing-frequency";
 import { Icon, type IconName } from "@/shared/ui";
 
-type CanvasTab = "personalidad" | "calidad";
+type CanvasTab = "personalidad" | "calidad" | "frecuencia";
 
 interface Props {
   agentId: string;
@@ -48,6 +49,8 @@ export function AgentsPrompts({ agentId }: Props) {
   }
 
   const isSales = agent.id === "sales";
+  // «Frecuencia» (cuántos toques hace el bot) solo existe para el remarketing.
+  const isRemarketing = agent.id === "remarketing";
   // En "Calidad LLM" ocultamos el header del agente (icono + nombre + rol): qué
   // agente es ya se sabe por la selección de la barra izquierda, y esos ~70px se
   // los damos a la vista de episodios evaluados, que es densa (chart + lista +
@@ -86,10 +89,23 @@ export function AgentsPrompts({ agentId }: Props) {
             <Icon.shield /> Calidad LLM
           </button>
         )}
+        {isRemarketing && (
+          <button
+            type="button"
+            className={"sub-tab" + (tab === "frecuencia" ? " on" : "")}
+            onClick={() => setTab("frecuencia")}
+          >
+            <Icon.clock /> Frecuencia
+          </button>
+        )}
       </div>
 
       {onQuality ? (
         <AgentsQuality />
+      ) : isRemarketing && tab === "frecuencia" ? (
+        <div className="ag-form">
+          <RemarketingFrequencyPanel />
+        </div>
       ) : (
       <div className="ag-form">
         {PROMPT_SECTIONS.map((s) => {

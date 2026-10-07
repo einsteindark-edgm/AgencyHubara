@@ -316,3 +316,48 @@ run "un_modo_de_notas_raro_no_pasa_el_plan" {
   }
   expect_failures = [var.tenants]
 }
+
+run "el_techo_de_toques_del_remarketing_es_la_escalera_completa_por_defecto" {
+  command = plan
+  module { source = "./modules/lab-config" }
+  variables {
+    tenant = "t1"
+    config = {
+      perception_mode_ceiling = "off"
+      perception_profile      = "jev-v1"
+      signal_inbound_meta     = false
+      max_usd_per_run         = 120
+      max_usd_per_month       = 300
+      internal_numbers        = []
+    }
+  }
+  assert {
+    condition     = aws_ssm_parameter.lab["REMARKETING_MAX_TOUCHES"].value == "5"
+    error_message = "Sin config, el techo es 5 (la escalera completa: el comportamiento de siempre)."
+  }
+  assert {
+    condition     = aws_ssm_parameter.lab["REMARKETING_MAX_TOUCHES"].name == "/hubara/t1/REMARKETING_MAX_TOUCHES" && aws_ssm_parameter.lab["REMARKETING_MAX_TOUCHES"].type == "String"
+    error_message = "REMARKETING_MAX_TOUCHES va en /hubara/<tenant>/, tipo String (render-env-from-ssm.sh lo baja al .env)."
+  }
+}
+
+run "el_techo_de_toques_del_remarketing_sale_del_tenant" {
+  command = plan
+  module { source = "./modules/lab-config" }
+  variables {
+    tenant = "t1"
+    config = {
+      perception_mode_ceiling = "off"
+      perception_profile      = "jev-v1"
+      signal_inbound_meta     = false
+      max_usd_per_run         = 120
+      max_usd_per_month       = 300
+      internal_numbers        = []
+      remarketing_max_touches = 3
+    }
+  }
+  assert {
+    condition     = aws_ssm_parameter.lab["REMARKETING_MAX_TOUCHES"].value == "3"
+    error_message = "El techo del tenant llega tal cual al parámetro."
+  }
+}

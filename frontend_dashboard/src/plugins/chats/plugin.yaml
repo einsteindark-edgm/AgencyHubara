@@ -73,6 +73,10 @@ api:
     # Contrato perception-rollout@v1 (plan del laboratorio, PR 16): el encendido
     # del bot nuevo por etapas. El panel de Agents lo consume por cast.
     - { module: src.plugins.chats.api.perception, prefix: /api/chats, tags: [Chats_Perception] }
+    # Contrato remarketing-frequency@v1: cuántos toques máximo hace el bot de
+    # remarketing (0..techo de Terraform REMARKETING_MAX_TOUCHES). Editable
+    # desde Agents → Remarketing → Frecuencia, por cast.
+    - { module: src.plugins.chats.api.remarketing_frequency, prefix: /api/chats, tags: [Chats_RemarketingFrequency] }
     # Plan del laboratorio PR 17: el hilo de cada turno del bot (botón por
     # turno en el panel del chat).
     - { module: src.plugins.chats.api.turns, prefix: /api/chats, tags: [Chats_Turns] }

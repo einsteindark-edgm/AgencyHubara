@@ -49,8 +49,18 @@ from src.platform.whatsapp.reengagement_ladder import (
     TOUCH_FREE_FORM as TOUCH_FREE_FORM,
     TOUCH_TEMPLATE as TOUCH_TEMPLATE,
     LadderState as LadderState,
+    clamp_max_steps as clamp_max_steps,
     ladder_state as ladder_state,
     record_touch as record_touch,
+)
+
+# Frecuencia del remarketing (dashboard Agents → Remarketing → Frecuencia):
+# cuántos toques máximo hace el bot. Techo en Terraform; guardado en el vault.
+from src.platform.whatsapp import reengagement_frequency as _reengagement_frequency
+from src.platform.whatsapp.reengagement_frequency import (
+    FrequencyState as FrequencyState,
+    effective_max_touches as effective_max_touches,
+    set_max_touches as set_max_touches,
 )
 from src.platform.whatsapp import reengagement_index as _reengagement_index
 
@@ -167,3 +177,8 @@ load_reengagement_index = _reengagement_index.load_index
 update_reengagement_index_entry = _reengagement_index.update_index_entry
 update_reengagement_index_entries = _reengagement_index.update_index_entries
 reengagement_shortlist = _reengagement_index.shortlist_session_ids
+
+# Frecuencia del remarketing: nombres propios del kit (el módulo de platform
+# llama `ceiling`/`read_state` a lo que acá es `frequency_ceiling`/…).
+frequency_ceiling = _reengagement_frequency.ceiling
+read_frequency_state = _reengagement_frequency.read_state

@@ -82,6 +82,7 @@ variable "tenants" {
       workflow_v2_ceiling     = optional(string, "off")    # techo del workflow de ventas V2: off | canary | on
       order_sentinel_reader   = optional(string, "off")    # lector de Jev del Order Sentinel: off | shadow | on
       decisions_bundle        = optional(string, "ventas") # paquete de decisión de la tienda (chats/shared/decisions/bundles/<id>, PAQUETES_DE_DECISION.md)
+      remarketing_max_touches = optional(number, 5)        # TECHO de toques del remarketing (0..5): el dashboard (Agents → Remarketing → Frecuencia) elige dentro de él; 5 = la escalera completa
       prompt_turn_context     = optional(string, "off")    # notas del turno (hora, pedido) en el mensaje del turno y no en las instrucciones (caché de DeepSeek): off | team | on
     }), {})
   }))
@@ -131,6 +132,14 @@ variable "tenants" {
   validation {
     condition     = alltrue([for t in values(var.tenants) : can(regex("^[a-z][a-z0-9-]{0,39}$", t.lab.decisions_bundle))])
     error_message = "tenants.*.lab.decisions_bundle: id de paquete de decisión (la carpeta en chats/shared/decisions/bundles/, hasta 40 caracteres), p.ej. ventas."
+  }
+
+  validation {
+    condition = alltrue([
+      for t in values(var.tenants) :
+      t.lab.remarketing_max_touches >= 0 && t.lab.remarketing_max_touches <= 5 && t.lab.remarketing_max_touches == floor(t.lab.remarketing_max_touches)
+    ])
+    error_message = "tenants.*.lab.remarketing_max_touches: entero de 0 a 5 (la escalera de reactivación tiene 5 peldaños; 0 apaga el remarketing)."
   }
 
   validation {
