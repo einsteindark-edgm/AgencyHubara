@@ -45,10 +45,18 @@ jobs:
             echo "app=true" >> "$GITHUB_OUTPUT"
             echo "sin PR → se corre (fail-safe)"; exit 0
           fi
+          # Qué cuenta como «lo que la app consume». Derivado del cierre de imports de los routers móviles
+          # (chats/api/mobile*.py, operator_tools) + lo que arranca el backend de prueba (e2e/sandbox/launcher.py).
+          # Dos pasadas: se incluye por directorio y luego se descarta lo que ni la app ni el sandbox tocan
+          # (Temporal está falseado, así que workers/workflows no corren; los bundles del motor son datos del bot).
+          INCLUDE='^(android_operator/|hubara_agency/src/(plugins/(chats/(api|shared)|orders|chats/agent/sales)/|platform/|sdk/|main\.py$)|hubara_agency/pyproject\.toml$|pyproject\.toml$|uv\.lock$|\.github/workflows/qa-emulador\.yml$)'
+          EXCLUDE='(\.md$|^android_operator/release/|^hubara_agency/src/plugins/chats/shared/decisions/bundles/|^hubara_agency/src/plugins/(chats|orders)/(workers)/|^hubara_agency/src/plugins/chats/agent/sales/workflows/)'
           CHANGED="$(git diff --name-only "$BASE"...HEAD)"
-          if echo "$CHANGED" | grep -qE '^(android_operator/|hubara_agency/src/plugins/(chats|orders)/|hubara_agency/src/(platform|sdk)/|hubara_agency/src/main\.py$|hubara_agency/pyproject\.toml$|pyproject\.toml$|uv\.lock$|\.github/workflows/qa-emulador\.yml$)'; then
+          RELEVANT="$(echo "$CHANGED" | grep -E "$INCLUDE" | grep -vE "$EXCLUDE" || true)"
+          if [ -n "$RELEVANT" ]; then
             echo "app=true" >> "$GITHUB_OUTPUT"
-            echo "→ toca la app o su backend: se corren los escenarios en el emulador"
+            echo "→ toca la app o su backend: se corren los escenarios en el emulador. Archivos que lo disparan:"
+            echo "$RELEVANT" | head -20
           else
             echo "app=false" >> "$GITHUB_OUTPUT"
             echo "→ no toca la app ni su backend: nada que probar en el emulador"
