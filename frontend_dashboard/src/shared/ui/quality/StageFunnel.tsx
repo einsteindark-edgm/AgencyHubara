@@ -2,6 +2,7 @@ import {
   QUALITY_VERDICT_ORDER as EPISODE_VERDICT_ORDER,
   qualityVerdictColor as episodeVerdictColor,
   qualityVerdictLabel as episodeVerdictLabel,
+  qualityPercent,
   verdictCountsTotal as funnelTotal,
   type FunnelRowView,
 } from "@/shared/lib";
@@ -13,7 +14,7 @@ interface Props {
 
 const W = 560;
 const L = 128;
-const R = 36;
+const R = 84;
 const T = 8;
 const ROW_H = 34;
 const AXIS_H = 22;
@@ -21,7 +22,8 @@ const AXIS_H = 22;
 /**
  * Embudo de etapa terminal: dónde terminan los episodios y con qué veredicto.
  * Barras horizontales apiladas (Falla → Alerta → Pasa → Sin datos) con total
- * por etapa; el conteo de cada tramo va en su tooltip y, si cabe, adentro.
+ * por etapa y su parte de todos los episodios; el conteo de cada tramo (y su
+ * parte de la etapa) va en su tooltip y, si cabe, adentro.
  */
 export function StageFunnel({ funnel: rows }: Props) {
   if (rows.length === 0) {
@@ -29,6 +31,7 @@ export function StageFunnel({ funnel: rows }: Props) {
   }
 
   const maxN = Math.max(1, ...rows.map(funnelTotal));
+  const allEpisodes = rows.reduce((sum, r) => sum + funnelTotal(r), 0);
   const H = T + rows.length * ROW_H + AXIS_H;
   const plotW = W - L - R;
   const xv = (v: number) => L + (plotW * v) / maxN;
@@ -64,7 +67,7 @@ export function StageFunnel({ funnel: rows }: Props) {
                 x += w;
                 return (
                   <g key={v}>
-                    <title>{`${r.label} · ${episodeVerdictLabel(v)}: ${n}`}</title>
+                    <title>{`${r.label} · ${episodeVerdictLabel(v)}: ${n} (${qualityPercent(n, total)} de la etapa)`}</title>
                     <rect x={segX} y={y} width={Math.max(0, w - 2)} height={h} rx={3} fill={episodeVerdictColor(v)} />
                     {w > 20 && (
                       <text x={segX + (w - 2) / 2} y={y + h / 2 + 4} textAnchor="middle" fontSize={10} fontWeight={700} fill="var(--color-win-bg)">
@@ -75,7 +78,7 @@ export function StageFunnel({ funnel: rows }: Props) {
                 );
               })}
               <text data-testid="funnel-total" x={x + 6} y={y + h / 2 + 4} fontSize={11} fill="var(--color-fg-muted)">
-                {total}
+                {`${total} · ${qualityPercent(total, allEpisodes)}`}
               </text>
             </g>
           );

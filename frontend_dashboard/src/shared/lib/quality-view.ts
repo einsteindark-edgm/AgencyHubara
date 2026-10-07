@@ -335,3 +335,52 @@ export function toQualityFunnel(rows: readonly (VerdictCounts & { stage: string 
     .sort((a, b) => qualityStageRank(a.stage) - qualityStageRank(b.stage))
     .map((r) => ({ ...r, label: qualityStageLabel(r.stage), color: qualityStageColor(r.stage) }));
 }
+
+// ── Porcentajes del Resumen (operador, 2026-10-07) ─────────────────────────
+
+/** `part` de `total` en porcentaje con un decimal («42,9 %»); «—» sin total. */
+export function qualityPercent(part: number, total: number): string {
+  if (total <= 0) return "—";
+  return `${((part / total) * 100).toLocaleString("es-CO", { maximumFractionDigits: 1 })} %`;
+}
+
+/** El cumplimiento semanal de un check (`stats.trend`). */
+export interface CheckWeeksView {
+  check_id: string;
+  weeks: readonly { applicable: number; passed: number }[];
+}
+
+/** Cumplimiento de una etapa: de las veces que sus checks aplicaron, cuántas pasaron. */
+export interface StageComplianceView {
+  stage: string;
+  label: string;
+  color: string;
+  applicable: number;
+  passed: number;
+}
+
+/**
+ * Cumplimiento por etapa del guion: suma, por la etapa de cada check
+ * (`stageOf`), las veces que aplicó y las que pasó en la ventana. En el
+ * orden del guion; las etapas sin ningún check aplicado no salen.
+ */
+export function stageCompliance(
+  trend: readonly CheckWeeksView[],
+  stageOf: (checkId: string) => string | undefined,
+): StageComplianceView[] {
+  const sums = new Map<string, { applicable: number; passed: number }>();
+  for (const check of trend) {
+    const stage = stageOf(check.check_id);
+    if (!stage) continue;
+    const sum = sums.get(stage) ?? { applicable: 0, passed: 0 };
+    for (const w of check.weeks) {
+      sum.applicable += w.applicable;
+      sum.passed += w.passed;
+    }
+    sums.set(stage, sum);
+  }
+  return [...sums.entries()]
+    .filter(([, s]) => s.applicable > 0)
+    .sort(([a], [b]) => qualityStageRank(a) - qualityStageRank(b))
+    .map(([stage, s]) => ({ stage, label: qualityStageLabel(stage), color: qualityStageColor(stage), ...s }));
+}

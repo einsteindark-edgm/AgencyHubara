@@ -40,6 +40,23 @@ export interface CheckSpecView {
   stage?: string;
 }
 
+/** Lo que el operador necesita para entender un check (la ventana de «qué califica»). */
+export interface CheckInfoView {
+  id: string;
+  name: string;
+  level: QualityLevel;
+  /** `code` (lo revisa el código) o `judge` (un juez con IA). */
+  kind: string;
+  /** La familia del check («Apertura», «Envío»…). */
+  family: string;
+  /** La etapa del guion donde se mira. */
+  stage: string;
+  /** Cuándo se califica (si no aplica, el check no cuenta). */
+  applies: string;
+  /** Qué tiene que pasar para aprobar. */
+  rule: string;
+}
+
 export interface CheckCatalogView {
   checks: CheckSpecView[];
 }

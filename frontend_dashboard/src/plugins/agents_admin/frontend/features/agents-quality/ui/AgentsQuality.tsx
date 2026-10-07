@@ -8,7 +8,7 @@ import { EvalTrendChart } from "@plugins/agents_admin/frontend/features/eval-tre
 import { GoldenEvalCuration } from "@plugins/agents_admin/frontend/features/golden-eval-curation";
 import { JudgeCalibration } from "@plugins/agents_admin/frontend/features/judge-calibration";
 import { QualityConversations } from "@plugins/agents_admin/frontend/features/quality-conversations";
-import { QualitySummary } from "@plugins/agents_admin/frontend/features/quality-summary";
+import { QualitySummary, type ConversationFocus } from "@plugins/agents_admin/frontend/features/quality-summary";
 import type { QualityVerdict } from "@/shared/lib";
 import { Icon } from "@/shared/ui";
 
@@ -69,6 +69,8 @@ export function AgentsQuality() {
 
   // Conversaciones: la elegida desde el Resumen y el filtro de la alerta.
   const [openSid, setOpenSid] = useState<string | null>(null);
+  // Desde una falla de la matriz: el turno de ese check en ese episodio.
+  const [openFocus, setOpenFocus] = useState<ConversationFocus | null>(null);
   const [verdictFilter, setVerdictFilter] = useState<QualityVerdict | null>(null);
 
   // Legado (sin cambios de comportamiento)
@@ -90,15 +92,18 @@ export function AgentsQuality() {
     setBot(value);
     // La conversación abierta puede no ser de ese bot.
     setOpenSid(null);
+    setOpenFocus(null);
   };
 
-  const openConversation = (sid: string) => {
+  const openConversation = (sid: string, focus?: ConversationFocus) => {
     setOpenSid(sid);
+    setOpenFocus(focus ?? null);
     setVerdictFilter(null);
     setTab("conversaciones");
   };
   const showFailing = () => {
     setOpenSid(null);
+    setOpenFocus(null);
     setVerdictFilter("FALLA");
     setTab("conversaciones");
   };
@@ -201,11 +206,12 @@ export function AgentsQuality() {
 
         {tab === "conversaciones" && (
           <QualityConversations
-            key={`${bot ?? "todos"}|${verdictFilter ?? ""}|${openSid ?? ""}`}
+            key={`${bot ?? "todos"}|${verdictFilter ?? ""}|${openSid ?? ""}|${openFocus ? `${openFocus.episodeId}:${openFocus.checkId}` : ""}`}
             days={WINDOW_DAYS}
             bot={bot}
             verdictFilter={verdictFilter}
             initialSid={openSid}
+            initialFocus={openFocus}
           />
         )}
 

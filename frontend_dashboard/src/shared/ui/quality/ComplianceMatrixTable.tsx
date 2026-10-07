@@ -18,6 +18,10 @@ interface Props {
   rows: readonly MatrixRowView[];
   selectedKey: string | null;
   onSelectRow: (row: MatrixRowView) => void;
+  /** El código del check: qué califica (sin él, el encabezado es solo texto). */
+  onSelectColumn?: (columnId: string) => void;
+  /** Una celda que falló: el turno que la tiene (sin él, la celda abre la fila). */
+  onSelectFailure?: (row: MatrixRowView, columnId: string) => void;
   /** Filas pintadas por tanda (64 columnas × cientos de episodios revientan el DOM). */
   rowCap: number;
   /** Cambiarla (p. ej. la clave de los filtros) vuelve al tope inicial de filas. */
@@ -47,7 +51,7 @@ const CELL_BG: Partial<Record<CheckStatus, string>> = {
  * mismo bug en clientes distintos. Encabezados y primera columna fijos; scroll
  * propio en ambas direcciones; pinta las filas por tandas de `rowCap`.
  */
-export function ComplianceMatrixTable({ groups, rows, selectedKey, onSelectRow, rowCap, resetKey }: Props) {
+export function ComplianceMatrixTable({ groups, rows, selectedKey, onSelectRow, onSelectColumn, onSelectFailure, rowCap, resetKey }: Props) {
   // El tope se guarda junto con la clave de filtros: cambiar un filtro vuelve
   // al tope inicial sin efectos (estado derivado en el render).
   const [capState, setCapState] = useState({ key: resetKey, cap: rowCap });
@@ -103,7 +107,18 @@ export function ComplianceMatrixTable({ groups, rows, selectedKey, onSelectRow, 
                     title={`${c.id} · ${c.name}`}
                     className="sticky top-6 z-20 h-16 border-b border-line bg-canvas px-0 py-1 align-bottom font-mono text-[10px] font-normal text-fg-muted"
                   >
-                    <span className="inline-block rotate-180 [writing-mode:vertical-rl]">{c.id}</span>
+                    {onSelectColumn ? (
+                      <button
+                        type="button"
+                        aria-label={`${c.id} · ${c.name}: qué califica`}
+                        onClick={() => onSelectColumn(c.id)}
+                        className="cursor-help rounded border-0 bg-transparent p-0 font-mono text-[10px] text-fg-muted underline decoration-dotted underline-offset-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent"
+                      >
+                        <span className="inline-block rotate-180 [writing-mode:vertical-rl]">{c.id}</span>
+                      </button>
+                    ) : (
+                      <span className="inline-block rotate-180 [writing-mode:vertical-rl]">{c.id}</span>
+                    )}
                   </th>
                 )),
               )}
@@ -137,6 +152,7 @@ export function ComplianceMatrixTable({ groups, rows, selectedKey, onSelectRow, 
                   {groups.flatMap((g) =>
                     g.columns.map((c) => {
                       const st = matrixCellStatus(r, c);
+                      const failed = r.checks[c.id] === "falla";
                       return (
                         <td
                           key={c.id}
@@ -147,7 +163,22 @@ export function ComplianceMatrixTable({ groups, rows, selectedKey, onSelectRow, 
                             color: CELL_TEXT[st] ?? "var(--color-win-bg)",
                           }}
                         >
-                          {statusGlyph(st)}
+                          {failed && onSelectFailure ? (
+                            <button
+                              type="button"
+                              aria-label={`${c.id} · falla: ver el turno`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectFailure(r, c.id);
+                              }}
+                              onKeyDown={(e) => e.stopPropagation()}
+                              className="h-full w-full cursor-pointer border-0 bg-transparent p-0 font-bold text-inherit focus-visible:outline-2 focus-visible:outline-accent"
+                            >
+                              {statusGlyph(st)}
+                            </button>
+                          ) : (
+                            statusGlyph(st)
+                          )}
                         </td>
                       );
                     }),

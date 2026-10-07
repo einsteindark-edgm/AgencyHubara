@@ -44,6 +44,8 @@ interface Props {
   verdictFilter?: QualityVerdict | null;
   /** La conversación que se abre primero (la que eligió el Resumen). */
   initialSid?: string | null;
+  /** Desde una falla de la matriz: abre la ventana del turno de ese check en ese episodio. */
+  initialFocus?: { episodeId: string; checkId: string } | null;
 }
 
 const EYEBROW = "text-[10px] font-semibold uppercase leading-none tracking-[0.08em] text-fg-faint";
@@ -70,12 +72,26 @@ function rowBot(row: QualityConversationRow): string | null {
   return bots.length === 1 ? (BOT_NAME[bots[0]] ?? null) : BOT_NAME.mixto;
 }
 
+/** El turno de un check en un episodio: el primero en que falló o, si no falló, el primero en que se juzgó. */
+function focusTurn(
+  thread: QualityThread | undefined,
+  evals: QualityEvaluations | undefined,
+  focus: { episodeId: string; checkId: string } | null,
+): QualityThreadTurn | null {
+  if (!focus || !thread || !evals) return null;
+  const results = (evals.episodes.find((e) => e.episode_id === focus.episodeId)?.results ?? [])
+    .filter((r) => r.check_id === focus.checkId && r.turn !== null)
+    .sort((a, b) => (a.turn ?? 0) - (b.turn ?? 0));
+  const hit = results.find((r) => r.verdict === "falla") ?? results[0];
+  return hit ? (thread.turns.find((t) => t.episode_id === focus.episodeId && t.turn === hit.turn) ?? null) : null;
+}
+
 function turnResults(evals: QualityEvaluations | undefined, turn: QualityThreadTurn) {
   const episode = evals?.episodes.find((e) => e.episode_id === turn.episode_id);
   return episode ? episode.results.filter((r) => r.turn === turn.turn) : [];
 }
 
-export function QualityConversations({ days, bot, verdictFilter = null, initialSid = null }: Props) {
+export function QualityConversations({ days, bot, verdictFilter = null, initialSid = null, initialFocus = null }: Props) {
   const conversations = useQualityConversations(days, bot);
   const rows = useMemo(
     () => (conversations.data?.conversations ?? []).filter((r) => verdictFilter === null || rowVerdict(r) === verdictFilter),
@@ -83,13 +99,20 @@ export function QualityConversations({ days, bot, verdictFilter = null, initialS
   );
   const [picked, setPicked] = useState<string | null>(initialSid);
   const [side, setSide] = useState<"resultado" | "fallas">("resultado");
-  const [open, setOpen] = useState<QualityThreadTurn | null>(null);
+  const [chosen, setChosen] = useState<QualityThreadTurn | null>(null);
+  // La falla de la matriz espera al hilo y a la evaluación; elegir o cerrar otro turno la descarta.
+  const [focus, setFocus] = useState(initialFocus);
   const registry = useCheckRegistry();
 
   const row = rows.find((r) => r.session_id === picked) ?? rows[0] ?? null;
   const sid = row?.session_id ?? null;
   const thread = useQualityThread(sid);
   const evals = useQualityEvaluations(sid);
+  const open = chosen ?? (sid === initialSid ? focusTurn(thread.data, evals.data, focus) : null);
+  const setOpen = (turn: QualityThreadTurn | null) => {
+    setFocus(null);
+    setChosen(turn);
+  };
 
   if (conversations.isPending) return <p className="p-4 text-[12.5px] text-fg-muted">Cargando las conversaciones…</p>;
   if (conversations.isError) return <p className="p-4 text-[12.5px] text-fg-muted">No se pudieron leer las conversaciones.</p>;

@@ -15,18 +15,19 @@ describe("StageFunnel", () => {
     const chart = screen.getByRole("img", { name: /embudo de etapa terminal/i });
     const labels = within(chart).getAllByTestId("funnel-stage").map((n) => n.textContent);
     expect(labels).toEqual(["descubrimiento", "variantes", "confirmación", "datos de envío", "cierre"]);
+    // Cada total con su parte de los 42 episodios (operador, 2026-10-07).
     expect(within(chart).getAllByTestId("funnel-total").map((n) => n.textContent)).toEqual([
-      "16",
-      "9",
-      "7",
-      "3",
-      "7",
+      "16 · 38,1 %",
+      "9 · 21,4 %",
+      "7 · 16,7 %",
+      "3 · 7,1 %",
+      "7 · 16,7 %",
     ]);
     const legend = screen.getByRole("list", { name: /leyenda/i });
     for (const v of ["Falla", "Alerta", "Pasa", "Sin datos"]) {
       expect(within(legend).getByText(v)).toBeInTheDocument();
     }
-    expect(chart.querySelector("title")?.textContent).toMatch(/descubrimiento · Falla: 1/);
+    expect(chart.querySelector("title")?.textContent).toMatch(/descubrimiento · Falla: 1 \(6,3 % de la etapa\)/);
   });
 
   it("sin episodios lo dice", () => {
